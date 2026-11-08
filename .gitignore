@@ -1,0 +1,9 @@
+/target/
+/dist/
+**/.scrutate/
+__pycache__/
+*.pyc
+.pytest_cache/
+/python/*.egg-info/
+/crates/scrutate-py/python/scrutate/*.so
+/crates/scrutate-py/target/

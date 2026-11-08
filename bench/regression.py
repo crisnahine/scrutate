@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+"""Benchmark regression gate: compare a results file from compare_tools.py with a baseline.
+
+usage: regression.py BASELINE.json CURRENT.json [--tolerance 0.15]
+Fails (exit 1) when scrutate's median wall time for any (corpus, query) is slower than the baseline
+by more than the tolerance, when a match count changed, or when the index grew by more than the
+tolerance. Only scrutate's own rows are gated; competitor rows are informational.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+
+
+def rows(d, tool="scrutate"):
+    return {(r["corpus"], r["query"]): r for r in d.get("text_search", []) if r.get("tool") == tool and r.get("status") == "ok"}
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("baseline")
+    ap.add_argument("current")
+    ap.add_argument("--tolerance", type=float, default=0.15)
+    a = ap.parse_args()
+    base, cur = json.load(open(a.baseline)), json.load(open(a.current))
+    b, c = rows(base), rows(cur)
+    problems = []
+    for key, br in b.items():
+        cr = c.get(key)
+        if cr is None:
+            problems.append(f"{key}: missing in current results")
+            continue
+        if cr["matches"] != br["matches"]:
+            problems.append(f"{key}: match count {br['matches']} -> {cr['matches']}")
+        ratio = cr["wall_median_ms"] / max(br["wall_median_ms"], 1e-9)
+        flag = "  <-- REGRESSION" if ratio > 1 + a.tolerance else ""
+        print(f"{key[0]:10} {key[1]:26} {br['wall_median_ms']:9.1f} -> {cr['wall_median_ms']:9.1f} ms  x{ratio:.2f}{flag}")
+        if flag:
+            problems.append(f"{key}: {ratio:.2f}x slower")
+    for bi in base.get("index", []):
+        ci = next((x for x in cur.get("index", []) if x["corpus"] == bi["corpus"]), None)
+        if ci and ci["index_mb"] > bi["index_mb"] * (1 + a.tolerance):
+            problems.append(f"index {bi['corpus']}: {bi['index_mb']:.0f} MB -> {ci['index_mb']:.0f} MB")
+    for p in problems:
+        print("PROBLEM:", p)
+    print("OK" if not problems else f"{len(problems)} problems")
+    return 1 if problems else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,74 @@
+# Ranking quality (Engine B)
+
+How good are the answers, as opposed to how fast? Numbers below are produced by
+`bench/train_ranker.py eval v7` (log: `test_eval_v7.log`, 2026-11-08) on packages that were never
+used to train the semantic model, fit the ranker or choose hyper-parameters. The Rust engine
+produces bit-identical candidates, features and scores to the Python code that ran this evaluation
+(`bench/parity.py`), so the numbers hold for the shipped binary.
+
+## Protocol
+
+- A query is generated from a real function; the function it came from is the one correct answer.
+- The indexed copy has that function's docstring removed (**variant A**: every docstring in the
+  package removed — an undocumented code base; **variant B**: only the first sentence of each
+  docstring removed), so the answer text is not sitting in the index.
+- Query types: **doc** = the first docstring sentence written as a natural-language request;
+  **kw** = three content words sampled from it; **name** = the function name as words
+  (`remove tool`); **id** = the bare identifier (`remove_tool`); **qid** = the qualified name
+  (`Server.remove_tool`).
+- **MRR@10**: mean of 1/rank of the correct result (0 when not in the top 10). **hit@k**: share of
+  queries with the correct result in the top k. Brackets: 95 % bootstrap intervals over queries.
+- Held-out packages: networkx, mcp, rich (Python). Compared systems run on the **same candidate
+  pool, tokenizer, stemming and field weights**: *BM25* is Scrutate's own lexical layer alone;
+  *semantic only* ranks by the vector similarity alone; *linear blend* is the hand-set fallback
+  used when no ranker is present; *learned* is the shipped pipeline.
+
+## Variant A — every docstring removed (MRR@10, n queries)
+
+| Query type | n | BM25 | semantic only | linear blend | **learned ranker** | learned − BM25 [95 % CI] | hit@1 / hit@5 / hit@10 (learned) |
+|---|---:|---:|---:|---:|---:|---:|---|
+| doc | 1 695 | 0.448 | 0.422 | 0.497 | **0.632** [0.613, 0.651] | +0.184 [+0.170, +0.198] | 0.509 / 0.791 / 0.869 |
+| kw | 1 604 | 0.302 | 0.261 | 0.321 | **0.420** [0.399, 0.440] | +0.118 [+0.104, +0.132] | 0.305 / 0.570 / 0.661 |
+| name | 1 274 | 0.746 | 0.661 | 0.753 | **0.930** [0.918, 0.942] | +0.184 [+0.165, +0.203] | 0.898 / 0.972 / 0.986 |
+| id | 900 | 0.923 | 0.698 | 0.984 | **0.989** [0.983, 0.994] | +0.066 [+0.052, +0.080] | 0.983 / 0.996 / 0.996 |
+| qid | 754 | 0.886 | 0.615 | 0.894 | **0.980** [0.972, 0.987] | +0.094 [+0.077, +0.113] | 0.963 / 0.999 / 1.000 |
+
+## Variant B — first docstring sentence removed
+
+| Query type | n | BM25 | **learned ranker** | learned − BM25 [95 % CI] |
+|---|---:|---:|---:|---:|
+| doc | 1 695 | 0.505 | **0.673** [0.655, 0.691] | +0.168 [+0.154, +0.182] |
+| kw | 1 604 | 0.349 | **0.460** [0.438, 0.480] | +0.111 [+0.097, +0.125] |
+| name | 1 274 | 0.723 | **0.930** [0.917, 0.941] | +0.207 [+0.187, +0.226] |
+| id | 900 | 0.912 | **0.988** [0.981, 0.994] | +0.076 [+0.062, +0.092] |
+| qid | 754 | 0.866 | **0.975** [0.967, 0.983] | +0.110 [+0.091, +0.127] |
+
+## What these numbers say and do not say
+
+- The learned pipeline beats its own lexical layer on every query type with non-overlapping
+  intervals, by the most where lexical search is weakest (natural-language and keyword queries in
+  an undocumented code base).
+- They are **Python** results. The ranker's training data is Python-heavy; a JavaScript evaluation
+  set (lodash-es, commander, ws, antlr4 — a language the models never saw) exists in the harness
+  and was run on earlier model versions; it is not reproduced here for the shipped v7 model and
+  so no JavaScript quality claim is made for 0.1.0. Other languages inherit the lexical layer's
+  quality plus whatever the code-word vectors generalise.
+- They are not a comparison with other code-search products: no other tool in the benchmark set
+  ranks by meaning, and public code-search benchmarks (e.g. natural-language-to-code retrieval
+  sets) use different protocols. Absolute MRR values are not comparable across protocols.
+- Hand-written queries over the `mcp` package (`handwritten_final.log`) show the same picture
+  qualitatively (e.g. "initial handshake that negotiates protocol version": BM25 rank 5, Scrutate
+  rank 2) but are too few to carry intervals.
+
+## Semantic model and ranker
+
+- Semantic model (`models/semantic.npz`, 14.6 MB): a code-word model with two views per chunk
+  (description: name + signature + docs; implementation: body), 256 dimensions, trained with an
+  InfoNCE contrastive objective over (query, description), (query, implementation) and
+  (description, implementation) pairs with 20 % word dropout, in numpy
+  (`bench/train_semantic.py`). On the DEV packages its semantic-only doc MRR rose from 0.247
+  (previous PLS-SVD model) to 0.427.
+- Ranker (`models/ranker.npz`, 87 KB): LightGBM LambdaRank over 47 features, exported to arrays;
+  numpy and LightGBM predictions agree to 4.3e-8; cross-validated on DEV packages, fitted once,
+  evaluated once on TEST. Top features by gain: lexical ratio and rank, name coverage, mixed
+  semantic z-score, A-view semantic z-score, query length, lexical z-score, chunk kind.

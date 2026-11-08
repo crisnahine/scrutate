@@ -1,0 +1,619 @@
+//! Python bindings for the Scrutate engines (PyO3, stable ABI).
+//!
+//! Rules this module follows (see docs/TRACEABILITY.md, section 13):
+//! * every long-running engine call runs with the GIL released (`Python::detach`), so Python
+//!   threads can drive the engines in parallel;
+//! * Engine A results stream through a bounded channel from the search thread and are converted
+//!   to Python objects one batch at a time: a search over millions of lines never materialises
+//!   a giant list unless the caller builds one;
+//! * no Python runtime is needed by the core crate: this crate is an optional workspace member.
+
+use std::collections::VecDeque;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
+
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::prelude::*;
+use pyo3::types::PyDict;
+
+use scrutate::instant::{self, Case, Mode, Options};
+use scrutate::search::Searcher;
+
+fn err<E: std::fmt::Display>(e: E) -> PyErr {
+    PyRuntimeError::new_err(e.to_string())
+}
+
+/// One matching (or context) line from Engine A.
+#[pyclass(frozen, get_all, module = "scrutate")]
+#[derive(Clone)]
+pub struct Match {
+    pub path: String,
+    pub line: u64,
+    pub column: u64,
+    pub text: String,
+    pub spans: Vec<(usize, usize)>,
+    pub context: bool,
+}
+
+#[pymethods]
+impl Match {
+    fn __repr__(&self) -> String {
+        format!("Match({}:{}: {:?})", self.path, self.line, self.text)
+    }
+}
+
+impl From<instant::Hit> for Match {
+    fn from(h: instant::Hit) -> Match {
+        Match {
+            path: h.path.to_string(),
+            line: h.line,
+            column: h.column,
+            text: h.text,
+            spans: h.spans,
+            context: h.context,
+        }
+    }
+}
+
+/// One ranked result (a function, class, module header or text window) from Engine B.
+#[pyclass(frozen, get_all, module = "scrutate")]
+#[derive(Clone)]
+pub struct Hit {
+    pub path: String,
+    pub start: i64,
+    pub end: i64,
+    pub name: String,
+    pub qualname: String,
+    pub kind: String,
+    pub score: f64,
+    pub text: String,
+}
+
+#[pymethods]
+impl Hit {
+    fn __repr__(&self) -> String {
+        format!(
+            "Hit({}:{}-{} [{}] {} score={:.3})",
+            self.path, self.start, self.end, self.kind, self.qualname, self.score
+        )
+    }
+}
+
+impl From<scrutate::search::Hit> for Hit {
+    fn from(h: scrutate::search::Hit) -> Hit {
+        Hit {
+            path: h.path,
+            start: h.start,
+            end: h.end,
+            name: h.name,
+            qualname: h.qualname,
+            kind: h.kind,
+            score: h.score,
+            text: h.text,
+        }
+    }
+}
+
+fn parse_mode(mode: &str, fuzzy_edits: u8) -> PyResult<Mode> {
+    Ok(match mode {
+        "regex" => Mode::Regex,
+        "literal" => Mode::Literal,
+        "identifier" => Mode::Identifier,
+        "fuzzy" => Mode::Fuzzy {
+            max_edits: fuzzy_edits,
+        },
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "unknown mode {other:?}: regex, literal, identifier or fuzzy"
+            )))
+        }
+    })
+}
+
+/// Streaming result of `grep`: a Python iterator over `Match` objects fed by a background search
+/// thread. Dropping it (or calling `cancel()`) stops the search.
+#[pyclass(module = "scrutate")]
+pub struct GrepIter {
+    /// behind a mutex only to satisfy `Sync` (a pyclass may be shared across Python threads);
+    /// `__next__` takes `&mut self`, so the lock is never contended
+    rx: Option<Mutex<mpsc::Receiver<Vec<instant::Hit>>>>,
+    buf: VecDeque<instant::Hit>,
+    cancel: Arc<AtomicBool>,
+    handle: Option<std::thread::JoinHandle<anyhow::Result<instant::Stats>>>,
+    stats: Option<instant::Stats>,
+    error: Option<String>,
+}
+
+impl GrepIter {
+    fn finish(&mut self) {
+        if let Some(h) = self.handle.take() {
+            match h.join() {
+                Ok(Ok(st)) => self.stats = Some(st),
+                Ok(Err(e)) => self.error = Some(e.to_string()),
+                Err(_) => self.error = Some("search thread panicked".into()),
+            }
+        }
+    }
+}
+
+#[pymethods]
+impl GrepIter {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(mut slf: PyRefMut<'_, Self>, py: Python<'_>) -> PyResult<Option<Match>> {
+        if let Some(h) = slf.buf.pop_front() {
+            return Ok(Some(h.into()));
+        }
+        let this = &mut *slf;
+        let Some(rx) = this.rx.as_ref() else {
+            return Ok(None);
+        };
+        // wait for the next batch without holding the GIL
+        let batch = py.detach(|| rx.lock().ok().and_then(|r| r.recv().ok()));
+        match batch {
+            Some(b) => {
+                this.buf.extend(b);
+                Ok(this.buf.pop_front().map(Into::into))
+            }
+            None => {
+                this.rx = None;
+                this.finish();
+                if let Some(e) = this.error.take() {
+                    return Err(err(e));
+                }
+                Ok(None)
+            }
+        }
+    }
+
+    /// Stop the search; remaining results are discarded.
+    fn cancel(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+        self.rx = None;
+        self.buf.clear();
+        self.finish();
+    }
+
+    /// Statistics of a finished search (files searched/matched, matches, bytes, elapsed ms, cancelled).
+    fn stats<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        if self.rx.is_some() {
+            return Ok(None); // still running
+        }
+        self.finish();
+        match &self.stats {
+            None => Ok(None),
+            Some(st) => {
+                let d = PyDict::new(py);
+                d.set_item("files_searched", st.files_searched)?;
+                d.set_item("files_matched", st.files_matched)?;
+                d.set_item("matches", st.matches)?;
+                d.set_item("bytes_searched", st.bytes_searched)?;
+                d.set_item("errors", st.errors)?;
+                d.set_item("elapsed_ms", st.elapsed_ms)?;
+                d.set_item("cancelled", st.cancelled)?;
+                Ok(Some(d))
+            }
+        }
+    }
+}
+
+impl Drop for GrepIter {
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+        self.rx = None;
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
+/// Engine A: search `paths` for `pattern` without any index.
+///
+/// mode: "regex" (default), "literal", "identifier" (every casing of an identifier) or "fuzzy"
+/// (within `fuzzy_edits` edits). Returns an iterator of `Match`.
+#[pyfunction]
+#[pyo3(signature = (pattern, paths=vec![".".to_string()], *, mode="regex", case="sensitive", word=false, multiline=false,
+                    invert=false, hidden=false, no_ignore=false, follow_links=false, globs=vec![], types=vec![],
+                    max_filesize=None, max_depth=None, max_count=None, max_results=None, before=0, after=0, threads=0, fuzzy_edits=1))]
+#[allow(clippy::too_many_arguments)]
+fn grep(
+    pattern: String,
+    paths: Vec<String>,
+    mode: &str,
+    case: &str,
+    word: bool,
+    multiline: bool,
+    invert: bool,
+    hidden: bool,
+    no_ignore: bool,
+    follow_links: bool,
+    globs: Vec<String>,
+    types: Vec<String>,
+    max_filesize: Option<u64>,
+    max_depth: Option<usize>,
+    max_count: Option<u64>,
+    max_results: Option<u64>,
+    before: usize,
+    after: usize,
+    threads: usize,
+    fuzzy_edits: u8,
+) -> PyResult<GrepIter> {
+    let o = Options {
+        pattern,
+        mode: parse_mode(mode, fuzzy_edits)?,
+        case: match case {
+            "sensitive" => Case::Sensitive,
+            "insensitive" => Case::Insensitive,
+            "smart" => Case::Smart,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown case {other:?}: sensitive, insensitive or smart"
+                )))
+            }
+        },
+        word,
+        multiline,
+        invert,
+        hidden,
+        no_ignore,
+        follow_links,
+        globs,
+        types,
+        max_filesize,
+        max_depth,
+        max_count,
+        max_results,
+        before,
+        after,
+        threads,
+        want_spans: true,
+        ..Options::default()
+    };
+    // validate the pattern up front so errors surface at call time, not at the first `next()`
+    instant::build_matcher(&o).map_err(|e| PyValueError::new_err(e.to_string()))?;
+    let roots: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let (tx, rx) = mpsc::sync_channel::<Vec<instant::Hit>>(64); // bounded: a slow consumer throttles the search
+    let c2 = Arc::clone(&cancel);
+    let handle = std::thread::Builder::new()
+        .name("scrutate-grep".into())
+        .spawn(move || {
+            let mut batch: Vec<instant::Hit> = Vec::with_capacity(256);
+            let tx2 = tx.clone();
+            let c3 = Arc::clone(&c2);
+            let st = instant::search(&roots, &o, Arc::clone(&c2), |h| {
+                batch.push(h);
+                if batch.len() >= 256 && tx2.send(std::mem::take(&mut batch)).is_err() {
+                    c3.store(true, Ordering::Relaxed); // consumer gone
+                }
+            });
+            if !batch.is_empty() {
+                let _ = tx.send(batch);
+            }
+            st
+        })
+        .map_err(err)?;
+    Ok(GrepIter {
+        rx: Some(Mutex::new(rx)),
+        buf: VecDeque::new(),
+        cancel,
+        handle: Some(handle),
+        stats: None,
+        error: None,
+    })
+}
+
+/// Engine B: a repository's persistent code-intelligence index.
+#[pyclass(module = "scrutate")]
+pub struct Repo {
+    root: PathBuf,
+    inner: Mutex<Searcher>,
+}
+
+fn hits_py(hits: Vec<scrutate::search::Hit>) -> Vec<Hit> {
+    hits.into_iter().map(Into::into).collect()
+}
+
+#[pymethods]
+impl Repo {
+    /// Open (creating if needed) the index of the repository at `root`.
+    #[new]
+    fn new(py: Python<'_>, root: &str) -> PyResult<Self> {
+        let root = PathBuf::from(root);
+        let r2 = root.clone();
+        let s = py.detach(move || scrutate::open(&r2)).map_err(err)?;
+        Ok(Repo {
+            root,
+            inner: Mutex::new(s),
+        })
+    }
+
+    #[getter]
+    fn root(&self) -> String {
+        self.root.to_string_lossy().into_owned()
+    }
+
+    /// Bring the index up to date (incremental: only changed files are parsed). GIL released.
+    #[pyo3(signature = (force=false))]
+    fn index<'py>(&self, py: Python<'py>, force: bool) -> PyResult<Bound<'py, PyDict>> {
+        let st = py
+            .detach(|| {
+                let mut s = self
+                    .inner
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("engine lock poisoned"))?;
+                s.ix.update(force)
+            })
+            .map_err(err)?;
+        let d = PyDict::new(py);
+        d.set_item("files_total", st.files_total)?;
+        d.set_item("files_changed", st.files_changed)?;
+        d.set_item("files_removed", st.files_removed)?;
+        d.set_item("chunks", st.chunks)?;
+        d.set_item("seconds", st.seconds)?;
+        d.set_item("semantic", st.semantic)?;
+        Ok(d)
+    }
+
+    /// Ranked search by meaning, name or identifier. `alt` are alternative phrasings whose results
+    /// are fused with the main query. GIL released.
+    #[pyo3(signature = (query, k=10, alt=None, with_text=true))]
+    fn search(
+        &self,
+        py: Python<'_>,
+        query: &str,
+        k: usize,
+        alt: Option<Vec<String>>,
+        with_text: bool,
+    ) -> PyResult<Vec<Hit>> {
+        let q = query.to_string();
+        let hits = py
+            .detach(move || {
+                let mut s = self
+                    .inner
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("engine lock poisoned"))?;
+                s.ix.refresh(1.0)?;
+                match alt {
+                    Some(a) if !a.is_empty() => {
+                        let mut qs = vec![q];
+                        qs.extend(a);
+                        s.search_many(&qs, k, with_text)
+                    }
+                    _ => s.search(&q, k, with_text),
+                }
+            })
+            .map_err(err)?;
+        Ok(hits_py(hits))
+    }
+
+    /// Where is this function/class/method defined? (`Class.method` works.)
+    #[pyo3(signature = (name, limit=20))]
+    fn symbol(&self, py: Python<'_>, name: &str, limit: usize) -> PyResult<Vec<Hit>> {
+        let n = name.to_string();
+        let hits = py
+            .detach(move || {
+                self.inner
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("engine lock poisoned"))?
+                    .find_symbol(&n, limit)
+            })
+            .map_err(err)?;
+        Ok(hits_py(hits))
+    }
+
+    /// Functions that call `name`.
+    #[pyo3(signature = (name, limit=50))]
+    fn callers(&self, py: Python<'_>, name: &str, limit: usize) -> PyResult<Vec<Hit>> {
+        let n = name.to_string();
+        let hits = py
+            .detach(move || {
+                self.inner
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("engine lock poisoned"))?
+                    .callers(&n, limit)
+            })
+            .map_err(err)?;
+        Ok(hits_py(hits))
+    }
+
+    /// Functions `name` calls: (resolved hits, unresolved external names).
+    #[pyo3(signature = (name, limit=50))]
+    fn callees(
+        &self,
+        py: Python<'_>,
+        name: &str,
+        limit: usize,
+    ) -> PyResult<(Vec<Hit>, Vec<String>)> {
+        let n = name.to_string();
+        let (hits, ext) = py
+            .detach(move || {
+                self.inner
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("engine lock poisoned"))?
+                    .callees(&n, limit)
+            })
+            .map_err(err)?;
+        Ok((hits_py(hits), ext))
+    }
+
+    /// Symbols of a file in source order, as dicts (kind, name, qualname, start, end).
+    fn outline<'py>(&self, py: Python<'py>, path: &str) -> PyResult<Vec<Bound<'py, PyDict>>> {
+        let p = path.to_string();
+        let rows = py
+            .detach(move || {
+                scrutate::intel::outline(
+                    &self
+                        .inner
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("engine lock poisoned"))?
+                        .ix,
+                    &p,
+                )
+            })
+            .map_err(err)?;
+        rows.iter()
+            .map(|r| {
+                let d = PyDict::new(py);
+                d.set_item("kind", &r.kind)?;
+                d.set_item("name", &r.name)?;
+                d.set_item("qualname", &r.qualname)?;
+                d.set_item("start", r.start)?;
+                d.set_item("end", r.end)?;
+                Ok(d)
+            })
+            .collect()
+    }
+
+    /// Modules a file imports: list of (line, module, resolved_path_or_None).
+    fn dependencies(
+        &self,
+        py: Python<'_>,
+        path: &str,
+    ) -> PyResult<Vec<(i64, String, Option<String>)>> {
+        let p = path.to_string();
+        let deps = py
+            .detach(move || {
+                scrutate::intel::deps(
+                    &self
+                        .inner
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("engine lock poisoned"))?
+                        .ix,
+                    &p,
+                )
+            })
+            .map_err(err)?;
+        Ok(deps
+            .into_iter()
+            .map(|d| (d.line, d.module, d.resolved))
+            .collect())
+    }
+
+    /// Files importing a module or repository file: list of (path, line, module as written).
+    fn dependents(&self, py: Python<'_>, target: &str) -> PyResult<Vec<(String, i64, String)>> {
+        let t = target.to_string();
+        py.detach(move || {
+            scrutate::intel::rdeps(
+                &self
+                    .inner
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("engine lock poisoned"))?
+                    .ix,
+                &t,
+            )
+        })
+        .map_err(err)
+    }
+
+    /// Code similar to a symbol or `path:line`: list of (hit, cosine, jaccard).
+    #[pyo3(signature = (target, k=10))]
+    fn similar(&self, py: Python<'_>, target: &str, k: usize) -> PyResult<Vec<(Hit, f32, f32)>> {
+        let t = target.to_string();
+        let out = py
+            .detach(move || {
+                let mut g = self
+                    .inner
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("engine lock poisoned"))?;
+                scrutate::intel::similar(&mut g, &t, k)
+            })
+            .map_err(err)?;
+        Ok(out.into_iter().map(|(h, c, j)| (h.into(), c, j)).collect())
+    }
+
+    /// Duplicate and near-duplicate functions, as JSON-compatible dicts.
+    #[pyo3(signature = (min_tokens=30, threshold=0.75, limit=50))]
+    fn duplicates<'py>(
+        &self,
+        py: Python<'py>,
+        min_tokens: usize,
+        threshold: f32,
+        limit: usize,
+    ) -> PyResult<Vec<Bound<'py, PyDict>>> {
+        let groups = py
+            .detach(move || {
+                scrutate::intel::dupes(
+                    &self
+                        .inner
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("engine lock poisoned"))?
+                        .ix,
+                    min_tokens,
+                    threshold,
+                    limit,
+                )
+            })
+            .map_err(err)?;
+        groups
+            .iter()
+            .map(|g| {
+                let d = PyDict::new(py);
+                d.set_item("kind", g.kind)?;
+                d.set_item("similarity", g.similarity)?;
+                d.set_item("tokens", g.tokens)?;
+                d.set_item("members", g.members.clone())?;
+                Ok(d)
+            })
+            .collect()
+    }
+
+    /// Index statistics as a dict.
+    fn stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let v = self
+            .inner
+            .lock()
+            .map_err(|_| err("engine lock poisoned"))?
+            .ix
+            .stats()
+            .map_err(err)?;
+        let d = PyDict::new(py);
+        if let Some(m) = v.as_object() {
+            for (k, val) in m {
+                match val {
+                    serde_json::Value::Number(n) if n.is_i64() => d.set_item(k, n.as_i64())?,
+                    serde_json::Value::Bool(b) => d.set_item(k, *b)?,
+                    other => d.set_item(k, other.to_string())?,
+                }
+            }
+        }
+        Ok(d)
+    }
+
+    /// Lines `start..=end` of a file inside the repository (never outside it).
+    #[pyo3(signature = (path, start=1, end=None, max_lines=400))]
+    fn read(&self, path: &str, start: i64, end: Option<i64>, max_lines: i64) -> PyResult<String> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(|_| err("engine lock poisoned"))?
+            .read(path, start, end, max_lines))
+    }
+}
+
+/// Engine version string.
+#[pyfunction]
+fn version() -> &'static str {
+    scrutate::VERSION
+}
+
+/// Thread-safety review for free-threaded Python (`gil_used = false`):
+/// * `Match` and `Hit` are frozen (immutable after construction);
+/// * `Repo` keeps the engine behind a `Mutex`; every method locks it;
+/// * `GrepIter` methods take `&mut self`: PyO3's borrow checker rejects concurrent mutable access
+///   with an exception instead of racing; the channel receiver is additionally behind a `Mutex`;
+/// * the module holds no other global mutable state.
+#[pymodule(gil_used = false)]
+fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<Match>()?;
+    m.add_class::<Hit>()?;
+    m.add_class::<GrepIter>()?;
+    m.add_class::<Repo>()?;
+    m.add_function(wrap_pyfunction!(grep, m)?)?;
+    m.add_function(wrap_pyfunction!(version, m)?)?;
+    m.add("__version__", scrutate::VERSION)?;
+    Ok(())
+}

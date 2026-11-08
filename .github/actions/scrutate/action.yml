@@ -1,0 +1,31 @@
+name: scrutate
+description: Install a Scrutate release binary and run a command (search, check, dupes, ...) in CI.
+inputs:
+  version:
+    description: release tag to install (e.g. v0.1.0)
+    required: true
+  args:
+    description: arguments passed to scrutate (e.g. "dupes --json --limit 20")
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+        v=${{ inputs.version }}
+        case "$(uname -s)-$(uname -m)" in
+          Linux-x86_64) t=x86_64-unknown-linux-musl ;;
+          Linux-aarch64) t=aarch64-unknown-linux-musl ;;
+          Darwin-arm64) t=aarch64-apple-darwin ;;
+          Darwin-x86_64) t=x86_64-apple-darwin ;;
+          *) echo "unsupported runner"; exit 1 ;;
+        esac
+        name=scrutate-${v#v}-$t
+        curl -sSfL -o "$name.tar.gz" "https://github.com/crisnahine/scrutate/releases/download/$v/$name.tar.gz"
+        curl -sSfL -o "$name.sha256" "https://github.com/crisnahine/scrutate/releases/download/$v/$name.sha256"
+        grep "$name.tar.gz" "$name.sha256" | sha256sum -c -
+        tar xzf "$name.tar.gz"
+        echo "$PWD/$name" >> "$GITHUB_PATH"
+    - shell: bash
+      run: scrutate ${{ inputs.args }}

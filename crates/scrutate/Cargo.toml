@@ -1,0 +1,117 @@
+[package]
+name = "scrutate"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "Scrutate: universal instant code search (Engine A) and a persistent code-intelligence index with learned ranking (Engine B), one CLI and MCP server"
+license.workspace = true
+
+[[bin]]
+name = "scrutate"
+path = "src/main.rs"
+
+[dependencies]
+aho-corasick = "1"
+anyhow = "1"
+blake2 = "0.10"
+clap = { version = "4", features = ["derive", "env"] }
+clap_complete = "4"
+ctrlc = "3"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+grep-matcher = "0.1"
+grep-regex = "0.1"
+grep-searcher = "0.1"
+half = "2"
+ignore = "0.4"
+matrixmultiply = "0.3"
+memmap2 = "0.9"
+rayon = "1"
+regex = "1"
+rusqlite = { version = "0.37", features = ["bundled"] }
+rust-stemmers = "1"
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+termcolor = "1"
+toml = { version = "0.8", default-features = false, features = ["parse"] }
+sha1 = "0.10"
+tree-sitter = "0.26"
+tree-sitter-go = "0.25"
+tree-sitter-java = "0.23"
+tree-sitter-javascript = "0.25"
+tree-sitter-python = "0.25"
+tree-sitter-rust = "0.24"
+tree-sitter-typescript = "0.23"
+tree-sitter-c = "0.24"
+tree-sitter-cpp = "0.23"
+tree-sitter-c-sharp = "0.23"
+tree-sitter-ruby = "0.23"
+tree-sitter-php = "0.25"
+tree-sitter-bash = "0.25"
+tree-sitter-kotlin-ng = "1.1"
+tree-sitter-swift = "0.7"
+tree-sitter-scala = "0.26"
+tree-sitter-lua = "0.5"
+tree-sitter-haskell = "0.24"
+tree-sitter-ocaml = { version = "0.26", optional = true }
+tree-sitter-elixir = "0.3"
+tree-sitter-zig = "1.1"
+tree-sitter-julia = "0.23"
+tree-sitter-dart = "0.3"
+tree-sitter-r = "1.3"
+tree-sitter-erlang = "0.21"
+tree-sitter-nix = "0.3"
+tree-sitter-groovy = "0.1"
+tree-sitter-objc = "3.0"
+tree-sitter-fortran = { version = "0.6", optional = true }
+tree-sitter-elm = "5.9"
+tree-sitter-powershell = "0.26"
+tree-sitter-hcl = "1.1"
+tree-sitter-solidity = "1.2"
+tree-sitter-html = "0.23"
+tree-sitter-css = "0.25"
+tree-sitter-json = "0.24"
+tree-sitter-yaml = "0.7"
+tree-sitter-toml-ng = "0.7"
+tree-sitter-md = "0.5"
+tree-sitter-cmake = "0.7"
+tree-sitter-make = "1.1"
+tree-sitter-gleam = "1.0"
+tree-sitter-d = { version = "0.8", optional = true }
+tree-sitter-pascal = "0.10"
+tree-sitter-ada = "0.9"
+tree-sitter-verilog = { version = "1.0", optional = true }
+tree-sitter-vhdl = { version = "1.4", optional = true }
+tree-sitter-matlab = "1.3"
+tree-sitter-fsharp = { version = "0.3", optional = true }
+tree-sitter-elisp = "1.7"
+tree-sitter-scheme = "0.25"
+tree-sitter-racket = "0.25"
+tree-sitter-commonlisp = "0.4"
+tree-sitter-odin = { version = "1.3", optional = true }
+tree-sitter-vim = "0.4"
+tree-sitter-glsl = "0.2"
+tree-sitter-cuda = { version = "0.21", optional = true }
+tree-sitter-starlark = "1.3"
+tree-sitter-fish = "3.6"
+tree-sitter-graphql = "0.3"
+tree-sitter-prisma = "0.2"
+tree-sitter-puppet = "1.3"
+tree-sitter-bicep = "1.1"
+tree-sitter-llvm = { version = "1.1", optional = true }
+tree-sitter-asm = "0.24"
+tree-sitter-qmljs = { version = "0.3", optional = true }
+tree-sitter-tlaplus = { version = "1.5", optional = true }
+tree-sitter-jsonnet = "0.0.1"
+tree-sitter-xml = "0.7"
+tree-sitter-ini = "1.4"
+tree-sitter-rst = "0.2"
+tree-sitter-autohotkey = { version = "1.1", optional = true }
+
+[dev-dependencies]
+proptest = "1"
+
+[features]
+default = []
+# heavy or niche grammars (about 80 MB of parse tables): Fortran, OCaml, F#, Verilog, VHDL, CUDA, TLA+, D, AutoHotkey, Odin, QML, LLVM IR
+extra-langs = ["dep:tree-sitter-fortran", "dep:tree-sitter-ocaml", "dep:tree-sitter-fsharp", "dep:tree-sitter-verilog", "dep:tree-sitter-vhdl", "dep:tree-sitter-cuda", "dep:tree-sitter-tlaplus", "dep:tree-sitter-d", "dep:tree-sitter-autohotkey", "dep:tree-sitter-odin", "dep:tree-sitter-qmljs", "dep:tree-sitter-llvm"]

@@ -1,0 +1,29 @@
+{
+  "name": "scrutate",
+  "displayName": "Scrutate",
+  "description": "Instant code search and code intelligence from the Scrutate CLI: ranked search, symbol lookup, callers, grep.",
+  "version": "0.1.0",
+  "publisher": "scrutate",
+  "license": "MIT OR Apache-2.0",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "activationEvents": [],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "scrutate.search", "title": "Scrutate: Search (ranked, by meaning or name)" },
+      { "command": "scrutate.grep", "title": "Scrutate: Grep (instant, no index)" },
+      { "command": "scrutate.symbol", "title": "Scrutate: Go to symbol definition" },
+      { "command": "scrutate.callers", "title": "Scrutate: Who calls this?" },
+      { "command": "scrutate.refs", "title": "Scrutate: References of the word under the cursor" },
+      { "command": "scrutate.index", "title": "Scrutate: Update index" }
+    ],
+    "configuration": {
+      "title": "Scrutate",
+      "properties": {
+        "scrutate.path": { "type": "string", "default": "scrutate", "description": "Path to the scrutate binary." },
+        "scrutate.results": { "type": "number", "default": 15, "description": "Number of ranked results to show." }
+      }
+    }
+  }
+}

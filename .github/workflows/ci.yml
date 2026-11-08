@@ -1,0 +1,94 @@
+# Continuous integration: quality gates for every push and pull request.
+# Core crate only needs Rust; the Python jobs cover the reference engine, the bindings and the
+# differential/parity harnesses.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+jobs:
+  rust:
+    name: rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest, windows-11-arm]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --exclude scrutate-py -- -D warnings
+      # the core must build and pass its tests with no Python involved (the bindings crate is excluded)
+      - run: cargo test --release -p scrutate
+      - run: cargo build --release -p scrutate
+      - name: smoke test the binary
+        shell: bash
+        run: |
+          ./target/release/scrutate --version
+          ./target/release/scrutate grep -F "fn main" crates/scrutate/src
+          ./target/release/scrutate --root crates/scrutate index
+          ./target/release/scrutate --root crates/scrutate search "parse a file into chunks" -k 3
+          ./target/release/scrutate --root crates/scrutate check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scrutate-${{ matrix.os }}
+          path: target/release/scrutate*
+          if-no-files-found: error
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+  python:
+    name: python reference, bindings, parity, differential
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install maturin pytest numpy "snowballstemmer>=2.2,<3" tree-sitter tree-sitter-python tree-sitter-javascript tree-sitter-typescript tree-sitter-go tree-sitter-rust tree-sitter-java
+      - run: cargo build --release -p scrutate
+      - name: bindings wheel (abi3) and tests
+        run: |
+          maturin build --release --strip -m crates/scrutate-py/Cargo.toml -o target/wheels
+          pip install --force-reinstall --no-deps target/wheels/scrutate-*.whl
+          cd python && SCRUTATE_BIN=$GITHUB_WORKSPACE/target/release/scrutate python -m pytest -q tests
+      - name: differential test against ripgrep
+        run: |
+          sudo apt-get install -y ripgrep
+          python bench/differential.py --cases 200 --seed 3
+      - name: python/rust parity on the engine's own sources
+        run: python bench/parity.py crates/scrutate/src target/release/scrutate --queries 50
+  musl:
+    name: fully static linux binary (musl)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - run: sudo apt-get install -y musl-tools
+      - run: cargo build --release -p scrutate
+      - run: cargo build --release -p scrutate --target x86_64-unknown-linux-musl
+      - name: static, identical output, performance difference
+        run: |
+          file target/x86_64-unknown-linux-musl/release/scrutate | grep -q "statically linked"
+          ! ldd target/x86_64-unknown-linux-musl/release/scrutate 2>/dev/null | grep -q "=>"
+          ./target/release/scrutate grep --json -F "fn " crates > /tmp/glibc.jsonl
+          ./target/x86_64-unknown-linux-musl/release/scrutate grep --json -F "fn " crates > /tmp/musl.jsonl
+          cmp /tmp/glibc.jsonl /tmp/musl.jsonl
+          python3 bench/musl_vs_glibc.py target/release/scrutate target/x86_64-unknown-linux-musl/release/scrutate crates

@@ -1,0 +1,9 @@
+# yaml sample
+version: 2
+services:
+  web:
+    image: nginx
+    ports:
+      - "80:80"
+  db:
+    image: postgres

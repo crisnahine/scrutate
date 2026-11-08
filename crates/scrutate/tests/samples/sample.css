@@ -1,0 +1,5 @@
+/* css sample */
+.button { color: red; }
+#main .title, h1 { font-size: 2em; }
+@media (max-width: 600px) { .button { display: none; } }
+@keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }

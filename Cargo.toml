@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = ["crates/scrutate", "crates/scrutate-py"]
+default-members = ["crates/scrutate"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/crisnahine/scrutate"
+rust-version = "1.85"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+debug = 0
+strip = true

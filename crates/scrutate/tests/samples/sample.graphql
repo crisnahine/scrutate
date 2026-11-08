@@ -1,0 +1,12 @@
+# GraphQL sample
+"""A user."""
+type User {
+  id: ID!
+  name: String
+}
+interface Node { id: ID! }
+enum Role { ADMIN USER }
+input NewUser { name: String! }
+union SearchResult = User
+query GetUser($id: ID!) { user(id: $id) { name } }
+fragment UserFields on User { id name }

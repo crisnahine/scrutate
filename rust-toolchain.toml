@@ -1,0 +1,7 @@
+# The crate requires stable Rust >= 1.85 (`rust-version` in Cargo.toml). Builds and benchmarks in
+# docs/TEST_RESULTS.md were made with the exact stable version recorded there (1.97.0); CI uses the
+# current stable. A fixed version can be pinned here (channel = "1.97.0") when the toolchain can be
+# downloaded in the build environment.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]

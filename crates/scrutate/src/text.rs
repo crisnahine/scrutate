@@ -1,0 +1,399 @@
+//! Tokenization shared by indexing and querying (a faithful port of python/scrutate_ref/text.py).
+//!
+//! Everything is lowercase, identifier-aware (camelCase / snake_case are split) and stemmed with the
+//! Snowball English stemmer, so `refreshTokens`, `refresh_token` and "refreshing tokens" all meet at
+//! `refresh`, `token`. Compound identifiers also emit one joined token (`sendrequest`).
+
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
+
+use regex::Regex;
+use rust_stemmers::{Algorithm, Stemmer};
+
+const ENGLISH: &str = "a an the of to in on at by for with from as and or nor but so if then than that this
+these those it its is are was were be been being am do does did done has have had having not no
+yes can could should would will shall may might must i we you he she they them his her our your
+their my me us about into onto over under up down out off also very just only more most such
+there here when where which who whom whose why how what whatever any all each both either some
+other another same own too via per etc eg ie e g";
+const CODE: &str = "self cls this super none null nil true false def class import from return pass lambda
+yield async await elif else try except finally raise with assert break continue global nonlocal
+del var let const function new void typeof undefined public private protected static final
+fn func pub mut impl struct enum trait use mod crate self_ int str bool float";
+const QUESTION: &str = "find show give get where which implemented implement implementation handled
+handle handles handling happens happen code codebase file files function functions method
+methods class classes defined define used uses using use look looking search want need
+please tell list";
+
+pub static INDEX_STOP: LazyLock<HashSet<&'static str>> = LazyLock::new(|| ENGLISH.split_whitespace().chain(CODE.split_whitespace()).collect());
+pub static QUERY_STOP: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
+    let mut s: HashSet<&'static str> = INDEX_STOP.iter().copied().collect();
+    s.extend(QUESTION.split_whitespace());
+    s
+});
+
+/// Maximum identifiers of a body that are indexed / embedded.
+pub const BODY_CAP: usize = 2000;
+
+thread_local! {
+    static STEMMER: Stemmer = Stemmer::create(Algorithm::English);
+    static STEM_CACHE: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+    static IDENT_CACHE: RefCell<HashMap<String, (Vec<String>, String)>> = RefCell::new(HashMap::new());
+}
+
+pub fn stem(w: &str) -> String {
+    if let Some(s) = STEM_CACHE.with(|c| c.borrow().get(w).cloned()) {
+        return s;
+    }
+    let s = STEMMER.with(|st| st.stem(w).into_owned());
+    STEM_CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.len() < 2_000_000 {
+            c.insert(w.to_string(), s.clone());
+        }
+    });
+    s
+}
+
+/// Words of a text: `[A-Za-z_][A-Za-z0-9_]*` (ASCII, like the Python regex).
+pub struct Words<'a> {
+    bytes: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Words<'a> {
+    pub fn new(text: &'a str) -> Self {
+        Words { bytes: text.as_bytes(), pos: 0 }
+    }
+}
+
+fn is_word_start(b: u8) -> bool {
+    b.is_ascii_alphabetic() || b == b'_'
+}
+
+fn is_word_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
+impl<'a> Iterator for Words<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<&'a str> {
+        let b = self.bytes;
+        while self.pos < b.len() && !is_word_start(b[self.pos]) {
+            self.pos += 1;
+        }
+        if self.pos >= b.len() {
+            return None;
+        }
+        let start = self.pos;
+        while self.pos < b.len() && is_word_char(b[self.pos]) {
+            self.pos += 1;
+        }
+        // ASCII boundaries are always char boundaries
+        Some(unsafe { std::str::from_utf8_unchecked(&b[start..self.pos]) })
+    }
+}
+
+/// `parseHTTPResponse_v2` -> ["parse", "http", "response", "v"] (lowercase, unstemmed). This is the
+/// Python regex `[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+` applied to every `_`-separated part.
+pub fn raw_subwords(ident: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for part in ident.split('_') {
+        if part.is_empty() {
+            continue;
+        }
+        let b = part.as_bytes();
+        let n = b.len();
+        let mut i = 0;
+        while i < n {
+            let c = b[i];
+            if c.is_ascii_uppercase() {
+                // alternative 1: a run of capitals followed by Capital+lowercase (greedy, backtracking)
+                let mut run = i;
+                while run < n && b[run].is_ascii_uppercase() {
+                    run += 1;
+                }
+                let mut matched = None;
+                let mut l = run - i;
+                while l >= 1 {
+                    let j = i + l;
+                    if j + 1 < n && b[j].is_ascii_uppercase() && b[j + 1].is_ascii_lowercase() {
+                        matched = Some(l);
+                        break;
+                    }
+                    l -= 1;
+                }
+                if let Some(l) = matched {
+                    out.push(part[i..i + l].to_ascii_lowercase());
+                    i += l;
+                    continue;
+                }
+                // alternative 2: one capital + lowercase run
+                if i + 1 < n && b[i + 1].is_ascii_lowercase() {
+                    let mut j = i + 1;
+                    while j < n && b[j].is_ascii_lowercase() {
+                        j += 1;
+                    }
+                    out.push(part[i..j].to_ascii_lowercase());
+                    i = j;
+                    continue;
+                }
+                // alternative 3: the whole run of capitals
+                out.push(part[i..run].to_ascii_lowercase());
+                i = run;
+            } else if c.is_ascii_lowercase() {
+                let mut j = i + 1;
+                while j < n && b[j].is_ascii_lowercase() {
+                    j += 1;
+                }
+                out.push(part[i..j].to_string());
+                i = j;
+            } else {
+                i += 1; // digits and anything else are skipped
+            }
+        }
+    }
+    out
+}
+
+/// -> (stemmed subwords without stopwords, joined whole token or "").
+pub fn ident_tokens(ident: &str) -> (Vec<String>, String) {
+    if let Some(hit) = IDENT_CACHE.with(|c| c.borrow().get(ident).cloned()) {
+        return hit;
+    }
+    let subs = raw_subwords(ident);
+    let toks: Vec<String> = subs.iter().filter(|w| w.len() > 1 && !INDEX_STOP.contains(w.as_str())).map(|w| stem(w)).collect();
+    let whole = if subs.len() > 1 && !toks.is_empty() { subs.concat() } else { String::new() };
+    let hit = (toks, whole);
+    IDENT_CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.len() < 2_000_000 {
+            c.insert(ident.to_string(), hit.clone());
+        }
+    });
+    hit
+}
+
+/// -> (stemmed subwords, joined whole identifiers) of a text; `cap` limits the number of words read.
+pub fn tokenize2(text: &str, cap: Option<usize>) -> (Vec<String>, Vec<String>) {
+    let mut subs = Vec::new();
+    let mut wholes = Vec::new();
+    let mut n = 0;
+    for w in Words::new(text) {
+        let (t, whole) = ident_tokens(w);
+        subs.extend(t);
+        if !whole.is_empty() {
+            wholes.push(whole);
+        }
+        n += 1;
+        if let Some(c) = cap {
+            if n >= c {
+                break;
+            }
+        }
+    }
+    (subs, wholes)
+}
+
+/// Case- and underscore-insensitive key: `send_request`, `sendRequest` -> `sendrequest`.
+pub fn name_key(name: &str) -> String {
+    name.chars().filter(|c| *c != '_').flat_map(|c| c.to_lowercase()).collect()
+}
+
+const TEST_PARTS: &[&str] = &["test", "tests", "testing", "__tests__", "spec", "specs", "e2e", "fixtures", "mocks"];
+
+pub fn is_test_path(path: &str) -> bool {
+    let low = path.to_lowercase().replace('\\', "/");
+    let parts: Vec<&str> = low.split('/').collect();
+    let base = parts[parts.len() - 1];
+    parts[..parts.len() - 1].iter().any(|p| TEST_PARTS.contains(p))
+        || base.starts_with("test_")
+        || ["_test.py", "_test.go", ".test.js", ".test.ts", ".test.tsx", ".spec.js", ".spec.ts", ".spec.tsx", "test.java"].iter().any(|s| base.ends_with(s))
+        || base == "conftest.py"
+}
+
+// --- query analysis -------------------------------------------------------------------------
+
+/// Unique stemmed content terms of a query (question words and stopwords removed), in order.
+pub fn query_terms(query: &str) -> Vec<String> {
+    let mut seen = Vec::new();
+    let mut set = HashSet::new();
+    for w in Words::new(query) {
+        for s in raw_subwords(w) {
+            if s.len() > 1 && !QUERY_STOP.contains(s.as_str()) {
+                let st = stem(&s);
+                if set.insert(st.clone()) {
+                    seen.push(st);
+                }
+            }
+        }
+    }
+    seen
+}
+
+/// The longest prefix of `s` of at most `n` bytes that ends on a char boundary.
+pub fn prefix_bytes(s: &str, n: usize) -> &str {
+    if s.len() <= n {
+        return s;
+    }
+    let mut i = n;
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    &s[..i]
+}
+
+/// Joined tokens for identifier-like words of the query (`send_request` -> `sendrequest`).
+pub fn query_wholes(query: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut set = HashSet::new();
+    for w in Words::new(query) {
+        let subs = raw_subwords(w);
+        if subs.len() > 1 && (w.contains('_') || w.bytes().skip(1).any(|c| c.is_ascii_uppercase())) {
+            let j = subs.concat();
+            if set.insert(j.clone()) {
+                out.push(j);
+            }
+        }
+    }
+    out
+}
+
+static QUOTED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#""([^"]+)"|'([^']+)'|`([^`]+)`"#).unwrap());
+static QUOTED_ANY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#""[^"]*"|'[^']*'|`[^`]*`"#).unwrap());
+static LIT_WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[A-Za-z_][\w.]*[\w]").unwrap());
+
+/// Python's `str.isupper()`: at least one cased character and no lowercase ones.
+fn py_isupper(s: &str) -> bool {
+    let mut cased = false;
+    for c in s.chars() {
+        if c.is_lowercase() {
+            return false;
+        }
+        if c.is_uppercase() {
+            cased = true;
+        }
+    }
+    cased
+}
+
+/// Pieces of the query that look like exact code strings: quoted strings and identifier-ish words
+/// (snake_case, camelCase, dotted, CONSTANTS).
+pub fn literal_candidates(query: &str) -> Vec<String> {
+    let mut lits: Vec<String> = Vec::new();
+    for m in QUOTED.captures_iter(query) {
+        for i in 1..=3 {
+            if let Some(g) = m.get(i) {
+                lits.push(g.as_str().to_string());
+                break;
+            }
+        }
+    }
+    let stripped = QUOTED_ANY.replace_all(query, " ");
+    for m in LIT_WORD.find_iter(&stripped) {
+        let w = m.as_str();
+        let tail_upper = w.chars().skip(1).any(|c| c.is_uppercase());
+        let any_lower = w.chars().any(|c| c.is_lowercase());
+        if w.contains('_') || w.contains('.') || (tail_upper && any_lower) || (py_isupper(w) && w.chars().count() > 2) {
+            lits.push(w.to_string());
+        }
+    }
+    let mut seen = HashSet::new();
+    lits.retain(|l| seen.insert(l.clone()));
+    lits
+}
+
+/// Python's `str.splitlines()` boundaries (\n, \r\n, \r, \v, \f, \x1c-\x1e, \x85,  ,  ).
+pub fn py_splitlines(s: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut iter = s.char_indices().peekable();
+    while let Some((i, c)) = iter.next() {
+        let boundary = matches!(c, '\n' | '\r' | '\x0b' | '\x0c' | '\x1c' | '\x1d' | '\x1e' | '\u{85}' | '\u{2028}' | '\u{2029}');
+        if boundary {
+            out.push(&s[start..i]);
+            let mut next = i + c.len_utf8();
+            if c == '\r' {
+                if let Some((j, '\n')) = iter.peek().copied() {
+                    iter.next();
+                    next = j + 1;
+                }
+            }
+            start = next;
+        }
+    }
+    if start < s.len() {
+        out.push(&s[start..]);
+    }
+    out
+}
+
+/// Lowercase words of a query, for snippet highlighting (agent.query_words: len > 2).
+pub fn query_words(q: &str) -> Vec<String> {
+    Words::new(q).filter(|w| w.len() > 2).map(|w| w.to_lowercase()).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn camel_split_matches_python_regex() {
+        assert_eq!(raw_subwords("parseHTTPResponse_v2"), vec!["parse", "http", "response", "v"]);
+        assert_eq!(raw_subwords("HTTPServer"), vec!["http", "server"]);
+        assert_eq!(raw_subwords("ABC"), vec!["abc"]);
+        assert_eq!(raw_subwords("getX"), vec!["get", "x"]);
+        assert_eq!(raw_subwords("__init__"), vec!["init"]);
+        assert_eq!(raw_subwords("x2y"), vec!["x", "y"]);
+        assert_eq!(raw_subwords("IOError"), vec!["io", "error"]);
+        assert_eq!(raw_subwords("aBCd"), vec!["a", "b", "cd"]);
+    }
+
+    #[test]
+    fn ident_tokens_and_whole() {
+        let (t, w) = ident_tokens("refresh_token");
+        assert_eq!(t, vec!["refresh", "token"]);
+        assert_eq!(w, "refreshtoken");
+        let (t, w) = ident_tokens("self");
+        assert!(t.is_empty() && w.is_empty());
+    }
+
+    #[test]
+    fn splitlines_like_python() {
+        assert_eq!(py_splitlines("a\nb\r\nc\rd"), vec!["a", "b", "c", "d"]);
+        assert_eq!(py_splitlines("a\n"), vec!["a"]);
+        assert_eq!(py_splitlines("a\x0cb"), vec!["a", "b"]);
+        assert_eq!(py_splitlines(""), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn literals() {
+        assert_eq!(literal_candidates("where is send_request called, see 'foo bar' and Server.add"), vec!["foo bar", "send_request", "Server.add"]);
+        assert_eq!(literal_candidates("MAX_SIZE and ABC and Ab"), vec!["MAX_SIZE", "ABC"]);
+    }
+}
+
+#[cfg(test)]
+mod utf8_tests {
+    use super::*;
+
+    #[test]
+    fn prefix_never_splits_a_char() {
+        let s = "aé€😀".repeat(2000);
+        for n in 0..40 {
+            let p = prefix_bytes(&s, n);
+            assert!(p.len() <= n);
+            assert!(s.starts_with(p));
+        }
+        assert_eq!(prefix_bytes("abc", 10), "abc");
+    }
+
+    #[test]
+    fn query_wholes_accept_non_ascii_words() {
+        // must not panic on a multibyte first character
+        let _ = query_wholes("ñandúRequest sendRequest Ωmega_value");
+        assert_eq!(query_wholes("sendRequest"), vec!["sendrequest".to_string()]);
+    }
+}

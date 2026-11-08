@@ -1,0 +1,18 @@
+// Prisma sample
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+generator client {
+  provider = "prisma-client-js"
+}
+/// A user.
+model User {
+  id    Int    @id @default(autoincrement())
+  email String @unique
+  role  Role
+}
+enum Role {
+  USER
+  ADMIN
+}

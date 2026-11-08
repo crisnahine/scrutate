@@ -1,0 +1,108 @@
+# Release: binaries for every declared platform, abi3 and free-threaded wheels, checksums, SBOM and
+# build provenance attestations (Sigstore, via GitHub artifact attestations). Triggered by a tag.
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+  id-token: write      # Sigstore signing of the attestations
+  attestations: write
+jobs:
+  binaries:
+    name: binary (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,     target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-latest,     target: x86_64-unknown-linux-musl, musl: true }
+          - { os: ubuntu-24.04-arm,  target: aarch64-unknown-linux-gnu }
+          - { os: ubuntu-24.04-arm,  target: aarch64-unknown-linux-musl, musl: true }
+          - { os: macos-latest,      target: aarch64-apple-darwin }
+          - { os: macos-15-intel,    target: x86_64-apple-darwin }
+          - { os: windows-latest,    target: x86_64-pc-windows-msvc }
+          - { os: windows-11-arm,    target: aarch64-pc-windows-msvc }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - if: matrix.musl
+        run: sudo apt-get install -y musl-tools
+      - run: cargo build --release -p scrutate --target ${{ matrix.target }} --locked
+      - run: cargo test --release -p scrutate --target ${{ matrix.target }} --locked
+      - name: package
+        shell: bash
+        run: |
+          set -e
+          v=${GITHUB_REF_NAME#v}
+          mkdir -p dist
+          bin=target/${{ matrix.target }}/release/scrutate
+          [ -f "$bin.exe" ] && bin="$bin.exe"
+          name=scrutate-$v-${{ matrix.target }}
+          mkdir -p "$name"
+          cp "$bin" LICENSE-MIT LICENSE-APACHE README.md "$name/"
+          cp -r docs "$name/docs"
+          if [[ "${{ matrix.target }}" == *windows* ]]; then 7z a "dist/$name.zip" "$name" > /dev/null; else tar czf "dist/$name.tar.gz" "$name"; fi
+          (cd dist && sha256sum * > "$name.sha256")
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.target }}
+          path: dist/*
+  wheels:
+    name: wheel (${{ matrix.os }}, ${{ matrix.kind }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest, windows-11-arm]
+        kind: [abi3, free-threaded]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.kind == 'free-threaded' && '3.14t' || '3.12' }}
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          # abi3: one cp39-abi3 wheel per platform. free-threaded: a cp314t wheel (the stable ABI does not cover no-GIL builds)
+          args: --release --strip -m crates/scrutate-py/Cargo.toml -o dist ${{ matrix.kind == 'free-threaded' && '-i python3.14t' || '' }}
+          manylinux: ${{ startsWith(matrix.os, 'ubuntu') && '2_34' || 'auto' }}
+      - name: install and test the wheel on this platform
+        shell: bash
+        run: |
+          pip install --no-deps dist/scrutate-*.whl
+          python -c "import scrutate, sys; print(scrutate.__version__); print(list(scrutate.grep('fn ', ['crates'], mode='literal'))[:1]); print('gil enabled:', getattr(sys, '_is_gil_enabled', lambda: True)())"
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*.whl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.os }}-${{ matrix.kind }}
+          path: dist/*.whl
+  sbom-and-release:
+    needs: [binaries, wheels]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: SBOM (CycloneDX, from the locked dependency graph)
+        run: python3 tools/sbom.py --out artifacts/scrutate-${GITHUB_REF_NAME#v}.cdx.json
+      - name: combined checksums
+        run: cd artifacts && sha256sum *.tar.gz *.zip *.whl > SHA256SUMS
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: artifacts/SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true

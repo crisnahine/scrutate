@@ -1,0 +1,941 @@
+{
+ "date": "2026-11-08",
+ "results": [
+  {
+   "name": "querent",
+   "crates.io": {
+    "status": 404,
+    "taken": false,
+    "detail": null,
+    "downloads": null
+   },
+   "pypi": {
+    "status": 200,
+    "taken": true,
+    "detail": "The Asynchronous Data Dynamo and Graph Neural Network Catalyst"
+   },
+   "npm": {
+    "status": 200,
+    "taken": true,
+    "detail": ""
+   },
+   "github": {
+    "repos_matching": 45,
+    "exact_name_top": {
+     "repo": "teogor/querent",
+     "stars": 5,
+     "description": "\ud83c\udfd7\ufe0f Querent lays the groundwork for your project's resource management, fostering consistency and eff"
+    }
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "dowser",
+   "crates.io": {
+    "status": 200,
+    "taken": true,
+    "detail": "A recursive, canonicalizing file finding library for Unix.",
+    "downloads": 60097
+   },
+   "pypi": {
+    "status": 200,
+    "taken": true,
+    "detail": "Debugging Python\u2019s Memory Usage with Dowser"
+   },
+   "npm": {
+    "status": 404,
+    "taken": false,
+    "detail": null
+   },
+   "github": {
+    "repos_matching": 101,
+    "exact_name_top": {
+     "repo": "catfact/dowser",
+     "stars": 16,
+     "description": "straightforward CLI tool for spectral analysis of sound files"
+    }
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "pellucid",
+   "crates.io": {
+    "status": 404,
+    "taken": false,
+    "detail": null,
+    "downloads": null
+   },
+   "pypi": {
+    "status": 404,
+    "taken": false,
+    "detail": null
+   },
+   "npm": {
+    "status": 200,
+    "taken": true,
+    "detail": "Experimental module using HTML5's Custom Elements that creates a crystalline blurred background."
+   },
+   "github": {
+    "repos_matching": 69,
+    "exact_name_top": {
+     "repo": "meppent/pellucid",
+     "stars": 48,
+     "description": "An EVM decompiler written in Rust."
+    }
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "celerity",
+   "crates.io": {
+    "status": 200,
+    "taken": true,
+    "detail": "Pure Rust sans-IO ZMTP 3.1 messaging core with Tokio TCP and Unix socket transports.",
+    "downloads": 46
+   },
+   "pypi": {
+    "status": 200,
+    "taken": true,
+    "detail": "Celerity is a lightweight, zero-dependency and type-safe Python library for astronomical calculation"
+   },
+   "npm": {
+    "status": 200,
+    "taken": true,
+    "detail": "celerity uses redis to do centralized rate limiting for applications running on multiple heroku dyno"
+   },
+   "github": {
+    "repos_matching": 257,
+    "exact_name_top": {
+     "repo": "jarib/celerity",
+     "stars": 204,
+     "description": "This project is no longer maintained."
+    }
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "kenning",
+   "crates.io": {
+    "status": 404,
+    "taken": false,
+    "detail": null,
+    "downloads": null
+   },
+   "pypi": {
+    "status": 200,
+    "taken": true,
+    "detail": "Kenning - a local-first cognitive compiler that turns multi-platform AI chat history into a queryabl"
+   },
+   "npm": {
+    "status": 404,
+    "taken": false,
+    "detail": null
+   },
+   "github": {
+    "repos_matching": 115,
+    "exact_name_top": {
+     "repo": "antmicro/kenning",
+     "stars": 149,
+     "description": ""
+    }
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "lodestar",
+   "crates.io": {
+    "status": 200,
+    "taken": true,
+    "detail": "Composable semantic source-code indexing and vector search",
+    "downloads": 95
+   },
+   "pypi": {
+    "status": 200,
+    "taken": true,
+    "detail": "Alpha Version"
+   },
+   "npm": {
+    "status": 200,
+    "taken": true,
+    "detail": "A modern MVC for JavaScript"
+   },
+   "github": {
+    "repos_matching": 665,
+    "exact_name_top": {
+     "repo": "ChainSafe/lodestar",
+     "stars": 1433,
+     "description": "\ud83c\udf1f Ethereum Consensus client for the Zig and TypeScript ecosystem"
+    }
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "quarry",
+   "crates.io": {
+    "status": 200,
+    "taken": true,
+    "detail": "Quarry is a Rust library for mining type information from the Rust standard library.",
+    "downloads": 729
+   },
+   "pypi": {
+    "status": 200,
+    "taken": true,
+    "detail": "Minecraft protocol library"
+   },
+   "npm": {
+    "status": 200,
+    "taken": true,
+    "detail": "Type-safe, ClickHouse-native query builder for TypeScript."
+   },
+   "github": {
+    "repos_matching": 1947,
+    "exact_name_top": {
+     "repo": "barneygale/quarry",
+     "stars": 548,
+     "description": "Python library that implements the Minecraft network protocol and data types"
+    }
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "ferrograph",
+   "crates.io": {
+    "status": 200,
+    "taken": true,
+    "detail": "Graph-powered Rust code intelligence",
+    "downloads": 210
+   },
+   "pypi": {
+    "status": 404,
+    "taken": false,
+    "detail": null
+   },
+   "npm": {
+    "status": 404,
+    "taken": false,
+    "detail": null
+   },
+   "github": {
+    "repos_matching": 10,
+    "exact_name_top": {
+     "repo": "GarthDB/ferrograph",
+     "stars": 4,
+     "description": "Graph-powered Rust code intelligence. Indexes Rust codebases into a queryable knowledge graph with C"
+    }
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "codequill",
+   "crates.io": {
+    "status": 404,
+    "taken": false,
+    "detail": null,
+    "downloads": null
+   },
+   "pypi": {
+    "status": 404,
+    "taken": false,
+    "detail": null
+   },
+   "npm": {
+    "status": 200,
+    "taken": true,
+    "detail": "CodeQuill CLI \u2014 claim authorship, create snapshots, attest artifact and push preservations"
+   },
+   "github": {
+    "repos_matching": 20,
+    "exact_name_top": {
+     "repo": "The-Best-Codes/codequill",
+     "stars": 25,
+     "description": "Organize, edit, and preview code efficiently"
+    }
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "greptile",
+   "crates.io": {
+    "status": 404,
+    "taken": false,
+    "detail": null,
+    "downloads": null
+   },
+   "pypi": {
+    "status": 200,
+    "taken": true,
+    "detail": "Grep implementation with replace"
+   },
+   "npm": {
+    "status": 200,
+    "taken": true,
+    "detail": "Greptile code review from your terminal"
+   },
+   "github": {
+    "repos_matching": 1317,
+    "exact_name_top": {
+     "repo": "ncornette/greptile",
+     "stars": 24,
+     "description": "Fast grep implementation in python, with recursive search and replace"
+    }
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "sift",
+   "crates.io": {
+    "status": 200,
+    "taken": true,
+    "detail": "sift filters (big) files.\n",
+    "downloads": 2192
+   },
+   "pypi": {
+    "status": 200,
+    "taken": true,
+    "detail": "Python bindings for Sift Science's API"
+   },
+   "npm": {
+    "status": 200,
+    "taken": true,
+    "detail": "MongoDB query filtering in JavaScript"
+   },
+   "github": {
+    "repos_matching": 7358,
+    "exact_name_top": {
+     "repo": "svent/sift",
+     "stars": 1656,
+     "description": "A fast and powerful alternative to grep"
+    }
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "scour",
+   "crates.io": {
+    "status": 200,
+    "taken": true,
+    "detail": "A fuzzy search algorithm",
+    "downloads": 1526
+   },
+   "pypi": {
+    "status": 200,
+    "taken": true,
+    "detail": "Scour SVG Optimizer"
+   },
+   "npm": {
+    "status": 200,
+    "taken": true,
+    "detail": "parses html files to remove click tags"
+   },
+   "github": {
+    "repos_matching": 859,
+    "exact_name_top": {
+     "repo": "scour-project/scour",
+     "stars": 878,
+     "description": "Scour - An SVG Optimizer / Cleaner"
+    }
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "hark",
+   "crates.io": {
+    "status": 200,
+    "taken": true,
+    "detail": "Rust-native RPC where traits are the schema (not yet released)",
+    "downloads": 25
+   },
+   "pypi": {
+    "status": 200,
+    "taken": true,
+    "detail": "a simple virtual machine management tool"
+   },
+   "npm": {
+    "status": 200,
+    "taken": true,
+    "detail": "Converts an audio stream to speech events in the browser"
+   },
+   "github": {
+    "repos_matching": 4177,
+    "exact_name_top": {
+     "repo": "otalk/hark",
+     "stars": 571,
+     "description": "Converts an audio stream to speech events in the browser"
+    }
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "tessera",
+   "crates.io": {
+    "status": 200,
+    "taken": true,
+    "detail": "A library and command line interface for calculating geometric error for 3D Tiles tilesets",
+    "downloads": 309
+   },
+   "pypi": {
+    "status": 200,
+    "taken": true,
+    "detail": "A dashboard front end for Graphite"
+   },
+   "npm": {
+    "status": 200,
+    "taken": true,
+    "detail": "A tilelive-based tile server"
+   },
+   "github": {
+    "repos_matching": 10694,
+    "exact_name_top": {
+     "repo": "tessera-metrics/tessera",
+     "stars": 1172,
+     "description": "A dashboard front-end for graphite.  "
+    }
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "augur",
+   "crates.io": {
+    "status": 200,
+    "taken": true,
+    "detail": "Reverse engineering assistant that extracts strings and related pseudocode from a binary file.",
+    "downloads": 11180
+   },
+   "pypi": {
+    "status": 200,
+    "taken": true,
+    "detail": ""
+   },
+   "npm": {
+    "status": 200,
+    "taken": true,
+    "detail": "tiny little promises, cooked to perfection."
+   },
+   "github": {
+    "repos_matching": 1437,
+    "exact_name_top": {
+     "repo": "augurlabs/augur",
+     "stars": 695,
+     "description": "When Augur reached a wall we made Aveloxis: Reliably collecting OSS Metrics Data. 40,000 repositorie"
+    }
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "sondel",
+   "crates.io": {
+    "status": 404,
+    "taken": false,
+    "detail": null,
+    "downloads": null
+   },
+   "pypi": {
+    "status": 404,
+    "taken": false,
+    "detail": null
+   },
+   "npm": {
+    "status": 404,
+    "taken": false,
+    "detail": null
+   },
+   "github": {
+    "repos_matching": 28,
+    "exact_name_top": null
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "sourcelight",
+   "crates.io": {
+    "status": 404,
+    "taken": false,
+    "detail": null,
+    "downloads": null
+   },
+   "pypi": {
+    "status": 404,
+    "taken": false,
+    "detail": null
+   },
+   "npm": {
+    "status": 200,
+    "taken": true,
+    "detail": ""
+   },
+   "github": {
+    "repos_matching": 39,
+    "exact_name_top": {
+     "repo": "philosophysystems/sourcelight",
+     "stars": 0,
+     "description": "Source Light social media assets"
+    }
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "greplex",
+   "crates.io": {
+    "status": 404,
+    "taken": false,
+    "detail": null,
+    "downloads": null
+   },
+   "pypi": {
+    "status": 404,
+    "taken": false,
+    "detail": null
+   },
+   "npm": {
+    "status": 404,
+    "taken": false,
+    "detail": null
+   },
+   "github": {
+    "repos_matching": 0,
+    "exact_name_top": null
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "codeken",
+   "crates.io": {
+    "status": 404,
+    "taken": false,
+    "detail": null,
+    "downloads": null
+   },
+   "pypi": {
+    "status": 404,
+    "taken": false,
+    "detail": null
+   },
+   "npm": {
+    "status": 404,
+    "taken": false,
+    "detail": null
+   },
+   "github": {
+    "repos_matching": 52,
+    "exact_name_top": {
+     "repo": "all3xfx/codeken",
+     "stars": 0,
+     "description": "Clone of Codepen"
+    }
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "rummage",
+   "crates.io": {
+    "status": 200,
+    "taken": true,
+    "detail": "A simple and opinionated environment collector",
+    "downloads": 16826
+   },
+   "pypi": {
+    "status": 200,
+    "taken": true,
+    "detail": "A GUI search and replace app."
+   },
+   "npm": {
+    "status": 200,
+    "taken": true,
+    "detail": "stream friendly JSON.stringify"
+   },
+   "github": {
+    "repos_matching": 227,
+    "exact_name_top": {
+     "repo": "facelessuser/Rummage",
+     "stars": 87,
+     "description": "Rummage is a GUI for grep like searches in Python"
+    }
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "spelunk",
+   "crates.io": {
+    "status": 404,
+    "taken": false,
+    "detail": null,
+    "downloads": null
+   },
+   "pypi": {
+    "status": 200,
+    "taken": true,
+    "detail": "Package with helpful object recursion utils"
+   },
+   "npm": {
+    "status": 200,
+    "taken": true,
+    "detail": "Traverse a folder in node, turning its contents into an object for easy consumption"
+   },
+   "github": {
+    "repos_matching": 616,
+    "exact_name_top": {
+     "repo": "Rich-Harris/spelunk",
+     "stars": 30,
+     "description": "Traverse a folder in node, turning its contents into an object for easy consumption"
+    }
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "spelunker",
+   "crates.io": {
+    "status": 404,
+    "taken": false,
+    "detail": null,
+    "downloads": null
+   },
+   "pypi": {
+    "status": 200,
+    "taken": true,
+    "detail": "spelunker: a library to extract guidestar data and observe technical and stellar events"
+   },
+   "npm": {
+    "status": 200,
+    "taken": true,
+    "detail": "require('child_process').spawn on steroids"
+   },
+   "github": {
+    "repos_matching": 163,
+    "exact_name_top": {
+     "repo": "wowserhq/spelunker",
+     "stars": 23,
+     "description": "Database explorer for World of Warcraft servers."
+    }
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "lexicode",
+   "crates.io": {
+    "status": 404,
+    "taken": false,
+    "detail": null,
+    "downloads": null
+   },
+   "pypi": {
+    "status": 404,
+    "taken": false,
+    "detail": null
+   },
+   "npm": {
+    "status": 404,
+    "taken": false,
+    "detail": null
+   },
+   "github": {
+    "repos_matching": 46,
+    "exact_name_top": {
+     "repo": "wobh/lexicode",
+     "stars": 14,
+     "description": "Lexicode: A Programmer's Thesaurus"
+    }
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "sondex",
+   "crates.io": {
+    "status": 404,
+    "taken": false,
+    "detail": null,
+    "downloads": null
+   },
+   "pypi": {
+    "status": 404,
+    "taken": false,
+    "detail": null
+   },
+   "npm": {
+    "status": 404,
+    "taken": false,
+    "detail": null
+   },
+   "github": {
+    "repos_matching": 7,
+    "exact_name_top": {
+     "repo": "josuekot23/sondex",
+     "stars": 0,
+     "description": ""
+    }
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "grepwise",
+   "crates.io": {
+    "status": 404,
+    "taken": false,
+    "detail": null,
+    "downloads": null
+   },
+   "pypi": {
+    "status": 404,
+    "taken": false,
+    "detail": null
+   },
+   "npm": {
+    "status": 404,
+    "taken": false,
+    "detail": null
+   },
+   "github": {
+    "repos_matching": 3,
+    "exact_name_top": {
+     "repo": "ozkanpakdil/grepwise",
+     "stars": 1,
+     "description": "Splunk alternative"
+    }
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "syntaxis",
+   "crates.io": {
+    "status": 200,
+    "taken": true,
+    "detail": "Deterministic, offline English structural analysis.",
+    "downloads": 61
+   },
+   "pypi": {
+    "status": 200,
+    "taken": true,
+    "detail": "syntaxis"
+   },
+   "npm": {
+    "status": 404,
+    "taken": false,
+    "detail": null
+   },
+   "github": {
+    "repos_matching": 160,
+    "exact_name_top": {
+     "repo": "shobrook/syntaxis",
+     "stars": 18,
+     "description": "Analyze usage patterns of imported modules in a Python program"
+    }
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "scrutate",
+   "crates.io": {
+    "status": 404,
+    "taken": false,
+    "detail": null,
+    "downloads": null
+   },
+   "pypi": {
+    "status": 404,
+    "taken": false,
+    "detail": null
+   },
+   "npm": {
+    "status": 404,
+    "taken": false,
+    "detail": null
+   },
+   "github": {
+    "repos_matching": 3,
+    "exact_name_top": null
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "percept",
+   "crates.io": {
+    "status": 404,
+    "taken": false,
+    "detail": null,
+    "downloads": null
+   },
+   "pypi": {
+    "status": 200,
+    "taken": true,
+    "detail": "Modular machine learning framework that is easy to test and deploy."
+   },
+   "npm": {
+    "status": 200,
+    "taken": true,
+    "detail": "A generic realtime multiplayer server and client to plug into your games."
+   },
+   "github": {
+    "repos_matching": 32750,
+    "exact_name_top": null
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "codesonde",
+   "crates.io": {
+    "status": 404,
+    "taken": false,
+    "detail": null,
+    "downloads": null
+   },
+   "pypi": {
+    "status": 404,
+    "taken": false,
+    "detail": null
+   },
+   "npm": {
+    "status": 404,
+    "taken": false,
+    "detail": null
+   },
+   "github": {
+    "repos_matching": 1,
+    "exact_name_top": null
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  },
+  {
+   "name": "grepnova",
+   "crates.io": {
+    "status": 404,
+    "taken": false,
+    "detail": null,
+    "downloads": null
+   },
+   "pypi": {
+    "status": 404,
+    "taken": false,
+    "detail": null
+   },
+   "npm": {
+    "status": 404,
+    "taken": false,
+    "detail": null
+   },
+   "github": {
+    "repos_matching": 3,
+    "exact_name_top": null
+   },
+   "github_account": {
+    "taken": null,
+    "type": null,
+    "verified": false
+   }
+  }
+ ]
+}

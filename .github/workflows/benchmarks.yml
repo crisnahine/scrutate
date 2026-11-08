@@ -1,0 +1,26 @@
+# Benchmark regression tracking: weekly and on demand. Compares the current binary with the
+# committed baseline (bench/baseline.json) and fails when a tracked metric regresses by more than
+# the tolerance in bench/regression.py.
+name: benchmarks
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get install -y ripgrep
+      - run: cargo build --release -p scrutate --locked
+      - name: corpus (pinned revision for reproducibility)
+        run: git clone --depth 1 --branch networkx-3.4.2 https://github.com/networkx/networkx /tmp/networkx
+      - run: python3 bench/compare_tools.py --corpus networkx=/tmp/networkx --runs 7 --out bench_results.json
+      - run: python3 bench/regression.py bench/baseline.json bench_results.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: bench_results.json

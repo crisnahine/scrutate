@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""Software bill of materials (CycloneDX 1.5 JSON) from the resolved Cargo dependency graph.
+
+Uses `cargo metadata` (the authoritative, locked graph) so the SBOM lists exactly what the binary
+was built from: name, version, license expression, source registry and purl for every crate.
+
+usage: sbom.py [--out FILE] [--package scrutate]
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+import uuid
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--out", default=None)
+    ap.add_argument("--package", default="scrutate")
+    a = ap.parse_args()
+    meta = json.loads(subprocess.run(["cargo", "metadata", "--format-version", "1", "--locked"], cwd=os.path.join(HERE, ".."), capture_output=True, text=True, check=True).stdout)
+    by_id = {p["id"]: p for p in meta["packages"]}
+    nodes = {n["id"]: n for n in meta["resolve"]["nodes"]}
+    root_id = next(p["id"] for p in meta["packages"] if p["name"] == a.package)
+    # transitive closure of normal + build dependencies (dev dependencies are not shipped)
+    seen, stack = set(), [root_id]
+    while stack:
+        nid = stack.pop()
+        if nid in seen:
+            continue
+        seen.add(nid)
+        for dep in nodes[nid]["deps"]:
+            if any(k["kind"] in (None, "build") for k in dep["dep_kinds"]):
+                stack.append(dep["pkg"])
+    comps = []
+    for nid in sorted(seen - {root_id}, key=lambda i: (by_id[i]["name"], by_id[i]["version"])):
+        p = by_id[nid]
+        comps.append({
+            "type": "library",
+            "bom-ref": f"pkg:cargo/{p['name']}@{p['version']}",
+            "name": p["name"],
+            "version": p["version"],
+            "purl": f"pkg:cargo/{p['name']}@{p['version']}",
+            "licenses": [{"expression": p["license"]}] if p.get("license") else [],
+            "externalReferences": [{"type": "distribution", "url": p["source"] or "path"}] + ([{"type": "website", "url": p["repository"]}] if p.get("repository") else []),
+        })
+    root = by_id[root_id]
+    bom = {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.5",
+        "serialNumber": f"urn:uuid:{uuid.uuid4()}",
+        "version": 1,
+        "metadata": {
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "tools": [{"name": "scrutate/tools/sbom.py", "version": root["version"]}],
+            "component": {"type": "application", "bom-ref": f"pkg:cargo/{root['name']}@{root['version']}", "name": root["name"], "version": root["version"],
+                          "licenses": [{"expression": root["license"]}] if root.get("license") else []},
+        },
+        "components": comps,
+        "dependencies": [
+            {"ref": f"pkg:cargo/{by_id[nid]['name']}@{by_id[nid]['version']}",
+             "dependsOn": sorted({f"pkg:cargo/{by_id[d['pkg']]['name']}@{by_id[d['pkg']]['version']}" for d in nodes[nid]["deps"] if d["pkg"] in seen})}
+            for nid in sorted(seen, key=lambda i: by_id[i]["name"])
+        ],
+    }
+    text = json.dumps(bom, indent=1)
+    if a.out:
+        with open(a.out, "w") as f:
+            f.write(text)
+        print(f"{len(comps)} components -> {a.out}", file=sys.stderr)
+    else:
+        print(text)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

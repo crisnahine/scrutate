@@ -1,0 +1,20 @@
+# Bitbucket Pipelines template: Scrutate duplicate-code report on every push.
+image: debian:bookworm-slim
+definitions:
+  steps:
+    - step: &scrutate
+        name: scrutate
+        script:
+          - apt-get update -qq && apt-get install -y -qq curl ca-certificates > /dev/null
+          - export V=0.1.0 NAME="scrutate-0.1.0-x86_64-unknown-linux-musl"
+          - curl -sSfL -o "$NAME.tar.gz" "https://github.com/crisnahine/scrutate/releases/download/v$V/$NAME.tar.gz"
+          - curl -sSfL -o "$NAME.sha256" "https://github.com/crisnahine/scrutate/releases/download/v$V/$NAME.sha256"
+          - grep "$NAME.tar.gz" "$NAME.sha256" | sha256sum -c -
+          - tar xzf "$NAME.tar.gz" && export PATH="$PWD/$NAME:$PATH"
+          - scrutate index
+          - scrutate dupes --json --min-tokens 60 > scrutate-dupes.json
+        artifacts:
+          - scrutate-dupes.json
+pipelines:
+  default:
+    - step: *scrutate

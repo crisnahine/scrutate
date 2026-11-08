@@ -1,0 +1,1127 @@
+//! Segment store: memory-mapped BM25 postings + semantic vectors (Lucene-style; port of python/scrutate_ref/lex.py).
+//!
+//! An index is a list of immutable *segments* (`<index>/seg/sNNNNNN/`). Every update that adds chunks
+//! writes one new segment; deletions are not written anywhere (a chunk is alive iff its id is still
+//! in the SQLite `chunks` table) and small segments are merged by compaction. Lexical scoring is
+//! Okapi BM25 with field weights multiplying the term frequency, document length = tokens over all
+//! fields, idf = ln((N - df + 0.5) / (df + 0.5)) floored at 1e-6, all computed over the live chunks.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+use anyhow::{bail, Context, Result};
+use blake2::digest::{Update, VariableOutput};
+use blake2::Blake2bVar;
+use half::f16;
+use half::slice::HalfFloatSliceExt;
+use rayon::prelude::*;
+
+use crate::npy::{self, Npy};
+
+pub const FIELDS: [&str; 6] = ["name", "qual", "sig", "doc", "body", "path"];
+pub const NF: usize = 6;
+pub const K1: f32 = 1.2;
+pub const B: f32 = 0.75;
+pub const WEIGHTS: [f32; NF] = [10.0, 3.0, 3.0, 5.0, 1.0, 2.0];
+pub const IDF_FLOOR: f32 = 1e-6;
+
+/// Vector scan. Segments with at least IVF_MIN_ROWS chunks get an inverted-file index: the vectors are
+/// clustered (spherical k-means) and stored in cluster order; a query scores the centroids and scans
+/// only the IVF_NPROBE closest clusters. Smaller segments are scanned exhaustively.
+pub const IVF_MIN_ROWS: usize = 20_000;
+pub const IVF_NPROBE: usize = 48;
+pub const IVF_SAMPLE: usize = 25_000;
+pub const IVF_ITERS: usize = 10;
+
+/// Stable 63-bit key of a token (no vocabulary file: segments merge without remapping).
+pub fn tok_key(tok: &str) -> i64 {
+    let mut h = Blake2bVar::new(8).expect("blake2b-64");
+    h.update(tok.as_bytes());
+    let mut out = [0u8; 8];
+    h.finalize_variable(&mut out).expect("blake2b finalize");
+    (u64::from_le_bytes(out) >> 1) as i64
+}
+
+/// Lexical + vector data of the chunks of one file.
+pub struct FileLex {
+    pub dl: Vec<f32>,
+    pub keys: Vec<Vec<i64>>,   // per field: term keys, chunk after chunk
+    pub tf: Vec<Vec<u8>>,      // per field: term frequencies
+    pub cnt: Vec<Vec<i32>>,    // per field: distinct terms per chunk
+    pub vec: Option<Vec<f16>>, // [m, 2, k] row-major
+}
+
+/// bags[i][c] is a {token: tf} map of chunk i, field c.
+pub fn pack_bags(bags: &[Vec<HashMap<String, u32>>], vec: Option<Vec<f16>>) -> FileLex {
+    let m = bags.len();
+    let mut dl = vec![0f32; m];
+    let mut keys: Vec<Vec<i64>> = (0..NF).map(|_| Vec::new()).collect();
+    let mut tf: Vec<Vec<u8>> = (0..NF).map(|_| Vec::new()).collect();
+    let mut cnt: Vec<Vec<i32>> = (0..NF).map(|_| vec![0i32; m]).collect();
+    for (i, fields) in bags.iter().enumerate() {
+        let mut total: u64 = 0;
+        for (c, bag) in fields.iter().enumerate() {
+            if bag.is_empty() {
+                continue;
+            }
+            // deterministic order (the sort inside write_segment makes it irrelevant for scoring)
+            let mut items: Vec<(&String, &u32)> = bag.iter().collect();
+            items.sort_by(|a, b| a.0.cmp(b.0));
+            for (t, &c_) in items {
+                keys[c].push(tok_key(t));
+                tf[c].push(c_.min(255) as u8);
+                total += c_ as u64;
+            }
+            cnt[c][i] = bag.len() as i32;
+        }
+        dl[i] = total as f32;
+    }
+    FileLex { dl, keys, tf, cnt, vec }
+}
+
+// --------------------------------------------------------------------------- segments
+pub struct Segment {
+    pub path: PathBuf,
+    pub ids: Npy,
+    pub dl: Npy,
+    pub keys: Npy,
+    pub df: Npy,
+    pub ptr: Vec<Npy>,
+    pub doc: Vec<Npy>,
+    pub tf: Vec<Npy>,
+    pub vec: Option<Npy>,
+    pub n: usize,
+    pub k: usize,
+    pub ivf: Option<Ivf>,
+}
+
+pub struct Ivf {
+    pub cent: Vec<f32>, // [K, k]
+    pub ptr: Vec<i64>,  // [K + 1]
+    pub order: Npy,     // i32 [n]: segment row at each sorted position
+    pub inv: Npy,       // i32 [n]: sorted position of each segment row
+    pub nclusters: usize,
+}
+
+impl Segment {
+    pub fn open(path: &Path) -> Result<Segment> {
+        let ld = |name: &str| Npy::open(&path.join(format!("{name}.npy")));
+        let ids = ld("ids")?;
+        let n = ids.len();
+        let vp = path.join("vec.npy");
+        let vec = if vp.exists() { Some(Npy::open(&vp)?) } else { None };
+        let k = vec.as_ref().map(|v| if v.shape.len() == 3 { v.shape[2] } else { 0 }).unwrap_or(0);
+        let ivf = if path.join("ivf_order.npy").exists() {
+            let cent = ld("ivf_cent")?;
+            let ptr = ld("ivf_ptr")?;
+            let nclusters = ptr.len() - 1;
+            Some(Ivf { cent: cent.to_vec::<f32>()?, ptr: ptr.to_vec::<i64>()?, order: ld("ivf_order")?, inv: ld("ivf_inv")?, nclusters })
+        } else {
+            None
+        };
+        let seg = Segment {
+            path: path.to_path_buf(),
+            ids,
+            dl: ld("dl")?,
+            keys: ld("keys")?,
+            df: ld("df")?,
+            ptr: (0..NF).map(|c| ld(&format!("ptr{c}"))).collect::<Result<_>>()?,
+            doc: (0..NF).map(|c| ld(&format!("doc{c}"))).collect::<Result<_>>()?,
+            tf: (0..NF).map(|c| ld(&format!("tf{c}"))).collect::<Result<_>>()?,
+            vec,
+            n,
+            k,
+            ivf,
+        };
+        seg.validate().with_context(|| format!("segment {} is corrupt", path.display()))?;
+        Ok(seg)
+    }
+
+    /// Dtype, length and shape of every array (file-size level checks: no data is read), so the
+    /// accessors below, which unwrap, cannot fail on a truncated or mistyped file. Damage inside the
+    /// data (a wrong row number, say) is caught by `validate_deep`, or by bounds checks at use.
+    fn validate(&self) -> Result<()> {
+        let n = self.n;
+        self.ids.view::<i64>()?;
+        if self.dl.view::<f32>()?.len() != n {
+            bail!("dl length");
+        }
+        let nv = self.keys.view::<i64>()?.len();
+        if self.df.view::<i32>()?.len() != nv {
+            bail!("df length");
+        }
+        for c in 0..NF {
+            let ptr = self.ptr[c].view::<i64>()?;
+            let doc = self.doc[c].view::<i32>()?;
+            let tf = self.tf[c].view::<u8>()?;
+            if ptr.len() != nv + 1 || ptr.first().copied().unwrap_or(1) != 0 {
+                bail!("field {c}: postings pointer table");
+            }
+            let e = *ptr.last().unwrap_or(&0);
+            if e < 0 || doc.len() != e as usize || tf.len() != e as usize {
+                bail!("field {c}: postings length");
+            }
+        }
+        if let Some(v) = &self.vec {
+            if v.shape.len() != 3 || v.shape[0] != n || v.shape[1] != 2 || v.shape[2] != self.k {
+                bail!("vector shape {:?}", v.shape);
+            }
+            v.view::<f16>()?;
+        }
+        if let Some(ivf) = &self.ivf {
+            let order = ivf.order.view::<i32>()?;
+            let inv = ivf.inv.view::<i32>()?;
+            if order.len() != n || inv.len() != n || ivf.ptr.len() != ivf.nclusters + 1 || ivf.cent.len() != ivf.nclusters * self.k {
+                bail!("ivf table lengths");
+            }
+            if ivf.ptr.last().copied().unwrap_or(-1) != n as i64 {
+                bail!("ivf cluster pointers");
+            }
+        }
+        Ok(())
+    }
+
+    /// Full content check (reads every array): ids sorted, postings rows and pointers in range,
+    /// IVF permutation a bijection. Used by `scrutate check` and before trusting a recovered index.
+    pub fn validate_deep(&self) -> Result<()> {
+        let n = self.n;
+        let ids = self.ids();
+        if ids.windows(2).any(|w| w[0] >= w[1]) {
+            bail!("ids not strictly increasing");
+        }
+        for c in 0..NF {
+            let ptr = self.ptr(c);
+            if ptr.windows(2).any(|w| w[0] > w[1]) {
+                bail!("field {c}: pointer table not monotonic");
+            }
+            if self.doc(c).iter().any(|&d| d < 0 || d as usize >= n) {
+                bail!("field {c}: posting row out of range");
+            }
+        }
+        if let Some(ivf) = &self.ivf {
+            if ivf.ptr.windows(2).any(|w| w[0] > w[1]) {
+                bail!("ivf cluster pointers not monotonic");
+            }
+            let order = ivf.order.view::<i32>()?;
+            let inv = ivf.inv.view::<i32>()?;
+            let mut seen = vec![false; n];
+            for &r in order {
+                if r < 0 || r as usize >= n || seen[r as usize] {
+                    bail!("ivf order is not a permutation");
+                }
+                seen[r as usize] = true;
+            }
+            if (0..n).any(|r| inv[r] < 0 || inv[r] as usize >= n || order[inv[r] as usize] as usize != r) {
+                bail!("ivf inverse permutation mismatch");
+            }
+        }
+        Ok(())
+    }
+
+    pub fn ids(&self) -> &[i64] {
+        self.ids.view::<i64>().expect("ids dtype")
+    }
+    pub fn dl(&self) -> &[f32] {
+        self.dl.view::<f32>().expect("dl dtype")
+    }
+    pub fn keys(&self) -> &[i64] {
+        self.keys.view::<i64>().expect("keys dtype")
+    }
+    pub fn df(&self) -> &[i32] {
+        self.df.view::<i32>().expect("df dtype")
+    }
+    pub fn ptr(&self, c: usize) -> &[i64] {
+        self.ptr[c].view::<i64>().expect("ptr dtype")
+    }
+    pub fn doc(&self, c: usize) -> &[i32] {
+        self.doc[c].view::<i32>().expect("doc dtype")
+    }
+    pub fn tf(&self, c: usize) -> &[u8] {
+        self.tf[c].view::<u8>().expect("tf dtype")
+    }
+    /// All vectors as stored: float16 [n, 2, k], in *cluster order* when the segment has an
+    /// inverted-file index (one probe reads one contiguous block), else in row order.
+    pub fn vec(&self) -> Option<&[f16]> {
+        self.vec.as_ref().map(|v| v.view::<f16>().expect("vec dtype"))
+    }
+
+    /// The (A view, B view) vector of segment row `r`: `2 * k` halves.
+    pub fn vec_row(&self, r: usize) -> Option<&[f16]> {
+        let v = self.vec()?;
+        let k = self.k;
+        let pos = match &self.ivf {
+            Some(ivf) => ivf.inv.view::<i32>().expect("inv dtype")[r] as usize,
+            None => r,
+        };
+        Some(&v[pos * 2 * k..(pos + 1) * 2 * k])
+    }
+
+    /// Index of each key in this segment's vocabulary, -1 when absent.
+    pub fn locate(&self, keys: &[i64]) -> Vec<i64> {
+        let vocab = self.keys();
+        keys.iter().map(|k| vocab.binary_search(k).map(|i| i as i64).unwrap_or(-1)).collect()
+    }
+
+    /// Position of `id` in this segment, if present.
+    pub fn row_of(&self, id: i64) -> Option<usize> {
+        self.ids().binary_search(&id).ok()
+    }
+}
+
+fn save_i64(p: &Path, name: &str, v: &[i64]) -> Result<()> {
+    npy::save(&p.join(format!("{name}.npy")), v, &[v.len()])
+}
+
+/// fields[c] = (row i32[E], key i64[E], tf u8[E]); if `row_sorted` the entries are already in
+/// ascending row order (true for freshly indexed chunks, false when merging). `vec` is [n, 2, k].
+pub fn write_segment(
+    dest: &Path,
+    ids: &[i64],
+    dl: &[f32],
+    fields: &[(Vec<i32>, Vec<i64>, Vec<u8>)],
+    vec: Option<&[f16]>,
+    k: usize,
+    row_sorted: bool,
+) -> Result<()> {
+    let n = ids.len();
+    let tmp = PathBuf::from(format!("{}.tmp", dest.display()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).with_context(|| format!("create {}", tmp.display()))?;
+    let mut vocab: Vec<i64> = fields.iter().flat_map(|f| f.1.iter().copied()).collect();
+    vocab.sort_unstable();
+    vocab.dedup();
+    let nv = vocab.len();
+    let mut pairs: Vec<i64> = Vec::new();
+    for (c, (rows, keys, tfs)) in fields.iter().enumerate() {
+        let mut counts = vec![0i64; nv];
+        let (doc, tfo) = if !keys.is_empty() {
+            let vi: Vec<i32> = keys.iter().map(|k| vocab.binary_search(k).unwrap() as i32).collect();
+            let mut order: Vec<usize> = (0..keys.len()).collect();
+            if row_sorted {
+                order.sort_by_key(|&i| vi[i]); // stable: rows stay ascending within a term
+            } else {
+                order.sort_by_key(|&i| (vi[i], rows[i]));
+            }
+            for &v in &vi {
+                counts[v as usize] += 1;
+            }
+            pairs.extend(vi.iter().zip(rows.iter()).map(|(&v, &r)| v as i64 * n as i64 + r as i64));
+            let doc: Vec<i32> = order.iter().map(|&i| rows[i]).collect();
+            let tfo: Vec<u8> = order.iter().map(|&i| tfs[i]).collect();
+            (doc, tfo)
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        let mut ptr = vec![0i64; nv + 1];
+        for v in 0..nv {
+            ptr[v + 1] = ptr[v] + counts[v];
+        }
+        save_i64(&tmp, &format!("ptr{c}"), &ptr)?;
+        npy::save(&tmp.join(format!("doc{c}.npy")), &doc, &[doc.len()])?;
+        npy::save(&tmp.join(format!("tf{c}.npy")), &tfo, &[tfo.len()])?;
+    }
+    // documents containing the term in *any* field
+    pairs.sort_unstable();
+    pairs.dedup();
+    let mut df = vec![0i32; nv];
+    for p in pairs {
+        df[(p / n as i64) as usize] += 1;
+    }
+    save_i64(&tmp, "keys", &vocab)?;
+    npy::save(&tmp.join("df.npy"), &df, &[nv])?;
+    save_i64(&tmp, "ids", ids)?;
+    npy::save(&tmp.join("dl.npy"), dl, &[n])?;
+    if let Some(v) = vec {
+        if n >= IVF_MIN_ROWS {
+            let order = build_ivf(&tmp, v, n, k)?;
+            let mut sorted = vec![f16::ZERO; v.len()];
+            for (pos, &r) in order.iter().enumerate() {
+                sorted[pos * 2 * k..(pos + 1) * 2 * k].copy_from_slice(&v[r * 2 * k..(r + 1) * 2 * k]);
+            }
+            npy::save(&tmp.join("vec.npy"), &sorted, &[n, 2, k])?;
+        } else {
+            npy::save(&tmp.join("vec.npy"), v, &[n, 2, k])?;
+        }
+    }
+    std::fs::rename(&tmp, dest).with_context(|| format!("rename {} -> {}", tmp.display(), dest.display()))?;
+    Ok(())
+}
+
+/// One file's postings of one field inside a `SegmentBuilder`: (first row, row counts, keys, tf).
+type FieldPart = (usize, Vec<i32>, Vec<i64>, Vec<u8>);
+
+/// Accumulates FileLex batches (in chunk-id order) and writes one segment.
+pub struct SegmentBuilder {
+    ids: Vec<i64>,
+    dl: Vec<f32>,
+    parts: Vec<Vec<FieldPart>>, // per field
+    vec: Vec<Vec<f16>>,
+    pub n: usize,
+    pub k: usize,
+}
+
+impl SegmentBuilder {
+    pub fn new(k: usize) -> Self {
+        SegmentBuilder { ids: Vec::new(), dl: Vec::new(), parts: (0..NF).map(|_| Vec::new()).collect(), vec: Vec::new(), n: 0, k }
+    }
+
+    pub fn add_file(&mut self, first_id: i64, lex: FileLex) {
+        let m = lex.dl.len();
+        if m == 0 {
+            return;
+        }
+        self.ids.extend((0..m as i64).map(|i| first_id + i));
+        self.dl.extend_from_slice(&lex.dl);
+        let FileLex { keys, tf, cnt, vec, .. } = lex;
+        for (c, ((k, t), cn)) in keys.into_iter().zip(tf).zip(cnt).enumerate() {
+            self.parts[c].push((self.n, cn, k, t));
+        }
+        if let Some(v) = vec {
+            self.vec.push(v);
+        }
+        self.n += m;
+    }
+
+    pub fn write(&self, dest: &Path) -> Result<()> {
+        let mut fields = Vec::with_capacity(NF);
+        for c in 0..NF {
+            let mut rows = Vec::new();
+            let mut keys = Vec::new();
+            let mut tfs = Vec::new();
+            for (first, cnt, k, t) in &self.parts[c] {
+                for (i, &cn) in cnt.iter().enumerate() {
+                    for _ in 0..cn {
+                        rows.push((*first + i) as i32);
+                    }
+                }
+                keys.extend_from_slice(k);
+                tfs.extend_from_slice(t);
+            }
+            fields.push((rows, keys, tfs));
+        }
+        let vec: Option<Vec<f16>> = if self.vec.is_empty() { None } else { Some(self.vec.concat()) };
+        write_segment(dest, &self.ids, &self.dl, &fields, vec.as_deref(), self.k, true)
+    }
+}
+
+/// Write one segment holding only the alive documents of `segs` (any order, ids may interleave).
+pub fn merge_segments(dest: &Path, segs: &[&Segment], alive: &[&[bool]]) -> Result<()> {
+    let mut ids: Vec<i64> = Vec::new();
+    for (s, a) in segs.iter().zip(alive) {
+        ids.extend(s.ids().iter().zip(a.iter()).filter(|(_, &al)| al).map(|(&i, _)| i));
+    }
+    let mut order: Vec<usize> = (0..ids.len()).collect();
+    order.sort_by_key(|&i| ids[i]);
+    let mut rank = vec![0usize; ids.len()];
+    for (new, &old) in order.iter().enumerate() {
+        rank[old] = new;
+    }
+    let mut dl_cat: Vec<f32> = Vec::new();
+    for (s, a) in segs.iter().zip(alive) {
+        dl_cat.extend(s.dl().iter().zip(a.iter()).filter(|(_, &al)| al).map(|(&d, _)| d));
+    }
+    let dl: Vec<f32> = order.iter().map(|&i| dl_cat[i]).collect();
+    let k = segs.iter().map(|s| s.k).max().unwrap_or(0);
+    let has_vec = segs.iter().any(|s| s.vec.is_some());
+    let vec: Option<Vec<f16>> = if has_vec && k > 0 {
+        let mut cat: Vec<f16> = Vec::with_capacity(ids.len() * 2 * k);
+        for (s, a) in segs.iter().zip(alive) {
+            if s.vec.is_some() {
+                for (r, &al) in a.iter().enumerate() {
+                    if al {
+                        cat.extend_from_slice(s.vec_row(r).expect("vector row"));
+                    }
+                }
+            }
+        }
+        let mut out: Vec<f16> = Vec::with_capacity(cat.len());
+        for &i in &order {
+            out.extend_from_slice(&cat[i * 2 * k..(i + 1) * 2 * k]);
+        }
+        Some(out)
+    } else {
+        None
+    };
+    let mut fields: Vec<(Vec<i32>, Vec<i64>, Vec<u8>)> = (0..NF).map(|_| (Vec::new(), Vec::new(), Vec::new())).collect();
+    let mut offset = 0usize;
+    for (s, a) in segs.iter().zip(alive) {
+        // position among the concatenated alive docs, for every original row
+        let mut newrow = vec![0usize; s.n];
+        let mut acc = 0usize;
+        for (r, &al) in a.iter().enumerate() {
+            if al {
+                newrow[r] = offset + acc;
+                acc += 1;
+            }
+        }
+        let keys = s.keys();
+        for c in 0..NF {
+            let ptr = s.ptr(c);
+            if ptr[ptr.len() - 1] == 0 {
+                continue;
+            }
+            let doc = s.doc(c);
+            let tf = s.tf(c);
+            for t in 0..keys.len() {
+                for e in ptr[t] as usize..ptr[t + 1] as usize {
+                    let r = doc[e] as usize;
+                    if a[r] {
+                        fields[c].0.push(rank[newrow[r]] as i32);
+                        fields[c].1.push(keys[t]);
+                        fields[c].2.push(tf[e]);
+                    }
+                }
+            }
+        }
+        offset += acc;
+    }
+    let ids_sorted: Vec<i64> = order.iter().map(|&i| ids[i]).collect();
+    write_segment(dest, &ids_sorted, &dl, &fields, vec.as_deref(), k, false)
+}
+
+// ------------------------------------------------------------------------- inverted file
+struct Rng(u64);
+impl Rng {
+    fn next(&mut self) -> u64 {
+        // xorshift64*
+        self.0 ^= self.0 >> 12;
+        self.0 ^= self.0 << 25;
+        self.0 ^= self.0 >> 27;
+        self.0.wrapping_mul(0x2545F4914F6CDD1D)
+    }
+    fn below(&mut self, n: usize) -> usize {
+        (self.next() % n as u64) as usize
+    }
+    /// `m` distinct indices below `n`, sorted.
+    fn sample(&mut self, n: usize, m: usize) -> Vec<usize> {
+        if m >= n {
+            return (0..n).collect();
+        }
+        let mut pool: Vec<usize> = (0..n).collect();
+        for i in 0..m {
+            let j = i + self.below(n - i);
+            pool.swap(i, j);
+        }
+        let mut s = pool[..m].to_vec();
+        s.sort_unstable();
+        s
+    }
+}
+
+/// C[rows, K] = X[rows, k] . cent[K, k]^T, then argmax per row (parallel over row blocks).
+fn nearest(x: &[f32], k: usize, cent: &[f32], nk: usize) -> Vec<i32> {
+    let n = x.len() / k;
+    let block = 2048;
+    let mut out = vec![0i32; n];
+    out.par_chunks_mut(block).enumerate().for_each(|(bi, chunk)| {
+        let r0 = bi * block;
+        let rows = chunk.len();
+        let mut c = vec![0f32; rows * nk];
+        unsafe {
+            matrixmultiply::sgemm(rows, k, nk, 1.0, x[r0 * k..].as_ptr(), k as isize, 1, cent.as_ptr(), 1, k as isize, 0.0, c.as_mut_ptr(), nk as isize, 1);
+        }
+        for r in 0..rows {
+            let row = &c[r * nk..(r + 1) * nk];
+            let mut best = 0usize;
+            let mut bv = f32::NEG_INFINITY;
+            for (j, &v) in row.iter().enumerate() {
+                if v > bv {
+                    bv = v;
+                    best = j;
+                }
+            }
+            chunk[r] = best as i32;
+        }
+    });
+    out
+}
+
+fn normalize_rows(m: &mut [f32], k: usize) {
+    for row in m.chunks_mut(k) {
+        let n = row.iter().map(|v| v * v).sum::<f32>().sqrt().max(1e-6);
+        for v in row.iter_mut() {
+            *v /= n;
+        }
+    }
+}
+
+/// Cluster the A+B vectors of a segment (spherical k-means on a sample, then one assignment pass
+/// over every row). Returns the cluster order (segment row at each sorted position); the caller
+/// stores the vectors in that order so a query can scan a few clusters contiguously.
+pub fn build_ivf(tmp: &Path, vec: &[f16], n: usize, k: usize) -> Result<Vec<usize>> {
+    let mut mix = vec![0f32; n * k];
+    for r in 0..n {
+        for j in 0..k {
+            mix[r * k + j] = vec[r * 2 * k + j].to_f32() + vec[r * 2 * k + k + j].to_f32();
+        }
+    }
+    let mut unit = mix.clone();
+    normalize_rows(&mut unit, k);
+    let nk = ((2.0 * (n as f64).sqrt()).round() as usize).clamp(32, 1024);
+    let mut rng = Rng(0x9E3779B97F4A7C15);
+    let sample_idx = rng.sample(n, n.min(IVF_SAMPLE));
+    let ns = sample_idx.len();
+    let mut sample = vec![0f32; ns * k];
+    for (i, &r) in sample_idx.iter().enumerate() {
+        sample[i * k..(i + 1) * k].copy_from_slice(&unit[r * k..(r + 1) * k]);
+    }
+    let mut cent = vec![0f32; nk * k];
+    for (c, &i) in rng.sample(ns, nk).iter().enumerate() {
+        cent[c * k..(c + 1) * k].copy_from_slice(&sample[i * k..(i + 1) * k]);
+    }
+    for _ in 0..IVF_ITERS {
+        let a = nearest(&sample, k, &cent, nk);
+        let mut sums = vec![0f32; nk * k];
+        let mut counts = vec![0usize; nk];
+        for (i, &c) in a.iter().enumerate() {
+            let c = c as usize;
+            counts[c] += 1;
+            let row = &sample[i * k..(i + 1) * k];
+            for j in 0..k {
+                sums[c * k + j] += row[j];
+            }
+        }
+        for c in 0..nk {
+            if counts[c] > 0 {
+                let s = &mut sums[c * k..(c + 1) * k];
+                let nrm = s.iter().map(|v| v * v).sum::<f32>().sqrt().max(1e-6);
+                for (dst, v) in cent[c * k..(c + 1) * k].iter_mut().zip(s.iter()) {
+                    *dst = v / nrm;
+                }
+            } else {
+                let i = rng.below(ns); // re-seed an empty cluster from a random row
+                cent[c * k..(c + 1) * k].copy_from_slice(&sample[i * k..(i + 1) * k]);
+            }
+        }
+    }
+    let a = nearest(&unit, k, &cent, nk);
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by_key(|&i| a[i]); // stable
+    let mut inv = vec![0i32; n];
+    for (pos, &r) in order.iter().enumerate() {
+        inv[r] = pos as i32;
+    }
+    let mut ptr = vec![0i64; nk + 1];
+    for &c in &a {
+        ptr[c as usize + 1] += 1;
+    }
+    for c in 0..nk {
+        ptr[c + 1] += ptr[c];
+    }
+    npy::save(&tmp.join("ivf_cent.npy"), &cent, &[nk, k])?;
+    npy::save(&tmp.join("ivf_ptr.npy"), &ptr, &[nk + 1])?;
+    let order32: Vec<i32> = order.iter().map(|&r| r as i32).collect();
+    npy::save(&tmp.join("ivf_order.npy"), &order32, &[n])?;
+    npy::save(&tmp.join("ivf_inv.npy"), &inv, &[n])?;
+    Ok(order)
+}
+
+// ------------------------------------------------------------------------------ store
+fn dot(a: &[f32], b: &[f32]) -> f32 {
+    let mut acc = [0f32; 8];
+    let chunks = a.len() / 8;
+    for i in 0..chunks {
+        for j in 0..8 {
+            acc[j] += a[i * 8 + j] * b[i * 8 + j];
+        }
+    }
+    let mut s: f32 = acc.iter().sum();
+    for i in chunks * 8..a.len() {
+        s += a[i] * b[i];
+    }
+    s
+}
+
+/// Indices of the `limit` best eligible values, deterministically: every row tied with the last one
+/// kept is considered and ties are broken by index, so two engines (or two runs) select the same rows.
+fn top_indices(sc: &[f32], limit: usize, keep: impl Fn(f32) -> bool) -> Vec<usize> {
+    let mut idx: Vec<usize> = (0..sc.len()).filter(|&i| keep(sc[i])).collect();
+    if idx.len() > limit {
+        idx.select_nth_unstable_by(limit - 1, |&a, &b| sc[b].partial_cmp(&sc[a]).unwrap());
+        let thresh = idx[..limit].iter().map(|&i| sc[i]).fold(f32::INFINITY, f32::min);
+        idx.retain(|&i| sc[i] >= thresh);
+    }
+    idx.sort_by(|&a, &b| sc[b].partial_cmp(&sc[a]).unwrap().then(a.cmp(&b)));
+    idx.truncate(limit);
+    idx
+}
+
+/// All segments of an index plus the global statistics needed to score across them.
+pub struct LexStore {
+    pub base: PathBuf,
+    pub names: Vec<String>,
+    pub segs: Vec<Segment>,
+    w: [f32; NF],
+    pub alive: Vec<Vec<bool>>,
+    pub has_dead: Vec<bool>,
+    dlsum: Vec<f64>,
+    adf: HashMap<(usize, usize), i64>,
+    norm: Vec<Vec<f32>>,
+    mix: Vec<Option<Vec<f32>>>,           // exhaustive scan matrix of the small segments
+    alive_sorted: Vec<Option<Vec<bool>>>, // liveness in cluster order (ivf segments)
+    pub nprobe: usize,
+    pub n_alive: usize,
+    pub avgdl: f64,
+}
+
+impl LexStore {
+    pub fn open(base: &Path, names: &[String]) -> Result<LexStore> {
+        let segs = names.iter().map(|n| Segment::open(&base.join(n))).collect::<Result<Vec<_>>>()?;
+        Ok(LexStore {
+            base: base.to_path_buf(),
+            names: names.to_vec(),
+            segs,
+            w: WEIGHTS,
+            alive: Vec::new(),
+            has_dead: Vec::new(),
+            dlsum: Vec::new(),
+            adf: HashMap::new(),
+            norm: Vec::new(),
+            mix: Vec::new(),
+            alive_sorted: Vec::new(),
+            nprobe: IVF_NPROBE,
+            n_alive: 0,
+            avgdl: 1.0,
+        })
+    }
+
+    /// Statistics from scratch. `live_ids`: sorted ids of the chunks currently in the index, or None
+    /// when every row of every segment is known to be alive.
+    pub fn prepare(&mut self, live_ids: Option<&[i64]>) {
+        self.alive.clear();
+        self.dlsum.clear();
+        for s in &self.segs {
+            let a: Vec<bool> = match live_ids {
+                None => vec![true; s.n],
+                Some(live) => s.ids().iter().map(|id| live.binary_search(id).is_ok()).collect(),
+            };
+            self.dlsum.push(s.dl().iter().zip(&a).filter(|(_, &al)| al).map(|(&d, _)| d as f64).sum());
+            self.alive.push(a);
+        }
+        self.n_alive = self.alive.iter().map(|a| a.iter().filter(|&&x| x).count()).sum();
+        self.has_dead = self.alive.iter().map(|a| a.iter().any(|&x| !x)).collect();
+        self.mix = self.segs.iter().zip(&self.alive).map(|(s, a)| Self::mix_of(s, a)).collect();
+        self.alive_sorted = self
+            .segs
+            .iter()
+            .zip(&self.alive)
+            .map(|(s, a)| s.ivf.as_ref().map(|ivf| ivf.order.view::<i32>().unwrap().iter().map(|&r| a[r as usize]).collect()))
+            .collect();
+        self.adf.clear();
+        self.set_norm();
+    }
+
+    fn mix_of(s: &Segment, alive: &[bool]) -> Option<Vec<f32>> {
+        if s.ivf.is_some() || s.n == 0 {
+            return None;
+        }
+        s.vec()?;
+        let k = s.k;
+        let mut m = vec![0f32; s.n * k];
+        for r in 0..s.n {
+            if alive[r] {
+                let v = s.vec_row(r)?;
+                for j in 0..k {
+                    m[r * k + j] = v[j].to_f32() + v[k + j].to_f32();
+                }
+            }
+        }
+        Some(m)
+    }
+
+    fn set_norm(&mut self) {
+        self.avgdl = if self.n_alive > 0 { self.dlsum.iter().sum::<f64>() / self.n_alive as f64 } else { 1.0 };
+        let avg = self.avgdl as f32;
+        self.norm = self.segs.iter().map(|s| s.dl().iter().map(|&d| K1 * (1.0 - B + B * d / avg)).collect()).collect();
+    }
+
+    /// Patch the statistics after the chunks `removed` died and the segments `added` appeared.
+    pub fn apply(&mut self, removed: &[i64], added: &[String]) -> Result<()> {
+        let mut removed = removed.to_vec();
+        removed.sort_unstable();
+        removed.dedup();
+        if !removed.is_empty() {
+            self.adf.clear();
+            for si in 0..self.segs.len() {
+                let s = &self.segs[si];
+                if s.n == 0 {
+                    continue;
+                }
+                let ids = s.ids();
+                let mut rows: Vec<usize> = removed.iter().filter_map(|id| ids.binary_search(id).ok()).collect();
+                rows.retain(|&r| self.alive[si][r]);
+                if rows.is_empty() {
+                    continue;
+                }
+                let dl = s.dl();
+                for &r in &rows {
+                    self.alive[si][r] = false;
+                    self.dlsum[si] -= dl[r] as f64;
+                    if let Some(m) = self.mix[si].as_mut() {
+                        for v in &mut m[r * s.k..(r + 1) * s.k] {
+                            *v = 0.0;
+                        }
+                    }
+                    if let (Some(a), Some(ivf)) = (self.alive_sorted[si].as_mut(), s.ivf.as_ref()) {
+                        a[ivf.inv.view::<i32>().unwrap()[r] as usize] = false;
+                    }
+                }
+                self.n_alive -= rows.len();
+                self.has_dead[si] = true;
+            }
+        }
+        for name in added {
+            let s = Segment::open(&self.base.join(name))?;
+            let a = vec![true; s.n];
+            self.dlsum.push(s.dl().iter().map(|&d| d as f64).sum());
+            self.n_alive += s.n;
+            self.has_dead.push(false);
+            self.mix.push(Self::mix_of(&s, &a));
+            self.alive_sorted.push(s.ivf.as_ref().map(|_| vec![true; s.n]));
+            self.alive.push(a);
+            self.names.push(name.clone());
+            self.segs.push(s);
+        }
+        self.set_norm();
+        Ok(())
+    }
+
+    pub fn alive_counts(&self) -> Vec<usize> {
+        self.alive.iter().map(|a| a.iter().filter(|&&x| x).count()).collect()
+    }
+
+    // ---- lexical
+    fn alive_df(&mut self, si: usize, j: usize) -> i64 {
+        if let Some(&v) = self.adf.get(&(si, j)) {
+            return v;
+        }
+        let s = &self.segs[si];
+        let mut seen = vec![false; s.n];
+        for c in 0..NF {
+            let ptr = s.ptr(c);
+            let doc = s.doc(c);
+            for &d in &doc[ptr[j] as usize..ptr[j + 1] as usize] {
+                seen[d as usize] = true;
+            }
+        }
+        let got = seen.iter().zip(&self.alive[si]).filter(|(&s, &a)| s && a).count() as i64;
+        self.adf.insert((si, j), got);
+        got
+    }
+
+    /// idf over the live chunks: ln((N - df + 0.5) / (df + 0.5)), floored.
+    fn idf(&mut self, locs: &[Vec<i64>]) -> Vec<f32> {
+        let nt = locs.first().map(|l| l.len()).unwrap_or(0);
+        let mut df = vec![0i64; nt];
+        for si in 0..self.segs.len() {
+            for t in 0..nt {
+                let j = locs[si][t];
+                if j < 0 {
+                    continue;
+                }
+                if self.has_dead[si] {
+                    df[t] += self.alive_df(si, j as usize);
+                } else {
+                    df[t] += self.segs[si].df()[j as usize] as i64;
+                }
+            }
+        }
+        let n = self.n_alive as f64;
+        df.iter()
+            .map(|&d| {
+                let v = ((n - d as f64 + 0.5) / (d as f64 + 0.5)).ln();
+                if v.is_finite() && v > 0.0 {
+                    v as f32
+                } else {
+                    IDF_FLOOR
+                }
+            })
+            .collect()
+    }
+
+    /// Top `limit` chunks by field-weighted BM25 -> (ids, scores), best first.
+    pub fn search(&mut self, keys: &[i64], limit: usize) -> (Vec<i64>, Vec<f32>) {
+        if keys.is_empty() || self.n_alive == 0 {
+            return (Vec::new(), Vec::new());
+        }
+        let locs: Vec<Vec<i64>> = self.segs.iter().map(|s| s.locate(keys)).collect();
+        let idf = self.idf(&locs);
+        let mut out_ids: Vec<i64> = Vec::new();
+        let mut out_sc: Vec<f32> = Vec::new();
+        for si in 0..self.segs.len() {
+            let s = &self.segs[si];
+            let present: Vec<usize> = (0..keys.len()).filter(|&t| locs[si][t] >= 0).collect();
+            if present.is_empty() || s.n == 0 {
+                continue;
+            }
+            let norm = &self.norm[si];
+            let alive = &self.alive[si];
+            let mut f = vec![0f32; s.n];
+            let mut acc = vec![0f32; s.n];
+            let mut touched: Vec<usize> = Vec::new();
+            for &t in &present {
+                let jt = locs[si][t] as usize;
+                touched.clear();
+                for c in 0..NF {
+                    let ptr = s.ptr(c);
+                    let (a, b) = (ptr[jt] as usize, ptr[jt + 1] as usize);
+                    if a == b {
+                        continue;
+                    }
+                    let doc = s.doc(c);
+                    let tf = s.tf(c);
+                    for e in a..b {
+                        let d = doc[e] as usize;
+                        if f[d] == 0.0 {
+                            touched.push(d);
+                        }
+                        f[d] += self.w[c] * tf[e] as f32;
+                    }
+                }
+                let w = idf[t] * (K1 + 1.0);
+                for &d in &touched {
+                    let fu = f[d];
+                    acc[d] += w * fu / (fu + norm[d]);
+                    f[d] = 0.0;
+                }
+            }
+            for (r, al) in alive.iter().enumerate() {
+                if !al {
+                    acc[r] = 0.0;
+                }
+            }
+            let ids = s.ids();
+            for p in top_indices(&acc, limit, |v| v > 0.0) {
+                out_ids.push(ids[p]);
+                out_sc.push(acc[p]);
+            }
+        }
+        let mut order: Vec<usize> = (0..out_ids.len()).collect();
+        order.sort_by(|&a, &b| out_sc[b].partial_cmp(&out_sc[a]).unwrap().then(out_ids[a].cmp(&out_ids[b])));
+        order.truncate(limit);
+        (order.iter().map(|&i| out_ids[i]).collect(), order.iter().map(|&i| out_sc[i]).collect())
+    }
+
+    /// -> [len(ids)][1 + NF]: weighted score, then the score of each single field.
+    pub fn field_scores(&mut self, keys: &[i64], ids: &[i64]) -> Vec<[f32; 1 + NF]> {
+        let mut out = vec![[0f32; 1 + NF]; ids.len()];
+        if keys.is_empty() || ids.is_empty() || self.n_alive == 0 {
+            return out;
+        }
+        let locs: Vec<Vec<i64>> = self.segs.iter().map(|s| s.locate(keys)).collect();
+        let idf = self.idf(&locs);
+        for si in 0..self.segs.len() {
+            let s = &self.segs[si];
+            if s.n == 0 {
+                continue;
+            }
+            let sel: Vec<(usize, usize)> = ids.iter().enumerate().filter_map(|(i, id)| s.row_of(*id).filter(|&r| self.alive[si][r]).map(|r| (i, r))).collect();
+            if sel.is_empty() {
+                continue;
+            }
+            let norm = &self.norm[si];
+            for t in 0..keys.len() {
+                let jt = locs[si][t];
+                if jt < 0 {
+                    continue;
+                }
+                let jt = jt as usize;
+                let w = idf[t] * (K1 + 1.0);
+                for &(i, r) in &sel {
+                    let mut tfm = [0f32; NF];
+                    for c in 0..NF {
+                        let ptr = s.ptr(c);
+                        let (a, b) = (ptr[jt] as usize, ptr[jt + 1] as usize);
+                        if a == b {
+                            continue;
+                        }
+                        let d = &s.doc(c)[a..b];
+                        if let Ok(p) = d.binary_search(&(r as i32)) {
+                            tfm[c] = s.tf(c)[a + p] as f32;
+                        }
+                    }
+                    let nm = norm[r];
+                    let mut comb = 0f32;
+                    for c in 0..NF {
+                        comb += tfm[c] * self.w[c];
+                    }
+                    out[i][0] += w * comb / (comb + nm);
+                    for c in 0..NF {
+                        out[i][1 + c] += w * tfm[c] / (tfm[c] + nm);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    // ---- semantic
+    /// Ids of the `limit` chunks closest to the query vector (A-view + B-view similarity). Segments
+    /// with an inverted-file index scan their `nprobe` closest clusters (all of them when nprobe is
+    /// at least the number of clusters, which makes the result exact).
+    pub fn semantic_top(&self, qz: &[f32], limit: usize, nprobe: Option<usize>) -> Vec<i64> {
+        let nprobe = nprobe.unwrap_or(self.nprobe);
+        let mut out_ids: Vec<i64> = Vec::new();
+        let mut out_sc: Vec<f32> = Vec::new();
+        for si in 0..self.segs.len() {
+            let s = &self.segs[si];
+            let (part, sc): (Vec<usize>, Vec<f32>) = if s.ivf.is_some() {
+                self.ivf_scan(si, qz, limit, nprobe)
+            } else {
+                let Some(m) = self.mix[si].as_ref() else {
+                    continue;
+                };
+                let k = s.k;
+                let alive = &self.alive[si];
+                let sc: Vec<f32> = (0..s.n).map(|r| if alive[r] { dot(&m[r * k..(r + 1) * k], qz) } else { f32::NEG_INFINITY }).collect();
+                let part = top_indices(&sc, limit, |v| v.is_finite());
+                let scs = part.iter().map(|&p| sc[p]).collect();
+                (part, scs)
+            };
+            let ids = s.ids();
+            for (p, v) in part.into_iter().zip(sc) {
+                out_ids.push(ids[p]);
+                out_sc.push(v);
+            }
+        }
+        let mut order: Vec<usize> = (0..out_ids.len()).collect();
+        order.sort_by(|&a, &b| out_sc[b].partial_cmp(&out_sc[a]).unwrap().then(out_ids[a].cmp(&out_ids[b])));
+        order.truncate(limit);
+        order.iter().map(|&i| out_ids[i]).collect()
+    }
+
+    /// -> (segment rows, scores) of the best `limit` live rows in the `nprobe` closest clusters.
+    fn ivf_scan(&self, si: usize, qz: &[f32], limit: usize, nprobe: usize) -> (Vec<usize>, Vec<f32>) {
+        let s = &self.segs[si];
+        let ivf = s.ivf.as_ref().unwrap();
+        let k = s.k;
+        let vec = s.vec().unwrap(); // cluster order
+        let order = ivf.order.view::<i32>().unwrap();
+        let alive = self.alive_sorted[si].as_ref().unwrap();
+        let ranges: Vec<(usize, usize)> = if nprobe < ivf.nclusters {
+            let cs: Vec<f32> = (0..ivf.nclusters).map(|c| dot(&ivf.cent[c * k..(c + 1) * k], qz)).collect();
+            top_indices(&cs, nprobe, |_| true).into_iter().map(|c| (ivf.ptr[c] as usize, ivf.ptr[c + 1] as usize)).collect()
+        } else {
+            vec![(0, s.n)]
+        };
+        let total: usize = ranges.iter().map(|(a, b)| b - a).sum();
+        let mut positions: Vec<usize> = Vec::with_capacity(total);
+        let mut sc: Vec<f32> = Vec::with_capacity(total);
+        let mut f32buf: Vec<f32> = Vec::new();
+        let mut mix = vec![0f32; k];
+        for (a, b) in ranges {
+            // one contiguous block per cluster: convert once, then A + B (exact in f32) and dot
+            let block = &vec[a * 2 * k..b * 2 * k];
+            f32buf.resize(block.len(), 0.0);
+            block.convert_to_f32_slice(&mut f32buf);
+            for p in a..b {
+                positions.push(p);
+                if !alive[p] {
+                    sc.push(f32::NEG_INFINITY);
+                    continue;
+                }
+                let row = &f32buf[(p - a) * 2 * k..(p - a + 1) * 2 * k];
+                for j in 0..k {
+                    mix[j] = row[j] + row[k + j];
+                }
+                sc.push(dot(&mix, qz));
+            }
+        }
+        let part = top_indices(&sc, limit, |v| v.is_finite());
+        let rows = part.iter().map(|&i| order[positions[i]] as usize).collect();
+        let scs = part.iter().map(|&i| sc[i]).collect();
+        (rows, scs)
+    }
+
+    /// The stored (A view, B view) vectors of a chunk, as float32.
+    pub fn vec_of(&self, id: i64) -> Option<(Vec<f32>, Vec<f32>)> {
+        for s in &self.segs {
+            if let Some(r) = s.row_of(id) {
+                let v = s.vec_row(r)?;
+                let k = s.k;
+                let a = v[..k].iter().map(|x| x.to_f32()).collect();
+                let b = v[k..].iter().map(|x| x.to_f32()).collect();
+                return Some((a, b));
+            }
+        }
+        None
+    }
+
+    /// Ids of the `limit` live chunks whose B (implementation) vector is closest to `q` (exhaustive;
+    /// used by similar-code queries, which are rare and tolerate ~100 ms on 100k chunks).
+    pub fn scan_b(&self, q: &[f32], limit: usize, exclude: i64) -> Vec<(i64, f32)> {
+        let mut out: Vec<(i64, f32)> = Vec::new();
+        let mut row = vec![0f32; q.len()];
+        for (si, s) in self.segs.iter().enumerate() {
+            if s.vec().is_none() {
+                continue;
+            }
+            let k = s.k;
+            let ids = s.ids();
+            for r in 0..s.n {
+                if !self.alive[si][r] || ids[r] == exclude {
+                    continue;
+                }
+                let Some(vr) = s.vec_row(r) else { continue };
+                let src = &vr[k..];
+                if src.iter().all(|x| *x == f16::ZERO) {
+                    continue;
+                }
+                for j in 0..k {
+                    row[j] = src[j].to_f32();
+                }
+                let sc = dot(&row, q);
+                if out.len() < limit {
+                    out.push((ids[r], sc));
+                    if out.len() == limit {
+                        out.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+                    }
+                } else if sc > out[limit - 1].1 {
+                    out[limit - 1] = (ids[r], sc);
+                    out.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+                }
+            }
+        }
+        out.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap().then(a.0.cmp(&b.0)));
+        out
+    }
+
+    /// -> (sim of the A view, sim of the B view) for each id; 0 where a chunk has no vector.
+    /// Accumulated in float64 and rounded to float32, like the Python reference.
+    pub fn sem_pair(&self, ids: &[i64], qz: &[f32]) -> (Vec<f32>, Vec<f32>) {
+        let mut sa = vec![0f32; ids.len()];
+        let mut sb = vec![0f32; ids.len()];
+        for s in &self.segs {
+            if s.vec().is_none() {
+                continue;
+            }
+            let k = s.k;
+            for (i, id) in ids.iter().enumerate() {
+                if let Some(r) = s.row_of(*id) {
+                    let Some(v) = s.vec_row(r) else { continue };
+                    let (mut a, mut b) = (0f64, 0f64);
+                    for j in 0..k {
+                        a += v[j].to_f64() * qz[j] as f64;
+                        b += v[k + j].to_f64() * qz[j] as f64;
+                    }
+                    sa[i] = a as f32;
+                    sb[i] = b as f32;
+                }
+            }
+        }
+        (sa, sb)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn token_keys_match_python_blake2b() {
+        // int.from_bytes(hashlib.blake2b(word, digest_size=8).digest(), "little") >> 1
+        assert_eq!(tok_key("token"), 4201213877827993759);
+        assert_eq!(tok_key("refresh"), 8715277808867335775);
+        assert_eq!(tok_key("a"), 1702698405120146464);
+    }
+}

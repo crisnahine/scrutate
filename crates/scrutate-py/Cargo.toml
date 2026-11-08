@@ -1,0 +1,25 @@
+[package]
+name = "scrutate-py"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "Python bindings for the Scrutate code-search engines (PyO3, stable ABI)"
+license.workspace = true
+publish = false
+
+[lib]
+name = "scrutate"
+crate-type = ["cdylib"]
+
+[dependencies]
+# abi3-py39: one wheel per OS/architecture serves every CPython >= 3.9
+pyo3 = { version = "0.30", features = ["abi3-py39"] }
+scrutate = { path = "../scrutate" }
+serde_json = "1"
+anyhow = "1"
+
+[features]
+default = []
+# forwarded to the engine: the optional heavy grammars
+extra-langs = ["scrutate/extra-langs"]

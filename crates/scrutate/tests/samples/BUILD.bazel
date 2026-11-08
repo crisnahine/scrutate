@@ -1,0 +1,10 @@
+# Starlark sample
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+def _impl(ctx):
+    """Rule implementation."""
+    return [DefaultInfo()]
+
+my_rule = rule(implementation = _impl)
+
+cc_library(name = "lib", srcs = ["lib.cc"])

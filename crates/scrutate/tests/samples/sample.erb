@@ -1,0 +1,9 @@
+<%# A view template %>
+<% def render_row(item) %>
+  <tr><td><%= item.name %></td></tr>
+<% end %>
+<ul>
+<% @items.each do |item| %>
+  <li><%= helper(item) %></li>
+<% end %>
+</ul>

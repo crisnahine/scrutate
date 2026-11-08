@@ -1,0 +1,12 @@
+# toml sample
+title = "demo"
+
+[package]
+name = "demo"
+version = "0.1.0"
+
+[dependencies]
+serde = "1"
+
+[[bin]]
+name = "demo"

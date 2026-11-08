@@ -1,0 +1,183 @@
+import os
+import time
+
+from conftest import write_repo
+from scrutate_ref.index import Index
+
+
+def test_build_and_stats(repo):
+    ix = Index(repo, model=None)
+    st = ix.update()
+    assert st.files_changed >= 4 and st.chunks > 10
+    s = ix.stats()
+    assert s["symbols"] >= 8 and s["call_edges"] > 0
+
+
+def test_second_update_does_no_work(repo):
+    ix = Index(repo, model=None)
+    ix.update()
+    st = ix.update()
+    assert st.files_changed == 0 and st.files_removed == 0
+
+
+def test_touch_without_change_does_not_reindex(repo):
+    ix = Index(repo, model=None)
+    ix.update()
+    p = os.path.join(repo, "app/auth.py")
+    os.utime(p, (time.time() + 100, time.time() + 100))
+    assert ix.update().files_changed == 0
+
+
+def test_modified_file_is_reindexed_and_old_chunks_removed(repo):
+    ix = Index(repo, model=None)
+    ix.update()
+    p = os.path.join(repo, "app/auth.py")
+    with open(p, "a") as f:
+        f.write("\n\ndef brand_new_function():\n    return 1\n")
+    assert ix.update().files_changed == 1
+    assert ix.db.execute("SELECT COUNT(*) FROM chunks WHERE name='brand_new_function'").fetchone()[0] == 1
+    assert ix.db.execute("SELECT COUNT(*) FROM chunks WHERE name='refresh_token'").fetchone()[0] == 1  # no dupes
+
+
+def test_deleted_file_is_removed(repo):
+    ix = Index(repo, model=None)
+    ix.update()
+    os.remove(os.path.join(repo, "app/util.js"))
+    st = ix.update()
+    assert st.files_removed == 1
+    assert ix.db.execute("SELECT COUNT(*) FROM chunks WHERE path='app/util.js'").fetchone()[0] == 0
+    # nothing orphaned in refs
+    assert ix.db.execute("SELECT COUNT(*) FROM refs WHERE chunk_id NOT IN (SELECT id FROM chunks)").fetchone()[0] == 0
+
+
+def test_binary_and_huge_files_are_skipped_and_remembered(repo):
+    with open(os.path.join(repo, "blob.txt"), "wb") as f:
+        f.write(b"\x00\x01\x02" * 100)
+    ix = Index(repo, model=None)
+    ix.update()
+    assert ix.db.execute("SELECT COUNT(*) FROM chunks WHERE path='blob.txt'").fetchone()[0] == 0
+    assert ix.db.execute("SELECT hash FROM files WHERE path='blob.txt'").fetchone()[0] == "SKIP"
+    assert ix.update().files_changed == 0
+
+
+def test_force_rebuild(repo):
+    ix = Index(repo, model=None)
+    n = ix.update().chunks
+    st = ix.update(force=True)
+    assert st.files_changed > 0 and st.chunks == n
+
+
+def test_parallel_and_serial_indexing_agree(tmp_path):
+    files = {f"pkg/m{i}.py": f"def f{i}(x):\n    '''doc {i}'''\n    return g{i}(x)\n" for i in range(60)}
+    a, b = tmp_path / "a", tmp_path / "b"
+    write_repo(str(a), files)
+    write_repo(str(b), files)
+    ia, ib = Index(str(a), model=None), Index(str(b), model=None)
+    ia.update(workers=1)
+    ib.update(workers=2)
+    q = "SELECT path, qualname, start, end FROM chunks ORDER BY path, start, qualname"
+    assert [tuple(r) for r in ia.db.execute(q)] == [tuple(r) for r in ib.db.execute(q)]
+
+
+def test_gitignore_is_respected(repo):
+    import shutil
+    if not shutil.which("rg"):
+        return
+    os.makedirs(os.path.join(repo, ".git"), exist_ok=True)  # rg only honors .gitignore inside a repo
+    with open(os.path.join(repo, ".gitignore"), "w") as f:
+        f.write("ignored/\n")
+    write_repo(repo, {"ignored/x.py": "def hidden():\n    pass\n"})
+    ix = Index(repo, model=None)
+    ix.update()
+    assert ix.db.execute("SELECT COUNT(*) FROM chunks WHERE name='hidden'").fetchone()[0] == 0
+
+
+def test_index_from_older_layout_is_rebuilt_not_crashed(repo):
+    """An index written by a previous version (other columns, other schema_version) is replaced."""
+    import sqlite3
+
+    os.makedirs(os.path.join(repo, ".scrutate"), exist_ok=True)
+    con = sqlite3.connect(os.path.join(repo, ".scrutate", "index.db"))
+    con.executescript("""
+        CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);
+        INSERT INTO meta VALUES('schema_version','1');
+        CREATE TABLE chunks(id INTEGER PRIMARY KEY, path TEXT, name TEXT);
+        INSERT INTO chunks VALUES(1,'old.py','old_function');
+    """)
+    con.commit()
+    con.close()
+    ix = Index(repo, model=None)  # must not raise "no such column"
+    assert ix.update().chunks > 10
+    assert ix.db.execute("SELECT COUNT(*) FROM chunks WHERE name='old_function'").fetchone()[0] == 0
+
+
+def test_damaged_index_file_is_replaced(repo):
+    os.makedirs(os.path.join(repo, ".scrutate"), exist_ok=True)
+    with open(os.path.join(repo, ".scrutate", "index.db"), "wb") as f:
+        f.write(b"this is not a sqlite database" * 100)
+    ix = Index(repo, model=None)
+    assert ix.update().chunks > 10
+
+
+def test_switching_semantic_model_rebuilds(repo):
+    ix = Index(repo)  # default model
+    ix.update()
+    ix.db.close()
+    ix2 = Index(repo, model=None)  # different model signature -> start over, no stale vectors
+    st = ix2.update()
+    assert st.files_changed >= 4
+
+
+def test_store_always_agrees_with_the_chunk_table(repo):
+    """Whatever happens to the files, the live rows the search engine scores are exactly the chunks in SQLite."""
+    ix = Index(repo, model=None)
+    ix.update()
+
+    def check():
+        assert ix.lex.n_alive == ix.db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+
+    check()
+    with open(os.path.join(repo, "app/auth.py"), "a") as f:
+        f.write("\n\ndef brand_new_function():\n    return 1\n")
+    ix.update()
+    check()
+    os.remove(os.path.join(repo, "app/util.js"))
+    ix.update()
+    check()
+    with open(os.path.join(repo, "app/server.py"), "wb") as f:  # a source file that turns into a binary blob
+        f.write(b"\x00\x01\x02" * 100)
+    ix.update()
+    check()
+    assert ix.db.execute("SELECT COUNT(*) FROM chunks WHERE path='app/server.py'").fetchone()[0] == 0
+    ix.update(force=True)
+    check()
+
+
+def test_a_second_process_sees_changes_made_by_the_first(repo):
+    """Two Index objects on one directory (CLI + MCP server): the reader refreshes its statistics."""
+    from scrutate_ref.search import QueryInfo, _lex_keys
+
+    a = Index(repo, model=None)
+    a.update()
+    b = Index(repo, model=None)
+    b.lex  # b now holds the statistics of the first state
+    with open(os.path.join(repo, "app/auth.py"), "a") as f:
+        f.write("\n\ndef another_one():\n    return 2\n")
+    a.update()
+    n = a.db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+    assert b.lex.n_alive == a.lex.n_alive == n
+    assert len(b.lex.search(_lex_keys(QueryInfo.parse("another_one")), 3)[0]) >= 1
+
+
+def test_refresh_is_throttled_but_a_cheap_scan_is_not_held_back_for_long(repo):
+    import time
+
+    ix = Index(repo, model=None)
+    assert ix.refresh(1e6) is not None  # first call always scans
+    assert ix.refresh(1e6) is None  # immediately after: throttled
+    with open(os.path.join(repo, "app/auth.py"), "a") as f:
+        f.write("\n\ndef fresh_after_edit():\n    return 3\n")
+    time.sleep(10 * ix._scan_cost + 0.05)  # far less than the 1e6 s requested interval
+    st = ix.refresh(1e6)
+    assert st is not None and st.files_changed == 1
+    assert ix.refresh(0) is not None  # interval 0 means: always scan

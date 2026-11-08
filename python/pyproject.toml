@@ -1,0 +1,40 @@
+[project]
+name = "scrutate-ref"
+dynamic = ["version"]
+description = "Reference implementation and trainer for the Scrutate code-intelligence engine (not the product: the product is the Rust crate)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.26",
+  "snowballstemmer>=2.2,<3",  # 3.x changed the English stemmer; the Rust engine uses 2.x stems
+  "tree-sitter>=0.23",
+  "tree-sitter-python",
+  "tree-sitter-javascript",
+  "tree-sitter-typescript",
+  "tree-sitter-go",
+  "tree-sitter-rust",
+  "tree-sitter-java",
+]
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.2"]            # `scrutate-ref serve`
+agent = ["anthropic>=0.40"]   # `scrutate-ref ask`
+train = ["scipy", "scikit-learn", "lightgbm"]  # retrain the semantic model / ranker, run bench/
+test = ["pytest"]
+all = ["mcp>=1.2", "anthropic>=0.40"]
+
+[project.scripts]
+scrutate-ref = "scrutate_ref.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["scrutate_ref"]
+
+[tool.setuptools.dynamic]
+version = {attr = "scrutate_ref.__version__"}
+
+[tool.setuptools.package-data]
+scrutate_ref = []
