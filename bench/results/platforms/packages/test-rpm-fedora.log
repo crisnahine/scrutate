@@ -1,0 +1,35 @@
++ case "$1" in
++ rpm -i --nosignature /dist/scrutate-0.1.0-1.aarch64.rpm
+/usr/sbin/scrutate
++ command -v scrutate
++ scrutate --version
+scrutate 0.1.0
++ mkdir -p /tmp/t
++ printf 'def greet():\n    return "hello"\n'
+++ scrutate grep --no-color greet /tmp/t
+hello.py:1:def greet():
++ out='hello.py:1:def greet():'
++ echo 'hello.py:1:def greet():'
++ '[' 'hello.py:1:def greet():' = 'hello.py:1:def greet():' ']'
++ case "$1" in
++ rpm -qi scrutate
+Name         : scrutate
+Version      : 0.1.0
+Release      : 1
+Architecture : aarch64
+Install Date : Mon Nov  9 13:42:54 2026
+Group        : Unspecified
+Size         : 83335889
+License      : Apache-2.0
+Signature    : (none)
+Source RPM   : (none)
+Build Date   : Mon Nov  9 13:42:05 2026
+Build Host   : (none)
+URL          : https://github.com/crisnahine/scrutate
+Summary      : Instant code search and a persistent code-intelligence index
+Description  :
+Instant code search and a persistent code-intelligence index
++ rpm -e scrutate
++ test '!' -e /usr/bin/scrutate
++ echo 'PASS: rpm installed, ran, removed'
+PASS: rpm installed, ran, removed

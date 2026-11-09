@@ -141,6 +141,56 @@
       "main"
     ]
   ],
+  "sample.mli": [
+    [
+      "module",
+      "sample"
+    ],
+    [
+      "type",
+      "t"
+    ],
+    [
+      "type",
+      "error"
+    ],
+    [
+      "interface",
+      "ORDERED"
+    ],
+    [
+      "type",
+      "ORDERED.key"
+    ],
+    [
+      "function",
+      "ORDERED.compare"
+    ],
+    [
+      "module",
+      "Priority"
+    ],
+    [
+      "type",
+      "Priority.q"
+    ],
+    [
+      "function",
+      "Priority.push"
+    ],
+    [
+      "function",
+      "create"
+    ],
+    [
+      "function",
+      "push"
+    ],
+    [
+      "function",
+      "pop"
+    ]
+  ],
   "sample.odin": [
     [
       "module",

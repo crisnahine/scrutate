@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.9.0.schema.json
+PackageIdentifier: crisnahine.Scrutate
+PackageVersion: 0.1.0
+PackageLocale: en-US
+Publisher: Cris Nahine
+PublisherUrl: https://github.com/crisnahine
+PackageName: Scrutate
+PackageUrl: https://github.com/crisnahine/scrutate
+License: Apache-2.0
+LicenseUrl: https://github.com/crisnahine/scrutate/blob/main/LICENSE
+ShortDescription: Instant code search and a persistent code-intelligence index
+Description: Scrutate searches any repository without an index, and builds a persistent index for ranked search, symbols, callers and imports. One CLI and an MCP server.
+Moniker: scrutate
+Tags:
+  - code-search
+  - grep
+  - cli
+  - mcp
+ManifestType: defaultLocale
+ManifestVersion: 1.9.0

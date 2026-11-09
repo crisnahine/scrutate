@@ -1,0 +1,221 @@
+#!/usr/bin/env python3
+"""docs/dashboard.html: one self-contained page (inline CSS and SVG) from the JSON in bench/results/.
+
+usage: make_dashboard.py [--results bench/results] [--out docs/dashboard.html]
+
+For each benchmark it plots scrutate's ratio to the best competitor, with the 95% interval and the
+status, for every run in time order, and counts the statuses per run. Runs under `superseded/` come
+first, in the order of HISTORY; the current files follow.
+"""
+from __future__ import annotations
+
+import argparse
+import glob
+import html
+import json
+import math
+import os
+import sys
+
+# the runs carry no timestamp; this is the order they were measured in (superseded/README.md)
+HISTORY = ["leaderboard-warm-prelim", "leaderboard-warm-blocks", "leaderboard-warm-prevbin", "leaderboard-warm-eeab",
+           "leaderboard-warm-a82a", "leaderboard-warm-9da7-partial", "indexed-eeab"]
+STATUSES = ["PASS", "PARTIAL", "BLOCKED", "FAIL"]
+MARK = {"PASS": "P", "PARTIAL": "~", "BLOCKED": "B", "FAIL": "F"}
+
+
+def load_runs(results):
+    """Runs grouped by (platform, kind), each group in time order."""
+    paths = glob.glob(os.path.join(results, "*", "leaderboard-*.json")) + glob.glob(os.path.join(results, "*", "indexed*.json"))
+    paths += glob.glob(os.path.join(results, "*", "superseded", "leaderboard-*.json"))
+    paths += glob.glob(os.path.join(results, "*", "superseded", "indexed*.json"))
+    groups = {}
+    for p in paths:
+        name = os.path.splitext(os.path.basename(p))[0]
+        rel = os.path.relpath(p, results)
+        platform = rel.split(os.sep)[0]
+        old = "superseded" in rel.split(os.sep)
+        try:
+            d = json.load(open(p))
+        except (OSError, ValueError) as e:
+            print(f"skipping {p}: {e}", file=sys.stderr)
+            continue
+        env = d.get("environment", {})
+        if name.startswith("indexed"):
+            kind = "indexed"
+            items = d.get("comparison", {})
+        else:
+            kind = f"leaderboard, {d.get('settings', {}).get('cache', '?')} cache"
+            items = d.get("benchmarks", {})
+        if not items:
+            continue
+        order = (0 if old else 1, HISTORY.index(name) if name in HISTORY else len(HISTORY), name)
+        groups.setdefault((platform, kind), []).append({
+            "order": order, "name": name, "path": rel, "old": old, "items": items,
+            "sha": env.get("scrutate_sha256"), "date": env.get("date"),
+        })
+    for runs in groups.values():
+        runs.sort(key=lambda r: r["order"])
+    return dict(sorted(groups.items()))
+
+
+def norm(item):
+    """(ratio, lo, hi, status, best) for a leaderboard benchmark or an indexed comparison."""
+    ci = item.get("ci95") or [None, None]
+    return item.get("ratio"), ci[0], ci[1], item.get("status", "?"), item.get("best_competitor") or item.get("best"), item.get("why")
+
+
+def fmt(x):
+    return "-" if x is None else f"{x:.3f}" if x >= 0.01 else f"{x:.2g}"
+
+
+def strip_chart(cells, lo_d, hi_d, labels):
+    """Small SVG: x = run, y = ratio on a log scale, with a line at 1."""
+    n = len(cells)
+    w, h, pad = 24 + 44 * n, 64, 10
+    step = (w - 2 * pad) / max(n, 1)
+    y = lambda v: pad + (h - 2 * pad) * (math.log(hi_d) - math.log(min(max(v, lo_d), hi_d))) / (math.log(hi_d) - math.log(lo_d))
+    out = [f'<svg viewBox="0 0 {w} {h}" class="strip" role="img" aria-label="ratio per run">',
+           f'<line x1="{pad}" x2="{w - pad}" y1="{y(1):.1f}" y2="{y(1):.1f}" class="one"/>',
+           f'<text x="0" y="{y(1) + 4:.1f}" class="axis">1</text>']
+    for i, c in enumerate(cells):
+        cx = pad + step * (i + 0.5)
+        if c is None:
+            out.append(f'<text x="{cx:.1f}" y="{h - 2}" class="miss">.</text>')
+            continue
+        r, lo, hi, st, best, why = c
+        tip = html.escape(f"{labels[i]}: " + (f"{fmt(r)} [{fmt(lo)}, {fmt(hi)}] vs {best}, {st}" if r is not None else f"{st}: {why or 'no ratio'}"))
+        cls = st.lower() if st in STATUSES else "other"
+        out.append(f'<g class="{cls}"><title>{tip}</title>')
+        out.append(f'<rect x="{cx - step / 2:.1f}" y="0" width="{step:.1f}" height="{h}" class="hit"/>')
+        if r is None:
+            out.append(f'<text x="{cx:.1f}" y="{h / 2 + 4:.1f}" class="glyph">x</text></g>')
+            continue
+        if lo is not None and hi is not None:
+            out.append(f'<line x1="{cx:.1f}" x2="{cx:.1f}" y1="{y(hi):.1f}" y2="{y(lo):.1f}" class="ci"/>')
+        out.append(f'<circle cx="{cx:.1f}" cy="{y(r):.1f}" r="4" class="dot"/></g>')
+    out.append("</svg>")
+    return "".join(out)
+
+
+def section(platform, kind, runs):
+    labels = [r["name"] + (f" ({r['sha'][:8]})" if r["sha"] else "") for r in runs]
+    keys = []
+    for r in runs:
+        keys += [k for k in r["items"] if k not in keys]
+    vals = [v for r in runs for it in r["items"].values() for v in norm(it)[:3] if isinstance(v, (int, float)) and v > 0]
+    lo_d, hi_d = min(vals + [1.0]) / 1.15, max(vals + [1.0]) * 1.15
+    o = [f'<section><h2>{html.escape(platform)}: {html.escape(kind)}</h2>']
+    o.append('<ol class="runs">' + "".join(
+        f'<li><code>{html.escape(r["path"])}</code> binary {("<code>" + r["sha"][:12] + "</code>") if r["sha"] else "not recorded"}'
+        + (f', {html.escape(r["date"])}' if r["date"] else "") + "</li>" for r in runs) + "</ol>")
+    o.append("<h3>Status counts per run</h3><div class='counts'>")
+    for r, lab in zip(runs, labels):
+        c = {s: 0 for s in STATUSES}
+        for it in r["items"].values():
+            st = norm(it)[3]
+            c[st if st in c else "FAIL"] += 1
+        total = sum(c.values())
+        bar = "".join(f'<span class="seg {s.lower()}" style="flex:{v}" title="{s} {v}"></span>' for s, v in c.items() if v)
+        text = ", ".join(f"{s} {v}" for s, v in c.items() if v)
+        o.append(f'<div class="crow"><div class="clab">{html.escape(lab)}</div><div class="bar">{bar}</div>'
+                 f'<div class="ctext">{text} (of {total})</div></div>')
+    o.append("</div>")
+    o.append(f"<h3>Ratio to the best competitor, run by run</h3><p class='note'>Log scale from {fmt(lo_d)} to {fmt(hi_d)}; "
+             "below the line at 1 scrutate is faster (or smaller). Vertical bar: 95% interval. A dot means no run measured it; "
+             "x means the run has a status but no ratio. Hover a mark for its numbers.</p><div class='bench'>")
+    for k in keys:
+        cells = [norm(r["items"][k]) if k in r["items"] else None for r in runs]
+        last = next(c for c in reversed(cells) if c)
+        st = last[3]
+        o.append(f'<div class="brow"><div class="bname">{html.escape(k)}</div>{strip_chart(cells, lo_d, hi_d, labels)}'
+                 f'<div class="blast"><span class="tag {st.lower()}">{MARK.get(st, "?")}</span> {st} {fmt(last[0])}</div></div>')
+    o.append("</div><details><summary>Table view</summary><div class='scroll'><table><thead><tr><th>Benchmark</th>"
+             + "".join(f"<th>{html.escape(l)}</th>" for l in labels) + "</tr></thead><tbody>")
+    for k in keys:
+        o.append(f"<tr><th>{html.escape(k)}</th>")
+        for r in runs:
+            if k not in r["items"]:
+                o.append("<td>-</td>")
+                continue
+            rr, lo, hi, st, best, _ = norm(r["items"][k])
+            ci = f" [{fmt(lo)}, {fmt(hi)}]" if lo is not None else ""
+            o.append(f"<td>{fmt(rr)}{ci} {html.escape(str(best or ''))} <b>{st}</b></td>")
+        o.append("</tr>")
+    o.append("</tbody></table></div></details></section>")
+    return "\n".join(o)
+
+
+CSS = """
+:root{--bg:#fcfcfb;--ink:#0b0b0b;--muted:#5f5e58;--grid:#e1e0d9;--axis:#c3c2b7;--pass:#0ca30c;--partial:#fab219;
+--blocked:#8a8980;--fail:#d03b3b;--card:#f3f2ee}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1a1a19;--ink:#ecebe6;--muted:#a3a29a;
+--grid:#2c2c2a;--axis:#55544f;--blocked:#8f8e86;--card:#232321}}
+:root[data-theme="dark"]{--bg:#1a1a19;--ink:#ecebe6;--muted:#a3a29a;--grid:#2c2c2a;--axis:#55544f;--blocked:#8f8e86;--card:#232321}
+*{box-sizing:border-box}
+body{margin:0;padding:16px;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:980px;margin:0 auto}
+h1{font-size:1.5rem;margin:.2em 0}h2{font-size:1.15rem;margin:2em 0 .4em;border-bottom:1px solid var(--grid);padding-bottom:.3em}
+h3{font-size:1rem;margin:1.4em 0 .4em}
+.note,.runs,.legend{color:var(--muted);font-size:.88rem}
+code{font-size:.85em;overflow-wrap:anywhere}
+.legend span{margin-right:1em;white-space:nowrap}
+.crow,.brow{display:grid;grid-template-columns:minmax(0,15rem) minmax(0,1fr) minmax(0,11rem);gap:.6rem;align-items:center;padding:.25rem 0;
+border-bottom:1px solid var(--grid)}
+.clab,.bname{font-size:.85rem;overflow-wrap:anywhere}
+.ctext,.blast{font-size:.82rem;color:var(--muted)}
+.bar{display:flex;gap:2px;height:14px}
+.seg{border-radius:3px}
+.seg.pass,.tag.pass{background:var(--pass)}.seg.partial,.tag.partial{background:var(--partial)}
+.seg.blocked,.tag.blocked{background:var(--blocked)}.seg.fail,.tag.fail{background:var(--fail)}
+.tag{display:inline-block;min-width:1.4em;text-align:center;border-radius:4px;color:#fff;font-weight:600;font-size:.75rem}
+.tag.partial{color:#0b0b0b}
+.strip{height:64px;width:auto;max-width:100%;display:block}
+.strip .one{stroke:var(--axis);stroke-width:1;stroke-dasharray:3 3}
+.strip .hit{fill:transparent}
+.strip g:hover .hit{fill:var(--grid)}
+.strip .ci{stroke-width:2;stroke-linecap:round;opacity:.55}
+.strip .dot{stroke:var(--bg);stroke-width:2}
+.strip .pass .ci{stroke:var(--pass)}.strip .pass .dot{fill:var(--pass)}
+.strip .partial .ci{stroke:var(--partial)}.strip .partial .dot{fill:var(--partial)}
+.strip .blocked .ci{stroke:var(--blocked)}.strip .blocked .dot{fill:var(--blocked)}
+.strip .fail .ci{stroke:var(--fail)}.strip .fail .dot{fill:var(--fail)}
+.strip .axis{fill:var(--muted);font-size:10px}
+.strip .glyph,.strip .miss{fill:var(--muted);font-size:12px;text-anchor:middle}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;font-size:.8rem}td,th{border:1px solid var(--grid);padding:.25rem .4rem;text-align:left;vertical-align:top}
+thead th{background:var(--card)}
+details{margin-top:1rem}summary{cursor:pointer}
+@media (max-width:640px){.crow,.brow{grid-template-columns:minmax(0,1fr)}}
+"""
+
+
+def main() -> int:
+    here = os.path.dirname(os.path.abspath(__file__))
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--results", default=os.path.join(here, "results"))
+    ap.add_argument("--out", default=os.path.join(here, "..", "docs", "dashboard.html"))
+    a = ap.parse_args()
+    groups = load_runs(a.results)
+    if not groups:
+        raise SystemExit(f"no leaderboard or indexed results under {a.results}")
+    legend = "".join(f'<span><span class="tag {s.lower()}">{MARK[s]}</span> {s}</span>' for s in STATUSES)
+    body = [
+        "<h1>Scrutate benchmark dashboard</h1>",
+        "<p class='note'>Generated by <code>bench/make_dashboard.py</code> from the raw results in <code>bench/results/</code>. "
+        "Ratio = median(scrutate) / median(best competitor). PASS: the 95% interval lies below 1. FAIL: above 1. PARTIAL: it contains 1. "
+        "BLOCKED: a tie at the hardware limit. Runs are listed oldest first; runs under <code>superseded/</code> used older binaries "
+        "or an older harness. The machine was shared, so no row is a #1 claim.</p>",
+        f"<p class='legend'>{legend}</p>",
+    ]
+    body += [section(p, k, runs) for (p, k), runs in groups.items()]
+    page = ("<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+            f"<title>Scrutate benchmarks</title><style>{CSS}</style></head><body><main>{''.join(body)}</main></body></html>\n")
+    with open(a.out, "w") as f:
+        f.write(page)
+    print(f"wrote {a.out} ({sum(len(r) for r in groups.values())} runs in {len(groups)} groups)", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

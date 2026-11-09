@@ -11,6 +11,24 @@ license.workspace = true
 name = "scrutate"
 path = "src/main.rs"
 
+[package.metadata.deb]
+maintainer = "Cris Nahine <80492222+crisnahine@users.noreply.github.com>"
+section = "devel"
+extended-description = "Instant grep-class search of any repository without an index, plus a persistent index for ranked search, symbols, callers and imports. One CLI and an MCP server."
+assets = [
+    ["target/release/scrutate", "usr/bin/", "755"],
+    ["../../LICENSE", "usr/share/doc/scrutate/", "644"],
+    ["../../README.md", "usr/share/doc/scrutate/", "644"],
+]
+
+[package.metadata.generate-rpm]
+summary = "Instant code search and a persistent code-intelligence index"
+assets = [
+    { source = "target/release/scrutate", dest = "/usr/bin/scrutate", mode = "755" },
+    { source = "../../LICENSE", dest = "/usr/share/licenses/scrutate/LICENSE", mode = "644", doc = true },
+    { source = "../../README.md", dest = "/usr/share/doc/scrutate/README.md", mode = "644", doc = true },
+]
+
 [dependencies]
 aho-corasick = "1"
 anyhow = "1"

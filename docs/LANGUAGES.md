@@ -58,7 +58,7 @@ Engine A (instant search) needs none of this: it searches every readable file of
 | nix | `.nix` | key | yes | yes | no | `tests/samples/sample.nix` |
 | objc | `.mm` | class, function, method | yes | yes | no | `tests/samples/sample.mm` |
 | ocaml (extra-langs) | `.ml` | function, type | yes | no | no | `tests/samples_extra/sample.ml` |
-| ocaml_interface (extra-langs) | `.mli` | not verified by a sample | no | no | no | registry only |
+| ocaml_interface (extra-langs) | `.mli` | function, interface, type | no | no | no | `tests/samples_extra/sample.mli` |
 | odin (extra-langs) | `.odin` | function, struct | yes | no | no | `tests/samples_extra/sample.odin` |
 | pascal | `.pas .dpr .lpr` | function, type | yes | no | no | `tests/samples/sample.pas` |
 | php | `.php .phtml` | class, enum, function, interface, method, trait | yes | yes | no | `tests/samples/sample.php` |
@@ -88,7 +88,7 @@ Engine A (instant search) needs none of this: it searches every readable file of
 | yaml | `.yaml .yml` | key | no | no | no | `tests/samples/sample.yaml` |
 | zig | `.zig .zon` | function, type | yes | yes | no | `tests/samples/sample.zig` |
 
-60 grammars in the default build, 13 more with `--features extra-langs`; 72 verified by snapshot samples. Call-edge and import extraction are declared per language by the registry rules; the sample for a language exercises them when its `expected.json` entry lists methods/functions and the file contains imports.
+60 grammars in the default build, 13 more with `--features extra-langs`; 73 verified by snapshot samples. Call-edge and import extraction are declared per language by the registry rules; the sample for a language exercises them when its `expected.json` entry lists methods/functions and the file contains imports.
 
 ## Heuristic tier (samples in the snapshot test)
 
@@ -123,6 +123,7 @@ Off by default because of their size. Each has a sample in `crates/scrutate/test
 | `sample.fs` | type `Point`, function `distance`, function `scale`, function `origin` |
 | `sample.ll` | function `add`, function `main` |
 | `sample.ml` | type `point`, function `distance`, function `distance.dx`, function `distance.dy`, function `Shape.area_of_square`, function `main` |
+| `sample.mli` | type `t`, type `error`, interface `ORDERED`, type `ORDERED.key`, function `ORDERED.compare`, type `Priority.q`, function `Priority.push`, function `create`, function `push`, function `pop` |
 | `sample.odin` | struct `Point`, function `distance`, function `main` |
 | `sample.qml` | class `Rectangle`, method `Rectangle.toggleColor`, class `Rectangle.MouseArea` |
 | `sample.tla` | function `Counter.Init`, function `Counter.Next`, function `Counter.Spec` |

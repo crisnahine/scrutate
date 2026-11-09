@@ -28,7 +28,7 @@ fn extra_language_samples_yield_the_recorded_symbols() {
     }
     let expected: BTreeMap<String, Vec<(String, String)>> = serde_json::from_str(&fs::read_to_string(&expected_path).unwrap()).unwrap();
     assert_eq!(got, expected);
-    assert_eq!(got.len(), 12);
+    assert_eq!(got.len(), 13);
 }
 
 fn src_name(p: &Path) -> String {

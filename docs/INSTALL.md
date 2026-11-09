@@ -78,5 +78,8 @@ indexed and the configuration directory you may have created.
 
 ## Package managers
 
-Homebrew, Scoop, winget, Debian/RPM packages and a `cargo install scrutate` crates.io release are
-planned for a later release (docs/ROADMAP.md); none exists for 0.1.0.
+None is published for 0.1.0. The package definitions are in `packaging/`: a Homebrew formula, a
+Scoop manifest, winget manifests, and `.deb`/`.rpm` builds from `crates/scrutate/Cargo.toml`.
+`packaging/README.md` says how each was tested and what is left to do at release time. A
+`cargo install scrutate` from crates.io is not possible yet: the bundled models are too large for a
+crates.io upload.

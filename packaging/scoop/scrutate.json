@@ -1,0 +1,35 @@
+{
+    "version": "0.1.0",
+    "description": "Instant code search and a persistent code-intelligence index",
+    "homepage": "https://github.com/crisnahine/scrutate",
+    "license": "Apache-2.0",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/crisnahine/scrutate/releases/download/v0.1.0/scrutate-0.1.0-x86_64-pc-windows-msvc.zip",
+            "hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "extract_dir": "scrutate-0.1.0-x86_64-pc-windows-msvc"
+        },
+        "arm64": {
+            "url": "https://github.com/crisnahine/scrutate/releases/download/v0.1.0/scrutate-0.1.0-aarch64-pc-windows-msvc.zip",
+            "hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "extract_dir": "scrutate-0.1.0-aarch64-pc-windows-msvc"
+        }
+    },
+    "bin": "scrutate.exe",
+    "checkver": "github",
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/crisnahine/scrutate/releases/download/v$version/scrutate-$version-x86_64-pc-windows-msvc.zip",
+                "extract_dir": "scrutate-$version-x86_64-pc-windows-msvc"
+            },
+            "arm64": {
+                "url": "https://github.com/crisnahine/scrutate/releases/download/v$version/scrutate-$version-aarch64-pc-windows-msvc.zip",
+                "extract_dir": "scrutate-$version-aarch64-pc-windows-msvc"
+            }
+        },
+        "hash": {
+            "url": "$baseurl/SHA256SUMS"
+        }
+    }
+}
