@@ -13,13 +13,38 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..")
 
 PURPOSE = {
-    "aho-corasick": "multi-pattern prefilter for fuzzy search", "anyhow": "error type", "blake2": "token hashing (63-bit keys, same as the reference)",
-    "clap": "command-line parsing", "clap_complete": "shell completions", "flate2": "zlib for chunk text and .npz (pure Rust backend)",
-    "grep-matcher": "matcher trait shared with grep-searcher", "grep-regex": "regex matcher with line-oriented optimisations", "grep-searcher": "buffered/mmap line searching, context, binary detection",
-    "half": "float16 vectors", "ignore": "parallel, ignore-aware directory walking", "matrixmultiply": "sgemm for k-means (pure Rust)", "memchr": "newline and NUL scans when one large file is searched in ranges", "memmap2": "memory-mapped segments", "notify": "filesystem events for `watch` and `serve --watch` (FSEvents, inotify, ReadDirectoryChangesW, kqueue)",
-    "rayon": "data parallelism (indexing, structural search)", "regex-syntax": "pattern syntax trees: the text index's trigram conditions and the suffix literals of a regex", "regex": "identifier/heuristic patterns", "rusqlite": "SQLite (bundled)", "rust-stemmers": "Snowball English stemmer",
-    "serde": "serialisation", "serde_json": "JSON output / MCP / config", "termcolor": "coloured terminal output", "sha1": "file content hashes", "toml": "configuration files",
-    "tree-sitter": "incremental parsing runtime", "proptest": "property-based tests (dev only)", "pyo3": "Python bindings (optional crate)",
+    "aho-corasick": "multi-pattern prefilter for fuzzy search",
+    "anyhow": "error type",
+    "blake2": "token hashing (63-bit keys, same as the reference)",
+    "clap": "command-line parsing",
+    "clap_complete": "shell completions",
+    "flate2": "zlib for chunk text and .npz (pure Rust backend)",
+    "grep-matcher": "matcher trait shared with grep-searcher",
+    "grep-regex": "regex matcher with line-oriented optimisations",
+    "grep-searcher": "buffered/mmap line searching, context, binary detection",
+    "grep-cli": "runs the system's decompression tools for `grep -z` (bzip2, xz, zstd, lz4, brotli, .Z)",
+    "grep-pcre2": "PCRE2 matcher for `grep -P` (look-around, backreferences)",
+    "tar": "tar archive members for `grep -z`",
+    "zip": "zip archive members for `grep -z` (stored and deflate)",
+    "half": "float16 semantic model weights",
+    "ignore": "parallel, ignore-aware directory walking",
+    "matrixmultiply": "sgemm for k-means (pure Rust)",
+    "memchr": "newline and NUL scans when one large file is searched in ranges",
+    "memmap2": "memory-mapped segments",
+    "notify": "filesystem events for `watch` and `serve --watch` (inotify, ReadDirectoryChangesW; polling on macOS)",
+    "proptest": "property-based tests (dev only)",
+    "pyo3": "Python bindings (optional crate)",
+    "rayon": "data parallelism (indexing, structural search)",
+    "regex": "identifier/heuristic patterns",
+    "regex-syntax": "pattern syntax trees: the text index's trigram conditions and the suffix literals of a regex",
+    "rusqlite": "SQLite (bundled)",
+    "rust-stemmers": "Snowball English stemmer",
+    "serde": "serialisation",
+    "serde_json": "JSON output / MCP / config",
+    "sha1": "file content hashes",
+    "termcolor": "coloured terminal output",
+    "toml": "configuration files",
+    "tree-sitter": "incremental parsing runtime",
 }
 
 
@@ -48,7 +73,8 @@ def main() -> int:
            "- Python ≥ 3.9 is needed only for the optional bindings, the reference implementation and the benchmark/test harnesses.\n",
            "## Direct dependencies of the `scrutate` crate\n",
            "| Crate | Version (locked) | Licence | Purpose | Optional |", "|---|---|---|---|---|"]
-    direct = sorted(core["dependencies"], key=lambda d: d["name"])
+    # one row per crate: a crate declared twice (per target, with other features) is one dependency
+    direct = sorted({d["name"]: d for d in core["dependencies"]}.values(), key=lambda d: d["name"])
     grammars = []
     for d in direct:
         if d["kind"] == "dev":

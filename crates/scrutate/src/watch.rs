@@ -5,21 +5,28 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(not(target_os = "macos"))]
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
-use anyhow::{bail, Context, Result};
+#[cfg(not(target_os = "macos"))]
+use anyhow::bail;
+use anyhow::{Context, Result};
 use ignore::gitignore::Gitignore;
-use notify::{Event, EventKind, RecursiveMode, Watcher};
+use notify::{Event, EventKind};
+#[cfg(not(target_os = "macos"))]
+use notify::{RecursiveMode, Watcher};
 
 /// A burst of events ends after this much quiet.
 pub const DEBOUNCE: Duration = Duration::from_millis(200);
 /// A burst that never goes quiet is still flushed this often.
+#[cfg(not(target_os = "macos"))]
 const MAX_WAIT: Duration = Duration::from_secs(2);
 
 /// Decides whether a changed path can change what one of the indexes holds: Engine B indexes the
 /// `index::list_files` set (hidden files included, `SKIP_DIRS` pruned), the text index the files of
 /// Engine A's default walk (hidden files skipped). Both honour the same ignore files.
+#[cfg_attr(target_os = "macos", allow(dead_code))] // the macOS watcher polls the index instead
 pub struct Filter {
     root: PathBuf,
     skip: Vec<String>,
@@ -30,6 +37,7 @@ pub struct Filter {
     dirs: HashMap<PathBuf, Vec<Gitignore>>,
 }
 
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 impl Filter {
     pub fn new(root: &Path) -> Filter {
         let mut skip: Vec<String> = crate::index::SKIP_DIRS.iter().map(|s| s.to_string()).collect();
@@ -117,14 +125,10 @@ impl Filter {
 /// Watch `root` until `stop` is set, calling `on_change` once per debounced burst of relevant
 /// events. `on_ready` runs once the watch is in place. Errors from `on_change` are reported and the
 /// watch goes on.
+#[cfg(not(target_os = "macos"))]
 pub fn run(root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), mut on_change: impl FnMut() -> Result<()>) -> Result<()> {
     let root = std::fs::canonicalize(root).with_context(|| format!("watch {}", root.display()))?;
     let (tx, rx) = mpsc::channel();
-    // macOS polls: the FSEvents backend links CoreServices into every scrutate command (about 1 ms
-    // of start-up and 4 MB), not only into `watch`
-    #[cfg(target_os = "macos")]
-    let mut watcher = notify::PollWatcher::new(tx, notify::Config::default().with_poll_interval(Duration::from_secs(2))).context("start the file watcher")?;
-    #[cfg(not(target_os = "macos"))]
     let mut watcher = notify::recommended_watcher(tx).context("start the file watcher")?;
     watcher.watch(&root, RecursiveMode::Recursive).with_context(|| format!("watch {}", root.display()))?;
     let mut filter = Filter::new(&root);
@@ -150,6 +154,32 @@ pub fn run(root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), mut on_chang
         if let Err(e) = on_change() {
             eprintln!("[scrutate] update failed: {e:#}");
         }
+    }
+    Ok(())
+}
+
+/// macOS: the FSEvents backend would link CoreServices into every scrutate command (about 1 ms of
+/// start-up and 4 MB), and a poller that compares whole-second modification times misses quick
+/// edits. So the index's own incremental check runs on a timer: it compares sizes and nanosecond
+/// times, and the pause grows with what a check costs (about a tenth of the time at most).
+#[cfg(target_os = "macos")]
+pub fn run(root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), mut on_change: impl FnMut() -> Result<()>) -> Result<()> {
+    std::fs::canonicalize(root).with_context(|| format!("watch {}", root.display()))?;
+    on_ready();
+    let mut pause = Duration::from_secs(1);
+    while !stop.load(Ordering::Relaxed) {
+        let t0 = Instant::now();
+        while t0.elapsed() < pause && !stop.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        if stop.load(Ordering::Relaxed) {
+            break;
+        }
+        let t1 = Instant::now();
+        if let Err(e) = on_change() {
+            eprintln!("[scrutate] update failed: {e:#}");
+        }
+        pause = (t1.elapsed() * 10).clamp(Duration::from_secs(1), Duration::from_secs(30));
     }
     Ok(())
 }

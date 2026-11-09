@@ -8,17 +8,16 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, Result};
-use half::f16;
 use rayon::prelude::*;
 use rusqlite::{params, Connection, OptionalExtension};
 use sha1::{Digest, Sha1};
 
-use crate::lex::{merge_segments, pack_bags, FileLex, LexStore, SegmentBuilder, NF};
+use crate::lex::{merge_segments, pack_bags, quantize, FileLex, LexStore, QVecs, SegmentBuilder, NF};
 use crate::parse::{is_indexable, parse_file};
 use crate::semantic::SemanticModel;
 use crate::text::{is_test_path, name_key, tokenize2, BODY_CAP};
 
-pub const SCHEMA_VERSION: u32 = 12;
+pub const SCHEMA_VERSION: u32 = 13;
 pub const MAX_SEGMENTS: usize = 6; // more live segments than this triggers a merge of the small ones
 pub const SMALL_INDEX_ROWS: usize = 8000; // an index this small is kept as ONE segment
 /// Rows per segment flushed during one update: bounds the memory of building the inverted index
@@ -289,7 +288,7 @@ pub fn build_rows(rel: &str, source: &str, model: Option<&SemanticModel>) -> (Ve
     let path_bag = bag(tokenize2(&path_text, None).0.into_iter(), None);
     let mut rows = Vec::new();
     let mut bags: Vec<Vec<HashMap<String, u32>>> = Vec::new();
-    let mut vecs: Vec<f16> = Vec::new();
+    let mut vecs = QVecs::default();
     let k = model.map(|m| m.k).unwrap_or(0);
     let prof = prof::enabled();
     let t = Instant::now();
@@ -321,20 +320,20 @@ pub fn build_rows(rel: &str, source: &str, model: Option<&SemanticModel>) -> (Ve
         }
         let t = Instant::now();
         if let Some(m) = model {
-            let mut z = vec![f16::ZERO; 2 * k];
+            let mut z = vec![0f32; 2 * k];
             if c.kind != "window" {
                 if let Some(za) = m.encode_chunk(&name_s, &qual_s, &sig_s, &doc_s, &[]) {
-                    for j in 0..k {
-                        z[j] = f16::from_f32(za[j]);
-                    }
+                    z[..k].copy_from_slice(&za);
                 }
             }
             if let Some(zb) = m.encode_chunk(&[], &[], &[], &[], &body_s) {
-                for j in 0..k {
-                    z[k + j] = f16::from_f32(zb[j]);
-                }
+                z[k..].copy_from_slice(&zb);
             }
-            vecs.extend(z);
+            let mut q = vec![0i8; 2 * k];
+            let (qa, qb) = q.split_at_mut(k);
+            vecs.scale.push(quantize(&z[..k], qa));
+            vecs.scale.push(quantize(&z[k..], qb));
+            vecs.q.extend(q);
         }
         if prof {
             prof::add(&prof::ENCODE, t);
@@ -374,7 +373,7 @@ enum Processed {
     Gone,
     Skip(u64, i64),
     Same(u64, i64),
-    New(u64, i64, String, Vec<NewRow>, FileLex, Vec<(i64, String)>),
+    New(u64, i64, String, Vec<NewRow>, Box<FileLex>, Vec<(i64, String)>),
 }
 
 fn mtime_ns(md: &std::fs::Metadata) -> i64 {
@@ -402,7 +401,7 @@ fn process(root: &Path, rel: &str, known_hash: Option<&str>, model: Option<&Sema
     }
     let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| build_rows(rel, &source, model)));
     match built {
-        Ok((rows, lex, imports)) => Processed::New(size, mtime, h, rows, lex, imports),
+        Ok((rows, lex, imports)) => Processed::New(size, mtime, h, rows, Box::new(lex), imports),
         Err(_) => {
             eprintln!("[scrutate] skipped {rel}: parser failure");
             Processed::Skip(size, mtime)
@@ -824,7 +823,7 @@ impl Index {
                                 ins.execute(params![rel, module, line])?;
                             }
                         }
-                        builder.add_file(first, lex);
+                        builder.add_file(first, *lex);
                         self.db.execute("INSERT OR REPLACE INTO files(path,size,mtime_ns,hash) VALUES(?1,?2,?3,?4)", params![rel, size as i64, mtime, h])?;
                         st.files_changed += 1;
                         changed = true;

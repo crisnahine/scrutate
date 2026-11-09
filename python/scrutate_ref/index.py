@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .lex import LexStore, SegmentBuilder, merge_segments, pack_bags
+from .lex import LexStore, SegmentBuilder, merge_segments, pack_bags, quantize
 from .parse import is_indexable, parse_source
 from .semantic import SemanticModel, default_model, default_model_path
 from .text import BODY_CAP, is_test_path, name_key, tokenize2
@@ -34,7 +34,7 @@ def unpack_text(blob) -> str:
         return blob
     return zlib.decompress(blob).decode("utf8")
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 MAX_SEGMENTS = 6          # more live segments than this triggers a merge of the small ones
 SMALL_INDEX_ROWS = 8000   # an index this small is kept as ONE segment (a rewrite costs a few ms)
 GC_AGE_S = 600            # unreferenced segment directories younger than this may be in flight
@@ -129,7 +129,7 @@ def build_rows(rel: str, source: str, model: SemanticModel | None):
         bags.append((Counter(name_s + name_w), Counter(qual_s + qual_w), _bag(sig_s + sig_w, TF_CAP),
                      _bag(doc_s + doc_w, TF_CAP), _bag(body_s + body_w, TF_CAP), path_bag))
         if model is not None:
-            z = np.zeros((2, model.k), np.float16)
+            z = np.zeros((2, model.k), np.float32)
             if c.kind != "window":
                 za = model.encode_chunk(name_s, qual_s, sig_s, doc_s, [])
                 if za is not None:
@@ -140,7 +140,7 @@ def build_rows(rel: str, source: str, model: SemanticModel | None):
             vecs.append(z)
         rows.append(((c.kind, c.name, c.qualname, name_key(c.name), name_key(c.qualname), c.start, c.end,
                       is_test, len(doc_s), len(body_s), pack_text(c.text), " ".join(dict.fromkeys(name_s))), sorted(c.calls)))
-    return rows, pack_bags(bags, np.stack(vecs) if vecs else None)
+    return rows, pack_bags(bags, quantize(np.stack(vecs)) if vecs else None)
 
 
 def decode_source(raw):

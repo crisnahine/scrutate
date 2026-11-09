@@ -202,7 +202,7 @@ pub fn similar(s: &mut Searcher, target: &str, k: usize) -> Result<Vec<(Hit, f32
         let toks: HashSet<String> = tokenize2(&r.text, Some(BODY_CAP)).0.into_iter().collect();
         let inter = my_tokens.intersection(&toks).count() as f32;
         let union = my_tokens.union(&toks).count().max(1) as f32;
-        let cos = cos.clamp(-1.0, 1.0); // float16 storage can push a unit dot product a hair past 1
+        let cos = cos.clamp(-1.0, 1.0); // quantized storage can push a unit dot product a hair past 1
         let mut h = Hit::from_row(&r, true);
         h.score = cos as f64;
         out.push((h, cos, inter / union));

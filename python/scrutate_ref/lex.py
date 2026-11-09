@@ -54,10 +54,24 @@ class FileLex:
     keys: list                # per field: int64 [E]   term keys, chunk after chunk
     tf: list                  # per field: uint8 [E]   term frequencies
     cnt: list                 # per field: int32 [m]   distinct terms per chunk
-    vec: np.ndarray | None    # float16 [m, 2, k]
+    vec: tuple | None         # (int8 [m, 2, k], float32 scale [m, 2]), see quantize
 
 
-def pack_bags(bags: list, vec: np.ndarray | None) -> FileLex:
+def quantize(v: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """float32 [..., k] -> (int8 [..., k], float32 scale [...]): symmetric, one scale per vector,
+    value = q * scale. All steps are single float32 operations so the Rust engine rounds the same."""
+    v = np.asarray(v, np.float32)
+    s = (np.abs(v).max(axis=-1) / np.float32(127)).astype(np.float32)
+    safe = np.where(s > 0, s, np.float32(1))
+    q = np.clip(np.rint(v / safe[..., None]), -127, 127).astype(np.int8)
+    return q, s
+
+
+def dequantize(q: np.ndarray, s: np.ndarray) -> np.ndarray:
+    return q.astype(np.float32) * s[..., None]
+
+
+def pack_bags(bags: list, vec: tuple | None) -> FileLex:
     """bags[i][c] is a {token: tf} dict of chunk i, field c."""
     m = len(bags)
     dl = np.zeros(m, np.float32)
@@ -96,9 +110,10 @@ class Segment:
         self.doc = [_load(os.path.join(path, f"doc{c}.npy")) for c in range(NF)]
         self.tf = [_load(os.path.join(path, f"tf{c}.npy")) for c in range(NF)]
         vp = os.path.join(path, "vec.npy")
-        # float16 [n, 2, k]; in *cluster order* when the segment has an inverted-file index (see
-        # build_ivf), else in row order. `vec_rows` maps segment rows to it.
+        # int8 [n, 2, k] and float32 scales [n, 2]; in *cluster order* when the segment has an
+        # inverted-file index (see build_ivf), else in row order. `vec_rows` maps segment rows to it.
         self.vec = _load(vp) if os.path.exists(vp) else None
+        self.vscale = _load(os.path.join(path, "vscale.npy")) if self.vec is not None else None
         self.n = len(self.ids)
         self.ivf = os.path.exists(os.path.join(path, "ivf_order.npy"))
         if self.ivf:
@@ -107,13 +122,21 @@ class Segment:
             self.ivf_order = _load(os.path.join(path, "ivf_order.npy"))  # segment row at each sorted position
             self.ivf_inv = _load(os.path.join(path, "ivf_inv.npy"))      # sorted position of each segment row
 
-    def vec_rows(self, rows: np.ndarray) -> np.ndarray:
-        """float16 [len(rows), 2, k] vectors of the given segment rows."""
+    def vec_at(self, pos) -> np.ndarray:
+        """float32 [len(pos), 2, k] vectors at the given stored positions."""
+        return dequantize(np.asarray(self.vec)[pos], np.asarray(self.vscale)[pos])
+
+    def raw_rows(self, rows: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """(int8 [len(rows), 2, k], float32 [len(rows), 2]) as stored, for the given segment rows."""
         pos = np.asarray(self.ivf_inv)[rows] if self.ivf else rows
-        return np.asarray(self.vec)[pos]
+        return np.asarray(self.vec)[pos], np.asarray(self.vscale)[pos]
+
+    def vec_rows(self, rows: np.ndarray) -> np.ndarray:
+        """float32 [len(rows), 2, k] vectors of the given segment rows."""
+        return dequantize(*self.raw_rows(rows))
 
     def vec_in_row_order(self) -> np.ndarray:
-        """All vectors, as float16 [n, 2, k] in segment-row order."""
+        """All vectors, as float32 [n, 2, k] in segment-row order."""
         return self.vec_rows(np.arange(self.n))
 
     def locate(self, keys: np.ndarray) -> np.ndarray:
@@ -125,10 +148,11 @@ class Segment:
         return np.where(self.keys[jc] == keys, jc, -1)
 
 
-def write_segment(dest: str, ids: np.ndarray, dl: np.ndarray, fields: list, vec: np.ndarray | None,
+def write_segment(dest: str, ids: np.ndarray, dl: np.ndarray, fields: list, vec: tuple | None,
                   row_sorted: bool) -> None:
     """fields[c] = (row int32[E], key int64[E], tf uint8[E]); if `row_sorted` the entries are
-    already in ascending row order (true for freshly indexed chunks, false when merging)."""
+    already in ascending row order (true for freshly indexed chunks, false when merging).
+    `vec` = (int8 [n, 2, k], float32 [n, 2]) from `quantize`."""
     n = len(ids)
     tmp = dest + ".tmp"
     shutil.rmtree(tmp, ignore_errors=True)
@@ -164,11 +188,13 @@ def write_segment(dest: str, ids: np.ndarray, dl: np.ndarray, fields: list, vec:
     save("ids", np.asarray(ids, np.int64))
     save("dl", np.asarray(dl, np.float32))
     if vec is not None:
-        vec = np.asarray(vec, np.float16)
+        q, sc = np.asarray(vec[0], np.int8), np.asarray(vec[1], np.float32)
         if n >= IVF_MIN_ROWS:
-            order = build_ivf(tmp, vec)
-            vec = np.ascontiguousarray(vec[order])  # cluster order: a probe reads one contiguous block
-        save("vec", vec)
+            order = build_ivf(tmp, dequantize(q, sc))
+            q = np.ascontiguousarray(q[order])  # cluster order: a probe reads one contiguous block
+            sc = np.ascontiguousarray(sc[order])
+        save("vec", q)
+        save("vscale", sc)
     os.replace(tmp, dest)
 
 
@@ -185,8 +211,7 @@ def build_ivf(tmp: str, vec: np.ndarray, seed: int = 0) -> np.ndarray:
     stores the vectors in that order so a query can scan a few clusters contiguously. Exact top-k
     over all rows is still available by probing every cluster."""
     n = len(vec)
-    mix = vec[:, 0].astype(np.float32)
-    mix += vec[:, 1].astype(np.float32)
+    mix = vec[:, 0] + vec[:, 1]
     unit = mix / np.maximum(np.linalg.norm(mix, axis=1), 1e-6)[:, None]
     K = int(np.clip(round(2 * math.sqrt(n)), 32, 1024))
     rng = np.random.default_rng(seed)
@@ -224,7 +249,7 @@ class SegmentBuilder:
         self.ids: list[np.ndarray] = []
         self.dl: list[np.ndarray] = []
         self.parts: list[list] = [[] for _ in range(NF)]  # per field: (first row, FileLex)
-        self.vec: list[np.ndarray] = []
+        self.vec: list[tuple] = []
         self.n = 0
 
     def add_file(self, first_id: int, lex: FileLex) -> None:
@@ -251,7 +276,8 @@ class SegmentBuilder:
                            np.concatenate(keys) if keys else np.zeros(0, np.int64),
                            np.concatenate(tfs) if tfs else np.zeros(0, np.uint8)))
         write_segment(dest, np.concatenate(self.ids), np.concatenate(self.dl), fields,
-                      np.concatenate(self.vec) if self.vec else None, row_sorted=True)
+                      (np.concatenate([v[0] for v in self.vec]), np.concatenate([v[1] for v in self.vec]))
+                      if self.vec else None, row_sorted=True)
 
 
 def merge_segments(dest: str, segs: list, alive: list) -> None:
@@ -261,8 +287,8 @@ def merge_segments(dest: str, segs: list, alive: list) -> None:
     rank = np.empty(len(order), np.int64)
     rank[order] = np.arange(len(order))
     dl = np.concatenate([np.asarray(s.dl)[a] for s, a in zip(segs, alive)])[order]
-    vecs = [s.vec_in_row_order()[a] for s, a in zip(segs, alive) if s.vec is not None]
-    vec = np.concatenate(vecs)[order] if vecs else None
+    raw = [s.raw_rows(np.flatnonzero(a)) for s, a in zip(segs, alive) if s.vec is not None]
+    vec = (np.concatenate([r[0] for r in raw])[order], np.concatenate([r[1] for r in raw])[order]) if raw else None
     fields = [([], [], []) for _ in range(NF)]
     offset = 0
     for s, a in zip(segs, alive):
@@ -280,6 +306,12 @@ def merge_segments(dest: str, segs: list, alive: list) -> None:
     cat = [(np.concatenate(r) if r else np.zeros(0, np.int32), np.concatenate(k) if k else np.zeros(0, np.int64),
             np.concatenate(t) if t else np.zeros(0, np.uint8)) for r, k, t in fields]
     write_segment(dest, ids[order], dl, cat, vec, row_sorted=False)
+
+
+def _dot64(m: np.ndarray, q: np.ndarray) -> np.ndarray:
+    """m @ q accumulated in float64 and rounded once to float32: the Rust engine sums in another
+    order, and float32 sums would let near-tied rows swap places between the two engines."""
+    return (np.asarray(m, np.float64) @ q.astype(np.float64)).astype(np.float32)
 
 
 def _top(sc: np.ndarray, limit: int, mask: np.ndarray) -> np.ndarray:
@@ -344,8 +376,7 @@ class LexStore:
         if s.vec is None or not s.n or s.ivf:
             return None
         v = s.vec_in_row_order()
-        m = v[:, 0].astype(np.float32)
-        m += v[:, 1].astype(np.float32)
+        m = v[:, 0] + v[:, 1]
         m[~alive] = 0.0
         return m
 
@@ -503,7 +534,7 @@ class LexStore:
                 m = self.mix[si]
                 if m is None:
                     continue
-                sc = m @ qz
+                sc = _dot64(m, qz)
                 sc[~self.alive[si]] = -np.inf
                 part = _top(sc, limit, np.isfinite(sc))
                 sc = sc[part]
@@ -520,7 +551,7 @@ class LexStore:
         s = self.segs[si]
         K = len(s.ivf_ptr) - 1
         if nprobe < K:
-            cs = s.ivf_cent @ qz
+            cs = _dot64(s.ivf_cent, qz)
             probe = np.argpartition(-cs, nprobe - 1)[:nprobe]
             starts, ends = s.ivf_ptr[probe], s.ivf_ptr[probe + 1]
             lens = ends - starts
@@ -529,15 +560,14 @@ class LexStore:
                 return np.zeros(0, np.int64), np.zeros(0, np.float32)
             # positions (in cluster order) of every row in the probed clusters, as one gather
             pos = np.repeat(starts - np.concatenate(([0], np.cumsum(lens)[:-1])), lens) + np.arange(total)
-            v = np.asarray(s.vec)[pos]
+            v = s.vec_at(pos)
             alive = self.alive_sorted[si][pos]
         else:
             pos = None
-            v = np.asarray(s.vec)
+            v = s.vec_at(slice(None))
             alive = self.alive_sorted[si]
-        rows = v[:, 0].astype(np.float32)
-        rows += v[:, 1].astype(np.float32)
-        sc = rows @ qz
+        rows = v[:, 0] + v[:, 1]
+        sc = _dot64(rows, qz)
         sc[~alive] = -np.inf
         part = _top(sc, limit, np.isfinite(sc))
         spos = pos[part] if pos is not None else part

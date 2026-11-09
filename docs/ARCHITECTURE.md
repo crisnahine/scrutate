@@ -29,7 +29,7 @@ capabilities those crates do not provide rather than re-implementing what they a
 - **Matching modes**: regex (Rust `regex`: linear time, no backtracking, size-limited), literal,
   **identifier** (one spelling matches every casing: `refreshToken` ≡ `refresh_token` ≡
   `REFRESH_TOKEN`; digits and acronyms are parts), **fuzzy/approximate** (Myers' bit-parallel
-  edit-distance matcher over 128-byte patterns, with a pigeonhole prefilter so only candidate lines
+  edit-distance matcher: one 128-bit word for patterns up to 128 bytes, 64-bit blocks with carries up to 4096 bytes, with a pigeonhole prefilter so only candidate lines
   pay for the DP), multiline, inverted, whole-word, smart case.
 - **Traversal**: the `ignore` parallel walker (work-stealing across threads, `.gitignore` /
   `.ignore` / global excludes, hidden files off by default, symlink loop detection, max depth and
@@ -79,8 +79,11 @@ and a sample file, not new code.
   (schema version, model signature, segment manifest, data version).
 - **Segments** (`.scrutate/seg/sNNNNNN/`): immutable, memory-mapped `.npy` arrays — Lucene-style.
   Per field (name, qualified name, signature, docs, body, path): BM25 postings (`ptr`, `doc`, `tf`)
-  over a shared 63-bit token-hash vocabulary; `ids`, `dl`; float16 semantic vectors
-  (two views per chunk: description and implementation) stored in **IVF cluster order** for
+  over a shared 63-bit token-hash vocabulary; `ids`, `dl`; int8 semantic vectors (`vec`, two
+  views per chunk: description and implementation) with one float32 scale per view (`vscale`:
+  symmetric quantisation, value = code × max|x| / 127, rounded half to even, identical in both
+  engines; half the size of the float16 vectors used up to schema 12, docs/QUALITY.md has the
+  measurements) stored in **IVF cluster order** for
   segments ≥ 20 000 rows (spherical k-means, K = clamp(2√n, 32, 1024); a query probes 48
   clusters, measured at ±0.000 MRR against the exhaustive scan).
 - **Lifecycle**: content hashing (mtime/size fast path, SHA-1 verification), one `BEGIN IMMEDIATE`
@@ -103,7 +106,8 @@ name coverage, kind, lengths, test-path flags…) go through a LightGBM LambdaRa
 exported to plain arrays and evaluated in Rust. All arithmetic is specified to the bit: the Python
 reference implementation (`python/scrutate_ref`, which also trains the models) and the Rust engine
 return identical features, scores and rankings (`bench/parity.py`: 300/300 queries; the IVF path
-200/200 on a 135k-chunk index).
+200/200 on a 135k-chunk index). Vector dot products are summed in float64 and rounded once, so
+the two engines' different summation orders cannot reorder near-tied chunks.
 
 ### Text index (`textindex.rs`)
 The indexed counterpart of Engine A, for repeated grep-style queries on large trees (the job Zoekt

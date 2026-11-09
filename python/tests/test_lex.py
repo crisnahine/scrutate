@@ -253,12 +253,21 @@ def test_statistics_patched_by_update_equal_recomputed_ones(tmp_path, monkeypatc
 
 
 def _toy_vectors(n, k, rng):
-    """Unit A/B vectors with a few clear directions, as float16 [n, 2, k]."""
+    """Unit A/B vectors with a few clear directions, quantized as stored."""
     centers = rng.standard_normal((8, k)).astype(np.float32)
     v = centers[rng.integers(0, 8, n)] + 0.3 * rng.standard_normal((n, k)).astype(np.float32)
     a = v / np.linalg.norm(v, axis=1, keepdims=True)
     b = np.roll(a, 1, axis=1)
-    return np.stack([a, b], axis=1).astype(np.float16)
+    from scrutate_ref.lex import quantize
+
+    return quantize(np.stack([a, b], axis=1))
+
+
+def _mix(vec):
+    from scrutate_ref.lex import dequantize
+
+    v = dequantize(*vec)
+    return v[:, 0] + v[:, 1]
 
 
 def test_clustered_scan_is_exact_when_every_cluster_is_probed(tmp_path, monkeypatch):
@@ -283,7 +292,7 @@ def test_clustered_scan_is_exact_when_every_cluster_is_probed(tmp_path, monkeypa
     s = store.segs[0]
     K = len(s.ivf_ptr) - 1
     assert s.ivf and K >= 32
-    mix = vec[:, 0].astype(np.float32) + vec[:, 1].astype(np.float32)
+    mix = _mix(vec)
     for qi in range(5):
         q = rng.standard_normal(k).astype(np.float32)
         q /= np.linalg.norm(q)
@@ -340,10 +349,26 @@ def test_merge_keeps_the_clustered_layout_consistent(tmp_path, monkeypatch):
     store.prepare(None)
     assert store.segs[0].ivf and store.n_alive == 400 - 100 + 50 + 300
     all_ids = np.concatenate([i[a] for i, a in zip(idss, alive)])
-    all_mix = np.concatenate([(v[:, 0].astype(np.float32) + v[:, 1].astype(np.float32))[a] for v, a in zip(vecs, alive)])
+    all_mix = np.concatenate([_mix(v)[a] for v, a in zip(vecs, alive)])
     q = rng.standard_normal(k).astype(np.float32)
     q /= np.linalg.norm(q)
     sc = all_mix @ q
     want = all_ids[np.lexsort((all_ids, -sc))[:15]].tolist()
     K = len(store.segs[0].ivf_ptr) - 1
     assert store.semantic_top(q, 15, nprobe=K).tolist() == want
+
+
+def test_quantize_round_trip():
+    from scrutate_ref.lex import dequantize, quantize
+
+    rng = np.random.default_rng(3)
+    v = rng.standard_normal((50, 2, 256)).astype(np.float32)
+    v /= np.linalg.norm(v, axis=-1, keepdims=True)
+    v[0, 0] = 0.0
+    q, s = quantize(v)
+    assert q.dtype == np.int8 and s.dtype == np.float32 and s.shape == (50, 2)
+    assert s[0, 0] == 0 and not q[0, 0].any()
+    assert np.abs(q).max() == 127
+    d = dequantize(q, s)
+    assert np.all(np.abs(d - v) <= s[..., None] / 2 * 1.0001)
+    assert np.array_equal(quantize(d)[0], q)  # quantizing a decoded vector gives the same codes

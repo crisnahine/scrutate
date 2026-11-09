@@ -60,6 +60,61 @@ produces bit-identical candidates, features and scores to the Python code that r
   qualitatively (e.g. "initial handshake that negotiates protocol version": BM25 rank 5, Scrutate
   rank 2) but are too few to carry intervals.
 
+## int8 vectors (schema 13)
+
+Since schema 13 the index stores each semantic vector as int8 codes plus one float32 scale
+(symmetric, per vector) instead of float16. The tables above were measured with float16 vectors.
+The check below reruns the same protocol before and after the change on one freshly generated
+benchmark (`bench/make_bench.py` on networkx 3.4.2, mcp 1.30.0 and rich 15.0.0, then
+`bench/gen_features.py` and `bench/train_ranker.py eval` with the shipped models, not retrained).
+The package versions differ from the v7 run, so n and the absolute values differ from the tables
+above; only the difference matters here.
+
+Learned ranker MRR@10, float16 → int8:
+
+| Query type | n | variant A | variant B |
+|---|---:|---:|---:|
+| doc | 1 494 | 0.6521 → 0.6514 (−0.0007) | 0.6797 → 0.6808 (+0.0010) |
+| kw | 1 392 | 0.4526 → 0.4518 (−0.0008) | 0.4891 → 0.4898 (+0.0008) |
+| name | 1 129 | 0.9227 → 0.9223 (−0.0004) | 0.9233 → 0.9230 (−0.0003) |
+| id | 893 | 0.9922 → 0.9922 (0) | 0.9924 → 0.9924 (0) |
+| qid | 753 | 0.9861 → 0.9854 (−0.0007) | 0.9810 → 0.9810 (0) |
+
+BM25, semantic only and linear blend move by at most 0.001 as well.
+
+Vector recall on the reference engine's 121 760-chunk index of a copy of 10 site-packages (numpy,
+pandas, scipy and others; the same tree as the size table below), 398 doc and kw queries:
+
+- exact scan, int8 top-100 against float16 top-100: recall 0.9945 (top-10: 0.9915);
+- default scan (48 of 698 clusters) against the float16 exact top-100: 0.8910 with int8,
+  0.8901 with float16 (`bench/ivf_recall.py` at nprobe 48: 0.8922 and 0.8901);
+- final top-10 of the whole pipeline: same first result for 376 of 398 queries, 96.1 % of the
+  top-10 in common.
+
+Index size, fresh index built by the Rust engine (`du`, MiB):
+
+| Repository | chunks | float16 | int8 | vectors (`vec` + `vscale`) |
+|---|---:|---:|---:|---:|
+| networkx package | 8 054 | 18.8 | 14.9 (−21 %) | 7.9 → 4.0 |
+| 10 site-packages | 161 208 | 343.0 | 265.5 (−23 %) | 157.4 → 79.9 |
+
+Query latency (`scrutate search` on the large index, warm, 4 queries, 3 alternating rounds of
+20 runs, median): 62.4 ms with float16, 61.5 ms with int8.
+
+Parity (`bench/parity.py`, release build): bit-identical vectors, features and scores on the
+networkx package (300 queries) and on a 119 358-chunk index that uses the clustered scan (the
+`.py` files of the same 10 packages, 200 queries). To get there on the clustered path, both
+engines now sum the vector-scan dot products in float64 and round once to float32; with float32
+sums, two near-tied rows could swap places between the engines.
+
+Not shipped: compressing chunk text with a zstd dictionary trained on the repository's chunks.
+On a 20 000-chunk sample of the large index, per-chunk zstd with a 110 KB trained dictionary is
+19 % (level 3) to 30 % (level 19) smaller than the current zlib level 6; the whole text column is
+41 MiB, so the index would shrink by 8 to 13 MiB (3 to 5 %), and by about 0.5 to 0.8 MiB on the
+networkx package. That would add a C library to the engine and a third-party package to the
+reference, a dictionary training pass before chunks can be compressed (1.6 s of CPU for 30 000
+samples), and a dictionary to version in the index, for a few percent.
+
 ## Semantic model and ranker
 
 - Semantic model (`models/semantic.npz`, 14.6 MB): a code-word model with two views per chunk

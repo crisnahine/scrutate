@@ -504,7 +504,8 @@ fn regex_limits_and_errors_are_clean() {
     // fuzzy limits
     assert!(instant::FuzzyMatcher::new("", 1, false).is_err());
     assert!(instant::FuzzyMatcher::new("ab", 2, false).is_err());
-    assert!(instant::FuzzyMatcher::new(&"x".repeat(129), 1, false).is_err());
+    assert!(instant::FuzzyMatcher::new(&"x".repeat(instant::FUZZY_MAX + 1), 1, false).is_err());
+    assert!(instant::FuzzyMatcher::new(&"x".repeat(instant::FUZZY_MAX), 1, false).is_ok());
     // cancellation flag stops a search
     let big: String = (0..300_000).map(|i| format!("line {i} needle\n")).collect();
     r.write("big.txt", big.as_bytes());

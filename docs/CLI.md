@@ -111,9 +111,11 @@ requires. The exit code is 0 after `shutdown` then `exit`, 1 otherwise. Logs go 
 scrutate watch [PATH]
 ```
 Updates the index of `PATH` (default `--root`) once, prints `watching PATH` on stderr, then waits
-for filesystem events (inotify on Linux, ReadDirectoryChangesW on Windows; on macOS it polls every
-2 seconds, because the FSEvents backend would link CoreServices into every `scrutate` command and
-cost about 1 ms of start-up). Events under `.scrutate/` and `.git/` are dropped, and so are paths that
+for filesystem events (inotify on Linux, ReadDirectoryChangesW on Windows). On macOS it runs the
+index's own incremental check instead, every second or, on a large tree, after a pause ten times as
+long as the last check took: the FSEvents backend would link CoreServices into every `scrutate`
+command (about 1 ms of start-up), and the check compares sizes and nanosecond times, so it misses
+no edit. Events under `.scrutate/` and `.git/` are dropped, and so are paths that
 neither index would hold under its usual rules (ignore files; the skipped build and vendor
 directories and `SCRUTATE_INDEX_EXCLUDE_DIRS` for the code index; hidden paths for the text
 index). A burst of events is collected until 200 ms pass without one (at

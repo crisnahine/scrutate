@@ -2,7 +2,7 @@
 //!
 //! The index keeps the exact file layout the Python reference engine writes, so an index built by
 //! either engine is readable by the other (that is how the parity tests work). Only the dtypes the
-//! engine uses are supported: i64, i32, u64, u32, u8, f32, f64, f16, bool and fixed-width unicode strings.
+//! engine uses are supported: i64, i32, u64, u32, u8, i8, f32, f64, f16, bool and fixed-width unicode strings.
 
 use std::fs::File;
 use std::io::{Read, Write};
@@ -53,6 +53,9 @@ unsafe impl Pod for u64 {
 }
 unsafe impl Pod for u8 {
     const DESCR: &'static [&'static str] = &["|u1"];
+}
+unsafe impl Pod for i8 {
+    const DESCR: &'static [&'static str] = &["|i1"];
 }
 unsafe impl Pod for f32 {
     const DESCR: &'static [&'static str] = &["<f4"];
