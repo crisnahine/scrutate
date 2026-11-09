@@ -33,7 +33,16 @@ capabilities those crates do not provide rather than re-implementing what they a
   pay for the DP), multiline, inverted, whole-word, smart case.
 - **Traversal**: the `ignore` parallel walker (work-stealing across threads, `.gitignore` /
   `.ignore` / global excludes, hidden files off by default, symlink loop detection, max depth and
-  size filters, type globs derived from the language registry).
+  size filters, type globs derived from the language registry). The crate is vendored
+  (`vendor/ignore`) with one change: the global git excludes path is read from `~/.gitconfig` by a
+  small parser instead of a regex compiled for each run (0.4 ms of a 6 ms search).
+- **Thread count**: the cores (at most 12), except on macOS, where a walk uses as many threads as
+  performance cores: there, more threads opening and reading files at once wait on each other in
+  the kernel (the Linux tree on an M3 Pro: 977 ms on 11 threads, about 845 ms on 5). The open and
+  read time of the first files tells the page cache from the disk (about 25 µs a file against
+  160 µs or more); when it is the disk, the walk switches to twice the cores, at most 24, because
+  the disk serves many reads in flight (the Linux tree cold: 2.9 s on 5 threads, 1.4 s on 22).
+  `-j` overrides both.
 - **One large file, every core**: a file of 64 MB or more is cut into ranges of whole lines (8 MB
   each). A first pass counts each range's newlines for the line numbers and stops at a NUL byte,
   which sends the file back to the single pass so binary handling is unchanged. The second pass
@@ -50,6 +59,10 @@ capabilities those crates do not provide rather than re-implementing what they a
 - **Line anchors**: the regex is always built in multi-line mode, so `^` and `$` mean line start and
   end and the searcher can scan a whole buffer at once; without it, patterns using them were run
   one line at a time.
+- **Line-start literals**: when every match of a regex starts a line and begins with one of at most
+  64 literals (`^(a|aa)+$`, `^#include`), the candidate lines are the line starts followed by one
+  of them, and each is decided by a search anchored there. A match that would cross a line break
+  is passed to grep-regex's matcher, which cannot match one.
 - **Suffix literals**: when a regex has no literal prefix but every match ends in one of at most 64
   literals of 3 bytes or more (`\w+_(suspend|resume)\(`), candidate lines are found with an
   Aho-Corasick search for those literals and the regex runs only on those lines. Without it the
