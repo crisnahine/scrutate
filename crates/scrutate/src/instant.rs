@@ -670,6 +670,23 @@ impl PlainSink {
         }
     }
 
+    /// `before`, `head`, `text` with invalid UTF-8 replaced, and a line break, as one unit.
+    fn write_line(&self, before: &[u8], head: &[u8], text: &[u8], cancel: &AtomicBool) {
+        if self.broken.load(Ordering::Relaxed) {
+            return;
+        }
+        let res = match self.out.lock() {
+            Ok(mut w) => {
+                w.write_all(before).and_then(|_| w.write_all(head)).and_then(|_| write_lossy(&mut **w, text, 1 << 18)).and_then(|_| w.write_all(b"\n"))
+            }
+            Err(_) => Err(std::io::Error::other("output lock poisoned")),
+        };
+        if res.is_err() {
+            self.broken.store(true, Ordering::Relaxed);
+            cancel.store(true, Ordering::Relaxed);
+        }
+    }
+
     pub fn flush(&self) -> std::io::Result<()> {
         match self.out.lock() {
             Ok(mut w) => w.flush(),
@@ -685,6 +702,38 @@ fn lossy(b: &[u8]) -> std::borrow::Cow<'_, str> {
         Ok(s) => std::borrow::Cow::Borrowed(s),
         Err(_) => String::from_utf8_lossy(b),
     }
+}
+
+/// `b` written as `lossy(b)` would be, `piece` bytes at a time: each piece is checked just before it
+/// is written, while the reader drains the previous one, instead of the whole line up front.
+fn write_lossy(w: &mut dyn Write, b: &[u8], piece: usize) -> std::io::Result<()> {
+    let mut at = 0;
+    while at < b.len() {
+        let end = b.len().min(at + piece.max(4));
+        match std::str::from_utf8(&b[at..end]) {
+            Ok(_) => {
+                w.write_all(&b[at..end])?;
+                at = end;
+            }
+            Err(e) => {
+                let ok = at + e.valid_up_to();
+                w.write_all(&b[at..ok])?;
+                match e.error_len() {
+                    Some(bad) => {
+                        w.write_all("\u{FFFD}".as_bytes())?;
+                        at = ok + bad;
+                    }
+                    // a character cut by the end of the piece: the next piece starts with it
+                    None if end < b.len() => at = ok,
+                    None => {
+                        w.write_all("\u{FFFD}".as_bytes())?;
+                        at = b.len();
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// `path:line:text\n` (`-` separators for context lines), the CLI's plain format. A multi-line
@@ -735,6 +784,8 @@ struct Collector<'a> {
     hold: bool,
     /// the searcher reported binary data
     binary: bool,
+    /// a match may span lines (otherwise a matched line holds no line break)
+    multiline: bool,
 }
 
 fn spans_in(matcher: &AnyMatcher, line: &[u8]) -> Vec<(usize, usize)> {
@@ -781,17 +832,16 @@ impl<'a> Sink for Collector<'a> {
         if let Some(p) = self.plain {
             self.matched = true;
             let n = self.stats_matches.fetch_add(1, Ordering::Relaxed) + 1;
-            let text = lossy(line);
             let number = mat.line_number().unwrap_or(0) + self.line_base;
-            if text.len() >= 1 << 16 && !text.contains('\n') && !self.hold {
+            if line.len() >= 1 << 16 && !self.hold && !(self.multiline && memchr::memchr(b'\n', line).is_some()) {
                 // a very long line is written from where it is instead of being copied into the buffer
                 let mut head = Vec::with_capacity(self.path.len() + 24);
                 format_plain(&mut head, &self.path, number, b"", false);
                 head.pop(); // the newline: the text goes between
-                p.write_parts(&[&self.out, &head, text.as_bytes(), b"\n"], self.cancel);
+                p.write_line(&self.out, &head, line, self.cancel);
                 self.out.clear();
             } else {
-                format_plain(&mut self.out, &self.path, number, text.as_bytes(), false);
+                format_plain(&mut self.out, &self.path, number, lossy(line).as_bytes(), false);
             }
             if self.out.len() >= 1 << 16 && !self.hold {
                 p.write(&self.out, self.cancel);
@@ -1150,6 +1200,7 @@ fn collector<'a>(
         line_base: 0,
         hold: false,
         binary: false,
+        multiline: o.multiline,
     }
 }
 
@@ -1480,6 +1531,7 @@ mod split {
             line_base: base,
             hold: true,
             binary: false,
+            multiline: false, // never split in multiline mode
         };
         let mut range = Range { file, pos: a, end: b };
         let res = match &matcher {
@@ -1698,6 +1750,28 @@ pub fn relative(path: &Path, roots: &[PathBuf]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn write_lossy_equals_from_utf8_lossy() {
+        let parts: &[&[u8]] = &[b"a", b"\xC3\xA9", b"\xE6\x97\xA5", b"\xF0\x9F\x98\x80", b"\xFF", b"\xC3", b"\xE6\x97", b"\xF0\x9F", b"\x80", b"\n"];
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = |n: usize| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state % n as u64) as usize
+        };
+        for _ in 0..20_000 {
+            let mut b = Vec::new();
+            for _ in 0..next(12) {
+                b.extend_from_slice(parts[next(parts.len())]);
+            }
+            let piece = 1 + next(9);
+            let mut out = Vec::new();
+            write_lossy(&mut out, &b, piece).unwrap();
+            assert_eq!(out, String::from_utf8_lossy(&b).as_bytes(), "{b:?} piece {piece}");
+        }
+    }
 
     #[test]
     fn suffix_candidates_find_the_same_lines() {
