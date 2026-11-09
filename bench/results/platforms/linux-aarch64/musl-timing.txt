@@ -1,5 +1,5 @@
-grep -F fn  .                    glibc     1.6 ms  musl     2.4 ms  musl/glibc x1.52  (identical output, 790 bytes)
-grep \w+::\w+\( .                glibc     4.8 ms  musl     5.7 ms  musl/glibc x1.18  (identical output, 1462 bytes)
-grep -F -c use  .                glibc     1.5 ms  musl     1.9 ms  musl/glibc x1.33  (identical output, 37 bytes)
-grep --ident parseFile .         glibc     1.7 ms  musl     2.2 ms  musl/glibc x1.27  (identical output, 11 bytes)
-worst musl/glibc ratio: x1.52
+grep -F fn  .                    glibc     1.5 ms  musl     2.4 ms  musl/glibc x1.56  (identical output, 790 bytes)
+grep \w+::\w+\( .                glibc     4.7 ms  musl     5.6 ms  musl/glibc x1.19  (identical output, 1462 bytes)
+grep -F -c use  .                glibc     1.4 ms  musl     1.9 ms  musl/glibc x1.35  (identical output, 37 bytes)
+grep --ident parseFile .         glibc     1.7 ms  musl     2.1 ms  musl/glibc x1.27  (identical output, 11 bytes)
+worst musl/glibc ratio: x1.56

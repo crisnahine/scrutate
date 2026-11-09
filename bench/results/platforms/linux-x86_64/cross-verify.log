@@ -1,6 +1,6 @@
-=== cross build on linux/arm64 (2026-11-09T19:10:25Z)
+=== cross build on linux/arm64 (2026-11-09T23:09:17Z)
 debconf: delaying package configuration, since apt-utils is not installed
-target/x86_64-unknown-linux-gnu/release/scrutate: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, BuildID[sha1]=ca866a011d561b2f2adcf0c49c073ceefe3468bb, for GNU/Linux 3.2.0, stripped
+target/x86_64-unknown-linux-gnu/release/scrutate: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, BuildID[sha1]=ab9085c03d6f8c6406231f8ee9694708f1d04c6e, for GNU/Linux 3.2.0, stripped
 test binaries: 10
 === tests on linux/amd64
 x86_64
@@ -10,17 +10,17 @@ test result: ok. 53 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 --- target/x86_64-unknown-linux-gnu/release/deps/scrutate-7bb43e89e258cfa1
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 --- target/x86_64-unknown-linux-gnu/release/deps/cli-609666c4c9ffd387
-test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.89s
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.66s
 --- target/x86_64-unknown-linux-gnu/release/deps/incremental-f81f61cbc0154f58
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.03s
 --- target/x86_64-unknown-linux-gnu/release/deps/lsp-eb4d3cbe29a5527b
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.48s
 --- target/x86_64-unknown-linux-gnu/release/deps/properties-3bc29cd7331bc31e
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.03s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.01s
 --- target/x86_64-unknown-linux-gnu/release/deps/resolve-dd4fa11e35a50590
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.23s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.21s
 --- target/x86_64-unknown-linux-gnu/release/deps/robustness-beecbff9f6af80d5
-test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.44s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.43s
 --- target/x86_64-unknown-linux-gnu/release/deps/samples-090fe00ab51a52e6
 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
 --- target/x86_64-unknown-linux-gnu/release/deps/samples_extra-4b294cdebc23226e
