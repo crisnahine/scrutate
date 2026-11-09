@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end evaluation of the shipped artifact (default semantic model + ranker) vs baselines.
 
-usage: final_eval.py [TEST|DEV|JS] [--variants A,B] [--json OUT]
+usage: final_eval.py [TEST|DEV|CODE] [--variants A,B] [--json OUT]
 All systems rank the same chunks of the same masked corpus; hits are de-duplicated the same way.
 """
 from __future__ import annotations
@@ -16,9 +16,8 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 from evalcore import bootstrap_ci, first_relevant_rank, load_queries, mrr_values, paired_diff_ci, summarize  # noqa: E402
-from groups import BENCH, DEV, TEST  # noqa: E402
+from groups import BENCH, CODE_TEST, DEV, TEST  # noqa: E402
 
-JS = ["js_lodash-es", "js_commander", "js_ws", "js_antlr4"]  # see make_bench_js.py
 
 from scrutate_ref.index import Index  # noqa: E402
 from scrutate_ref.search import FI, Searcher  # noqa: E402
@@ -65,7 +64,7 @@ def baselines(ix: Index):
 
 
 def run(group: str, variants: list[str]):
-    pkgs = {"DEV": DEV, "TEST": TEST, "JS": JS}[group]
+    pkgs = {"DEV": DEV, "TEST": TEST, "CODE": CODE_TEST}[group]
     out: dict = {}
     for variant in variants:
         ranks = {t: {c: [] for c in CONFIGS} for t in TYPES}
@@ -115,7 +114,7 @@ def report(res, title: str) -> dict:
 
 if __name__ == "__main__":
     a = sys.argv[1:]
-    group = a[0] if a and a[0] in ("TEST", "DEV", "JS") else "TEST"
+    group = a[0] if a and a[0] in ("TEST", "DEV", "CODE") else "TEST"
     variants = ["A", "B"]
     if "--variants" in a:
         variants = a[a.index("--variants") + 1].split(",")

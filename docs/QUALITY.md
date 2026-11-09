@@ -1,9 +1,10 @@
 # Ranking quality (Engine B)
 
 How good are the answers, as opposed to how fast? Numbers below are produced by
-`bench/train_ranker.py eval v7` (log: `test_eval_v7.log`, 2026-11-08) on packages that were never
-used to train the semantic model, fit the ranker or choose hyper-parameters. The Rust engine
-produces bit-identical candidates, features and scores to the Python code that ran this evaluation
+`bench/train_ranker.py eval v8` (log: `test_eval_v8_py.log`, 2026-11-09) and
+`bench/train_ranker.py compare v8` (log: `compare_v8.log`) on packages that were never used to
+train the semantic model, fit the ranker or choose hyper-parameters. The Rust engine produces
+bit-identical candidates, features and scores to the Python code that ran this evaluation
 (`bench/parity.py`), so the numbers hold for the shipped binary.
 
 ## Protocol
@@ -18,7 +19,8 @@ produces bit-identical candidates, features and scores to the Python code that r
   (`Server.remove_tool`).
 - **MRR@10**: mean of 1/rank of the correct result (0 when not in the top 10). **hit@k**: share of
   queries with the correct result in the top k. Brackets: 95 % bootstrap intervals over queries.
-- Held-out packages: networkx, mcp, rich (Python). Compared systems run on the **same candidate
+- Held-out packages: networkx 3.4.2, mcp 1.30.0, rich 15.0.0 (Python), and ten repositories in
+  other languages (next section). Compared systems run on the **same candidate
   pool, tokenizer, stemming and field weights**: *BM25* is Scrutate's own lexical layer alone;
   *semantic only* ranks by the vector similarity alone; *linear blend* is the hand-set fallback
   used when no ranker is present; *learned* is the shipped pipeline.
@@ -27,32 +29,50 @@ produces bit-identical candidates, features and scores to the Python code that r
 
 | Query type | n | BM25 | semantic only | linear blend | **learned ranker** | learned − BM25 [95 % CI] | hit@1 / hit@5 / hit@10 (learned) |
 |---|---:|---:|---:|---:|---:|---:|---|
-| doc | 1 695 | 0.448 | 0.422 | 0.497 | **0.632** [0.613, 0.651] | +0.184 [+0.170, +0.198] | 0.509 / 0.791 / 0.869 |
-| kw | 1 604 | 0.302 | 0.261 | 0.321 | **0.420** [0.399, 0.440] | +0.118 [+0.104, +0.132] | 0.305 / 0.570 / 0.661 |
-| name | 1 274 | 0.746 | 0.661 | 0.753 | **0.930** [0.918, 0.942] | +0.184 [+0.165, +0.203] | 0.898 / 0.972 / 0.986 |
-| id | 900 | 0.923 | 0.698 | 0.984 | **0.989** [0.983, 0.994] | +0.066 [+0.052, +0.080] | 0.983 / 0.996 / 0.996 |
-| qid | 754 | 0.886 | 0.615 | 0.894 | **0.980** [0.972, 0.987] | +0.094 [+0.077, +0.113] | 0.963 / 0.999 / 1.000 |
+| doc | 1 494 | 0.468 | 0.435 | 0.509 | **0.663** [0.642, 0.684] | +0.195 [+0.180, +0.213] | 0.549 / 0.823 / 0.873 |
+| kw | 1 392 | 0.329 | 0.288 | 0.349 | **0.455** [0.433, 0.477] | +0.127 [+0.112, +0.141] | 0.343 / 0.609 / 0.687 |
+| name | 1 129 | 0.712 | 0.630 | 0.727 | **0.930** [0.917, 0.942] | +0.218 [+0.196, +0.239] | 0.894 / 0.976 / 0.986 |
+| id | 893 | 0.929 | 0.680 | 0.981 | **0.993** [0.988, 0.997] | +0.064 [+0.050, +0.077] | 0.988 / 0.998 / 0.998 |
+| qid | 753 | 0.893 | 0.627 | 0.897 | **0.990** [0.985, 0.996] | +0.097 [+0.079, +0.115] | 0.983 / 0.997 / 1.000 |
 
 ## Variant B — first docstring sentence removed
 
 | Query type | n | BM25 | **learned ranker** | learned − BM25 [95 % CI] |
 |---|---:|---:|---:|---:|
-| doc | 1 695 | 0.505 | **0.673** [0.655, 0.691] | +0.168 [+0.154, +0.182] |
-| kw | 1 604 | 0.349 | **0.460** [0.438, 0.480] | +0.111 [+0.097, +0.125] |
-| name | 1 274 | 0.723 | **0.930** [0.917, 0.941] | +0.207 [+0.187, +0.226] |
-| id | 900 | 0.912 | **0.988** [0.981, 0.994] | +0.076 [+0.062, +0.092] |
-| qid | 754 | 0.866 | **0.975** [0.967, 0.983] | +0.110 [+0.091, +0.127] |
+| doc | 1 494 | 0.526 | **0.702** [0.683, 0.722] | +0.176 [+0.160, +0.192] |
+| kw | 1 392 | 0.372 | **0.489** [0.467, 0.514] | +0.117 [+0.102, +0.131] |
+| name | 1 129 | 0.692 | **0.928** [0.915, 0.941] | +0.236 [+0.216, +0.257] |
+| id | 893 | 0.912 | **0.995** [0.991, 0.998] | +0.083 [+0.068, +0.097] |
+| qid | 753 | 0.872 | **0.986** [0.980, 0.992] | +0.115 [+0.096, +0.133] |
+
+## Other languages
+
+Ten held-out repositories (`bench/groups.py` `CODE_TEST`): ripgrep and serde_json (Rust),
+protobuf-go and client_golang (Go), jsoup and commons-io (Java), ws and lodash (JavaScript), RxJS
+and PixiJS (TypeScript). Their queries are built the same way from doc comments
+(`bench/make_bench_code.py`). Variant A, MRR@10 of the learned ranker against BM25; the last
+column is the change from the previous, Python-only ranker (v7) on the same queries:
+
+| Language | doc | kw | name | id | qid | v8 − v7, doc [95 % CI] |
+|---|---|---|---|---|---|---:|
+| Rust | 0.368 → **0.501** | 0.222 → **0.301** | 0.692 → **0.845** | 0.905 → **0.986** | 0.753 → **0.966** | +0.050 [+0.038, +0.065] |
+| Go | 0.332 → **0.464** | 0.190 → **0.272** | 0.631 → **0.829** | 0.935 → **0.985** | (none) | +0.002 [−0.009, +0.012] |
+| Java | 0.456 → **0.522** | 0.276 → **0.314** | 0.722 → **0.815** | 0.954 → **0.975** | 0.858 → **0.935** | +0.017 [+0.010, +0.024] |
+| JavaScript | 0.406 → **0.581** | 0.289 → **0.391** | 0.603 → **0.868** | 0.883 → **0.997** | 0.912 → **1.000** | +0.008 [−0.006, +0.020] |
+| TypeScript | 0.477 → **0.618** | 0.297 → **0.376** | 0.801 → **0.911** | 0.914 → **0.990** | 0.873 → **0.983** | +0.012 [+0.004, +0.021] |
+
+Across both variants, six languages (Python included) and the query types each has, v8 is above
+v7 in 56 of 58 cells. The other two are in JavaScript, variant B: name queries −0.001 [−0.016,
++0.013] and qualified names unchanged at 1.000. No cell's interval lies below zero. Per-cell numbers, hit@k and intervals: `compare_v8.log`.
 
 ## What these numbers say and do not say
 
 - The learned pipeline beats its own lexical layer on every query type with non-overlapping
   intervals, by the most where lexical search is weakest (natural-language and keyword queries in
   an undocumented code base).
-- They are **Python** results. The ranker's training data is Python-heavy; a JavaScript evaluation
-  set (lodash-es, commander, ws, antlr4 — a language the models never saw) exists in the harness
-  and was run on earlier model versions; it is not reproduced here for the shipped v7 model and
-  so no JavaScript quality claim is made for 0.1.0. Other languages inherit the lexical layer's
-  quality plus whatever the code-word vectors generalise.
+- They cover six languages. The semantic model was trained on Python only; the ranker was fitted
+  on Python and the five other languages above. Languages outside these six inherit the lexical
+  layer's quality plus whatever the ranker and the code-word vectors generalise.
 - They are not a comparison with other code-search products: no other tool in the benchmark set
   ranks by meaning, and public code-search benchmarks (e.g. natural-language-to-code retrieval
   sets) use different protocols. Absolute MRR values are not comparable across protocols.
@@ -63,8 +83,8 @@ produces bit-identical candidates, features and scores to the Python code that r
 ## int8 vectors (schema 13)
 
 Since schema 13 the index stores each semantic vector as int8 codes plus one float32 scale
-(symmetric, per vector) instead of float16. The tables above were measured with float16 vectors.
-The check below reruns the same protocol before and after the change on one freshly generated
+(symmetric, per vector) instead of float16. The tables above use int8 vectors. The check below,
+made with the previous ranker (v7) when the change went in, reruns the same protocol before and after the change on one freshly generated
 benchmark (`bench/make_bench.py` on networkx 3.4.2, mcp 1.30.0 and rich 15.0.0, then
 `bench/gen_features.py` and `bench/train_ranker.py eval` with the shipped models, not retrained).
 The package versions differ from the v7 run, so n and the absolute values differ from the tables
@@ -131,7 +151,11 @@ samples), and a dictionary to version in the index, for a few percent.
   pytest, pydantic, python-pptx, python-docx, openpyxl, mcp, rich), MIT-CMU (pillow), the
   Matplotlib licence, Apache-2.0 (playwright, cryptography as one option) and MPL-2.0 (pikepdf).
   The model files keep word statistics, vocabulary tables and projections, not source text.
-- Ranker (`models/ranker.npz`, 87 KB): LightGBM LambdaRank over 47 features, exported to arrays;
-  numpy and LightGBM predictions agree to 4.3e-8; cross-validated on DEV packages, fitted once,
-  evaluated once on TEST. Top features by gain: lexical ratio and rank, name coverage, mixed
-  semantic z-score, A-view semantic z-score, query length, lexical z-score, chunk kind.
+- Ranker (`models/ranker.npz`, 86 KB, v8): LightGBM LambdaRank over 47 features, exported to
+  arrays; numpy and LightGBM predictions agree to 5.3e-8; cross-validated on DEV packages (three
+  folds, each language's repositories dealt across them), fitted once, evaluated once on TEST.
+  Fitted on the 7 Python DEV packages and the 16 `CODE_DEV` repositories of `bench/groups.py`
+  (tokio, clap, chrono, grpc-go, zap, cobra, commons-lang, gson, javapoet, guava, commander,
+  axios, immutable-js, eslint, three.js, vue core; MIT, Apache-2.0, or both). Top features by
+  gain: lexical ratio and rank, A-view semantic z-score, lexical z-score, name coverage, query
+  length, mixed semantic z-score.

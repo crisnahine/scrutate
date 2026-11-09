@@ -2,13 +2,18 @@
 """Train / evaluate the learned ranker on saved candidate features.
 
 usage:
-  train_ranker.py cv    TAG                 leave-one-package-out CV on DEV features
-  train_ranker.py fit   TAG OUT.npz         fit on all DEV features, save ensemble
-  train_ranker.py eval  TAG [OUT.npz]       evaluate scorers on TEST features (+ ranker if given)
+  train_ranker.py cv      TAG                  3-fold package-held-out CV on DEV features
+  train_ranker.py fit     TAG OUT.npz          fit on all DEV features, save ensemble
+  train_ranker.py eval    TAG [OUT.npz]        evaluate scorers on TEST features (+ ranker if given)
+  train_ranker.py compare TAG OLD.npz NEW.npz [OUT.json]   two rankers on TEST, per language
+
+DEV and TEST include the other-language packages of groups.CODE_DEV / CODE_TEST unless
+PYTHON_ONLY=1. RANKER_PARAMS='{"n_estimators": 400}' overrides PARAMS (for tuning with cv).
 """
 from __future__ import annotations
 
 import glob
+import json
 import os
 import pickle
 import sys
@@ -18,7 +23,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 from evalcore import bootstrap_ci, fmt_row, mrr_values, paired_diff_ci, summarize  # noqa: E402
-from groups import DEV, TEST, WORK  # noqa: E402
+from groups import CODE_DEV, CODE_TEST, DEV, TEST, WORK, language  # noqa: E402
 
 from scrutate_ref.rank import TreeEnsemble  # noqa: E402
 from scrutate_ref.search import FEATURES, FI, linear_score, prune_indices  # noqa: E402
@@ -29,6 +34,23 @@ PARAMS = dict(objective="lambdarank", metric="ndcg", n_estimators=250, learning_
               num_leaves=31, min_child_samples=40, subsample=0.8, subsample_freq=1,
               colsample_bytree=0.8, reg_lambda=1.0, lambdarank_truncation_level=20,
               verbose=-1, n_jobs=2)
+PARAMS.update(json.loads(os.environ.get("RANKER_PARAMS", "{}")))
+if not os.environ.get("PYTHON_ONLY"):
+    DEV, TEST = DEV + CODE_DEV, TEST + CODE_TEST
+TYPES = ("doc", "kw", "name", "id", "qid")
+
+
+def folds() -> list[list[str]]:
+    """The Python folds; each other language's packages dealt round-robin over them."""
+    out = [["pydantic", "werkzeug"], ["pptx", "seaborn", "joblib"], ["docx", "openpyxl"]]
+    by_lang: dict[str, list[str]] = {}
+    for p in DEV:
+        if language(p) != "python":
+            by_lang.setdefault(language(p).replace("typescript", "javascript"), []).append(p)
+    for pkgs in by_lang.values():
+        for i, p in enumerate(pkgs):
+            out[i % 3].append(p)
+    return out
 
 
 def load(tag: str, pkgs: list[str]):
@@ -42,6 +64,7 @@ def load(tag: str, pkgs: list[str]):
             drop = [i for i, n in enumerate(FEATURES) if any(n.startswith(p) for p in DROP)]
             for r in d["recs"]:
                 r["variant"] = os.path.basename(f).split("_")[0]
+                r["lang"] = language(pkg)
                 if drop:
                     r["X"] = r["X"].copy()
                     r["X"][:, drop] = 0.0
@@ -89,7 +112,7 @@ SCORERS = {
 }
 
 
-def evaluate(recs, ranker=None, types=("doc", "kw", "name", "id", "qid")):
+def evaluate(recs, ranker=None, types=TYPES):
     res = {}
     scorers = dict(SCORERS)
     if ranker is not None:
@@ -122,17 +145,22 @@ def main() -> None:
     if cmd == "cv":
         data = load(tag, DEV)
         allres: dict = {}
-        folds = [["pydantic", "werkzeug"], ["pptx", "seaborn", "joblib"], ["docx", "openpyxl"]]
-        for held in folds:
+        print("params:", PARAMS)
+        langs = sorted({r["lang"] for rs in data.values() for r in rs})
+        for held in folds():
             train = [r for p, rs in data.items() if p not in held for r in rs]
             m = fit(train)
             ens = TreeEnsemble.from_lightgbm(m.booster_, FEATURES)
-            res = evaluate([r for p in held for r in data[p]], ens)
-            for t, d in res.items():
-                for name, ranks in d.items():
-                    allres.setdefault(t, {}).setdefault(name, []).extend(ranks)
+            for lang in ["all"] + langs:
+                res = evaluate([r for p in held for r in data[p] if lang in ("all", r["lang"])], ens)
+                for t, d in res.items():
+                    for name, ranks in d.items():
+                        allres.setdefault(lang, {}).setdefault(t, {}).setdefault(name, []).extend(ranks)
             print(f"held-out {held}: done", flush=True)
-        print_eval(allres, "3-fold package-held-out CV on DEV")
+        for lang, res in allres.items():
+            print_eval(res, f"3-fold package-held-out CV on DEV, {lang}")
+            mrr = np.mean([v for d in res.values() for v in mrr_values(d["LEARNED ranker"])])
+            print(f"  learned ranker MRR@10 over all {lang} queries: {mrr:.4f}")
     elif cmd == "fit":
         data = load(tag, DEV)
         recs = [r for rs in data.values() for r in rs]
@@ -153,6 +181,34 @@ def main() -> None:
         for variant in ("A", "B"):
             print_eval(evaluate([r for r in recs if r["variant"] == variant], ens),
                        f"TEST (held-out packages), variant {variant}")
+    elif cmd == "compare":
+        data = load(tag, TEST)
+        old, new = TreeEnsemble.load(sys.argv[3]), TreeEnsemble.load(sys.argv[4])
+        recs = [r for rs in data.values() for r in rs]
+        out: dict = {}
+        for lang in sorted({r["lang"] for r in recs}):
+            for variant in ("A", "B"):
+                sub = [r for r in recs if r["lang"] == lang and r["variant"] == variant]
+                a, b = evaluate(sub, old), evaluate(sub, new)
+                print(f"\n=== TEST {lang}, variant {variant}: old ranker -> new ranker")
+                for t in TYPES:
+                    ro, rn = a[t]["LEARNED ranker"], b[t]["LEARNED ranker"]
+                    if not ro:
+                        continue
+                    so, sn = summarize(ro), summarize(rn)
+                    (lo1, hi1), (lo2, hi2) = bootstrap_ci(mrr_values(ro)), bootstrap_ci(mrr_values(rn))
+                    m, lo, hi = paired_diff_ci(rn, ro)
+                    bm = summarize(a[t]["bm25 (lexical)"])["MRR"]
+                    print(f"  {t:<5} n={so['n']:<5} bm25 {bm:.3f}  old {so['MRR']:.3f} [{lo1:.3f},{hi1:.3f}]  "
+                          f"new {sn['MRR']:.3f} [{lo2:.3f},{hi2:.3f}]  new-old {m:+.3f} [{lo:+.3f},{hi:+.3f}]  "
+                          f"hit@1/5/10 old {so['hit@1']:.3f}/{so['hit@5']:.3f}/{so['hit@10']:.3f} "
+                          f"new {sn['hit@1']:.3f}/{sn['hit@5']:.3f}/{sn['hit@10']:.3f}")
+                    out.setdefault(lang, {}).setdefault(variant, {})[t] = {
+                        "n": so["n"], "bm25": bm, "old": {**so, "ci": [lo1, hi1]},
+                        "new": {**sn, "ci": [lo2, hi2]}, "new_minus_old": [m, lo, hi]}
+        if len(sys.argv) > 5:
+            with open(sys.argv[5], "w") as f:
+                json.dump(out, f, indent=1)
 
 
 if __name__ == "__main__":
