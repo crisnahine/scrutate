@@ -45,6 +45,13 @@ First release.
 - Regexes are built with `^` and `$` as line anchors in every mode, as ripgrep builds them. Before,
   a pattern using either was matched one line at a time: `^(a|aa)+$` over ten million one-byte
   lines took 198 ms, now 8 ms.
+- A regex whose every match starts a line and begins with one of a few literals looks only at the
+  line starts that begin with them, each decided by a search anchored there: `^(a|aa)+$` over a
+  100 MB line, ten million short lines and 2 MB of near misses, 52 ms to 18 ms.
+- On macOS a search of many files runs on as many threads as there are performance cores: more
+  threads opening and reading files at once wait on each other in the kernel (the Linux tree on an
+  M3 Pro: 977 ms on 11 threads, about 845 ms on 5). One large file split into ranges still uses
+  every core.
 - Fixed: a file given directly as the search root was printed with an empty path (`:1:text`).
 - `ignore` 0.4.34 is vendored (`vendor/ignore`) with one change: the global git excludes path is
   read from `~/.gitconfig` without compiling a regex, about 0.4 ms of every search in a git

@@ -26,6 +26,8 @@ docs/TRACEABILITY.md.
 | Third-party notices in releases | `tools/third_party_notices.py`; archives and wheels include `THIRD_PARTY_NOTICES.txt` |
 | Incremental parsing of edited files (R-2B.1) | a long-running index (`watch`, `serve`, `lsp`) reparses an edited file against its previous tree, for the 21 grammars without an external scanner (with one, a reparse was seen to differ from a fresh parse); a 66 KB Go file: 5.5 ms to 2.0 ms per edit; `tests/incremental.rs` |
 | Ranking quality beyond Python (R-2B.12) | ranker v8 fitted on Python plus Rust, Go, Java, JavaScript and TypeScript repositories; held-out results per language in docs/QUALITY.md |
+| Many files on macOS (R-4.6) | as many threads as performance cores when walking (kernel contention made 11 threads slower than 5); the Linux and LLVM trees, 200,000 small files and the binary-heavy tree went from behind or level with ugrep to 13 to 21% ahead |
+| Regexes anchored at line starts (R-4.6) | only line starts beginning with the regex's prefix literals are examined: `^(a|aa)+$` on the pathological corpus, 52 ms to 18 ms |
 | Start-up in git repositories (R-4.6) | `vendor/ignore` reads the global excludes path without compiling a regex: 0.4 ms of a 6 ms search of a 220-file repository |
 
 ## Blocked: needs the repository published (declined for this release)
@@ -43,8 +45,13 @@ docs/TRACEABILITY.md.
 
 ## Next
 
-- Case-insensitive literals on many files: ugrep is about a fifth faster on the LLVM tree
-  (docs/LEADERBOARD.md); profile its candidate search against the regex engine's.
+- Small trees (a few hundred files): Scrutate and ugrep are within about 10% of each other and the
+  order changes with machine load. Scrutate starts 1.2 ms sooner; ugrep walks the directories and
+  matches ignore rules in less time (it compiles no glob sets and does not read the global git
+  excludes or `.git/info/exclude`). Next: read each directory's ignore files from its listing on the
+  one-thread walk, and build glob sets lazily.
+- Thread counts on Linux and Windows: the macOS default (performance cores) came from measurement;
+  repeat it on dedicated Linux and Windows machines before changing their default.
 - References: type inference for method calls on variables; more languages (Java, C#, C/C++
   includes); TypeScript path aliases.
 - `cargo install`: int8 weights for the semantic model, with the quality check QUALITY.md uses.
