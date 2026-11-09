@@ -6,12 +6,17 @@
 scrutate grep "refresh_token" .                 # Engine A: instant, index-free, ignore-aware search
 scrutate grep --ident refreshToken .            #   one spelling finds refresh_token / RefreshToken / REFRESH_TOKEN
 scrutate grep --fuzzy=1 "shortest_pth" .        #   approximate matching (Myers bit-parallel)
+scrutate grep --fuzzy-regex=1 '(get|set)_valu'  #   a regex within N edits
+scrutate grep -P '(?<=self\.)cache\b' .         #   PCRE2: look-around, backreferences
+scrutate grep -z "TODO" dist/                   #   inside zip/tar archives and compressed files
 scrutate index && scrutate grep --index "PM_RESUME"   # Engine B text index: the same answer, from a trigram index
 scrutate search "where do we renew expired tokens"   # Engine B: ranked search by meaning, learned ranker
 scrutate callers refresh_token                  #   call graph, definitions, references, outline
+scrutate refs Graph --def networkx/classes/graph.py   # references resolved through imports and scopes
 scrutate dupes                                  #   exact and near-duplicate functions
 scrutate tsquery python '(class_definition name: (identifier) @c)'   # structural search (tree-sitter)
-scrutate serve                                  # MCP server for AI coding agents
+scrutate serve --watch                          # MCP server for AI coding agents, index kept fresh
+scrutate lsp                                    # language server for editors (VS Code, JetBrains)
 ```
 
 Scrutate is two independent engines behind one CLI:
