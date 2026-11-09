@@ -927,25 +927,98 @@ fn small_tree_files() -> usize {
     *V.get_or_init(|| std::env::var("SCRUTATE_SMALL_TREE").ok().and_then(|v| v.parse().ok()).unwrap_or(256))
 }
 
-/// The files the walk would visit, when there are at most `small_tree_files()` of them. None as soon
-/// as there are more, or on any walk error (the parallel walk counts those).
-fn small_tree(roots: &[PathBuf], o: &Options) -> Option<Vec<(PathBuf, Arc<str>)>> {
+enum Small {
+    Done,
+    /// more files than the budget: the paths already searched, for the parallel walk to skip
+    Big(std::collections::HashSet<PathBuf>),
+}
+
+/// Walks on one thread while a few threads search the files it finds, so a small tree pays
+/// neither for a parallel walk nor for walking before searching. Past `small_tree_files()` files the
+/// walk stops; the caller's parallel walk then skips what was searched here. Walk errors count only
+/// when this walk finished (the parallel walk meets them again otherwise).
+#[allow(clippy::too_many_arguments)]
+fn small_first(
+    roots: &[PathBuf],
+    o: &Options,
+    matcher: &AnyMatcher,
+    c: &Counters,
+    cancel: &AtomicBool,
+    plain: Option<&PlainSink>,
+    on_hit: &mut impl FnMut(Hit),
+) -> Small {
     let limit = small_tree_files();
+    let Ok(wb) = walk_builder(roots, o) else { return Small::Big(Default::default()) };
     if limit == 0 {
-        return None;
+        return Small::Big(Default::default());
     }
-    let mut files = Vec::new();
-    for entry in walk_builder(roots, o).ok()?.build() {
-        let entry = entry.ok()?;
-        if entry.file_type().is_some_and(|t| t.is_file()) {
-            if files.len() == limit {
-                return None;
-            }
-            let rel = Arc::from(relative(entry.path(), roots));
-            files.push((entry.into_path(), rel));
+    let (work_tx, work_rx) = mpsc::channel::<(PathBuf, Arc<str>, Option<u64>)>();
+    let work_rx = Mutex::new(work_rx);
+    let (tx, rx) = mpsc::channel::<Vec<Hit>>();
+    let workers = default_threads(o).min(3);
+    let walked = std::thread::scope(|s| {
+        for _ in 0..workers {
+            let (tx, work_rx) = (tx.clone(), &work_rx);
+            // a clone per thread: each gets its own regex cache pool instead of contending for one
+            let matcher = matcher.clone();
+            s.spawn(move || {
+                let mut searcher = file_searcher(o);
+                loop {
+                    let job = match work_rx.lock() {
+                        Ok(r) => r.recv(),
+                        Err(_) => break,
+                    };
+                    let Ok((path, rel, size)) = job else { break };
+                    if !cancel.load(Ordering::Relaxed) {
+                        search_one(&mut searcher, &matcher, &path, rel, size, o, c, cancel, &tx, plain);
+                    }
+                }
+            });
         }
+        drop(tx);
+        let walker = s.spawn(move || {
+            let mut seen = std::collections::HashSet::new();
+            let mut errors = Vec::new();
+            for entry in wb.build() {
+                if cancel.load(Ordering::Relaxed) {
+                    break;
+                }
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(e) => {
+                        errors.push(e.to_string());
+                        continue;
+                    }
+                };
+                if !entry.file_type().is_some_and(|t| t.is_file()) {
+                    continue;
+                }
+                if seen.len() == limit {
+                    return (seen, errors, true);
+                }
+                let size = if o.want_bytes { entry.metadata().ok().map(|m| m.len()) } else { None };
+                let rel: Arc<str> = Arc::from(relative(entry.path(), roots));
+                let path = entry.into_path();
+                seen.insert(path.clone());
+                if work_tx.send((path, rel, size)).is_err() {
+                    break;
+                }
+            }
+            (seen, errors, false)
+        });
+        drain(rx, o, &mut *on_hit);
+        walker.join()
+    });
+    match walked {
+        Ok((seen, _, true)) if !cancel.load(Ordering::Relaxed) => Small::Big(seen),
+        Ok((_, errors, _)) => {
+            for e in errors {
+                c.failed(e);
+            }
+            Small::Done
+        }
+        Err(_) => Small::Done,
     }
-    Some(files)
 }
 
 #[derive(Default)]
@@ -1459,13 +1532,14 @@ fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Opti
         bail!("no paths to search");
     }
     let matcher = Arc::new(build_matcher(o)?);
-    if let Some(files) = small_tree(roots, o) {
-        let threads = (files.len() / 64).clamp(1, default_threads(o));
-        return Ok(search_list(files, threads, &matcher, o, &cancel, plain.as_deref(), on_hit, t0));
-    }
+    let counters = Arc::new(Counters::default());
+    let mut on_hit = on_hit;
+    let searched = match small_first(roots, o, &matcher, &counters, &cancel, plain.as_deref(), &mut on_hit) {
+        Small::Done => return Ok(stats(&counters, t0, &cancel)),
+        Small::Big(seen) => Arc::new(seen),
+    };
     let walker = build_walker(roots, o)?;
     let (tx, rx) = mpsc::channel::<Vec<Hit>>();
-    let counters = Arc::new(Counters::default());
     let roots_owned: Vec<PathBuf> = roots.to_vec();
     let opts = o.clone();
     let (c2, cancel2) = (Arc::clone(&counters), Arc::clone(&cancel));
@@ -1479,6 +1553,7 @@ fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Opti
             let opts = opts.clone();
             let roots = roots_owned.clone();
             let plain = plain.clone();
+            let searched = Arc::clone(&searched);
             let mut searcher = file_searcher(&opts);
             Box::new(move |entry| {
                 if cancel.load(Ordering::Relaxed) {
@@ -1491,7 +1566,7 @@ fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Opti
                         return WalkState::Continue;
                     }
                 };
-                if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) || searched.contains(entry.path()) {
                     return WalkState::Continue;
                 }
                 let size = if opts.want_bytes { entry.metadata().ok().map(|m| m.len()) } else { None };
@@ -1505,7 +1580,7 @@ fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Opti
             })
         });
     });
-    drain(rx, o, on_hit);
+    drain(rx, o, &mut on_hit);
     worker.join().map_err(|_| anyhow!("search worker panicked"))?;
     Ok(stats(&counters, t0, &cancel))
 }

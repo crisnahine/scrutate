@@ -602,7 +602,10 @@ fn small_tree_path_equals_parallel_walk() {
     ] {
         let small = untimed(run_in(&r.root, args, &[("SCRUTATE_SMALL_TREE", "100000")]));
         let parallel = untimed(run_in(&r.root, args, &[("SCRUTATE_SMALL_TREE", "0")]));
+        // a budget smaller than the tree: some files searched by the first walk, the rest by the second
+        let handed_over = untimed(run_in(&r.root, args, &[("SCRUTATE_SMALL_TREE", "3")]));
         assert_eq!(small, parallel, "{args:?}");
+        assert_eq!(handed_over, parallel, "{args:?}");
         assert_eq!(small.0, 0, "{args:?}: {small:?}");
     }
 }

@@ -40,9 +40,9 @@ capabilities those crates do not provide rather than re-implementing what they a
   searches one window of ranges per thread at a time and writes the windows' output in file order,
   so the output held in memory stays bounded. Context lines, `--max-count`, `--max-results`, `-l`,
   multiline and a byte-order mark keep the single pass.
-- **Small trees**: a sequential walk with the same rules runs first and stops at 256 files. A tree
-  that fits is searched by one thread per 64 files; any larger tree, or any walk error, goes to the
-  parallel walk. On a 220-file repository this halves the CPU cycles and saves about a quarter of
+- **Small trees**: a sequential walk with the same rules runs first, and three threads search the
+  files as it finds them. Past 256 files it stops, and the parallel walk takes over, skipping the
+  files already searched. On a 220-file repository this halves the CPU cycles and saves about a quarter of
   the wall time; on the Linux tree the extra walk is within measurement noise.
 - **Files without line breaks**: a large file whose ranges cannot be cut at a newline is read once
   into a buffer of its exact size (checked for NUL bytes as it is read, so binary handling is

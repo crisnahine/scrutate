@@ -30,8 +30,8 @@ First release.
   `--max-results`, `-l` and multiline searches keep the single pass.
 - A regex with no literal prefix whose matches all end in one of a few literals
   (`\w+_(suspend|resume)\(`) finds candidate lines by searching for those literals.
-- A tree of at most 256 files is walked on one thread and searched by a few, instead of starting
-  the full parallel walk (about a quarter less time on a 220-file repository).
+- A small tree is walked on one thread while three threads search what it finds; past 256 files
+  the parallel walk takes over (about a quarter less time on a 220-file repository).
 - A large file without line breaks to split at is read into one buffer of its exact size (the
   stream reader grew its buffer by doubling).
 - Regexes are built with `^` and `$` as line anchors in every mode, as ripgrep builds them. Before,
