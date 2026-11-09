@@ -1,0 +1,5 @@
+grep -F fn  .                    glibc     2.9 ms  musl     3.3 ms  musl/glibc x1.15  (identical output, 550 bytes)
+grep \w+::\w+\( .                glibc     7.2 ms  musl     9.0 ms  musl/glibc x1.25  (identical output, 1076 bytes)
+grep -F -c use  .                glibc     2.7 ms  musl     2.3 ms  musl/glibc x0.85  (identical output, 27 bytes)
+grep --ident parseFile .         glibc     3.3 ms  musl     2.9 ms  musl/glibc x0.86  (identical output, 12 bytes)
+worst musl/glibc ratio: x1.25

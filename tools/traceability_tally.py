@@ -23,7 +23,8 @@ for line in s.splitlines():
             break
 total = sum(counts.values())
 line = f"PASS {counts['PASS']} · PARTIAL {counts['PARTIAL']} · BLOCKED {counts['BLOCKED']} · FAIL {counts['FAIL']}"
-s = re.sub(r"Counts: PASS \d+ · PARTIAL \d+ · BLOCKED \d+ · FAIL \d+ \(tallied at the end\)\.", f"Counts: {line} over {total} rows (computed by `tools/traceability_tally.py`).", s)
-s = re.sub(r"## Tally\n\nPASS \d+ · PARTIAL \d+ · BLOCKED \d+ · FAIL \d+\.", f"## Tally\n\n{line} over {total} rows.", s)
+s = re.sub(r"Counts: PASS \d+ · PARTIAL \d+ · BLOCKED \d+ · FAIL \d+ (\(tallied at the end\)|over \d+ rows \(computed by `tools/traceability_tally.py`\))\.",
+           f"Counts: {line} over {total} rows (computed by `tools/traceability_tally.py`).", s)
+s = re.sub(r"## Tally\n\nPASS \d+ · PARTIAL \d+ · BLOCKED \d+ · FAIL \d+( over \d+ rows)?\.", f"## Tally\n\n{line} over {total} rows.", s)
 open(p, "w").write(s)
 print(line, "over", total, "rows")

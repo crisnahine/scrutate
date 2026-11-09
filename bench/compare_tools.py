@@ -45,7 +45,8 @@ def discover() -> dict:
     tools: dict[str, dict] = {}
     tools["scrutate"] = {"exe": SCRUTATE, "version": run_version([SCRUTATE, "--version"])}
     for name in ["rg", "grep", "git", "ugrep", "ack", "ag", "ast-grep"]:
-        p = find(name)
+        # GNU grep where it is installed under its Homebrew name (macOS ships BSD grep as grep)
+        p = (find("ggrep") or find(name)) if name == "grep" else find(name)
         tools[name] = {"exe": p, "version": run_version([p, "--version"]) if p else None}
     # ugrep bundled inside another binary (dispatches on argv[0]); used only when no native ugrep exists
     bundled = os.environ.get("UGREP_BUNDLED")
@@ -136,7 +137,7 @@ def command(tool: str, t: dict, q: dict, corpus: str) -> list[str] | None:
         if mode == "literal":
             c += ["-n", "-F", pat]
         elif mode == "regex":
-            c += ["-n", "-E", pat]
+            c += ["-n", "-P", pat]  # \s and \w are not POSIX: PCRE, as in bench/leaderboard.py
         elif mode == "icase":
             c += ["-n", "-F", "-i", pat]
         elif mode == "word":
@@ -146,7 +147,7 @@ def command(tool: str, t: dict, q: dict, corpus: str) -> list[str] | None:
         elif mode == "files":
             c += ["-l", "-F", pat]
         elif mode == "identifier":
-            c += ["-n", "-E", "-i", q["ident_regex_posix"]]
+            c += ["-n", "-P", "-i", q["ident_regex"]]
         else:
             return None
         return c
@@ -173,7 +174,8 @@ def command(tool: str, t: dict, q: dict, corpus: str) -> list[str] | None:
             return None
         return c + ["."]
     if tool == "ack":
-        c = [t["exe"], "--noenv", "--nocolor", "--nogroup"]
+        # ack 3.10 refuses --nogroup together with -c or -l
+        c = [t["exe"], "--noenv", "--nocolor"] + ([] if mode in ("count", "files") else ["--nogroup"])
         if mode == "literal":
             c += ["-Q", pat]
         elif mode == "regex":
@@ -256,6 +258,18 @@ def timed_rusage(cmd: list[str], cwd: str, executable: str | None = None, count_
 
 
 def peak_rss_mb(cmd: list[str], cwd: str, executable: str | None = None) -> float:
+    if not os.path.isdir("/proc"):
+        # macOS: /usr/bin/time -l reports the child's own maximum resident set size, in bytes
+        r = subprocess.run(["/usr/bin/time", "-l", executable or cmd[0], *cmd[1:]], cwd=cwd, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, text=True)
+        for line in r.stderr.splitlines():
+            if "maximum resident set size" in line:
+                return int(line.split()[0]) / 2**20
+        return 0.0
+    return _peak_rss_proc(cmd, cwd, executable)
+
+
+def _peak_rss_proc(cmd: list[str], cwd: str, executable: str | None = None) -> float:
     """Peak resident set size of one run, sampled from /proc/<pid>/status (VmHWM) every millisecond.
 
     `wait4`'s ru_maxrss cannot be used: on Linux the kernel records the pre-exec image's high-water
@@ -552,7 +566,7 @@ def environment(tools: dict) -> dict:
                 cpu = line.split(":", 1)[1].strip()
                 break
     except OSError:
-        pass
+        cpu = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True).stdout.strip()
     return {
         "date": time.strftime("%Y-%m-%d %H:%M:%S %z"),
         "platform": platform.platform(),

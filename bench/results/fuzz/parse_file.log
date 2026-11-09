@@ -1,0 +1,322 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+   Compiling scrutate-fuzz v0.0.0 (/Users/crisn/Documents/Projects/scrutate/fuzz)
+    Finished `release` profile [optimized + debuginfo] target(s) in 48.65s
+    Blocking waiting for file lock on build directory
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.87s
+     Running `fuzz/target/aarch64-apple-darwin/release/parse_file -artifact_prefix=/Users/crisn/Documents/Projects/scrutate/fuzz/artifacts/parse_file/ -max_total_time=600 -rss_limit_mb=4096 -timeout=20 /Users/crisn/Documents/Projects/scrutate/fuzz/corpus/parse_file`
+INFO: Running with entropic power schedule (0xFF, 100).
+INFO: Seed: 1711746559
+INFO: Loaded 1 modules   (385405 inline 8-bit counters): 385405 [0x10ae71ba0, 0x10aecfd1d), 
+INFO: Loaded 1 PC tables (385405 PCs): 385405 [0x10aecfd20,0x10b4b14f0), 
+INFO:        0 files found in /Users/crisn/Documents/Projects/scrutate/fuzz/corpus/parse_file
+INFO: -max_len is not provided; libFuzzer will not generate inputs larger than 4096 bytes
+INFO: A corpus is not provided, starting from an empty corpus
+#2	INITED cov: 228 ft: 228 corp: 1/1b exec/s: 0 rss: 51Mb
+	NEW_FUNC[1/2]: 0x000106505470 in _RNvMs7_NtCs4qTDAHBj79k_5alloc7raw_vecINtB5_6RawVecReE8grow_oneCs4K2tUc4AJg6_12clap_builder+0x0 (parse_file:arm64+0x1019d1470)
+	NEW_FUNC[2/2]: 0x000106505968 in _RNvMs8_NtCs4qTDAHBj79k_5alloc7raw_vecNtB5_11RawVecInner11finish_growCs4K2tUc4AJg6_12clap_builder+0x0 (parse_file:arm64+0x1019d1968)
+#4	NEW    cov: 261 ft: 267 corp: 2/3b lim: 4 exec/s: 0 rss: 53Mb L: 2/2 MS: 1 CrossOver-
+	NEW_FUNC[1/1]: 0x0001051dd344 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREs6_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a9344)
+#6	NEW    cov: 264 ft: 276 corp: 3/5b lim: 4 exec/s: 0 rss: 53Mb L: 2/2 MS: 1 InsertByte-
+	NEW_FUNC[1/1]: 0x0001051dd360 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREs7_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a9360)
+#8	NEW    cov: 270 ft: 286 corp: 4/6b lim: 4 exec/s: 0 rss: 53Mb L: 1/2 MS: 1 ChangeByte-
+	NEW_FUNC[1/4]: 0x00010649db40 in _RNvMs7_NtCs4qTDAHBj79k_5alloc7raw_vecINtB5_6RawVecNtNtCsczFPHFtjn4c_8scrutate5parse5ChunkE8grow_oneBQ_+0x0 (parse_file:arm64+0x101969b40)
+	NEW_FUNC[2/4]: 0x00010649ef20 in _RNvMs7_NtCs4qTDAHBj79k_5alloc7raw_vecINtB5_6RawVecTNtCsk3pQ0UTIXmF_11tree_sitter4NodebbEE8grow_oneCsczFPHFtjn4c_8scrutate+0x0 (parse_file:arm64+0x10196af20)
+#9	NEW    cov: 328 ft: 385 corp: 5/8b lim: 4 exec/s: 0 rss: 54Mb L: 2/2 MS: 1 ChangeByte-
+#10	NEW    cov: 333 ft: 401 corp: 6/11b lim: 4 exec/s: 0 rss: 54Mb L: 3/3 MS: 1 InsertByte-
+	NEW_FUNC[1/2]: 0x0001051dd684 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsd_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a9684)
+	NEW_FUNC[2/2]: 0x0001055434e0 in _RNvCs71HcZyxBzVM_16tree_sitter_fish8language+0x0 (parse_file:arm64+0x100a0f4e0)
+#12	NEW    cov: 362 ft: 466 corp: 7/14b lim: 4 exec/s: 0 rss: 54Mb L: 3/3 MS: 1 InsertByte-
+	NEW_FUNC[1/1]: 0x0001051dd6ec in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsh_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a96ec)
+#14	NEW    cov: 363 ft: 468 corp: 8/15b lim: 4 exec/s: 0 rss: 54Mb L: 1/3 MS: 1 ChangeBit-
+	NEW_FUNC[1/1]: 0x0001051dd6b4 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsf_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a96b4)
+#16	NEW    cov: 366 ft: 474 corp: 9/16b lim: 4 exec/s: 0 rss: 54Mb L: 1/3 MS: 1 ChangeBit-
+#17	NEW    cov: 370 ft: 478 corp: 10/19b lim: 4 exec/s: 0 rss: 54Mb L: 3/3 MS: 1 ChangeBit-
+	NEW_FUNC[1/1]: 0x0001051dd30c in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREs4_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a930c)
+#21	NEW    cov: 372 ft: 508 corp: 11/21b lim: 4 exec/s: 0 rss: 55Mb L: 2/3 MS: 3 ShuffleBytes-CopyPart-ChangeBit-
+	NEW_FUNC[1/5]: 0x00010506be60 in _RNvNtCsczFPHFtjn4c_8scrutate5parse17py_docstring_node+0x0 (parse_file:arm64+0x100537e60)
+	NEW_FUNC[2/5]: 0x0001051dd280 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4CORE0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a9280)
+#23	NEW    cov: 392 ft: 582 corp: 12/23b lim: 4 exec/s: 0 rss: 55Mb L: 2/3 MS: 1 CMP- DE: "\000 "-
+#24	NEW    cov: 400 ft: 592 corp: 13/26b lim: 4 exec/s: 0 rss: 55Mb L: 3/3 MS: 1 ChangeBit-
+	NEW_FUNC[1/2]: 0x000104b3a6e8 in _RINvMNtCs2WdQrLQjXP6_4core3stre18trim_start_matchesNvMNtNtB5_4char7methodsc13is_whitespaceECsczFPHFtjn4c_8scrutate+0x0 (parse_file:arm64+0x1000066e8)
+	NEW_FUNC[2/2]: 0x000105060600 in _RNvNtCsczFPHFtjn4c_8scrutate5parse16heuristic_chunks+0x0 (parse_file:arm64+0x10052c600)
+#25	NEW    cov: 414 ft: 628 corp: 14/28b lim: 4 exec/s: 0 rss: 55Mb L: 2/3 MS: 1 InsertByte-
+	NEW_FUNC[1/4]: 0x0001051dd668 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsc_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a9668)
+	NEW_FUNC[2/4]: 0x0001059411f8 in _RNvMsi_Csk3pQ0UTIXmF_11tree_sitterNtB5_4Node10start_byte+0x0 (parse_file:arm64+0x100e0d1f8)
+#27	NEW    cov: 440 ft: 683 corp: 15/31b lim: 4 exec/s: 0 rss: 55Mb L: 3/3 MS: 1 ChangeBinInt-
+	NEW_FUNC[1/2]: 0x00010503bc98 in _RNvNtCsczFPHFtjn4c_8scrutate5langs12heading_text+0x0 (parse_file:arm64+0x100507c98)
+	NEW_FUNC[2/2]: 0x0001051dd5dc in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsU_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a95dc)
+#29	NEW    cov: 469 ft: 721 corp: 16/33b lim: 4 exec/s: 0 rss: 56Mb L: 2/3 MS: 1 ChangeBit-
+	NEW_FUNC[1/2]: 0x000105947e10 in _RNvMso_Csk3pQ0UTIXmF_11tree_sitterNtB5_10TreeCursor17goto_next_sibling+0x0 (parse_file:arm64+0x100e13e10)
+	NEW_FUNC[2/2]: 0x000105947ecc in _RNvMso_Csk3pQ0UTIXmF_11tree_sitterNtB5_10TreeCursor4node+0x0 (parse_file:arm64+0x100e13ecc)
+#31	NEW    cov: 478 ft: 736 corp: 17/36b lim: 4 exec/s: 0 rss: 56Mb L: 3/3 MS: 1 PersAutoDict- DE: "\000 "-
+	NEW_FUNC[1/1]: 0x0001051dd3d0 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsB_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a93d0)
+#33	NEW    cov: 479 ft: 742 corp: 18/37b lim: 4 exec/s: 0 rss: 56Mb L: 1/3 MS: 1 ChangeBit-
+#36	NEW    cov: 479 ft: 749 corp: 19/41b lim: 4 exec/s: 0 rss: 56Mb L: 4/4 MS: 2 CopyPart-CopyPart-
+	NEW_FUNC[1/6]: 0x00010506de54 in _RNvNtCsczFPHFtjn4c_8scrutate5parse4head+0x0 (parse_file:arm64+0x100539e54)
+	NEW_FUNC[2/6]: 0x0001050ed95c in _RNvXNtNtCs4qTDAHBj79k_5alloc3vec21spec_from_iter_nestedINtB4_3VecReEINtB2_18SpecFromIterNestedB11_INtNtNtCs2WdQrLQjXP6_4core3str4iter5SplitcEE9from_iterCsczFPHFtjn4c_8scrutate+0x0 (parse_file:arm64+0x1005b995c)
+#37	NEW    cov: 595 ft: 886 corp: 20/44b lim: 4 exec/s: 0 rss: 56Mb L: 3/4 MS: 1 InsertByte-
+	NEW_FUNC[1/1]: 0x0001051dd56c in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsQ_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a956c)
+#39	NEW    cov: 597 ft: 889 corp: 21/46b lim: 4 exec/s: 0 rss: 56Mb L: 2/4 MS: 1 ShuffleBytes-
+#43	NEW    cov: 600 ft: 896 corp: 22/50b lim: 4 exec/s: 0 rss: 56Mb L: 4/4 MS: 2 CrossOver-CrossOver-
+	NEW_FUNC[1/1]: 0x0001051dd778 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsm_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a9778)
+#45	NEW    cov: 602 ft: 899 corp: 23/51b lim: 4 exec/s: 0 rss: 57Mb L: 1/4 MS: 1 ChangeByte-
+#47	NEW    cov: 602 ft: 900 corp: 24/54b lim: 4 exec/s: 0 rss: 57Mb L: 3/4 MS: 1 ChangeBit-
+	NEW_FUNC[1/1]: 0x0001051dd438 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsF_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a9438)
+#49	NEW    cov: 604 ft: 905 corp: 25/57b lim: 4 exec/s: 0 rss: 57Mb L: 3/4 MS: 1 InsertByte-
+#53	NEW    cov: 606 ft: 910 corp: 26/61b lim: 4 exec/s: 0 rss: 57Mb L: 4/4 MS: 4 CopyPart-ChangeBit-ShuffleBytes-ChangeBinInt-
+#54	NEW    cov: 610 ft: 924 corp: 27/63b lim: 4 exec/s: 0 rss: 57Mb L: 2/4 MS: 1 CrossOver-
+#58	NEW    cov: 610 ft: 928 corp: 28/67b lim: 4 exec/s: 0 rss: 57Mb L: 4/4 MS: 3 ShuffleBytes-CrossOver-CrossOver-
+	NEW_FUNC[1/1]: 0x0001051dd874 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsv_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a9874)
+#60	NEW    cov: 615 ft: 953 corp: 29/69b lim: 4 exec/s: 0 rss: 58Mb L: 2/4 MS: 1 InsertByte-
+#66	NEW    cov: 615 ft: 955 corp: 30/73b lim: 4 exec/s: 0 rss: 58Mb L: 4/4 MS: 3 ChangeBinInt-ChangeBit-CrossOver-
+	NEW_FUNC[1/1]: 0x0001051dd740 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsk_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a9740)
+#69	NEW    cov: 616 ft: 967 corp: 31/76b lim: 4 exec/s: 0 rss: 58Mb L: 3/4 MS: 2 ShuffleBytes-ChangeByte-
+	NEW_FUNC[1/1]: 0x0001051dd2d4 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREs2_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a92d4)
+#73	NEW    cov: 617 ft: 968 corp: 32/78b lim: 4 exec/s: 0 rss: 59Mb L: 2/4 MS: 2 InsertByte-ChangeBinInt-
+	NEW_FUNC[1/1]: 0x0001051dd4c4 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsK_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a94c4)
+#78	NEW    cov: 618 ft: 969 corp: 33/81b lim: 4 exec/s: 0 rss: 59Mb L: 3/4 MS: 3 CopyPart-ChangeByte-ChangeBit-
+	NEW_FUNC[1/1]: 0x0001051dd400 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsD_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a9400)
+#80	NEW    cov: 619 ft: 970 corp: 34/85b lim: 4 exec/s: 0 rss: 59Mb L: 4/4 MS: 1 ChangeByte-
+#81	NEW    cov: 619 ft: 982 corp: 35/89b lim: 4 exec/s: 0 rss: 59Mb L: 4/4 MS: 1 ChangeByte-
+	NEW_FUNC[1/1]: 0x0001051dd454 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsG_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a9454)
+#83	NEW    cov: 620 ft: 983 corp: 36/91b lim: 4 exec/s: 0 rss: 59Mb L: 2/4 MS: 1 ChangeBit-
+#86	NEW    cov: 621 ft: 984 corp: 37/94b lim: 4 exec/s: 0 rss: 59Mb L: 3/4 MS: 3 ChangeByte-ChangeByte-ChangeByte-
+	NEW_FUNC[1/1]: 0x0001051dd2f0 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREs3_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a92f0)
+#94	NEW    cov: 622 ft: 986 corp: 38/95b lim: 4 exec/s: 0 rss: 60Mb L: 1/4 MS: 4 ShuffleBytes-ShuffleBytes-CrossOver-ChangeByte-
+#98	NEW    cov: 622 ft: 987 corp: 39/98b lim: 4 exec/s: 0 rss: 60Mb L: 3/4 MS: 2 PersAutoDict-CopyPart- DE: "\000 "-
+#108	NEW    cov: 622 ft: 989 corp: 40/101b lim: 4 exec/s: 0 rss: 60Mb L: 3/4 MS: 5 CopyPart-ShuffleBytes-PersAutoDict-ShuffleBytes-CopyPart- DE: "\000 "-
+	NEW_FUNC[1/1]: 0x0001051dd328 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREs5_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a9328)
+#124	NEW    cov: 624 ft: 992 corp: 41/104b lim: 4 exec/s: 0 rss: 60Mb L: 3/4 MS: 3 ChangeBit-ChangeByte-ChangeBit-
+	NEW_FUNC[1/1]: 0x0001051dd7b0 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREso_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a97b0)
+#126	NEW    cov: 625 ft: 993 corp: 42/105b lim: 4 exec/s: 0 rss: 60Mb L: 1/4 MS: 1 ChangeBit-
+	NEW_FUNC[1/1]: 0x0001051dd4fc in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsM_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a94fc)
+#133	NEW    cov: 628 ft: 1000 corp: 43/108b lim: 4 exec/s: 0 rss: 60Mb L: 3/4 MS: 4 EraseBytes-ChangeByte-ChangeByte-ChangeBit-
+	NEW_FUNC[1/1]: 0x0001051dd708 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsi_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a9708)
+#145	NEW    cov: 629 ft: 1002 corp: 44/111b lim: 4 exec/s: 0 rss: 61Mb L: 3/4 MS: 3 CopyPart-InsertByte-ChangeBit-
+#150	NEW    cov: 629 ft: 1003 corp: 45/114b lim: 4 exec/s: 0 rss: 61Mb L: 3/4 MS: 3 CrossOver-EraseBytes-PersAutoDict- DE: "\000 "-
+	NEW_FUNC[1/1]: 0x0001051dd890 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsw_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a9890)
+#155	NEW    cov: 630 ft: 1004 corp: 46/117b lim: 4 exec/s: 0 rss: 61Mb L: 3/4 MS: 3 ChangeBit-CopyPart-ChangeBinInt-
+#170	NEW    cov: 633 ft: 1007 corp: 47/120b lim: 4 exec/s: 0 rss: 61Mb L: 3/4 MS: 3 CopyPart-CopyPart-ChangeBit-
+	NEW_FUNC[1/1]: 0x0001051dd6d0 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsg_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a96d0)
+#174	NEW    cov: 634 ft: 1008 corp: 48/122b lim: 4 exec/s: 0 rss: 61Mb L: 2/4 MS: 3 InsertByte-CopyPart-ChangeByte-
+#177	NEW    cov: 634 ft: 1014 corp: 49/125b lim: 4 exec/s: 0 rss: 61Mb L: 3/4 MS: 2 CrossOver-CrossOver-
+	NEW_FUNC[1/1]: 0x0001051dd858 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsu_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a9858)
+#191	NEW    cov: 636 ft: 1022 corp: 50/128b lim: 4 exec/s: 0 rss: 62Mb L: 3/4 MS: 2 CrossOver-ChangeByte-
+	NEW_FUNC[1/1]: 0x0001051dd724 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsj_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a9724)
+#199	NEW    cov: 637 ft: 1063 corp: 51/131b lim: 4 exec/s: 0 rss: 62Mb L: 3/4 MS: 1 ChangeByte-
+#201	NEW    cov: 637 ft: 1064 corp: 52/133b lim: 4 exec/s: 0 rss: 62Mb L: 2/4 MS: 1 CopyPart-
+	NEW_FUNC[1/1]: 0x0001051dd470 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsH_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a9470)
+#224	NEW    cov: 638 ft: 1065 corp: 53/137b lim: 4 exec/s: 0 rss: 62Mb L: 4/4 MS: 4 CopyPart-ShuffleBytes-CrossOver-ChangeByte-
+#227	NEW    cov: 639 ft: 1068 corp: 54/141b lim: 4 exec/s: 0 rss: 62Mb L: 4/4 MS: 3 CrossOver-CrossOver-PersAutoDict- DE: "\000 "-
+#233	NEW    cov: 639 ft: 1071 corp: 55/145b lim: 4 exec/s: 0 rss: 62Mb L: 4/4 MS: 5 CrossOver-ChangeBinInt-ChangeBinInt-PersAutoDict-ChangeBinInt- DE: "\000 "-
+	NEW_FUNC[1/1]: 0x0001051dd5f8 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsV_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a95f8)
+#251	NEW    cov: 640 ft: 1072 corp: 56/147b lim: 4 exec/s: 0 rss: 63Mb L: 2/4 MS: 4 ChangeByte-ChangeByte-CopyPart-ChangeByte-
+	NEW_FUNC[1/1]: 0x0001051dd7e8 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsq_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a97e8)
+#257	NEW    cov: 641 ft: 1073 corp: 57/150b lim: 4 exec/s: 0 rss: 63Mb L: 3/4 MS: 3 ShuffleBytes-EraseBytes-InsertByte-
+	NEW_FUNC[1/1]: 0x0001051dd794 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsn_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a9794)
+#259	NEW    cov: 642 ft: 1074 corp: 58/153b lim: 4 exec/s: 0 rss: 63Mb L: 3/4 MS: 1 ChangeBit-
+	NEW_FUNC[1/1]: 0x0001051dd804 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsr_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a9804)
+#267	NEW    cov: 644 ft: 1076 corp: 59/155b lim: 4 exec/s: 0 rss: 63Mb L: 2/4 MS: 4 EraseBytes-InsertByte-EraseBytes-ChangeBit-
+	NEW_FUNC[1/1]: 0x0001051dd534 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsO_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a9534)
+#269	NEW    cov: 645 ft: 1077 corp: 60/158b lim: 4 exec/s: 0 rss: 63Mb L: 3/4 MS: 1 ChangeByte-
+#271	NEW    cov: 646 ft: 1078 corp: 61/161b lim: 4 exec/s: 0 rss: 63Mb L: 3/4 MS: 2 CrossOver-ChangeBit-
+	NEW_FUNC[1/1]: 0x0001051dd5c0 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsT_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a95c0)
+#279	NEW    cov: 647 ft: 1080 corp: 62/162b lim: 4 exec/s: 0 rss: 64Mb L: 1/4 MS: 4 ShuffleBytes-CrossOver-CopyPart-ChangeByte-
+#281	NEW    cov: 647 ft: 1081 corp: 63/166b lim: 4 exec/s: 0 rss: 64Mb L: 4/4 MS: 1 InsertByte-
+	NEW_FUNC[1/1]: 0x0001051dd29c in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREs0_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a929c)
+#289	NEW    cov: 648 ft: 1082 corp: 64/170b lim: 4 exec/s: 0 rss: 64Mb L: 4/4 MS: 4 ChangeByte-ChangeByte-ShuffleBytes-ChangeBinInt-
+#319	NEW    cov: 648 ft: 1084 corp: 65/174b lim: 4 exec/s: 0 rss: 64Mb L: 4/4 MS: 5 EraseBytes-ChangeBinInt-CopyPart-CrossOver-PersAutoDict- DE: "\000 "-
+	NEW_FUNC[1/1]: 0x0001051dd614 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREs_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a9614)
+#321	NEW    cov: 649 ft: 1085 corp: 66/177b lim: 4 exec/s: 0 rss: 65Mb L: 3/4 MS: 1 InsertByte-
+	NEW_FUNC[1/1]: 0x0001051dd550 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsP_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a9550)
+#323	NEW    cov: 650 ft: 1087 corp: 67/180b lim: 4 exec/s: 0 rss: 65Mb L: 3/4 MS: 1 ShuffleBytes-
+	NEW_FUNC[1/1]: 0x0001051dd4e0 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsL_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a94e0)
+#330	NEW    cov: 651 ft: 1088 corp: 68/184b lim: 4 exec/s: 0 rss: 65Mb L: 4/4 MS: 5 CopyPart-ShuffleBytes-EraseBytes-ShuffleBytes-InsertByte-
+#346	NEW    cov: 656 ft: 1095 corp: 69/188b lim: 4 exec/s: 0 rss: 66Mb L: 4/4 MS: 4 ShuffleBytes-ChangeByte-ChangeBinInt-CrossOver-
+#355	NEW    cov: 656 ft: 1096 corp: 70/190b lim: 4 exec/s: 0 rss: 66Mb L: 2/4 MS: 5 ShuffleBytes-ChangeBit-EraseBytes-ChangeBinInt-ChangeBinInt-
+	NEW_FUNC[1/2]: 0x0001051dd3ec in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsC_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a93ec)
+	NEW_FUNC[2/2]: 0x00010528faa8 in _RNvCsjaLj3icoT4e_15tree_sitter_vim8language+0x0 (parse_file:arm64+0x10075baa8)
+#365	NEW    cov: 658 ft: 1098 corp: 71/191b lim: 4 exec/s: 0 rss: 66Mb L: 1/4 MS: 5 ChangeByte-ChangeBit-ChangeByte-InsertByte-EraseBytes-
+#398	NEW    cov: 658 ft: 1102 corp: 72/195b lim: 4 exec/s: 0 rss: 67Mb L: 4/4 MS: 1 CopyPart-
+#408	NEW    cov: 658 ft: 1103 corp: 73/199b lim: 4 exec/s: 0 rss: 67Mb L: 4/4 MS: 2 CopyPart-ChangeByte-
+	NEW_FUNC[1/1]: 0x0001051dd8c8 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsy_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a98c8)
+#452	NEW    cov: 659 ft: 1104 corp: 74/200b lim: 4 exec/s: 0 rss: 67Mb L: 1/4 MS: 5 CopyPart-EraseBytes-EraseBytes-ChangeBit-ChangeBit-
+	NEW_FUNC[1/2]: 0x0001059419b4 in _RNvMsi_Csk3pQ0UTIXmF_11tree_sitterNtB5_4Node11named_child+0x0 (parse_file:arm64+0x100e0d9b4)
+	NEW_FUNC[2/2]: 0x000105943160 in _RNvMsi_Csk3pQ0UTIXmF_11tree_sitterNtB5_4Node17named_child_count+0x0 (parse_file:arm64+0x100e0f160)
+#453	NEW    cov: 672 ft: 1117 corp: 75/203b lim: 4 exec/s: 0 rss: 67Mb L: 3/4 MS: 1 PersAutoDict- DE: "\000 "-
+#482	NEW    cov: 673 ft: 1118 corp: 76/207b lim: 4 exec/s: 0 rss: 68Mb L: 4/4 MS: 3 ChangeBinInt-PersAutoDict-ChangeBinInt- DE: "\000 "-
+#483	NEW    cov: 678 ft: 1132 corp: 77/211b lim: 4 exec/s: 0 rss: 68Mb L: 4/4 MS: 1 InsertByte-
+#492	NEW    cov: 679 ft: 1133 corp: 78/215b lim: 4 exec/s: 0 rss: 68Mb L: 4/4 MS: 2 CopyPart-InsertByte-
+#499	NEW    cov: 679 ft: 1137 corp: 79/219b lim: 4 exec/s: 0 rss: 68Mb L: 4/4 MS: 5 ChangeBit-InsertByte-ShuffleBytes-EraseBytes-PersAutoDict- DE: "\000 "-
+	NEW_FUNC[1/2]: 0x0001051c8ca4 in _RNvXst_NtNtCs2WdQrLQjXP6_4core3str7patternReNtB5_7Pattern15is_contained_in+0x0 (parse_file:arm64+0x100694ca4)
+	NEW_FUNC[2/2]: 0x0001051dd4a8 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsJ_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a94a8)
+#530	NEW    cov: 698 ft: 1165 corp: 80/220b lim: 4 exec/s: 0 rss: 68Mb L: 1/4 MS: 3 ChangeByte-ChangeByte-ChangeBit-
+#574	NEW    cov: 700 ft: 1167 corp: 81/221b lim: 4 exec/s: 0 rss: 69Mb L: 1/4 MS: 3 CopyPart-ShuffleBytes-ChangeByte-
+	NEW_FUNC[1/1]: 0x0001051dd3b4 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsA_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a93b4)
+#602	NEW    cov: 701 ft: 1168 corp: 82/223b lim: 4 exec/s: 0 rss: 70Mb L: 2/4 MS: 4 CrossOver-ChangeByte-ChangeBit-ChangeByte-
+#604	NEW    cov: 701 ft: 1169 corp: 83/226b lim: 4 exec/s: 0 rss: 70Mb L: 3/4 MS: 1 InsertByte-
+	NEW_FUNC[1/1]: 0x0001051dd48c in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsI_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a948c)
+#607	NEW    cov: 702 ft: 1170 corp: 84/229b lim: 4 exec/s: 0 rss: 70Mb L: 3/4 MS: 2 ChangeBit-ChangeBinInt-
+#622	NEW    cov: 702 ft: 1171 corp: 85/233b lim: 4 exec/s: 0 rss: 70Mb L: 4/4 MS: 3 ChangeByte-InsertByte-ShuffleBytes-
+#623	NEW    cov: 705 ft: 1180 corp: 86/237b lim: 4 exec/s: 0 rss: 70Mb L: 4/4 MS: 1 CopyPart-
+#687	NEW    cov: 706 ft: 1181 corp: 87/240b lim: 4 exec/s: 0 rss: 71Mb L: 3/4 MS: 1 InsertByte-
+#698	NEW    cov: 707 ft: 1182 corp: 88/242b lim: 4 exec/s: 0 rss: 71Mb L: 2/4 MS: 1 EraseBytes-
+	NEW_FUNC[1/1]: 0x0001051dd518 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsN_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a9518)
+#703	NEW    cov: 708 ft: 1183 corp: 89/246b lim: 4 exec/s: 0 rss: 72Mb L: 4/4 MS: 3 ChangeByte-ChangeBit-ShuffleBytes-
+	NEW_FUNC[1/1]: 0x0001051dd41c in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsE_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a941c)
+#745	NEW    cov: 709 ft: 1184 corp: 90/249b lim: 4 exec/s: 0 rss: 72Mb L: 3/4 MS: 4 CopyPart-ChangeBit-PersAutoDict-ChangeByte- DE: "\000 "-
+	NEW_FUNC[1/1]: 0x0001051dd8e4 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsz_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a98e4)
+#760	NEW    cov: 710 ft: 1185 corp: 91/251b lim: 4 exec/s: 0 rss: 72Mb L: 2/4 MS: 5 EraseBytes-ChangeByte-ShuffleBytes-CrossOver-InsertByte-
+	NEW_FUNC[1/206]: 0x000104dd285c in _RNCINvMs0_NtNtCskxHI7cCZDyP_3std4sync4onceNtB8_4Once15call_once_forceNCNvMNtBa_9lazy_lockINtB1a_8LazyLockNtNtNtCsaQA5wNATEeA_5regex5regex6string5RegexE5force0E0CsczFPHFtjn4c_8scrutate+0x0 (parse_file:arm64+0x10029e85c)
+	NEW_FUNC[2/206]: 0x000104f35eac in _RNvMs4_NtNtCsaQA5wNATEeA_5regex5regex6stringNtB5_5Regex11captures_at+0x0 (parse_file:arm64+0x100401eac)
+#784	NEW    cov: 3932 ft: 4407 corp: 92/255b lim: 4 exec/s: 0 rss: 84Mb L: 4/4 MS: 1 InsertByte-
+#793	NEW    cov: 3933 ft: 4408 corp: 93/257b lim: 4 exec/s: 0 rss: 84Mb L: 2/4 MS: 1 EraseBytes-
+	NEW_FUNC[1/1]: 0x0001051dd5a4 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsS_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a95a4)
+#851	NEW    cov: 3935 ft: 4410 corp: 94/260b lim: 4 exec/s: 0 rss: 85Mb L: 3/4 MS: 4 EraseBytes-ShuffleBytes-CrossOver-ChangeByte-
+#976	REDUCE cov: 3935 ft: 4410 corp: 94/259b lim: 4 exec/s: 0 rss: 87Mb L: 2/4 MS: 2 EraseBytes-ChangeBit-
+	NEW_FUNC[1/1]: 0x0001051dd2b8 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREs1_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a92b8)
+#989	NEW    cov: 3936 ft: 4411 corp: 95/261b lim: 4 exec/s: 0 rss: 87Mb L: 2/4 MS: 2 CrossOver-InsertByte-
+	NEW_FUNC[1/1]: 0x0001051dd83c in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREst_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a983c)
+#993	NEW    cov: 3937 ft: 4412 corp: 96/262b lim: 4 exec/s: 0 rss: 87Mb L: 1/4 MS: 3 EraseBytes-ShuffleBytes-ChangeBit-
+	NEW_FUNC[1/21]: 0x000106495c74 in _RNvMs2_NtNtNtCsgT1l9EmBF6m_14regex_automata4util4pool5innerINtB5_4PoolNtNtNtBb_4meta5regex5CacheINtNtCs4qTDAHBj79k_5alloc5boxed3BoxDINtNtNtCs2WdQrLQjXP6_4core3ops8function2FnuEp6OutputB16_NtNtB2d_6marker4SendNtNtNtB2d_5panic11unwind_safe13RefUnwindSafeNtB3m_10UnwindSafeNtB32_4SyncEL_EE8get_slowCsczFPHFtjn4c_8scrutate+0x0 (parse_file:arm64+0x101961c74)
+	NEW_FUNC[2/21]: 0x0001064d2984 in _RINvMs6_NtCsatYeb3nT2xH_9hashbrown3rawINtB6_8RawTableTNtNtNtNtCsgT1l9EmBF6m_14regex_automata4util11determinize5state5StateNtNtNtBY_6hybrid2id11LazyStateIDEE14reserve_rehashNCINvNtB8_3map11make_hasherBQ_B1W_NtNtNtCskxHI7cCZDyP_3std4hash6random11RandomStateE0EBY_+0x0 (parse_file:arm64+0x10199e984)
+#1010	NEW    cov: 4294 ft: 4785 corp: 97/266b lim: 4 exec/s: 0 rss: 89Mb L: 4/4 MS: 4 CrossOver-ChangeByte-CopyPart-CrossOver-
+#1031	NEW    cov: 4348 ft: 4966 corp: 98/270b lim: 4 exec/s: 0 rss: 89Mb L: 4/4 MS: 4 ChangeByte-ShuffleBytes-PersAutoDict-InsertByte- DE: "\000 "-
+#1053	NEW    cov: 4349 ft: 4967 corp: 99/274b lim: 4 exec/s: 0 rss: 89Mb L: 4/4 MS: 3 ChangeBinInt-ChangeBit-ShuffleBytes-
+#1122	NEW    cov: 4349 ft: 4969 corp: 100/278b lim: 4 exec/s: 0 rss: 90Mb L: 4/4 MS: 3 ChangeBit-ChangeByte-ChangeByte-
+#1134	NEW    cov: 4349 ft: 4970 corp: 101/281b lim: 4 exec/s: 0 rss: 91Mb L: 3/4 MS: 1 ChangeBinInt-
+	NEW_FUNC[1/1]: 0x0001051dd75c in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsl_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a975c)
+#1172	NEW    cov: 4350 ft: 4971 corp: 102/284b lim: 4 exec/s: 0 rss: 91Mb L: 3/4 MS: 4 PersAutoDict-ChangeBit-EraseBytes-InsertByte- DE: "\000 "-
+#1225	NEW    cov: 4352 ft: 4975 corp: 103/287b lim: 4 exec/s: 0 rss: 92Mb L: 3/4 MS: 1 InsertByte-
+#1227	NEW    cov: 4353 ft: 4983 corp: 104/291b lim: 4 exec/s: 0 rss: 92Mb L: 4/4 MS: 2 CopyPart-CopyPart-
+#1244	NEW    cov: 4360 ft: 5025 corp: 105/294b lim: 4 exec/s: 0 rss: 92Mb L: 3/4 MS: 4 ChangeBit-ChangeBit-ShuffleBytes-ChangeByte-
+#1288	NEW    cov: 4360 ft: 5026 corp: 106/295b lim: 4 exec/s: 0 rss: 93Mb L: 1/4 MS: 4 CrossOver-EraseBytes-EraseBytes-ChangeBit-
+#1358	NEW    cov: 4361 ft: 5027 corp: 107/298b lim: 4 exec/s: 0 rss: 94Mb L: 3/4 MS: 1 CrossOver-
+#1382	NEW    cov: 4363 ft: 5037 corp: 108/302b lim: 4 exec/s: 0 rss: 94Mb L: 4/4 MS: 5 CrossOver-ChangeBit-PersAutoDict-ChangeBinInt-CopyPart- DE: "\000 "-
+#1395	NEW    cov: 4364 ft: 5040 corp: 109/305b lim: 4 exec/s: 0 rss: 94Mb L: 3/4 MS: 1 InsertByte-
+#1403	NEW    cov: 4365 ft: 5041 corp: 110/307b lim: 4 exec/s: 0 rss: 94Mb L: 2/4 MS: 2 InsertByte-EraseBytes-
+#1414	NEW    cov: 4367 ft: 5043 corp: 111/311b lim: 4 exec/s: 0 rss: 95Mb L: 4/4 MS: 1 CopyPart-
+#1450	NEW    cov: 4367 ft: 5044 corp: 112/315b lim: 4 exec/s: 0 rss: 95Mb L: 4/4 MS: 2 CopyPart-CMP- DE: "\001\012"-
+#1549	NEW    cov: 4367 ft: 5045 corp: 113/319b lim: 4 exec/s: 0 rss: 97Mb L: 4/4 MS: 1 CopyPart-
+#1575	NEW    cov: 4367 ft: 5046 corp: 114/321b lim: 4 exec/s: 0 rss: 97Mb L: 2/4 MS: 5 PersAutoDict-EraseBytes-CopyPart-CopyPart-CrossOver- DE: "\001\012"-
+	NEW_FUNC[1/1]: 0x0001051dd7cc in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsp_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a97cc)
+#1589	NEW    cov: 4368 ft: 5047 corp: 115/325b lim: 4 exec/s: 0 rss: 98Mb L: 4/4 MS: 5 InsertByte-ChangeBinInt-ChangeBit-InsertByte-ShuffleBytes-
+#1591	NEW    cov: 4368 ft: 5048 corp: 116/329b lim: 4 exec/s: 0 rss: 98Mb L: 4/4 MS: 1 InsertByte-
+#1625	NEW    cov: 4368 ft: 5049 corp: 117/332b lim: 4 exec/s: 0 rss: 98Mb L: 3/4 MS: 3 ChangeByte-CopyPart-EraseBytes-
+#1633	NEW    cov: 4368 ft: 5052 corp: 118/336b lim: 4 exec/s: 0 rss: 98Mb L: 4/4 MS: 2 ShuffleBytes-InsertByte-
+#1648	NEW    cov: 4368 ft: 5053 corp: 119/339b lim: 4 exec/s: 0 rss: 99Mb L: 3/4 MS: 1 ChangeBit-
+	NEW_FUNC[1/1]: 0x0001051dd588 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsR_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a9588)
+#1674	NEW    cov: 4369 ft: 5055 corp: 120/341b lim: 4 exec/s: 0 rss: 99Mb L: 2/4 MS: 4 ChangeBit-EraseBytes-ShuffleBytes-ChangeBinInt-
+#1702	REDUCE cov: 4369 ft: 5055 corp: 120/340b lim: 4 exec/s: 0 rss: 99Mb L: 2/4 MS: 2 ShuffleBytes-EraseBytes-
+	NEW_FUNC[1/1]: 0x0001051dd698 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREse_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a9698)
+#1707	NEW    cov: 4370 ft: 5059 corp: 121/344b lim: 4 exec/s: 0 rss: 100Mb L: 4/4 MS: 4 EraseBytes-ShuffleBytes-ChangeBinInt-InsertByte-
+#1735	NEW    cov: 4373 ft: 5062 corp: 122/348b lim: 4 exec/s: 0 rss: 100Mb L: 4/4 MS: 1 InsertByte-
+#1737	NEW    cov: 4376 ft: 5065 corp: 123/352b lim: 4 exec/s: 0 rss: 100Mb L: 4/4 MS: 2 ChangeBit-InsertByte-
+#1763	NEW    cov: 4376 ft: 5066 corp: 124/356b lim: 4 exec/s: 0 rss: 100Mb L: 4/4 MS: 1 ChangeBinInt-
+	NEW_FUNC[1/1]: 0x0001051dd820 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREss_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a9820)
+#1809	NEW    cov: 4377 ft: 5067 corp: 125/360b lim: 4 exec/s: 0 rss: 100Mb L: 4/4 MS: 4 CopyPart-CrossOver-ChangeBinInt-ChangeBinInt-
+	NEW_FUNC[1/1]: 0x0001051dd630 in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsa_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a9630)
+#1869	NEW    cov: 4378 ft: 5101 corp: 126/362b lim: 4 exec/s: 0 rss: 100Mb L: 2/4 MS: 2 CopyPart-ChangeBinInt-
+	NEW_FUNC[1/1]: 0x0001051dd8ac in _RNvYNCNvNtCsczFPHFtjn4c_8scrutate5langs4COREsx_0INtNtNtCs2WdQrLQjXP6_4core3ops8function6FnOnceuE9call_onceB8_+0x0 (parse_file:arm64+0x1006a98ac)
+#1908	NEW    cov: 4384 ft: 5109 corp: 127/364b lim: 4 exec/s: 0 rss: 100Mb L: 2/4 MS: 2 InsertByte-EraseBytes-
+#1917	NEW    cov: 4384 ft: 5110 corp: 128/367b lim: 4 exec/s: 0 rss: 100Mb L: 3/4 MS: 2 ChangeBit-ShuffleBytes-
+#1930	NEW    cov: 4384 ft: 5111 corp: 129/370b lim: 4 exec/s: 0 rss: 100Mb L: 3/4 MS: 4 ChangeByte-ShuffleBytes-EraseBytes-PersAutoDict- DE: "\000 "-
+#2017	NEW    cov: 4384 ft: 5113 corp: 130/374b lim: 4 exec/s: 0 rss: 100Mb L: 4/4 MS: 3 ShuffleBytes-ShuffleBytes-CopyPart-
+#2018	NEW    cov: 4386 ft: 5115 corp: 131/377b lim: 4 exec/s: 0 rss: 100Mb L: 3/4 MS: 1 ChangeByte-
+#2044	NEW    cov: 4386 ft: 5116 corp: 132/380b lim: 4 exec/s: 0 rss: 100Mb L: 3/4 MS: 4 ChangeBit-CopyPart-ChangeBit-PersAutoDict- DE: "\000 "-
+	NEW_FUNC[1/1]: 0x000105049e78 in _RNvNtCsczFPHFtjn4c_8scrutate5langs9head_word+0x0 (parse_file:arm64+0x100515e78)
+#2134	NEW    cov: 4404 ft: 5134 corp: 133/384b lim: 4 exec/s: 0 rss: 100Mb L: 4/4 MS: 2 PersAutoDict-ChangeByte- DE: "\000 "-
+#2141	NEW    cov: 4405 ft: 5137 corp: 134/386b lim: 4 exec/s: 0 rss: 100Mb L: 2/4 MS: 1 EraseBytes-
+#2142	NEW    cov: 4405 ft: 5139 corp: 135/390b lim: 4 exec/s: 0 rss: 100Mb L: 4/4 MS: 1 ChangeBinInt-
+#2178	NEW    cov: 4405 ft: 5145 corp: 136/393b lim: 4 exec/s: 0 rss: 101Mb L: 3/4 MS: 2 ChangeBit-CopyPart-
+#2243	NEW    cov: 4406 ft: 5487 corp: 137/397b lim: 4 exec/s: 0 rss: 101Mb L: 4/4 MS: 1 ShuffleBytes-
+#2265	NEW    cov: 4407 ft: 5489 corp: 138/400b lim: 4 exec/s: 0 rss: 101Mb L: 3/4 MS: 4 CrossOver-CopyPart-ChangeBit-CopyPart-
+#2285	NEW    cov: 4419 ft: 5509 corp: 139/404b lim: 4 exec/s: 0 rss: 102Mb L: 4/4 MS: 2 ChangeByte-ChangeByte-
+#2304	NEW    cov: 4420 ft: 5510 corp: 140/408b lim: 4 exec/s: 0 rss: 102Mb L: 4/4 MS: 4 InsertByte-CrossOver-EraseBytes-InsertByte-
+#2321	NEW    cov: 4420 ft: 5512 corp: 141/412b lim: 4 exec/s: 0 rss: 102Mb L: 4/4 MS: 3 ChangeByte-CopyPart-ChangeByte-
+#2327	NEW    cov: 4425 ft: 5518 corp: 142/415b lim: 4 exec/s: 0 rss: 102Mb L: 3/4 MS: 3 ShuffleBytes-ChangeBit-InsertByte-
+#2349	NEW    cov: 4425 ft: 5519 corp: 143/419b lim: 4 exec/s: 0 rss: 102Mb L: 4/4 MS: 2 CrossOver-ChangeByte-
+#2383	NEW    cov: 4426 ft: 5520 corp: 144/421b lim: 4 exec/s: 0 rss: 102Mb L: 2/4 MS: 1 ChangeByte-
+#2392	NEW    cov: 4426 ft: 5521 corp: 145/425b lim: 4 exec/s: 0 rss: 102Mb L: 4/4 MS: 3 CopyPart-CrossOver-PersAutoDict- DE: "\001\012"-
+#2434	NEW    cov: 4443 ft: 5615 corp: 146/429b lim: 4 exec/s: 0 rss: 102Mb L: 4/4 MS: 5 ShuffleBytes-CopyPart-ChangeBinInt-PersAutoDict-ChangeByte- DE: "\000 "-
+#2441	NEW    cov: 4443 ft: 5618 corp: 147/433b lim: 4 exec/s: 0 rss: 102Mb L: 4/4 MS: 2 ChangeByte-CopyPart-
+#2447	NEW    cov: 4443 ft: 5620 corp: 148/437b lim: 4 exec/s: 0 rss: 102Mb L: 4/4 MS: 1 CopyPart-
+#2469	NEW    cov: 4446 ft: 5626 corp: 149/441b lim: 4 exec/s: 0 rss: 102Mb L: 4/4 MS: 3 CopyPart-ChangeByte-PersAutoDict- DE: "\001\012"-
+#2556	NEW    cov: 4446 ft: 5631 corp: 150/444b lim: 4 exec/s: 0 rss: 102Mb L: 3/4 MS: 1 InsertByte-
+#2557	NEW    cov: 4446 ft: 5636 corp: 151/448b lim: 4 exec/s: 0 rss: 102Mb L: 4/4 MS: 1 PersAutoDict- DE: "\000 "-
+#2660	NEW    cov: 4446 ft: 5654 corp: 152/452b lim: 4 exec/s: 0 rss: 102Mb L: 4/4 MS: 1 ChangeByte-
+#2687	REDUCE cov: 4446 ft: 5654 corp: 152/451b lim: 4 exec/s: 0 rss: 102Mb L: 3/4 MS: 1 EraseBytes-
+#2698	NEW    cov: 4446 ft: 5655 corp: 153/455b lim: 4 exec/s: 0 rss: 102Mb L: 4/4 MS: 1 CMP- DE: "\356\377\377\377"-
+#2720	REDUCE cov: 4446 ft: 5655 corp: 153/454b lim: 4 exec/s: 0 rss: 102Mb L: 2/4 MS: 5 ChangeBinInt-ShuffleBytes-ShuffleBytes-ChangeBinInt-EraseBytes-
+#2796	NEW    cov: 4447 ft: 5660 corp: 154/458b lim: 4 exec/s: 0 rss: 102Mb L: 4/4 MS: 5 EraseBytes-InsertByte-CopyPart-CrossOver-ShuffleBytes-
+#2871	NEW    cov: 4451 ft: 5664 corp: 155/462b lim: 4 exec/s: 0 rss: 102Mb L: 4/4 MS: 1 ChangeBit-
+#2888	NEW    cov: 4451 ft: 5665 corp: 156/465b lim: 4 exec/s: 0 rss: 102Mb L: 3/4 MS: 1 ChangeBit-
+#2890	NEW    cov: 4451 ft: 5666 corp: 157/469b lim: 4 exec/s: 0 rss: 102Mb L: 4/4 MS: 2 CopyPart-CrossOver-
+#2912	NEW    cov: 4454 ft: 5669 corp: 158/472b lim: 4 exec/s: 0 rss: 102Mb L: 3/4 MS: 4 ChangeBinInt-ChangeByte-ChangeByte-InsertByte-
+#2939	REDUCE cov: 4454 ft: 5669 corp: 158/471b lim: 4 exec/s: 0 rss: 102Mb L: 3/4 MS: 1 EraseBytes-
+
+thread '<unnamed>' (8611900) panicked at fuzz_targets/parse_file.rs:17:9:
+f.ts: chunk 1..3 of 2 lines
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+==51855== ERROR: libFuzzer: deadly signal
+    #0 0x00010c373654 in __sanitizer_print_stack_trace+0x28 (librustc-nightly_rt.asan.dylib:arm64+0x87654)
+    #1 0x0001063ee1d0 in fuzzer::PrintStackTrace()+0x30 (parse_file:arm64+0x1018ba1d0)
+    #2 0x0001063e1b10 in fuzzer::Fuzzer::CrashCallback()+0x54 (parse_file:arm64+0x1018adb10)
+    #3 0x0001a4f06140 in _sigtramp+0x34 (libsystem_platform.dylib:arm64e+0x4140)
+    #4 0x00019ff3c95c in pthread_kill+0x124 (libsystem_pthread.dylib:arm64e+0x695c)
+    #5 0x00019ffd047c in abort+0x90 (libsystem_c.dylib:arm64e+0x7b47c)
+    #6 0x00010651042c in _RNvNtNtNtCskxHI7cCZDyP_3std3sys3pal4unix14abort_internal+0x8 (parse_file:arm64+0x1019dc42c)
+    #7 0x00010651017c in _RNvNtCskxHI7cCZDyP_3std7process5abort+0x8 (parse_file:arm64+0x1019dc17c)
+    #8 0x00010650aba8 in _RNCNvCsdBEYEIiMDe_13libfuzzer_sys10initialize0B3_+0xb8 (parse_file:arm64+0x1019d6ba8)
+    #9 0x0001064346bc in _RNvNtCskxHI7cCZDyP_3std9panicking15panic_with_hook+0x26c (parse_file:arm64+0x1019006bc)
+    #10 0x000106422cb8 in _RNCNvNtCskxHI7cCZDyP_3std9panicking13panic_handler0B5_+0x40 (parse_file:arm64+0x1018eecb8)
+    #11 0x00010641bb00 in _RINvNtNtCskxHI7cCZDyP_3std3sys9backtrace26___rust_end_short_backtraceNCNvNtB6_9panicking13panic_handler0zEB6_+0x8 (parse_file:arm64+0x1018e7b00)
+    #12 0x0001064236e4 in _RNvCsaS0kMgGQ6Nj_7___rustc17rust_begin_unwind+0x1c (parse_file:arm64+0x1018ef6e4)
+    #13 0x000106510f04 in _RNvNtCs2WdQrLQjXP6_4core9panicking9panic_fmt+0x24 (parse_file:arm64+0x1019dcf04)
+    #14 0x000104b36804 in _RNvNvCsbSGg21eLqO9_10parse_file1__19___libfuzzer_sys_run parse_file.rs:17
+    #15 0x000104b382e0 in rust_fuzzer_test_input lib.rs:276
+    #16 0x0001063e031c in _RINvNvNtCskxHI7cCZDyP_3std9panicking12catch_unwind7do_callNCNvCsdBEYEIiMDe_13libfuzzer_sys15test_input_wrap0lEBY_+0xac (parse_file:arm64+0x1018ac31c)
+    #17 0x0001063e0d60 in __rust_try+0x18 (parse_file:arm64+0x1018acd60)
+    #18 0x0001063dfc04 in LLVMFuzzerTestOneInput+0x16c (parse_file:arm64+0x1018abc04)
+    #19 0x0001063e338c in fuzzer::Fuzzer::ExecuteCallback(unsigned char const*, unsigned long)+0x158 (parse_file:arm64+0x1018af38c)
+    #20 0x0001063e2a30 in fuzzer::Fuzzer::RunOne(unsigned char const*, unsigned long, bool, fuzzer::InputInfo*, bool, bool*)+0x48 (parse_file:arm64+0x1018aea30)
+    #21 0x0001063e4934 in fuzzer::Fuzzer::MutateAndTestOne()+0x22c (parse_file:arm64+0x1018b0934)
+    #22 0x0001063e5690 in fuzzer::Fuzzer::Loop(std::__1::vector<fuzzer::SizedFile, std::__1::allocator<fuzzer::SizedFile>>&)+0x354 (parse_file:arm64+0x1018b1690)
+    #23 0x000106404958 in fuzzer::FuzzerDriver(int*, char***, int (*)(unsigned char const*, unsigned long))+0x1a3c (parse_file:arm64+0x1018d0958)
+    #24 0x0001064124fc in main+0x24 (parse_file:arm64+0x1018de4fc)
+    #25 0x00019fe68d78 in start+0x19f8 (dyld:arm64e+0x31d78)
+
+NOTE: libFuzzer has rudimentary signal handlers.
+      Combine libFuzzer with AddressSanitizer or similar for better crash reports.
+SUMMARY: libFuzzer: deadly signal
+MS: 2 CrossOver-CopyPart-; base unit: 79196a8649f7a1fbfc6ed5871e4a11d62580ba13
+0x4,0xc,0xc,0x4,
+\004\014\014\004
+artifact_prefix='/Users/crisn/Documents/Projects/scrutate/fuzz/artifacts/parse_file/'; Test unit written to /Users/crisn/Documents/Projects/scrutate/fuzz/artifacts/parse_file/crash-2b385913981ecbc7bab23978ca96c1223eab3b11
+Base64: BAwMBA==
+
+────────────────────────────────────────────────────────────────────────────────
+
+Failing input:
+
+	fuzz/artifacts/parse_file/crash-2b385913981ecbc7bab23978ca96c1223eab3b11
+
+Output of `std::fmt::Debug`:
+
+	[4, 12, 12, 4]
+
+Reproduce with:
+
+	cargo fuzz run -O parse_file fuzz/artifacts/parse_file/crash-2b385913981ecbc7bab23978ca96c1223eab3b11
+
+Minimize test case with:
+
+	cargo fuzz tmin -O parse_file fuzz/artifacts/parse_file/crash-2b385913981ecbc7bab23978ca96c1223eab3b11
+
+────────────────────────────────────────────────────────────────────────────────
+
+Error: Fuzz target exited with exit status: 77

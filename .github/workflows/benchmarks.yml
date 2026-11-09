@@ -24,3 +24,22 @@ jobs:
         with:
           name: bench-results
           path: bench_results.json
+  leaderboard:
+    # the section-14 suite on the small corpus: shared runners are too noisy for #1 claims, so this
+    # job only tracks regressions against the baseline recorded on the same runner type
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get install -y ripgrep ugrep silversearcher-ag ack hyperfine && pip install uv
+      - run: cargo build --release -p scrutate --locked
+      - run: python3 bench/corpora.py --root /tmp/corpora --only ripgrep
+      - run: python3 bench/leaderboard.py --corpora /tmp/corpora --out leaderboard-ci.json --only ripgrep/ --max-load 64
+      - name: regression gate (when a baseline from this runner type is committed)
+        run: |
+          if [ -f bench/results/ci/leaderboard-baseline.json ]; then
+            python3 bench/leaderboard_regression.py bench/results/ci/leaderboard-baseline.json leaderboard-ci.json
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: leaderboard-ci
+          path: leaderboard-ci.json

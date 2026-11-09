@@ -1,0 +1,4 @@
+parse_file exit 1
+npy exit 1
+fuzzy_matcher exit 0
+trigram_query exit 0

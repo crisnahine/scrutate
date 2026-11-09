@@ -43,6 +43,8 @@ def main() -> int:
     ap.add_argument("--repo", default="/tmp/pmid", help="repository for the parity harness")
     ap.add_argument("--differential-cases", type=int, default=200)
     ap.add_argument("--reproducible", action="store_true", help="also run tools/reproducible_check.sh (two clean release builds)")
+    ap.add_argument("--wheels", help="directory of built wheels to install and test (tools/wheel_matrix.py)")
+    ap.add_argument("--pythons", nargs="*", default=["3.10", "3.11", "3.12", "3.13", "3.14t"])
     a = ap.parse_args()
     rustc = subprocess.run(["rustc", "--version"], capture_output=True, text=True).stdout.strip()
     cargo = subprocess.run(["cargo", "--version"], capture_output=True, text=True).stdout.strip()
@@ -50,11 +52,19 @@ def main() -> int:
     sections = []
     results = []
 
+    def display(arg):
+        # local interpreter and scratch paths say nothing to a reader
+        if arg == sys.executable:
+            return "python"
+        if os.path.isabs(arg) and not arg.startswith(ROOT):
+            return os.path.basename(arg.rstrip("/"))
+        return os.path.relpath(arg, ROOT) if os.path.isabs(arg) else arg
+
     def gate(name, cmd, **kw):
         rc, dt, shown, full = run(cmd, **kw)
         ok = rc == 0
         results.append((name, ok, dt))
-        sections.append(f"### {name}\n\n`{' '.join(cmd)}` — exit {rc} ({'PASS' if ok else 'FAIL'}, {dt:.1f} s)\n\n```\n{shown}\n```\n")
+        sections.append(f"### {name}\n\n`{' '.join(display(c) for c in cmd)}` — exit {rc} ({'PASS' if ok else 'FAIL'}, {dt:.1f} s)\n\n```\n{shown}\n```\n")
         print(f"{'PASS' if ok else 'FAIL'} {name} ({dt:.1f}s)", file=sys.stderr)
         return full
 
@@ -62,14 +72,25 @@ def main() -> int:
     gate("cargo clippy (core, all targets, -D warnings)", ["cargo", "clippy", "--release", "-p", "scrutate", "--all-targets", "--", "-D", "warnings"], tail=6)
     gate("cargo clippy (python bindings, -D warnings)", ["cargo", "clippy", "--release", "-p", "scrutate-py", "--", "-D", "warnings"], tail=6)
     test_out = gate("cargo test (core crate)", ["cargo", "test", "--release", "-p", "scrutate"], tail=60)
-    # core tests with no python on PATH (the hybrid-stack rule)
-    gate("cargo test with no Python on PATH", ["cargo", "test", "--release", "-p", "scrutate", "--", "--quiet"], env={"PATH": os.path.expanduser("~/.cargo/bin") + ":/usr/bin:/bin"}, tail=12)
+    gate("cargo test --features extra-langs (optional grammars' samples)", ["cargo", "test", "--release", "-p", "scrutate", "--features", "extra-langs", "--test", "samples_extra"], tail=6)
+    # core tests with Python removed from PATH (the hybrid-stack rule); where the OS ships its own
+    # /usr/bin/python3 (macOS) the gate says so: the Linux container check runs with no Python at all
+    stripped = os.path.expanduser("~/.cargo/bin") + ":/usr/bin:/bin"
+    has_py = any(os.path.exists(os.path.join(d, "python3")) for d in stripped.split(":"))
+    gate("cargo test with Python removed from PATH" + (" (the OS still provides /usr/bin/python3)" if has_py else ""),
+         ["cargo", "test", "--release", "-p", "scrutate", "--", "--quiet"], env={"PATH": stripped}, tail=12)
     gate("cargo audit", ["cargo", "audit"], tail=8)
     gate("python reference tests", [sys.executable, "-m", "pytest", "-q", "--ignore=tests/test_bindings.py"], cwd=os.path.join(ROOT, "python"), tail=6)
     gate("python bindings tests (wheel must be installed)", [sys.executable, "-m", "pytest", "-q", "tests/test_bindings.py"], cwd=os.path.join(ROOT, "python"),
          env={"SCRUTATE_BIN": os.path.join(ROOT, "target", "release", "scrutate")}, tail=6)
     gate("rust/python parity (bit-identical features, scores, rankings)", [sys.executable, "bench/parity.py", a.repo, "target/release/scrutate", "--queries", "300"], tail=8)
-    gate("differential test against ripgrep", [sys.executable, "bench/differential.py", "--cases", str(a.differential_cases), "--seed", "11"], tail=4)
+    gate("differential test against ripgrep, and grep --index against the walk", [sys.executable, "bench/differential.py", "--cases", str(a.differential_cases), "--seed", "11"], tail=4)
+    if a.wheels:
+        gate("wheels installed and tested on several interpreters", [sys.executable, "tools/wheel_matrix.py", "--wheels", a.wheels, "--cli", os.path.join(ROOT, "target", "release", "scrutate")] + a.pythons, tail=10)
+    if subprocess.run(["cargo", "+nightly", "fuzz", "--version"], capture_output=True).returncode == 0:
+        for d in sorted(os.listdir(os.path.join(ROOT, "fuzz", "regressions"))):
+            for f in sorted(os.listdir(os.path.join(ROOT, "fuzz", "regressions", d))):
+                gate(f"fuzz regression {d}/{f[:18]}", ["cargo", "+nightly", "fuzz", "run", "-O", d, os.path.join("fuzz", "regressions", d, f)], tail=2)
     if a.reproducible:
         gate("reproducible build (two clean builds, identical hash)", ["bash", "tools/reproducible_check.sh"], tail=4, timeout=7200)
     # summary counts from cargo test output
@@ -78,7 +99,7 @@ def main() -> int:
     head = [
         "# Test and quality-gate results",
         "",
-        f"Generated by `tools/gen_test_results.py` on {time.strftime('%Y-%m-%d %H:%M %Z')} — {platform.platform()}, {os.cpu_count()} cores; `{rustc}`, `{cargo}`, Python {py}. "
+        f"Generated by `tools/gen_test_results.py` on {time.strftime('%Y-%m-%d %H:%M %z')} — {platform.platform()}, {os.cpu_count()} cores; `{rustc}`, `{cargo}`, Python {py}. "
         "Each block shows the exact command, its exit status and the tail of its output; nothing is transcribed by hand.",
         "",
         "| Gate | Result | Time |",

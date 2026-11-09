@@ -1,0 +1,72 @@
+[leaderboard] linux/literal
+  BLOCKED: scrutate 1030.5 ms; best competitor ripgrep 1030.7 ms; ratio 1.000 [0.975774080438762, 1.0307620382728213]
+[leaderboard] linux/multiple literals
+  PASS: scrutate 1032.8 ms; best competitor ripgrep 1121.2 ms; ratio 0.921 [0.8923180538594704, 0.9334028880117679]
+[leaderboard] linux/case-insensitive
+  BLOCKED: scrutate 989.9 ms; best competitor ripgrep 985.6 ms; ratio 1.004 [0.9806387752737458, 1.0219101387703986]
+[leaderboard] linux/whole-word
+  PASS: scrutate 1013.7 ms; best competitor ripgrep 1032.3 ms; ratio 0.982 [0.9684454211076657, 0.991087411066308]
+[leaderboard] linux/simple regex
+  BLOCKED: scrutate 1039.3 ms; best competitor ripgrep 1044.5 ms; ratio 0.995 [0.9775759818938012, 1.0132176787454505]
+[leaderboard] linux/complex regex
+  PASS: scrutate 1035.3 ms; best competitor ripgrep 1067.3 ms; ratio 0.970 [0.9537531600903155, 0.9797009571205865]
+[leaderboard] linux/unicode
+  BLOCKED: scrutate 1018.6 ms; best competitor ripgrep 1032.9 ms; ratio 0.986 [0.9577406400759576, 1.0027009323609175]
+[leaderboard] linux/no match
+  BLOCKED: scrutate 1012.8 ms; best competitor ripgrep 1000.7 ms; ratio 1.012 [0.995525532372434, 1.0638346412343502]
+[leaderboard] linux/very many matches
+  PASS: scrutate 1038.3 ms; best competitor ripgrep 1384.8 ms; ratio 0.750 [0.7347511179530932, 0.7567705606897657]
+[leaderboard] linux/multiline
+  BLOCKED: scrutate 1044.9 ms; best competitor ripgrep 1046.6 ms; ratio 0.998 [0.9581943522244085, 1.0216922380466633]
+[leaderboard] linux/identifier
+  BLOCKED: scrutate 1026.8 ms; best competitor ripgrep 1021.3 ms; ratio 1.005 [0.9963507917118936, 1.0155680750606486]
+[leaderboard] linux/unrestricted
+  PASS: scrutate 1038.7 ms; best competitor ripgrep 1058.6 ms; ratio 0.981 [0.9677300495173538, 0.9948693348116255]
+[leaderboard] linux/file-type filter
+  PASS: scrutate 704.1 ms; best competitor ripgrep 731.9 ms; ratio 0.962 [0.9557105634857108, 0.9787331608870673]
+[leaderboard] llvm/literal
+  BLOCKED: scrutate 1753.7 ms; best competitor ripgrep 1796.9 ms; ratio 0.976 [0.9563032187826188, 1.0010471785733253]
+[leaderboard] llvm/case-insensitive
+  BLOCKED: scrutate 1752.2 ms; best competitor ripgrep 1753.6 ms; ratio 0.999 [0.9564542727044688, 1.0189930153617188]
+[leaderboard] llvm/complex regex
+  BLOCKED: scrutate 1680.1 ms; best competitor ripgrep 1715.8 ms; ratio 0.979 [0.9706361804606192, 1.0025365552431242]
+[leaderboard] llvm/very many matches
+  PASS: scrutate 2124.2 ms; best competitor ripgrep 2656.0 ms; ratio 0.800 [0.757953583898591, 0.8368696183946347]
+[leaderboard] llvm/no match
+[leaderboard] llvm/no match
+[leaderboard] llvm/no match
+[leaderboard] llvm/no match
+  PARTIAL: scrutate 3484.5 ms; best competitor ripgrep 3583.3 ms; ratio 0.972 [0.9406162854044452, 1.0478271355210533]
+[leaderboard] llvm/identifier
+  PARTIAL: scrutate 3740.5 ms; best competitor ripgrep 3653.8 ms; ratio 1.024 [0.9564708382763799, 1.0809027684976846]
+[leaderboard] ripgrep/literal
+  FAIL: scrutate 13.8 ms; best competitor ripgrep 12.5 ms; ratio 1.104 [1.0173583338114085, 1.227689094447816]
+[leaderboard] ripgrep/simple regex
+  PARTIAL: scrutate 13.6 ms; best competitor ugrep 14.5 ms; ratio 0.934 [0.7893764711668324, 1.1204075744157675]
+[leaderboard] ripgrep/case-insensitive
+  PARTIAL: scrutate 14.4 ms; best competitor ugrep 14.1 ms; ratio 1.019 [0.932412094061194, 1.2087781236274753]
+[leaderboard] bigfile/literal
+  FAIL: scrutate 134.8 ms; best competitor ugrep 121.8 ms; ratio 1.107 [1.065495198841808, 1.1904491913583555]
+[leaderboard] bigfile/case-insensitive
+  FAIL: scrutate 216.6 ms; best competitor ugrep 162.2 ms; ratio 1.335 [1.246274183458142, 1.4304379850732787]
+[leaderboard] bigfile/complex regex
+  FAIL: scrutate 1691.0 ms; best competitor ugrep 188.9 ms; ratio 8.950 [7.746348773250058, 9.999240336586933]
+[leaderboard] bigfile/very many matches
+  FAIL: scrutate 374.4 ms; best competitor ripgrep 303.0 ms; ratio 1.236 [1.183491642475662, 1.2893774932702886]
+[leaderboard] bigfile/no match
+  PARTIAL: scrutate 122.7 ms; best competitor ripgrep 124.5 ms; ratio 0.985 [0.936650786878914, 1.0148977561140284]
+[leaderboard] bigfile/unicode
+  FAIL: scrutate 186.9 ms; best competitor ugrep 106.9 ms; ratio 1.749 [1.6679665544455906, 1.913853595681513]
+[leaderboard] smallfiles/literal
+  BLOCKED: scrutate 1641.1 ms; best competitor ripgrep 1658.4 ms; ratio 0.990 [0.9461145969786419, 1.018412246789813]
+[leaderboard] smallfiles/simple regex
+  BLOCKED: scrutate 1569.5 ms; best competitor ripgrep 1564.8 ms; ratio 1.003 [0.9809408455658908, 1.107982712322849]
+[leaderboard] binheavy/literal
+  PASS: scrutate 97.0 ms; best competitor ripgrep 101.1 ms; ratio 0.959 [0.9341975686159314, 0.982404360837974]
+[leaderboard] patho/long line
+  FAIL: scrutate 65.7 ms; best competitor ugrep 43.2 ms; ratio 1.522 [1.483060910519861, 1.562704790751925]
+[leaderboard] patho/one-byte lines
+  PASS: scrutate 459.9 ms; best competitor ripgrep 544.6 ms; ratio 0.845 [0.7409021333319182, 0.8809295677378562]
+[leaderboard] patho/backtracking trap
+exit 143
+exit killed: reference regex backtracked on patho/backtracking trap

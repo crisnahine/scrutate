@@ -1,0 +1,13 @@
+rm: /Users/crisn/.cache/scrutate-bench/smbmnt/netfs-check/.scrutate/text/lock: Resource busy
+rm: /Users/crisn/.cache/scrutate-bench/smbmnt/netfs-check/.scrutate/text: Directory not empty
+rm: /Users/crisn/.cache/scrutate-bench/smbmnt/netfs-check/.scrutate: Directory not empty
+rm: /Users/crisn/.cache/scrutate-bench/smbmnt/netfs-check: Directory not empty
+file system: smbfs
+engine A [-F Searcher]: network 1a6b2670cf0e4703 local 1a6b2670cf0e4703 same
+engine A [-i -F error]: network a9fdc5e63d0b5a9f local a9fdc5e63d0b5a9f same
+engine A [[A-Z][a-z]+Builder]: network 869a1be1e31665ed local 869a1be1e31665ed same
+engine B index: {"call_edges":9046,"chunks":4395,"files":199,"files_skipped":3,"imports":352,"segments":1,"semantic":true,"symbols":3929,"text_index":{"bytes":722761,"files":21
+OK
+indexed grep after concurrent updates: 1 line(s), walk: 1 line(s) same
+(cleanup: the share still holds a lock file; removed on the next run)
+NETWORK FS OK

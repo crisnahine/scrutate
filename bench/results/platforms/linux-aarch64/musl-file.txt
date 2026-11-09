@@ -1,0 +1,1 @@
+target/aarch64-unknown-linux-musl/release/scrutate: ELF 64-bit LSB executable, ARM aarch64, version 1 (SYSV), statically linked, BuildID[sha1]=0679c31cdf042b5ada3e056e5df686f39406407f, stripped

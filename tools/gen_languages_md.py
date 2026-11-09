@@ -16,6 +16,8 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..")
 BIN = os.environ.get("SCRUTATE_BIN", os.path.join(ROOT, "target", "release", "scrutate"))
+# optional: a build with `--features extra-langs`, so the optional grammars get rows of their own
+EXTRA_BIN = os.environ.get("SCRUTATE_EXTRA_BIN")
 SAMPLES = os.path.join(ROOT, "crates", "scrutate", "tests", "samples")
 
 HEURISTIC_ONLY = {
@@ -29,7 +31,15 @@ HEURISTIC_ONLY = {
 
 def main() -> int:
     regs = json.loads(subprocess.run([BIN, "languages", "--json"], capture_output=True, text=True, check=True).stdout)
+    default_ids = {r["id"] for r in regs}
+    if EXTRA_BIN:
+        regs = json.loads(subprocess.run([EXTRA_BIN, "languages", "--json"], capture_output=True, text=True, check=True).stdout)
     expected = json.load(open(os.path.join(SAMPLES, "expected.json")))
+    extra = json.load(open(os.path.join(SAMPLES + "_extra", "expected.json")))
+    sample_dir = {fn: "samples" for fn in expected}
+    for fn, syms in extra.items():
+        if fn not in expected:
+            expected[fn], sample_dir[fn] = syms, "samples_extra"
     sample_by_ext: dict[str, str] = {}
     for fn in expected:
         ext = os.path.splitext(fn)[1] or fn
@@ -55,6 +65,7 @@ def main() -> int:
     n_verified = 0
     for r in sorted(regs, key=lambda x: x["id"]):
         exts = " ".join(r["extensions"] + r["filenames"])
+        optional = " (extra-langs)" if r["id"] not in default_ids else ""
         sample = None
         for e in r["extensions"]:
             if e.lower() in sample_by_ext:
@@ -70,13 +81,15 @@ def main() -> int:
         if sample:
             kinds = sorted({k for k, _ in expected[sample] if k not in ("module", "window")})
             kinds_s = ", ".join(kinds) if kinds else "(module only)"
-            evidence = f"`tests/samples/{sample}`"
+            evidence = f"`tests/{sample_dir[sample]}/{sample}`"
             n_verified += 1
         else:
             kinds_s = "not verified by a sample"
             evidence = "registry only"
-        out.append(f"| {r['id']} | `{exts}` | {kinds_s} | {'yes' if r['call_edges'] else '—'} | {'yes' if r['imports'] else '—'} | {'yes' if r['docstrings'] else '—'} | {evidence} |")
-    out.append(f"\n{len(regs)} grammars in the default build; {n_verified} verified by snapshot samples. "
+        out.append(f"| {r['id']}{optional} | `{exts}` | {kinds_s} | {'yes' if r['call_edges'] else 'no'} | {'yes' if r['imports'] else 'no'} | {'yes' if r['docstrings'] else 'no'} | {evidence} |")
+    n_opt = sum(r["id"] not in default_ids for r in regs)
+    out.append(f"\n{len(regs) - n_opt} grammars in the default build" + (f", {n_opt} more with `--features extra-langs`" if n_opt else "")
+               + f"; {n_verified} verified by snapshot samples. "
                "Call-edge and import extraction are declared per language by the registry rules; the sample for a language exercises them when its `expected.json` entry lists methods/functions and the file contains imports.\n")
     out.append("## Heuristic tier (samples in the snapshot test)\n")
     out.append("| Sample | Language | Definition kinds verified |")
@@ -86,8 +99,14 @@ def main() -> int:
             kinds = sorted({k for k, _ in expected[fn] if k not in ("module", "window")})
             out.append(f"| `{fn}` | {lang} | {', '.join(kinds) if kinds else '(windows only)'} |")
     out.append("\n## Optional grammars (`--features extra-langs`, +~80 MB of parse tables)\n")
-    out.append("Fortran, OCaml, F#, Verilog, VHDL, CUDA, TLA+, D, AutoHotkey, Odin, QML, LLVM IR. They compile and parse; "
-               "they have **no** snapshot samples yet, so their definition extraction is *not verified* and they are off by default.\n")
+    out.append("Off by default because of their size. Each has a sample in `crates/scrutate/tests/samples_extra/`, re-checked by "
+               "`cargo test --features extra-langs --test samples_extra` against `expected.json` there.\n")
+    out.append("| Sample | Symbols extracted (kind, qualified name) |")
+    out.append("|---|---|")
+    for fn in sorted(extra):
+        syms = ", ".join(f"{k} `{q}`" for k, q in extra[fn] if k not in ("module", "window")) or "(module only)"
+        out.append(f"| `{fn}` | {syms} |")
+    out.append("")
     out.append("## Known limits\n")
     out.append("- Heuristic-tier languages get no call graph, no imports and approximate block extents.\n"
                "- Nesting depth of data keys (JSON/YAML/TOML) is capped at two levels.\n"

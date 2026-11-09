@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Differential testing of Engine A against ripgrep: random corpora x random patterns, exact
-agreement on (path, line number, line text) for every match, plus -c and -l modes.
+agreement on (path, line number, line text) for every match, plus -c and -l modes; and of Engine
+B's text index (`grep --index`) against Engine A on the same cases, before and after an update.
 
 usage: differential.py [--cases N] [--seed S] [--keep]
 exit status 0 when every case agrees; the first disagreement is printed with a reproduction.
@@ -115,6 +116,27 @@ def rg_matches(out: bytes) -> set:
     return s
 
 
+def indexed_agrees(rng: random.Random, root: str, pat: str, sf: list[str], mode: str) -> str | None:
+    """Engine B's text index must give Engine A's answer, before and after an incremental update."""
+    for stage in ("fresh", "updated"):
+        if stage == "updated":
+            files = [os.path.join(d, f) for d, _, fs in os.walk(root) if ".scrutate" not in d for f in fs]
+            if not files:
+                return None
+            victim = rng.choice(sorted(files))
+            with open(victim, "a", encoding="utf8") as f:
+                f.write(" ".join(rng.choice(WORDS) for _ in range(6)) + "\n")
+        if subprocess.run([SCRUTATE, "index", "--text"], cwd=root, capture_output=True).returncode != 0:
+            return f"index --text failed (corpus {root})"
+        rc1, o1 = run_json([SCRUTATE, "grep", "--sort", "--json", *sf, pat, "."], root)
+        rc2, o2 = run_json([SCRUTATE, "grep", "--index", "--sort", "--json", *sf, pat], root)
+        if rc1 != rc2 or scrutate_matches(o1) != scrutate_matches(o2):
+            only_walk = sorted(scrutate_matches(o1) - scrutate_matches(o2))[:3]
+            only_index = sorted(scrutate_matches(o2) - scrutate_matches(o1))[:3]
+            return f"--index differs ({stage}) for {pat!r} ({mode}, flags {sf}): exit {rc1}/{rc2}; only walk {only_walk}; only index {only_index} (corpus {root})"
+    return None
+
+
 def one_case(rng: random.Random, keep: bool) -> str | None:
     root = tempfile.mkdtemp(prefix="scrutate_diff_")
     try:
@@ -128,7 +150,7 @@ def one_case(rng: random.Random, keep: bool) -> str | None:
             b = sorted(l.decode()[2:] if l.startswith(b"./") else l.decode() for l in o2.splitlines())
             if a != b:
                 return f"multiline -l mismatch for {pat!r}: scrutate={a} rg={b} (corpus {root})"
-            return None
+            return indexed_agrees(rng, root, pat, sf, mode)
         rc1, o1 = run_json([SCRUTATE, "grep", "--json", *sf, pat, "."], root)
         rc2, o2 = run_json([RG, "--json", "--no-messages", *rf, pat, "."], root)
         if rc1 not in (0, 1) or rc2 not in (0, 1):
@@ -152,7 +174,7 @@ def one_case(rng: random.Random, keep: bool) -> str | None:
                 cb[p[2:] if p.startswith("./") else p] = int(n)
         if ca != cb:
             return f"-c differs for {pat!r} ({mode}): scrutate={ca} rg={cb} (corpus {root})"
-        return None
+        return indexed_agrees(rng, root, pat, sf, mode)
     finally:
         if not keep:
             shutil.rmtree(root, ignore_errors=True)

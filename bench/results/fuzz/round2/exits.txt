@@ -1,0 +1,2 @@
+npy exit 1
+parse_file exit 0

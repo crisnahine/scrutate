@@ -1,0 +1,85 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.14s
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.09s
+     Running `fuzz/target/aarch64-apple-darwin/release/npy -artifact_prefix=/Users/crisn/Documents/Projects/scrutate/fuzz/artifacts/npy/ -max_total_time=600 -rss_limit_mb=4096 -timeout=20 /Users/crisn/Documents/Projects/scrutate/fuzz/corpus/npy`
+INFO: Running with entropic power schedule (0xFF, 100).
+INFO: Seed: 2388416328
+INFO: Loaded 1 modules   (385752 inline 8-bit counters): 385752 [0x10ae70f20, 0x10aecf1f8), 
+INFO: Loaded 1 PC tables (385752 PCs): 385752 [0x10aecf1f8,0x10b4b1f78), 
+INFO:       14 files found in /Users/crisn/Documents/Projects/scrutate/fuzz/corpus/npy
+INFO: -max_len is not provided; libFuzzer will not generate inputs larger than 4096 bytes
+INFO: seed corpus: files: 14 min: 10b max: 2572b total: 4299b rss: 50Mb
+#15	INITED cov: 308 ft: 393 corp: 12/4027b exec/s: 0 rss: 51Mb
+#16	NEW    cov: 309 ft: 394 corp: 13/4105b lim: 2572 exec/s: 0 rss: 51Mb L: 78/2572 MS: 1 EraseBytes-
+#18	NEW    cov: 313 ft: 433 corp: 14/4273b lim: 2572 exec/s: 0 rss: 52Mb L: 168/2572 MS: 2 ShuffleBytes-ShuffleBytes-
+	NEW_FUNC[1/5]: 0x00010645eda0 in _RINvMNtCsdkthdqkzPtA_6anyhow5errorNtB5_5Error9constructINtB3_12ContextErrorReNtNtNtCs2WdQrLQjXP6_4core3str5error9Utf8ErrorEECsczFPHFtjn4c_8scrutate+0x0 (npy:arm64+0x10192eda0)
+	NEW_FUNC[2/5]: 0x000104bfc450 in _RINvNtCsdkthdqkzPtA_6anyhow5error11object_dropINtB2_12ContextErrorReNtNtNtCs2WdQrLQjXP6_4core3str5error9Utf8ErrorEECsczFPHFtjn4c_8scrutate+0x0 (npy:arm64+0x1000cc450)
+#34	NEW    cov: 328 ft: 448 corp: 15/4495b lim: 2572 exec/s: 0 rss: 53Mb L: 222/2572 MS: 1 InsertRepeatedBytes-
+#40	NEW    cov: 332 ft: 452 corp: 16/7067b lim: 2572 exec/s: 0 rss: 53Mb L: 2572/2572 MS: 1 ShuffleBytes-
+#41	NEW    cov: 332 ft: 463 corp: 17/9639b lim: 2572 exec/s: 0 rss: 53Mb L: 2572/2572 MS: 1 CopyPart-
+
+thread '<unnamed>' (8691760) panicked at /Users/crisn/Documents/Projects/scrutate/crates/scrutate/src/npy.rs:220:46:
+index out of bounds: the len is 88 but the index is 104
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+==64359== ERROR: libFuzzer: deadly signal
+    #0 0x00010c2f3654 in __sanitizer_print_stack_trace+0x28 (librustc-nightly_rt.asan.dylib:arm64+0x87654)
+    #1 0x0001063eded0 in fuzzer::PrintStackTrace()+0x30 (npy:arm64+0x1018bded0)
+    #2 0x0001063e1810 in fuzzer::Fuzzer::CrashCallback()+0x54 (npy:arm64+0x1018b1810)
+    #3 0x0001a4f06140 in _sigtramp+0x34 (libsystem_platform.dylib:arm64e+0x4140)
+    #4 0x00019ff3c95c in pthread_kill+0x124 (libsystem_pthread.dylib:arm64e+0x695c)
+    #5 0x00019ffd047c in abort+0x90 (libsystem_c.dylib:arm64e+0x7b47c)
+    #6 0x00010651082c in _RNvNtNtNtCskxHI7cCZDyP_3std3sys3pal4unix14abort_internal+0x8 (npy:arm64+0x1019e082c)
+    #7 0x00010651057c in _RNvNtCskxHI7cCZDyP_3std7process5abort+0x8 (npy:arm64+0x1019e057c)
+    #8 0x00010650afa8 in _RNCNvCsdBEYEIiMDe_13libfuzzer_sys10initialize0B3_+0xb8 (npy:arm64+0x1019dafa8)
+    #9 0x0001064343bc in _RNvNtCskxHI7cCZDyP_3std9panicking15panic_with_hook+0x26c (npy:arm64+0x1019043bc)
+    #10 0x0001064229b8 in _RNCNvNtCskxHI7cCZDyP_3std9panicking13panic_handler0B5_+0x40 (npy:arm64+0x1018f29b8)
+    #11 0x00010641b800 in _RINvNtNtCskxHI7cCZDyP_3std3sys9backtrace26___rust_end_short_backtraceNCNvNtB6_9panicking13panic_handler0zEB6_+0x8 (npy:arm64+0x1018eb800)
+    #12 0x0001064233e4 in _RNvCsaS0kMgGQ6Nj_7___rustc17rust_begin_unwind+0x1c (npy:arm64+0x1018f33e4)
+    #13 0x000106511304 in _RNvNtCs2WdQrLQjXP6_4core9panicking9panic_fmt+0x24 (npy:arm64+0x1019e1304)
+    #14 0x000106511144 in _RNvNtCs2WdQrLQjXP6_4core9panicking18panic_bounds_check+0x34 (npy:arm64+0x1019e1144)
+    #15 0x000104f39bd4 in _RNvMs6_NtCsczFPHFtjn4c_8scrutate3npyNtB5_3Npy10to_strings+0x158c (npy:arm64+0x100409bd4)
+    #16 0x000104b331c8 in _RNvNvCs35Mfnm8L6jr_3npy1__19___libfuzzer_sys_run npy.rs:12
+    #17 0x000104b370f8 in rust_fuzzer_test_input lib.rs:276
+    #18 0x0001063e001c in _RINvNvNtCskxHI7cCZDyP_3std9panicking12catch_unwind7do_callNCNvCsdBEYEIiMDe_13libfuzzer_sys15test_input_wrap0lEBY_+0xac (npy:arm64+0x1018b001c)
+    #19 0x0001063e0a60 in __rust_try+0x18 (npy:arm64+0x1018b0a60)
+    #20 0x0001063df904 in LLVMFuzzerTestOneInput+0x16c (npy:arm64+0x1018af904)
+    #21 0x0001063e308c in fuzzer::Fuzzer::ExecuteCallback(unsigned char const*, unsigned long)+0x158 (npy:arm64+0x1018b308c)
+    #22 0x0001063e2730 in fuzzer::Fuzzer::RunOne(unsigned char const*, unsigned long, bool, fuzzer::InputInfo*, bool, bool*)+0x48 (npy:arm64+0x1018b2730)
+    #23 0x0001063e4634 in fuzzer::Fuzzer::MutateAndTestOne()+0x22c (npy:arm64+0x1018b4634)
+    #24 0x0001063e5390 in fuzzer::Fuzzer::Loop(std::__1::vector<fuzzer::SizedFile, std::__1::allocator<fuzzer::SizedFile>>&)+0x354 (npy:arm64+0x1018b5390)
+    #25 0x000106404658 in fuzzer::FuzzerDriver(int*, char***, int (*)(unsigned char const*, unsigned long))+0x1a3c (npy:arm64+0x1018d4658)
+    #26 0x0001064121fc in main+0x24 (npy:arm64+0x1018e21fc)
+    #27 0x00019fe68d78 in start+0x19f8 (dyld:arm64e+0x31d78)
+
+NOTE: libFuzzer has rudimentary signal handlers.
+      Combine libFuzzer with AddressSanitizer or similar for better crash reports.
+SUMMARY: libFuzzer: deadly signal
+MS: 2 CrossOver-InsertRepeatedBytes-; base unit: 7c958e0771e4a05a551004841ea096e1ac0aa81b
+0x93,0x4e,0x55,0x4d,0x50,0x59,0x1,0x0,0x76,0x0,0x7b,0x27,0x64,0x65,0x73,0x63,0x72,0x27,0x3a,0x20,0x27,0x3c,0x55,0x31,0x33,0x27,0x2c,0x20,0x27,0x66,0x6f,0x72,0x74,0x72,0x61,0x6e,0x5f,0x6f,0x72,0x64,0x65,0x72,0x27,0x3a,0x20,0x46,0x61,0x6c,0x73,0x65,0x2c,0x20,0x27,0x73,0x68,0x61,0x70,0x65,0x27,0x3a,0x20,0x28,0x34,0x37,0x2c,0x29,0x2c,0x20,0x7d,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x20,0x20,0x20,0x20,0x93,0x4e,0x55,0x4d,0x50,0x59,0x1,0x0,0x76,0x0,0x7b,0x27,0x64,0x20,0x20,0x20,0x20,0x20,0xa,0x6c,0x0,0x0,0x0,0x65,0x0,0x0,0x0,0x78,0x0,0x0,0x0,0x5f,0x0,0x0,0x0,0x6c,0x0,0x0,0x0,0x6f,0x0,0x0,0x0,0x67,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x65,0x73,0x63,0x72,0x27,0x3a,0x20,0x27,0x3c,0x69,0x38,0x27,0x2c,0x0,0x0,0x0,0x0,0x0,0x20,0x0,0x0,
+\223NUMPY\001\000v\000{'descr': '<U13', 'fortran_order': False, 'shape': (47,), }                                                 \000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000    \223NUMPY\001\000v\000{'d     \012l\000\000\000e\000\000\000x\000\000\000_\000\000\000l\000\000\000o\000\000\000g\000\000\000\000\000\000\000\000escr': '<i8',\000\000\000\000\000 \000\000
+artifact_prefix='/Users/crisn/Documents/Projects/scrutate/fuzz/artifacts/npy/'; Test unit written to /Users/crisn/Documents/Projects/scrutate/fuzz/artifacts/npy/crash-6052dacf1688b238ccf0102af3fd51bfa8d0e65b
+Base64: k05VTVBZAQB2AHsnZGVzY3InOiAnPFUxMycsICdmb3J0cmFuX29yZGVyJzogRmFsc2UsICdzaGFwZSc6ICg0NywpLCB9ICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAAAAAAAAAAAAAAAAAAAAAAAAAAAACAgICCTTlVNUFkBAHYAeydkICAgICAKbAAAAGUAAAB4AAAAXwAAAGwAAABvAAAAZwAAAAAAAAAAZXNjcic6ICc8aTgnLAAAAAAAIAAA
+
+────────────────────────────────────────────────────────────────────────────────
+
+Failing input:
+
+	fuzz/artifacts/npy/crash-6052dacf1688b238ccf0102af3fd51bfa8d0e65b
+
+Output of `std::fmt::Debug`:
+
+	[147, 78, 85, 77, 80, 89, 1, 0, 118, 0, 123, 39, 100, 101, 115, 99, 114, 39, 58, 32, 39, 60, 85, 49, 51, 39, 44, 32, 39, 102, 111, 114, 116, 114, 97, 110, 95, 111, 114, 100, 101, 114, 39, 58, 32, 70, 97, 108, 115, 101, 44, 32, 39, 115, 104, 97, 112, 101, 39, 58, 32, 40, 52, 55, 44, 41, 44, 32, 125, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 32, 32, 32, 32, 147, 78, 85, 77, 80, 89, 1, 0, 118, 0, 123, 39, 100, 32, 32, 32, 32, 32, 10, 108, 0, 0, 0, 101, 0, 0, 0, 120, 0, 0, 0, 95, 0, 0, 0, 108, 0, 0, 0, 111, 0, 0, 0, 103, 0, 0, 0, 0, 0, 0, 0, 0, 101, 115, 99, 114, 39, 58, 32, 39, 60, 105, 56, 39, 44, 0, 0, 0, 0, 0, 32, 0, 0]
+
+Reproduce with:
+
+	cargo fuzz run -O npy fuzz/artifacts/npy/crash-6052dacf1688b238ccf0102af3fd51bfa8d0e65b
+
+Minimize test case with:
+
+	cargo fuzz tmin -O npy fuzz/artifacts/npy/crash-6052dacf1688b238ccf0102af3fd51bfa8d0e65b
+
+────────────────────────────────────────────────────────────────────────────────
+
+Error: Fuzz target exited with exit status: 77

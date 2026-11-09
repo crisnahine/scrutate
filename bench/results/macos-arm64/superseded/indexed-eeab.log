@@ -1,0 +1,10 @@
+[indexed] scrutate: index 2.69s, 154 MB, peak 819 MB
+[indexed] zoekt: index 138.18s, 4238 MB, peak 1552 MB
+[indexed] latency p50: {'best': 'zoekt', 'ratio': 0.8484002006510989, 'ci95': [0.6338239975112051, 0.9164085775115358], 'status': 'PASS'}
+[indexed] latency p95: {'best': 'zoekt', 'ratio': 0.566344653635268, 'ci95': [0.1505640572840615, 1.2860741676996466], 'status': 'PARTIAL'}
+[indexed] latency p99: {'best': 'zoekt', 'ratio': 0.22202806932030378, 'ci95': [0.20507065622006104, 0.268021861416255], 'status': 'PASS'}
+[indexed] full indexing time: {'best': 'zoekt', 'ratio': 0.01945594944575534, 'ci95': [0.01870254906633588, 0.028025431535906302], 'status': 'PASS', 'runs': 5}
+[indexed] incremental update time: {'best': 'zoekt', 'ratio': 0.002054808766935629, 'ci95': [0.0008718452595463324, 0.002205138923150583], 'status': 'PASS', 'runs': 5}
+[indexed] index size: {'best': 'zoekt', 'ratio': 0.03640298143945691, 'status': 'PASS'}
+[indexed] concurrent throughput: {'best': 'zoekt', 'ratio': 0.970136198945611, 'ci95': [0.9055145738738885, 1.017959036617033], 'status': 'PARTIAL'}
+[indexed] query memory: {'best': 'zoekt', 'ratio': 0.05136709995517705, 'status': 'PASS'}

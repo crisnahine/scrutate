@@ -1,0 +1,89 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+   Compiling scrutate v0.1.0 (/Users/crisn/Documents/Projects/scrutate/crates/scrutate)
+   Compiling scrutate-fuzz v0.0.0 (/Users/crisn/Documents/Projects/scrutate/fuzz)
+    Finished `release` profile [optimized + debuginfo] target(s) in 47.11s
+    Blocking waiting for file lock on build directory
+    Finished `release` profile [optimized + debuginfo] target(s) in 2.30s
+     Running `fuzz/target/aarch64-apple-darwin/release/npy -artifact_prefix=/Users/crisn/Documents/Projects/scrutate/fuzz/artifacts/npy/ -max_total_time=600 -rss_limit_mb=4096 -timeout=20 /Users/crisn/Documents/Projects/scrutate/fuzz/corpus/npy`
+INFO: Running with entropic power schedule (0xFF, 100).
+INFO: Seed: 1711745595
+INFO: Loaded 1 modules   (385683 inline 8-bit counters): 385683 [0x10a858fc0, 0x10a8b7253), 
+INFO: Loaded 1 PC tables (385683 PCs): 385683 [0x10a8b7258,0x10ae99b88), 
+INFO:        0 files found in /Users/crisn/Documents/Projects/scrutate/fuzz/corpus/npy
+INFO: -max_len is not provided; libFuzzer will not generate inputs larger than 4096 bytes
+INFO: A corpus is not provided, starting from an empty corpus
+#2	INITED cov: 43 ft: 43 corp: 1/1b exec/s: 0 rss: 50Mb
+#725	NEW    cov: 44 ft: 44 corp: 2/11b lim: 11 exec/s: 0 rss: 50Mb L: 10/10 MS: 3 CMP-CopyPart-InsertByte- DE: "\000\000\000\000\000\000\000\000"-
+#32768	pulse  cov: 44 ft: 44 corp: 2/11b lim: 325 exec/s: 10922 rss: 52Mb
+#65536	pulse  cov: 44 ft: 44 corp: 2/11b lim: 652 exec/s: 9362 rss: 52Mb
+#131072	pulse  cov: 44 ft: 44 corp: 2/11b lim: 1300 exec/s: 9362 rss: 52Mb
+#262144	pulse  cov: 44 ft: 44 corp: 2/11b lim: 2600 exec/s: 9039 rss: 63Mb
+#524288	pulse  cov: 44 ft: 44 corp: 2/11b lim: 4096 exec/s: 9198 rss: 114Mb
+#1048576	pulse  cov: 44 ft: 44 corp: 2/11b lim: 4096 exec/s: 8886 rss: 229Mb
+#2097152	pulse  cov: 44 ft: 44 corp: 2/11b lim: 4096 exec/s: 9000 rss: 286Mb
+	NEW_FUNC[1/18]: 0x000105e4432c in _RINvMNtCsdkthdqkzPtA_6anyhow5errorNtB5_5Error3msgNtNtCs4qTDAHBj79k_5alloc6string6StringECs35Mfnm8L6jr_3npy error.rs:77
+	NEW_FUNC[2/18]: 0x000105e447ec in _RINvMNtCsdkthdqkzPtA_6anyhow5errorNtB5_5Error9constructINtNtB5_7wrapper12MessageErrorNtNtCs4qTDAHBj79k_5alloc6string6StringEECs35Mfnm8L6jr_3npy error.rs:278
+#3694952	RELOAD cov: 269 ft: 299 corp: 4/2719b lim: 4096 exec/s: 8612 rss: 304Mb
+
+thread '<unnamed>' (8611894) panicked at /Users/crisn/Documents/Projects/scrutate/crates/scrutate/src/npy.rs:220:46:
+index out of bounds: the len is 1706 but the index is 1716
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+==49993== ERROR: libFuzzer: deadly signal
+    #0 0x00010bd67654 in __sanitizer_print_stack_trace+0x28 (librustc-nightly_rt.asan.dylib:arm64+0x87654)
+    #1 0x000105dd5010 in fuzzer::PrintStackTrace()+0x30 (npy:arm64+0x1018bd010)
+    #2 0x000105dc8950 in fuzzer::Fuzzer::CrashCallback()+0x54 (npy:arm64+0x1018b0950)
+    #3 0x0001a4f06140 in _sigtramp+0x34 (libsystem_platform.dylib:arm64e+0x4140)
+    #4 0x00019ff3c95c in pthread_kill+0x124 (libsystem_pthread.dylib:arm64e+0x695c)
+    #5 0x00019ffd047c in abort+0x90 (libsystem_c.dylib:arm64e+0x7b47c)
+    #6 0x000105ef78ec in _RNvNtNtNtCskxHI7cCZDyP_3std3sys3pal4unix14abort_internal+0x8 (npy:arm64+0x1019df8ec)
+    #7 0x000105ef763c in _RNvNtCskxHI7cCZDyP_3std7process5abort+0x8 (npy:arm64+0x1019df63c)
+    #8 0x000105ef2068 in _RNCNvCsdBEYEIiMDe_13libfuzzer_sys10initialize0B3_+0xb8 (npy:arm64+0x1019da068)
+    #9 0x000105e1b4fc in _RNvNtCskxHI7cCZDyP_3std9panicking15panic_with_hook+0x26c (npy:arm64+0x1019034fc)
+    #10 0x000105e09af8 in _RNCNvNtCskxHI7cCZDyP_3std9panicking13panic_handler0B5_+0x40 (npy:arm64+0x1018f1af8)
+    #11 0x000105e02940 in _RINvNtNtCskxHI7cCZDyP_3std3sys9backtrace26___rust_end_short_backtraceNCNvNtB6_9panicking13panic_handler0zEB6_+0x8 (npy:arm64+0x1018ea940)
+    #12 0x000105e0a524 in _RNvCsaS0kMgGQ6Nj_7___rustc17rust_begin_unwind+0x1c (npy:arm64+0x1018f2524)
+    #13 0x000105ef83c4 in _RNvNtCs2WdQrLQjXP6_4core9panicking9panic_fmt+0x24 (npy:arm64+0x1019e03c4)
+    #14 0x000105ef8204 in _RNvNtCs2WdQrLQjXP6_4core9panicking18panic_bounds_check+0x34 (npy:arm64+0x1019e0204)
+    #15 0x000104921228 in _RNvMs6_NtCsczFPHFtjn4c_8scrutate3npyNtB5_3Npy10to_strings+0x158c (npy:arm64+0x100409228)
+    #16 0x00010451b1c8 in _RNvNvCs35Mfnm8L6jr_3npy1__19___libfuzzer_sys_run npy.rs:12
+    #17 0x00010451f0f8 in rust_fuzzer_test_input lib.rs:276
+    #18 0x000105dc715c in _RINvNvNtCskxHI7cCZDyP_3std9panicking12catch_unwind7do_callNCNvCsdBEYEIiMDe_13libfuzzer_sys15test_input_wrap0lEBY_+0xac (npy:arm64+0x1018af15c)
+    #19 0x000105dc7ba0 in __rust_try+0x18 (npy:arm64+0x1018afba0)
+    #20 0x000105dc6a44 in LLVMFuzzerTestOneInput+0x16c (npy:arm64+0x1018aea44)
+    #21 0x000105dca1cc in fuzzer::Fuzzer::ExecuteCallback(unsigned char const*, unsigned long)+0x158 (npy:arm64+0x1018b21cc)
+    #22 0x000105dc9870 in fuzzer::Fuzzer::RunOne(unsigned char const*, unsigned long, bool, fuzzer::InputInfo*, bool, bool*)+0x48 (npy:arm64+0x1018b1870)
+    #23 0x000105dcb774 in fuzzer::Fuzzer::MutateAndTestOne()+0x22c (npy:arm64+0x1018b3774)
+    #24 0x000105dcc4d0 in fuzzer::Fuzzer::Loop(std::__1::vector<fuzzer::SizedFile, std::__1::allocator<fuzzer::SizedFile>>&)+0x354 (npy:arm64+0x1018b44d0)
+    #25 0x000105deb798 in fuzzer::FuzzerDriver(int*, char***, int (*)(unsigned char const*, unsigned long))+0x1a3c (npy:arm64+0x1018d3798)
+    #26 0x000105df933c in main+0x24 (npy:arm64+0x1018e133c)
+    #27 0x00019fe68d78 in start+0x19f8 (dyld:arm64e+0x31d78)
+
+NOTE: libFuzzer has rudimentary signal handlers.
+      Combine libFuzzer with AddressSanitizer or similar for better crash reports.
+SUMMARY: libFuzzer: deadly signal
+MS: 1 EraseBytes-; base unit: ca0b6e804d58404dc144416872de29454528edf0
+artifact_prefix='/Users/crisn/Documents/Projects/scrutate/fuzz/artifacts/npy/'; Test unit written to /Users/crisn/Documents/Projects/scrutate/fuzz/artifacts/npy/crash-f97699233028b876b22b0c17b47e7f08cfb0006f
+
+────────────────────────────────────────────────────────────────────────────────
+
+Failing input:
+
+	fuzz/artifacts/npy/crash-f97699233028b876b22b0c17b47e7f08cfb0006f
+
+Output of `std::fmt::Debug`:
+
+	[147, 78, 85, 77, 80, 89, 1, 0, 118, 0, 123, 39, 100, 101, 115, 99, 114, 39, 58, 32, 39, 60, 85, 49, 51, 39, 44, 32, 39, 102, 111, 114, 116, 114, 97, 110, 95, 111, 114, 100, 101, 114, 39, 58, 32, 70, 97, 108, 115, 101, 44, 32, 39, 115, 104, 97, 112, 101, 39, 58, 32, 40, 52, 55, 44, 41, 44, 32, 125, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 10, 108, 0, 0, 0, 101, 0, 0, 0, 120, 0, 0, 0, 95, 0, 0, 0, 108, 0, 0, 0, 111, 0, 0, 0, 103, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 108, 0, 0, 0, 101, 0, 0, 0, 120, 0, 0, 0, 95, 0, 0, 0, 114, 0, 0, 0, 97, 0, 0, 0, 116, 0, 0, 0, 105, 0, 0, 0, 111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 108, 0, 0, 0, 101, 0, 0, 0, 120, 0, 0, 0, 95, 0, 0, 0, 114, 0, 0, 0, 97, 0, 0, 0, 110, 0, 0, 0, 107, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 108, 0, 0, 0, 101, 0, 0, 0, 120, 0, 0, 0, 95, 0, 0, 0, 122, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 110, 0, 0, 0, 97, 0, 0, 0, 109, 0, 0, 0, 101, 0, 0, 0, 95, 0, 0, 0, 108, 0, 0, 0, 111, 0, 0, 0, 103, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 110, 0, 0, 0, 97, 0, 0, 0, 109, 0, 0, 0, 101, 0, 0, 0, 95, 0, 0, 0, 114, 0, 0, 0, 97, 0, 0, 0, 116, 0, 0, 0, 105, 0, 0, 0, 111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 113, 0, 0, 0, 117, 0, 0, 0, 97, 0, 0, 0, 108, 0, 0, 0, 95, 0, 0, 0, 108, 0, 0, 0, 111, 0, 0, 0, 103, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 113, 0, 0, 0, 117, 0, 0, 0, 97, 0, 0, 0, 108, 0, 0, 0, 95, 0, 0, 0, 114, 0, 0, 0, 97, 0, 0, 0, 116, 0, 0, 0, 105, 0, 0, 0, 111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 115, 0, 0, 0, 105, 0, 0, 0, 103, 0, 0, 0, 95, 0, 0, 0, 108, 0, 0, 0, 111, 0, 0, 0, 103, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 115, 0, 0, 0, 105, 0, 0, 0, 103, 0, 0, 0, 95, 0, 0, 0, 114, 0, 0, 0, 97, 0, 0, 0, 116, 0, 0, 0, 105, 0, 0, 0, 111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 100, 0, 0, 0, 111, 0, 0, 0, 99, 0, 0, 0, 95, 0, 0, 0, 108, 0, 0, 0, 111, 0, 0, 0, 103, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 100, 0, 0, 0, 111, 0, 0, 0, 99, 0, 0, 0, 95, 0, 0, 0, 114, 0, 0, 0, 97, 0, 0, 0, 116, 0, 0, 0, 105, 0, 0, 0, 111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 98, 0, 0, 0, 111, 0, 0, 0, 100, 0, 0, 0, 121, 0, 0, 0, 95, 0, 0, 0, 108, 0, 0, 0, 111, 0, 0, 0, 103, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 98, 0, 0, 0, 111, 0, 0, 0, 100, 0, 0, 0, 121, 0, 0, 0, 95, 0, 0, 0, 114, 0, 0, 0, 97, 0, 0, 0, 116, 0, 0, 0, 105, 0, 0, 0, 111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 112, 0, 0, 0, 97, 0, 0, 0, 116, 0, 0, 0, 104, 0, 0, 0, 95, 0, 0, 0, 108, 0, 0, 0, 111, 0, 0, 0, 103, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 112, 0, 0, 0, 97, 0, 0, 0, 116, 0, 0, 0, 104, 0, 0, 0, 95, 0, 0, 0, 114, 0, 0, 0, 97, 0, 0, 0, 116, 0, 0, 0, 105, 0, 0, 0, 111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 115, 0, 0, 0, 101, 0, 0, 0, 109, 0, 0, 0, 95, 0, 0, 0, 97, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 115, 0, 0, 0, 101, 0, 0, 0, 109, 0, 0, 0, 95, 0, 0, 0, 98, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 115, 0, 0, 0, 101, 0, 0, 0, 109, 0, 0, 0, 95, 0, 0, 0, 109, 0, 0, 0, 105, 0, 0, 0, 120, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 115, 0, 0, 0, 101, 0, 0, 0, 109, 0, 0, 0, 95, 0, 0, 0, 97, 0, 0, 0, 95, 0, 0, 0, 122, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 115, 0, 0, 0, 101, 0, 0, 0, 109, 0, 0, 0, 95, 0, 0, 0, 98, 0, 0, 0, 95, 0, 0, 0, 122, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 115, 0, 0, 0, 101, 0, 0, 0, 109, 0, 0, 0, 95, 0, 0, 0, 109, 0, 0, 0, 105, 0, 0, 0, 120, 0, 0, 0, 95, 0, 0, 0, 122, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 115, 0, 0, 0, 101, 0, 0, 0, 109, 0, 0, 0, 95, 0, 0, 0, 114, 0, 0, 0, 97, 0, 0, 0, 110, 0, 0, 0, 107, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 101, 0, 0, 0, 120, 0, 0, 0, 97, 0, 0, 0, 99, 0, 0, 0, 116, 0, 0, 0, 95, 0, 0, 0, 110, 0, 0, 0, 97, 0, 0, 0, 109, 0, 0, 0, 101, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 101, 0, 0, 0, 120, 0, 0, 0, 97, 0, 0, 0, 99, 0, 0, 0, 116, 0, 0, 0, 95, 0, 0, 0, 113, 0, 0, 0, 117, 0, 0, 0, 97, 0, 0, 0, 108, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 110, 0, 0, 0, 97, 0, 0, 0, 109, 0, 0, 0, 101, 0, 0, 0, 95, 0, 0, 0, 111, 0, 0, 0, 118, 0, 0, 0, 101, 0, 0, 0, 114, 0, 0, 0, 108, 0, 0, 0, 97, 0, 0, 0, 112, 0, 0, 0, 0, 0, 0, 0, 110, 0, 0, 0, 97, 0, 0, 0, 109, 0, 0, 0, 101, 0, 0, 0, 0, 0, 97, 0, 0, 0, 116, 0, 0, 0, 101, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 108, 0, 0, 0, 111, 0, 0, 0, 103, 0, 0, 0, 95, 0, 0, 0, 110, 0, 0, 0, 99, 0, 0, 0, 97, 0, 0, 0, 108, 0, 0, 0, 108, 0, 0, 0, 101, 0, 0, 0, 114, 0, 0, 0, 115, 0, 0, 0, 0, 0, 0, 0, 110, 0, 0, 0, 95, 0, 0, 0, 116, 0, 0, 0, 101, 0, 0, 0, 114, 0, 0, 0, 109, 0, 0, 0, 115, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 110, 0, 0, 0, 95, 0, 0, 0, 108, 0, 0, 0, 105, 0, 0, 0, 116, 0, 0, 0, 115, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 110, 0, 0, 0, 95, 0, 0, 0, 119, 0, 0, 0, 111, 0, 0, 0, 114, 0, 0, 0, 100, 0, 0, 0, 115, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 104, 0, 0, 0, 97, 0, 0, 0, 115, 0, 0, 0, 95, 0, 0, 0, 105, 0, 0, 0, 100, 0, 0, 0, 101, 0, 0, 0, 110, 0, 0, 0, 116, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 102, 0, 0, 0, 105, 0, 0, 0, 108, 0, 0, 0, 101, 0, 0, 0, 95, 0, 0, 0, 102, 0, 0, 0, 114, 0, 0, 0, 97, 0, 0, 0, 99, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+
+Reproduce with:
+
+	cargo fuzz run -O npy fuzz/artifacts/npy/crash-f97699233028b876b22b0c17b47e7f08cfb0006f
+
+Minimize test case with:
+
+	cargo fuzz tmin -O npy fuzz/artifacts/npy/crash-f97699233028b876b22b0c17b47e7f08cfb0006f
+
+────────────────────────────────────────────────────────────────────────────────
+
+Error: Fuzz target exited with exit status: 77

@@ -5,6 +5,7 @@ and verify the outputs are byte-identical. usage: musl_vs_glibc.py GLIBC_BIN MUS
 from __future__ import annotations
 
 import argparse
+import os
 import statistics
 import subprocess
 import sys
@@ -14,7 +15,8 @@ import time
 def timed(cmd, cwd):
     t0 = time.perf_counter()
     r = subprocess.run(cmd, cwd=cwd, capture_output=True, stdin=subprocess.DEVNULL)
-    return time.perf_counter() - t0, r.stdout
+    # several threads print in no fixed order: compare the set of lines
+    return time.perf_counter() - t0, sorted(r.stdout.splitlines())
 
 
 def main() -> int:
@@ -24,6 +26,7 @@ def main() -> int:
     ap.add_argument("corpus")
     ap.add_argument("--runs", type=int, default=11)
     a = ap.parse_args()
+    a.glibc, a.musl = os.path.abspath(a.glibc), os.path.abspath(a.musl)
     queries = [["grep", "-F", "fn ", "."], ["grep", r"\w+::\w+\(", "."], ["grep", "-F", "-c", "use ", "."], ["grep", "--ident", "parseFile", "."]]
     worst = 1.0
     for q in queries:

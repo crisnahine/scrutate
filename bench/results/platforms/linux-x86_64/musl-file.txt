@@ -1,0 +1,1 @@
+target/x86_64-unknown-linux-musl/release/scrutate: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), static-pie linked, BuildID[sha1]=6f27bdf93113055872567b24e084ed17392a2e3e, stripped

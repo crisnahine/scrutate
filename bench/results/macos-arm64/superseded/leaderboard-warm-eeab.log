@@ -1,0 +1,90 @@
+[leaderboard] linux/literal
+  BLOCKED: scrutate 1124.6 ms; best competitor ripgrep 1149.3 ms; ratio 0.979 [0.9483262895020856, 1.0168549693121258]
+[leaderboard] linux/multiple literals
+  PASS: scrutate 1165.2 ms; best competitor ripgrep 1318.4 ms; ratio 0.884 [0.8632558013923408, 0.9703292805515324]
+[leaderboard] linux/case-insensitive
+  PASS: scrutate 1306.7 ms; best competitor git grep 1428.4 ms; ratio 0.915 [0.88209596300654, 0.9401410020964921]
+[leaderboard] linux/whole-word
+  PARTIAL: scrutate 1320.1 ms; best competitor ripgrep 1373.0 ms; ratio 0.962 [0.9254258202507248, 1.0170674248145115]
+[leaderboard] linux/simple regex
+  PARTIAL: scrutate 1517.3 ms; best competitor ripgrep 1537.5 ms; ratio 0.987 [0.9196213420888293, 1.109958432141483]
+[leaderboard] linux/complex regex
+  PASS: scrutate 1601.3 ms; best competitor ripgrep 1878.1 ms; ratio 0.853 [0.8039224303511513, 0.8905966654598948]
+[leaderboard] linux/unicode
+  PARTIAL: scrutate 1498.9 ms; best competitor ripgrep 1480.0 ms; ratio 1.013 [0.9864770085475412, 1.0449626337057367]
+[leaderboard] linux/no match
+  PARTIAL: scrutate 1432.4 ms; best competitor ripgrep 1435.9 ms; ratio 0.998 [0.9701353911239118, 1.0170900044876028]
+[leaderboard] linux/very many matches
+  PARTIAL: scrutate 1762.7 ms; best competitor ripgrep 1962.0 ms; ratio 0.898 [0.7281816661285914, 1.7750845291566244]
+[leaderboard] linux/multiline
+  BLOCKED: scrutate 1351.7 ms; best competitor ripgrep 1322.1 ms; ratio 1.022 [0.996729467754342, 1.0468882149342562]
+[leaderboard] linux/identifier
+  PARTIAL: scrutate 1343.3 ms; best competitor ripgrep 1393.5 ms; ratio 0.964 [0.8855390007332216, 1.0802128923209937]
+[leaderboard] linux/unrestricted
+  BLOCKED: scrutate 1473.2 ms; best competitor ripgrep 1530.9 ms; ratio 0.962 [0.921727246644033, 1.0136051360273164]
+[leaderboard] linux/file-type filter
+  BLOCKED: scrutate 958.9 ms; best competitor ripgrep 1014.5 ms; ratio 0.945 [0.8819842986038242, 1.0015529328452328]
+[leaderboard] llvm/literal
+  BLOCKED: scrutate 2848.5 ms; best competitor ripgrep 2616.2 ms; ratio 1.089 [0.9256983956820933, 1.2488625650310832]
+[leaderboard] llvm/case-insensitive
+  FAIL: scrutate 2771.5 ms; best competitor ripgrep 2249.1 ms; ratio 1.232 [1.074170129589836, 1.4092761731691128]
+[leaderboard] llvm/complex regex
+  BLOCKED: scrutate 1916.9 ms; best competitor ripgrep 1906.4 ms; ratio 1.005 [0.9951128128410267, 1.0193810652508735]
+[leaderboard] llvm/very many matches
+  PASS: scrutate 1786.2 ms; best competitor git grep 1963.4 ms; ratio 0.910 [0.8999614809294161, 0.9208152783823191]
+[leaderboard] llvm/no match
+  BLOCKED: scrutate 1788.4 ms; best competitor ripgrep 1765.9 ms; ratio 1.013 [0.9991516112740162, 1.0234113572083838]
+[leaderboard] llvm/identifier
+  FAIL: scrutate 1802.9 ms; best competitor ugrep 1667.1 ms; ratio 1.081 [1.0710054751851559, 1.0909746359110482]
+[leaderboard] ripgrep/literal
+  FAIL: scrutate 8.8 ms; best competitor ugrep 5.7 ms; ratio 1.534 [1.4371373499534763, 1.6728836051621145]
+[leaderboard] ripgrep/simple regex
+  FAIL: scrutate 9.0 ms; best competitor ugrep 5.6 ms; ratio 1.592 [1.4735191125318539, 1.7247718326762205]
+[leaderboard] ripgrep/case-insensitive
+  FAIL: scrutate 9.8 ms; best competitor ugrep 5.6 ms; ratio 1.757 [1.6261483782998412, 1.8112972008841184]
+[leaderboard] bigfile/literal
+  PASS: scrutate 46.9 ms; best competitor ugrep 88.3 ms; ratio 0.531 [0.5192066244987859, 0.5412522074712676]
+[leaderboard] bigfile/case-insensitive
+  PASS: scrutate 53.2 ms; best competitor ugrep 113.5 ms; ratio 0.469 [0.4629367257499348, 0.47318973241911144]
+[leaderboard] bigfile/complex regex
+  PASS: scrutate 63.0 ms; best competitor ugrep 126.3 ms; ratio 0.499 [0.4873368074217309, 0.508904927704445]
+[leaderboard] bigfile/very many matches
+  PASS: scrutate 113.9 ms; best competitor ripgrep 222.8 ms; ratio 0.511 [0.4924399659564084, 0.5533704010281904]
+[leaderboard] bigfile/no match
+  PASS: scrutate 45.3 ms; best competitor ripgrep 95.6 ms; ratio 0.474 [0.46723377678758937, 0.4864710195672525]
+[leaderboard] bigfile/unicode
+  PASS: scrutate 55.3 ms; best competitor ugrep 87.1 ms; ratio 0.635 [0.6277053235493708, 0.6449107210615627]
+[leaderboard] smallfiles/literal
+  FAIL: scrutate 1484.8 ms; best competitor ugrep 1387.0 ms; ratio 1.071 [1.0507621687959423, 1.0842623044026163]
+[leaderboard] smallfiles/simple regex
+  FAIL: scrutate 1523.3 ms; best competitor ugrep 1408.2 ms; ratio 1.082 [1.066784583467145, 1.0960346384698079]
+[leaderboard] binheavy/literal
+  FAIL: scrutate 104.7 ms; best competitor ugrep 88.3 ms; ratio 1.186 [1.1430713895056934, 1.2199086521234448]
+[leaderboard] patho/long line
+  FAIL: scrutate 60.2 ms; best competitor ugrep 40.9 ms; ratio 1.472 [1.458537758321393, 1.4834114973799972]
+[leaderboard] patho/one-byte lines
+  PASS: scrutate 460.1 ms; best competitor ripgrep 521.0 ms; ratio 0.883 [0.8659817171060736, 0.8884256827493925]
+[leaderboard] patho/backtracking trap
+  FAIL: scrutate 151.4 ms; best competitor ugrep 18.9 ms; ratio 7.998 [7.929784046527145, 8.091533410760228]
+[leaderboard] rgbuilt/git-aware
+  FAIL: scrutate 8.3 ms; best competitor ugrep 5.5 ms; ratio 1.503 [1.4535994230783507, 1.6659210166290073]
+[leaderboard] linux/structural
+Traceback (most recent call last):
+  File "/Users/crisn/Documents/Projects/scrutate/bench/leaderboard.py", line 719, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/Users/crisn/Documents/Projects/scrutate/bench/leaderboard.py", line 707, in main
+    r = run_bench(b, a.corpora, a, cache_dir)
+  File "/Users/crisn/Documents/Projects/scrutate/bench/leaderboard.py", line 505, in run_bench
+    got = normalise(p.stdout, t if structural else None)
+  File "/Users/crisn/Documents/Projects/scrutate/bench/leaderboard.py", line 287, in normalise
+    r = json.loads(line)
+  File "/opt/homebrew/Cellar/python@3.15/3.15.2/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/__init__.py", line 371, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.2/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py", line 358, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.15/3.15.2/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/decoder.py", line 376, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)

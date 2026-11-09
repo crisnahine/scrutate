@@ -27,6 +27,8 @@ def main() -> int:
     ap.add_argument("--out", default=os.path.join(HERE, "..", "docs", "BENCHMARKS.md"))
     a = ap.parse_args()
     d = json.load(open(a.results))
+    gv = (d["environment"]["tools"].get("grep") or {}).get("version") or ""
+    LABEL["grep"] = "GNU grep" if "GNU grep" in gv else ("BSD grep" if "BSD grep" in gv else "grep")
     env = d["environment"]
     out = []
     w = out.append
@@ -174,13 +176,15 @@ def main() -> int:
         w("No competitor in this comparison builds a persistent index, so there is nothing to compare these numbers with; they are the cost side of the "
           "ranked, semantic and structural capabilities the grep-class tools do not have. Ranking quality is measured separately (docs/QUALITY.md).\n")
     w("## Caveats (read these)\n")
-    w("- ugrep was measured from the build bundled with another program on this machine (`argv[0]` dispatch), compiled with `+sse2` only; a native "
-      "ugrep build with AVX2/AVX-512 would be faster. ack and ag were not available (building them from source is not possible in this environment). "
-      "Their rows are absent rather than estimated.")
-    w("- Two logical cores. Multi-threaded tools (scrutate, ripgrep, ugrep, git grep) scale with cores; GNU grep is single-threaded by design.")
+    env = d["environment"]
+    if (env["tools"].get("ugrep") or {}).get("note"):
+        w(f"- ugrep: {env['tools']['ugrep']['note']}.")
+    missing = [LABEL[t] for t in TOOL_ORDER if not (env["tools"].get(t) or {}).get("version")]
+    if missing:
+        w(f"- Not available on this machine, so absent rather than estimated: {', '.join(missing)}.")
+    w(f"- {env['cores']} logical cores. Multi-threaded tools (scrutate, ripgrep, ugrep, git grep) scale with cores; grep, ack and ag search one file at a time.")
     w("- The corpora are Python-only; the byte-level search cost does not depend on the language, but structural-search and indexing figures do.")
-    w("- Where scrutate is slower, it says so in the tables above: on output-heavy queries (hundreds of thousands of matching lines) "
-      "its single formatting thread trails ripgrep (up to 25 % with 1.5 M matching lines), and ast-grep is faster on structural search. See docs/ROADMAP.md.")
+    w("- Rows where scrutate is slower are in the tables like any other. docs/LEADERBOARD.md has the statistical comparison (30 runs per tool, confidence intervals) on more corpora; this page adds memory, start-up, concurrency and index costs.")
     text = "\n".join(out) + "\n"
     with open(a.out, "w") as f:
         f.write(text)

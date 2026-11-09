@@ -1,0 +1,3 @@
+identical output for [-F fn ]: 564 lines, 102180 bytes
+identical output for [\w+::\w+\(]: 1077 lines, 210197 bytes
+identical output for [--ident parseFile]: 13 lines, 2685 bytes

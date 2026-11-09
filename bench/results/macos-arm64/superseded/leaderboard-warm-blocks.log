@@ -1,0 +1,20 @@
+[leaderboard] linux/literal
+  PASS: scrutate 1097.4 ms; best competitor ripgrep 1280.7 ms; ratio 0.857 [0.8037448037922478, 0.9405014819595678]
+[leaderboard] linux/multiple literals
+  PASS: scrutate 1070.5 ms; best competitor ripgrep 1173.2 ms; ratio 0.912 [0.8969946349104553, 0.9340363307104556]
+[leaderboard] linux/case-insensitive
+[leaderboard] linux/case-insensitive
+  PASS: scrutate 1089.0 ms; best competitor ripgrep 1143.9 ms; ratio 0.952 [0.9344563572359634, 0.9682532424410815]
+[leaderboard] linux/whole-word
+  PASS: scrutate 1044.5 ms; best competitor ripgrep 1076.3 ms; ratio 0.970 [0.9424315930692606, 0.9879105264704314]
+[leaderboard] linux/simple regex
+  FAIL: scrutate 1058.7 ms; best competitor ripgrep 1022.9 ms; ratio 1.035 [1.0134840663168982, 1.0502171813367784]
+[leaderboard] linux/complex regex
+  PASS: scrutate 1118.2 ms; best competitor ripgrep 1192.7 ms; ratio 0.938 [0.9180475358070151, 0.9605245677165084]
+[leaderboard] linux/unicode
+  FAIL: scrutate 1084.1 ms; best competitor ripgrep 1057.4 ms; ratio 1.025 [1.001602882040738, 1.0393328361404546]
+[leaderboard] linux/no match
+  FAIL: scrutate 1032.2 ms; best competitor ripgrep 1010.0 ms; ratio 1.022 [1.0044093491670123, 1.038583718378948]
+[leaderboard] linux/very many matches
+  PASS: scrutate 1036.5 ms; best competitor ripgrep 1373.4 ms; ratio 0.755 [0.7440222661511146, 0.7645284117525736]
+[leaderboard] linux/multiline

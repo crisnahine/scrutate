@@ -1,0 +1,59 @@
+{
+ "host": "Linux x86_64",
+ "platform": "Linux-6.8.0-117-generic-x86_64-with-glibc2.36",
+ "rows": [
+  {
+   "python": "3.10.22",
+   "free_threaded": false,
+   "platform": "Linux x86_64",
+   "checks": {
+    "installed": true,
+    "imports": true,
+    "bindings tests": false
+   },
+   "wheel": "scrutate-0.1.0-cp39-abi3-manylinux_2_34_x86_64.whl",
+   "pytest": "1 failed, 4 passed in 5.52s",
+   "ok": false
+  },
+  {
+   "python": "3.12.16",
+   "free_threaded": false,
+   "platform": "Linux x86_64",
+   "checks": {
+    "installed": true,
+    "imports": true,
+    "bindings tests": false
+   },
+   "wheel": "scrutate-0.1.0-cp39-abi3-manylinux_2_34_x86_64.whl",
+   "pytest": "1 failed, 4 passed in 5.17s",
+   "ok": false
+  },
+  {
+   "python": "3.13.18",
+   "free_threaded": false,
+   "platform": "Linux x86_64",
+   "checks": {
+    "installed": true,
+    "imports": true,
+    "bindings tests": false
+   },
+   "wheel": "scrutate-0.1.0-cp39-abi3-manylinux_2_34_x86_64.whl",
+   "pytest": "1 failed, 4 passed in 5.34s",
+   "ok": false
+  },
+  {
+   "python": "3.14.10",
+   "free_threaded": true,
+   "platform": "Linux x86_64",
+   "checks": {
+    "abi3 wheel refused": true,
+    "installed": true,
+    "GIL stays disabled after import (-W error)": true,
+    "bindings tests": true
+   },
+   "wheel": "scrutate-0.1.0-cp314-cp314t-manylinux_2_34_x86_64.whl",
+   "pytest": "5 passed in 4.37s",
+   "ok": true
+  }
+ ]
+}

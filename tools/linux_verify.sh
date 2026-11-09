@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Verify one Linux platform from a clean container: build and cargo test on an image with no Python
+# at all, the static musl binary (statically linked, byte-identical output, timed against glibc),
+# and the abi3 + free-threaded wheels installed and tested on several interpreters.
+#
+#   docker run --rm --platform linux/arm64 -v "$PWD":/src:ro -v "$PWD/bench/results/platforms":/out \
+#     rust:1-slim-bookworm bash /src/tools/linux_verify.sh
+#
+# Results go to /out/linux-<arch>/ (log, wheels, wheel-matrix JSON, musl checks and timing).
+set -euo pipefail
+arch=$(uname -m)
+out=/out/linux-$arch
+mkdir -p "$out"
+exec > >(tee "$out/verify.log") 2>&1
+step() { echo; echo "=== $* ($(date -u +%H:%M:%S))"; }
+
+step "environment"
+uname -a
+rustc --version
+cargo --version
+nproc
+
+step "copy source (the mount is read-only; host build output excluded)"
+rm -rf /work && mkdir /work
+tar -C /src --exclude=./target --exclude=./dist --exclude='.scrutate' --exclude='__pycache__' -cf - . | tar -C /work -xf -
+cd /work
+
+step "cargo build + test on an image without Python"
+if command -v python3 || command -v python; then echo "unexpected: the base image has Python"; exit 1; fi
+cargo build --release -p scrutate --locked
+cargo test --release -p scrutate --locked 2>&1 | grep -E '^test result|FAILED|panicked'
+
+step "system packages"
+apt-get update -qq
+apt-get install -y -qq musl-tools file python3 ripgrep curl git > /dev/null
+curl -LsSf https://astral.sh/uv/install.sh | sh > /dev/null
+export PATH="$HOME/.local/bin:$PATH"
+
+step "musl static binary"
+musl="$arch-unknown-linux-musl"
+rustup target add "$musl"
+cargo build --release -p scrutate --locked --target "$musl"
+m="target/$musl/release/scrutate"
+file "$m" | tee "$out/musl-file.txt"
+file "$m" | grep -qE "statically linked|static-pie linked"
+if ldd "$m" 2>&1 | grep -q "=>"; then echo "musl binary has dynamic dependencies"; exit 1; fi
+untimed() { sed -E 's/"elapsed_ms":[0-9.eE+-]+,?//'; } # the summary's run time differs on every run
+for q in '-F fn ' '\w+::\w+\(' '--ident parseFile'; do
+  # shellcheck disable=SC2086
+  { target/release/scrutate grep --sort --json $q crates || true; } | untimed > /tmp/glibc.jsonl
+  # shellcheck disable=SC2086
+  { "$m" grep --sort --json $q crates || true; } | untimed > /tmp/musl.jsonl
+  cmp /tmp/glibc.jsonl /tmp/musl.jsonl
+  echo "identical output for [$q]: $(wc -l < /tmp/glibc.jsonl) lines, $(wc -c < /tmp/glibc.jsonl) bytes"
+done | tee "$out/musl-identical.txt"
+python3 bench/musl_vs_glibc.py target/release/scrutate "$m" crates --runs 41 | tee "$out/musl-timing.txt"
+
+step "wheels (abi3 + free-threaded)"
+uv python install 3.10 3.12 3.13 3.14t
+uv tool install maturin
+rm -rf target/wheels
+maturin build --release --strip -m crates/scrutate-py/Cargo.toml -o target/wheels -i "$(uv python find 3.12)"
+maturin build --release --strip -m crates/scrutate-py/Cargo.toml -o target/wheels -i "$(uv python find 3.14t)"
+ls target/wheels
+uv run --no-project --python 3.12 python tools/wheel_matrix.py --wheels target/wheels --cli "$PWD/target/release/scrutate" \
+  --json "$out/wheels.json" 3.10 3.12 3.13 3.14t | tee "$out/wheels.md"
+
+step "done"

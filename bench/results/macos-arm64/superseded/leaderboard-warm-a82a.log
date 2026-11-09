@@ -1,0 +1,89 @@
+[leaderboard] linux/literal
+  FAIL: scrutate 1043.4 ms; best competitor ugrep 1021.4 ms; ratio 1.022 [1.0116676131222382, 1.0353544272186457]
+[leaderboard] linux/multiple literals
+  PASS: scrutate 1013.9 ms; best competitor ripgrep 1118.3 ms; ratio 0.907 [0.8994165693546874, 0.9264167842303384]
+[leaderboard] linux/case-insensitive
+  BLOCKED: scrutate 1013.3 ms; best competitor ripgrep 1013.1 ms; ratio 1.000 [0.9921708804239403, 1.0209152717318442]
+[leaderboard] linux/whole-word
+  BLOCKED: scrutate 1043.7 ms; best competitor ripgrep 1046.1 ms; ratio 0.998 [0.9744802099156505, 1.0265567208376907]
+[leaderboard] linux/simple regex
+  PARTIAL: scrutate 1216.4 ms; best competitor ripgrep 1191.1 ms; ratio 1.021 [0.5689217135841602, 1.3164549355102977]
+[leaderboard] linux/complex regex
+  PASS: scrutate 1117.5 ms; best competitor ripgrep 1161.8 ms; ratio 0.962 [0.9180784762760802, 0.9958687728935609]
+[leaderboard] linux/unicode
+  PARTIAL: scrutate 1228.4 ms; best competitor ripgrep 1227.1 ms; ratio 1.001 [0.9792639543390057, 1.0261152609554607]
+[leaderboard] linux/no match
+  PARTIAL: scrutate 1248.0 ms; best competitor ripgrep 1219.4 ms; ratio 1.023 [0.9827148766197803, 1.045438649026563]
+[leaderboard] linux/very many matches
+  PASS: scrutate 1430.2 ms; best competitor ripgrep 1854.8 ms; ratio 0.771 [0.7124670462672374, 0.8302847833144089]
+[leaderboard] linux/multiline
+  PARTIAL: scrutate 1291.0 ms; best competitor ripgrep 1277.2 ms; ratio 1.011 [0.9889081121122415, 1.0465428789735745]
+[leaderboard] linux/identifier
+  FAIL: scrutate 1190.4 ms; best competitor ripgrep 1153.6 ms; ratio 1.032 [1.0140903755077424, 1.0521545484381658]
+[leaderboard] linux/unrestricted
+  BLOCKED: scrutate 1243.0 ms; best competitor ripgrep 1250.1 ms; ratio 0.994 [0.9677060804287899, 1.0071583768161743]
+[leaderboard] linux/file-type filter
+  PARTIAL: scrutate 1012.2 ms; best competitor ripgrep 1061.1 ms; ratio 0.954 [0.8673079621040455, 1.0299876705756716]
+[leaderboard] llvm/literal
+  BLOCKED: scrutate 2709.8 ms; best competitor ripgrep 2672.6 ms; ratio 1.014 [0.9549535058372012, 1.0411342525916416]
+[leaderboard] llvm/case-insensitive
+  BLOCKED: scrutate 3048.9 ms; best competitor ripgrep 2964.0 ms; ratio 1.029 [0.9012473534290314, 1.1579973187065686]
+[leaderboard] llvm/complex regex
+  PASS: scrutate 2346.9 ms; best competitor ripgrep 2530.0 ms; ratio 0.928 [0.8565498049725033, 0.9741060999025335]
+[leaderboard] llvm/very many matches
+  BLOCKED: scrutate 3226.0 ms; best competitor ripgrep 3495.0 ms; ratio 0.923 [0.8673476827479137, 1.0356620523594937]
+[leaderboard] llvm/no match
+  PASS: scrutate 2001.7 ms; best competitor ripgrep 2223.3 ms; ratio 0.900 [0.8363928586613455, 0.9314121814197182]
+[leaderboard] llvm/identifier
+  BLOCKED: scrutate 3044.4 ms; best competitor ripgrep 2878.7 ms; ratio 1.058 [0.9433684014890276, 1.2169420399041133]
+[leaderboard] ripgrep/literal
+  PARTIAL: scrutate 8.5 ms; best competitor ugrep 8.2 ms; ratio 1.026 [0.9702738338429302, 1.1257532005808615]
+[leaderboard] ripgrep/simple regex
+  FAIL: scrutate 9.0 ms; best competitor ugrep 7.3 ms; ratio 1.233 [1.1745794635915343, 1.2640475624512226]
+[leaderboard] ripgrep/case-insensitive
+  FAIL: scrutate 8.6 ms; best competitor ugrep 7.2 ms; ratio 1.196 [1.1555739622377217, 1.242377331182299]
+[leaderboard] bigfile/literal
+  PASS: scrutate 59.6 ms; best competitor ugrep 101.5 ms; ratio 0.587 [0.5429314768944982, 0.616966882697448]
+[leaderboard] bigfile/case-insensitive
+  PASS: scrutate 78.3 ms; best competitor ugrep 129.4 ms; ratio 0.605 [0.5790783182757189, 0.6378867155610393]
+[leaderboard] bigfile/complex regex
+  PASS: scrutate 86.2 ms; best competitor ugrep 146.3 ms; ratio 0.590 [0.5340029960513384, 0.6170183464107136]
+[leaderboard] bigfile/very many matches
+  PASS: scrutate 135.3 ms; best competitor ripgrep 260.6 ms; ratio 0.519 [0.5013879009454864, 0.5332373160241486]
+[leaderboard] bigfile/no match
+  PASS: scrutate 62.1 ms; best competitor ripgrep 106.4 ms; ratio 0.583 [0.5514798387990025, 0.6074444289575339]
+[leaderboard] bigfile/unicode
+  PASS: scrutate 79.6 ms; best competitor ugrep 107.5 ms; ratio 0.741 [0.699815481085941, 0.7881306007006104]
+[leaderboard] smallfiles/literal
+  FAIL: scrutate 2015.9 ms; best competitor ripgrep 1870.4 ms; ratio 1.078 [1.0035038972329875, 1.155675810934979]
+[leaderboard] smallfiles/simple regex
+  PARTIAL: scrutate 2100.2 ms; best competitor ripgrep 2010.1 ms; ratio 1.045 [0.9810671864146805, 1.1028804402358265]
+[leaderboard] binheavy/literal
+  PASS: scrutate 107.8 ms; best competitor ripgrep 112.4 ms; ratio 0.960 [0.9287840939855001, 0.9834162917541376]
+[leaderboard] patho/long line
+  FAIL: scrutate 78.0 ms; best competitor ugrep 67.2 ms; ratio 1.161 [1.0973244254110903, 1.248487606013121]
+[leaderboard] patho/one-byte lines
+  FAIL: scrutate 684.6 ms; best competitor ugrep 628.9 ms; ratio 1.089 [1.0631183559289494, 1.1166273336011696]
+[leaderboard] patho/backtracking trap
+  FAIL: scrutate 178.0 ms; best competitor ugrep 22.0 ms; ratio 8.102 [7.861394392497436, 8.369485918686413]
+[leaderboard] rgbuilt/git-aware
+  FAIL: scrutate 8.6 ms; best competitor ugrep 7.3 ms; ratio 1.173 [1.1119923626750223, 1.2406871165644173]
+[leaderboard] linux/structural
+  FAIL: scrutate nan ms; best competitor None nan ms; ratio nan 
+[leaderboard] ripgrep/structural
+Traceback (most recent call last):
+  File "/Users/crisn/Documents/Projects/scrutate/bench/leaderboard.py", line 719, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/Users/crisn/Documents/Projects/scrutate/bench/leaderboard.py", line 707, in main
+    r = run_bench(b, a.corpora, a, cache_dir)
+  File "/Users/crisn/Documents/Projects/scrutate/bench/leaderboard.py", line 477, in run_bench
+    ref, nref = structural_reference(cdir, files, structural, cache_dir)
+                ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/crisn/Documents/Projects/scrutate/bench/leaderboard.py", line 633, in structural_reference
+    p = subprocess.run(["uv", "run", "--no-project", "-q", "--with", "tree-sitter>=0.25", "--with", pkg, "python", "-c", code, lst, spec["tsquery"], mod],
+                       cwd=cdir, capture_output=True, text=True, check=True)
+  File "/opt/homebrew/Cellar/python@3.15/3.15.2/Frameworks/Python.framework/Versions/3.15/lib/python3.15/subprocess.py", line 692, in run
+    raise CalledProcessError(retcode, process.args,
+                             output=stdout, stderr=stderr)
+subprocess.CalledProcessError: Command ['uv', 'run', '--no-project', '-q', '--with', 'tree-sitter>=0.25', '--with', 'tree-sitter-rust', 'python', '-c', '\nimport json, sys, tree_sitter as ts\nlang_mod = __import__(sys.argv[3])\nlang = ts.Language(lang_mod.language())\nq = ts.Query(lang, sys.argv[2])\ncur = ts.QueryCursor(q)\nparser = ts.Parser(lang)\nhits = set(); n = 0\nfor rel in open(sys.argv[1]).read().split("\\n"):\n    if not rel: continue\n    src = open(rel, "rb").read()\n    if b"\\0" in src: continue\n    n += 1\n    tree = parser.parse(src)\n    for _, caps in cur.matches(tree.root_node):\n        for node in caps.get("call", []):\n            hits.add((rel, node.start_point[0] + 1))\nprint(json.dumps({"hits": sorted(hits), "files": n}))\n', '/Users/crisn/Documents/Projects/scrutate/bench/results/macos-arm64/cache/sref-files.txt', '(macro_invocation macro: (identifier) @m (#eq? @m "format")) @call', 'tree_sitter_rust'] returned non-zero exit status 1.
