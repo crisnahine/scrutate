@@ -1161,6 +1161,7 @@ dependencies = [
  "proptest",
  "rayon",
  "regex",
+ "regex-automata",
  "regex-syntax",
  "rusqlite",
  "rust-stemmers",

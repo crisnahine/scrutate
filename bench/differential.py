@@ -80,7 +80,11 @@ def random_pattern(rng: random.Random) -> tuple[str, list[str], list[str], str]:
     if mode == "multiline":
         return rng.choice([r"alpha\n\s*beta", r"def\s*\n", r"(?s)gamma.{0,20}delta"]), ["-U"], ["-U"], mode
     atoms = [r"\w+", r"\balpha\b", "(alpha|beta)", "ga+mma", r"\d", "[a-c]+", "tok(en)?", r"^\s*def", r"value$", "é", ".", r"x{3,}", r"refresh[_-]?token", "(?i)TOKEN"]
+    # patterns anchored at a line start with a literal prefix take their own path in the engine
+    anchored = [r"^alpha", r"^(alpha|beta)\b", r"^[a-c]", r"^(?i)value", r"^(a|aa)+$", r"^été"]
     pat = "".join(rng.choice(atoms) for _ in range(rng.randint(1, 3)))
+    if rng.random() < 0.25:
+        pat = rng.choice(anchored) + pat
     return pat, [], [], "regex"
 
 

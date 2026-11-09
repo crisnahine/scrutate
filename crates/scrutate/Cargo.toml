@@ -50,6 +50,7 @@ notify = { version = "8.2", default-features = false }
 rayon = "1"
 regex = "1"
 regex-syntax = "0.8"
+regex-automata = "0.4"
 rusqlite = { version = "0.37", features = ["bundled"] }
 rust-stemmers = "1"
 serde = { version = "1", features = ["derive", "rc"] }

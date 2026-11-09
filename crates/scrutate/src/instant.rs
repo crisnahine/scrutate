@@ -439,20 +439,78 @@ pub enum AnyMatcher {
     FuzzyRegex(Box<crate::fuzzyre::FuzzyRegex>),
 }
 
-/// grep-regex's matcher, except that a regex with no usable literal prefix whose every match ends
-/// in one of a few literals (`\w+_(suspend|resume)\(`) finds candidate lines by searching for those
-/// literals: the regex engine would otherwise run its automaton over every byte.
+/// grep-regex's matcher, except that the regex engine is kept from running its automaton over every
+/// byte in two cases: a regex with no usable literal prefix whose every match ends in one of a few
+/// literals (`\w+_(suspend|resume)\(`) finds candidate lines by searching for those literals, and a
+/// regex whose every match starts a line (`^(a|aa)+$`) looks only at line starts.
 #[derive(Clone, Debug)]
 pub struct LineRegex {
     inner: grep_regex::RegexMatcher,
     suffixes: Option<regex::bytes::Regex>,
+    line_start: Option<LineStart>,
+}
+
+/// For a regex whose every match begins at a line start: the line starts that begin with one of its
+/// prefix literals, and a search anchored at a line start. Used only on text without a line break
+/// past the start (grep-regex removes `\n` from what a line regex can match; this regex does not).
+#[derive(Clone, Debug)]
+struct LineStart {
+    anchored: regex_automata::meta::Regex,
+    prefixes: Vec<Vec<u8>>,
+    /// a line break followed by one of `prefixes`
+    starts: regex::bytes::Regex,
 }
 
 impl LineRegex {
     fn new(inner: grep_regex::RegexMatcher, pattern: &str, insensitive: bool) -> LineRegex {
-        let suffixes = if inner.line_terminator().is_some() { suffix_searcher(pattern, insensitive) } else { None };
-        LineRegex { inner, suffixes }
+        let lines = inner.line_terminator().is_some();
+        let suffixes = if lines { suffix_searcher(pattern, insensitive) } else { None };
+        let line_start = if lines && suffixes.is_none() { line_start(pattern, insensitive) } else { None };
+        LineRegex { inner, suffixes, line_start }
     }
+
+    fn plain(inner: grep_regex::RegexMatcher) -> LineRegex {
+        LineRegex { inner, suffixes: None, line_start: None }
+    }
+
+    /// The end of the match anchored at `at`, when `at` starts a line of a haystack without line
+    /// breaks after it; Err when the line-start path does not apply.
+    fn at_line_start(&self, haystack: &[u8], at: usize, earliest: bool) -> Result<Option<MatchSpan>, ()> {
+        let ls = self.line_start.as_ref().ok_or(())?;
+        if at > haystack.len() || memchr::memchr(b'\n', &haystack[at..]).is_some() {
+            return Err(());
+        }
+        if at > 0 && haystack[at - 1] != b'\n' {
+            return Ok(None);
+        }
+        let input = regex_automata::Input::new(haystack).range(at..).anchored(regex_automata::Anchored::Yes).earliest(earliest);
+        Ok(ls.anchored.search(&input).map(|m| MatchSpan::new(m.start(), m.end())))
+    }
+}
+
+/// The line-start path for `pattern`, when every match begins at a line start and begins with one
+/// of a few literals.
+fn line_start(pattern: &str, insensitive: bool) -> Option<LineStart> {
+    use regex_syntax::hir::{
+        literal::{ExtractKind, Extractor},
+        Look,
+    };
+    let hir = regex_syntax::ParserBuilder::new().case_insensitive(insensitive).multi_line(true).utf8(false).build().parse(pattern).ok()?;
+    // `\A` and `\z` mean the line's ends when the searcher checks a line, the buffer's ends here
+    let looks = hir.properties().look_set();
+    if !hir.properties().look_set_prefix().contains(Look::StartLF) || looks.contains(Look::Start) || looks.contains(Look::End) {
+        return None;
+    }
+    let lits = Extractor::new().kind(ExtractKind::Prefix).extract(&hir);
+    let lits = lits.literals()?;
+    if lits.is_empty() || lits.len() > 64 || lits.iter().any(|l| l.is_empty() || l.as_bytes().contains(&b'\n')) {
+        return None;
+    }
+    let prefixes: Vec<Vec<u8>> = lits.iter().map(|l| l.as_bytes().to_vec()).collect();
+    let alts: Vec<String> = prefixes.iter().map(|l| l.iter().map(|b| format!("\\x{b:02X}")).collect()).collect();
+    let starts = regex::bytes::Regex::new(&format!("(?-u:\\n(?:{}))", alts.join("|"))).ok()?;
+    let anchored = regex_automata::meta::Regex::builder().configure(regex_automata::meta::Config::new().utf8_empty(false)).build_from_hir(&hir).ok()?;
+    Some(LineStart { anchored, prefixes, starts })
 }
 
 /// A searcher for the literals every match of `pattern` ends with, when that beats the regex engine.
@@ -478,7 +536,10 @@ impl Matcher for LineRegex {
     type Error = NoError;
 
     fn find_at(&self, haystack: &[u8], at: usize) -> Result<Option<MatchSpan>, NoError> {
-        self.inner.find_at(haystack, at)
+        match self.at_line_start(haystack, at, false) {
+            Ok(m) => Ok(m),
+            Err(()) => self.inner.find_at(haystack, at),
+        }
     }
     fn new_captures(&self) -> Result<Self::Captures, NoError> {
         self.inner.new_captures()
@@ -499,7 +560,10 @@ impl Matcher for LineRegex {
         self.inner.captures_at(haystack, at, caps)
     }
     fn shortest_match_at(&self, haystack: &[u8], at: usize) -> Result<Option<usize>, NoError> {
-        self.inner.shortest_match_at(haystack, at)
+        match self.at_line_start(haystack, at, true) {
+            Ok(m) => Ok(m.map(|m| m.end())),
+            Err(()) => self.inner.shortest_match_at(haystack, at),
+        }
     }
     fn non_matching_bytes(&self) -> Option<&grep_matcher::ByteSet> {
         self.inner.non_matching_bytes()
@@ -508,6 +572,28 @@ impl Matcher for LineRegex {
         self.inner.line_terminator()
     }
     fn find_candidate_line(&self, haystack: &[u8]) -> Result<Option<grep_matcher::LineMatchKind>, NoError> {
+        if let Some(ls) = &self.line_start {
+            // the searcher calls this at the start of a line, with whole lines
+            let mut next = ls.prefixes.iter().any(|p| haystack.starts_with(p)).then_some(0);
+            let mut from = 0;
+            loop {
+                let at = match next.take() {
+                    Some(at) => at,
+                    None => match ls.starts.find_at(haystack, from) {
+                        Some(m) => m.start() + 1,
+                        None => return Ok(None),
+                    },
+                };
+                let input = regex_automata::Input::new(haystack).range(at..).anchored(regex_automata::Anchored::Yes).earliest(true);
+                match ls.anchored.search_half(&input) {
+                    // no match here, so none for grep-regex's line regex either (it matches less)
+                    None => from = at,
+                    // a match within the line is one for grep-regex too
+                    Some(m) if memchr::memchr(b'\n', &haystack[at..m.offset()]).is_none() => return Ok(Some(grep_matcher::LineMatchKind::Confirmed(at))),
+                    Some(_) => return Ok(Some(grep_matcher::LineMatchKind::Candidate(at))),
+                }
+            }
+        }
         match &self.suffixes {
             Some(re) => Ok(re.find(haystack).map(|m| grep_matcher::LineMatchKind::Candidate(m.start()))),
             None => self.inner.find_candidate_line(haystack),
@@ -597,11 +683,7 @@ pub fn build_matcher(o: &Options) -> Result<AnyMatcher> {
                 .line_terminator(if o.multiline { None } else { Some(b'\n') });
             let m = b.build(&pat).with_context(|| format!("invalid pattern {:?}", o.pattern))?;
             let suffix_ok = !o.word && o.mode != Mode::Literal;
-            Ok(AnyMatcher::Regex(if suffix_ok {
-                LineRegex::new(m, &pat, insensitive && o.mode != Mode::Identifier)
-            } else {
-                LineRegex { inner: m, suffixes: None }
-            }))
+            Ok(AnyMatcher::Regex(if suffix_ok { LineRegex::new(m, &pat, insensitive && o.mode != Mode::Identifier) } else { LineRegex::plain(m) }))
         }
     }
 }
@@ -1833,7 +1915,7 @@ mod tests {
             let fast = build_matcher(&o).unwrap();
             let AnyMatcher::Regex(ref f) = fast else { unreachable!() };
             engaged += f.suffixes.is_some() as usize;
-            let slow = AnyMatcher::Regex(LineRegex { inner: f.inner.clone(), suffixes: None });
+            let slow = AnyMatcher::Regex(LineRegex::plain(f.inner.clone()));
             for invert in [false, true] {
                 let (a, b) = (lines(&fast, invert), lines(&slow, invert));
                 assert_eq!(a, b, "{pat} {case:?} invert={invert}");
@@ -1845,6 +1927,83 @@ mod tests {
         let o = Options { pattern: "PM_RESUME".into(), ..Options::default() };
         let AnyMatcher::Regex(m) = build_matcher(&o).unwrap() else { unreachable!() };
         assert!(m.suffixes.is_none(), "a literal prefix is the engine's job");
+    }
+
+    #[test]
+    fn line_start_candidates_find_the_same_lines() {
+        let words = ["a", "aa", "aaa", "b", "!", "\n", "\r\n", "#include <x>", "x", "A", "é", "É", " ", "\t", "ab", "\n\n", "\nab"];
+        let mut state = 0x9E3779B97F4A7C15u64;
+        let mut hay = String::new();
+        for _ in 0..20000 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            hay.push_str(words[(state % words.len() as u64) as usize]);
+        }
+        let lines = |m: &AnyMatcher, invert: bool| {
+            let mut v = Vec::new();
+            let mut s = SearcherBuilder::new().line_number(true).invert_match(invert).build();
+            let AnyMatcher::Regex(m) = m else { unreachable!() };
+            s.search_slice(
+                m,
+                hay.as_bytes(),
+                grep_searcher::sinks::Lossy(|n, _| {
+                    v.push(n);
+                    Ok(true)
+                }),
+            )
+            .unwrap();
+            v
+        };
+        let mut engaged = 0;
+        for (pat, case) in [
+            (r"^(a|aa)+$", Case::Sensitive),
+            (r"^a", Case::Sensitive),
+            (r"^#include", Case::Sensitive),
+            (r"^(?:a|b)+!", Case::Insensitive),
+            (r"^é", Case::Insensitive),
+            (r"^ab?\s*$", Case::Sensitive),
+            (r"^a$|^b$", Case::Sensitive),
+            (r"^$", Case::Sensitive),
+            (r"^\w", Case::Sensitive),
+            (r"^a|b", Case::Sensitive),
+            (r"^a\z", Case::Sensitive),
+            (r"^a\s*", Case::Sensitive),
+            (r"^(?:a|ab)(?:\n|b)", Case::Sensitive),
+            (r"^a[^x]", Case::Sensitive),
+        ] {
+            let o = Options { pattern: pat.to_string(), case, ..Options::default() };
+            let fast = build_matcher(&o).unwrap();
+            let AnyMatcher::Regex(ref f) = fast else { unreachable!() };
+            engaged += f.line_start.is_some() as usize;
+            let slow = AnyMatcher::Regex(LineRegex::plain(f.inner.clone()));
+            for invert in [false, true] {
+                let (a, b) = (lines(&fast, invert), lines(&slow, invert));
+                assert_eq!(a, b, "{pat} {case:?} invert={invert}");
+                assert!(invert || !a.is_empty(), "{pat}: no matches, the test proves nothing");
+            }
+            for line in hay.split('\n').take(3000) {
+                assert_eq!(spans_in(&fast, line.as_bytes()), spans_in(&slow, line.as_bytes()), "{pat} on {line:?}");
+            }
+            assert_eq!(spans_in(&fast, hay.as_bytes()), spans_in(&slow, hay.as_bytes()), "{pat} on the whole text");
+            // every short text over a small alphabet, from every offset
+            let (AnyMatcher::Regex(fm), AnyMatcher::Regex(sm)) = (&fast, &slow) else { unreachable!() };
+            let alphabet: [&[u8]; 5] = [b"a", b"b", b"\n", b"!", "é".as_bytes()];
+            let mut texts: Vec<Vec<u8>> = vec![Vec::new()];
+            for _ in 0..4 {
+                let more: Vec<Vec<u8>> = texts.iter().flat_map(|t| alphabet.iter().map(move |c| [t.as_slice(), c].concat())).collect();
+                texts.extend(more);
+            }
+            for t in &texts {
+                for at in 0..=t.len() {
+                    assert_eq!(fm.find_at(t, at).unwrap(), sm.find_at(t, at).unwrap(), "{pat} find_at {t:?} {at}");
+                    assert_eq!(fm.shortest_match_at(t, at).unwrap().is_some(), sm.shortest_match_at(t, at).unwrap().is_some(), "{pat} {t:?} {at}");
+                }
+            }
+        }
+        // `^$`, `^\w` (no finite prefix literals), `^a|b` (not anchored), `^a\z` and a line break in
+        // the prefix keep the plain path
+        assert_eq!(engaged, 9);
     }
 
     fn fuzzy_find(pat: &str, k: u8, hay: &str) -> Option<(usize, usize)> {
