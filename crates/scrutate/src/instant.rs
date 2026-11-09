@@ -153,19 +153,96 @@ pub struct FuzzyMatcher {
     pattern: Vec<u8>,
     fold: bool,
     prefilter: Option<aho_corasick::AhoCorasick>,
+    /// patterns longer than 128 bytes: the pattern and its reverse in 64-bit blocks
+    long: Option<Box<(Blocks, Blocks)>>,
+}
+
+/// The longest fuzzy pattern accepted (the work per byte grows with its length / 64).
+pub const FUZZY_MAX: usize = 4096;
+
+/// Myers' recurrence on 64-bit blocks, for patterns longer than one machine word: the addition
+/// and the two shifts carry from block to block (Hyyrö 2003).
+#[derive(Clone)]
+struct Blocks {
+    words: usize,
+    m: usize,
+    peq: Vec<u64>,
+}
+
+impl Blocks {
+    fn new(pat: &[u8], fold: bool) -> Blocks {
+        let words = pat.len().div_ceil(64);
+        let mut peq = vec![0u64; 256 * words];
+        for (j, &c) in pat.iter().enumerate() {
+            peq[c as usize * words + j / 64] |= 1 << (j % 64);
+            if fold && c.is_ascii_lowercase() {
+                peq[c.to_ascii_uppercase() as usize * words + j / 64] |= 1 << (j % 64);
+            }
+        }
+        for w in 0..words {
+            peq[b'\n' as usize * words + w] = 0;
+        }
+        Blocks { words, m: pat.len(), peq }
+    }
+
+    fn start(&self) -> (Vec<u64>, Vec<u64>) {
+        let mut pv = vec![u64::MAX; self.words];
+        if !self.m.is_multiple_of(64) {
+            pv[self.words - 1] = (1u64 << (self.m % 64)) - 1;
+        }
+        (pv, vec![0; self.words])
+    }
+
+    /// One text byte: updates the column and returns the change of the last row's distance.
+    fn step(&self, pv: &mut [u64], mv: &mut [u64], c: u8) -> isize {
+        let last = self.words - 1;
+        let top = 1u64 << ((self.m - 1) % 64);
+        let (mut carry, mut ph_in, mut mh_in, mut delta) = (0u64, 0u64, 0u64, 0isize);
+        for w in 0..self.words {
+            let eq = self.peq[c as usize * self.words + w];
+            let xv = eq | mv[w];
+            let (s1, o1) = (eq & pv[w]).overflowing_add(pv[w]);
+            let (s2, o2) = s1.overflowing_add(carry);
+            carry = (o1 | o2) as u64;
+            let xh = (s2 ^ pv[w]) | eq;
+            let ph = mv[w] | !(xh | pv[w]);
+            let mh = pv[w] & xh;
+            if w == last {
+                delta = if ph & top != 0 {
+                    1
+                } else if mh & top != 0 {
+                    -1
+                } else {
+                    0
+                };
+            }
+            let ph_s = (ph << 1) | ph_in;
+            let mh_s = (mh << 1) | mh_in;
+            ph_in = ph >> 63;
+            mh_in = mh >> 63;
+            pv[w] = mh_s | !(xv | ph_s);
+            mv[w] = ph_s & xv;
+        }
+        if !self.m.is_multiple_of(64) {
+            let mask = (1u64 << (self.m % 64)) - 1;
+            pv[last] &= mask;
+            mv[last] &= mask;
+        }
+        delta
+    }
 }
 
 impl FuzzyMatcher {
     pub fn new(pattern: &str, max_edits: u8, fold_case: bool) -> Result<FuzzyMatcher> {
         let pat: Vec<u8> = if fold_case { pattern.to_ascii_lowercase().into_bytes() } else { pattern.as_bytes().to_vec() };
-        if pat.is_empty() || pat.len() > 128 {
-            bail!("fuzzy patterns must be 1..=128 bytes");
+        if pat.is_empty() || pat.len() > FUZZY_MAX {
+            bail!("fuzzy patterns must be 1..={FUZZY_MAX} bytes");
         }
         if max_edits as usize >= pat.len() {
             bail!("the number of edits ({max_edits}) must be smaller than the pattern length ({})", pat.len());
         }
         let mut peq = [0u128; 256];
-        for (j, &c) in pat.iter().enumerate() {
+        for (j, &c) in pat.iter().enumerate().take(128) {
             peq[c as usize] |= 1u128 << j;
             if fold_case && c.is_ascii_lowercase() {
                 peq[c.to_ascii_uppercase() as usize] |= 1u128 << j;
@@ -181,7 +258,11 @@ impl FuzzyMatcher {
         } else {
             None
         };
-        Ok(FuzzyMatcher { peq, m: pat.len(), k: max_edits as usize, pattern: pat, fold: fold_case, prefilter })
+        let long = (pat.len() > 128).then(|| {
+            let rev: Vec<u8> = pat.iter().rev().copied().collect();
+            Box::new((Blocks::new(&pat, fold_case), Blocks::new(&rev, fold_case)))
+        });
+        Ok(FuzzyMatcher { peq, m: pat.len(), k: max_edits as usize, pattern: pat, fold: fold_case, prefilter, long })
     }
 
     /// Byte range of the line containing `pos` within `hay[at..]`.
@@ -210,6 +291,23 @@ impl FuzzyMatcher {
 
     /// End positions (exclusive) in `hay[at..]` where a match with <= k edits ends, with its distance.
     fn first_end(&self, hay: &[u8], at: usize) -> Option<(usize, usize)> {
+        if let Some(b) = &self.long {
+            let (fwd, _) = &**b;
+            let (mut pv, mut mv) = fwd.start();
+            let mut score = self.m as isize;
+            for (i, &c) in hay[at..].iter().enumerate() {
+                if c == b'\n' {
+                    (pv, mv) = fwd.start();
+                    score = self.m as isize;
+                    continue;
+                }
+                score += fwd.step(&mut pv, &mut mv, c);
+                if score <= self.k as isize {
+                    return Some((at + i + 1, score as usize));
+                }
+            }
+            return None;
+        }
         let m = self.m;
         let top = 1u128 << (m - 1);
         let mask = if m == 128 { u128::MAX } else { (1u128 << m) - 1 };
@@ -249,6 +347,23 @@ impl FuzzyMatcher {
     /// longest match, which highlights the whole misspelt word rather than a fragment of it).
     fn start_for(&self, hay: &[u8], end: usize, d: usize) -> usize {
         let m = self.m;
+        if let Some(b) = &self.long {
+            let (_, rev) = &**b;
+            let lo = end.saturating_sub(m + self.k);
+            let (mut pv, mut mv) = rev.start();
+            let mut score = m as isize;
+            let mut best = None;
+            for (i, &c) in hay[lo..end].iter().rev().enumerate() {
+                if c == b'\n' {
+                    break;
+                }
+                score += rev.step(&mut pv, &mut mv, c);
+                if score <= d as isize {
+                    best = Some(end - (i + 1));
+                }
+            }
+            return best.unwrap_or_else(|| end.saturating_sub(m));
+        }
         let lo = end.saturating_sub(m + self.k);
         let window: Vec<u8> = hay[lo..end].iter().rev().copied().collect();
         let mut peq = [0u128; 256];
@@ -1560,6 +1675,73 @@ mod tests {
     fn fuzzy_find(pat: &str, k: u8, hay: &str) -> Option<(usize, usize)> {
         let m = FuzzyMatcher::new(pat, k, false).unwrap();
         m.find_at(hay.as_bytes(), 0).unwrap().map(|m| (m.start(), m.end()))
+    }
+
+    /// First end (and distance) of a match within `k` edits: the textbook dynamic programme.
+    fn naive_first_end(pat: &[u8], hay: &[u8], k: usize) -> Option<(usize, usize)> {
+        let m = pat.len();
+        let mut col: Vec<usize> = (0..=m).collect();
+        for (i, &c) in hay.iter().enumerate() {
+            let mut next = vec![0usize; m + 1];
+            for j in 1..=m {
+                next[j] = (next[j - 1] + 1).min(col[j] + 1).min(col[j - 1] + usize::from(pat[j - 1] != c));
+            }
+            col = next;
+            if col[m] <= k {
+                return Some((i + 1, col[m]));
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn fuzzy_blocks_agree_with_the_dynamic_programme() {
+        let mut state = 0x2545F4914F6CDD1Du64;
+        let mut next = |n: u64| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state % n
+        };
+        for round in 0..400 {
+            let m = 1 + next(300) as usize;
+            let pat: Vec<u8> = (0..m).map(|_| b"abc"[next(3) as usize]).collect();
+            // text: the pattern with a few edits, inside noise, so matches at small distances exist
+            let mut hay: Vec<u8> = (0..next(200)).map(|_| b"abcd"[next(4) as usize]).collect();
+            let mut copy = pat.clone();
+            for _ in 0..next(6) {
+                let at = next(copy.len() as u64) as usize;
+                match next(3) {
+                    0 => copy[at] = b'd',
+                    1 => drop(copy.remove(at)),
+                    _ => copy.insert(at, b'a'),
+                }
+                if copy.is_empty() {
+                    copy.push(b'b');
+                }
+            }
+            hay.extend_from_slice(&copy);
+            hay.extend((0..next(50)).map(|_| b"abcd"[next(4) as usize]));
+            let k = (next(8) as usize).min(m - 1);
+            let f = FuzzyMatcher::new(std::str::from_utf8(&pat).unwrap(), k as u8, false).unwrap();
+            assert_eq!(f.first_end(&hay, 0), naive_first_end(&pat, &hay, k), "round {round}: m={m} k={k}");
+            if m <= 128 {
+                // the block path on short patterns too, against the single-word one
+                let b = Blocks::new(&pat, false);
+                let (mut pv, mut mv) = b.start();
+                let mut score = m as isize;
+                let mut got = None;
+                for (i, &c) in hay.iter().enumerate() {
+                    score += b.step(&mut pv, &mut mv, c);
+                    if score <= k as isize {
+                        got = Some((i + 1, score as usize));
+                        break;
+                    }
+                }
+                assert_eq!(got, naive_first_end(&pat, &hay, k), "blocks, round {round}: m={m} k={k}");
+            }
+        }
+        assert!(FuzzyMatcher::new(&"a".repeat(FUZZY_MAX + 1), 1, false).is_err());
     }
 
     #[test]

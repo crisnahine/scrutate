@@ -33,7 +33,7 @@
 scrutate grep [OPTIONS] PATTERN [PATHS...]
 ```
 `PATTERN` is a regex unless `-F` (literal), `--ident` (identifier in any casing) or `--fuzzy[=N]`
-(within N edits, default 1, literal, at most 128 bytes). The default regex engine runs in linear
+(within N edits, default 1, literal, at most 4096 bytes). The default regex engine runs in linear
 time and has no look-around or backreferences; `-P` (`--pcre2`) switches to PCRE2 for those. PCRE2
 backtracks, so a pattern can take exponential time; its match limit stops the search of a file
 then, and `scrutate` prints a warning naming that file. With `-P`, `--index` cannot narrow the
