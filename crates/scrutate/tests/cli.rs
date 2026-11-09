@@ -606,3 +606,27 @@ fn small_tree_path_equals_parallel_walk() {
         assert_eq!(small.0, 0, "{args:?}: {small:?}");
     }
 }
+
+#[test]
+fn pcre2_look_around_backreferences_and_the_match_limit() {
+    let r = Repo::new("pcre2");
+    r.write("t.txt", b"foobar\nbazbar\nabba\nabc\n");
+    r.write("trap.txt", format!("{}!\n", "a".repeat(40)).repeat(50).as_bytes());
+    let (code, out, _) = r.run(&["grep", "-P", "(?<=foo)bar", "t.txt"]);
+    assert_eq!((code, out.as_str()), (0, "t.txt:1:foobar\n"));
+    let (code, out, _) = r.run(&["grep", "-P", r"(\w)\1", "t.txt"]);
+    assert_eq!((code, out.as_str()), (0, "t.txt:1:foobar\nt.txt:3:abba\n"));
+    let (code, _, _) = r.run(&["grep", "-P", "-F", "a(b", "t.txt"]);
+    assert_eq!(code, 1, "-F makes the pattern literal");
+    let (code, out, _) = r.run(&["grep", "-P", "-w", "-e", "ab", "-e", "abc", "t.txt"]);
+    assert_eq!((code, out.as_str()), (0, "t.txt:4:abc\n"));
+    // exponential backtracking stops at PCRE2's match limit and says so
+    let t0 = std::time::Instant::now();
+    let (code, out, err) = r.run(&["grep", "-P", "^(a|aa)+$", "trap.txt"]);
+    assert!(t0.elapsed() < std::time::Duration::from_secs(20));
+    assert_eq!((code, out.as_str()), (1, ""));
+    assert!(err.contains("trap.txt") && err.contains("match limit"), "{err}");
+    let (code, _, err) = r.run(&["grep", "-P", "(?<=", "t.txt"]);
+    assert_eq!(code, 2);
+    assert!(err.contains("PCRE2"), "{err}");
+}

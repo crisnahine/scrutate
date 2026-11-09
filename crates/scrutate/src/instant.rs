@@ -32,6 +32,8 @@ pub enum Mode {
     Fuzzy {
         max_edits: u8,
     },
+    /// PCRE2: look-around and backreferences, by backtracking within PCRE2's match limit
+    Pcre2,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -131,6 +133,9 @@ pub struct Stats {
     pub errors: u64,
     pub elapsed_ms: f64,
     pub cancelled: bool,
+    /// the first few files that could not be searched (or not to the end), with the reason
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub failures: Vec<String>,
 }
 
 // ------------------------------------------------------------------------- fuzzy matcher
@@ -308,6 +313,7 @@ impl Matcher for FuzzyMatcher {
 pub enum AnyMatcher {
     Regex(LineRegex),
     Fuzzy(Box<FuzzyMatcher>),
+    Pcre2(grep_pcre2::RegexMatcher),
 }
 
 /// grep-regex's matcher, except that a regex with no usable literal prefix whose every match ends
@@ -436,6 +442,19 @@ pub fn build_matcher(o: &Options) -> Result<AnyMatcher> {
     };
     match o.mode {
         Mode::Fuzzy { max_edits } => Ok(AnyMatcher::Fuzzy(Box::new(FuzzyMatcher::new(&o.pattern, max_edits, insensitive)?))),
+        Mode::Pcre2 => {
+            let m = grep_pcre2::RegexMatcherBuilder::new()
+                .caseless(insensitive)
+                .word(o.word)
+                .multi_line(true)
+                .dotall(false)
+                .utf(true)
+                .ucp(true)
+                .jit_if_available(true)
+                .build(&o.pattern)
+                .with_context(|| format!("invalid PCRE2 pattern {:?}", o.pattern))?;
+            Ok(AnyMatcher::Pcre2(m))
+        }
         _ => {
             let pat = match o.mode {
                 Mode::Literal => regex::escape(&o.pattern),
@@ -601,6 +620,7 @@ fn spans_in(matcher: &AnyMatcher, line: &[u8]) -> Vec<(usize, usize)> {
         match matcher {
             AnyMatcher::Regex(m) => m.find_at(line, at).ok().flatten(),
             AnyMatcher::Fuzzy(m) => m.find_at(line, at).ok().flatten(),
+            AnyMatcher::Pcre2(m) => m.find_at(line, at).ok().flatten(),
         }
     };
     while at <= line.len() {
@@ -810,6 +830,18 @@ struct Counters {
     matches: AtomicU64,
     bytes: AtomicU64,
     errors: AtomicU64,
+    failures: Mutex<Vec<String>>,
+}
+
+impl Counters {
+    fn failed(&self, what: String) {
+        self.errors.fetch_add(1, Ordering::Relaxed);
+        if let Ok(mut v) = self.failures.lock() {
+            if v.len() < 10 {
+                v.push(what);
+            }
+        }
+    }
 }
 
 fn file_searcher(o: &Options) -> Searcher {
@@ -843,8 +875,8 @@ fn search_one(
     }
     let file = match std::fs::File::open(path) {
         Ok(f) => f,
-        Err(_) => {
-            c.errors.fetch_add(1, Ordering::Relaxed);
+        Err(e) => {
+            c.failed(format!("{rel}: {e}"));
             return;
         }
     };
@@ -883,11 +915,13 @@ fn search_one(
     let res = match (matcher, &whole) {
         (AnyMatcher::Regex(rm), Some(b)) => searcher.search_slice(rm, b, &mut sink),
         (AnyMatcher::Fuzzy(fm), Some(b)) => searcher.search_slice(fm.as_ref(), b, &mut sink),
+        (AnyMatcher::Pcre2(pm), Some(b)) => searcher.search_slice(pm, b, &mut sink),
         (AnyMatcher::Regex(rm), None) => searcher.search_file(rm, &file, &mut sink),
         (AnyMatcher::Fuzzy(fm), None) => searcher.search_file(fm.as_ref(), &file, &mut sink),
+        (AnyMatcher::Pcre2(pm), None) => searcher.search_file(pm, &file, &mut sink),
     };
-    if res.is_err() {
-        c.errors.fetch_add(1, Ordering::Relaxed);
+    if let Err(e) = res {
+        c.failed(format!("{rel}: {e}"));
     }
     sink.flush(); // a search aborted by an error or cancellation still reports what it found
     if sink.matched {
@@ -1111,7 +1145,7 @@ mod split {
                 }
                 if !part.ok {
                     // the file changed after the first pass, or a read failed: what was found so far stands
-                    c.errors.fetch_add(1, Ordering::Relaxed);
+                    c.failed(format!("{rel}: changed while it was searched, or a read failed"));
                     break 'windows;
                 }
             }
@@ -1173,6 +1207,7 @@ mod split {
         let res = match &matcher {
             AnyMatcher::Regex(m) => searcher.search_reader(m, &mut range, &mut sink),
             AnyMatcher::Fuzzy(m) => searcher.search_reader(m.as_ref(), &mut range, &mut sink),
+            AnyMatcher::Pcre2(m) => searcher.search_reader(m, &mut range, &mut sink),
         };
         sink.flush();
         let ok = res.is_ok() && !sink.binary && (range.pos >= b || cancel.load(Ordering::Relaxed));
@@ -1211,6 +1246,7 @@ fn stats(c: &Counters, t0: Instant, cancel: &AtomicBool) -> Stats {
         errors: c.errors.load(Ordering::Relaxed),
         elapsed_ms: t0.elapsed().as_secs_f64() * 1000.0,
         cancelled: cancel.load(Ordering::Relaxed),
+        failures: c.failures.lock().map(|v| v.clone()).unwrap_or_default(),
     }
 }
 
@@ -1259,8 +1295,8 @@ fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Opti
                 }
                 let entry = match entry {
                     Ok(e) => e,
-                    Err(_) => {
-                        c.errors.fetch_add(1, Ordering::Relaxed);
+                    Err(e) => {
+                        c.failed(e.to_string());
                         return WalkState::Continue;
                     }
                 };

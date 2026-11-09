@@ -44,6 +44,7 @@ jobs:
           name=scrutate-$v-${{ matrix.target }}
           mkdir -p "$name"
           cp "$bin" LICENSE README.md "$name/"
+          python3 tools/third_party_notices.py --out "$name/THIRD_PARTY_NOTICES.txt"
           cp -r docs "$name/docs"
           if [[ "${{ matrix.target }}" == *windows* ]]; then 7z a "dist/$name.zip" "$name" > /dev/null; else tar czf "dist/$name.tar.gz" "$name"; fi
           (cd dist && sha256sum * > "$name.sha256")
@@ -67,6 +68,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.kind == 'free-threaded' && '3.14t' || '3.12' }}
+      - name: notices of the crates compiled into the wheel
+        shell: bash
+        run: |
+          cmp -s LICENSE crates/scrutate-py/LICENSE
+          python tools/third_party_notices.py --package scrutate-py --out crates/scrutate-py/THIRD_PARTY_NOTICES.txt
       - uses: PyO3/maturin-action@v1
         with:
           command: build

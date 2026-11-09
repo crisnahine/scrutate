@@ -119,6 +119,9 @@ pub enum Cmd {
         /// approximate search: literal within N edits (insertions, deletions, substitutions)
         #[arg(long, value_name = "N", num_args = 0..=1, default_missing_value = "1")]
         fuzzy: Option<u8>,
+        /// PCRE2 syntax: look-around and backreferences (backtracking, stopped by PCRE2's match limit)
+        #[arg(short = 'P', long)]
+        pcre2: bool,
         /// case-insensitive
         #[arg(short = 'i', long)]
         ignore_case: bool,
@@ -397,6 +400,7 @@ pub fn run() -> Result<i32> {
             regexp,
             index,
             fixed_strings,
+            pcre2,
             ident,
             fuzzy,
             ignore_case,
@@ -431,12 +435,17 @@ pub fn run() -> Result<i32> {
                 }
                 return Ok(0);
             }
+            if pcre2 && (ident || fuzzy.is_some()) {
+                anyhow::bail!("-P/--pcre2 cannot be combined with --ident or --fuzzy");
+            }
             let mut mode = match (fixed_strings, ident, fuzzy) {
                 (_, _, Some(n)) => Mode::Fuzzy { max_edits: n },
                 (_, true, _) => Mode::Identifier,
+                _ if pcre2 => Mode::Pcre2,
                 (true, _, _) => Mode::Literal,
                 _ => Mode::Regex,
             };
+            let many = regexp.len() > 1;
             let pattern = if regexp.is_empty() {
                 pattern.unwrap_or_default()
             } else {
@@ -453,14 +462,18 @@ pub fn run() -> Result<i32> {
                         let each = mode;
                         let part = |p: &str| match each {
                             Mode::Literal => regex::escape(p),
+                            Mode::Pcre2 if fixed_strings => regex::escape(p),
                             Mode::Identifier => instant::identifier_regex(p),
                             _ => p.to_string(),
                         };
-                        mode = Mode::Regex;
+                        if mode != Mode::Pcre2 {
+                            mode = Mode::Regex;
+                        }
                         regexp.iter().map(|p| format!("(?:{})", part(p))).collect::<Vec<_>>().join("|")
                     }
                 }
             };
+            let pattern = if mode == Mode::Pcre2 && fixed_strings && !many { regex::escape(&pattern) } else { pattern };
             if index {
                 if hidden || no_ignore || follow || max_depth.is_some() || max_filesize.is_some() {
                     anyhow::bail!(
@@ -978,6 +991,7 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
             instant::search(&roots, &o, Arc::clone(&cancel), &mut sink)?
         }
     };
+    warn_failures(&stats);
     if pipe_closed {
         return Ok(if found { 0 } else { 1 });
     }
@@ -1035,6 +1049,17 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
     Ok(if found { 0 } else { 1 })
 }
 
+/// The first files a search could not read, or not to the end (PCRE2's match limit, I/O errors).
+fn warn_failures(stats: &instant::Stats) {
+    for f in &stats.failures {
+        diagnostic("warning", f);
+    }
+    let more = stats.errors.saturating_sub(stats.failures.len() as u64);
+    if more > 0 {
+        diagnostic("warning", &format!("{more} more files could not be searched"));
+    }
+}
+
 /// Plain unsorted output, written by the search threads (see `instant::PlainSink`).
 fn grep_plain(roots: Vec<PathBuf>, o: Options, out: GrepOutput, cancel: Arc<AtomicBool>) -> Result<i32> {
     let sink = Arc::new(instant::PlainSink::new(Box::new(std::io::stdout())));
@@ -1047,6 +1072,7 @@ fn grep_plain(roots: Vec<PathBuf>, o: Options, out: GrepOutput, cancel: Arc<Atom
     } else {
         instant::search_plain(&roots, &o, Arc::clone(&cancel), Arc::clone(&sink))?
     };
+    warn_failures(&stats);
     let found = stats.matches > 0;
     if sink.broken.load(Ordering::Relaxed) {
         return Ok(if found { 0 } else { 1 }); // the reader went away (`| head`): stop quietly

@@ -21,3 +21,5 @@ features = ["pyo3/extension-module"]
 module-name = "scrutate._native"
 python-source = "python"
 strip = true
+# written by tools/third_party_notices.py before a release build; absent in a development build
+include = [{ path = "THIRD_PARTY_NOTICES.txt", format = "wheel" }]

@@ -10,11 +10,14 @@ cargo build --release -p scrutate --locked
 name="scrutate-$v-$target"
 rm -rf "dist/$name" && mkdir -p "dist/$name"
 cp target/release/scrutate LICENSE README.md CHANGELOG.md "dist/$name/"
+python3 tools/third_party_notices.py --out "dist/$name/THIRD_PARTY_NOTICES.txt"
 cp -r docs "dist/$name/docs"
 cp -r integrations "dist/$name/integrations"
 tar -C dist -czf "dist/$name.tar.gz" "$name"
 rm -rf "dist/$name"
 if command -v maturin >/dev/null; then
+  cmp -s LICENSE crates/scrutate-py/LICENSE || { echo "crates/scrutate-py/LICENSE (the wheel's copy) differs from LICENSE"; exit 1; }
+  python3 tools/third_party_notices.py --package scrutate-py --out crates/scrutate-py/THIRD_PARTY_NOTICES.txt
   maturin build --release --strip -m crates/scrutate-py/Cargo.toml -o dist
 fi
 python3 tools/sbom.py --out "dist/scrutate-$v.cdx.json"

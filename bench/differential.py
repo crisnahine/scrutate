@@ -63,7 +63,7 @@ def random_corpus(rng: random.Random, root: str) -> None:
 
 def random_pattern(rng: random.Random) -> tuple[str, list[str], list[str], str]:
     """-> (pattern, scrutate flags, rg flags, mode)"""
-    mode = rng.choice(["literal", "literal", "regex", "regex", "icase", "word", "multiline"])
+    mode = rng.choice(["literal", "literal", "regex", "regex", "icase", "word", "multiline", "pcre2"])
     w = rng.choice(WORDS)
     if mode == "literal":
         pat = rng.choice([w, w[: max(1, len(w) // 2)], w + " " + rng.choice(WORDS)])
@@ -73,6 +73,10 @@ def random_pattern(rng: random.Random) -> tuple[str, list[str], list[str], str]:
         return pat, ["-F", "-i"], ["-F", "-i"], mode
     if mode == "word":
         return w, ["-F", "-w"], ["-F", "-w"], mode
+    if mode == "pcre2":
+        w2 = rng.choice(WORDS)
+        pat = rng.choice([rf"(?<={w[:2]}){w[2:] or w}", rf"{w}(?=\s+{w2})", rf"(?<!x)\b{w}\b", r"(\w)\1", rf"(?i){w}(?!{w2})", rf"({w}).*\1"])
+        return pat, ["-P"], ["-P"], mode
     if mode == "multiline":
         return rng.choice([r"alpha\n\s*beta", r"def\s*\n", r"(?s)gamma.{0,20}delta"]), ["-U"], ["-U"], mode
     atoms = [r"\w+", r"\balpha\b", "(alpha|beta)", "ga+mma", r"\d", "[a-c]+", "tok(en)?", r"^\s*def", r"value$", "é", ".", r"x{3,}", r"refresh[_-]?token", "(?i)TOKEN"]

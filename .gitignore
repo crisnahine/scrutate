@@ -8,3 +8,5 @@ __pycache__/
 /crates/scrutate-py/python/scrutate/*.so
 /crates/scrutate-py/target/
 /bench/results/*/cache/
+/crates/scrutate-py/THIRD_PARTY_NOTICES.txt
+/.claude/

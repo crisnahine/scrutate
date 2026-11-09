@@ -33,14 +33,19 @@
 scrutate grep [OPTIONS] PATTERN [PATHS...]
 ```
 `PATTERN` is a regex unless `-F` (literal), `--ident` (identifier in any casing) or `--fuzzy[=N]`
-(within N edits, default 1, literal, at most 128 bytes). `-e PATTERN` (repeatable) gives several
+(within N edits, default 1, literal, at most 128 bytes). The default regex engine runs in linear
+time and has no look-around or backreferences; `-P` (`--pcre2`) switches to PCRE2 for those. PCRE2
+backtracks, so a pattern can take exponential time; its match limit stops the search of a file
+then, and `scrutate` prints a warning naming that file. With `-P`, `--index` cannot narrow the
+files and searches all of them. `-e PATTERN` (repeatable) gives several
 patterns; a line matching any of them matches, and the first positional argument is then a path.
 Options mirror grep/ripgrep where the meaning is identical: `-i`, `-S` (smart case), `-w`, `-U`
 (multiline: each line of a multi-line match is printed with its own number), `-v`, `-l`, `-c`,
 `-A/-B/-C`, `-m`, `--max-results`, `-g GLOB` (`!` excludes), `-t TYPE` / `--type-list`, `--hidden`,
 `--no-ignore`, `-L` (follow links), `--max-filesize`, `--max-depth`, `-j THREADS`, `--sort`,
 `--json`, `--stats`, `--symbols` (group lines by the enclosing function using the index, when one
-exists).
+exists). Files that cannot be read, or not to the end, are named in warnings on stderr (the first
+ten); they do not change the exit code.
 
 `--index` answers from Engine B's text index (`scrutate index`): the index names the files that
 can contain a match (trigram postings), and Engine A's matcher searches only those, so the output
