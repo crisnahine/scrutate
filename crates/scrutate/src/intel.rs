@@ -2,7 +2,7 @@
 //! and tree-sitter structural queries.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Result};
 use rusqlite::params;
@@ -10,6 +10,7 @@ use rusqlite::params;
 use crate::index::{ChunkRow, Index, CHUNK_COLS};
 use crate::search::{Hit, Searcher, CODE_KINDS};
 use crate::text::{name_key, tokenize2, BODY_CAP};
+use crate::tscache::Key;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Dependency {
@@ -374,8 +375,10 @@ pub struct Capture {
 /// Run a tree-sitter query (S-expression pattern language) over the files of one language under
 /// `roots`, delivering every capture to `on_capture` in path order. No index is needed; files are
 /// parsed in parallel in bounded chunks, so memory stays flat however many matches there are.
+/// With `cache_root`, each file's captures are kept under `cache_root/.scrutate/tsquery/` by
+/// content hash and files seen before are not parsed again (see `tscache`); the output is the same.
 /// Returns the number of captures delivered (stops at `limit`).
-pub fn tsquery_each(lang: &str, query: &str, roots: &[PathBuf], limit: usize, on_capture: &mut dyn FnMut(Capture)) -> Result<usize> {
+pub fn tsquery_each(lang: &str, query: &str, roots: &[PathBuf], limit: usize, cache_root: Option<&Path>, on_capture: &mut dyn FnMut(Capture)) -> Result<usize> {
     use rayon::prelude::*;
     let spec = crate::langs::by_id(lang).ok_or_else(|| anyhow!("unknown language {lang:?} (see `scrutate languages`)"))?;
     let language = (spec.language)();
@@ -400,17 +403,21 @@ pub fn tsquery_each(lang: &str, query: &str, roots: &[PathBuf], limit: usize, on
             }
         }
     }
-    // parse in parallel, deliver in path order: workers send (file index, captures) through a
-    // bounded channel; the consumer reorders with a small buffer, so memory stays flat and no
-    // thread waits at chunk barriers
-    let (tx, rx) = std::sync::mpsc::sync_channel::<(usize, Vec<Capture>)>(512);
+    let cache = cache_root.map(|r| crate::tscache::Cache::open(r, lang, query, roots));
+    // parse in parallel, deliver in path order: workers send (file index, content hash, captures,
+    // complete) through a bounded channel; the consumer reorders with a small buffer, so memory
+    // stays flat and no thread waits at chunk barriers
+    let (tx, rx) = std::sync::mpsc::sync_channel::<(usize, Option<Key>, Vec<Capture>, bool)>(512);
     let stop = std::sync::atomic::AtomicBool::new(false);
+    let mut fresh: HashMap<Key, Vec<Capture>> = HashMap::new();
+    let (mut misses, mut fresh_bytes, mut finished) = (0usize, 0u64, true);
     let delivered = std::thread::scope(|scope| -> usize {
         let files_ref = &files;
         let q_ref = &q;
         let names_ref = &names;
         let language_ref = &language;
         let stop_ref = &stop;
+        let cached = cache.as_ref().map(|c| &c.entries);
         scope.spawn(move || {
             files_ref.par_iter().enumerate().for_each_init(
                 || {
@@ -423,9 +430,17 @@ pub fn tsquery_each(lang: &str, query: &str, roots: &[PathBuf], limit: usize, on
                         return;
                     }
                     let mut out = Vec::new();
+                    let mut key = None;
+                    let mut complete = true;
                     if *ok {
                         if let Ok(src) = std::fs::read_to_string(path) {
                             if crate::parse::spec_for(rel, &src).map(|s| s.id) == Some(spec.id) {
+                                key = cached.map(|_| crate::tscache::hash(&[src.as_bytes()]));
+                                if let Some(hit) = key.and_then(|k| cached.and_then(|c| c.get(&k))) {
+                                    let caps = hit.iter().map(|c| Capture { path: rel.clone(), ..c.clone() }).collect();
+                                    let _ = tx.send((i, key, caps, true));
+                                    return;
+                                }
                                 if let Some(tree) = parser.parse(src.as_bytes(), None) {
                                     let mut cursor = tree_sitter::QueryCursor::new();
                                     cursor.set_match_limit(1 << 16);
@@ -445,24 +460,36 @@ pub fn tsquery_each(lang: &str, query: &str, roots: &[PathBuf], limit: usize, on
                                             });
                                         }
                                         if out.len() >= limit {
+                                            complete = false; // a cut-off list is not the file's result
                                             break;
                                         }
                                     }
+                                } else {
+                                    complete = false;
                                 }
                             }
                         }
                     }
-                    let _ = tx.send((i, out));
+                    let _ = tx.send((i, key, out, complete));
                 },
             );
         });
         let mut next = 0usize;
-        let mut pending: std::collections::BTreeMap<usize, Vec<Capture>> = std::collections::BTreeMap::new();
+        let mut pending: std::collections::BTreeMap<usize, (Option<Key>, Vec<Capture>, bool)> = std::collections::BTreeMap::new();
         let mut delivered = 0usize;
-        for (i, caps) in rx {
-            pending.insert(i, caps);
-            while let Some(caps) = pending.remove(&next) {
+        for (i, key, caps, complete) in rx {
+            pending.insert(i, (key, caps, complete));
+            while let Some((key, caps, complete)) = pending.remove(&next) {
                 next += 1;
+                if let Some(k) = key {
+                    if !complete {
+                        finished = false;
+                    } else if fresh_bytes <= crate::tscache::MAX_BYTES {
+                        misses += usize::from(!cached.is_some_and(|c| c.contains_key(&k)));
+                        fresh_bytes += 32 + caps.iter().map(|c| 32 + c.capture.len() + c.kind.len() + c.text.len()).sum::<usize>() as u64;
+                        fresh.entry(k).or_insert_with(|| caps.iter().map(|c| Capture { path: String::new(), ..c.clone() }).collect());
+                    }
+                }
                 for cap in caps {
                     if delivered >= limit {
                         stop.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -477,15 +504,33 @@ pub fn tsquery_each(lang: &str, query: &str, roots: &[PathBuf], limit: usize, on
                 break;
             }
         }
+        finished = finished && next == files_ref.len();
         delivered
     });
+    if let Some(mut cache) = cache {
+        if fresh_bytes > crate::tscache::MAX_BYTES {
+            return Ok(delivered); // too large to cache: the stored entries stay as they were
+        }
+        let stale = finished && fresh.len() != cache.entries.len();
+        if !finished {
+            // files this run did not reach keep their entries
+            for (k, v) in cache.entries.drain() {
+                fresh.entry(k).or_insert(v);
+            }
+        }
+        if misses > 0 || stale {
+            let _ = cache.store(&fresh);
+        } else {
+            cache.touch();
+        }
+    }
     Ok(delivered)
 }
 
 /// `tsquery_each` collected into a vector (MCP and bindings; the CLI streams).
-pub fn tsquery(lang: &str, query: &str, roots: &[PathBuf], limit: usize) -> Result<Vec<Capture>> {
+pub fn tsquery(lang: &str, query: &str, roots: &[PathBuf], limit: usize, cache_root: Option<&Path>) -> Result<Vec<Capture>> {
     let mut out = Vec::new();
-    tsquery_each(lang, query, roots, limit, &mut |c| out.push(c))?;
+    tsquery_each(lang, query, roots, limit, cache_root, &mut |c| out.push(c))?;
     Ok(out)
 }
 

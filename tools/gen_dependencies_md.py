@@ -16,7 +16,7 @@ PURPOSE = {
     "aho-corasick": "multi-pattern prefilter for fuzzy search", "anyhow": "error type", "blake2": "token hashing (63-bit keys, same as the reference)",
     "clap": "command-line parsing", "clap_complete": "shell completions", "flate2": "zlib for chunk text and .npz (pure Rust backend)",
     "grep-matcher": "matcher trait shared with grep-searcher", "grep-regex": "regex matcher with line-oriented optimisations", "grep-searcher": "buffered/mmap line searching, context, binary detection",
-    "half": "float16 vectors", "ignore": "parallel, ignore-aware directory walking", "matrixmultiply": "sgemm for k-means (pure Rust)", "memchr": "newline and NUL scans when one large file is searched in ranges", "memmap2": "memory-mapped segments",
+    "half": "float16 vectors", "ignore": "parallel, ignore-aware directory walking", "matrixmultiply": "sgemm for k-means (pure Rust)", "memchr": "newline and NUL scans when one large file is searched in ranges", "memmap2": "memory-mapped segments", "notify": "filesystem events for `watch` and `serve --watch` (FSEvents, inotify, ReadDirectoryChangesW, kqueue)",
     "rayon": "data parallelism (indexing, structural search)", "regex-syntax": "pattern syntax trees: the text index's trigram conditions and the suffix literals of a regex", "regex": "identifier/heuristic patterns", "rusqlite": "SQLite (bundled)", "rust-stemmers": "Snowball English stemmer",
     "serde": "serialisation", "serde_json": "JSON output / MCP / config", "termcolor": "coloured terminal output", "sha1": "file content hashes", "toml": "configuration files",
     "tree-sitter": "incremental parsing runtime", "proptest": "property-based tests (dev only)", "pyo3": "Python bindings (optional crate)",

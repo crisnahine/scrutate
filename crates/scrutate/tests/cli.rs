@@ -606,3 +606,136 @@ fn small_tree_path_equals_parallel_walk() {
         assert_eq!(small.0, 0, "{args:?}: {small:?}");
     }
 }
+
+/// Poll `ok` every 100 ms until it holds or `secs` pass.
+fn wait_for(secs: u64, what: &str, mut ok: impl FnMut() -> bool) {
+    let t0 = std::time::Instant::now();
+    while !ok() {
+        assert!(t0.elapsed().as_secs() < secs, "timed out waiting for {what}");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+struct KillOnDrop(std::process::Child);
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+#[test]
+fn watch_keeps_the_code_and_text_indexes_fresh() {
+    use std::io::BufRead;
+    let r = Repo::new("watch");
+    r.write("a.py", b"def alpha_one():\n    return 1\n");
+    r.write("c.py", b"def gamma_old():\n    return 3\n");
+    r.write(".ignore", b"skipped/\n");
+    assert_eq!(r.run(&["index"]).0, 0);
+    let mut child =
+        Command::new(BIN).args(["watch", "."]).current_dir(&r.root).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().unwrap();
+    let stderr = child.stderr.take().unwrap();
+    let _guard = KillOnDrop(child);
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in std::io::BufReader::new(stderr).lines().map_while(Result::ok) {
+            let _ = tx.send(line);
+        }
+    });
+    while !rx.recv_timeout(std::time::Duration::from_secs(30)).expect("watch starts").contains("watching") {}
+
+    r.write("a.py", b"def alpha_two():\n    return 22\n");
+    r.write("sub/b.py", b"def beta_new():\n    return 2\n");
+    fs::remove_file(r.root.join("c.py")).unwrap();
+    r.write("skipped/s.py", b"def ignored_by_rules():\n    pass\n");
+    // `check` and `grep --index` read the indexes as they are: only the watcher can have updated them
+    wait_for(30, "the watcher to update both indexes", || {
+        r.run(&["check", "--files"]).0 == 0
+            && r.run(&["grep", "--index", "-F", "beta_new"]).0 == 0
+            && r.run(&["grep", "--index", "-F", "alpha_two"]).0 == 0
+            && r.run(&["grep", "--index", "-F", "gamma_old"]).0 == 1
+    });
+    let (code, out, _) = r.run(&["stats"]);
+    assert_eq!(code, 0);
+    let st: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(st["files"], 3, "a.py, sub/b.py, .ignore: {out}");
+    assert_eq!(r.run(&["symbol", "beta_new"]).0, 0);
+    assert_eq!(r.run(&["symbol", "alpha_two"]).0, 0);
+    assert_eq!(r.run(&["symbol", "gamma_old"]).0, 1);
+    assert_eq!(r.run(&["grep", "--index", "-F", "ignored_by_rules"]).0, 1);
+}
+
+#[test]
+fn serve_watch_updates_the_index_while_serving() {
+    use std::io::BufRead;
+    let r = python_repo("servewatch");
+    assert_eq!(r.run(&["index"]).0, 0);
+    let mut child = Command::new(BIN)
+        .args(["--root", r.root.to_str().unwrap(), "serve", "--watch"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = std::io::BufReader::new(child.stdout.take().unwrap());
+    let stderr = std::io::BufReader::new(child.stderr.take().unwrap());
+    let _guard = KillOnDrop(child);
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in stderr.lines().map_while(Result::ok) {
+            let _ = tx.send(line);
+        }
+    });
+    while !rx.recv_timeout(std::time::Duration::from_secs(30)).expect("watch starts").contains("watching") {}
+    r.write("pkg/m3.py", b"def served_and_watched():\n    return 3\n");
+    wait_for(30, "the watcher thread to update the index", || r.run(&["check", "--files"]).0 == 0);
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"find_symbol","arguments":{{"name":"served_and_watched"}}}}}}"#)
+        .unwrap();
+    let mut line = String::new();
+    stdout.read_line(&mut line).unwrap();
+    assert!(line.contains("pkg/m3.py"), "{line}");
+}
+
+#[test]
+fn tsquery_cache_output_equals_a_fresh_parse() {
+    let r = Repo::new("tscache");
+    r.write("py/a.py", b"def one():\n    return two()\n\n\ndef two():\n    return 2\n");
+    r.write("py/copy.py", b"def one():\n    return two()\n\n\ndef two():\n    return 2\n");
+    r.write("rs/lib.rs", b"fn main() {\n    helper(1);\n}\n\nfn helper(x: i32) -> i32 {\n    x + 1\n}\n");
+    r.write("js/app.js", b"function start() {\n  return stop(1);\n}\nfunction stop(n) {\n  return n;\n}\n");
+    r.write("c/k.c", b"#include <stdlib.h>\nvoid *f(void) { return kmalloc(4, 0); }\nvoid *g(void) { return kmalloc(8, 0); }\n");
+    let queries: &[(&str, &str)] = &[
+        ("python", "(function_definition name: (identifier) @n)"),
+        ("python", "(call function: (identifier) @f) @call"),
+        ("rust", "(function_item name: (identifier) @n)"),
+        ("javascript", "(call_expression function: (identifier) @f)"),
+        ("c", "(call_expression function: (identifier) @f (#eq? @f \"kmalloc\")) @call"),
+    ];
+    let compare = |stage: &str| {
+        for (lang, q) in queries {
+            for extra in [&[][..], &["--json"], &["--limit", "1"], &["--limit", "3", "--json"]] {
+                let mut args = vec!["tsquery", lang, q];
+                args.extend_from_slice(extra);
+                let fresh = r.run(&[&args[..], &["--no-cache"]].concat());
+                let first = r.run(&args);
+                let again = r.run(&args);
+                assert_eq!(fresh.0, 0, "{stage} {args:?}: {fresh:?}");
+                assert_eq!(fresh, first, "{stage} {args:?}");
+                assert_eq!(fresh, again, "{stage} {args:?}");
+            }
+        }
+    };
+    compare("first runs");
+    assert!(r.root.join(".scrutate/tsquery").read_dir().unwrap().count() >= queries.len());
+    r.write("py/a.py", b"def renamed():\n    return other()\n");
+    r.write("rs/lib.rs", b"fn main() {}\n");
+    r.write("c/k.c", b"void *f(void) { return kmalloc(1, 0); }\n");
+    compare("after edits");
+    let (_, out, _) = r.run(&["tsquery", "python", "(function_definition name: (identifier) @n)"]);
+    assert!(out.contains("py/a.py:1:5  @n (identifier)  renamed") && !out.contains("py/a.py:5"), "{out}");
+    let sub = ["tsquery", "python", "(function_definition name: (identifier) @n)", "py"];
+    assert_eq!(r.run(&sub), r.run(&[&sub[..], &["--no-cache"]].concat()), "a subtree has its own cache");
+    assert_eq!(r.run(&sub), r.run(&[&sub[..], &["--no-cache"]].concat()));
+}

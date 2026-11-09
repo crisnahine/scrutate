@@ -166,7 +166,7 @@ pub fn call_tool(s: &mut Searcher, name: &str, args: &Value, refresh_interval: f
                 let lang = str_arg("lang").ok_or_else(|| anyhow::anyhow!("missing lang"))?;
                 let query = str_arg("query").ok_or_else(|| anyhow::anyhow!("missing query"))?;
                 let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(200).clamp(1, 5000) as usize;
-                let caps = crate::intel::tsquery(&lang, &query, std::slice::from_ref(&s.ix.root), limit)?;
+                let caps = crate::intel::tsquery(&lang, &query, std::slice::from_ref(&s.ix.root), limit, Some(&s.ix.root))?;
                 if caps.is_empty() {
                     "no matches".to_string()
                 } else {
