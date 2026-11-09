@@ -20,7 +20,7 @@ step() { echo; echo "=== $* ($(date -u +%H:%M:%S))"; }
 
 step "system packages"
 apt-get update -qq
-apt-get install -y -qq make pkg-config file perl python3 python3-venv silversearcher-ag libpcre2-dev zlib1g-dev libbz2-dev liblzma-dev libzstd-dev liblz4-dev \
+apt-get install -y -qq make g++ pkg-config file perl python3 python3-venv silversearcher-ag libpcre2-dev zlib1g-dev libbz2-dev liblzma-dev libzstd-dev liblz4-dev \
   libbrotli-dev unzip xz-utils curl git autoconf automake > /dev/null
 
 fetch() { [ -f "$B/src/$2" ] || curl -fsSL -o "$B/src/$2" "$1"; }
