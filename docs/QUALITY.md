@@ -68,6 +68,14 @@ produces bit-identical candidates, features and scores to the Python code that r
   (description, implementation) pairs with 20 % word dropout, in numpy
   (`bench/train_semantic.py`). On the DEV packages its semantic-only doc MRR rose from 0.247
   (previous PLS-SVD model) to 0.427.
+- Training data and its licences: the 37 Python packages listed in `bench/groups.py` (27 to
+  pretrain the semantic model, 7 to tune and fit the ranker, 3 held out for the test). Their
+  licences as declared on PyPI: BSD-2/3-Clause (pandas, scipy, scikit-learn, numpy, scikit-image,
+  reportlab, pypdf, xlsxwriter, pygments, uvicorn, imageio, mammoth, protobuf, werkzeug, seaborn,
+  joblib, networkx), MIT (spacy, mypy, fonttools, narwhals, thinc, srsly, anyio, markdown-it-py,
+  pytest, pydantic, python-pptx, python-docx, openpyxl, mcp, rich), MIT-CMU (pillow), the
+  Matplotlib licence, Apache-2.0 (playwright, cryptography as one option) and MPL-2.0 (pikepdf).
+  The model files keep word statistics, vocabulary tables and projections, not source text.
 - Ranker (`models/ranker.npz`, 87 KB): LightGBM LambdaRank over 47 features, exported to arrays;
   numpy and LightGBM predictions agree to 4.3e-8; cross-validated on DEV packages, fitted once,
   evaluated once on TEST. Top features by gain: lexical ratio and rank, name coverage, mixed

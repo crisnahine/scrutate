@@ -630,3 +630,51 @@ fn pcre2_look_around_backreferences_and_the_match_limit() {
     assert_eq!(code, 2);
     assert!(err.contains("PCRE2"), "{err}");
 }
+
+#[test]
+fn search_zip_reads_archive_members_and_compressed_files() {
+    use std::io::Write as _;
+    let r = Repo::new("searchzip");
+    let members: [(&str, &[u8]); 3] = [("src/a.txt", b"alpha needle\n"), ("src/b.txt", b"no\nneedle two\n"), ("bin.dat", b"needle\0binary\n")];
+    let zip_path = r.root.join("a.zip");
+    let mut z = zip::ZipWriter::new(fs::File::create(&zip_path).unwrap());
+    for (name, data) in members {
+        z.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+        z.write_all(data).unwrap();
+    }
+    z.finish().unwrap();
+    let tar_bytes = {
+        let mut b = tar::Builder::new(Vec::new());
+        for (name, data) in members {
+            let mut h = tar::Header::new_gnu();
+            h.set_size(data.len() as u64);
+            h.set_mode(0o644);
+            h.set_cksum();
+            b.append_data(&mut h, name, data).unwrap();
+        }
+        b.into_inner().unwrap()
+    };
+    r.write("a.tar", &tar_bytes);
+    let gz = |data: &[u8]| {
+        let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        e.write_all(data).unwrap();
+        e.finish().unwrap()
+    };
+    r.write("a.tar.gz", &gz(&tar_bytes));
+    r.write("c.txt.gz", &gz(b"needle in gz\n"));
+    let (code, out, _) = r.run(&["grep", "--sort", "-z", "needle"]);
+    assert_eq!(code, 0);
+    assert_eq!(
+        out,
+        "a.tar.gz{src/a.txt}:1:alpha needle\na.tar.gz{src/b.txt}:2:needle two\na.tar{src/a.txt}:1:alpha needle\na.tar{src/b.txt}:2:needle two\n\
+         a.zip{src/a.txt}:1:alpha needle\na.zip{src/b.txt}:2:needle two\nc.txt.gz:1:needle in gz\n"
+    );
+    let (code, _, _) = r.run(&["grep", "needle"]);
+    assert_eq!(code, 1, "without -z archives are binary files and skipped");
+    let (code, out, _) = r.run(&["grep", "-z", "-l", "two"]);
+    let mut listed: Vec<&str> = out.lines().collect();
+    listed.sort();
+    assert_eq!((code, listed), (0, vec!["a.tar.gz{src/b.txt}", "a.tar{src/b.txt}", "a.zip{src/b.txt}"]));
+    let (code, _, err) = r.run(&["grep", "-z", "--index", "needle"]);
+    assert_eq!(code, 2, "{err}");
+}

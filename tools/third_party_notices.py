@@ -52,6 +52,21 @@ def shipped(package: str) -> list[dict]:
     return sorted((by_id[i] for i in seen - {root}), key=lambda p: (p["name"], p["version"]))
 
 
+# C libraries compiled into the binary whose licence lives only in their source headers
+BUNDLED = {"pcre2-sys": ("PCRE2", "upstream/src/pcre2_compile.c")}
+
+
+def header_licence(path: str) -> str:
+    """The comment of a C source file that holds its licence (copyright lines included)."""
+    text = open(path, encoding="utf-8", errors="replace").read()
+    at = text.find("Redistribution and use")
+    if at < 0:
+        return ""
+    start = text.rfind("/*", 0, at)
+    end = text.find("*/", at)
+    return text[start:end + 2]
+
+
 def licence_files(manifest_path: str) -> list[str]:
     d = os.path.dirname(manifest_path)
     found = []
@@ -86,6 +101,13 @@ def main() -> int:
             out.append(os.path.basename(f))
             out.append("")
             out.append(open(f, encoding="utf-8", errors="replace").read().rstrip())
+        if p["name"] in BUNDLED:
+            lib, rel = BUNDLED[p["name"]]
+            src = os.path.join(os.path.dirname(p["manifest_path"]), rel)
+            out.append("-" * 78)
+            out.append(f"{lib}, the C library this crate compiles in (licence from {rel})")
+            out.append("")
+            out.append(header_licence(src) if os.path.exists(src) else f"({rel} not found; see the {lib} project)")
         out.append("")
     out.append("=" * 78)
     out.append("Standard licence texts, for the crates above that ship no licence file")

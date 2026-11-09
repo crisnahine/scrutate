@@ -122,6 +122,9 @@ pub enum Cmd {
         /// PCRE2 syntax: look-around and backreferences (backtracking, stopped by PCRE2's match limit)
         #[arg(short = 'P', long)]
         pcre2: bool,
+        /// also search inside zip and tar archives and compressed files (gz, bz2, xz, zst, lz4, br, Z)
+        #[arg(short = 'z', long)]
+        search_zip: bool,
         /// case-insensitive
         #[arg(short = 'i', long)]
         ignore_case: bool,
@@ -403,6 +406,7 @@ pub fn run() -> Result<i32> {
             index,
             fixed_strings,
             pcre2,
+            search_zip,
             ident,
             fuzzy,
             ignore_case,
@@ -476,6 +480,9 @@ pub fn run() -> Result<i32> {
                 }
             };
             let pattern = if mode == Mode::Pcre2 && fixed_strings && !many { regex::escape(&pattern) } else { pattern };
+            if index && search_zip {
+                anyhow::bail!("--index does not cover archive members; search with -z and without --index");
+            }
             if index {
                 if hidden || no_ignore || follow || max_depth.is_some() || max_filesize.is_some() {
                     anyhow::bail!(
@@ -515,6 +522,7 @@ pub fn run() -> Result<i32> {
                 files_only: files_with_matches,
                 want_bytes: stats || json,
                 want_spans: json || color_choice(no_color) != ColorChoice::Never,
+                search_zip,
                 ..Options::default()
             };
             let roots: Vec<PathBuf> = if paths.is_empty() { vec![PathBuf::from(".")] } else { paths };

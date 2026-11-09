@@ -5,6 +5,7 @@
 // indices than with zipped iterators; this lint is noise here.
 #![allow(clippy::needless_range_loop)]
 
+pub mod archive;
 pub mod cli;
 pub mod config;
 pub mod fmt;

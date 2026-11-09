@@ -73,6 +73,8 @@ pub struct Options {
     /// compute the byte ranges of the matches inside each line (colour / JSON output); off, the
     /// line is reported without a second pass of the matcher over it
     pub want_spans: bool,
+    /// search the members of zip/tar archives and the contents of compressed files (`-z`)
+    pub search_zip: bool,
     /// regex size limits (resource exhaustion protection)
     pub regex_size_limit: usize,
     pub dfa_size_limit: usize,
@@ -103,6 +105,7 @@ impl Default for Options {
             files_only: false,
             want_bytes: false,
             want_spans: false,
+            search_zip: false,
             regex_size_limit: 20 * (1 << 20),
             dfa_size_limit: 10 * (1 << 20),
         }
@@ -873,6 +876,12 @@ fn search_one(
     if let Some(n) = size {
         c.bytes.fetch_add(n, Ordering::Relaxed);
     }
+    if o.search_zip {
+        if let Some(kind) = crate::archive::Kind::of(&rel) {
+            search_archive(searcher, matcher, path, &rel, kind, o, c, cancel, tx, plain);
+            return;
+        }
+    }
     let file = match std::fs::File::open(path) {
         Ok(f) => f,
         Err(e) => {
@@ -892,26 +901,7 @@ fn search_one(
             }
         }
     }
-    let mut sink = Collector {
-        path: Arc::clone(&rel),
-        tx,
-        batch: Vec::new(),
-        plain,
-        out: Vec::new(),
-        want_spans: o.want_spans,
-        stats_matches: &c.matches,
-        max_results: o.max_results,
-        matched: false,
-        cancel,
-        matcher,
-        invert: o.invert,
-        count_only: o.count_only,
-        files_only: o.files_only,
-        file_count: 0,
-        line_base: 0,
-        hold: false,
-        binary: false,
-    };
+    let mut sink = collector(Arc::clone(&rel), matcher, o, c, cancel, tx, plain);
     let res = match (matcher, &whole) {
         (AnyMatcher::Regex(rm), Some(b)) => searcher.search_slice(rm, b, &mut sink),
         (AnyMatcher::Fuzzy(fm), Some(b)) => searcher.search_slice(fm.as_ref(), b, &mut sink),
@@ -930,6 +920,81 @@ fn search_one(
             // one record per file carries the count in `line`
             let _ = tx.send(vec![Hit { path: rel, line: sink.file_count, column: 0, text: String::new(), spans: Vec::new(), context: false }]);
         }
+    }
+}
+
+fn collector<'a>(
+    path: Arc<str>,
+    matcher: &'a AnyMatcher,
+    o: &Options,
+    c: &'a Counters,
+    cancel: &'a AtomicBool,
+    tx: &'a mpsc::Sender<Vec<Hit>>,
+    plain: Option<&'a PlainSink>,
+) -> Collector<'a> {
+    Collector {
+        path,
+        tx,
+        batch: Vec::new(),
+        plain,
+        out: Vec::new(),
+        want_spans: o.want_spans,
+        stats_matches: &c.matches,
+        max_results: o.max_results,
+        matched: false,
+        cancel,
+        matcher,
+        invert: o.invert,
+        count_only: o.count_only,
+        files_only: o.files_only,
+        file_count: 0,
+        line_base: 0,
+        hold: false,
+        binary: false,
+    }
+}
+
+/// `-z`: every member of an archive, or the decompressed file, as a file of its own, reported as
+/// `archive.zip{member}` (the decompressed file keeps its own name).
+#[allow(clippy::too_many_arguments)]
+fn search_archive(
+    searcher: &mut Searcher,
+    matcher: &AnyMatcher,
+    path: &Path,
+    rel: &Arc<str>,
+    kind: crate::archive::Kind,
+    o: &Options,
+    c: &Counters,
+    cancel: &AtomicBool,
+    tx: &mpsc::Sender<Vec<Hit>>,
+    plain: Option<&PlainSink>,
+) {
+    let mut each = |member: Option<&str>, r: &mut dyn std::io::Read| -> bool {
+        let label: Arc<str> = match member {
+            Some(m) => Arc::from(format!("{rel}{{{m}}}")),
+            None => Arc::clone(rel),
+        };
+        let mut sink = collector(Arc::clone(&label), matcher, o, c, cancel, tx, plain);
+        let res = match matcher {
+            AnyMatcher::Regex(m) => searcher.search_reader(m, r, &mut sink),
+            AnyMatcher::Fuzzy(m) => searcher.search_reader(m.as_ref(), r, &mut sink),
+            AnyMatcher::Pcre2(m) => searcher.search_reader(m, r, &mut sink),
+        };
+        if let Err(e) = res {
+            c.failed(format!("{label}: {e}"));
+        }
+        sink.flush();
+        if sink.matched {
+            c.files_matched.fetch_add(1, Ordering::Relaxed);
+            if o.count_only || o.files_only {
+                let _ = tx.send(vec![Hit { path: label, line: sink.file_count, column: 0, text: String::new(), spans: Vec::new(), context: false }]);
+            }
+        }
+        !cancel.load(Ordering::Relaxed)
+    };
+    let mut failed = |what: String| c.failed(format!("{rel}: {what}"));
+    if let Err(e) = crate::archive::walk(path, kind, &mut each, &mut failed) {
+        c.failed(format!("{rel}: {e}"));
     }
 }
 
