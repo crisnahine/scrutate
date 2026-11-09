@@ -34,6 +34,10 @@ pub enum Mode {
     },
     /// PCRE2: look-around and backreferences, by backtracking within PCRE2's match limit
     Pcre2,
+    /// a regex within `max_edits` errors (byte-oriented, at most 64 character positions)
+    FuzzyRegex {
+        max_edits: u8,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -432,6 +436,7 @@ pub enum AnyMatcher {
     Regex(LineRegex),
     Fuzzy(Box<FuzzyMatcher>),
     Pcre2(grep_pcre2::RegexMatcher),
+    FuzzyRegex(Box<crate::fuzzyre::FuzzyRegex>),
 }
 
 /// grep-regex's matcher, except that a regex with no usable literal prefix whose every match ends
@@ -560,6 +565,7 @@ pub fn build_matcher(o: &Options) -> Result<AnyMatcher> {
     };
     match o.mode {
         Mode::Fuzzy { max_edits } => Ok(AnyMatcher::Fuzzy(Box::new(FuzzyMatcher::new(&o.pattern, max_edits, insensitive)?))),
+        Mode::FuzzyRegex { max_edits } => Ok(AnyMatcher::FuzzyRegex(Box::new(crate::fuzzyre::FuzzyRegex::new(&o.pattern, max_edits, insensitive)?))),
         Mode::Pcre2 => {
             let m = grep_pcre2::RegexMatcherBuilder::new()
                 .caseless(insensitive)
@@ -739,6 +745,7 @@ fn spans_in(matcher: &AnyMatcher, line: &[u8]) -> Vec<(usize, usize)> {
             AnyMatcher::Regex(m) => m.find_at(line, at).ok().flatten(),
             AnyMatcher::Fuzzy(m) => m.find_at(line, at).ok().flatten(),
             AnyMatcher::Pcre2(m) => m.find_at(line, at).ok().flatten(),
+            AnyMatcher::FuzzyRegex(m) => m.find_at(line, at).ok().flatten(),
         }
     };
     while at <= line.len() {
@@ -1021,9 +1028,11 @@ fn search_one(
         (AnyMatcher::Regex(rm), Some(b)) => searcher.search_slice(rm, b, &mut sink),
         (AnyMatcher::Fuzzy(fm), Some(b)) => searcher.search_slice(fm.as_ref(), b, &mut sink),
         (AnyMatcher::Pcre2(pm), Some(b)) => searcher.search_slice(pm, b, &mut sink),
+        (AnyMatcher::FuzzyRegex(fm), Some(b)) => searcher.search_slice(fm.as_ref(), b, &mut sink),
         (AnyMatcher::Regex(rm), None) => searcher.search_file(rm, &file, &mut sink),
         (AnyMatcher::Fuzzy(fm), None) => searcher.search_file(fm.as_ref(), &file, &mut sink),
         (AnyMatcher::Pcre2(pm), None) => searcher.search_file(pm, &file, &mut sink),
+        (AnyMatcher::FuzzyRegex(fm), None) => searcher.search_file(fm.as_ref(), &file, &mut sink),
     };
     if let Err(e) = res {
         c.failed(format!("{rel}: {e}"));
@@ -1094,6 +1103,7 @@ fn search_archive(
             AnyMatcher::Regex(m) => searcher.search_reader(m, r, &mut sink),
             AnyMatcher::Fuzzy(m) => searcher.search_reader(m.as_ref(), r, &mut sink),
             AnyMatcher::Pcre2(m) => searcher.search_reader(m, r, &mut sink),
+            AnyMatcher::FuzzyRegex(m) => searcher.search_reader(m.as_ref(), r, &mut sink),
         };
         if let Err(e) = res {
             c.failed(format!("{label}: {e}"));
@@ -1388,6 +1398,7 @@ mod split {
             AnyMatcher::Regex(m) => searcher.search_reader(m, &mut range, &mut sink),
             AnyMatcher::Fuzzy(m) => searcher.search_reader(m.as_ref(), &mut range, &mut sink),
             AnyMatcher::Pcre2(m) => searcher.search_reader(m, &mut range, &mut sink),
+            AnyMatcher::FuzzyRegex(m) => searcher.search_reader(m.as_ref(), &mut range, &mut sink),
         };
         sink.flush();
         let ok = res.is_ok() && !sink.binary && (range.pos >= b || cancel.load(Ordering::Relaxed));

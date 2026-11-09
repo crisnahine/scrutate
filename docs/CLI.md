@@ -37,7 +37,9 @@ scrutate grep [OPTIONS] PATTERN [PATHS...]
 time and has no look-around or backreferences; `-P` (`--pcre2`) switches to PCRE2 for those. PCRE2
 backtracks, so a pattern can take exponential time; its match limit stops the search of a file
 then, and `scrutate` prints a warning naming that file. With `-P`, `--index` cannot narrow the
-files and searches all of them. `-z` also searches inside zip and tar archives (members are shown as
+files and searches all of them. `--fuzzy-regex[=N]` matches a regex within N edits
+(default 1): byte-oriented, ASCII classes, no anchors or word boundaries, at most 64 character
+positions (a bounded repeat counts each copy), and it must not match the empty string. `-z` also searches inside zip and tar archives (members are shown as
 `archive.zip{dir/file}`) and compressed files: gzip in process; bzip2, xz, zstd, lz4, brotli and
 `.Z` through the system's tools, as ripgrep does. An archive or compressed file stops at 8 GiB
 expanded or a million members. Archives inside archives are not opened, and `--index` does not

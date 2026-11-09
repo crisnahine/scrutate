@@ -284,6 +284,7 @@ pub fn query_for(o: &Options) -> Result<Q> {
         Mode::Regex => o.pattern.clone(),
         // PCRE2 syntax differs from this parser's in places: no condition, so no file is missed
         Mode::Pcre2 => return Ok(Q::All),
+        Mode::FuzzyRegex { .. } => return Ok(Q::All),
     };
     let hir = regex_syntax::ParserBuilder::new()
         .case_insensitive(insensitive && o.mode != Mode::Identifier)

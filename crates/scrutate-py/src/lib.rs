@@ -101,12 +101,15 @@ fn parse_mode(mode: &str, fuzzy_edits: u8) -> PyResult<Mode> {
         "literal" => Mode::Literal,
         "identifier" => Mode::Identifier,
         "pcre2" => Mode::Pcre2,
+        "fuzzy_regex" => Mode::FuzzyRegex {
+            max_edits: fuzzy_edits,
+        },
         "fuzzy" => Mode::Fuzzy {
             max_edits: fuzzy_edits,
         },
         other => {
             return Err(PyValueError::new_err(format!(
-                "unknown mode {other:?}: regex, literal, identifier, pcre2 or fuzzy"
+                "unknown mode {other:?}: regex, literal, identifier, pcre2, fuzzy or fuzzy_regex"
             )))
         }
     })

@@ -819,3 +819,17 @@ fn tsquery_on_a_single_file() {
     assert_eq!(code, 0);
     assert!(out.lines().count() >= 2 && out.lines().all(|l| l.starts_with("pkg/m1.py:")), "{out}");
 }
+
+#[test]
+fn fuzzy_regex_finds_near_misses_of_a_regex() {
+    let r = Repo::new("fuzzyre");
+    r.write("a.txt", b"def get_value(x):\ndef set_valu(y):\ndef fetch_all():\n");
+    let (code, out, _) = r.run(&["grep", "--fuzzy-regex=1", "(get|set)_value", "a.txt"]);
+    assert_eq!((code, out.as_str()), (0, "a.txt:1:def get_value(x):\na.txt:2:def set_valu(y):\n"));
+    let (code, out, _) = r.run(&["grep", "--fuzzy-regex", "-e", "fetch_al+x", "-e", "nothing", "a.txt"]);
+    assert_eq!((code, out.as_str()), (0, "a.txt:3:def fetch_all():\n"));
+    let (code, _, err) = r.run(&["grep", "--fuzzy-regex=1", "^def", "a.txt"]);
+    assert_eq!(code, 2, "{err}");
+    let (code, _, _) = r.run(&["grep", "--fuzzy-regex=1", "-F", "x", "a.txt"]);
+    assert_eq!(code, 2);
+}

@@ -117,8 +117,11 @@ pub enum Cmd {
         #[arg(long)]
         ident: bool,
         /// approximate search: literal within N edits (insertions, deletions, substitutions)
-        #[arg(long, value_name = "N", num_args = 0..=1, default_missing_value = "1")]
+        #[arg(long, value_name = "N", num_args = 0..=1, require_equals = true, default_missing_value = "1")]
         fuzzy: Option<u8>,
+        /// approximate regex: PATTERN within N edits (byte-oriented, ASCII classes, no anchors)
+        #[arg(long, value_name = "N", num_args = 0..=1, require_equals = true, default_missing_value = "1")]
+        fuzzy_regex: Option<u8>,
         /// PCRE2 syntax: look-around and backreferences (backtracking, stopped by PCRE2's match limit)
         #[arg(short = 'P', long)]
         pcre2: bool,
@@ -417,6 +420,7 @@ pub fn run() -> Result<i32> {
             index,
             fixed_strings,
             pcre2,
+            fuzzy_regex,
             search_zip,
             ident,
             fuzzy,
@@ -455,7 +459,11 @@ pub fn run() -> Result<i32> {
             if pcre2 && (ident || fuzzy.is_some()) {
                 anyhow::bail!("-P/--pcre2 cannot be combined with --ident or --fuzzy");
             }
+            if fuzzy_regex.is_some() && (pcre2 || ident || fuzzy.is_some() || fixed_strings) {
+                anyhow::bail!("--fuzzy-regex cannot be combined with -P, --ident, --fuzzy or -F (use --fuzzy for a literal)");
+            }
             let mut mode = match (fixed_strings, ident, fuzzy) {
+                _ if fuzzy_regex.is_some() => Mode::FuzzyRegex { max_edits: fuzzy_regex.unwrap_or(1) },
                 (_, _, Some(n)) => Mode::Fuzzy { max_edits: n },
                 (_, true, _) => Mode::Identifier,
                 _ if pcre2 => Mode::Pcre2,
@@ -483,7 +491,7 @@ pub fn run() -> Result<i32> {
                             Mode::Identifier => instant::identifier_regex(p),
                             _ => p.to_string(),
                         };
-                        if mode != Mode::Pcre2 {
+                        if !matches!(mode, Mode::Pcre2 | Mode::FuzzyRegex { .. }) {
                             mode = Mode::Regex;
                         }
                         regexp.iter().map(|p| format!("(?:{})", part(p))).collect::<Vec<_>>().join("|")
