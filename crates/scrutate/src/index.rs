@@ -13,7 +13,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use sha1::{Digest, Sha1};
 
 use crate::lex::{merge_segments, pack_bags, quantize, FileLex, LexStore, QVecs, SegmentBuilder, NF};
-use crate::parse::{is_indexable, parse_file};
+use crate::parse::{is_indexable, parse_file_with, PrevParse};
 use crate::semantic::SemanticModel;
 use crate::text::{is_test_path, name_key, tokenize2, BODY_CAP};
 
@@ -31,6 +31,9 @@ pub const MAX_MERGE_ROWS: usize = 300_000;
 pub const QUICK_CHECK_MAX_BYTES: u64 = 64 * 1024 * 1024;
 pub const GC_AGE_S: u64 = 600; // unreferenced segment directories younger than this may be in flight
 pub const MAX_FILE_BYTES: u64 = 1_000_000;
+/// Source bytes of the syntax trees an open index keeps for incremental reparsing (the trees
+/// themselves take several times this in memory).
+pub const TREE_CACHE_BYTES: usize = 2 << 20;
 pub const TF_CAP: u32 = 4; // a token counts at most this many times per field
 pub const SKIP_DIRS: &[&str] = &[
     ".git",
@@ -282,7 +285,9 @@ pub mod prof {
     }
 }
 
-pub fn build_rows(rel: &str, source: &str, model: Option<&SemanticModel>) -> (Vec<NewRow>, FileLex, Vec<(i64, String)>) {
+pub type BuiltRows = (Vec<NewRow>, FileLex, Vec<(i64, String)>, Option<PrevParse>);
+
+pub fn build_rows(rel: &str, source: &str, model: Option<&SemanticModel>, prev: Option<PrevParse>) -> BuiltRows {
     let is_test = is_test_path(rel) as i64;
     let path_text = rel.replace(['/', '.', '_'], " ");
     let path_bag = bag(tokenize2(&path_text, None).0.into_iter(), None);
@@ -292,7 +297,7 @@ pub fn build_rows(rel: &str, source: &str, model: Option<&SemanticModel>) -> (Ve
     let k = model.map(|m| m.k).unwrap_or(0);
     let prof = prof::enabled();
     let t = Instant::now();
-    let parsed = parse_file(rel, source);
+    let (parsed, tree) = parse_file_with(rel, source, prev);
     if prof {
         prof::add(&prof::PARSE, t);
     }
@@ -366,21 +371,21 @@ pub fn build_rows(rel: &str, source: &str, model: Option<&SemanticModel>) -> (Ve
         }
     }
     let vec = if model.is_some() && !rows.is_empty() { Some(vecs) } else { None };
-    (rows, pack_bags(&bags, vec), parsed.imports)
+    (rows, pack_bags(&bags, vec), parsed.imports, tree)
 }
 
 enum Processed {
     Gone,
     Skip(u64, i64),
     Same(u64, i64),
-    New(u64, i64, String, Vec<NewRow>, Box<FileLex>, Vec<(i64, String)>),
+    New(u64, i64, String, Vec<NewRow>, Box<FileLex>, Vec<(i64, String)>, Option<PrevParse>),
 }
 
 fn mtime_ns(md: &std::fs::Metadata) -> i64 {
     md.modified().ok().and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok()).map(|d| d.as_nanos() as i64).unwrap_or(0)
 }
 
-fn process(root: &Path, rel: &str, known_hash: Option<&str>, model: Option<&SemanticModel>) -> Processed {
+fn process(root: &Path, rel: &str, known_hash: Option<&str>, model: Option<&SemanticModel>, prev: Option<PrevParse>) -> Processed {
     let full = root.join(rel);
     let Ok(md) = std::fs::metadata(&full) else {
         return Processed::Gone;
@@ -399,9 +404,9 @@ fn process(root: &Path, rel: &str, known_hash: Option<&str>, model: Option<&Sema
     if Some(h.as_str()) == known_hash {
         return Processed::Same(size, mtime);
     }
-    let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| build_rows(rel, &source, model)));
+    let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| build_rows(rel, &source, model, prev)));
     match built {
-        Ok((rows, lex, imports)) => Processed::New(size, mtime, h, rows, Box::new(lex), imports),
+        Ok((rows, lex, imports, tree)) => Processed::New(size, mtime, h, rows, Box::new(lex), imports, tree),
         Err(_) => {
             eprintln!("[scrutate] skipped {rel}: parser failure");
             Processed::Skip(size, mtime)
@@ -488,6 +493,9 @@ pub struct Index {
     lex_ver: Option<String>,
     last_refresh: Option<Instant>,
     scan_cost: f64,
+    /// last syntax tree of recently indexed files, with a use counter for eviction
+    trees: HashMap<String, (u64, PrevParse)>,
+    tree_tick: u64,
 }
 
 impl Index {
@@ -532,7 +540,20 @@ impl Index {
                 db
             }
         };
-        let mut ix = Index { root, dir, seg_dir, model, db, progress: false, lex: None, lex_ver: None, last_refresh: None, scan_cost: 1.0 };
+        let mut ix = Index {
+            root,
+            dir,
+            seg_dir,
+            model,
+            db,
+            progress: false,
+            lex: None,
+            lex_ver: None,
+            last_refresh: None,
+            scan_cost: 1.0,
+            trees: HashMap::new(),
+            tree_tick: 0,
+        };
         if let Triage::Rebuild(why) = triage {
             // an index of another schema or model: drop its contents *inside* the database, so
             // other processes using the same index keep a consistent (if briefly empty) view
@@ -792,8 +813,9 @@ impl Index {
         let mut done = 0usize;
         let mut last_tick = Instant::now();
         for batch in todo.chunks(256) {
+            let prevs: Vec<Option<PrevParse>> = batch.iter().map(|(rel, _)| self.trees.remove(rel).map(|t| t.1)).collect();
             let results: Vec<(String, Processed)> =
-                batch.par_iter().map(|(rel, kh)| (rel.clone(), process(&root, rel, kh.as_deref(), model.as_deref()))).collect();
+                batch.par_iter().zip(prevs).map(|((rel, kh), prev)| (rel.clone(), process(&root, rel, kh.as_deref(), model.as_deref(), prev))).collect();
             done += batch.len();
             if progress && (last_tick.elapsed().as_millis() >= 200 || done == todo.len()) {
                 eprint!("\r[scrutate] indexing {done}/{} files...", todo.len());
@@ -811,7 +833,11 @@ impl Index {
                         // content identical, only the mtime moved
                         self.db.execute("UPDATE files SET size=?1, mtime_ns=?2 WHERE path=?3", params![size as i64, mtime, rel])?;
                     }
-                    Processed::New(size, mtime, h, rows, lex, imports) => {
+                    Processed::New(size, mtime, h, rows, lex, imports, tree) => {
+                        if let Some(tree) = tree.filter(|t| t.source_len() <= TREE_CACHE_BYTES) {
+                            self.tree_tick += 1;
+                            self.trees.insert(rel.clone(), (self.tree_tick, tree));
+                        }
                         let t = Instant::now();
                         removed.extend(self.delete_file(&rel)?);
                         let first = next_id;
@@ -839,6 +865,7 @@ impl Index {
         if progress && done > 0 {
             eprint!("\r{}\r", " ".repeat(60)); // clear the progress line
         }
+        self.evict_trees();
         if builder.n > 0 {
             self.flush_segment(builder, seg_names)?;
         }
@@ -848,6 +875,22 @@ impl Index {
             self.bump_version()?; // same transaction as the manifest: readers never see one without the other
         }
         Ok(changed)
+    }
+
+    /// Drop the least recently parsed trees until the kept sources fit in TREE_CACHE_BYTES.
+    fn evict_trees(&mut self) {
+        let mut total: usize = self.trees.values().map(|t| t.1.source_len()).sum();
+        if total <= TREE_CACHE_BYTES {
+            return;
+        }
+        let mut by_age: Vec<(u64, String)> = self.trees.iter().map(|(p, t)| (t.0, p.clone())).collect();
+        by_age.sort_unstable();
+        for (_, p) in by_age {
+            if total <= TREE_CACHE_BYTES {
+                break;
+            }
+            total -= self.trees.remove(&p).map(|t| t.1.source_len()).unwrap_or(0);
+        }
     }
 
     /// Write one segment and register it in the manifest (inside the caller's transaction).

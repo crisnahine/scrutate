@@ -12,7 +12,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::LazyLock;
 
 use regex::Regex;
-use tree_sitter::{Node, Parser};
+use tree_sitter::{InputEdit, Node, Parser, Point, Tree};
 
 use crate::langs::{self, head_word, ImportHow, LangSpec, NameRule};
 use crate::text::split_lines;
@@ -608,10 +608,85 @@ fn finish(path: &str, source: &str, mut chunks: Vec<Chunk>, module_doc: String) 
 /// (chunks, module docstring, imports as (line, module))
 type GrammarOutput = (Vec<Chunk>, String, Vec<(i64, String)>);
 
-fn grammar_chunks(spec: &'static LangSpec, source: &str) -> Option<GrammarOutput> {
+/// A file's last grammar parse, kept in memory so the next version of the file is parsed
+/// incrementally (tree-sitter reuses the unchanged subtrees).
+pub struct PrevParse {
+    lang: &'static str,
+    source: String,
+    tree: Tree,
+}
+
+impl PrevParse {
+    pub fn source_len(&self) -> usize {
+        self.source.len()
+    }
+}
+
+/// Grammars reparsed incrementally: those without an external scanner. With a scanner (Python,
+/// JavaScript, Rust, Elm, reStructuredText...) a reparse was seen to differ from a fresh parse.
+const INCREMENTAL: &[&str] = &[
+    "ada",
+    "asm",
+    "c",
+    "commonlisp",
+    "elisp",
+    "glsl",
+    "go",
+    "graphql",
+    "groovy",
+    "java",
+    "json",
+    "llvm",
+    "make",
+    "objc",
+    "pascal",
+    "prisma",
+    "puppet",
+    "scheme",
+    "solidity",
+    "verilog",
+    "zig",
+];
+
+fn point_at(s: &[u8], at: usize) -> Point {
+    let line_start = memchr::memrchr(b'\n', &s[..at]).map(|i| i + 1).unwrap_or(0);
+    Point { row: memchr::memchr_iter(b'\n', &s[..at]).count(), column: at - line_start }
+}
+
+/// The edit from `old` to `new` as one replaced range: common prefix and suffix are kept.
+pub fn single_edit(old: &[u8], new: &[u8]) -> InputEdit {
+    let pre = old.iter().zip(new).take_while(|(a, b)| a == b).count();
+    let max_suf = old.len().min(new.len()) - pre;
+    let suf = old.iter().rev().zip(new.iter().rev()).take(max_suf).take_while(|(a, b)| a == b).count();
+    let (old_end, new_end) = (old.len() - suf, new.len() - suf);
+    InputEdit {
+        start_byte: pre,
+        old_end_byte: old_end,
+        new_end_byte: new_end,
+        start_position: point_at(new, pre),
+        old_end_position: point_at(old, old_end),
+        new_end_position: point_at(new, new_end),
+    }
+}
+
+fn parse_tree(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>) -> Option<Tree> {
+    let src = source.as_bytes();
+    let old = prev.filter(|p| p.lang == spec.id).map(|mut p| {
+        p.tree.edit(&single_edit(p.source.as_bytes(), src));
+        p.tree
+    });
+    let tree = with_parser(spec, |p| p.parse(src, old.as_ref()))??;
+    if old.is_some() && tree.root_node().has_error() {
+        // error recovery can settle differently when it starts from an old tree
+        return with_parser(spec, |p| p.parse(src, None))?;
+    }
+    Some(tree)
+}
+
+fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>) -> Option<(GrammarOutput, Option<PrevParse>)> {
     let src = source.as_bytes();
     let t = std::time::Instant::now();
-    let tree = with_parser(spec, |p| p.parse(src, None))??;
+    let tree = parse_tree(spec, source, prev)?;
     if crate::index::prof::enabled() {
         crate::index::prof::add(&crate::index::prof::TREESITTER, t);
     }
@@ -736,7 +811,9 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str) -> Option<GrammarOutput
             mdoc = py_string_content(&txt(src, s.start_byte(), s.end_byte()));
         }
     }
-    Some((chunks, mdoc, imports))
+    // a tree with errors is not kept: the next parse would likely redo it from scratch anyway
+    let keep = (!tree.root_node().has_error() && INCREMENTAL.contains(&spec.id)).then(|| PrevParse { lang: spec.id, source: source.to_string(), tree });
+    Some(((chunks, mdoc, imports), keep))
 }
 
 // ------------------------------------------------------------------------- tier 2: heuristics
@@ -1004,15 +1081,21 @@ pub fn sexp(spec: &'static LangSpec, source: &str) -> String {
 // ------------------------------------------------------------------------- main
 /// Chunks and imports of one file (grammar tier, then heuristics, then windows).
 pub fn parse_file(path: &str, source: &str) -> Parsed {
+    parse_file_with(path, source, None).0
+}
+
+/// `parse_file`, reusing the tree of the file's previous version when there is one; also returns
+/// this version's tree for the next call. The result is the same as a fresh parse.
+pub fn parse_file_with(path: &str, source: &str, prev: Option<PrevParse>) -> (Parsed, Option<PrevParse>) {
     if let Some(spec) = spec_for(path, source) {
-        if let Some((chunks, mdoc, imports)) = grammar_chunks(spec, source) {
+        if let Some(((chunks, mdoc, imports), tree)) = grammar_chunks(spec, source, prev) {
             // a parsed file is the grammar's verdict even when it holds no definitions: the
             // keyword heuristics would invent symbols from prose ("namespace so the ...")
-            return Parsed { chunks: finish(path, source, chunks, mdoc), imports };
+            return (Parsed { chunks: finish(path, source, chunks, mdoc), imports }, tree);
         }
     }
     let chunks = heuristic_chunks(source);
-    Parsed { chunks: finish(path, source, chunks, String::new()), imports: Vec::new() }
+    (Parsed { chunks: finish(path, source, chunks, String::new()), imports: Vec::new() }, None)
 }
 
 pub fn parse_source(path: &str, source: &str) -> Vec<Chunk> {
