@@ -17,7 +17,8 @@ codegen-units = 4
 debug = 0
 strip = true
 
-# `ignore` with one change: the global git excludes path is parsed without compiling a regex
-# (vendor/ignore, the excludes_file_span function).
+# `ignore` with two changes (vendor/ignore): the global git excludes path is parsed without
+# compiling a regex (excludes_file_span), and an idle walker thread waits 10 us at first, doubling
+# up to the original 1 ms, before looking for work again (Worker::get_work).
 [patch.crates-io]
 ignore = { path = "vendor/ignore" }

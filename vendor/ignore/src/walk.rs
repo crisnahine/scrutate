@@ -1970,6 +1970,7 @@ impl<'s> Worker<'s> {
                         return None;
                     }
                     // Wait for next `Work` or `Quit` message.
+                    let mut wait = std::time::Duration::from_micros(10);
                     loop {
                         if self.is_quit_now() {
                             return None;
@@ -1983,8 +1984,8 @@ impl<'s> Worker<'s> {
                         // CPU waiting, we let the thread sleep for a bit. In
                         // general, this tends to only occur once the search is
                         // approaching termination.
-                        let dur = std::time::Duration::from_millis(1);
-                        std::thread::sleep(dur);
+                        std::thread::sleep(wait);
+                        wait = (wait * 2).min(std::time::Duration::from_millis(1));
                     }
                 }
             }

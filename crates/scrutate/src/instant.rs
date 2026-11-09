@@ -1124,8 +1124,10 @@ fn walk_builder(roots: &[PathBuf], o: &Options) -> Result<WalkBuilder> {
 }
 
 /// Trees with at most this many files are walked on one thread and searched by a few: starting the
-/// parallel walk costs more there than the search itself. `SCRUTATE_SMALL_TREE` overrides it (0
-/// always walks in parallel; the tests use both).
+/// parallel walk costs more there than the search itself. A larger tree switches to the parallel
+/// walk after these files, whose read times also tell the page cache from the disk
+/// (`walk_threads`). `SCRUTATE_SMALL_TREE` overrides it (0 always walks in parallel; the tests use
+/// both).
 fn small_tree_files() -> usize {
     static V: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     *V.get_or_init(|| std::env::var("SCRUTATE_SMALL_TREE").ok().and_then(|v| v.parse().ok()).unwrap_or(256))
