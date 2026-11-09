@@ -49,8 +49,11 @@ docs/TRACEABILITY.md.
 - Small trees (a few hundred files): Scrutate and ugrep are within about 10% of each other and the
   order changes with machine load. Scrutate starts 1.2 ms sooner; ugrep walks the directories and
   matches ignore rules in less time (it compiles no glob sets and does not read the global git
-  excludes or `.git/info/exclude`). Next: read each directory's ignore files from its listing on the
-  one-thread walk, and build glob sets lazily.
+  excludes or `.git/info/exclude`). Next: in the vendored walker, idle threads sleep 1 ms between
+  checks for work; a wait that starts at 10 µs and doubles took the parallel walk of the ripgrep
+  repository from 8.5 to 6.2 ms (measured, not shipped: the default one-thread walk was level, and
+  the release binary is the one the leaderboard measured). Then read each directory's ignore files
+  from its listing on the one-thread walk, and build glob sets lazily.
 - Thread counts on Linux and Windows: the macOS default (performance cores) came from measurement;
   repeat it on dedicated Linux and Windows machines before changing their default.
 - References: type inference for method calls on variables; more languages (Java, C#, C/C++

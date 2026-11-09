@@ -18,7 +18,11 @@ TOOLS = ["scrutate", "ripgrep", "ugrep", "GNU grep", "git grep", "ag", "ack", "a
 
 # what closes each kind of gap; the leaderboard states the measured gap next to it
 PLANS = {
-    "small": "start-up and thread start-up dominate below ~20 ms: fewer threads for small trees (measure first), lazy initialisation",
+    "small": ("below ~20 ms the walk of the directories, on one thread, is the critical path: Scrutate starts 1.4 ms sooner than "
+              "ugrep but takes about 1.7 ms longer to walk and match ignore rules (ugrep compiles no glob sets and reads neither "
+              "the global git excludes nor .git/info/exclude). Measured next steps: the parallel walker's idle threads sleep 1 ms "
+              "between checks for work, and a wait that starts at 10 us took the parallel walk of the ripgrep repository from "
+              "8.5 to 6.2 ms; then read each directory's ignore files from its listing and build glob sets lazily"),
     "output": "output-bound: per-file buffers already avoid per-line allocation; next, write straight from the search buffer (no UTF-8 re-validation) and reuse buffers across files",
     "regex": "regex-bound: profile the matcher configuration against ripgrep's (same regex crate) and check literal prefilters",
     "default": "profile this workload (instrumented build) and compare with the leader's strategy before changing code",
