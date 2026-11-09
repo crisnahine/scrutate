@@ -18,7 +18,7 @@ use crate::parse::{is_indexable, parse_file};
 use crate::semantic::SemanticModel;
 use crate::text::{is_test_path, name_key, tokenize2, BODY_CAP};
 
-pub const SCHEMA_VERSION: u32 = 11;
+pub const SCHEMA_VERSION: u32 = 12;
 pub const MAX_SEGMENTS: usize = 6; // more live segments than this triggers a merge of the small ones
 pub const SMALL_INDEX_ROWS: usize = 8000; // an index this small is kept as ONE segment
 /// Rows per segment flushed during one update: bounds the memory of building the inverted index
@@ -393,14 +393,13 @@ fn process(root: &Path, rel: &str, known_hash: Option<&str>, model: Option<&Sema
     let Ok(raw) = std::fs::read(&full) else {
         return Processed::Gone;
     };
-    if raw[..raw.len().min(4096)].contains(&0u8) {
+    let Some(source) = decode_source(&raw) else {
         return Processed::Skip(size, mtime);
-    }
+    };
     let h = format!("{:x}", Sha1::digest(&raw));
     if Some(h.as_str()) == known_hash {
         return Processed::Same(size, mtime);
     }
-    let source = String::from_utf8_lossy(&raw);
     let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| build_rows(rel, &source, model)));
     match built {
         Ok((rows, lex, imports)) => Processed::New(size, mtime, h, rows, lex, imports),
@@ -409,6 +408,29 @@ fn process(root: &Path, rel: &str, known_hash: Option<&str>, model: Option<&Sema
             Processed::Skip(size, mtime)
         }
     }
+}
+
+/// Source text of a file: UTF-16 with a byte-order mark is transcoded (Windows tools write it), a
+/// NUL byte in the first 4 KB means binary (None), anything else is lossy UTF-8.
+pub fn decode_source(raw: &[u8]) -> Option<std::borrow::Cow<'_, str>> {
+    let utf16 = |be: bool| {
+        let units = raw[2..].chunks(2).map(|c| match c {
+            [a, b] if be => u16::from_be_bytes([*a, *b]),
+            [a, b] => u16::from_le_bytes([*a, *b]),
+            _ => 0xFFFD, // odd trailing byte
+        });
+        std::borrow::Cow::Owned(char::decode_utf16(units).map(|c| c.unwrap_or('\u{FFFD}')).collect())
+    };
+    if raw.starts_with(&[0xFF, 0xFE]) {
+        return Some(utf16(false));
+    }
+    if raw.starts_with(&[0xFE, 0xFF]) {
+        return Some(utf16(true));
+    }
+    if raw[..raw.len().min(4096)].contains(&0u8) {
+        return None;
+    }
+    Some(String::from_utf8_lossy(raw))
 }
 
 /// SQLite errors that mean the file is not a usable database (as opposed to busy or I/O trouble).

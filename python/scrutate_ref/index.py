@@ -34,7 +34,7 @@ def unpack_text(blob) -> str:
         return blob
     return zlib.decompress(blob).decode("utf8")
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 MAX_SEGMENTS = 6          # more live segments than this triggers a merge of the small ones
 SMALL_INDEX_ROWS = 8000   # an index this small is kept as ONE segment (a rewrite costs a few ms)
 GC_AGE_S = 600            # unreferenced segment directories younger than this may be in flight
@@ -143,6 +143,15 @@ def build_rows(rel: str, source: str, model: SemanticModel | None):
     return rows, pack_bags(bags, np.stack(vecs) if vecs else None)
 
 
+def decode_source(raw):
+    """UTF-16 with a byte-order mark is transcoded; a NUL in the first 4 KB means binary (None)."""
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return raw[2:].decode("utf-16-le" if raw[:2] == b"\xff\xfe" else "utf-16-be", "replace")
+    if b"\x00" in raw[:4096]:
+        return None
+    return raw.decode("utf8", "replace")
+
+
 def _process(args):
     """-> (rel, status, payload). status: 'skip' | 'same' | 'new' | 'gone'."""
     rel, root, known_hash = args
@@ -155,13 +164,14 @@ def _process(args):
             raw = f.read()
     except OSError:
         return rel, "gone", None
-    if b"\x00" in raw[:4096]:
+    source = decode_source(raw)
+    if source is None:
         return rel, "skip", (st.st_size, st.st_mtime_ns)
     h = hashlib.sha1(raw).hexdigest()
     if h == known_hash:
         return rel, "same", (st.st_size, st.st_mtime_ns, h)
     try:
-        rows, lex = build_rows(rel, raw.decode("utf8", "replace"), _W_MODEL)
+        rows, lex = build_rows(rel, source, _W_MODEL)
     except Exception as e:  # a parser bug must never abort indexing
         print(f"[scrutate-ref] skipped {rel}: {e}", file=sys.stderr)
         return rel, "skip", (st.st_size, st.st_mtime_ns)

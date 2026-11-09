@@ -94,13 +94,14 @@ def test_repo_index_and_intelligence(repo):
 
 
 def test_gil_is_released_during_rust_work(repo):
-    # a big enough corpus that the search time dominates thread start-up
+    # one big file (searched by one thread, below the size where a file is split across threads)
+    # and a single match, so the time is Rust scanning, not Python building result objects
     big = repo / "big.txt"
-    big.write_text("".join(f"line {i} with some words to scan\n" for i in range(400_000)))
+    big.write_text("".join(f"line {i} with some words to scan\n" for i in range(1_500_000)))
 
     def work():
-        for _ in scrutate.grep("words to scan", [str(repo)], mode="literal", max_results=10**9):
-            pass
+        hits = list(scrutate.grep("line 1499999 with", [str(repo)], mode="literal"))
+        assert len(hits) == 1
 
     work()  # warm the cache
     t0 = time.perf_counter()

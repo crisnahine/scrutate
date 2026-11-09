@@ -7,3 +7,4 @@ __pycache__/
 /python/*.egg-info/
 /crates/scrutate-py/python/scrutate/*.so
 /crates/scrutate-py/target/
+/bench/results/*/cache/

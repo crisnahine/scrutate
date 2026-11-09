@@ -305,29 +305,11 @@ pub fn literal_candidates(query: &str) -> Vec<String> {
     lits
 }
 
-/// Python's `str.splitlines()` boundaries (\n, \r\n, \r, \v, \f, \x1c-\x1e, \x85,  ,  ).
-pub fn py_splitlines(s: &str) -> Vec<&str> {
-    let mut out = Vec::new();
-    let mut start = 0;
-    let mut iter = s.char_indices().peekable();
-    while let Some((i, c)) = iter.next() {
-        let boundary = matches!(c, '\n' | '\r' | '\x0b' | '\x0c' | '\x1c' | '\x1d' | '\x1e' | '\u{85}' | '\u{2028}' | '\u{2029}');
-        if boundary {
-            out.push(&s[start..i]);
-            let mut next = i + c.len_utf8();
-            if c == '\r' {
-                if let Some((j, '\n')) = iter.peek().copied() {
-                    iter.next();
-                    next = j + 1;
-                }
-            }
-            start = next;
-        }
-    }
-    if start < s.len() {
-        out.push(&s[start..]);
-    }
-    out
+/// Lines as grep-class tools number them: split at `\n`, a `\r` before it dropped, no empty
+/// last line for a trailing newline. Form feeds, lone `\r` and Unicode separators are text, so a
+/// chunk's line numbers agree with Engine A's and tree-sitter's.
+pub fn split_lines(s: &str) -> Vec<&str> {
+    s.lines().collect()
 }
 
 /// Lowercase words of a query, for snippet highlighting (agent.query_words: len > 2).
@@ -362,10 +344,11 @@ mod tests {
 
     #[test]
     fn splitlines_like_python() {
-        assert_eq!(py_splitlines("a\nb\r\nc\rd"), vec!["a", "b", "c", "d"]);
-        assert_eq!(py_splitlines("a\n"), vec!["a"]);
-        assert_eq!(py_splitlines("a\x0cb"), vec!["a", "b"]);
-        assert_eq!(py_splitlines(""), Vec::<&str>::new());
+        assert_eq!(split_lines("a\nb\r\nc\rd"), vec!["a", "b", "c\rd"]);
+        assert_eq!(split_lines("a\n"), vec!["a"]);
+        assert_eq!(split_lines("a\x0cb"), vec!["a\x0cb"]);
+        assert_eq!(split_lines(""), Vec::<&str>::new());
+        assert_eq!(split_lines("\n\nx"), vec!["", "", "x"]);
     }
 
     #[test]

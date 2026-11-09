@@ -15,7 +15,7 @@ use regex::Regex;
 use tree_sitter::{Node, Parser};
 
 use crate::langs::{self, head_word, ImportHow, LangSpec, NameRule};
-use crate::text::py_splitlines;
+use crate::text::split_lines;
 
 #[derive(Debug, Clone, Default)]
 pub struct Chunk {
@@ -241,7 +241,7 @@ pub fn window_chunks(source: &str) -> Vec<Chunk> {
 /// Overlapping 50-line windows (10 lines overlap) from 0-based line `first_line` on.
 pub fn window_chunks_from(source: &str, first_line: usize) -> Vec<Chunk> {
     let (size, overlap) = (50usize, 10usize);
-    let all = py_splitlines(source);
+    let all = split_lines(source);
     let lines = &all[first_line.min(all.len())..];
     let mut out = Vec::new();
     let step = (size - overlap).max(1);
@@ -570,7 +570,7 @@ fn finish(path: &str, source: &str, mut chunks: Vec<Chunk>, module_doc: String) 
         _ => base,
     };
     let first_def = chunks.iter().map(|c| c.start).min();
-    let lines = py_splitlines(source);
+    let lines = split_lines(source);
     let head_end = match first_def {
         Some(fd) => (fd - 1).max(0) as usize,
         None => lines.len(),
@@ -915,7 +915,7 @@ fn is_comment_line(line: &str) -> bool {
 
 /// Keyword-introduced definitions for languages without a grammar (or whose grammar found nothing).
 pub fn heuristic_chunks(source: &str) -> Vec<Chunk> {
-    let lines = py_splitlines(source);
+    let lines = split_lines(source);
     let mut defs: Vec<(usize, &'static str, String)> = Vec::new();
     for (i, line) in lines.iter().enumerate() {
         if let Some((kind, name)) = heuristic_def(line) {
@@ -1103,5 +1103,18 @@ mod tests {
         assert!(ch.iter().any(|c| c.name == "my_func" && c.kind == "function"));
         let plain = "just some prose\nwithout definitions\n";
         assert!(parse_source("notes.unknownext", plain).iter().all(|c| c.kind == "module"));
+    }
+
+    #[test]
+    fn form_feeds_and_lone_cr_do_not_shift_line_numbers() {
+        // found by fuzzing: Python-style splitlines counted \x0c as a line break
+        for c in parse_source("f.ts", "\x0c\x0c\x04") {
+            assert!(c.start == 1 && c.end == 1, "{}..{}", c.start, c.end);
+        }
+        let src = "x = 1\x0c\n\x0c\ndef f():\r    pass\n";
+        let total = src.lines().count() as i64;
+        for c in parse_source("g.py", src) {
+            assert!(c.end <= total, "{} {}..{} of {total}", c.name, c.start, c.end);
+        }
     }
 }

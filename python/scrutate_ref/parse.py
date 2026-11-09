@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 
 from tree_sitter import Language, Parser
 
+from .text import split_lines
+
 sys.setrecursionlimit(20000)
 
 
@@ -132,7 +134,7 @@ def _head(text: str, n: int) -> str:
 
 def window_chunks(source: str, size: int = 50, overlap: int = 10, first_line: int = 0) -> list[Chunk]:
     """Overlapping line windows of ``source`` from 0-based line ``first_line`` on."""
-    lines = source.splitlines()[first_line:]
+    lines = split_lines(source)[first_line:]
     out: list[Chunk] = []
     step = max(1, size - overlap)
     for i in range(0, len(lines), step):
@@ -278,7 +280,7 @@ def parse_source(path: str, source: str) -> list[Chunk]:
 
     # module-level header chunk (module docstring, imports, constants)
     first_def = min((c.start for c in chunks), default=None)
-    lines = source.splitlines()
+    lines = split_lines(source)
     head_end = min((first_def - 1) if first_def else len(lines), 60)
     head = "\n".join(lines[:head_end])
     if head.strip():

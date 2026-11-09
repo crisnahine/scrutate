@@ -1295,6 +1295,19 @@ const CORE: &[LangSpec] = &[
 // ERB/EJS templates are deliberately not in the registry: the embedded-template grammar only
 // delimits directives, so the keyword heuristics (which see the embedded `def`s) do better.
 
+/// D declarations carry the name as their first identifier child (no `name` field).
+#[cfg(feature = "extra-langs")]
+const D_NAME: &[NameRule] = &[NameRule::Field("name"), NameRule::ChildKind(&["identifier"])];
+
+/// LLVM IR: `define i32 @f(...)` keeps the name in the header's `name` field.
+#[cfg(feature = "extra-langs")]
+fn llvm_fn_name(n: Node, src: &[u8]) -> Option<String> {
+    let mut cur = n.walk();
+    let header = n.children(&mut cur).find(|c| c.kind() == "function_header")?;
+    let name = header.child_by_field_name("name")?;
+    std::str::from_utf8(src.get(name.start_byte()..name.end_byte())?).ok().map(|s| s.trim_start_matches('@').to_string())
+}
+
 #[cfg(feature = "extra-langs")]
 const EXTRA: &[LangSpec] = &[
     LangSpec {
@@ -1318,7 +1331,7 @@ const EXTRA: &[LangSpec] = &[
         defs: &[
             d("let_binding", "function", &[NameRule::Field("pattern")]),
             d("type_binding", "type", N),
-            d("module_binding", "module", N),
+            d("module_binding", "module", &[NameRule::ChildKind(&["module_name"])]),
             d("class_binding", "class", N),
         ],
         calls: &[c("application_expression", "function")],
@@ -1387,12 +1400,12 @@ const EXTRA: &[LangSpec] = &[
         files: &[],
         language: || tree_sitter_d::LANGUAGE.into(),
         defs: &[
-            d("function_declaration", "function", N),
-            d("class_declaration", "class", N),
-            d("struct_declaration", "struct", N),
-            d("interface_declaration", "interface", N),
-            d("enum_declaration", "enum", N),
-            d("template_declaration", "macro", N),
+            d("function_declaration", "function", D_NAME),
+            d("class_declaration", "class", D_NAME),
+            d("struct_declaration", "struct", D_NAME),
+            d("interface_declaration", "interface", D_NAME),
+            d("enum_declaration", "enum", D_NAME),
+            d("template_declaration", "macro", D_NAME),
         ],
         calls: &[c("call_expression", "")],
         docstring: false,
@@ -1426,7 +1439,7 @@ const EXTRA: &[LangSpec] = &[
         language: || tree_sitter_vhdl::LANGUAGE.into(),
         defs: &[
             d("entity_declaration", "class", &[NameRule::ChildKind(&["identifier"])]),
-            d("architecture_body", "impl", &[NameRule::ChildKind(&["identifier"])]),
+            d("architecture_definition", "impl", &[NameRule::Field("architecture")]),
             d("function_body", "function", &[NameRule::Custom(vhdl_name)]),
             d("procedure_body", "function", &[NameRule::Custom(vhdl_name)]),
             d("package_declaration", "module", &[NameRule::ChildKind(&["identifier"])]),
@@ -1461,7 +1474,7 @@ const EXTRA: &[LangSpec] = &[
         exts: &[".ll"],
         files: &[],
         language: || tree_sitter_llvm::LANGUAGE.into(),
-        defs: &[d("define", "function", &[NameRule::ChildKind(&["global_var"])]), d("type_def", "type", &[NameRule::ChildKind(&["local_var"])])],
+        defs: &[d("fn_define", "function", &[NameRule::Custom(llvm_fn_name)]), d("type_def", "type", &[NameRule::ChildKind(&["local_var"])])],
         calls: &[],
         docstring: false,
         wrappers: &[],
@@ -1500,8 +1513,8 @@ const EXTRA: &[LangSpec] = &[
         exts: &[".ahk"],
         files: &[],
         language: || tree_sitter_autohotkey::LANGUAGE.into(),
-        defs: &[d("function_definition", "function", N), d("class_definition", "class", N)],
-        calls: &[c("call_expression", "function")],
+        defs: &[d("function_declaration", "function", N), d("class_declaration", "class", N), d("method_declaration", "method", N)],
+        calls: &[c("function_call", "function"), c("call_statement", "function")],
         docstring: false,
         wrappers: &[],
         outer: &[],

@@ -46,6 +46,18 @@ fn run_in(cwd: &Path, args: &[&str], env: &[(&str, &str)]) -> (i32, String, Stri
     (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
 }
 
+/// Output lines with the summary's run time removed (it differs on every run).
+fn untimed((code, out, err): (i32, String, String)) -> (i32, Vec<String>, String) {
+    let out = out
+        .lines()
+        .map(|l| match l.find("\"elapsed_ms\":") {
+            Some(i) => format!("{}{}", &l[..i], &l[i..][l[i..].find(',').unwrap_or(l.len() - i)..]),
+            None => l.to_string(),
+        })
+        .collect();
+    (code, out, err)
+}
+
 fn python_repo(name: &str) -> Repo {
     let r = Repo::new(name);
     for i in 0..12 {
@@ -251,7 +263,7 @@ fn compaction_merges_segments_and_keeps_counts() {
 }
 
 #[test]
-fn utf16_bom_is_searched_by_engine_a_and_skipped_by_engine_b() {
+fn utf16_bom_is_searched_by_engine_a_and_indexed_by_engine_b() {
     let r = Repo::new("utf16");
     let mut u16le = vec![0xff, 0xfe];
     for u in "def utf16_marker():\n    pass\n".encode_utf16() {
@@ -265,7 +277,10 @@ fn utf16_bom_is_searched_by_engine_a_and_skipped_by_engine_b() {
     r.run(&["index"]);
     let (_, out, _) = r.run(&["stats"]);
     let st: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(st["files_skipped"], 1, "Engine B skips UTF-16 as binary (documented limitation): {out}");
+    assert_eq!(st["files_skipped"], 0, "Engine B transcodes UTF-16 too: {out}");
+    let (code, out, _) = r.run(&["symbol", "utf16_marker", "--json"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("\"w.py\"") && out.contains("\"start\": 1"), "{out}");
 }
 
 #[test]
@@ -362,4 +377,232 @@ fn corruption_found_during_use_triggers_a_rebuild() {
     assert!(out.contains("make_widget_"), "{out}");
     let (code, out, _) = run_in(&r.root, &["check", "--json"], &[("SCRUTATE_QUICK_CHECK_MAX_BYTES", "0")]);
     assert_eq!(code, 0, "{out}");
+}
+
+/// `grep --index` must print exactly what the walk prints, for every kind of query, before and
+/// after incremental updates (edits, additions, deletions, renames) and after segment merges.
+#[test]
+fn indexed_grep_equals_walk() {
+    let r = Repo::new("textindex");
+    r.write(".gitignore", b"ignored/\n*.log\n");
+    fs::create_dir_all(r.root.join(".git")).unwrap();
+    for i in 0..40 {
+        r.write(
+            &format!("src/m{i}.rs"),
+            format!("// module {i}\nfn make_widget_{i}(size: usize) -> Widget {{\n    Widget::new(size * {i})\n}}\n\nstruct RefreshToken{i};\nconst KÖNIG_{i}: &str = \"König\";\n").as_bytes(),
+        );
+    }
+    r.write("src/crlf.txt", b"alpha beta\r\nkernel_thread here\r\n");
+    r.write("src/bin.dat", b"needle before\0needle after\n");
+    r.write("src/late_nul.txt", &[b"needle line\n".repeat(8000), b"\0tail needle\n".to_vec()].concat());
+    r.write("src/utf16.txt", &[0xFF, 0xFE, b'n', 0, b'e', 0, b'e', 0, b'd', 0, b'l', 0, b'e', 0, b'\n', 0]);
+    r.write("src/multi.c", b"struct file_operations fops = {\n\t.owner = THIS_MODULE,\n};\n");
+    r.write("ignored/x.rs", b"fn make_widget_0() {}\n");
+    r.write("debug.log", b"make_widget_0\n");
+    r.write(".hidden/h.rs", b"fn make_widget_0() {}\n");
+    let queries: Vec<Vec<&str>> = vec![
+        vec!["-F", "make_widget_1"],
+        vec!["make_widget_\\d+"],
+        vec!["-i", "-F", "REFRESHTOKEN3"],
+        vec!["-w", "-F", "Widget"],
+        vec!["--ident", "refreshToken"],
+        vec!["--fuzzy=1", "make_widgte"],
+        vec!["-i", "könig"],
+        vec!["-e", "alpha", "-e", "kernel_thread"],
+        vec!["-F", "needle"],
+        vec!["-U", "fops = \\{\\n\\s+\\.owner"],
+        vec!["-v", "-c", "-F", "Widget"],
+        vec!["-l", "-F", "size"],
+        vec!["-C", "1", "-F", "struct RefreshToken7"],
+        vec!["-g", "*.txt", "-F", "needle"],
+        vec!["-t", "rust", "-F", "module"],
+        vec!["x{0}"],
+        vec!["(ab|cd)?e"],
+    ];
+    let check = |stage: &str| {
+        for q in &queries {
+            let mut walk = vec!["grep", "--sort"];
+            walk.extend(q.iter());
+            let mut idx = walk.clone();
+            idx.insert(1, "--index");
+            let (c1, o1, e1) = r.run(&walk);
+            let (c2, o2, e2) = r.run(&idx);
+            assert_eq!((c1, &o1), (c2, &o2), "{stage}: {q:?}\nwalk stderr: {e1}\nindex stderr: {e2}");
+        }
+    };
+    let (code, out, err) = r.run(&["index", "--text"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("text index: 45 files"), "{out}");
+    check("fresh");
+    // edit, add, delete, rename
+    r.write("src/m3.rs", b"fn make_widget_1000() {}\n");
+    r.write("src/new.rs", b"fn make_widget_42() {}\nstruct RefreshToken99;\n");
+    fs::remove_file(r.root.join("src/m5.rs")).unwrap();
+    fs::rename(r.root.join("src/m6.rs"), r.root.join("src/renamed.rs")).unwrap();
+    let (_, out, _) = r.run(&["index", "--text"]);
+    assert!(out.contains("3 changed, 2 removed"), "{out}");
+    check("incremental");
+    // many small updates: segments merge, dead documents are purged
+    for i in 0..8 {
+        r.write(&format!("src/extra{i}.rs"), format!("fn extra_{i}() {{}}\n").as_bytes());
+        r.run(&["index", "--text"]);
+    }
+    let (_, out, _) = r.run(&["index", "--text"]);
+    let segs: usize = out.split(" segment(s)").next().and_then(|s| s.rsplit(", ").next()).and_then(|s| s.parse().ok()).unwrap();
+    assert!(segs <= 4, "{out}");
+    check("merged");
+    // a damaged segment is reported with the repair command; rebuilding repairs it
+    let seg = fs::read_dir(r.root.join(".scrutate/text")).unwrap().flatten().find(|e| e.path().is_dir()).unwrap().path();
+    fs::write(seg.join("ptr.npy"), b"garbage").unwrap();
+    let (code, _, err) = r.run(&["grep", "--index", "-F", "make_widget_1"]);
+    assert_eq!(code, 2);
+    assert!(err.contains("index --text --force"), "{err}");
+    let (code, _, _) = r.run(&["index", "--text", "--force"]);
+    assert_eq!(code, 0);
+    check("rebuilt");
+    // flags that change the file set are refused rather than silently ignored
+    let (code, _, err) = r.run(&["grep", "--index", "--hidden", "x"]);
+    assert_eq!(code, 2, "{err}");
+}
+
+/// Each line of a multi-line match is printed with its own number, as grep-class tools do.
+#[test]
+fn multiline_matches_print_every_line() {
+    let r = Repo::new("multiline");
+    r.write("a.c", b"int x;\nstruct file_operations fops = {\n\t.owner = THIS_MODULE,\n};\n");
+    let (code, out, _) = r.run(&["grep", "-U", "fops = \\{\\n\\s+\\.owner"]);
+    assert_eq!(code, 0);
+    assert_eq!(out, "a.c:2:struct file_operations fops = {\na.c:3:\t.owner = THIS_MODULE,\n");
+}
+
+/// Ctrl-C stops a search and exits 130.
+#[cfg(unix)]
+#[test]
+fn interrupt_exits_130() {
+    let r = Repo::new("interrupt");
+    let line = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron\n".repeat(20_000);
+    for i in 0..60 {
+        r.write(&format!("f{i}.txt"), line.as_bytes());
+    }
+    // a signal that lands before the handler is installed kills the process: on a loaded machine
+    // start-up can take long, so wait longer and try again; a missing handler fails every attempt
+    let mut last = None;
+    for wait_ms in [200u64, 600, 1500] {
+        let mut child = Command::new(BIN)
+            .args(["grep", "-j", "1", "--fuzzy=3", "omicron_pi_rho_sigma"])
+            .current_dir(&r.root)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(wait_ms));
+        if child.try_wait().unwrap().is_some() {
+            eprintln!("search finished before the signal; nothing to interrupt on this machine");
+            return;
+        }
+        // the system call, not a `kill` binary: minimal images have none
+        extern "C" {
+            fn kill(pid: i32, sig: i32) -> i32;
+        }
+        assert_eq!(unsafe { kill(child.id() as i32, 2) }, 0, "SIGINT");
+        let st = child.wait().unwrap();
+        if st.code() == Some(130) {
+            return;
+        }
+        last = Some(st);
+    }
+    panic!("Ctrl-C did not stop the search with exit code 130: {last:?}");
+}
+
+/// With --json (or SCRUTATE_DIAGNOSTICS=json) an error is one JSON record on stderr.
+#[test]
+fn errors_are_json_when_asked() {
+    let r = Repo::new("jsonerr");
+    r.write("a.txt", b"x\n");
+    let (code, _, err) = r.run(&["grep", "--json", "(unclosed"]);
+    assert_eq!(code, 2);
+    let v: serde_json::Value = serde_json::from_str(err.trim()).unwrap_or_else(|e| panic!("{e}: {err}"));
+    assert_eq!(v["type"], "error");
+    assert_eq!(v["schema"], 1);
+    assert!(v["message"].as_str().unwrap().contains("unclosed"), "{v}");
+    let (code, _, err) = run_in(&r.root, &["outline", "missing.py"], &[("SCRUTATE_DIAGNOSTICS", "json")]);
+    if code == 2 {
+        let v: serde_json::Value = serde_json::from_str(err.trim().lines().last().unwrap()).unwrap();
+        assert_eq!(v["type"], "error");
+    }
+    let (code, _, err) = r.run(&["grep", "(unclosed"]);
+    assert_eq!(code, 2);
+    assert!(err.starts_with("scrutate: error: "), "{err}");
+}
+
+#[test]
+fn a_file_searched_in_ranges_equals_one_pass() {
+    let r = Repo::new("split");
+    let mut big = String::new();
+    for i in 0..4000 {
+        match i % 7 {
+            0 => big.push_str(&format!("alpha {i} König\n")),
+            3 => big.push_str(&format!("{}\r\n", "x".repeat(i % 300))),
+            5 => big.push('\n'),
+            _ => big.push_str(&format!("beta {i} konig gamma\n")),
+        }
+    }
+    big.push_str(&"long ".repeat(400)); // a line longer than a range, and no final newline
+    big.push_str("alpha tail");
+    r.write("big.txt", big.as_bytes());
+    let mut late_nul = big.clone().into_bytes();
+    late_nul.splice(late_nul.len() - 500..late_nul.len() - 500, [0u8]);
+    r.write("late_nul.txt", &late_nul);
+    let mut bom = vec![0xEF, 0xBB, 0xBF];
+    bom.extend_from_slice(big.as_bytes());
+    r.write("bom.txt", &bom);
+    r.write("one_line.txt", format!("{}alpha beta{}", "y".repeat(5000), "z".repeat(5000)).as_bytes());
+    r.write("one_line_nul.txt", format!("{}alpha beta{}\0tail alpha", "y".repeat(5000), "z".repeat(5000)).as_bytes());
+    for args in [
+        &["grep", "alpha"][..],
+        &["grep", "-i", "KÖNIG"],
+        &["grep", "--json", "beta 2"],
+        &["grep", "-c", "konig"],
+        &["grep", "-v", "a"],
+        &["grep", "--json", "-v", "e"],
+        &["grep", "x{20}"],
+        &["grep", "nothing here"],
+        &["grep", "-j", "3", "gamma"],
+    ] {
+        for file in ["big.txt", "late_nul.txt", "bom.txt", "one_line.txt", "one_line_nul.txt"] {
+            let mut a = args.to_vec();
+            a.push(file);
+            let one = untimed(run_in(&r.root, &a, &[("SCRUTATE_SPLIT_FILE_BYTES", "999999999999")]));
+            let split = untimed(run_in(&r.root, &a, &[("SCRUTATE_SPLIT_FILE_BYTES", "1000")]));
+            assert_eq!(one, split, "{a:?}");
+            assert!(one.0 == 0 || one.0 == 1, "{a:?}: {one:?}");
+            if one.0 == 0 && !a.contains(&"-c") && !a.contains(&"--json") {
+                assert!(one.1.iter().all(|l| l.starts_with(&format!("{file}:"))), "{a:?}: {:?}", &one.1[..1]);
+            }
+        }
+    }
+}
+
+#[test]
+fn small_tree_path_equals_parallel_walk() {
+    let r = python_repo("smalltree");
+    r.write(".gitignore", b"ignored/\n*.log\n");
+    r.write("ignored/x.py", b"make_widget_1 hidden by gitignore\n");
+    r.write("a.log", b"make_widget_1 in a log\n");
+    r.write(".hidden/h.py", b"make_widget_1 in a hidden dir\n");
+    r.write("bin.dat", b"make_widget_1\0binary\n");
+    for args in [
+        &["grep", "--sort", "make_widget"][..],
+        &["grep", "--sort", "--json", "-i", "WIDGET"],
+        &["grep", "--sort", "--hidden", "--no-ignore", "make_widget_1"],
+        &["grep", "--sort", "-c", "import"],
+        &["grep", "--sort", "-l", "widget"],
+        &["grep", "--sort", "-g", "*.md", "widgets"],
+    ] {
+        let small = untimed(run_in(&r.root, args, &[("SCRUTATE_SMALL_TREE", "100000")]));
+        let parallel = untimed(run_in(&r.root, args, &[("SCRUTATE_SMALL_TREE", "0")]));
+        assert_eq!(small, parallel, "{args:?}");
+        assert_eq!(small.0, 0, "{args:?}: {small:?}");
+    }
 }

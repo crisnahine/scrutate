@@ -2,7 +2,7 @@
 //!
 //! The index keeps the exact file layout the Python reference engine writes, so an index built by
 //! either engine is readable by the other (that is how the parity tests work). Only the dtypes the
-//! engine uses are supported: i64, i32, u8, f32, f64, f16, bool and fixed-width unicode strings.
+//! engine uses are supported: i64, i32, u64, u32, u8, f32, f64, f16, bool and fixed-width unicode strings.
 
 use std::fs::File;
 use std::io::{Read, Write};
@@ -44,6 +44,12 @@ unsafe impl Pod for i64 {
 }
 unsafe impl Pod for i32 {
     const DESCR: &'static [&'static str] = &["<i4"];
+}
+unsafe impl Pod for u32 {
+    const DESCR: &'static [&'static str] = &["<u4"];
+}
+unsafe impl Pod for u64 {
+    const DESCR: &'static [&'static str] = &["<u8"];
 }
 unsafe impl Pod for u8 {
     const DESCR: &'static [&'static str] = &["|u1"];
@@ -135,8 +141,10 @@ impl Npy {
         Ok(Npy { descr, shape, fortran, offset, backing: Backing::Owned(bytes) })
     }
 
+    /// Number of elements; a shape whose product overflows (a damaged header) saturates, so every
+    /// size check against the data fails instead of wrapping.
     pub fn len(&self) -> usize {
-        self.shape.iter().product::<usize>()
+        self.shape.iter().try_fold(1usize, |a, &d| a.checked_mul(d)).unwrap_or(usize::MAX)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -161,12 +169,12 @@ impl Npy {
         }
         let n = self.len();
         let bytes = self.bytes();
-        let need = n * std::mem::size_of::<T>();
+        let need = n.saturating_mul(std::mem::size_of::<T>());
         if bytes.len() < need {
             bail!("array data truncated");
         }
         let ptr = bytes.as_ptr();
-        if (ptr as usize) % std::mem::align_of::<T>() != 0 {
+        if !(ptr as usize).is_multiple_of(std::mem::align_of::<T>()) {
             bail!("unaligned array data");
         }
         Ok(unsafe { std::slice::from_raw_parts(ptr as *const T, n) })
@@ -180,7 +188,7 @@ impl Npy {
         let n = self.len();
         let size = std::mem::size_of::<T>();
         let bytes = self.bytes();
-        if bytes.len() < n * size {
+        if bytes.len() < n.saturating_mul(size) {
             bail!("array data truncated");
         }
         let mut out: Vec<T> = Vec::with_capacity(n);
@@ -206,6 +214,13 @@ impl Npy {
         let width: usize = self.descr.strip_prefix("<U").and_then(|w| w.parse().ok()).ok_or_else(|| anyhow!("not a unicode array: {}", self.descr))?;
         let n = self.len();
         let bytes = self.bytes();
+        if n.checked_mul(width).and_then(|x| x.checked_mul(4)).is_none_or(|need| bytes.len() < need) {
+            bail!("string array data truncated");
+        }
+        if width == 0 && n > 0 {
+            // zero-width strings take no bytes, so the shape alone would size the allocation
+            bail!("zero-width string array");
+        }
         let mut out = Vec::with_capacity(n);
         for i in 0..n {
             let mut s = String::new();
@@ -388,5 +403,23 @@ mod header_tests {
         assert_eq!(extract(h, "'shape'").unwrap().trim(), "(11127, 256)");
         let h2 = "{'descr': '<U102', 'fortran_order': False, 'shape': (), }\n";
         assert_eq!(extract(h2, "'shape'").unwrap().trim(), "()");
+    }
+
+    #[test]
+    fn damaged_headers_are_errors_not_panics() {
+        // found by fuzzing: a string array shorter than its shape claims
+        let mut bytes = header_bytes("<U13", &[47]);
+        bytes.extend_from_slice(&[0u8; 88]);
+        assert!(Npy::from_bytes(bytes).unwrap().to_strings().is_err());
+        // a shape whose element count overflows must not wrap into a small one
+        let mut bytes = header_bytes("<i8", &[1 << 62, 8]);
+        bytes.extend_from_slice(&[0u8; 64]);
+        let a = Npy::from_bytes(bytes).unwrap();
+        assert_eq!(a.len(), usize::MAX);
+        assert!(a.view::<i64>().is_err() && a.to_vec::<i64>().is_err());
+        // zero-width strings with a huge shape: an error, not an allocation of the shape's size
+        let mut bytes = header_bytes("<U0", &[1 << 40]);
+        bytes.extend_from_slice(&[0u8; 8]);
+        assert!(Npy::from_bytes(bytes).unwrap().to_strings().is_err());
     }
 }

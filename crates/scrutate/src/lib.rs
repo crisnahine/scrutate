@@ -20,6 +20,7 @@ pub mod rank;
 pub mod search;
 pub mod semantic;
 pub mod text;
+pub mod textindex;
 
 use std::path::Path;
 use std::sync::Arc;

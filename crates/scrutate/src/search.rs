@@ -647,7 +647,7 @@ impl Searcher {
             return format!("error: cannot read {path}");
         };
         let text = String::from_utf8_lossy(&bytes);
-        let lines = crate::text::py_splitlines(&text);
+        let lines = crate::text::split_lines(&text);
         let n = lines.len() as i64;
         let end = end.unwrap_or(start + max_lines - 1).min(n).min(start + max_lines - 1);
         let mut out = Vec::new();

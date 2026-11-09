@@ -229,7 +229,9 @@ fn symlinks_ignores_and_nested_repos() {
     fs::write(outside.join("secret.py"), b"def outside_secret():\n    pass\n").unwrap();
     symlink(&outside, r.root.join("escape")).unwrap();
     symlink(r.root.join("src/a.py"), r.root.join("alias.py")).unwrap();
-    std::process::Command::new("git").args(["init", "-q"]).current_dir(&r.root).output().ok();
+    // .gitignore rules apply inside a git repository; a `.git` directory is all the walker checks,
+    // so the test does not depend on a git binary being installed
+    fs::create_dir_all(r.root.join(".git")).unwrap();
 
     let mut ix = r.index();
     ix.update(true).unwrap();

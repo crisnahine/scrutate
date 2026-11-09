@@ -1,0 +1,46 @@
+[package]
+name = "scrutate-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+regex = "1"
+grep-matcher = "0.1"
+scrutate = { path = "../crates/scrutate" }
+
+# a workspace of its own: the fuzz targets need nightly and never build with the product
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "npy"
+path = "fuzz_targets/npy.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "trigram_query"
+path = "fuzz_targets/trigram_query.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzzy_matcher"
+path = "fuzz_targets/fuzzy_matcher.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_file"
+path = "fuzz_targets/parse_file.rs"
+test = false
+doc = false
+bench = false

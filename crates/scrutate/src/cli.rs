@@ -18,6 +18,59 @@ use crate::text::query_words;
 
 pub const SCHEMA: u32 = 1; // version of every JSON record this CLI emits
 
+/// Ctrl-C sets a cancellation flag (searches stop between files, exit 130). Direct libc / Win32
+/// calls: the `ctrlc` crate links Foundation and libobjc into every macOS process, about 1 ms of
+/// start-up on each invocation.
+mod interrupt {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, OnceLock};
+
+    static FLAG: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+
+    // async-signal-safe: an atomic load of the cell and an atomic store
+    fn fire() {
+        if let Some(f) = FLAG.get() {
+            f.store(true, Ordering::Relaxed);
+        }
+    }
+
+    #[cfg(unix)]
+    pub fn install(flag: Arc<AtomicBool>) {
+        extern "C" fn handler(_: i32) {
+            fire()
+        }
+        extern "C" {
+            fn signal(sig: i32, handler: extern "C" fn(i32)) -> usize;
+        }
+        const SIGINT: i32 = 2;
+        if FLAG.set(flag).is_ok() {
+            unsafe {
+                signal(SIGINT, handler);
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    pub fn install(flag: Arc<AtomicBool>) {
+        unsafe extern "system" fn handler(_: u32) -> i32 {
+            fire();
+            1
+        }
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn SetConsoleCtrlHandler(handler: Option<unsafe extern "system" fn(u32) -> i32>, add: i32) -> i32;
+        }
+        if FLAG.set(flag).is_ok() {
+            unsafe {
+                SetConsoleCtrlHandler(Some(handler), 1);
+            }
+        }
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    pub fn install(_flag: Arc<AtomicBool>) {}
+}
+
 #[derive(Parser)]
 #[command(name = "scrutate", version, about = "Code search: instant grep-class search plus an indexed, ranked code-intelligence engine", long_about = None)]
 pub struct Cli {
@@ -45,9 +98,18 @@ pub enum Cmd {
     /// Engine A: instant search of files (no index). PATTERN is a regex unless -F, --ident or --fuzzy
     #[command(alias = "g")]
     Grep {
-        pattern: String,
+        /// the pattern (omit it when patterns are given with -e)
+        #[arg(required_unless_present = "regexp")]
+        pattern: Option<String>,
         /// files or directories to search (default: current directory)
         paths: Vec<PathBuf>,
+        /// a pattern to search for; repeatable, a line matching any of them matches
+        #[arg(short = 'e', long = "regexp", value_name = "PATTERN")]
+        regexp: Vec<String>,
+        /// use the text index (Engine B, built by `scrutate index`) to read only the files that can
+        /// match; results are those of the indexed snapshot of --root
+        #[arg(long)]
+        index: bool,
         /// treat PATTERN as a literal string
         #[arg(short = 'F', long)]
         fixed_strings: bool,
@@ -133,10 +195,16 @@ pub enum Cmd {
         #[arg(long)]
         symbols: bool,
     },
-    /// Engine B: build or update the index
+    /// Engine B: build or update the index (code intelligence and the text index for `grep --index`)
     Index {
         #[arg(long)]
         force: bool,
+        /// only the text index (trigram postings for `grep --index`)
+        #[arg(long, conflicts_with = "no_text")]
+        text: bool,
+        /// skip the text index
+        #[arg(long)]
+        no_text: bool,
     },
     /// Engine B: ranked search by meaning, name or identifier
     #[command(alias = "s")]
@@ -325,7 +393,9 @@ pub fn run() -> Result<i32> {
     match cli.cmd {
         Cmd::Grep {
             pattern,
-            paths,
+            mut paths,
+            regexp,
+            index,
             fixed_strings,
             ident,
             fuzzy,
@@ -361,12 +431,46 @@ pub fn run() -> Result<i32> {
                 }
                 return Ok(0);
             }
-            let mode = match (fixed_strings, ident, fuzzy) {
+            let mut mode = match (fixed_strings, ident, fuzzy) {
                 (_, _, Some(n)) => Mode::Fuzzy { max_edits: n },
                 (_, true, _) => Mode::Identifier,
                 (true, _, _) => Mode::Literal,
                 _ => Mode::Regex,
             };
+            let pattern = if regexp.is_empty() {
+                pattern.unwrap_or_default()
+            } else {
+                // with -e, the first positional argument is a path
+                if let Some(p) = pattern {
+                    paths.insert(0, PathBuf::from(p));
+                }
+                match regexp.len() {
+                    1 => regexp.into_iter().next().unwrap_or_default(),
+                    _ => {
+                        if matches!(mode, Mode::Fuzzy { .. }) {
+                            anyhow::bail!("--fuzzy takes one pattern");
+                        }
+                        let each = mode;
+                        let part = |p: &str| match each {
+                            Mode::Literal => regex::escape(p),
+                            Mode::Identifier => instant::identifier_regex(p),
+                            _ => p.to_string(),
+                        };
+                        mode = Mode::Regex;
+                        regexp.iter().map(|p| format!("(?:{})", part(p))).collect::<Vec<_>>().join("|")
+                    }
+                }
+            };
+            if index {
+                if hidden || no_ignore || follow || max_depth.is_some() || max_filesize.is_some() {
+                    anyhow::bail!(
+                        "--index searches the files of the default walk; drop --hidden/--no-ignore/-L/--max-depth/--max-filesize or search without --index"
+                    );
+                }
+                if !paths.is_empty() {
+                    anyhow::bail!("--index searches the indexed repository (--root); narrow it with -g/-t instead of paths");
+                }
+            }
             let o = Options {
                 pattern,
                 mode,
@@ -399,29 +503,50 @@ pub fn run() -> Result<i32> {
                 ..Options::default()
             };
             let roots: Vec<PathBuf> = if paths.is_empty() { vec![PathBuf::from(".")] } else { paths };
-            grep_command(roots, o, GrepOutput { files_with_matches, count, sort, json, stats, symbols, root: cli.root, no_color })
+            grep_command(roots, o, GrepOutput { files_with_matches, count, sort, json, stats, symbols, root: cli.root, no_color, indexed: index })
         }
-        Cmd::Index { force } => {
-            let mut s = crate::open(&cli.root)?;
-            s.ix.progress = true;
-            let st = match s.ix.update(force) {
-                Ok(st) => st,
-                Err(e) if crate::index::error_is_corruption(&e) => {
-                    eprintln!("[scrutate] index database corrupt ({e:#}); rebuilding");
-                    drop(s);
-                    crate::index::wipe_index(&cli.root);
-                    s = crate::open(&cli.root)?;
-                    s.ix.progress = true;
-                    s.ix.update(true)?
-                }
-                Err(e) => return Err(e),
-            };
-            println!("{} files, {} changed, {} chunks, semantic={}, {:.1}s", st.files_total, st.files_changed, st.chunks, st.semantic, st.seconds);
+        Cmd::Index { force, text, no_text } => {
+            let progress = std::io::stderr().is_terminal();
+            if !text {
+                let mut s = crate::open(&cli.root)?;
+                s.ix.progress = true;
+                let st = match s.ix.update(force) {
+                    Ok(st) => st,
+                    Err(e) if crate::index::error_is_corruption(&e) => {
+                        eprintln!("[scrutate] index database corrupt ({e:#}); rebuilding");
+                        drop(s);
+                        crate::index::wipe_index(&cli.root);
+                        s = crate::open(&cli.root)?;
+                        s.ix.progress = true;
+                        s.ix.update(true)?
+                    }
+                    Err(e) => return Err(e),
+                };
+                println!("{} files, {} changed, {} chunks, semantic={}, {:.1}s", st.files_total, st.files_changed, st.chunks, st.semantic, st.seconds);
+            }
+            if !no_text {
+                let root = std::fs::canonicalize(&cli.root).unwrap_or_else(|_| cli.root.clone());
+                let t = crate::textindex::update(&root, force, progress)?;
+                println!(
+                    "text index: {} files, {} changed, {} removed, {} segment(s), {:.1} MB, {:.1}s",
+                    t.files,
+                    t.files_changed,
+                    t.files_removed,
+                    t.segments,
+                    t.bytes as f64 / 1e6,
+                    t.seconds
+                );
+            }
             Ok(0)
         }
         Cmd::Stats => {
             let s = open_fresh(&cli.root)?;
-            println!("{}", serde_json::to_string(&s.ix.stats()?)?);
+            let mut v = s.ix.stats()?;
+            if let Some(t) = crate::textindex::TextIndex::open(&s.ix.root)? {
+                v["text_index"] =
+                    serde_json::json!({"files": t.files(), "segments": t.segments(), "bytes": crate::textindex::TextIndex::disk_bytes(&s.ix.root)});
+            }
+            println!("{}", serde_json::to_string(&v)?);
             Ok(0)
         }
         Cmd::Search { query, alt, also, k, why, json } => {
@@ -745,13 +870,16 @@ struct GrepOutput {
     symbols: bool,
     root: PathBuf,
     no_color: bool,
+    /// answer from the text index of `root` instead of walking `roots`
+    indexed: bool,
 }
 
 fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32> {
     let cancel = Arc::new(AtomicBool::new(false));
-    {
-        let c = Arc::clone(&cancel);
-        let _ = ctrlc::set_handler(move || c.store(true, Ordering::Relaxed));
+    interrupt::install(Arc::clone(&cancel));
+    let colour = color_choice(out.no_color) != ColorChoice::Never;
+    if !out.json && !colour && !out.sort && !out.symbols && !o.count_only && !o.files_only && o.max_count.is_none() {
+        return grep_plain(roots, o, out, cancel);
     }
     // buffered: one write per 64 KB instead of several per matching line
     let mut w = termcolor::BufferedStandardStream::stdout(color_choice(out.no_color));
@@ -768,7 +896,6 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
     let mut seen_files: std::collections::HashSet<Arc<str>> = std::collections::HashSet::new();
     let defer = out.sort || out.count || out.files_with_matches || out.symbols;
     let bookkeeping = out.count || out.files_with_matches;
-    let colour = color_choice(out.no_color) != ColorChoice::Never;
     let mut found = false;
     let mut linebuf: Vec<u8> = Vec::with_capacity(512);
     let mut emit = |h: &instant::Hit, w: &mut termcolor::BufferedStandardStream| -> Result<()> {
@@ -781,23 +908,7 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
         if !colour {
             // plain output: one assembled line, one write (the common piped case)
             linebuf.clear();
-            linebuf.extend_from_slice(h.path.as_bytes());
-            linebuf.push(if h.context { b'-' } else { b':' });
-            let mut n = h.line;
-            let mut digits = [0u8; 20];
-            let mut i = digits.len();
-            loop {
-                i -= 1;
-                digits[i] = b'0' + (n % 10) as u8;
-                n /= 10;
-                if n == 0 {
-                    break;
-                }
-            }
-            linebuf.extend_from_slice(&digits[i..]);
-            linebuf.push(if h.context { b'-' } else { b':' });
-            linebuf.extend_from_slice(h.text.as_bytes());
-            linebuf.push(b'\n');
+            instant::format_plain(&mut linebuf, &h.path, h.line, h.text.as_bytes(), h.context);
             w.write_all(&linebuf)?;
             return Ok(());
         }
@@ -857,7 +968,15 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
                 }
             }
         };
-        instant::search(&roots, &o, Arc::clone(&cancel), &mut sink)?
+        if out.indexed {
+            let root = std::fs::canonicalize(&out.root).unwrap_or_else(|_| out.root.clone());
+            let ti = crate::textindex::TextIndex::open(&root)?
+                .ok_or_else(|| anyhow::anyhow!("no text index in {}; build it with `scrutate index --text`", root.display()))?;
+            let files = ti.candidates(&crate::textindex::query_for(&o)?, o.multiline)?;
+            instant::search_files(&root, files, &o, Arc::clone(&cancel), &mut sink)?
+        } else {
+            instant::search(&roots, &o, Arc::clone(&cancel), &mut sink)?
+        }
     };
     if pipe_closed {
         return Ok(if found { 0 } else { 1 });
@@ -916,6 +1035,45 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
     Ok(if found { 0 } else { 1 })
 }
 
+/// Plain unsorted output, written by the search threads (see `instant::PlainSink`).
+fn grep_plain(roots: Vec<PathBuf>, o: Options, out: GrepOutput, cancel: Arc<AtomicBool>) -> Result<i32> {
+    let sink = Arc::new(instant::PlainSink::new(Box::new(std::io::stdout())));
+    let stats = if out.indexed {
+        let root = std::fs::canonicalize(&out.root).unwrap_or_else(|_| out.root.clone());
+        let ti = crate::textindex::TextIndex::open(&root)?
+            .ok_or_else(|| anyhow::anyhow!("no text index in {}; build it with `scrutate index --text`", root.display()))?;
+        let files = ti.candidates(&crate::textindex::query_for(&o)?, o.multiline)?;
+        instant::search_files_plain(&root, files, &o, Arc::clone(&cancel), Arc::clone(&sink))?
+    } else {
+        instant::search_plain(&roots, &o, Arc::clone(&cancel), Arc::clone(&sink))?
+    };
+    let found = stats.matches > 0;
+    if sink.broken.load(Ordering::Relaxed) {
+        return Ok(if found { 0 } else { 1 }); // the reader went away (`| head`): stop quietly
+    }
+    if let Err(e) = sink.flush() {
+        if e.kind() != std::io::ErrorKind::BrokenPipe {
+            return Err(e.into());
+        }
+    }
+    if out.stats {
+        eprintln!(
+            "{} matches in {} of {} files ({:.1} MB) in {:.1} ms{}{}",
+            stats.matches,
+            stats.files_matched,
+            stats.files_searched,
+            stats.bytes_searched as f64 / 1e6,
+            stats.elapsed_ms,
+            if stats.errors > 0 { format!(", {} unreadable", stats.errors) } else { String::new() },
+            if stats.cancelled { ", stopped early" } else { "" }
+        );
+    }
+    if stats.cancelled && !o.max_results.map(|m| stats.matches >= m).unwrap_or(false) {
+        return Ok(130);
+    }
+    Ok(if found { 0 } else { 1 })
+}
+
 /// Engine B enrichment of Engine A results: group matching lines by the enclosing symbol.
 fn grouped_by_symbol(root: &Path, hits: &mut [instant::Hit], w: &mut termcolor::BufferedStandardStream, json: bool) -> Result<()> {
     let s = open_fresh(root)?;
@@ -959,7 +1117,17 @@ fn find_command(root: &Path, query: &str, k: usize, json: bool, no_color: bool) 
         return grep_command(
             vec![root.to_path_buf()],
             o,
-            GrepOutput { files_with_matches: false, count: false, sort: true, json, stats: false, symbols: false, root: root.to_path_buf(), no_color },
+            GrepOutput {
+                files_with_matches: false,
+                count: false,
+                sort: true,
+                json,
+                stats: false,
+                symbols: false,
+                root: root.to_path_buf(),
+                no_color,
+                indexed: false,
+            },
         );
     }
     if has_index || small_repo() {
@@ -973,7 +1141,17 @@ fn find_command(root: &Path, query: &str, k: usize, json: bool, no_color: bool) 
     grep_command(
         vec![root.to_path_buf()],
         o,
-        GrepOutput { files_with_matches: false, count: false, sort: true, json, stats: false, symbols: false, root: root.to_path_buf(), no_color },
+        GrepOutput {
+            files_with_matches: false,
+            count: false,
+            sort: true,
+            json,
+            stats: false,
+            symbols: false,
+            root: root.to_path_buf(),
+            no_color,
+            indexed: false,
+        },
     )
 }
 
@@ -1027,20 +1205,35 @@ fn batch_command(root: &Path, file: &Path, features: bool, timing: bool) -> Resu
     Ok(0)
 }
 
+/// Errors go to stderr as one line of text, or as one JSON record (`{"type": "error", ...}`) when
+/// the command was given `--json` or `SCRUTATE_DIAGNOSTICS=json` is set, so callers that parse
+/// the output can parse the failure too.
+fn diagnostic(kind: &str, message: &str) {
+    let json = std::env::var("SCRUTATE_DIAGNOSTICS").map(|v| v == "json").unwrap_or(false) || std::env::args().any(|a| a == "--json");
+    if json {
+        eprintln!("{}", serde_json::json!({"type": kind, "schema": SCHEMA, "message": message}));
+    } else {
+        eprintln!("scrutate: {}: {message}", kind.replace('_', " "));
+    }
+}
+
 pub fn main_exit() {
     // a panic is a bug, but the user still gets a one-line diagnosis and a stable exit code
     // (2 = error) instead of a backtrace dump; RUST_BACKTRACE=1 shows the details
     std::panic::set_hook(Box::new(|info| {
         let msg = info.payload().downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| info.payload().downcast_ref::<String>().cloned()).unwrap_or_default();
-        eprintln!(
-            "scrutate: internal error: {msg} ({}). If this persists run `scrutate index --force`; please report it with RUST_BACKTRACE=1.",
-            info.location().map(|l| l.to_string()).unwrap_or_default()
+        diagnostic(
+            "internal_error",
+            &format!(
+                "{msg} ({}). If this persists run `scrutate index --force`; please report it with RUST_BACKTRACE=1.",
+                info.location().map(|l| l.to_string()).unwrap_or_default()
+            ),
         );
     }));
     let code = match std::panic::catch_unwind(run) {
         Ok(Ok(c)) => c,
         Ok(Err(e)) => {
-            eprintln!("scrutate: error: {e:#}");
+            diagnostic("error", &format!("{e:#}"));
             2
         }
         Err(_) => 2,

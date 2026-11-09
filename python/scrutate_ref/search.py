@@ -20,7 +20,7 @@ import numpy as np
 from .index import Index, unpack_text
 from .lex import tok_key
 from .rank import TreeEnsemble, default_ranker_path
-from .text import QUERY_STOP, literal_candidates, name_key, query_terms, query_wholes, raw_subwords
+from .text import QUERY_STOP, literal_candidates, name_key, query_terms, query_wholes, raw_subwords, split_lines
 
 PRUNE = 200  # the learned ranker sees (at most) this many candidates, best by the linear blend
 LEX_LIMIT = 100
@@ -416,7 +416,7 @@ class Searcher:
             return "error: path outside repo"
         try:
             with open(full, encoding="utf8", errors="replace") as f:
-                lines = f.read().splitlines()
+                lines = split_lines(f.read())
         except OSError as e:
             return f"error: {e}"
         end = min(end or start + max_lines - 1, len(lines), start + max_lines - 1)

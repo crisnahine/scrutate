@@ -9,10 +9,11 @@
 //!
 //! Results stream to a sink as they are found; a cancellation flag stops the walk between files.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -305,8 +306,84 @@ impl Matcher for FuzzyMatcher {
 // ------------------------------------------------------------------------- matcher selection
 #[derive(Clone)]
 pub enum AnyMatcher {
-    Regex(grep_regex::RegexMatcher),
+    Regex(LineRegex),
     Fuzzy(Box<FuzzyMatcher>),
+}
+
+/// grep-regex's matcher, except that a regex with no usable literal prefix whose every match ends
+/// in one of a few literals (`\w+_(suspend|resume)\(`) finds candidate lines by searching for those
+/// literals: the regex engine would otherwise run its automaton over every byte.
+#[derive(Clone, Debug)]
+pub struct LineRegex {
+    inner: grep_regex::RegexMatcher,
+    suffixes: Option<regex::bytes::Regex>,
+}
+
+impl LineRegex {
+    fn new(inner: grep_regex::RegexMatcher, pattern: &str, insensitive: bool) -> LineRegex {
+        let suffixes = if inner.line_terminator().is_some() { suffix_searcher(pattern, insensitive) } else { None };
+        LineRegex { inner, suffixes }
+    }
+}
+
+/// A searcher for the literals every match of `pattern` ends with, when that beats the regex engine.
+/// An alternation of literals compiles to the engine's vectorised multi-literal search.
+fn suffix_searcher(pattern: &str, insensitive: bool) -> Option<regex::bytes::Regex> {
+    use regex_syntax::hir::literal::{ExtractKind, Extractor};
+    let hir = regex_syntax::ParserBuilder::new().case_insensitive(insensitive).utf8(false).build().parse(pattern).ok()?;
+    let prefixes = Extractor::new().kind(ExtractKind::Prefix).extract(&hir);
+    if prefixes.literals().is_some_and(|l| !l.is_empty() && l.iter().all(|x| x.len() >= 2)) {
+        return None; // the engine's own prefilter already searches for these
+    }
+    let suffixes = Extractor::new().kind(ExtractKind::Suffix).extract(&hir);
+    let lits = suffixes.literals()?;
+    if lits.is_empty() || lits.len() > 64 || lits.iter().any(|l| l.len() < 3 || l.as_bytes().contains(&b'\n')) {
+        return None;
+    }
+    let alts: Vec<String> = lits.iter().map(|l| l.as_bytes().iter().map(|b| format!("\\x{b:02X}")).collect()).collect();
+    regex::bytes::Regex::new(&format!("(?-u:{})", alts.join("|"))).ok()
+}
+
+impl Matcher for LineRegex {
+    type Captures = grep_regex::RegexCaptures;
+    type Error = NoError;
+
+    fn find_at(&self, haystack: &[u8], at: usize) -> Result<Option<MatchSpan>, NoError> {
+        self.inner.find_at(haystack, at)
+    }
+    fn new_captures(&self) -> Result<Self::Captures, NoError> {
+        self.inner.new_captures()
+    }
+    fn capture_count(&self) -> usize {
+        self.inner.capture_count()
+    }
+    fn capture_index(&self, name: &str) -> Option<usize> {
+        self.inner.capture_index(name)
+    }
+    fn try_find_iter<F, E>(&self, haystack: &[u8], matched: F) -> Result<Result<(), E>, NoError>
+    where
+        F: FnMut(MatchSpan) -> Result<bool, E>,
+    {
+        self.inner.try_find_iter(haystack, matched)
+    }
+    fn captures_at(&self, haystack: &[u8], at: usize, caps: &mut Self::Captures) -> Result<bool, NoError> {
+        self.inner.captures_at(haystack, at, caps)
+    }
+    fn shortest_match_at(&self, haystack: &[u8], at: usize) -> Result<Option<usize>, NoError> {
+        self.inner.shortest_match_at(haystack, at)
+    }
+    fn non_matching_bytes(&self) -> Option<&grep_matcher::ByteSet> {
+        self.inner.non_matching_bytes()
+    }
+    fn line_terminator(&self) -> Option<LineTerminator> {
+        self.inner.line_terminator()
+    }
+    fn find_candidate_line(&self, haystack: &[u8]) -> Result<Option<grep_matcher::LineMatchKind>, NoError> {
+        match &self.suffixes {
+            Some(re) => Ok(re.find(haystack).map(|m| grep_matcher::LineMatchKind::Candidate(m.start()))),
+            None => self.inner.find_candidate_line(haystack),
+        }
+    }
 }
 
 /// The parts of an identifier in any casing style: `XMLHttpRequest2` -> xml, http, request, 2;
@@ -366,15 +443,22 @@ pub fn build_matcher(o: &Options) -> Result<AnyMatcher> {
                 _ => o.pattern.clone(),
             };
             let mut b = RegexMatcherBuilder::new();
+            // ^ and $ are line anchors in every mode, as in ripgrep; without it the searcher has to
+            // run the regex one line at a time
             b.case_insensitive(insensitive && o.mode != Mode::Identifier)
                 .word(o.word)
-                .multi_line(o.multiline)
+                .multi_line(true)
                 .dot_matches_new_line(false)
                 .size_limit(o.regex_size_limit)
                 .dfa_size_limit(o.dfa_size_limit)
                 .line_terminator(if o.multiline { None } else { Some(b'\n') });
             let m = b.build(&pat).with_context(|| format!("invalid pattern {:?}", o.pattern))?;
-            Ok(AnyMatcher::Regex(m))
+            let suffix_ok = !o.word && o.mode != Mode::Literal;
+            Ok(AnyMatcher::Regex(if suffix_ok {
+                LineRegex::new(m, &pat, insensitive && o.mode != Mode::Identifier)
+            } else {
+                LineRegex { inner: m, suffixes: None }
+            }))
         }
     }
 }
@@ -409,11 +493,89 @@ pub fn type_list() -> Vec<(String, Vec<String>)> {
 }
 
 // ------------------------------------------------------------------------- the search
+/// Plain `path:line:text` output written by the search threads themselves: each file's lines are
+/// formatted into a buffer and written in one call, so no per-line allocation or channel message.
+/// Used for the common piped case (no colour, no JSON, no sorting); the bytes are the same as the
+/// CLI's own formatting of `Hit`s.
+pub struct PlainSink {
+    pub out: Mutex<Box<dyn Write + Send>>,
+    /// the reader went away (`| head`)
+    pub broken: AtomicBool,
+}
+
+impl PlainSink {
+    pub fn new(out: Box<dyn Write + Send>) -> PlainSink {
+        PlainSink { out: Mutex::new(out), broken: AtomicBool::new(false) }
+    }
+
+    fn write(&self, buf: &[u8], cancel: &AtomicBool) {
+        self.write_parts(&[buf], cancel)
+    }
+
+    /// Write several slices as one unit (no other thread's output between them).
+    fn write_parts(&self, parts: &[&[u8]], cancel: &AtomicBool) {
+        if parts.iter().all(|p| p.is_empty()) || self.broken.load(Ordering::Relaxed) {
+            return;
+        }
+        let res = match self.out.lock() {
+            Ok(mut w) => parts.iter().try_for_each(|p| w.write_all(p)),
+            Err(_) => Err(std::io::Error::other("output lock poisoned")),
+        };
+        if res.is_err() {
+            self.broken.store(true, Ordering::Relaxed);
+            cancel.store(true, Ordering::Relaxed);
+        }
+    }
+
+    pub fn flush(&self) -> std::io::Result<()> {
+        match self.out.lock() {
+            Ok(mut w) => w.flush(),
+            Err(_) => Err(std::io::Error::other("output lock poisoned")),
+        }
+    }
+}
+
+/// Line text as UTF-8, invalid bytes replaced. Validates with `from_utf8` first: its word-at-a-time
+/// check is several times faster than the replacing decoder on the (common) valid input.
+fn lossy(b: &[u8]) -> std::borrow::Cow<'_, str> {
+    match std::str::from_utf8(b) {
+        Ok(s) => std::borrow::Cow::Borrowed(s),
+        Err(_) => String::from_utf8_lossy(b),
+    }
+}
+
+/// `path:line:text\n` (`-` separators for context lines), the CLI's plain format. A multi-line
+/// match prints each of its lines with its own number, as grep-class tools do.
+pub fn format_plain(out: &mut Vec<u8>, path: &str, line: u64, text: &[u8], context: bool) {
+    let sep = if context { b'-' } else { b':' };
+    for (k, part) in text.split(|&b| b == b'\n').enumerate() {
+        out.extend_from_slice(path.as_bytes());
+        out.push(sep);
+        let mut n = line + k as u64;
+        let mut digits = [0u8; 20];
+        let mut i = digits.len();
+        loop {
+            i -= 1;
+            digits[i] = b'0' + (n % 10) as u8;
+            n /= 10;
+            if n == 0 {
+                break;
+            }
+        }
+        out.extend_from_slice(&digits[i..]);
+        out.push(sep);
+        out.extend_from_slice(part);
+        out.push(b'\n');
+    }
+}
+
 struct Collector<'a> {
     path: Arc<str>,
     tx: &'a mpsc::Sender<Vec<Hit>>,
     /// hits of the current file, sent in batches (one channel operation per file or 512 lines)
     batch: Vec<Hit>,
+    plain: Option<&'a PlainSink>,
+    out: Vec<u8>,
     want_spans: bool,
     stats_matches: &'a AtomicU64,
     max_results: Option<u64>,
@@ -424,6 +586,12 @@ struct Collector<'a> {
     count_only: bool,
     files_only: bool,
     file_count: u64,
+    /// added to every line number (a range of a split file starts mid-file)
+    line_base: u64,
+    /// keep plain output in `out` instead of writing it (a range of a split file waits its turn)
+    hold: bool,
+    /// the searcher reported binary data
+    binary: bool,
 }
 
 fn spans_in(matcher: &AnyMatcher, line: &[u8]) -> Vec<(usize, usize)> {
@@ -464,12 +632,40 @@ impl<'a> Sink for Collector<'a> {
             return Ok(!self.files_only); // one match is enough to list the file
         }
         let bytes = mat.bytes();
-        let text = String::from_utf8_lossy(bytes.strip_suffix(b"\n").map(|b| b.strip_suffix(b"\r").unwrap_or(b)).unwrap_or(bytes)).into_owned();
+        let line = bytes.strip_suffix(b"\n").map(|b| b.strip_suffix(b"\r").unwrap_or(b)).unwrap_or(bytes);
+        if let Some(p) = self.plain {
+            self.matched = true;
+            let n = self.stats_matches.fetch_add(1, Ordering::Relaxed) + 1;
+            let text = lossy(line);
+            let number = mat.line_number().unwrap_or(0) + self.line_base;
+            if text.len() >= 1 << 16 && !text.contains('\n') && !self.hold {
+                // a very long line is written from where it is instead of being copied into the buffer
+                let mut head = Vec::with_capacity(self.path.len() + 24);
+                format_plain(&mut head, &self.path, number, b"", false);
+                head.pop(); // the newline: the text goes between
+                p.write_parts(&[&self.out, &head, text.as_bytes(), b"\n"], self.cancel);
+                self.out.clear();
+            } else {
+                format_plain(&mut self.out, &self.path, number, text.as_bytes(), false);
+            }
+            if self.out.len() >= 1 << 16 && !self.hold {
+                p.write(&self.out, self.cancel);
+                self.out.clear();
+            }
+            if let Some(max) = self.max_results {
+                if n >= max {
+                    self.cancel.store(true, Ordering::Relaxed);
+                    return Ok(false);
+                }
+            }
+            return Ok(true);
+        }
+        let text = lossy(line).into_owned();
         let spans = if self.invert || !self.want_spans { Vec::new() } else { spans_in(self.matcher, bytes) };
         let column = spans.first().map(|s| s.0 as u64 + 1).unwrap_or(0);
         self.matched = true;
         let n = self.stats_matches.fetch_add(1, Ordering::Relaxed) + 1;
-        self.push(Hit { path: Arc::clone(&self.path), line: mat.line_number().unwrap_or(0), column, text, spans, context: false });
+        self.push(Hit { path: Arc::clone(&self.path), line: mat.line_number().unwrap_or(0) + self.line_base, column, text, spans, context: false });
         if let Some(max) = self.max_results {
             if n >= max {
                 self.cancel.store(true, Ordering::Relaxed);
@@ -481,12 +677,25 @@ impl<'a> Sink for Collector<'a> {
 
     fn context(&mut self, _s: &Searcher, ctx: &SinkContext<'_>) -> Result<bool, std::io::Error> {
         let bytes = ctx.bytes();
-        let text = String::from_utf8_lossy(bytes.strip_suffix(b"\n").unwrap_or(bytes)).into_owned();
-        self.push(Hit { path: Arc::clone(&self.path), line: ctx.line_number().unwrap_or(0), column: 0, text, spans: Vec::new(), context: true });
+        let line = bytes.strip_suffix(b"\n").unwrap_or(bytes);
+        if self.plain.is_some() {
+            format_plain(&mut self.out, &self.path, ctx.line_number().unwrap_or(0) + self.line_base, lossy(line).as_bytes(), true);
+            return Ok(true);
+        }
+        let text = lossy(line).into_owned();
+        self.push(Hit {
+            path: Arc::clone(&self.path),
+            line: ctx.line_number().unwrap_or(0) + self.line_base,
+            column: 0,
+            text,
+            spans: Vec::new(),
+            context: true,
+        });
         Ok(true)
     }
 
-    fn finish(&mut self, _s: &Searcher, _f: &grep_searcher::SinkFinish) -> Result<(), std::io::Error> {
+    fn finish(&mut self, _s: &Searcher, f: &grep_searcher::SinkFinish) -> Result<(), std::io::Error> {
+        self.binary = f.binary_byte_offset().is_some();
         self.flush();
         Ok(())
     }
@@ -500,29 +709,31 @@ impl Collector<'_> {
         }
     }
     fn flush(&mut self) {
+        if let (Some(p), false) = (self.plain, self.hold) {
+            p.write(&self.out, self.cancel);
+            self.out.clear();
+        }
         if !self.batch.is_empty() {
             let _ = self.tx.send(std::mem::take(&mut self.batch));
         }
     }
 }
 
-fn build_walker(roots: &[PathBuf], o: &Options) -> Result<ignore::WalkParallel> {
-    let mut wb = WalkBuilder::new(&roots[0]);
-    for r in &roots[1..] {
-        wb.add(r);
+/// Default number of search threads: the cores, at most 12 (more threads than that only add
+/// contention on the directory walk and the output channel).
+pub fn default_threads(o: &Options) -> usize {
+    static CORES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    if o.threads == 0 {
+        // a system call on some platforms, and asked once per file
+        *CORES.get_or_init(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2).min(12))
+    } else {
+        o.threads
     }
-    wb.hidden(!o.hidden)
-        .ignore(!o.no_ignore)
-        .git_ignore(!o.no_ignore)
-        .git_global(!o.no_ignore)
-        .git_exclude(!o.no_ignore)
-        .parents(!o.no_ignore)
-        .follow_links(o.follow_links)
-        .max_depth(o.max_depth)
-        .max_filesize(o.max_filesize)
-        .threads(if o.threads == 0 { std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2).min(12) } else { o.threads });
-    // the index directory is never searched
-    let mut ob = OverrideBuilder::new(&roots[0]);
+}
+
+/// The glob and file-type filters of `o`, plus the index directory, which is never searched.
+pub fn overrides(root: &Path, o: &Options) -> Result<ignore::overrides::Override> {
+    let mut ob = OverrideBuilder::new(root);
     ob.add("!.scrutate/")?;
     for g in &o.globs {
         ob.add(g).with_context(|| format!("invalid glob {g:?}"))?;
@@ -537,106 +748,443 @@ fn build_walker(roots: &[PathBuf], o: &Options) -> Result<ignore::WalkParallel> 
             ob.add(&if neg { format!("!{g}") } else { g })?;
         }
     }
-    wb.overrides(ob.build()?);
-    Ok(wb.build_parallel())
+    Ok(ob.build()?)
 }
 
-/// Search `roots`, sending every hit to `on_hit` as it is found (from the calling thread). Returns
-/// statistics; `cancel` may be set from another thread (or by `max_results`) to stop early.
-pub fn search(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, mut on_hit: impl FnMut(Hit)) -> Result<Stats> {
-    let t0 = Instant::now();
-    if roots.is_empty() {
-        bail!("no paths to search");
+pub fn build_walker(roots: &[PathBuf], o: &Options) -> Result<ignore::WalkParallel> {
+    Ok(walk_builder(roots, o)?.build_parallel())
+}
+
+fn walk_builder(roots: &[PathBuf], o: &Options) -> Result<WalkBuilder> {
+    let mut wb = WalkBuilder::new(&roots[0]);
+    for r in &roots[1..] {
+        wb.add(r);
     }
-    let matcher = build_matcher(o)?;
-    let walker = build_walker(roots, o)?;
-    let (tx, rx) = mpsc::channel::<Vec<Hit>>();
-    let files_searched = Arc::new(AtomicU64::new(0));
-    let files_matched = Arc::new(AtomicU64::new(0));
-    let matches = Arc::new(AtomicU64::new(0));
-    let bytes = Arc::new(AtomicU64::new(0));
-    let errors = Arc::new(AtomicU64::new(0));
-    let roots_owned: Vec<PathBuf> = roots.to_vec();
-    let opts = o.clone();
-    let matcher_arc = Arc::new(matcher);
-    let cancel2 = Arc::clone(&cancel);
-    let (fs2, fm2, m2, b2, e2) = (Arc::clone(&files_searched), Arc::clone(&files_matched), Arc::clone(&matches), Arc::clone(&bytes), Arc::clone(&errors));
-    let worker = std::thread::spawn(move || {
-        walker.run(|| {
-            let tx = tx.clone();
-            let matcher = Arc::clone(&matcher_arc);
-            let cancel = Arc::clone(&cancel2);
-            let (fs, fm, m, b, e) = (Arc::clone(&fs2), Arc::clone(&fm2), Arc::clone(&m2), Arc::clone(&b2), Arc::clone(&e2));
-            let opts = opts.clone();
-            let roots = roots_owned.clone();
-            let mut searcher = SearcherBuilder::new()
-                .binary_detection(BinaryDetection::quit(0))
-                .line_number(!(opts.count_only || opts.files_only)) // line numbers cost a pass over the buffer
-                .multi_line(opts.multiline)
-                .before_context(opts.before)
-                .after_context(opts.after)
-                .invert_match(opts.invert)
-                .build();
-            Box::new(move |entry| {
-                if cancel.load(Ordering::Relaxed) {
-                    return WalkState::Quit;
+    wb.hidden(!o.hidden)
+        .ignore(!o.no_ignore)
+        .git_ignore(!o.no_ignore)
+        .git_global(!o.no_ignore)
+        .git_exclude(!o.no_ignore)
+        .parents(!o.no_ignore)
+        .follow_links(o.follow_links)
+        .max_depth(o.max_depth)
+        .max_filesize(o.max_filesize)
+        .threads(default_threads(o));
+    wb.overrides(overrides(&roots[0], o)?);
+    Ok(wb)
+}
+
+/// Trees with at most this many files are walked on one thread and searched by a few: starting the
+/// parallel walk costs more there than the search itself. `SCRUTATE_SMALL_TREE` overrides it (0
+/// always walks in parallel; the tests use both).
+fn small_tree_files() -> usize {
+    static V: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *V.get_or_init(|| std::env::var("SCRUTATE_SMALL_TREE").ok().and_then(|v| v.parse().ok()).unwrap_or(256))
+}
+
+/// The files the walk would visit, when there are at most `small_tree_files()` of them. None as soon
+/// as there are more, or on any walk error (the parallel walk counts those).
+fn small_tree(roots: &[PathBuf], o: &Options) -> Option<Vec<(PathBuf, Arc<str>)>> {
+    let limit = small_tree_files();
+    if limit == 0 {
+        return None;
+    }
+    let mut files = Vec::new();
+    for entry in walk_builder(roots, o).ok()?.build() {
+        let entry = entry.ok()?;
+        if entry.file_type().is_some_and(|t| t.is_file()) {
+            if files.len() == limit {
+                return None;
+            }
+            let rel = Arc::from(relative(entry.path(), roots));
+            files.push((entry.into_path(), rel));
+        }
+    }
+    Some(files)
+}
+
+#[derive(Default)]
+struct Counters {
+    files_searched: AtomicU64,
+    files_matched: AtomicU64,
+    matches: AtomicU64,
+    bytes: AtomicU64,
+    errors: AtomicU64,
+}
+
+fn file_searcher(o: &Options) -> Searcher {
+    SearcherBuilder::new()
+        .binary_detection(BinaryDetection::quit(0))
+        .line_number(!(o.count_only || o.files_only)) // line numbers cost a pass over the buffer
+        .multi_line(o.multiline)
+        .before_context(o.before)
+        .after_context(o.after)
+        .invert_match(o.invert)
+        .build()
+}
+
+/// Search one file and send its hits to `tx`.
+#[allow(clippy::too_many_arguments)]
+fn search_one(
+    searcher: &mut Searcher,
+    matcher: &AnyMatcher,
+    path: &Path,
+    rel: Arc<str>,
+    size: Option<u64>,
+    o: &Options,
+    c: &Counters,
+    cancel: &AtomicBool,
+    tx: &mpsc::Sender<Vec<Hit>>,
+    plain: Option<&PlainSink>,
+) {
+    c.files_searched.fetch_add(1, Ordering::Relaxed);
+    if let Some(n) = size {
+        c.bytes.fetch_add(n, Ordering::Relaxed);
+    }
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => {
+            c.errors.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+    };
+    let mut whole = None;
+    if splittable(o) {
+        let len = size.or_else(|| file.metadata().ok().map(|m| m.len())).unwrap_or(0);
+        let min = split_file_bytes();
+        if len >= min {
+            match split::search(&file, len, (min / 8).max(1), &rel, matcher, o, c, cancel, tx, plain) {
+                split::Outcome::Done => return,
+                split::Outcome::Stream => {}
+                split::Outcome::Buffer(b) => whole = Some(b),
+            }
+        }
+    }
+    let mut sink = Collector {
+        path: Arc::clone(&rel),
+        tx,
+        batch: Vec::new(),
+        plain,
+        out: Vec::new(),
+        want_spans: o.want_spans,
+        stats_matches: &c.matches,
+        max_results: o.max_results,
+        matched: false,
+        cancel,
+        matcher,
+        invert: o.invert,
+        count_only: o.count_only,
+        files_only: o.files_only,
+        file_count: 0,
+        line_base: 0,
+        hold: false,
+        binary: false,
+    };
+    let res = match (matcher, &whole) {
+        (AnyMatcher::Regex(rm), Some(b)) => searcher.search_slice(rm, b, &mut sink),
+        (AnyMatcher::Fuzzy(fm), Some(b)) => searcher.search_slice(fm.as_ref(), b, &mut sink),
+        (AnyMatcher::Regex(rm), None) => searcher.search_file(rm, &file, &mut sink),
+        (AnyMatcher::Fuzzy(fm), None) => searcher.search_file(fm.as_ref(), &file, &mut sink),
+    };
+    if res.is_err() {
+        c.errors.fetch_add(1, Ordering::Relaxed);
+    }
+    sink.flush(); // a search aborted by an error or cancellation still reports what it found
+    if sink.matched {
+        c.files_matched.fetch_add(1, Ordering::Relaxed);
+        if o.count_only || o.files_only {
+            // one record per file carries the count in `line`
+            let _ = tx.send(vec![Hit { path: rel, line: sink.file_count, column: 0, text: String::new(), spans: Vec::new(), context: false }]);
+        }
+    }
+}
+
+/// Files at least this large are searched as several ranges of whole lines at once (an eighth of
+/// it each): one huge file would otherwise keep a single core busy while the others idle.
+/// `SCRUTATE_SPLIT_FILE_BYTES` overrides it (the tests use small files).
+fn split_file_bytes() -> u64 {
+    static V: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *V.get_or_init(|| std::env::var("SCRUTATE_SPLIT_FILE_BYTES").ok().and_then(|v| v.parse().ok()).unwrap_or(64 << 20))
+}
+
+/// Line-at-a-time searches whose results do not depend on neighbouring lines or on a running count.
+/// `-l` stays sequential: it stops at the first match.
+fn splittable(o: &Options) -> bool {
+    !o.multiline && o.before == 0 && o.after == 0 && o.max_count.is_none() && o.max_results.is_none() && !o.files_only && default_threads(o) > 1
+}
+
+mod split {
+    use super::*;
+    use std::fs::File;
+    use std::io::Read;
+    use std::sync::atomic::AtomicUsize;
+
+    #[cfg(unix)]
+    fn read_at(f: &File, buf: &mut [u8], off: u64) -> std::io::Result<usize> {
+        std::os::unix::fs::FileExt::read_at(f, buf, off)
+    }
+    #[cfg(windows)]
+    fn read_at(f: &File, buf: &mut [u8], off: u64) -> std::io::Result<usize> {
+        std::os::windows::fs::FileExt::seek_read(f, buf, off)
+    }
+    #[cfg(not(any(unix, windows)))]
+    fn read_at(_f: &File, _buf: &mut [u8], _off: u64) -> std::io::Result<usize> {
+        Err(std::io::Error::other("positional reads unavailable"))
+    }
+
+    /// Bytes `pos..end` of a file, read without moving a shared file offset.
+    struct Range<'f> {
+        file: &'f File,
+        pos: u64,
+        end: u64,
+    }
+
+    impl Read for Range<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.pos >= self.end {
+                return Ok(0);
+            }
+            let want = buf.len().min((self.end - self.pos) as usize);
+            let n = read_at(self.file, &mut buf[..want], self.pos)?;
+            self.pos += n as u64;
+            Ok(n)
+        }
+    }
+
+    /// The start of the first line beginning in `x..x + 64 KiB` (just past a newline), if any: a
+    /// longer line is left whole inside a bigger range rather than read twice to find its end.
+    fn line_start(f: &File, x: u64, buf: &mut [u8]) -> std::io::Result<Option<u64>> {
+        let n = read_at(f, buf, x - 1)?;
+        Ok(memchr::memchr(b'\n', &buf[..n]).map(|i| x + i as u64))
+    }
+
+    /// Newlines in `a..b`; None when the range holds a NUL byte, a read fails or `stop` is set.
+    fn newlines(f: &File, a: u64, b: u64, buf: &mut [u8], stop: &AtomicBool) -> Option<u64> {
+        let mut r = Range { file: f, pos: a, end: b };
+        let mut n = 0u64;
+        loop {
+            let got = r.read(buf).ok()?;
+            if got == 0 {
+                return Some(n);
+            }
+            if stop.load(Ordering::Relaxed) || memchr::memchr(0, &buf[..got]).is_some() {
+                stop.store(true, Ordering::Relaxed);
+                return None;
+            }
+            n += memchr::memchr_iter(b'\n', &buf[..got]).count() as u64;
+        }
+    }
+
+    pub(super) enum Outcome {
+        /// searched and reported
+        Done,
+        /// nothing reported: search the file as one stream
+        Stream,
+        /// nothing reported: the file has no line breaks to split at and no NUL byte, so here it is in
+        /// one buffer of its exact size (a stream would grow its buffer by doubling, copying each time)
+        Buffer(Vec<u8>),
+    }
+
+    /// The whole file when it holds no NUL byte (a slice search checks only its start for binary data).
+    fn whole(file: &File, size: u64) -> Option<Vec<u8>> {
+        let mut buf = vec![0u8; usize::try_from(size).ok()?];
+        let mut at = 0;
+        while at < buf.len() {
+            // a piece at a time, so the NUL check reads it while it is still in cache
+            let end = buf.len().min(at + (1 << 20));
+            match read_at(file, &mut buf[at..end], at as u64) {
+                Ok(0) => break,
+                Ok(n) if memchr::memchr(0, &buf[at..at + n]).is_some() => return None,
+                Ok(n) => at += n,
+                Err(_) => return None,
+            }
+        }
+        buf.truncate(at);
+        Some(buf)
+    }
+
+    struct Part {
+        out: Vec<u8>,
+        hits: Vec<Hit>,
+        matched: bool,
+        count: u64,
+        /// the search reached the end of the range
+        ok: bool,
+    }
+
+    /// Search `file` (`size` bytes) as ranges of whole lines, `chunk` bytes or so each, on several
+    /// threads, and report the results in file order exactly as one sequential pass would. A first
+    /// pass counts the newlines of every range (for the line numbers). Reports nothing when the file
+    /// must be searched sequentially after all: it starts with a byte-order mark (transcoded as one
+    /// stream), holds a NUL byte (binary detection), a read failed, or it has no line breaks to split at.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn search(
+        file: &File,
+        size: u64,
+        chunk: u64,
+        rel: &Arc<str>,
+        matcher: &AnyMatcher,
+        o: &Options,
+        c: &Counters,
+        cancel: &AtomicBool,
+        tx: &mpsc::Sender<Vec<Hit>>,
+        plain: Option<&PlainSink>,
+    ) -> Outcome {
+        let mut head = [0u8; 3];
+        match read_at(file, &mut head, 0) {
+            Ok(n) if n >= 2 && (head[..2] == [0xFF, 0xFE] || head[..2] == [0xFE, 0xFF] || (n == 3 && head == [0xEF, 0xBB, 0xBF])) => return Outcome::Stream,
+            Ok(_) => {}
+            Err(_) => return Outcome::Stream,
+        }
+        let mut bounds = vec![0u64];
+        let mut probe = vec![0u8; 64 << 10];
+        let mut x = chunk;
+        while x < size {
+            match line_start(file, x, &mut probe) {
+                Ok(Some(b)) if b < size => {
+                    bounds.push(b);
+                    x = b + chunk;
                 }
-                let entry = match entry {
-                    Ok(e) => e,
-                    Err(_) => {
-                        e.fetch_add(1, Ordering::Relaxed);
-                        return WalkState::Continue;
-                    }
-                };
-                if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
-                    return WalkState::Continue;
-                }
-                let path = entry.path();
-                let rel: Arc<str> = Arc::from(relative(path, &roots));
-                fs.fetch_add(1, Ordering::Relaxed);
-                if opts.want_bytes {
-                    if let Ok(md) = entry.metadata() {
-                        b.fetch_add(md.len(), Ordering::Relaxed);
-                    }
-                }
-                let mut sink = Collector {
-                    path: Arc::clone(&rel),
-                    tx: &tx,
-                    batch: Vec::new(),
-                    want_spans: opts.want_spans,
-                    stats_matches: &m,
-                    max_results: opts.max_results,
-                    matched: false,
-                    cancel: &cancel,
-                    matcher: &matcher,
-                    invert: opts.invert,
-                    count_only: opts.count_only,
-                    files_only: opts.files_only,
-                    file_count: 0,
-                };
-                let res = match &*matcher {
-                    AnyMatcher::Regex(rm) => searcher.search_path(rm, path, &mut sink),
-                    AnyMatcher::Fuzzy(fm_) => searcher.search_path(fm_.as_ref(), path, &mut sink),
-                };
-                if res.is_err() {
-                    e.fetch_add(1, Ordering::Relaxed);
-                }
-                sink.flush(); // a search aborted by an error or cancellation still reports what it found
-                if sink.matched {
-                    fm.fetch_add(1, Ordering::Relaxed);
-                    if opts.count_only || opts.files_only {
-                        // one record per file carries the count in `line`
-                        let _ = tx.send(vec![Hit { path: rel, line: sink.file_count, column: 0, text: String::new(), spans: Vec::new(), context: false }]);
-                    }
-                }
-                if cancel.load(Ordering::Relaxed) {
-                    WalkState::Quit
-                } else {
-                    WalkState::Continue
-                }
-            })
+                Ok(_) => x += chunk,
+                Err(_) => return Outcome::Stream,
+            }
+        }
+        bounds.push(size);
+        if bounds.len() < 3 {
+            return whole(file, size).map_or(Outcome::Stream, Outcome::Buffer);
+        }
+        let ranges: Vec<(u64, u64)> = bounds.windows(2).map(|w| (w[0], w[1])).collect();
+        let threads = default_threads(o).min(ranges.len());
+
+        let next = AtomicUsize::new(0);
+        let stop = AtomicBool::new(false);
+        let counted: Vec<Option<Vec<(usize, u64)>>> = std::thread::scope(|s| {
+            let hs: Vec<_> = (0..threads)
+                .map(|_| {
+                    s.spawn(|| {
+                        let mut buf = vec![0u8; 1 << 20];
+                        let mut mine = Vec::new();
+                        loop {
+                            let i = next.fetch_add(1, Ordering::Relaxed);
+                            let Some(&(a, b)) = ranges.get(i) else { return Some(mine) };
+                            mine.push((i, newlines(file, a, b, &mut buf, &stop)?));
+                        }
+                    })
+                })
+                .collect();
+            hs.into_iter().map(|h| h.join().ok().flatten()).collect()
         });
-    });
+        // a NUL byte (binary handling stays sequential) or a read error: no line numbers to trust
+        let Ok(per_thread) = counted.into_iter().map(|w| w.ok_or(())).collect::<Result<Vec<_>, ()>>() else {
+            return Outcome::Stream;
+        };
+        let mut lines = vec![0u64; ranges.len()];
+        for (i, n) in per_thread.concat() {
+            lines[i] = n;
+        }
+        let mut bases = Vec::with_capacity(ranges.len());
+        let mut acc = 0u64;
+        for n in &lines {
+            bases.push(acc);
+            acc += n;
+        }
+
+        // one window of ranges at a time, so the output held back for ordering stays bounded
+        let mut matched = false;
+        let mut count = 0u64;
+        'windows: for (rs, bs) in ranges.chunks(threads).zip(bases.chunks(threads)) {
+            let parts: Vec<Part> = std::thread::scope(|s| {
+                let hs: Vec<_> = rs
+                    .iter()
+                    .zip(bs)
+                    .map(|(&(a, b), &base)| s.spawn(move || search_range(file, a, b, base, rel, matcher, o, c, cancel, plain.is_some())))
+                    .collect();
+                hs.into_iter().map(|h| h.join().unwrap_or(Part { out: Vec::new(), hits: Vec::new(), matched: false, count: 0, ok: false })).collect()
+            });
+            for part in parts {
+                matched |= part.matched;
+                count += part.count;
+                if let Some(p) = plain {
+                    p.write(&part.out, cancel);
+                } else if !part.hits.is_empty() {
+                    let _ = tx.send(part.hits);
+                }
+                if !part.ok {
+                    // the file changed after the first pass, or a read failed: what was found so far stands
+                    c.errors.fetch_add(1, Ordering::Relaxed);
+                    break 'windows;
+                }
+            }
+            if cancel.load(Ordering::Relaxed) {
+                break;
+            }
+        }
+        if matched {
+            c.files_matched.fetch_add(1, Ordering::Relaxed);
+            if o.count_only {
+                let _ = tx.send(vec![Hit { path: Arc::clone(rel), line: count, column: 0, text: String::new(), spans: Vec::new(), context: false }]);
+            }
+        }
+        Outcome::Done
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn search_range(
+        file: &File,
+        a: u64,
+        b: u64,
+        base: u64,
+        rel: &Arc<str>,
+        matcher: &AnyMatcher,
+        o: &Options,
+        c: &Counters,
+        cancel: &AtomicBool,
+        plain: bool,
+    ) -> Part {
+        // its own matcher (its own regex cache pool) and its own searcher, without transcoding: the
+        // middle of a file is not the start of a stream
+        let matcher = matcher.clone();
+        let mut searcher =
+            SearcherBuilder::new().binary_detection(BinaryDetection::quit(0)).bom_sniffing(false).line_number(!o.count_only).invert_match(o.invert).build();
+        let (ptx, prx) = mpsc::channel::<Vec<Hit>>();
+        // with `hold` the plain text is formatted into `out` and never written to this sink
+        let sink_plain = PlainSink::new(Box::new(std::io::sink()));
+        let mut sink = Collector {
+            path: Arc::clone(rel),
+            tx: &ptx,
+            batch: Vec::new(),
+            plain: if plain { Some(&sink_plain) } else { None },
+            out: Vec::new(),
+            want_spans: o.want_spans,
+            stats_matches: &c.matches,
+            max_results: None,
+            matched: false,
+            cancel,
+            matcher: &matcher,
+            invert: o.invert,
+            count_only: o.count_only,
+            files_only: false,
+            file_count: 0,
+            line_base: base,
+            hold: true,
+            binary: false,
+        };
+        let mut range = Range { file, pos: a, end: b };
+        let res = match &matcher {
+            AnyMatcher::Regex(m) => searcher.search_reader(m, &mut range, &mut sink),
+            AnyMatcher::Fuzzy(m) => searcher.search_reader(m.as_ref(), &mut range, &mut sink),
+        };
+        sink.flush();
+        let ok = res.is_ok() && !sink.binary && (range.pos >= b || cancel.load(Ordering::Relaxed));
+        let (out, matched, count) = (std::mem::take(&mut sink.out), sink.matched, sink.file_count);
+        drop(sink);
+        drop(ptx);
+        Part { out, hits: prx.into_iter().flatten().collect(), matched, count, ok }
+    }
+}
+
+/// Hand the hits to the caller in arrival order, applying the per-file `max_count`.
+fn drain(rx: mpsc::Receiver<Vec<Hit>>, o: &Options, mut on_hit: impl FnMut(Hit)) {
     let mut per_file_count: std::collections::HashMap<Arc<str>, u64> = std::collections::HashMap::new();
     for batch in rx {
         for hit in batch {
@@ -652,24 +1200,174 @@ pub fn search(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, mut on_hi
             on_hit(hit);
         }
     }
-    worker.join().map_err(|_| anyhow!("search worker panicked"))?;
-    Ok(Stats {
-        files_searched: files_searched.load(Ordering::Relaxed),
-        files_matched: files_matched.load(Ordering::Relaxed),
-        matches: matches.load(Ordering::Relaxed),
-        bytes_searched: bytes.load(Ordering::Relaxed),
-        errors: errors.load(Ordering::Relaxed),
-        elapsed_ms: t0.elapsed().as_secs_f64() * 1000.0,
-        cancelled: cancel.load(Ordering::Relaxed),
-    })
 }
 
-fn relative(path: &Path, roots: &[PathBuf]) -> String {
+fn stats(c: &Counters, t0: Instant, cancel: &AtomicBool) -> Stats {
+    Stats {
+        files_searched: c.files_searched.load(Ordering::Relaxed),
+        files_matched: c.files_matched.load(Ordering::Relaxed),
+        matches: c.matches.load(Ordering::Relaxed),
+        bytes_searched: c.bytes.load(Ordering::Relaxed),
+        errors: c.errors.load(Ordering::Relaxed),
+        elapsed_ms: t0.elapsed().as_secs_f64() * 1000.0,
+        cancelled: cancel.load(Ordering::Relaxed),
+    }
+}
+
+/// Search `roots`, sending every hit to `on_hit` as it is found (from the calling thread). Returns
+/// statistics; `cancel` may be set from another thread (or by `max_results`) to stop early.
+pub fn search(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, on_hit: impl FnMut(Hit)) -> Result<Stats> {
+    run_walk(roots, o, cancel, None, on_hit)
+}
+
+/// `search` with plain output written straight to `out` by the search threads (no `Hit`s).
+/// Only for plain match output: not with counts, file lists, `max_count` or JSON.
+pub fn search_plain(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, out: Arc<PlainSink>) -> Result<Stats> {
+    run_walk(roots, o, cancel, Some(out), |_| {})
+}
+
+fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Option<Arc<PlainSink>>, on_hit: impl FnMut(Hit)) -> Result<Stats> {
+    let t0 = Instant::now();
+    if roots.is_empty() {
+        bail!("no paths to search");
+    }
+    let matcher = Arc::new(build_matcher(o)?);
+    if let Some(files) = small_tree(roots, o) {
+        let threads = (files.len() / 64).clamp(1, default_threads(o));
+        return Ok(search_list(files, threads, &matcher, o, &cancel, plain.as_deref(), on_hit, t0));
+    }
+    let walker = build_walker(roots, o)?;
+    let (tx, rx) = mpsc::channel::<Vec<Hit>>();
+    let counters = Arc::new(Counters::default());
+    let roots_owned: Vec<PathBuf> = roots.to_vec();
+    let opts = o.clone();
+    let (c2, cancel2) = (Arc::clone(&counters), Arc::clone(&cancel));
+    let worker = std::thread::spawn(move || {
+        walker.run(|| {
+            let tx = tx.clone();
+            // a clone per thread: each gets its own regex cache pool instead of contending for one
+            let matcher = AnyMatcher::clone(&matcher);
+            let cancel = Arc::clone(&cancel2);
+            let c = Arc::clone(&c2);
+            let opts = opts.clone();
+            let roots = roots_owned.clone();
+            let plain = plain.clone();
+            let mut searcher = file_searcher(&opts);
+            Box::new(move |entry| {
+                if cancel.load(Ordering::Relaxed) {
+                    return WalkState::Quit;
+                }
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(_) => {
+                        c.errors.fetch_add(1, Ordering::Relaxed);
+                        return WalkState::Continue;
+                    }
+                };
+                if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                    return WalkState::Continue;
+                }
+                let size = if opts.want_bytes { entry.metadata().ok().map(|m| m.len()) } else { None };
+                let rel: Arc<str> = Arc::from(relative(entry.path(), &roots));
+                search_one(&mut searcher, &matcher, entry.path(), rel, size, &opts, &c, &cancel, &tx, plain.as_deref());
+                if cancel.load(Ordering::Relaxed) {
+                    WalkState::Quit
+                } else {
+                    WalkState::Continue
+                }
+            })
+        });
+    });
+    drain(rx, o, on_hit);
+    worker.join().map_err(|_| anyhow!("search worker panicked"))?;
+    Ok(stats(&counters, t0, &cancel))
+}
+
+/// Search the given files (paths relative to `root`, as an index lists them) with exactly the
+/// per-file logic of `search`; glob and type filters of `o` apply to these paths. Used by the
+/// indexed path, which has already chosen the files that can match.
+pub fn search_files(root: &Path, files: Vec<String>, o: &Options, cancel: Arc<AtomicBool>, on_hit: impl FnMut(Hit)) -> Result<Stats> {
+    run_files(root, files, o, cancel, None, on_hit)
+}
+
+/// `search_files` with plain output (see `search_plain`).
+pub fn search_files_plain(root: &Path, files: Vec<String>, o: &Options, cancel: Arc<AtomicBool>, out: Arc<PlainSink>) -> Result<Stats> {
+    run_files(root, files, o, cancel, Some(out), |_| {})
+}
+
+fn run_files(root: &Path, files: Vec<String>, o: &Options, cancel: Arc<AtomicBool>, plain: Option<Arc<PlainSink>>, on_hit: impl FnMut(Hit)) -> Result<Stats> {
+    let t0 = Instant::now();
+    let matcher = build_matcher(o)?;
+    let ov = overrides(root, o)?;
+    let files: Vec<(PathBuf, Arc<str>)> = files.into_iter().filter(|rel| !filtered_out(&ov, rel)).map(|rel| (root.join(&rel), Arc::from(rel))).collect();
+    let threads = default_threads(o).min(files.len().max(1));
+    Ok(search_list(files, threads, &matcher, o, &cancel, plain.as_deref(), on_hit, t0))
+}
+
+/// Search a known list of files (path, path as reported) on `threads` threads.
+#[allow(clippy::too_many_arguments)]
+fn search_list(
+    files: Vec<(PathBuf, Arc<str>)>,
+    threads: usize,
+    matcher: &AnyMatcher,
+    o: &Options,
+    cancel: &AtomicBool,
+    plain: Option<&PlainSink>,
+    on_hit: impl FnMut(Hit),
+    t0: Instant,
+) -> Stats {
+    let (tx, rx) = mpsc::channel::<Vec<Hit>>();
+    let counters = Counters::default();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    std::thread::scope(|s| {
+        for _ in 0..threads {
+            let tx = tx.clone();
+            let (counters, next, files) = (&counters, &next, &files);
+            // a clone per thread: each gets its own regex cache pool instead of contending for one
+            let matcher = matcher.clone();
+            s.spawn(move || {
+                let matcher = &matcher;
+                let mut searcher = file_searcher(o);
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    if i >= files.len() || cancel.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let (path, rel) = &files[i];
+                    let size = if o.want_bytes { std::fs::metadata(path).ok().map(|m| m.len()) } else { None };
+                    search_one(&mut searcher, matcher, path, Arc::clone(rel), size, o, counters, cancel, &tx, plain);
+                }
+            });
+        }
+        drop(tx);
+        drain(rx, o, on_hit);
+    });
+    stats(&counters, t0, cancel)
+}
+
+/// True when the walk with these overrides would not reach `rel` (an ancestor directory or the
+/// file itself is excluded).
+fn filtered_out(ov: &ignore::overrides::Override, rel: &str) -> bool {
+    if ov.is_empty() {
+        return false;
+    }
+    let mut at = 0;
+    while let Some(i) = rel[at..].find('/') {
+        if ov.matched(&rel[..at + i], true).is_ignore() {
+            return true;
+        }
+        at += i + 1;
+    }
+    ov.matched(rel, false).is_ignore()
+}
+
+pub fn relative(path: &Path, roots: &[PathBuf]) -> String {
     for r in roots {
         if let Ok(rel) = path.strip_prefix(r) {
             let s = rel.to_string_lossy().replace('\\', "/");
-            if roots.len() == 1 && r == Path::new(".") {
-                return s;
+            if s.is_empty() {
+                // the root is the file itself
+                return r.to_string_lossy().replace('\\', "/");
             }
             if roots.len() == 1 {
                 return s;
@@ -683,6 +1381,80 @@ fn relative(path: &Path, roots: &[PathBuf]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn suffix_candidates_find_the_same_lines() {
+        let words = [
+            "dev_resume(",
+            "x_suspend(",
+            " _resume(",
+            "KÖNIG",
+            "königin",
+            "pm_RESUME(",
+            "rc",
+            "\t",
+            "ing ",
+            "sing\n",
+            "12px",
+            "é_resume(",
+            "abc",
+            "_",
+            "(",
+            "\n",
+            "\r\n",
+            "\u{212A}önig",
+        ];
+        let mut state = 0x9E3779B97F4A7C15u64;
+        let mut hay = String::new();
+        for _ in 0..20000 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            hay.push_str(words[(state % words.len() as u64) as usize]);
+        }
+        let lines = |m: &AnyMatcher, invert: bool| {
+            let mut v = Vec::new();
+            let mut s = SearcherBuilder::new().line_number(true).invert_match(invert).build();
+            let AnyMatcher::Regex(m) = m else { unreachable!() };
+            s.search_slice(
+                m,
+                hay.as_bytes(),
+                grep_searcher::sinks::Lossy(|n, _| {
+                    v.push(n);
+                    Ok(true)
+                }),
+            )
+            .unwrap();
+            v
+        };
+        let mut engaged = 0;
+        for (pat, case) in [
+            (r"\w+_(suspend|resume)\(", Case::Sensitive),
+            (r"\w+_resume\(", Case::Insensitive),
+            (r"\w+KÖNIG", Case::Insensitive),
+            (r"[a-z]+ing\b", Case::Sensitive),
+            (r"\d+px", Case::Sensitive),
+            (r".*abc", Case::Sensitive),
+            (r"\S*_resume\($", Case::Smart),
+            (r"PM_RESUME", Case::Insensitive),
+        ] {
+            let o = Options { pattern: pat.to_string(), case, ..Options::default() };
+            let fast = build_matcher(&o).unwrap();
+            let AnyMatcher::Regex(ref f) = fast else { unreachable!() };
+            engaged += f.suffixes.is_some() as usize;
+            let slow = AnyMatcher::Regex(LineRegex { inner: f.inner.clone(), suffixes: None });
+            for invert in [false, true] {
+                let (a, b) = (lines(&fast, invert), lines(&slow, invert));
+                assert_eq!(a, b, "{pat} {case:?} invert={invert}");
+                assert!(invert || !a.is_empty(), "{pat}: no matches, the test proves nothing");
+            }
+        }
+        // the rest have a short suffix, a literal prefix, or too many case variants (s folds to ſ too)
+        assert_eq!(engaged, 5);
+        let o = Options { pattern: "PM_RESUME".into(), ..Options::default() };
+        let AnyMatcher::Regex(m) = build_matcher(&o).unwrap() else { unreachable!() };
+        assert!(m.suffixes.is_none(), "a literal prefix is the engine's job");
+    }
 
     fn fuzzy_find(pat: &str, k: u8, hay: &str) -> Option<(usize, usize)> {
         let m = FuzzyMatcher::new(pat, k, false).unwrap();

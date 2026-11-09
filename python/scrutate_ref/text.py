@@ -173,3 +173,14 @@ def literal_candidates(query: str) -> list[str]:
         ):
             lits.append(w)
     return list(dict.fromkeys(lits))
+
+
+def split_lines(s: str) -> list[str]:
+    """Lines as grep-class tools number them (Rust's ``str::lines``): split at "\\n", a "\\r"
+    before it dropped, no empty last line for a trailing newline; form feeds and lone "\\r" are text."""
+    parts = s.split("\n")
+    last = parts.pop()
+    lines = [p[:-1] if p.endswith("\r") else p for p in parts]
+    if last:
+        lines.append(last)
+    return lines
