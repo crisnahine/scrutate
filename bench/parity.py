@@ -30,7 +30,7 @@ from scrutate_ref.search import FEATURES, Searcher  # noqa: E402
 
 TOL_FEAT = 2e-3      # features (float32 pipelines; z-scores amplify 1e-7 differences)
 TOL_SCORE = 2e-3     # ranker output
-TOL_VEC = 2e-3       # f16 vectors
+TOL_VEC = 0.0        # int8 codes times float32 scales: same quantization in both engines
 
 
 def identity(row):
@@ -69,7 +69,7 @@ def postings(ix, by_id):
             if cid in by_id:
                 dl[by_id[cid]] = float(s.dl[r])
                 if v_rows is not None:
-                    vec[by_id[cid]] = np.asarray(v_rows[r], np.float32)
+                    vec[by_id[cid]] = v_rows[r]
     return post, dl, vec
 
 

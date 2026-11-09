@@ -12,8 +12,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use blake2::digest::{Update, VariableOutput};
 use blake2::Blake2bVar;
-use half::f16;
-use half::slice::HalfFloatSliceExt;
 use rayon::prelude::*;
 
 use crate::npy::{self, Npy};
@@ -45,14 +43,38 @@ pub fn tok_key(tok: &str) -> i64 {
 /// Lexical + vector data of the chunks of one file.
 pub struct FileLex {
     pub dl: Vec<f32>,
-    pub keys: Vec<Vec<i64>>,   // per field: term keys, chunk after chunk
-    pub tf: Vec<Vec<u8>>,      // per field: term frequencies
-    pub cnt: Vec<Vec<i32>>,    // per field: distinct terms per chunk
-    pub vec: Option<Vec<f16>>, // [m, 2, k] row-major
+    pub keys: Vec<Vec<i64>>, // per field: term keys, chunk after chunk
+    pub tf: Vec<Vec<u8>>,    // per field: term frequencies
+    pub cnt: Vec<Vec<i32>>,  // per field: distinct terms per chunk
+    pub vec: Option<QVecs>,
+}
+
+/// Semantic vectors as stored: int8 codes [m, 2, k] row-major and one scale per vector [m, 2].
+#[derive(Default)]
+pub struct QVecs {
+    pub q: Vec<i8>,
+    pub scale: Vec<f32>,
+}
+
+/// Symmetric int8 quantization of one vector (value = q * scale), written into `q`; returns the
+/// scale. Same float32 steps and ties-to-even rounding as `quantize` in the Python reference.
+pub fn quantize(v: &[f32], q: &mut [i8]) -> f32 {
+    let s = v.iter().fold(0f32, |m, x| m.max(x.abs())) / 127.0;
+    let d = if s > 0.0 { s } else { 1.0 };
+    for (o, &x) in q.iter_mut().zip(v) {
+        *o = (x / d).round_ties_even().clamp(-127.0, 127.0) as i8;
+    }
+    s
+}
+
+pub fn dequantize(q: &[i8], s: f32, out: &mut [f32]) {
+    for (o, &x) in out.iter_mut().zip(q) {
+        *o = x as f32 * s;
+    }
 }
 
 /// bags[i][c] is a {token: tf} map of chunk i, field c.
-pub fn pack_bags(bags: &[Vec<HashMap<String, u32>>], vec: Option<Vec<f16>>) -> FileLex {
+pub fn pack_bags(bags: &[Vec<HashMap<String, u32>>], vec: Option<QVecs>) -> FileLex {
     let m = bags.len();
     let mut dl = vec![0f32; m];
     let mut keys: Vec<Vec<i64>> = (0..NF).map(|_| Vec::new()).collect();
@@ -89,7 +111,8 @@ pub struct Segment {
     pub ptr: Vec<Npy>,
     pub doc: Vec<Npy>,
     pub tf: Vec<Npy>,
-    pub vec: Option<Npy>,
+    pub vec: Option<Npy>,    // int8 [n, 2, k]
+    pub vscale: Option<Npy>, // float32 [n, 2]
     pub n: usize,
     pub k: usize,
     pub ivf: Option<Ivf>,
@@ -110,6 +133,7 @@ impl Segment {
         let n = ids.len();
         let vp = path.join("vec.npy");
         let vec = if vp.exists() { Some(Npy::open(&vp)?) } else { None };
+        let vscale = if vec.is_some() { Some(ld("vscale")?) } else { None };
         let k = vec.as_ref().map(|v| if v.shape.len() == 3 { v.shape[2] } else { 0 }).unwrap_or(0);
         let ivf = if path.join("ivf_order.npy").exists() {
             let cent = ld("ivf_cent")?;
@@ -129,6 +153,7 @@ impl Segment {
             doc: (0..NF).map(|c| ld(&format!("doc{c}"))).collect::<Result<_>>()?,
             tf: (0..NF).map(|c| ld(&format!("tf{c}"))).collect::<Result<_>>()?,
             vec,
+            vscale,
             n,
             k,
             ivf,
@@ -166,7 +191,11 @@ impl Segment {
             if v.shape.len() != 3 || v.shape[0] != n || v.shape[1] != 2 || v.shape[2] != self.k {
                 bail!("vector shape {:?}", v.shape);
             }
-            v.view::<f16>()?;
+            v.view::<i8>()?;
+            let sc = self.vscale.as_ref().ok_or_else(|| anyhow::anyhow!("vector scales missing"))?;
+            if sc.view::<f32>()?.len() != 2 * n {
+                bail!("vector scale length");
+            }
         }
         if let Some(ivf) = &self.ivf {
             let order = ivf.order.view::<i32>()?;
@@ -239,21 +268,32 @@ impl Segment {
     pub fn tf(&self, c: usize) -> &[u8] {
         self.tf[c].view::<u8>().expect("tf dtype")
     }
-    /// All vectors as stored: float16 [n, 2, k], in *cluster order* when the segment has an
-    /// inverted-file index (one probe reads one contiguous block), else in row order.
-    pub fn vec(&self) -> Option<&[f16]> {
-        self.vec.as_ref().map(|v| v.view::<f16>().expect("vec dtype"))
+    /// All vectors as stored: int8 codes [n, 2, k] and scales [n, 2], in *cluster order* when the
+    /// segment has an inverted-file index (one probe reads one contiguous block), else in row order.
+    pub fn vec(&self) -> Option<(&[i8], &[f32])> {
+        let q = self.vec.as_ref()?.view::<i8>().expect("vec dtype");
+        let s = self.vscale.as_ref()?.view::<f32>().expect("vscale dtype");
+        Some((q, s))
     }
 
-    /// The (A view, B view) vector of segment row `r`: `2 * k` halves.
-    pub fn vec_row(&self, r: usize) -> Option<&[f16]> {
-        let v = self.vec()?;
+    /// The stored (A view, B view) vector of segment row `r`: `2 * k` codes and 2 scales.
+    pub fn vec_row(&self, r: usize) -> Option<(&[i8], &[f32])> {
+        let (q, s) = self.vec()?;
         let k = self.k;
         let pos = match &self.ivf {
             Some(ivf) => ivf.inv.view::<i32>().expect("inv dtype")[r] as usize,
             None => r,
         };
-        Some(&v[pos * 2 * k..(pos + 1) * 2 * k])
+        Some((&q[pos * 2 * k..(pos + 1) * 2 * k], &s[pos * 2..pos * 2 + 2]))
+    }
+
+    /// The (A view, B view) vector of segment row `r` as float32, into `out` (`2 * k` values).
+    pub fn vec_row_f32(&self, r: usize, out: &mut [f32]) -> bool {
+        let Some((q, s)) = self.vec_row(r) else { return false };
+        let k = self.k;
+        dequantize(&q[..k], s[0], &mut out[..k]);
+        dequantize(&q[k..], s[1], &mut out[k..2 * k]);
+        true
     }
 
     /// Index of each key in this segment's vocabulary, -1 when absent.
@@ -279,7 +319,7 @@ pub fn write_segment(
     ids: &[i64],
     dl: &[f32],
     fields: &[(Vec<i32>, Vec<i64>, Vec<u8>)],
-    vec: Option<&[f16]>,
+    vec: Option<&QVecs>,
     k: usize,
     row_sorted: bool,
 ) -> Result<()> {
@@ -334,13 +374,17 @@ pub fn write_segment(
     if let Some(v) = vec {
         if n >= IVF_MIN_ROWS {
             let order = build_ivf(&tmp, v, n, k)?;
-            let mut sorted = vec![f16::ZERO; v.len()];
+            let mut q = vec![0i8; v.q.len()];
+            let mut sc = vec![0f32; v.scale.len()];
             for (pos, &r) in order.iter().enumerate() {
-                sorted[pos * 2 * k..(pos + 1) * 2 * k].copy_from_slice(&v[r * 2 * k..(r + 1) * 2 * k]);
+                q[pos * 2 * k..(pos + 1) * 2 * k].copy_from_slice(&v.q[r * 2 * k..(r + 1) * 2 * k]);
+                sc[pos * 2..pos * 2 + 2].copy_from_slice(&v.scale[r * 2..r * 2 + 2]);
             }
-            npy::save(&tmp.join("vec.npy"), &sorted, &[n, 2, k])?;
+            npy::save(&tmp.join("vec.npy"), &q, &[n, 2, k])?;
+            npy::save(&tmp.join("vscale.npy"), &sc, &[n, 2])?;
         } else {
-            npy::save(&tmp.join("vec.npy"), v, &[n, 2, k])?;
+            npy::save(&tmp.join("vec.npy"), &v.q, &[n, 2, k])?;
+            npy::save(&tmp.join("vscale.npy"), &v.scale, &[n, 2])?;
         }
     }
     std::fs::rename(&tmp, dest).with_context(|| format!("rename {} -> {}", tmp.display(), dest.display()))?;
@@ -355,7 +399,7 @@ pub struct SegmentBuilder {
     ids: Vec<i64>,
     dl: Vec<f32>,
     parts: Vec<Vec<FieldPart>>, // per field
-    vec: Vec<Vec<f16>>,
+    vec: Vec<QVecs>,
     pub n: usize,
     pub k: usize,
 }
@@ -399,8 +443,11 @@ impl SegmentBuilder {
             }
             fields.push((rows, keys, tfs));
         }
-        let vec: Option<Vec<f16>> = if self.vec.is_empty() { None } else { Some(self.vec.concat()) };
-        write_segment(dest, &self.ids, &self.dl, &fields, vec.as_deref(), self.k, true)
+        let vec = (!self.vec.is_empty()).then(|| QVecs {
+            q: self.vec.iter().flat_map(|v| v.q.iter().copied()).collect(),
+            scale: self.vec.iter().flat_map(|v| v.scale.iter().copied()).collect(),
+        });
+        write_segment(dest, &self.ids, &self.dl, &fields, vec.as_ref(), self.k, true)
     }
 }
 
@@ -423,20 +470,23 @@ pub fn merge_segments(dest: &Path, segs: &[&Segment], alive: &[&[bool]]) -> Resu
     let dl: Vec<f32> = order.iter().map(|&i| dl_cat[i]).collect();
     let k = segs.iter().map(|s| s.k).max().unwrap_or(0);
     let has_vec = segs.iter().any(|s| s.vec.is_some());
-    let vec: Option<Vec<f16>> = if has_vec && k > 0 {
-        let mut cat: Vec<f16> = Vec::with_capacity(ids.len() * 2 * k);
+    let vec: Option<QVecs> = if has_vec && k > 0 {
+        let mut cat = QVecs::default();
         for (s, a) in segs.iter().zip(alive) {
             if s.vec.is_some() {
                 for (r, &al) in a.iter().enumerate() {
                     if al {
-                        cat.extend_from_slice(s.vec_row(r).expect("vector row"));
+                        let (q, sc) = s.vec_row(r).expect("vector row");
+                        cat.q.extend_from_slice(q);
+                        cat.scale.extend_from_slice(sc);
                     }
                 }
             }
         }
-        let mut out: Vec<f16> = Vec::with_capacity(cat.len());
+        let mut out = QVecs { q: Vec::with_capacity(cat.q.len()), scale: Vec::with_capacity(cat.scale.len()) };
         for &i in &order {
-            out.extend_from_slice(&cat[i * 2 * k..(i + 1) * 2 * k]);
+            out.q.extend_from_slice(&cat.q[i * 2 * k..(i + 1) * 2 * k]);
+            out.scale.extend_from_slice(&cat.scale[i * 2..i * 2 + 2]);
         }
         Some(out)
     } else {
@@ -476,7 +526,7 @@ pub fn merge_segments(dest: &Path, segs: &[&Segment], alive: &[&[bool]]) -> Resu
         offset += acc;
     }
     let ids_sorted: Vec<i64> = order.iter().map(|&i| ids[i]).collect();
-    write_segment(dest, &ids_sorted, &dl, &fields, vec.as_deref(), k, false)
+    write_segment(dest, &ids_sorted, &dl, &fields, vec.as_ref(), k, false)
 }
 
 // ------------------------------------------------------------------------- inverted file
@@ -548,11 +598,12 @@ fn normalize_rows(m: &mut [f32], k: usize) {
 /// Cluster the A+B vectors of a segment (spherical k-means on a sample, then one assignment pass
 /// over every row). Returns the cluster order (segment row at each sorted position); the caller
 /// stores the vectors in that order so a query can scan a few clusters contiguously.
-pub fn build_ivf(tmp: &Path, vec: &[f16], n: usize, k: usize) -> Result<Vec<usize>> {
+pub fn build_ivf(tmp: &Path, vec: &QVecs, n: usize, k: usize) -> Result<Vec<usize>> {
     let mut mix = vec![0f32; n * k];
     for r in 0..n {
+        let (q, s) = (&vec.q[r * 2 * k..(r + 1) * 2 * k], &vec.scale[r * 2..r * 2 + 2]);
         for j in 0..k {
-            mix[r * k + j] = vec[r * 2 * k + j].to_f32() + vec[r * 2 * k + k + j].to_f32();
+            mix[r * k + j] = q[j] as f32 * s[0] + q[k + j] as f32 * s[1];
         }
     }
     let mut unit = mix.clone();
@@ -617,6 +668,23 @@ pub fn build_ivf(tmp: &Path, vec: &[f16], n: usize, k: usize) -> Result<Vec<usiz
 }
 
 // ------------------------------------------------------------------------------ store
+/// a . b accumulated in float64 and rounded once, like `_dot64` in the reference (numpy sums in
+/// another order; float32 sums would let near-tied rows swap places between the engines).
+fn dot64(a: &[f32], b: &[f32]) -> f32 {
+    let mut acc = [0f64; 4];
+    let chunks = a.len() / 4;
+    for i in 0..chunks {
+        for j in 0..4 {
+            acc[j] += a[i * 4 + j] as f64 * b[i * 4 + j] as f64;
+        }
+    }
+    let mut s: f64 = acc.iter().sum();
+    for i in chunks * 4..a.len() {
+        s += a[i] as f64 * b[i] as f64;
+    }
+    s as f32
+}
+
 fn dot(a: &[f32], b: &[f32]) -> f32 {
     let mut acc = [0f32; 8];
     let chunks = a.len() / 8;
@@ -718,11 +786,11 @@ impl LexStore {
         s.vec()?;
         let k = s.k;
         let mut m = vec![0f32; s.n * k];
+        let mut v = vec![0f32; 2 * k];
         for r in 0..s.n {
-            if alive[r] {
-                let v = s.vec_row(r)?;
+            if alive[r] && s.vec_row_f32(r, &mut v) {
                 for j in 0..k {
-                    m[r * k + j] = v[j].to_f32() + v[k + j].to_f32();
+                    m[r * k + j] = v[j] + v[k + j];
                 }
             }
         }
@@ -973,7 +1041,7 @@ impl LexStore {
                 };
                 let k = s.k;
                 let alive = &self.alive[si];
-                let sc: Vec<f32> = (0..s.n).map(|r| if alive[r] { dot(&m[r * k..(r + 1) * k], qz) } else { f32::NEG_INFINITY }).collect();
+                let sc: Vec<f32> = (0..s.n).map(|r| if alive[r] { dot64(&m[r * k..(r + 1) * k], qz) } else { f32::NEG_INFINITY }).collect();
                 let part = top_indices(&sc, limit, |v| v.is_finite());
                 let scs = part.iter().map(|&p| sc[p]).collect();
                 (part, scs)
@@ -995,11 +1063,11 @@ impl LexStore {
         let s = &self.segs[si];
         let ivf = s.ivf.as_ref().unwrap();
         let k = s.k;
-        let vec = s.vec().unwrap(); // cluster order
+        let (vq, vs) = s.vec().unwrap(); // cluster order
         let order = ivf.order.view::<i32>().unwrap();
         let alive = self.alive_sorted[si].as_ref().unwrap();
         let ranges: Vec<(usize, usize)> = if nprobe < ivf.nclusters {
-            let cs: Vec<f32> = (0..ivf.nclusters).map(|c| dot(&ivf.cent[c * k..(c + 1) * k], qz)).collect();
+            let cs: Vec<f32> = (0..ivf.nclusters).map(|c| dot64(&ivf.cent[c * k..(c + 1) * k], qz)).collect();
             top_indices(&cs, nprobe, |_| true).into_iter().map(|c| (ivf.ptr[c] as usize, ivf.ptr[c + 1] as usize)).collect()
         } else {
             vec![(0, s.n)]
@@ -1007,24 +1075,19 @@ impl LexStore {
         let total: usize = ranges.iter().map(|(a, b)| b - a).sum();
         let mut positions: Vec<usize> = Vec::with_capacity(total);
         let mut sc: Vec<f32> = Vec::with_capacity(total);
-        let mut f32buf: Vec<f32> = Vec::new();
         let mut mix = vec![0f32; k];
         for (a, b) in ranges {
-            // one contiguous block per cluster: convert once, then A + B (exact in f32) and dot
-            let block = &vec[a * 2 * k..b * 2 * k];
-            f32buf.resize(block.len(), 0.0);
-            block.convert_to_f32_slice(&mut f32buf);
             for p in a..b {
                 positions.push(p);
                 if !alive[p] {
                     sc.push(f32::NEG_INFINITY);
                     continue;
                 }
-                let row = &f32buf[(p - a) * 2 * k..(p - a + 1) * 2 * k];
+                let (row, s) = (&vq[p * 2 * k..(p + 1) * 2 * k], &vs[p * 2..p * 2 + 2]);
                 for j in 0..k {
-                    mix[j] = row[j] + row[k + j];
+                    mix[j] = row[j] as f32 * s[0] + row[k + j] as f32 * s[1];
                 }
-                sc.push(dot(&mix, qz));
+                sc.push(dot64(&mix, qz));
             }
         }
         let part = top_indices(&sc, limit, |v| v.is_finite());
@@ -1037,11 +1100,13 @@ impl LexStore {
     pub fn vec_of(&self, id: i64) -> Option<(Vec<f32>, Vec<f32>)> {
         for s in &self.segs {
             if let Some(r) = s.row_of(id) {
-                let v = s.vec_row(r)?;
                 let k = s.k;
-                let a = v[..k].iter().map(|x| x.to_f32()).collect();
-                let b = v[k..].iter().map(|x| x.to_f32()).collect();
-                return Some((a, b));
+                let mut v = vec![0f32; 2 * k];
+                if !s.vec_row_f32(r, &mut v) {
+                    return None;
+                }
+                let b = v.split_off(k);
+                return Some((v, b));
             }
         }
         None
@@ -1062,14 +1127,11 @@ impl LexStore {
                 if !self.alive[si][r] || ids[r] == exclude {
                     continue;
                 }
-                let Some(vr) = s.vec_row(r) else { continue };
-                let src = &vr[k..];
-                if src.iter().all(|x| *x == f16::ZERO) {
-                    continue;
+                let Some((vq, vs)) = s.vec_row(r) else { continue };
+                if vs[1] == 0.0 {
+                    continue; // no implementation view
                 }
-                for j in 0..k {
-                    row[j] = src[j].to_f32();
-                }
+                dequantize(&vq[k..], vs[1], &mut row);
                 let sc = dot(&row, q);
                 if out.len() < limit {
                     out.push((ids[r], sc));
@@ -1096,13 +1158,16 @@ impl LexStore {
                 continue;
             }
             let k = s.k;
+            let mut v = vec![0f32; 2 * k];
             for (i, id) in ids.iter().enumerate() {
                 if let Some(r) = s.row_of(*id) {
-                    let Some(v) = s.vec_row(r) else { continue };
+                    if !s.vec_row_f32(r, &mut v) {
+                        continue;
+                    }
                     let (mut a, mut b) = (0f64, 0f64);
                     for j in 0..k {
-                        a += v[j].to_f64() * qz[j] as f64;
-                        b += v[k + j].to_f64() * qz[j] as f64;
+                        a += v[j] as f64 * qz[j] as f64;
+                        b += v[k + j] as f64 * qz[j] as f64;
                     }
                     sa[i] = a as f32;
                     sb[i] = b as f32;
@@ -1123,5 +1188,21 @@ mod tests {
         assert_eq!(tok_key("token"), 4201213877827993759);
         assert_eq!(tok_key("refresh"), 8715277808867335775);
         assert_eq!(tok_key("a"), 1702698405120146464);
+    }
+
+    #[test]
+    fn quantize_matches_python_reference() {
+        // scrutate_ref.lex.quantize(np.array([...], np.float32)); -0.25 / scale = -63.5 rounds to even
+        let v = [0.5f32, -0.25, 0.125, 0.0, -0.5, 0.3, 0.003, -0.002];
+        let mut q = [0i8; 8];
+        let s = quantize(&v, &mut q);
+        assert_eq!(q, [127, -64, 32, 0, -127, 76, 1, -1]);
+        assert_eq!(s.to_bits(), 998310404);
+        let mut z = [1i8; 4];
+        assert_eq!(quantize(&[0.0; 4], &mut z), 0.0);
+        assert_eq!(z, [0; 4]);
+        let mut d = [0f32; 8];
+        dequantize(&q, s, &mut d);
+        assert!(d.iter().zip(&v).all(|(a, b)| (a - b).abs() <= s / 2.0));
     }
 }
