@@ -649,7 +649,7 @@ print(json.dumps({"hits": sorted(hits), "files": n, "parse_errors": errors}))
 
 
 def environment():
-    env = {"platform": platform.platform(), "machine": platform.machine(), "python": platform.python_version(), "cpus": os.cpu_count()}
+    env = {"date": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "platform": platform.platform(), "machine": platform.machine(), "python": platform.python_version(), "cpus": os.cpu_count()}
     if platform.system() == "Darwin":
         q = lambda k: subprocess.run(["sysctl", "-n", k], capture_output=True, text=True).stdout.strip()
         env.update({"cpu": q("machdep.cpu.brand_string"), "memory_bytes": int(q("hw.memsize") or 0), "perf_cores": q("hw.perflevel0.physicalcpu"),

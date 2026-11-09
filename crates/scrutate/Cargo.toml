@@ -46,6 +46,7 @@ ignore = "0.4"
 matrixmultiply = "0.3"
 memchr = "2"
 memmap2 = "0.9"
+notify = { version = "8.2", default-features = false }
 rayon = "1"
 regex = "1"
 regex-syntax = "0.8"
@@ -130,6 +131,10 @@ tree-sitter-ini = "1.4"
 tree-sitter-rst = "0.2"
 tree-sitter-autohotkey = { version = "1.1", optional = true }
 zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
+
+# kqueue instead of FSEvents keeps CoreServices out of the binary (the watcher polls on macOS)
+[target.'cfg(target_os = "macos")'.dependencies]
+notify = { version = "8.2", default-features = false, features = ["macos_kqueue"] }
 
 [dev-dependencies]
 proptest = "1"

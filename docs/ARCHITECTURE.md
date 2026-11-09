@@ -127,6 +127,15 @@ with EAGAIN). The index stores no file contents (154 MB for the 1.3 GB Linux v7.
 compares sizes with Zoekt and livegrep, whose indexes hold the text), so a query reads the
 candidate files from the source tree.
 
+### Watching (`watch.rs`)
+`scrutate watch` and `serve --watch` turn filesystem events (the `notify` crate: FSEvents,
+inotify, ReadDirectoryChangesW) into index updates. Events are filtered with the indexes' own
+ignore rules, a burst ends after 200 ms of quiet, and each burst runs the existing incremental
+updates (`Index::update`, `textindex::update` when a text index exists). No new write path: the
+watcher is one more writer behind the same SQLite transaction and text index lock file, so a crash
+mid-update leaves the previous snapshot. Reads by the update itself are not events, so updates do
+not trigger themselves. Not a daemon: it runs only while the command (or server) runs.
+
 ### Intelligence (`intel.rs`)
 Definitions and references (`refs` = index definitions + call edges + Engine A whole-word
 occurrences grouped by enclosing symbol), callers/callees, outline, imports with best-effort
@@ -134,6 +143,13 @@ module→file resolution and reverse dependencies, **similar code** (implementat
 token Jaccard), **duplicates** (exact token-sequence hash and MinHash/LSH near-duplicates over
 token 3-grams, nested chunks excluded), and **structural search** (`tsquery`: tree-sitter query
 language over all files of a language, parallel, no index needed).
+
+`tsquery` keeps each file's captures in `.scrutate/tsquery/` (`tscache.rs`): one file per
+(version, language, query text, searched paths) mapping a 128-bit BLAKE2b content hash to the
+captures, without paths, so files whose content was seen before are read and hashed but not parsed. A file cut off
+by `--limit` is never stored, so a cached list is always the complete one and the global limit
+gives the same prefix. Files are written to a temporary name and renamed; an unreadable one
+counts as empty. Eviction is by query file, least recently used first, above 128 MB in total.
 
 ## Unified layer (`cli.rs`, `mcp.rs`, `crates/scrutate-py`)
 `find QUERY` chooses: regex-looking → Engine A; otherwise ranked search when an index exists or

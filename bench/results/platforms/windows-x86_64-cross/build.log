@@ -167,7 +167,7 @@ info: downloading component rust-std
    Compiling blake2 v0.10.6
    Compiling termcolor v1.4.1
    Compiling rusqlite v0.37.0
-   Compiling scrutate v0.1.0 (/Users/crisn/Documents/Projects/scrutate/crates/scrutate)
+   Compiling scrutate v0.1.0 (<repo>/crates/scrutate)
     Finished `release` profile [optimized] target(s) in 2m 42s
    Compiling rand_core v0.10.1
    Compiling getrandom v0.4.3
@@ -187,7 +187,7 @@ info: downloading component rust-std
    Compiling rand v0.10.3
    Compiling rusty-fork v0.3.1
    Compiling proptest v1.12.0
-   Compiling scrutate v0.1.0 (/Users/crisn/Documents/Projects/scrutate/crates/scrutate)
+   Compiling scrutate v0.1.0 (<repo>/crates/scrutate)
     Finished `release` profile [optimized] target(s) in 28.07s
   Executable unittests src/lib.rs (target/win/x86_64-pc-windows-gnu/release/deps/scrutate-bc4c78a6971b916b.exe)
   Executable unittests src/main.rs (target/win/x86_64-pc-windows-gnu/release/deps/scrutate-acd3fa1e30566d62.exe)

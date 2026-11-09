@@ -23,6 +23,8 @@ pub mod search;
 pub mod semantic;
 pub mod text;
 pub mod textindex;
+pub mod tscache;
+pub mod watch;
 
 use std::path::Path;
 use std::sync::Arc;

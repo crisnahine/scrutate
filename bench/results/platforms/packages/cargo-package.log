@@ -1,7 +1,7 @@
-   Packaging scrutate v0.1.0 (/Users/crisn/Documents/Projects/scrutate/.claude/worktrees/agent-af74fea583f0042b2/crates/scrutate)
+   Packaging scrutate v0.1.0 (<repo>/crates/scrutate)
     Updating crates.io index
     Packaged 112 files, 624.2KiB (164.4KiB compressed)
-   Verifying scrutate v0.1.0 (/Users/crisn/Documents/Projects/scrutate/.claude/worktrees/agent-af74fea583f0042b2/crates/scrutate)
+   Verifying scrutate v0.1.0 (<repo>/crates/scrutate)
    Compiling find-msvc-tools v0.1.15
    Compiling shlex v2.0.1
    Compiling tree-sitter-language v0.1.9
@@ -165,14 +165,14 @@
    Compiling blake2 v0.10.6
    Compiling rust-stemmers v1.2.0
    Compiling termcolor v1.4.1
-   Compiling scrutate v0.1.0 (/Users/crisn/Documents/Projects/scrutate/.claude/worktrees/agent-af74fea583f0042b2/target/package/scrutate-0.1.0)
-error: couldn't read `/Users/crisn/Documents/Projects/scrutate/.claude/worktrees/agent-af74fea583f0042b2/target/package/scrutate-0.1.0/../../models/semantic.npz`: No such file or directory (os error 2)
+   Compiling scrutate v0.1.0 (<repo>/target/package/scrutate-0.1.0)
+error: couldn't read `<repo>/target/package/scrutate-0.1.0/../../models/semantic.npz`: No such file or directory (os error 2)
   --> src/lib.rs:32:30
    |
 32 | static SEMANTIC_NPZ: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../models/semantic.npz"));
    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-error: couldn't read `/Users/crisn/Documents/Projects/scrutate/.claude/worktrees/agent-af74fea583f0042b2/target/package/scrutate-0.1.0/../../models/ranker.npz`: No such file or directory (os error 2)
+error: couldn't read `<repo>/target/package/scrutate-0.1.0/../../models/ranker.npz`: No such file or directory (os error 2)
   --> src/lib.rs:33:28
    |
 33 | static RANKER_NPZ: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../models/ranker.npz"));

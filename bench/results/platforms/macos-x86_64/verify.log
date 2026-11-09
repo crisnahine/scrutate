@@ -164,7 +164,7 @@ info: downloading component rust-std
    Compiling blake2 v0.10.6
    Compiling termcolor v1.4.1
    Compiling rusqlite v0.37.0
-   Compiling scrutate v0.1.0 (/Users/crisn/Documents/Projects/scrutate/crates/scrutate)
+   Compiling scrutate v0.1.0 (<repo>/crates/scrutate)
     Finished `release` profile [optimized] target(s) in 1m 01s
 target/x86/x86_64-apple-darwin/release/scrutate: Mach-O 64-bit executable x86_64
 === Rosetta 2 is not installed: x86_64 code cannot run here; compiling the tests only
@@ -187,7 +187,7 @@ target/x86/x86_64-apple-darwin/release/scrutate: Mach-O 64-bit executable x86_64
    Compiling unarray v0.1.4
    Compiling bit-set v0.11.1
    Compiling rand v0.10.3
-   Compiling scrutate v0.1.0 (/Users/crisn/Documents/Projects/scrutate/crates/scrutate)
+   Compiling scrutate v0.1.0 (<repo>/crates/scrutate)
    Compiling tempfile v3.27.0
    Compiling rusty-fork v0.3.1
    Compiling proptest v1.12.0

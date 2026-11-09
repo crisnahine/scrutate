@@ -1,7 +1,7 @@
-rm: /Users/crisn/.cache/scrutate-bench/smbmnt/netfs-check/.scrutate/text/lock: Resource busy
-rm: /Users/crisn/.cache/scrutate-bench/smbmnt/netfs-check/.scrutate/text: Directory not empty
-rm: /Users/crisn/.cache/scrutate-bench/smbmnt/netfs-check/.scrutate: Directory not empty
-rm: /Users/crisn/.cache/scrutate-bench/smbmnt/netfs-check: Directory not empty
+rm: ~/.cache/scrutate-bench/smbmnt/netfs-check/.scrutate/text/lock: Resource busy
+rm: ~/.cache/scrutate-bench/smbmnt/netfs-check/.scrutate/text: Directory not empty
+rm: ~/.cache/scrutate-bench/smbmnt/netfs-check/.scrutate: Directory not empty
+rm: ~/.cache/scrutate-bench/smbmnt/netfs-check: Directory not empty
 file system: smbfs
 engine A [-F Searcher]: network 1a6b2670cf0e4703 local 1a6b2670cf0e4703 same
 engine A [-i -F error]: network a9fdc5e63d0b5a9f local a9fdc5e63d0b5a9f same

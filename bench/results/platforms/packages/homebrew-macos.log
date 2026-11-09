@@ -1,12 +1,12 @@
-+ export 'PATH=/opt/homebrew/bin:/Users/crisn/.rvm/gems/ruby-3.4.9/bin:/Users/crisn/.rvm/gems/ruby-3.4.9@global/bin:/Users/crisn/.rvm/rubies/ruby-3.4.9/bin:/Users/crisn/.kimi-code/bin:/Users/crisn/Library/Application Support/Herd/bin/:/Users/crisn/Library/Application Support/Herd/config/nvm/versions/node/v22.22.3/bin:/Users/crisn/.npm-global/bin:/Users/crisn/.local/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/usr/local/co.palokaj.battery:/Library/Apple/usr/bin:/opt/homebrew/bin:/Users/crisn/.rvm/gems/ruby-3.4.9/bin:/Users/crisn/.rvm/gems/ruby-3.4.9@global/bin:/Users/crisn/.rvm/rubies/ruby-3.4.9/bin:/Users/crisn/.kimi-code/bin:/Users/crisn/Library/Application Support/Herd/bin/:/Users/crisn/Library/Application Support/Herd/config/nvm/versions/node/v22.22.3/bin:/Users/crisn/Library/pnpm:/Users/crisn/.npm-global/bin:/Users/crisn/.local/bin:/Users/crisn/.rvm/bin:/Users/crisn/.lmstudio/bin:/Users/crisn/.maestro/bin:/Users/crisn/Library/Application Support/Code/User/globalStorage/github.copilot-chat/debugCommand:/Applications/Visual Studio Code.app/Contents/Resources/app/bin/copilot-shim:/Users/crisn/.rvm/bin:/Users/crisn/.lmstudio/bin:/Users/crisn/.maestro/bin:/Users/crisn/.claude/plugins/cache/crisnahine/anatomiya/0.22.0/bin' HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_ANALYTICS=1
-+ PATH='/opt/homebrew/bin:/Users/crisn/.rvm/gems/ruby-3.4.9/bin:/Users/crisn/.rvm/gems/ruby-3.4.9@global/bin:/Users/crisn/.rvm/rubies/ruby-3.4.9/bin:/Users/crisn/.kimi-code/bin:/Users/crisn/Library/Application Support/Herd/bin/:/Users/crisn/Library/Application Support/Herd/config/nvm/versions/node/v22.22.3/bin:/Users/crisn/.npm-global/bin:/Users/crisn/.local/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/usr/local/co.palokaj.battery:/Library/Apple/usr/bin:/opt/homebrew/bin:/Users/crisn/.rvm/gems/ruby-3.4.9/bin:/Users/crisn/.rvm/gems/ruby-3.4.9@global/bin:/Users/crisn/.rvm/rubies/ruby-3.4.9/bin:/Users/crisn/.kimi-code/bin:/Users/crisn/Library/Application Support/Herd/bin/:/Users/crisn/Library/Application Support/Herd/config/nvm/versions/node/v22.22.3/bin:/Users/crisn/Library/pnpm:/Users/crisn/.npm-global/bin:/Users/crisn/.local/bin:/Users/crisn/.rvm/bin:/Users/crisn/.lmstudio/bin:/Users/crisn/.maestro/bin:/Users/crisn/Library/Application Support/Code/User/globalStorage/github.copilot-chat/debugCommand:/Applications/Visual Studio Code.app/Contents/Resources/app/bin/copilot-shim:/Users/crisn/.rvm/bin:/Users/crisn/.lmstudio/bin:/Users/crisn/.maestro/bin:/Users/crisn/.claude/plugins/cache/crisnahine/anatomiya/0.22.0/bin'
++ export 'PATH=...' HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_ANALYTICS=1
++ PATH='...'
 + HOMEBREW_NO_AUTO_UPDATE=1
 + HOMEBREW_NO_INSTALL_CLEANUP=1
 + HOMEBREW_NO_ANALYTICS=1
-+ S=/private/tmp/claude-502/-Users-crisn-Documents-Projects-scrutate/032db348-b12c-4238-ade7-7c9c75f5a050/scratchpad
-+ W=/Users/crisn/Documents/Projects/scrutate/.claude/worktrees/agent-af74fea583f0042b2
-+ TAR=/private/tmp/claude-502/-Users-crisn-Documents-Projects-scrutate/032db348-b12c-4238-ade7-7c9c75f5a050/scratchpad/scrutate-0.1.0.tar.gz
-++ shasum -a 256 /private/tmp/claude-502/-Users-crisn-Documents-Projects-scrutate/032db348-b12c-4238-ade7-7c9c75f5a050/scratchpad/scrutate-0.1.0.tar.gz
++ S=$TMPDIR
++ W=<repo>
++ TAR=$TMPDIR/scrutate-0.1.0.tar.gz
+++ shasum -a 256 $TMPDIR/scrutate-0.1.0.tar.gz
 ++ cut '-d ' -f1
 + SUM=7d254559c5f22970d02c5963fd4c5dad6694befa361e96c88b71011b73101385
 + brew tap-new --no-git scrutatelocal/test
@@ -25,9 +25,9 @@ workflow with the pull request number and, optionally, the pull
 request's expected head commit SHA.
 ++ brew --repository scrutatelocal/test
 + TAP=/opt/homebrew/Library/Taps/scrutatelocal/homebrew-test
-+ sed -e 's|https://github.com/crisnahine/scrutate/archive/refs/tags/v0.1.0.tar.gz|file:///private/tmp/claude-502/-Users-crisn-Documents-Projects-scrutate/032db348-b12c-4238-ade7-7c9c75f5a050/scratchpad/scrutate-0.1.0.tar.gz|' -e 's|0000000000000000000000000000000000000000000000000000000000000000|7d254559c5f22970d02c5963fd4c5dad6694befa361e96c88b71011b73101385|' /Users/crisn/Documents/Projects/scrutate/.claude/worktrees/agent-af74fea583f0042b2/packaging/homebrew/scrutate.rb
++ sed -e 's|https://github.com/crisnahine/scrutate/archive/refs/tags/v0.1.0.tar.gz|file://$TMPDIR/scrutate-0.1.0.tar.gz|' -e 's|0000000000000000000000000000000000000000000000000000000000000000|7d254559c5f22970d02c5963fd4c5dad6694befa361e96c88b71011b73101385|' <repo>/packaging/homebrew/scrutate.rb
 + grep -n 'url\|sha256' /opt/homebrew/Library/Taps/scrutatelocal/homebrew-test/Formula/scrutate.rb
-4:  url "file:///private/tmp/claude-502/-Users-crisn-Documents-Projects-scrutate/032db348-b12c-4238-ade7-7c9c75f5a050/scratchpad/scrutate-0.1.0.tar.gz"
+4:  url "file://$TMPDIR/scrutate-0.1.0.tar.gz"
 6:  sha256 "7d254559c5f22970d02c5963fd4c5dad6694befa361e96c88b71011b73101385"
 + brew install --build-from-source scrutatelocal/test/scrutate
 ==> Trusted formula scrutatelocal/test/scrutate
@@ -90,7 +90,7 @@ Xcode can be updated from the App Store.
 ++ brew --prefix
 + scrutate_bin=/opt/homebrew/bin/scrutate
 + /opt/homebrew/bin/scrutate --version
-/private/tmp/claude-502/-Users-crisn-Documents-Projects-scrutate/032db348-b12c-4238-ade7-7c9c75f5a050/scratchpad/brew_test.sh: line 17: /opt/homebrew/bin/scrutate: No such file or directory
+$TMPDIR/brew_test.sh: line 17: /opt/homebrew/bin/scrutate: No such file or directory
 + rc_version=127
 ++ brew --prefix
 ++ brew --prefix

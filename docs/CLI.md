@@ -72,11 +72,12 @@ refused with `--index`; `-g` and `-t` filter the indexed files.
 | `deps FILE` / `rdeps TARGET` | Imports of a file (resolved to repository files when possible) / files importing a module or file. |
 | `similar TARGET [-k N]` | Code similar to a symbol or `path:line` (vector cosine + token Jaccard). |
 | `dupes [--min-tokens N] [--threshold J] [--limit N]` | Exact and near-duplicate functions. |
-| `tsquery LANG QUERY [PATHS] [--limit N]` | Tree-sitter structural query over every file of a language (no index). |
+| `tsquery LANG QUERY [PATHS] [--limit N] [--no-cache]` | Tree-sitter structural query over every file of a language (no index; per-file results are cached, see below). |
 | `check [--files] [--json]` | Verify database integrity, segment consistency and (with `--files`) that indexed files are unchanged. Exit 1 on problems. |
 | `stats` | Index statistics (files, chunks, symbols, call edges, imports, segments, and the text index's files, segments and bytes). |
 | `languages [--json]` | The verified capability registry. |
-| `serve [--refresh-interval S]` | MCP server on stdio. |
+| `watch [PATH]` | Keep the index (and the text index, if there is one) up to date from filesystem events (see below). |
+| `serve [--refresh-interval S] [--watch]` | MCP server on stdio; `--watch` also runs the watcher in a background thread. |
 | `lsp` | Language Server Protocol server on stdio (see below). |
 | `config` | Show the configuration file in effect. |
 | `batch FILE [--features] [--timing]` | Run queries from a JSON-lines file (benchmarks, parity tests). |
@@ -105,6 +106,36 @@ one (as `scrutate index` does, without the text index) and reports it with `wind
 requests that arrive meanwhile wait for it. Columns are UTF-16 code units, as the protocol
 requires. The exit code is 0 after `shutdown` then `exit`, 1 otherwise. Logs go to stderr.
 
+### `watch`
+```
+scrutate watch [PATH]
+```
+Updates the index of `PATH` (default `--root`) once, prints `watching PATH` on stderr, then waits
+for filesystem events (inotify on Linux, ReadDirectoryChangesW on Windows; on macOS it polls every
+2 seconds, because the FSEvents backend would link CoreServices into every `scrutate` command and
+cost about 1 ms of start-up). Events under `.scrutate/` and `.git/` are dropped, and so are paths that
+neither index would hold under its usual rules (ignore files; the skipped build and vendor
+directories and `SCRUTATE_INDEX_EXCLUDE_DIRS` for the code index; hidden paths for the text
+index). A burst of events is collected until 200 ms pass without one (at
+most 2 s), then the usual incremental update runs: the code index, and the text index when
+`.scrutate/text/` exists (`watch` never creates one; `scrutate index` does). Each update that
+changed something prints one line on stderr. Ctrl-C stops it after the update in progress (exit
+130). Other processes can read and update the same index meanwhile; the indexes' own locks order
+the writers, and stopping the process mid-update leaves the previous state in place.
+
+`serve --watch` runs the same watcher in a background thread while the server answers requests.
+The watcher and the tool calls share one engine, so a code index update and a request never run at
+the same time in that process.
+
+### `tsquery` cache
+Each file's captures are kept in `--root`/.scrutate/tsquery/, one file per (scrutate version,
+language, query text, searched paths), keyed by a hash of the file's content. A file whose content
+was seen before is not parsed again; the output is byte-identical to `--no-cache`, which parses everything and
+leaves the cache alone. A run that visits every file keeps only the entries it used, so edited and
+deleted files do not accumulate. The directory is bounded at 128 MB: beyond it the least recently
+used query files are deleted, and a query whose results alone exceed it is not cached. The cache
+is safe to delete at any time.
+
 ### Environment variables
 `SCRUTATE_ROOT`, `SCRUTATE_THREADS`, `SCRUTATE_GREP_{HIDDEN,NO_IGNORE,FOLLOW,SMART_CASE,MAX_FILESIZE,MAX_DEPTH,GLOBS,TYPES}`,
 `SCRUTATE_INDEX_EXCLUDE_DIRS`, `SCRUTATE_REFRESH_INTERVAL`, `SCRUTATE_CONFIG`, `SCRUTATE_SEMANTIC`
@@ -113,6 +144,7 @@ timings), `SCRUTATE_DIAGNOSTICS` (`json`: errors as JSON records), `NO_COLOR`.
 
 ### The index directory
 `.scrutate/index.db` (SQLite, WAL), `.scrutate/seg/*/` (memory-mapped arrays) and
-`.scrutate/text/` (the text index: a manifest and immutable trigram segments), plus a `.gitignore`
+`.scrutate/text/` (the text index: a manifest and immutable trigram segments),
+`.scrutate/tsquery/` (the `tsquery` cache), plus a `.gitignore`
 so it is never committed. It is a cache: deleting it is always safe; `scrutate index
 --force` rebuilds it; a damaged index rebuilds itself.

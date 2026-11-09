@@ -313,14 +313,25 @@ pub enum Cmd {
         limit: usize,
         #[arg(long)]
         json: bool,
+        /// parse every file again instead of reusing the results cached in `--root`/.scrutate/tsquery
+        #[arg(long)]
+        no_cache: bool,
     },
     /// index statistics
     Stats,
+    /// keep the index (and the text index, if there is one) up to date as files change
+    Watch {
+        /// repository to watch (default: --root)
+        path: Option<PathBuf>,
+    },
     /// run the MCP server on stdio
     Serve {
         /// at most one directory scan per this many seconds
         #[arg(long, default_value_t = 1.0, env = "SCRUTATE_REFRESH_INTERVAL")]
         refresh_interval: f64,
+        /// also update the index from filesystem events, in the background
+        #[arg(long)]
+        watch: bool,
     },
     /// run a Language Server Protocol server on stdio (definitions, references, symbols from the index)
     Lsp,
@@ -719,12 +730,13 @@ pub fn run() -> Result<i32> {
             }
             Ok(if groups.is_empty() { 1 } else { 0 })
         }
-        Cmd::Tsquery { lang, query, paths, limit, json } => {
+        Cmd::Tsquery { lang, query, paths, limit, json, no_cache } => {
             // streamed: one JSON object or one text line per capture, in path order
             let stdout = std::io::stdout();
             let mut w = std::io::BufWriter::new(stdout.lock());
             let mut err: Option<std::io::Error> = None;
-            let n = crate::intel::tsquery_each(&lang, &query, &paths, limit, &mut |c| {
+            let cache_root = (!no_cache).then_some(cli.root.as_path());
+            let n = crate::intel::tsquery_each(&lang, &query, &paths, limit, cache_root, &mut |c| {
                 if err.is_some() {
                     return;
                 }
@@ -747,12 +759,39 @@ pub fn run() -> Result<i32> {
             let _ = w.flush();
             Ok(if n == 0 { 1 } else { 0 })
         }
-        Cmd::Serve { refresh_interval } => {
+        Cmd::Serve { refresh_interval, watch } => {
             let s = crate::open(&cli.root)?;
-            crate::mcp::serve(Arc::new(Mutex::new(s)), refresh_interval, crate::VERSION)?;
+            let root = s.ix.root.clone();
+            let s = Arc::new(Mutex::new(s));
+            if watch {
+                let s = Arc::clone(&s);
+                std::thread::Builder::new().name("scrutate-watch".into()).spawn(move || {
+                    static NEVER: AtomicBool = AtomicBool::new(false);
+                    if let Err(e) = crate::watch::update_text(&root) {
+                        eprintln!("[scrutate] text index update failed: {e:#}");
+                    }
+                    // the searcher's lock makes this the only writer in the process; the index's own
+                    // locks order it with other processes
+                    let r = crate::watch::run(
+                        &root,
+                        &NEVER,
+                        || eprintln!("[scrutate] watching {}", root.display()),
+                        || {
+                            s.lock().unwrap_or_else(|p| p.into_inner()).ix.update(false)?;
+                            crate::watch::update_text(&root)?;
+                            Ok(())
+                        },
+                    );
+                    if let Err(e) = r {
+                        eprintln!("[scrutate] watching stopped: {e:#}");
+                    }
+                })?;
+            }
+            crate::mcp::serve(s, refresh_interval, crate::VERSION)?;
             Ok(0)
         }
         Cmd::Lsp => crate::lsp::serve(&cli.root),
+        Cmd::Watch { path } => watch_command(path.as_deref().unwrap_or(&cli.root)),
         Cmd::Languages { json: true } => {
             // the verified capability registry: what each grammar's rules extract
             let v: Vec<serde_json::Value> = crate::langs::LANGS
@@ -847,6 +886,45 @@ fn refs_command(root: &Path, name: &str, max_results: usize, json: bool) -> Resu
         print!("{}", crate::intel::references_text(&s, name, max_results as u64)?);
         Ok(if r.is_empty() { 1 } else { 0 })
     }
+}
+
+/// `watch`: update the indexes now, then after every burst of file changes until Ctrl-C.
+fn watch_command(root: &Path) -> Result<i32> {
+    let root = std::fs::canonicalize(root).with_context(|| format!("watch {}", root.display()))?;
+    let stop = Arc::new(AtomicBool::new(false));
+    interrupt::install(Arc::clone(&stop));
+    let mut s: Option<crate::search::Searcher> = None;
+    let mut update = || -> Result<()> {
+        let st = match s.as_mut().map(|s| s.ix.update(false)) {
+            Some(Ok(st)) => st,
+            Some(Err(e)) if !crate::index::error_is_corruption(&e) => return Err(e),
+            other => {
+                if let Some(Err(e)) = other {
+                    eprintln!("[scrutate] index database corrupt ({e:#}); rebuilding");
+                    s = None; // close the database before its files are deleted
+                    crate::index::wipe_index(&root);
+                }
+                let (fresh, st) = crate::open_updated(&root, false)?;
+                s = Some(fresh);
+                st
+            }
+        };
+        let text = crate::watch::update_text(&root)?;
+        let text_changed = text.as_ref().map(|t| t.files_changed + t.files_removed).unwrap_or(0);
+        if st.files_changed + st.files_removed + text_changed > 0 {
+            eprintln!(
+                "[scrutate] {} changed, {} removed ({} chunks){}",
+                st.files_changed,
+                st.files_removed,
+                st.chunks,
+                text.map(|t| format!("; text index: {} changed, {} removed", t.files_changed, t.files_removed)).unwrap_or_default()
+            );
+        }
+        Ok(())
+    };
+    update()?;
+    crate::watch::run(&root, &stop, || eprintln!("[scrutate] watching {}", root.display()), update)?;
+    Ok(if stop.load(Ordering::Relaxed) { 130 } else { 0 })
 }
 
 /// `check`: integrity of the database and the segments; with `--files`, re-hash every indexed file.
