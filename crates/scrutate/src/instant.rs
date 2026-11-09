@@ -1014,14 +1014,21 @@ pub fn default_threads(o: &Options) -> usize {
 /// flight, so then twice the cores, at most 24 (the Linux tree cold: 2.9 s on 5 threads, 1.7 s on
 /// 11, 1.4 s on 24).
 fn walk_threads(o: &Options, c: &Counters) -> usize {
-    const COLD_READ_NS: u64 = 75_000;
-    let reads = c.small_reads.load(Ordering::Relaxed);
-    let cold = reads >= 32 && c.small_read_ns.load(Ordering::Relaxed) / reads >= COLD_READ_NS;
-    if o.threads == 0 && cold {
-        (2 * std::thread::available_parallelism().map_or(2, |n| n.get())).min(24)
+    if o.threads == 0 && reads_from_disk(c) {
+        cold_threads()
     } else {
         default_threads(o)
     }
+}
+
+fn reads_from_disk(c: &Counters) -> bool {
+    const COLD_READ_NS: u64 = 75_000;
+    let reads = c.small_reads.load(Ordering::Relaxed);
+    reads >= 16 && c.small_read_ns.load(Ordering::Relaxed) / reads >= COLD_READ_NS
+}
+
+fn cold_threads() -> usize {
+    (2 * std::thread::available_parallelism().map_or(2, |n| n.get())).min(24)
 }
 
 /// Threads for one large file searched as ranges: every core (at most 12), since that work is
@@ -1138,8 +1145,8 @@ fn small_first(
     let (tx, rx) = mpsc::channel::<Vec<Hit>>();
     let workers = default_threads(o).min(3);
     let walked = std::thread::scope(|s| {
-        for _ in 0..workers {
-            let (tx, work_rx) = (tx.clone(), &work_rx);
+        let work_rx = &work_rx;
+        let worker = move |tx: mpsc::Sender<Vec<Hit>>| {
             // a clone per thread: each gets its own regex cache pool instead of contending for one
             let matcher = matcher.clone();
             s.spawn(move || {
@@ -1155,7 +1162,12 @@ fn small_first(
                     }
                 }
             });
+        };
+        for _ in 0..workers {
+            worker(tx.clone());
         }
+        // for the workers added when the files turn out to come from the disk
+        let mut more = (o.threads == 0).then(|| tx.clone());
         drop(tx);
         let walker = s.spawn(move || {
             let mut seen = std::collections::HashSet::new();
@@ -1183,6 +1195,11 @@ fn small_first(
                 seen.insert(path.clone());
                 if work_tx.send((path, rel, size)).is_err() {
                     break;
+                }
+                if let Some(tx) = more.take_if(|_| reads_from_disk(c)) {
+                    for _ in workers..cold_threads() {
+                        worker(tx.clone());
+                    }
                 }
             }
             (seen, errors, false)
