@@ -1,18 +1,9 @@
 //! Soundness of the text index: whenever a regex matches a text, the trigram condition derived from
-//! the pattern must accept that text's trigrams (otherwise `grep --index` would miss the match).
+//! the pattern must accept that text's trigrams and their masks (otherwise `grep --index` would miss the match).
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 use scrutate::instant::{Case, Mode, Options};
-use scrutate::textindex::{query_for, trigrams, Q};
-
-fn holds(q: &Q, tris: &[u32]) -> bool {
-    match q {
-        Q::All => true,
-        Q::Tri(t) => tris.binary_search(t).is_ok(),
-        Q::And(v) => v.iter().all(|q| holds(q, tris)),
-        Q::Or(v) => v.iter().any(|q| holds(q, tris)),
-    }
-}
+use scrutate::textindex::{holds, query_for, trigram_masks};
 
 fuzz_target!(|data: &[u8]| {
     let Some((&flags, rest)) = data.split_first() else { return };
@@ -30,12 +21,12 @@ fuzz_target!(|data: &[u8]| {
     };
     let o = Options { pattern: pat.to_string(), mode, case, ..Options::default() };
     let Ok(cond) = query_for(&o) else { return };
-    let tris = trigrams(text.as_bytes());
+    let tris = trigram_masks(text.as_bytes());
     let re = match mode {
         Mode::Regex => regex::RegexBuilder::new(pat).case_insensitive(case == Case::Insensitive).size_limit(1 << 20).build(),
         Mode::Literal => regex::RegexBuilder::new(&regex::escape(pat)).case_insensitive(case == Case::Insensitive).build(),
         Mode::Identifier => regex::Regex::new(&scrutate::instant::identifier_regex(pat)),
-        Mode::Fuzzy { .. } => return,
+        Mode::Fuzzy { .. } | Mode::Pcre2 | Mode::FuzzyRegex { .. } => return,
     };
     if let Ok(re) = re {
         for line in text.split('\n') {

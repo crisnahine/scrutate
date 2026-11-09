@@ -4,7 +4,9 @@
 //!
 //! Layout under `.scrutate/text/`: `manifest.json` names the live segments; a segment directory
 //! holds `keys.npy` (sorted u32 trigrams), `ptr.npy` (u64 offsets into `post.bin`), `post.bin`
-//! (delta + LEB128 document numbers), `docs.npy` (size, mtime, flags per document), `paths.bin` +
+//! (per document holding the trigram: its number, delta + LEB128, then two mask bytes, a bit for
+//! the low three bits of each byte that follows the trigram and a bit for each position of the
+//! trigram modulo 8), `docs.npy` (size, mtime, flags per document), `paths.bin` +
 //! `poff.npy` (paths), and `live-<generation>.bin` (which documents are current). Segments are
 //! immutable; an update writes new segments and new liveness files, then swaps the manifest.
 
@@ -22,7 +24,7 @@ use regex_syntax::hir::{Class, Hir, HirKind};
 use crate::instant::{self, Case, Mode, Options};
 use crate::npy::{self, Npy};
 
-pub const FORMAT: u32 = 1;
+pub const FORMAT: u32 = 2;
 const MAX_SEGMENTS: usize = 4;
 /// Postings held in memory before a batch is written as a segment (about 200 MB at the peak).
 const BATCH_POSTINGS: usize = 16 << 20;
@@ -37,11 +39,14 @@ pub const ALWAYS: i64 = 2;
 pub const RETRY: i64 = 4;
 
 // ------------------------------------------------------------------------- query extraction
-/// A necessary condition on a file's trigram set for the pattern to match somewhere in it.
+/// A necessary condition on a file's trigrams for the pattern to match somewhere in it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Q {
     All,
     Tri(u32),
+    /// a folded string of 4 bytes or more: its trigrams, at positions that can line up and each
+    /// followed by a byte that fits the string's next byte
+    Seq(Vec<u8>),
     And(Vec<Q>),
     Or(Vec<Q>),
 }
@@ -88,10 +93,40 @@ fn fold(s: &[u8]) -> Vec<u8> {
 }
 
 fn string_query(s: &[u8]) -> Q {
-    if s.len() < 3 {
-        return Q::All;
+    match s.len() {
+        0..=2 => Q::All,
+        3 => Q::Tri(key(s[0], s[1], s[2])),
+        _ => Q::Seq(s.to_vec()),
     }
-    and(s.windows(3).map(|w| Q::Tri(key(w[0], w[1], w[2]))).collect())
+}
+
+/// Whether a file whose masks for the consecutive trigrams of the folded string `s` are
+/// `mask_of(i)` can hold `s`: every trigram present, one position modulo 8 lining all of them up,
+/// and each followed by a byte with the low bits of the next byte of `s`.
+fn seq_fits(s: &[u8], mask_of: impl Fn(usize) -> Option<u16>) -> bool {
+    let mut lined_up = 0xFFu8;
+    for i in 0..s.len().saturating_sub(2) {
+        let Some(m) = mask_of(i) else { return false };
+        let (next, at) = ((m >> 8) as u8, m as u8);
+        lined_up &= at.rotate_right((i % 8) as u32);
+        if s.get(i + 3).is_some_and(|&b| next & (1 << (b & 7)) == 0) {
+            return false;
+        }
+    }
+    lined_up != 0
+}
+
+/// Whether `q` accepts a file whose sorted trigram masks are `masks` (as `trigram_masks` gives
+/// them): the condition the index evaluates, on one text.
+pub fn holds(q: &Q, masks: &[(u32, u16)]) -> bool {
+    let find = |t: u32| masks.binary_search_by_key(&t, |m| m.0).ok().map(|i| masks[i].1);
+    match q {
+        Q::All => true,
+        Q::Tri(t) => find(*t).is_some(),
+        Q::Seq(s) => seq_fits(s, |i| find(key(s[i], s[i + 1], s[i + 2]))),
+        Q::And(v) => v.iter().all(|q| holds(q, masks)),
+        Q::Or(v) => v.iter().any(|q| holds(q, masks)),
+    }
 }
 
 fn set_query(set: &[Vec<u8>]) -> Q {
@@ -297,33 +332,80 @@ pub fn query_for(o: &Options) -> Result<Q> {
 }
 
 // ------------------------------------------------------------------------- trigram extraction
-thread_local! {
-    static SEEN: std::cell::RefCell<Vec<u64>> = std::cell::RefCell::new(vec![0u64; 1 << 18]);
+/// An open-addressing table from trigram to masks, reused by each thread across files.
+struct MaskTable {
+    keys: Vec<u32>,
+    masks: Vec<u16>,
+    used: Vec<u32>,
 }
 
-/// Distinct folded trigrams of `bytes`, sorted.
-pub fn trigrams(bytes: &[u8]) -> Vec<u32> {
-    let mut out = Vec::new();
-    if bytes.len() < 3 {
-        return out;
-    }
-    SEEN.with(|s| {
-        let seen = &mut *s.borrow_mut();
-        let mut k = (bytes[0].to_ascii_lowercase() as u32) << 8 | bytes[1].to_ascii_lowercase() as u32;
-        for &b in &bytes[2..] {
-            k = ((k << 8) | b.to_ascii_lowercase() as u32) & 0xFF_FFFF;
-            let (w, bit) = ((k >> 6) as usize, 1u64 << (k & 63));
-            if seen[w] & bit == 0 {
-                seen[w] |= bit;
-                out.push(k);
+const EMPTY: u32 = u32::MAX; // trigram keys use 24 bits
+
+thread_local! {
+    static TABLE: std::cell::RefCell<MaskTable> = std::cell::RefCell::new(MaskTable { keys: vec![EMPTY; 1 << 12], masks: vec![0; 1 << 12], used: Vec::new() });
+}
+
+impl MaskTable {
+    fn add(&mut self, k: u32, m: u16) {
+        if self.used.len() * 2 >= self.keys.len() {
+            self.grow();
+        }
+        let mask = self.keys.len() - 1;
+        let mut i = (k.wrapping_mul(0x9E37_79B1) >> 7) as usize & mask;
+        loop {
+            if self.keys[i] == k {
+                self.masks[i] |= m;
+                return;
             }
+            if self.keys[i] == EMPTY {
+                self.keys[i] = k;
+                self.masks[i] = m;
+                self.used.push(i as u32);
+                return;
+            }
+            i = (i + 1) & mask;
         }
-        for &k in &out {
-            seen[(k >> 6) as usize] &= !(1u64 << (k & 63));
+    }
+
+    fn grow(&mut self) {
+        let old: Vec<(u32, u16)> = self.used.iter().map(|&i| (self.keys[i as usize], self.masks[i as usize])).collect();
+        let n = self.keys.len() * 2;
+        self.keys = vec![EMPTY; n];
+        self.masks = vec![0; n];
+        self.used.clear();
+        for (k, m) in old {
+            self.add(k, m);
         }
-    });
-    out.sort_unstable();
-    out
+    }
+
+    /// The entries, sorted by trigram; leaves the table empty.
+    fn take(&mut self) -> Vec<(u32, u16)> {
+        let mut out: Vec<(u32, u16)> = self.used.iter().map(|&i| (self.keys[i as usize], self.masks[i as usize])).collect();
+        for &i in &self.used {
+            self.keys[i as usize] = EMPTY;
+        }
+        self.used.clear();
+        out.sort_unstable_by_key(|e| e.0);
+        out
+    }
+}
+
+/// Distinct folded trigrams of `bytes`, sorted, each with its masks: next-byte bits in the high
+/// byte (`1 << (next & 7)`, folded), position bits in the low byte (`1 << (start % 8)`).
+pub fn trigram_masks(bytes: &[u8]) -> Vec<(u32, u16)> {
+    if bytes.len() < 3 {
+        return Vec::new();
+    }
+    TABLE.with(|t| {
+        let t = &mut *t.borrow_mut();
+        let mut k = (bytes[0].to_ascii_lowercase() as u32) << 8 | bytes[1].to_ascii_lowercase() as u32;
+        for j in 0..bytes.len() - 2 {
+            k = ((k << 8) | bytes[j + 2].to_ascii_lowercase() as u32) & 0xFF_FFFF;
+            let next = bytes.get(j + 3).map_or(0, |&b| 1u16 << ((b.to_ascii_lowercase() & 7) + 8));
+            t.add(k, next | 1 << (j & 7));
+        }
+        t.take()
+    })
 }
 
 struct DocIn {
@@ -331,7 +413,7 @@ struct DocIn {
     size: u64,
     mtime: i64,
     flags: i64,
-    tris: Vec<u32>,
+    tris: Vec<(u32, u16)>,
 }
 
 fn read_doc(root: &Path, rel: String, size: u64, mtime: i64) -> DocIn {
@@ -353,7 +435,7 @@ fn read_doc(root: &Path, rel: String, size: u64, mtime: i64) -> DocIn {
         Some(i) => (&bytes[..i], BINARY),
         None => (bytes, 0),
     };
-    DocIn { rel, size, mtime, flags, tris: trigrams(text) }
+    DocIn { rel, size, mtime, flags, tris: trigram_masks(text) }
 }
 
 // ------------------------------------------------------------------------- segments
@@ -365,8 +447,9 @@ fn varint(out: &mut Vec<u8>, mut v: u64) {
     out.push(v as u8);
 }
 
-/// Decode one posting list (document numbers below `ndocs`, strictly increasing).
-fn decode_into(bytes: &[u8], ndocs: usize, mut each: impl FnMut(usize)) -> Result<()> {
+/// Decode one posting list (document numbers below `ndocs`, strictly increasing, each with its
+/// masks).
+fn decode_into(bytes: &[u8], ndocs: usize, mut each: impl FnMut(usize, u16)) -> Result<()> {
     let mut i = 0;
     let mut prev = 0u64;
     let mut first = true;
@@ -397,7 +480,9 @@ fn decode_into(bytes: &[u8], ndocs: usize, mut each: impl FnMut(usize)) -> Resul
         if doc as usize >= ndocs {
             bail!("posting {doc} outside the segment ({ndocs} documents)");
         }
-        each(doc as usize);
+        let m = bytes.get(i..i + 2).ok_or_else(|| anyhow!("truncated posting masks"))?;
+        i += 2;
+        each(doc as usize, u16::from(m[0]) << 8 | u16::from(m[1]));
         prev = doc;
     }
     Ok(())
@@ -477,7 +562,7 @@ impl Segment {
                 bail!("keys or offsets out of order");
             }
             for i in 0..keys.len() {
-                decode_into(&post[ptr[i] as usize..ptr[i + 1] as usize], self.ndocs, |_| {})?;
+                decode_into(&post[ptr[i] as usize..ptr[i + 1] as usize], self.ndocs, |_, _| {})?;
             }
             for d in 0..self.ndocs {
                 std::str::from_utf8(self.path_bytes(d)).context("path is not UTF-8")?;
@@ -513,15 +598,45 @@ impl Segment {
             Q::Tri(t) => {
                 let mut bits = vec![0u64; words];
                 if let Some(p) = self.posting(*t) {
-                    decode_into(p, self.ndocs, |d| bits[d / 64] |= 1 << (d % 64))?;
+                    decode_into(p, self.ndocs, |d, _| bits[d / 64] |= 1 << (d % 64))?;
                 }
                 Some(bits)
+            }
+            Q::Seq(s) => {
+                let keys: Vec<u32> = s.windows(3).map(|w| key(w[0], w[1], w[2])).collect();
+                // rarest trigrams first, so the documents still in play shrink fastest
+                let mut order: Vec<usize> = (0..keys.len()).collect();
+                order.sort_by_key(|&i| self.posting(keys[i]).map(|p| p.len()).unwrap_or(0));
+                let mut alive: Option<Vec<u64>> = None;
+                let mut lined_up = vec![0xFFu8; self.ndocs];
+                for i in order {
+                    let mut seen = vec![0u64; words];
+                    let need = s.get(i + 3).map(|&b| 1u8 << (b & 7));
+                    if let Some(p) = self.posting(keys[i]) {
+                        decode_into(p, self.ndocs, |d, m| {
+                            if alive.as_ref().is_some_and(|a| a[d / 64] & (1 << (d % 64)) == 0) {
+                                return;
+                            }
+                            lined_up[d] &= (m as u8).rotate_right((i % 8) as u32);
+                            if need.is_none_or(|n| (m >> 8) as u8 & n != 0) && lined_up[d] != 0 {
+                                seen[d / 64] |= 1 << (d % 64);
+                            }
+                        })?;
+                    }
+                    let empty = seen.iter().all(|&w| w == 0);
+                    alive = Some(seen);
+                    if empty {
+                        break;
+                    }
+                }
+                alive
             }
             Q::And(qs) => {
                 // rarest trigrams first: the intersection shrinks fastest and can stop early
                 let mut order: Vec<&Q> = qs.iter().collect();
                 order.sort_by_key(|q| match q {
                     Q::Tri(t) => self.posting(*t).map(|p| p.len()).unwrap_or(0),
+                    Q::Seq(s) => s.windows(3).map(|w| self.posting(key(w[0], w[1], w[2])).map(|p| p.len()).unwrap_or(0)).min().unwrap_or(0),
                     _ => usize::MAX,
                 });
                 let mut acc: Option<Vec<u64>> = None;
@@ -562,12 +677,22 @@ fn all_live(n: usize) -> Vec<u8> {
     v
 }
 
+/// Append a posting list: increasing document numbers with their masks.
+fn encode_postings(out: &mut Vec<u8>, list: &[(u32, u16)]) {
+    let mut prev = 0u32;
+    for (j, &(d, m)) in list.iter().enumerate() {
+        varint(out, if j == 0 { d as u64 } else { (d - prev) as u64 });
+        out.extend_from_slice(&m.to_be_bytes());
+        prev = d;
+    }
+}
+
 /// Write one segment from documents in order (document `i` of the segment is `docs[i]`).
 fn write_segment(dir: &Path, docs: &[DocIn]) -> Result<()> {
     std::fs::create_dir_all(dir)?;
     let mut count = vec![0u32; 1 << 24];
     for d in docs {
-        for &t in &d.tris {
+        for &(t, _) in &d.tris {
             count[t as usize] += 1;
         }
     }
@@ -581,25 +706,21 @@ fn write_segment(dir: &Path, docs: &[DocIn]) -> Result<()> {
             total += count[t];
         }
     }
-    let mut post = vec![0u32; total as usize];
+    let mut post = vec![(0u32, 0u16); total as usize];
     let mut cur = start.clone();
     for (i, d) in docs.iter().enumerate() {
-        for &t in &d.tris {
-            post[cur[t as usize] as usize] = i as u32;
+        for &(t, m) in &d.tris {
+            post[cur[t as usize] as usize] = (i as u32, m);
             cur[t as usize] += 1;
         }
     }
     drop(cur);
     let mut ptr = Vec::with_capacity(keys.len() + 1);
-    let mut enc = Vec::with_capacity(post.len() + post.len() / 4);
+    let mut enc = Vec::with_capacity(post.len() * 3 + post.len() / 4);
     for &t in &keys {
         ptr.push(enc.len() as u64);
         let (s, n) = (start[t as usize] as usize, count[t as usize] as usize);
-        let mut prev = 0u32;
-        for (j, &d) in post[s..s + n].iter().enumerate() {
-            varint(&mut enc, if j == 0 { d as u64 } else { (d - prev) as u64 });
-            prev = d;
-        }
+        encode_postings(&mut enc, &post[s..s + n]);
     }
     ptr.push(enc.len() as u64);
     std::fs::write(dir.join("post.bin"), &enc)?;
@@ -670,9 +791,9 @@ fn merge_segments(dir: &Path, segs: &[&Segment]) -> Result<()> {
             if s.keys().get(cur[i]) == Some(&k) {
                 let p = s.ptr();
                 let post = &bytes(&s.post)[p[cur[i]] as usize..p[cur[i] + 1] as usize];
-                decode_into(post, s.ndocs, |d| {
+                decode_into(post, s.ndocs, |d, m| {
                     if remap[i][d] != u32::MAX {
-                        ids.push(remap[i][d]);
+                        ids.push((remap[i][d], m));
                     }
                 })?;
                 cur[i] += 1;
@@ -682,11 +803,7 @@ fn merge_segments(dir: &Path, segs: &[&Segment]) -> Result<()> {
             continue;
         }
         buf.clear();
-        let mut prev = 0u32;
-        for (j, &d) in ids.iter().enumerate() {
-            varint(&mut buf, if j == 0 { d as u64 } else { (d - prev) as u64 });
-            prev = d;
-        }
+        encode_postings(&mut buf, &ids);
         w.write_all(&buf)?;
         written += buf.len() as u64;
         keys.push(k);
@@ -1017,13 +1134,8 @@ mod tests {
         query_for(&Options { pattern: pat.to_string(), mode, case, ..Options::default() }).unwrap()
     }
 
-    fn holds(q: &Q, tris: &[u32]) -> bool {
-        match q {
-            Q::All => true,
-            Q::Tri(t) => tris.binary_search(t).is_ok(),
-            Q::And(v) => v.iter().all(|q| holds(q, tris)),
-            Q::Or(v) => v.iter().any(|q| holds(q, tris)),
-        }
+    fn trigrams(text: &[u8]) -> Vec<(u32, u16)> {
+        trigram_masks(text)
     }
 
     #[test]
@@ -1032,6 +1144,38 @@ mod tests {
         assert!(holds(&x, &trigrams(b"the KERNEL thread")));
         assert!(!holds(&x, &trigrams(b"the kern el")));
         assert_eq!(q("ab", Mode::Literal, Case::Sensitive), Q::All);
+        // every trigram of "kernel" is there, but not one after the other
+        assert!(!holds(&x, &trigrams(b"kerne nel")));
+        assert!(!holds(&x, &trigrams(b"ker xern yrne znel")));
+        assert!(holds(&x, &trigrams(b"ker xern yrne znel kernel")));
+    }
+
+    #[test]
+    fn masks_match_a_scan_of_the_text() {
+        let text = b"Kernel_thread(kernel) kernels";
+        for (k, m) in trigram_masks(text) {
+            let (mut next, mut at) = (0u8, 0u8);
+            for j in 0..text.len() - 2 {
+                if key(text[j], text[j + 1], text[j + 2]) == k {
+                    at |= 1 << (j % 8);
+                    if let Some(&b) = text.get(j + 3) {
+                        next |= 1 << (b.to_ascii_lowercase() & 7);
+                    }
+                }
+            }
+            assert_eq!(m, u16::from(next) << 8 | u16::from(at), "{k:06x}");
+        }
+        let mut x = 0x9E37_79B9_7F4A_7C15u64;
+        let big: Vec<u8> = (0..200_000)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                x as u8
+            })
+            .collect();
+        let m = trigram_masks(&big);
+        assert!(m.windows(2).all(|w| w[0].0 < w[1].0) && m.len() > 10_000);
     }
 
     #[test]
@@ -1062,6 +1206,46 @@ mod tests {
         }
         let f = q("tokenizer", Mode::Fuzzy { max_edits: 1 }, Case::Sensitive);
         assert!(holds(&f, &trigrams(b"tokXnizer")));
+    }
+
+    #[test]
+    fn segments_evaluate_conditions_as_holds_does() {
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut rnd = |n: usize| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state % n as u64) as usize
+        };
+        let words = ["kernel", "thread", "ker", "nel", "rne", "ern", "Kernel_", "_thread", " ", "\n", "xyz", "pm_resume", "PM_", "RESUME", "é", "aaaa", "aa"];
+        let texts: Vec<Vec<u8>> = (0..300).map(|_| (0..rnd(40)).map(|_| words[rnd(words.len())]).collect::<String>().into_bytes()).collect();
+        let tmp = std::env::temp_dir().join(format!("scrutate-seg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let doc = |i: usize, t: &[u8]| DocIn { rel: format!("f{i}"), size: t.len() as u64, mtime: 0, flags: 0, tris: trigram_masks(t) };
+        let (a, b) = texts.split_at(170);
+        write_segment(&tmp.join("a"), &a.iter().enumerate().map(|(i, t)| doc(i, t)).collect::<Vec<_>>()).unwrap();
+        write_segment(&tmp.join("b"), &b.iter().enumerate().map(|(i, t)| doc(i, t)).collect::<Vec<_>>()).unwrap();
+        std::fs::write(tmp.join("a/live"), all_live(a.len())).unwrap();
+        std::fs::write(tmp.join("b/live"), all_live(b.len())).unwrap();
+        let (sa, sb) = (Segment::open(&tmp, "a", "live").unwrap(), Segment::open(&tmp, "b", "live").unwrap());
+        merge_segments(&tmp.join("m"), &[&sa, &sb]).unwrap();
+        std::fs::write(tmp.join("m/live"), all_live(texts.len())).unwrap();
+        let sm = Segment::open(&tmp, "m", "live").unwrap();
+        sm.validate(true).unwrap();
+        let pats = ["kernel", "kernel_thread", "pm_resume", "ker(nel|xyz)", "thread", "aaaaa", "nel thr", "é xyz", r"_\w+_resume"];
+        for pat in pats {
+            for case in [Case::Sensitive, Case::Insensitive] {
+                let cond = q(pat, Mode::Regex, case);
+                for (seg, docs) in [(&sa, a), (&sb, b), (&sm, &texts[..])] {
+                    let bits = seg.eval(&cond).unwrap();
+                    for (d, t) in docs.iter().enumerate() {
+                        let got = bits.as_ref().is_none_or(|b| b[d / 64] & (1 << (d % 64)) != 0);
+                        assert_eq!(got, holds(&cond, &trigram_masks(t)), "{pat} {case:?} doc {d} {:?}", String::from_utf8_lossy(t));
+                    }
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
