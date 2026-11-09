@@ -277,13 +277,19 @@ pub enum Cmd {
         #[arg(long)]
         json: bool,
     },
-    /// every reference to a name: definitions, callers and identifier matches grouped by enclosing symbol
+    /// every occurrence of a name, each resolved to the definition it refers to (or unresolved)
     Refs {
         name: String,
         #[arg(long)]
         json: bool,
         #[arg(long, default_value_t = 200)]
         max_results: usize,
+        /// only the references of the definition of NAME in PATH (at LINE, when several)
+        #[arg(long = "def", value_name = "PATH[:LINE]")]
+        def: Option<String>,
+        /// no resolution: definitions, callers and every whole-word occurrence grouped by enclosing symbol
+        #[arg(long, conflicts_with = "def")]
+        textual: bool,
     },
     /// code similar to a symbol or location (`name`, `Class.method` or `path:line`)
     Similar {
@@ -709,7 +715,13 @@ pub fn run() -> Result<i32> {
             }
             Ok(if rows.is_empty() { 1 } else { 0 })
         }
-        Cmd::Refs { name, json, max_results } => refs_command(&cli.root, &name, max_results, json),
+        Cmd::Refs { name, json, max_results, def, textual } => {
+            if textual {
+                refs_command(&cli.root, &name, max_results, json)
+            } else {
+                resolved_refs_command(&cli.root, &name, max_results, def.as_deref(), json)
+            }
+        }
         Cmd::Similar { target, k, json } => {
             let mut s = open_fresh(&cli.root)?;
             let out = crate::intel::similar(&mut s, &target, k)?;
@@ -870,7 +882,56 @@ pub fn run() -> Result<i32> {
     }
 }
 
-/// `refs NAME`: definitions, callers and every identifier occurrence grouped by the enclosing symbol.
+/// `refs NAME`: every occurrence resolved to its definition; `--def` keeps one definition.
+fn resolved_refs_command(root: &Path, name: &str, max_results: usize, def: Option<&str>, json: bool) -> Result<i32> {
+    let s = open_fresh(root)?;
+    let r = crate::resolve::resolved_references(&s, name, max_results as u64)?;
+    let only = match def {
+        None => None,
+        Some(spec) => {
+            let (path, line) = match spec.rsplit_once(':') {
+                Some((p, l)) if l.parse::<i64>().is_ok() => (p, l.parse::<i64>().ok()),
+                _ => (spec, None),
+            };
+            let path = path.trim_start_matches("./");
+            let pick = r
+                .definitions
+                .iter()
+                .filter(|d| d.path == path && line.is_none_or(|l| d.start <= l && l <= d.end))
+                .min_by_key(|d| (line.is_some().then_some(d.end - d.start), d.start));
+            match pick {
+                Some(d) => Some(d.id),
+                None => anyhow::bail!("no definition of {name} in {spec}"),
+            }
+        }
+    };
+    let defs: Vec<&crate::index::ChunkRow> = r.definitions.iter().filter(|d| only.is_none_or(|id| d.id == id)).collect();
+    let found = !defs.is_empty() || (only.is_none() && !r.occurrences.is_empty());
+    if json {
+        let occ = |o: &crate::resolve::Occurrence| serde_json::json!({"path": o.path, "line": o.line, "column": o.column, "text": o.text, "via": o.resolution.ok().map(|x| x.1)});
+        let mut v = serde_json::json!({
+            "schema": SCHEMA,
+            "name": name,
+            "definitions": defs.iter().map(|c| serde_json::json!({
+                "path": c.path, "start": c.start, "end": c.end, "kind": c.kind, "qualname": c.qualname,
+                "references": r.of(c.id).map(occ).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
+            "truncated": r.truncated,
+        });
+        if only.is_none() {
+            v["unresolved"] = r
+                .unresolved()
+                .map(|o| serde_json::json!({"path": o.path, "line": o.line, "column": o.column, "text": o.text, "reason": o.resolution.err()}))
+                .collect();
+        }
+        println!("{}", serde_json::to_string_pretty(&v)?);
+    } else {
+        print!("{}", crate::resolve::resolved_text(&r, only));
+    }
+    Ok(if found { 0 } else { 1 })
+}
+
+/// `refs NAME --textual`: definitions, callers and every identifier occurrence grouped by the enclosing symbol.
 fn refs_command(root: &Path, name: &str, max_results: usize, json: bool) -> Result<i32> {
     let s = open_fresh(root)?;
     if json {

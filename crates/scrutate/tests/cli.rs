@@ -165,6 +165,10 @@ fn index_search_symbol_refs_outline_deps() {
     assert_eq!(code, 0);
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v["definitions"].as_array().unwrap().len(), 1);
+    assert!(v["definitions"][0]["references"].as_array().unwrap().len() >= 2, "{out}");
+    let (code, out, _) = r.run(&["refs", "make_widget_4", "--textual", "--json"]);
+    assert_eq!(code, 0);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert!(v["references"].as_array().unwrap().len() >= 2, "{out}");
     let (code, out, _) = r.run(&["outline", "pkg/m4.py"]);
     assert_eq!(code, 0);

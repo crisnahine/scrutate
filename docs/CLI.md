@@ -69,7 +69,7 @@ refused with `--index`; `-g` and `-t` filter the indexed files.
 | `find QUERY` | Unified: regex-looking → `grep`; otherwise ranked search (indexing a small repository on the spot); otherwise identifier grep. |
 | `symbol NAME` | Where is it defined (`Class.method` works). |
 | `callers NAME` / `callees NAME` | Call graph edges resolved to definitions (unresolved callee names listed as external). |
-| `refs NAME [--max-results N]` | Definitions + callers + every whole-word occurrence grouped by enclosing symbol (works without an index: occurrences only). |
+| `refs NAME [--def PATH[:LINE]] [--textual] [--max-results N]` | Every whole-word occurrence, each resolved to the definition it refers to, or listed as unresolved with a reason (see below). |
 | `outline FILE` | Symbols of a file in source order. |
 | `deps FILE` / `rdeps TARGET` | Imports of a file (resolved to repository files when possible) / files importing a module or file. |
 | `similar TARGET [-k N]` | Code similar to a symbol or `path:line` (vector cosine + token Jaccard). |
@@ -84,6 +84,47 @@ refused with `--index`; `-g` and `-t` filter the indexed files.
 | `config` | Show the configuration file in effect. |
 | `batch FILE [--features] [--timing]` | Run queries from a JSON-lines file (benchmarks, parity tests). |
 
+### `refs`
+```
+scrutate refs NAME [--def PATH[:LINE]] [--textual] [--max-results N] [--json]
+```
+Finds every whole-word occurrence of `NAME` (as `grep -w`) and decides which definition each one
+refers to. For Python, JavaScript, TypeScript, Rust and Go the rules are, in order:
+
+1. An occurrence that is the name of a definition, or the name in an import statement, is that
+   definition (or what the import resolves to).
+2. A qualified occurrence (`obj.N`, `a::b::N`, `pkg.N`) is looked up in what the qualifier names:
+   a module bound by an import (`import x`, `import * as x`, `use crate::a`, a Go import), a
+   module path (`crate::`, `self::`, `super::`, a workspace crate, a Rust child module), or a
+   class or type (`Class.N`, `Type::N`, then its Python and JavaScript base classes). `self.N`,
+   `this.N`, `cls.N` and `Self::N` look in the enclosing class or impl. Any other receiver
+   (`x.N` with `x` a variable) is unresolved.
+3. A plain occurrence is, first, a definition nested in an enclosing function (or directly in an
+   enclosing class body); a parameter or local variable of that name hides everything else;
+   then a top-level definition of the file; then a name an import binds (`from x import N`,
+   `import {N} from './x'`, `use a::N`, `require`); then, in Go, a top-level definition of another
+   file of the same package directory; then wildcard imports (`from x import *`, `export * from`,
+   `use a::*`, Go dot imports).
+
+Import paths resolve to repository files: Python relative imports, packages (`__init__.py`) and
+a repository root inside the package; JavaScript relative paths with the usual extensions and
+`index` files (a `.js` import finds the `.ts` source); Rust module files (`a.rs`, `a/mod.rs`) from
+the crate root, workspace crates by their `Cargo.toml` name; Go import paths by the directory
+they end with. Re-exports (`from .x import N` in `__init__.py`, `export {N} from`, `pub use`) are
+followed. Occurrences in comments and strings, in other languages and in files without a
+grammar are unresolved, and so is anything the rules do not reach (method calls on variables,
+enum variants, local variables). Imports of modules outside the repository give `external`.
+
+The output lists each definition with its references, then the unresolved occurrences with the
+reason. `--def PATH[:LINE]` keeps one definition of `NAME`: the one in `PATH`, or the one
+containing `LINE` when the file has several; no such definition is an error. `--textual` gives the
+behaviour without resolution: definitions, callers and every occurrence grouped by enclosing
+symbol (it never misses anything, and works without an index). With `--json`, each definition has
+a `references` list (`path`, `line`, `column` in bytes, `text`, `via`) and the document has an
+`unresolved` list with a `reason` (left out with `--def`). Resolution reads the index's
+definitions and parses the files that hold occurrences again, so it needs no index change; the
+MCP `references` tool still returns the textual answer.
+
 ### `lsp`
 
 ```
@@ -96,7 +137,7 @@ editor sends none. It answers from the Engine B index:
 | Request | Answer |
 |---|---|
 | `textDocument/definition` | definitions of the identifier under the cursor, as `symbol` finds them; with a qualifier (`Point.norm`, `a::b`), only the definitions whose qualified name matches, when there are any; definitions in the same file first |
-| `textDocument/references` | what `refs` finds: definitions (left out when `includeDeclaration` is false) and every whole-word occurrence |
+| `textDocument/references` | the occurrences `refs` resolves to the definition under the cursor, and that definition (left out when `includeDeclaration` is false); when the cursor's occurrence is unresolved, every whole-word occurrence, as `refs --textual` |
 | `workspace/symbol` | symbols whose name contains the query (case and underscores ignored), exact and prefix matches first, at most 200 |
 | `textDocument/documentSymbol` | the `outline` of the file, nested (methods under their class) |
 

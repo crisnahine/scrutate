@@ -141,12 +141,24 @@ mid-update leaves the previous snapshot. Reads by the update itself are not even
 not trigger themselves. Not a daemon: it runs only while the command (or server) runs.
 
 ### Intelligence (`intel.rs`)
-Definitions and references (`refs` = index definitions + call edges + Engine A whole-word
-occurrences grouped by enclosing symbol), callers/callees, outline, imports with best-effort
+Definitions and references, callers/callees, outline, imports with best-effort
 module→file resolution and reverse dependencies, **similar code** (implementation-view vectors +
 token Jaccard), **duplicates** (exact token-sequence hash and MinHash/LSH near-duplicates over
 token 3-grams, nested chunks excluded), and **structural search** (`tsquery`: tree-sitter query
 language over all files of a language, parallel, no index needed).
+
+`refs` resolves names (`resolve.rs`). Engine A finds the whole-word occurrences; for each file
+that holds one (Python, JavaScript/TypeScript, Rust, Go), the file is parsed again with
+tree-sitter to find the identifier node, its qualifier, the enclosing scopes and the names its
+imports bind, while definitions and their nesting come from the index's `chunks` rows. An
+occurrence goes to the innermost scope that defines the name, then the file's top level, then
+an import binding, the Go package directory or a wildcard import; a qualifier goes through the
+module it names or the class or type it names. Import paths are mapped onto repository files
+(Python packages and relative imports, JavaScript paths and `index` files, Rust `crate`/`self`/
+`super` paths, module files and workspace crates from `Cargo.toml`, Go import paths by
+directory), following re-exports with a depth limit. It is a query-time step: no schema change,
+nothing for the Python reference to mirror, and `refs --textual` keeps the unresolved answer.
+The LSP references request uses it for the definition under the cursor.
 
 `tsquery` keeps each file's captures in `.scrutate/tsquery/` (`tscache.rs`): one file per
 (version, language, query text, searched paths) mapping a 128-bit BLAKE2b content hash to the
