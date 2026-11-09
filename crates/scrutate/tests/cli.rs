@@ -855,3 +855,24 @@ fn grep_index_update_answers_for_the_tree_as_it_is_now() {
     let (_, indexed, _) = r.run(&["grep", "--sort", "--index", "--update", "widget"]);
     assert_eq!(walked, indexed);
 }
+
+#[test]
+fn max_results_is_never_exceeded() {
+    // many matching files searched by several threads at once: each thread that finds a match after
+    // the limit was reached elsewhere must drop it
+    let r = Repo::new("maxres");
+    for i in 0..400 {
+        r.write(&format!("d{}/f{i}.txt", i % 20), "needle one\nneedle two\nneedle three\n".as_bytes());
+    }
+    for round in 0..30 {
+        for extra in [&[][..], &["--json"][..]] {
+            let small = if round % 2 == 0 { "0" } else { "256" };
+            let mut args = vec!["grep", "--max-results", "5", "-j", "8", "needle"];
+            args.extend_from_slice(extra);
+            let (code, out, err) = run_in(&r.root, &args, &[("SCRUTATE_SMALL_TREE", small)]);
+            assert_eq!(code, 0, "{err}");
+            let n = out.lines().filter(|l| l.contains("needle")).count();
+            assert!((1..=5).contains(&n), "round {round} {extra:?}: {n} matches\n{out}");
+        }
+    }
+}

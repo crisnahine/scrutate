@@ -912,8 +912,11 @@ impl<'a> Sink for Collector<'a> {
         let bytes = mat.bytes();
         let line = bytes.strip_suffix(b"\n").map(|b| b.strip_suffix(b"\r").unwrap_or(b)).unwrap_or(bytes);
         if let Some(p) = self.plain {
-            self.matched = true;
             let n = self.stats_matches.fetch_add(1, Ordering::Relaxed) + 1;
+            if self.over_limit(n) {
+                return Ok(false);
+            }
+            self.matched = true;
             let number = mat.line_number().unwrap_or(0) + self.line_base;
             if line.len() >= 1 << 16 && !self.hold && !(self.multiline && memchr::memchr(b'\n', line).is_some()) {
                 // a very long line is written from where it is instead of being copied into the buffer
@@ -937,11 +940,14 @@ impl<'a> Sink for Collector<'a> {
             }
             return Ok(true);
         }
+        let n = self.stats_matches.fetch_add(1, Ordering::Relaxed) + 1;
+        if self.over_limit(n) {
+            return Ok(false);
+        }
         let text = lossy(line).into_owned();
         let spans = if self.invert || !self.want_spans { Vec::new() } else { spans_in(self.matcher, bytes) };
         let column = spans.first().map(|s| s.0 as u64 + 1).unwrap_or(0);
         self.matched = true;
-        let n = self.stats_matches.fetch_add(1, Ordering::Relaxed) + 1;
         self.push(Hit { path: Arc::clone(&self.path), line: mat.line_number().unwrap_or(0) + self.line_base, column, text, spans, context: false });
         if let Some(max) = self.max_results {
             if n >= max {
@@ -979,6 +985,16 @@ impl<'a> Sink for Collector<'a> {
 }
 
 impl Collector<'_> {
+    /// Match number `n` (counted over all threads) is past `max_results`: another thread got there
+    /// first, so this one is not reported.
+    fn over_limit(&self, n: u64) -> bool {
+        let over = self.max_results.is_some_and(|max| n > max);
+        if over {
+            self.cancel.store(true, Ordering::Relaxed);
+        }
+        over
+    }
+
     fn push(&mut self, h: Hit) {
         self.batch.push(h);
         if self.batch.len() >= 512 {
