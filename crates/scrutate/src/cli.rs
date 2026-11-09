@@ -192,7 +192,7 @@ pub enum Cmd {
         /// descend at most this many directory levels
         #[arg(long, env = "SCRUTATE_GREP_MAX_DEPTH")]
         max_depth: Option<usize>,
-        /// number of search threads (default: cores, max 12)
+        /// number of search threads (default: the cores, at most 12; on macOS the performance cores, or twice the cores when the files come from disk)
         #[arg(short = 'j', long, default_value_t = 0, env = "SCRUTATE_THREADS")]
         threads: usize,
         /// sort results by path (deterministic, waits for the search to finish)

@@ -48,7 +48,9 @@ patterns; a line matching any of them matches, and the first positional argument
 Options mirror grep/ripgrep where the meaning is identical: `-i`, `-S` (smart case), `-w`, `-U`
 (multiline: each line of a multi-line match is printed with its own number), `-v`, `-l`, `-c`,
 `-A/-B/-C`, `-m`, `--max-results`, `-g GLOB` (`!` excludes), `-t TYPE` / `--type-list`, `--hidden`,
-`--no-ignore`, `-L` (follow links), `--max-filesize`, `--max-depth`, `-j THREADS`, `--sort`,
+`--no-ignore`, `-L` (follow links), `--max-filesize`, `--max-depth`, `-j THREADS` (default: the
+cores, at most 12; on macOS the performance cores, and twice the cores, at most 24, when the first
+files read come from the disk rather than the page cache), `--sort`,
 `--json`, `--stats`, `--symbols` (group lines by the enclosing function using the index, when one
 exists). Files that cannot be read, or not to the end, are named in warnings on stderr (the first
 ten); they do not change the exit code.
