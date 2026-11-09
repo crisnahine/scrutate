@@ -319,6 +319,8 @@ pub enum Cmd {
         #[arg(long, default_value_t = 1.0, env = "SCRUTATE_REFRESH_INTERVAL")]
         refresh_interval: f64,
     },
+    /// run a Language Server Protocol server on stdio (definitions, references, symbols from the index)
+    Lsp,
     /// verify the index: database integrity, segment consistency, and (with --files) that every
     /// indexed file still has the content that was indexed
     Check {
@@ -742,6 +744,7 @@ pub fn run() -> Result<i32> {
             crate::mcp::serve(Arc::new(Mutex::new(s)), refresh_interval, crate::VERSION)?;
             Ok(0)
         }
+        Cmd::Lsp => crate::lsp::serve(&cli.root),
         Cmd::Languages { json: true } => {
             // the verified capability registry: what each grammar's rules extract
             let v: Vec<serde_json::Value> = crate::langs::LANGS

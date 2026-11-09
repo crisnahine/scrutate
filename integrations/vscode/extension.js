@@ -1,13 +1,18 @@
-// Scrutate for VS Code: a thin client over the CLI's JSON output. No bundler, no dependencies:
-// package with `npx @vscode/vsce package` in this directory and install the .vsix.
+// Scrutate for VS Code: `scrutate lsp` as a language client, plus commands over the CLI's JSON
+// output. No bundler: `npm install`, then `npx @vscode/vsce package` and install the .vsix.
 const vscode = require("vscode");
 const { execFile } = require("child_process");
+const { LanguageClient } = require("vscode-languageclient/node");
+
+/** @type {LanguageClient | undefined} */
+let client;
 
 function root() {
   const f = vscode.workspace.workspaceFolders;
   return f && f.length ? f[0].uri.fsPath : undefined;
 }
 
+/** @returns {Promise<string>} */
 function run(args) {
   const bin = vscode.workspace.getConfiguration("scrutate").get("path", "scrutate");
   return new Promise((resolve, reject) => {
@@ -28,6 +33,7 @@ async function open(path, line) {
   ed.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
 }
 
+/** @param {any[]} hits @param {string} placeHolder */
 async function pickHits(hits, placeHolder) {
   if (!hits.length) return vscode.window.showInformationMessage("Scrutate: no results");
   const items = hits.map((h) => ({
@@ -55,8 +61,22 @@ async function withErrors(f) {
   }
 }
 
+function startClient() {
+  const cwd = root();
+  if (!cwd) return;
+  const bin = vscode.workspace.getConfiguration("scrutate").get("path", "scrutate");
+  client = new LanguageClient(
+    "scrutate",
+    "Scrutate",
+    { command: bin, args: ["lsp"], options: { cwd } },
+    { documentSelector: [{ scheme: "file" }] }
+  );
+  client.start().catch((e) => vscode.window.showErrorMessage(`Scrutate: language server did not start: ${e.message}`));
+}
+
 function activate(context) {
-  const k = () => vscode.workspace.getConfiguration("scrutate").get("results", 15);
+  startClient();
+  const k =() => vscode.workspace.getConfiguration("scrutate").get("results", 15);
   context.subscriptions.push(
     vscode.commands.registerCommand("scrutate.search", () =>
       withErrors(async () => {
@@ -118,6 +138,8 @@ function activate(context) {
   );
 }
 
-function deactivate() {}
+function deactivate() {
+  return client ? client.stop() : undefined;
+}
 
 module.exports = { activate, deactivate };

@@ -13,6 +13,7 @@ pub mod instant;
 pub mod intel;
 pub mod langs;
 pub mod lex;
+pub mod lsp;
 pub mod mcp;
 pub mod npy;
 pub mod parse;
