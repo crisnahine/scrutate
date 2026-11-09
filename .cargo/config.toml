@@ -1,0 +1,4 @@
+[env]
+# build the bundled PCRE2 into the binary; without this, pcre2-sys links a system copy found by
+# pkg-config (Homebrew's, for one), and the binary fails on machines without it
+PCRE2_SYS_STATIC = "1"

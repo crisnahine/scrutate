@@ -7,6 +7,16 @@ v=$(grep -m1 '^version = ' crates/scrutate/Cargo.toml | cut -d'"' -f2)
 target=$(rustc -vV | sed -n 's/^host: //p')
 rm -rf dist && mkdir -p dist
 cargo build --release -p scrutate --locked
+# the binary must need only the operating system's own libraries
+if command -v otool > /dev/null; then
+  if otool -L target/release/scrutate | tail -n +2 | grep -v -E '^[[:space:]]+(/usr/lib/|/System/)'; then
+    echo "target/release/scrutate links a library outside the system"; exit 1
+  fi
+elif command -v ldd > /dev/null; then
+  if ldd target/release/scrutate | grep -v -E 'linux-vdso|ld-linux|lib(c|m|dl|pthread|rt|gcc_s)\.so'; then
+    echo "target/release/scrutate links a library outside the system"; exit 1
+  fi
+fi
 name="scrutate-$v-$target"
 rm -rf "dist/$name" && mkdir -p "dist/$name"
 cp target/release/scrutate LICENSE README.md CHANGELOG.md "dist/$name/"
