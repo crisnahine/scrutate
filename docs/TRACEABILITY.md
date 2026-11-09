@@ -47,7 +47,7 @@ Counts: PASS 0 · PARTIAL 0 · BLOCKED 0 · FAIL 0 (tallied at the end).
 | R-2B.9 | Duplicate and similar-code discovery | `intel::dupes` (exact hash + MinHash/LSH), `intel::similar` | bindings tests | PASS |
 | R-2B.10 | Language-aware navigation | `outline`, `symbol`, `callers`, `callees`, `refs`, `deps` | bindings tests, `cli.rs` | PASS |
 | R-2B.11 | Evaluate tree-sitter / compilers / language servers | tree-sitter chosen; compiler front-ends and LSP servers rejected for 0.1 (per-language toolchains, repository code execution) (ARCHITECTURE.md) | design record | PASS |
-| R-2B.12 | Ranking quality | BM25 + exact + semantic + LightGBM ranker | QUALITY.md: held-out MRR 0.632 (doc) to 0.989 (id), above the lexical baseline with non-overlapping CIs | PASS |
+| R-2B.12 | Ranking quality | BM25 + exact + semantic + LightGBM ranker (v8: fitted on Python, Rust, Go, Java, JavaScript, TypeScript) | QUALITY.md: held-out Python MRR 0.663 (doc) to 0.993 (id), above the lexical baseline with non-overlapping CIs; held-out repositories in five more languages, above BM25 on every query type | PASS |
 | R-2B.13 | Indexed text search (the job of Zoekt and livegrep) | `textindex.rs` (trigram postings over the default walk's files, HIR-derived trigram conditions, candidates searched by Engine A's per-file searcher), `grep --index` | `cli.rs::indexed_grep_equals_walk` (17 query kinds, 4 stages), `bench/differential.py` (index vs walk on random corpora, before and after an update), unit and property tests `textindex::tests`, fuzz target `trigram_query` (1.17 M runs, no failure), LEADERBOARD Engine B section | PASS |
 
 ## 2C. Unified query layer

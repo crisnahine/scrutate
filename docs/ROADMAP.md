@@ -13,7 +13,7 @@ docs/TRACEABILITY.md.
 | Fuzzy patterns longer than 128 bytes (R-2A.2) | `--fuzzy`, up to 4096 bytes (64-bit blocks with carries) |
 | Fuzzy regex (R-2A.2) | `--fuzzy-regex[=N]`, `src/fuzzyre.rs` (bit-parallel Glushkov automaton, up to 64 positions) |
 | Small trees (R-4.6) | a sequential walk that hands files to three search threads as it finds them, then the parallel walk past 256 files |
-| One very long line (R-4.6) | read into one exactly sized buffer: 60.5 ms to 47.5 ms on a 100 MB line, ugrep 42.5 ms in the same run (with output turned off the two are level, so the rest is printing, including the UTF-8 check) |
+| One very long line (R-4.6) | read into one exactly sized buffer, and its UTF-8 checked a piece at a time as it is written: 60.5 ms to about 42 ms on a 100 MB line, level with ugrep in the same runs |
 | Incremental re-search for editors (R-4.1) | `grep --index --update` (refresh the text index, then search only candidate files); `watch` and `serve --watch` keep the index fresh |
 | Structural search without re-parsing (R-2B.2) | `tsquery` keeps captures per file by content hash: the Linux tree took about 25 s, the repeated query 1.6 s |
 | Cross-file reference resolution with scope awareness (R-2B.4) | `refs` resolves occurrences through scopes, imports and qualified names for Python, JavaScript/TypeScript, Rust and Go (60 of 60 hand-checked resolutions right) |
@@ -24,8 +24,9 @@ docs/TRACEABILITY.md.
 | Benchmark dashboard (R-4.5) | `bench/make_dashboard.py` writes `docs/dashboard.html` from the results in `bench/results/` |
 | Package definitions (R-12.13) | `packaging/`: Homebrew formula (installed and tested in a Linux Homebrew), Scoop and winget manifests (schema-validated), `.deb` and `.rpm` (built and install-tested in clean Debian and Fedora containers) |
 | Third-party notices in releases | `tools/third_party_notices.py`; archives and wheels include `THIRD_PARTY_NOTICES.txt` |
-
-AGENT_ITEMS
+| Incremental parsing of edited files (R-2B.1) | a long-running index (`watch`, `serve`, `lsp`) reparses an edited file against its previous tree, for the 21 grammars without an external scanner (with one, a reparse was seen to differ from a fresh parse); a 66 KB Go file: 5.5 ms to 2.0 ms per edit; `tests/incremental.rs` |
+| Ranking quality beyond Python (R-2B.12) | ranker v8 fitted on Python plus Rust, Go, Java, JavaScript and TypeScript repositories; held-out results per language in docs/QUALITY.md |
+| Start-up in git repositories (R-4.6) | `vendor/ignore` reads the global excludes path without compiling a regex: 0.4 ms of a 6 ms search of a 220-file repository |
 
 ## Blocked: needs the repository published (declined for this release)
 
@@ -44,8 +45,6 @@ AGENT_ITEMS
 
 - Case-insensitive literals on many files: ugrep is about a fifth faster on the LLVM tree
   (docs/LEADERBOARD.md); profile its candidate search against the regex engine's.
-- The long line: print without re-checking UTF-8 when the bytes are already valid, which needs a
-  decision on how invalid bytes are shown (raw, as ripgrep does, or replaced, as now).
 - References: type inference for method calls on variables; more languages (Java, C#, C/C++
   includes); TypeScript path aliases.
 - `cargo install`: int8 weights for the semantic model, with the quality check QUALITY.md uses.

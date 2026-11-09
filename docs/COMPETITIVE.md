@@ -65,9 +65,10 @@ LIVEGREP
 
 None of the measured tools has a code-intelligence index, so this has no competitor here:
 
-- **Ranked search by meaning** with a learned ranker: MRR@10 0.632 for natural-language queries on
-  an undocumented held-out code base, vs 0.448 for BM25 over the same candidates; 0.93 to 0.99 for
-  name and identifier queries (docs/QUALITY.md).
+- **Ranked search by meaning** with a learned ranker: MRR@10 0.663 for natural-language queries on
+  an undocumented held-out Python code base, vs 0.468 for BM25 over the same candidates; 0.93 to
+  0.99 for name and identifier queries; held-out Rust, Go, Java, JavaScript and TypeScript
+  repositories also gain on every query type (docs/QUALITY.md).
 - **Symbols for 60 languages** (72 with the optional grammars), each verified by a sample; call
   graph, imports and dependents, references grouped by symbol, outline, similar code, exact and
   near-duplicate detection, cross-repository search.

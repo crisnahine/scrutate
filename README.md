@@ -52,7 +52,7 @@ exactly what is and is not verified.
 - **Benchmarks**: LEADERBOARD_SUMMARY
 - **Engine B** gives bit-identical features, scores and rankings to the Python reference it was
   developed against (300 queries in the parity harness), and its learned ranker beats its own
-  lexical layer on every held-out query type (docs/QUALITY.md).
+  lexical layer on every held-out query type, in Python and five more languages (docs/QUALITY.md).
 - `cargo clippy -D warnings` and `cargo fmt` are clean; `cargo audit` reports no vulnerabilities;
   an SBOM is generated.
 

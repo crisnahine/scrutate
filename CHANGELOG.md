@@ -21,8 +21,9 @@ First release.
 - `-e PATTERN` (repeatable) for several patterns; each line of a multi-line match is printed with its
   own line number.
 - Plain output is formatted by the search threads into per-file buffers (no per-line allocation or
-  channel message); lines over 64 KB are written without being copied; UTF-8 is validated with the
-  fast checker before the replacing decoder.
+  channel message); lines over 64 KB are written without being copied, their UTF-8 checked a
+  256 KB piece at a time as they are written; UTF-8 is validated with the fast checker before the
+  replacing decoder.
 - Ctrl-C handling through `signal()` / `SetConsoleCtrlHandler` directly: the `ctrlc` crate linked
   Foundation and libobjc into every macOS process (about 1.5 ms of start-up).
 - A file of 64 MB or more is searched on every search thread as ranges of whole lines, with the
@@ -45,6 +46,9 @@ First release.
   a pattern using either was matched one line at a time: `^(a|aa)+$` over ten million one-byte
   lines took 198 ms, now 8 ms.
 - Fixed: a file given directly as the search root was printed with an empty path (`:1:text`).
+- `ignore` 0.4.34 is vendored (`vendor/ignore`) with one change: the global git excludes path is
+  read from `~/.gitconfig` without compiling a regex, about 0.4 ms of every search in a git
+  repository.
 
 ### Engine B — code intelligence
 - Incremental index (SQLite + memory-mapped segments), content hashing, atomic updates,
@@ -78,6 +82,12 @@ First release.
 - `scrutate lsp`: a language server (definitions, resolved references, workspace symbols,
   outlines) for editors; the VS Code extension starts it, JetBrains uses it through LSP4IJ.
 - `scrutate watch` and `serve --watch` keep the indexes fresh as files change.
+- A long-running index (`watch`, `serve`, `lsp`) reparses an edited file against its previous
+  syntax tree (up to 2 MB of source kept) for the 21 grammars without an external scanner: a
+  66 KB Go file, 5.5 ms to 2.0 ms per edit.
+- Ranker v8, fitted on Python and on 16 repositories in Rust, Go, Java, JavaScript and TypeScript:
+  better than v7 on held-out code in 56 of 58 language, variant and query-type cells, never worse
+  beyond noise (docs/QUALITY.md).
 
 ### Product
 - Unified `find`, MCP server (14 tools), configuration files with environment-variable precedence,
