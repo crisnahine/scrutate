@@ -840,3 +840,18 @@ fn fuzzy_regex_finds_near_misses_of_a_regex() {
     let (code, _, _) = r.run(&["grep", "--fuzzy-regex=1", "-F", "x", "a.txt"]);
     assert_eq!(code, 2);
 }
+
+#[test]
+fn grep_index_update_answers_for_the_tree_as_it_is_now() {
+    let r = python_repo("idxupdate");
+    let (code, _, _) = r.run(&["grep", "--index", "--update", "-F", "make_widget_1("]);
+    assert_eq!(code, 0, "--update builds a missing index");
+    r.write("pkg/new.py", b"def fresh_name():\n    return 1\n");
+    let (code, _, _) = r.run(&["grep", "--index", "fresh_name"]);
+    assert_eq!(code, 1, "without --update the index is the old snapshot");
+    let (code, out, _) = r.run(&["grep", "--index", "--update", "fresh_name"]);
+    assert_eq!((code, out.trim()), (0, "pkg/new.py:1:def fresh_name():"));
+    let (_, walked, _) = r.run(&["grep", "--sort", "widget"]);
+    let (_, indexed, _) = r.run(&["grep", "--sort", "--index", "--update", "widget"]);
+    assert_eq!(walked, indexed);
+}

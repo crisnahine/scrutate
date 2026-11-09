@@ -58,7 +58,10 @@ can contain a match (trigram postings), and Engine A's matcher searches only tho
 is what the walk prints for the indexed snapshot of `--root`. Run `scrutate index` (or `index
 --text`) after changing files; the update is incremental. Options that change which files a walk
 visits (`--hidden`, `--no-ignore`, `-L`, `--max-depth`, `--max-filesize`, explicit paths) are
-refused with `--index`; `-g` and `-t` filter the indexed files.
+refused with `--index`; `-g` and `-t` filter the indexed files. `--index --update` first brings
+the text index up to date (building it if there is none; only new and changed files are read),
+so the answer is the walk's for the tree as it is now: the call for an editor that searches
+often while files change.
 
 ## Engine B
 

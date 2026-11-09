@@ -110,6 +110,10 @@ pub enum Cmd {
         /// match; results are those of the indexed snapshot of --root
         #[arg(long)]
         index: bool,
+        /// with --index: bring the text index up to date first (only changed files are read), so
+        /// the answer is the walk's for the tree as it is now
+        #[arg(long, requires = "index")]
+        update: bool,
         /// treat PATTERN as a literal string
         #[arg(short = 'F', long)]
         fixed_strings: bool,
@@ -424,6 +428,7 @@ pub fn run() -> Result<i32> {
             mut paths,
             regexp,
             index,
+            update,
             fixed_strings,
             pcre2,
             fuzzy_regex,
@@ -551,7 +556,7 @@ pub fn run() -> Result<i32> {
                 ..Options::default()
             };
             let roots: Vec<PathBuf> = if paths.is_empty() { vec![PathBuf::from(".")] } else { paths };
-            grep_command(roots, o, GrepOutput { files_with_matches, count, sort, json, stats, symbols, root: cli.root, no_color, indexed: index })
+            grep_command(roots, o, GrepOutput { files_with_matches, count, sort, json, stats, symbols, root: cli.root, no_color, indexed: index, update })
         }
         Cmd::Index { force, text, no_text } => {
             let progress = std::io::stderr().is_terminal();
@@ -1043,6 +1048,21 @@ struct GrepOutput {
     no_color: bool,
     /// answer from the text index of `root` instead of walking `roots`
     indexed: bool,
+    /// refresh that index first
+    update: bool,
+}
+
+/// The canonical root and the indexed files that can match `o` (after an incremental refresh of
+/// the text index when `update`).
+fn indexed_candidates(root: &Path, o: &Options, update: bool) -> Result<(PathBuf, Vec<String>)> {
+    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    if update {
+        crate::textindex::update(&root, false, false)?;
+    }
+    let ti = crate::textindex::TextIndex::open(&root)?
+        .ok_or_else(|| anyhow::anyhow!("no text index in {}; build it with `scrutate index --text` (or add --update)", root.display()))?;
+    let files = ti.candidates(&crate::textindex::query_for(o)?, o.multiline)?;
+    Ok((root, files))
 }
 
 fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32> {
@@ -1140,10 +1160,7 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
             }
         };
         if out.indexed {
-            let root = std::fs::canonicalize(&out.root).unwrap_or_else(|_| out.root.clone());
-            let ti = crate::textindex::TextIndex::open(&root)?
-                .ok_or_else(|| anyhow::anyhow!("no text index in {}; build it with `scrutate index --text`", root.display()))?;
-            let files = ti.candidates(&crate::textindex::query_for(&o)?, o.multiline)?;
+            let (root, files) = indexed_candidates(&out.root, &o, out.update)?;
             instant::search_files(&root, files, &o, Arc::clone(&cancel), &mut sink)?
         } else {
             instant::search(&roots, &o, Arc::clone(&cancel), &mut sink)?
@@ -1222,10 +1239,7 @@ fn warn_failures(stats: &instant::Stats) {
 fn grep_plain(roots: Vec<PathBuf>, o: Options, out: GrepOutput, cancel: Arc<AtomicBool>) -> Result<i32> {
     let sink = Arc::new(instant::PlainSink::new(Box::new(std::io::stdout())));
     let stats = if out.indexed {
-        let root = std::fs::canonicalize(&out.root).unwrap_or_else(|_| out.root.clone());
-        let ti = crate::textindex::TextIndex::open(&root)?
-            .ok_or_else(|| anyhow::anyhow!("no text index in {}; build it with `scrutate index --text`", root.display()))?;
-        let files = ti.candidates(&crate::textindex::query_for(&o)?, o.multiline)?;
+        let (root, files) = indexed_candidates(&out.root, &o, out.update)?;
         instant::search_files_plain(&root, files, &o, Arc::clone(&cancel), Arc::clone(&sink))?
     } else {
         instant::search_plain(&roots, &o, Arc::clone(&cancel), Arc::clone(&sink))?
@@ -1311,6 +1325,7 @@ fn find_command(root: &Path, query: &str, k: usize, json: bool, no_color: bool) 
                 root: root.to_path_buf(),
                 no_color,
                 indexed: false,
+                update: false,
             },
         );
     }
@@ -1335,6 +1350,7 @@ fn find_command(root: &Path, query: &str, k: usize, json: bool, no_color: bool) 
             root: root.to_path_buf(),
             no_color,
             indexed: false,
+            update: false,
         },
     )
 }
