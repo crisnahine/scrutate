@@ -1,14 +1,17 @@
 {
   "name": "scrutate",
   "displayName": "Scrutate",
-  "description": "Instant code search and code intelligence from the Scrutate CLI: ranked search, symbol lookup, callers, grep.",
+  "description": "Code intelligence from Scrutate: go to definition, references and symbols through the scrutate language server, plus ranked search, grep and callers.",
   "version": "0.1.0",
   "publisher": "scrutate",
   "license": "Apache-2.0",
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Other"],
-  "activationEvents": [],
+  "activationEvents": ["onStartupFinished"],
   "main": "./extension.js",
+  "scripts": { "check": "tsc -p ." },
+  "dependencies": { "vscode-languageclient": "9.0.1" },
+  "devDependencies": { "@types/node": "20.19.43", "@types/vscode": "1.85.0", "typescript": "5.9.3" },
   "contributes": {
     "commands": [
       { "command": "scrutate.search", "title": "Scrutate: Search (ranked, by meaning or name)" },

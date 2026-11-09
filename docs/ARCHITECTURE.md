@@ -143,6 +143,14 @@ independently usable (`grep`, `index`/`search`) and independently tested. The MC
 fourteen tools over stdio; the Python bindings expose both engines with the GIL released and
 streaming results.
 
+`lsp.rs` is a language server for editors (`scrutate lsp`), hand-written like the MCP server: a
+`Content-Length` framed JSON-RPC loop on stdio that turns definition, references, workspace symbol
+and document symbol requests into the same index lookups as `symbol`, `refs` and `outline`, and
+converts between the index's lines and the protocol's UTF-16 columns. The first index build holds
+the searcher's lock, so early requests wait for a complete index. A save updates the index on a
+second connection owned by a background thread; SQLite WAL lets requests keep reading while it
+writes.
+
 ## Models (`models/`)
 `semantic.npz` (14.6 MB: code-word vocabulary tables and projections) and `ranker.npz` (87 KB)
 are embedded in the binary with `include_bytes!`; `SCRUTATE_SEMANTIC` / `SCRUTATE_RANKER` can

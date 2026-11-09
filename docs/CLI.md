@@ -68,8 +68,33 @@ refused with `--index`; `-g` and `-t` filter the indexed files.
 | `stats` | Index statistics (files, chunks, symbols, call edges, imports, segments, and the text index's files, segments and bytes). |
 | `languages [--json]` | The verified capability registry. |
 | `serve [--refresh-interval S]` | MCP server on stdio. |
+| `lsp` | Language Server Protocol server on stdio (see below). |
 | `config` | Show the configuration file in effect. |
 | `batch FILE [--features] [--timing]` | Run queries from a JSON-lines file (benchmarks, parity tests). |
+
+### `lsp`
+
+```
+scrutate lsp
+```
+A language server for editors (JSON-RPC 2.0 over stdin and stdout, `Content-Length` framing).
+The repository is the editor's workspace folder (`rootUri` in `initialize`), or `--root` when the
+editor sends none. It answers from the Engine B index:
+
+| Request | Answer |
+|---|---|
+| `textDocument/definition` | definitions of the identifier under the cursor, as `symbol` finds them; with a qualifier (`Point.norm`, `a::b`), only the definitions whose qualified name matches, when there are any; definitions in the same file first |
+| `textDocument/references` | what `refs` finds: definitions (left out when `includeDeclaration` is false) and every whole-word occurrence |
+| `workspace/symbol` | symbols whose name contains the query (case and underscores ignored), exact and prefix matches first, at most 200 |
+| `textDocument/documentSymbol` | the `outline` of the file, nested (methods under their class) |
+
+It advertises only these four, plus full text sync. Open documents are read from the editor's
+text, so an unsaved line still finds the word under the cursor; locations in other files come from
+disk. `didSave` updates the index incrementally on a second connection in a background thread,
+so requests keep being answered meanwhile. When the repository has no index, `initialize` builds
+one (as `scrutate index` does, without the text index) and reports it with `window/logMessage`;
+requests that arrive meanwhile wait for it. Columns are UTF-16 code units, as the protocol
+requires. The exit code is 0 after `shutdown` then `exit`, 1 otherwise. Logs go to stderr.
 
 ### Environment variables
 `SCRUTATE_ROOT`, `SCRUTATE_THREADS`, `SCRUTATE_GREP_{HIDDEN,NO_IGNORE,FOLLOW,SMART_CASE,MAX_FILESIZE,MAX_DEPTH,GLOBS,TYPES}`,
