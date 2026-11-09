@@ -138,7 +138,8 @@ def suite():
     # any argument list: a two-argument pattern is not the same query in both tools (tree-sitter's
     # anchors count a comment between arguments as an argument, ast-grep's $A, $B does not)
     B.append({"id": "linux/structural", "corpus": "linux", "qtype": "structural", "mode": "ignore", "structural": {
-        "lang": "c", "ast_grep": "kmalloc($$$A)",
+        # alone, `kmalloc($$$A)` parses as a type macro in C; as a statement with a selector it is a call
+        "lang": "c", "ast_grep": "kmalloc($$$A);", "ast_grep_selector": "call_expression",
         "tsquery": '(call_expression function: (identifier) @f (#eq? @f "kmalloc")) @call'}})
     B.append({"id": "ripgrep/structural", "corpus": "ripgrep", "qtype": "structural", "mode": "ignore", "structural": {
         "lang": "rust", "ast_grep": "format!($$$A)",
@@ -274,7 +275,8 @@ def structural_argv(tool, spec):
     if tool == "scrutate":
         return [SCRUTATE, "tsquery", "--json", spec["lang"], spec["tsquery"], ".", "--limit", "100000000"]
     if tool == "ast-grep" and BIN["ast-grep"]:
-        return [BIN["ast-grep"], "run", "-p", spec["ast_grep"], "-l", spec["lang"], "--json=stream", "."]
+        sel = ["--selector", spec["ast_grep_selector"]] if spec.get("ast_grep_selector") else []
+        return [BIN["ast-grep"], "run", "-p", spec["ast_grep"], *sel, "-l", spec["lang"], "--json=stream", "."]
     return None
 
 
@@ -641,7 +643,8 @@ print(json.dumps({"hits": sorted(hits), "files": n, "parse_errors": errors}))
 '''
     mod = {"c": "tree_sitter_c", "rust": "tree_sitter_rust"}[spec["lang"]]
     pkg = {"c": "tree-sitter-c", "rust": "tree-sitter-rust"}[spec["lang"]]
-    p = subprocess.run(["uv", "run", "--no-project", "-q", "--with", "tree-sitter>=0.25", "--with", pkg, "python", "-c", code, lst, spec["tsquery"], mod],
+    # a Python the grammar packages publish wheels for (a newer one would try to build them)
+    p = subprocess.run(["uv", "run", "--no-project", "-q", "--python", "3.13", "--with", "tree-sitter>=0.25", "--with", pkg, "python", "-c", code, lst, spec["tsquery"], mod],
                        cwd=cdir, capture_output=True, text=True, check=True)
     d = json.loads(p.stdout)
     json.dump(d, open(cpath, "w"))
