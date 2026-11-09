@@ -19,6 +19,7 @@ pub mod mcp;
 pub mod npy;
 pub mod parse;
 pub mod rank;
+pub mod resolve;
 pub mod search;
 pub mod semantic;
 pub mod text;

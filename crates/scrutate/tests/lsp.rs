@@ -166,6 +166,14 @@ fn lsp_round_trip() {
     );
     assert!(!places(&refs["result"]).contains(&("geo.py".to_string(), 5, 4)), "{refs}");
 
+    // references of the method under the cursor, not of the unrelated `norm` in other.py
+    let refs = c.request(
+        "textDocument/references",
+        json!({"textDocument": {"uri": app}, "position": {"line": 5, "character": utf16(&line5[..line5.find("norm").unwrap()])}, "context": {"includeDeclaration": true}}),
+    );
+    let got = places(&refs["result"]);
+    assert_eq!(got, vec![("geo.py".to_string(), 1, 8), ("app.py".to_string(), 5, utf16(&line5[..line5.find("norm").unwrap()]))], "{refs}");
+
     let ws = c.request("workspace/symbol", json!({"query": "make_po"}));
     let syms = ws["result"].as_array().unwrap();
     assert_eq!(syms[0]["name"], "make_point", "{ws}");

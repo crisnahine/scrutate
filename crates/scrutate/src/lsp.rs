@@ -412,8 +412,32 @@ impl Server {
     }
 
     fn references(&self, s: &Searcher, p: &Value) -> Result<Value> {
-        let Some((ident, _)) = self.ident_at(p) else { return Ok(Value::Null) };
+        let Some((ident, before)) = self.ident_at(p) else { return Ok(Value::Null) };
         let include_decl = p["context"]["includeDeclaration"].as_bool().unwrap_or(true);
+        // the definition under the cursor; an unresolved cursor falls back to every textual occurrence
+        let here = p["textDocument"]["uri"].as_str().and_then(|u| self.rel(u));
+        let line = p["position"]["line"].as_u64().unwrap_or(0);
+        if let Some(rel) = here {
+            let mut rv = crate::resolve::Resolver::new(&s.ix)?;
+            if let Ok((def_id, _)) = rv.resolve_at(&rel, line + 1, before.len(), &ident) {
+                let r = crate::resolve::resolved_references(s, &ident, 5000)?;
+                let mut lines = self.lines();
+                let mut out = Vec::new();
+                if let (true, Some(d)) = (include_decl, r.definitions.iter().find(|d| d.id == def_id)) {
+                    let (l, a, b) = lines.name_pos(&d.path, d.start, d.end, &d.name);
+                    out.push(json!({"uri": path_to_uri(&self.root.join(&d.path)), "range": range(l, a, l, b)}));
+                }
+                let width = ident.encode_utf16().count() as u64;
+                for o in r.of(def_id) {
+                    if matches!(o.resolution, Ok((_, "definition"))) {
+                        continue;
+                    }
+                    let (l, a) = (o.line.saturating_sub(1), byte_to_utf16(&o.text, o.column as usize - 1));
+                    out.push(json!({"uri": path_to_uri(&self.root.join(&o.path)), "range": range(l, a, l, a + width)}));
+                }
+                return Ok(Value::Array(out));
+            }
+        }
         let r = crate::intel::references(s, &ident, 5000)?;
         let mut lines = self.lines();
         let mut seen: HashSet<(String, u64, u64)> = HashSet::new();
