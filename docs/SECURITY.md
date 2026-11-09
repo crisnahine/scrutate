@@ -48,6 +48,8 @@ a **hostile MCP client** (malformed JSON-RPC, path escapes).
   of ASCII word bytes (ASCII boundaries are UTF-8 boundaries); `config.rs` — `std::env::set_var`
   during startup before any thread exists; `cli.rs` — `signal(SIGINT, ...)` (Unix) and
   `SetConsoleCtrlHandler` (Windows) declarations, whose handler only stores to an atomic flag;
+  `instant.rs` — one `sysctlbyname("hw.perflevel0.physicalcpu")` call on macOS, writing an `i32`
+  whose size it passes;
   `textindex.rs` — `Mmap::map` of segment and large source files (bounds-checked slicing only). tree-sitter grammars and SQLite are C code built from
   crates.io sources.
 - **Memory-mapped files can change underneath a reader** if another process rewrites a segment in

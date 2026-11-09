@@ -996,16 +996,49 @@ impl Collector<'_> {
     }
 }
 
-/// Default number of search threads: the cores, at most 12 (more threads than that only add
-/// contention on the directory walk and the output channel).
+/// Default number of threads searching many files: the cores, at most 12 (more only add contention
+/// on the directory walk and the output channel); on macOS the performance cores, because threads
+/// opening and reading files at once mostly wait on each other in the kernel there (the Linux tree:
+/// 977 ms on 11 threads, 843 ms on 6, 850 ms on 4; LLVM: 1649 ms on 11, 1377 ms on 4).
 pub fn default_threads(o: &Options) -> usize {
-    static CORES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    if o.threads == 0 {
-        // a system call on some platforms, and asked once per file
-        *CORES.get_or_init(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2).min(12))
-    } else {
-        o.threads
+    static N: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    if o.threads != 0 {
+        return o.threads;
     }
+    *N.get_or_init(|| performance_cores().map_or_else(cores, |p| p.clamp(2, cores())))
+}
+
+/// Threads for one large file searched as ranges: every core (at most 12), since that work is
+/// matching rather than opening files.
+fn range_threads(o: &Options) -> usize {
+    if o.threads != 0 {
+        o.threads
+    } else {
+        cores()
+    }
+}
+
+fn cores() -> usize {
+    static CORES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    // a system call on some platforms, and asked once per file
+    *CORES.get_or_init(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2).min(12))
+}
+
+#[cfg(target_os = "macos")]
+fn performance_cores() -> Option<usize> {
+    extern "C" {
+        fn sysctlbyname(name: *const std::ffi::c_char, oldp: *mut std::ffi::c_void, oldlenp: *mut usize, newp: *mut std::ffi::c_void, newlen: usize) -> i32;
+    }
+    let mut v: i32 = 0;
+    let mut len = std::mem::size_of::<i32>();
+    // SAFETY: a NUL-terminated name, an i32 to write and its size, no new value
+    let rc = unsafe { sysctlbyname(c"hw.perflevel0.physicalcpu".as_ptr(), (&mut v as *mut i32).cast(), &mut len, std::ptr::null_mut(), 0) };
+    (rc == 0 && len == std::mem::size_of::<i32>() && v > 0).then_some(v as usize)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn performance_cores() -> Option<usize> {
+    None
 }
 
 /// The glob and file-type filters of `o`, plus the index directory, which is never searched.
@@ -1346,7 +1379,7 @@ fn split_file_bytes() -> u64 {
 /// Line-at-a-time searches whose results do not depend on neighbouring lines or on a running count.
 /// `-l` stays sequential: it stops at the first match.
 fn splittable(o: &Options) -> bool {
-    !o.multiline && o.before == 0 && o.after == 0 && o.max_count.is_none() && o.max_results.is_none() && !o.files_only && default_threads(o) > 1
+    !o.multiline && o.before == 0 && o.after == 0 && o.max_count.is_none() && o.max_results.is_none() && !o.files_only && range_threads(o) > 1
 }
 
 mod split {
@@ -1499,7 +1532,7 @@ mod split {
             return whole(file, size).map_or(Outcome::Stream, Outcome::Buffer);
         }
         let ranges: Vec<(u64, u64)> = bounds.windows(2).map(|w| (w[0], w[1])).collect();
-        let threads = default_threads(o).min(ranges.len());
+        let threads = range_threads(o).min(ranges.len());
 
         let next = AtomicUsize::new(0);
         let stop = AtomicBool::new(false);
