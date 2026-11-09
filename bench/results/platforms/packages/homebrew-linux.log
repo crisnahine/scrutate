@@ -1,0 +1,637 @@
++ export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_INSTALL_CLEANUP=1
++ HOMEBREW_NO_AUTO_UPDATE=1
++ HOMEBREW_NO_ANALYTICS=1
++ HOMEBREW_NO_INSTALL_CLEANUP=1
++ brew update --quiet
+==> Updating Homebrew...
+==> Downloading https://ghcr.io/v2/homebrew/core/portable-ruby/blobs/sha256:346f2c71db33cdf4c64c68954f4e1134fbf63cc0d1a5885cfdf94b881f5ec53b
+#=#=#                                                                         ##O#-#                                                                        ##O=#  #                                                                      #=#=-#  #                                                                     -#O#- #   #                                                                                                                                              0.0%                                                                           0.7%                                                                           1.1%#                                                                          2.5%###                                                                        4.9%####                                                                       5.8%#######                                                                   10.1%########                                                                  12.2%##############                                                            20.3%##################                                                        25.3%############################                                              39.0%################################                                          45.7%############################################                              61.5%###############################################                           66.2%###################################################                       71.3%########################################################                  79.1%###########################################################               83.1%#################################################################         90.7%######################################################################    97.3%######################################################################## 100.0%
+==> Pouring portable-ruby-4.0.9.arm64_linux.bottle.tar.gz
+==> Downloading Homebrew API data
+✔︎ JSON API packages.arm64_linux.jws.json
++ brew --version
+Homebrew 7.0.13
+Homebrew/homebrew-core (git revision 7063bfe7fa1; last commit 2026-11-09)
+++ sha256sum /work/scrutate-0.1.0.tar.gz
+++ cut '-d ' -f1
++ SUM=7d254559c5f22970d02c5963fd4c5dad6694befa361e96c88b71011b73101385
++ brew tap-new --no-git scrutatelocal/test
+Warning: tap-new is a developer command, so Homebrew's
+developer mode has been automatically turned on.
+To turn developer mode off, run:
+  brew developer off
+
+==> Created scrutatelocal/test
+/home/linuxbrew/.linuxbrew/Homebrew/Library/Taps/scrutatelocal/homebrew-test
+
+When a pull request making changes to a formula (or formulae) becomes green
+(all checks passed), then you can publish the built bottles.
+To do so, run `brew pr-pull` locally or run the `brew pr-pull`
+workflow with the pull request number and, optionally, the pull
+request's expected head commit SHA.
+++ brew --repository scrutatelocal/test
++ TAP=/home/linuxbrew/.linuxbrew/Homebrew/Library/Taps/scrutatelocal/homebrew-test
++ sed -e 's|https://github.com/crisnahine/scrutate/archive/refs/tags/v0.1.0.tar.gz|file:///work/scrutate-0.1.0.tar.gz|' -e 's|0000000000000000000000000000000000000000000000000000000000000000|7d254559c5f22970d02c5963fd4c5dad6694befa361e96c88b71011b73101385|' /work/scrutate.rb
++ grep -n 'url\|sha256' /home/linuxbrew/.linuxbrew/Homebrew/Library/Taps/scrutatelocal/homebrew-test/Formula/scrutate.rb
+4:  url "file:///work/scrutate-0.1.0.tar.gz"
+6:  sha256 "7d254559c5f22970d02c5963fd4c5dad6694befa361e96c88b71011b73101385"
++ brew install --build-from-source scrutatelocal/test/scrutate
+==> Trusted formula scrutatelocal/test/scrutate
+==> Would install 1 formula:
+scrutatelocal/test/scrutate 0.1.0
+==> Would install 42 dependencies for scrutate:
+linux-headers@6.8  6.8.12_1
+glibc              2.39_1
+ca-certificates    2026-11-05
+openssl@4          4.1.0
+zlib-ng-compat     2.3.3_1
+libssh2            1.11.1_7
+gmp                6.3.0
+isl                0.28
+mpfr               4.2.2
+libmpc             1.4.1
+lz4                1.11.0
+xz                 5.8.4
+zstd               1.5.7_1
+binutils           2.47
+gcc                16.2.0
+llhttp             9.4.3
+bzip2              1.0.8
+pcre2              10.49
+libgit2            1.9.7_2
+z3                 5.3.3
+ncurses            6.6
+libedit            20260512-3.1
+libffi             3.8.0
+llvm               23.1.5
+pkgconf            3.0.10
+readline           8.3.6
+sqlite             3.54.1
+brotli             1.2.1
+libnghttp2         1.71.0
+libnghttp3         1.19.0
+libngtcp2          1.26.0
+libunistring       1.5
+libidn2            2.3.8
+libpsl             0.23.3
+keyutils           1.6.3
+krb5               1.22.2_2
+libxcrypt          4.5.2
+util-linux         2.42.4
+cyrus-sasl         2.1.28_4
+openldap           2.7.2
+curl               8.23.0
+rust               1.99.1
+==> Fetching downloads for: scrutate
+✔︎ Bottle Manifest linux-headers@6.8 (6.8.12_1)
+✔︎ Bottle Manifest glibc (2.39_1)
+✔︎ Bottle Manifest ca-certificates (2026-11-05)
+✔︎ Bottle Manifest libssh2 (1.11.1_7)
+✔︎ Bottle Manifest openssl@4 (4.1.0)
+✔︎ Bottle Manifest zlib-ng-compat (2.3.3_1)
+✔︎ Bottle Manifest isl (0.28)
+✔︎ Bottle Manifest gmp (6.3.0)
+✔︎ Bottle Manifest mpfr (4.2.2)
+✔︎ Bottle Manifest libmpc (1.4.1)
+✔︎ Bottle Manifest lz4 (1.11.0)
+✔︎ Bottle Manifest xz (5.8.4)
+Warning: Landlock ABI 10 or later is required to deny all network access; found ABI 4. Applying the network restrictions supported by this kernel.
+✔︎ Bottle Manifest zstd (1.5.7_1)
+✔︎ Bottle Manifest binutils (2.47)
+✔︎ Bottle Manifest gcc (16.2.0)
+✔︎ Bottle Manifest llhttp (9.4.3)
+✔︎ Bottle Manifest bzip2 (1.0.8)
+✔︎ Bottle mpfr (4.2.2)
+✔︎ Bottle Manifest pcre2 (10.49)
+✔︎ Bottle ca-certificates (2026-11-05)
+✔︎ Bottle Manifest libgit2 (1.9.7_2)
+✔︎ Bottle libssh2 (1.11.1_7)
+✔︎ Bottle Manifest z3 (5.3.3)
+✔︎ Bottle Manifest ncurses (6.6)
+✔︎ Bottle Manifest libedit (20260512-3.1)
+✔︎ Bottle Manifest libffi (3.8.0)
+✔︎ Bottle linux-headers@6.8 (6.8.12_1)
+✔︎ Bottle Manifest llvm (23.1.5)
+✔︎ Bottle Manifest pkgconf (3.0.10)
+✔︎ Bottle zlib-ng-compat (2.3.3_1)
+✔︎ Bottle libmpc (1.4.1)
+✔︎ Bottle isl (0.28)
+✔︎ Bottle isl (0.28)
+✔︎ Bottle Manifest readline (8.3.6)
+✔︎ Bottle Manifest sqlite (3.54.1)
+✔︎ Bottle Manifest brotli (1.2.1)
+✔︎ Bottle lz4 (1.11.0)
+✔︎ Bottle Manifest libnghttp2 (1.71.0)
+✔︎ Bottle xz (5.8.4)
+✔︎ Bottle zstd (1.5.7_1)
+✔︎ Bottle Manifest libnghttp3 (1.19.0)
+✔︎ Bottle Manifest libngtcp2 (1.26.0)
+✔︎ Bottle Manifest libunistring (1.5)
+✔︎ Bottle gmp (6.3.0)
+✔︎ Bottle openssl@4 (4.1.0)
+✔︎ Bottle glibc (2.39_1)
+✔︎ Bottle Manifest libidn2 (2.3.8)
+✔︎ Bottle bzip2 (1.0.8)
+✔︎ Bottle llhttp (9.4.3)
+✔︎ Bottle Manifest libpsl (0.23.3)
+✔︎ Bottle Manifest keyutils (1.6.3)
+✔︎ Bottle Manifest krb5 (1.22.2_2)
+✔︎ Bottle Manifest libxcrypt (4.5.2)
+✔︎ Bottle libedit (20260512-3.1)
+✔︎ Bottle libgit2 (1.9.7_2)
+✔︎ Bottle libffi (3.8.0)
+✔︎ Bottle pcre2 (10.49)
+✔︎ Bottle pkgconf (3.0.10)
+✔︎ Bottle Manifest util-linux (2.42.4)
+✔︎ Bottle readline (8.3.6)
+✔︎ Bottle Manifest cyrus-sasl (2.1.28_4)
+✔︎ Bottle sqlite (3.54.1)
+✔︎ Formula scrutate (0.1.0)
+✔︎ Bottle libnghttp2 (1.71.0)
+✔︎ Bottle ncurses (6.6)
+✔︎ Bottle Manifest openldap (2.7.2)
+✔︎ Bottle Manifest curl (8.23.0)
+✔︎ Bottle Manifest rust (1.99.1)
+✔︎ Bottle libngtcp2 (1.26.0)
+✔︎ Bottle libnghttp3 (1.19.0)
+✔︎ Bottle brotli (1.2.1)
+✔︎ Bottle libunistring (1.5)
+✔︎ Bottle libpsl (0.23.3)
+✔︎ Bottle libidn2 (2.3.8)
+✔︎ Bottle keyutils (1.6.3)
+✔︎ Bottle libxcrypt (4.5.2)
+✔︎ Bottle krb5 (1.22.2_2)
+✔︎ Bottle cyrus-sasl (2.1.28_4)
+✔︎ Bottle openldap (2.7.2)
+✔︎ Bottle z3 (5.3.3)
+✔︎ Bottle curl (8.23.0)
+✔︎ Bottle util-linux (2.42.4)
+✔︎ Bottle binutils (2.47)
+✔︎ Bottle rust (1.99.1)
+✔︎ Bottle gcc (16.2.0)
+✔︎ Bottle llvm (23.1.5)
+==> Installing scrutate from scrutatelocal/test
+==> Installing dependencies for scrutatelocal/test/scrutate: linux-headers@6.8, glibc, ca-certificates, openssl@4, zlib-ng-compat, libssh2, gmp, isl, mpfr, libmpc, lz4, xz, zstd, binutils, gcc, llhttp, bzip2, pcre2, libgit2, z3, ncurses, libedit, libffi, llvm, pkgconf, readline, sqlite, brotli, libnghttp2, libnghttp3, libngtcp2, libunistring, libidn2, libpsl, keyutils, krb5, libxcrypt, util-linux, cyrus-sasl, openldap, curl and rust
+==> Installing scrutatelocal/test/scrutate dependency: linux-headers@6.8 (6.8.12_1)
+==> Pouring linux-headers@6.8--6.8.12_1.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/linux-headers@6.8/6.8.12_1: 964 files, 6.6MB
+==> Installing scrutatelocal/test/scrutate dependency: glibc (2.39_1)
+==> Pouring glibc--2.39_1.arm64_linux.bottle.2.tar.gz
+[34m==>[0m [1mInstalling locale data for C.utf8 en_US.UTF-8[0m
+🍺  /home/linuxbrew/.linuxbrew/Cellar/glibc/2.39_1: 1,419 files, 58MB
+==> Installing scrutatelocal/test/scrutate dependency: ca-certificates (2026-11-05)
+==> Pouring ca-certificates--2026-11-05.all.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/ca-certificates/2026-11-05: 5 files, 216.4KB
+==> Installing scrutatelocal/test/scrutate dependency: openssl@4 (4.1.0)
+==> Pouring openssl@4--4.1.0.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/openssl@4/4.1.0: 6,878 files, 32MB
+==> Installing scrutatelocal/test/scrutate dependency: zlib-ng-compat (2.3.3_1)
+==> Pouring zlib-ng-compat--2.3.3_1.arm64_linux.bottle.1.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/zlib-ng-compat/2.3.3_1: 17 files, 576KB
+==> Installing scrutatelocal/test/scrutate dependency: libssh2 (1.11.1_7)
+==> Pouring libssh2--1.11.1_7.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/libssh2/1.11.1_7: 202 files, 1.6MB
+==> Installing scrutatelocal/test/scrutate dependency: gmp (6.3.0)
+==> Pouring gmp--6.3.0.arm64_linux.bottle.1.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/gmp/6.3.0: 24 files, 4.4MB
+==> Installing scrutatelocal/test/scrutate dependency: isl (0.28)
+==> Pouring isl--0.28.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/isl/0.28: 81 files, 10.8MB
+==> Installing scrutatelocal/test/scrutate dependency: mpfr (4.2.2)
+==> Pouring mpfr--4.2.2.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/mpfr/4.2.2: 32 files, 3.9MB
+==> Installing scrutatelocal/test/scrutate dependency: libmpc (1.4.1)
+==> Pouring libmpc--1.4.1.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/libmpc/1.4.1: 15 files, 759.4KB
+==> Installing scrutatelocal/test/scrutate dependency: lz4 (1.11.0)
+==> Pouring lz4--1.11.0.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/lz4/1.11.0: 28 files, 1.1MB
+==> Installing scrutatelocal/test/scrutate dependency: xz (5.8.4)
+==> Pouring xz--5.8.4.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/xz/5.8.4: 97 files, 3.6MB
+==> Installing scrutatelocal/test/scrutate dependency: zstd (1.5.7_1)
+==> Pouring zstd--1.5.7_1.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/zstd/1.5.7_1: 32 files, 3.1MB
+==> Installing scrutatelocal/test/scrutate dependency: binutils (2.47)
+==> Pouring binutils--2.47.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/binutils/2.47: 6,283 files, 139.2MB
+==> Installing scrutatelocal/test/scrutate dependency: gcc (16.2.0)
+==> Pouring gcc--16.2.0.arm64_linux.bottle.1.tar.gz
+[34m==>[0m [1mCreating the GCC specs file: /home/linuxbrew/.linuxbrew/Cellar/gcc/16.2.0/bi[0m
+🍺  /home/linuxbrew/.linuxbrew/Cellar/gcc/16.2.0: 2,143 files, 416.3MB
+==> Installing scrutatelocal/test/scrutate dependency: llhttp (9.4.3)
+==> Pouring llhttp--9.4.3.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/llhttp/9.4.3: 15 files, 302.2KB
+==> Installing scrutatelocal/test/scrutate dependency: bzip2 (1.0.8)
+==> Pouring bzip2--1.0.8.arm64_linux.bottle.2.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/bzip2/1.0.8: 32 files, 1MB
+==> Installing scrutatelocal/test/scrutate dependency: pcre2 (10.49)
+==> Pouring pcre2--10.49.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/pcre2/10.49: 249 files, 8.3MB
+==> Installing scrutatelocal/test/scrutate dependency: libgit2 (1.9.7_2)
+==> Pouring libgit2--1.9.7_2.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/libgit2/1.9.7_2: 109 files, 7.3MB
+==> Installing scrutatelocal/test/scrutate dependency: z3 (5.3.3)
+==> Pouring z3--5.3.3.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/z3/5.3.3: 143 files, 51.3MB
+==> Installing scrutatelocal/test/scrutate dependency: ncurses (6.6)
+==> Pouring ncurses--6.6.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/ncurses/6.6: 4,071 files, 12.8MB
+==> Installing scrutatelocal/test/scrutate dependency: libedit (20260512-3.1)
+==> Pouring libedit--20260512-3.1.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/libedit/20260512-3.1: 61 files, 1.9MB
+==> Installing scrutatelocal/test/scrutate dependency: libffi (3.8.0)
+==> Pouring libffi--3.8.0.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/libffi/3.8.0: 19 files, 1.1MB
+==> Installing scrutatelocal/test/scrutate dependency: llvm (23.1.5)
+==> Pouring llvm--23.1.5.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/llvm/23.1.5: 9,378 files, 2.8GB
+==> Installing scrutatelocal/test/scrutate dependency: pkgconf (3.0.10)
+==> Pouring pkgconf--3.0.10.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/pkgconf/3.0.10: 36 files, 1.5MB
+==> Installing scrutatelocal/test/scrutate dependency: readline (8.3.6)
+==> Pouring readline--8.3.6.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/readline/8.3.6: 56 files, 3.3MB
+==> Installing scrutatelocal/test/scrutate dependency: sqlite (3.54.1)
+==> Pouring sqlite--3.54.1.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/sqlite/3.54.1: 13 files, 7.2MB
+==> Installing scrutatelocal/test/scrutate dependency: brotli (1.2.1)
+==> Pouring brotli--1.2.1.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/brotli/1.2.1: 33 files, 2.4MB
+==> Installing scrutatelocal/test/scrutate dependency: libnghttp2 (1.71.0)
+==> Pouring libnghttp2--1.71.0.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/libnghttp2/1.71.0: 15 files, 974.2KB
+==> Installing scrutatelocal/test/scrutate dependency: libnghttp3 (1.19.0)
+==> Pouring libnghttp3--1.19.0.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/libnghttp3/1.19.0: 20 files, 823KB
+==> Installing scrutatelocal/test/scrutate dependency: libngtcp2 (1.26.0)
+==> Pouring libngtcp2--1.26.0.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/libngtcp2/1.26.0: 23 files, 1.9MB
+==> Installing scrutatelocal/test/scrutate dependency: libunistring (1.5)
+==> Pouring libunistring--1.5.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/libunistring/1.5: 60 files, 6.6MB
+==> Installing scrutatelocal/test/scrutate dependency: libidn2 (2.3.8)
+==> Pouring libidn2--2.3.8.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/libidn2/2.3.8: 81 files, 1.3MB
+==> Installing scrutatelocal/test/scrutate dependency: libpsl (0.23.3)
+==> Pouring libpsl--0.23.3.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/libpsl/0.23.3: 19 files, 571.3KB
+==> Installing scrutatelocal/test/scrutate dependency: keyutils (1.6.3)
+==> Pouring keyutils--1.6.3.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/keyutils/1.6.3: 66 files, 891KB
+==> Installing scrutatelocal/test/scrutate dependency: krb5 (1.22.2_2)
+==> Pouring krb5--1.22.2_2.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/krb5/1.22.2_2: 164 files, 10.7MB
+==> Installing scrutatelocal/test/scrutate dependency: libxcrypt (4.5.2)
+==> Pouring libxcrypt--4.5.2.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/libxcrypt/4.5.2: 25 files, 428.9KB
+==> Installing scrutatelocal/test/scrutate dependency: util-linux (2.42.4)
+==> Pouring util-linux--2.42.4.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/util-linux/2.42.4: 459 files, 48.9MB
+==> Installing scrutatelocal/test/scrutate dependency: cyrus-sasl (2.1.28_4)
+==> Pouring cyrus-sasl--2.1.28_4.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/cyrus-sasl/2.1.28_4: 90 files, 2.4MB
+==> Installing scrutatelocal/test/scrutate dependency: openldap (2.7.2)
+==> Pouring openldap--2.7.2.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/openldap/2.7.2: 341 files, 12.7MB
+==> Installing scrutatelocal/test/scrutate dependency: curl (8.23.0)
+==> Pouring curl--8.23.0.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/curl/8.23.0: 559 files, 6.6MB
+==> Installing scrutatelocal/test/scrutate dependency: rust (1.99.1)
+==> Pouring rust--1.99.1.arm64_linux.bottle.tar.gz
+🍺  /home/linuxbrew/.linuxbrew/Cellar/rust/1.99.1: 7,470 files, 441.4MB
+==> Installing scrutatelocal/test/scrutate
+[34m==>[0m [1mcargo install --path=crates/scrutate[0m
+🍺  /home/linuxbrew/.linuxbrew/Cellar/scrutate/0.1.0: 12 files, 84.3MB, built in 2 minutes 53 seconds
+==> Caveats
+Bash completion has been installed to:
+  /home/linuxbrew/.linuxbrew/etc/bash_completion.d
++ rc_install=0
+++ brew --prefix
++ /home/linuxbrew/.linuxbrew/bin/scrutate --version
+scrutate 0.1.0
++ rc_version=0
+++ brew --prefix
+++ brew --prefix
+++ brew --prefix
++ ls /home/linuxbrew/.linuxbrew/etc/bash_completion.d/scrutate /home/linuxbrew/.linuxbrew/share/zsh/site-functions/_scrutate /home/linuxbrew/.linuxbrew/share/fish/vendor_completions.d/scrutate.fish
+/home/linuxbrew/.linuxbrew/etc/bash_completion.d/scrutate
+/home/linuxbrew/.linuxbrew/share/fish/vendor_completions.d/scrutate.fish
+/home/linuxbrew/.linuxbrew/share/zsh/site-functions/_scrutate
++ rc_compl=0
++ brew test scrutatelocal/test/scrutate
+Fetching gem metadata from https://rubygems.org/.........
+Fetching ast 2.4.3
+Fetching bigdecimal 4.1.3
+Fetching benchmark 0.5.0
+Fetching base64 0.3.0
+Fetching bindata 3.0.1
+Fetching concurrent-ruby 1.3.8
+Fetching csv 3.3.7
+Fetching diff-lcs 1.6.2
+Installing bigdecimal 4.1.3 with native extensions
+Fetching drb 2.2.3
+Fetching elftools 2.2.0
+Fetching erubi 1.13.1
+Fetching hana 1.3.7
+Fetching json 3.1.0
+Fetching regexp_parser 2.13.1
+Fetching simpleidn 0.3.0
+Fetching json_schemer 2.5.0
+Installing json 3.1.0 with native extensions
+Fetching rexml 3.4.4
+Fetching kramdown 2.5.2
+Fetching language_server-protocol 3.17.0.6
+Fetching lint_roller 1.1.0
+Fetching logger 1.7.0
+Fetching prism 1.9.0
+Fetching minitest 6.0.6
+Fetching netrc 0.11.0
+Fetching ostruct 0.6.3
+Fetching parallel 2.3.0
+Fetching parallel_tests 5.8.0
+Installing prism 1.9.0 with native extensions
+Fetching racc 1.8.1
+Fetching parser 3.3.13.0
+Installing racc 1.8.1 with native extensions
+Fetching patchelf 1.7.0
+Fetching plist 3.7.2
+Fetching rainbow 3.1.1
+Fetching tsort 0.2.0
+Fetching rbs 4.2.0
+Fetching rbi 0.5.0
+Fetching require-hooks 0.5.1
+Fetching rspec-support 3.13.7
+Fetching rspec-core 3.13.6
+Fetching rspec-expectations 3.13.5
+Fetching rspec-mocks 3.13.8
+Fetching rspec 3.13.2
+Fetching rspec-github 3.0.0
+Fetching rspec-retry 0.6.2
+Fetching sorbet-runtime 0.6.13610
+Fetching rspec-sorbet 1.9.2
+Fetching rspec_junit_formatter 0.8.0
+Fetching rubocop-ast 1.50.0
+Fetching ruby-progressbar 1.13.0
+Fetching unicode-emoji 4.3.0
+Fetching unicode-display_width 3.3.0
+Fetching rubocop 1.92.2
+Fetching rubocop-md 2.0.4
+Fetching rubocop-performance 1.27.0
+Fetching rubocop-rspec 3.10.2
+Fetching sorbet-static 0.6.13610 (aarch64-linux)
+Fetching sorbet 0.6.13610
+Fetching sorbet-static-and-runtime 0.6.13610
+Fetching thor 1.5.0
+Fetching spoom 1.8.13
+Fetching rubocop-sorbet 0.17.2
+Fetching ruby-lsp 0.26.11
+Fetching ruby-macho 7.0.0
+Fetching ruby-prof 2.0.5
+Fetching rubydex 0.4.4 (aarch64-linux)
+Fetching simplecov 1.3.2
+Fetching simplecov-cobertura 4.0.0
+Fetching stackprof 0.2.28
+Fetching tapioca 0.20.0
+Installing stackprof 0.2.28 with native extensions
+Fetching test-prof 1.6.4
+Fetching vernier 1.12.0
+Fetching yard 0.9.45
+Installing vernier 1.12.0 with native extensions
+Fetching yard-sorbet 0.9.0
+Installing benchmark 0.5.0
+Installing base64 0.3.0
+Installing ast 2.4.3
+Installing diff-lcs 1.6.2
+Installing bindata 3.0.1
+Installing csv 3.3.7
+Installing drb 2.2.3
+Installing elftools 2.2.0
+Installing concurrent-ruby 1.3.8
+Installing erubi 1.13.1
+Installing hana 1.3.7
+Installing regexp_parser 2.13.1
+Installing simpleidn 0.3.0
+Installing json_schemer 2.5.0
+Installing rexml 3.4.4
+Installing kramdown 2.5.2
+Installing language_server-protocol 3.17.0.6
+Installing logger 1.7.0
+Installing lint_roller 1.1.0
+Installing minitest 6.0.6
+Installing netrc 0.11.0
+Installing ostruct 0.6.3
+Installing parallel_tests 5.8.0
+Installing parallel 2.3.0
+Installing parser 3.3.13.0
+Installing patchelf 1.7.0
+Installing plist 3.7.2
+Installing rainbow 3.1.1
+Installing tsort 0.2.0
+Installing rbi 0.5.0
+Installing require-hooks 0.5.1
+Installing rspec-support 3.13.7
+Installing rspec-core 3.13.6
+Installing rspec-expectations 3.13.5
+Installing rspec-mocks 3.13.8
+Installing rspec 3.13.2
+Installing rspec-github 3.0.0
+Installing rspec-retry 0.6.2
+Installing sorbet-runtime 0.6.13610
+Installing rspec-sorbet 1.9.2
+Installing rspec_junit_formatter 0.8.0
+Installing rubocop-ast 1.50.0
+Installing ruby-progressbar 1.13.0
+Installing unicode-emoji 4.3.0
+Installing unicode-display_width 3.3.0
+Installing rubocop 1.92.2
+Installing rubocop-md 2.0.4
+Installing rubocop-performance 1.27.0
+Installing rubocop-rspec 3.10.2
+Installing sorbet-static 0.6.13610 (aarch64-linux)
+Installing sorbet 0.6.13610
+Installing sorbet-static-and-runtime 0.6.13610
+Installing thor 1.5.0
+Installing spoom 1.8.13
+Installing rubocop-sorbet 0.17.2
+Installing ruby-lsp 0.26.11
+Installing ruby-macho 7.0.0
+Installing rubydex 0.4.4 (aarch64-linux)
+Installing ruby-prof 2.0.5 with native extensions
+Installing simplecov 1.3.2
+Installing simplecov-cobertura 4.0.0
+Installing tapioca 0.20.0
+Installing test-prof 1.6.4
+Installing yard 0.9.45
+Installing yard-sorbet 0.9.0
+Installing rbs 4.2.0 with native extensions
+Bundle complete! 38 Gemfile dependencies, 72 gems now installed.
+Bundled gems are installed into `./.linuxbrew/Homebrew/Library/Homebrew/vendor/bundle`
+3 installed gems you directly depend on are looking for funding.
+  Run `bundle fund` for details
+==> Testing scrutatelocal/test/scrutate
+[34m==>[0m [1m/home/linuxbrew/.linuxbrew/Cellar/scrutate/0.1.0/bin/scrutate --version[0m
+[34m==>[0m [1m/home/linuxbrew/.linuxbrew/Cellar/scrutate/0.1.0/bin/scrutate grep --no-colo[0m
++ rc_test=0
++ brew uninstall scrutatelocal/test/scrutate
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/scrutate/0.1.0... (12 files, 84.3MB)
+Warning: The following openldap configuration files have not been removed!
+If desired, remove them manually with `rm -rf`:
+  /home/linuxbrew/.linuxbrew/etc/openldap
+  /home/linuxbrew/.linuxbrew/etc/openldap/ldap.conf
+  /home/linuxbrew/.linuxbrew/etc/openldap/ldap.conf.default
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/README
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/collective.ldif
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/collective.schema
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/corba.ldif
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/corba.schema
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/core.ldif
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/core.schema
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/cosine.ldif
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/cosine.schema
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/dsee.ldif
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/dsee.schema
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/duaconf.ldif
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/duaconf.schema
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/dyngroup.ldif
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/dyngroup.schema
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/inetorgperson.ldif
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/inetorgperson.schema
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/java.ldif
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/java.schema
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/misc.ldif
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/misc.schema
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/msuser.ldif
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/msuser.schema
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/namedobject.ldif
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/namedobject.schema
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/nis.ldif
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/nis.schema
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/openldap.ldif
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/openldap.schema
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/pmi.ldif
+  /home/linuxbrew/.linuxbrew/etc/openldap/schema/pmi.schema
+  /home/linuxbrew/.linuxbrew/etc/openldap/slapd.conf
+  /home/linuxbrew/.linuxbrew/etc/openldap/slapd.conf.default
+  /home/linuxbrew/.linuxbrew/etc/openldap/slapd.ldif
+  /home/linuxbrew/.linuxbrew/etc/openldap/slapd.ldif.default
+Warning: The following keyutils configuration files have not been removed!
+If desired, remove them manually with `rm -rf`:
+  /home/linuxbrew/.linuxbrew/etc/keyutils
+Warning: The following openssl@4 configuration files have not been removed!
+If desired, remove them manually with `rm -rf`:
+  /home/linuxbrew/.linuxbrew/etc/openssl@4
+  /home/linuxbrew/.linuxbrew/etc/openssl@4/cert.pem
+  /home/linuxbrew/.linuxbrew/etc/openssl@4/certs
+  /home/linuxbrew/.linuxbrew/etc/openssl@4/certs/.keepme
+  /home/linuxbrew/.linuxbrew/etc/openssl@4/ct_log_list.cnf
+  /home/linuxbrew/.linuxbrew/etc/openssl@4/ct_log_list.cnf.dist
+  /home/linuxbrew/.linuxbrew/etc/openssl@4/misc
+  /home/linuxbrew/.linuxbrew/etc/openssl@4/misc/CA.pl
+  /home/linuxbrew/.linuxbrew/etc/openssl@4/misc/tsget
+  /home/linuxbrew/.linuxbrew/etc/openssl@4/misc/tsget.pl
+  /home/linuxbrew/.linuxbrew/etc/openssl@4/openssl.cnf
+  /home/linuxbrew/.linuxbrew/etc/openssl@4/openssl.cnf.dist
+  /home/linuxbrew/.linuxbrew/etc/openssl@4/private
+  /home/linuxbrew/.linuxbrew/etc/openssl@4/private/.keepme
+Warning: The following ca-certificates configuration files have not been removed!
+If desired, remove them manually with `rm -rf`:
+  /home/linuxbrew/.linuxbrew/etc/ca-certificates
+  /home/linuxbrew/.linuxbrew/etc/ca-certificates/cert.pem
+==> Autoremoving 42 unneeded formulae:
+binutils
+brotli
+bzip2
+ca-certificates
+curl
+cyrus-sasl
+gcc
+glibc
+gmp
+isl
+keyutils
+krb5
+libedit
+libffi
+libgit2
+libidn2
+libmpc
+libnghttp2
+libnghttp3
+libngtcp2
+libpsl
+libssh2
+libunistring
+libxcrypt
+linux-headers@6.8
+llhttp
+llvm
+lz4
+mpfr
+ncurses
+openldap
+openssl@4
+pcre2
+pkgconf
+readline
+rust
+sqlite
+util-linux
+xz
+z3
+zlib-ng-compat
+zstd
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/rust/1.99.1... (7,470 files, 441.4MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/libgit2/1.9.7_2... (109 files, 7.3MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/curl/8.23.0... (559 files, 6.6MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/pkgconf/3.0.10... (36 files, 1.5MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/llvm/23.1.5... (9,378 files, 2.8GB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/llhttp/9.4.3... (15 files, 302.2KB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/z3/5.3.3... (143 files, 51.3MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/pcre2/10.49... (249 files, 8.3MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/libedit/20260512-3.1... (61 files, 1.9MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/libnghttp2/1.71.0... (15 files, 974.2KB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/libpsl/0.23.3... (19 files, 571.3KB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/openldap/2.7.2... (341 files, 12.7MB)
+
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/libssh2/1.11.1_7... (202 files, 1.6MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/libnghttp3/1.19.0... (20 files, 823KB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/brotli/1.2.1... (33 files, 2.4MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/libngtcp2/1.26.0... (23 files, 1.9MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/libffi/3.8.0... (19 files, 1.1MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/util-linux/2.42.4... (459 files, 48.9MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/bzip2/1.0.8... (32 files, 1MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/libidn2/2.3.8... (81 files, 1.3MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/cyrus-sasl/2.1.28_4... (90 files, 2.4MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/gcc/16.2.0... (2,143 files, 416.3MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/libunistring/1.5... (60 files, 6.6MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/libxcrypt/4.5.2... (25 files, 428.9KB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/krb5/1.22.2_2... (164 files, 10.7MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/sqlite/3.54.1... (13 files, 7.2MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/readline/8.3.6... (56 files, 3.3MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/isl/0.28... (81 files, 10.8MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/libmpc/1.4.1... (15 files, 759.4KB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/keyutils/1.6.3... (66 files, 891KB)
+
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/openssl@4/4.1.0... (6,878 files, 32MB)
+
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/binutils/2.47... (6,283 files, 139.2MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/mpfr/4.2.2... (32 files, 3.9MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/zstd/1.5.7_1... (32 files, 3.1MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/ca-certificates/2026-11-05... (5 files, 216.4KB)
+
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/ncurses/6.6... (4,071 files, 12.8MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/zlib-ng-compat/2.3.3_1... (17 files, 576KB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/xz/5.8.4... (97 files, 3.6MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/lz4/1.11.0... (28 files, 1.1MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/gmp/6.3.0... (24 files, 4.4MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/glibc/2.39_1... (1,419 files, 58MB)
+Uninstalling /home/linuxbrew/.linuxbrew/Cellar/linux-headers@6.8/6.8.12_1... (964 files, 6.6MB)
++ rc_uninstall=0
+++ brew --prefix
++ test '!' -e /home/linuxbrew/.linuxbrew/bin/scrutate
++ rc_gone=0
++ echo 'RESULT install=0 version=0 completions=0 test=0 uninstall=0 removed=0'
+RESULT install=0 version=0 completions=0 test=0 uninstall=0 removed=0
+exit 0

@@ -1,0 +1,8 @@
+syntax ok: scoop/scrutate.json (JSON)
+syntax ok: winget/manifests/c/crisnahine/Scrutate/0.1.0/crisnahine.Scrutate.installer.yaml (YAML)
+syntax ok: winget/manifests/c/crisnahine/Scrutate/0.1.0/crisnahine.Scrutate.locale.en-US.yaml (YAML)
+syntax ok: winget/manifests/c/crisnahine/Scrutate/0.1.0/crisnahine.Scrutate.yaml (YAML)
+schema ok: scoop/scrutate.json against https://raw.githubusercontent.com/ScoopInstaller/Scoop/master/schema.json
+schema ok: winget/manifests/c/crisnahine/Scrutate/0.1.0/crisnahine.Scrutate.installer.yaml against https://raw.githubusercontent.com/microsoft/winget-cli/master/schemas/JSON/manifests/v1.9.0/manifest.installer.1.9.0.json
+schema ok: winget/manifests/c/crisnahine/Scrutate/0.1.0/crisnahine.Scrutate.locale.en-US.yaml against https://raw.githubusercontent.com/microsoft/winget-cli/master/schemas/JSON/manifests/v1.9.0/manifest.defaultLocale.1.9.0.json
+schema ok: winget/manifests/c/crisnahine/Scrutate/0.1.0/crisnahine.Scrutate.yaml against https://raw.githubusercontent.com/microsoft/winget-cli/master/schemas/JSON/manifests/v1.9.0/manifest.version.1.9.0.json

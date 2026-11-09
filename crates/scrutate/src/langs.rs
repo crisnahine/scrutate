@@ -1349,11 +1349,13 @@ const EXTRA: &[LangSpec] = &[
         defs: &[
             d("value_specification", "function", &[NameRule::ChildKind(&["value_name"])]),
             d("type_binding", "type", N),
-            d("module_declaration", "module", N),
+            // the interface grammar has no module_declaration: `module M : sig` is a module_binding
+            d("module_binding", "module", &[NameRule::ChildKind(&["module_name"])]),
+            d("module_type_definition", "interface", &[NameRule::ChildKind(&["module_type_name"])]),
         ],
         calls: &[],
         docstring: false,
-        wrappers: &[],
+        wrappers: &["type_definition", "module_definition"],
         outer: &[],
         body: "",
         imports: NO_IMPORTS,
