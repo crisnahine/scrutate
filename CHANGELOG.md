@@ -34,6 +34,13 @@ First release.
   the parallel walk takes over (about a quarter less time on a 220-file repository).
 - A large file without line breaks to split at is read into one buffer of its exact size (the
   stream reader grew its buffer by doubling).
+- `-P` / `--pcre2`: PCRE2 syntax (look-around, backreferences), stopped by PCRE2's match limit
+  on exponential patterns, with a warning naming the file.
+- `-z` / `--search-zip`: zip and tar members (`archive.zip{member}`) and compressed files.
+- `--fuzzy` patterns up to 4096 bytes (64-bit blocks beyond 128); `--fuzzy-regex[=N]`: a regex
+  within N edits (bit-parallel Glushkov automaton, up to 64 character positions).
+- `grep --index --update`: refresh the text index (changed files only), then search it.
+- Files that could not be searched, or not to the end, are named in warnings.
 - Regexes are built with `^` and `$` as line anchors in every mode, as ripgrep builds them. Before,
   a pattern using either was matched one line at a time: `^(a|aa)+$` over ten million one-byte
   lines took 198 ms, now 8 ms.
@@ -60,6 +67,17 @@ First release.
 - `symbol`, `callers`, `callees`, `refs`, `outline`, `deps`, `rdeps`, `similar`, `dupes`
   (exact + MinHash/LSH near-duplicates), `tsquery` (tree-sitter structural search),
   cross-repository `search --also`.
+- `refs` resolves each occurrence to the definition it refers to (scopes, imports, qualified
+  names) for Python, JavaScript/TypeScript, Rust and Go; `--def` keeps one definition and
+  `--textual` gives every whole-word occurrence as before.
+- `tsquery` keeps each file's captures in `.scrutate/tsquery/` by content hash: a repeated query
+  re-parses only changed files (the Linux tree: about 25 s, then 1.6 s), output identical to
+  `--no-cache`; it also accepts a single file as its path.
+- Semantic vectors stored as int8 with a scale per vector (schema 13): the index is about a fifth
+  smaller, ranking quality within 0.001 MRR, parity with the Python reference exact.
+- `scrutate lsp`: a language server (definitions, resolved references, workspace symbols,
+  outlines) for editors; the VS Code extension starts it, JetBrains uses it through LSP4IJ.
+- `scrutate watch` and `serve --watch` keep the indexes fresh as files change.
 
 ### Product
 - Unified `find`, MCP server (14 tools), configuration files with environment-variable precedence,
@@ -73,6 +91,9 @@ First release.
   independent reference, 30+ runs per contender, bootstrap confidence intervals, hardware-ceiling
   baseline, warm and cold cache; regression gate; CI/release workflows; SBOM; IDE and Git-platform
   integrations.
+- Packaging: Homebrew formula, Scoop and winget manifests, `.deb` and `.rpm` packages (built and
+  install-tested in clean containers); release archives and wheels carry
+  `THIRD_PARTY_NOTICES.txt`; `docs/dashboard.html` charts the benchmark runs.
 - Fuzz targets (`fuzz/`): the `.npy` reader (three defects fixed: a panic on truncated string
   arrays, a wrapping element count in release builds, a huge allocation for zero-width strings),
   the text index's soundness, the edit-distance matcher and every parser tier.
