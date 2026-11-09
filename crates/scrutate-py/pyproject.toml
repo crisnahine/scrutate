@@ -7,7 +7,7 @@ name = "scrutate"
 description = "Universal instant code search and persistent code intelligence (Rust engines, Python bindings)"
 readme = "README.md"
 requires-python = ">=3.9"
-license = { text = "MIT OR Apache-2.0" }
+license = { text = "Apache-2.0" }
 dynamic = ["version"]
 classifiers = [
   "Programming Language :: Rust",

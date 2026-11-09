@@ -4,7 +4,7 @@
   "description": "Instant code search and code intelligence from the Scrutate CLI: ranked search, symbol lookup, callers, grep.",
   "version": "0.1.0",
   "publisher": "scrutate",
-  "license": "MIT OR Apache-2.0",
+  "license": "Apache-2.0",
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Other"],
   "activationEvents": [],

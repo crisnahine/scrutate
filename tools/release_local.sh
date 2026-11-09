@@ -9,7 +9,7 @@ rm -rf dist && mkdir -p dist
 cargo build --release -p scrutate --locked
 name="scrutate-$v-$target"
 rm -rf "dist/$name" && mkdir -p "dist/$name"
-cp target/release/scrutate LICENSE-MIT LICENSE-APACHE README.md CHANGELOG.md "dist/$name/"
+cp target/release/scrutate LICENSE README.md CHANGELOG.md "dist/$name/"
 cp -r docs "dist/$name/docs"
 cp -r integrations "dist/$name/integrations"
 tar -C dist -czf "dist/$name.tar.gz" "$name"
