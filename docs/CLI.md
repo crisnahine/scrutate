@@ -5,8 +5,11 @@
 ## Conventions
 
 - **Exit codes**: `0` results found, `1` no results, `2` error (bad arguments, unreadable index,
-  invalid pattern…), `130` interrupted (Ctrl-C, or stopped early for a reason other than
+  invalid pattern...), `130` interrupted (Ctrl-C, or stopped early for a reason other than
   `--max-results`).
+- **Diagnostics**: errors are one line on stderr (`scrutate: error: ...`). With `--json`, or with
+  `SCRUTATE_DIAGNOSTICS=json` for any command, an error is one JSON record instead:
+  `{"type": "error", "schema": 1, "message": "..."}` (`"internal_error"` for a bug).
 - **Streams**: results on stdout, diagnostics and progress on stderr. Output is plain `path:line:text`
   when stdout is not a terminal; colour only on a terminal (`--no-color` / `NO_COLOR` disable it).
 - **Determinism**: `--sort` orders Engine A output by path then line (default output is in
@@ -15,7 +18,7 @@
 - **Machine-readable output**: `--json` on every command. Engine A emits JSON Lines with
   `"schema": 1` and `"type"` ∈ {`match`, `context`, `count`, `file`, `summary`, `symbol_group`};
   Engine B commands emit one JSON document. The schema number changes only on incompatible changes.
-- **Paths**: relative to the searched root, `/`-separated on every platform.
+- **Paths**: relative to the searched root (a root that is a file is shown as given), `/`-separated on every platform.
 - **Configuration**: `.scrutate.toml` in the repository, `$XDG_CONFIG_HOME/scrutate/config.toml`,
   or `$SCRUTATE_CONFIG`; `scrutate config` shows what is in effect. Precedence: command line >
   environment variable > configuration file > built-in default. Every configurable option names its
@@ -30,17 +33,27 @@
 scrutate grep [OPTIONS] PATTERN [PATHS...]
 ```
 `PATTERN` is a regex unless `-F` (literal), `--ident` (identifier in any casing) or `--fuzzy[=N]`
-(within N edits, default 1, literal, ≤128 bytes). Options mirror grep/ripgrep where the meaning is
-identical: `-i`, `-S` (smart case), `-w`, `-U` (multiline), `-v`, `-l`, `-c`, `-A/-B/-C`, `-m`,
-`--max-results`, `-g GLOB` (`!` excludes), `-t TYPE` / `--type-list`, `--hidden`, `--no-ignore`,
-`-L` (follow links), `--max-filesize`, `--max-depth`, `-j THREADS`, `--sort`, `--json`, `--stats`,
-`--symbols` (group lines by the enclosing function using the index, when one exists).
+(within N edits, default 1, literal, at most 128 bytes). `-e PATTERN` (repeatable) gives several
+patterns; a line matching any of them matches, and the first positional argument is then a path.
+Options mirror grep/ripgrep where the meaning is identical: `-i`, `-S` (smart case), `-w`, `-U`
+(multiline: each line of a multi-line match is printed with its own number), `-v`, `-l`, `-c`,
+`-A/-B/-C`, `-m`, `--max-results`, `-g GLOB` (`!` excludes), `-t TYPE` / `--type-list`, `--hidden`,
+`--no-ignore`, `-L` (follow links), `--max-filesize`, `--max-depth`, `-j THREADS`, `--sort`,
+`--json`, `--stats`, `--symbols` (group lines by the enclosing function using the index, when one
+exists).
+
+`--index` answers from Engine B's text index (`scrutate index`): the index names the files that
+can contain a match (trigram postings), and Engine A's matcher searches only those, so the output
+is what the walk prints for the indexed snapshot of `--root`. Run `scrutate index` (or `index
+--text`) after changing files; the update is incremental. Options that change which files a walk
+visits (`--hidden`, `--no-ignore`, `-L`, `--max-depth`, `--max-filesize`, explicit paths) are
+refused with `--index`; `-g` and `-t` filter the indexed files.
 
 ## Engine B
 
 | Command | Purpose |
 |---|---|
-| `index [--force]` | Build or incrementally update `.scrutate/` (progress on a terminal). |
+| `index [--force] [--text \| --no-text]` | Build or incrementally update `.scrutate/`: the code-intelligence index and the text index for `grep --index` (`--text`: only the text index; `--no-text`: skip it). Progress on a terminal. |
 | `search QUERY [-k N] [-a ALT]... [--also ROOT]... [--why] [--json]` (alias `s`) | Ranked search by meaning, name or identifier; `--alt` fuses alternative phrasings; `--also` searches other repositories too (paths prefixed with the repository name). |
 | `find QUERY` | Unified: regex-looking → `grep`; otherwise ranked search (indexing a small repository on the spot); otherwise identifier grep. |
 | `symbol NAME` | Where is it defined (`Class.method` works). |
@@ -52,7 +65,7 @@ identical: `-i`, `-S` (smart case), `-w`, `-U` (multiline), `-v`, `-l`, `-c`, `-
 | `dupes [--min-tokens N] [--threshold J] [--limit N]` | Exact and near-duplicate functions. |
 | `tsquery LANG QUERY [PATHS] [--limit N]` | Tree-sitter structural query over every file of a language (no index). |
 | `check [--files] [--json]` | Verify database integrity, segment consistency and (with `--files`) that indexed files are unchanged. Exit 1 on problems. |
-| `stats` | Index statistics (files, chunks, symbols, call edges, imports, segments). |
+| `stats` | Index statistics (files, chunks, symbols, call edges, imports, segments, and the text index's files, segments and bytes). |
 | `languages [--json]` | The verified capability registry. |
 | `serve [--refresh-interval S]` | MCP server on stdio. |
 | `config` | Show the configuration file in effect. |
@@ -62,9 +75,10 @@ identical: `-i`, `-S` (smart case), `-w`, `-U` (multiline), `-v`, `-l`, `-c`, `-
 `SCRUTATE_ROOT`, `SCRUTATE_THREADS`, `SCRUTATE_GREP_{HIDDEN,NO_IGNORE,FOLLOW,SMART_CASE,MAX_FILESIZE,MAX_DEPTH,GLOBS,TYPES}`,
 `SCRUTATE_INDEX_EXCLUDE_DIRS`, `SCRUTATE_REFRESH_INTERVAL`, `SCRUTATE_CONFIG`, `SCRUTATE_SEMANTIC`
 (path or `none`), `SCRUTATE_RANKER` (path or `none`), `SCRUTATE_PROFILE` (print indexing phase
-timings), `NO_COLOR`.
+timings), `SCRUTATE_DIAGNOSTICS` (`json`: errors as JSON records), `NO_COLOR`.
 
 ### The index directory
-`.scrutate/index.db` (SQLite, WAL) and `.scrutate/seg/*/` (memory-mapped arrays), plus a
-`.gitignore` so it is never committed. It is a cache: deleting it is always safe; `scrutate index
+`.scrutate/index.db` (SQLite, WAL), `.scrutate/seg/*/` (memory-mapped arrays) and
+`.scrutate/text/` (the text index: a manifest and immutable trigram segments), plus a `.gitignore`
+so it is never committed. It is a cache: deleting it is always safe; `scrutate index
 --force` rebuilds it; a damaged index rebuilds itself.

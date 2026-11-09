@@ -5,16 +5,22 @@ background and nothing phones home.
 
 ## Supported platforms (0.1.0)
 
-| Platform | Status | How it was verified |
-|---|---|---|
-| Linux x86_64 (glibc) | **tested** | built and the whole test suite run on this platform (docs/TEST_RESULTS.md) |
-| Linux x86_64 (musl, fully static) | **not yet verified** | CI job `musl` in `.github/workflows/ci.yml` builds it, checks `file`/`ldd`, compares output byte-for-byte with the glibc build and times both; it has not run yet |
-| Linux aarch64, macOS (Intel, Apple Silicon), Windows (x86_64, ARM64) | **not yet verified** | built and tested only by the CI matrix (`ci.yml`, `release.yml`), which has not run yet |
+A platform is declared supported only after its binary and wheel were built, installed and tested
+on it. Every row below names the evidence; `bench/results/platforms/` holds the logs.
 
-A platform is declared supported only after its binary (and wheel) has been installed and tested
-on it. Until the CI matrix has run, Linux x86_64 is the only supported platform.
+| Platform | Binary | Wheels | Status | Evidence |
+|---|---|---|---|---|
+| macOS arm64 (Apple Silicon, macOS 27) | built and tested natively | `cp39-abi3` on CPython 3.10, 3.11, 3.12, 3.13; `cp314t` on free-threaded 3.14 | **supported** | docs/TEST_RESULTS.md; `wheels-macos-arm64.json` |
+| Linux aarch64 (glibc and static musl) | built and tested in a clean `rust:1-slim-bookworm` container (no Python on the image); the static musl binary prints byte-identical output | `cp39-abi3` on CPython 3.10, 3.12, 3.13; `cp314t` on free-threaded 3.14 | **supported** | `linux-aarch64/verify.log`, `musl-identical.txt`, `wheels.json` |
+| Linux x86_64 (glibc and static musl) | the same script in a `linux/amd64` container, run under emulation on the Apple Silicon host: it verifies behaviour, not x86 speed | same as aarch64 | **supported** | `linux-x86_64/verify.log`, `musl-identical.txt`, `wheels.json` |
+| macOS x86_64 | cross-built; the test binaries compile and link, none was run (Rosetta 2 is not installed on the build machine) | not built | **not supported yet** | `macos-x86_64/verify.log` |
+| Windows x86_64 | cross-built with MinGW-w64; the test binaries compile and link, none was run | not built | **not supported yet** | `windows-x86_64-cross/build.log` |
+| Windows ARM64 | not built | not built | **not supported yet** | no toolchain or machine; the CI matrix (`.github/workflows/ci.yml`, `release.yml`) covers Windows and Intel macOS but has not run, because the repository is not published yet |
 
 ## From a release archive
+
+No archive is published for 0.1.0: the repository is not public yet. Once releases exist, the steps
+are:
 
 ```sh
 v=0.1.0; t=x86_64-unknown-linux-gnu
@@ -29,15 +35,18 @@ scrutate completions bash > ~/.local/share/bash-completion/completions/scrutate 
 
 Windows: unzip, put `scrutate.exe` on `PATH`, `scrutate completions powershell | Out-String | Invoke-Expression`.
 
-## From source (any platform with stable Rust ≥ 1.85)
+## From source (any platform with stable Rust 1.89 or newer)
+
+From a copy of the source tree (the clone URL works once the repository is published):
 
 ```sh
 git clone https://github.com/crisnahine/scrutate && cd scrutate
-cargo build --release -p scrutate --locked          # ~2–3 minutes; binary at target/release/scrutate
+cargo build --release -p scrutate --locked          # a few minutes; binary at target/release/scrutate
 cargo test --release -p scrutate                     # the Rust test suite
 ```
-Add `--features extra-langs` for the optional heavy grammars (Fortran, OCaml, F#, Verilog, VHDL,
-CUDA, TLA+, D, AutoHotkey, Odin, QML, LLVM IR; +~80 MB).
+`rust-toolchain.toml` pins the compiler (1.99.1) so builds are reproducible; rustup installs it on
+first use. Add `--features extra-langs` for the optional heavy grammars (Fortran, OCaml, F#,
+Verilog, VHDL, CUDA, TLA+, D, AutoHotkey, Odin, QML, LLVM IR; about 80 MB more).
 
 ## Python package
 

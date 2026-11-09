@@ -1,80 +1,79 @@
-# Competitive positioning — what the evidence supports
+# Competitive positioning: what the evidence supports
 
-This page says what Scrutate 0.1.0 does better than the tools it was benchmarked against, where it
-is merely equal, and where it is behind. Every performance statement points at a table in
-docs/BENCHMARKS.md (generated from `bench/results/final.json`); every capability statement points
-at a test. Claims about other tools are limited to what was observed in those runs on this machine
-(2 cores, Linux x86_64, Python-only corpora of 4 MB / 104 MB / 830 MB) and to their own
-documented command-line options.
+This page says what Scrutate 0.1.0 does better than the tools it was measured against, where it
+ties, and where it is behind. Every performance statement points at docs/LEADERBOARD.md (generated
+from the raw results in `bench/results/`); every capability statement points at a test. Claims
+about other tools are limited to what was observed in those runs and to their documented options.
+The machine is a developer laptop shared with other work (an Apple M3 Pro); section 14 of the
+mission reserves "#1" claims for dedicated idle hardware, so the wins below are measured results,
+not publishable leadership claims.
 
-## 1. Against grep-class tools (grep, ripgrep, ugrep, git grep; ack/ag not measured)
+## 1. Against grep-class tools (GNU grep, ripgrep, ugrep, git grep, ag, ack)
 
-**Speed on plain text search: within 2 % of ripgrep on average, ahead of the rest.** Across the
-27 comparable rows, the geometric mean of ripgrep's time over Scrutate's is 0.98× (ripgrep 2 %
-faster on average); Scrutate is faster on 7 rows and slower on 20, the slowest cases being output-heavy
-(`whole word` with 192 k–1.5 M matching lines: 121 vs 77 ms on the big corpus, 769 vs 612 ms on
-the massive one; a single output thread versus ripgrep's parallel printers — docs/ROADMAP.md).
-Against GNU grep the mean ratio is 2.06×, against git grep 1.70×, against the bundled `+sse2`
-ugrep 1.11×. Peak memory for the common-literal query: 8.5 / 9.7 / 11 MB (small / big / massive)
-for Scrutate vs 6.9 / 7.4 / 7.8 MB for ripgrep and 2.2–2.3 MB for GNU grep — all small; CPU time
-equal to ripgrep's. Startup: 5 ms, the same as ripgrep (GNU grep 1.7 ms, ugrep 3.7 ms).
+SUMMARY_ENGINE_A
 
-**Capabilities none of them have (each verified by tests):**
+**What decides most large-tree benchmarks on macOS is the file system, not the matcher.** Merely
+reading every file of the Linux tree (the "read files" baseline, `bench/rawread.c`, eleven threads)
+takes about as long as the fastest search tools take to search it, because opening 96,000 files
+costs more than scanning their bytes. Several benchmarks are therefore ties at the hardware limit
+(BLOCKED), and the margins of the wins there are a few percent. Where the work is not dominated by
+opening files, the differences are larger: printing a million matching lines (the search threads
+format their own output) and the indexed path below.
 
-| Capability | Scrutate | grep / ripgrep / ugrep / git grep |
-|---|---|---|
-| Identifier search across casings (`refreshToken` ≡ `refresh_token` ≡ `REFRESH_TOKEN`, digit- and acronym-aware) | `--ident`; 44–312 ms on big/massive, *faster* than ripgrep running the equivalent hand-written regex (46–339 ms) | needs a hand-written regex per query |
-| Multiline search | `-U`: 44 ms (big), 260 ms (massive) — 2–3× faster than ripgrep's `-U` (93 / 770 ms) in these runs | ripgrep `-U` (slower here); ugrep via `-P`; grep/git grep: no |
-| Approximate/fuzzy search | `--fuzzy=N` (Myers, prefiltered): 74 ms big, 541 ms massive | ugrep `-Z` (200 / 1 668 ms here; first character must match); others: no |
-| Results grouped by enclosing function (`--symbols`) | yes, when an index exists | no |
-| Ranked search by meaning, symbols, callers, references, imports, duplicates, structural queries | Engine B (next section) | no |
-| Identical results | differential test: 0 disagreements with ripgrep in 750 random cases | — |
+**Capabilities the others do not have (each verified by tests):** identifier search across casings
+(`--ident`), fuzzy search within N edits (ugrep has `-Z` with a different edit model), results
+grouped by enclosing function (`--symbols`), and an index-backed `grep --index` whose output equals
+the walk's.
 
-**Where they remain better:** GNU grep starts 3 ms faster (single binary with no thread pool);
-ripgrep prints very large result sets up to ~25 % faster (`whole word`, massive: 612 vs 769 ms);
-a natively built ugrep with AVX2 would likely be faster than the SSE2 build measured here (not
-measured — stated as a limitation, not a result); ugrep searches inside archives and compressed
-files, which Scrutate does not do in 0.1.0; ack and ag were not measured at all.
+**Where they remain better** (the FAIL and PARTIAL rows of the leaderboard, each with its gap):
+WHERE_BEHIND
+
+**Correctness differences found while making the comparison fair**, so the reader can judge them:
+ag and ack have no Unicode case folding (`-i KÖNIG` finds nothing); ag, ack and git grep's own `-w`
+use ASCII word boundaries (they report `ERR_PTR` glued to Chinese text as a whole word); GNU grep
+needs a UTF-8 locale for Unicode word and case rules; tools other than ripgrep and Scrutate skip the
+dotfiles a repository's `.gitignore` explicitly re-includes (`!.mailmap` in the Linux tree).
 
 ## 2. Against ast-grep (structural search)
 
-Same tree-sitter parse, same node kind, identical match counts (2 302 / 114 522 / 916 176).
-ast-grep is faster: 241 vs 255 ms (small), 9.9 vs 10.8 s (big), 77.6 vs 85.8 s (massive) —
-Scrutate's `tsquery` is 6–11 % slower in these runs; peak memory 14 / 57 / 199 MB vs ast-grep's
-16 / 53 / 55 MB (the ordered streaming buffer grows with the number of files on the massive corpus). ast-grep also offers rewriting (`--rewrite`) and a YAML rule language, which
-Scrutate does not. What Scrutate adds is everything around the structural query: the structural
-search runs inside the same tool that holds the index, the call graph and the ranked search, and
-its output follows the same JSON conventions.
+STRUCTURAL
 
-## 3. Against "nothing": the code-intelligence engine
+## 3. Against Zoekt and livegrep (indexed search)
 
-None of the benchmarked tools has an index, so the following has no competitor in the comparison:
+Measured on the Linux kernel tree (95,578 files, 1.6 GB) on the development Mac, against Zoekt at
+commit `a5a933bc` built with `go install` as its README says (docs/LEADERBOARD.md, Engine B
+section; raw data in `bench/results/macos-arm64/indexed.json`). Every query was checked against an
+independent reference, and both tools answered all 20 the same way as the reference.
+
+- **Building the index**: 2.7 s against 138 s (0.019x), 154 MB on disk against 4,238 MB (0.036x),
+  819 MB peak memory against 1,552 MB.
+- **After editing 100 files**: 0.28 s, because the text index updates in place. Zoekt's directory
+  indexer (`zoekt-index`) rebuilds the whole index (138 s); the corpus is a plain directory, so its
+  git indexer was not part of the comparison.
+- **Query latency** over 20 queries x 20 runs, each a fresh process: p50 50 ms against 59 ms
+  (PASS), p99 195 ms against 879 ms (PASS), p95 150 ms against 265 ms (PARTIAL: the interval is
+  wide). Memory per query 14 MB against 274 MB.
+- **Throughput** with 11 clients at once: 21 against 22 queries per second, a tie (PARTIAL).
+
+Why it is smaller and quicker to build: the text index stores trigram postings and no file contents,
+and reads candidate files from the source tree, which must be present. Zoekt stores the contents
+and can answer without the tree. Scrutate offers only the first mode in 0.1.0 (R-14.12).
+
+LIVEGREP
+
+## 4. Against "nothing": the code-intelligence engine
+
+None of the measured tools has a code-intelligence index, so this has no competitor here:
 
 - **Ranked search by meaning** with a learned ranker: MRR@10 0.632 for natural-language queries on
-  an undocumented held-out code base, vs 0.448 for BM25 over the same candidates; 0.93–0.99 for
-  name/identifier queries (docs/QUALITY.md). In-process latency 8 ms (small), 15 ms (big),
-  48 ms p50 on a 1.08 M-chunk index; the whole process incl. start-up and model load 55 / 129 / 734 ms.
-- **Incremental index**: 25 s cold for 2.9 M lines (104 MB → 306 MB index), 0.19 s to absorb a
-  one-file edit, 217 s for 23.5 M lines (830 MB → 2.4 GB, peak 2.2 GB RAM); `check` verifies it;
-  corruption rebuilds it automatically (robustness tests).
-- **Symbols for 60 languages** verified by snapshot samples, heuristics for the rest, every text
-  file searchable; call graph, imports/dependents, references grouped by symbol, outline, similar
-  code, exact and near-duplicate detection, cross-repository search.
-- **One interface for humans and agents**: CLI with JSON everywhere, an MCP server with 14 tools,
-  Python bindings with the GIL released.
+  an undocumented held-out code base, vs 0.448 for BM25 over the same candidates; 0.93 to 0.99 for
+  name and identifier queries (docs/QUALITY.md).
+- **Symbols for 60 languages** (72 with the optional grammars), each verified by a sample; call
+  graph, imports and dependents, references grouped by symbol, outline, similar code, exact and
+  near-duplicate detection, cross-repository search.
+- **One interface for people and agents**: JSON everywhere (errors included), an MCP server with 14
+  tools, Python bindings with the GIL released.
 
-## 4. The case for adopting it — stated at the strength the evidence allows
+## 5. The case for adopting it, at the strength the evidence allows
 
-Scrutate replaces a grep-class tool without a speed penalty on this machine (within noise of
-ripgrep, far ahead of grep and git grep), adds identifier, fuzzy and faster multiline search that
-those tools do not offer, and adds a code-intelligence layer whose ranking quality is measured on
-held-out code and whose implementation is verified bit-for-bit against a reference. Its outputs
-are machine-readable and stable; its behaviour on hostile inputs, corrupted indexes and
-concurrent writers is tested; its dependencies are audited and listed in an SBOM.
-
-What the evidence does **not** support, and what this document therefore does not claim:
-dominance over ripgrep on every text query (it is a tie, with ripgrep ahead on output-heavy
-queries), superiority over ast-grep on structural search (ast-grep is 6–11 % faster), any comparison with
-ack or ag, results on hardware other than a 2-core VM, or results on languages other than Python
-for the indexing and quality figures. The honest summary is: **ripgrep-class speed (within 2 % on average), more capability,
-measured and reproducible** — and a list of the places where the competition is still ahead.
+ADOPTION

@@ -34,6 +34,27 @@ capabilities those crates do not provide rather than re-implementing what they a
 - **Traversal**: the `ignore` parallel walker (work-stealing across threads, `.gitignore` /
   `.ignore` / global excludes, hidden files off by default, symlink loop detection, max depth and
   size filters, type globs derived from the language registry).
+- **One large file, every core**: a file of 64 MB or more is cut into ranges of whole lines (8 MB
+  each). A first pass counts each range's newlines for the line numbers and stops at a NUL byte,
+  which sends the file back to the single pass so binary handling is unchanged. The second pass
+  searches one window of ranges per thread at a time and writes the windows' output in file order,
+  so the output held in memory stays bounded. Context lines, `--max-count`, `--max-results`, `-l`,
+  multiline and a byte-order mark keep the single pass.
+- **Small trees**: a sequential walk with the same rules runs first and stops at 256 files. A tree
+  that fits is searched by one thread per 64 files; any larger tree, or any walk error, goes to the
+  parallel walk. On a 220-file repository this halves the CPU cycles and saves about a quarter of
+  the wall time; on the Linux tree the extra walk is within measurement noise.
+- **Files without line breaks**: a large file whose ranges cannot be cut at a newline is read once
+  into a buffer of its exact size (checked for NUL bytes as it is read, so binary handling is
+  unchanged) and searched as a slice; the stream reader would grow its buffer by doubling.
+- **Line anchors**: the regex is always built in multi-line mode, so `^` and `$` mean line start and
+  end and the searcher can scan a whole buffer at once; without it, patterns using them were run
+  one line at a time.
+- **Suffix literals**: when a regex has no literal prefix but every match ends in one of at most 64
+  literals of 3 bytes or more (`\w+_(suspend|resume)\(`), candidate lines are found with an
+  Aho-Corasick search for those literals and the regex runs only on those lines. Without it the
+  regex engine scanned every byte for such patterns (ripgrep, built from the same crates, shows the
+  same cost).
 - **Streaming**: matches are batched per file and sent over a channel to the caller's sink while
   other threads keep searching; an `AtomicBool` cancels the walk between files (Ctrl-C → exit 130,
   `--max-results`, broken pipe).
@@ -84,6 +105,28 @@ reference implementation (`python/scrutate_ref`, which also trains the models) a
 return identical features, scores and rankings (`bench/parity.py`: 300/300 queries; the IVF path
 200/200 on a 135k-chunk index).
 
+### Text index (`textindex.rs`)
+The indexed counterpart of Engine A, for repeated grep-style queries on large trees (the job Zoekt
+and livegrep do). It covers exactly the files Engine A's default walk visits (same walker, same
+ignore rules) and stores, per file, the set of byte trigrams (ASCII case folded), as immutable
+segments: sorted trigram keys, delta + LEB128 posting lists of document numbers, and per-document
+path, size, mtime and flags. A query is turned into a boolean trigram condition by walking the
+pattern's regex-syntax HIR (literals, small classes and alternations expand to exact string sets;
+concatenations combine them; anything else contributes no constraint), evaluated over the
+postings as bitsets, and the surviving files are searched by Engine A's own per-file searcher.
+The condition is a necessary one, never a sufficient one, so results equal Engine A's on the
+indexed snapshot; a property test and a coverage-guided fuzz target check that a text a pattern
+matches always satisfies the pattern's condition, including Unicode case folding (the Kelvin sign
+matches `k` under `-i`). Files with a NUL byte index only the bytes before it (line-mode search
+stops there) and are always searched by multi-line queries; UTF-16 files and files unreadable at
+index time are always searched. Updates are incremental (size + mtime), write new segments and a new
+liveness file per generation, then swap `manifest.json` atomically, so readers never see a half
+state; more than four segments, or more than 30% dead documents, merges them by a streaming k-way
+merge. Writers serialise on a lock file (polled with `try_lock`: SMB mounts answer a blocking lock
+with EAGAIN). The index stores no file contents (154 MB for the 1.3 GB Linux v7.3 tree; docs/LEADERBOARD.md
+compares sizes with Zoekt and livegrep, whose indexes hold the text), so a query reads the
+candidate files from the source tree.
+
 ### Intelligence (`intel.rs`)
 Definitions and references (`refs` = index definitions + call edges + Engine A whole-word
 occurrences grouped by enclosing symbol), callers/callees, outline, imports with best-effort
@@ -94,7 +137,8 @@ language over all files of a language, parallel, no index needed).
 
 ## Unified layer (`cli.rs`, `mcp.rs`, `crates/scrutate-py`)
 `find QUERY` chooses: regex-looking → Engine A; otherwise ranked search when an index exists or
-the repository is small enough to index on the spot; otherwise identifier grep. Both engines stay
+the repository is small enough to index on the spot; otherwise identifier grep. `grep --index` sends
+an Engine A query through the text index. Both engines stay
 independently usable (`grep`, `index`/`search`) and independently tested. The MCP server exposes
 fourteen tools over stdio; the Python bindings expose both engines with the GIL released and
 streaming results.

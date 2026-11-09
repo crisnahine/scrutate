@@ -14,68 +14,81 @@ Engine A (instant search) needs none of this: it searches every readable file of
 
 | Language | Extensions / files | Definition kinds verified | Calls | Imports | Docstrings | Evidence |
 |---|---|---|---|---|---|---|
-| ada | `.adb .ads .ada` | function, type | yes | — | — | `tests/samples/sample.adb` |
-| asm | `.s .S .asm` | function | — | — | — | `tests/samples/sample.s` |
-| bash | `.sh .bash .zsh .ksh .bashrc .zshrc .profile` | function | yes | yes | — | `tests/samples/sample.sh` |
-| bicep | `.bicep` | block, function, type | yes | — | — | `tests/samples/sample.bicep` |
-| c | `.c .h` | enum, function, struct, type | yes | yes | — | `tests/samples/sample.c` |
-| cmake | `.cmake CMakeLists.txt` | function, macro | yes | — | — | `tests/samples/CMakeLists.txt` |
-| commonlisp | `.lisp .cl .asd` | class, function, key, macro | yes | — | — | `tests/samples/sample.lisp` |
-| cpp | `.cc .cpp .cxx .c++ .hpp .hh .hxx .h++ .inl .ipp` | class, function, struct | yes | yes | — | `tests/samples/sample.cpp` |
-| csharp | `.cs` | class, enum, interface, method, struct | yes | yes | — | `tests/samples/sample.cs` |
-| css | `.css .scss .less` | block | — | — | — | `tests/samples/sample.css` |
-| dart | `.dart` | class, enum, function, impl, method, trait | — | yes | — | `tests/samples/sample.dart` |
-| elisp | `.el` | function, macro | yes | — | — | `tests/samples/sample.el` |
-| elixir | `.ex .exs` | function | — | yes | — | `tests/samples/sample.ex` |
-| elm | `.elm` | function, type | yes | yes | — | `tests/samples/sample.elm` |
-| erlang | `.erl .hrl` | function, struct, type | yes | — | — | `tests/samples/sample.erl` |
-| fish | `.fish` | function | yes | — | — | `tests/samples/sample.fish` |
-| gleam | `.gleam` | function, type | yes | yes | — | `tests/samples/sample.gleam` |
-| glsl | `.glsl .vert .frag .geom .comp .tesc .tese` | function, struct | yes | yes | — | `tests/samples/sample.glsl` |
-| go | `.go` | function, method, type | yes | yes | — | `tests/samples/sample.go` |
-| graphql | `.graphql .gql .graphqls` | enum, function, interface, type | — | — | — | `tests/samples/sample.graphql` |
-| groovy | `.groovy .gradle .gvy Jenkinsfile` | class, function, method | yes | yes | — | `tests/samples/sample.groovy` |
-| haskell | `.hs .lhs` | class, function, impl, type | yes | yes | — | `tests/samples/sample.hs` |
-| hcl | `.tf .tfvars .hcl .nomad` | block | yes | — | — | `tests/samples/sample.tf` |
-| html | `.html .htm .xhtml` | (module only) | — | — | — | `tests/samples/sample.html` |
-| ini | `.ini .cfg .conf .properties .editorconfig .gitconfig .gitconfig .npmrc setup.cfg` | block | — | — | — | `tests/samples/sample.ini` |
-| java | `.java` | class, enum, interface, method | yes | yes | — | `tests/samples/Sample.java` |
-| javascript | `.js .jsx .mjs .cjs` | class, function, method | yes | yes | — | `tests/samples/sample.js` |
-| json | `.json .jsonc .json5 .webmanifest` | key | — | — | — | `tests/samples/sample.json` |
-| jsonnet | `.jsonnet .libsonnet` | key | — | — | — | `tests/samples/sample.jsonnet` |
-| julia | `.jl` | function, macro, struct, type | yes | yes | — | `tests/samples/sample.jl` |
-| kotlin | `.kt .kts` | class, function, interface, method | yes | yes | — | `tests/samples/sample.kt` |
-| lua | `.lua` | function | yes | yes | — | `tests/samples/sample.lua` |
-| make | `.mk .mak Makefile makefile GNUmakefile` | function, key, macro | — | — | — | `tests/samples/Makefile` |
-| markdown | `.md .markdown .mdx README` | section | — | — | — | `tests/samples/sample.md` |
-| matlab | `` | function | yes | — | — | `tests/samples/matrix.m` |
-| nix | `.nix` | key | yes | yes | — | `tests/samples/sample.nix` |
-| objc | `.mm` | class, function, method | yes | yes | — | `tests/samples/sample.mm` |
-| pascal | `.pas .dpr .lpr` | function, type | yes | — | — | `tests/samples/sample.pas` |
-| php | `.php .phtml` | class, enum, function, interface, method, trait | yes | yes | — | `tests/samples/sample.php` |
-| powershell | `.ps1 .psm1 .psd1` | class, function, method | yes | — | — | `tests/samples/sample.ps1` |
-| prisma | `.prisma` | block, class, enum | — | — | — | `tests/samples/schema.prisma` |
-| puppet | `` | class, function | yes | — | — | `tests/samples/manifest.pp` |
+| ada | `.adb .ads .ada` | function, type | yes | no | no | `tests/samples/sample.adb` |
+| asm | `.s .S .asm` | function | no | no | no | `tests/samples/sample.s` |
+| autohotkey (extra-langs) | `.ahk` | function | yes | no | no | `tests/samples_extra/sample.ahk` |
+| bash | `.sh .bash .zsh .ksh .bashrc .zshrc .profile` | function | yes | yes | no | `tests/samples/sample.sh` |
+| bicep | `.bicep` | block, function, type | yes | no | no | `tests/samples/sample.bicep` |
+| c | `.c .h` | enum, function, struct, type | yes | yes | no | `tests/samples/sample.c` |
+| cmake | `.cmake CMakeLists.txt` | function, macro | yes | no | no | `tests/samples/CMakeLists.txt` |
+| commonlisp | `.lisp .cl .asd` | class, function, key, macro | yes | no | no | `tests/samples/sample.lisp` |
+| cpp | `.cc .cpp .cxx .c++ .hpp .hh .hxx .h++ .inl .ipp` | class, function, struct | yes | yes | no | `tests/samples/sample.cpp` |
+| csharp | `.cs` | class, enum, interface, method, struct | yes | yes | no | `tests/samples/sample.cs` |
+| css | `.css .scss .less` | block | no | no | no | `tests/samples/sample.css` |
+| cuda (extra-langs) | `.cu .cuh` | function | yes | yes | no | `tests/samples_extra/sample.cu` |
+| d (extra-langs) | `.d .di` | class, function, method, struct | yes | no | no | `tests/samples_extra/sample.d` |
+| dart | `.dart` | class, enum, function, impl, method, trait | no | yes | no | `tests/samples/sample.dart` |
+| elisp | `.el` | function, macro | yes | no | no | `tests/samples/sample.el` |
+| elixir | `.ex .exs` | function | no | yes | no | `tests/samples/sample.ex` |
+| elm | `.elm` | function, type | yes | yes | no | `tests/samples/sample.elm` |
+| erlang | `.erl .hrl` | function, struct, type | yes | no | no | `tests/samples/sample.erl` |
+| fish | `.fish` | function | yes | no | no | `tests/samples/sample.fish` |
+| fortran (extra-langs) | `.f .f90 .f95 .f03 .f08 .for .F .F90` | function | yes | no | no | `tests/samples_extra/sample.f90` |
+| fsharp (extra-langs) | `.fs .fsx .fsi` | function, type | yes | no | no | `tests/samples_extra/sample.fs` |
+| gleam | `.gleam` | function, type | yes | yes | no | `tests/samples/sample.gleam` |
+| glsl | `.glsl .vert .frag .geom .comp .tesc .tese` | function, struct | yes | yes | no | `tests/samples/sample.glsl` |
+| go | `.go` | function, method, type | yes | yes | no | `tests/samples/sample.go` |
+| graphql | `.graphql .gql .graphqls` | enum, function, interface, type | no | no | no | `tests/samples/sample.graphql` |
+| groovy | `.groovy .gradle .gvy Jenkinsfile` | class, function, method | yes | yes | no | `tests/samples/sample.groovy` |
+| haskell | `.hs .lhs` | class, function, impl, type | yes | yes | no | `tests/samples/sample.hs` |
+| hcl | `.tf .tfvars .hcl .nomad` | block | yes | no | no | `tests/samples/sample.tf` |
+| html | `.html .htm .xhtml` | (module only) | no | no | no | `tests/samples/sample.html` |
+| ini | `.ini .cfg .conf .properties .editorconfig .gitconfig .gitconfig .npmrc setup.cfg` | block | no | no | no | `tests/samples/sample.ini` |
+| java | `.java` | class, enum, interface, method | yes | yes | no | `tests/samples/Sample.java` |
+| javascript | `.js .jsx .mjs .cjs` | class, function, method | yes | yes | no | `tests/samples/sample.js` |
+| json | `.json .jsonc .json5 .webmanifest` | key | no | no | no | `tests/samples/sample.json` |
+| jsonnet | `.jsonnet .libsonnet` | key | no | no | no | `tests/samples/sample.jsonnet` |
+| julia | `.jl` | function, macro, struct, type | yes | yes | no | `tests/samples/sample.jl` |
+| kotlin | `.kt .kts` | class, function, interface, method | yes | yes | no | `tests/samples/sample.kt` |
+| llvm (extra-langs) | `.ll` | function | no | no | no | `tests/samples_extra/sample.ll` |
+| lua | `.lua` | function | yes | yes | no | `tests/samples/sample.lua` |
+| make | `.mk .mak Makefile makefile GNUmakefile` | function, key, macro | no | no | no | `tests/samples/Makefile` |
+| markdown | `.md .markdown .mdx README` | section | no | no | no | `tests/samples/sample.md` |
+| matlab | `` | function | yes | no | no | `tests/samples/matrix.m` |
+| nix | `.nix` | key | yes | yes | no | `tests/samples/sample.nix` |
+| objc | `.mm` | class, function, method | yes | yes | no | `tests/samples/sample.mm` |
+| ocaml (extra-langs) | `.ml` | function, type | yes | no | no | `tests/samples_extra/sample.ml` |
+| ocaml_interface (extra-langs) | `.mli` | not verified by a sample | no | no | no | registry only |
+| odin (extra-langs) | `.odin` | function, struct | yes | no | no | `tests/samples_extra/sample.odin` |
+| pascal | `.pas .dpr .lpr` | function, type | yes | no | no | `tests/samples/sample.pas` |
+| php | `.php .phtml` | class, enum, function, interface, method, trait | yes | yes | no | `tests/samples/sample.php` |
+| powershell | `.ps1 .psm1 .psd1` | class, function, method | yes | no | no | `tests/samples/sample.ps1` |
+| prisma | `.prisma` | block, class, enum | no | no | no | `tests/samples/schema.prisma` |
+| puppet | `` | class, function | yes | no | no | `tests/samples/manifest.pp` |
 | python | `.py .pyi` | class, function, method | yes | yes | yes | `tests/samples/sample.py` |
-| r | `.r .R .rmd` | function | yes | yes | — | `tests/samples/sample.r` |
-| racket | `.rkt` | function, struct | yes | — | — | `tests/samples/sample.rkt` |
-| rst | `.rst` | section | — | — | — | `tests/samples/sample.rst` |
-| ruby | `.rb .rake .gemspec Gemfile Rakefile` | class, function, method | yes | yes | — | `tests/samples/sample.rb` |
-| rust | `.rs` | enum, function, impl, struct, trait, type | yes | yes | — | `tests/samples/sample.rs` |
-| scala | `.scala .sc` | class, enum, function, method, trait | yes | yes | — | `tests/samples/sample.scala` |
-| scheme | `.scm .ss` | function, macro | yes | — | — | `tests/samples/sample.scm` |
-| solidity | `.sol` | class, function, interface, method, struct, type | yes | — | — | `tests/samples/sample.sol` |
-| starlark | `.bzl .star .bazel BUILD WORKSPACE BUILD.bazel WORKSPACE.bazel MODULE.bazel` | function | yes | — | yes | `tests/samples/BUILD.bazel` |
-| swift | `.swift` | class, enum, function, interface, method, struct | yes | yes | — | `tests/samples/sample.swift` |
-| toml | `.toml Cargo.lock Pipfile poetry.lock` | block | — | — | — | `tests/samples/sample.toml` |
-| tsx | `.tsx` | class, function, interface, method | yes | yes | — | `tests/samples/sample.tsx` |
-| typescript | `.ts .mts .cts` | class, enum, function, interface, method, type | yes | yes | — | `tests/samples/sample.ts` |
-| vim | `.vim .vimrc` | function | yes | — | — | `tests/samples/sample.vim` |
-| xml | `.xml .xsd .xsl .xslt .svg .plist .csproj .pom pom.xml` | (module only) | — | — | — | `tests/samples/sample.xml` |
-| yaml | `.yaml .yml` | key | — | — | — | `tests/samples/sample.yaml` |
-| zig | `.zig .zon` | function, type | yes | yes | — | `tests/samples/sample.zig` |
+| qml (extra-langs) | `.qml` | class, method | yes | yes | no | `tests/samples_extra/sample.qml` |
+| r | `.r .R .rmd` | function | yes | yes | no | `tests/samples/sample.r` |
+| racket | `.rkt` | function, struct | yes | no | no | `tests/samples/sample.rkt` |
+| rst | `.rst` | section | no | no | no | `tests/samples/sample.rst` |
+| ruby | `.rb .rake .gemspec Gemfile Rakefile` | class, function, method | yes | yes | no | `tests/samples/sample.rb` |
+| rust | `.rs` | enum, function, impl, struct, trait, type | yes | yes | no | `tests/samples/sample.rs` |
+| scala | `.scala .sc` | class, enum, function, method, trait | yes | yes | no | `tests/samples/sample.scala` |
+| scheme | `.scm .ss` | function, macro | yes | no | no | `tests/samples/sample.scm` |
+| solidity | `.sol` | class, function, interface, method, struct, type | yes | no | no | `tests/samples/sample.sol` |
+| starlark | `.bzl .star .bazel BUILD WORKSPACE BUILD.bazel WORKSPACE.bazel MODULE.bazel` | function | yes | no | yes | `tests/samples/BUILD.bazel` |
+| swift | `.swift` | class, enum, function, interface, method, struct | yes | yes | no | `tests/samples/sample.swift` |
+| tlaplus (extra-langs) | `.tla` | function | no | no | no | `tests/samples_extra/sample.tla` |
+| toml | `.toml Cargo.lock Pipfile poetry.lock` | block | no | no | no | `tests/samples/sample.toml` |
+| tsx | `.tsx` | class, function, interface, method | yes | yes | no | `tests/samples/sample.tsx` |
+| typescript | `.ts .mts .cts` | class, enum, function, interface, method, type | yes | yes | no | `tests/samples/sample.ts` |
+| verilog (extra-langs) | `.v .sv .svh .vh` | (module only) | no | no | no | `tests/samples_extra/sample.v` |
+| vhdl (extra-langs) | `.vhd .vhdl` | class, impl | no | no | no | `tests/samples_extra/sample.vhd` |
+| vim | `.vim .vimrc` | function | yes | no | no | `tests/samples/sample.vim` |
+| xml | `.xml .xsd .xsl .xslt .svg .plist .csproj .pom pom.xml` | (module only) | no | no | no | `tests/samples/sample.xml` |
+| yaml | `.yaml .yml` | key | no | no | no | `tests/samples/sample.yaml` |
+| zig | `.zig .zon` | function, type | yes | yes | no | `tests/samples/sample.zig` |
 
-60 grammars in the default build; 60 verified by snapshot samples. Call-edge and import extraction are declared per language by the registry rules; the sample for a language exercises them when its `expected.json` entry lists methods/functions and the file contains imports.
+60 grammars in the default build, 13 more with `--features extra-langs`; 72 verified by snapshot samples. Call-edge and import extraction are declared per language by the registry rules; the sample for a language exercises them when its `expected.json` entry lists methods/functions and the file contains imports.
 
 ## Heuristic tier (samples in the snapshot test)
 
@@ -99,7 +112,22 @@ Engine A (instant search) needs none of this: it searches every readable file of
 
 ## Optional grammars (`--features extra-langs`, +~80 MB of parse tables)
 
-Fortran, OCaml, F#, Verilog, VHDL, CUDA, TLA+, D, AutoHotkey, Odin, QML, LLVM IR. They compile and parse; they have **no** snapshot samples yet, so their definition extraction is *not verified* and they are off by default.
+Off by default because of their size. Each has a sample in `crates/scrutate/tests/samples_extra/`, re-checked by `cargo test --features extra-langs --test samples_extra` against `expected.json` there.
+
+| Sample | Symbols extracted (kind, qualified name) |
+|---|---|
+| `sample.ahk` | function `Greet`, function `Sum` |
+| `sample.cu` | function `vector_add`, function `clamp_value`, function `launch` |
+| `sample.d` | struct `Point`, function `distance`, class `Circle`, method `Circle.area` |
+| `sample.f90` | function `physics.kinetic_energy`, function `physics.report` |
+| `sample.fs` | type `Point`, function `distance`, function `scale`, function `origin` |
+| `sample.ll` | function `add`, function `main` |
+| `sample.ml` | type `point`, function `distance`, function `distance.dx`, function `distance.dy`, function `Shape.area_of_square`, function `main` |
+| `sample.odin` | struct `Point`, function `distance`, function `main` |
+| `sample.qml` | class `Rectangle`, method `Rectangle.toggleColor`, class `Rectangle.MouseArea` |
+| `sample.tla` | function `Counter.Init`, function `Counter.Next`, function `Counter.Spec` |
+| `sample.v` | (module only) |
+| `sample.vhd` | class `blinker`, impl `rtl` |
 
 ## Known limits
 

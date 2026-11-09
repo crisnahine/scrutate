@@ -80,13 +80,26 @@ the top GitHub match).
 - Web search for "scrutate" software: no product or project. The nearest name is **Scrut**
   (Scrut Automation, a compliance-automation SaaS), a different word in an unrelated market.
 
-## What is *not* verified — read before relying on the name
+## Re-check on 2026-11-09
 
-- **Trademarks**: no trademark search was performed (USPTO, EUIPO, WIPO or national registers).
-  The name has **not** been legally cleared. A trademark search by counsel is required before
-  commercial use.
-- **Domains**: availability of `scrutate.dev`, `.io`, `.com` was not checked (no WHOIS/DNS access
-  from the build environment).
-- **GitHub account/organisation** `scrutate`: not verifiable from this environment (see Method).
-- **Global uniqueness** is not claimed: the checks cover the listed registries on the listed date
+- crates.io, PyPI, npm: still no package named `scrutate` (HTTP 404).
+- GitHub account or organisation `scrutate`: does not exist (the authenticated `GET /users/scrutate`
+  returns 404), so the name can be claimed there.
+- Domains (WHOIS): `scrutate.com` **is registered** (created 2026-06-22, registrar Cloudflare; WHOIS
+  does not show the owner, and whether it belongs to this project's authors was not checked). `scrutate.io`, `scrutate.org` and `scrutate.net`
+  returned "not found" (unregistered at the time of the query). `scrutate.dev` and `scrutate.app`:
+  the registry's WHOIS server gave no answer to this client, so their status is unknown.
+- Trademarks: a web search for "Scrutate" as a software product, company or mark found none. The
+  closest marks found are **SCRUT**, **SCRUT.IO** and **THE SCRUT PLATFORM**, held by Scrut
+  Automation Inc. (security and compliance software; listed on Justia's trademark pages). They are
+  a different word, but they are in software, so a confusion analysis belongs in the legal review.
+
+## What is *not* verified: read before relying on the name
+
+- **Trademark registers**: USPTO, EUIPO, WIPO and national registers were not searched directly,
+  and the name has **not** been legally cleared. A search by counsel is required before
+  commercial use, and it should cover the SCRUT marks above.
+- **The `.com` domain** is registered; unless it is already the authors', a product site needs
+  another domain or a purchase.
+- **Global uniqueness** is not claimed: the checks cover the listed registries on the listed dates
   and nothing else.

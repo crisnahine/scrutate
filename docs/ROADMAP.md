@@ -11,8 +11,10 @@ Ordered by value to users; each item names the gap it closes in docs/TRACEABILIT
 - Signed releases actually produced (Sigstore attestations + checksums) (R-12.13).
 
 ## 0.3 — Engine A beyond ripgrep's surface
-- Parallel output formatting (today a single thread formats; on output-heavy queries scrutate is
-  up to 25 % behind ripgrep, see docs/BENCHMARKS.md) (R-4.1).
+- One very long line (100 MB without a newline): ugrep is still about 15% faster after this
+  release's one-buffer read; profile the remaining copy, UTF-8 check and write (R-4.6).
+- Small trees: the single-thread walk brought a 220-file repository from 8.6 ms to 6.2 ms; ugrep
+  takes 6.0 ms. Overlap the walk with the search instead of walking first (R-4.6).
 - Searching inside archives (zip/tar) and compressed files; PCRE-style look-around via an
   optional backtracking engine with a hard step budget (R-2A.2).
 - Fuzzy patterns longer than 128 bytes (multi-word Myers blocks) and fuzzy regex (R-2A.2).
@@ -26,8 +28,8 @@ Ordered by value to users; each item names the gap it closes in docs/TRACEABILIT
   tier; today `refs` combines call edges with whole-word occurrences (R-2B.4).
 - Language-server protocol front end (definition, references, workspace symbols) reusing the index
   (R-6.3 IDE integrations: a real JetBrains plugin and a VS Code extension with inline results).
-- More verified grammars: snapshot samples for erb, javascript (covered by parity today but not by
-  a sample), matlab, puppet, tsx, and the `extra-langs` set (R-3.4).
+- A snapshot sample for `ocaml_interface` (`.mli`), the one grammar without one (72 of 73 have
+  one, docs/LANGUAGES.md) (R-3.4).
 - Index size: int8 quantisation of the semantic vectors (another ~70 MB on the 2.9 M-line corpus)
   with a measured recall check; shared-dictionary compression of chunk text (R-4.3).
 - Indexing speed: tree-sitter parsing is 67 % of the CPU time; parse only the regions that changed
