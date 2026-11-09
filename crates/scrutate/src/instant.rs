@@ -1008,6 +1008,22 @@ pub fn default_threads(o: &Options) -> usize {
     *N.get_or_init(|| performance_cores().map_or_else(cores, |p| p.clamp(2, cores())))
 }
 
+/// Threads for the parallel walk after the first files: `default_threads`, unless reading those
+/// files took long enough that they came from the disk rather than the page cache (25 µs or so
+/// each warm, 160 µs or more cold on an M3 Pro): a cold tree is read fastest with many reads in
+/// flight, so then twice the cores, at most 24 (the Linux tree cold: 2.9 s on 5 threads, 1.7 s on
+/// 11, 1.4 s on 24).
+fn walk_threads(o: &Options, c: &Counters) -> usize {
+    const COLD_READ_NS: u64 = 75_000;
+    let reads = c.small_reads.load(Ordering::Relaxed);
+    let cold = reads >= 32 && c.small_read_ns.load(Ordering::Relaxed) / reads >= COLD_READ_NS;
+    if o.threads == 0 && cold {
+        (2 * std::thread::available_parallelism().map_or(2, |n| n.get())).min(24)
+    } else {
+        default_threads(o)
+    }
+}
+
 /// Threads for one large file searched as ranges: every core (at most 12), since that work is
 /// matching rather than opening files.
 fn range_threads(o: &Options) -> usize {
@@ -1189,6 +1205,9 @@ fn small_first(
 #[derive(Default)]
 struct Counters {
     files_searched: AtomicU64,
+    /// small files opened and read in one call, and the nanoseconds that took
+    small_reads: AtomicU64,
+    small_read_ns: AtomicU64,
     files_matched: AtomicU64,
     matches: AtomicU64,
     bytes: AtomicU64,
@@ -1242,6 +1261,7 @@ fn search_one(
             return;
         }
     }
+    let opened = Instant::now();
     let file = match std::fs::File::open(path) {
         Ok(f) => f,
         Err(e) => {
@@ -1261,6 +1281,8 @@ fn search_one(
             }
         } else if len > 0 && len <= SMALL_FILE {
             whole = split::small(&file, len);
+            c.small_reads.fetch_add(1, Ordering::Relaxed);
+            c.small_read_ns.fetch_add(opened.elapsed().as_nanos() as u64, Ordering::Relaxed);
         }
     }
     let mut sink = collector(Arc::clone(&rel), matcher, o, c, cancel, tx, plain);
@@ -1720,7 +1742,7 @@ fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Opti
         Small::Done => return Ok(stats(&counters, t0, &cancel)),
         Small::Big(seen) => Arc::new(seen),
     };
-    let walker = build_walker(roots, o)?;
+    let walker = walk_builder(roots, o)?.threads(walk_threads(o, &counters)).build_parallel();
     let (tx, rx) = mpsc::channel::<Vec<Hit>>();
     let roots_owned: Vec<PathBuf> = roots.to_vec();
     let opts = o.clone();

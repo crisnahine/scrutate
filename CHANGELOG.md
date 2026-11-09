@@ -51,7 +51,9 @@ First release.
 - On macOS a search of many files runs on as many threads as there are performance cores: more
   threads opening and reading files at once wait on each other in the kernel (the Linux tree on an
   M3 Pro: 977 ms on 11 threads, about 845 ms on 5). One large file split into ranges still uses
-  every core.
+  every core, and when the first files of a tree take as long to read as a disk read (the page
+  cache does not hold them) the rest of the walk uses twice the cores, at most 24: the Linux tree
+  with a cold cache, 2.9 s on 5 threads, 1.4 s this way, ripgrep 1.8 s.
 - Fixed: a file given directly as the search root was printed with an empty path (`:1:text`).
 - `ignore` 0.4.34 is vendored (`vendor/ignore`) with one change: the global git excludes path is
   read from `~/.gitconfig` without compiling a regex, about 0.4 ms of every search in a git
