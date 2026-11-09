@@ -72,18 +72,18 @@
   FAIL: scrutate nan ms; best competitor None nan ms; ratio nan 
 [leaderboard] ripgrep/structural
 Traceback (most recent call last):
-  File "/Users/crisn/Documents/Projects/scrutate/bench/leaderboard.py", line 719, in <module>
+  File "<repo>/bench/leaderboard.py", line 719, in <module>
     sys.exit(main())
              ~~~~^^
-  File "/Users/crisn/Documents/Projects/scrutate/bench/leaderboard.py", line 707, in main
+  File "<repo>/bench/leaderboard.py", line 707, in main
     r = run_bench(b, a.corpora, a, cache_dir)
-  File "/Users/crisn/Documents/Projects/scrutate/bench/leaderboard.py", line 477, in run_bench
+  File "<repo>/bench/leaderboard.py", line 477, in run_bench
     ref, nref = structural_reference(cdir, files, structural, cache_dir)
                 ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/crisn/Documents/Projects/scrutate/bench/leaderboard.py", line 633, in structural_reference
+  File "<repo>/bench/leaderboard.py", line 633, in structural_reference
     p = subprocess.run(["uv", "run", "--no-project", "-q", "--with", "tree-sitter>=0.25", "--with", pkg, "python", "-c", code, lst, spec["tsquery"], mod],
                        cwd=cdir, capture_output=True, text=True, check=True)
   File "/opt/homebrew/Cellar/python@3.15/3.15.2/Frameworks/Python.framework/Versions/3.15/lib/python3.15/subprocess.py", line 692, in run
     raise CalledProcessError(retcode, process.args,
                              output=stdout, stderr=stderr)
-subprocess.CalledProcessError: Command ['uv', 'run', '--no-project', '-q', '--with', 'tree-sitter>=0.25', '--with', 'tree-sitter-rust', 'python', '-c', '\nimport json, sys, tree_sitter as ts\nlang_mod = __import__(sys.argv[3])\nlang = ts.Language(lang_mod.language())\nq = ts.Query(lang, sys.argv[2])\ncur = ts.QueryCursor(q)\nparser = ts.Parser(lang)\nhits = set(); n = 0\nfor rel in open(sys.argv[1]).read().split("\\n"):\n    if not rel: continue\n    src = open(rel, "rb").read()\n    if b"\\0" in src: continue\n    n += 1\n    tree = parser.parse(src)\n    for _, caps in cur.matches(tree.root_node):\n        for node in caps.get("call", []):\n            hits.add((rel, node.start_point[0] + 1))\nprint(json.dumps({"hits": sorted(hits), "files": n}))\n', '/Users/crisn/Documents/Projects/scrutate/bench/results/macos-arm64/cache/sref-files.txt', '(macro_invocation macro: (identifier) @m (#eq? @m "format")) @call', 'tree_sitter_rust'] returned non-zero exit status 1.
+subprocess.CalledProcessError: Command ['uv', 'run', '--no-project', '-q', '--with', 'tree-sitter>=0.25', '--with', 'tree-sitter-rust', 'python', '-c', '\nimport json, sys, tree_sitter as ts\nlang_mod = __import__(sys.argv[3])\nlang = ts.Language(lang_mod.language())\nq = ts.Query(lang, sys.argv[2])\ncur = ts.QueryCursor(q)\nparser = ts.Parser(lang)\nhits = set(); n = 0\nfor rel in open(sys.argv[1]).read().split("\\n"):\n    if not rel: continue\n    src = open(rel, "rb").read()\n    if b"\\0" in src: continue\n    n += 1\n    tree = parser.parse(src)\n    for _, caps in cur.matches(tree.root_node):\n        for node in caps.get("call", []):\n            hits.add((rel, node.start_point[0] + 1))\nprint(json.dumps({"hits": sorted(hits), "files": n}))\n', '<repo>/bench/results/macos-arm64/cache/sref-files.txt', '(macro_invocation macro: (identifier) @m (#eq? @m "format")) @call', 'tree_sitter_rust'] returned non-zero exit status 1.

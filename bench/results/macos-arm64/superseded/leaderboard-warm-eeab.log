@@ -70,14 +70,14 @@
   FAIL: scrutate 8.3 ms; best competitor ugrep 5.5 ms; ratio 1.503 [1.4535994230783507, 1.6659210166290073]
 [leaderboard] linux/structural
 Traceback (most recent call last):
-  File "/Users/crisn/Documents/Projects/scrutate/bench/leaderboard.py", line 719, in <module>
+  File "<repo>/bench/leaderboard.py", line 719, in <module>
     sys.exit(main())
              ~~~~^^
-  File "/Users/crisn/Documents/Projects/scrutate/bench/leaderboard.py", line 707, in main
+  File "<repo>/bench/leaderboard.py", line 707, in main
     r = run_bench(b, a.corpora, a, cache_dir)
-  File "/Users/crisn/Documents/Projects/scrutate/bench/leaderboard.py", line 505, in run_bench
+  File "<repo>/bench/leaderboard.py", line 505, in run_bench
     got = normalise(p.stdout, t if structural else None)
-  File "/Users/crisn/Documents/Projects/scrutate/bench/leaderboard.py", line 287, in normalise
+  File "<repo>/bench/leaderboard.py", line 287, in normalise
     r = json.loads(line)
   File "/opt/homebrew/Cellar/python@3.15/3.15.2/Frameworks/Python.framework/Versions/3.15/lib/python3.15/json/__init__.py", line 371, in loads
     return _default_decoder.decode(s)

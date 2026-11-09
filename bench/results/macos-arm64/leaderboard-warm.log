@@ -1,0 +1,74 @@
+[leaderboard] linux/literal
+  PASS: scrutate 739.8 ms; best competitor ugrep 878.4 ms; ratio 0.842 [0.8256349561881876, 0.849406764666284]
+[leaderboard] linux/multiple literals
+  PASS: scrutate 764.7 ms; best competitor ugrep 970.8 ms; ratio 0.788 [0.7836015534232016, 0.7925461424000851]
+[leaderboard] linux/case-insensitive
+  PASS: scrutate 749.8 ms; best competitor ugrep 880.8 ms; ratio 0.851 [0.8451214804652567, 0.8567663681288383]
+[leaderboard] linux/whole-word
+  PASS: scrutate 732.6 ms; best competitor ugrep 886.6 ms; ratio 0.826 [0.8205967024628386, 0.8300891785086083]
+[leaderboard] linux/simple regex
+  PASS: scrutate 728.7 ms; best competitor ugrep 866.2 ms; ratio 0.841 [0.8360332045140668, 0.8462792352410863]
+[leaderboard] linux/complex regex
+  PASS: scrutate 758.6 ms; best competitor ugrep 917.1 ms; ratio 0.827 [0.82182998039147, 0.8328237339542504]
+[leaderboard] linux/unicode
+  PASS: scrutate 751.7 ms; best competitor ripgrep 971.0 ms; ratio 0.774 [0.7683574420206511, 0.7807859188482843]
+[leaderboard] linux/no match
+  PASS: scrutate 726.9 ms; best competitor ugrep 891.6 ms; ratio 0.815 [0.8073833086850153, 0.8207417001309953]
+[leaderboard] linux/very many matches
+  PASS: scrutate 794.9 ms; best competitor ripgrep 1286.0 ms; ratio 0.618 [0.6106980704153874, 0.6214795979760721]
+[leaderboard] linux/multiline
+  PASS: scrutate 755.1 ms; best competitor ugrep 897.0 ms; ratio 0.842 [0.832971070467648, 0.8461339684706783]
+[leaderboard] linux/identifier
+  PASS: scrutate 754.5 ms; best competitor ugrep 868.4 ms; ratio 0.869 [0.8622121917634742, 0.8744002017203228]
+[leaderboard] linux/unrestricted
+  PASS: scrutate 719.0 ms; best competitor ugrep 873.0 ms; ratio 0.824 [0.8185439756866512, 0.8297275589193386]
+[leaderboard] linux/file-type filter
+  PASS: scrutate 536.5 ms; best competitor ugrep 680.5 ms; ratio 0.788 [0.78436747743527, 0.7947222291919086]
+[leaderboard] llvm/literal
+  PASS: scrutate 1190.7 ms; best competitor ugrep 1376.9 ms; ratio 0.865 [0.8583657560330337, 0.8675677559698829]
+[leaderboard] llvm/case-insensitive
+  PASS: scrutate 1212.8 ms; best competitor ugrep 1385.1 ms; ratio 0.876 [0.8693950515060594, 0.8812168708374442]
+[leaderboard] llvm/complex regex
+  PASS: scrutate 1217.7 ms; best competitor ripgrep 1639.4 ms; ratio 0.743 [0.739930430643635, 0.7450529342612491]
+[leaderboard] llvm/very many matches
+  PASS: scrutate 1267.1 ms; best competitor git grep 1686.8 ms; ratio 0.751 [0.7490562860378596, 0.7560606460472612]
+[leaderboard] llvm/no match
+  PASS: scrutate 1191.6 ms; best competitor ugrep 1385.1 ms; ratio 0.860 [0.852916395271611, 0.8655930922876602]
+[leaderboard] llvm/identifier
+  PASS: scrutate 1220.3 ms; best competitor ugrep 1394.2 ms; ratio 0.875 [0.8692584913709361, 0.8809745346894678]
+[leaderboard] ripgrep/literal
+  FAIL: scrutate 4.9 ms; best competitor ugrep 4.8 ms; ratio 1.026 [1.0071291444944739, 1.046758045367007]
+[leaderboard] ripgrep/simple regex
+  FAIL: scrutate 5.2 ms; best competitor ugrep 4.8 ms; ratio 1.084 [1.0582446303180506, 1.1356889989990566]
+[leaderboard] ripgrep/case-insensitive
+  PARTIAL: scrutate 5.1 ms; best competitor ugrep 5.0 ms; ratio 1.016 [0.9811685576949051, 1.06991686079619]
+[leaderboard] bigfile/literal
+  PASS: scrutate 38.2 ms; best competitor ugrep 82.5 ms; ratio 0.463 [0.45734291987226006, 0.46796502751227104]
+[leaderboard] bigfile/case-insensitive
+  PASS: scrutate 47.6 ms; best competitor ugrep 108.8 ms; ratio 0.438 [0.43281446597576245, 0.44305264295795677]
+[leaderboard] bigfile/complex regex
+  PASS: scrutate 54.5 ms; best competitor ugrep 120.4 ms; ratio 0.452 [0.4466516872943962, 0.4552940792491066]
+[leaderboard] bigfile/very many matches
+  PASS: scrutate 103.4 ms; best competitor ripgrep 211.4 ms; ratio 0.489 [0.4869797807214383, 0.49470637953939406]
+[leaderboard] bigfile/no match
+  PASS: scrutate 38.6 ms; best competitor ripgrep 89.4 ms; ratio 0.432 [0.4236315905007585, 0.43778380931519395]
+[leaderboard] bigfile/unicode
+  PASS: scrutate 47.5 ms; best competitor ugrep 81.8 ms; ratio 0.580 [0.5768698891958521, 0.5885103264547157]
+[leaderboard] smallfiles/literal
+  PASS: scrutate 1036.4 ms; best competitor ugrep 1315.1 ms; ratio 0.788 [0.7836905935863006, 0.7936894032814278]
+[leaderboard] smallfiles/simple regex
+  PASS: scrutate 1039.7 ms; best competitor ugrep 1300.1 ms; ratio 0.800 [0.7931193671509833, 0.8026969391022005]
+[leaderboard] binheavy/literal
+  PASS: scrutate 68.9 ms; best competitor ugrep 81.0 ms; ratio 0.851 [0.8359114201420573, 0.8576305615551719]
+[leaderboard] patho/long line
+  PASS: scrutate 37.1 ms; best competitor ugrep 38.0 ms; ratio 0.976 [0.9652523183770969, 0.9850511431226]
+[leaderboard] patho/one-byte lines
+  PASS: scrutate 439.7 ms; best competitor ripgrep 506.9 ms; ratio 0.867 [0.8625865573607371, 0.8755841419338131]
+[leaderboard] patho/backtracking trap
+  FAIL: scrutate 17.0 ms; best competitor ugrep 16.6 ms; ratio 1.023 [1.012104863877124, 1.0373764877813818]
+[leaderboard] rgbuilt/git-aware
+  PARTIAL: scrutate 4.9 ms; best competitor ugrep 5.0 ms; ratio 0.988 [0.9364528525726715, 1.0381276101031698]
+[leaderboard] linux/structural
+  PASS: scrutate 958.5 ms; best competitor ast-grep 13152.3 ms; ratio 0.073 [0.07132808849042578, 0.08031796963376801]
+[leaderboard] ripgrep/structural
+  PASS: scrutate 7.1 ms; best competitor ast-grep 39.9 ms; ratio 0.178 [0.17169644439185294, 0.18409927084766925]
