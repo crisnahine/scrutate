@@ -44,8 +44,8 @@ exactly what is and is not verified.
   containers with no Python on the image, including static musl binaries and wheels for CPython
   3.10 to 3.13 and free-threaded 3.14). macOS x86_64 and Windows x86_64 are cross-built only
   (docs/INSTALL.md).
-- **Tests**: 65 Rust tests (unit, 60-language snapshot, robustness, property, end-to-end CLI and
-  MCP), 81 Python reference tests, the bindings tests, Rust/Python parity, fuzz regressions and a
+- **Tests**: 104 Rust tests (unit, 60-language snapshot, robustness, property, end-to-end CLI and
+  MCP, incremental parsing), 82 Python reference tests, the bindings tests, Rust/Python parity, fuzz regressions and a
   reproducible-build check, all passing (docs/TEST_RESULTS.md). Engine A agrees with ripgrep on
   2,000 random corpora and patterns, run three ways: as shipped, with the parallel walk forced,
   and with every file searched in ranges.
