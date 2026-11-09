@@ -105,7 +105,7 @@ Counts: PASS 0 · PARTIAL 0 · BLOCKED 0 · FAIL 0 (tallied at the end).
 | R-6.8 | Offline and air-gapped operation | no network code; models embedded | code review | PASS |
 | R-6.9 | No unauthorized source-code transmission | nothing leaves the machine | code review | PASS |
 | R-6.10 | Dependency and supply-chain security | `Cargo.lock`, `cargo audit`, SBOM (CycloneDX), licences reviewed | TEST_RESULTS.md, `tools/sbom.py` | PASS |
-| R-6.11 | Reproducible builds | pinned toolchain, lock file, release profile | TBD-REPRO | PASS |
+| R-6.11 | Reproducible builds | pinned toolchain, lock file, release profile | two clean builds on macOS give the same hash (TEST_RESULTS.md); two different Linux images (`rust:1-slim-bookworm`, `golang:1.26-bookworm` with rustup) give the same SHA-256 (`bench/results/platforms/repro/`) | PASS |
 | R-6.12 | CI/CD integration | `.github/workflows/{ci,release,benchmarks}.yml`, GitLab/Bitbucket templates | YAML validated; **not executed** (no remote repository: publishing was declined for this release) | PARTIAL |
 | R-6.13 | JSON and JSONL output | `--json` everywhere; JSONL schema 1; JSON error records | `cli.rs::json_lines_schema_and_modes`, `errors_are_json_when_asked` | PASS |
 | R-6.14 | Stable, versioned integration interfaces | JSONL `schema`, MCP protocol versions, SemVer policy | docs | PASS |
