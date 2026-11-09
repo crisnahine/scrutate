@@ -1094,6 +1094,8 @@ fn search_one(
                 split::Outcome::Stream => {}
                 split::Outcome::Buffer(b) => whole = Some(b),
             }
+        } else if len > 0 && len <= SMALL_FILE {
+            whole = split::small(&file, len);
         }
     }
     let mut sink = collector(Arc::clone(&rel), matcher, o, c, cancel, tx, plain);
@@ -1199,6 +1201,10 @@ fn search_archive(
 /// Files at least this large are searched as several ranges of whole lines at once (an eighth of
 /// it each): one huge file would otherwise keep a single core busy while the others idle.
 /// `SCRUTATE_SPLIT_FILE_BYTES` overrides it (the tests use small files).
+/// Files up to this size are read with one call (the size is known) instead of reading until a
+/// zero-length read; within it the searcher's binary check covers the whole file.
+const SMALL_FILE: u64 = 64 << 10;
+
 fn split_file_bytes() -> u64 {
     static V: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *V.get_or_init(|| std::env::var("SCRUTATE_SPLIT_FILE_BYTES").ok().and_then(|v| v.parse().ok()).unwrap_or(64 << 20))
@@ -1280,6 +1286,15 @@ mod split {
         /// nothing reported: the file has no line breaks to split at and no NUL byte, so here it is in
         /// one buffer of its exact size (a stream would grow its buffer by doubling, copying each time)
         Buffer(Vec<u8>),
+    }
+
+    /// A small file in one read, unless it starts with a byte-order mark (only the stream reader
+    /// transcodes) or came back short (it changed: the stream reader takes it from the start).
+    pub(super) fn small(file: &File, len: u64) -> Option<Vec<u8>> {
+        let mut buf = vec![0u8; len as usize];
+        let n = read_at(file, &mut buf, 0).ok()?;
+        let bom = buf.starts_with(&[0xEF, 0xBB, 0xBF]) || buf.starts_with(&[0xFF, 0xFE]) || buf.starts_with(&[0xFE, 0xFF]);
+        (n == buf.len() && !bom).then_some(buf)
     }
 
     /// The whole file when it holds no NUL byte (a slice search checks only its start for binary data).
