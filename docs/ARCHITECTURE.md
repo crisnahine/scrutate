@@ -114,10 +114,15 @@ The indexed counterpart of Engine A, for repeated grep-style queries on large tr
 and livegrep do). It covers exactly the files Engine A's default walk visits (same walker, same
 ignore rules) and stores, per file, the set of byte trigrams (ASCII case folded), as immutable
 segments: sorted trigram keys, delta + LEB128 posting lists of document numbers, and per-document
-path, size, mtime and flags. A query is turned into a boolean trigram condition by walking the
-pattern's regex-syntax HIR (literals, small classes and alternations expand to exact string sets;
-concatenations combine them; anything else contributes no constraint), evaluated over the
-postings as bitsets, and the surviving files are searched by Engine A's own per-file searcher.
+path, size, mtime and flags. Each posting carries two mask bytes: a bit for the low three bits of
+each byte that follows the trigram in that file, and a bit for each position of the trigram modulo
+8. A query is turned into a boolean trigram condition by walking the pattern's regex-syntax HIR
+(literals, small classes and alternations expand to exact string sets; concatenations combine them;
+anything else contributes no constraint), evaluated over the postings as bitsets, and the
+surviving files are searched by Engine A's own per-file searcher. A string of four bytes or more
+needs its trigrams at positions that can line up and each followed by a byte that fits, so a file
+holding them apart is not a candidate (`kernel_thread` on the Linux tree: 164 candidate files
+instead of 1,781).
 The condition is a necessary one, never a sufficient one, so results equal Engine A's on the
 indexed snapshot; a property test and a coverage-guided fuzz target check that a text a pattern
 matches always satisfies the pattern's condition, including Unicode case folding (the Kelvin sign
@@ -127,7 +132,7 @@ index time are always searched. Updates are incremental (size + mtime), write ne
 liveness file per generation, then swap `manifest.json` atomically, so readers never see a half
 state; more than four segments, or more than 30% dead documents, merges them by a streaming k-way
 merge. Writers serialise on a lock file (polled with `try_lock`: SMB mounts answer a blocking lock
-with EAGAIN). The index stores no file contents (154 MB for the 1.3 GB Linux v7.3 tree; docs/LEADERBOARD.md
+with EAGAIN). The index stores no file contents (409 MB for the 1.6 GB Linux v7.3 tree; docs/LEADERBOARD.md
 compares sizes with Zoekt and livegrep, whose indexes hold the text), so a query reads the
 candidate files from the source tree.
 

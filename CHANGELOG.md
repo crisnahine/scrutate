@@ -69,6 +69,10 @@ First release.
   pattern's syntax tree, candidates searched by Engine A's own matcher, so the output equals the
   walk's. Incremental (segments merge during updates) and safe for concurrent readers.
 - UTF-16 files with a byte-order mark are transcoded and indexed (previously skipped as binary).
+- Text index format 2: each posting carries next-byte and position masks, so a literal's trigrams
+  must line up in a file for it to be a candidate (the Linux tree: `kernel_thread` 1,781 candidate
+  files to 164; concurrent query throughput went from 4% behind Zoekt to 5% ahead). The index is
+  409 MB instead of 148 MB; format 1 indexes are rebuilt by the next update.
 - Chunk line numbers follow grep's line counting (`\n` only); Python-style splitting had shifted
   them after form feeds (found by fuzzing). Index schema 12.
 - The 12 optional grammars (`--features extra-langs`) are verified by samples; writing them fixed
