@@ -50,6 +50,11 @@ def main() -> int:
             "licenses": [{"expression": p["license"]}] if p.get("license") else [],
             "externalReferences": [{"type": "distribution", "url": p["source"] or "path"}] + ([{"type": "website", "url": p["repository"]}] if p.get("repository") else []),
         })
+        if not p["source"]:
+            # a crate vendored under vendor/ with local changes (see the workspace Cargo.toml)
+            rel = os.path.relpath(os.path.dirname(p["manifest_path"]), os.path.join(HERE, ".."))
+            comps[-1]["pedigree"] = {"notes": f"modified copy of the crates.io release, in {rel}"}
+            comps[-1]["externalReferences"][0]["url"] = rel
     root = by_id[root_id]
     bom = {
         "bomFormat": "CycloneDX",

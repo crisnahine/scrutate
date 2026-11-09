@@ -2,6 +2,7 @@
 resolver = "2"
 members = ["crates/scrutate", "crates/scrutate-py"]
 default-members = ["crates/scrutate"]
+exclude = ["vendor/ignore"]
 
 [workspace.package]
 edition = "2021"
@@ -15,3 +16,8 @@ lto = "thin"
 codegen-units = 4
 debug = 0
 strip = true
+
+# `ignore` with one change: the global git excludes path is parsed without compiling a regex
+# (vendor/ignore, the excludes_file_span function).
+[patch.crates-io]
+ignore = { path = "vendor/ignore" }
