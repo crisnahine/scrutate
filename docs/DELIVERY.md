@@ -1,4 +1,4 @@
-# Delivery index: Scrutate 0.1.0 (2026-11-09)
+# Delivery index: Scrutate 0.1.0 (2026-11-10)
 
 The fifteen items the mission asks for (section 11), each with where it lives in this repository.
 

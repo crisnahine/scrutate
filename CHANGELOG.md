@@ -6,7 +6,7 @@ API are versioned interfaces; incompatible changes bump the major version once p
 listed here under "Breaking". The on-disk index is a cache with its own `schema_version`; a new
 version rebuilds incompatible indexes automatically and this is never considered breaking.
 
-## [0.1.0] - 2026-11-09
+## [0.1.0] - 2026-11-10
 
 First release.
 
@@ -55,9 +55,12 @@ First release.
   cache does not hold them) the rest of the walk uses twice the cores, at most 24: the Linux tree
   with a cold cache, 2.9 s on 5 threads, 1.4 s this way, ripgrep 1.8 s.
 - Fixed: a file given directly as the search root was printed with an empty path (`:1:text`).
-- `ignore` 0.4.34 is vendored (`vendor/ignore`) with one change: the global git excludes path is
-  read from `~/.gitconfig` without compiling a regex, about 0.4 ms of every search in a git
-  repository.
+- `ignore` 0.4.34 is vendored (`vendor/ignore`) with two changes: the global git excludes path is
+  read from `~/.gitconfig` without compiling a regex (about 0.4 ms of every search in a git
+  repository), and an idle walker thread waits 10 µs at first instead of 1 ms before it looks for
+  work again (a 598-file package: 10.7 ms to 8.1 ms).
+- Fixed: `--max-results N` could report one or two matches more than N when several threads found
+  matches at once.
 
 ### Engine B — code intelligence
 - Incremental index (SQLite + memory-mapped segments), content hashing, atomic updates,
