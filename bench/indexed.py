@@ -29,6 +29,7 @@ import shutil
 import statistics
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 
@@ -147,6 +148,33 @@ def timed(cmd, cwd):
     return wall, rss, os.waitstatus_to_exitcode(status), out
 
 
+def query_rss(cmd, cwd, measured):
+    """Peak RSS of one run of `cmd`. On Linux a child's ru_maxrss also counts the forked copy of this
+    harness from before exec, so there the figure comes from GNU time, which forks the command from
+    a small process; elsewhere `measured` (from wait4) is already the command's own."""
+    gnu_time = "/usr/bin/time"
+    if platform.system() != "Linux" or not os.path.exists(gnu_time):
+        return measured
+    with tempfile.NamedTemporaryFile(suffix=".rss", delete=False) as f:
+        path = f.name
+    subprocess.run([gnu_time, "-f", "%M", "-o", path] + cmd, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    kb = open(path).read().split()
+    os.unlink(path)
+    return int(kb[-1]) * 1024 if kb else measured
+
+
+def server_rss(proc):
+    """Resident bytes of a server process now (Linux /proc; elsewhere `ps`)."""
+    try:
+        for line in open(f"/proc/{proc.pid}/status"):
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1]) * 1024
+    except OSError:
+        out = subprocess.run(["ps", "-o", "rss=", "-p", str(proc.pid)], capture_output=True, text=True).stdout.strip()
+        return int(out) * 1024 if out else 0
+    return 0
+
+
 def pct(xs, p):
     xs = sorted(xs)
     k = (len(xs) - 1) * p
@@ -246,9 +274,11 @@ def main() -> int:
         save()
     # ---- servers
     servers = []
+    owner = {}
     for n in names:
         for cmd in defs[n].get("server", []):
             servers.append(subprocess.Popen(cmd, cwd=a.corpus, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+            owner[servers[-1].pid] = n
             time.sleep(10)
     try:
         # ---- correctness per query
@@ -286,12 +316,23 @@ def main() -> int:
                     t["rss"].append(m)
             if rep % 5 == 4:
                 save()
+        # ---- memory: one run per query measured on its own (see query_rss), plus the resident
+        # memory of a tool's server, which holds its index for every query
+        for entry in res["queries"]:
+            for n in names:
+                t = entry["tools"][n]
+                if t["valid"] and t["rss"]:
+                    t["rss"] = [query_rss(t["argv"], a.corpus, statistics.median(t["rss"]))]
+        for p in servers:
+            n = owner[p.pid]
+            res["tools"][n]["server_rss"] = res["tools"][n].get("server_rss", 0) + server_rss(p)
         for n in names:
             # the percentiles compare tools over the queries every tool answered correctly
             common = [e for e in res["queries"] if all(e["tools"][x]["valid"] for x in names)]
             samples = [x for e in common for x in e["tools"][n]["times"]]
             res["tools"][n]["latency"] = {"queries": len(common), "samples": len(samples), "p50": pct(samples, .5), "p95": pct(samples, .95),
-                                          "p99": pct(samples, .99), "rss_median": statistics.median(x for e in common for x in e["tools"][n]["rss"]),
+                                          "p99": pct(samples, .99),
+                                          "rss_median": statistics.median(x for e in common for x in e["tools"][n]["rss"]) + res["tools"][n].get("server_rss", 0),
                                           "wrong_queries": [e["q"]["pats"][0] for e in res["queries"] if not e["tools"][n]["valid"]]}
         save()
         # ---- concurrent throughput

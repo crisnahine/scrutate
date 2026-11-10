@@ -8,7 +8,7 @@
 #     -v scrutate-bench-linux:/bench -v "$PWD/bench/results":/results ubuntu:24.04 bash /src/bench/competitors/linux_indexed.sh
 set -euo pipefail
 B=/bench
-apt-get update -qq && apt-get install -y -qq python3 git > /dev/null
+apt-get update -qq && apt-get install -y -qq python3 git time > /dev/null  # GNU time: per-query peak memory
 export PATH=$B/bin:$PATH SCRUTATE_BIN=$B/scrutate/target/release/scrutate ZOEKT_BIN_DIR=$B/bin
 git config --global --add safe.directory '*'
 out=/results/linux-$(uname -m)

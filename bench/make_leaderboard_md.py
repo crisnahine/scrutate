@@ -189,7 +189,7 @@ def indexed(data, label):
         ("query latency p50 (ms)", lambda t: ms(t["latency"]["p50"])),
         ("query latency p95 (ms)", lambda t: ms(t["latency"]["p95"])),
         ("query latency p99 (ms)", lambda t: ms(t["latency"]["p99"])),
-        ("query memory (median MB)", lambda t: f"{t['latency']['rss_median'] / 1e6:.0f}"),
+        ("memory to answer a query (median MB; a server's resident memory included)", lambda t: f"{t['latency']['rss_median'] / 1e6:.0f}"),
         ("concurrent throughput (queries/s)", lambda t: f"{t['throughput']['median']:.0f}"),
         ("queries answered differently from the reference", lambda t: str(len(t["latency"]["wrong_queries"]))),
     ]
