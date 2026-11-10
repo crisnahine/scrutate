@@ -13,6 +13,7 @@ measured with an older binary or an older version of the harness, as its own `en
 | `leaderboard-warm-a82a.json` | 37 | 3 | `a82a23c54270...` |
 | `leaderboard-warm-fb5c.json` (and `-cold`, `indexed-`, `compare-`, `chain-`) | 37 | 3 | `fb5c4e0a1250...` |
 | `leaderboard-warm-fb3b.json` (and `-cold`, `indexed-`, `compare-`, `chain-`) | 37 | 3 | `fb3bd578c6d9...` |
+| `leaderboard-warm-b57d.json` (and `-cold`, `indexed-`, `compare-`, `chain-`) | 37 | 3 | `b57d2a666dba...` |
 
 `leaderboard-warm-prevbin` stopped at `patho/backtracking trap`, where the reference (Python's
 backtracking regex engine) never finished. Its binary predates searching a large file on all
@@ -35,3 +36,7 @@ shortened (vendored `ignore`); the current files repeat every step with the rele
 `*-fb3b` is the run of the first 0.1.0 build. Its `linux` and `linux-nodot` corpora shared files
 through hard links, which doubles the cost of opening a file on macOS for every tool, and its
 binary predates the changes listed under "Performance" in CHANGELOG.md.
+
+`*-b57d` is a complete run (37 of 37 warm, 5 of 5 cold and every indexed metric PASS) of the build
+before the Linux read-path changes, the operation module and the other refactors of the same day;
+the published run is of the binary that includes them.
