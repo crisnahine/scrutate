@@ -46,6 +46,10 @@ docs/TRACEABILITY.md.
 
 ## Next
 
+- Branch `perf/next` (local) holds three measured changes made after these benchmark runs: one
+  reusable small-file buffer per search thread, a page-cache-or-disk test that counts slow reads
+  instead of averaging them, and the macOS 13 target. Together they took the five macOS benchmarks
+  under 18 ms from 2 to 12% behind ugrep to 3 to 7% behind; merge them with the next full run.
 - Small trees (a few hundred files): Scrutate and ugrep are within about 10% of each other and the
   order changes with machine load. Scrutate starts 1.2 ms sooner; ugrep walks the directories and
   matches ignore rules in less time (it compiles no glob sets and does not read the global git
