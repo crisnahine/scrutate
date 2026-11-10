@@ -82,6 +82,12 @@ pub struct Options {
     /// regex size limits (resource exhaustion protection)
     pub regex_size_limit: usize,
     pub dfa_size_limit: usize,
+    /// files at least this large are searched as several ranges of whole lines at once (an eighth of
+    /// it each): one huge file would otherwise keep a single core busy while the others idle
+    pub split_file_bytes: u64,
+    /// files the one-thread walk takes before the parallel walk does the rest (0 skips it); `None`
+    /// chooses from the roots (`small_tree_files`)
+    pub small_tree: Option<usize>,
 }
 
 impl Default for Options {
@@ -112,6 +118,8 @@ impl Default for Options {
             search_zip: false,
             regex_size_limit: 20 * (1 << 20),
             dfa_size_limit: 10 * (1 << 20),
+            split_file_bytes: 64 << 20,
+            small_tree: None,
         }
     }
 }
@@ -437,6 +445,35 @@ pub enum AnyMatcher {
     Fuzzy(Box<FuzzyMatcher>),
     Pcre2(grep_pcre2::RegexMatcher),
     FuzzyRegex(Box<crate::fuzzyre::FuzzyRegex>),
+}
+
+impl AnyMatcher {
+    fn search_slice<S: Sink>(&self, searcher: &mut Searcher, slice: &[u8], sink: S) -> Result<(), S::Error> {
+        match self {
+            AnyMatcher::Regex(m) => searcher.search_slice(m, slice, sink),
+            AnyMatcher::Fuzzy(m) => searcher.search_slice(m.as_ref(), slice, sink),
+            AnyMatcher::Pcre2(m) => searcher.search_slice(m, slice, sink),
+            AnyMatcher::FuzzyRegex(m) => searcher.search_slice(m.as_ref(), slice, sink),
+        }
+    }
+
+    fn search_file<S: Sink>(&self, searcher: &mut Searcher, file: &std::fs::File, sink: S) -> Result<(), S::Error> {
+        match self {
+            AnyMatcher::Regex(m) => searcher.search_file(m, file, sink),
+            AnyMatcher::Fuzzy(m) => searcher.search_file(m.as_ref(), file, sink),
+            AnyMatcher::Pcre2(m) => searcher.search_file(m, file, sink),
+            AnyMatcher::FuzzyRegex(m) => searcher.search_file(m.as_ref(), file, sink),
+        }
+    }
+
+    fn search_reader<R: std::io::Read, S: Sink>(&self, searcher: &mut Searcher, reader: R, sink: S) -> Result<(), S::Error> {
+        match self {
+            AnyMatcher::Regex(m) => searcher.search_reader(m, reader, sink),
+            AnyMatcher::Fuzzy(m) => searcher.search_reader(m.as_ref(), reader, sink),
+            AnyMatcher::Pcre2(m) => searcher.search_reader(m, reader, sink),
+            AnyMatcher::FuzzyRegex(m) => searcher.search_reader(m.as_ref(), reader, sink),
+        }
+    }
 }
 
 /// grep-regex's matcher, except that the regex engine is kept from running its automaton over every
@@ -1134,12 +1171,10 @@ fn walk_builder(roots: &[PathBuf], o: &Options) -> Result<WalkBuilder> {
 /// 0 skips it. Roots holding only files get 256: starting the parallel walk costs more there than
 /// the search itself (three large files: 40.6 ms against 41.9). Any directory to enter gets 0: one
 /// thread reading every directory then holds up the searches (the ripgrep repository, 60
-/// directories: 5.6 ms in parallel against 6.0). `SCRUTATE_SMALL_TREE` sets the number for any tree
+/// directories: 5.6 ms in parallel against 6.0). `Options::small_tree` sets the number for any tree
 /// (the tests use both walks).
 fn small_tree_files(roots: &[PathBuf], o: &Options) -> usize {
-    static V: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
-    let forced = *V.get_or_init(|| std::env::var("SCRUTATE_SMALL_TREE").ok().and_then(|v| v.parse().ok()));
-    forced.unwrap_or_else(|| if has_dirs(roots, o) { 0 } else { 256 })
+    o.small_tree.unwrap_or_else(|| if has_dirs(roots, o) { 0 } else { 256 })
 }
 
 /// Whether a root holds a directory the walk would enter (a hidden one only with `--hidden`).
@@ -1166,7 +1201,6 @@ enum Small {
 /// neither for a parallel walk nor for walking before searching. Past `small_tree_files` files the
 /// walk stops; the caller's parallel walk then skips what was searched here. Walk errors count only
 /// when this walk finished (the parallel walk meets them again otherwise).
-#[allow(clippy::too_many_arguments)]
 fn small_first(
     roots: &[PathBuf],
     o: &Options,
@@ -1199,7 +1233,7 @@ fn small_first(
                     };
                     let Ok((path, rel, size)) = job else { break };
                     if !cancel.load(Ordering::Relaxed) {
-                        search_one(&mut fw, &matcher, &path, rel, size, o, c, cancel, &tx, plain);
+                        search_one(&mut fw, &Run { matcher: &matcher, o, c, cancel, tx: &tx, plain }, &path, rel, size);
                     }
                 }
             });
@@ -1304,27 +1338,56 @@ fn file_worker(o: &Options) -> FileWorker {
     FileWorker { searcher, small: Vec::new() }
 }
 
+/// What every file of one search shares: the matcher, the options, the counters, the cancel flag and
+/// where the results go.
+#[derive(Clone, Copy)]
+struct Run<'a> {
+    matcher: &'a AnyMatcher,
+    o: &'a Options,
+    c: &'a Counters,
+    cancel: &'a AtomicBool,
+    tx: &'a mpsc::Sender<Vec<Hit>>,
+    plain: Option<&'a PlainSink>,
+}
+
+impl<'a> Run<'a> {
+    fn collector(&self, path: Arc<str>) -> Collector<'a> {
+        let o = self.o;
+        Collector {
+            path,
+            tx: self.tx,
+            batch: Vec::new(),
+            plain: self.plain,
+            out: Vec::new(),
+            want_spans: o.want_spans,
+            stats_matches: &self.c.matches,
+            max_results: o.max_results,
+            max_count: o.max_count,
+            matched: false,
+            cancel: self.cancel,
+            matcher: self.matcher,
+            invert: o.invert,
+            count_only: o.count_only,
+            files_only: o.files_only,
+            file_count: 0,
+            line_base: 0,
+            hold: false,
+            binary: false,
+            multiline: o.multiline,
+        }
+    }
+}
+
 /// Search one file and send its hits to `tx`.
-#[allow(clippy::too_many_arguments)]
-fn search_one(
-    w: &mut FileWorker,
-    matcher: &AnyMatcher,
-    path: &Path,
-    rel: Arc<str>,
-    size: Option<u64>,
-    o: &Options,
-    c: &Counters,
-    cancel: &AtomicBool,
-    tx: &mpsc::Sender<Vec<Hit>>,
-    plain: Option<&PlainSink>,
-) {
+fn search_one(w: &mut FileWorker, r: &Run, path: &Path, rel: Arc<str>, size: Option<u64>) {
+    let (o, c) = (r.o, r.c);
     c.files_searched.fetch_add(1, Ordering::Relaxed);
     if let Some(n) = size {
         c.bytes.fetch_add(n, Ordering::Relaxed);
     }
     if o.search_zip {
         if let Some(kind) = crate::archive::Kind::of(&rel) {
-            search_archive(&mut w.searcher, matcher, path, &rel, kind, o, c, cancel, tx, plain);
+            search_archive(&mut w.searcher, r, path, &rel, kind);
             return;
         }
     }
@@ -1355,9 +1418,9 @@ fn search_one(
             split::First::Other => {}
             split::First::Larger => {
                 let len = size.or_else(|| file.metadata().ok().map(|m| m.len())).unwrap_or(0);
-                let min = split_file_bytes();
+                let min = o.split_file_bytes;
                 if len >= min {
-                    match split::search(&file, len, (min / 8).max(1), &rel, matcher, o, c, cancel, tx, plain) {
+                    match split::search(r, &file, len, (min / 8).max(1), &rel) {
                         split::Outcome::Done => return,
                         split::Outcome::Stream => {}
                         split::Outcome::Buffer(b) => owned = Some(b),
@@ -1369,16 +1432,10 @@ fn search_one(
         }
     }
     let whole: Option<&[u8]> = owned.as_deref().or(small.map(|n| &w.small[..n]));
-    let mut sink = collector(Arc::clone(&rel), matcher, o, c, cancel, tx, plain);
-    let res = match (matcher, &whole) {
-        (AnyMatcher::Regex(rm), Some(b)) => searcher.search_slice(rm, b, &mut sink),
-        (AnyMatcher::Fuzzy(fm), Some(b)) => searcher.search_slice(fm.as_ref(), b, &mut sink),
-        (AnyMatcher::Pcre2(pm), Some(b)) => searcher.search_slice(pm, b, &mut sink),
-        (AnyMatcher::FuzzyRegex(fm), Some(b)) => searcher.search_slice(fm.as_ref(), b, &mut sink),
-        (AnyMatcher::Regex(rm), None) => searcher.search_file(rm, &file, &mut sink),
-        (AnyMatcher::Fuzzy(fm), None) => searcher.search_file(fm.as_ref(), &file, &mut sink),
-        (AnyMatcher::Pcre2(pm), None) => searcher.search_file(pm, &file, &mut sink),
-        (AnyMatcher::FuzzyRegex(fm), None) => searcher.search_file(fm.as_ref(), &file, &mut sink),
+    let mut sink = r.collector(Arc::clone(&rel));
+    let res = match whole {
+        Some(b) => r.matcher.search_slice(searcher, b, &mut sink),
+        None => r.matcher.search_file(searcher, &file, &mut sink),
     };
     if let Err(e) = res {
         c.failed(format!("{rel}: {e}"));
@@ -1388,71 +1445,22 @@ fn search_one(
         c.files_matched.fetch_add(1, Ordering::Relaxed);
         if o.count_only || o.files_only {
             // one record per file carries the count in `line`
-            let _ = tx.send(vec![Hit { path: rel, line: sink.file_count, column: 0, text: String::new(), spans: Vec::new(), context: false }]);
+            let _ = r.tx.send(vec![Hit { path: rel, line: sink.file_count, column: 0, text: String::new(), spans: Vec::new(), context: false }]);
         }
-    }
-}
-
-fn collector<'a>(
-    path: Arc<str>,
-    matcher: &'a AnyMatcher,
-    o: &Options,
-    c: &'a Counters,
-    cancel: &'a AtomicBool,
-    tx: &'a mpsc::Sender<Vec<Hit>>,
-    plain: Option<&'a PlainSink>,
-) -> Collector<'a> {
-    Collector {
-        path,
-        tx,
-        batch: Vec::new(),
-        plain,
-        out: Vec::new(),
-        want_spans: o.want_spans,
-        stats_matches: &c.matches,
-        max_results: o.max_results,
-        max_count: o.max_count,
-        matched: false,
-        cancel,
-        matcher,
-        invert: o.invert,
-        count_only: o.count_only,
-        files_only: o.files_only,
-        file_count: 0,
-        line_base: 0,
-        hold: false,
-        binary: false,
-        multiline: o.multiline,
     }
 }
 
 /// `-z`: every member of an archive, or the decompressed file, as a file of its own, reported as
 /// `archive.zip{member}` (the decompressed file keeps its own name).
-#[allow(clippy::too_many_arguments)]
-fn search_archive(
-    searcher: &mut Searcher,
-    matcher: &AnyMatcher,
-    path: &Path,
-    rel: &Arc<str>,
-    kind: crate::archive::Kind,
-    o: &Options,
-    c: &Counters,
-    cancel: &AtomicBool,
-    tx: &mpsc::Sender<Vec<Hit>>,
-    plain: Option<&PlainSink>,
-) {
+fn search_archive(searcher: &mut Searcher, run: &Run, path: &Path, rel: &Arc<str>, kind: crate::archive::Kind) {
+    let (o, c, cancel) = (run.o, run.c, run.cancel);
     let mut each = |member: Option<&str>, r: &mut dyn std::io::Read| -> bool {
         let label: Arc<str> = match member {
             Some(m) => Arc::from(format!("{rel}{{{m}}}")),
             None => Arc::clone(rel),
         };
-        let mut sink = collector(Arc::clone(&label), matcher, o, c, cancel, tx, plain);
-        let res = match matcher {
-            AnyMatcher::Regex(m) => searcher.search_reader(m, r, &mut sink),
-            AnyMatcher::Fuzzy(m) => searcher.search_reader(m.as_ref(), r, &mut sink),
-            AnyMatcher::Pcre2(m) => searcher.search_reader(m, r, &mut sink),
-            AnyMatcher::FuzzyRegex(m) => searcher.search_reader(m.as_ref(), r, &mut sink),
-        };
+        let mut sink = run.collector(Arc::clone(&label));
+        let res = run.matcher.search_reader(searcher, r, &mut sink);
         if let Err(e) = res {
             c.failed(format!("{label}: {e}"));
         }
@@ -1460,7 +1468,7 @@ fn search_archive(
         if sink.matched {
             c.files_matched.fetch_add(1, Ordering::Relaxed);
             if o.count_only || o.files_only {
-                let _ = tx.send(vec![Hit { path: label, line: sink.file_count, column: 0, text: String::new(), spans: Vec::new(), context: false }]);
+                let _ = run.tx.send(vec![Hit { path: label, line: sink.file_count, column: 0, text: String::new(), spans: Vec::new(), context: false }]);
             }
         }
         !cancel.load(Ordering::Relaxed)
@@ -1471,9 +1479,6 @@ fn search_archive(
     }
 }
 
-/// Files at least this large are searched as several ranges of whole lines at once (an eighth of
-/// it each): one huge file would otherwise keep a single core busy while the others idle.
-/// `SCRUTATE_SPLIT_FILE_BYTES` overrides it (the tests use small files).
 /// Files up to this size are read with one call (`split::first`) instead of reading until a
 /// zero-length read; within it the searcher's binary check covers the whole file.
 const SMALL_FILE: u64 = 64 << 10;
@@ -1481,11 +1486,6 @@ const SMALL_FILE: u64 = 64 << 10;
 /// reader takes one read per 64 KB, moves the rest of each buffer down and counts the lines of
 /// everything it passes. Half the bytes of the Linux tree are in files between the two sizes.
 const MID_FILE: u64 = 1 << 20;
-
-fn split_file_bytes() -> u64 {
-    static V: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    *V.get_or_init(|| std::env::var("SCRUTATE_SPLIT_FILE_BYTES").ok().and_then(|v| v.parse().ok()).unwrap_or(64 << 20))
-}
 
 /// Line-at-a-time searches whose results do not depend on neighbouring lines or on a running count.
 /// `-l` stays sequential: it stops at the first match.
@@ -1657,19 +1657,8 @@ mod split {
     /// pass counts the newlines of every range (for the line numbers). Reports nothing when the file
     /// must be searched sequentially after all: it starts with a byte-order mark (transcoded as one
     /// stream), holds a NUL byte (binary detection), a read failed, or it has no line breaks to split at.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn search(
-        file: &File,
-        size: u64,
-        chunk: u64,
-        rel: &Arc<str>,
-        matcher: &AnyMatcher,
-        o: &Options,
-        c: &Counters,
-        cancel: &AtomicBool,
-        tx: &mpsc::Sender<Vec<Hit>>,
-        plain: Option<&PlainSink>,
-    ) -> Outcome {
+    pub(super) fn search(r: &Run, file: &File, size: u64, chunk: u64, rel: &Arc<str>) -> Outcome {
+        let Run { o, c, cancel, tx, plain, .. } = *r;
         let mut head = [0u8; 3];
         match read_at(file, &mut head, 0) {
             Ok(n) if n >= 2 && (head[..2] == [0xFF, 0xFE] || head[..2] == [0xFE, 0xFF] || (n == 3 && head == [0xEF, 0xBB, 0xBF])) => return Outcome::Stream,
@@ -1734,11 +1723,7 @@ mod split {
         let mut count = 0u64;
         'windows: for (rs, bs) in ranges.chunks(threads).zip(bases.chunks(threads)) {
             let parts: Vec<Part> = std::thread::scope(|s| {
-                let hs: Vec<_> = rs
-                    .iter()
-                    .zip(bs)
-                    .map(|(&(a, b), &base)| s.spawn(move || search_range(file, a, b, base, rel, matcher, o, c, cancel, plain.is_some())))
-                    .collect();
+                let hs: Vec<_> = rs.iter().zip(bs).map(|(&(a, b), &base)| s.spawn(move || search_range(r, file, a, b, base, rel))).collect();
                 hs.into_iter().map(|h| h.join().unwrap_or(Part { out: Vec::new(), hits: Vec::new(), matched: false, count: 0, ok: false })).collect()
             });
             for part in parts {
@@ -1768,56 +1753,28 @@ mod split {
         Outcome::Done
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn search_range(
-        file: &File,
-        a: u64,
-        b: u64,
-        base: u64,
-        rel: &Arc<str>,
-        matcher: &AnyMatcher,
-        o: &Options,
-        c: &Counters,
-        cancel: &AtomicBool,
-        plain: bool,
-    ) -> Part {
+    fn search_range(r: &Run, file: &File, a: u64, b: u64, base: u64, rel: &Arc<str>) -> Part {
+        let (o, cancel) = (r.o, r.cancel);
         // its own matcher (its own regex cache pool) and its own searcher, without transcoding: the
         // middle of a file is not the start of a stream
-        let matcher = matcher.clone();
+        let matcher = r.matcher.clone();
         let mut searcher =
             SearcherBuilder::new().binary_detection(BinaryDetection::quit(0)).bom_sniffing(false).line_number(!o.count_only).invert_match(o.invert).build();
         let (ptx, prx) = mpsc::channel::<Vec<Hit>>();
         // with `hold` the plain text is formatted into `out` and never written to this sink
         let sink_plain = PlainSink::new(Box::new(std::io::sink()));
+        let range_run = Run { matcher: &matcher, tx: &ptx, plain: if r.plain.is_some() { Some(&sink_plain) } else { None }, ..*r };
         let mut sink = Collector {
-            path: Arc::clone(rel),
-            tx: &ptx,
-            batch: Vec::new(),
-            plain: if plain { Some(&sink_plain) } else { None },
-            out: Vec::new(),
-            want_spans: o.want_spans,
-            stats_matches: &c.matches,
             max_results: None,
             max_count: None,
-            matched: false,
-            cancel,
-            matcher: &matcher,
-            invert: o.invert,
-            count_only: o.count_only,
             files_only: false,
-            file_count: 0,
             line_base: base,
             hold: true,
-            binary: false,
             multiline: false, // never split in multiline mode
+            ..range_run.collector(Arc::clone(rel))
         };
         let mut range = Range { file, pos: a, end: b };
-        let res = match &matcher {
-            AnyMatcher::Regex(m) => searcher.search_reader(m, &mut range, &mut sink),
-            AnyMatcher::Fuzzy(m) => searcher.search_reader(m.as_ref(), &mut range, &mut sink),
-            AnyMatcher::Pcre2(m) => searcher.search_reader(m, &mut range, &mut sink),
-            AnyMatcher::FuzzyRegex(m) => searcher.search_reader(m.as_ref(), &mut range, &mut sink),
-        };
+        let res = matcher.search_reader(&mut searcher, &mut range, &mut sink);
         sink.flush();
         let ok = res.is_ok() && !sink.binary && (range.pos >= b || cancel.load(Ordering::Relaxed));
         let (out, matched, count) = (std::mem::take(&mut sink.out), sink.matched, sink.file_count);
@@ -1927,7 +1884,7 @@ fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Opti
                 let size = if opts.want_bytes { entry.metadata().ok().map(|m| m.len()) } else { None };
                 let rel: Arc<str> = Arc::from(relative(entry.path(), &roots));
                 let fw = fw.get_or_insert_with(|| file_worker(&opts));
-                search_one(fw, &matcher, entry.path(), rel, size, &opts, &c, &cancel, &tx, plain.as_deref());
+                search_one(fw, &Run { matcher: &matcher, o: &opts, c: &c, cancel: &cancel, tx: &tx, plain: plain.as_deref() }, entry.path(), rel, size);
                 if !cold.load(Ordering::Relaxed) && reads_from_disk(&c) {
                     cold.store(true, Ordering::Relaxed);
                 }
@@ -1996,7 +1953,7 @@ fn search_list(
                     }
                     let (path, rel) = &files[i];
                     let size = if o.want_bytes { std::fs::metadata(path).ok().map(|m| m.len()) } else { None };
-                    search_one(&mut fw, matcher, path, Arc::clone(rel), size, o, counters, cancel, &tx, plain);
+                    search_one(&mut fw, &Run { matcher, o, c: counters, cancel, tx: &tx, plain }, path, Arc::clone(rel), size);
                 }
             });
         }

@@ -554,7 +554,7 @@ pub fn run() -> Result<i32> {
                     anyhow::bail!("--index searches the indexed repository (--root); narrow it with -g/-t instead of paths");
                 }
             }
-            let o = Options {
+            let mut o = Options {
                 pattern,
                 mode,
                 case: if ignore_case {
@@ -584,8 +584,12 @@ pub fn run() -> Result<i32> {
                 want_bytes: stats || json,
                 want_spans: json || color_choice(no_color) != ColorChoice::Never,
                 search_zip,
+                small_tree: std::env::var("SCRUTATE_SMALL_TREE").ok().and_then(|v| v.parse().ok()),
                 ..Options::default()
             };
+            if let Some(n) = std::env::var("SCRUTATE_SPLIT_FILE_BYTES").ok().and_then(|v| v.parse().ok()) {
+                o.split_file_bytes = n;
+            }
             let roots: Vec<PathBuf> = if paths.is_empty() { vec![PathBuf::from(".")] } else { paths };
             grep_command(roots, o, GrepOutput { files_with_matches, count, sort, json, stats, symbols, root: cli.root, no_color, indexed: index, update })
         }
