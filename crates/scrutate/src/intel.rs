@@ -628,9 +628,8 @@ pub fn references(s: &Searcher, name: &str, max_results: u64) -> Result<Referenc
     Ok(References { definitions, callers, groups, truncated })
 }
 
-/// Plain-text rendering of `references` (CLI and MCP).
-pub fn references_text(s: &Searcher, name: &str, max_results: u64) -> Result<String> {
-    let r = references(s, name, max_results)?;
+/// Plain-text rendering of `references`.
+pub fn references_render(r: &References) -> String {
     let mut out = String::new();
     if !r.definitions.is_empty() {
         out.push_str("definitions:\n");
@@ -646,7 +645,7 @@ pub fn references_text(s: &Searcher, name: &str, max_results: u64) -> Result<Str
     }
     out.push_str(&format!("references ({} lines in {} symbols{}):\n", r.total_lines(), r.groups.len(), if r.truncated { ", truncated" } else { "" }));
     groups_text(&r.groups, &mut out);
-    Ok(out)
+    out
 }
 
 /// All symbols named `name` anywhere (for `refs`): definitions by key.

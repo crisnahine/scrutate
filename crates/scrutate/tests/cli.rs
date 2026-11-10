@@ -350,14 +350,21 @@ fn mcp_protocol_round_trip() {
     let by_id = |id: i64| lines.iter().find(|v| v["id"] == id).unwrap_or_else(|| panic!("no response {id}"));
     assert_eq!(by_id(1)["result"]["protocolVersion"], "2025-06-18");
     assert_eq!(by_id(1)["result"]["serverInfo"]["name"], "scrutate");
+    assert!(by_id(1)["result"]["instructions"].as_str().unwrap().starts_with("scrutate searches the code of this repository"));
     let tools = by_id(2)["result"]["tools"].as_array().unwrap();
     assert!(tools.len() >= 14, "{}", tools.len());
     assert!(tools.iter().all(|t| t["inputSchema"]["type"] == "object"));
+    // every tool tells the client it only reads and stays on this machine, except reindex
+    for t in tools {
+        assert_eq!(t["annotations"]["readOnlyHint"], t["name"] != "reindex", "{}", t["name"]);
+        assert_eq!(t["annotations"]["openWorldHint"], false);
+    }
     let text = by_id(3)["result"]["content"][0]["text"].as_str().unwrap();
     assert!(text.contains("pkg/m7.py"), "{text}");
     assert_eq!(by_id(3)["result"]["isError"], false);
     let text = by_id(4)["result"]["content"][0]["text"].as_str().unwrap();
     assert!(text.starts_with("error"), "path escape refused: {text}");
+    assert_eq!(by_id(4)["result"]["isError"], true);
     assert_eq!(by_id(5)["result"]["isError"], true);
     assert_eq!(by_id(6)["error"]["code"], -32601);
     // grep_code is Engine A: matching lines under their enclosing symbol, an error for a bad pattern,
@@ -624,6 +631,22 @@ fn small_tree_path_equals_parallel_walk() {
         assert_eq!(handed_over, parallel, "{args:?}");
         assert_eq!(small.0, 0, "{args:?}: {small:?}");
     }
+}
+
+#[test]
+fn batch_runs_any_operation() {
+    let r = python_repo("batchops");
+    assert_eq!(r.run(&["index", "--no-text"]).0, 0);
+    r.write("q.jsonl", b"{\"op\": \"find_symbol\", \"name\": \"make_widget_3\"}\n{\"op\": \"outline\", \"path\": \"pkg/m3.py\"}\n{\"op\": \"callers\"}\n{\"query\": \"make_widget_3\", \"k\": 2}\n");
+    let (code, out, _) = r.run(&["batch", "q.jsonl"]);
+    assert_eq!(code, 0);
+    let recs: Vec<serde_json::Value> = out.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    assert_eq!(recs.len(), 4, "{out}");
+    assert_eq!(recs[0]["op"], "find_symbol");
+    assert_eq!(recs[0]["result"][0]["path"], "pkg/m3.py");
+    assert!(recs[1]["result"].as_array().unwrap().iter().any(|s| s["name"] == "make_widget_3"), "{}", recs[1]);
+    assert_eq!(recs[2]["error"], "missing name");
+    assert!(recs[3]["hits"].as_array().is_some_and(|h| h.len() <= 2), "{}", recs[3]);
 }
 
 #[test]

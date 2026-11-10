@@ -18,6 +18,7 @@ pub mod lex;
 pub mod lsp;
 pub mod mcp;
 pub mod npy;
+pub mod ops;
 pub mod parse;
 pub mod rank;
 pub mod resolve;

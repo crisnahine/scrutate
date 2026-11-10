@@ -321,6 +321,19 @@ fn hits_py(hits: Vec<scrutate::search::Hit>) -> Vec<Hit> {
     hits.into_iter().map(Into::into).collect()
 }
 
+impl Repo {
+    /// The engine with its index brought up to date (checked at most once a second), as the CLI
+    /// and the MCP server see it before every operation.
+    fn fresh(&self) -> anyhow::Result<std::sync::MutexGuard<'_, Searcher>> {
+        let mut s = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("engine lock poisoned"))?;
+        s.ix.refresh(1.0)?;
+        Ok(s)
+    }
+}
+
 #[pymethods]
 impl Repo {
     /// Open (creating if needed) the index of the repository at `root`.
@@ -364,7 +377,7 @@ impl Repo {
 
     /// Ranked search by meaning, name or identifier. `alt` are alternative phrasings whose results
     /// are fused with the main query. GIL released.
-    #[pyo3(signature = (query, k=10, alt=None, with_text=true))]
+    #[pyo3(signature = (query, k=scrutate::ops::SEARCH_K, alt=None, with_text=true))]
     fn search(
         &self,
         py: Python<'_>,
@@ -376,11 +389,7 @@ impl Repo {
         let q = query.to_string();
         let hits = py
             .detach(move || {
-                let mut s = self
-                    .inner
-                    .lock()
-                    .map_err(|_| anyhow::anyhow!("engine lock poisoned"))?;
-                s.ix.refresh(1.0)?;
+                let mut s = self.fresh()?;
                 match alt {
                     Some(a) if !a.is_empty() => {
                         let mut qs = vec![q];
@@ -395,37 +404,27 @@ impl Repo {
     }
 
     /// Where is this function/class/method defined? (`Class.method` works.)
-    #[pyo3(signature = (name, limit=20))]
+    #[pyo3(signature = (name, limit=scrutate::ops::SYMBOL_LIMIT))]
     fn symbol(&self, py: Python<'_>, name: &str, limit: usize) -> PyResult<Vec<Hit>> {
         let n = name.to_string();
         let hits = py
-            .detach(move || {
-                self.inner
-                    .lock()
-                    .map_err(|_| anyhow::anyhow!("engine lock poisoned"))?
-                    .find_symbol(&n, limit)
-            })
+            .detach(move || self.fresh()?.find_symbol(&n, limit))
             .map_err(err)?;
         Ok(hits_py(hits))
     }
 
     /// Functions that call `name`.
-    #[pyo3(signature = (name, limit=50))]
+    #[pyo3(signature = (name, limit=scrutate::ops::CALLERS_LIMIT))]
     fn callers(&self, py: Python<'_>, name: &str, limit: usize) -> PyResult<Vec<Hit>> {
         let n = name.to_string();
         let hits = py
-            .detach(move || {
-                self.inner
-                    .lock()
-                    .map_err(|_| anyhow::anyhow!("engine lock poisoned"))?
-                    .callers(&n, limit)
-            })
+            .detach(move || self.fresh()?.callers(&n, limit))
             .map_err(err)?;
         Ok(hits_py(hits))
     }
 
     /// Functions `name` calls: (resolved hits, unresolved external names).
-    #[pyo3(signature = (name, limit=50))]
+    #[pyo3(signature = (name, limit=scrutate::ops::CALLEES_LIMIT))]
     fn callees(
         &self,
         py: Python<'_>,
@@ -434,12 +433,7 @@ impl Repo {
     ) -> PyResult<(Vec<Hit>, Vec<String>)> {
         let n = name.to_string();
         let (hits, ext) = py
-            .detach(move || {
-                self.inner
-                    .lock()
-                    .map_err(|_| anyhow::anyhow!("engine lock poisoned"))?
-                    .callees(&n, limit)
-            })
+            .detach(move || self.fresh()?.callees(&n, limit))
             .map_err(err)?;
         Ok((hits_py(hits), ext))
     }
@@ -448,16 +442,7 @@ impl Repo {
     fn outline<'py>(&self, py: Python<'py>, path: &str) -> PyResult<Vec<Bound<'py, PyDict>>> {
         let p = path.to_string();
         let rows = py
-            .detach(move || {
-                scrutate::intel::outline(
-                    &self
-                        .inner
-                        .lock()
-                        .map_err(|_| anyhow::anyhow!("engine lock poisoned"))?
-                        .ix,
-                    &p,
-                )
-            })
+            .detach(move || scrutate::intel::outline(&self.fresh()?.ix, &p))
             .map_err(err)?;
         rows.iter()
             .map(|r| {
@@ -480,16 +465,7 @@ impl Repo {
     ) -> PyResult<Vec<(i64, String, Option<String>)>> {
         let p = path.to_string();
         let deps = py
-            .detach(move || {
-                scrutate::intel::deps(
-                    &self
-                        .inner
-                        .lock()
-                        .map_err(|_| anyhow::anyhow!("engine lock poisoned"))?
-                        .ix,
-                    &p,
-                )
-            })
+            .detach(move || scrutate::intel::deps(&self.fresh()?.ix, &p))
             .map_err(err)?;
         Ok(deps
             .into_iter()
@@ -500,29 +476,17 @@ impl Repo {
     /// Files importing a module or repository file: list of (path, line, module as written).
     fn dependents(&self, py: Python<'_>, target: &str) -> PyResult<Vec<(String, i64, String)>> {
         let t = target.to_string();
-        py.detach(move || {
-            scrutate::intel::rdeps(
-                &self
-                    .inner
-                    .lock()
-                    .map_err(|_| anyhow::anyhow!("engine lock poisoned"))?
-                    .ix,
-                &t,
-            )
-        })
-        .map_err(err)
+        py.detach(move || scrutate::intel::rdeps(&self.fresh()?.ix, &t))
+            .map_err(err)
     }
 
     /// Code similar to a symbol or `path:line`: list of (hit, cosine, jaccard).
-    #[pyo3(signature = (target, k=10))]
+    #[pyo3(signature = (target, k=scrutate::ops::SIMILAR_K))]
     fn similar(&self, py: Python<'_>, target: &str, k: usize) -> PyResult<Vec<(Hit, f32, f32)>> {
         let t = target.to_string();
         let out = py
             .detach(move || {
-                let mut g = self
-                    .inner
-                    .lock()
-                    .map_err(|_| anyhow::anyhow!("engine lock poisoned"))?;
+                let mut g = self.fresh()?;
                 scrutate::intel::similar(&mut g, &t, k)
             })
             .map_err(err)?;
@@ -530,7 +494,7 @@ impl Repo {
     }
 
     /// Duplicate and near-duplicate functions, as JSON-compatible dicts.
-    #[pyo3(signature = (min_tokens=30, threshold=0.75, limit=50))]
+    #[pyo3(signature = (min_tokens=scrutate::ops::DUPES_MIN_TOKENS, threshold=scrutate::ops::DUPES_THRESHOLD, limit=scrutate::ops::DUPES_LIMIT))]
     fn duplicates<'py>(
         &self,
         py: Python<'py>,
@@ -539,18 +503,7 @@ impl Repo {
         limit: usize,
     ) -> PyResult<Vec<Bound<'py, PyDict>>> {
         let groups = py
-            .detach(move || {
-                scrutate::intel::dupes(
-                    &self
-                        .inner
-                        .lock()
-                        .map_err(|_| anyhow::anyhow!("engine lock poisoned"))?
-                        .ix,
-                    min_tokens,
-                    threshold,
-                    limit,
-                )
-            })
+            .detach(move || scrutate::intel::dupes(&self.fresh()?.ix, min_tokens, threshold, limit))
             .map_err(err)?;
         groups
             .iter()
@@ -588,7 +541,7 @@ impl Repo {
     }
 
     /// Lines `start..=end` of a file inside the repository (never outside it).
-    #[pyo3(signature = (path, start=1, end=None, max_lines=400))]
+    #[pyo3(signature = (path, start=1, end=None, max_lines=scrutate::ops::READ_LINES))]
     fn read(&self, path: &str, start: i64, end: Option<i64>, max_lines: i64) -> PyResult<String> {
         Ok(self
             .inner

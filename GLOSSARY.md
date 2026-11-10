@@ -27,3 +27,12 @@ references use it.
 
 **Front end**: one of the four ways in: the CLI, the MCP server, the LSP server, the Python
 bindings.
+
+**Operation**: one question a front end can ask of the index (`ops::Op`): ranked search, grep,
+symbol, callers, callees, read, outline, dependencies, dependents, references, similar,
+duplicates, structural search, reindex. An operation owns its arguments, their defaults and
+limits, and the rule for refreshing the index first. Front ends parse into operations; they hold
+no defaults of their own.
+
+**Answer**: the typed result of an operation (`ops::Answer`), with one text form and one JSON
+form. Every front end renders the same answer.

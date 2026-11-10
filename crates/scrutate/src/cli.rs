@@ -14,9 +14,10 @@ use termcolor::{Color, ColorChoice, ColorSpec, WriteColor};
 
 use crate::fmt::{fmt_hits, hits_json};
 use crate::instant::{self, Case, Mode, Options};
+use crate::ops::Op;
 use crate::text::query_words;
 
-pub const SCHEMA: u32 = 1; // version of every JSON record this CLI emits
+pub use crate::ops::SCHEMA;
 
 /// Ctrl-C sets a cancellation flag (searches stop between files, exit 130). Direct libc / Win32
 /// calls: the `ctrlc` crate links Foundation and libobjc into every macOS process, about 1 ms of
@@ -255,7 +256,7 @@ pub enum Cmd {
         /// also search these repositories (repeatable): cross-repository results, paths prefixed with the repository name
         #[arg(long = "also", value_name = "ROOT")]
         also: Vec<PathBuf>,
-        #[arg(short, default_value_t = 8)]
+        #[arg(short, default_value_t = crate::ops::SEARCH_K)]
         k: usize,
         /// show why each result matched
         #[arg(long)]
@@ -266,7 +267,7 @@ pub enum Cmd {
     /// Unified: pick the engine from the query (regex-looking -> grep, otherwise ranked search; falls back to identifier grep without an index)
     Find {
         query: String,
-        #[arg(short, default_value_t = 8)]
+        #[arg(short, default_value_t = crate::ops::SEARCH_K)]
         k: usize,
         #[arg(long)]
         json: bool,
@@ -312,8 +313,8 @@ pub enum Cmd {
         name: String,
         #[arg(long)]
         json: bool,
-        #[arg(long, default_value_t = 200)]
-        max_results: usize,
+        #[arg(long, default_value_t = crate::ops::REFS_MAX)]
+        max_results: u64,
         /// only the references of the definition of NAME in PATH (at LINE, when several)
         #[arg(long = "def", value_name = "PATH[:LINE]")]
         def: Option<String>,
@@ -324,7 +325,7 @@ pub enum Cmd {
     /// code similar to a symbol or location (`name`, `Class.method` or `path:line`)
     Similar {
         target: String,
-        #[arg(short, default_value_t = 10)]
+        #[arg(short, default_value_t = crate::ops::SIMILAR_K)]
         k: usize,
         #[arg(long)]
         json: bool,
@@ -332,12 +333,12 @@ pub enum Cmd {
     /// duplicate and near-duplicate functions across the repository
     Dupes {
         /// ignore functions with fewer body tokens than this
-        #[arg(long, default_value_t = 30)]
+        #[arg(long, default_value_t = crate::ops::DUPES_MIN_TOKENS)]
         min_tokens: usize,
         /// near-duplicate threshold (Jaccard similarity of token 3-grams)
-        #[arg(long, default_value_t = 0.75)]
+        #[arg(long, default_value_t = crate::ops::DUPES_THRESHOLD)]
         threshold: f32,
-        #[arg(long, default_value_t = 50)]
+        #[arg(long, default_value_t = crate::ops::DUPES_LIMIT)]
         limit: usize,
         #[arg(long)]
         json: bool,
@@ -348,7 +349,7 @@ pub enum Cmd {
         query: String,
         #[arg(default_value = ".")]
         paths: Vec<PathBuf>,
-        #[arg(long, default_value_t = 1000)]
+        #[arg(long, default_value_t = crate::ops::TSQUERY_LIMIT)]
         limit: usize,
         #[arg(long)]
         json: bool,
@@ -688,108 +689,15 @@ pub fn run() -> Result<i32> {
             Ok(0)
         }
         Cmd::Find { query, k, json } => find_command(&cli.root, &query, k, json, no_color),
-        Cmd::Symbol { name, json } => {
-            let s = open_fresh(&cli.root)?;
-            let hits = s.find_symbol(&name, 20)?;
-            print_hits(&hits, &[], false, json)?;
-            Ok(if hits.is_empty() { 1 } else { 0 })
-        }
-        Cmd::Callers { name, json } => {
-            let s = open_fresh(&cli.root)?;
-            let hits = s.callers(&name, 30)?;
-            if json {
-                println!("{}", serde_json::to_string_pretty(&hits_json(&hits))?)
-            } else {
-                println!("{}", fmt_hits(&hits, &[], false, false))
-            }
-            Ok(if hits.is_empty() { 1 } else { 0 })
-        }
-        Cmd::Callees { name, json } => {
-            let s = open_fresh(&cli.root)?;
-            let (res, ext) = s.callees(&name, 40)?;
-            if json {
-                println!("{}", serde_json::to_string_pretty(&serde_json::json!({"resolved": hits_json(&res), "external": ext}))?);
-            } else {
-                println!("{}", fmt_hits(&res, &[], false, false));
-                println!("external: {}", ext.iter().take(50).cloned().collect::<Vec<_>>().join(", "));
-            }
-            Ok(if res.is_empty() && ext.is_empty() { 1 } else { 0 })
-        }
-        Cmd::Deps { file, json } => {
-            let s = open_fresh(&cli.root)?;
-            let deps = crate::intel::deps(&s.ix, &file)?;
-            if json {
-                println!("{}", serde_json::to_string_pretty(&deps)?);
-            } else {
-                for d in &deps {
-                    println!("{}:{}  {}{}", file, d.line, d.module, d.resolved.as_ref().map(|r| format!("  -> {r}")).unwrap_or_default());
-                }
-            }
-            Ok(if deps.is_empty() { 1 } else { 0 })
-        }
-        Cmd::Rdeps { target, json } => {
-            let s = open_fresh(&cli.root)?;
-            let rows = crate::intel::rdeps(&s.ix, &target)?;
-            if json {
-                let v: Vec<serde_json::Value> = rows.iter().map(|(p, l, m)| serde_json::json!({"path": p, "line": l, "module": m})).collect();
-                println!("{}", serde_json::to_string_pretty(&v)?);
-            } else {
-                for (p, l, m) in &rows {
-                    println!("{p}:{l}  {m}");
-                }
-            }
-            Ok(if rows.is_empty() { 1 } else { 0 })
-        }
-        Cmd::Outline { file, json } => {
-            let s = open_fresh(&cli.root)?;
-            let rows = crate::intel::outline(&s.ix, &file)?;
-            if json {
-                let v: Vec<serde_json::Value> =
-                    rows.iter().map(|r| serde_json::json!({"kind": r.kind, "name": r.name, "qualname": r.qualname, "start": r.start, "end": r.end})).collect();
-                println!("{}", serde_json::to_string_pretty(&v)?);
-            } else {
-                for r in &rows {
-                    let depth = r.qualname.matches('.').count();
-                    println!("{:>5}-{:<5} {}{:<9} {}", r.start, r.end, "  ".repeat(depth), r.kind, r.qualname);
-                }
-            }
-            Ok(if rows.is_empty() { 1 } else { 0 })
-        }
-        Cmd::Refs { name, json, max_results, def, textual } => {
-            if textual {
-                refs_command(&cli.root, &name, max_results, json)
-            } else {
-                resolved_refs_command(&cli.root, &name, max_results, def.as_deref(), json)
-            }
-        }
-        Cmd::Similar { target, k, json } => {
-            let mut s = open_fresh(&cli.root)?;
-            let out = crate::intel::similar(&mut s, &target, k)?;
-            if json {
-                let v: Vec<serde_json::Value> = out.iter().map(|(h, cos, jac)| serde_json::json!({"path": h.path, "start": h.start, "end": h.end, "kind": h.kind, "qualname": h.qualname, "cosine": cos, "jaccard": jac})).collect();
-                println!("{}", serde_json::to_string_pretty(&v)?);
-            } else {
-                for (h, cos, jac) in &out {
-                    println!("{:.3} cos  {:.2} jaccard  {}  [{}] {}", cos, jac, h.loc(), h.kind, h.qualname);
-                }
-            }
-            Ok(if out.is_empty() { 1 } else { 0 })
-        }
-        Cmd::Dupes { min_tokens, threshold, limit, json } => {
-            let s = open_fresh(&cli.root)?;
-            let groups = crate::intel::dupes(&s.ix, min_tokens, threshold, limit)?;
-            if json {
-                println!("{}", serde_json::to_string_pretty(&groups)?);
-            } else {
-                for g in &groups {
-                    println!("{} ({} tokens, similarity {:.2})", g.kind, g.tokens, g.similarity);
-                    for (p, q, a, b) in &g.members {
-                        println!("    {p}:{a}-{b}  {q}");
-                    }
-                }
-            }
-            Ok(if groups.is_empty() { 1 } else { 0 })
-        }
+        Cmd::Symbol { name, json } => run_op(&cli.root, Op::Symbol { name, limit: crate::ops::SYMBOL_LIMIT }, json),
+        Cmd::Callers { name, json } => run_op(&cli.root, Op::Callers { name, limit: crate::ops::CALLERS_LIMIT }, json),
+        Cmd::Callees { name, json } => run_op(&cli.root, Op::Callees { name, limit: crate::ops::CALLEES_LIMIT }, json),
+        Cmd::Deps { file, json } => run_op(&cli.root, Op::Deps { path: file }, json),
+        Cmd::Rdeps { target, json } => run_op(&cli.root, Op::Rdeps { target }, json),
+        Cmd::Outline { file, json } => run_op(&cli.root, Op::Outline { path: file }, json),
+        Cmd::Refs { name, json, max_results, def, textual } => run_op(&cli.root, Op::Refs { name, max_results, textual, def }, json),
+        Cmd::Similar { target, k, json } => run_op(&cli.root, Op::Similar { target, k }, json),
+        Cmd::Dupes { min_tokens, threshold, limit, json } => run_op(&cli.root, Op::Dupes { min_tokens, threshold, limit }, json),
         Cmd::Tsquery { lang, query, paths, limit, json, no_cache } => {
             // streamed: one JSON object or one text line per capture, in path order
             let stdout = std::io::stdout();
@@ -922,79 +830,22 @@ pub fn run() -> Result<i32> {
     }
 }
 
-/// `refs NAME`: every occurrence resolved to its definition; `--def` keeps one definition.
-fn resolved_refs_command(root: &Path, name: &str, max_results: usize, def: Option<&str>, json: bool) -> Result<i32> {
-    let s = open_fresh(root)?;
-    let r = crate::resolve::resolved_references(&s, name, max_results as u64)?;
-    let only = match def {
-        None => None,
-        Some(spec) => {
-            let (path, line) = match spec.rsplit_once(':') {
-                Some((p, l)) if l.parse::<i64>().is_ok() => (p, l.parse::<i64>().ok()),
-                _ => (spec, None),
-            };
-            let path = path.trim_start_matches("./");
-            let pick = r
-                .definitions
-                .iter()
-                .filter(|d| d.path == path && line.is_none_or(|l| d.start <= l && l <= d.end))
-                .min_by_key(|d| (line.is_some().then_some(d.end - d.start), d.start));
-            match pick {
-                Some(d) => Some(d.id),
-                None => anyhow::bail!("no definition of {name} in {spec}"),
-            }
-        }
-    };
-    let defs: Vec<&crate::index::ChunkRow> = r.definitions.iter().filter(|d| only.is_none_or(|id| d.id == id)).collect();
-    let found = !defs.is_empty() || (only.is_none() && !r.occurrences.is_empty());
+/// Run one index operation and print its answer; exit code 1 when nothing was found.
+fn run_op(root: &Path, op: Op, json: bool) -> Result<i32> {
+    use crate::ops::Answer;
+    let mut s = open_fresh(root)?;
+    let answer = crate::ops::run(&mut s, &op, None)?;
+    // these print nothing on standard output when empty, so a pipeline sees no lines
+    let quiet = matches!(answer, Answer::Outline { .. } | Answer::Deps { .. } | Answer::Rdeps { .. } | Answer::Similar(_) | Answer::Dupes(_));
     if json {
-        let occ = |o: &crate::resolve::Occurrence| serde_json::json!({"path": o.path, "line": o.line, "column": o.column, "text": o.text, "via": o.resolution.ok().map(|x| x.1)});
-        let mut v = serde_json::json!({
-            "schema": SCHEMA,
-            "name": name,
-            "definitions": defs.iter().map(|c| serde_json::json!({
-                "path": c.path, "start": c.start, "end": c.end, "kind": c.kind, "qualname": c.qualname,
-                "references": r.of(c.id).map(occ).collect::<Vec<_>>(),
-            })).collect::<Vec<_>>(),
-            "truncated": r.truncated,
-        });
-        if only.is_none() {
-            v["unresolved"] = r
-                .unresolved()
-                .map(|o| serde_json::json!({"path": o.path, "line": o.line, "column": o.column, "text": o.text, "reason": o.resolution.err()}))
-                .collect();
-        }
-        println!("{}", serde_json::to_string_pretty(&v)?);
+        println!("{}", serde_json::to_string_pretty(&answer.json())?);
+    } else if quiet && answer.is_empty() {
+        eprintln!("{}", answer.text());
     } else {
-        print!("{}", crate::resolve::resolved_text(&r, only));
+        let text = answer.text();
+        print!("{text}{}", if text.ends_with('\n') { "" } else { "\n" });
     }
-    Ok(if found { 0 } else { 1 })
-}
-
-/// `refs NAME --textual`: definitions, callers and every identifier occurrence grouped by the enclosing symbol.
-fn refs_command(root: &Path, name: &str, max_results: usize, json: bool) -> Result<i32> {
-    let s = open_fresh(root)?;
-    if json {
-        let r = crate::intel::references(&s, name, max_results as u64)?;
-        let v = serde_json::json!({
-            "schema": SCHEMA,
-            "name": name,
-            "definitions": r.definitions.iter().map(|c| serde_json::json!({"path": c.path, "start": c.start, "end": c.end, "kind": c.kind, "qualname": c.qualname})).collect::<Vec<_>>(),
-            "callers": hits_json(&r.callers),
-            "references": r.groups.iter().map(|g| serde_json::json!({
-                "symbol": g.symbol.as_ref().map(|c| serde_json::json!({"path": c.path, "start": c.start, "end": c.end, "kind": c.kind, "qualname": c.qualname})),
-                "path": g.path,
-                "lines": g.lines.iter().map(|h| serde_json::json!({"line": h.line, "column": h.column, "text": h.text})).collect::<Vec<_>>()
-            })).collect::<Vec<_>>(),
-            "truncated": r.truncated,
-        });
-        println!("{}", serde_json::to_string_pretty(&v)?);
-        Ok(if r.is_empty() { 1 } else { 0 })
-    } else {
-        let r = crate::intel::references(&s, name, max_results as u64)?;
-        print!("{}", crate::intel::references_text(&s, name, max_results as u64)?);
-        Ok(if r.is_empty() { 1 } else { 0 })
-    }
+    Ok(if answer.is_empty() { 1 } else { 0 })
 }
 
 /// `watch`: update the indexes now, then after every burst of file changes until Ctrl-C.
@@ -1393,8 +1244,17 @@ fn batch_command(root: &Path, file: &Path, features: bool, timing: bool) -> Resu
             continue;
         }
         let req: serde_json::Value = serde_json::from_str(&line)?;
+        if let Some(tool) = req.get("op").and_then(|v| v.as_str()) {
+            // any operation, named and given arguments as an MCP tool call is
+            let rec = match Op::from_tool(tool, &req).and_then(|op| crate::ops::run(&mut s, &op, None)) {
+                Ok(answer) => serde_json::json!({"op": tool, "result": answer.json()}),
+                Err(e) => serde_json::json!({"op": tool, "error": e.to_string()}),
+            };
+            writeln!(out, "{rec}")?;
+            continue;
+        }
         let query = req.get("query").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let k = req.get("k").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+        let k = req.get("k").and_then(|v| v.as_u64()).unwrap_or(crate::ops::SEARCH_K as u64) as usize;
         let alt: Vec<String> =
             req.get("alt").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
         let t = Instant::now();
