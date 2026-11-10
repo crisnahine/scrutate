@@ -63,6 +63,24 @@ capabilities those crates do not provide rather than re-implementing what they a
   the parallel walk (40.6 ms against 41.9). Any directory to enter sends the search straight to the
   parallel walk: one thread reading every directory held up the searches (the ripgrep repository,
   60 directories: 5.6 ms in parallel against 6.0).
+- **Start-up** (`lazy_bind.rs`, `cli.rs`): a search of a few hundred files is mostly process
+  start. Two costs were ours. dyld binds every imported symbol before `main`, about 3.3 µs each for
+  symbols that come through libSystem (a C program importing 121 more of them starts 0.4 ms
+  later); the executable imported 210, and a search calls about 75. On macOS arm64 the other 133
+  are defined in the executable as private stubs that look the function up with `dlsym` on the
+  first call and jump to it, keeping every argument register and the stack; `fork` binds all of
+  them first, so a child never does a lookup. And clap builds every subcommand's argument
+  definitions before parsing, so `scrutate grep` uses a definition of that subcommand alone.
+  Start-up went from 2.4 ms to 1.9 ms (a Rust hello-world: 1.5 ms). Measured and left alone: the
+  binary's 37,000 pointer fix-ups (applied lazily by the kernel, no cost), its code-signature page
+  size (no difference), and its 85 MB size (0.05 to 0.2 ms).
+- **What bounds a search on macOS**: opening a file. On APFS `open` costs 8 to 11 µs for a file
+  that was opened recently and about 19 µs when the tree is large enough that the kernel's data for
+  it left the CPU caches; `close` costs 0.5 µs, a read of the whole file 1.3 µs, `stat` 1 to 2 µs.
+  Opens scale to the performance cores and no further (the Linux tree, open and read only: 1.95 s
+  on one thread, 0.56 s on five, 0.71 s on six, 0.95 s on eleven; the same for processes as for
+  threads), which is why the default thread count is the performance cores. A search of that tree
+  takes 0.66 s, so about 0.1 s of it is ours.
 - **Files without line breaks**: a large file whose ranges cannot be cut at a newline is read once
   into a buffer of its exact size (checked for NUL bytes as it is read, so binary handling is
   unchanged) and searched as a slice; the stream reader would grow its buffer by doubling.

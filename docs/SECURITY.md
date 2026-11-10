@@ -50,6 +50,11 @@ a **hostile MCP client** (malformed JSON-RPC, path escapes).
   `SetConsoleCtrlHandler` (Windows) declarations, whose handler only stores to an atomic flag;
   `instant.rs` — one `sysctlbyname("hw.perflevel0.physicalcpu")` call on macOS, writing an `i32`
   whose size it passes;
+  `lazy_bind.rs` (the executable on macOS arm64 only) — assembly stubs for 133 libSystem
+  functions, each jumping to the address `dlsym` returned for its own name, with every argument
+  register and the stack left as the caller set them; `fork` binds all of them first, so a child
+  process never calls `dlsym`; `tests/lazy_bind.rs` runs variadic, floating-point, callback, panic
+  and `fork` calls through them;
   `textindex.rs` — `Mmap::map` of segment and large source files (bounds-checked slicing only). tree-sitter grammars and SQLite are C code built from
   crates.io sources.
 - **Memory-mapped files can change underneath a reader** if another process rewrites a segment in

@@ -18,6 +18,18 @@ version rebuilds incompatible indexes automatically and this is never considered
   (60 directories, 211 files) the five benchmarks that ugrep led are now level or ahead.
 - One reusable buffer per search thread for small files instead of a zeroed buffer per file; the
   disk-or-cache test counts slow reads instead of averaging their times.
+- macOS on Apple silicon: 133 system functions that a search never calls (SQLite's file calls,
+  process spawning, the unwinder) are bound on their first call instead of at launch. dyld spends
+  about 3.3 µs on each imported symbol; imports fell from 210 to 77 and start-up from 2.2 ms to
+  1.9 ms.
+- `scrutate grep` parses its arguments with a definition of that one subcommand instead of all 24
+  (about 0.1 ms).
+
+### Benchmarks
+- The `linux-nodot` corpus is made of copies (APFS clones) instead of hard links to `linux`. On
+  macOS, opening a file with two links costs about twice as much as opening a plain one, so both
+  corpora ran slower than a real checkout for every tool. The file set and its checksum are
+  unchanged.
 
 ### Changed
 - macOS builds need macOS 13 or newer (0.1.0 ran on 11): the binary gets chained fixups, applied as

@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import random
+import shutil
 import subprocess
 import sys
 
@@ -25,6 +26,19 @@ REAL = {
     "ripgrep": ("https://github.com/BurntSushi/ripgrep.git", "15.2.0"),
 }
 GENERATED = ["bigfile", "smallfiles", "binheavy", "patho", "rgbuilt", "linux-nodot"]
+
+
+def own_copy(src, dst):
+    """A copy with an inode of its own. A hard link would be cheaper to make, but on macOS opening
+    a file with two links costs every tool about twice as much (19 us against 10 on APFS), here
+    and in the tree it links to. APFS clones share the data blocks, so they cost no space."""
+    if sys.platform == "darwin":
+        import ctypes
+
+        libc = ctypes.CDLL(None, use_errno=True)
+        if libc.clonefile(os.fsencode(src), os.fsencode(dst), 0) == 0:
+            return
+    shutil.copy2(src, dst)
 
 
 def sh(cmd, cwd=None):
@@ -186,8 +200,8 @@ def generate(root, name):
                 continue
             t = os.path.join(tmp, rel)
             os.makedirs(os.path.dirname(t), exist_ok=True)
-            os.link(s, t) if os.stat(s).st_dev == os.stat(tmp).st_dev else subprocess.run(["cp", s, t], check=True)
-        info = "linux tracked files without hidden files and directories (hard links)"
+            own_copy(s, t)
+        info = "linux tracked files without hidden files and directories (copies; clones where the file system has them)"
     else:
         raise SystemExit(f"unknown corpus {name}")
     os.rename(tmp, d)
