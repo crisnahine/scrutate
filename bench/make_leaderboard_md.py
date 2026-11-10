@@ -47,12 +47,21 @@ def plan_for(r):
     return PLANS["default"]
 
 
+def hardware(env):
+    """The CPU as recorded; a Linux guest of the Apple Virtualization framework reports no name."""
+    cpu = env.get("cpu", "?")
+    if env.get("platform", "").startswith("Linux") and (not cpu or cpu.startswith("0x")):
+        return ("a Linux virtual machine (Colima, Apple Virtualization) on the Apple M3 Pro above; its virtual CPUs run on "
+                "performance or efficiency cores as macOS schedules them, so run-to-run variation is higher than on the host")
+    return cpu
+
+
 def engine_a(data, label):
     env = data["environment"]
     out = []
     out.append(f"## Engine A and structural search: {label}\n")
     mem = env.get("memory_bytes", 0) / 2**30
-    out.append(f"- Hardware: {env.get('cpu', '?')} ({env.get('cpus')} logical CPUs"
+    out.append(f"- Hardware: {hardware(env)} ({env.get('cpus')} logical CPUs"
                + (f"; {env.get('perf_cores')} performance + {env.get('efficiency_cores')} efficiency cores" if env.get("perf_cores") else "")
                + f"), {mem:.0f} GB RAM; {env['platform']}")
     st = data["settings"]
@@ -164,7 +173,7 @@ def indexed(data, label):
     others = [t for t in data["tools"] if t != "scrutate"]
     out = [f"## Engine B: indexed search against {' and '.join(others)}: {label}\n"]
     env = data["environment"]
-    out.append(f"- Hardware: {env.get('cpu', '?')}, {env.get('cpus')} logical CPUs; {env['platform']}. Corpus: `{os.path.basename(data['corpus'])}`.")
+    out.append(f"- Hardware: {hardware(env)}, {env.get('cpus')} logical CPUs; {env['platform']}. Corpus: `{os.path.basename(data['corpus'])}`.")
     st = data["settings"]
     out.append(f"- Method: {st['index_runs']} full index builds and {st['index_runs']} incremental updates (100 files edited) per tool; "
                f"{st['runs']} runs of each of {st['queries']} queries, round-robin across tools, each run a fresh process; "
