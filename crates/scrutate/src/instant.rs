@@ -757,8 +757,14 @@ fn uppercase_literal(pattern: &str, regex: bool) -> bool {
 }
 
 pub fn build_matcher(o: &Options) -> Result<AnyMatcher> {
-    if o.word && matches!(o.mode, Mode::Fuzzy { .. } | Mode::FuzzyRegex { .. }) {
-        bail!("whole-word matching (-w) is not available with --fuzzy or --fuzzy-regex");
+    if matches!(o.mode, Mode::Fuzzy { .. } | Mode::FuzzyRegex { .. }) {
+        // neither matcher looks beyond a line or at word boundaries: saying so beats finding nothing
+        if o.word {
+            bail!("whole-word matching (-w) is not available with --fuzzy or --fuzzy-regex");
+        }
+        if o.multiline {
+            bail!("multiline matching (-U) is not available with --fuzzy or --fuzzy-regex");
+        }
     }
     let Translated { insensitive, pattern: pat } = o.translate();
     match o.mode {
@@ -1197,7 +1203,7 @@ fn performance_cores() -> Option<usize> {
 /// The glob and file-type filters of `o`, plus the index directory, which is never searched.
 pub fn overrides(root: &Path, o: &Options) -> Result<ignore::overrides::Override> {
     let mut ob = OverrideBuilder::new(root);
-    ob.add("!.scrutate/")?;
+    ob.add(&format!("!{}/", crate::files::INDEX_DIR))?;
     for g in &o.globs {
         ob.add(g).with_context(|| format!("invalid glob {g:?}"))?;
     }
@@ -2351,7 +2357,9 @@ mod tests {
             assert_eq!(uppercase_literal(pattern, regex), upper, "{pattern:?} regex={regex}");
         }
         let o = Options { pattern: "fooz".into(), mode: Mode::Fuzzy { max_edits: 1 }, word: true, ..Options::default() };
-        assert!(build_matcher(&o).err().unwrap().to_string().contains("not available with --fuzzy"));
+        assert!(build_matcher(&o).err().unwrap().to_string().contains("-w) is not available with --fuzzy"));
+        let o = Options { pattern: "fooz".into(), mode: Mode::FuzzyRegex { max_edits: 1 }, multiline: true, ..Options::default() };
+        assert!(build_matcher(&o).err().unwrap().to_string().contains("-U) is not available with --fuzzy"));
     }
 
     #[test]

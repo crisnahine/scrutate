@@ -89,8 +89,10 @@ docs/TRACEABILITY.md.
   reads (`read_code` by symbol name) and result ids an agent can pass back. Sources and client
   support are in docs/research/agent-facing-search-2026-11.md.
 - Known limits left in place: smart case does not see `\x41` as an uppercase letter; the LSP
-  server's save worker updates the index without the corrupt-database rebuild; `-U` is ignored by
-  `--fuzzy` and `--fuzzy-regex`.
+  server's save worker updates the index without the corrupt-database rebuild; the watcher's test
+  of one path (`files::Membership`) walks the ignore files by hand, because the walker's own
+  per-directory matcher is private to the `ignore` crate, and lets a nested `.gitignore` win over
+  a parent `.ignore` (the walk does the opposite), which can only cause an extra wake-up.
 - Linux: in the 8-CPU Linux VM on the development Mac, Scrutate used about 10% more CPU than
   ripgrep for the same Linux-tree search (993 ms against 910 ms for `PM_RESUME`). Two measured
   steps, both on `perf/next`: read small files into one buffer per thread instead of a new zeroed

@@ -13,7 +13,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use sha1::{Digest, Sha1};
 
 use crate::lex::{merge_segments, pack_bags, quantize, FileLex, LexStore, QVecs, SegmentBuilder, NF};
-use crate::parse::{is_indexable, parse_file_with, PrevParse};
+use crate::parse::{parse_file_with, PrevParse};
 use crate::semantic::SemanticModel;
 use crate::text::{is_test_path, name_key, tokenize2, BODY_CAP};
 
@@ -35,23 +35,6 @@ pub const MAX_FILE_BYTES: u64 = 1_000_000;
 /// themselves take several times this in memory).
 pub const TREE_CACHE_BYTES: usize = 2 << 20;
 pub const TF_CAP: u32 = 4; // a token counts at most this many times per field
-pub const SKIP_DIRS: &[&str] = &[
-    ".git",
-    ".scrutate",
-    "node_modules",
-    "__pycache__",
-    ".venv",
-    "venv",
-    "dist",
-    "build",
-    ".mypy_cache",
-    ".pytest_cache",
-    "target",
-    ".next",
-    ".tox",
-    ".idea",
-    ".vscode",
-];
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
@@ -198,46 +181,6 @@ impl ChunkRow {
             name_tok: r.get::<_, Option<String>>(13)?.unwrap_or_default(),
         })
     }
-}
-
-/// Relative paths ('/' separated, sorted) of the files worth indexing: the same rules as ripgrep's
-/// file listing (.gitignore, hidden files) plus the usual build/vendor directories.
-pub fn list_files(root: &Path) -> Vec<String> {
-    let mut out = Vec::new();
-    // hidden files are indexed (.github/workflows/*.yml, .eslintrc.js, .env.example are code or
-    // config people search for); SKIP_DIRS prunes VCS internals and caches
-    let extra: Vec<String> = std::env::var("SCRUTATE_INDEX_EXCLUDE_DIRS")
-        .map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
-        .unwrap_or_default();
-    let skip = move |name: &str| SKIP_DIRS.contains(&name) || extra.iter().any(|e| e == name);
-    let skip2 = skip.clone();
-    let walker = ignore::WalkBuilder::new(root)
-        .hidden(false)
-        .git_ignore(true)
-        .git_global(true)
-        .git_exclude(true)
-        .ignore(true)
-        .parents(true)
-        .follow_links(false)
-        .filter_entry(move |e| !(e.file_type().map(|t| t.is_dir()).unwrap_or(false) && skip(&e.file_name().to_string_lossy())))
-        .build();
-    for entry in walker.flatten() {
-        if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
-            continue;
-        }
-        if entry.file_name() == ".git" {
-            continue; // a `.git` *file* (worktree or submodule pointer) is VCS metadata, not source
-        }
-        let Ok(rel) = entry.path().strip_prefix(root) else {
-            continue;
-        };
-        let rel = rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect::<Vec<_>>().join("/");
-        if is_indexable(&rel) && !rel.split('/').any(&skip2) {
-            out.push(rel);
-        }
-    }
-    out.sort();
-    out
 }
 
 fn bag(tokens: impl Iterator<Item = String>, cap: Option<u32>) -> HashMap<String, u32> {
@@ -781,7 +724,7 @@ impl Index {
                 known.insert(p, (s, m, h));
             }
         }
-        let files = list_files(&self.root);
+        let files = crate::files::list_files(&self.root);
         st.files_total = files.len();
         let fileset: HashSet<&String> = files.iter().collect();
         let mut gone: Vec<String> = known.keys().filter(|p| !fileset.contains(p)).cloned().collect();

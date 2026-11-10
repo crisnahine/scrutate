@@ -139,6 +139,9 @@ First release.
   call for longer than 20 seconds.
 - The index recovers from a corrupt database in every front end that stays open (the MCP server,
   the Python bindings, `watch`), not only in the CLI.
+- `watch` and `serve --watch` no longer stop on Linux and Windows when `.git/info/exclude` has
+  patterns (the matcher was rooted at `.git/info` and panicked on the first changed path).
+- `-U` with `--fuzzy` or `--fuzzy-regex` is an error (it found nothing across lines).
 - Licensed under Apache-2.0. Toolchain pinned to Rust 1.99.1 (`rust-version` 1.89).
 - Python bindings (PyO3 0.30, abi3 wheels, GIL released, streaming iterator, free-threading
   declaration after review).

@@ -1143,7 +1143,7 @@ fn grouped_by_symbol(root: &Path, hits: &mut Vec<instant::Hit>, w: &mut termcolo
 /// an index exists or the repository is small enough to index now; otherwise an identifier grep.
 fn find_command(root: &Path, query: &str, k: usize, json: bool, no_color: bool) -> Result<i32> {
     let has_index = crate::index::exists(root);
-    let small_repo = || crate::index::list_files(root).len() <= 3000;
+    let small_repo = || crate::files::list_files(root).len() <= 3000;
     if looks_like_regex(query) {
         let o = Options { pattern: query.to_string(), mode: Mode::Regex, case: Case::Smart, ..Options::default() };
         return grep_command(

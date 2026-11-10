@@ -50,3 +50,8 @@ A's matcher and the text index's trigram condition are both built from it.
 
 **Run**: one Engine A search in progress (`instant::Run`): the matcher, options, counters, cancel
 flag and output target that every file search of it shares.
+
+**Repository files**: which files belong to the repository for each index (`files.rs`): the code
+index's list (hidden files included, cache and dependency directories skipped), Engine A's walk
+(hidden files skipped, the same ignore files), and **membership**, the test of one changed path
+that the watcher asks.

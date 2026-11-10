@@ -8,6 +8,7 @@
 pub mod archive;
 pub mod cli;
 pub mod config;
+pub mod files;
 pub mod fmt;
 pub mod fuzzyre;
 pub mod index;
