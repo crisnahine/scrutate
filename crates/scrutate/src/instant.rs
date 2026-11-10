@@ -1337,19 +1337,31 @@ fn search_one(
     let mut owned = None;
     let mut small = None;
     if splittable(o) {
-        let len = size.or_else(|| file.metadata().ok().map(|m| m.len())).unwrap_or(0);
-        let min = split_file_bytes();
-        if len >= min {
-            match split::search(&file, len, (min / 8).max(1), &rel, matcher, o, c, cancel, tx, plain) {
-                split::Outcome::Done => return,
-                split::Outcome::Stream => {}
-                split::Outcome::Buffer(b) => owned = Some(b),
-            }
-        } else if len > 0 && len <= SMALL_FILE {
-            small = split::small(&file, len, &mut w.small);
+        // most files are small: one read of up to SMALL_FILE + 1 bytes takes such a file whole and
+        // tells a larger one apart, with no call for the size (a `statx` per file otherwise: 96,000
+        // of them on the Linux tree)
+        let first = if size.is_none_or(|n| n <= SMALL_FILE) { split::first(&file, &mut w.small) } else { split::First::Larger };
+        if matches!(first, split::First::Whole(_) | split::First::Other) {
             c.small_reads.fetch_add(1, Ordering::Relaxed);
             if opened.elapsed().as_nanos() as u64 >= COLD_READ_NS {
                 c.slow_reads.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        match first {
+            split::First::Whole(n) => small = Some(n),
+            split::First::Other => {}
+            split::First::Larger => {
+                let len = size.or_else(|| file.metadata().ok().map(|m| m.len())).unwrap_or(0);
+                let min = split_file_bytes();
+                if len >= min {
+                    match split::search(&file, len, (min / 8).max(1), &rel, matcher, o, c, cancel, tx, plain) {
+                        split::Outcome::Done => return,
+                        split::Outcome::Stream => {}
+                        split::Outcome::Buffer(b) => owned = Some(b),
+                    }
+                } else if len <= MID_FILE {
+                    small = split::rest(&file, len as usize, &mut w.small);
+                }
             }
         }
     }
@@ -1458,9 +1470,13 @@ fn search_archive(
 /// Files at least this large are searched as several ranges of whole lines at once (an eighth of
 /// it each): one huge file would otherwise keep a single core busy while the others idle.
 /// `SCRUTATE_SPLIT_FILE_BYTES` overrides it (the tests use small files).
-/// Files up to this size are read with one call (the size is known) instead of reading until a
+/// Files up to this size are read with one call (`split::first`) instead of reading until a
 /// zero-length read; within it the searcher's binary check covers the whole file.
 const SMALL_FILE: u64 = 64 << 10;
+/// Files up to this size are read whole into the thread's buffer too (`split::rest`): the stream
+/// reader takes one read per 64 KB, moves the rest of each buffer down and counts the lines of
+/// everything it passes. Half the bytes of the Linux tree are in files between the two sizes.
+const MID_FILE: u64 = 1 << 20;
 
 fn split_file_bytes() -> u64 {
     static V: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
@@ -1545,18 +1561,64 @@ mod split {
         Buffer(Vec<u8>),
     }
 
-    /// A small file in one read, unless it starts with a byte-order mark (only the stream reader
-    /// transcodes) or came back short (it changed: the stream reader takes it from the start).
-    /// Reads into `buf`, kept by the thread across files (sized once, never zeroed again).
-    pub(super) fn small(file: &File, len: u64, buf: &mut Vec<u8>) -> Option<usize> {
-        let len = len as usize;
-        if buf.len() < len {
-            buf.resize(SMALL_FILE as usize, 0);
+    /// What one read of a file's first `SMALL_FILE + 1` bytes found.
+    pub(super) enum First {
+        /// the whole file, this many bytes, in the buffer
+        Whole(usize),
+        /// more than `SMALL_FILE` bytes
+        Larger,
+        /// a small file for the stream reader: it starts with a byte-order mark (only that reader
+        /// transcodes), or it cannot be read at an offset
+        Other,
+    }
+
+    /// The rest of a file of `len` bytes whose first `SMALL_FILE + 1` are in `buf` (`first` said
+    /// `Larger`): the whole file's length, unless it holds a NUL byte or starts with a byte-order
+    /// mark (the stream reader's cases) or is no longer `len` bytes long.
+    pub(super) fn rest(file: &File, len: usize, buf: &mut Vec<u8>) -> Option<usize> {
+        let mut at = SMALL_FILE as usize + 1;
+        if len < at {
+            return None;
         }
-        let b = &mut buf[..len];
-        let n = read_at(file, b, 0).ok()?;
+        if buf.len() < len {
+            buf.resize(MID_FILE as usize, 0);
+        }
+        while at < len {
+            match read_at(file, &mut buf[at..len], at as u64) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => at += n,
+            }
+        }
+        #[cfg(not(unix))]
+        let _ = std::io::Seek::seek(&mut &*file, std::io::SeekFrom::Start(0));
+        let b = &buf[..len];
         let bom = b.starts_with(&[0xEF, 0xBB, 0xBF]) || b.starts_with(&[0xFF, 0xFE]) || b.starts_with(&[0xFE, 0xFF]);
-        (n == len && !bom).then_some(n)
+        (at == len && !bom && memchr::memchr(0, b).is_none()).then_some(len)
+    }
+
+    /// Reads into `buf`, kept by the thread across files (sized once, never zeroed again).
+    pub(super) fn first(file: &File, buf: &mut Vec<u8>) -> First {
+        let max = SMALL_FILE as usize;
+        if buf.len() <= max {
+            buf.resize(max + 1, 0);
+        }
+        let read = read_at(file, &mut buf[..max + 1], 0);
+        // Windows moves the file's position on a read at an offset; the stream reader starts at it
+        #[cfg(not(unix))]
+        let _ = std::io::Seek::seek(&mut &*file, std::io::SeekFrom::Start(0));
+        match read {
+            Ok(n) if n > max => First::Larger,
+            Ok(n) => {
+                let b = &buf[..n];
+                let bom = b.starts_with(&[0xEF, 0xBB, 0xBF]) || b.starts_with(&[0xFF, 0xFE]) || b.starts_with(&[0xFE, 0xFF]);
+                if bom {
+                    First::Other
+                } else {
+                    First::Whole(n)
+                }
+            }
+            Err(_) => First::Other,
+        }
     }
 
     /// The whole file when it holds no NUL byte (a slice search checks only its start for binary data).

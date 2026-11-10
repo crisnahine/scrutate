@@ -11,7 +11,8 @@ use std::{
     fs::File,
     io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::atomic::{AtomicUsize, Ordering},
+    sync::{Arc, OnceLock},
 };
 
 use {
@@ -40,6 +41,9 @@ pub struct Glob {
     is_whitelist: bool,
     /// Whether this glob should only match directories or not.
     is_only_dir: bool,
+    /// The builder's `case_insensitive` and `allow_unclosed_class` when
+    /// this glob was added.
+    options: (bool, bool),
 }
 
 impl Glob {
@@ -84,12 +88,33 @@ pub struct Gitignore {
     set_index: Vec<usize>,
     /// the globs matched without `set`, with their index in `globs`
     simple: Vec<(usize, Simple)>,
+    /// every glob in one set, for a matcher used often (`full_set`)
+    full: Arc<Full>,
     root: PathBuf,
     globs: Vec<Glob>,
     num_ignores: u64,
     num_whitelists: u64,
     matches: Option<Arc<Pool<Vec<usize>>>>,
 }
+
+/// Every glob of a matcher in one `GlobSet`, compiled once the matcher has
+/// tried its simple globs often enough.
+#[derive(Debug, Default)]
+struct Full {
+    /// tries so far, counted in steps of `TICK`
+    uses: AtomicUsize,
+    /// `None` inside: the set could not be built, and the globs stay as they are
+    set: OnceLock<Option<GlobSet>>,
+}
+
+/// Tries times simple globs at which the set is compiled: a build costs
+/// about 250 µs and trying one simple glob about 15 ns, so this is where
+/// going on would cost more than compiling. The Linux tree's root file (over
+/// 100 globs, 95,000 paths) compiles after 160 paths; a file with 5 globs
+/// in a tree of 3,000 never does.
+const COMPILE_AT: usize = 16_000;
+/// A thread adds its tries to the shared count once in this many.
+const TICK: u32 = 16;
 
 /// A glob that needs no regex: building a `GlobSet` regex costs more than a small
 /// tree's whole walk, and most gitignore lines have one of these shapes.
@@ -133,19 +158,12 @@ impl Simple {
         }
     }
 
-    fn is_match(&self, path: &[u8]) -> bool {
+    /// `name` is the last component of `path`.
+    fn is_match(&self, path: &[u8], name: &[u8]) -> bool {
         match self {
-            Simple::Name(p) => {
-                let name = match memchr::memrchr(b'/', path) {
-                    Some(i) => &path[i + 1..],
-                    None => path,
-                };
-                wildcard(p, name)
-            }
+            Simple::Name(p) => wildcard(p, name),
             Simple::Tail(t) => path.ends_with(t) || path == &t[1..],
-            Simple::Root(p) => {
-                memchr::memchr(b'/', path).is_none() && wildcard(p, path)
-            }
+            Simple::Root(p) => name.len() == path.len() && wildcard(p, path),
         }
     }
 }
@@ -262,6 +280,7 @@ impl Gitignore {
             set: GlobSet::empty(),
             set_index: vec![],
             simple: vec![],
+            full: Arc::default(),
             root: PathBuf::from(""),
             globs: vec![],
             num_ignores: 0,
@@ -379,25 +398,36 @@ impl Gitignore {
         // the last glob that matches (and applies to this kind of entry) wins
         let applies = |i: usize| !self.globs[i].is_only_dir() || is_dir;
         let mut best = None;
-        if !self.set.is_empty() {
+        if let Some(full) = self.full_set() {
             let mut matches = self.matches.as_ref().unwrap().get();
             let candidate = Candidate::new(path);
-            self.set.matches_candidate_into(&candidate, &mut *matches);
-            best = matches
-                .iter()
-                .rev()
-                .map(|&i| self.set_index[i])
-                .find(|&i| applies(i));
-        }
-        if !self.simple.is_empty() {
-            let bytes = path_bytes(path);
-            for (i, s) in self.simple.iter().rev() {
-                if best.is_some_and(|b| b > *i) {
-                    break;
-                }
-                if applies(*i) && s.is_match(&bytes) {
-                    best = Some(*i);
-                    break;
+            full.matches_candidate_into(&candidate, &mut *matches);
+            best = matches.iter().rev().copied().find(|&i| applies(i));
+        } else {
+            if !self.set.is_empty() {
+                let mut matches = self.matches.as_ref().unwrap().get();
+                let candidate = Candidate::new(path);
+                self.set.matches_candidate_into(&candidate, &mut *matches);
+                best = matches
+                    .iter()
+                    .rev()
+                    .map(|&i| self.set_index[i])
+                    .find(|&i| applies(i));
+            }
+            if !self.simple.is_empty() {
+                let bytes = path_bytes(path);
+                let name = match memchr::memrchr(b'/', &bytes) {
+                    Some(i) => &bytes[i + 1..],
+                    None => &bytes[..],
+                };
+                for (i, s) in self.simple.iter().rev() {
+                    if best.is_some_and(|b| b > *i) {
+                        break;
+                    }
+                    if applies(*i) && s.is_match(&bytes, name) {
+                        best = Some(*i);
+                        break;
+                    }
                 }
             }
         }
@@ -406,6 +436,48 @@ impl Gitignore {
             Some(glob) => Match::Ignore(glob),
             None => Match::None,
         }
+    }
+
+    /// The set of every glob, once trying the simple globs one by one has
+    /// cost about as much as compiling it (`COMPILE_AT`); `None` before.
+    fn full_set(&self) -> Option<&GlobSet> {
+        if self.simple.is_empty() {
+            return None;
+        }
+        if let Some(set) = self.full.set.get() {
+            return set.as_ref();
+        }
+        thread_local!(static TRIES: std::cell::Cell<u32> = const { std::cell::Cell::new(0) });
+        let tries = TRIES.with(|t| {
+            t.set(t.get().wrapping_add(1));
+            t.get()
+        });
+        if tries % TICK != 0 {
+            return None;
+        }
+        let uses = self.full.uses.fetch_add(TICK as usize, Ordering::Relaxed)
+            + TICK as usize;
+        if uses * self.simple.len() < COMPILE_AT {
+            return None;
+        }
+        self.full.set.get_or_init(|| self.compile()).as_ref()
+    }
+
+    fn compile(&self) -> Option<GlobSet> {
+        let mut builder = GlobSetBuilder::new();
+        for glob in &self.globs {
+            let (case_insensitive, unclosed_class) = glob.options;
+            builder.add(
+                GlobBuilder::new(&glob.actual)
+                    .literal_separator(true)
+                    .case_insensitive(case_insensitive)
+                    .backslash_escape(true)
+                    .allow_unclosed_class(unclosed_class)
+                    .build()
+                    .ok()?,
+            );
+        }
+        builder.build().ok()
     }
 
     /// Strips the given path such that it's suitable for matching with this
@@ -491,6 +563,7 @@ impl GitignoreBuilder {
             set,
             set_index: self.set_index.clone(),
             simple: self.simple.clone(),
+            full: Arc::default(),
             root: self.root.clone(),
             globs: self.globs.clone(),
             num_ignores: nignore as u64,
@@ -615,6 +688,7 @@ impl GitignoreBuilder {
             actual: String::new(),
             is_whitelist: false,
             is_only_dir: false,
+            options: (self.case_insensitive, self.allow_unclosed_class),
         };
         let mut is_absolute = false;
         if line.starts_with("\\!") || line.starts_with("\\#") {
@@ -1153,6 +1227,47 @@ mod tests {
             }
         }
         assert!(simple > 1_000 && hits > 5_000, "{simple} simple globs, {hits} hits");
+    }
+
+    #[test]
+    fn a_busy_matcher_compiles_its_globs_and_answers_the_same() {
+        use crate::Match;
+        let gi = gi_from_str(
+            ROOT,
+            "*.o\n!keep*.o\n/top*\nsub/dir\nbuild/\n[ab].txt\n",
+        );
+        let cases = [
+            ("x.o", false),
+            ("keep1.o", false),
+            ("a/keep.o", false),
+            ("top1", false),
+            ("a/top1", false),
+            ("x/sub/dir", false),
+            ("sub/dir", true),
+            ("build", true),
+            ("build", false),
+            ("a.txt", false),
+            ("c.txt", false),
+            ("z", false),
+        ];
+        let answers = |gi: &Gitignore| -> Vec<u8> {
+            cases
+                .iter()
+                .map(|(path, is_dir)| match gi.matched(path, *is_dir) {
+                    Match::None => 0,
+                    Match::Ignore(_) => 1,
+                    Match::Whitelist(_) => 2,
+                })
+                .collect()
+        };
+        assert!(gi.full.set.get().is_none());
+        let before = answers(&gi);
+        assert_eq!(before, [1, 2, 2, 1, 0, 0, 1, 1, 0, 1, 0, 0]);
+        for _ in 0..super::COMPILE_AT {
+            gi.matched("z", false);
+        }
+        assert!(gi.full.set.get().is_some_and(|set| set.is_some()));
+        assert_eq!(answers(&gi), before);
     }
 
     // See: https://github.com/BurntSushi/ripgrep/issues/106

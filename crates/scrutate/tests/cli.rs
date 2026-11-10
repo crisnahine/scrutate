@@ -615,6 +615,56 @@ fn small_tree_path_equals_parallel_walk() {
 }
 
 #[test]
+fn whole_file_reads_equal_the_stream_reader() {
+    // files around the sizes read in one piece (64 KB and 1 MB): several threads read them whole,
+    // one thread (-j 1) streams them, and both must print the same
+    let r = Repo::new("wholeread");
+    let line = "alpha beta gamma KÖNIG delta\n".as_bytes();
+    let text = |n: usize| line.iter().copied().cycle().take(n).collect::<Vec<u8>>();
+    let with = |mut t: Vec<u8>, at: usize, byte: u8| {
+        t[at] = byte;
+        t
+    };
+    let bom = |t: Vec<u8>| [&[0xEF, 0xBB, 0xBF][..], &t].concat();
+    r.write("empty.txt", b"");
+    r.write("small.txt", &text(1000));
+    r.write("small_nul.txt", &with(text(5000), 100, 0));
+    r.write("small_bom.txt", &bom(text(100)));
+    r.write("edge_64k.txt", &text(64 << 10));
+    r.write("edge_64k_1.txt", &text((64 << 10) + 1));
+    r.write("mid.txt", &text(300_000));
+    r.write("mid_crlf.txt", &"alpha beta\r\ngamma\r\n".as_bytes().iter().copied().cycle().take(200_000).collect::<Vec<u8>>());
+    r.write("mid_nul.txt", &with(text(200_000), 150_000, 0));
+    r.write("mid_bom.txt", &bom(text(100_000)));
+    r.write("edge_1m.txt", &text(1 << 20));
+    r.write("edge_1m_1.txt", &text((1 << 20) + 1));
+    for args in [
+        &["grep", "--sort", "alpha"][..],
+        &["grep", "--sort", "-c", "beta"],
+        &["grep", "--sort", "-i", "könig"],
+        &["grep", "--sort", "-v", "alpha"],
+        &["grep", "--sort", "--json", "gamma"],
+        &["grep", "--sort", "-F", "a d"],
+        &["grep", "--sort", "nothing here"],
+    ] {
+        let whole = untimed(r.run(args));
+        let mut one = args.to_vec();
+        one.extend_from_slice(&["-j", "1"]);
+        let stream = untimed(r.run(&one));
+        assert_eq!(whole.0, stream.0, "{args:?}");
+        assert_eq!(whole.1.len(), stream.1.len(), "{args:?}");
+        for (a, b) in whole.1.iter().zip(&stream.1) {
+            assert_eq!(a, b, "{args:?}");
+        }
+    }
+    // and the whole-file path is the one that ran: every text file up to 1 MB has its matches
+    let (_, out, _) = r.run(&["grep", "--sort", "-c", "beta"]);
+    for file in ["small.txt", "edge_64k.txt", "edge_64k_1.txt", "mid.txt", "mid_crlf.txt", "mid_bom.txt", "edge_1m.txt", "edge_1m_1.txt"] {
+        assert!(out.lines().any(|l| l.starts_with(&format!("{file}:"))), "{file} missing in\n{out}");
+    }
+}
+
+#[test]
 fn pcre2_look_around_backreferences_and_the_match_limit() {
     let r = Repo::new("pcre2");
     r.write("t.txt", b"foobar\nbazbar\nabba\nabc\n");
