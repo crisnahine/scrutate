@@ -58,6 +58,8 @@ jobs:
   wheels:
     name: wheel (${{ matrix.os }}, ${{ matrix.kind }})
     runs-on: ${{ matrix.os }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "13.0"  # as .cargo/config.toml; maturin reads it for the wheel tag
     strategy:
       fail-fast: false
       matrix:

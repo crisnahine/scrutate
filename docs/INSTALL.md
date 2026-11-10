@@ -10,7 +10,7 @@ on it. Every row below names the evidence; `bench/results/platforms/` holds the 
 
 | Platform | Binary | Wheels | Status | Evidence |
 |---|---|---|---|---|
-| macOS arm64 (Apple Silicon, macOS 27) | built and tested natively | `cp39-abi3` on CPython 3.10, 3.11, 3.12, 3.13; `cp314t` on free-threaded 3.14 | **supported** | docs/TEST_RESULTS.md; `wheels-macos-arm64.json` |
+| macOS arm64 (Apple Silicon; macOS 13 or newer, tested on macOS 27) | built and tested natively | `cp39-abi3` on CPython 3.10, 3.11, 3.12, 3.13; `cp314t` on free-threaded 3.14 | **supported** | docs/TEST_RESULTS.md; `wheels-macos-arm64.json` |
 | Linux aarch64 (glibc and static musl) | built and tested in a clean `rust:1-slim-bookworm` container (no Python on the image); the static musl binary prints byte-identical output | `cp39-abi3` on CPython 3.10, 3.12, 3.13; `cp314t` on free-threaded 3.14 | **supported** | `linux-aarch64/verify.log`, `musl-identical.txt`, `wheels.json` |
 | Linux x86_64 (glibc and static musl) | the same script in a `linux/amd64` container, run under emulation on the Apple Silicon host: it verifies behaviour, not x86 speed. For the release commit, gcc crashed under that emulation, so the binary and every test binary were cross-built on arm64 and all 104 tests run in an amd64 container | same as aarch64 (from the full run on an earlier commit) | **supported** | `linux-x86_64/cross-verify.log` (release commit); `verify.log`, `musl-identical.txt`, `wheels.json` (earlier full run) |
 | macOS x86_64 | cross-built; the test binaries compile and link, none was run (Rosetta 2 is not installed on the build machine) | not built | **not supported yet** | `macos-x86_64/verify.log` |

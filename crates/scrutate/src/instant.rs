@@ -1037,10 +1037,14 @@ fn walk_threads(o: &Options, c: &Counters) -> usize {
     }
 }
 
+/// An open and read of a small file taking this long came from the disk, not the page cache
+/// (about 25 us warm, 160 us or more cold on an M3 Pro).
+const COLD_READ_NS: u64 = 75_000;
+
 fn reads_from_disk(c: &Counters) -> bool {
-    const COLD_READ_NS: u64 = 75_000;
+    // three quarters slow: a few reads delayed by a busy machine do not make a warm tree look cold
     let reads = c.small_reads.load(Ordering::Relaxed);
-    reads >= 16 && c.small_read_ns.load(Ordering::Relaxed) / reads >= COLD_READ_NS
+    reads >= 16 && c.slow_reads.load(Ordering::Relaxed) * 4 >= reads * 3
 }
 
 fn cold_threads() -> usize {
@@ -1168,7 +1172,7 @@ fn small_first(
             // a clone per thread: each gets its own regex cache pool instead of contending for one
             let matcher = matcher.clone();
             s.spawn(move || {
-                let mut searcher = file_searcher(o);
+                let mut fw = file_worker(o);
                 loop {
                     let job = match work_rx.lock() {
                         Ok(r) => r.recv(),
@@ -1176,7 +1180,7 @@ fn small_first(
                     };
                     let Ok((path, rel, size)) = job else { break };
                     if !cancel.load(Ordering::Relaxed) {
-                        search_one(&mut searcher, &matcher, &path, rel, size, o, c, cancel, &tx, plain);
+                        search_one(&mut fw, &matcher, &path, rel, size, o, c, cancel, &tx, plain);
                     }
                 }
             });
@@ -1240,9 +1244,10 @@ fn small_first(
 #[derive(Default)]
 struct Counters {
     files_searched: AtomicU64,
-    /// small files opened and read in one call, and the nanoseconds that took
+    /// small files opened and read in one call
     small_reads: AtomicU64,
-    small_read_ns: AtomicU64,
+    /// of those, the reads that took as long as a disk read (`COLD_READ_NS` or more)
+    slow_reads: AtomicU64,
     files_matched: AtomicU64,
     matches: AtomicU64,
     bytes: AtomicU64,
@@ -1261,21 +1266,29 @@ impl Counters {
     }
 }
 
-fn file_searcher(o: &Options) -> Searcher {
-    SearcherBuilder::new()
+/// What one search thread keeps from file to file: its searcher and the buffer small files are
+/// read into (a new zeroed buffer per file cost about 4% of the CPU of a Linux-tree search on Linux).
+struct FileWorker {
+    searcher: Searcher,
+    small: Vec<u8>,
+}
+
+fn file_worker(o: &Options) -> FileWorker {
+    let searcher = SearcherBuilder::new()
         .binary_detection(BinaryDetection::quit(0))
         .line_number(!(o.count_only || o.files_only)) // line numbers cost a pass over the buffer
         .multi_line(o.multiline)
         .before_context(o.before)
         .after_context(o.after)
         .invert_match(o.invert)
-        .build()
+        .build();
+    FileWorker { searcher, small: Vec::new() }
 }
 
 /// Search one file and send its hits to `tx`.
 #[allow(clippy::too_many_arguments)]
 fn search_one(
-    searcher: &mut Searcher,
+    w: &mut FileWorker,
     matcher: &AnyMatcher,
     path: &Path,
     rel: Arc<str>,
@@ -1292,10 +1305,11 @@ fn search_one(
     }
     if o.search_zip {
         if let Some(kind) = crate::archive::Kind::of(&rel) {
-            search_archive(searcher, matcher, path, &rel, kind, o, c, cancel, tx, plain);
+            search_archive(&mut w.searcher, matcher, path, &rel, kind, o, c, cancel, tx, plain);
             return;
         }
     }
+    let searcher = &mut w.searcher;
     let opened = Instant::now();
     let file = match std::fs::File::open(path) {
         Ok(f) => f,
@@ -1304,7 +1318,8 @@ fn search_one(
             return;
         }
     };
-    let mut whole = None;
+    let mut owned = None;
+    let mut small = None;
     if splittable(o) {
         let len = size.or_else(|| file.metadata().ok().map(|m| m.len())).unwrap_or(0);
         let min = split_file_bytes();
@@ -1312,14 +1327,17 @@ fn search_one(
             match split::search(&file, len, (min / 8).max(1), &rel, matcher, o, c, cancel, tx, plain) {
                 split::Outcome::Done => return,
                 split::Outcome::Stream => {}
-                split::Outcome::Buffer(b) => whole = Some(b),
+                split::Outcome::Buffer(b) => owned = Some(b),
             }
         } else if len > 0 && len <= SMALL_FILE {
-            whole = split::small(&file, len);
+            small = split::small(&file, len, &mut w.small);
             c.small_reads.fetch_add(1, Ordering::Relaxed);
-            c.small_read_ns.fetch_add(opened.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            if opened.elapsed().as_nanos() as u64 >= COLD_READ_NS {
+                c.slow_reads.fetch_add(1, Ordering::Relaxed);
+            }
         }
     }
+    let whole: Option<&[u8]> = owned.as_deref().or(small.map(|n| &w.small[..n]));
     let mut sink = collector(Arc::clone(&rel), matcher, o, c, cancel, tx, plain);
     let res = match (matcher, &whole) {
         (AnyMatcher::Regex(rm), Some(b)) => searcher.search_slice(rm, b, &mut sink),
@@ -1513,11 +1531,16 @@ mod split {
 
     /// A small file in one read, unless it starts with a byte-order mark (only the stream reader
     /// transcodes) or came back short (it changed: the stream reader takes it from the start).
-    pub(super) fn small(file: &File, len: u64) -> Option<Vec<u8>> {
-        let mut buf = vec![0u8; len as usize];
-        let n = read_at(file, &mut buf, 0).ok()?;
-        let bom = buf.starts_with(&[0xEF, 0xBB, 0xBF]) || buf.starts_with(&[0xFF, 0xFE]) || buf.starts_with(&[0xFE, 0xFF]);
-        (n == buf.len() && !bom).then_some(buf)
+    /// Reads into `buf`, kept by the thread across files (sized once, never zeroed again).
+    pub(super) fn small(file: &File, len: u64, buf: &mut Vec<u8>) -> Option<usize> {
+        let len = len as usize;
+        if buf.len() < len {
+            buf.resize(SMALL_FILE as usize, 0);
+        }
+        let b = &mut buf[..len];
+        let n = read_at(file, b, 0).ok()?;
+        let bom = b.starts_with(&[0xEF, 0xBB, 0xBF]) || b.starts_with(&[0xFF, 0xFE]) || b.starts_with(&[0xFE, 0xFF]);
+        (n == len && !bom).then_some(n)
     }
 
     /// The whole file when it holds no NUL byte (a slice search checks only its start for binary data).
@@ -1793,7 +1816,7 @@ fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Opti
             let roots = roots_owned.clone();
             let plain = plain.clone();
             let searched = Arc::clone(&searched);
-            let mut searcher = file_searcher(&opts);
+            let mut fw = file_worker(&opts);
             Box::new(move |entry| {
                 if cancel.load(Ordering::Relaxed) {
                     return WalkState::Quit;
@@ -1810,7 +1833,7 @@ fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Opti
                 }
                 let size = if opts.want_bytes { entry.metadata().ok().map(|m| m.len()) } else { None };
                 let rel: Arc<str> = Arc::from(relative(entry.path(), &roots));
-                search_one(&mut searcher, &matcher, entry.path(), rel, size, &opts, &c, &cancel, &tx, plain.as_deref());
+                search_one(&mut fw, &matcher, entry.path(), rel, size, &opts, &c, &cancel, &tx, plain.as_deref());
                 if cancel.load(Ordering::Relaxed) {
                     WalkState::Quit
                 } else {
@@ -1868,7 +1891,7 @@ fn search_list(
             let matcher = matcher.clone();
             s.spawn(move || {
                 let matcher = &matcher;
-                let mut searcher = file_searcher(o);
+                let mut fw = file_worker(o);
                 loop {
                     let i = next.fetch_add(1, Ordering::Relaxed);
                     if i >= files.len() || cancel.load(Ordering::Relaxed) {
@@ -1876,7 +1899,7 @@ fn search_list(
                     }
                     let (path, rel) = &files[i];
                     let size = if o.want_bytes { std::fs::metadata(path).ok().map(|m| m.len()) } else { None };
-                    search_one(&mut searcher, matcher, path, Arc::clone(rel), size, o, counters, cancel, &tx, plain);
+                    search_one(&mut fw, matcher, path, Arc::clone(rel), size, o, counters, cancel, &tx, plain);
                 }
             });
         }

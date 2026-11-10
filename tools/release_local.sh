@@ -3,6 +3,8 @@
 # checksums. The release workflow does the same for every platform and adds Sigstore attestations.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# .cargo/config.toml sets it for cargo; maturin reads it from the environment for the wheel tag
+export MACOSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET:-13.0}
 v=$(grep -m1 '^version = ' crates/scrutate/Cargo.toml | cut -d'"' -f2)
 target=$(rustc -vV | sed -n 's/^host: //p')
 rm -rf dist && mkdir -p dist
