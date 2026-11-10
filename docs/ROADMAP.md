@@ -30,6 +30,11 @@ docs/TRACEABILITY.md.
 | Many files on macOS (R-4.6) | as many threads as performance cores when walking (kernel contention made 11 threads slower than 5); the Linux and LLVM trees, 200,000 small files and the binary-heavy tree went from behind or level with ugrep to 13 to 21% ahead |
 | Regexes anchored at line starts (R-4.6) | only line starts beginning with the regex's prefix literals are examined: `^(a|aa)+$` on the pathological corpus, 52 ms to 18 ms |
 | Start-up in git repositories (R-4.6) | `vendor/ignore` reads the global excludes path without compiling a regex: 0.4 ms of a 6 ms search of a 220-file repository |
+| One definition of every index operation (R-6.15, R-13) | `ops.rs`: the CLI, the MCP server, `batch` and the Python bindings share arguments, defaults, limits, text and JSON; they had drifted (three limits for `callers`, references textual in MCP and resolved in the CLI) |
+| An MCP server that fits how agents work today (R-6.15) | read-only and local hints on every tool, server instructions, answers within a byte budget with an offset to continue, `grep_code` on Engine A, no tool call blocked for more than 20 s by a first index build; from docs/research/agent-facing-search-2026-11.md |
+| Index upkeep in one place (R-12.4) | `Repo`: update, and rebuild when the database is corrupt, for every front end that stays open |
+| The index never disagrees with the walk about a pattern (R-2B.1) | one translation of the pattern for Engine A's matcher and the text index's trigram condition, checked by an in-process test |
+| Linux-tree searches against ripgrep (R-4.6) | a busy `.gitignore` compiles its globs; files up to 1 MB read whole; no size lookup per file: in the test VM from 2 to 6% behind ripgrep to 6 to 12% ahead |
 
 ## Blocked: needs the repository published (declined for this release)
 
@@ -76,6 +81,16 @@ docs/TRACEABILITY.md.
   the cost of every open on macOS for every tool; `bench/corpora.py` now makes copies (APFS
   clones). The published `linux/*` rows were measured with the hard links and need the next full
   run.
+- Agents, next: `outputSchema` and `structuredContent` on the MCP tools (Codex turns an output
+  schema into a typed return value for its scripts; clients still differ on which form reaches
+  the model, so the text stays); the stateless protocol revision 2026-07-28 (`server/discover`,
+  `resultType`, cache hints on `tools/list`; today clients fall back to the handshake); honouring
+  `notifications/cancelled` (a tool call runs on the thread that reads requests); symbol-scoped
+  reads (`read_code` by symbol name) and result ids an agent can pass back. Sources and client
+  support are in docs/research/agent-facing-search-2026-11.md.
+- Known limits left in place: smart case does not see `\x41` as an uppercase letter; the LSP
+  server's save worker updates the index without the corrupt-database rebuild; `-U` is ignored by
+  `--fuzzy` and `--fuzzy-regex`.
 - Linux: in the 8-CPU Linux VM on the development Mac, Scrutate used about 10% more CPU than
   ripgrep for the same Linux-tree search (993 ms against 910 ms for `PM_RESUME`). Two measured
   steps, both on `perf/next`: read small files into one buffer per thread instead of a new zeroed
