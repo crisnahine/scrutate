@@ -603,38 +603,6 @@ impl Searcher {
         Ok((resolved, external))
     }
 
-    /// Exact regex search over the files of the repository, results grouped by enclosing symbol.
-    pub fn grep(&self, pattern: &str, k: usize) -> Result<Vec<Hit>> {
-        let Ok(rx) = Regex::new(pattern) else {
-            return Ok(Vec::new());
-        };
-        let mut seen: HashMap<i64, Hit> = HashMap::new();
-        let mut order: Vec<i64> = Vec::new();
-        for rel in crate::index::list_files(&self.ix.root) {
-            let Ok(bytes) = std::fs::read(self.ix.root.join(&rel)) else {
-                continue;
-            };
-            if bytes[..bytes.len().min(4096)].contains(&0) {
-                continue;
-            }
-            let text = String::from_utf8_lossy(&bytes);
-            for (i, line) in text.split('\n').enumerate() {
-                if rx.is_match(line) {
-                    if let Some(row) = self.ix.chunk_at(&rel, i as i64 + 1)? {
-                        if let std::collections::hash_map::Entry::Vacant(e) = seen.entry(row.id) {
-                            order.push(row.id);
-                            e.insert(Hit::from_row(&row, true));
-                            if seen.len() >= k {
-                                return Ok(order.iter().map(|i| seen.remove(i).unwrap()).collect());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Ok(order.iter().map(|i| seen.remove(i).unwrap()).collect())
-    }
-
     pub fn read(&self, path: &str, start: i64, end: Option<i64>, max_lines: i64) -> String {
         let full = self.ix.root.join(path);
         let Ok(canon) = std::fs::canonicalize(&full) else {

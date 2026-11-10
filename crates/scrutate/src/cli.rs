@@ -1304,31 +1304,23 @@ fn grep_plain(roots: Vec<PathBuf>, o: Options, out: GrepOutput, cancel: Arc<Atom
 }
 
 /// Engine B enrichment of Engine A results: group matching lines by the enclosing symbol.
-fn grouped_by_symbol(root: &Path, hits: &mut [instant::Hit], w: &mut termcolor::BufferedStandardStream, json: bool) -> Result<()> {
+fn grouped_by_symbol(root: &Path, hits: &mut Vec<instant::Hit>, w: &mut termcolor::BufferedStandardStream, json: bool) -> Result<()> {
     let s = open_fresh(root)?;
-    hits.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
-    let mut groups: Vec<(Option<crate::index::ChunkRow>, Vec<&instant::Hit>)> = Vec::new();
-    for h in hits.iter().filter(|h| !h.context) {
-        let row = s.ix.chunk_at(&h.path, h.line as i64)?;
-        match groups.last_mut() {
-            Some((Some(r), v)) if row.as_ref().map(|x| x.id) == Some(r.id) => v.push(h),
-            Some((None, v)) if row.is_none() && v.last().map(|x| x.path == h.path).unwrap_or(false) => v.push(h),
-            _ => groups.push((row, vec![h])),
-        }
-    }
-    for (row, lines) in groups {
+    let mut lines: Vec<instant::Hit> = std::mem::take(hits).into_iter().filter(|h| !h.context).collect();
+    lines.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
+    for g in crate::intel::group_by_symbol(&s.ix, lines)? {
         let name =
-            row.as_ref().map(|r| format!("{}:{}-{}  [{}] {}", r.path, r.start, r.end, r.kind, if r.qualname.is_empty() { &r.name } else { &r.qualname }));
+            g.symbol.as_ref().map(|r| format!("{}:{}-{}  [{}] {}", r.path, r.start, r.end, r.kind, if r.qualname.is_empty() { &r.name } else { &r.qualname }));
         if json {
             writeln!(
                 w,
                 "{}",
-                serde_json::json!({"type": "symbol_group", "schema": SCHEMA, "symbol": name, "path": lines[0].path,
-                "matches": lines.iter().map(|h| serde_json::json!({"line": h.line, "text": h.text})).collect::<Vec<_>>()})
+                serde_json::json!({"type": "symbol_group", "schema": SCHEMA, "symbol": name, "path": g.path,
+                "matches": g.lines.iter().map(|h| serde_json::json!({"line": h.line, "text": h.text})).collect::<Vec<_>>()})
             )?;
         } else {
-            writeln!(w, "{}", name.unwrap_or_else(|| format!("{}  (no symbol)", lines[0].path)))?;
-            for h in lines {
+            writeln!(w, "{}", name.unwrap_or_else(|| format!("{}  (no symbol)", g.path)))?;
+            for h in &g.lines {
                 writeln!(w, "    {}: {}", h.line, h.text.trim_end())?;
             }
         }

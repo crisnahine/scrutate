@@ -1103,8 +1103,6 @@ impl Resolved {
 
 /// Every whole-word occurrence of `name` (Engine A), each resolved to the definition it refers to.
 pub fn resolved_references(s: &Searcher, name: &str, max_results: u64) -> Result<Resolved> {
-    use std::sync::atomic::AtomicBool;
-    use std::sync::Arc;
     let bare = name.rsplit('.').next().unwrap_or(name);
     let o = crate::instant::Options {
         pattern: bare.to_string(),
@@ -1114,14 +1112,7 @@ pub fn resolved_references(s: &Searcher, name: &str, max_results: u64) -> Result
         max_results: Some(max_results),
         ..crate::instant::Options::default()
     };
-    let mut hits: Vec<crate::instant::Hit> = Vec::new();
-    let mut sink = |h: crate::instant::Hit| {
-        if !h.context {
-            hits.push(h)
-        }
-    };
-    let stats = crate::instant::search(std::slice::from_ref(&s.ix.root), &o, Arc::new(AtomicBool::new(false)), &mut sink)?;
-    hits.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
+    let (hits, truncated) = crate::intel::occurrences(&s.ix.root, &o)?;
     let mut rv = Resolver::new(&s.ix)?;
     let mut occurrences = Vec::new();
     for h in hits {
@@ -1140,7 +1131,7 @@ pub fn resolved_references(s: &Searcher, name: &str, max_results: u64) -> Result
             }
         }
     }
-    Ok(Resolved { definitions, occurrences, truncated: stats.cancelled })
+    Ok(Resolved { definitions, occurrences, truncated })
 }
 
 /// Plain-text rendering of `resolved_references`, optionally for the one definition `only`.

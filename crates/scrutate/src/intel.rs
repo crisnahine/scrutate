@@ -560,11 +560,61 @@ impl References {
     }
 }
 
+/// Engine A matches under the repository root, in path and line order, without context lines.
+/// The flag says the search stopped at `o.max_results`.
+pub fn occurrences(root: &std::path::Path, o: &crate::instant::Options) -> Result<(Vec<crate::instant::Hit>, bool)> {
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+    let mut hits: Vec<crate::instant::Hit> = Vec::new();
+    let mut sink = |h: crate::instant::Hit| {
+        if !h.context {
+            hits.push(h)
+        }
+    };
+    let stats = crate::instant::search(std::slice::from_ref(&root.to_path_buf()), o, Arc::new(AtomicBool::new(false)), &mut sink)?;
+    hits.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
+    Ok((hits, stats.cancelled))
+}
+
+/// Matching lines (in path and line order) grouped by the symbol that encloses them; lines outside
+/// any symbol form one group per file.
+pub fn group_by_symbol(ix: &Index, hits: Vec<crate::instant::Hit>) -> Result<Vec<RefGroup>> {
+    let mut groups: Vec<RefGroup> = Vec::new();
+    for h in hits {
+        let row = ix.chunk_at(&h.path, h.line as i64)?;
+        match groups.last_mut() {
+            Some(g) if g.symbol.as_ref().map(|x| x.id) == row.as_ref().map(|x| x.id) && *g.path == *h.path => g.lines.push(h),
+            _ => groups.push(RefGroup { symbol: row, path: h.path.to_string(), lines: vec![h] }),
+        }
+    }
+    Ok(groups)
+}
+
+/// An Engine A search of the repository with its matches grouped by enclosing symbol: the grep an
+/// agent asks for (MCP `grep_code`), over the files `scrutate grep` searches.
+pub fn grouped_grep(s: &Searcher, o: &crate::instant::Options) -> Result<(Vec<RefGroup>, bool)> {
+    let (hits, truncated) = occurrences(&s.ix.root, o)?;
+    Ok((group_by_symbol(&s.ix, hits)?, truncated))
+}
+
+/// One line per group and one per matching line under it.
+pub fn groups_text(groups: &[RefGroup], out: &mut String) {
+    for g in groups {
+        match &g.symbol {
+            Some(c) => {
+                out.push_str(&format!("  {}:{}-{}  [{}] {}\n", c.path, c.start, c.end, c.kind, if c.qualname.is_empty() { &c.name } else { &c.qualname }))
+            }
+            None => out.push_str(&format!("  {}  (no enclosing symbol)\n", g.path)),
+        }
+        for h in &g.lines {
+            out.push_str(&format!("    {}: {}\n", h.line, h.text.trim_end()));
+        }
+    }
+}
+
 /// Definitions (index), callers (index) and every whole-word occurrence of `name` (Engine A),
 /// grouped by the enclosing symbol. Works without an index too (then only occurrences, ungrouped).
 pub fn references(s: &Searcher, name: &str, max_results: u64) -> Result<References> {
-    use std::sync::atomic::AtomicBool;
-    use std::sync::Arc;
     let definitions = definitions(&s.ix, name)?;
     let callers = s.callers(name, 200)?;
     let o = crate::instant::Options {
@@ -574,23 +624,8 @@ pub fn references(s: &Searcher, name: &str, max_results: u64) -> Result<Referenc
         max_results: Some(max_results),
         ..crate::instant::Options::default()
     };
-    let mut hits: Vec<crate::instant::Hit> = Vec::new();
-    let mut sink = |h: crate::instant::Hit| {
-        if !h.context {
-            hits.push(h)
-        }
-    };
-    let stats = crate::instant::search(std::slice::from_ref(&s.ix.root), &o, Arc::new(AtomicBool::new(false)), &mut sink)?;
-    hits.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
-    let mut groups: Vec<RefGroup> = Vec::new();
-    for h in hits {
-        let row = s.ix.chunk_at(&h.path, h.line as i64)?;
-        match groups.last_mut() {
-            Some(g) if g.symbol.as_ref().map(|x| x.id) == row.as_ref().map(|x| x.id) && *g.path == *h.path => g.lines.push(h),
-            _ => groups.push(RefGroup { symbol: row, path: h.path.to_string(), lines: vec![h] }),
-        }
-    }
-    Ok(References { definitions, callers, groups, truncated: stats.cancelled })
+    let (groups, truncated) = grouped_grep(s, &o)?;
+    Ok(References { definitions, callers, groups, truncated })
 }
 
 /// Plain-text rendering of `references` (CLI and MCP).
@@ -610,17 +645,7 @@ pub fn references_text(s: &Searcher, name: &str, max_results: u64) -> Result<Str
         }
     }
     out.push_str(&format!("references ({} lines in {} symbols{}):\n", r.total_lines(), r.groups.len(), if r.truncated { ", truncated" } else { "" }));
-    for g in &r.groups {
-        match &g.symbol {
-            Some(c) => {
-                out.push_str(&format!("  {}:{}-{}  [{}] {}\n", c.path, c.start, c.end, c.kind, if c.qualname.is_empty() { &c.name } else { &c.qualname }))
-            }
-            None => out.push_str(&format!("  {}  (no enclosing symbol)\n", g.path)),
-        }
-        for h in &g.lines {
-            out.push_str(&format!("    {}: {}\n", h.line, h.text.trim_end()));
-        }
-    }
+    groups_text(&r.groups, &mut out);
     Ok(out)
 }
 

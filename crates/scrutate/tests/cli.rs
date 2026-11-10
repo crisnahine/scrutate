@@ -335,6 +335,9 @@ fn mcp_protocol_round_trip() {
         r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"read_code","arguments":{"path":"../../etc/passwd"}}}"#,
         r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"no_such_tool","arguments":{}}}"#,
         r#"{"jsonrpc":"2.0","id":6,"method":"bogus/method"}"#,
+        r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"grep_code","arguments":{"pattern":"def make_widget_[37]\\("}}}"#,
+        r#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"grep_code","arguments":{"pattern":"(unclosed"}}}"#,
+        r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"grep_code","arguments":{"pattern":"import os","max_results":3}}}"#,
         "this is not json",
     ];
     for m in msgs {
@@ -357,6 +360,15 @@ fn mcp_protocol_round_trip() {
     assert!(text.starts_with("error"), "path escape refused: {text}");
     assert_eq!(by_id(5)["result"]["isError"], true);
     assert_eq!(by_id(6)["error"]["code"], -32601);
+    // grep_code is Engine A: matching lines under their enclosing symbol, an error for a bad pattern,
+    // and a note when it stopped at the limit
+    let text = by_id(7)["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.starts_with("2 matching lines in 2 symbols"), "{text}");
+    assert!(text.contains("pkg/m3.py") && text.contains("7: def make_widget_7(size):"), "{text}");
+    assert_eq!(by_id(8)["result"]["isError"], true);
+    assert!(by_id(8)["result"]["content"][0]["text"].as_str().unwrap().contains("invalid pattern"));
+    let text = by_id(9)["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.starts_with("3 matching lines") && text.contains("stopped at 3 matching lines"), "{text}");
     assert!(lines.iter().any(|v| v["error"]["code"] == -32700), "parse error for non-JSON input");
 }
 

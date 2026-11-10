@@ -22,8 +22,8 @@ pub fn tools() -> Value {
              "query": {"type": "string"},
              "alt_queries": {"type": ["array", "null"], "items": {"type": "string"}, "default": null},
              "k": {"type": "integer", "default": 8}}, "required": ["query"]}},
-        {"name": "grep_code", "description": "Exact regex search, results grouped by the enclosing function/class.",
-         "inputSchema": {"type": "object", "properties": {"pattern": {"type": "string"}}, "required": ["pattern"]}},
+        {"name": "grep_code", "description": "Exact regex search of the repository's files (case-sensitive; (?i) in the pattern for any case), matching lines grouped by the enclosing function/class.",
+         "inputSchema": {"type": "object", "properties": {"pattern": {"type": "string"}, "max_results": {"type": "integer", "default": 100}}, "required": ["pattern"]}},
         {"name": "find_symbol", "description": "Where is this function/class/method defined? (`Class.method` works).",
          "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
         {"name": "callers", "description": "Which functions call this function?",
@@ -79,7 +79,24 @@ pub fn call_tool(s: &mut Searcher, name: &str, args: &Value, refresh_interval: f
                 let k = args.get("k").and_then(|v| v.as_i64()).unwrap_or(8).clamp(1, 100) as usize;
                 run_search(s, &query, &alt, k, false)?
             }
-            "grep_code" => fmt_hits(&s.grep(&str_arg("pattern").ok_or_else(|| anyhow::anyhow!("missing pattern"))?, 30)?, &[], true, false),
+            "grep_code" => {
+                let max = args.get("max_results").and_then(|v| v.as_u64()).unwrap_or(100).clamp(1, 2000);
+                let o = crate::instant::Options {
+                    pattern: str_arg("pattern").ok_or_else(|| anyhow::anyhow!("missing pattern"))?,
+                    mode: crate::instant::Mode::Regex,
+                    case: crate::instant::Case::Sensitive,
+                    max_results: Some(max),
+                    ..crate::instant::Options::default()
+                };
+                let (groups, truncated) = crate::intel::grouped_grep(s, &o)?;
+                let lines: usize = groups.iter().map(|g| g.lines.len()).sum();
+                let mut out = format!("{lines} matching lines in {} symbols\n", groups.len());
+                crate::intel::groups_text(&groups, &mut out);
+                if truncated {
+                    out.push_str(&format!("stopped at {max} matching lines: narrow the pattern or raise max_results\n"));
+                }
+                out
+            }
             "find_symbol" => fmt_hits(&s.find_symbol(&str_arg("name").ok_or_else(|| anyhow::anyhow!("missing name"))?, 20)?, &[], true, false),
             "callers" => fmt_hits(&s.callers(&str_arg("name").ok_or_else(|| anyhow::anyhow!("missing name"))?, 30)?, &[], false, false),
             "callees" => {
