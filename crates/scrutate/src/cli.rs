@@ -93,121 +93,147 @@ pub enum Shell {
     Elvish,
 }
 
+/// The arguments of `scrutate grep`.
+#[derive(clap::Args)]
+pub struct GrepArgs {
+    /// the pattern (omit it when patterns are given with -e)
+    #[arg(required_unless_present = "regexp")]
+    pub pattern: Option<String>,
+    /// files or directories to search (default: current directory)
+    pub paths: Vec<PathBuf>,
+    /// a pattern to search for; repeatable, a line matching any of them matches
+    #[arg(short = 'e', long = "regexp", value_name = "PATTERN")]
+    pub regexp: Vec<String>,
+    /// use the text index (Engine B, built by `scrutate index`) to read only the files that can
+    /// match; results are those of the indexed snapshot of --root
+    #[arg(long)]
+    pub index: bool,
+    /// with --index: bring the text index up to date first (only changed files are read), so
+    /// the answer is the walk's for the tree as it is now
+    #[arg(long, requires = "index")]
+    pub update: bool,
+    /// treat PATTERN as a literal string
+    #[arg(short = 'F', long)]
+    pub fixed_strings: bool,
+    /// identifier search: `refreshToken` also finds refresh_token, RefreshToken, REFRESH_TOKEN
+    #[arg(long)]
+    pub ident: bool,
+    /// approximate search: literal within N edits (insertions, deletions, substitutions)
+    #[arg(long, value_name = "N", num_args = 0..=1, require_equals = true, default_missing_value = "1")]
+    pub fuzzy: Option<u8>,
+    /// approximate regex: PATTERN within N edits (byte-oriented, ASCII classes, no anchors)
+    #[arg(long, value_name = "N", num_args = 0..=1, require_equals = true, default_missing_value = "1")]
+    pub fuzzy_regex: Option<u8>,
+    /// PCRE2 syntax: look-around and backreferences (backtracking, stopped by PCRE2's match limit)
+    #[arg(short = 'P', long)]
+    pub pcre2: bool,
+    /// also search inside zip and tar archives and compressed files (gz, bz2, xz, zst, lz4, br, Z)
+    #[arg(short = 'z', long)]
+    pub search_zip: bool,
+    /// case-insensitive
+    #[arg(short = 'i', long)]
+    pub ignore_case: bool,
+    /// case-insensitive unless the pattern has an uppercase letter
+    #[arg(short = 'S', long, env = "SCRUTATE_GREP_SMART_CASE")]
+    pub smart_case: bool,
+    /// match whole words only
+    #[arg(short = 'w', long)]
+    pub word: bool,
+    /// let the pattern span lines
+    #[arg(short = 'U', long)]
+    pub multiline: bool,
+    /// select non-matching lines
+    #[arg(short = 'v', long)]
+    pub invert_match: bool,
+    /// print only the paths of files with matches
+    #[arg(short = 'l', long)]
+    pub files_with_matches: bool,
+    /// print only the number of matching lines per file
+    #[arg(short = 'c', long)]
+    pub count: bool,
+    /// lines of context after each match
+    #[arg(short = 'A', long, default_value_t = 0)]
+    pub after: usize,
+    /// lines of context before each match
+    #[arg(short = 'B', long, default_value_t = 0)]
+    pub before: usize,
+    /// lines of context around each match
+    #[arg(short = 'C', long)]
+    pub context: Option<usize>,
+    /// stop after N matching lines per file
+    #[arg(short = 'm', long)]
+    pub max_count: Option<u64>,
+    /// stop everything after N matches in total
+    #[arg(long)]
+    pub max_results: Option<u64>,
+    /// include/exclude files by glob (prefix ! to exclude); repeatable
+    #[arg(short = 'g', long = "glob", env = "SCRUTATE_GREP_GLOBS", value_delimiter = ',')]
+    pub globs: Vec<String>,
+    /// only files of this type (see --type-list); prefix ! to exclude; repeatable
+    #[arg(short = 't', long = "type", env = "SCRUTATE_GREP_TYPES", value_delimiter = ',')]
+    pub types: Vec<String>,
+    /// list the known file types
+    #[arg(long)]
+    pub type_list: bool,
+    /// search hidden files and directories
+    #[arg(long, env = "SCRUTATE_GREP_HIDDEN")]
+    pub hidden: bool,
+    /// ignore .gitignore / .ignore rules
+    #[arg(long, env = "SCRUTATE_GREP_NO_IGNORE")]
+    pub no_ignore: bool,
+    /// follow symbolic links
+    #[arg(short = 'L', long, env = "SCRUTATE_GREP_FOLLOW")]
+    pub follow: bool,
+    /// skip files larger than this (e.g. 10M)
+    #[arg(long, value_name = "SIZE", env = "SCRUTATE_GREP_MAX_FILESIZE")]
+    pub max_filesize: Option<String>,
+    /// descend at most this many directory levels
+    #[arg(long, env = "SCRUTATE_GREP_MAX_DEPTH")]
+    pub max_depth: Option<usize>,
+    /// number of search threads (default: the cores, at most 12; on macOS the performance cores, or twice the cores when the files come from disk)
+    #[arg(short = 'j', long, default_value_t = 0, env = "SCRUTATE_THREADS")]
+    pub threads: usize,
+    /// sort results by path (deterministic, waits for the search to finish)
+    #[arg(long)]
+    pub sort: bool,
+    /// one JSON object per line
+    #[arg(long)]
+    pub json: bool,
+    /// print search statistics to stderr
+    #[arg(long)]
+    pub stats: bool,
+    /// group matches by enclosing function/class using the index (Engine B), if one exists
+    #[arg(long)]
+    pub symbols: bool,
+}
+
+/// `Cli` with `grep` as its only subcommand: clap builds every subcommand's arguments before it
+/// parses, about 0.2 ms for all of them, and a search needs one.
+#[derive(Parser)]
+#[command(name = "scrutate", version, about = "Code search: instant grep-class search plus an indexed, ranked code-intelligence engine", long_about = None)]
+struct GrepCli {
+    /// repository root for the indexed engine (default: current directory)
+    #[arg(long, default_value = ".", global = true, env = "SCRUTATE_ROOT")]
+    root: PathBuf,
+    /// never print color
+    #[arg(long, global = true, env = "NO_COLOR")]
+    no_color: bool,
+    #[command(subcommand)]
+    cmd: GrepCmd,
+}
+
+#[derive(Subcommand)]
+enum GrepCmd {
+    /// Engine A: instant search of files (no index). PATTERN is a regex unless -F, --ident or --fuzzy
+    #[command(alias = "g")]
+    Grep(GrepArgs),
+}
+
 #[derive(Subcommand)]
 pub enum Cmd {
     /// Engine A: instant search of files (no index). PATTERN is a regex unless -F, --ident or --fuzzy
     #[command(alias = "g")]
-    Grep {
-        /// the pattern (omit it when patterns are given with -e)
-        #[arg(required_unless_present = "regexp")]
-        pattern: Option<String>,
-        /// files or directories to search (default: current directory)
-        paths: Vec<PathBuf>,
-        /// a pattern to search for; repeatable, a line matching any of them matches
-        #[arg(short = 'e', long = "regexp", value_name = "PATTERN")]
-        regexp: Vec<String>,
-        /// use the text index (Engine B, built by `scrutate index`) to read only the files that can
-        /// match; results are those of the indexed snapshot of --root
-        #[arg(long)]
-        index: bool,
-        /// with --index: bring the text index up to date first (only changed files are read), so
-        /// the answer is the walk's for the tree as it is now
-        #[arg(long, requires = "index")]
-        update: bool,
-        /// treat PATTERN as a literal string
-        #[arg(short = 'F', long)]
-        fixed_strings: bool,
-        /// identifier search: `refreshToken` also finds refresh_token, RefreshToken, REFRESH_TOKEN
-        #[arg(long)]
-        ident: bool,
-        /// approximate search: literal within N edits (insertions, deletions, substitutions)
-        #[arg(long, value_name = "N", num_args = 0..=1, require_equals = true, default_missing_value = "1")]
-        fuzzy: Option<u8>,
-        /// approximate regex: PATTERN within N edits (byte-oriented, ASCII classes, no anchors)
-        #[arg(long, value_name = "N", num_args = 0..=1, require_equals = true, default_missing_value = "1")]
-        fuzzy_regex: Option<u8>,
-        /// PCRE2 syntax: look-around and backreferences (backtracking, stopped by PCRE2's match limit)
-        #[arg(short = 'P', long)]
-        pcre2: bool,
-        /// also search inside zip and tar archives and compressed files (gz, bz2, xz, zst, lz4, br, Z)
-        #[arg(short = 'z', long)]
-        search_zip: bool,
-        /// case-insensitive
-        #[arg(short = 'i', long)]
-        ignore_case: bool,
-        /// case-insensitive unless the pattern has an uppercase letter
-        #[arg(short = 'S', long, env = "SCRUTATE_GREP_SMART_CASE")]
-        smart_case: bool,
-        /// match whole words only
-        #[arg(short = 'w', long)]
-        word: bool,
-        /// let the pattern span lines
-        #[arg(short = 'U', long)]
-        multiline: bool,
-        /// select non-matching lines
-        #[arg(short = 'v', long)]
-        invert_match: bool,
-        /// print only the paths of files with matches
-        #[arg(short = 'l', long)]
-        files_with_matches: bool,
-        /// print only the number of matching lines per file
-        #[arg(short = 'c', long)]
-        count: bool,
-        /// lines of context after each match
-        #[arg(short = 'A', long, default_value_t = 0)]
-        after: usize,
-        /// lines of context before each match
-        #[arg(short = 'B', long, default_value_t = 0)]
-        before: usize,
-        /// lines of context around each match
-        #[arg(short = 'C', long)]
-        context: Option<usize>,
-        /// stop after N matching lines per file
-        #[arg(short = 'm', long)]
-        max_count: Option<u64>,
-        /// stop everything after N matches in total
-        #[arg(long)]
-        max_results: Option<u64>,
-        /// include/exclude files by glob (prefix ! to exclude); repeatable
-        #[arg(short = 'g', long = "glob", env = "SCRUTATE_GREP_GLOBS", value_delimiter = ',')]
-        globs: Vec<String>,
-        /// only files of this type (see --type-list); prefix ! to exclude; repeatable
-        #[arg(short = 't', long = "type", env = "SCRUTATE_GREP_TYPES", value_delimiter = ',')]
-        types: Vec<String>,
-        /// list the known file types
-        #[arg(long)]
-        type_list: bool,
-        /// search hidden files and directories
-        #[arg(long, env = "SCRUTATE_GREP_HIDDEN")]
-        hidden: bool,
-        /// ignore .gitignore / .ignore rules
-        #[arg(long, env = "SCRUTATE_GREP_NO_IGNORE")]
-        no_ignore: bool,
-        /// follow symbolic links
-        #[arg(short = 'L', long, env = "SCRUTATE_GREP_FOLLOW")]
-        follow: bool,
-        /// skip files larger than this (e.g. 10M)
-        #[arg(long, value_name = "SIZE", env = "SCRUTATE_GREP_MAX_FILESIZE")]
-        max_filesize: Option<String>,
-        /// descend at most this many directory levels
-        #[arg(long, env = "SCRUTATE_GREP_MAX_DEPTH")]
-        max_depth: Option<usize>,
-        /// number of search threads (default: the cores, at most 12; on macOS the performance cores, or twice the cores when the files come from disk)
-        #[arg(short = 'j', long, default_value_t = 0, env = "SCRUTATE_THREADS")]
-        threads: usize,
-        /// sort results by path (deterministic, waits for the search to finish)
-        #[arg(long)]
-        sort: bool,
-        /// one JSON object per line
-        #[arg(long)]
-        json: bool,
-        /// print search statistics to stderr
-        #[arg(long)]
-        stats: bool,
-        /// group matches by enclosing function/class using the index (Engine B), if one exists
-        #[arg(long)]
-        symbols: bool,
-    },
+    Grep(GrepArgs),
     /// Engine B: build or update the index (code intelligence and the text index for `grep --index`)
     Index {
         #[arg(long)]
@@ -420,10 +446,15 @@ pub fn run() -> Result<i32> {
         let cfg = crate::config::load(p)?;
         crate::config::apply_as_env(&cfg);
     }
-    let cli = Cli::parse();
+    let cli = if matches!(args.get(1).map(String::as_str), Some("grep" | "g")) {
+        let GrepCli { root, no_color, cmd: GrepCmd::Grep(grep) } = GrepCli::parse();
+        Cli { root, no_color, cmd: Cmd::Grep(grep) }
+    } else {
+        Cli::parse()
+    };
     let no_color = cli.no_color;
     match cli.cmd {
-        Cmd::Grep {
+        Cmd::Grep(GrepArgs {
             pattern,
             mut paths,
             regexp,
@@ -460,7 +491,7 @@ pub fn run() -> Result<i32> {
             json,
             stats,
             symbols,
-        } => {
+        }) => {
             if type_list {
                 for (name, globs) in instant::type_list() {
                     println!("{name}: {}", globs.join(", "));
