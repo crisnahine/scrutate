@@ -1,13 +1,14 @@
 info: component rust-std for target x86_64-pc-windows-gnu is up to date
    Compiling ignore v0.4.34 (<repo>/vendor/ignore)
    Compiling scrutate v0.1.0 (<repo>/crates/scrutate)
-    Finished `release` profile [optimized] target(s) in 16.40s
+    Finished `release` profile [optimized] target(s) in 15.96s
    Compiling scrutate v0.1.0 (<repo>/crates/scrutate)
-    Finished `release` profile [optimized] target(s) in 34.40s
+    Finished `release` profile [optimized] target(s) in 33.56s
   Executable unittests src/lib.rs (target/win/x86_64-pc-windows-gnu/release/deps/scrutate-22c44582632b6a53.exe)
   Executable unittests src/main.rs (target/win/x86_64-pc-windows-gnu/release/deps/scrutate-411b02c6a110d784.exe)
   Executable tests/cli.rs (target/win/x86_64-pc-windows-gnu/release/deps/cli-878207dc04bd12c4.exe)
   Executable tests/incremental.rs (target/win/x86_64-pc-windows-gnu/release/deps/incremental-c96d449451ac4cc0.exe)
+  Executable tests/lazy_bind.rs (target/win/x86_64-pc-windows-gnu/release/deps/lazy_bind-4fb632e5f57e5e0e.exe)
   Executable tests/lsp.rs (target/win/x86_64-pc-windows-gnu/release/deps/lsp-a362a323d495e583.exe)
   Executable tests/properties.rs (target/win/x86_64-pc-windows-gnu/release/deps/properties-f8aea35155dc793b.exe)
   Executable tests/resolve.rs (target/win/x86_64-pc-windows-gnu/release/deps/resolve-4d34b8cafacca088.exe)
