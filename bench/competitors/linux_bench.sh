@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 # Linux benchmark environment: every competitor at its latest stable release, installed the way
 # its maintainers publish it (release binaries where they exist, source builds otherwise), then the
-# Engine A leaderboard (warm and cold cache) and the indexed comparison with Zoekt and livegrep.
+# Engine A leaderboard (warm and cold cache); linux_indexed.sh then runs the indexed comparison.
 #
 #   docker run --rm --privileged --platform linux/arm64 -v "$PWD":/src:ro \
 #     -v "$HOME/.cache/scrutate-bench/corpora":/corpora:ro -v "$HOME/.cache/scrutate-bench/livegrep":/livegrep:ro \
 #     -v scrutate-bench-linux:/bench -v "$PWD/bench/results":/results rust:1-slim-bookworm bash /src/bench/competitors/linux_bench.sh
-#
-# INDEXED_TOOLS (default scrutate,zoekt,livegrep) picks the indexed engines when disk space is short.
 #
 # The corpora are copied into the container's own disk (/bench) so reads do not go through the
 # host file-sharing layer; the cold-cache runs drop the guest page cache before every run.
@@ -88,8 +86,5 @@ python3 bench/leaderboard.py --corpora $B/corpora --out $out/leaderboard-warm.js
 step "Engine A leaderboard, cold cache (linux corpus subset)"
 python3 bench/leaderboard.py --corpora $B/corpora --out $out/leaderboard-cold.json --cache cold \
   --cold-prepare 'sync; echo 3 > /proc/sys/vm/drop_caches' --only 'linux/literal' 'linux/case-insensitive' 'linux/complex regex' 'linux/no match' --runs 30 --max-load "$(nproc)"
-step "indexed: scrutate, Zoekt, livegrep"
-python3 bench/indexed.py --corpus $B/corpora/linux-nodot --work $B/indexed-work --out $out/indexed.json --tools "${INDEXED_TOOLS:-scrutate,zoekt,livegrep}" \
-  --livegrep-bin /livegrep --max-load "$(nproc)"
-rm -rf $B/indexed-work
+# the indexed comparison runs next, in an ubuntu:24.04 container: bench/competitors/linux_indexed.sh
 step "done"
