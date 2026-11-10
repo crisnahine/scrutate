@@ -13,7 +13,7 @@ export PATH=$B/bin:$PATH SCRUTATE_BIN=$B/scrutate/target/release/scrutate ZOEKT_
 git config --global --add safe.directory '*'
 out=/results/linux-$(uname -m)
 mkdir -p "$out"
-cd $B/scrutate
+cd /src  # the harness as committed; the binary is the one linux_bench.sh built
 python3 bench/indexed.py --corpus $B/corpora/linux-nodot --work $B/indexed-work --out "$out/indexed.json" --tools "${INDEXED_TOOLS:-scrutate,zoekt,livegrep}" \
   --livegrep-bin /livegrep --max-load "$(nproc)"
 rm -rf $B/indexed-work
