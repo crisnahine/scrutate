@@ -14,6 +14,7 @@ measured with an older binary or an older version of the harness, as its own `en
 | `leaderboard-warm-fb5c.json` (and `-cold`, `indexed-`, `compare-`, `chain-`) | 37 | 3 | `fb5c4e0a1250...` |
 | `leaderboard-warm-fb3b.json` (and `-cold`, `indexed-`, `compare-`, `chain-`) | 37 | 3 | `fb3bd578c6d9...` |
 | `leaderboard-warm-b57d.json` (and `-cold`, `indexed-`, `compare-`, `chain-`) | 37 | 3 | `b57d2a666dba...` |
+| `leaderboard-warm-587a.json` (and `chain-`; `leaderboard-cold-587a-partial.json`: 2 rows) | 37 | 3 | `587a75a9b4dd...` |
 
 `leaderboard-warm-prevbin` stopped at `patho/backtracking trap`, where the reference (Python's
 backtracking regex engine) never finished. Its binary predates searching a large file on all
