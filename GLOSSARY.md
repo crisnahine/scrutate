@@ -36,3 +36,17 @@ no defaults of their own.
 
 **Answer**: the typed result of an operation (`ops::Answer`), with one text form and one JSON
 form. Every front end renders the same answer.
+
+**Budget**: the size limit of an answer as text (`Answer::text_within`). A cut answer keeps whole
+items and ends with how many are left and the `offset` that continues it.
+
+**Repo**: an open repository (`scrutate::Repo`): the searcher on its index plus the rules for
+keeping the index usable (bring it up to date, rebuild it when its database is damaged). Front ends
+that stay open (the MCP server, the Python bindings, `watch`) hold one.
+
+**Translation**: what a query's options ask every matcher of them to find
+(`Options::translate`): the pattern in the form its mode means, and whether case is folded. Engine
+A's matcher and the text index's trigram condition are both built from it.
+
+**Run**: one Engine A search in progress (`instant::Run`): the matcher, options, counters, cancel
+flag and output target that every file search of it shares.

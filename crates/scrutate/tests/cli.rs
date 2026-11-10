@@ -338,6 +338,7 @@ fn mcp_protocol_round_trip() {
         r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"grep_code","arguments":{"pattern":"def make_widget_[37]\\("}}}"#,
         r#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"grep_code","arguments":{"pattern":"(unclosed"}}}"#,
         r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"grep_code","arguments":{"pattern":"import os","max_results":3}}}"#,
+        r#"{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"grep_code","arguments":{"pattern":"import os","offset":10}}}"#,
         "this is not json",
     ];
     for m in msgs {
@@ -376,6 +377,11 @@ fn mcp_protocol_round_trip() {
     assert!(by_id(8)["result"]["content"][0]["text"].as_str().unwrap().contains("invalid pattern"));
     let text = by_id(9)["result"]["content"][0]["text"].as_str().unwrap();
     assert!(text.starts_with("3 matching lines") && text.contains("stopped at 3 matching lines"), "{text}");
+    // an answer continues from an offset: the last 2 of 12 groups
+    let text = by_id(10)["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.starts_with("12 matching lines in 12 symbols"), "{text}");
+    assert_eq!(text.lines().filter(|l| l.contains(": import os")).count(), 2, "{text}");
+    assert!(tools.iter().all(|t| t["name"] == "reindex" || t["inputSchema"]["properties"]["max_bytes"]["default"] == 24_000));
     assert!(lines.iter().any(|v| v["error"]["code"] == -32700), "parse error for non-JSON input");
 }
 
@@ -631,6 +637,23 @@ fn small_tree_path_equals_parallel_walk() {
         assert_eq!(handed_over, parallel, "{args:?}");
         assert_eq!(small.0, 0, "{args:?}: {small:?}");
     }
+}
+
+#[test]
+fn an_index_answer_fits_max_bytes_and_continues_from_an_offset() {
+    let r = python_repo("budget");
+    assert_eq!(r.run(&["index", "--no-text"]).0, 0);
+    let (code, all, _) = r.run(&["outline", "pkg/m3.py"]);
+    assert_eq!(code, 0);
+    let lines: Vec<&str> = all.lines().collect();
+    assert!(lines.len() >= 2, "{all}");
+    // room for the first line only
+    let (code, cut, _) = r.run(&["outline", "pkg/m3.py", "--max-bytes", "40"]);
+    assert_eq!(code, 0);
+    assert_eq!(cut.lines().next(), Some(lines[0]));
+    assert!(cut.contains(&format!("{} more symbols not shown: call again with offset=1", lines.len() - 1)), "{cut}");
+    let (_, rest, _) = r.run(&["outline", "pkg/m3.py", "--offset", "1"]);
+    assert_eq!(rest.lines().collect::<Vec<_>>(), lines[1..]);
 }
 
 #[test]

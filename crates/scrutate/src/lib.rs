@@ -63,20 +63,79 @@ pub fn open(root: &Path) -> Result<search::Searcher> {
     Ok(search::Searcher::new(ix, default_ranker()?))
 }
 
-/// Open and bring the index up to date; if the database turns out to be corrupt while doing so,
-/// delete it and build a fresh one (the index is a cache; the sources are the truth).
+/// Open and bring the index up to date (`Repo::update`).
 pub fn open_updated(root: &Path, force: bool) -> Result<(search::Searcher, index::UpdateStats)> {
-    let mut s = open(root)?;
-    match s.ix.update(force) {
-        Ok(st) => Ok((s, st)),
-        Err(e) if index::error_is_corruption(&e) => {
-            eprintln!("[scrutate] index database corrupt ({e:#}); rebuilding");
-            drop(s);
-            index::wipe_index(root);
-            let mut s = open(root)?;
-            let st = s.ix.update(true)?;
-            Ok((s, st))
+    let mut repo = Repo::open(root)?;
+    let st = repo.update(force)?;
+    Ok((repo.into_searcher(), st))
+}
+
+/// An open repository: the searcher on its index, and the one place that knows how to bring the
+/// index up to date and what to do when its database is damaged. It derefs to the searcher.
+pub struct Repo {
+    /// `None` only while a damaged index is being replaced
+    searcher: Option<search::Searcher>,
+}
+
+impl Repo {
+    /// Open (or create) the index of `root`, without updating it.
+    pub fn open(root: &Path) -> Result<Repo> {
+        Ok(Repo { searcher: Some(open(root)?) })
+    }
+
+    pub fn into_searcher(self) -> search::Searcher {
+        self.searcher.expect("the index was not reopened after a rebuild")
+    }
+
+    /// Bring the index up to date. A corrupt database is deleted and built again: the index is a
+    /// cache, the sources are the truth.
+    pub fn update(&mut self, force: bool) -> Result<index::UpdateStats> {
+        match self.ix.update(force) {
+            Err(e) if index::error_is_corruption(&e) => self.rebuild(&e),
+            other => other,
         }
-        Err(e) => Err(e),
+    }
+
+    /// `update`, unless the index was checked less than `min_interval` seconds ago.
+    pub fn refresh(&mut self, min_interval: f64) -> Result<Option<index::UpdateStats>> {
+        match self.ix.refresh(min_interval) {
+            Err(e) if index::error_is_corruption(&e) => self.rebuild(&e).map(Some),
+            other => other,
+        }
+    }
+
+    /// Run one operation on an index refreshed as `refresh` does (operations that do not read
+    /// the index skip that).
+    pub fn run(&mut self, op: &ops::Op, min_interval: f64) -> Result<ops::Answer> {
+        if !matches!(op, ops::Op::Read { .. } | ops::Op::Reindex) {
+            self.refresh(min_interval)?;
+        }
+        ops::run(self, op)
+    }
+
+    fn rebuild(&mut self, why: &anyhow::Error) -> Result<index::UpdateStats> {
+        eprintln!("[scrutate] index database corrupt ({why:#}); rebuilding");
+        let root = self.ix.root.clone();
+        let progress = self.ix.progress;
+        self.searcher = None; // the database is closed before its files are deleted
+        index::wipe_index(&root);
+        let mut s = open(&root)?;
+        s.ix.progress = progress;
+        let st = s.ix.update(true);
+        self.searcher = Some(s);
+        st
+    }
+}
+
+impl std::ops::Deref for Repo {
+    type Target = search::Searcher;
+    fn deref(&self) -> &search::Searcher {
+        self.searcher.as_ref().expect("the index was not reopened after a rebuild")
+    }
+}
+
+impl std::ops::DerefMut for Repo {
+    fn deref_mut(&mut self) -> &mut search::Searcher {
+        self.searcher.as_mut().expect("the index was not reopened after a rebuild")
     }
 }

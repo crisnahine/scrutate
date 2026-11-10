@@ -6,7 +6,7 @@
 use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Value};
 
-use crate::fmt::{fmt_hits, hits_json};
+use crate::fmt::{hit_blocks, hits_json};
 use crate::index::{ChunkRow, UpdateStats};
 use crate::intel::{Capture, Dependency, DupGroup, RefGroup, References};
 use crate::resolve::Resolved;
@@ -31,6 +31,9 @@ pub const DUPES_LIMIT: usize = 50;
 pub const TSQUERY_LIMIT: usize = 1000;
 /// Lines one `read` returns at most.
 pub const READ_LINES: i64 = 400;
+/// Bytes of text an agent gets from one call unless it asks for more: about 6,000 tokens, under
+/// the 10,000 at which Codex cuts a tool result and Claude Code warns.
+pub const AGENT_BYTES: usize = 24_000;
 
 pub enum Op {
     Search {
@@ -187,14 +190,8 @@ pub enum Answer {
     Reindexed(UpdateStats),
 }
 
-/// Run one operation. `refresh_interval`: bring the index up to date first unless it was checked
-/// less than this many seconds ago (`None`: the caller has just done so).
-pub fn run(s: &mut Searcher, op: &Op, refresh_interval: Option<f64>) -> Result<Answer> {
-    if let Some(interval) = refresh_interval {
-        if !matches!(op, Op::Read { .. } | Op::Reindex) {
-            s.ix.refresh(interval)?;
-        }
-    }
+/// Run one operation on the index as it is; `Repo::run` brings the index up to date first.
+pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
     Ok(match op {
         Op::Search { query, alt, k } => {
             let mut qs = vec![query.clone()];
@@ -273,6 +270,15 @@ fn chunk_json(c: &ChunkRow) -> Value {
     json!({"path": c.path, "start": c.start, "end": c.end, "kind": c.kind, "qualname": c.qualname})
 }
 
+/// An answer as text: a first line, the items that can be counted and cut, and a last line.
+#[derive(Default)]
+struct Parts {
+    head: String,
+    items: Vec<String>,
+    tail: String,
+    noun: &'static str,
+}
+
 impl Answer {
     /// Nothing was found (the CLI's exit code 1).
     pub fn is_empty(&self) -> bool {
@@ -298,64 +304,131 @@ impl Answer {
 
     /// The answer as text: one item per line or block, and a sentence when there is nothing.
     pub fn text(&self) -> String {
-        match self {
-            Answer::Hits { hits, words, snippet } => fmt_hits(hits, words, *snippet, false),
-            Answer::Callees { resolved, external } => {
-                let mut out = fmt_hits(resolved, &[], false, false);
-                if !external.is_empty() {
-                    out.push_str("\nexternal: ");
-                    out.push_str(&external.iter().take(EXTERNAL_CALLEES).cloned().collect::<Vec<_>>().join(", "));
-                }
-                out
+        self.text_within(usize::MAX, 0)
+    }
+
+    /// The answer as text of about `max_bytes` at most: whole items from item `offset` on, then
+    /// a line saying how many are left and how to ask for them. A harness cuts a tool result that
+    /// is too long for it (Codex at 10,000 tokens, from the middle); cutting here keeps whole
+    /// items and tells the agent what to do next.
+    pub fn text_within(&self, max_bytes: usize, offset: usize) -> String {
+        let Parts { head, items, tail, noun } = self.parts();
+        let mut out = head;
+        let push = |out: &mut String, part: &str| {
+            if !out.is_empty() && !part.is_empty() {
+                out.push('\n');
             }
+            out.push_str(part);
+        };
+        let mut shown = 0;
+        for item in items.iter().skip(offset) {
+            if shown > 0 && out.len() + item.len() + 1 > max_bytes {
+                break;
+            }
+            push(&mut out, item);
+            shown += 1;
+            if out.len() > max_bytes {
+                // one item larger than the whole budget: keep its start
+                let mut cut = max_bytes;
+                while !out.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                out.truncate(cut);
+                push(&mut out, "(this item is cut: pass a larger max_bytes to see all of it)");
+                break;
+            }
+        }
+        let next = offset.min(items.len()) + shown;
+        if next < items.len() {
+            push(&mut out, &format!("({} more {noun} not shown: call again with offset={next}, or narrow the request)", items.len() - next));
+        } else {
+            if offset > 0 && shown == 0 {
+                push(&mut out, &format!("(no more {noun}: {} in all)", items.len()));
+            }
+            push(&mut out, &tail);
+        }
+        out
+    }
+
+    fn parts(&self) -> Parts {
+        let lines = |text: String, noun: &'static str| Parts { items: text.lines().map(str::to_string).collect(), noun, ..Parts::default() };
+        let nothing = |sentence: String| Parts { head: sentence, ..Parts::default() };
+        match self {
+            Answer::Hits { hits, .. } if hits.is_empty() => nothing("(no results)".to_string()),
+            Answer::Hits { hits, words, snippet } => Parts { items: hit_blocks(hits, words, *snippet, false), noun: "results", ..Parts::default() },
+            Answer::Callees { resolved, external } => Parts {
+                head: if resolved.is_empty() { "(no results)".to_string() } else { String::new() },
+                items: hit_blocks(resolved, &[], false, false),
+                tail: if external.is_empty() {
+                    String::new()
+                } else {
+                    format!("external: {}", external.iter().take(EXTERNAL_CALLEES).cloned().collect::<Vec<_>>().join(", "))
+                },
+                noun: "callees",
+            },
             Answer::Grep { groups, stopped_at } => {
                 let lines: usize = groups.iter().map(|g| g.lines.len()).sum();
-                let mut out = format!("{lines} matching lines in {} symbols\n", groups.len());
-                crate::intel::groups_text(groups, &mut out);
-                if let Some(max) = stopped_at {
-                    out.push_str(&format!("stopped at {max} matching lines: narrow the pattern or raise max_results\n"));
+                let stopped = stopped_at.map(|max| format!(" (stopped at {max} matching lines: narrow the pattern or raise max_results)")).unwrap_or_default();
+                Parts {
+                    head: format!("{lines} matching lines in {} symbols{stopped}", groups.len()),
+                    items: groups.iter().map(crate::intel::group_text).collect(),
+                    noun: "symbols",
+                    ..Parts::default()
                 }
-                out
             }
-            Answer::Read(text) => text.clone(),
-            Answer::Outline { path, rows } if rows.is_empty() => format!("no symbols in {path} (not indexed or no definitions)"),
-            Answer::Outline { rows, .. } => rows
-                .iter()
-                .map(|r| format!("{:>5}-{:<5} {}{:<9} {}", r.start, r.end, "  ".repeat(r.qualname.matches('.').count()), r.kind, r.qualname))
-                .collect::<Vec<_>>()
-                .join("\n"),
-            Answer::Deps { path, deps } if deps.is_empty() => format!("no imports recorded for {path}"),
-            Answer::Deps { path, deps } => deps
-                .iter()
-                .map(|d| format!("{}:{}  {}{}", path, d.line, d.module, d.resolved.as_ref().map(|r| format!("  -> {r}")).unwrap_or_default()))
-                .collect::<Vec<_>>()
-                .join("\n"),
-            Answer::Rdeps { target, rows } if rows.is_empty() => format!("nothing imports {target}"),
-            Answer::Rdeps { rows, .. } => rows.iter().map(|(p, l, m)| format!("{p}:{l}  {m}")).collect::<Vec<_>>().join("\n"),
-            Answer::Refs { refs, .. } => crate::intel::references_render(refs),
-            Answer::Resolved { refs, only, .. } => crate::resolve::resolved_text(refs, *only),
-            Answer::Similar(v) if v.is_empty() => "(no results)".to_string(),
-            Answer::Similar(v) => v
-                .iter()
-                .map(|(h, cos, jac)| format!("{:.3} cos  {:.2} jaccard  {}  [{}] {}", cos, jac, h.loc(), h.kind, h.qualname))
-                .collect::<Vec<_>>()
-                .join("\n"),
-            Answer::Dupes(groups) if groups.is_empty() => "no duplicates found".to_string(),
-            Answer::Dupes(groups) => {
-                let mut out = String::new();
-                for g in groups {
-                    out.push_str(&format!("{} ({} tokens, similarity {:.2})\n", g.kind, g.tokens, g.similarity));
-                    for (p, q, a, b) in &g.members {
-                        out.push_str(&format!("    {p}:{a}-{b}  {q}\n"));
-                    }
-                }
-                out
+            Answer::Read(text) => lines(text.clone(), "lines"),
+            Answer::Outline { path, rows } if rows.is_empty() => nothing(format!("no symbols in {path} (not indexed or no definitions)")),
+            Answer::Outline { rows, .. } => Parts {
+                items: rows
+                    .iter()
+                    .map(|r| format!("{:>5}-{:<5} {}{:<9} {}", r.start, r.end, "  ".repeat(r.qualname.matches('.').count()), r.kind, r.qualname))
+                    .collect(),
+                noun: "symbols",
+                ..Parts::default()
+            },
+            Answer::Deps { path, deps } if deps.is_empty() => nothing(format!("no imports recorded for {path}")),
+            Answer::Deps { path, deps } => Parts {
+                items: deps
+                    .iter()
+                    .map(|d| format!("{}:{}  {}{}", path, d.line, d.module, d.resolved.as_ref().map(|r| format!("  -> {r}")).unwrap_or_default()))
+                    .collect(),
+                noun: "imports",
+                ..Parts::default()
+            },
+            Answer::Rdeps { target, rows } if rows.is_empty() => nothing(format!("nothing imports {target}")),
+            Answer::Rdeps { rows, .. } => {
+                Parts { items: rows.iter().map(|(p, l, m)| format!("{p}:{l}  {m}")).collect(), noun: "importers", ..Parts::default() }
             }
-            Answer::Captures(caps) if caps.is_empty() => "no matches".to_string(),
-            Answer::Captures(caps) => {
-                caps.iter().map(|c| format!("{}:{}:{}  @{} ({})  {}", c.path, c.line, c.column, c.capture, c.kind, c.text)).collect::<Vec<_>>().join("\n")
-            }
-            Answer::Reindexed(st) => format!("{} files changed, {} removed, {} chunks", st.files_changed, st.files_removed, st.chunks),
+            Answer::Refs { refs, .. } => lines(crate::intel::references_render(refs), "lines"),
+            Answer::Resolved { refs, only, .. } => lines(crate::resolve::resolved_text(refs, *only), "lines"),
+            Answer::Similar(v) if v.is_empty() => nothing("(no results)".to_string()),
+            Answer::Similar(v) => Parts {
+                items: v.iter().map(|(h, cos, jac)| format!("{:.3} cos  {:.2} jaccard  {}  [{}] {}", cos, jac, h.loc(), h.kind, h.qualname)).collect(),
+                noun: "results",
+                ..Parts::default()
+            },
+            Answer::Dupes(groups) if groups.is_empty() => nothing("no duplicates found".to_string()),
+            Answer::Dupes(groups) => Parts {
+                items: groups
+                    .iter()
+                    .map(|g| {
+                        let mut out = format!("{} ({} tokens, similarity {:.2})", g.kind, g.tokens, g.similarity);
+                        for (p, q, a, b) in &g.members {
+                            out.push_str(&format!("\n    {p}:{a}-{b}  {q}"));
+                        }
+                        out
+                    })
+                    .collect(),
+                noun: "groups",
+                ..Parts::default()
+            },
+            Answer::Captures(caps) if caps.is_empty() => nothing("no matches".to_string()),
+            Answer::Captures(caps) => Parts {
+                items: caps.iter().map(|c| format!("{}:{}:{}  @{} ({})  {}", c.path, c.line, c.column, c.capture, c.kind, c.text)).collect(),
+                noun: "matches",
+                ..Parts::default()
+            },
+            Answer::Reindexed(st) => nothing(format!("{} files changed, {} removed, {} chunks", st.files_changed, st.files_removed, st.chunks)),
         }
     }
 
@@ -450,6 +523,29 @@ mod tests {
         assert_eq!(Op::from_tool("callers", &json!({})).err().unwrap().to_string(), "missing name");
         assert_eq!(Op::from_tool("no_such_tool", &json!({})).err().unwrap().to_string(), "unknown tool no_such_tool");
         assert!(read_only("search_code") && read_only("read_code") && !read_only("reindex"));
+    }
+
+    #[test]
+    fn a_long_answer_is_cut_at_whole_items_and_says_how_to_continue() {
+        let hit = |i: usize| Hit { path: format!("src/f{i}.rs"), start: 1, end: 9, name: format!("f{i}"), kind: "function".into(), ..Hit::default() };
+        let answer = Answer::Hits { hits: (0..5).map(hit).collect(), words: vec![], snippet: false };
+        let all = answer.text();
+        assert_eq!(all.lines().count(), 5);
+        assert_eq!(answer.text_within(usize::MAX, 0), all);
+        // room for two items of 30 bytes each, not three
+        let cut = answer.text_within(70, 0);
+        assert_eq!(
+            cut.lines().collect::<Vec<_>>(),
+            ["src/f0.rs:1-9  [function] f0", "src/f1.rs:1-9  [function] f1", "(3 more results not shown: call again with offset=2, or narrow the request)",]
+        );
+        let rest = answer.text_within(usize::MAX, 2);
+        assert_eq!(rest.lines().count(), 3);
+        assert!(rest.starts_with("src/f2.rs"));
+        assert_eq!(answer.text_within(70, 5), "(no more results: 5 in all)");
+        // an item larger than the budget keeps its start
+        let one = Answer::Read("x".repeat(500));
+        let cut = one.text_within(100, 0);
+        assert!(cut.starts_with(&"x".repeat(100)) && cut.contains("this item is cut"), "{cut}");
     }
 
     #[test]

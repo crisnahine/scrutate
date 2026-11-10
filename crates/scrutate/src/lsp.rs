@@ -257,7 +257,7 @@ impl Server {
             .or_else(|| p["rootPath"].as_str().map(PathBuf::from))
             .unwrap_or_else(|| self.root.clone());
         self.root = std::fs::canonicalize(&root).unwrap_or(root);
-        let existed = self.root.join(".scrutate").join("index.db").exists();
+        let existed = crate::index::exists(&self.root);
         let (ready_tx, ready_rx) = mpsc::channel();
         let (shared, root) = (Arc::clone(&self.searcher), self.root.clone());
         let builder = std::thread::Builder::new().name("scrutate-index".into()).spawn(move || {

@@ -444,6 +444,11 @@ fn is_corruption(e: &rusqlite::Error) -> bool {
 }
 
 /// True when an error anywhere in `e`'s chain is SQLite corruption.
+/// Whether `root` has an index database (built or being built).
+pub fn exists(root: &Path) -> bool {
+    root.join(".scrutate").join("index.db").exists()
+}
+
 pub fn error_is_corruption(e: &anyhow::Error) -> bool {
     e.chain().any(|c| c.downcast_ref::<rusqlite::Error>().map(is_corruption).unwrap_or(false))
 }

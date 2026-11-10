@@ -7,6 +7,11 @@ pub fn fmt_hits(hits: &[Hit], words: &[String], snippet: bool, why: bool) -> Str
     if hits.is_empty() {
         return "(no results)".to_string();
     }
+    hit_blocks(hits, words, snippet, why).join("\n")
+}
+
+/// One block of text per hit: its location line and, with `snippet`, the lines that matter.
+pub fn hit_blocks(hits: &[Hit], words: &[String], snippet: bool, why: bool) -> Vec<String> {
     let mut out = Vec::with_capacity(hits.len());
     for h in hits {
         let name = if h.qualname.is_empty() { &h.name } else { &h.qualname };
@@ -21,7 +26,7 @@ pub fn fmt_hits(hits: &[Hit], words: &[String], snippet: bool, why: bool) -> Str
         }
         out.push(head);
     }
-    out.join("\n")
+    out
 }
 
 pub fn hits_json(hits: &[Hit]) -> serde_json::Value {

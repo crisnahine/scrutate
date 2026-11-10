@@ -600,16 +600,21 @@ pub fn grouped_grep(s: &Searcher, o: &crate::instant::Options) -> Result<(Vec<Re
 /// One line per group and one per matching line under it.
 pub fn groups_text(groups: &[RefGroup], out: &mut String) {
     for g in groups {
-        match &g.symbol {
-            Some(c) => {
-                out.push_str(&format!("  {}:{}-{}  [{}] {}\n", c.path, c.start, c.end, c.kind, if c.qualname.is_empty() { &c.name } else { &c.qualname }))
-            }
-            None => out.push_str(&format!("  {}  (no enclosing symbol)\n", g.path)),
-        }
-        for h in &g.lines {
-            out.push_str(&format!("    {}: {}\n", h.line, h.text.trim_end()));
-        }
+        out.push_str(&group_text(g));
+        out.push('\n');
     }
+}
+
+/// A group as text: its symbol, then its matching lines.
+pub fn group_text(g: &RefGroup) -> String {
+    let mut out = match &g.symbol {
+        Some(c) => format!("  {}:{}-{}  [{}] {}", c.path, c.start, c.end, c.kind, if c.qualname.is_empty() { &c.name } else { &c.qualname }),
+        None => format!("  {}  (no enclosing symbol)", g.path),
+    };
+    for h in &g.lines {
+        out.push_str(&format!("\n    {}: {}", h.line, h.text.trim_end()));
+    }
+    out
 }
 
 /// Definitions (index), callers (index) and every whole-word occurrence of `name` (Engine A),

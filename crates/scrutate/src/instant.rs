@@ -680,15 +680,90 @@ pub fn identifier_regex(ident: &str) -> String {
     format!("(?i)\\b{body}\\b")
 }
 
-pub fn build_matcher(o: &Options) -> Result<AnyMatcher> {
-    let insensitive = match o.case {
-        Case::Sensitive => false,
-        Case::Insensitive => true,
-        Case::Smart => !o.pattern.chars().any(|c| c.is_uppercase()),
+/// Several patterns as one that matches where any of them does, and the mode to search it with:
+/// literals and identifiers become regex alternatives. `fixed` is `-F`, which escapes `-P` patterns.
+pub fn join_patterns(patterns: &[String], mode: Mode, fixed: bool) -> Result<(String, Mode)> {
+    if let [one] = patterns {
+        let one = if mode == Mode::Pcre2 && fixed { regex::escape(one) } else { one.clone() };
+        return Ok((one, mode));
+    }
+    if matches!(mode, Mode::Fuzzy { .. }) {
+        bail!("--fuzzy takes one pattern");
+    }
+    let part = |p: &str| match mode {
+        Mode::Literal => regex::escape(p),
+        Mode::Pcre2 if fixed => regex::escape(p),
+        Mode::Identifier => identifier_regex(p),
+        _ => p.to_string(),
     };
+    let joined = patterns.iter().map(|p| format!("(?:{})", part(p))).collect::<Vec<_>>().join("|");
+    Ok((joined, if matches!(mode, Mode::Pcre2 | Mode::FuzzyRegex { .. }) { mode } else { Mode::Regex }))
+}
+
+/// What the options ask every matcher of them to find; `build_matcher` and the text index both
+/// start from this, so a file the index lets through is judged by the same pattern.
+pub struct Translated<'a> {
+    /// case folding on top of `pattern` (the smart-case rule applied)
+    pub insensitive: bool,
+    /// regex source for Regex, Literal and Identifier; the pattern as given for the other modes
+    pub pattern: std::borrow::Cow<'a, str>,
+}
+
+impl Options {
+    pub fn translate(&self) -> Translated<'_> {
+        let insensitive = match self.case {
+            Case::Sensitive => false,
+            Case::Insensitive => true,
+            Case::Smart => !uppercase_literal(&self.pattern, matches!(self.mode, Mode::Regex | Mode::Pcre2 | Mode::FuzzyRegex { .. })),
+        };
+        match self.mode {
+            Mode::Literal => Translated { insensitive, pattern: regex::escape(&self.pattern).into() },
+            // the identifier regex carries its own (?i)
+            Mode::Identifier => Translated { insensitive: false, pattern: identifier_regex(&self.pattern).into() },
+            _ => Translated { insensitive, pattern: self.pattern.as_str().into() },
+        }
+    }
+
+    /// Rejects options the text index cannot answer for: it holds only the files of the default walk.
+    pub fn check_indexable(&self) -> Result<()> {
+        if self.search_zip {
+            bail!("--index does not cover archive members; search with -z and without --index");
+        }
+        if self.hidden || self.no_ignore || self.follow_links || self.max_depth.is_some() || self.max_filesize.is_some() {
+            bail!("--index searches the files of the default walk; drop --hidden/--no-ignore/-L/--max-depth/--max-filesize or search without --index");
+        }
+        Ok(())
+    }
+}
+
+/// Whether the pattern has an uppercase letter that stands for itself (the smart-case rule, as in
+/// ripgrep): in a regex, `\S`, `\W`, `\pL` and `\p{Lu}` are not such letters.
+fn uppercase_literal(pattern: &str, regex: bool) -> bool {
+    let mut chars = pattern.chars().peekable();
+    while let Some(c) = chars.next() {
+        if regex && c == '\\' {
+            // shortcut: `\x41` (the letter A by its code) is not seen as uppercase; parse the regex if that matters
+            let class = matches!(chars.next(), Some('p' | 'P'));
+            if class && chars.peek() == Some(&'{') {
+                chars.by_ref().find(|&d| d == '}');
+            } else if class {
+                chars.next();
+            }
+        } else if c.is_uppercase() {
+            return true;
+        }
+    }
+    false
+}
+
+pub fn build_matcher(o: &Options) -> Result<AnyMatcher> {
+    if o.word && matches!(o.mode, Mode::Fuzzy { .. } | Mode::FuzzyRegex { .. }) {
+        bail!("whole-word matching (-w) is not available with --fuzzy or --fuzzy-regex");
+    }
+    let Translated { insensitive, pattern: pat } = o.translate();
     match o.mode {
-        Mode::Fuzzy { max_edits } => Ok(AnyMatcher::Fuzzy(Box::new(FuzzyMatcher::new(&o.pattern, max_edits, insensitive)?))),
-        Mode::FuzzyRegex { max_edits } => Ok(AnyMatcher::FuzzyRegex(Box::new(crate::fuzzyre::FuzzyRegex::new(&o.pattern, max_edits, insensitive)?))),
+        Mode::Fuzzy { max_edits } => Ok(AnyMatcher::Fuzzy(Box::new(FuzzyMatcher::new(&pat, max_edits, insensitive)?))),
+        Mode::FuzzyRegex { max_edits } => Ok(AnyMatcher::FuzzyRegex(Box::new(crate::fuzzyre::FuzzyRegex::new(&pat, max_edits, insensitive)?))),
         Mode::Pcre2 => {
             let m = grep_pcre2::RegexMatcherBuilder::new()
                 .caseless(insensitive)
@@ -698,20 +773,15 @@ pub fn build_matcher(o: &Options) -> Result<AnyMatcher> {
                 .utf(true)
                 .ucp(true)
                 .jit_if_available(true)
-                .build(&o.pattern)
+                .build(&pat)
                 .with_context(|| format!("invalid PCRE2 pattern {:?}", o.pattern))?;
             Ok(AnyMatcher::Pcre2(m))
         }
         _ => {
-            let pat = match o.mode {
-                Mode::Literal => regex::escape(&o.pattern),
-                Mode::Identifier => identifier_regex(&o.pattern),
-                _ => o.pattern.clone(),
-            };
             let mut b = RegexMatcherBuilder::new();
             // ^ and $ are line anchors in every mode, as in ripgrep; without it the searcher has to
             // run the regex one line at a time
-            b.case_insensitive(insensitive && o.mode != Mode::Identifier)
+            b.case_insensitive(insensitive)
                 .word(o.word)
                 .multi_line(true)
                 .dot_matches_new_line(false)
@@ -720,7 +790,7 @@ pub fn build_matcher(o: &Options) -> Result<AnyMatcher> {
                 .line_terminator(if o.multiline { None } else { Some(b'\n') });
             let m = b.build(&pat).with_context(|| format!("invalid pattern {:?}", o.pattern))?;
             let suffix_ok = !o.word && o.mode != Mode::Literal;
-            Ok(AnyMatcher::Regex(if suffix_ok { LineRegex::new(m, &pat, insensitive && o.mode != Mode::Identifier) } else { LineRegex::plain(m) }))
+            Ok(AnyMatcher::Regex(if suffix_ok { LineRegex::new(m, &pat, insensitive) } else { LineRegex::plain(m) }))
         }
     }
 }
@@ -2075,7 +2145,7 @@ mod tests {
             (r"[a-z]+ing\b", Case::Sensitive),
             (r"\d+px", Case::Sensitive),
             (r".*abc", Case::Sensitive),
-            (r"\S*_resume\($", Case::Smart),
+            (r"\S*_resume\($", Case::Sensitive),
             (r"PM_RESUME", Case::Insensitive),
         ] {
             let o = Options { pattern: pat.to_string(), case, ..Options::default() };
@@ -2267,6 +2337,24 @@ mod tests {
     }
 
     #[test]
+    fn smart_case_counts_only_letters_that_stand_for_themselves() {
+        for (pattern, regex, upper) in [
+            ("foo", true, false),
+            ("Foo", true, true),
+            (r"\Sfoo", true, false),
+            (r"\W+\Bfoo\d", true, false),
+            (r"\pLfoo\p{Lu}x", true, false),
+            (r"\SFoo", true, true),
+            (r"foo\\Bar", true, true),
+            (r"\Sfoo", false, true),
+        ] {
+            assert_eq!(uppercase_literal(pattern, regex), upper, "{pattern:?} regex={regex}");
+        }
+        let o = Options { pattern: "fooz".into(), mode: Mode::Fuzzy { max_edits: 1 }, word: true, ..Options::default() };
+        assert!(build_matcher(&o).err().unwrap().to_string().contains("not available with --fuzzy"));
+    }
+
+    #[test]
     fn identifier_parts_cover_digits_and_acronyms() {
         let p = |s: &str| ident_parts(s);
         assert_eq!(p("makeWidget3"), vec!["make", "Widget", "3"]);
@@ -2287,5 +2375,22 @@ mod tests {
         }
         assert!(!re.is_match("refreshTokens"));
         assert!(!re.is_match("refresh tokens"));
+    }
+
+    #[test]
+    fn joined_patterns_keep_each_mode_meaning() {
+        let ps = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(join_patterns(&ps(&["a.b"]), Mode::Pcre2, true).unwrap(), (r"a\.b".to_string(), Mode::Pcre2));
+        assert_eq!(join_patterns(&ps(&["a.b"]), Mode::Literal, false).unwrap(), ("a.b".to_string(), Mode::Literal));
+        assert_eq!(join_patterns(&ps(&["a.b", "c"]), Mode::Literal, true).unwrap(), (r"(?:a\.b)|(?:c)".to_string(), Mode::Regex));
+        assert_eq!(join_patterns(&ps(&["a.b", "c"]), Mode::Pcre2, true).unwrap().1, Mode::Pcre2);
+        let (p, m) = join_patterns(&ps(&["fooBar", "x"]), Mode::Identifier, false).unwrap();
+        assert_eq!((p.as_str(), m), (r"(?:(?i)\bfoo[_\-]?Bar\b)|(?:(?i)\bx\b)", Mode::Regex));
+        let e = join_patterns(&ps(&["a", "b"]), Mode::Fuzzy { max_edits: 1 }, false).unwrap_err();
+        assert_eq!(e.to_string(), "--fuzzy takes one pattern");
+        let zip = Options { search_zip: true, hidden: true, ..Options::default() };
+        assert!(zip.check_indexable().unwrap_err().to_string().starts_with("--index does not cover archive members"));
+        assert!(Options { max_depth: Some(1), ..Options::default() }.check_indexable().unwrap_err().to_string().starts_with("--index searches the files"));
+        assert!(Options::default().check_indexable().is_ok());
     }
 }

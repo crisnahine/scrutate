@@ -18,7 +18,6 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use scrutate::instant::{self, Case, Mode, Options};
-use scrutate::search::Searcher;
 
 fn err<E: std::fmt::Display>(e: E) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
@@ -314,7 +313,7 @@ fn grep(
 #[pyclass(module = "scrutate")]
 pub struct Repo {
     root: PathBuf,
-    inner: Mutex<Searcher>,
+    inner: Mutex<scrutate::Repo>,
 }
 
 fn hits_py(hits: Vec<scrutate::search::Hit>) -> Vec<Hit> {
@@ -324,12 +323,12 @@ fn hits_py(hits: Vec<scrutate::search::Hit>) -> Vec<Hit> {
 impl Repo {
     /// The engine with its index brought up to date (checked at most once a second), as the CLI
     /// and the MCP server see it before every operation.
-    fn fresh(&self) -> anyhow::Result<std::sync::MutexGuard<'_, Searcher>> {
+    fn fresh(&self) -> anyhow::Result<std::sync::MutexGuard<'_, scrutate::Repo>> {
         let mut s = self
             .inner
             .lock()
             .map_err(|_| anyhow::anyhow!("engine lock poisoned"))?;
-        s.ix.refresh(1.0)?;
+        s.refresh(1.0)?;
         Ok(s)
     }
 }
@@ -341,7 +340,7 @@ impl Repo {
     fn new(py: Python<'_>, root: &str) -> PyResult<Self> {
         let root = PathBuf::from(root);
         let r2 = root.clone();
-        let s = py.detach(move || scrutate::open(&r2)).map_err(err)?;
+        let s = py.detach(move || scrutate::Repo::open(&r2)).map_err(err)?;
         Ok(Repo {
             root,
             inner: Mutex::new(s),
@@ -362,7 +361,7 @@ impl Repo {
                     .inner
                     .lock()
                     .map_err(|_| anyhow::anyhow!("engine lock poisoned"))?;
-                s.ix.update(force)
+                s.update(force)
             })
             .map_err(err)?;
         let d = PyDict::new(py);

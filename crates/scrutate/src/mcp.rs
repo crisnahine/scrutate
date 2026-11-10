@@ -9,7 +9,7 @@ use anyhow::Result;
 use serde_json::{json, Value};
 
 use crate::ops;
-use crate::search::Searcher;
+use crate::Repo;
 
 const KNOWN_VERSIONS: &[&str] = &["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
 
@@ -26,6 +26,12 @@ pub fn tools() -> Value {
     for tool in tools.as_array_mut().into_iter().flatten() {
         let read_only = ops::read_only(tool["name"].as_str().unwrap_or(""));
         tool["annotations"] = json!({"readOnlyHint": read_only, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false});
+        if read_only {
+            let properties = &mut tool["inputSchema"]["properties"];
+            properties["max_bytes"] = json!({"type": "integer", "default": ops::AGENT_BYTES, "description": "size limit of the answer"});
+            properties["offset"] =
+                json!({"type": "integer", "default": 0, "description": "items to skip, to continue an answer that said more were not shown"});
+        }
     }
     tools
 }
@@ -71,9 +77,11 @@ fn tool_table() -> Value {
 }
 
 /// Run one tool; errors become text for the model.
-pub fn call_tool(s: &mut Searcher, name: &str, args: &Value, refresh_interval: f64) -> (String, bool) {
-    match ops::Op::from_tool(name, args).and_then(|op| ops::run(s, &op, Some(refresh_interval))) {
-        Ok(answer) => (answer.text(), false),
+pub fn call_tool(repo: &mut Repo, name: &str, args: &Value, refresh_interval: f64) -> (String, bool) {
+    let max_bytes = args.get("max_bytes").and_then(Value::as_u64).map_or(ops::AGENT_BYTES, |n| (n as usize).clamp(1_000, 1_000_000));
+    let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
+    match ops::Op::from_tool(name, args).and_then(|op| repo.run(&op, refresh_interval)) {
+        Ok(answer) => (answer.text_within(max_bytes, offset), false),
         Err(e) => (format!("error: {e}"), true),
     }
 }
@@ -90,15 +98,23 @@ fn respond_err(out: &mut impl Write, id: &Value, code: i64, message: &str) {
     let _ = out.flush();
 }
 
+/// How long a tool call waits for an index that is still being built before it answers that it
+/// is (well under the 60 s after which Codex gives a call up).
+const BUILD_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// Serve until stdin closes. The first indexing runs in the background so the handshake is instant;
-/// tool calls that arrive meanwhile wait for it.
-pub fn serve(searcher: Arc<Mutex<Searcher>>, refresh_interval: f64, version: &str) -> Result<()> {
+/// tool calls that arrive meanwhile wait for it, up to `BUILD_WAIT`.
+pub fn serve(repo: Arc<Mutex<Repo>>, refresh_interval: f64, version: &str) -> Result<()> {
+    let building = Arc::new(std::sync::atomic::AtomicBool::new(true));
     {
-        let s = Arc::clone(&searcher);
+        let (repo, building) = (Arc::clone(&repo), Arc::clone(&building));
         std::thread::Builder::new().name("scrutate-index".into()).spawn(move || {
-            if let Ok(mut g) = s.lock() {
-                let _ = g.ix.refresh(0.0);
+            if let Ok(mut g) = repo.lock() {
+                if let Err(e) = g.update(false) {
+                    eprintln!("[scrutate] indexing failed: {e:#}");
+                }
             }
+            building.store(false, std::sync::atomic::Ordering::Release);
         })?;
     }
     let stdin = std::io::stdin();
@@ -146,12 +162,24 @@ pub fn serve(searcher: Arc<Mutex<Searcher>>, refresh_interval: f64, version: &st
                 let args = params.get("arguments").cloned().unwrap_or(json!({}));
                 // a panic inside one tool call must not take the server down: report it as a tool
                 // error and keep serving (the mutex is poisoned afterwards; clear it)
-                let (text, is_error) = match searcher.lock().or_else(|p| Ok::<_, ()>(p.into_inner())) {
-                    Ok(mut s) => match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| call_tool(&mut s, &name, &args, refresh_interval))) {
-                        Ok(r) => r,
-                        Err(_) => (format!("error: internal failure while running {name} (a bug: please report it); the server keeps running"), true),
-                    },
-                    Err(()) => ("error: engine unavailable".to_string(), true),
+                let waited = std::time::Instant::now();
+                while building.load(std::sync::atomic::Ordering::Acquire) && waited.elapsed() < BUILD_WAIT {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                let (text, is_error) = if building.load(std::sync::atomic::Ordering::Acquire) {
+                    (
+                        "scrutate is still building its index of this repository (first use, or many files changed). Call the tool again in a little while."
+                            .to_string(),
+                        false,
+                    )
+                } else {
+                    match repo.lock().or_else(|p| Ok::<_, ()>(p.into_inner())) {
+                        Ok(mut r) => match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| call_tool(&mut r, &name, &args, refresh_interval))) {
+                            Ok(r) => r,
+                            Err(_) => (format!("error: internal failure while running {name} (a bug: please report it); the server keeps running"), true),
+                        },
+                        Err(()) => ("error: engine unavailable".to_string(), true),
+                    }
                 };
                 respond(&mut out, &id, json!({"content": [{"type": "text", "text": text}], "isError": is_error}));
             }

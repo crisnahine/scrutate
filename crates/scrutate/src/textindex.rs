@@ -21,7 +21,7 @@ use memmap2::Mmap;
 use rayon::prelude::*;
 use regex_syntax::hir::{Class, Hir, HirKind};
 
-use crate::instant::{self, Case, Mode, Options};
+use crate::instant::{self, Mode, Options};
 use crate::npy::{self, Npy};
 
 pub const FORMAT: u32 = 2;
@@ -291,21 +291,17 @@ fn analyze(h: &Hir) -> Info {
     }
 }
 
-/// The trigram condition for Engine A's options (same pattern translation and case rules as
-/// `instant::build_matcher`). Inverted searches can match any file.
+/// The trigram condition for Engine A's options (`Options::translate`, as `instant::build_matcher`
+/// uses it). Inverted searches can match any file.
 pub fn query_for(o: &Options) -> Result<Q> {
     if o.invert {
         return Ok(Q::All);
     }
-    let insensitive = match o.case {
-        Case::Sensitive => false,
-        Case::Insensitive => true,
-        Case::Smart => !o.pattern.chars().any(|c| c.is_uppercase()),
-    };
-    let pat = match o.mode {
+    let t = o.translate();
+    match o.mode {
         // k edits leave one of k+1 pieces verbatim (the fuzzy matcher's own prefilter)
         Mode::Fuzzy { max_edits } => {
-            let p = o.pattern.as_bytes();
+            let p = t.pattern.as_bytes();
             let pieces = max_edits as usize + 1;
             let len = p.len() / pieces;
             if len < 3 {
@@ -314,19 +310,17 @@ pub fn query_for(o: &Options) -> Result<Q> {
             let qs = (0..pieces).map(|i| string_query(&p[i * len..if i == pieces - 1 { p.len() } else { (i + 1) * len }])).collect();
             return Ok(or(qs));
         }
-        Mode::Literal => regex::escape(&o.pattern),
-        Mode::Identifier => instant::identifier_regex(&o.pattern),
-        Mode::Regex => o.pattern.clone(),
+        Mode::Literal | Mode::Identifier | Mode::Regex => {}
         // PCRE2 syntax differs from this parser's in places: no condition, so no file is missed
         Mode::Pcre2 => return Ok(Q::All),
         Mode::FuzzyRegex { .. } => return Ok(Q::All),
-    };
+    }
     let hir = regex_syntax::ParserBuilder::new()
-        .case_insensitive(insensitive && o.mode != Mode::Identifier)
+        .case_insensitive(t.insensitive)
         .multi_line(true)
         .utf8(false)
         .build()
-        .parse(&pat)
+        .parse(&t.pattern)
         .with_context(|| format!("invalid pattern {:?}", o.pattern))?;
     Ok(analyze(&hir).query())
 }
@@ -1129,6 +1123,7 @@ fn gc(dir: &Path, keep: &[String], live: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::instant::Case;
 
     fn q(pat: &str, mode: Mode, case: Case) -> Q {
         query_for(&Options { pattern: pat.to_string(), mode, case, ..Options::default() }).unwrap()
@@ -1274,5 +1269,85 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn condition_never_rejects_a_text_engine_a_matches() {
+        use grep_matcher::Matcher;
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut rnd = |n: usize| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state % n as u64) as usize
+        };
+        let words = [
+            "kernel",
+            "Kernel",
+            "KERNEL",
+            "_thread",
+            "thread",
+            "ker",
+            "nel",
+            " ",
+            "\n",
+            "pm_resume",
+            "PM_RESUME",
+            "refresh_token",
+            "RefreshToken",
+            "\u{212A}ernel",
+            "été",
+            "ÉTÉ",
+            "tokXnizer",
+            "x",
+        ];
+        let texts: Vec<String> = (0..400).map(|_| (0..rnd(12)).map(|_| words[rnd(words.len())]).collect()).collect();
+        let pats = [
+            "kernel",
+            "Kernel",
+            "KERNEL_thread",
+            "pm_resume",
+            "refreshToken",
+            "ker(nel|xyz)",
+            r"\bthread\b",
+            "été",
+            "ÉTÉ",
+            "^pm_",
+            "nel$",
+            r"nel\nker",
+            "tokenizer",
+            "a.b",
+            "el thr",
+        ];
+        let modes = [Mode::Regex, Mode::Literal, Mode::Identifier, Mode::Fuzzy { max_edits: 1 }, Mode::Pcre2, Mode::FuzzyRegex { max_edits: 1 }];
+        let mut matched = 0;
+        for pat in pats {
+            for mode in modes {
+                for case in [Case::Sensitive, Case::Insensitive, Case::Smart] {
+                    for (word, multiline) in [(false, false), (true, false), (false, true)] {
+                        let o = Options { pattern: pat.to_string(), mode, case, word, multiline, ..Options::default() };
+                        let Ok(m) = instant::build_matcher(&o) else { continue };
+                        let cond = query_for(&o).unwrap();
+                        let is_match = |h: &str| match &m {
+                            instant::AnyMatcher::Regex(m) => m.is_match(h.as_bytes()).unwrap(),
+                            instant::AnyMatcher::Fuzzy(m) => m.is_match(h.as_bytes()).unwrap(),
+                            instant::AnyMatcher::Pcre2(m) => m.is_match(h.as_bytes()).unwrap(),
+                            instant::AnyMatcher::FuzzyRegex(m) => m.is_match(h.as_bytes()).unwrap(),
+                        };
+                        for text in &texts {
+                            let hit = if multiline { is_match(text) } else { text.split('\n').any(&is_match) };
+                            if hit {
+                                matched += 1;
+                                assert!(
+                                    holds(&cond, &trigrams(text.as_bytes())),
+                                    "{pat:?} {mode:?} {case:?} word={word} multiline={multiline} matches {text:?} but {cond:?} rejects it"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(matched > 1000, "only {matched} matches");
     }
 }

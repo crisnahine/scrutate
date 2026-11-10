@@ -81,6 +81,12 @@ pub struct Cli {
     /// never print color
     #[arg(long, global = true, env = "NO_COLOR")]
     pub no_color: bool,
+    /// size limit, in bytes, of an answer from the index; a cut answer says how many items are left
+    #[arg(long, global = true, value_name = "BYTES", env = "SCRUTATE_MAX_BYTES")]
+    pub max_bytes: Option<usize>,
+    /// items of an answer to skip, to continue one that --max-bytes cut
+    #[arg(long, global = true, value_name = "N", default_value_t = 0)]
+    pub offset: usize,
     #[command(subcommand)]
     pub cmd: Cmd,
 }
@@ -449,11 +455,12 @@ pub fn run() -> Result<i32> {
     }
     let cli = if matches!(args.get(1).map(String::as_str), Some("grep" | "g")) {
         let GrepCli { root, no_color, cmd: GrepCmd::Grep(grep) } = GrepCli::parse();
-        Cli { root, no_color, cmd: Cmd::Grep(grep) }
+        Cli { root, no_color, max_bytes: None, offset: 0, cmd: Cmd::Grep(grep) }
     } else {
         Cli::parse()
     };
     let no_color = cli.no_color;
+    let page = (cli.max_bytes.unwrap_or(usize::MAX), cli.offset);
     match cli.cmd {
         Cmd::Grep(GrepArgs {
             pattern,
@@ -505,7 +512,7 @@ pub fn run() -> Result<i32> {
             if fuzzy_regex.is_some() && (pcre2 || ident || fuzzy.is_some() || fixed_strings) {
                 anyhow::bail!("--fuzzy-regex cannot be combined with -P, --ident, --fuzzy or -F (use --fuzzy for a literal)");
             }
-            let mut mode = match (fixed_strings, ident, fuzzy) {
+            let mode = match (fixed_strings, ident, fuzzy) {
                 _ if fuzzy_regex.is_some() => Mode::FuzzyRegex { max_edits: fuzzy_regex.unwrap_or(1) },
                 (_, _, Some(n)) => Mode::Fuzzy { max_edits: n },
                 (_, true, _) => Mode::Identifier,
@@ -513,48 +520,15 @@ pub fn run() -> Result<i32> {
                 (true, _, _) => Mode::Literal,
                 _ => Mode::Regex,
             };
-            let many = regexp.len() > 1;
-            let pattern = if regexp.is_empty() {
-                pattern.unwrap_or_default()
+            let (pattern, mode) = if regexp.is_empty() {
+                instant::join_patterns(&[pattern.unwrap_or_default()], mode, fixed_strings)?
             } else {
                 // with -e, the first positional argument is a path
                 if let Some(p) = pattern {
                     paths.insert(0, PathBuf::from(p));
                 }
-                match regexp.len() {
-                    1 => regexp.into_iter().next().unwrap_or_default(),
-                    _ => {
-                        if matches!(mode, Mode::Fuzzy { .. }) {
-                            anyhow::bail!("--fuzzy takes one pattern");
-                        }
-                        let each = mode;
-                        let part = |p: &str| match each {
-                            Mode::Literal => regex::escape(p),
-                            Mode::Pcre2 if fixed_strings => regex::escape(p),
-                            Mode::Identifier => instant::identifier_regex(p),
-                            _ => p.to_string(),
-                        };
-                        if !matches!(mode, Mode::Pcre2 | Mode::FuzzyRegex { .. }) {
-                            mode = Mode::Regex;
-                        }
-                        regexp.iter().map(|p| format!("(?:{})", part(p))).collect::<Vec<_>>().join("|")
-                    }
-                }
+                instant::join_patterns(&regexp, mode, fixed_strings)?
             };
-            let pattern = if mode == Mode::Pcre2 && fixed_strings && !many { regex::escape(&pattern) } else { pattern };
-            if index && search_zip {
-                anyhow::bail!("--index does not cover archive members; search with -z and without --index");
-            }
-            if index {
-                if hidden || no_ignore || follow || max_depth.is_some() || max_filesize.is_some() {
-                    anyhow::bail!(
-                        "--index searches the files of the default walk; drop --hidden/--no-ignore/-L/--max-depth/--max-filesize or search without --index"
-                    );
-                }
-                if !paths.is_empty() {
-                    anyhow::bail!("--index searches the indexed repository (--root); narrow it with -g/-t instead of paths");
-                }
-            }
             let mut o = Options {
                 pattern,
                 mode,
@@ -591,26 +565,21 @@ pub fn run() -> Result<i32> {
             if let Some(n) = std::env::var("SCRUTATE_SPLIT_FILE_BYTES").ok().and_then(|v| v.parse().ok()) {
                 o.split_file_bytes = n;
             }
+            if index {
+                o.check_indexable()?;
+                if !paths.is_empty() {
+                    anyhow::bail!("--index searches the indexed repository (--root); narrow it with -g/-t instead of paths");
+                }
+            }
             let roots: Vec<PathBuf> = if paths.is_empty() { vec![PathBuf::from(".")] } else { paths };
             grep_command(roots, o, GrepOutput { files_with_matches, count, sort, json, stats, symbols, root: cli.root, no_color, indexed: index, update })
         }
         Cmd::Index { force, text, no_text } => {
             let progress = std::io::stderr().is_terminal();
             if !text {
-                let mut s = crate::open(&cli.root)?;
-                s.ix.progress = true;
-                let st = match s.ix.update(force) {
-                    Ok(st) => st,
-                    Err(e) if crate::index::error_is_corruption(&e) => {
-                        eprintln!("[scrutate] index database corrupt ({e:#}); rebuilding");
-                        drop(s);
-                        crate::index::wipe_index(&cli.root);
-                        s = crate::open(&cli.root)?;
-                        s.ix.progress = true;
-                        s.ix.update(true)?
-                    }
-                    Err(e) => return Err(e),
-                };
+                let mut repo = crate::Repo::open(&cli.root)?;
+                repo.ix.progress = true;
+                let st = repo.update(force)?;
                 println!("{} files, {} changed, {} chunks, semantic={}, {:.1}s", st.files_total, st.files_changed, st.chunks, st.semantic, st.seconds);
             }
             if !no_text {
@@ -689,15 +658,15 @@ pub fn run() -> Result<i32> {
             Ok(0)
         }
         Cmd::Find { query, k, json } => find_command(&cli.root, &query, k, json, no_color),
-        Cmd::Symbol { name, json } => run_op(&cli.root, Op::Symbol { name, limit: crate::ops::SYMBOL_LIMIT }, json),
-        Cmd::Callers { name, json } => run_op(&cli.root, Op::Callers { name, limit: crate::ops::CALLERS_LIMIT }, json),
-        Cmd::Callees { name, json } => run_op(&cli.root, Op::Callees { name, limit: crate::ops::CALLEES_LIMIT }, json),
-        Cmd::Deps { file, json } => run_op(&cli.root, Op::Deps { path: file }, json),
-        Cmd::Rdeps { target, json } => run_op(&cli.root, Op::Rdeps { target }, json),
-        Cmd::Outline { file, json } => run_op(&cli.root, Op::Outline { path: file }, json),
-        Cmd::Refs { name, json, max_results, def, textual } => run_op(&cli.root, Op::Refs { name, max_results, textual, def }, json),
-        Cmd::Similar { target, k, json } => run_op(&cli.root, Op::Similar { target, k }, json),
-        Cmd::Dupes { min_tokens, threshold, limit, json } => run_op(&cli.root, Op::Dupes { min_tokens, threshold, limit }, json),
+        Cmd::Symbol { name, json } => run_op(&cli.root, Op::Symbol { name, limit: crate::ops::SYMBOL_LIMIT }, json, page),
+        Cmd::Callers { name, json } => run_op(&cli.root, Op::Callers { name, limit: crate::ops::CALLERS_LIMIT }, json, page),
+        Cmd::Callees { name, json } => run_op(&cli.root, Op::Callees { name, limit: crate::ops::CALLEES_LIMIT }, json, page),
+        Cmd::Deps { file, json } => run_op(&cli.root, Op::Deps { path: file }, json, page),
+        Cmd::Rdeps { target, json } => run_op(&cli.root, Op::Rdeps { target }, json, page),
+        Cmd::Outline { file, json } => run_op(&cli.root, Op::Outline { path: file }, json, page),
+        Cmd::Refs { name, json, max_results, def, textual } => run_op(&cli.root, Op::Refs { name, max_results, textual, def }, json, page),
+        Cmd::Similar { target, k, json } => run_op(&cli.root, Op::Similar { target, k }, json, page),
+        Cmd::Dupes { min_tokens, threshold, limit, json } => run_op(&cli.root, Op::Dupes { min_tokens, threshold, limit }, json, page),
         Cmd::Tsquery { lang, query, paths, limit, json, no_cache } => {
             // streamed: one JSON object or one text line per capture, in path order
             let stdout = std::io::stdout();
@@ -728,7 +697,7 @@ pub fn run() -> Result<i32> {
             Ok(if n == 0 { 1 } else { 0 })
         }
         Cmd::Serve { refresh_interval, watch } => {
-            let s = crate::open(&cli.root)?;
+            let s = crate::Repo::open(&cli.root)?;
             let root = s.ix.root.clone();
             let s = Arc::new(Mutex::new(s));
             if watch {
@@ -745,7 +714,7 @@ pub fn run() -> Result<i32> {
                         &NEVER,
                         || eprintln!("[scrutate] watching {}", root.display()),
                         || {
-                            s.lock().unwrap_or_else(|p| p.into_inner()).ix.update(false)?;
+                            s.lock().unwrap_or_else(|p| p.into_inner()).update(false)?;
                             crate::watch::update_text(&root)?;
                             Ok(())
                         },
@@ -831,10 +800,10 @@ pub fn run() -> Result<i32> {
 }
 
 /// Run one index operation and print its answer; exit code 1 when nothing was found.
-fn run_op(root: &Path, op: Op, json: bool) -> Result<i32> {
+fn run_op(root: &Path, op: Op, json: bool, (max_bytes, offset): (usize, usize)) -> Result<i32> {
     use crate::ops::Answer;
     let mut s = open_fresh(root)?;
-    let answer = crate::ops::run(&mut s, &op, None)?;
+    let answer = crate::ops::run(&mut s, &op)?;
     // these print nothing on standard output when empty, so a pipeline sees no lines
     let quiet = matches!(answer, Answer::Outline { .. } | Answer::Deps { .. } | Answer::Rdeps { .. } | Answer::Similar(_) | Answer::Dupes(_));
     if json {
@@ -842,7 +811,7 @@ fn run_op(root: &Path, op: Op, json: bool) -> Result<i32> {
     } else if quiet && answer.is_empty() {
         eprintln!("{}", answer.text());
     } else {
-        let text = answer.text();
+        let text = answer.text_within(max_bytes, offset);
         print!("{text}{}", if text.ends_with('\n') { "" } else { "\n" });
     }
     Ok(if answer.is_empty() { 1 } else { 0 })
@@ -853,22 +822,9 @@ fn watch_command(root: &Path) -> Result<i32> {
     let root = std::fs::canonicalize(root).with_context(|| format!("watch {}", root.display()))?;
     let stop = Arc::new(AtomicBool::new(false));
     interrupt::install(Arc::clone(&stop));
-    let mut s: Option<crate::search::Searcher> = None;
+    let mut repo = crate::Repo::open(&root)?;
     let mut update = || -> Result<()> {
-        let st = match s.as_mut().map(|s| s.ix.update(false)) {
-            Some(Ok(st)) => st,
-            Some(Err(e)) if !crate::index::error_is_corruption(&e) => return Err(e),
-            other => {
-                if let Some(Err(e)) = other {
-                    eprintln!("[scrutate] index database corrupt ({e:#}); rebuilding");
-                    s = None; // close the database before its files are deleted
-                    crate::index::wipe_index(&root);
-                }
-                let (fresh, st) = crate::open_updated(&root, false)?;
-                s = Some(fresh);
-                st
-            }
-        };
+        let st = repo.update(false)?;
         let text = crate::watch::update_text(&root)?;
         let text_changed = text.as_ref().map(|t| t.files_changed + t.files_removed).unwrap_or(0);
         if st.files_changed + st.files_removed + text_changed > 0 {
@@ -1186,7 +1142,7 @@ fn grouped_by_symbol(root: &Path, hits: &mut Vec<instant::Hit>, w: &mut termcolo
 /// Unified strategy: regex-looking queries go to Engine A; everything else to the ranked engine when
 /// an index exists or the repository is small enough to index now; otherwise an identifier grep.
 fn find_command(root: &Path, query: &str, k: usize, json: bool, no_color: bool) -> Result<i32> {
-    let has_index = root.join(".scrutate/index.db").exists();
+    let has_index = crate::index::exists(root);
     let small_repo = || crate::index::list_files(root).len() <= 3000;
     if looks_like_regex(query) {
         let o = Options { pattern: query.to_string(), mode: Mode::Regex, case: Case::Smart, ..Options::default() };
@@ -1246,7 +1202,7 @@ fn batch_command(root: &Path, file: &Path, features: bool, timing: bool) -> Resu
         let req: serde_json::Value = serde_json::from_str(&line)?;
         if let Some(tool) = req.get("op").and_then(|v| v.as_str()) {
             // any operation, named and given arguments as an MCP tool call is
-            let rec = match Op::from_tool(tool, &req).and_then(|op| crate::ops::run(&mut s, &op, None)) {
+            let rec = match Op::from_tool(tool, &req).and_then(|op| crate::ops::run(&mut s, &op)) {
                 Ok(answer) => serde_json::json!({"op": tool, "result": answer.json()}),
                 Err(e) => serde_json::json!({"op": tool, "error": e.to_string()}),
             };
