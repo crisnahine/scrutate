@@ -79,8 +79,8 @@ def engine_a(data, label):
     out.append(f"- Load average (1 minute) at the start of each measured block: median {statistics.median(loads):.1f}, max {max(loads):.1f} on "
                f"{env.get('cpus')} logical CPUs. The machine was shared with other work throughout, so no result here is a publishable #1 claim "
                "(section 14 requires dedicated idle hardware); rows whose load exceeded the CPU count carry it in the status column.")
-    out.append("- The read-files ceiling (`bench/rawread.c`) is measured once per file set, before that set's first benchmark: with a warm cache "
-               "on one thread per CPU, with a cold cache on the fastest of several thread counts (a disk takes more reads at once than there "
+    out.append("- The read-files ceiling (`bench/rawread.c`) is measured once per file set, before that set's first benchmark, and is the fastest of several thread "
+               "counts: one per CPU and half as many with a warm cache, up to 96 with a cold one (a disk takes more reads at once than there "
                "are cores). On a shared machine a row measured later under heavier load can read PARTIAL where a quieter run reads BLOCKED; "
                "PARTIAL is the weaker of the two claims.")
     out.append("- Tool versions: " + "; ".join(f"{t}: `{v}`" for t, v in env["tools"].items() if v and t != "scrutate --index") + ".")

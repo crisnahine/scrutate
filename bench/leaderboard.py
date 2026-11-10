@@ -18,8 +18,8 @@ Per benchmark:
  4. Status. The 95% confidence interval of median(scrutate) / median(best competitor), by a
     bootstrap over the runs: PASS if it lies below 1, FAIL above 1, PARTIAL if it contains 1;
     BLOCKED (a tie at the hardware limit) when it contains 1 and both medians are within 15% of
-    the time to merely read the same files (bench/rawread.c; with a cold cache, the fastest of
-    several thread counts).
+    the time to merely read the same files (bench/rawread.c, the fastest of several thread
+    counts).
 Results are written after every benchmark, so an interrupted run resumes where it stopped.
 """
 from __future__ import annotations
@@ -572,9 +572,10 @@ def run_bench(b, corpora, a, cache_dir):
         key = f"{b['corpus']}|{b['mode']}|{a.cache}|{len(files)}"
         if key not in RAWREAD:
             cpus = os.cpu_count() or 4
-            # cold reads wait on the disk, which takes more of them at once than there are cores:
-            # the ceiling is the fastest of a few thread counts
-            for threads in [cpus] if a.cache == "warm" else sorted({cpus, 24, 48, 96}):
+            # the ceiling is the fastest of a few thread counts: cold reads wait on the disk, which
+            # takes more of them at once than there are cores, and warm reads on macOS are fastest
+            # on the performance cores alone
+            for threads in sorted({cpus, max(1, cpus // 2)} if a.cache == "warm" else {cpus, 24, 48, 96}):
                 rr = hyperfine([rawread_bin(), lst, str(threads)], cdir, {}, a.runs if a.cache == "warm" else min(a.runs, 10), 3, prepare)
                 cur = {"median": statistics.median(rr["times"]), "n": rr["n"], "threads": threads, "times": rr["times"]}
                 if key not in RAWREAD or cur["median"] < RAWREAD[key]["median"]:
