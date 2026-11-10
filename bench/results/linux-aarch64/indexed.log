@@ -1,0 +1,13 @@
+debconf: delaying package configuration, since apt-utils is not installed
+[indexed] scrutate: index 4.24s, 428 MB, peak 721 MB
+[indexed] zoekt: index 117.70s, 4238 MB, peak 1529 MB
+[indexed] livegrep: index 26.84s, 7781 MB, peak 7812 MB
+[indexed] latency p50: {'best': 'zoekt', 'ratio': 0.22125670772091402, 'ci95': [0.1603603066010536, 0.28217432921972074], 'status': 'PASS'}
+[indexed] latency p95: {'best': 'zoekt', 'ratio': 0.32703996119396445, 'ci95': [0.05763750293682812, 0.618756413795552], 'status': 'PASS'}
+[indexed] latency p99: {'best': 'livegrep', 'ratio': 0.29186306749560065, 'ci95': [0.27557570411997645, 0.3096617373425951], 'status': 'PASS'}
+[indexed] full indexing time: {'best': 'livegrep', 'ratio': 0.15814544038761144, 'ci95': [0.1330945112243891, 0.2711384500999557], 'status': 'PASS', 'runs': 5}
+[indexed] incremental update time: {'best': 'livegrep', 'ratio': 0.004265864442637104, 'ci95': [0.0032418156342502, 0.009146483297311539], 'status': 'PASS', 'runs': 5}
+[indexed] index size: {'best': 'zoekt', 'ratio': 0.10107985390609824, 'status': 'PASS'}
+[indexed] concurrent throughput: {'best': 'livegrep', 'ratio': 4.302281868776127, 'ci95': [3.5551502119307394, 5.7450571939742465], 'status': 'PASS'}
+[indexed] query memory: {'best': 'zoekt', 'ratio': 0.046179838558287965, 'status': 'PASS'}
+indexed exit 0
