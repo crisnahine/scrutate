@@ -9,7 +9,7 @@
 set -euo pipefail
 B=/bench
 apt-get update -qq && apt-get install -y -qq python3 git time > /dev/null  # GNU time: per-query peak memory
-export PATH=$B/bin:$PATH SCRUTATE_BIN=$B/scrutate/target/release/scrutate ZOEKT_BIN_DIR=$B/bin
+export PATH=$B/bin:$B/go/bin:$PATH SCRUTATE_BIN=$B/scrutate/target/release/scrutate ZOEKT_BIN_DIR=$B/bin
 git config --global --add safe.directory '*'
 out=/results/linux-$(uname -m)
 mkdir -p "$out"
