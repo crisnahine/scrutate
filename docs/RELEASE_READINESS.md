@@ -39,7 +39,17 @@ below). Every PASS refers to a test, benchmark or audit output in this repositor
 
 Status words as in docs/TRACEABILITY.md. "Resolution" says what closes the item.
 
-REMAINING_TABLE
+| ID | What is missing | Status | What closes it |
+|---|---|---|---|
+| R-4.6, R-14.16 | #1 on every benchmark: on macOS 5 warm benchmarks under 18 ms are lost to ugrep by 2 to 8% and the indexed p95 is a tie; in the Linux VM 11 benchmarks tie with ripgrep and `-i KÖNIG` is lost (1.16x) | PARTIAL | the measured next steps in docs/ROADMAP.md (small-tree walk, Linux CPU), then a run on dedicated hardware |
+| R-14.11 | Results from dedicated, otherwise idle hardware | BLOCKED | a dedicated Mac and Linux machine; the harness and corpora are ready |
+| R-14.12 | A second index mode (file contents in the index) to trade size for latency | PARTIAL | implement and benchmark it; the p95 against Zoekt is the case it would decide |
+| R-6.1, R-9.10, R-12.2, R-13.9 | Windows and Intel macOS executed, not only cross-built | PARTIAL | a Windows machine or the CI matrix; Intel macOS with Rosetta 2 installed on the build Mac |
+| R-6.12, R-14.15, R-12.18 | CI runs, benchmark regression tracking in CI | PARTIAL | publishing the repository (declined for this release) |
+| R-12.17 | Signed releases and published packages | PARTIAL | the release workflow's Sigstore steps and the package pull requests, which need the published repository |
+| R-6.15, R-12.16 | GitHub App / GitLab integration exercised against a real platform | PARTIAL | the published repository |
+| R-12.15 | The cross-platform part of verification | PARTIAL | as R-9.10 |
+| R-7.2 | Trademark search by counsel | PARTIAL | counsel's search of the trademark registers |
 
 ## Defects found and fixed while preparing this release
 
@@ -67,4 +77,8 @@ the JSON summary, and unordered output.
 
 ## Recommendation
 
-RECOMMENDATION
+Use 0.1.0 for development work on macOS arm64 and Linux: both engines are verified there, the
+results are reproducible from this repository, and the remaining gaps are listed above with what
+closes each. Before calling it production-ready: run the CI matrix (publishing the repository),
+execute the Windows and Intel macOS builds, get an independent security review, and repeat the
+benchmarks on dedicated hardware.

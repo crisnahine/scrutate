@@ -57,7 +57,10 @@ exactly what is and is not verified.
   18 ms (a 220-file repository and the backtracking trap), 2 to 8% behind ugrep. Structural search
   is 5 to 26 times faster than ast-grep. Against Zoekt the text index builds 26 times faster, is a
   tenth of the size, answers in half the median time and serves 1.27 times the queries per second;
-  its p95 is a tie. LINUX_SUMMARY
+  its p95 is a tie. In an 8-CPU Linux virtual machine on the same Mac, Engine A ties ripgrep on 11 of
+  14 Linux-tree benchmarks, wins 2 and loses one (`-i KÖNIG`, 1.16x); cold, it wins 3 of 4 and
+  ties the fourth at the hardware limit. There the text index leads Zoekt and livegrep on all 8
+  indexed metrics (3.2 times the throughput of the next).
 - **Engine B** gives bit-identical features, scores and rankings to the Python reference it was
   developed against (300 queries in the parity harness), and its learned ranker beats its own
   lexical layer on every held-out query type, in Python and five more languages (docs/QUALITY.md).

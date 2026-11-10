@@ -13,7 +13,7 @@ Evidence files: `docs/TEST_RESULTS.md` (test and audit output, generated), `docs
 `docs/SECURITY.md`, `docs/LANGUAGES.md`, `docs/NAMING.md`, `bench/results/platforms/` (per-platform
 logs). Test names refer to `crates/scrutate/tests/*.rs`, `crates/scrutate/src/*.rs` unit tests and
 `python/tests/*.py`.
-Counts: PASS 0 · PARTIAL 0 · BLOCKED 0 · FAIL 0 (tallied at the end).
+Counts: PASS 120 · PARTIAL 15 · BLOCKED 1 · FAIL 0 over 136 rows (computed by `tools/traceability_tally.py`).
 
 ## 2A. Engine A: universal instant search
 
@@ -77,7 +77,7 @@ Counts: PASS 0 · PARTIAL 0 · BLOCKED 0 · FAIL 0 (tallied at the end).
 | R-4.3 | Measure latency, throughput, CPU, memory, startup, indexing time, index size, concurrency | `leaderboard.py` (wall, CPU, peak RSS per run via hyperfine), `indexed.py` (index time, size, update, p50/p95/p99, memory, concurrent throughput) | LEADERBOARD.md | PASS |
 | R-4.4 | Small and massive repositories, cold and warm caches, query types, realistic workloads | 9 corpora; warm and cold (macOS: page eviction with `bench/evict.c`; Linux VM: `drop_caches`) | LEADERBOARD.md: warm and cold sections for macOS and the Linux VM; BENCHMARKS.md: three Python corpora from 600 to 54,500 files | PASS |
 | R-4.5 | Reproducible benchmarks with versions, hardware, configuration, datasets, commands | results JSON records tool versions, hardware, settings, every argv; corpora pinned (`bench/corpora.py`, manifest with tree checksums) | LEADERBOARD.md "Exact command lines" | PASS |
-| R-4.6 | Outperform competitors across every workload; report where they remain superior | per-thread output, no Foundation/libobjc at start-up, long-line writes, fast UTF-8 validation, one large file searched on every thread, suffix-literal and line-start-literal candidate lines, walk threads chosen by platform and by the speed of the first reads, a vendored `ignore` with a regex-free excludes parser and a short idle wait, a text index with position and next-byte masks | LEADERBOARD.md statuses: macOS 32 of 37 warm and 5 of 5 cold PASS, the 5 losses runs under 18 ms (ugrep, 2 to 8%); Linux VM 2 PASS, 11 PARTIAL, 1 FAIL warm and 3 PASS, 1 BLOCKED cold; indexed: macOS 7 PASS, 1 PARTIAL against Zoekt, LINUX_INDEXED_COUNTS; COMPETITIVE.md names every case where another tool is ahead | PARTIAL |
+| R-4.6 | Outperform competitors across every workload; report where they remain superior | per-thread output, no Foundation/libobjc at start-up, long-line writes, fast UTF-8 validation, one large file searched on every thread, suffix-literal and line-start-literal candidate lines, walk threads chosen by platform and by the speed of the first reads, a vendored `ignore` with a regex-free excludes parser and a short idle wait, a text index with position and next-byte masks | LEADERBOARD.md statuses: macOS 32 of 37 warm and 5 of 5 cold PASS, the 5 losses runs under 18 ms (ugrep, 2 to 8%); Linux VM 2 PASS, 11 PARTIAL, 1 FAIL warm and 3 PASS, 1 BLOCKED cold; indexed: macOS 7 PASS, 1 PARTIAL against Zoekt, Linux VM 8 of 8 PASS against Zoekt and livegrep; COMPETITIVE.md names every case where another tool is ahead | PARTIAL |
 
 ## 5. World-class Rust engineering
 
@@ -223,9 +223,9 @@ Counts: PASS 0 · PARTIAL 0 · BLOCKED 0 · FAIL 0 (tallied at the end).
 | R-14.13 | Leaderboard with medians, CIs and our rank; status per benchmark | `bench/make_leaderboard_md.py` | LEADERBOARD.md | PASS |
 | R-14.14 | Claims of #1 only for PASS rows, linked to raw data | docs reviewed | README.md, COMPETITIVE.md | PASS |
 | R-14.15 | Every benchmark tracked in CI; regressions beyond noise block the change | `benchmarks.yml` job + `leaderboard_regression.py` | workflow not executed | PARTIAL |
-| R-14.16 | Rank #1 on every benchmark, every metric, every declared platform | everything in R-4.6 | LEADERBOARD.md: #1 with significance in 32 of 37 warm and 5 of 5 cold benchmarks on macOS, 2 of 14 warm and 3 of 4 cold in the Linux VM (the rest ties but one Linux loss and the five macOS losses under 18 ms), 7 of 8 indexed metrics against Zoekt on macOS, LINUX_INDEXED_COUNTS; no result comes from dedicated idle hardware, which section 14 requires for a published #1 | PARTIAL |
+| R-14.16 | Rank #1 on every benchmark, every metric, every declared platform | everything in R-4.6 | LEADERBOARD.md: #1 with significance in 32 of 37 warm and 5 of 5 cold benchmarks on macOS, 2 of 14 warm and 3 of 4 cold in the Linux VM (the rest ties but one Linux loss and the five macOS losses under 18 ms), 7 of 8 indexed metrics against Zoekt on macOS and 8 of 8 against Zoekt and livegrep in the Linux VM; no result comes from dedicated idle hardware, which section 14 requires for a published #1 | PARTIAL |
 
 ## Tally
 
-PASS 0 · PARTIAL 0 · BLOCKED 0 · FAIL 0. The PARTIAL, BLOCKED and FAIL rows are listed with their
+PASS 120 · PARTIAL 15 · BLOCKED 1 · FAIL 0 over 136 rows. The PARTIAL, BLOCKED and FAIL rows are listed with their
 resolution in RELEASE_READINESS.md ("Remaining defects and incomplete requirements").

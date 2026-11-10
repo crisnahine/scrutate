@@ -84,7 +84,22 @@ Why it is smaller and quicker to build: the text index stores trigram postings a
 and reads candidate files from the source tree, which must be present. Zoekt stores the contents
 and can answer without the tree. Scrutate offers only the first mode in 0.1.0 (R-14.12).
 
-LIVEGREP
+In the Linux virtual machine, against Zoekt and livegrep (revision `923d5ad7`, built with Bazel as
+its README says; its `codesearch` server holds the index and a minimal gRPC client prints each
+answer), on the same tree and the same 20 queries, every answer checked: Scrutate is ahead on all 8
+metrics (`bench/results/linux-aarch64/indexed.json`).
+
+| Metric | Scrutate | Zoekt | livegrep |
+|---|---|---|---|
+| Building the index | 5.2 s | 127.7 s | 47.8 s |
+| Index on disk | 428 MB | 4,238 MB | 7,782 MB |
+| After editing 100 files | 0.22 s | 131.9 s (rebuild) | 29.5 s (rebuild) |
+| Latency p50 / p95 / p99 | 11.9 / 74.0 / 107 ms | 51.4 / 222 / 851 ms | 72.0 / 317 / 365 ms |
+| Throughput, 8 clients | 155.7 queries/s | 26.4 | 48.9 |
+| Memory to answer a query | 16 MB | 358 MB | 2,704 MB (the server's resident index included) |
+
+livegrep keeps its index in a long-running server's memory and answers there, which is what makes
+its large queries fast; Scrutate and Zoekt start a process per query and map their index files.
 
 ## 4. Against "nothing": the code-intelligence engine
 
