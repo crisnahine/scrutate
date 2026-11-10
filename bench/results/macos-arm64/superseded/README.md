@@ -40,3 +40,9 @@ binary predates the changes listed under "Performance" in CHANGELOG.md.
 `*-b57d` is a complete run (37 of 37 warm, 5 of 5 cold and every indexed metric PASS) of the build
 before the Linux read-path changes, the operation module and the other refactors of the same day;
 the published run is of the binary that includes them.
+
+`leaderboard-warm-587a.json` is a complete warm run (36 of 37 PASS) of the build before output was
+held for a millisecond and a large one-line file was read on several threads. Its one PARTIAL is
+`patho/backtracking trap`: 17.0 ms against ugrep's 17.0 ms, where the b57d run had 15.8 against
+16.2. `leaderboard-cold-587a-partial.json` holds the two rows measured before that chain was
+stopped to work on the tie.

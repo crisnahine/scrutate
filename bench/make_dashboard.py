@@ -21,7 +21,9 @@ import sys
 HISTORY = ["leaderboard-warm-prelim", "leaderboard-warm-blocks", "leaderboard-warm-prevbin", "leaderboard-warm-eeab",
            "leaderboard-warm-a82a", "leaderboard-warm-9da7-partial", "indexed-eeab", "leaderboard-warm-fb5c", "leaderboard-cold-fb5c",
            "indexed-fb5c", "leaderboard-warm-fb3b", "leaderboard-cold-fb3b", "indexed-fb3b", "leaderboard-warm-6602",
-           "leaderboard-cold-6602", "indexed-6602"]
+           "leaderboard-cold-6602", "indexed-6602", "leaderboard-warm-b57d", "leaderboard-cold-b57d", "indexed-b57d",
+           "leaderboard-warm-558e", "leaderboard-cold-558e", "indexed-558e", "leaderboard-warm-e49f", "leaderboard-cold-e49f",
+           "indexed-e49f", "leaderboard-warm-587a", "leaderboard-cold-587a-partial"]
 STATUSES = ["PASS", "PARTIAL", "BLOCKED", "FAIL"]
 MARK = {"PASS": "P", "PARTIAL": "~", "BLOCKED": "B", "FAIL": "F"}
 

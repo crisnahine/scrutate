@@ -1,0 +1,5 @@
+[leaderboard] linux/literal
+  PASS: scrutate 1276.1 ms; best competitor ripgrep 1733.4 ms; ratio 0.736 [0.7322918785760038, 0.7482879202945246]
+[leaderboard] linux/case-insensitive
+  PASS: scrutate 1288.9 ms; best competitor ripgrep 1764.6 ms; ratio 0.730 [0.7242346977013242, 0.7474893166632419]
+[leaderboard] llvm/literal
