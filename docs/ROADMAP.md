@@ -53,7 +53,14 @@ docs/TRACEABILITY.md.
   checks for work; a wait that starts at 10 µs and doubles took the parallel walk of the ripgrep
   repository from 8.5 to 6.2 ms (measured, not shipped: the default one-thread walk was level, and
   the release binary is the one the leaderboard measured). Then read each directory's ignore files
-  from its listing on the one-thread walk, and build glob sets lazily.
+  from its listing on the one-thread walk, and build glob sets lazily. Two more measured options:
+  building for macOS 13 or newer gives the binary chained fixups, applied as pages are first
+  touched rather than all at launch (start-up 2.6 ms to 2.4 ms; it did not change any of the five
+  results, and it would drop macOS 11 and 12); compiling the pattern while the walk starts saved
+  nothing measurable. The remaining gap is about 0.2 to 0.3 ms of a 5 ms run, spread over start-up
+  (an 85 MB binary: 0.3 ms more than a small one) and the first search in a fresh process (0.4 ms
+  more than later ones); profile-guided optimisation, which also orders code by use, is the next
+  thing to try.
 - Linux: in the 8-CPU Linux VM on the development Mac, Scrutate used about 10% more CPU than
   ripgrep for the same Linux-tree search (993 ms against 910 ms for `PM_RESUME`). Two measured
   steps: read small files into one buffer per thread instead of a new zeroed buffer per file (4% of
