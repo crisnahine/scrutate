@@ -51,6 +51,11 @@ def hardware(env):
     """The CPU as recorded; a Linux guest of the Apple Virtualization framework reports no name."""
     cpu = env.get("cpu", "?")
     if env.get("platform", "").startswith("Linux") and (not cpu or cpu.startswith("0x")):
+        if env.get("cpus", 0) <= 5:
+            # one virtual CPU per performance core of the host: none has to run on an efficiency core
+            return ("a Linux virtual machine (Colima, Apple Virtualization) on the Apple M3 Pro above, with one virtual CPU "
+                    "for each of that machine's performance cores; macOS schedules them, so run-to-run variation is higher "
+                    "than on the host")
         return ("a Linux virtual machine (Colima, Apple Virtualization) on the Apple M3 Pro above; its virtual CPUs run on "
                 "performance or efficiency cores as macOS schedules them, so run-to-run variation is higher than on the host")
     return cpu

@@ -20,7 +20,8 @@ import sys
 # the runs carry no timestamp; this is the order they were measured in (superseded/README.md)
 HISTORY = ["leaderboard-warm-prelim", "leaderboard-warm-blocks", "leaderboard-warm-prevbin", "leaderboard-warm-eeab",
            "leaderboard-warm-a82a", "leaderboard-warm-9da7-partial", "indexed-eeab", "leaderboard-warm-fb5c", "leaderboard-cold-fb5c",
-           "indexed-fb5c"]
+           "indexed-fb5c", "leaderboard-warm-fb3b", "leaderboard-cold-fb3b", "indexed-fb3b", "leaderboard-warm-6602",
+           "leaderboard-cold-6602", "indexed-6602"]
 STATUSES = ["PASS", "PARTIAL", "BLOCKED", "FAIL"]
 MARK = {"PASS": "P", "PARTIAL": "~", "BLOCKED": "B", "FAIL": "F"}
 

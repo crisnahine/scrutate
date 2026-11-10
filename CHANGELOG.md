@@ -6,35 +6,6 @@ API are versioned interfaces; incompatible changes bump the major version once p
 listed here under "Breaking". The on-disk index is a cache with its own `schema_version`; a new
 version rebuilds incompatible indexes automatically and this is never considered breaking.
 
-## [Unreleased]
-
-### Performance
-- Gitignore lines of three common shapes (`*.log`, `**/a/b`, `/build*`) are matched without
-  building a regex; each `.gitignore` used to cost 100 to 400 µs to load, the global excludes file
-  included, which was more than the whole walk of a small repository.
-- A search whose roots hold directories starts the parallel walk at once instead of a one-thread
-  walk of the first 256 files; the walk adds threads when its reads turn out to come from the disk.
-  Only roots holding files and no directories keep the one-thread walk. On the ripgrep repository
-  (60 directories, 211 files) the five benchmarks that ugrep led are now level or ahead.
-- One reusable buffer per search thread for small files instead of a zeroed buffer per file; the
-  disk-or-cache test counts slow reads instead of averaging their times.
-- macOS on Apple silicon: 133 system functions that a search never calls (SQLite's file calls,
-  process spawning, the unwinder) are bound on their first call instead of at launch. dyld spends
-  about 3.3 µs on each imported symbol; imports fell from 210 to 77 and start-up from 2.2 ms to
-  1.9 ms.
-- `scrutate grep` parses its arguments with a definition of that one subcommand instead of all 24
-  (about 0.1 ms).
-
-### Benchmarks
-- The `linux-nodot` corpus is made of copies (APFS clones) instead of hard links to `linux`. On
-  macOS, opening a file with two links costs about twice as much as opening a plain one, so both
-  corpora ran slower than a real checkout for every tool. The file set and its checksum are
-  unchanged.
-
-### Changed
-- macOS builds need macOS 13 or newer (0.1.0 ran on 11): the binary gets chained fixups, applied as
-  pages are first touched (start-up 2.6 ms to 2.4 ms).
-
 ## [0.1.0] - 2026-11-10
 
 First release.
@@ -55,6 +26,25 @@ First release.
   replacing decoder.
 - Ctrl-C handling through `signal()` / `SetConsoleCtrlHandler` directly: the `ctrlc` crate linked
   Foundation and libobjc into every macOS process (about 1.5 ms of start-up).
+- Gitignore lines of three common shapes (`*.log`, `**/a/b`, `/build*`) are matched without
+  building a regex; a `.gitignore` built that way cost 100 to 400 µs to load, the global excludes
+  file included, which was more than the whole walk of a small repository.
+- A search whose roots hold directories starts the parallel walk at once and adds threads when its
+  reads turn out to come from the disk; roots holding only files are walked on one thread while
+  three search.
+- macOS on Apple silicon: 133 system functions that a search never calls (SQLite's file calls,
+  process spawning, the unwinder) are bound on their first call instead of at launch; dyld spends
+  about 3.3 µs on each imported symbol. With the grep-only argument parser (clap otherwise builds
+  all 24 subcommands), start-up is 1.9 ms, against 1.5 ms for a Rust hello-world.
+- macOS builds need macOS 13 or newer: the binary gets chained fixups, which the kernel applies as
+  pages are first touched.
+- A `.gitignore` used on many paths compiles its globs into one set after a while (the Linux
+  tree's root file has over 100); files up to 1 MB are read whole, and a file's size is no longer
+  asked for before reading it. In a Linux VM the Linux-tree search went from 144 ms to 120 ms
+  (ripgrep: 135 ms).
+- Smart case counts only letters that stand for themselves: `-S '\Sfoo'` is case-insensitive, as
+  in ripgrep. `-c` with `--max-count` stops counting at the limit. `-w` with `--fuzzy` or
+  `--fuzzy-regex` is an error (it was ignored).
 - A file of 64 MB or more is searched on every search thread as ranges of whole lines, with the
   output in file order. Binary data, a byte-order mark, context lines, `--max-count`,
   `--max-results`, `-l` and multiline searches keep the single pass.
@@ -138,6 +128,17 @@ First release.
 - Unified `find`, MCP server (14 tools), configuration files with environment-variable precedence,
   shell completions, progress reporting; errors as JSON records with `--json` or
   `SCRUTATE_DIAGNOSTICS=json`.
+- One definition of every index operation for the CLI, the MCP server, `batch` and the Python
+  bindings (`ops.rs`): the same defaults, limits, text and JSON everywhere. `batch` runs any
+  operation by name.
+- For AI agents. Every MCP tool but `reindex` is marked read-only and local; the server returns
+  instructions; `grep_code` is an Engine A search with matches grouped by enclosing symbol;
+  `references` resolves each use to its definition; an answer is at most 24,000 bytes by default
+  (`max_bytes`), cut at whole items, with the `offset` that continues it; the CLI has the same as
+  `--max-bytes` (`SCRUTATE_MAX_BYTES`) and `--offset`; a first index build no longer blocks a tool
+  call for longer than 20 seconds.
+- The index recovers from a corrupt database in every front end that stays open (the MCP server,
+  the Python bindings, `watch`), not only in the CLI.
 - Licensed under Apache-2.0. Toolchain pinned to Rust 1.99.1 (`rust-version` 1.89).
 - Python bindings (PyO3 0.30, abi3 wheels, GIL released, streaming iterator, free-threading
   declaration after review).
