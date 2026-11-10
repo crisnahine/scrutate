@@ -46,32 +46,33 @@ docs/TRACEABILITY.md.
 
 ## Next
 
-- Branch `perf/next` (local) holds three measured changes made after these benchmark runs: one
-  reusable small-file buffer per search thread, a page-cache-or-disk test that counts slow reads
-  instead of averaging them, and the macOS 13 target. Together they took the five macOS benchmarks
-  under 18 ms from 2 to 12% behind ugrep to 3 to 7% behind; merge them with the next full run.
-- Small trees (a few hundred files): Scrutate and ugrep are within about 10% of each other and the
-  order changes with machine load. Scrutate starts 1.2 ms sooner; ugrep walks the directories and
-  matches ignore rules in less time (it compiles no glob sets and does not read the global git
-  excludes or `.git/info/exclude`). Next: in the vendored walker, idle threads sleep 1 ms between
-  checks for work; a wait that starts at 10 µs and doubles took the parallel walk of the ripgrep
-  repository from 8.5 to 6.2 ms (measured, not shipped: the default one-thread walk was level, and
-  the release binary is the one the leaderboard measured). Then read each directory's ignore files
-  from its listing on the one-thread walk, and build glob sets lazily. Two more measured options:
-  building for macOS 13 or newer gives the binary chained fixups, applied as pages are first
-  touched rather than all at launch (start-up 2.6 ms to 2.4 ms; it did not change any of the five
-  results, and it would drop macOS 11 and 12); compiling the pattern while the walk starts saved
-  nothing measurable. The remaining gap is about 0.2 to 0.3 ms of a 5 ms run, spread over start-up
-  (an 85 MB binary: 0.3 ms more than a small one) and the first search in a fresh process (0.4 ms
-  more than later ones). Profile-guided optimisation (a profile from the benchmark workloads)
-  measured 2 to 3.5% on the 220-file tree, about 1% on matching-bound searches and up to 8% on
-  output-bound ones; not adopted for 0.1.0, since it needs a 13 MB profile in the repository and in
-  every release build for less than the gaps above.
+- Branch `perf/next` (local) holds changes made after these benchmark runs: one reusable
+  small-file buffer per search thread, a page-cache-or-disk test that counts slow reads, the macOS
+  13 target, gitignore lines matched without a regex, and the parallel walk from the start for any
+  root that holds directories (growing its threads when the reads come from the disk). Checked with
+  the leaderboard harness on the same laptop (30 runs, a busy machine): `rgbuilt/git-aware` 1.022
+  to 0.898 (PASS) and `ripgrep/simple regex` 1.076 to 0.948 (PASS); `ripgrep/literal` 1.051 to
+  0.955, `ripgrep/case-insensitive` 1.076 to 0.967 and `patho/backtracking trap` 1.024 to 0.988
+  (ahead on the median, intervals still crossing 1, so PARTIAL); `patho/long line` 0.983 to 0.995
+  (PARTIAL); the other small-tree rows kept their PASS. Merge them with the next full run.
+- Small trees (a few hundred files), measured on `perf/next`: Scrutate starts sooner than ugrep
+  (`--version` 2.4 ms against 3.0 ms; a search of an empty directory 2.9 ms against 3.1 ms), so the
+  gap on the ripgrep repository was the walk and search of its 211 files: 2.2 ms against ugrep's
+  1.7 ms. Two causes, both fixed on the branch: each ignore file built a `GlobSet` regex (100 to
+  400 µs, the global excludes file 0.3 ms of every run), and one thread read all 60 directories
+  while the search threads waited. Ruled out by measurement: code-signature page size (16 KB pages,
+  no change) and code layout (a linker order file putting the 979 functions a search runs first:
+  585 page faults against 586, no change in time). Profile-guided optimisation measured 2 to 3.5%
+  on the 220-file tree, about 1% on matching-bound searches and up to 8% on output-bound ones; not
+  adopted, since it needs a 13 MB profile in the repository and in every release build. Still
+  open: the interval of `ripgrep/literal` and `ripgrep/case-insensitive` crosses 1 on a busy laptop;
+  repeat on an idle machine.
 - Linux: in the 8-CPU Linux VM on the development Mac, Scrutate used about 10% more CPU than
   ripgrep for the same Linux-tree search (993 ms against 910 ms for `PM_RESUME`). Two measured
-  steps: read small files into one buffer per thread instead of a new zeroed buffer per file (4% of
-  the CPU of a `return` search), and skip the one-thread small-tree phase there (about 5 ms of a
-  130 ms search, since files are cheap to open on Linux). Then repeat on dedicated Linux hardware,
+  steps, both on `perf/next`: read small files into one buffer per thread instead of a new zeroed
+  buffer per file (4% of the CPU of a `return` search), and skip the one-thread small-tree phase
+  (about 5 ms of a 130 ms search); the branch also drops the regex build for most of the tree's 407
+  `.gitignore` files. Then repeat on dedicated Linux hardware,
   where the VM's noise (ripgrep's own medians moved by up to 50% between runs) does not hide them.
 - Thread counts on Linux and Windows: the macOS default (performance cores) came from measurement;
   repeat it on dedicated Linux and Windows machines before changing their default. The disk-or-cache
