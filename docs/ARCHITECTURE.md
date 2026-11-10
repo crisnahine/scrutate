@@ -63,7 +63,10 @@ capabilities those crates do not provide rather than re-implementing what they a
   which sends the file back to the single pass so binary handling is unchanged. The second pass
   searches one window of ranges per thread at a time and writes the windows' output in file order,
   so the output held in memory stays bounded. Context lines, `--max-count`, `--max-results`, `-l`,
-  multiline and a byte-order mark keep the single pass.
+  multiline and a byte-order mark keep the single pass. A file with no line break to split at
+  goes into one buffer of its exact size, each thread filling its own part, and is searched there:
+  the time is the kernel copying pages, which spreads as far as opening files does (100 MB on an
+  M3 Pro: 12.6 ms on one thread, 4.0 ms on the five performance cores, 6.7 ms on all eleven).
 - **Roots without directories**: when no root holds a directory the walk would enter, a sequential
   walk with the same rules runs first, and three threads search the files as it finds them; when
   those files turn out to come from the disk, it adds threads. Past 256 files it stops, and the
@@ -121,7 +124,13 @@ capabilities those crates do not provide rather than re-implementing what they a
   same cost).
 - **Streaming**: matches are batched per file and sent over a channel to the caller's sink while
   other threads keep searching; an `AtomicBool` cancels the walk between files (Ctrl-C → exit 130,
-  `--max-results`, broken pipe).
+  `--max-results`, broken pipe). Plain piped output skips the channel: each thread formats a
+  file's lines and hands them to one shared sink (`PlainSink`). Output that follows other output
+  within a millisecond waits there in a 64 KB buffer, so the lines of many files leave in one
+  write; a write per matching file wakes the reader of a pipe every time (88,000 writes for
+  `return` in the Linux tree; on Linux 302 ms to 190 ms). Output after a quiet spell leaves at
+  once, and threads let held output go between files, so nothing waits longer than a millisecond
+  or the longest file being searched.
 - **Output**: path:line:text, `-c`, `-l`, context, colour, deterministic `--sort`, and JSONL
   (`--json`, schema version 1: `match`, `context`, `count`, `file`, `summary`, `symbol_group`).
 - **No dependency on Engine B**: `grep` never opens the index. `grep --symbols` is the one

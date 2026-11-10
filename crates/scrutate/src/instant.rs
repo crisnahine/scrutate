@@ -832,53 +832,82 @@ pub fn type_list() -> Vec<(String, Vec<String>)> {
 
 // ------------------------------------------------------------------------- the search
 /// Plain `path:line:text` output written by the search threads themselves: each file's lines are
-/// formatted into a buffer and written in one call, so no per-line allocation or channel message.
+/// formatted into a buffer and handed over in one call, so no per-line allocation or channel message.
 /// Used for the common piped case (no colour, no JSON, no sorting); the bytes are the same as the
 /// CLI's own formatting of `Hit`s.
+///
+/// Output that follows other output within `HOLD_NS` waits in a buffer, so the lines of many files
+/// leave in one write: a write per matching file wakes the reader of a pipe every time (88,000
+/// writes for `return` in the Linux tree). Output after a quiet spell leaves at once.
 pub struct PlainSink {
-    pub out: Mutex<Box<dyn Write + Send>>,
+    out: Mutex<std::io::BufWriter<Box<dyn Write + Send>>>,
+    /// when output last left, in nanoseconds since `start`
+    left: AtomicU64,
+    /// the buffer holds output
+    holding: AtomicBool,
+    start: Instant,
     /// the reader went away (`| head`)
     pub broken: AtomicBool,
 }
 
+/// The longest output waits for more to leave with it, unless no thread starts a file meanwhile.
+const HOLD_NS: u64 = 1_000_000;
+
 impl PlainSink {
     pub fn new(out: Box<dyn Write + Send>) -> PlainSink {
-        PlainSink { out: Mutex::new(out), broken: AtomicBool::new(false) }
+        PlainSink {
+            out: Mutex::new(std::io::BufWriter::with_capacity(1 << 16, out)),
+            left: AtomicU64::new(0),
+            holding: AtomicBool::new(false),
+            start: Instant::now(),
+            broken: AtomicBool::new(false),
+        }
     }
 
-    fn write(&self, buf: &[u8], cancel: &AtomicBool) {
-        self.write_parts(&[buf], cancel)
+    fn waited(&self) -> Option<u64> {
+        let now = self.start.elapsed().as_nanos() as u64;
+        (now.saturating_sub(self.left.load(Ordering::Relaxed)) >= HOLD_NS).then_some(now)
     }
 
-    /// Write several slices as one unit (no other thread's output between them).
-    fn write_parts(&self, parts: &[&[u8]], cancel: &AtomicBool) {
-        if parts.iter().all(|p| p.is_empty()) || self.broken.load(Ordering::Relaxed) {
+    /// Runs `f` on the writer as one unit (no other thread's output inside it), then lets the held
+    /// output go if it has waited long enough.
+    fn with(&self, cancel: &AtomicBool, f: impl FnOnce(&mut dyn Write) -> std::io::Result<()>) {
+        if self.broken.load(Ordering::Relaxed) {
             return;
         }
         let res = match self.out.lock() {
-            Ok(mut w) => parts.iter().try_for_each(|p| w.write_all(p)),
+            Ok(mut w) => f(&mut *w).and_then(|_| {
+                if let Some(now) = self.waited().filter(|_| !w.buffer().is_empty()) {
+                    self.left.store(now, Ordering::Relaxed);
+                    w.flush()?;
+                }
+                self.holding.store(!w.buffer().is_empty(), Ordering::Relaxed);
+                Ok(())
+            }),
             Err(_) => Err(std::io::Error::other("output lock poisoned")),
         };
         if res.is_err() {
             self.broken.store(true, Ordering::Relaxed);
             cancel.store(true, Ordering::Relaxed);
+        }
+    }
+
+    fn write(&self, buf: &[u8], cancel: &AtomicBool) {
+        if !buf.is_empty() {
+            self.with(cancel, |w| w.write_all(buf));
         }
     }
 
     /// `before`, `head`, `text` with invalid UTF-8 replaced, and a line break, as one unit.
     fn write_line(&self, before: &[u8], head: &[u8], text: &[u8], cancel: &AtomicBool) {
-        if self.broken.load(Ordering::Relaxed) {
-            return;
-        }
-        let res = match self.out.lock() {
-            Ok(mut w) => {
-                w.write_all(before).and_then(|_| w.write_all(head)).and_then(|_| write_lossy(&mut **w, text, 1 << 18)).and_then(|_| w.write_all(b"\n"))
-            }
-            Err(_) => Err(std::io::Error::other("output lock poisoned")),
-        };
-        if res.is_err() {
-            self.broken.store(true, Ordering::Relaxed);
-            cancel.store(true, Ordering::Relaxed);
+        self.with(cancel, |w| w.write_all(before).and_then(|_| w.write_all(head)).and_then(|_| write_lossy(w, text, 1 << 18)).and_then(|_| w.write_all(b"\n")));
+    }
+
+    /// Lets held output go once it has waited. Threads call this between files, so output waits
+    /// no longer than `HOLD_NS` or the longest file being searched.
+    fn tick(&self, cancel: &AtomicBool) {
+        if self.holding.load(Ordering::Relaxed) && self.waited().is_some() {
+            self.with(cancel, |_| Ok(()));
         }
     }
 
@@ -1469,6 +1498,9 @@ impl<'a> Run<'a> {
 /// Search one file and send its hits to `tx`.
 fn search_one(w: &mut FileWorker, r: &Run, path: &Path, rel: Arc<str>, size: Option<u64>) {
     let (o, c) = (r.o, r.c);
+    if let Some(p) = r.plain {
+        p.tick(r.cancel);
+    }
     c.files_searched.fetch_add(1, Ordering::Relaxed);
     if let Some(n) = size {
         c.bytes.fetch_add(n, Ordering::Relaxed);
@@ -1713,22 +1745,33 @@ mod split {
         }
     }
 
-    /// The whole file when it holds no NUL byte (a slice search checks only its start for binary data).
-    fn whole(file: &File, size: u64) -> Option<Vec<u8>> {
+    /// The whole file when it holds no NUL byte (a slice search checks only its start for binary
+    /// data) and is still `size` bytes long. Each thread fills its own part of the buffer: the time
+    /// goes to the kernel copying pages into fresh memory, and that work spreads as far as opening
+    /// files does (100 MB on macOS: 12.6 ms on one thread, 4.0 ms on 5, 6.7 ms on 11).
+    fn whole(file: &File, size: u64, threads: usize) -> Option<Vec<u8>> {
         let mut buf = vec![0u8; usize::try_from(size).ok()?];
-        let mut at = 0;
-        while at < buf.len() {
+        let part = buf.len().div_ceil(threads.max(1)).max(1 << 20);
+        let filled = std::thread::scope(|s| {
+            let hs: Vec<_> = buf.chunks_mut(part).enumerate().map(|(i, b)| s.spawn(move || fill(file, b, (i * part) as u64))).collect();
+            // the scope waits for the threads this stops joining at the first failure
+            hs.into_iter().all(|h| h.join().unwrap_or(false))
+        });
+        filled.then_some(buf)
+    }
+
+    /// Fills `buf` from `at` in the file; false on a NUL byte, a failed read or a shorter file.
+    fn fill(file: &File, buf: &mut [u8], at: u64) -> bool {
+        let mut done = 0;
+        while done < buf.len() {
             // a piece at a time, so the NUL check reads it while it is still in cache
-            let end = buf.len().min(at + (1 << 20));
-            match read_at(file, &mut buf[at..end], at as u64) {
-                Ok(0) => break,
-                Ok(n) if memchr::memchr(0, &buf[at..at + n]).is_some() => return None,
-                Ok(n) => at += n,
-                Err(_) => return None,
+            let end = buf.len().min(done + (1 << 20));
+            match read_at(file, &mut buf[done..end], at + done as u64) {
+                Ok(n) if n > 0 && memchr::memchr(0, &buf[done..done + n]).is_none() => done += n,
+                _ => return false,
             }
         }
-        buf.truncate(at);
-        Some(buf)
+        true
     }
 
     struct Part {
@@ -1768,7 +1811,7 @@ mod split {
         }
         bounds.push(size);
         if bounds.len() < 3 {
-            return whole(file, size).map_or(Outcome::Stream, Outcome::Buffer);
+            return whole(file, size, default_threads(o)).map_or(Outcome::Stream, Outcome::Buffer);
         }
         let ranges: Vec<(u64, u64)> = bounds.windows(2).map(|w| (w[0], w[1])).collect();
         let threads = range_threads(o).min(ranges.len());
@@ -1827,6 +1870,9 @@ mod split {
                     c.failed(format!("{rel}: changed while it was searched, or a read failed"));
                     break 'windows;
                 }
+            }
+            if let Some(p) = plain {
+                p.tick(cancel);
             }
             if cancel.load(Ordering::Relaxed) {
                 break;
@@ -2413,6 +2459,45 @@ mod tests {
         assert!(zip.check_indexable().unwrap_err().to_string().starts_with("--index does not cover archive members"));
         assert!(Options { max_depth: Some(1), ..Options::default() }.check_indexable().unwrap_err().to_string().starts_with("--index searches the files"));
         assert!(Options::default().check_indexable().is_ok());
+    }
+
+    #[test]
+    fn held_output_leaves_in_fewer_writes_and_never_waits_on_a_quiet_sink() {
+        struct Record(Arc<Mutex<Vec<Vec<u8>>>>);
+        impl Write for Record {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().push(b.to_vec());
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let sink = PlainSink::new(Box::new(Record(Arc::clone(&writes))));
+        let cancel = AtomicBool::new(false);
+        let written = || writes.lock().unwrap().concat();
+        let quiet = || std::thread::sleep(std::time::Duration::from_millis(5));
+        let mut all = Vec::new();
+        for i in 0..1000 {
+            let line = format!("file{i}:1:text\n");
+            sink.write(line.as_bytes(), &cancel);
+            all.extend_from_slice(line.as_bytes());
+        }
+        assert!(writes.lock().unwrap().len() < 500, "a burst leaves in few writes");
+        quiet();
+        sink.tick(&cancel);
+        assert_eq!(written(), all, "held output leaves once it has waited");
+        quiet();
+        sink.write(b"late:1:text\n", &cancel);
+        all.extend_from_slice(b"late:1:text\n");
+        assert_eq!(written(), all, "output after a quiet spell leaves at once");
+        sink.write(b"last:1:text\n", &cancel);
+        sink.write_line(b"", b"long:1:", b"x\xFFy", &cancel);
+        sink.flush().unwrap();
+        all.extend_from_slice("last:1:text\nlong:1:x\u{FFFD}y\n".as_bytes());
+        assert_eq!(written(), all);
+        assert!(!sink.broken.load(Ordering::Relaxed) && !cancel.load(Ordering::Relaxed));
     }
 
     #[test]

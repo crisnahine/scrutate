@@ -588,6 +588,12 @@ fn a_file_searched_in_ranges_equals_one_pass() {
     r.write("bom.txt", &bom);
     r.write("one_line.txt", format!("{}alpha beta{}", "y".repeat(5000), "z".repeat(5000)).as_bytes());
     r.write("one_line_nul.txt", format!("{}alpha beta{}\0tail alpha", "y".repeat(5000), "z".repeat(5000)).as_bytes());
+    // a line over a megabyte goes into one buffer in parts, each read by its own thread
+    let words: String = (0..200_000).map(|i| format!("w{i} ")).collect();
+    r.write("long_line.txt", format!("{words}alpha beta KÖNIG").as_bytes());
+    let mut nul = format!("{words}alpha tail").into_bytes();
+    nul[1_200_000] = 0;
+    r.write("long_line_nul.txt", &nul);
     for args in [
         &["grep", "alpha"][..],
         &["grep", "-i", "KÖNIG"],
@@ -599,7 +605,7 @@ fn a_file_searched_in_ranges_equals_one_pass() {
         &["grep", "nothing here"],
         &["grep", "-j", "3", "gamma"],
     ] {
-        for file in ["big.txt", "late_nul.txt", "bom.txt", "one_line.txt", "one_line_nul.txt"] {
+        for file in ["big.txt", "late_nul.txt", "bom.txt", "one_line.txt", "one_line_nul.txt", "long_line.txt", "long_line_nul.txt"] {
             let mut a = args.to_vec();
             a.push(file);
             let one = untimed(run_in(&r.root, &a, &[("SCRUTATE_SPLIT_FILE_BYTES", "999999999999")]));

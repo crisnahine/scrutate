@@ -30,8 +30,11 @@ First release.
   building a regex; a `.gitignore` built that way cost 100 to 400 µs to load, the global excludes
   file included, which was more than the whole walk of a small repository.
 - A search whose roots hold directories starts the parallel walk at once and adds threads when its
-  reads turn out to come from the disk; roots holding only files are walked on one thread while
-  three search.
+  reads turn out to come from the disk.
+- Plain output that follows other output within a millisecond waits in a 64 KB buffer, so the
+  lines of many files leave in one write; output after a quiet spell still leaves at once. A write
+  per matching file woke the reader of a pipe every time: `return` in the Linux tree (1.3 million
+  lines in 88,000 files), on Linux 302 ms to 190 ms (ripgrep 319 ms), on macOS 675 ms to 650 ms.
 - macOS on Apple silicon: 133 system functions that a search never calls (SQLite's file calls,
   process spawning, the unwinder) are bound on their first call instead of at launch; dyld spends
   about 3.3 µs on each imported symbol. With the grep-only argument parser (clap otherwise builds
@@ -50,10 +53,12 @@ First release.
   `--max-results`, `-l` and multiline searches keep the single pass.
 - A regex with no literal prefix whose matches all end in one of a few literals
   (`\w+_(suspend|resume)\(`) finds candidate lines by searching for those literals.
-- A small tree is walked on one thread while three threads search what it finds; past 256 files
-  the parallel walk takes over (about a quarter less time on a 220-file repository).
+- Roots that hold no directory to enter are walked on one thread while three threads search what
+  it finds; past 256 files the parallel walk takes over.
 - A large file without line breaks to split at is read into one buffer of its exact size (the
-  stream reader grew its buffer by doubling).
+  stream reader grew its buffer by doubling), each search thread filling its own part: 100 MB in
+  one line took 12.6 ms to read on one thread and 4.0 ms on five. `^(a|aa)+$` over that line and
+  two more files: 15.3 ms to 11.0 ms (ugrep 16.5 ms).
 - `-P` / `--pcre2`: PCRE2 syntax (look-around, backreferences), stopped by PCRE2's match limit
   on exponential patterns, with a warning naming the file.
 - `-z` / `--search-zip`: zip and tar members (`archive.zip{member}`) and compressed files.
