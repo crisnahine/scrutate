@@ -1,0 +1,61 @@
+
+=== system packages (21:28:15)
+debconf: delaying package configuration, since apt-utils is not installed
+
+=== ack 3.10.0 (standalone file from beyondgrep.com) (21:28:24)
+curl: (60) SSL certificate problem: certificate has expired
+More details here: https://curl.se/docs/sslcerts.html
+
+curl failed to verify the legitimacy of the server and therefore could not
+establish a secure connection to it. To learn more about this situation and
+how to fix it, please visit the web page mentioned above.
+
+=== scrutate (release build) (21:28:24)
+info: syncing channel updates for 1.99.1-aarch64-unknown-linux-gnu
+info: latest update on 2026-10-15 for version 1.99.1 (58cf8f9c3 2026-10-13)
+info: downloading 2 components
+
+=== corpora onto the container disk (21:29:21)
+
+=== Engine A leaderboard, warm cache (linux corpus) (21:29:21)
+[leaderboard] linux/literal
+  PASS: scrutate 102.2 ms; best competitor ripgrep 114.5 ms; ratio 0.892 [0.8843603975311329, 0.8944502570897678]
+[leaderboard] linux/multiple literals
+  PASS: scrutate 131.3 ms; best competitor ripgrep 155.8 ms; ratio 0.843 [0.8255950198197276, 0.863651790003591]
+[leaderboard] linux/case-insensitive
+  PASS: scrutate 124.9 ms; best competitor ripgrep 136.0 ms; ratio 0.919 [0.9144984772468868, 0.9225769334777617]
+[leaderboard] linux/whole-word
+  PASS: scrutate 105.2 ms; best competitor ripgrep 121.6 ms; ratio 0.865 [0.8571719949207494, 0.8713828139060551]
+[leaderboard] linux/simple regex
+  PASS: scrutate 102.9 ms; best competitor ripgrep 116.2 ms; ratio 0.886 [0.8832007814742933, 0.8889793620399654]
+[leaderboard] linux/complex regex
+  PASS: scrutate 131.5 ms; best competitor ripgrep 319.6 ms; ratio 0.412 [0.40892640884714393, 0.41291189752957885]
+[leaderboard] linux/unicode
+  PASS: scrutate 124.3 ms; best competitor ripgrep 135.5 ms; ratio 0.918 [0.9164139028887205, 0.92090708780707]
+[leaderboard] linux/no match
+  PASS: scrutate 101.6 ms; best competitor ripgrep 113.9 ms; ratio 0.891 [0.8875776149760211, 0.8963161512247438]
+[leaderboard] linux/very many matches
+  PASS: scrutate 182.1 ms; best competitor ripgrep 303.6 ms; ratio 0.600 [0.5892079744116698, 0.6215291234218246]
+[leaderboard] linux/multiline
+  PASS: scrutate 132.3 ms; best competitor ripgrep 143.0 ms; ratio 0.925 [0.9209738422254858, 0.9317549015952454]
+[leaderboard] linux/identifier
+  PASS: scrutate 129.4 ms; best competitor ripgrep 140.5 ms; ratio 0.921 [0.9159438494796576, 0.9252079134248097]
+[leaderboard] linux/unrestricted
+  PASS: scrutate 94.9 ms; best competitor ripgrep 106.1 ms; ratio 0.895 [0.8893581212622119, 0.8985662526287387]
+[leaderboard] linux/file-type filter
+  PASS: scrutate 78.5 ms; best competitor ripgrep 89.5 ms; ratio 0.877 [0.870707758114331, 0.884349378828588]
+[leaderboard] linux/structural
+  PASS: scrutate 662.1 ms; best competitor None nan ms; ratio nan 
+
+=== Engine A leaderboard, cold cache (linux corpus subset) (21:35:19)
+[leaderboard] linux/literal
+  PASS: scrutate 354.6 ms; best competitor git grep 1200.4 ms; ratio 0.295 [0.2931074919845453, 0.298969545692882]
+[leaderboard] linux/case-insensitive
+  PASS: scrutate 365.7 ms; best competitor git grep 1216.2 ms; ratio 0.301 [0.2992464588214996, 0.3032330147591044]
+[leaderboard] linux/complex regex
+  PASS: scrutate 374.6 ms; best competitor ugrep 1357.5 ms; ratio 0.276 [0.27323341279291274, 0.28050724104984054]
+[leaderboard] linux/no match
+  PASS: scrutate 359.5 ms; best competitor git grep 1201.3 ms; ratio 0.299 [0.29721037293658614, 0.3012572520081536]
+
+=== done (21:51:48)
+bench exit 0
