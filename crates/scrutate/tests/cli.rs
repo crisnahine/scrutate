@@ -615,6 +615,19 @@ fn small_tree_path_equals_parallel_walk() {
 }
 
 #[test]
+fn a_count_stops_at_max_count() {
+    let r = Repo::new("countmax");
+    r.write("f.txt", b"a\na\na\na\nb\n");
+    r.write("g.txt", b"a\nb\n");
+    let (code, out, _) = r.run(&["grep", "--sort", "-c", "-m", "2", "a"]);
+    assert_eq!((code, out.as_str()), (0, "f.txt:2\ng.txt:1\n"));
+    let (_, out, _) = r.run(&["grep", "--sort", "-c", "a"]);
+    assert_eq!(out, "f.txt:4\ng.txt:1\n");
+    let (_, out, _) = r.run(&["grep", "--sort", "-m", "2", "a"]);
+    assert_eq!(out, "f.txt:1:a\nf.txt:2:a\ng.txt:1:a\n");
+}
+
+#[test]
 fn whole_file_reads_equal_the_stream_reader() {
     // files around the sizes read in one piece (64 KB and 1 MB): several threads read them whole,
     // one thread (-j 1) streams them, and both must print the same

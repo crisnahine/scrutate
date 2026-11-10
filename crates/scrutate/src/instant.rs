@@ -853,6 +853,8 @@ struct Collector<'a> {
     want_spans: bool,
     stats_matches: &'a AtomicU64,
     max_results: Option<u64>,
+    /// `--max-count`, for the count of `-c`; printed lines are cut in `drain`
+    max_count: Option<u64>,
     matched: bool,
     cancel: &'a AtomicBool,
     matcher: &'a AnyMatcher,
@@ -907,7 +909,8 @@ impl<'a> Sink for Collector<'a> {
             self.matched = true;
             self.file_count += 1;
             self.stats_matches.fetch_add(1, Ordering::Relaxed);
-            return Ok(!self.files_only); // one match is enough to list the file
+            // one match is enough to list the file; a count stops at --max-count
+            return Ok(!self.files_only && self.max_count.is_none_or(|max| self.file_count < max));
         }
         let bytes = mat.bytes();
         let line = bytes.strip_suffix(b"\n").map(|b| b.strip_suffix(b"\r").unwrap_or(b)).unwrap_or(bytes);
@@ -1408,6 +1411,7 @@ fn collector<'a>(
         want_spans: o.want_spans,
         stats_matches: &c.matches,
         max_results: o.max_results,
+        max_count: o.max_count,
         matched: false,
         cancel,
         matcher,
@@ -1794,6 +1798,7 @@ mod split {
             want_spans: o.want_spans,
             stats_matches: &c.matches,
             max_results: None,
+            max_count: None,
             matched: false,
             cancel,
             matcher: &matcher,
