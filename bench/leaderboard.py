@@ -20,6 +20,10 @@ Per benchmark:
     BLOCKED (a tie at the hardware limit) when it contains 1 and both medians are within 15% of
     the time to merely read the same files (bench/rawread.c, the fastest of several thread
     counts).
+ 5. Stability. A contender whose block medians differ by more than 25% was measured while the
+    machine did something else. `--redo-unstable` measures such benchmarks again, once, whatever
+    their status; the first measurement's status, ratio, interval and load stay in the row
+    (`first`).
 Results are written after every benchmark, so an interrupted run resumes where it stopped.
 """
 from __future__ import annotations
@@ -616,6 +620,18 @@ def decide(res, valid, runs):
                 res["why"] = "tie at the hardware limit (both within 15% of reading the files)"
 
 
+def unstable(res):
+    """True when the block medians of a fully measured tool differ by more than 25%."""
+    for t in res["tools"].values():
+        times, blocks = t.get("times"), t.get("blocks")
+        if times and blocks and len(times) >= 3 * blocks:
+            per = len(times) // blocks
+            medians = [statistics.median(times[i * per:(i + 1) * per]) for i in range(blocks)]
+            if max(medians) > 1.25 * min(medians):
+                return True
+    return False
+
+
 def structural_reference(cdir, files, spec, cache_dir):
     """Python tree-sitter over the same files: nodes matched by the query's outer capture."""
     key = hashlib.sha1(json.dumps([cdir, spec, len(files)]).encode()).hexdigest()[:16]
@@ -690,6 +706,8 @@ def main() -> int:
     ap.add_argument("--contender", type=float, default=1.25, help="besides scrutate and the fastest competitor, tools whose pilot median is within this "
                     "factor of the fastest also get the full run count")
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--redo-unstable", action="store_true", help="measure again, once, the benchmarks in --out where a tool's block medians "
+                    "differ by more than 25%% (the machine was disturbed); each keeps its first status, ratio, interval and load as `first`")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--restatus", action="store_true", help="no measurement: refresh each benchmark's hardware ceiling from the run's shared "
                     "measurements and recompute every status")
@@ -715,17 +733,28 @@ def main() -> int:
             print(f"{r['id']}: {r['status']}", file=sys.stderr)
         json.dump(data, open(a.out, "w"), indent=1)
         return 0
-    data["environment"] = environment()
-    data["corpora"] = json.load(open(os.path.join(a.corpora, "manifest.json")))
-    data["settings"] = {"runs": a.runs, "cache": a.cache, "cold_prepare": a.cold_prepare, "max_load": a.max_load, "warmup": 1, "contender": a.contender,
-                        "blocks": a.blocks}
+    if a.redo_unstable:
+        # the same run, continued: its environment and settings stand, so the binary must be the same
+        if environment().get("scrutate_sha256") != data.get("environment", {}).get("scrutate_sha256"):
+            raise SystemExit("--redo-unstable: the scrutate binary is not the one this run measured")
+    else:
+        data["environment"] = environment()
+        data["corpora"] = json.load(open(os.path.join(a.corpora, "manifest.json")))
+        data["settings"] = {"runs": a.runs, "cache": a.cache, "cold_prepare": a.cold_prepare, "max_load": a.max_load, "warmup": 1,
+                            "contender": a.contender, "blocks": a.blocks}
     for b in benches:
+        old = data["benchmarks"].get(b["id"])
         if a.only and not any(b["id"].startswith(p) for p in a.only):
             continue
-        if b["id"] in data["benchmarks"] and not a.force:
+        if a.redo_unstable:
+            if not old or "first" in old or not unstable(old):
+                continue
+        elif old and not a.force:
             continue
-        print(f"[leaderboard] {b['id']}", file=sys.stderr, flush=True)
+        print(f"[leaderboard] {b['id']}" + (" (again: unstable)" if a.redo_unstable else ""), file=sys.stderr, flush=True)
         r = run_bench(b, a.corpora, a, cache_dir)
+        if a.redo_unstable:
+            r["first"] = {k: old.get(k) for k in ("status", "ratio", "ci95", "max_load")}
         data["benchmarks"][b["id"]] = r
         data["rawread"] = RAWREAD
         json.dump(data, open(a.out, "w"), indent=1)

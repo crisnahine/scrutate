@@ -81,10 +81,15 @@ git config --global --add safe.directory '*'
 out=/results/linux-$arch
 mkdir -p $out
 cd $B/scrutate
+warm=(--corpora $B/corpora --out $out/leaderboard-warm.json --only linux/ --max-load "$(nproc)")
+cold=(--corpora $B/corpora --out $out/leaderboard-cold.json --cache cold --cold-prepare 'sync; echo 3 > /proc/sys/vm/drop_caches'
+  --only 'linux/literal' 'linux/case-insensitive' 'linux/complex regex' 'linux/no match' --runs 30 --max-load "$(nproc)")
 step "Engine A leaderboard, warm cache (linux corpus)"
-python3 bench/leaderboard.py --corpora $B/corpora --out $out/leaderboard-warm.json --only linux/ --max-load "$(nproc)"
+python3 bench/leaderboard.py "${warm[@]}"
 step "Engine A leaderboard, cold cache (linux corpus subset)"
-python3 bench/leaderboard.py --corpora $B/corpora --out $out/leaderboard-cold.json --cache cold \
-  --cold-prepare 'sync; echo 3 > /proc/sys/vm/drop_caches' --only 'linux/literal' 'linux/case-insensitive' 'linux/complex regex' 'linux/no match' --runs 30 --max-load "$(nproc)"
+python3 bench/leaderboard.py "${cold[@]}"
+step "benchmarks disturbed by other work on the machine, measured again once"
+python3 bench/leaderboard.py "${warm[@]}" --redo-unstable
+python3 bench/leaderboard.py "${cold[@]}" --redo-unstable
 # the indexed comparison runs next, in an ubuntu:24.04 container: bench/competitors/linux_indexed.sh
 step "done"

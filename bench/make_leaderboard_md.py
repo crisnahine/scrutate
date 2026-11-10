@@ -83,6 +83,9 @@ def engine_a(data, label):
                "counts: one per CPU and half as many with a warm cache, up to 96 with a cold one (a disk takes more reads at once than there "
                "are cores). On a shared machine a row measured later under heavier load can read PARTIAL where a quieter run reads BLOCKED; "
                "PARTIAL is the weaker of the two claims.")
+    out.append("- A benchmark where some tool's block medians differed by more than 25% was measured while the machine did something else. "
+               "Each such benchmark was measured again, once, whatever its status (`leaderboard.py --redo-unstable`); its status column gives "
+               "the first measurement too.")
     out.append("- Tool versions: " + "; ".join(f"{t}: `{v}`" for t, v in env["tools"].items() if v and t != "scrutate --index") + ".")
     if env.get("scrutate_sha256"):
         out.append(f"- scrutate binary measured: SHA-256 `{env['scrutate_sha256']}`.")
@@ -116,6 +119,9 @@ def engine_a(data, label):
         ratio = f"{r['ratio']:.3f} [{r['ci95'][0]:.3f}, {r['ci95'][1]:.3f}] vs {r['best_competitor']}" if "ratio" in r else r.get("why", "")
         cpus = data["environment"].get("cpus") or 1
         flag = f" (load {r.get('max_load', 0):.0f})" if r.get("max_load", 0) > cpus else ""
+        first = r.get("first")
+        if first:
+            flag += f" (measured again; first: {first['status']}" + (f" {first['ratio']:.3f}" if first.get("ratio") else "") + ")"
         out.append(f"| {bid} ({r['reference']['lines']:,} lines) | " + " | ".join(cells) + f" | {idx} | {ms(r.get('rawread', {}).get('median'))} | {ratio} | {r['status']}{flag} |")
     out.append("")
     for bid, r in data["benchmarks"].items():
