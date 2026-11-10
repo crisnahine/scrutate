@@ -1160,7 +1160,7 @@ fn cold_threads() -> usize {
     if cfg!(target_os = "linux") {
         64
     } else {
-        (2 * std::thread::available_parallelism().map_or(2, |n| n.get())).min(24)
+        2 * cores()
     }
 }
 
