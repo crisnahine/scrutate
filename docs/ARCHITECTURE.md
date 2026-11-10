@@ -41,8 +41,12 @@ capabilities those crates do not provide rather than re-implementing what they a
   9.3 ms). Gitignore lines of three shapes (`**/` and a name with `*` or `?`, `**/` and a literal
   path, `/` and a name with `*` or `?`) are matched by a byte loop instead of a `GlobSet` regex,
   whose build cost 100 to 400 µs per file, more than the whole walk of a small repository; a
-  randomized test checks it against `GlobSet`. And a parallel walk can start more threads while it
-  runs (`grow_threads`); their visitors are built at the start and stay idle until then.
+  randomized test checks it against `GlobSet`. Trying each such glob on every path is slow for a
+  file with many of them used on many paths (the Linux tree's root `.gitignore`: over 100 globs,
+  95,000 paths, 7.8% of the search's CPU), so a matcher compiles all its globs into one `GlobSet`
+  once the tries have cost about what the build costs; a small repository never reaches that. And
+  a parallel walk can start more threads while it runs (`grow_threads`); their visitors are built
+  at the start and stay idle until then.
 - **Thread count**: the cores (at most 12), except on macOS, where a walk uses as many threads as
   performance cores: there, more threads opening and reading files at once wait on each other in
   the kernel (the Linux tree on an M3 Pro: 977 ms on 11 threads, about 845 ms on 5). The open and
@@ -81,6 +85,21 @@ capabilities those crates do not provide rather than re-implementing what they a
   on one thread, 0.56 s on five, 0.71 s on six, 0.95 s on eleven; the same for processes as for
   threads), which is why the default thread count is the performance cores. A search of that tree
   takes 0.66 s, so about 0.1 s of it is ours.
+- **Reading a file**: the first read asks for 64 KB and one byte. A short read is the whole file,
+  searched in the thread's buffer with no call for its size (a `statx` per file otherwise: 96,000
+  on the Linux tree). A file up to 1 MB is read whole into the same buffer too: the stream reader
+  takes a read per 64 KB, moves the rest of each buffer down and counts the lines of everything it
+  passes, and half the bytes of the Linux tree are in files of that size. A NUL byte or a
+  byte-order mark sends the file to the stream reader, whose binary and encoding handling is
+  unchanged. On Linux, where opening a file is cheap, this and the matcher change above took the
+  Linux-tree search from 144 ms to 120 ms in the test VM (ripgrep: 135 ms), with 316,000 system
+  calls against ripgrep's 526,000.
+- **One run, one translation**: every file search of a run shares a `Run` (matcher, options,
+  counters, cancel flag, output target). The pattern is translated once (`Options::translate`:
+  the form its mode means, and whether case is folded), and both the matcher and the text index's
+  trigram condition are built from that, so a file the index lets through is judged by the same
+  pattern. Smart case counts only letters that stand for themselves (`\S` is not uppercase), as
+  ripgrep does.
 - **Files without line breaks**: a large file whose ranges cannot be cut at a newline is read once
   into a buffer of its exact size (checked for NUL bytes as it is read, so binary handling is
   unchanged) and searched as a slice; the stream reader would grow its buffer by doubling.
@@ -213,13 +232,29 @@ by `--limit` is never stored, so a cached list is always the complete one and th
 gives the same prefix. Files are written to a temporary name and renamed; an unreadable one
 counts as empty. Eviction is by query file, least recently used first, above 128 MB in total.
 
-## Unified layer (`cli.rs`, `mcp.rs`, `crates/scrutate-py`)
+## Unified layer (`ops.rs`, `lib.rs`, `cli.rs`, `mcp.rs`, `crates/scrutate-py`)
 `find QUERY` chooses: regex-looking → Engine A; otherwise ranked search when an index exists or
 the repository is small enough to index on the spot; otherwise identifier grep. `grep --index` sends
 an Engine A query through the text index. Both engines stay
-independently usable (`grep`, `index`/`search`) and independently tested. The MCP server exposes
-fourteen tools over stdio; the Python bindings expose both engines with the GIL released and
-streaming results.
+independently usable (`grep`, `index`/`search`) and independently tested.
+
+Every question a front end can ask of the index is an **operation** (`ops::Op`): its arguments,
+their defaults and limits live there, and it returns a typed **answer** (`ops::Answer`) with one
+text form and one JSON form. The CLI's index commands, the MCP server's fourteen tools, `batch`
+and the Python bindings parse into operations and render answers; none of them has a default or an
+output format of its own (they had drifted: three different limits for `callers`, references
+textual in one and resolved in another). An answer renders within a byte budget: whole items, then
+a line with how many are left and the offset that continues it, because an agent's harness cuts a
+long tool result where it likes (Codex at 10,000 tokens, from the middle).
+
+`Repo` (`lib.rs`) is an open repository: the searcher on its index and the one copy of the rules
+for keeping the index usable (bring it up to date; when the database is corrupt, delete it and
+build it again). The MCP server, the Python bindings and `watch` hold one; the MCP server builds
+the first index in the background and answers "still building" after a 20 second wait.
+
+The MCP server (`mcp.rs`) is an adapter: the tool table with its hints for clients (`readOnlyHint`,
+`openWorldHint`), server instructions, and the protocol loop. The Python bindings expose both
+engines with the GIL released and streaming results.
 
 `lsp.rs` is a language server for editors (`scrutate lsp`), hand-written like the MCP server: a
 `Content-Length` framed JSON-RPC loop on stdio that turns definition, references, workspace symbol

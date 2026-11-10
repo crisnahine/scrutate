@@ -73,7 +73,7 @@ often while files change.
 | `search QUERY [-k N] [-a ALT]... [--also ROOT]... [--why] [--json]` (alias `s`) | Ranked search by meaning, name or identifier; `--alt` fuses alternative phrasings; `--also` searches other repositories too (paths prefixed with the repository name). |
 | `find QUERY` | Unified: regex-looking → `grep`; otherwise ranked search (indexing a small repository on the spot); otherwise identifier grep. |
 | `symbol NAME` | Where is it defined (`Class.method` works). |
-| `callers NAME` / `callees NAME` | Call graph edges resolved to definitions (unresolved callee names listed as external). |
+| `callers NAME` / `callees NAME` | Call graph edges resolved to definitions (callee names outside the repository listed after `external:`). |
 | `refs NAME [--def PATH[:LINE]] [--textual] [--max-results N]` | Every whole-word occurrence, each resolved to the definition it refers to, or listed as unresolved with a reason (see below). |
 | `outline FILE` | Symbols of a file in source order. |
 | `deps FILE` / `rdeps TARGET` | Imports of a file (resolved to repository files when possible) / files importing a module or file. |
@@ -84,10 +84,10 @@ often while files change.
 | `stats` | Index statistics (files, chunks, symbols, call edges, imports, segments, and the text index's files, segments and bytes). |
 | `languages [--json]` | The verified capability registry. |
 | `watch [PATH]` | Keep the index (and the text index, if there is one) up to date from filesystem events (see below). |
-| `serve [--refresh-interval S] [--watch]` | MCP server on stdio; `--watch` also runs the watcher in a background thread. |
+| `serve [--refresh-interval S] [--watch]` | MCP server on stdio (see below); `--watch` also runs the watcher in a background thread. |
 | `lsp` | Language Server Protocol server on stdio (see below). |
 | `config` | Show the configuration file in effect. |
-| `batch FILE [--features] [--timing]` | Run queries from a JSON-lines file (benchmarks, parity tests). |
+| `batch FILE [--features] [--timing]` | Run requests from a JSON-lines file with one index open. A line `{"query": ..., "k": ...}` is a ranked search; a line `{"op": TOOL, ...}` runs any operation, named and given arguments as the MCP tool is (`{"op": "callers", "name": "parse"}`), and prints `{"op", "result"}` or `{"op", "error"}`. |
 
 ### `refs`
 ```
@@ -127,8 +127,40 @@ behaviour without resolution: definitions, callers and every occurrence grouped 
 symbol (it never misses anything, and works without an index). With `--json`, each definition has
 a `references` list (`path`, `line`, `column` in bytes, `text`, `via`) and the document has an
 `unresolved` list with a `reason` (left out with `--def`). Resolution reads the index's
-definitions and parses the files that hold occurrences again, so it needs no index change; the
-MCP `references` tool still returns the textual answer.
+definitions and parses the files that hold occurrences again, so it needs no index change. The
+MCP `references` tool gives the same answer (`textual` and `def` are arguments there).
+
+### Answers from the index: one definition for every front end
+
+`symbol`, `callers`, `callees`, `refs`, `outline`, `deps`, `rdeps`, `similar` and `dupes` are
+operations (`ops.rs`): the CLI, the MCP server, `batch` and the Python bindings run the same code
+with the same defaults (search `k` 8, callers 30, callees 40, references 200, duplicates 50,
+structural search 1000) and print the same text or JSON. An empty answer has exit code 1;
+`outline`, `deps`, `rdeps`, `similar` and `dupes` then print nothing on standard output and one
+sentence on standard error.
+
+`--max-bytes BYTES` (or `SCRUTATE_MAX_BYTES`) limits the size of such an answer. A cut answer
+keeps whole items and ends with a line like `(12 more results not shown: call again with
+offset=8, or narrow the request)`; `--offset 8` continues it. An agent that runs the CLI through
+a shell can set the variable once, so no answer is cut by its harness in the middle.
+
+### `serve` (MCP)
+
+Fourteen tools over stdio, each one an operation above (`search_code`, `grep_code`,
+`find_symbol`, `callers`, `callees`, `read_code`, `outline`, `dependencies`, `dependents`,
+`references`, `similar_code`, `duplicates`, `structural_search`, `reindex`).
+
+- Every tool but `reindex` is marked read-only (`readOnlyHint`), and all are marked as staying on
+  this machine (`openWorldHint: false`), so clients that ask before a write do not ask for these.
+- The server returns `instructions`: which tool to start with and that answers are capped.
+- Every read-only tool takes `max_bytes` (default 24,000, about 6,000 tokens) and `offset`, as
+  `--max-bytes` and `--offset` above.
+- `grep_code` is an Engine A search of the files `scrutate grep` searches (case-sensitive regex;
+  `(?i)` for any case), matching lines grouped by enclosing symbol; `max_results` (default 100)
+  stops it, and the answer says so. An invalid pattern is an error.
+- While the first index of a repository is being built, a call waits up to 20 seconds and then
+  answers that the index is still being built.
+- Protocol versions 2024-11-05, 2025-03-26, 2025-06-18 and 2025-11-25.
 
 ### `lsp`
 
