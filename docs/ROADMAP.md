@@ -54,8 +54,15 @@ docs/TRACEABILITY.md.
   repository from 8.5 to 6.2 ms (measured, not shipped: the default one-thread walk was level, and
   the release binary is the one the leaderboard measured). Then read each directory's ignore files
   from its listing on the one-thread walk, and build glob sets lazily.
+- Linux: in the 8-CPU Linux VM on the development Mac, Scrutate used about 10% more CPU than
+  ripgrep for the same Linux-tree search (993 ms against 910 ms for `PM_RESUME`). Two measured
+  steps: read small files into one buffer per thread instead of a new zeroed buffer per file (4% of
+  the CPU of a `return` search), and skip the one-thread small-tree phase there (about 5 ms of a
+  130 ms search, since files are cheap to open on Linux). Then repeat on dedicated Linux hardware,
+  where the VM's noise (ripgrep's own medians moved by up to 50% between runs) does not hide them.
 - Thread counts on Linux and Windows: the macOS default (performance cores) came from measurement;
-  repeat it on dedicated Linux and Windows machines before changing their default.
+  repeat it on dedicated Linux and Windows machines before changing their default. The disk-or-cache
+  test (75 µs per small read) also needs a check there: in the VM under load it may misfire.
 - References: type inference for method calls on variables; more languages (Java, C#, C/C++
   includes); TypeScript path aliases.
 - `cargo install`: int8 weights for the semantic model, with the quality check QUALITY.md uses.

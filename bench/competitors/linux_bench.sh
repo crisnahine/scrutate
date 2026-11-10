@@ -61,6 +61,10 @@ if [ ! -x $B/go/bin/zoekt ]; then
   mv $B/go/bin/zoekt $B/go/bin/zoekt-index $B/bin/ 2>/dev/null || true
 fi
 ln -sf $B/bin/zoekt $B/bin/zoekt-index $B/go/bin/ 2>/dev/null || true
+if ! command -v uv > /dev/null; then
+  step "uv (the structural benchmark's reference runs tree-sitter's Python bindings under it)"
+  curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=$B/bin sh > /dev/null
+fi
 
 step "scrutate (release build)"
 rm -rf $B/scrutate && mkdir -p $B/scrutate
