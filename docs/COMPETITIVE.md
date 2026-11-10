@@ -10,15 +10,29 @@ not publishable leadership claims.
 
 ## 1. Against grep-class tools (GNU grep, ripgrep, ugrep, git grep, ag, ack)
 
-SUMMARY_ENGINE_A
+On the development Mac, Engine A is significantly fastest in 32 of the 37 warm-cache benchmarks
+(30 runs per contender in three interleaved blocks; the 95% interval of the ratio of medians lies
+entirely below 1) and in all 5 cold-cache ones. On the Linux kernel tree it is 13 to 38% ahead of
+the next tool (ugrep in most rows, ripgrep or git grep where ugrep's answer is wrong), on LLVM 12
+to 26%, on 200,000 small files 21%, on a binary-heavy tree 18%, and 42 to 57% on one 740 MB file,
+which it searches on every core. With the page cache cleared before every run it is 17 to 23%
+ahead of the next tool.
 
-**What decides most large-tree benchmarks on macOS is the file system, not the matcher.** Merely
-reading every file of the Linux tree (the "read files" baseline, `bench/rawread.c`, eleven threads)
-takes about as long as the fastest search tools take to search it, because opening 96,000 files
-costs more than scanning their bytes. Several benchmarks are therefore ties at the hardware limit
-(BLOCKED), and the margins of the wins there are a few percent. Where the work is not dominated by
-opening files, the differences are larger: printing a million matching lines (the search threads
-format their own output) and the indexed path below.
+In the 8-CPU Linux virtual machine on the same Mac, where opening files is cheap and run-to-run
+variation is high (its virtual CPUs land on performance or efficiency cores), Engine A ties ripgrep
+on 11 of the 14 Linux-tree benchmarks (PARTIAL: the intervals contain 1), is significantly faster
+on the complex regex (0.54x) and the structural query (0.04x of ast-grep), and loses one, the
+case-insensitive Unicode query. With the page cache dropped before every run it wins 3 of 4 (0.56
+to 0.70x of ripgrep) and ties the fourth at the hardware limit.
+
+**On macOS, opening files is the expensive part, and more threads make it slower.** Reading every
+file of the Linux tree with eleven threads (the "read files" column, `bench/rawread.c`) takes 980
+ms; Scrutate searches the same files in 723 ms, because threads opening and reading files at once
+wait on each other in the kernel. Scrutate walks with as many threads as performance cores, and
+switches to twice the cores when its first reads show the files coming from the disk rather than
+the page cache (cold, the disk serves many reads at once). The other margins come from the matcher
+and the output path: one large file searched on every core, regexes anchored at line starts
+examined only there, and search threads that format their own output.
 
 **Capabilities the others do not have (each verified by tests):** identifier search across casings
 (`--ident`), fuzzy search within N edits (ugrep has `-Z` with a different edit model), results
@@ -26,7 +40,13 @@ grouped by enclosing function (`--symbols`), and an index-backed `grep --index` 
 the walk's.
 
 **Where they remain better** (the FAIL and PARTIAL rows of the leaderboard, each with its gap):
-WHERE_BEHIND
+all five on the Mac are runs under 18 ms, and ugrep is ahead in each: the 220-file ripgrep
+repository (5.1 ms against 4.7 to 4.8 ms, three queries), the same repository with its build
+directory ignored (4.9 against 4.8 ms) and the backtracking trap (17.1 against 16.7 ms). Scrutate
+starts 1.4 ms sooner than ugrep but takes longer to walk the directories and apply ignore rules
+there; docs/ROADMAP.md has the measured next steps.On Linux, `-i KÖNIG` is
+154 ms against ripgrep's 133 ms (1.16x, interval 1.03 to 1.24), and the 11 ties above are ties with
+ripgrep; docs/ROADMAP.md (Linux) has the measured CPU difference and the next steps.
 
 **Correctness differences found while making the comparison fair**, so the reader can judge them:
 ag and ack have no Unicode case folding (`-i KÖNIG` finds nothing); ag, ack and git grep's own `-w`
@@ -36,7 +56,11 @@ dotfiles a repository's `.gitignore` explicitly re-includes (`!.mailmap` in the 
 
 ## 2. Against ast-grep (structural search)
 
-STRUCTURAL
+Against ast-grep 0.51.1 with the same question (every call to `kmalloc` in the Linux tree, every
+`format!` in ripgrep), both answers checked against a tree-sitter reference: 975 ms against 13.5 s
+on the Linux tree (0.072x), 7.5 ms against 40.8 ms on ripgrep (0.184x). For C, ast-grep needs
+`--selector call_expression` and a statement as the pattern: alone, `kmalloc($$$A)` parses as a
+type macro and matches nothing, which the first comparison mistook for ast-grep being wrong.
 
 ## 3. Against Zoekt and livegrep (indexed search)
 
@@ -45,15 +69,16 @@ commit `a5a933bc` built with `go install` as its README says (docs/LEADERBOARD.m
 section; raw data in `bench/results/macos-arm64/indexed.json`). Every query was checked against an
 independent reference, and both tools answered all 20 the same way as the reference.
 
-- **Building the index**: 2.7 s against 138 s (0.019x), 154 MB on disk against 4,238 MB (0.036x),
-  819 MB peak memory against 1,552 MB.
-- **After editing 100 files**: 0.28 s, because the text index updates in place. Zoekt's directory
-  indexer (`zoekt-index`) rebuilds the whole index (138 s); the corpus is a plain directory, so its
+- **Building the index**: 5.3 s against 137 s (0.039x), 428 MB on disk against 4,238 MB (0.10x),
+  1,118 MB peak memory against 1,302 MB.
+- **After editing 100 files**: 0.19 s, because the text index updates in place. Zoekt's directory
+  indexer (`zoekt-index`) rebuilds the whole index (135 s); the corpus is a plain directory, so its
   git indexer was not part of the comparison.
-- **Query latency** over 20 queries x 20 runs, each a fresh process: p50 50 ms against 59 ms
-  (PASS), p99 195 ms against 879 ms (PASS), p95 150 ms against 265 ms (PARTIAL: the interval is
-  wide). Memory per query 14 MB against 274 MB.
-- **Throughput** with 11 clients at once: 21 against 22 queries per second, a tie (PARTIAL).
+- **Query latency** over 20 queries x 20 runs, each a fresh process: p50 28.5 ms against 58.9 ms
+  (PASS), p99 225 ms against 875 ms (PASS), p95 155 ms against 263 ms (PARTIAL: the interval, 0.17
+  to 1.16, is wide because each tool's slowest query sits right at the 95th percentile). Memory per
+  query 12 MB against 273 MB.
+- **Throughput** with 11 clients at once: 32.3 against 25.4 queries per second (1.27x, PASS).
 
 Why it is smaller and quicker to build: the text index stores trigram postings and no file contents,
 and reads candidate files from the source tree, which must be present. Zoekt stores the contents

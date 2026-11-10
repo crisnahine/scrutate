@@ -49,7 +49,15 @@ exactly what is and is not verified.
   reproducible-build check, all passing (docs/TEST_RESULTS.md). Engine A agrees with ripgrep on
   2,000 random corpora and patterns, run three ways: as shipped, with the parallel walk forced,
   and with every file searched in ranges.
-- **Benchmarks**: LEADERBOARD_SUMMARY
+- **Benchmarks** (docs/LEADERBOARD.md, generated from the raw results in `bench/results/`; 30
+  runs per contender, 95% intervals): on the development Mac (Apple M3 Pro, shared with other work,
+  so these are measurements rather than publishable #1 claims), Engine A is significantly fastest in
+  32 of 37 warm-cache benchmarks and all 5 cold-cache ones: 13 to 38% ahead of the next tool on the
+  Linux kernel tree, 12 to 26% on LLVM, 42 to 57% on a 740 MB file. The five it loses are runs under
+  18 ms (a 220-file repository and the backtracking trap), 2 to 8% behind ugrep. Structural search
+  is 5 to 26 times faster than ast-grep. Against Zoekt the text index builds 26 times faster, is a
+  tenth of the size, answers in half the median time and serves 1.27 times the queries per second;
+  its p95 is a tie. LINUX_SUMMARY
 - **Engine B** gives bit-identical features, scores and rankings to the Python reference it was
   developed against (300 queries in the parity harness), and its learned ranker beats its own
   lexical layer on every held-out query type, in Python and five more languages (docs/QUALITY.md).

@@ -54,7 +54,12 @@ printed with an empty path (`:1:text`, or `one.txt/` next to a second root); a t
 `kill` binary, which minimal Linux images do not have; and a GIL-release test that could not show
 what it claimed, because every line matched and the time went into building Python objects (it
 failed on x86_64 and was skipped elsewhere; it now searches one large file for one match, and four
-threads take a third of the sequential time). In the benchmark harness itself: a reference that let
+threads take a third of the sequential time); `--max-results N` reporting one or two matches more
+than N when several threads found matches at once (caught by the bindings test, now covered by a
+CLI test that repeats the search sixty times); and a bundled SQLite with a published CVE
+(RUSTSEC-2026-0459, found by `cargo audit` on the release candidate; upgraded). In the benchmark
+harness itself: an ast-grep pattern that ast-grep parses as a C type macro, so the Linux structural
+benchmark compared Scrutate with a tool that could match nothing; a reference that let
 git's case-insensitive ignore matching hide 1,343 files (every tool agreed against it, which is how
 it was caught); a reference that used Python's backtracking regex engine on the backtracking-trap
 benchmark and never finished; and a musl/glibc comparison that compared the run time recorded in
