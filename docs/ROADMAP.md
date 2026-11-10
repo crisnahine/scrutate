@@ -59,8 +59,10 @@ docs/TRACEABILITY.md.
   results, and it would drop macOS 11 and 12); compiling the pattern while the walk starts saved
   nothing measurable. The remaining gap is about 0.2 to 0.3 ms of a 5 ms run, spread over start-up
   (an 85 MB binary: 0.3 ms more than a small one) and the first search in a fresh process (0.4 ms
-  more than later ones); profile-guided optimisation, which also orders code by use, is the next
-  thing to try.
+  more than later ones). Profile-guided optimisation (a profile from the benchmark workloads)
+  measured 2 to 3.5% on the 220-file tree, about 1% on matching-bound searches and up to 8% on
+  output-bound ones; not adopted for 0.1.0, since it needs a 13 MB profile in the repository and in
+  every release build for less than the gaps above.
 - Linux: in the 8-CPU Linux VM on the development Mac, Scrutate used about 10% more CPU than
   ripgrep for the same Linux-tree search (993 ms against 910 ms for `PM_RESUME`). Two measured
   steps: read small files into one buffer per thread instead of a new zeroed buffer per file (4% of
