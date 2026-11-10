@@ -1024,11 +1024,11 @@ pub fn default_threads(o: &Options) -> usize {
     *N.get_or_init(|| performance_cores().map_or_else(cores, |p| p.clamp(2, cores())))
 }
 
-/// Threads for the parallel walk after the first files: `default_threads`, unless reading those
-/// files took long enough that they came from the disk rather than the page cache (25 µs or so
-/// each warm, 160 µs or more cold on an M3 Pro): a cold tree is read fastest with many reads in
-/// flight, so then twice the cores, at most 24 (the Linux tree cold: 2.9 s on 5 threads, 1.7 s on
-/// 11, 1.4 s on 24).
+/// Threads the parallel walk starts with: `default_threads`, unless the files read so far took
+/// long enough that they came from the disk rather than the page cache (25 µs or so each warm,
+/// 160 µs or more cold on an M3 Pro): a cold tree is read fastest with many reads in flight, so
+/// then twice the cores, at most 24 (the Linux tree cold: 2.9 s on 5 threads, 1.7 s on 11, 1.4 s
+/// on 24). A walk that starts warm grows to that count when its reads turn slow.
 fn walk_threads(o: &Options, c: &Counters) -> usize {
     if o.threads == 0 && reads_from_disk(c) {
         cold_threads()
@@ -1127,14 +1127,30 @@ fn walk_builder(roots: &[PathBuf], o: &Options) -> Result<WalkBuilder> {
     Ok(wb)
 }
 
-/// Trees with at most this many files are walked on one thread and searched by a few: starting the
-/// parallel walk costs more there than the search itself. A larger tree switches to the parallel
-/// walk after these files, whose read times also tell the page cache from the disk
-/// (`walk_threads`). `SCRUTATE_SMALL_TREE` overrides it (0 always walks in parallel; the tests use
-/// both).
-fn small_tree_files() -> usize {
-    static V: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *V.get_or_init(|| std::env::var("SCRUTATE_SMALL_TREE").ok().and_then(|v| v.parse().ok()).unwrap_or(256))
+/// How many files the one-thread walk (`small_first`) takes before the parallel walk does the rest;
+/// 0 skips it. Roots holding only files get 256: starting the parallel walk costs more there than
+/// the search itself (three large files: 40.6 ms against 41.9). Any directory to enter gets 0: one
+/// thread reading every directory then holds up the searches (the ripgrep repository, 60
+/// directories: 5.6 ms in parallel against 6.0). `SCRUTATE_SMALL_TREE` sets the number for any tree
+/// (the tests use both walks).
+fn small_tree_files(roots: &[PathBuf], o: &Options) -> usize {
+    static V: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
+    let forced = *V.get_or_init(|| std::env::var("SCRUTATE_SMALL_TREE").ok().and_then(|v| v.parse().ok()));
+    forced.unwrap_or_else(|| if has_dirs(roots, o) { 0 } else { 256 })
+}
+
+/// Whether a root holds a directory the walk would enter (a hidden one only with `--hidden`).
+fn has_dirs(roots: &[PathBuf], o: &Options) -> bool {
+    roots.iter().any(|r| {
+        std::fs::read_dir(r).is_ok_and(|mut entries| {
+            entries.any(|e| {
+                e.is_ok_and(|e| {
+                    let dir = if o.follow_links { e.path().is_dir() } else { e.file_type().is_ok_and(|t| t.is_dir()) };
+                    dir && (o.hidden || !e.file_name().as_encoded_bytes().starts_with(b"."))
+                })
+            })
+        })
+    })
 }
 
 enum Small {
@@ -1144,7 +1160,7 @@ enum Small {
 }
 
 /// Walks on one thread while a few threads search the files it finds, so a small tree pays
-/// neither for a parallel walk nor for walking before searching. Past `small_tree_files()` files the
+/// neither for a parallel walk nor for walking before searching. Past `small_tree_files` files the
 /// walk stops; the caller's parallel walk then skips what was searched here. Walk errors count only
 /// when this walk finished (the parallel walk meets them again otherwise).
 #[allow(clippy::too_many_arguments)]
@@ -1157,11 +1173,11 @@ fn small_first(
     plain: Option<&PlainSink>,
     on_hit: &mut impl FnMut(Hit),
 ) -> Small {
-    let limit = small_tree_files();
-    let Ok(wb) = walk_builder(roots, o) else { return Small::Big(Default::default()) };
+    let limit = small_tree_files(roots, o);
     if limit == 0 {
         return Small::Big(Default::default());
     }
+    let Ok(wb) = walk_builder(roots, o) else { return Small::Big(Default::default()) };
     let (work_tx, work_rx) = mpsc::channel::<(PathBuf, Arc<str>, Option<u64>)>();
     let work_rx = Mutex::new(work_rx);
     let (tx, rx) = mpsc::channel::<Vec<Hit>>();
@@ -1800,10 +1816,18 @@ fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Opti
         Small::Done => return Ok(stats(&counters, t0, &cancel)),
         Small::Big(seen) => Arc::new(seen),
     };
-    let walker = walk_builder(roots, o)?.threads(walk_threads(o, &counters)).build_parallel();
+    let threads = walk_threads(o, &counters);
+    // set once the reads look like disk reads: the walk then grows to `cold_threads`
+    let cold = Arc::new(AtomicBool::new(false));
+    let mut wb = walk_builder(roots, o)?;
+    wb.threads(threads);
+    if o.threads == 0 {
+        wb.grow_threads(cold_threads().saturating_sub(threads), Arc::clone(&cold));
+    }
+    let walker = wb.build_parallel();
     let (tx, rx) = mpsc::channel::<Vec<Hit>>();
-    let roots_owned: Vec<PathBuf> = roots.to_vec();
-    let opts = o.clone();
+    let roots_owned: Arc<[PathBuf]> = roots.into();
+    let opts = Arc::new(o.clone());
     let (c2, cancel2) = (Arc::clone(&counters), Arc::clone(&cancel));
     let worker = std::thread::spawn(move || {
         walker.run(|| {
@@ -1812,11 +1836,13 @@ fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Opti
             let matcher = AnyMatcher::clone(&matcher);
             let cancel = Arc::clone(&cancel2);
             let c = Arc::clone(&c2);
-            let opts = opts.clone();
-            let roots = roots_owned.clone();
+            let opts = Arc::clone(&opts);
+            let roots = Arc::clone(&roots_owned);
             let plain = plain.clone();
             let searched = Arc::clone(&searched);
-            let mut fw = file_worker(&opts);
+            let cold = Arc::clone(&cold);
+            // made on the first file: the threads kept for a cold walk mostly never run
+            let mut fw = None;
             Box::new(move |entry| {
                 if cancel.load(Ordering::Relaxed) {
                     return WalkState::Quit;
@@ -1828,12 +1854,16 @@ fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Opti
                         return WalkState::Continue;
                     }
                 };
-                if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) || searched.contains(entry.path()) {
+                if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) || (!searched.is_empty() && searched.contains(entry.path())) {
                     return WalkState::Continue;
                 }
                 let size = if opts.want_bytes { entry.metadata().ok().map(|m| m.len()) } else { None };
                 let rel: Arc<str> = Arc::from(relative(entry.path(), &roots));
-                search_one(&mut fw, &matcher, entry.path(), rel, size, &opts, &c, &cancel, &tx, plain.as_deref());
+                let fw = fw.get_or_insert_with(|| file_worker(&opts));
+                search_one(fw, &matcher, entry.path(), rel, size, &opts, &c, &cancel, &tx, plain.as_deref());
+                if !cold.load(Ordering::Relaxed) && reads_from_disk(&c) {
+                    cold.store(true, Ordering::Relaxed);
+                }
                 if cancel.load(Ordering::Relaxed) {
                     WalkState::Quit
                 } else {

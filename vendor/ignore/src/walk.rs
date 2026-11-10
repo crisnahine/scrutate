@@ -495,6 +495,7 @@ pub struct WalkBuilder {
     same_file_system: bool,
     sorter: Option<Sorter>,
     threads: usize,
+    grow: Option<(usize, Arc<AtomicBool>)>,
     skip: Option<Arc<Handle>>,
     filter: Option<Filter>,
     /// The directory that gitignores should be interpreted relative to.
@@ -568,6 +569,7 @@ impl WalkBuilder {
             same_file_system: false,
             sorter: None,
             threads: 0,
+            grow: None,
             skip: None,
             filter: None,
             global_gitignores_relative_to: OnceLock::new(),
@@ -709,6 +711,7 @@ impl WalkBuilder {
             follow_links: self.follow_links,
             same_file_system: self.same_file_system,
             threads: self.threads,
+            grow: self.grow.clone(),
             skip: self.skip.clone(),
             filter: self.filter.clone(),
         }
@@ -772,6 +775,17 @@ impl WalkBuilder {
     /// automatically using heuristics.
     pub fn threads(&mut self, n: usize) -> &mut WalkBuilder {
         self.threads = n;
+        self
+    }
+
+    /// Start `extra` more threads during a parallel walk once `when` is set
+    /// (by a visitor, say). Their visitors are built when the walk starts.
+    pub fn grow_threads(
+        &mut self,
+        extra: usize,
+        when: Arc<AtomicBool>,
+    ) -> &mut WalkBuilder {
+        self.grow = (extra > 0).then_some((extra, when));
         self
     }
 
@@ -1417,6 +1431,7 @@ pub struct WalkParallel {
     follow_links: bool,
     same_file_system: bool,
     threads: usize,
+    grow: Option<(usize, Arc<AtomicBool>)>,
     skip: Option<Arc<Handle>>,
     filter: Option<Filter>,
 }
@@ -1503,12 +1518,16 @@ impl WalkParallel {
         // Create the workers and then wait for them to finish.
         let quit_now = Arc::new(AtomicBool::new(false));
         let active_workers = Arc::new(AtomicUsize::new(threads));
-        let stacks = Stack::new_for_each_thread(threads, stack);
+        let (extra, when) = match self.grow.take() {
+            Some((n, when)) => (n, Some(when)),
+            None => (0, None),
+        };
+        let stacks = Stack::new_for_each_thread(threads, extra, stack);
         // Collect all of the workers first. In the case that
         // `builder.build()` panics, we want that to happen and
         // propagate before we actually start to run any of the
         // workers.
-        let workers: Vec<_> = stacks
+        let mut workers: Vec<_> = stacks
             .into_iter()
             .map(|stack| Worker {
                 visitor: builder.build(),
@@ -1523,10 +1542,16 @@ impl WalkParallel {
                 filter: self.filter.clone(),
             })
             .collect();
+        let spare = Spare {
+            when,
+            started: AtomicBool::new(false),
+            workers: std::sync::Mutex::new(workers.split_off(threads)),
+        };
+        let spare = &spare;
         std::thread::scope(|s| {
             let handles: Vec<_> = workers
                 .into_iter()
-                .map(|worker| s.spawn(|| worker.run()))
+                .map(|worker| s.spawn(move || worker.run(s, spare)))
                 .collect();
             for handle in handles {
                 handle.join().unwrap();
@@ -1659,13 +1684,18 @@ impl Stack {
     /// Create a work-stealing stack for each thread. The given messages
     /// correspond to the initial paths to start the search at. They will
     /// be distributed automatically to each stack in a round-robin fashion.
-    fn new_for_each_thread(threads: usize, init: Vec<Message>) -> Vec<Stack> {
+    fn new_for_each_thread(
+        threads: usize,
+        spare: usize,
+        init: Vec<Message>,
+    ) -> Vec<Stack> {
         // Using new_lifo() ensures each worker operates depth-first, not
         // breadth-first. We do depth-first because a breadth first traversal
         // on wide directories with a lot of gitignores is disastrous (for
         // example, searching a directory tree containing all of crates.io).
-        let deques: Vec<Deque<Message>> =
-            std::iter::repeat_with(Deque::new_lifo).take(threads).collect();
+        let deques: Vec<Deque<Message>> = std::iter::repeat_with(Deque::new_lifo)
+            .take(threads + spare)
+            .collect();
         let stealers = Arc::<[Stealer<Message>]>::from(
             deques.iter().map(Deque::stealer).collect::<Vec<_>>(),
         );
@@ -1683,7 +1713,7 @@ impl Stack {
         // per-thread stacks which are filled here.
         init.into_iter()
             .rev()
-            .zip(stacks.iter().cycle())
+            .zip(stacks[..threads].iter().cycle())
             .for_each(|(m, s)| s.push(m));
         stacks
     }
@@ -1711,6 +1741,38 @@ impl Stack {
             .chain(left.iter())
             .map(|s| s.steal_batch_and_pop(&self.deque))
             .find_map(|s| s.success())
+    }
+}
+
+/// Workers built when the walk starts and started once `when` is set.
+struct Spare<'s> {
+    when: Option<Arc<AtomicBool>>,
+    started: AtomicBool,
+    workers: std::sync::Mutex<Vec<Worker<'s>>>,
+}
+
+impl<'s> Spare<'s> {
+    fn start<'scope>(
+        &'scope self,
+        s: &'scope std::thread::Scope<'scope, '_>,
+        active_workers: &AtomicUsize,
+    ) where
+        's: 'scope,
+    {
+        let Some(when) = &self.when else { return };
+        if self.started.load(AtomicOrdering::Relaxed)
+            || !when.load(AtomicOrdering::Relaxed)
+            || self.started.swap(true, AtomicOrdering::AcqRel)
+        {
+            return;
+        }
+        let workers = std::mem::take(&mut *self.workers.lock().unwrap());
+        // the caller is an active worker, so the walk cannot finish before
+        // these are counted
+        active_workers.fetch_add(workers.len(), AtomicOrdering::Release);
+        for worker in workers {
+            s.spawn(move || worker.run(s, self));
+        }
     }
 }
 
@@ -1758,11 +1820,18 @@ impl<'s> Worker<'s> {
     ///
     /// The worker will call the caller's callback for all entries that aren't
     /// skipped by the ignore matcher.
-    fn run(mut self) {
+    fn run<'scope>(
+        mut self,
+        s: &'scope std::thread::Scope<'scope, '_>,
+        spare: &'scope Spare<'s>,
+    ) where
+        's: 'scope,
+    {
         while let Some(work) = self.get_work() {
             if let WalkState::Quit = self.run_one(work) {
                 self.quit_now();
             }
+            spare.start(s, &self.active_workers);
         }
     }
 
@@ -2290,6 +2359,64 @@ mod tests {
         assert_eq!(got, mkpaths(expected), "single threaded");
         let got = walk_collect_parallel(prefix, builder);
         assert_eq!(got, mkpaths(expected), "parallel");
+    }
+
+    #[test]
+    fn grown_walk_visits_every_entry_once() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let td = tmpdir();
+        let mut want = vec![];
+        for d in 0..20 {
+            mkdirp(td.path().join(format!("d{d}/e")));
+            want.push(format!("d{d}"));
+            want.push(format!("d{d}/e"));
+            for f in 0..10 {
+                wfile(td.path().join(format!("d{d}/e/f{f}")), "");
+                want.push(format!("d{d}/e/f{f}"));
+            }
+        }
+        want.sort();
+        for after in [0, 1, 50, 10_000] {
+            let when = Arc::new(AtomicBool::new(false));
+            let seen = Arc::new(Mutex::new(vec![]));
+            let threads = Arc::new(Mutex::new(std::collections::HashSet::new()));
+            WalkBuilder::new(td.path())
+                .threads(1)
+                .grow_threads(3, when.clone())
+                .build_parallel()
+                .run(|| {
+                    let (when, seen, threads) =
+                        (when.clone(), seen.clone(), threads.clone());
+                    Box::new(move |result| {
+                        let dent = result.unwrap();
+                        let mut seen = seen.lock().unwrap();
+                        seen.push(dent.path().to_path_buf());
+                        if seen.len() > after {
+                            when.store(true, Ordering::Relaxed);
+                        }
+                        // slow visits, so the started threads get some work
+                        std::thread::sleep(std::time::Duration::from_micros(200));
+                        threads.lock().unwrap().insert(std::thread::current().id());
+                        WalkState::Continue
+                    })
+                });
+            let mut got: Vec<String> = seen
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|p| p.strip_prefix(td.path()).unwrap())
+                .filter(|p| !p.as_os_str().is_empty())
+                .map(|p| normal_path(p.to_str().unwrap()))
+                .collect();
+            got.sort();
+            assert_eq!(got, want, "grown after {after} entries");
+            let n = threads.lock().unwrap().len();
+            if after < 50 {
+                assert!(n > 1, "{n} threads after {after} entries");
+            } else if after == 10_000 {
+                assert_eq!(n, 1);
+            }
+        }
     }
 
     #[test]

@@ -17,8 +17,10 @@ codegen-units = 4
 debug = 0
 strip = true
 
-# `ignore` with two changes (vendor/ignore): the global git excludes path is parsed without
-# compiling a regex (excludes_file_span), and an idle walker thread waits 10 us at first, doubling
-# up to the original 1 ms, before looking for work again (Worker::get_work).
+# `ignore` with four changes (vendor/ignore): the global git excludes path is parsed without
+# compiling a regex (excludes_file_span); an idle walker thread waits 10 us at first, doubling up
+# to the original 1 ms, before looking for work again (Worker::get_work); gitignore lines of three
+# common shapes are matched without a regex (gitignore::Simple); and a parallel walk can start more
+# threads while it runs (WalkBuilder::grow_threads).
 [patch.crates-io]
 ignore = { path = "vendor/ignore" }

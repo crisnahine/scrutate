@@ -80,11 +80,120 @@ impl Glob {
 #[derive(Clone, Debug)]
 pub struct Gitignore {
     set: GlobSet,
+    /// the index in `globs` of each glob in `set`
+    set_index: Vec<usize>,
+    /// the globs matched without `set`, with their index in `globs`
+    simple: Vec<(usize, Simple)>,
     root: PathBuf,
     globs: Vec<Glob>,
     num_ignores: u64,
     num_whitelists: u64,
     matches: Option<Arc<Pool<Vec<usize>>>>,
+}
+
+/// A glob that needs no regex: building a `GlobSet` regex costs more than a small
+/// tree's whole walk, and most gitignore lines have one of these shapes.
+#[derive(Clone, Debug)]
+enum Simple {
+    /// `**/` and a file name with `*` or `?`: matches the last path component
+    Name(Box<[u8]>),
+    /// `**/` and a literal path with a slash, stored with a leading `/`
+    Tail(Box<[u8]>),
+    /// a file name with `*` or `?` anchored at the root (`/x*`): matches a
+    /// path of one component
+    Root(Box<[u8]>),
+}
+
+impl Simple {
+    /// The simple form of `actual` (a glob as `add_line` rewrote it), if it
+    /// has one. It matches exactly the paths the glob's regex does
+    /// (`literal_separator`, `backslash_escape`, case-sensitive).
+    fn new(actual: &str) -> Option<Simple> {
+        let (anywhere, rest) = match actual.strip_prefix("**/") {
+            Some(rest) => (true, rest),
+            None => (false, actual),
+        };
+        if rest.is_empty()
+            || rest.contains("**")
+            || rest.starts_with('/')
+            || rest.ends_with('/')
+            || rest.contains("//")
+            || rest.bytes().any(|b| matches!(b, b'[' | b']' | b'{' | b'}' | b'\\'))
+        {
+            return None;
+        }
+        let wild = rest.bytes().any(|b| b == b'*' || b == b'?');
+        match (anywhere, rest.contains('/'), wild) {
+            (true, false, true) => Some(Simple::Name(rest.as_bytes().into())),
+            (true, true, false) => {
+                Some(Simple::Tail(format!("/{rest}").into_bytes().into()))
+            }
+            (false, false, true) => Some(Simple::Root(rest.as_bytes().into())),
+            _ => None,
+        }
+    }
+
+    fn is_match(&self, path: &[u8]) -> bool {
+        match self {
+            Simple::Name(p) => {
+                let name = match memchr::memrchr(b'/', path) {
+                    Some(i) => &path[i + 1..],
+                    None => path,
+                };
+                wildcard(p, name)
+            }
+            Simple::Tail(t) => path.ends_with(t) || path == &t[1..],
+            Simple::Root(p) => {
+                memchr::memchr(b'/', path).is_none() && wildcard(p, path)
+            }
+        }
+    }
+}
+
+/// `*` matches any bytes, `?` one byte (`name` holds no `/`).
+fn wildcard(p: &[u8], name: &[u8]) -> bool {
+    let (mut pi, mut ni) = (0, 0);
+    let mut star: Option<(usize, usize)> = None;
+    while ni < name.len() {
+        match p.get(pi) {
+            Some(b'*') => {
+                star = Some((pi, ni));
+                pi += 1;
+            }
+            Some(&c) if c == b'?' || c == name[ni] => {
+                pi += 1;
+                ni += 1;
+            }
+            _ => match star {
+                Some((sp, sn)) => {
+                    pi = sp + 1;
+                    ni = sn + 1;
+                    star = Some((sp, sn + 1));
+                }
+                None => return false,
+            },
+        }
+    }
+    p[pi..].iter().all(|&c| c == b'*')
+}
+
+/// The bytes globset matches for `path`, with `/` as the separator.
+fn path_bytes(path: &Path) -> std::borrow::Cow<'_, [u8]> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        std::borrow::Cow::Borrowed(path.as_os_str().as_bytes())
+    }
+    #[cfg(not(unix))]
+    {
+        let mut v = path.to_string_lossy().into_owned().into_bytes();
+        for b in v.iter_mut() {
+            if *b != b'/' && std::path::is_separator(char::from(*b)) {
+                *b = b'/';
+            }
+        }
+        std::borrow::Cow::Owned(v)
+    }
 }
 
 impl Gitignore {
@@ -151,6 +260,8 @@ impl Gitignore {
     pub fn empty() -> Gitignore {
         Gitignore {
             set: GlobSet::empty(),
+            set_index: vec![],
+            simple: vec![],
             root: PathBuf::from(""),
             globs: vec![],
             num_ignores: 0,
@@ -169,13 +280,13 @@ impl Gitignore {
     /// Returns true if and only if this gitignore has zero globs, and
     /// therefore never matches any file path.
     pub fn is_empty(&self) -> bool {
-        self.set.is_empty()
+        self.set.is_empty() && self.simple.is_empty()
     }
 
     /// Returns the total number of globs, which should be equivalent to
     /// `num_ignores + num_whitelists`.
     pub fn len(&self) -> usize {
-        self.set.len()
+        self.globs.len()
     }
 
     /// Returns the total number of ignore globs.
@@ -265,20 +376,36 @@ impl Gitignore {
             return Match::None;
         }
         let path = path.as_ref();
-        let mut matches = self.matches.as_ref().unwrap().get();
-        let candidate = Candidate::new(path);
-        self.set.matches_candidate_into(&candidate, &mut *matches);
-        for &i in matches.iter().rev() {
-            let glob = &self.globs[i];
-            if !glob.is_only_dir() || is_dir {
-                return if glob.is_whitelist() {
-                    Match::Whitelist(glob)
-                } else {
-                    Match::Ignore(glob)
-                };
+        // the last glob that matches (and applies to this kind of entry) wins
+        let applies = |i: usize| !self.globs[i].is_only_dir() || is_dir;
+        let mut best = None;
+        if !self.set.is_empty() {
+            let mut matches = self.matches.as_ref().unwrap().get();
+            let candidate = Candidate::new(path);
+            self.set.matches_candidate_into(&candidate, &mut *matches);
+            best = matches
+                .iter()
+                .rev()
+                .map(|&i| self.set_index[i])
+                .find(|&i| applies(i));
+        }
+        if !self.simple.is_empty() {
+            let bytes = path_bytes(path);
+            for (i, s) in self.simple.iter().rev() {
+                if best.is_some_and(|b| b > *i) {
+                    break;
+                }
+                if applies(*i) && s.is_match(&bytes) {
+                    best = Some(*i);
+                    break;
+                }
             }
         }
-        Match::None
+        match best.map(|i| &self.globs[i]) {
+            Some(glob) if glob.is_whitelist() => Match::Whitelist(glob),
+            Some(glob) => Match::Ignore(glob),
+            None => Match::None,
+        }
     }
 
     /// Strips the given path such that it's suitable for matching with this
@@ -319,6 +446,8 @@ impl Gitignore {
 #[derive(Clone, Debug)]
 pub struct GitignoreBuilder {
     builder: GlobSetBuilder,
+    set_index: Vec<usize>,
+    simple: Vec<(usize, Simple)>,
     root: PathBuf,
     globs: Vec<Glob>,
     case_insensitive: bool,
@@ -336,6 +465,8 @@ impl GitignoreBuilder {
         let root = root.as_ref();
         GitignoreBuilder {
             builder: GlobSetBuilder::new(),
+            set_index: vec![],
+            simple: vec![],
             root: strip_prefix("./", root).unwrap_or(root).to_path_buf(),
             globs: vec![],
             case_insensitive: false,
@@ -358,6 +489,8 @@ impl GitignoreBuilder {
             .map_err(|err| Error::Glob { glob: None, err: err.to_string() })?;
         Ok(Gitignore {
             set,
+            set_index: self.set_index.clone(),
+            simple: self.simple.clone(),
             root: self.root.clone(),
             globs: self.globs.clone(),
             num_ignores: nignore as u64,
@@ -528,6 +661,13 @@ impl GitignoreBuilder {
         if glob.actual.ends_with("/**") {
             glob.actual = format!("{}/*", glob.actual);
         }
+        if !self.case_insensitive
+            && let Some(s) = Simple::new(&glob.actual)
+        {
+            self.simple.push((self.globs.len(), s));
+            self.globs.push(glob);
+            return Ok(self);
+        }
         let parsed = GlobBuilder::new(&glob.actual)
             .literal_separator(true)
             .case_insensitive(self.case_insensitive)
@@ -539,6 +679,7 @@ impl GitignoreBuilder {
                 err: err.kind().to_string(),
             })?;
         self.builder.add(parsed);
+        self.set_index.push(self.globs.len());
         self.globs.push(glob);
         Ok(self)
     }
@@ -936,6 +1077,82 @@ mod tests {
             assert_eq!(super::excludes_file_span(&data), want, "{:?}", bstr::BStr::new(&data));
         }
         assert!(matched > 10_000, "{matched}");
+    }
+
+    /// Random gitignore lines and paths: the matcher (some globs matched
+    /// without a regex) gives the same answer as one GlobSet of every glob.
+    #[test]
+    fn simple_globs_equal_the_glob_set() {
+        use globset::{Candidate, GlobBuilder, GlobSetBuilder};
+        let line_parts =
+            ["a", "b", "*", "?", ".", "x*y", "é", "a*", "*.b", "/", "[ab]", "**", "\\*", "{a,b}"];
+        let path_parts = ["a", "b", "ab", ".a", "x", "xay", "é", "a.b", "xy", "*", ""];
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = move |n: usize| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state % n as u64) as usize
+        };
+        let (mut simple, mut hits) = (0, 0);
+        for _ in 0..3_000 {
+            let mut text = String::new();
+            for _ in 0..1 + next(4) {
+                let mut line = String::new();
+                if next(4) == 0 {
+                    line.push('!');
+                }
+                for _ in 0..1 + next(4) {
+                    line.push_str(line_parts[next(line_parts.len())]);
+                }
+                if next(5) == 0 {
+                    line.push('/');
+                }
+                text.push_str(&line);
+                text.push('\n');
+            }
+            let mut b = GitignoreBuilder::new(ROOT);
+            if b.add_str(None, &text).is_err() {
+                continue;
+            }
+            let gi = b.build().unwrap();
+            simple += gi.simple.len();
+            let mut sb = GlobSetBuilder::new();
+            for g in &gi.globs {
+                sb.add(
+                    GlobBuilder::new(&g.actual)
+                        .literal_separator(true)
+                        .backslash_escape(true)
+                        .allow_unclosed_class(true)
+                        .build()
+                        .unwrap(),
+                );
+            }
+            let set = sb.build().unwrap();
+            for _ in 0..30 {
+                let n = 1 + next(3);
+                let path = (0..n)
+                    .map(|_| path_parts[next(path_parts.len())])
+                    .collect::<Vec<_>>()
+                    .join("/");
+                let is_dir = next(2) == 0;
+                let want = set
+                    .matches_candidate(&Candidate::new(&path))
+                    .into_iter()
+                    .rev()
+                    .map(|i| &gi.globs[i])
+                    .find(|g| !g.is_only_dir() || is_dir)
+                    .map(|g| (g.is_whitelist(), g.original().to_string()));
+                let got = match gi.matched(&path, is_dir) {
+                    super::Match::None => None,
+                    super::Match::Ignore(g) => Some((false, g.original().to_string())),
+                    super::Match::Whitelist(g) => Some((true, g.original().to_string())),
+                };
+                hits += want.is_some() as usize;
+                assert_eq!(got, want, "path {path:?} dir {is_dir} in\n{text}");
+            }
+        }
+        assert!(simple > 1_000 && hits > 5_000, "{simple} simple globs, {hits} hits");
     }
 
     // See: https://github.com/BurntSushi/ripgrep/issues/106

@@ -34,16 +34,20 @@ capabilities those crates do not provide rather than re-implementing what they a
 - **Traversal**: the `ignore` parallel walker (work-stealing across threads, `.gitignore` /
   `.ignore` / global excludes, hidden files off by default, symlink loop detection, max depth and
   size filters, type globs derived from the language registry). The crate is vendored
-  (`vendor/ignore`) with two changes: the global git excludes path is read from `~/.gitconfig` by a
-  small parser instead of a regex compiled for each run (0.4 ms of a 6 ms search), and an idle
-  walker thread first waits 10 µs, doubling up to the original 1 ms, before it looks for work
-  again; with a fixed 1 ms, a walk of a few hundred files spent whole milliseconds asleep (598
-  files: 12.3 ms to 9.3 ms).
+  (`vendor/ignore`) with four changes. The global git excludes path is read from `~/.gitconfig` by
+  a small parser instead of a regex compiled for each run (0.4 ms of a 6 ms search). An idle walker
+  thread first waits 10 µs, doubling up to the original 1 ms, before it looks for work again; with a
+  fixed 1 ms, a walk of a few hundred files spent whole milliseconds asleep (598 files: 12.3 ms to
+  9.3 ms). Gitignore lines of three shapes (`**/` and a name with `*` or `?`, `**/` and a literal
+  path, `/` and a name with `*` or `?`) are matched by a byte loop instead of a `GlobSet` regex,
+  whose build cost 100 to 400 µs per file, more than the whole walk of a small repository; a
+  randomized test checks it against `GlobSet`. And a parallel walk can start more threads while it
+  runs (`grow_threads`); their visitors are built at the start and stay idle until then.
 - **Thread count**: the cores (at most 12), except on macOS, where a walk uses as many threads as
   performance cores: there, more threads opening and reading files at once wait on each other in
   the kernel (the Linux tree on an M3 Pro: 977 ms on 11 threads, about 845 ms on 5). The open and
   read time of the first files tells the page cache from the disk (about 25 µs a file against
-  160 µs or more); when it is the disk, the walk switches to twice the cores, at most 24, because
+  160 µs or more); when it is the disk, the walk grows to twice the cores, at most 24, because
   the disk serves many reads in flight (the Linux tree cold: 2.9 s on 5 threads, 1.4 s on 22).
   `-j` overrides both.
 - **One large file, every core**: a file of 64 MB or more is cut into ranges of whole lines (8 MB
@@ -52,11 +56,13 @@ capabilities those crates do not provide rather than re-implementing what they a
   searches one window of ranges per thread at a time and writes the windows' output in file order,
   so the output held in memory stays bounded. Context lines, `--max-count`, `--max-results`, `-l`,
   multiline and a byte-order mark keep the single pass.
-- **Small trees**: a sequential walk with the same rules runs first, and three threads search the
-  files as it finds them; when those files turn out to come from the disk, it adds threads. Past
-  256 files it stops, and the parallel walk takes over, skipping the files already searched. On a
-  220-file repository this beats the parallel walk alone; from about 600 files on, the parallel walk
-  is the faster of the two.
+- **Roots without directories**: when no root holds a directory the walk would enter, a sequential
+  walk with the same rules runs first, and three threads search the files as it finds them; when
+  those files turn out to come from the disk, it adds threads. Past 256 files it stops, and the
+  parallel walk takes over, skipping the files already searched. For three large files this beats
+  the parallel walk (40.6 ms against 41.9). Any directory to enter sends the search straight to the
+  parallel walk: one thread reading every directory held up the searches (the ripgrep repository,
+  60 directories: 5.6 ms in parallel against 6.0).
 - **Files without line breaks**: a large file whose ranges cannot be cut at a newline is read once
   into a buffer of its exact size (checked for NUL bytes as it is read, so binary handling is
   unchanged) and searched as a slice; the stream reader would grow its buffer by doubling.

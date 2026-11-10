@@ -6,6 +6,23 @@ API are versioned interfaces; incompatible changes bump the major version once p
 listed here under "Breaking". The on-disk index is a cache with its own `schema_version`; a new
 version rebuilds incompatible indexes automatically and this is never considered breaking.
 
+## [Unreleased]
+
+### Performance
+- Gitignore lines of three common shapes (`*.log`, `**/a/b`, `/build*`) are matched without
+  building a regex; each `.gitignore` used to cost 100 to 400 µs to load, the global excludes file
+  included, which was more than the whole walk of a small repository.
+- A search whose roots hold directories starts the parallel walk at once instead of a one-thread
+  walk of the first 256 files; the walk adds threads when its reads turn out to come from the disk.
+  Only roots holding files and no directories keep the one-thread walk. On the ripgrep repository
+  (60 directories, 211 files) the five benchmarks that ugrep led are now level or ahead.
+- One reusable buffer per search thread for small files instead of a zeroed buffer per file; the
+  disk-or-cache test counts slow reads instead of averaging their times.
+
+### Changed
+- macOS builds need macOS 13 or newer (0.1.0 ran on 11): the binary gets chained fixups, applied as
+  pages are first touched (start-up 2.6 ms to 2.4 ms).
+
 ## [0.1.0] - 2026-11-10
 
 First release.
