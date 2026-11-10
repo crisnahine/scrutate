@@ -12,6 +12,7 @@ measured with an older binary or an older version of the harness, as its own `en
 | `leaderboard-warm-eeab.json` | 35 | 3 | `eeab24663509...` |
 | `leaderboard-warm-a82a.json` | 37 | 3 | `a82a23c54270...` |
 | `leaderboard-warm-fb5c.json` (and `-cold`, `indexed-`, `compare-`, `chain-`) | 37 | 3 | `fb5c4e0a1250...` |
+| `leaderboard-warm-fb3b.json` (and `-cold`, `indexed-`, `compare-`, `chain-`) | 37 | 3 | `fb3bd578c6d9...` |
 
 `leaderboard-warm-prevbin` stopped at `patho/backtracking trap`, where the reference (Python's
 backtracking regex engine) never finished. Its binary predates searching a large file on all
@@ -30,3 +31,7 @@ benchmarks compared the same query in both tools.
 
 The `fb5c` files are a complete run of the binary before the parallel walker's idle wait was
 shortened (vendored `ignore`); the current files repeat every step with the release binary.
+
+`*-fb3b` is the run of the first 0.1.0 build. Its `linux` and `linux-nodot` corpora shared files
+through hard links, which doubles the cost of opening a file on macOS for every tool, and its
+binary predates the changes listed under "Performance" in CHANGELOG.md.
