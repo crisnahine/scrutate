@@ -11,7 +11,7 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -1140,22 +1140,10 @@ pub fn default_threads(o: &Options) -> usize {
     *N.get_or_init(|| performance_cores().map_or_else(cores, |p| p.clamp(2, cores())))
 }
 
-/// Threads the parallel walk starts with: `default_threads`, unless the files read so far took
-/// long enough that they came from the disk rather than the page cache (25 µs or so each warm,
-/// 160 µs or more cold on an M3 Pro): a cold tree is read fastest with many reads in flight, so
-/// then twice the cores, at most 24 (the Linux tree cold: 2.9 s on 5 threads, 1.7 s on 11, 1.4 s
-/// on 24). A walk that starts warm grows to that count when its reads turn slow.
-fn walk_threads(o: &Options, c: &Counters) -> usize {
-    if o.threads == 0 && reads_from_disk(c) {
-        cold_threads()
-    } else {
-        default_threads(o)
-    }
-}
-
-/// An open and read of a small file taking this long came from the disk, not the page cache
-/// (about 25 us warm, 160 us or more cold on an M3 Pro).
-const COLD_READ_NS: u64 = 75_000;
+/// An open and read of a small file taking this long came from the disk, not the page cache:
+/// on macOS about 25 us warm and 160 us or more cold (M3 Pro); on Linux 99.9% of warm reads
+/// under 15 us and 97% of cold reads over 30 us (a VM on the same machine).
+const COLD_READ_NS: u64 = if cfg!(target_os = "linux") { 30_000 } else { 75_000 };
 
 fn reads_from_disk(c: &Counters) -> bool {
     // three quarters slow: a few reads delayed by a busy machine do not make a warm tree look cold
@@ -1163,8 +1151,33 @@ fn reads_from_disk(c: &Counters) -> bool {
     reads >= 16 && c.slow_reads.load(Ordering::Relaxed) * 4 >= reads * 3
 }
 
+/// Most threads for a tree read from the disk. Those reads wait on the device, so more of them
+/// than cores are worth having. On Linux 64: the Linux tree cold on 5 CPUs took 1.22 s on 5
+/// threads, 0.76 s on 10, 0.55 s on 20, 0.41 s on 40, 0.37 s on 80, 0.38 s on 160. Elsewhere twice
+/// the cores, at most 24: on macOS the same tree took 2.7 s on 5 threads, 1.6 s on 11, 1.31 s on
+/// 24, 1.24 s on 48, 1.36 s on 96, and 200,000 small files were slower on 48 than on 22.
 fn cold_threads() -> usize {
-    (2 * std::thread::available_parallelism().map_or(2, |n| n.get())).min(24)
+    if cfg!(target_os = "linux") {
+        64
+    } else {
+        (2 * std::thread::available_parallelism().map_or(2, |n| n.get())).min(24)
+    }
+}
+
+/// A cold tree gets one more thread for every this many slow reads, not all `cold_threads` at
+/// once: starting a thread costs about as much as a slow read, which a small tree never earns
+/// back (231 files cold on Linux: 8.3 ms with a thread per slow read, 7.4 ms per 4, 6.0 ms per 8,
+/// 5.8 ms per 16; the Linux tree takes 0.37 s with any of them).
+const COLD_READS_PER_THREAD: u64 = 16;
+
+/// Threads the reads so far call for, on top of `default_threads`.
+fn cold_extra(o: &Options, c: &Counters) -> usize {
+    if o.threads == 0 && reads_from_disk(c) {
+        let most = cold_threads().saturating_sub(default_threads(o));
+        ((c.slow_reads.load(Ordering::Relaxed) / COLD_READS_PER_THREAD) as usize).min(most)
+    } else {
+        0
+    }
 }
 
 /// Threads for one large file searched as ranges: every core (at most 12), since that work is
@@ -1317,8 +1330,8 @@ fn small_first(
         for _ in 0..workers {
             worker(tx.clone());
         }
-        // for the workers added when the files turn out to come from the disk
-        let mut more = (o.threads == 0).then(|| tx.clone());
+        // for the workers added as the files turn out to come from the disk
+        let (more, mut added) = (tx.clone(), 0);
         drop(tx);
         let walker = s.spawn(move || {
             let mut seen = std::collections::HashSet::new();
@@ -1347,10 +1360,9 @@ fn small_first(
                 if work_tx.send((path, rel, size)).is_err() {
                     break;
                 }
-                if let Some(tx) = more.take_if(|_| reads_from_disk(c)) {
-                    for _ in workers..cold_threads() {
-                        worker(tx.clone());
-                    }
+                while added < cold_extra(o, c) {
+                    worker(more.clone());
+                    added += 1;
                 }
             }
             (seen, errors, false)
@@ -1916,9 +1928,9 @@ fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Opti
         Small::Done => return Ok(stats(&counters, t0, &cancel)),
         Small::Big(seen) => Arc::new(seen),
     };
-    let threads = walk_threads(o, &counters);
-    // set once the reads look like disk reads: the walk then grows to `cold_threads`
-    let cold = Arc::new(AtomicBool::new(false));
+    let threads = default_threads(o);
+    // raised as reads turn out to come from the disk: the walk grows by that many threads
+    let cold = Arc::new(AtomicUsize::new(cold_extra(o, &counters)));
     let mut wb = walk_builder(roots, o)?;
     wb.threads(threads);
     if o.threads == 0 {
@@ -1961,8 +1973,9 @@ fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Opti
                 let rel: Arc<str> = Arc::from(relative(entry.path(), &roots));
                 let fw = fw.get_or_insert_with(|| file_worker(&opts));
                 search_one(fw, &Run { matcher: &matcher, o: &opts, c: &c, cancel: &cancel, tx: &tx, plain: plain.as_deref() }, entry.path(), rel, size);
-                if !cold.load(Ordering::Relaxed) && reads_from_disk(&c) {
-                    cold.store(true, Ordering::Relaxed);
+                let extra = cold_extra(&opts, &c);
+                if extra > cold.load(Ordering::Relaxed) {
+                    cold.fetch_max(extra, Ordering::Relaxed);
                 }
                 if cancel.load(Ordering::Relaxed) {
                     WalkState::Quit
@@ -2400,5 +2413,26 @@ mod tests {
         assert!(zip.check_indexable().unwrap_err().to_string().starts_with("--index does not cover archive members"));
         assert!(Options { max_depth: Some(1), ..Options::default() }.check_indexable().unwrap_err().to_string().starts_with("--index searches the files"));
         assert!(Options::default().check_indexable().is_ok());
+    }
+
+    #[test]
+    fn a_cold_tree_earns_threads_by_its_slow_reads() {
+        let o = Options::default();
+        let most = cold_threads().saturating_sub(default_threads(&o));
+        let reads = |all: u64, slow: u64| {
+            let c = Counters::default();
+            c.small_reads.store(all, Ordering::Relaxed);
+            c.slow_reads.store(slow, Ordering::Relaxed);
+            cold_extra(&o, &c)
+        };
+        assert_eq!(reads(15, 15), 0, "too few reads to tell");
+        assert_eq!(reads(1000, 700), 0, "mostly fast reads are a warm tree");
+        assert_eq!(reads(16, 16), 1.min(most));
+        assert_eq!(reads(100, 80), 5.min(most));
+        assert_eq!(reads(1_000_000, 1_000_000), most);
+        let c = Counters::default();
+        c.small_reads.store(100, Ordering::Relaxed);
+        c.slow_reads.store(100, Ordering::Relaxed);
+        assert_eq!(cold_extra(&Options { threads: 4, ..Options::default() }, &c), 0, "-j is kept");
     }
 }

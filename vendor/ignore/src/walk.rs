@@ -495,7 +495,7 @@ pub struct WalkBuilder {
     same_file_system: bool,
     sorter: Option<Sorter>,
     threads: usize,
-    grow: Option<(usize, Arc<AtomicBool>)>,
+    grow: Option<(usize, Arc<AtomicUsize>)>,
     skip: Option<Arc<Handle>>,
     filter: Option<Filter>,
     /// The directory that gitignores should be interpreted relative to.
@@ -778,14 +778,15 @@ impl WalkBuilder {
         self
     }
 
-    /// Start `extra` more threads during a parallel walk once `when` is set
-    /// (by a visitor, say). Their visitors are built when the walk starts.
+    /// Up to `extra` more threads during a parallel walk: as many as `want`
+    /// holds, which a visitor may raise while the walk runs. Their visitors
+    /// are built when the walk starts.
     pub fn grow_threads(
         &mut self,
         extra: usize,
-        when: Arc<AtomicBool>,
+        want: Arc<AtomicUsize>,
     ) -> &mut WalkBuilder {
-        self.grow = (extra > 0).then_some((extra, when));
+        self.grow = (extra > 0).then_some((extra, want));
         self
     }
 
@@ -1431,7 +1432,7 @@ pub struct WalkParallel {
     follow_links: bool,
     same_file_system: bool,
     threads: usize,
-    grow: Option<(usize, Arc<AtomicBool>)>,
+    grow: Option<(usize, Arc<AtomicUsize>)>,
     skip: Option<Arc<Handle>>,
     filter: Option<Filter>,
 }
@@ -1518,8 +1519,8 @@ impl WalkParallel {
         // Create the workers and then wait for them to finish.
         let quit_now = Arc::new(AtomicBool::new(false));
         let active_workers = Arc::new(AtomicUsize::new(threads));
-        let (extra, when) = match self.grow.take() {
-            Some((n, when)) => (n, Some(when)),
+        let (extra, want) = match self.grow.take() {
+            Some((n, want)) => (n, Some(want)),
             None => (0, None),
         };
         let stacks = Stack::new_for_each_thread(threads, extra, stack);
@@ -1543,8 +1544,8 @@ impl WalkParallel {
             })
             .collect();
         let spare = Spare {
-            when,
-            started: AtomicBool::new(false),
+            want,
+            started: AtomicUsize::new(0),
             workers: std::sync::Mutex::new(workers.split_off(threads)),
         };
         let spare = &spare;
@@ -1744,10 +1745,10 @@ impl Stack {
     }
 }
 
-/// Workers built when the walk starts and started once `when` is set.
+/// Workers built when the walk starts; `want` says how many of them run.
 struct Spare<'s> {
-    when: Option<Arc<AtomicBool>>,
-    started: AtomicBool,
+    want: Option<Arc<AtomicUsize>>,
+    started: AtomicUsize,
     workers: std::sync::Mutex<Vec<Worker<'s>>>,
 }
 
@@ -1759,18 +1760,24 @@ impl<'s> Spare<'s> {
     ) where
         's: 'scope,
     {
-        let Some(when) = &self.when else { return };
-        if self.started.load(AtomicOrdering::Relaxed)
-            || !when.load(AtomicOrdering::Relaxed)
-            || self.started.swap(true, AtomicOrdering::AcqRel)
-        {
+        let Some(want) = &self.want else { return };
+        let behind = || {
+            self.started.load(AtomicOrdering::Relaxed)
+                < want.load(AtomicOrdering::Relaxed)
+        };
+        if !behind() {
             return;
         }
-        let workers = std::mem::take(&mut *self.workers.lock().unwrap());
-        // the caller is an active worker, so the walk cannot finish before
-        // these are counted
-        active_workers.fetch_add(workers.len(), AtomicOrdering::Release);
-        for worker in workers {
+        let mut workers = self.workers.lock().unwrap();
+        while behind() {
+            let Some(worker) = workers.pop() else {
+                self.started.store(usize::MAX, AtomicOrdering::Relaxed);
+                break;
+            };
+            // the caller is an active worker, so the walk cannot finish
+            // before this one is counted
+            active_workers.fetch_add(1, AtomicOrdering::Release);
+            self.started.fetch_add(1, AtomicOrdering::Relaxed);
             s.spawn(move || worker.run(s, self));
         }
     }
@@ -2363,7 +2370,7 @@ mod tests {
 
     #[test]
     fn grown_walk_visits_every_entry_once() {
-        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::atomic::{AtomicUsize, Ordering};
         let td = tmpdir();
         let mut want = vec![];
         for d in 0..20 {
@@ -2377,7 +2384,7 @@ mod tests {
         }
         want.sort();
         for after in [0, 1, 50, 10_000] {
-            let when = Arc::new(AtomicBool::new(false));
+            let when = Arc::new(AtomicUsize::new(0));
             let seen = Arc::new(Mutex::new(vec![]));
             let threads = Arc::new(Mutex::new(std::collections::HashSet::new()));
             WalkBuilder::new(td.path())
@@ -2392,7 +2399,7 @@ mod tests {
                         let mut seen = seen.lock().unwrap();
                         seen.push(dent.path().to_path_buf());
                         if seen.len() > after {
-                            when.store(true, Ordering::Relaxed);
+                            when.store(3, Ordering::Relaxed);
                         }
                         // slow visits, so the started threads get some work
                         std::thread::sleep(std::time::Duration::from_micros(200));

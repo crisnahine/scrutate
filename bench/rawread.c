@@ -12,6 +12,12 @@
 #include <string.h>
 #include <unistd.h>
 
+/* Paths a thread takes at a time. Neighbours in the list share a directory: threads that take
+ * them one each wait on the same directory and inode blocks, and a cold tree then reads at a
+ * third of the speed the disk allows (the Linux tree on 48 threads: 3.4 s one path at a time,
+ * 1.5 s with 16, 1.3 s with 64 or 256). */
+#define BATCH 64
+
 static char **paths;
 static size_t npaths;
 static atomic_size_t next_path;
@@ -23,13 +29,15 @@ static void *worker(void *arg) {
     char *buf = malloc(cap);
     unsigned long long mine = 0;
     for (;;) {
-        size_t i = atomic_fetch_add(&next_path, 1);
+        size_t i = atomic_fetch_add(&next_path, BATCH), end = i + BATCH;
         if (i >= npaths) break;
-        int fd = open(paths[i], O_RDONLY);
-        if (fd < 0) continue;
-        ssize_t n;
-        while ((n = read(fd, buf, cap)) > 0) mine += (unsigned long long)n;
-        close(fd);
+        for (; i < end && i < npaths; i++) {
+            int fd = open(paths[i], O_RDONLY);
+            if (fd < 0) continue;
+            ssize_t n;
+            while ((n = read(fd, buf, cap)) > 0) mine += (unsigned long long)n;
+            close(fd);
+        }
     }
     atomic_fetch_add(&total, mine);
     free(buf);

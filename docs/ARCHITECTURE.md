@@ -50,10 +50,14 @@ capabilities those crates do not provide rather than re-implementing what they a
 - **Thread count**: the cores (at most 12), except on macOS, where a walk uses as many threads as
   performance cores: there, more threads opening and reading files at once wait on each other in
   the kernel (the Linux tree on an M3 Pro: 977 ms on 11 threads, about 845 ms on 5). The open and
-  read time of the first files tells the page cache from the disk (about 25 µs a file against
-  160 µs or more); when it is the disk, the walk grows to twice the cores, at most 24, because
-  the disk serves many reads in flight (the Linux tree cold: 2.9 s on 5 threads, 1.4 s on 22).
-  `-j` overrides both.
+  read time of small files tells the page cache from the disk (macOS: about 25 µs a file against
+  160 µs or more; Linux: under 15 µs against 30 µs or more). When it is the disk, the walk adds
+  a thread for every 16 slow reads, because the disk serves many reads in flight: up to 64
+  threads on Linux (the Linux tree cold on 5 CPUs: 1.22 s on 5 threads, 0.37 s this way),
+  elsewhere up to twice the cores, at most 24 (macOS: 2.7 s on 5 threads, 1.3 s on 22; 48 gained
+  5% there on one tree and lost 4% on another). Threads come one at a time because starting one
+  costs about a slow read, which a small tree never earns back (231 files cold on Linux: 5.8 ms
+  this way, 8.3 ms with a thread per slow read). `-j` overrides all of it.
 - **One large file, every core**: a file of 64 MB or more is cut into ranges of whole lines (8 MB
   each). A first pass counts each range's newlines for the line numbers and stops at a NUL byte,
   which sends the file back to the single pass so binary handling is unchanged. The second pass

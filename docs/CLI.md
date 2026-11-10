@@ -49,8 +49,8 @@ Options mirror grep/ripgrep where the meaning is identical: `-i`, `-S` (smart ca
 (multiline: each line of a multi-line match is printed with its own number), `-v`, `-l`, `-c`,
 `-A/-B/-C`, `-m`, `--max-results`, `-g GLOB` (`!` excludes), `-t TYPE` / `--type-list`, `--hidden`,
 `--no-ignore`, `-L` (follow links), `--max-filesize`, `--max-depth`, `-j THREADS` (default: the
-cores, at most 12; on macOS the performance cores, and twice the cores, at most 24, when the first
-files read come from the disk rather than the page cache), `--sort`,
+cores, at most 12; on macOS the performance cores; more as files turn out to come from the disk
+rather than the page cache: up to 64 on Linux, elsewhere twice the cores, at most 24), `--sort`,
 `--json`, `--stats`, `--symbols` (group lines by the enclosing function using the index, when one
 exists). Files that cannot be read, or not to the end, are named in warnings on stderr (the first
 ten); they do not change the exit code.

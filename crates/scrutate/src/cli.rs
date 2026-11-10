@@ -197,7 +197,7 @@ pub struct GrepArgs {
     /// descend at most this many directory levels
     #[arg(long, env = "SCRUTATE_GREP_MAX_DEPTH")]
     pub max_depth: Option<usize>,
-    /// number of search threads (default: the cores, at most 12; on macOS the performance cores, or twice the cores when the files come from disk)
+    /// number of search threads (default: the cores, at most 12; on macOS the performance cores; more when the files come from the disk)
     #[arg(short = 'j', long, default_value_t = 0, env = "SCRUTATE_THREADS")]
     pub threads: usize,
     /// sort results by path (deterministic, waits for the search to finish)

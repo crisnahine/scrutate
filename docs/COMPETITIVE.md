@@ -29,8 +29,8 @@ to 0.70x of ripgrep) and ties the fourth at the hardware limit.
 file of the Linux tree with eleven threads (the "read files" column, `bench/rawread.c`) takes 980
 ms; Scrutate searches the same files in 723 ms, because threads opening and reading files at once
 wait on each other in the kernel. Scrutate walks with as many threads as performance cores, and
-switches to twice the cores when its first reads show the files coming from the disk rather than
-the page cache (cold, the disk serves many reads at once). The other margins come from the matcher
+adds threads when its reads show the files coming from the disk rather than the page cache (cold,
+the disk serves many reads at once): up to twice the cores on macOS, up to 64 on Linux. The other margins come from the matcher
 and the output path: one large file searched on every core, regexes anchored at line starts
 examined only there, and search threads that format their own output.
 
