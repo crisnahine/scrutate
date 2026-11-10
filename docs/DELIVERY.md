@@ -20,7 +20,24 @@ The fifteen items the mission asks for (section 11), each with where it lives in
 | 14 | Future engineering roadmap | docs/ROADMAP.md |
 | 15 | Evidence-based competitive positioning | docs/COMPETITIVE.md |
 
-RELEASE_ARTIFACTS
+## Release artifacts (built locally, not published)
+
+`tools/release_local.sh` on the release commit writes them to `dist/` (macOS) and, run in a clean
+`rust:1-slim-bookworm` container, to `dist-linux/` (neither is in git; `SHA256SUMS` in each lists
+the files' checksums). Every archive holds the binary, LICENSE, README.md, CHANGELOG.md,
+THIRD_PARTY_NOTICES.txt, docs/ and integrations/.
+
+| Artifact | Platform | Binary SHA-256 |
+|---|---|---|
+| `scrutate-0.1.0-aarch64-apple-darwin.tar.gz` | macOS arm64 | `fb3bd578c6d9b348...`, the binary docs/LEADERBOARD.md measured on macOS |
+| `scrutate-0.1.0-cp39-abi3-macosx_11_0_arm64.whl` | macOS arm64, CPython 3.9 or newer | |
+| `scrutate-0.1.0-aarch64-unknown-linux-gnu.tar.gz` | Linux aarch64 (glibc) | `6602bbe5890005db...`, identical from two build images (`bench/results/platforms/repro/`) and the binary measured in the Linux VM |
+| `scrutate-0.1.0-cp39-abi3-manylinux_2_34_aarch64.whl` | Linux aarch64, CPython 3.9 or newer | |
+| `scrutate-0.1.0.cdx.json` | | CycloneDX SBOM of the binary's dependencies |
+
+The free-threaded wheels (cp314t) and the static musl binary are built and tested by
+`tools/linux_verify.sh` but not packaged here. Signed archives, attestations and the other
+platforms come from `.github/workflows/release.yml` once the repository is public.
 
 Previous work is preserved untouched in the sibling directory that held the Python prototype
 ("Titan"); its engine lives on here as `python/scrutate_ref`, the reference implementation the Rust

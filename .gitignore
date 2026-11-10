@@ -1,5 +1,6 @@
 /target/
 /dist/
+/dist-linux/
 **/.scrutate/
 __pycache__/
 *.pyc
