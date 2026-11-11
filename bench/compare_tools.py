@@ -590,7 +590,7 @@ def main() -> int:
     tools = discover()
     print("tools:", {k: (v.get("version") or "not available") for k, v in tools.items()}, file=sys.stderr)
     out = a.out or os.path.join(HERE, "..", "work", "bench_results", time.strftime("%Y%m%d_%H%M%S") + ".json")
-    os.makedirs(os.path.dirname(out), exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     phases = set(a.only.split(",")) if a.only else {"text", "startup", "concurrency", "structural", "index"}
     # "memory" re-samples the peak RSS of rows already in --out (used after a run that predates sampling)
     if a.skip_index:
