@@ -645,6 +645,8 @@ fn same_family(a: &str, b: &str) -> bool {
 struct Uses {
     /// the definitions they resolve to
     got: HashSet<i64>,
+    /// the ones of `got` a call reaches other than through `super`, where an override may run instead
+    dispatched: HashSet<i64>,
     /// one stayed unresolved (or none was found)
     unsure: bool,
     /// one stayed unresolved that may call a free function: not `x.name(..)` where a method
@@ -659,7 +661,7 @@ fn methods_only(path: &str) -> bool {
 }
 
 fn resolve_in(rv: &mut Resolver, s: &Searcher, path: &str, (start, end): (i64, i64), name: &str) -> Uses {
-    let mut uses = Uses { got: HashSet::new(), unsure: true, unsure_free: true };
+    let mut uses = Uses { got: HashSet::new(), dispatched: HashSet::new(), unsure: true, unsure_free: true };
     let Some(src) = crate::resolve::repo_text(&s.ix.root, path) else { return uses };
     let ident = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
     let methods = methods_only(path);
@@ -674,11 +676,12 @@ fn resolve_in(rv: &mut Resolver, s: &Searcher, path: &str, (start, end): (i64, i
                 Ok((_, "definition")) => {}
                 Ok((id, why)) => {
                     seen = true;
-                    uses.got.insert(id);
-                    // a use the arguments do not tie to one overload stands for all of them
-                    if why == "overload" {
-                        uses.got.extend(rv.overloads(id));
+                    let all = if why == "overload" { rv.overloads(id) } else { vec![id] };
+                    if why != "super" {
+                        uses.dispatched.extend(&all);
                     }
+                    // a use the arguments do not tie to one overload stands for all of them
+                    uses.got.extend(all);
                 }
                 // an import from outside, a local, a field or a string is decided: not this definition
                 Err(why) => {
@@ -751,7 +754,7 @@ pub(crate) fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit
             }
             asked += 1;
             let uses = resolve_in(&mut rv, s, &row.path, (row.start, row.end), n);
-            let unsure = (if all_free(n) { uses.unsure_free } else { uses.unsure }) || !uses.got.is_disjoint(&overridden);
+            let unsure = (if all_free(n) { uses.unsure_free } else { uses.unsure }) || !uses.dispatched.is_disjoint(&overridden);
             if uses.got.is_disjoint(&ids) {
                 // with no other definition of the name, a call the resolver cannot place is this one's
                 if unsure && rivals {

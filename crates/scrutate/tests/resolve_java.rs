@@ -225,3 +225,45 @@ fn a_call_through_a_base_type_is_an_undecided_caller_of_an_override() {
     assert_eq!(r.refs_of("size", "j/Big.java:3"), ["Big.java:3", "Use.java:5", "Use.java:6"]);
     assert_eq!(r.refs_of("size", "j/Base.java:2"), ["Base.java:2", "Use.java:3", "Use.java:4", "Use.java:8", "Use.java:9"]);
 }
+
+#[test]
+fn a_super_call_is_a_decided_call_of_the_base_method_and_no_call_of_the_override() {
+    let files: Vec<(String, &str)> = vec![
+        ("j/Base.java".to_string(), "public class Base {\n    public int size() { return 0; }\n}\n"),
+        (
+            "j/Big.java".to_string(),
+            "public class Big extends Base {\n    @Override\n    public int size() { return super.size() + 9; }\n    int other() { return this.size(); }\n}\n",
+        ),
+        ("j/Bigger.java".to_string(), "public class Bigger extends Big {\n    public int size() { return super.size() + 1; }\n}\n"),
+        ("j/Use.java".to_string(), "public class Use {\n    int viaBase(Base b) { return b.size(); }\n}\n"),
+        (
+            "j/Far.java".to_string(),
+            "import java.util.ArrayList;\n\npublic class Far extends ArrayList<String> {\n    public int size() { return super.size() + 3; }\n}\n",
+        ),
+    ];
+    let r = Repo::with("super", &files);
+    let split = |spec: &str| {
+        let (_, text) = r.run(&["callers", spec]);
+        let names: Vec<String> = text.lines().filter_map(|l| l.split("] ").nth(1)).map(str::to_string).collect();
+        let n = if text.contains("could not tell whether any") {
+            names.len()
+        } else {
+            text.split_once(" of these call").and_then(|(a, _)| a.rsplit('(').next()?.parse().ok()).unwrap_or(0)
+        };
+        let (mut d, mut u) = (names[..names.len() - n].to_vec(), names[names.len() - n..].to_vec());
+        d.sort();
+        u.sort();
+        (d, u)
+    };
+    let strs = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    // the override is no caller of itself; the base lists it as decided
+    assert_eq!(split("j/Big.java:3"), (strs(&["Big.other", "Bigger.size"]), strs(&["Use.viaBase"])));
+    assert_eq!(split("j/Base.java:2"), (strs(&["Big.size", "Use.viaBase"]), strs(&[])));
+    assert_eq!(split("j/Bigger.java:2"), (strs(&[]), strs(&["Big.other", "Use.viaBase"])));
+    // a base from outside the repository: the super call is no call of the repository
+    assert_eq!(split("j/Far.java:4"), (strs(&[]), strs(&[])));
+    assert_eq!(r.names(&["callees", "Big.size", "--json"]), ["Base.size"]);
+    assert_eq!(r.names(&["callees", "Bigger.size", "--json"]), ["Big.size"]);
+    assert_eq!(r.refs_of("size", "j/Base.java:2"), ["Base.java:2", "Big.java:3", "Use.java:2"]);
+    assert_eq!(r.refs_of("size", "j/Big.java:3"), ["Big.java:3", "Big.java:4", "Bigger.java:2"]);
+}

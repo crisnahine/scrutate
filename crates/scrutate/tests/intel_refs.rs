@@ -976,3 +976,33 @@ fn a_call_through_an_interface_or_a_trait_is_an_undecided_caller_of_an_implement
     assert_eq!(callee_names(&r, "via_path"), ["Sizer.size"]);
     assert_eq!(ref_lines(&r, "size", "src/lib.rs:8"), ["src/lib.rs:30", "src/lib.rs:35", "src/lib.rs:40", "src/lib.rs:8"]);
 }
+
+#[test]
+fn a_super_call_is_a_decided_call_of_the_base_method_and_no_call_of_the_override() {
+    let ts = "export class Base {\n  size(): number {\n    return 0;\n  }\n}\nexport class Big extends Base {\n  size(): number {\n    return super.size() + 9;\n  }\n  other(): number {\n    return this.size();\n  }\n}\nexport class Bigger extends Big {\n  size(): number {\n    return super.size() + 1;\n  }\n}\nexport function viaBase(b: Base): number {\n  return b.size();\n}\n";
+    let far = "import { Outer } from 'outside';\nexport class Far extends Outer {\n  size(): number {\n    return super.size() + 3;\n  }\n}\n";
+    let js = ts.replace("(): number", "()").replace("(b: Base): number {\n  return b.size()", "() {\n  return new Base().size()");
+    let py = "class Base:\n    def size(self):\n        return 0\n\n\nclass Big(Base):\n    def size(self):\n        return super().size() + 9\n\n    def other(self):\n        return self.size()\n\n\nclass Bigger(Big):\n    def size(self):\n        return super(Bigger, self).size() + 1\n\n\ndef via_base(b: Base):\n    return b.size()\n";
+    let py_far = "from outside import Thing\n\n\nclass Far(Thing):\n    def size(self):\n        return super().size() + 3\n";
+    let cases = [
+        ("ts", ts.to_string(), far.to_string(), "viaBase", 3),
+        ("js", js, far.replace("(): number", "()"), "viaBase", 3),
+        ("py", py.to_string(), py_far.to_string(), "via_base", 5),
+    ];
+    for (ext, main, far, via, far_size) in cases {
+        let (shapes, outer) = (format!("shapes.{ext}"), format!("far.{ext}"));
+        let r = Repo::new(&format!("super_{ext}"), &[(&shapes, &main), (&outer, &far)]);
+        let at = |line: u32| format!("{shapes}:{line}");
+        // the override is no caller of itself; the base lists it as decided
+        assert_eq!(split_callers(&r, &at(7)), (strs(&["Big.other", "Bigger.size"]), strs(&[via])), "{ext}");
+        assert_eq!(split_callers(&r, &at(2)), (strs(&["Big.size", via]), strs(&[])), "{ext}");
+        assert_eq!(split_callers(&r, &at(15)), (strs(&[]), strs(&["Big.other", via])), "{ext}");
+        // a base from outside the repository: the super call is no call of the repository
+        let (code, out) = r.run(&["callers", &format!("{outer}:{far_size}")]);
+        assert!(code == 1 && out.contains("no results"), "{ext}: {out}");
+        assert_eq!(callee_names(&r, "Big.size"), ["Base.size"], "{ext}");
+        assert_eq!(callee_names(&r, "Bigger.size"), ["Big.size"], "{ext}");
+        assert_eq!(ref_lines(&r, "size", &at(2)), [at(2), at(20), at(8)], "{ext}");
+        assert_eq!(ref_lines(&r, "size", &at(7)), [at(11), at(16), at(7)], "{ext}");
+    }
+}

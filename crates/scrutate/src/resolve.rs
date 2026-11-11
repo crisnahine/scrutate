@@ -806,6 +806,19 @@ impl<'a> Resolver<'a> {
                 return Err(why);
             }
         }
+        if lang == Lang::Js && node.kind() == "super" {
+            // `super(..)` calls the constructor of the base class, which stands for it as `new C()` does
+            let called = node.parent().and_then(|p| p.child_by_field_name("function")).is_some_and(|f| f.id() == node.id());
+            if !called {
+                return Err("keyword");
+            }
+            let Some(Ty::Local(c)) = self.container_at(&fi, line) else { return Err("receiver") };
+            let (order, outside, unknown) = self.linearized(c, 0, &mut HashMap::new());
+            return match order.get(1) {
+                Some(&b) => Ok((b, "super")),
+                None => Err(if outside && !unknown { "external" } else { "not found" }),
+            };
+        }
         if let Some(q) = qualifier(node) {
             return self.resolve_qualified(path, &fi, lang, q, node, name, line);
         }
@@ -880,6 +893,14 @@ impl<'a> Resolver<'a> {
             return self.java_qualified(path, fi, q, node, name);
         }
         let qt = text(q, &fi.src).trim();
+        let sup = match lang {
+            Lang::Js => q.kind() == "super",
+            Lang::Python => q.kind() == "call" && q.child_by_field_name("function").is_some_and(|f| f.kind() == "identifier" && text(f, &fi.src) == "super"),
+            _ => false,
+        };
+        if sup {
+            return self.super_member(path, fi, lang, q, name, line);
+        }
         let receiver = match lang {
             Lang::Python => qt == "self" || qt == "cls",
             Lang::Js => qt == "this",
@@ -1137,6 +1158,14 @@ impl<'a> Resolver<'a> {
             let named = |f: &str| n.child_by_field_name(f).is_some_and(|x| text(x, src) == name);
             let hit = match n.kind() {
                 "field_declaration" if named("name") => Some((n.child_by_field_name("type"), None)),
+                // a Go embedded field is named after its type
+                "field_declaration"
+                    if lang == Lang::Go
+                        && n.child_by_field_name("name").is_none()
+                        && n.child_by_field_name("type").and_then(type_name).is_some_and(|t| text(t, src) == name) =>
+                {
+                    Some((n.child_by_field_name("type"), None))
+                }
                 "public_field_definition" | "field_definition" if named("name") || named("property") => {
                     Some((n.child_by_field_name("type"), n.child_by_field_name("value")))
                 }
@@ -1389,13 +1418,20 @@ impl<'a> Resolver<'a> {
         r
     }
 
+    /// `name` as a member container `id` itself declares.
+    fn declared_member(&mut self, id: i64, name: &str) -> Option<i64> {
+        let (path, qualname) = self.def_row(id)?;
+        let want = format!("{}.{name}", strip_generics(&qualname));
+        self.file(&path).defs.iter().find(|d| d.name == name && strip_generics(&d.qualname) == want).map(|d| d.id)
+    }
+
     fn member_inner(&mut self, id: i64, name: &str, depth: usize) -> Option<i64> {
+        if let Some(d) = self.declared_member(id, name) {
+            return Some(d);
+        }
         let (path, qualname) = self.def_row(id)?;
         let want = format!("{}.{name}", strip_generics(&qualname));
         let fi = self.file(&path);
-        if let Some(d) = fi.defs.iter().find(|d| d.name == name && strip_generics(&d.qualname) == want) {
-            return Some(d.id);
-        }
         // Rust impl blocks may live in another file of the crate
         if fi.lang == Some(Lang::Rust) {
             let mut st = self.ix.db.prepare_cached("SELECT id, path, qualname FROM chunks WHERE name_key=?1 AND name=?2").ok()?;
@@ -1459,11 +1495,17 @@ impl<'a> Resolver<'a> {
     /// and JavaScript base classes, TypeScript `extends` and `implements`, the trait of a Rust
     /// `impl Trait for T`.
     fn bases(&mut self, id: i64) -> Vec<i64> {
+        self.base_results(id).into_iter().filter_map(|b| b.ok()).collect()
+    }
+
+    /// The bases of `bases`, in header order, with why one is not of the repository: "external"
+    /// for an import from outside or a name the repository defines nowhere (`Error`, `object`).
+    fn base_results(&mut self, id: i64) -> Vec<std::result::Result<i64, &'static str>> {
         let Some((path, _)) = self.def_row(id) else { return Vec::new() };
         let fi = self.file(&path);
         let (Some(lang), Some(tree), Some(d)) = (fi.lang, fi.tree.as_ref(), fi.defs.iter().find(|d| d.id == id)) else { return Vec::new() };
         if lang == Lang::Java {
-            return self.java_bases(id).iter().filter_map(|b| b.ok()).filter(|&b| b != id).collect();
+            return self.java_bases(id).iter().copied().filter(|&b| b != Ok(id)).collect();
         }
         let mut named: Vec<Node> = Vec::new();
         let mut stack = vec![tree.root_node()];
@@ -1499,13 +1541,92 @@ impl<'a> Resolver<'a> {
         let mut out = Vec::new();
         for b in named {
             let Some(leaf) = type_name(b) else { continue };
+            let leaf_name = text(leaf, &fi.src);
             let found = match qualifier(leaf) {
-                Some(q) => self.resolve_qualified(&path, &fi, lang, q, leaf, text(leaf, &fi.src), d.start),
-                None => self.resolve_bare(&path, &fi, lang, leaf, text(leaf, &fi.src), d.start),
+                Some(q) => self.resolve_qualified(&path, &fi, lang, q, leaf, leaf_name, d.start),
+                None => self.resolve_bare(&path, &fi, lang, leaf, leaf_name, d.start),
             };
-            out.extend(found.ok().map(|x| x.0).filter(|&x| x != id));
+            match found {
+                Ok((x, _)) if x == id => {}
+                Ok((x, _)) => out.push(Ok(x)),
+                Err("not found") if !self.defined_anywhere(leaf_name) => out.push(Err("external")),
+                Err(e) => out.push(Err(e)),
+            }
         }
         out
+    }
+
+    /// Container `id` and the classes it inherits from, in Python's method resolution order (C3,
+    /// which for one base per class is the chain upwards), and whether a base is from outside and
+    /// whether one could not be found.
+    fn linearized(&mut self, id: i64, depth: usize, memo: &mut HashMap<i64, (Vec<i64>, bool, bool)>) -> (Vec<i64>, bool, bool) {
+        if let Some(l) = memo.get(&id) {
+            return l.clone();
+        }
+        // a class that comes round again through its own bases has none the second time
+        memo.insert(id, (vec![id], false, false));
+        let (mut seqs, mut direct, mut outside, mut unknown) = (Vec::new(), Vec::new(), false, false);
+        for b in if depth < 8 { self.base_results(id) } else { Vec::new() } {
+            match b {
+                Ok(b) => {
+                    let (l, o, u) = self.linearized(b, depth + 1, memo);
+                    (outside, unknown) = (outside || o, unknown || u);
+                    seqs.push(l);
+                    direct.push(b);
+                }
+                Err("external") => outside = true,
+                Err(_) => unknown = true,
+            }
+        }
+        seqs.push(direct);
+        let mut out = vec![id];
+        loop {
+            seqs.retain(|s| !s.is_empty());
+            let Some(head) = seqs.iter().map(|s| s[0]).find(|h| !seqs.iter().any(|s| s[1..].contains(h))) else { break };
+            out.push(head);
+            for s in seqs.iter_mut().filter(|s| s[0] == head) {
+                s.remove(0);
+            }
+        }
+        // an order C3 cannot keep (Python refuses the class): the rest in header order
+        for b in seqs.into_iter().flatten() {
+            if !out.contains(&b) {
+                out.push(b);
+            }
+        }
+        let l = (out, outside, unknown);
+        memo.insert(id, l.clone());
+        l
+    }
+
+    /// `super.name` (JavaScript), `super().name` and `super(C, self).name` (Python): the first
+    /// class after the one around (or `C`) in its resolution order that declares `name`.
+    fn super_member(&mut self, path: &str, fi: &FileInfo, lang: Lang, q: Node, name: &str, line: i64) -> Resolution {
+        if literal_owner(fi, q).is_some() {
+            return Err("receiver");
+        }
+        let start = match q.child_by_field_name("arguments").and_then(|a| a.named_child(0)) {
+            Some(c) => {
+                let leaf = type_name(c).ok_or("receiver")?;
+                let found = match qualifier(leaf) {
+                    Some(q) => self.resolve_qualified(path, fi, lang, q, leaf, text(leaf, &fi.src), line),
+                    None => self.resolve_bare(path, fi, lang, leaf, text(leaf, &fi.src), line),
+                };
+                found.map_err(|_| "receiver")?.0
+            }
+            None => match self.container_at(fi, line) {
+                Some(Ty::Local(c)) => c,
+                _ => return Err("receiver"),
+            },
+        };
+        let (order, outside, unknown) = self.linearized(start, 0, &mut HashMap::new());
+        for &c in &order[1..] {
+            if let Some(m) = self.declared_member(c, name) {
+                return Ok((m, "super"));
+            }
+        }
+        // a class with no base in the repository inherits from outside (`object`, `Error`)
+        Err(if !unknown && (outside || order.len() == 1) { "external" } else { "not found" })
     }
 
     /// The methods method `id` overrides or implements: the ones of its name declared in the
@@ -2721,7 +2842,7 @@ impl<'a> Resolver<'a> {
             for b in self.java_bases(c).iter() {
                 match *b {
                     Ok(bid) => match self.java_member(bid, name) {
-                        Ok(m) => return Ok(self.java_overload(m, arity, "member")),
+                        Ok(m) => return Ok(self.java_overload(m, arity, "super")),
                         Err("external") => outside = true,
                         Err(_) => {}
                     },
@@ -3726,6 +3847,36 @@ mod tests {
     }
 
     #[test]
+    fn a_super_call_is_the_method_of_the_nearest_base_that_defines_it() {
+        let ts = "import { Outer } from 'outside';\nexport class Base {\n  constructor(n: number) {}\n  size(): number { return 0; }\n}\nexport class Big extends Base {\n  constructor() { super(1); }\n  size(): number { return super.size() + 9; }\n  other(): number { return this.size(); }\n}\nexport class Bigger extends Big {\n  size(): number { return super.size() + 1; }\n}\nexport class Plain extends Big {\n  other(): number { return super.size() + 2; }\n}\nexport class Far extends Outer {\n  size(): number { return super.size() + 3; }\n}\nexport class Err extends Error {\n  size(): number { return super.size() + 4; }\n}\n";
+        let js = "export class A {\n  m() { return 0; }\n}\nexport class B extends A {\n  m() { return super.m() + 1; }\n}\n";
+        let py = "from outside import Thing\n\n\nclass Base:\n    def size(self):\n        return 0\n\n\nclass Big(Base):\n    def size(self):\n        return super().size() + 9\n\n    def other(self):\n        return self.size()\n\n\nclass Bigger(Big):\n    def size(self):\n        return super(Bigger, self).size() + 1\n\n    def skip(self):\n        return super(Big, self).size() + 2\n\n\nclass Left(Base):\n    pass\n\n\nclass Right(Base):\n    def size(self):\n        return 5\n\n\nclass Both(Left, Right):\n    def size(self):\n        return super().size() + 3\n\n\nclass Far(Thing):\n    def size(self):\n        return super().size() + 4\n\n\nclass Alone:\n    def __init__(self):\n        super().__init__()\n";
+        let go = "package g\n\ntype Base struct{}\n\nfunc (b *Base) Size() int { return 0 }\n\ntype Big struct {\n\tBase\n}\n\nfunc (b *Big) Size() int { return b.Base.Size() + 9 }\n";
+        resolver_case(
+            "super",
+            &[("t.ts", ts), ("j.js", js), ("p.py", py), ("g/g.go", go)],
+            &[
+                ("t.ts", "super.size() + 9", "size", "t.ts Base.size"),
+                ("t.ts", "super.size() + 1", "size", "t.ts Big.size"),
+                ("t.ts", "super.size() + 2", "size", "t.ts Big.size"),
+                ("t.ts", "this.size()", "size", "t.ts Big.size"),
+                ("t.ts", "super.size() + 3", "size", "external"),
+                ("t.ts", "super.size() + 4", "size", "external"),
+                ("t.ts", "super(1)", "super", "t.ts Base"),
+                ("j.js", "super.m()", "m", "j.js A.m"),
+                ("p.py", "super().size() + 9", "size", "p.py Base.size"),
+                ("p.py", "self.size()", "size", "p.py Big.size"),
+                ("p.py", "super(Bigger, self).size()", "size", "p.py Big.size"),
+                ("p.py", "super(Big, self).size()", "size", "p.py Base.size"),
+                ("p.py", "super().size() + 3", "size", "p.py Right.size"),
+                ("p.py", "super().size() + 4", "size", "external"),
+                ("p.py", "super().__init__()", "__init__", "external"),
+                ("g/g.go", "b.Base.Size()", "Size", "g/g.go Base.Size"),
+            ],
+        );
+    }
+
+    #[test]
     fn the_header_chunk_is_no_definition_wherever_it_sorts() {
         let (root, s) = indexed("header", &[("store.js", "export const store = {\n  total() {\n    return 1;\n  },\n};\n")]);
         let rv = Resolver::new(&s.ix).unwrap();
@@ -4044,7 +4195,7 @@ public class Main extends Base {
             ("Main", "SMALL.big()", "SMALL", "field or key"),
             ("Main", "int area = 3", "area", "local variable"),
             ("Main", "t.length()", "length", "external"),
-            ("Main", "super.inherited()", "inherited", "Base:4 Base.inherited (member)"),
+            ("Main", "super.inherited()", "inherited", "Base:4 Base.inherited (super)"),
             ("Main", "shapes.Circle.unit()", "unit", "Circle:17 Circle.unit (member)"),
             ("Main", "shapes.Circle.unit()", "Circle", "Circle:5 Circle (qualified)"),
             ("Main", "T pick(T x)", "T", "type parameter"),
