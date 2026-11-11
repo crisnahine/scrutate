@@ -500,6 +500,8 @@ fn package(path: &str) -> &str {
 /// because the resolver could not tell which same-named definition they call. Those come after
 /// the decided ones, first the ones whose code names the target's type, then the ones in its package.
 pub(crate) fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit>, usize)> {
+    /// Call sites the resolver is asked about in one answer, likeliest first.
+    const CALLERS_RESOLVED: usize = 400;
     let targets = targets(s, name, 500)?;
     let ids: HashSet<i64> = targets.iter().map(|t| t.id).collect();
     let names: std::collections::BTreeSet<&str> = targets.iter().map(|t| t.name.as_str()).collect();
@@ -512,16 +514,26 @@ pub(crate) fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit
     let mut namesakes = s.ix.db.prepare("SELECT id, path FROM chunks WHERE name=?1 AND kind != 'window'")?;
     let (mut out, mut unsure_rows, mut seen) = (Vec::new(), Vec::new(), HashSet::new());
     let mut rv = Resolver::new(&s.ix)?;
+    let names_owner = |text: &str| owners.iter().any(|o| has_word(text, o));
+    let likely = |r: &ChunkRow| (!names_owner(&r.text), !packages.contains(package(&r.path)), r.path.clone(), r.start);
+    let mut asked = 0;
     for n in names {
         let rows: Vec<(i64, String)> = namesakes.query_map([n], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
         // the resolver is asked only when another definition of the name could be the one called
         let rivals = rows.iter().any(|(id, path)| !ids.contains(id) && fits(path));
-        for row in calls.query_map([n], ChunkRow::from_row)? {
-            let row = row?;
-            if !fits(&row.path) || !seen.insert(row.id) {
-                continue;
-            }
+        let mut sites: Vec<ChunkRow> = calls.query_map([n], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
+        sites.retain(|r| fits(&r.path) && seen.insert(r.id));
+        if rivals {
+            sites.sort_by_cached_key(&likely);
+        }
+        for row in sites {
             if rivals {
+                // a common name has thousands of call sites: the likeliest are resolved, the rest stay undecided
+                if asked >= CALLERS_RESOLVED {
+                    unsure_rows.push(row);
+                    continue;
+                }
+                asked += 1;
                 let (got, unsure) = resolve_in(&mut rv, s, &row.path, (row.start, row.end), n);
                 if got.is_disjoint(&ids) {
                     if unsure {
@@ -536,8 +548,7 @@ pub(crate) fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit
             }
         }
     }
-    let names_owner = |text: &str| owners.iter().any(|o| has_word(text, o));
-    unsure_rows.sort_by_cached_key(|r| (!names_owner(&r.text), !packages.contains(package(&r.path)), r.path.clone(), r.start));
+    unsure_rows.sort_by_cached_key(&likely);
     let undecided = unsure_rows.len().min(limit - out.len());
     out.extend(unsure_rows.iter().take(undecided).map(|r| Hit::from_row(r, true)));
     Ok((out, undecided))
