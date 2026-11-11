@@ -2038,7 +2038,8 @@ fn search_one(w: &mut FileWorker, r: &Run, path: &Path, rel: Arc<str>, size: Opt
         report(r, sink, rel, true);
         return;
     }
-    let searcher = if named { w.named.get_or_insert_with(|| make_searcher(o, BinaryDetection::convert(0))) } else { &mut w.searcher };
+    let mut searcher = if named { w.named.get_or_insert_with(|| make_searcher(o, BinaryDetection::convert(0))) } else { &mut w.searcher };
+    let mut fresh = None;
     let opened = Instant::now();
     let file = match std::fs::File::open(path) {
         Ok(f) => f,
@@ -2073,7 +2074,9 @@ fn search_one(w: &mut FileWorker, r: &Run, path: &Path, rel: Arc<str>, size: Opt
                         split::Outcome::Buffer(b) => owned = Some(b),
                     }
                 } else if len <= MID_FILE {
-                    small = split::rest(&file, len as usize, &mut w.small);
+                    // a searcher of its own, so the thread's keeps the buffer size it had: where a
+                    // NUL byte after the first fill stops the output depends on that size
+                    searcher = fresh.insert(make_searcher(o, if named { BinaryDetection::convert(0) } else { BinaryDetection::quit(0) }));
                 }
             }
         }
@@ -2138,9 +2141,10 @@ fn search_archive(searcher: &mut Searcher, run: &Run, path: &Path, rel: &Arc<str
 /// Files up to this size are read with one call (`split::first`) instead of reading until a
 /// zero-length read; within it the searcher's binary check covers the whole file.
 const SMALL_FILE: u64 = 64 << 10;
-/// Files up to this size are read whole into the thread's buffer too (`split::rest`): the stream
-/// reader takes one read per 64 KB, moves the rest of each buffer down and counts the lines of
-/// everything it passes. Half the bytes of the Linux tree are in files between the two sizes.
+/// Files up to this size are streamed by a searcher made for the file, larger ones by the
+/// thread's. Reading them whole instead cost each thread a buffer the size of the largest such
+/// file it met (py-big: 12.6 MB peak resident on 5 threads, 8.2 MB streamed) for 1% fewer
+/// instructions at most (py-big and Linux).
 const MID_FILE: u64 = 1 << 20;
 
 /// Line-at-a-time searches whose results do not depend on neighbouring lines or on a running count.
@@ -2230,30 +2234,6 @@ mod split {
         /// a small file for the stream reader: it starts with a byte-order mark (only that reader
         /// transcodes), or it cannot be read at an offset
         Other,
-    }
-
-    /// The rest of a file of `len` bytes whose first `SMALL_FILE + 1` are in `buf` (`first` said
-    /// `Larger`): the whole file's length, unless it holds a NUL byte or starts with a byte-order
-    /// mark (the stream reader's cases) or is no longer `len` bytes long.
-    pub(super) fn rest(file: &File, len: usize, buf: &mut Vec<u8>) -> Option<usize> {
-        let mut at = SMALL_FILE as usize + 1;
-        if len < at {
-            return None;
-        }
-        if buf.len() < len {
-            buf.resize(MID_FILE as usize, 0);
-        }
-        while at < len {
-            match read_at(file, &mut buf[at..len], at as u64) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => at += n,
-            }
-        }
-        #[cfg(not(unix))]
-        let _ = std::io::Seek::seek(&mut &*file, std::io::SeekFrom::Start(0));
-        let b = &buf[..len];
-        let bom = b.starts_with(&[0xEF, 0xBB, 0xBF]) || b.starts_with(&[0xFF, 0xFE]) || b.starts_with(&[0xFE, 0xFF]);
-        (at == len && !bom && memchr::memchr(0, b).is_none()).then_some(len)
     }
 
     /// Reads into `buf`, kept by the thread across files (sized once, never zeroed again).
@@ -2966,6 +2946,27 @@ mod tests {
     thread_local! {
         /// the threads `small_first` started on this thread
         pub(super) static SMALL_WORKERS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    #[test]
+    fn a_thread_keeps_no_buffer_the_size_of_a_larger_file() {
+        let root = std::env::temp_dir().join(format!("scrutate_thread_buffer_{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("big.txt");
+        std::fs::write(&path, format!("needle first\n{}needle last\n", "x\n".repeat(150_000))).unwrap();
+        let o = Options { pattern: "needle".into(), mode: Mode::Literal, threads: 2, ..Options::default() };
+        let matcher = build_matcher(&o).unwrap();
+        let (c, cancel) = (Counters::default(), AtomicBool::new(false));
+        let (tx, rx) = mpsc::channel();
+        let mut fw = file_worker(&o);
+        for size in [None, Some(std::fs::metadata(&path).unwrap().len())] {
+            search_one(&mut fw, &Run { matcher: &matcher, o: &o, c: &c, cancel: &cancel, tx: &tx, plain: None }, &path, Arc::from("big.txt"), size, false);
+        }
+        drop(tx);
+        let lines: Vec<u64> = rx.into_iter().flatten().map(|h| h.line).collect();
+        assert_eq!(lines, [1, 150_002, 1, 150_002]);
+        assert!(fw.small.capacity() <= SMALL_FILE as usize + 1, "{}", fw.small.capacity());
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
