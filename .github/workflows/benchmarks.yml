@@ -35,7 +35,20 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: false
-      - run: sudo apt-get install -y ripgrep ugrep silversearcher-ag ack hyperfine
+      - run: sudo apt-get install -y ripgrep ugrep silversearcher-ag ack
+      - name: hyperfine 2.0.0 (the harness reads its JSON; the distribution ships 1.x)
+        run: |
+          arch=$(uname -m)
+          case "$arch" in
+            x86_64) sum=ae2beda2ac99c098427e4f755244552daf20e514422889cca6d44421e2d93c87 ;;
+            aarch64) sum=f8244d1e17f8da23ee6b3ae2cdc04a6a185a450f6b74e09bff12e498038fcbc9 ;;
+          esac
+          name=hyperfine-v2.0.0-$arch-unknown-linux-gnu
+          curl -sSfL -o "$RUNNER_TEMP/$name.tar.gz" "https://github.com/sharkdp/hyperfine/releases/download/v2.0.0/$name.tar.gz"
+          echo "$sum  $RUNNER_TEMP/$name.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP"
+          sudo install "$RUNNER_TEMP/$name/hyperfine" /usr/local/bin/hyperfine
+          hyperfine --version
       - name: build the change and its base
         run: |
           [ -n "$BASE" ] || BASE=$(git describe --tags --abbrev=0 --match 'v*' 2> /dev/null || true)

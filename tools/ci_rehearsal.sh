@@ -50,7 +50,7 @@ pip install -q --root-user-action=ignore -e "python[test]" maturin -c python/con
 maturin build --release --strip -m crates/scrutate-py/Cargo.toml -o target/wheels 2>&1 | tail -1
 pip install -q --root-user-action=ignore --force-reinstall --no-deps target/wheels/scrutate-*.whl
 python -c "import scrutate; print(scrutate.__version__)"
-(cd python && SCRUTATE_BIN=/work/target/release/scrutate python -m pytest -q tests 2>&1 | tail -1)
+(cd python && SCRUTATE_BIN=/work/target/release/scrutate python -m pytest -q -rf tests 2>&1 | tail -6)
 python bench/differential.py --cases 200 --seed 3 2>&1 | tail -2
 python bench/parity.py crates/scrutate/src target/release/scrutate --queries 50 2>&1 | tail -1
 
