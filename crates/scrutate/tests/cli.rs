@@ -366,7 +366,7 @@ fn mcp_protocol_round_trip() {
     let text = by_id(4)["result"]["content"][0]["text"].as_str().unwrap();
     assert!(text.starts_with("error"), "path escape refused: {text}");
     assert_eq!(by_id(4)["result"]["isError"], true);
-    assert_eq!(by_id(5)["result"]["isError"], true);
+    assert_eq!(by_id(5)["error"]["code"], -32602);
     assert_eq!(by_id(6)["error"]["code"], -32601);
     // grep_code is Engine A: matching lines under their enclosing symbol, an error for a bad pattern,
     // and a note when it stopped at the limit

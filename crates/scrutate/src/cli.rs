@@ -372,9 +372,9 @@ pub enum Cmd {
     },
     /// run the MCP server on stdio
     Serve {
-        /// at most one directory scan per this many seconds
-        #[arg(long, default_value_t = 1.0, env = "SCRUTATE_REFRESH_INTERVAL")]
-        refresh_interval: f64,
+        /// at most one directory scan per this many seconds [default: up to 1, less when a scan is cheap]
+        #[arg(long, env = "SCRUTATE_REFRESH_INTERVAL")]
+        refresh_interval: Option<f64>,
         /// also update the index from filesystem events, in the background
         #[arg(long)]
         watch: bool,
@@ -729,7 +729,7 @@ pub fn run() -> Result<i32> {
                     }
                 })?;
             }
-            crate::mcp::serve(s, refresh_interval, crate::VERSION, structured)?;
+            crate::mcp::serve(s, crate::mcp::Settings::new(cli.max_bytes, refresh_interval), crate::VERSION, structured)?;
             Ok(0)
         }
         Cmd::Lsp => crate::lsp::serve(&cli.root),

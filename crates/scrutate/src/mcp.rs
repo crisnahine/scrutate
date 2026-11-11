@@ -40,7 +40,7 @@ to mean that one definition: read_code symbol, find_symbol, callers, callees, si
 
 /// The tools, each with the hints clients use to decide whether a call needs approval and, with
 /// `structured`, the schema of the JSON its results carry.
-pub fn tools(structured: bool) -> Value {
+pub fn tools(structured: bool, max_bytes: usize) -> Value {
     let mut tools = tool_table();
     for tool in tools.as_array_mut().into_iter().flatten() {
         let name = tool["name"].as_str().unwrap_or("").to_string();
@@ -51,7 +51,7 @@ pub fn tools(structured: bool) -> Value {
         }
         if read_only {
             let properties = &mut tool["inputSchema"]["properties"];
-            properties["max_bytes"] = json!({"type": "integer", "default": ops::AGENT_BYTES, "description": "size limit of the answer"});
+            properties["max_bytes"] = json!({"type": "integer", "default": max_bytes, "description": "size limit of the answer"});
             properties["offset"] =
                 json!({"type": "integer", "default": 0, "description": "items to skip, to continue an answer that said more were not shown"});
         }
@@ -116,10 +116,21 @@ impl Called {
 }
 
 /// Run one tool; errors become text for the model.
-pub fn call_tool(repo: &mut Repo, name: &str, args: &Value, refresh_interval: f64) -> Called {
-    let max_bytes = args.get("max_bytes").and_then(Value::as_u64).map_or(ops::AGENT_BYTES, |n| (n as usize).clamp(1_000, 1_000_000));
+pub fn call_tool(repo: &mut Repo, name: &str, args: &Value, settings: &Settings) -> Called {
+    let max_bytes = args.get("max_bytes").and_then(Value::as_u64).map_or(settings.max_bytes, |n| clamp_bytes(n as usize));
     let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
-    match ops::Op::from_tool(name, args).and_then(|op| repo.run(&op, refresh_interval)) {
+    let run = |op: ops::Op| {
+        if !settings.floor {
+            return repo.run(&op, settings.refresh_interval);
+        }
+        let mut last = settings.last_scan.lock().unwrap_or_else(|p| p.into_inner());
+        if last.is_some_and(|t| t.elapsed().as_secs_f64() < settings.refresh_interval) {
+            return ops::run(repo, &op);
+        }
+        *last = Some(Instant::now());
+        repo.run(&op, 0.0)
+    };
+    match ops::Op::from_tool(name, args).and_then(run) {
         Ok(answer) => {
             let text = answer.text_within(max_bytes, offset);
             let mut structured = answer.structured(text.len(), max_bytes, offset);
@@ -201,7 +212,7 @@ const MAX_CALLS: usize = 32;
 
 /// One tool call from its first wait to its answer. A cancelled call sends nothing more: it
 /// stops waiting for the index or for its turn, and an answer already being computed is dropped.
-fn run_call(send: &Wire, repo: &Mutex<Repo>, building: &AtomicBool, calls: &Calls, refresh_interval: f64, call: Call) {
+fn run_call(send: &Wire, repo: &Mutex<Repo>, building: &AtomicBool, calls: &Calls, settings: &Settings, call: Call) {
     let Call { id, name, args, stateless, structured, progress, cancelled } = call;
     let (started, mut reported) = (Instant::now(), 0);
     let gone = || cancelled.load(Ordering::Relaxed);
@@ -224,7 +235,7 @@ fn run_call(send: &Wire, repo: &Mutex<Repo>, building: &AtomicBool, calls: &Call
         let mut repo = repo.lock().unwrap_or_else(|p| p.into_inner());
         // a panic inside one tool call must not take the server down: it becomes a tool error
         (!gone()).then(|| {
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| call_tool(&mut repo, &name, &args, refresh_interval))).unwrap_or_else(|_| {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| call_tool(&mut repo, &name, &args, settings))).unwrap_or_else(|_| {
                 Called::note(format!("error: internal failure while running {name} (a bug: please report it); the server keeps running"), true)
             })
         })
@@ -246,7 +257,7 @@ fn run_call(send: &Wire, repo: &Mutex<Repo>, building: &AtomicBool, calls: &Call
 /// `structured`: every tool declares an `outputSchema` and every result carries the answer as
 /// JSON beside its text. Off unless asked for: Claude Code (2.1.322) shows its model that JSON in
 /// place of the text, which has the snippets and says how to page.
-pub fn serve(repo: Arc<Mutex<Repo>>, refresh_interval: f64, version: &str, structured: bool) -> Result<()> {
+pub fn serve(repo: Arc<Mutex<Repo>>, settings: Settings, version: &str, structured: bool) -> Result<()> {
     let building = Arc::new(AtomicBool::new(true));
     {
         let (repo, building) = (Arc::clone(&repo), Arc::clone(&building));
@@ -260,96 +271,178 @@ pub fn serve(repo: Arc<Mutex<Repo>>, refresh_interval: f64, version: &str, struc
         })?;
     }
     let calls = Calls::default();
-    let (repo, building, calls, send) = (&*repo, &*building, &calls, &to_stdout as &Wire);
+    let server = Server { repo: &repo, building: &building, calls: &calls, settings: &settings, version, structured };
+    let (server, send) = (&server, &to_stdout as &Wire);
     std::thread::scope(|scope| -> Result<()> {
-        for line in std::io::stdin().lock().lines() {
-            let line = line?;
+        let mut stdin = std::io::stdin().lock();
+        let mut buf = Vec::new();
+        loop {
+            buf.clear();
+            if stdin.read_until(b'\n', &mut buf)? == 0 {
+                break;
+            }
+            let Ok(line) = std::str::from_utf8(&buf) else {
+                respond_err(send, &Value::Null, -32700, "parse error: not UTF-8", None);
+                continue;
+            };
             if line.trim().is_empty() {
                 continue;
             }
-            let msg: Value = match serde_json::from_str(&line) {
-                Ok(v) => v,
-                Err(_) => {
-                    respond_err(send, &Value::Null, -32700, "parse error", None);
-                    continue;
+            match serde_json::from_str(line) {
+                Ok(Value::Array(batch)) if !batch.is_empty() => {
+                    scope.spawn(move || {
+                        let replies = Mutex::new(Vec::new());
+                        // progress notifications go out at once; the batch's answers go out together
+                        let sink = |m: Value| {
+                            if m.get("method").is_some() {
+                                send(m)
+                            } else {
+                                replies.lock().unwrap_or_else(|p| p.into_inner()).push(m)
+                            }
+                        };
+                        std::thread::scope(|inner| batch.into_iter().for_each(|m| server.handle(inner, &sink, m)));
+                        let replies = replies.into_inner().unwrap_or_else(|p| p.into_inner());
+                        if !replies.is_empty() {
+                            send(Value::Array(replies));
+                        }
+                    });
                 }
-            };
-            let id = msg.get("id").cloned().unwrap_or(Value::Null);
-            let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("");
-            let params = msg.get("params").cloned().unwrap_or(json!({}));
-            let is_notification = msg.get("id").is_none();
-            let asked = params.get("_meta").and_then(|m| m.get(VERSION_KEY)).and_then(Value::as_str);
-            if let Some(other) = asked.filter(|v| *v != STATELESS_VERSION) {
-                if !is_notification {
-                    respond_err(send, &id, -32022, "Unsupported protocol version", Some(json!({"supported": [STATELESS_VERSION], "requested": other})));
-                }
-                continue;
-            }
-            let stateless = asked.is_some();
-            // a list a client may cache, under the revision that asks every list to say so
-            let list = |mut result: Value| {
-                if stateless {
-                    result["ttlMs"] = json!(LIST_TTL_MS);
-                    result["cacheScope"] = json!("public");
-                }
-                respond(send, &id, stateless, result);
-            };
-            match method {
-                "server/discover" if stateless => list(json!({
-                    "supportedVersions": [STATELESS_VERSION],
-                    "capabilities": {"tools": {}},
-                    "instructions": INSTRUCTIONS,
-                    "_meta": {SERVER_INFO_KEY: {"name": "scrutate", "version": version}},
-                })),
-                "server/discover" => respond_err(send, &id, -32602, &format!("_meta has no {VERSION_KEY}"), None),
-                "initialize" => {
-                    let asked = params.get("protocolVersion").and_then(|v| v.as_str()).unwrap_or("2025-06-18");
-                    let ver = if HANDSHAKE_VERSIONS.contains(&asked) { asked } else { "2025-06-18" };
-                    respond(
-                        send,
-                        &id,
-                        false,
-                        json!({
-                            "protocolVersion": ver,
-                            "capabilities": {"tools": {"listChanged": false}},
-                            "serverInfo": {"name": "scrutate", "version": version},
-                            "instructions": INSTRUCTIONS,
-                        }),
-                    );
-                }
-                "notifications/cancelled" => calls.cancel(&params["requestId"]),
-                "notifications/initialized" | "notifications/roots/list_changed" => {}
-                "ping" => respond(send, &id, stateless, json!({})),
-                "tools/list" => list(json!({"tools": tools(structured)})),
-                "resources/list" => list(json!({"resources": []})),
-                "resources/templates/list" => list(json!({"resourceTemplates": []})),
-                "prompts/list" => list(json!({"prompts": []})),
-                "tools/call" => {
-                    let call = Call {
-                        name: params.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                        args: params.get("arguments").cloned().unwrap_or(json!({})),
-                        stateless,
-                        structured,
-                        progress: params.get("_meta").and_then(|m| m.get("progressToken")).cloned().unwrap_or(Value::Null),
-                        cancelled: calls.begin(&id),
-                        id,
-                    };
-                    let run = move || run_call(send, repo, building, calls, refresh_interval, call);
-                    if calls.map().len() > MAX_CALLS {
-                        run();
-                    } else {
-                        scope.spawn(run);
-                    }
-                }
-                _ => {
-                    if !is_notification {
-                        respond_err(send, &id, -32601, &format!("method not found: {method}"), None);
-                    }
-                }
+                Ok(msg) => server.handle(scope, send, msg),
+                Err(_) => respond_err(send, &Value::Null, -32700, "parse error", None),
             }
         }
         Ok(())
-    })
+    })?;
+    // held until the process exits, so no index writer is inside a transaction the exit would cut
+    std::mem::forget(repo.lock().unwrap_or_else(|p| p.into_inner()));
+    Ok(())
+}
+
+/// The answer size and refresh policy `serve` was started with.
+pub struct Settings {
+    /// answer size of a call that gives no `max_bytes`
+    max_bytes: usize,
+    refresh_interval: f64,
+    /// the interval was given explicitly: no scan sooner, however cheap scans are
+    floor: bool,
+    last_scan: Mutex<Option<Instant>>,
+}
+
+impl Settings {
+    pub fn new(max_bytes: Option<usize>, refresh_interval: Option<f64>) -> Settings {
+        Settings {
+            max_bytes: max_bytes.map_or(ops::AGENT_BYTES, clamp_bytes),
+            refresh_interval: refresh_interval.unwrap_or(1.0),
+            floor: refresh_interval.is_some(),
+            last_scan: Mutex::new(None),
+        }
+    }
+}
+
+fn clamp_bytes(n: usize) -> usize {
+    n.clamp(1_000, 1_000_000)
+}
+
+/// What every message is handled with.
+struct Server<'a> {
+    repo: &'a Mutex<Repo>,
+    building: &'a AtomicBool,
+    calls: &'a Calls,
+    settings: &'a Settings,
+    version: &'a str,
+    structured: bool,
+}
+
+impl Server<'_> {
+    /// Answer one message, alone or a member of a batch, through `send`.
+    fn handle<'s, 'e>(&'e self, scope: &'s std::thread::Scope<'s, 'e>, send: &'e Wire<'e>, msg: Value) {
+        if !msg.is_object() {
+            return respond_err(send, &Value::Null, -32600, "invalid request: not a JSON object", None);
+        }
+        let id = msg.get("id").cloned().unwrap_or(Value::Null);
+        let Some(method) = msg.get("method").and_then(Value::as_str) else {
+            // a client's response to a request is not answered
+            if msg.get("method").is_none() && (msg.get("result").is_some() || msg.get("error").is_some()) {
+                return;
+            }
+            return respond_err(send, &id, -32600, "invalid request: no method", None);
+        };
+        let params = msg.get("params").cloned().unwrap_or(json!({}));
+        if msg.get("id").is_none() {
+            if method == "notifications/cancelled" {
+                self.calls.cancel(&params["requestId"]);
+            }
+            return;
+        }
+        let asked = params.get("_meta").and_then(|m| m.get(VERSION_KEY)).and_then(Value::as_str);
+        if let Some(other) = asked.filter(|v| *v != STATELESS_VERSION) {
+            return respond_err(send, &id, -32022, "Unsupported protocol version", Some(json!({"supported": [STATELESS_VERSION], "requested": other})));
+        }
+        let stateless = asked.is_some();
+        // a list a client may cache, under the revision that asks every list to say so
+        let list = |mut result: Value| {
+            if stateless {
+                result["ttlMs"] = json!(LIST_TTL_MS);
+                result["cacheScope"] = json!("public");
+            }
+            respond(send, &id, stateless, result);
+        };
+        match method {
+            "server/discover" if stateless => list(json!({
+                "supportedVersions": [STATELESS_VERSION],
+                "capabilities": {"tools": {}},
+                "instructions": INSTRUCTIONS,
+                "_meta": {SERVER_INFO_KEY: {"name": "scrutate", "version": self.version}},
+            })),
+            "server/discover" => respond_err(send, &id, -32602, &format!("_meta has no {VERSION_KEY}"), None),
+            "initialize" => {
+                let latest = HANDSHAKE_VERSIONS[HANDSHAKE_VERSIONS.len() - 1];
+                let asked = params.get("protocolVersion").and_then(|v| v.as_str()).unwrap_or(latest);
+                let ver = if HANDSHAKE_VERSIONS.contains(&asked) { asked } else { latest };
+                respond(
+                    send,
+                    &id,
+                    false,
+                    json!({
+                        "protocolVersion": ver,
+                        "capabilities": {"tools": {"listChanged": false}},
+                        "serverInfo": {"name": "scrutate", "version": self.version},
+                        "instructions": INSTRUCTIONS,
+                    }),
+                );
+            }
+            "ping" => respond(send, &id, stateless, json!({})),
+            "tools/list" => list(json!({"tools": tools(self.structured, self.settings.max_bytes)})),
+            "resources/list" => list(json!({"resources": []})),
+            "resources/templates/list" => list(json!({"resourceTemplates": []})),
+            "prompts/list" => list(json!({"prompts": []})),
+            "tools/call" => {
+                let Some(name) = params.get("name").and_then(Value::as_str) else {
+                    return respond_err(send, &id, -32602, "tools/call has no params.name", None);
+                };
+                if !tool_table().as_array().into_iter().flatten().any(|t| t["name"] == name) {
+                    return respond_err(send, &id, -32602, &format!("unknown tool: {name}"), None);
+                }
+                let call = Call {
+                    name: name.to_string(),
+                    args: params.get("arguments").cloned().unwrap_or(json!({})),
+                    stateless,
+                    structured: self.structured,
+                    progress: params.get("_meta").and_then(|m| m.get("progressToken")).cloned().unwrap_or(Value::Null),
+                    cancelled: self.calls.begin(&id),
+                    id,
+                };
+                let (repo, building, calls, settings) = (self.repo, self.building, self.calls, self.settings);
+                let run = move || run_call(send, repo, building, calls, settings, call);
+                if calls.map().len() > MAX_CALLS {
+                    run();
+                } else {
+                    scope.spawn(run);
+                }
+            }
+            _ => respond_err(send, &id, -32601, &format!("method not found: {method}"), None),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -378,7 +471,7 @@ mod tests {
         let (building, calls) = (AtomicBool::new(true), Calls::default());
         let send = |m: Value| sent.lock().unwrap().push(m);
         std::thread::scope(|s| {
-            let job = s.spawn(|| run_call(&send, &repo, &building, &calls, 0.0, call(&calls, 7, json!("tok"))));
+            let job = s.spawn(|| run_call(&send, &repo, &building, &calls, &Settings::new(None, Some(0.0)), call(&calls, 7, json!("tok"))));
             std::thread::sleep(Duration::from_millis(2300));
             assert!(!job.is_finished(), "the call waits for the index as long as it reports progress");
             building.store(false, Ordering::Release);
@@ -407,14 +500,14 @@ mod tests {
         std::thread::scope(|s| {
             // waiting for the index: the notice ends the wait
             let waiting = call(&calls, 1, Value::Null);
-            let job = s.spawn(|| run_call(&send, &repo, &building, &calls, 0.0, waiting));
+            let job = s.spawn(|| run_call(&send, &repo, &building, &calls, &Settings::new(None, Some(0.0)), waiting));
             calls.cancel(&json!(1));
             job.join().unwrap();
             building.store(false, Ordering::Release);
             // waiting for its turn: it gives the turn up when it comes
             let turn = repo.lock().unwrap();
             let queued = call(&calls, 2, Value::Null);
-            let job = s.spawn(|| run_call(&send, &repo, &building, &calls, 0.0, queued));
+            let job = s.spawn(|| run_call(&send, &repo, &building, &calls, &Settings::new(None, Some(0.0)), queued));
             calls.cancel(&json!(2));
             drop(turn);
             job.join().unwrap();
