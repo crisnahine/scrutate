@@ -14,7 +14,7 @@ The fifteen items the mission asks for (section 11), each with where it lives in
 | 8 | Security assessment | docs/SECURITY.md |
 | 9 | Reproducible competitive benchmarks | docs/LEADERBOARD.md (generated), bench/leaderboard.py, bench/indexed.py, bench/corpora.py (pinned corpora), bench/results/ (raw JSON and logs) |
 | 10 | Performance and memory measurements | docs/LEADERBOARD.md (wall time, CPU time, peak memory per benchmark and tool; indexed latency percentiles, index time and size), docs/BENCHMARKS.md (start-up, concurrency, Engine B index metrics) |
-| 11 | Documentation | docs/ (this directory), README.md, CHANGELOG.md, CONTRIBUTING.md |
+| 11 | Documentation | docs/ (this directory, with the release checklist in docs/RELEASING.md), README.md, CHANGELOG.md, CONTRIBUTING.md, GLOSSARY.md |
 | 12 | Remaining defects and incomplete requirements | docs/RELEASE_READINESS.md, docs/TRACEABILITY.md (PARTIAL, FAIL and BLOCKED rows) |
 | 13 | Release-readiness assessment | docs/RELEASE_READINESS.md |
 | 14 | Future engineering roadmap | docs/ROADMAP.md |
@@ -31,7 +31,7 @@ THIRD_PARTY_NOTICES.txt, docs/ and integrations/.
 |---|---|---|
 | `scrutate-0.1.0-aarch64-apple-darwin.tar.gz` | macOS arm64 | `9aa0a14ec4b0e10b...`, the binary docs/LEADERBOARD.md measured on macOS |
 | `scrutate-0.1.0-cp39-abi3-macosx_13_0_arm64.whl` | macOS arm64 (macOS 13 or newer), CPython 3.9 or newer | |
-| `scrutate-0.1.0-aarch64-unknown-linux-gnu.tar.gz` | Linux aarch64 (glibc) | `6602bbe5890005db...`, identical from two build images (`bench/results/platforms/repro/`) and the binary measured in the Linux VM |
+| `scrutate-0.1.0-aarch64-unknown-linux-gnu.tar.gz` | Linux aarch64 (glibc) | `261ed1a2a4613e19...`, identical from two build images (`bench/results/platforms/repro/`) and the binary measured in the Linux VM |
 | `scrutate-0.1.0-cp39-abi3-manylinux_2_34_aarch64.whl` | Linux aarch64, CPython 3.9 or newer | |
 | `scrutate-0.1.0.cdx.json` | | CycloneDX SBOM of the binary's dependencies |
 

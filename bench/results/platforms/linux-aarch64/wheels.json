@@ -12,7 +12,7 @@
     "bindings tests": true
    },
    "wheel": "scrutate-0.1.0-cp39-abi3-manylinux_2_34_aarch64.whl",
-   "pytest": "4 passed, 1 skipped in 0.34s",
+   "pytest": "4 passed, 1 skipped in 0.33s",
    "ok": true
   },
   {
@@ -25,7 +25,7 @@
     "bindings tests": true
    },
    "wheel": "scrutate-0.1.0-cp39-abi3-manylinux_2_34_aarch64.whl",
-   "pytest": "4 passed, 1 skipped in 0.25s",
+   "pytest": "5 passed in 0.31s",
    "ok": true
   },
   {
@@ -38,7 +38,7 @@
     "bindings tests": true
    },
    "wheel": "scrutate-0.1.0-cp39-abi3-manylinux_2_34_aarch64.whl",
-   "pytest": "4 passed, 1 skipped in 0.30s",
+   "pytest": "5 passed in 0.30s",
    "ok": true
   },
   {
@@ -52,7 +52,7 @@
     "bindings tests": true
    },
    "wheel": "scrutate-0.1.0-cp314-cp314t-manylinux_2_34_aarch64.whl",
-   "pytest": "4 passed, 1 skipped in 0.40s",
+   "pytest": "5 passed in 0.38s",
    "ok": true
   }
  ]

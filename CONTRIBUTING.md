@@ -48,6 +48,11 @@ python bench/differential.py --cases 200          # Engine A == ripgrep on rando
 - **Never execute repository content.** Parsers parse; nothing in a repository (including
   `.scrutate.toml`) may name a program to run.
 
+## Releasing
+
+docs/RELEASING.md is the checklist: benchmarks on the release binary, generated documents, the
+quality gates, the platform checks and the artifacts, with the hashes that must agree.
+
 ## Commit messages
 
 Imperative mood, one logical change per commit, reference the traceability row(s) a change

@@ -108,7 +108,12 @@ print(repo.search("parse a date string", k=5))
 | docs/RELEASE_READINESS.md | what 0.1.0 is, remaining defects and incomplete requirements |
 | docs/COMPETITIVE.md | evidence-based positioning against existing tools |
 | docs/NAMING.md | how the name was chosen and what was (not) checked |
-| docs/INSTALL.md, docs/DEPENDENCIES.md, docs/ROADMAP.md, CHANGELOG.md, CONTRIBUTING.md | |
+| docs/TEST_RESULTS.md | every quality gate with its command and output (generated) |
+| docs/DELIVERY.md | where each deliverable lives, and the release artifacts with their hashes |
+| docs/RELEASING.md | the release checklist |
+| docs/dashboard.html | every benchmark run so far, charted (generated) |
+| GLOSSARY.md | the words this codebase uses for its own concepts |
+| docs/INSTALL.md, docs/DEPENDENCIES.md, docs/ROADMAP.md, docs/RESEARCH.md, CHANGELOG.md, CONTRIBUTING.md | |
 | integrations/ | VS Code, Neovim, JetBrains, GitHub Action, GitLab, Bitbucket, MCP, pre-commit |
 
 ## Licence

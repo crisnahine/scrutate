@@ -1,77 +1,12 @@
 info: component rust-std for target x86_64-apple-darwin is up to date
 === build
-   Compiling tree-sitter v0.26.13
-   Compiling pcre2-sys v0.2.10
-   Compiling libsqlite3-sys v0.39.1
-   Compiling tree-sitter-pascal v0.10.2
-   Compiling tree-sitter-ruby v0.23.1
-   Compiling tree-sitter-cmake v0.7.6
-   Compiling tree-sitter-matlab v1.3.3
-   Compiling tree-sitter-python v0.25.0
-   Compiling tree-sitter-puppet v1.3.0
-   Compiling tree-sitter-asm v0.24.0
-   Compiling tree-sitter-jsonnet v0.0.1
-   Compiling tree-sitter-html v0.23.2
-   Compiling tree-sitter-solidity v1.2.13
-   Compiling tree-sitter-dart v0.3.0
-   Compiling tree-sitter-graphql v0.3.0
-   Compiling tree-sitter-typescript v0.23.2
-   Compiling tree-sitter-css v0.25.0
-   Compiling tree-sitter-go v0.25.0
-   Compiling tree-sitter-objc v3.0.2
-   Compiling tree-sitter-rst v0.2.0
-   Compiling tree-sitter-c-sharp v0.23.5
-   Compiling tree-sitter-erlang v0.21.0
-   Compiling tree-sitter-make v1.1.1
-   Compiling tree-sitter-elm v5.9.4
-   Compiling tree-sitter-lua v0.5.0
-   Compiling tree-sitter-prisma v0.2.2
-   Compiling tree-sitter-ada v0.9.2
-   Compiling tree-sitter-zig v1.1.2
-   Compiling tree-sitter-json v0.24.8
-   Compiling tree-sitter-hcl v1.1.0
-   Compiling tree-sitter-vim v0.4.0
-   Compiling tree-sitter-fish v3.6.0
-   Compiling tree-sitter-scheme v0.25.0
-   Compiling tree-sitter-haskell v0.24.1
-   Compiling tree-sitter-toml-ng v0.7.0
-   Compiling tree-sitter-scala v0.26.9
-   Compiling tree-sitter-cpp v0.23.4
-   Compiling tree-sitter-glsl v0.2.0
-   Compiling tree-sitter-nix v0.3.0
-   Compiling tree-sitter-racket v0.25.0
-   Compiling tree-sitter-c v0.24.2
-   Compiling tree-sitter-kotlin-ng v1.1.0
-   Compiling tree-sitter-powershell v0.26.6
-   Compiling tree-sitter-yaml v0.7.2
-   Compiling tree-sitter-swift v0.7.4
-   Compiling tree-sitter-javascript v0.25.0
-   Compiling tree-sitter-r v1.3.0
-   Compiling tree-sitter-bicep v1.1.0
-   Compiling tree-sitter-elixir v0.3.5
-   Compiling tree-sitter-starlark v1.3.0
-   Compiling tree-sitter-java v0.23.5
-   Compiling tree-sitter-groovy v0.1.2
-   Compiling tree-sitter-php v0.25.1
-   Compiling tree-sitter-rust v0.24.2
-   Compiling tree-sitter-commonlisp v0.4.1
-   Compiling tree-sitter-gleam v1.0.0
-   Compiling tree-sitter-md v0.5.4
-   Compiling tree-sitter-bash v0.25.1
-   Compiling tree-sitter-elisp v1.7.2
-   Compiling tree-sitter-julia v0.23.1
-   Compiling tree-sitter-ini v1.4.0
-   Compiling tree-sitter-xml v0.7.0
-   Compiling ignore v0.4.34 (<repo>/vendor/ignore)
-   Compiling pcre2 v0.2.11
-   Compiling grep-pcre2 v0.1.10
-   Compiling rusqlite v0.41.1
-   Compiling scrutate v0.1.0 (<repo>/crates/scrutate)
-    Finished `release` profile [optimized] target(s) in 30.85s
+   Compiling ignore v0.4.34 (/Users/crisn/Documents/Projects/scrutate/vendor/ignore)
+   Compiling scrutate v0.1.0 (/Users/crisn/Documents/Projects/scrutate/crates/scrutate)
+    Finished `release` profile [optimized] target(s) in 16.83s
 target/x86/x86_64-apple-darwin/release/scrutate: Mach-O 64-bit executable x86_64
 === Rosetta 2 is not installed: x86_64 code cannot run here; compiling the tests only
-   Compiling scrutate v0.1.0 (<repo>/crates/scrutate)
-    Finished `release` profile [optimized] target(s) in 35.91s
+   Compiling scrutate v0.1.0 (/Users/crisn/Documents/Projects/scrutate/crates/scrutate)
+    Finished `release` profile [optimized] target(s) in 34.00s
   Executable unittests src/lib.rs (target/x86/x86_64-apple-darwin/release/deps/scrutate-e1efd5d42c69d1a1)
   Executable unittests src/main.rs (target/x86/x86_64-apple-darwin/release/deps/scrutate-9f74d032039833aa)
   Executable tests/cli.rs (target/x86/x86_64-apple-darwin/release/deps/cli-dc02f522747adf11)
