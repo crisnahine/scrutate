@@ -261,7 +261,11 @@ fn field_text(node: Node, field: &str, kind: &str, src: &[u8]) -> Option<String>
 /// the class name string, else the name the class is assigned to.
 pub(crate) fn r6_class(node: Node, src: &[u8]) -> Option<String> {
     fn call_of<'t>(n: Node<'t>, f: &str, src: &[u8]) -> Option<Node<'t>> {
-        n.parent().filter(|a| a.kind() == "arguments")?.parent().filter(|c| field_text(*c, "function", "identifier", src).as_deref() == Some(f))
+        let call = n.parent().filter(|a| a.kind() == "arguments")?.parent()?;
+        let function = call.child_by_field_name("function")?;
+        // package code writes `R6::R6Class(...)`, since a package cannot attach R6
+        let named = if function.kind() == "namespace_operator" { function.child_by_field_name("rhs")? } else { function };
+        (named.kind() == "identifier" && text(src, named.start_byte(), named.end_byte()) == f).then_some(call)
     }
     let list = call_of(node, "list", src)?;
     let section = list

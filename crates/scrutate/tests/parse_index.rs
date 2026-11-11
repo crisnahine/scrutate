@@ -192,8 +192,8 @@ fn cpp_call_operators_haskell_operators_and_r6_methods_are_named_definitions() {
     let hs = "module M where\na <+> b = a + b\n(<+>) a b = a\n(|>) = flip ($)\nx `op` y = x\nplain x = x\n";
     let want = [("function", "<+>", "<+>"), ("function", "<+>", "<+>"), ("function", "|>", "|>"), ("function", "op", "op"), ("function", "plain", "plain")];
     assert_eq!(defs("m.hs", hs), triples(&want));
-    let r = "Counter <- R6Class(\"Counter\",\n  public = list(\n    n = 0,\n    add = function(n) {\n      self$n <- self$n + n\n    }\n  ),\n  private = list(h = function() 1)\n)\nx <- list(f = function() 1)\ng <- function() 1\n";
-    let want = [("method", "add", "Counter.add"), ("method", "h", "Counter.h"), ("function", "g", "g")];
+    let r = "Counter <- R6Class(\"Counter\",\n  public = list(\n    n = 0,\n    add = function(n) {\n      self$n <- self$n + n\n    }\n  ),\n  private = list(h = function() 1)\n)\nx <- list(f = function() 1)\ng <- function() 1\nStack <- R6::R6Class(\"Stack\", public = list(push = function(x) x))\n";
+    let want = [("method", "add", "Counter.add"), ("method", "h", "Counter.h"), ("function", "g", "g"), ("method", "push", "Stack.push")];
     assert_eq!(defs("c.r", r), triples(&want));
 }
 
