@@ -561,3 +561,21 @@ fn a_backslash_in_a_unix_file_name_stays_in_the_paths_answers_print() {
         assert!(text.contains("slash_fn"), "{text}");
     }
 }
+
+#[test]
+fn duplicates_say_where_limit_stopped_them() {
+    // three groups of three identical functions, bodies of 6, 5 and 3 tokens
+    let bodies = ["return alpha + beta + gamma + delta + omega + sigma", "return alpha + beta + gamma + delta + omega", "return alpha + beta + gamma"];
+    let files: Vec<(String, String)> =
+        (0..9).map(|n| (format!("g{}_{}.py", n / 3, n % 3), format!("def f{n}(alpha, beta, gamma, delta, omega, sigma):\n    {}\n", bodies[n / 3]))).collect();
+    let files: Vec<(&str, &str)> = files.iter().map(|(p, b)| (p.as_str(), b.as_str())).collect();
+    let mut r = Repo::new("dupes_limit", &files);
+    let all = r.ok("duplicates", json!({"min_tokens": 1}));
+    assert_eq!(all.lines().filter(|l| l.starts_with("exact")).count(), 3, "{all}");
+    assert!(!all.contains("stopped at"), "{all}");
+    let one = r.ok("duplicates", json!({"min_tokens": 1, "limit": 1}));
+    assert_eq!(one.lines().filter(|l| l.starts_with("exact")).count(), 1, "{one}");
+    assert_eq!(one.lines().last(), Some("(stopped at 1 groups: raise limit to see more)"), "{one}");
+    let c = scrutate::mcp::call_tool(&mut r.repo, "duplicates", &json!({"min_tokens": 1, "limit": 1}), &scrutate::mcp::Settings::new(None, Some(0.0)));
+    assert_eq!(c.structured["stopped_at"], 1, "{}", c.structured);
+}

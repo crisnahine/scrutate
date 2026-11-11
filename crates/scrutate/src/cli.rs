@@ -573,17 +573,33 @@ fn wildcard_matches(glob: &[char], name: &[char]) -> bool {
 /// current directory, and the index names files from its root.
 struct Here {
     cwd: PathBuf,
+    /// the root as given, and in its canonical form
+    root: PathBuf,
+    canonical_root: PathBuf,
+    /// the current directory is the root or below it
+    inside: bool,
     /// the names of the directories from the root down to the current one; empty at the root or outside it
     below: Vec<String>,
+}
+
+/// What a path argument names from the current directory.
+enum Named {
+    /// nothing there: the argument is read as given (a path from the root, or a module name)
+    Given,
+    /// a file or directory of the root, by its path from the root
+    Root(String),
+    /// a file or directory outside the root, canonical
+    Outside(PathBuf),
 }
 
 impl Here {
     fn new(cwd: Option<PathBuf>, root: &Path) -> Here {
         let cwd = cwd.unwrap_or_default();
-        let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+        let canonical_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
         // both in one form: a Windows temp directory may come as an 8.3 short name
-        let below = names_below(&std::fs::canonicalize(&cwd).unwrap_or_else(|_| cwd.clone()), &root);
-        Here { cwd, below }
+        let canonical_cwd = std::fs::canonicalize(&cwd).unwrap_or_else(|_| cwd.clone());
+        let below = names_below(&canonical_cwd, &canonical_root);
+        Here { inside: canonical_cwd.starts_with(&canonical_root), cwd, root: root.to_path_buf(), canonical_root, below }
     }
 
     /// The current directory from the root, when it is below it.
@@ -591,22 +607,43 @@ impl Here {
         (!self.below.is_empty()).then(|| self.below.join("/"))
     }
 
-    /// `arg` from the root when it names a file or directory from here; otherwise as given (a
-    /// path from the root, as answers print it, or a module name).
-    fn path(&self, arg: &str) -> String {
+    fn named(&self, arg: &str) -> Named {
         let p = Path::new(arg);
-        if self.below.is_empty() || arg.is_empty() || p.is_absolute() || !self.cwd.join(p).exists() {
-            return arg.to_string();
+        if arg.is_empty() || !self.cwd.join(p).exists() {
+            return Named::Given;
         }
-        let mut parts = self.below.clone();
-        for c in p.components() {
-            match c {
-                std::path::Component::Normal(n) => parts.push(n.to_string_lossy().into_owned()),
-                std::path::Component::ParentDir if parts.pop().is_none() => return arg.to_string(),
-                _ => {}
+        if self.inside && !p.is_absolute() {
+            // spelled from here, so a symbolic link inside the repository keeps its name
+            let lexical = p.components().try_fold(self.below.clone(), |mut parts, c| {
+                match c {
+                    std::path::Component::Normal(n) => parts.push(n.to_string_lossy().into_owned()),
+                    std::path::Component::ParentDir => {
+                        parts.pop()?;
+                    }
+                    _ => {}
+                }
+                Some(parts)
+            });
+            if let Some(parts) = lexical {
+                return Named::Root(parts.join("/"));
             }
         }
-        parts.join("/")
+        match std::fs::canonicalize(self.cwd.join(p)) {
+            Ok(abs) => match abs.strip_prefix(&self.canonical_root) {
+                Ok(rel) => Named::Root(crate::instant::slashed(rel.to_string_lossy())),
+                Err(_) => Named::Outside(abs),
+            },
+            Err(_) => Named::Given,
+        }
+    }
+
+    /// `arg` from the root when it names a file or directory of the root from here; otherwise as
+    /// given (a path from the root, as answers print it, or a module name).
+    fn path(&self, arg: &str) -> String {
+        match self.named(arg) {
+            Named::Root(r) if !r.is_empty() => r,
+            _ => arg.to_string(),
+        }
     }
 
     /// A location (`path:line`) with its path read as `path` reads one; a name as given.
@@ -620,15 +657,30 @@ impl Here {
     /// A path to walk: as given when it exists from here, else the same path from the root when
     /// that exists (as answers print it).
     fn shell(&self, p: &Path) -> PathBuf {
-        if self.below.is_empty() || p.is_absolute() || self.cwd.join(p).exists() {
+        if p.is_absolute() || self.cwd.join(p).exists() {
             return p.to_path_buf();
         }
-        let up: PathBuf = self.below.iter().map(|_| "..").collect();
+        let up: PathBuf = if self.inside { self.below.iter().map(|_| "..").collect() } else { self.root.clone() };
         if self.cwd.join(&up).join(p).exists() {
             up.join(p)
         } else {
             p.to_path_buf()
         }
+    }
+}
+
+/// The file an index command's argument names: a path, or the path of a location.
+fn named_file(cmd: &Cmd) -> Option<&str> {
+    fn loc(s: &str) -> Option<&str> {
+        crate::intel::location(s).map(|(p, _)| p)
+    }
+    match cmd {
+        Cmd::Symbol { name, .. } | Cmd::Callers { name, .. } | Cmd::Callees { name, .. } => loc(name),
+        Cmd::Similar { target, .. } => loc(target),
+        Cmd::Deps { file, .. } | Cmd::Outline { file, .. } => Some(file),
+        Cmd::Rdeps { target, .. } => Some(target),
+        Cmd::Refs { def: Some(d), .. } => loc(d).or(Some(d)),
+        _ => None,
     }
 }
 
@@ -671,13 +723,31 @@ pub fn run() -> Result<i32> {
         Cmd::Config | Cmd::Completions { .. } | Cmd::Languages { .. } | Cmd::Sexp { .. } | Cmd::Watch { path: Some(_) } => false,
         _ => true,
     };
+    let mut found_index = None;
     if uses_index && !root_given {
         if let Some(top) = cwd.as_deref().and_then(index_above) {
-            eprintln!("[scrutate] using the index in {}", top.display());
-            cli.root = top;
+            cli.root = top.clone();
+            found_index = Some(top);
         }
     }
-    let here = Here::new(cwd, &cli.root);
+    let mut here = Here::new(cwd.clone(), &cli.root);
+    // a file of another indexed repository (a path `search --also` printed) is answered from its index
+    let mut outside = None;
+    if let Some(arg) = named_file(&cli.cmd) {
+        if let Named::Outside(abs) = here.named(arg) {
+            match abs.ancestors().find(|d| d.join(crate::files::INDEX_DIR).is_dir()) {
+                Some(top) => {
+                    cli.root = top.to_path_buf();
+                    found_index = Some(top.to_path_buf());
+                    here = Here::new(cwd, &cli.root);
+                }
+                None => outside = Some(format!("{} is outside the repository", crate::fmt::echo(arg))),
+            }
+        }
+    }
+    if let Some(top) = found_index {
+        eprintln!("[scrutate] using the index in {}", top.display().to_string().trim_start_matches(r"\\?\"));
+    }
     let no_color = cli.no_color;
     let page = (cli.max_bytes.unwrap_or(usize::MAX), cli.offset);
     match cli.cmd {
@@ -927,18 +997,18 @@ pub fn run() -> Result<i32> {
             Ok(0)
         }
         Cmd::Find { query, k, json } => find_command(&cli.root, &query, k, json, no_color),
-        Cmd::Symbol { name, limit, json } => run_op(&cli.root, Op::Symbol { name: here.location(&name), limit }, json, page),
-        Cmd::Callers { name, limit, json } => run_op(&cli.root, Op::Callers { name: here.location(&name), limit }, json, page),
-        Cmd::Callees { name, limit, json } => run_op(&cli.root, Op::Callees { name: here.location(&name), limit }, json, page),
-        Cmd::Deps { file, json } => run_op(&cli.root, Op::Deps { path: here.path(&file) }, json, page),
-        Cmd::Rdeps { target, json } => run_op(&cli.root, Op::Rdeps { target: here.path(&target) }, json, page),
-        Cmd::Outline { file, json } => run_op(&cli.root, Op::Outline { path: here.path(&file) }, json, page),
+        Cmd::Symbol { name, limit, json } => run_op(&cli.root, Op::Symbol { name: here.location(&name), limit }, json, page, outside.as_deref()),
+        Cmd::Callers { name, limit, json } => run_op(&cli.root, Op::Callers { name: here.location(&name), limit }, json, page, outside.as_deref()),
+        Cmd::Callees { name, limit, json } => run_op(&cli.root, Op::Callees { name: here.location(&name), limit }, json, page, outside.as_deref()),
+        Cmd::Deps { file, json } => run_op(&cli.root, Op::Deps { path: here.path(&file) }, json, page, outside.as_deref()),
+        Cmd::Rdeps { target, json } => run_op(&cli.root, Op::Rdeps { target: here.path(&target) }, json, page, outside.as_deref()),
+        Cmd::Outline { file, json } => run_op(&cli.root, Op::Outline { path: here.path(&file) }, json, page, outside.as_deref()),
         Cmd::Refs { name, json, max_results, def, textual } => {
             let def = def.map(|d| if crate::intel::location(&d).is_some() { here.location(&d) } else { here.path(&d) });
-            run_op(&cli.root, Op::Refs { name, max_results, textual, def }, json, page)
+            run_op(&cli.root, Op::Refs { name, max_results, textual, def }, json, page, outside.as_deref())
         }
-        Cmd::Similar { target, k, json } => run_op(&cli.root, Op::Similar { target: here.location(&target), k }, json, page),
-        Cmd::Dupes { min_tokens, threshold, limit, json } => run_op(&cli.root, Op::Dupes { min_tokens, threshold, limit }, json, page),
+        Cmd::Similar { target, k, json } => run_op(&cli.root, Op::Similar { target: here.location(&target), k }, json, page, outside.as_deref()),
+        Cmd::Dupes { min_tokens, threshold, limit, json } => run_op(&cli.root, Op::Dupes { min_tokens, threshold, limit }, json, page, outside.as_deref()),
         Cmd::Tsquery { lang, query, paths, limit, json, no_cache } => {
             // streamed: one JSON object or one text line per capture, in path order
             let stdout = std::io::stdout();
@@ -946,11 +1016,22 @@ pub fn run() -> Result<i32> {
             let mut err: Option<std::io::Error> = None;
             let cache_root = (!no_cache).then_some(cli.root.as_path());
             let paths: Vec<PathBuf> = paths.iter().map(|p| here.shell(p)).collect();
+            // as grep: a path that cannot be read is named, the others are still searched, exit 2
+            let mut missing = false;
+            for p in &paths {
+                if let Err(e) = std::fs::metadata(p) {
+                    diagnostic("warning", &format!("{}: {e}", p.display()));
+                    missing = true;
+                }
+            }
             // with a size limit or an offset the lines are collected and paged as other answers are
             let paging = !json && page != (usize::MAX, 0);
             let mut lines: Vec<String> = Vec::new();
-            let n = crate::intel::tsquery_each(&lang, &query, &paths, limit, cache_root, &mut |c| {
-                if err.is_some() {
+            // one more than the limit, to tell whether it cut the answer
+            let mut seen = 0usize;
+            let n = crate::intel::tsquery_each(&lang, &query, &paths, limit.saturating_add(1), cache_root, &mut |c| {
+                seen += 1;
+                if err.is_some() || seen > limit {
                     return;
                 }
                 if paging {
@@ -971,13 +1052,22 @@ pub fn run() -> Result<i32> {
             if paging && !lines.is_empty() {
                 err = writeln!(w, "{}", crate::ops::paged(lines, "matches", page.0, page.1)).err();
             }
+            if n > limit && !json && err.is_none() {
+                err = writeln!(w, "{}", crate::ops::stop_line(Some(crate::ops::Stop { at: limit, how: crate::ops::RAISE_LIMIT }), "matches")).err();
+            }
             if let Some(e) = err {
                 if e.kind() != std::io::ErrorKind::BrokenPipe {
                     return Err(e.into());
                 }
             }
             let _ = w.flush();
-            Ok(if n == 0 { 1 } else { 0 })
+            Ok(if missing {
+                2
+            } else if n == 0 {
+                1
+            } else {
+                0
+            })
         }
         Cmd::Serve { refresh_interval, watch, structured } => {
             if cli.offset != 0 {
@@ -1082,20 +1172,29 @@ pub fn run() -> Result<i32> {
     }
 }
 
-/// Run one index operation and print its answer; exit code 1 when nothing was found.
-fn run_op(root: &Path, op: Op, json: bool, (max_bytes, offset): (usize, usize)) -> Result<i32> {
+/// Run one index operation and print its answer; exit code 1 when nothing was found. `outside`:
+/// why an argument names nothing in this index, said with an empty answer or an error.
+fn run_op(root: &Path, op: Op, json: bool, (max_bytes, offset): (usize, usize), outside: Option<&str>) -> Result<i32> {
     use crate::ops::Answer;
     let mut s = open_fresh(root)?;
-    let answer = crate::ops::run(&mut s, &op)?;
+    let answer = match (crate::ops::run(&mut s, &op), outside) {
+        (Err(e), Some(why)) => anyhow::bail!("{e:#} ({why})"),
+        (answer, _) => answer?,
+    };
     // these print nothing on standard output when empty, so a pipeline sees no lines
-    let quiet = matches!(answer, Answer::Outline { .. } | Answer::Deps { .. } | Answer::Rdeps { .. } | Answer::Similar(_) | Answer::Dupes(_));
+    let quiet = matches!(answer, Answer::Outline { .. } | Answer::Deps { .. } | Answer::Rdeps { .. } | Answer::Similar(_) | Answer::Dupes(..));
+    let why = outside.filter(|_| answer.is_empty());
     if json {
         println!("{}", serde_json::to_string_pretty(&answer.json())?);
     } else if quiet && answer.is_empty() {
-        eprintln!("{}", answer.text());
+        eprintln!("{}{}", answer.text(), why.map(|w| format!(" ({w})")).unwrap_or_default());
+        return Ok(1);
     } else {
         let text = answer.text_within(max_bytes, offset);
         print!("{text}{}", if text.ends_with('\n') { "" } else { "\n" });
+    }
+    if let Some(w) = why {
+        eprintln!("[scrutate] {w}");
     }
     Ok(if answer.is_empty() { 1 } else { 0 })
 }
@@ -1130,13 +1229,17 @@ fn watch_command(root: &Path) -> Result<i32> {
 fn check_command(root: &Path, files: bool, json: bool) -> Result<i32> {
     let mut s = crate::open(root)?;
     let report = s.ix.check(files)?;
+    // a constant has no postings, so no segment row: the counts below leave it out
+    let constants: i64 = s.ix.db.query_row("SELECT COUNT(*) FROM chunks WHERE kind = 'constant'", [], |r| r.get(0)).unwrap_or(0);
     if json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
+        let mut v = serde_json::to_value(&report)?;
+        v["constants"] = serde_json::json!(constants);
+        println!("{}", serde_json::to_string_pretty(&v)?);
     } else {
         println!("database: {}", if report.database_ok { "ok" } else { "CORRUPT" });
         println!("segments: {} checked, {}", report.segments, if report.segments_ok { "ok" } else { "DAMAGED" });
         println!(
-            "chunks: {} in database, {} alive in segments{}",
+            "chunks: {} ranked in the database, {} alive in segments{}, {constants} constants (no postings)",
             report.chunks_db,
             report.chunks_alive,
             if report.chunks_db == report.chunks_alive { "" } else { "  MISMATCH" }

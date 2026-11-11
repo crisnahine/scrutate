@@ -261,6 +261,23 @@ fn search_also_prints_other_repositories_by_the_path_given() {
     // a location of another repository is asked about with --root
     let (code, out, _) = run_in(&one, &["--root", "../two", "symbol", "src/db.py:6"], &[]);
     assert!(code == 0 && out.contains("only_in_two"), "{out}");
+    // or as printed: the index above the file answers, with paths as it stores them
+    for (args, want) in [
+        (&["symbol", "../two/src/db.py:6-7"][..], "src/db.py:6-7  [function] only_in_two"),
+        (&["outline", "../two/src/db.py"], "only_in_two"),
+        (&["refs", "only_in_two", "--def", "../two/src/db.py"], "src/db.py:6-7"),
+        (&["symbol", "../x/one/src/auth.py:1-3"], "src/auth.py:1-3"),
+    ] {
+        let (code, out, err) = run_in(&one, args, &[]);
+        assert!(code == 0 && out.contains(want), "{args:?}: {code} {out}{err}");
+        assert_eq!(err.lines().filter(|l| l.starts_with("[scrutate] using the index in ")).count(), 1, "{args:?}: {err}");
+    }
+    // a file no index holds keeps the error and says why
+    outer.write("loose/a.py", b"def loose_fn():\n    return 1\n");
+    let (code, _, err) = run_in(&one, &["symbol", "../loose/a.py:1"], &[]);
+    assert!(code == 2 && err.contains("no symbol at ../loose/a.py:1 (../loose/a.py is outside the repository)"), "{err}");
+    let (code, _, err) = run_in(&one, &["outline", "../loose/a.py"], &[]);
+    assert!(code == 1 && err.contains("no symbols in ../loose/a.py") && err.contains("is outside the repository"), "{err}");
     // without --also, no hint
     let (_, _, err) = run_in(&one, &["search", "renew token"], &[]);
     assert!(!err.contains("--root"), "{err}");
@@ -276,6 +293,18 @@ fn check_reports_consistency_and_staleness() {
     assert_eq!(v["database_ok"], true);
     assert_eq!(v["chunks_db"], v["chunks_alive"]);
     assert_eq!(v["files_changed"], 0);
+    // constants have no segment row: counted apart
+    r.write("pkg/consts.py", b"LIMIT = 10\nNAME = 'x'\n");
+    r.run(&["index"]);
+    let (_, json, _) = r.run(&["check", "--json"]);
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert!(v["constants"].as_u64().unwrap() >= 2 && v["chunks_db"] == v["chunks_alive"], "{json}");
+    let (code, out, _) = r.run(&["check"]);
+    let line =
+        format!("chunks: {} ranked in the database, {} alive in segments, {} constants (no postings)", v["chunks_db"], v["chunks_alive"], v["constants"]);
+    assert!(code == 0 && out.lines().any(|l| l == line), "{line}\n{out}");
+    fs::remove_file(r.root.join("pkg/consts.py")).unwrap();
+    r.run(&["index"]);
     r.write("pkg/m0.py", b"def changed():\n    pass\n");
     let (code, out, _) = r.run(&["check", "--files", "--json"]);
     assert_eq!(code, 1, "stale files are reported: {out}");
@@ -1327,6 +1356,45 @@ fn tsquery_on_a_single_file() {
     let (code, out, _) = r.run(&["tsquery", "python", "(function_definition name: (identifier) @n)", "pkg/m1.py", "--no-cache"]);
     assert_eq!(code, 0);
     assert!(out.lines().count() >= 2 && out.lines().all(|l| l.starts_with("pkg/m1.py:")), "{out}");
+}
+
+#[test]
+fn tsquery_names_a_missing_path_reads_paths_under_root_and_says_where_limit_stopped() {
+    let r = python_repo("tsqpaths");
+    let q = "(function_definition name: (identifier) @n)";
+    // as grep: the missing path is named, the others are still searched, exit 2
+    let (code, out, err) = r.run(&["tsquery", "python", q, "pkg/m1.py", "nope.py", "--no-cache"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(out.lines().count() == 2 && err.contains("nope.py"), "{out}{err}");
+    let (code, _, err) = r.run(&["tsquery", "python", q, "nope.py", "--no-cache"]);
+    assert!(code == 2 && err.contains("nope.py"), "{err}");
+    // with --root from another directory, a path not found here is read under the root
+    let elsewhere = r.root.join("pkg");
+    let (code, out, err) = run_in(&elsewhere, &["--root", r.root.to_str().unwrap(), "tsquery", "python", q, "pkg/m1.py", "--no-cache"], &[]);
+    assert!(code == 0 && out.lines().count() == 2 && out.contains("make_widget_1"), "{code} {out}{err}");
+    let (code, out, _) = r.run(&["tsquery", "python", q, "pkg", "--limit", "3", "--no-cache"]);
+    assert_eq!(code, 0);
+    assert_eq!(out.lines().count(), 4, "{out}");
+    assert_eq!(out.lines().last(), Some("(stopped at 3 matches: raise limit to see more)"));
+    let (_, out, _) = r.run(&["tsquery", "python", q, "pkg", "--limit", "24", "--no-cache"]);
+    assert!(!out.contains("stopped at"), "{out}");
+}
+
+#[test]
+fn rdeps_counts_only_unresolved_imports_that_could_name_the_target() {
+    let r = Repo::new("rdeps_js");
+    r.write("web/a.js", b"export function a() { return 1 }\n");
+    r.write("web/b.js", b"import { a } from './a'\nimport x from '../outside'\nimport 'side-effect'\nexport function b() { return a() }\n");
+    let (code, out, err) = r.run(&["rdeps", "web/a.js"]);
+    assert_eq!((code, out.as_str()), (0, "web/b.js:1  ./a\n"), "{err}");
+    // a relative import whose path is another directory's `a`, and a bare package named `a`
+    r.write("other/c.js", b"import './a'\nimport 'a'\n");
+    let (_, out, _) = r.run(&["rdeps", "web/a.js"]);
+    assert!(!out.contains("could not be resolved"), "{out}");
+    // the target's directory, which has no index file: it may mean the target
+    r.write("web/sub/d.js", b"import '..'\n");
+    let (_, out, _) = r.run(&["rdeps", "web/a.js"]);
+    assert!(out.contains("(1 more import could not be resolved and may name it)"), "{out}");
 }
 
 #[test]

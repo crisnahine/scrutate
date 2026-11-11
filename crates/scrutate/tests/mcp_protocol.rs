@@ -230,6 +230,22 @@ fn an_explicit_refresh_interval_is_a_floor() {
 }
 
 #[test]
+fn a_new_file_an_argument_names_is_indexed_within_the_refresh_interval() {
+    let r = Repo::new("named_new", 2);
+    fs::write(r.root.join(".ignore"), "skipped.py\n").unwrap();
+    let mut floor = Session::start(&r, &["serve", "--refresh-interval", "3600"], &[]);
+    assert!(floor.text(1, "find_symbol", json!({"name": "make_widget_1"})).contains("pkg/m1.py"));
+    fs::write(r.root.join("pkg/late.py"), "def arrived_late():\n    return 1\n").unwrap();
+    fs::write(r.root.join("skipped.py"), "def ignored_fn():\n    return 1\n").unwrap();
+    let outline = floor.text(2, "outline", json!({"path": "pkg/late.py"}));
+    assert!(outline.contains("arrived_late"), "{outline}");
+    assert!(floor.text(3, "find_symbol", json!({"name": "arrived_late"})).contains("pkg/late.py"), "the file stays indexed");
+    // a file a scan would not index is not indexed for naming it either
+    let outline = floor.text(4, "outline", json!({"path": "skipped.py"}));
+    assert!(outline.contains("not indexed"), "{outline}");
+}
+
+#[test]
 fn serve_refuses_an_offset_it_would_not_use() {
     let r = Repo::new("offset", 3);
     let out = spawn(&r, &["--offset", "2", "serve"], &[]).wait_with_output().unwrap();

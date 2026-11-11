@@ -67,41 +67,51 @@ const SOURCE_EXTS: &[&str] = &[
     ".lua", ".c", ".h", ".cc", ".cpp", ".hpp", ".cs", ".jl", ".r", ".R", ".sh", ".zig", ".elm",
 ];
 
+fn join(base: &str, rel: &str) -> String {
+    let mut parts: Vec<&str> = if base.is_empty() { Vec::new() } else { base.split('/').collect() };
+    for seg in rel.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            s => parts.push(s),
+        }
+    }
+    parts.join("/")
+}
+
+/// The repository path a relative import of `from` names before an extension or an index file
+/// is tried (`./x`, `../x`, Python's `.x`, `..pkg.mod` and `.`); None for any other module.
+fn relative_path(module: &str, from: &str) -> Option<String> {
+    let dir = from.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+    let up = |levels: usize| {
+        let mut base = dir.to_string();
+        for _ in 1..levels {
+            base = base.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default();
+        }
+        base
+    };
+    if module.starts_with("./") || module.starts_with("../") {
+        Some(join(dir, module))
+    } else if module.chars().all(|c| c == '.') {
+        Some(up(module.len()))
+    } else if module.starts_with('.') {
+        // python relative import: `.x` / `..pkg.mod`
+        let ups = module.chars().take_while(|c| *c == '.').count();
+        Some(join(&up(ups), &module[ups..].replace('.', "/")))
+    } else {
+        None
+    }
+}
+
 /// Best-effort mapping of an import string onto a file of the repository. Handles dotted/`::`-separated
 /// module paths, relative paths (`./x`, `../x`, `from . import`), `crate::` roots and index files.
 pub fn resolve(module: &str, from: &str, files: &HashSet<String>, root: &Path) -> Option<String> {
     let dir = from.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
     let mut candidates: Vec<String> = Vec::new();
-    let join = |base: &str, rel: &str| -> String {
-        let mut parts: Vec<&str> = if base.is_empty() { Vec::new() } else { base.split('/').collect() };
-        for seg in rel.split('/') {
-            match seg {
-                "" | "." => {}
-                ".." => {
-                    parts.pop();
-                }
-                s => parts.push(s),
-            }
-        }
-        parts.join("/")
-    };
-    if module.starts_with('.') && !module.trim_start_matches('.').is_empty() && !module.starts_with("./") && !module.starts_with("../") {
-        // python relative import: `.x` / `..pkg.mod`
-        let ups = module.chars().take_while(|c| *c == '.').count();
-        let rest = module[ups..].replace('.', "/");
-        let mut base = dir.to_string();
-        for _ in 1..ups {
-            base = base.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default();
-        }
-        candidates.push(join(&base, &rest));
-    } else if module.chars().all(|c| c == '.') {
-        let mut base = dir.to_string();
-        for _ in 1..module.len() {
-            base = base.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default();
-        }
-        candidates.push(base);
-    } else if module.starts_with("./") || module.starts_with("../") {
-        candidates.push(join(dir, module));
+    if let Some(path) = relative_path(module, from) {
+        candidates.push(path);
     } else {
         let m = module.strip_prefix("crate::").map(|m| format!("src/{m}")).unwrap_or_else(|| module.to_string());
         let slashed = m.replace("::", "/").replace('.', "/");
@@ -149,6 +159,8 @@ pub fn resolve(module: &str, from: &str, files: &HashSet<String>, root: &Path) -
     crate::resolve::below_own_package(root, &segs).and_then(|rest| try_one(&rest.join("/")))
 }
 
+const JS_EXTS: &[&str] = &[".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx"];
+
 /// (importing file, line, module as written)
 pub type Importer = (String, i64, String);
 
@@ -158,8 +170,8 @@ pub fn rdeps(ix: &Index, target: &str) -> Result<Vec<Importer>> {
     Ok(rdeps_counted(ix, target)?.0)
 }
 
-/// `rdeps`, and how many imports resolved to no file although their module path names one
-/// spelled like `target` (they may import it).
+/// `rdeps`, and how many imports resolved to no file although they may import `target`: a
+/// relative one whose path is the target's, or a bare one that names the target's module.
 pub fn rdeps_counted(ix: &Index, target: &str) -> Result<(Vec<Importer>, usize)> {
     let files = all_files(ix)?;
     let mut st = ix.db.prepare("SELECT path, line, module FROM imports ORDER BY path, line")?;
@@ -179,6 +191,7 @@ pub fn rdeps_counted(ix: &Index, target: &str) -> Result<(Vec<Importer>, usize)>
             last
         }
     };
+    let target_dir = target.rsplit_once('/').map_or("", |(d, _)| d);
     let mut names = crate::resolve::Resolver::new(ix)?;
     let (mut out, mut unsure) = (Vec::new(), 0);
     for (path, line, module) in rows {
@@ -193,8 +206,15 @@ pub fn rdeps_counted(ix: &Index, target: &str) -> Result<(Vec<Importer>, usize)>
                 || dotted_pkg.as_deref().map(|p| module == p || module.replace("::", ".") == p).unwrap_or(false)
                 // an include found through a search path the index does not know
                 || (found.is_empty() && module.rsplit('/').next() == Some(target.rsplit('/').next().unwrap_or(target)));
-            let relative = module.starts_with('.') && module.trim_start_matches('.').is_empty();
-            if !hit && found.is_empty() && (relative || module.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '-')).any(|seg| seg == own)) {
+            let may_name = match relative_path(&module, &path).filter(|_| module.starts_with('.')) {
+                // a relative import names one path: the file without its extension, or its directory
+                Some(p) => p == stem || p == target || p == target_dir,
+                // a bare name in JavaScript or TypeScript that the resolver did not map is a package
+                None => {
+                    !JS_EXTS.iter().any(|e| path.ends_with(e)) && module.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '-')).any(|seg| seg == own)
+                }
+            };
+            if !hit && found.is_empty() && may_name {
                 unsure += 1;
             }
             hit

@@ -279,7 +279,7 @@ pub struct Stop {
     pub how: &'static str,
 }
 
-const RAISE_LIMIT: &str = "raise limit to see more";
+pub const RAISE_LIMIT: &str = "raise limit to see more";
 
 /// `items` cut to `limit`, and where they stopped when there were more (ask for `limit + 1`).
 fn cut<T>(mut items: Vec<T>, limit: usize, how: &'static str) -> (Vec<T>, Option<Stop>) {
@@ -354,7 +354,7 @@ pub enum Answer {
         max_results: u64,
     },
     Similar(Vec<(Hit, f32, f32)>),
-    Dupes(Vec<DupGroup>),
+    Dupes(Vec<DupGroup>, Option<Stop>),
     Captures(Vec<Capture>, Option<Stop>),
     Reindexed(UpdateStats),
 }
@@ -465,7 +465,10 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
             Answer::Resolved { name: name.clone(), refs, only, max_results: *max_results }
         }
         Op::Similar { target, k } => Answer::Similar(crate::intel::similar(s, target, *k)?),
-        Op::Dupes { min_tokens, threshold, limit } => Answer::Dupes(crate::intel::dupes(&s.ix, *min_tokens, *threshold, *limit)?),
+        Op::Dupes { min_tokens, threshold, limit } => {
+            let (groups, stopped) = cut(crate::intel::dupes(&s.ix, *min_tokens, *threshold, limit.saturating_add(1))?, *limit, RAISE_LIMIT);
+            Answer::Dupes(groups, stopped)
+        }
         Op::Tsquery { lang, query, limit } => {
             let caps = crate::intel::tsquery(lang, query, std::slice::from_ref(&s.ix.root), limit + 1, Some(&s.ix.root))?;
             let (caps, stopped) = cut(caps, *limit, RAISE_LIMIT);
@@ -576,9 +579,9 @@ fn repo_path(s: &Searcher, path: &str) -> String {
     for seg in path.split('/') {
         match seg {
             "" | "." => {}
-            ".." => {
-                parts.pop();
-            }
+            // above the root: no repository file, and the answer names the path as given
+            ".." if parts.pop().is_none() => return path.to_string(),
+            ".." => {}
             seg => parts.push(seg),
         }
     }
@@ -830,7 +833,7 @@ fn definition_at(s: &Searcher, refs: &Resolved, name: &str, spec: &str) -> Resul
 }
 
 /// The closing line of an answer that stopped at its limit.
-fn stop_line(stopped: Option<Stop>, noun: &str) -> String {
+pub fn stop_line(stopped: Option<Stop>, noun: &str) -> String {
     stopped.map(|s| format!("(stopped at {} {noun}: {})", s.at, s.how)).unwrap_or_default()
 }
 
@@ -965,7 +968,7 @@ impl Answer {
             Answer::Refs { refs, .. } => rows(&refs.definitions).into_iter().chain(refs.groups.iter().map(|g| g.path.as_str())).collect(),
             Answer::Resolved { refs, .. } => rows(&refs.definitions).into_iter().chain(refs.occurrences.iter().map(|o| o.path.as_str())).collect(),
             Answer::Similar(v) => v.iter().map(|h| h.0.path.as_str()).collect(),
-            Answer::Dupes(groups) => groups.iter().flat_map(|g| g.members.iter().map(|m| m.0.as_str())).collect(),
+            Answer::Dupes(groups, _) => groups.iter().flat_map(|g| g.members.iter().map(|m| m.0.as_str())).collect(),
             Answer::Read { .. } | Answer::Captures(..) | Answer::Reindexed(_) => Vec::new(),
         }
     }
@@ -987,7 +990,7 @@ impl Answer {
                 None => refs.definitions.is_empty() && refs.occurrences.is_empty(),
             },
             Answer::Similar(v) => v.is_empty(),
-            Answer::Dupes(v) => v.is_empty(),
+            Answer::Dupes(v, _) => v.is_empty(),
             Answer::Captures(v, _) => v.is_empty(),
             Answer::Reindexed(_) => false,
         }
@@ -1133,8 +1136,8 @@ impl Answer {
                 noun: "results",
                 ..Parts::default()
             },
-            Answer::Dupes(groups) if groups.is_empty() => nothing("no duplicates found".to_string()),
-            Answer::Dupes(groups) => Parts {
+            Answer::Dupes(groups, _) if groups.is_empty() => nothing("no duplicates found".to_string()),
+            Answer::Dupes(groups, stopped) => Parts {
                 items: groups
                     .iter()
                     .map(|g| {
@@ -1145,6 +1148,7 @@ impl Answer {
                         out
                     })
                     .collect(),
+                tail: stop_line(*stopped, "groups"),
                 noun: "groups",
                 ..Parts::default()
             },
@@ -1173,7 +1177,7 @@ impl Answer {
     pub fn stopped(&self) -> Option<Stop> {
         match self {
             Answer::Hits { stopped, .. } | Answer::Callers { stopped, .. } | Answer::Callees { stopped, .. } => *stopped,
-            Answer::Definitions(_, stopped) | Answer::Captures(_, stopped) => *stopped,
+            Answer::Definitions(_, stopped) | Answer::Captures(_, stopped) | Answer::Dupes(_, stopped) => *stopped,
             _ => None,
         }
     }
@@ -1242,7 +1246,7 @@ impl Answer {
                 .iter()
                 .map(|(h, cos, jac)| json!({"path": h.path, "start": h.start, "end": h.end, "kind": h.kind, "qualname": h.qualname, "cosine": cos, "jaccard": jac}))
                 .collect(),
-            Answer::Dupes(groups) => serde_json::to_value(groups).unwrap_or_default(),
+            Answer::Dupes(groups, _) => serde_json::to_value(groups).unwrap_or_default(),
             Answer::Captures(caps, _) => serde_json::to_value(caps).unwrap_or_default(),
             Answer::Reindexed(st) => json!({"files_changed": st.files_changed, "files_removed": st.files_removed, "chunks": st.chunks}),
         }
@@ -1312,7 +1316,7 @@ mod tests {
         assert_eq!(Answer::Outline { path: "a.py".into(), rows: vec![] }.text(), "no symbols in a.py (not indexed or no definitions)");
         assert_eq!(Answer::Rdeps { target: "m".into(), rows: vec![], unresolved: 0 }.text(), "nothing imports m");
         assert_eq!(Answer::Hits { hits: vec![], words: vec![], snippet: true, stopped: None }.text(), "(no results)");
-        assert!(Answer::Dupes(vec![]).is_empty() && Answer::Captures(vec![], None).is_empty());
+        assert!(Answer::Dupes(vec![], None).is_empty() && Answer::Captures(vec![], None).is_empty());
         assert_eq!(
             Answer::Rdeps { target: "m".into(), rows: vec![("a.py".into(), 3, "m".into())], unresolved: 0 }.json(),
             json!([{"path": "a.py", "line": 3, "module": "m"}])

@@ -173,23 +173,30 @@ impl Repo {
 
     /// Run one operation on the index without a scan of the tree. The files the answer cites
     /// (and the ones its arguments name) are checked against the index, one `stat` each: when
-    /// one changed or is gone, those files alone are updated and the answer computed again,
-    /// once. A file no answer cites waits for the next scan. A damaged database is rebuilt and
-    /// the operation run again.
+    /// one changed or is gone, or a named one is new and a scan would index it, those files
+    /// alone are updated and the answer computed again, once. A file no answer cites or names
+    /// waits for the next scan. A damaged database is rebuilt and the operation run again.
     pub fn run_as_is(&mut self, op: &ops::Op) -> Result<ops::Answer> {
         let first = self.run_once(op);
         if self.searcher.is_none() {
             return first;
         }
-        let mut paths = op.named_paths();
+        let named = op.named_paths();
+        let mut paths = named.clone();
         if let Ok(a) = &first {
             paths.extend(a.cited().into_iter().map(str::to_string));
         }
         let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
         let stale = match self.ix.stale(&paths) {
-            Ok(s) if !s.is_empty() => s,
-            _ => return first,
+            Ok(mut s) => {
+                s.extend(self.unindexed(&named));
+                s
+            }
+            Err(_) => return first,
         };
+        if stale.is_empty() {
+            return first;
+        }
         match self.ix.update_paths(&stale) {
             Ok(_) => self.run_once(op),
             Err(e) if index::error_is_corruption(&e) => {
@@ -199,6 +206,30 @@ impl Repo {
             // another writer holds the lock, or the index cannot be written: answer as it is
             Err(_) => first,
         }
+    }
+
+    /// Of `paths` (from the root), the files the index has no row for that a scan would index:
+    /// one lookup and one `stat` each, and the ignore rules read for those alone.
+    fn unindexed(&self, paths: &[String]) -> Vec<String> {
+        let mut membership: Option<files::Membership> = None;
+        let skipped = files::skipped_dirs(&self.root);
+        let mut out = Vec::new();
+        for p in paths {
+            let plain = !p.is_empty() && Path::new(p).components().all(|c| matches!(c, std::path::Component::Normal(_)));
+            let known = || self.ix.db.query_row("SELECT 1 FROM files WHERE path=?1", [p], |_| Ok(())).is_ok();
+            if !plain || !parse::is_indexable(p) || p.split('/').any(|n| skipped.iter().any(|s| s == n)) || known() {
+                continue;
+            }
+            // the walk does not follow symbolic links
+            let full = self.root.join(p);
+            if !std::fs::symlink_metadata(&full).is_ok_and(|m| m.is_file() && m.len() <= index::MAX_FILE_BYTES) {
+                continue;
+            }
+            if membership.get_or_insert_with(|| files::Membership::new(&self.root)).may_contain(&full) {
+                out.push(p.clone());
+            }
+        }
+        out
     }
 
     fn run_once(&mut self, op: &ops::Op) -> Result<ops::Answer> {
