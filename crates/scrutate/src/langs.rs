@@ -395,10 +395,16 @@ pub(crate) fn js_this_member(node: Node, src: &[u8]) -> Option<String> {
     if !JS_FUNCS.contains(&node.child_by_field_name("right")?.kind()) {
         return None;
     }
-    let left = node.child_by_field_name("left").filter(|l| l.kind() == "member_expression")?;
+    let left = node.child_by_field_name("left")?;
     left.child_by_field_name("object").filter(|o| o.kind() == "this")?;
-    let prop = left.child_by_field_name("property").filter(|p| p.kind() == "property_identifier")?;
-    Some(text(src, prop.start_byte(), prop.end_byte()))
+    let key = match left.kind() {
+        "member_expression" => left.child_by_field_name("property").filter(|p| p.kind() == "property_identifier")?,
+        // `this["k"]` is `this.k`
+        "subscript_expression" => left.child_by_field_name("index").filter(|i| i.kind() == "string" && i.named_child_count() == 1)?.named_child(0)?,
+        _ => return None,
+    };
+    let key = text(src, key.start_byte(), key.end_byte());
+    (!key.is_empty() && !key.contains(|c: char| c == '.' || c.is_whitespace())).then_some(key)
 }
 /// The kind of a file's default export written as an expression: `export default function () {}`,
 /// `export default class {}`, `module.exports = () => ...`. A declaration is a definition already.

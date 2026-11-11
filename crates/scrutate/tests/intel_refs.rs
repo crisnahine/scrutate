@@ -338,6 +338,13 @@ fn a_call_outside_every_definition_has_the_chunk_that_holds_it_as_caller() {
 }
 
 #[test]
+fn the_outline_of_a_file_with_no_definition_is_its_module_line() {
+    let r = Repo::new("outline_text", &[("LICENSE", "MIT License\nCopyright (c) 2026\n"), ("a.py", "x = 1\n")]);
+    let (code, out) = r.run(&["outline", "LICENSE"]);
+    assert_eq!((code, out.trim()), (0, "1-2     module    LICENSE"));
+}
+
+#[test]
 fn callers_says_which_call_sites_it_did_not_check() {
     let mut files: Vec<(String, String)> = vec![
         ("a/__init__.py".into(), String::new()),

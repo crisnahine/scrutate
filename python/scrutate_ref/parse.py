@@ -479,12 +479,25 @@ def _js_member_path(node, src: bytes) -> str | None:
 def _js_this_member(node, src: bytes) -> str | None:
     """`this.x = function ...`: the member `x` of what the enclosing function or class builds."""
     left, right = node.child_by_field_name("left"), node.child_by_field_name("right")
-    if left is None or right is None or right.type not in _JS_FUNCS or left.type != "member_expression":
+    if left is None or right is None or right.type not in _JS_FUNCS:
         return None
-    obj, prop = left.child_by_field_name("object"), left.child_by_field_name("property")
-    if obj is None or obj.type != "this" or prop is None or prop.type != "property_identifier":
+    obj = left.child_by_field_name("object")
+    if obj is None or obj.type != "this":
         return None
-    return src[prop.start_byte : prop.end_byte].decode("utf8", "replace")
+    if left.type == "member_expression":
+        key = left.child_by_field_name("property")
+        if key is None or key.type != "property_identifier":
+            return None
+    elif left.type == "subscript_expression":
+        # `this["k"]` is `this.k`
+        index = left.child_by_field_name("index")
+        if index is None or index.type != "string" or index.named_child_count != 1:
+            return None
+        key = index.named_children[0]
+    else:
+        return None
+    key = src[key.start_byte : key.end_byte].decode("utf8", "replace")
+    return key if key and "." not in key and not any(c.isspace() for c in key) else None
 
 
 def _js_default_export(node, src: bytes) -> str | None:

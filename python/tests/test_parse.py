@@ -422,6 +422,14 @@ def test_a_call_outside_every_definition_belongs_to_the_chunk_that_holds_its_lin
     assert not next(c for c in parse_source("long.js", long) if c.qualname == "f").calls
 
 
+def test_a_function_set_on_this_by_a_string_key_is_a_member():
+    js = "function Foo() {\n  // Paints it.\n  this[\"paint\"] = function () {\n    return 1;\n  };\n}\n"
+    m = next(c for c in parse_source("a.js", js) if c.qualname == "Foo.paint")
+    assert (m.kind, m.start, m.doc) == ("method", 3, "Paints it.")
+    ts = "class Foo {\n  constructor() {\n    this['paint'] = () => 1;\n  }\n}\n"
+    assert any(c.qualname == "Foo.paint" for c in parse_source("a.ts", ts))
+
+
 def test_a_definition_starts_at_the_attribute_lines_right_above_it():
     rs = "/// Shows one.\n#[get(\"/users/show\")]\n#[inline]\npub fn show() {}\n\n#[cfg(test)]\n\nmod tests {}\n"
     chunks = {c.qualname: c for c in parse_source("a.rs", rs)}

@@ -257,9 +257,14 @@ fn py_string_content(raw: &str) -> String {
 
 pub fn clean_comment(raw: &str) -> String {
     let mut out = Vec::new();
+    // a PowerShell block closes on the line of its text: `<# Gets x. #>`
+    let block = raw.trim_start().starts_with("<#");
     for ln in raw.split('\n') {
         let s = COMMENT_MARK.replace(ln, "");
-        let s = s.trim_end_matches(['*', '/', ' ']).trim_end();
+        let mut s = s.trim_end_matches(['*', '/', ' ']).trim_end();
+        if block {
+            s = s.strip_suffix("#>").unwrap_or(s).trim_end();
+        }
         if !s.trim().is_empty() {
             out.push(s.to_string());
         }
@@ -1281,7 +1286,8 @@ fn leading_comment(lang: &str, node: Node, ancestors: &[(Node, Vec<Node>)], pos:
         }
         if last_row(p) >= want - 1 && p.start_position().row as i64 != header_row {
             if let Some(doc) = doc_form(lang, p, src) {
-                if parts.is_empty() {
+                // an empty form (`@doc false`) says there is none, whatever comment follows it
+                if parts.is_empty() || doc.is_empty() {
                     return doc;
                 }
                 break;
@@ -1322,7 +1328,12 @@ fn elixir_attribute<'t>(node: Node<'t>, src: &[u8]) -> Option<(String, Node<'t>)
 fn elixir_doc(node: Node, src: &[u8], word: &str) -> Option<String> {
     let (_, call) = elixir_attribute(node, src).filter(|(n, _)| n == word)?;
     let args = call.named_children(&mut call.walk()).find(|c| c.kind() == "arguments")?;
-    let arg = args.named_child(0).filter(|a| matches!(a.kind(), "string" | "sigil"))?;
+    let arg = args.named_child(0)?;
+    // `@doc false` hides the function: it has no documentation
+    if arg.kind() == "boolean" && txt(src, arg.start_byte(), arg.end_byte()) == "false" {
+        return Some(String::new());
+    }
+    let arg = Some(arg).filter(|a| matches!(a.kind(), "string" | "sigil"))?;
     let text: String = arg.named_children(&mut arg.walk()).filter(|c| c.kind() == "quoted_content").map(|c| txt(src, c.start_byte(), c.end_byte())).collect();
     Some(cleandoc(&text))
 }
@@ -1332,6 +1343,19 @@ fn doc_form(lang: &str, p: Node, src: &[u8]) -> Option<String> {
     match (lang, p.kind()) {
         ("elixir", "unary_operator") => elixir_doc(p, src, "doc"),
         ("julia", "string_literal") => Some(py_string_content(&txt(src, p.start_byte(), p.end_byte())).trim().to_string()),
+        ("erlang", "wild_attribute") => {
+            let name = p.child_by_field_name("name")?.child_by_field_name("name")?;
+            if txt(src, name.start_byte(), name.end_byte()) != "doc" {
+                return None;
+            }
+            let v = p.child_by_field_name("value")?;
+            let t = txt(src, v.start_byte(), v.end_byte());
+            match v.kind() {
+                "string" => Some(py_string_content(&t).trim().to_string()),
+                "atom" if t == "false" => Some(String::new()),
+                _ => None,
+            }
+        }
         _ => None,
     }
 }
@@ -1694,6 +1718,13 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
                 Some(ds) if !spec.docstring => py_string_content(&txt(src, ds.start_byte(), ds.end_byte())),
                 _ => leading_comment(spec.id, node, &ancestors, &pos, src, spec.wrappers, lead),
             };
+            if doc.is_empty() && spec.id == "powershell" {
+                // comment-based help may open the body instead of standing above it
+                let mut cur = node.walk();
+                let help = node.children(&mut cur).take_while(|c| c.kind() != "script_block").find(|c| c.kind() == "comment");
+                let help = help.map(|c| txt(src, c.start_byte(), c.end_byte())).filter(|t| t.starts_with("<#"));
+                doc = help.map(|t| clean_comment(&t.lines().map(str::trim_start).collect::<Vec<_>>().join("\n"))).unwrap_or_default();
+            }
             if doc.is_empty() && spec.id == "elixir" && kind == "module" {
                 let body = node.named_children(&mut node.walk()).find(|c| c.kind() == "do_block");
                 doc = body.and_then(|b| b.named_children(&mut b.walk()).find_map(|c| elixir_doc(c, src, "moduledoc"))).unwrap_or_default();
