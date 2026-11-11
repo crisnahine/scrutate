@@ -23,7 +23,8 @@ Per benchmark:
  5. Stability. A contender whose block medians differ by more than 25% was measured while the
     machine did something else. `--redo-unstable` measures such benchmarks again, once, whatever
     their status; the first measurement's status, ratio, interval and load stay in the row
-    (`first`).
+    (`first`). A warm-cache row records how much of its corpus was in the page cache when it
+    ended (`resident`); a second measurement with less than 95% there is not kept.
 Results are written after every benchmark, so an interrupted run resumes where it stopped.
 """
 from __future__ import annotations
@@ -433,6 +434,19 @@ def wait_idle(max_load, max_wait):
     return loadavg()
 
 
+def resident(lst, cwd):
+    """Fraction of the listed files' pages that are in the page cache (bench/evict.c --resident);
+    None where that cannot be measured."""
+    out = os.path.join(ROOT, "target", "evict")
+    try:
+        if not os.path.exists(out) or os.path.getmtime(out) < os.path.getmtime(os.path.join(HERE, "evict.c")):
+            subprocess.run(["cc", "-O2", "-o", out, os.path.join(HERE, "evict.c")], check=True)
+        m = re.search(r"pages: (\d+) total, (\d+) resident", subprocess.run([out, lst, "--resident"], cwd=cwd, capture_output=True, text=True).stdout)
+        return int(m.group(2)) / max(int(m.group(1)), 1) if m else None
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
 def hyperfine(cmd, cwd, env, runs, warmup, prepare=None):
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
         path = tf.name
@@ -585,6 +599,9 @@ def run_bench(b, corpora, a, cache_dir):
                 if key not in RAWREAD or cur["median"] < RAWREAD[key]["median"]:
                     RAWREAD[key] = cur
         res["rawread"] = {k: v for k, v in RAWREAD[key].items() if k != "times"}
+        if a.cache == "warm":
+            # a warm run is one whose files were in memory: on a machine short of it they are not
+            res["resident"] = resident(lst, cdir)
     decide(res, valid, a.runs)
     res["max_load"] = max(res["load"]) if res["load"] else loadavg()
     return res
@@ -618,6 +635,10 @@ def decide(res, valid, runs):
             if raw and us["median"] <= 1.15 * raw and res["tools"][best]["median"] <= 1.15 * raw:
                 res["status"] = "BLOCKED"
                 res["why"] = "tie at the hardware limit (both within 15% of reading the files)"
+
+
+# a warm-cache measurement needs this much of the corpus in the page cache
+WARM = 0.95
 
 
 def unstable(res):
@@ -754,6 +775,9 @@ def main() -> int:
         print(f"[leaderboard] {b['id']}" + (" (again: unstable)" if a.redo_unstable else ""), file=sys.stderr, flush=True)
         r = run_bench(b, a.corpora, a, cache_dir)
         if a.redo_unstable:
+            if r.get("resident") is not None and r["resident"] < WARM:
+                print(f"  not kept: {r['resident']:.0%} of the files were in the page cache", file=sys.stderr, flush=True)
+                continue
             r["first"] = {k: old.get(k) for k in ("status", "ratio", "ci95", "max_load")}
         data["benchmarks"][b["id"]] = r
         data["rawread"] = RAWREAD

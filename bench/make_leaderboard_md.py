@@ -85,7 +85,10 @@ def engine_a(data, label):
                "PARTIAL is the weaker of the two claims.")
     out.append("- A benchmark where some tool's block medians differed by more than 25% was measured while the machine did something else. "
                "Each such benchmark was measured again, once, whatever its status (`leaderboard.py --redo-unstable`); its status column gives "
-               "the first measurement too.")
+               "the first measurement too. A second measurement reflects the machine as it was by then.")
+    if any(r.get("resident") is not None for r in data["benchmarks"].values()):
+        out.append("- A warm-cache benchmark records how much of its corpus was in the page cache when it ended (`bench/evict.c --resident`); "
+                   "a row under 95% says so in its status column.")
     out.append("- Tool versions: " + "; ".join(f"{t}: `{v}`" for t, v in env["tools"].items() if v and t != "scrutate --index") + ".")
     if env.get("scrutate_sha256"):
         out.append(f"- scrutate binary measured: SHA-256 `{env['scrutate_sha256']}`.")
@@ -122,6 +125,8 @@ def engine_a(data, label):
         first = r.get("first")
         if first:
             flag += f" (measured again; first: {first['status']}" + (f" {first['ratio']:.3f}" if first.get("ratio") else "") + ")"
+        if r.get("resident") is not None and r["resident"] < 0.95:
+            flag += f" ({r['resident']:.0%} of the files in the page cache)"
         out.append(f"| {bid} ({r['reference']['lines']:,} lines) | " + " | ".join(cells) + f" | {idx} | {ms(r.get('rawread', {}).get('median'))} | {ratio} | {r['status']}{flag} |")
     out.append("")
     for bid, r in data["benchmarks"].items():

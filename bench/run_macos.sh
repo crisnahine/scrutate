@@ -16,13 +16,18 @@ log() { echo "=== $* $(date '+%Y-%m-%d %H:%M:%S')" | tee -a "$out/chain.log"; }
 bin=$(shasum -a 256 target/release/scrutate | cut -c1-16)
 : > "$out/chain.log"
 log "start $bin, built $(( ($(date +%s) - $(stat -f %m target/release/scrutate)) / 60 )) minutes ago"
-python3 bench/leaderboard.py --corpora "$corpora" --out "$out/leaderboard-warm.json" --max-load 40 --contender 1.15 --force \
-  > "$out/leaderboard-warm.log" 2>&1
+warm=(--corpora "$corpora" --out "$out/leaderboard-warm.json" --max-load 40 --contender 1.15)
+cold=(--corpora "$corpora" --out "$out/leaderboard-cold.json" --cache cold --cold-prepare "$PWD/target/evict {list}" --runs 30 --max-load 40 --contender 1.15
+  --only linux/literal linux/case-insensitive llvm/literal ripgrep/literal smallfiles/literal)
+python3 bench/leaderboard.py "${warm[@]}" --force > "$out/leaderboard-warm.log" 2>&1
 log "warm exit $?"
-python3 bench/leaderboard.py --corpora "$corpora" --out "$out/leaderboard-cold.json" --cache cold --cold-prepare "$PWD/target/evict {list}" \
-  --only linux/literal linux/case-insensitive llvm/literal ripgrep/literal smallfiles/literal --runs 30 --max-load 40 --contender 1.15 --force \
-  > "$out/leaderboard-cold.log" 2>&1
+python3 bench/leaderboard.py "${cold[@]}" --force > "$out/leaderboard-cold.log" 2>&1
 log "cold exit $?"
+# benchmarks disturbed by other work on the machine, measured again once
+python3 bench/leaderboard.py "${warm[@]}" --redo-unstable >> "$out/leaderboard-warm.log" 2>&1
+log "warm again exit $?"
+python3 bench/leaderboard.py "${cold[@]}" --redo-unstable >> "$out/leaderboard-cold.log" 2>&1
+log "cold again exit $?"
 python3 bench/compare_tools.py --corpus "small=$corpora/py-small" --corpus "big=$corpora/py-big" --corpus "massive=$corpora/py-massive" \
   --runs 6 --out "$out/compare.json" > "$out/compare.log" 2>&1
 log "compare_tools exit $?"

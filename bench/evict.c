@@ -4,6 +4,8 @@
  *
  *   cc -O2 -o evict bench/evict.c
  *   evict LIST [--check]    (LIST: NUL-separated paths relative to the current directory)
+ *   evict LIST --resident   drops nothing: only reports how many pages are resident, which says
+ *                           whether a "warm cache" run really had the files in memory
  */
 #include <fcntl.h>
 #include <stdio.h>
@@ -27,10 +29,11 @@ static size_t resident(void *p, size_t len, size_t page) {
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        fprintf(stderr, "usage: evict LIST [--check]\n");
+        fprintf(stderr, "usage: evict LIST [--check | --resident]\n");
         return 2;
     }
-    int check = argc > 2 && strcmp(argv[2], "--check") == 0;
+    int look = argc > 2 && strcmp(argv[2], "--resident") == 0;
+    int check = look || (argc > 2 && strcmp(argv[2], "--check") == 0);
     FILE *f = fopen(argv[1], "rb");
     if (!f) return 2;
     fseek(f, 0, SEEK_END);
@@ -51,13 +54,14 @@ int main(int argc, char **argv) {
             if (m != MAP_FAILED) {
                 total += ((size_t)st.st_size + page - 1) / page;
                 if (check) before += resident(m, (size_t)st.st_size, page);
-                msync(m, (size_t)st.st_size, MS_INVALIDATE);
-                if (check) after += resident(m, (size_t)st.st_size, page);
+                if (!look) msync(m, (size_t)st.st_size, MS_INVALIDATE);
+                if (check && !look) after += resident(m, (size_t)st.st_size, page);
                 munmap(m, (size_t)st.st_size);
             }
         }
         close(fd);
     }
-    if (check) printf("pages: %zu total, %zu resident before, %zu after\n", total, before, after);
+    if (look) printf("pages: %zu total, %zu resident\n", total, before);
+    else if (check) printf("pages: %zu total, %zu resident before, %zu after\n", total, before, after);
     return 0;
 }
