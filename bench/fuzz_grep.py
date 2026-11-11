@@ -11,10 +11,13 @@ given by name is `plain.txt`, text no ignore rule names, outside the directories
 glob is drawn with named paths: an explicitly named binary file, a file named twice (alone and
 under its directory) and globs under a named directory are ripgrep differences of their own. A tree that differs is kept, with its arguments in
 ARGS.txt, under the temporary directory printed at the end. One difference is ripgrep's and is
-counted apart: with `-v` or `^$` it prints one line before a NUL byte and stops. Exit status 1
-when anything else differs.
+counted apart: with `-v` or `^$` it prints one line before a NUL byte and stops, so differences
+in the lines of the files that got a NUL byte are excused. Runs whose arguments ripgrep rejects
+(exit 2 with a message) are not compared; on any other exit 2 the output is. Exit status 1 when
+anything else differs, or when no compared run had any output.
 """
 import argparse, os, random, shutil, subprocess, sys, tempfile, time
+from collections import Counter
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--bin", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "target", "release", "scrutate"))
@@ -34,11 +37,11 @@ IGN = ["*.log", "sub/", "/a.txt", "!keep.log", "**/tmp", "*.tmp", "dir*/", "b?.t
 def line():
     return " ".join(rnd.choice(WORDS) for _ in range(rnd.randint(0, 5)))
 
-STATE = {"nul": False}
+STATE = {"nul": set()}
 
 
 def make():
-    STATE["nul"] = False
+    STATE["nul"] = set()
     shutil.rmtree(WORK, ignore_errors=True)
     os.makedirs(os.path.join(WORK, ".git"))
     for d in rnd.sample(DIRS, rnd.randint(1, 5)):
@@ -52,7 +55,7 @@ def make():
             r = rnd.random()
             if r < 0.04:
                 data = data[: len(data) // 2] + b"\x00bin" + data[len(data) // 2 :]
-                STATE["nul"] = True
+                STATE["nul"].add(os.path.join(d, n))
             elif r < 0.08:
                 data = b"\xff\xfe bad " + data
             elif r < 0.11:
@@ -64,7 +67,7 @@ def make():
                 f.write("\n".join(rnd.sample(IGN, rnd.randint(1, 3))) + "\n")
     with open(os.path.join(WORK, "plain.txt"), "w") as f:
         f.write("\n".join(line() for _ in range(rnd.randint(0, 8))) + "\n")
-    if rnd.random() < 0.2:
+    if rnd.random() < 0.2 and os.path.isfile(os.path.join(WORK, "a.txt")):
         try:
             os.symlink("a.txt", os.path.join(WORK, "link.txt"))
         except OSError:
@@ -133,11 +136,19 @@ def run(tool, a):
     try:
         p = subprocess.run(cmd, cwd=WORK, capture_output=True, timeout=20)
     except subprocess.TimeoutExpired:
-        return ["<timeout>"], -9
+        return ["<timeout>"], -9, b""
     out = p.stdout.replace(b"\r", b"").decode("utf-8", "replace").splitlines()
-    return sorted(l[2:] if l.startswith("./") else l for l in out if "WARNING: stopped searching binary file" not in l), p.returncode
+    return sorted(l[2:] if l.startswith("./") else l for l in out if "WARNING: stopped searching binary file" not in l), p.returncode, p.stderr
 
-t0, n, diffs, known, kinds = time.time(), 0, 0, 0, {}
+def in_nul_file(l):
+    return any(l == f or l.startswith((f + ":", f + "-")) for f in STATE["nul"])
+
+def only(x, y):
+    left = Counter(x)
+    left.subtract(Counter(y))
+    return [l for l, c in left.items() if c > 0]
+
+t0, n, compared, nonempty, diffs, known, kinds = time.time(), 0, 0, 0, 0, 0, {}
 shutil.rmtree(KEEP, ignore_errors=True)
 os.makedirs(KEEP, exist_ok=True)
 while time.time() - t0 < SECONDS:
@@ -145,13 +156,17 @@ while time.time() - t0 < SECONDS:
     for _ in range(6):
         a = paths(args())
         n += 1
-        r, rc = run("rg", a)
-        if rc == 2:
+        r, rc, rerr = run("rg", a)
+        if rc == 2 and rerr.strip():
             continue  # rg rejects the arguments
-        s, sc = run("sc", a)
-        if r == s and rc == sc:
+        s, sc, _ = run("sc", a)
+        compared += 1
+        nonempty += bool(r)
+        # ripgrep's other exit 2 is an error it met while searching: only the output is compared
+        if r == s and (rc == sc or rc == 2):
             continue
-        if STATE["nul"] and ("-v" in a or "^$" in a):
+        changed = only(r, s) + only(s, r)
+        if ("-v" in a or "^$" in a) and changed and all(in_nul_file(l) for l in changed):
             known += 1
             continue
         diffs += 1
@@ -169,7 +184,9 @@ while time.time() - t0 < SECONDS:
                 print("    only scrutate:", l[:100])
             sys.stdout.flush()
 shutil.rmtree(WORK, ignore_errors=True)
-print(f"{n} runs in {time.time() - t0:.0f} s (seed {SEED}): {diffs} differ, {known} are ripgrep's stop at a NUL byte" + (f"; by flags: {sorted(kinds.items(), key=lambda kv: -kv[1])[:12]}; kept under {KEEP}" if diffs else ""))
+print(f"{n} runs in {time.time() - t0:.0f} s (seed {SEED}), {compared} compared: {diffs} differ, {known} are ripgrep's stop at a NUL byte" + (f"; by flags: {sorted(kinds.items(), key=lambda kv: -kv[1])[:12]}; kept under {KEEP}" if diffs else ""))
 if not diffs:
     shutil.rmtree(HERE, ignore_errors=True)
-sys.exit(1 if diffs else 0)
+if not nonempty:
+    print("no compared run had any ripgrep output: nothing was really compared")
+sys.exit(1 if diffs or not nonempty else 0)

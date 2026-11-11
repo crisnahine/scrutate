@@ -24,16 +24,26 @@ apt-get install -y -qq make g++ pkg-config file perl python3 python3-venv silver
   libbrotli-dev unzip xz-utils curl git autoconf automake > /dev/null
 
 fetch() { [ -f "$B/src/$2" ] || curl -fsSL -o "$B/src/$2" "$1"; }
+# fetch URL NAME SHA256: the same, and the archive must have that hash (a cached one too)
+fetch_sum() { fetch "$1" "$2" && echo "$3  $B/src/$2" | sha256sum -c -; }
 if [ ! -x $B/bin/rg ]; then
   step "ripgrep 15.2.0 (release binary)"
   # its x86_64 Linux release is the musl build; aarch64 has a glibc one
   rgt=$arch-unknown-linux-gnu; [ "$arch" = x86_64 ] && rgt=x86_64-unknown-linux-musl
-  fetch https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-$rgt.tar.gz rg.tgz
+  case "$arch" in
+    x86_64) sum=33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c ;;
+    aarch64) sum=a740b91c82eaf9914cfedd353572f2791cbe0162c84101ee0951058f4dcbc90d ;;
+  esac
+  fetch_sum https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-$rgt.tar.gz rg.tgz "$sum"
   tar -C $B/src -xzf $B/src/rg.tgz && cp $B/src/ripgrep-15.2.0-$rgt/rg $B/bin/
 fi
 if [ ! -x $B/bin/hyperfine ]; then
   step "hyperfine 2.0.0 (release binary)"
-  fetch https://github.com/sharkdp/hyperfine/releases/download/v2.0.0/hyperfine-v2.0.0-$arch-unknown-linux-gnu.tar.gz hf.tgz
+  case "$arch" in
+    x86_64) sum=ae2beda2ac99c098427e4f755244552daf20e514422889cca6d44421e2d93c87 ;;
+    aarch64) sum=f8244d1e17f8da23ee6b3ae2cdc04a6a185a450f6b74e09bff12e498038fcbc9 ;;
+  esac
+  fetch_sum https://github.com/sharkdp/hyperfine/releases/download/v2.0.0/hyperfine-v2.0.0-$arch-unknown-linux-gnu.tar.gz hf.tgz "$sum"
   tar -C $B/src -xzf $B/src/hf.tgz && cp $B/src/hyperfine-v2.0.0-$arch-unknown-linux-gnu/hyperfine $B/bin/
 fi
 if [ ! -x $B/bin/ast-grep ]; then

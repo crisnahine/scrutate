@@ -22,3 +22,11 @@ for hit in repo.search("where do we refresh expired tokens", k=5):
 The GIL is released during indexing and searching, so several Python threads can drive the
 engines in parallel. `grep` returns an iterator fed by a background search thread; results are
 converted to Python objects one batch at a time, never materialised as one giant list.
+
+`grep` checks its arguments when it is called: `ValueError` for a bad pattern, glob or file type
+or no paths, `FileNotFoundError` for a path that does not exist. Matches come in the order the
+files are searched; `sort=True` gives path and line order (the first match then waits for the
+whole search). `Repo.read` raises `FileNotFoundError` for a missing file and `ValueError` for a
+path outside the repository. Ctrl-C stops a `grep` within about 100 ms. During `Repo.index()` it
+returns as quickly, but the update runs to its end in the background, and the next call on that
+`Repo` waits for it.

@@ -47,9 +47,9 @@ if ldd "$m" 2>&1 | grep -q "=>"; then echo "musl binary has dynamic dependencies
 untimed() { sed -E 's/"elapsed_ms":[0-9.eE+-]+,?//'; } # the summary's run time differs on every run
 for q in '-F fn ' '\w+::\w+\(' '--ident parseFile'; do
   # shellcheck disable=SC2086
-  { target/release/scrutate grep --sort --json $q crates || true; } | untimed > /tmp/glibc.jsonl
+  { target/release/scrutate grep --sort --json $q crates || [ $? -eq 1 ]; } | untimed > /tmp/glibc.jsonl
   # shellcheck disable=SC2086
-  { "$m" grep --sort --json $q crates || true; } | untimed > /tmp/musl.jsonl
+  { "$m" grep --sort --json $q crates || [ $? -eq 1 ]; } | untimed > /tmp/musl.jsonl
   cmp /tmp/glibc.jsonl /tmp/musl.jsonl
   echo "identical output for [$q]: $(wc -l < /tmp/glibc.jsonl) lines, $(wc -c < /tmp/glibc.jsonl) bytes"
 done | tee "$out/musl-identical.txt"

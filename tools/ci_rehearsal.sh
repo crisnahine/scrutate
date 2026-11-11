@@ -9,7 +9,7 @@
 set -euo pipefail
 step() { echo; echo "=== $* ==="; }
 export DEBIAN_FRONTEND=noninteractive CARGO_TERM_COLOR=never
-apt-get update -qq && apt-get install -y -qq curl build-essential git ripgrep musl-tools file xz-utils > /dev/null
+apt-get update -qq && apt-get install -y -qq curl build-essential git ripgrep sqlite3 musl-tools file xz-utils > /dev/null
 curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal > /dev/null 2>&1
 export PATH=$HOME/.cargo/bin:$PATH
 mkdir -p /work && tar -C /src --exclude=./.claude --exclude=./target --exclude=./dist --exclude=./dist-linux --exclude=node_modules --exclude=./bench/results --exclude=.vscode-test -cf - . | tar -C /work -xf -
@@ -52,6 +52,8 @@ pip install -q --root-user-action=ignore --force-reinstall --no-deps target/whee
 python -c "import scrutate; print(scrutate.__version__)"
 (cd python && SCRUTATE_BIN=/work/target/release/scrutate python -m pytest -q -rf tests 2>&1 | tail -6)
 python bench/differential.py --cases 200 --seed 3 2>&1 | tail -2
+python bench/fuzz_grep.py --bin target/release/scrutate --seconds 20 --seed 7 2>&1 | tail -2
+python bench/fuzz_incremental.py --bin target/release/scrutate --seconds 20 --seed 7 2>&1 | tail -2
 python bench/parity.py crates/scrutate/src target/release/scrutate --queries 50 2>&1 | tail -1
 
 step "compat job"

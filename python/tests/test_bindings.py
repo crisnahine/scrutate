@@ -5,6 +5,7 @@ Skipped when the native module is not installed, so the pure-Python reference te
 import json
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
 import threading
@@ -91,7 +92,68 @@ def test_repo_index_and_intelligence(repo):
     s = r.stats()
     assert s["files"] == 21 and s["symbols"] == 41  # 40 functions + the README heading
     assert "Module 3" in r.read("pkg/m3.py", 1, 1)
-    assert r.read("../etc/passwd").startswith("error")
+    with pytest.raises(FileNotFoundError):
+        r.read("nope.py")
+    with pytest.raises(ValueError):
+        r.read("/etc/passwd")
+
+
+def test_similar_with_k_zero_leaves_the_repo_usable(repo):
+    r = scrutate.Repo(str(repo))
+    r.index()
+    assert r.similar("make_widget_3", 0) == []
+    assert r.symbol("make_widget_3")
+
+
+def test_grep_argument_errors_at_call_time(repo):
+    with pytest.raises(ValueError):
+        scrutate.grep("x", [])
+    with pytest.raises(ValueError):
+        scrutate.grep("x", [str(repo)], globs=["a[b"])
+    with pytest.raises(ValueError):
+        scrutate.grep("x", [str(repo)], types=["no-such-type"])
+    with pytest.raises(FileNotFoundError):
+        scrutate.grep("x", [str(repo / "missing")])
+
+
+def test_grep_sort_gives_path_and_line_order(repo):
+    got = [(m.path, m.line) for m in scrutate.grep("e", [str(repo)], sort=True)]
+    assert len(got) > 100 and got == sorted(got)
+
+
+def _interrupt_latency(call, delay):
+    """Seconds from a SIGINT sent `delay` s into `call()` to the KeyboardInterrupt; None if it finished first."""
+    timer = threading.Timer(delay, os.kill, (os.getpid(), signal.SIGINT))
+    t0 = time.perf_counter()
+    timer.start()
+    try:
+        call()
+    except KeyboardInterrupt:
+        return time.perf_counter() - t0 - delay
+    finally:
+        timer.cancel()
+    return None
+
+
+@pytest.mark.skipif(not hasattr(signal, "SIGINT") or os.name == "nt", reason="needs POSIX signals")
+def test_ctrl_c_interrupts_index_and_grep(tmp_path):
+    body = "".join(f"def f_{i}_{{n}}(a, b):\n    return [a * {i}, b + {i}, str(a) + str(b)]\n\n" for i in range(60))
+    for n in range(3000):  # about 2 s to index on an M-series laptop
+        (tmp_path / f"m{n}.py").write_text(body.format(n=n))
+    r = scrutate.Repo(str(tmp_path))
+    late = _interrupt_latency(lambda: r.index(force=True), 0.2)
+    if late is None:
+        pytest.skip("index finished before the signal")
+    assert late < 1.0, f"KeyboardInterrupt came {late:.2f}s after the signal"
+    assert r.symbol("f_3_7")  # waits for the update the interrupt left running
+    # each line costs PCRE2 about 15 ms of backtracking: a few seconds in all
+    slow = tmp_path / "slow"
+    slow.mkdir()
+    (slow / "s.txt").write_text("".join(f"line {i} with some words to scan\n" for i in range(200)))
+    late = _interrupt_latency(lambda: list(scrutate.grep(r"(\w+\s?)*\d{12}$", [str(slow)], mode="pcre2", threads=1)), 0.3)
+    if late is None:
+        pytest.skip("grep finished before the signal")
+    assert late < 1.0, f"KeyboardInterrupt came {late:.2f}s after the signal"
 
 
 def test_gil_is_released_during_rust_work(repo):

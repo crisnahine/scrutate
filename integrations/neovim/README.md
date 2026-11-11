@@ -5,6 +5,8 @@
 { dir = "/path/to/scrutate/integrations/neovim", config = function() require("scrutate").setup() end }
 ```
 
+Needs Neovim 0.10 or newer (the plugin runs the CLI through `vim.system`).
+
 Commands: `:Scrutate <query>` (ranked search), `:ScrutateGrep <regex>`, `:ScrutateSymbol [name]`,
 `:ScrutateCallers [name]` (default: word under cursor). Results go to the quickfix list.
 
@@ -24,5 +26,5 @@ vim.lsp.enable("scrutate")
 
 Test: in a repository made by `integrations/fixture.sh`,
 `nvim --headless -u NONE -l integrations/neovim/test/run.lua /path/to/scrutate` runs every
-command and a go-to-definition through the language server. It last passed on Neovim 0.12.6
-(2026-11-11).
+command, before any index and after an edit, and a go-to-definition through the language
+server. It last passed on Neovim 0.12.6 (2026-11-11).

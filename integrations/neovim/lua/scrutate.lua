@@ -7,13 +7,17 @@ M.config = { bin = "scrutate", results = 15 }
 local function run(args)
   local cmd = { M.config.bin }
   vim.list_extend(cmd, args)
-  local out = vim.fn.systemlist(cmd)
-  local code = vim.v.shell_error
-  if code ~= 0 and code ~= 1 then
-    vim.notify("scrutate: " .. table.concat(out, "\n"), vim.log.levels.ERROR)
+  -- stdout alone: scrutate reports index updates on stderr
+  local ok, r = pcall(function() return vim.system(cmd, { text = true }):wait() end)
+  if not ok then
+    vim.notify("scrutate: " .. tostring(r), vim.log.levels.ERROR)
     return nil
   end
-  return table.concat(out, "\n")
+  if r.code ~= 0 and r.code ~= 1 then
+    vim.notify("scrutate: " .. vim.trim(r.stderr ~= "" and r.stderr or r.stdout), vim.log.levels.ERROR)
+    return nil
+  end
+  return r.stdout
 end
 
 local function to_qf(hits)

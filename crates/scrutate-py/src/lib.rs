@@ -11,9 +11,10 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyFileNotFoundError, PyOSError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
@@ -21,6 +22,24 @@ use scrutate::instant::{self, Case, Mode, Options};
 
 fn err<E: std::fmt::Display>(e: E) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
+}
+
+/// The engine lock, also after a panic in an earlier call (as the MCP server takes it), so one
+/// failed call does not make every later call on the Repo fail.
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Wait for the next message without the GIL, checking for Ctrl-C every 100 ms.
+/// -> None once the sender is gone.
+fn wait<T: Send>(py: Python<'_>, rx: &Mutex<mpsc::Receiver<T>>) -> PyResult<Option<T>> {
+    loop {
+        match py.detach(|| lock(rx).recv_timeout(Duration::from_millis(100))) {
+            Ok(v) => return Ok(Some(v)),
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(None),
+            Err(mpsc::RecvTimeoutError::Timeout) => py.check_signals()?,
+        }
+    }
 }
 
 /// One matching (or context) line from Engine A.
@@ -154,8 +173,11 @@ impl GrepIter {
         let Some(rx) = this.rx.as_ref() else {
             return Ok(None);
         };
-        // wait for the next batch without holding the GIL
-        let batch = py.detach(|| rx.lock().ok().and_then(|r| r.recv().ok()));
+        let batch = wait(py, rx).inspect_err(|_| {
+            this.cancel.store(true, Ordering::Relaxed);
+            this.rx = None;
+            this.buf.clear();
+        })?;
         match batch {
             Some(b) => {
                 this.buf.extend(b);
@@ -204,23 +226,25 @@ impl GrepIter {
 }
 
 impl Drop for GrepIter {
+    /// The search thread stops at its next cancel check; joining it here would hold up a
+    /// Ctrl-C for as long as one line takes to match.
     fn drop(&mut self) {
         self.cancel.store(true, Ordering::Relaxed);
         self.rx = None;
-        if let Some(h) = self.handle.take() {
-            let _ = h.join();
-        }
     }
 }
 
 /// Engine A: search `paths` for `pattern` without any index.
 ///
 /// mode: "regex" (default), "literal", "identifier" (every casing of an identifier) or "fuzzy"
-/// (within `fuzzy_edits` edits). Returns an iterator of `Match`.
+/// (within `fuzzy_edits` edits). Returns an iterator of `Match`, in the order the files are
+/// searched, or in path and line order with `sort=True` (the first match then waits for the
+/// whole search).
 #[pyfunction]
 #[pyo3(signature = (pattern, paths=vec![".".to_string()], *, mode="regex", case="sensitive", word=false, multiline=false,
                     invert=false, hidden=false, no_ignore=false, follow_links=false, globs=vec![], types=vec![],
-                    max_filesize=None, max_depth=None, max_count=None, max_results=None, before=0, after=0, threads=0, fuzzy_edits=1))]
+                    max_filesize=None, max_depth=None, max_count=None, max_results=None, before=0, after=0, threads=0, fuzzy_edits=1,
+                    sort=false))]
 #[allow(clippy::too_many_arguments)]
 fn grep(
     pattern: String,
@@ -243,6 +267,7 @@ fn grep(
     after: usize,
     threads: usize,
     fuzzy_edits: u8,
+    sort: bool,
 ) -> PyResult<GrepIter> {
     let o = Options {
         pattern,
@@ -275,9 +300,19 @@ fn grep(
         want_spans: true,
         ..Options::default()
     };
-    // validate the pattern up front so errors surface at call time, not at the first `next()`
+    // errors surface at call time, not at the first `next()`
     instant::build_matcher(&o).map_err(|e| PyValueError::new_err(e.to_string()))?;
     let roots: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+    let Some(first) = roots.first() else {
+        return Err(PyValueError::new_err("no paths to search"));
+    };
+    instant::overrides(first, &o).map_err(|e| PyValueError::new_err(format!("{e:#}")))?;
+    if let Some(r) = roots.iter().find(|r| std::fs::metadata(r).is_err()) {
+        return Err(PyFileNotFoundError::new_err(format!(
+            "no such file or directory: {}",
+            r.display()
+        )));
+    }
     let cancel = Arc::new(AtomicBool::new(false));
     let (tx, rx) = mpsc::sync_channel::<Vec<instant::Hit>>(64); // bounded: a slow consumer throttles the search
     let c2 = Arc::clone(&cancel);
@@ -289,11 +324,19 @@ fn grep(
             let c3 = Arc::clone(&c2);
             let st = instant::search(&roots, &o, Arc::clone(&c2), |h| {
                 batch.push(h);
-                if batch.len() >= 256 && tx2.send(std::mem::take(&mut batch)).is_err() {
+                if !sort && batch.len() >= 256 && tx2.send(std::mem::take(&mut batch)).is_err() {
                     c3.store(true, Ordering::Relaxed); // consumer gone
                 }
             });
-            if !batch.is_empty() {
+            if sort {
+                batch.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
+                let mut it = batch.into_iter().peekable();
+                while it.peek().is_some() {
+                    if tx.send(it.by_ref().take(256).collect()).is_err() {
+                        break;
+                    }
+                }
+            } else if !batch.is_empty() {
                 let _ = tx.send(batch);
             }
             st
@@ -313,7 +356,8 @@ fn grep(
 #[pyclass(module = "scrutate")]
 pub struct Repo {
     root: PathBuf,
-    inner: Mutex<scrutate::Repo>,
+    /// shared with the thread of an `index()` call, which outlives a Ctrl-C
+    inner: Arc<Mutex<scrutate::Repo>>,
 }
 
 fn hits_py(hits: Vec<scrutate::search::Hit>) -> Vec<Hit> {
@@ -324,10 +368,7 @@ impl Repo {
     /// The engine with its index brought up to date (checked at most once a second), as the CLI
     /// and the MCP server see it before every operation.
     fn fresh(&self) -> anyhow::Result<std::sync::MutexGuard<'_, scrutate::Repo>> {
-        let mut s = self
-            .inner
-            .lock()
-            .map_err(|_| anyhow::anyhow!("engine lock poisoned"))?;
+        let mut s = lock(&self.inner);
         s.refresh(1.0)?;
         Ok(s)
     }
@@ -343,7 +384,7 @@ impl Repo {
         let s = py.detach(move || scrutate::Repo::open(&r2)).map_err(err)?;
         Ok(Repo {
             root,
-            inner: Mutex::new(s),
+            inner: Arc::new(Mutex::new(s)),
         })
     }
 
@@ -353,16 +394,20 @@ impl Repo {
     }
 
     /// Bring the index up to date (incremental: only changed files are parsed). GIL released.
+    /// Ctrl-C returns at once; the update itself runs to its end in the background, and the next
+    /// call on this Repo waits for it.
     #[pyo3(signature = (force=false))]
     fn index<'py>(&self, py: Python<'py>, force: bool) -> PyResult<Bound<'py, PyDict>> {
-        let st = py
-            .detach(|| {
-                let mut s = self
-                    .inner
-                    .lock()
-                    .map_err(|_| anyhow::anyhow!("engine lock poisoned"))?;
-                s.update(force)
+        let (tx, rx) = mpsc::channel();
+        let inner = Arc::clone(&self.inner);
+        std::thread::Builder::new()
+            .name("scrutate-index".into())
+            .spawn(move || {
+                let _ = tx.send(lock(&inner).update(force));
             })
+            .map_err(err)?;
+        let st = wait(py, &Mutex::new(rx))?
+            .unwrap_or_else(|| Err(anyhow::anyhow!("index update panicked")))
             .map_err(err)?;
         let d = PyDict::new(py);
         d.set_item("files_total", st.files_total)?;
@@ -519,15 +564,7 @@ impl Repo {
 
     /// Index statistics as a dict. GIL released while it waits for the engine.
     fn stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let v = py
-            .detach(|| {
-                self.inner
-                    .lock()
-                    .map_err(|_| anyhow::anyhow!("engine lock poisoned"))?
-                    .ix
-                    .stats()
-            })
-            .map_err(err)?;
+        let v = py.detach(|| lock(&self.inner).ix.stats()).map_err(err)?;
         let d = PyDict::new(py);
         if let Some(m) = v.as_object() {
             for (k, val) in m {
@@ -541,9 +578,10 @@ impl Repo {
         Ok(d)
     }
 
-    /// Lines `start..=end` of a file inside the repository (never outside it).
-    #[pyo3(signature = (path, start=1, end=None, max_lines=scrutate::ops::READ_LINES))]
+    /// Lines `start..=end` of a file inside the repository (never outside it), numbered.
+    /// Raises FileNotFoundError for a missing file, ValueError for a path outside the repository.
     /// GIL released while it waits for the engine.
+    #[pyo3(signature = (path, start=1, end=None, max_lines=scrutate::ops::READ_LINES))]
     fn read(
         &self,
         py: Python<'_>,
@@ -552,11 +590,21 @@ impl Repo {
         end: Option<i64>,
         max_lines: i64,
     ) -> PyResult<String> {
-        py.detach(|| {
-            self.inner
-                .lock()
-                .map(|s| s.read(path, start, end, max_lines))
-                .map_err(|_| err("engine lock poisoned"))
+        let end = end
+            .unwrap_or(i64::MAX)
+            .min(start.saturating_add(max_lines - 1));
+        let (r, root) = py.detach(|| {
+            let s = lock(&self.inner);
+            (s.read_lines(path, start, end), s.ix.root.clone())
+        });
+        let e = match r {
+            Ok((lines, _)) => return Ok(lines.join("\n")),
+            Err(e) => e.to_string(),
+        };
+        Err(match std::fs::canonicalize(root.join(path)) {
+            Err(_) => PyFileNotFoundError::new_err(e),
+            Ok(p) if !p.starts_with(&root) => PyValueError::new_err(e),
+            Ok(_) => PyOSError::new_err(e),
         })
     }
 }

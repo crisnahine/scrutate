@@ -106,8 +106,12 @@ jobs:
           cd python && SCRUTATE_BIN=$GITHUB_WORKSPACE/target/release/scrutate python -m pytest -q tests
       - name: differential test against ripgrep
         run: |
-          sudo apt-get install -y ripgrep
+          sudo apt-get install -y ripgrep sqlite3
           python bench/differential.py --cases 200 --seed 3
+      - name: random checks against ripgrep and a fresh index
+        run: |
+          python bench/fuzz_grep.py --bin target/release/scrutate --seconds 20 --seed 7
+          python bench/fuzz_incremental.py --bin target/release/scrutate --seconds 20 --seed 7
       - name: python/rust parity on the engine's own sources
         run: python bench/parity.py crates/scrutate/src target/release/scrutate --queries 50
   musl:

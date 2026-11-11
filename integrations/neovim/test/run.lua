@@ -29,11 +29,16 @@ local function has(list, file, line)
   return false
 end
 
+-- the first command builds the index and says so on stderr, which must stay out of the JSON
+local ok, e = pcall(vim.cmd, "ScrutateSymbol make_point")
+local q = quickfix()
+check(":ScrutateSymbol works before any index", ok and #q == 1 and q[1].file == "src/geo.py" and q[1].line == 6, ok and q or e)
+
 vim.fn.system({ bin, "index" })
 check("index builds", vim.v.shell_error == 0, vim.v.shell_error)
 
 vim.cmd("Scrutate build the origin point")
-local q = quickfix()
+q = quickfix()
 check(":Scrutate finds make_point first", q[1] and q[1].file == "src/geo.py" and q[1].line == 6 and q[1].text:find("make_point", 1, true), q)
 
 vim.cmd([[ScrutateGrep def \w+]])
@@ -56,6 +61,12 @@ check("a pattern that starts with - is not read as an option", #q == 1 and has(q
 
 vim.cmd("ScrutateGrep zzzzqqqq_no_such_thing_anywhere")
 check("no match leaves an empty list", #quickfix() == 0, quickfix())
+
+-- an edit since the last index: the search updates the index first and reports it on stderr
+vim.fn.writefile({ "def fresh_one():", "    return 2" }, "src/extra.py")
+ok, e = pcall(vim.cmd, "Scrutate fresh_one")
+q = quickfix()
+check(":Scrutate after an edit, without indexing", ok and has(q, "src/extra.py", 1), ok and q or e)
 
 -- the language server, from the lsp/scrutate.lua the plugin ships, with this run's binary
 if vim.lsp.config then

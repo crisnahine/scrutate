@@ -1116,6 +1116,9 @@ impl LexStore {
     /// used by similar-code queries, which are rare and tolerate ~100 ms on 100k chunks).
     pub fn scan_b(&self, q: &[f32], limit: usize, exclude: i64) -> Vec<(i64, f32)> {
         let mut out: Vec<(i64, f32)> = Vec::new();
+        if limit == 0 {
+            return out;
+        }
         let mut row = vec![0f32; q.len()];
         for (si, s) in self.segs.iter().enumerate() {
             if s.vec().is_none() {
@@ -1204,5 +1207,23 @@ mod tests {
         let mut d = [0f32; 8];
         dequantize(&q, s, &mut d);
         assert!(d.iter().zip(&v).all(|(a, b)| (a - b).abs() <= s / 2.0));
+    }
+
+    #[test]
+    fn similar_with_a_limit_of_zero_is_empty() {
+        let root = std::env::temp_dir().join(format!("scrutate_lex_similar0_{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        for i in 0..3 {
+            let src = format!(
+                "def make_{i}(items, limit):\n    total = 0\n    for index, item in enumerate(items):\n        if index >= limit:\n            break\n        total += item * {i}\n    return total\n"
+            );
+            std::fs::write(root.join(format!("m{i}.py")), src).unwrap();
+        }
+        let mut repo = crate::Repo::open(&root).unwrap();
+        repo.update(true).unwrap();
+        assert!(!crate::intel::similar(&mut repo, "make_1", 3).unwrap().is_empty());
+        assert!(crate::intel::similar(&mut repo, "make_1", 0).unwrap().is_empty());
+        drop(repo);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

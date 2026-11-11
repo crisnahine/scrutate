@@ -7,8 +7,9 @@ Each step applies 1 to 4 random edits (new file, edit, delete, rename, case-only
 .gitignore written or removed, binary or Latin-1 content, an emptied file) in a tree with a
 `.git` directory, runs `scrutate index --no-text`, indexes a copy of the tree from scratch, and
 compares chunks, files, call edges and imports of the two databases. Every 15 steps it runs
-`scrutate check`. Needs the sqlite3 command line tool. Exit status 1 on any mismatch; the tree
-that differed is kept under the temporary directory printed at the end.
+`scrutate check`. Needs the sqlite3 command line tool; a failing sqlite3 counts as a problem.
+Exit status 1 on any mismatch, or when no step compared a database holding a file; the tree that
+differed is kept under the temporary directory printed at the end.
 """
 import argparse, os, random, shutil, subprocess, sys, tempfile, time
 
@@ -100,11 +101,13 @@ def dump(root):
     if p.returncode != 0:
         return None, p.stderr.strip()[-300:]
     q = subprocess.run(["sqlite3", os.path.join(root, ".scrutate", "index.db"), Q], capture_output=True, text=True)
+    if q.returncode != 0:
+        return None, f"sqlite3 exit {q.returncode}: {q.stderr.strip()[-300:]}"
     return q.stdout.splitlines(), p.stderr.strip()[-200:]
 
 shutil.rmtree(T, ignore_errors=True)
 os.makedirs(os.path.join(T, ".git"))
-t0, steps, bad, log = time.time(), 0, 0, []
+t0, steps, with_files, bad, log = time.time(), 0, 0, 0, []
 while time.time() - t0 < SECONDS and bad < 3:
     ops = [op() for _ in range(rnd.randint(1, 4))]
     log.append(ops)
@@ -116,7 +119,9 @@ while time.time() - t0 < SECONDS and bad < 3:
     if inc is None or fresh is None:
         bad += 1
         print(f"step {steps}: index failed: {err or err2}; ops {ops}")
-    elif inc != fresh:
+    elif inc == fresh:
+        with_files += any(l.startswith("file|") for l in inc)
+    else:
         bad += 1
         only_inc = [l for l in inc if l not in fresh][:5]
         only_fresh = [l for l in fresh if l not in inc][:5]
@@ -131,7 +136,9 @@ while time.time() - t0 < SECONDS and bad < 3:
             print(f"step {steps}: check failed: {c.stdout.strip()[-300:]}")
     shutil.rmtree(F, ignore_errors=True)
     sys.stdout.flush()
-print(f"{steps} steps in {time.time() - t0:.0f} s (seed {SEED}): {bad} problems; tree has {len(files())} files" + (f"; kept under {HERE}" if bad else ""))
+print(f"{steps} steps in {time.time() - t0:.0f} s (seed {SEED}), {with_files} equal with files indexed: {bad} problems; tree has {len(files())} files" + (f"; kept under {HERE}" if bad else ""))
 if not bad:
     shutil.rmtree(HERE, ignore_errors=True)
-sys.exit(1 if bad else 0)
+if not with_files:
+    print("no step compared an index holding a file: nothing was really compared")
+sys.exit(1 if bad or not with_files else 0)
