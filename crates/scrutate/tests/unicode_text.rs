@@ -119,6 +119,14 @@ fn unspaced_scripts_are_bigrams_and_spaced_scripts_are_words() {
     assert_eq!(tokenize2("parsing_выручки", None).0, vec!["pars", "выручки"]);
     assert_eq!(tokenize2("x関数y", None).0, vec!["関数"]);
     assert_eq!(query_terms("合計 合計"), vec!["合計"]);
+    // Thai, Lao, Myanmar, Khmer, Javanese: no spaces between words either
+    for run in ["ภาษาไทย", "ພາສາລາວ", "မြန်မာစာ", "ភាសាខ្មែរ", "ꦧꦱꦗꦮ"] {
+        let chars: Vec<char> = run.chars().collect();
+        let pairs: Vec<String> = chars.windows(2).map(|p| p.iter().collect()).collect();
+        assert_eq!(tokenize2(run, None).0, pairs, "{run}");
+    }
+    // Tibetan marks its syllables: the tsheg between them ends a run
+    assert_eq!(tokenize2("བོད་སྐད", None).0, vec!["བོ", "ོད", "སྐ", "ྐད"]);
 }
 
 #[test]

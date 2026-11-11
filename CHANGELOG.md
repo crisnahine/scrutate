@@ -148,8 +148,9 @@ First release.
 - Ranker v8, fitted on Python and on 16 repositories in Rust, Go, Java, JavaScript and TypeScript:
   better than v7 on held-out code in 56 of 58 language, variant and query-type cells, never worse
   beyond noise (docs/QUALITY.md).
-- Ranked search finds words of every script: Han, kana and Thai become overlapping character
-  pairs, other scripts one lowercased token per word; an all-ASCII text gives the tokens it gave
+- Ranked search finds words of every script: scripts written without spaces (Han, kana, Thai,
+  Lao, Tibetan, Myanmar, Khmer, the Tai scripts, Balinese and Javanese) become overlapping
+  character pairs, other scripts one lowercased token per word; an all-ASCII text gives the tokens it gave
   before. Names compare in NFC (new dependency `unicode-normalization`), and a definition name
   over 200 bytes is a symbol when it has no whitespace.
 - Constants are symbols of kind `constant` (Rust `const` and `static`, Go package `const` and

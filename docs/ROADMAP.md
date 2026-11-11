@@ -134,9 +134,8 @@ settings in docs/RELEASING.md, public, tag `v0.1.0`.
   ripgrep does; `grep_code` skips them, as the index does.
 - The Python reference reads `.rgignore` files (ripgrep reads them for it) and the engine does
   not; without ripgrep installed, the reference ignores `.gitignore` as well.
-- In ranked search, a word of a script other than Han, kana and Thai is a whole run of letters.
-  Lao, Khmer and Myanmar are written without spaces, so a word inside a longer run there is not a
-  token of its own. Traditional and simplified Chinese characters are different tokens.
+- In ranked search, traditional and simplified Chinese characters are different tokens: a query
+  in one form does not find text written in the other.
 - A C++ function declared at the top level without a body (`Shape make();`) is not a symbol. A
   method declared in its class and defined outside it is two symbols with one qualified name: the
   declaration (`method`) and the definition (`function`).

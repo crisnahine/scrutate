@@ -170,7 +170,7 @@ Counts: PASS 121 · PARTIAL 14 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 |---|---|---|---|---|
 | R-12.1 | Filesystem edge cases | long names, spaces/unicode names, dotfiles, no extension, uppercase extensions, case-colliding paths (benchmark corpora) | robustness | PASS |
 | R-12.2 | Operating-system differences | portable code, CRLF/CR handling, `/`-normalised paths, SMB lock semantics | tests pass on macOS (APFS, SMB share) and Linux (ext4 in a container); the Windows-only code (console handler, path handling) compiles and links for x86_64-pc-windows-gnu | PARTIAL (no Windows run) |
-| R-12.3 | Unicode | lossy decoding, boundary safety, Unicode case folding in the trigram conditions; search tokens for words of every script (Han, kana and Thai as character bigrams) and names compared in NFC, in both engines | robustness, proptest, `textindex::tests::unicode_case_folding_is_covered`, `tests/unicode_text.rs` | PASS |
+| R-12.3 | Unicode | lossy decoding, boundary safety, Unicode case folding in the trigram conditions; search tokens for words of every script (scripts written without spaces as character bigrams) and names compared in NFC, in both engines | robustness, proptest, `textindex::tests::unicode_case_folding_is_covered`, `tests/unicode_text.rs` | PASS |
 | R-12.4 | Binary files | NUL sniff (Engine B), `BinaryDetection::quit` (Engine A), text index keeps the bytes before the first NUL | robustness; LEADERBOARD `binheavy/literal` | PASS |
 | R-12.5 | Invalid encodings | invalid UTF-8 lossy; UTF-16 with a BOM transcoded by both engines | `cli.rs::utf16_bom_is_searched_by_engine_a_and_indexed_by_engine_b` | PASS |
 | R-12.6 | Symlinks | not followed by default, loop-safe with `-L` | robustness | PASS |

@@ -135,8 +135,9 @@ members, Java `static final` fields, Python module-level names written in capita
 `symbol`, `outline`, `read_code symbol` and `refs` find them; ranked search (`search`, `find`,
 the MCP `search_code`) never returns one.
 
-Ranked search reads words of every script. Han, kana and Thai, written without spaces, become
-overlapping pairs of characters, so `天気` finds `東京の天気`; any other script gives one
+Ranked search reads words of every script. Scripts written without spaces (Han, kana, Thai, Lao,
+Tibetan, Myanmar, Khmer, the Tai scripts, Balinese and Javanese) become overlapping pairs of
+characters, so `天気` finds `東京の天気`; any other script gives one
 lowercased token per word. Only ASCII words are split at case changes and stemmed. Names
 compare in Unicode NFC, so a name typed with a combining accent finds the precomposed spelling.
 A definition name longer than 200 bytes is still a symbol when it holds no whitespace.

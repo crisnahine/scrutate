@@ -159,9 +159,11 @@ ranked search never sees them.
 ### Tokens (`text.rs`)
 Index and query use one tokenizer, in both engines. An ASCII word is split at `_` and case
 changes, lowercased and stemmed (Snowball English); a compound identifier also gives its joined
-form. A word with other characters is normalised to NFC first: runs of Han, kana and Thai, which
-are written without spaces, give overlapping character bigrams (a lone character itself), and
-any other script gives one lowercased token per word, with the final sigma folded. A text that
+form. A word with other characters is normalised to NFC first: runs of a script written without
+spaces (Han, kana, Thai, Lao, Tibetan, Myanmar, Khmer, the Tai scripts, Balinese and Javanese)
+give overlapping character bigrams (a lone character itself), and any other script gives one
+lowercased token per word, with the final sigma folded. A Tibetan run ends at the tsheg that
+closes each syllable. A text that
 is all ASCII gives the tokens it gave before Unicode words were added, so its postings did not
 change. Names are compared through a key that ignores case and `_`, in NFC with the final sigma
 folded, so two spellings of one accented name are one name.

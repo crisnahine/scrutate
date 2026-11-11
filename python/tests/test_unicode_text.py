@@ -69,6 +69,11 @@ def test_unspaced_scripts_are_bigrams_and_spaced_scripts_are_words():
     assert tokenize2("parsing_выручки")[0] == ["pars", "выручки"]
     assert tokenize2("x関数y")[0] == ["関数"]
     assert query_terms("合計 合計") == ["合計"]
+    # Thai, Lao, Myanmar, Khmer, Javanese: no spaces between words either
+    for run in ["ภาษาไทย", "ພາສາລາວ", "မြန်မာစာ", "ភាសាខ្មែរ", "ꦧꦱꦗꦮ"]:
+        assert tokenize2(run)[0] == [run[i:i + 2] for i in range(len(run) - 1)], run
+    # Tibetan marks its syllables: the tsheg between them ends a run
+    assert tokenize2("བོད་སྐད")[0] == ["བོ", "ོད", "སྐ", "ྐད"]
 
 
 def test_names_compare_in_nfc(tmp_path):
