@@ -174,6 +174,16 @@ fn java_calls_resolve_through_packages_types_imports_and_overloads() {
     assert_eq!(v["unresolved"], serde_json::json!([]), "{v}");
     let (_, text) = r.run(&["callers", "scale"]);
     assert!(!text.contains("could not"), "every call of scale is decided: {text}");
+    // imports name files through the package declarations, wherever the source root is
+    let deps = r.json(&["deps", &format!("{APP}/Main.java"), "--json"]);
+    let resolved: Vec<&str> = deps.as_array().unwrap().iter().filter_map(|d| d["resolved"].as_str()).collect();
+    for want in ["Circle.java", "Shape.java", "Square.java"] {
+        assert!(resolved.iter().any(|p| p.ends_with(&format!("{SHAPES}/{want}"))), "{want}: {deps}");
+    }
+    let (_, importers) = r.run(&["rdeps", &format!("{SHAPES}/Circle.java")]);
+    assert!(importers.contains(&format!("{APP}/Main.java")), "{importers}");
+    let (_, importers) = r.run(&["rdeps", &format!("{APP}/Util.java")]);
+    assert!(importers.contains("MainTest.java"), "a static import names the class file: {importers}");
     // two overloads of one arity: the call stands for both, and each lists it among its callers
     for line in [4, 8] {
         let (_, text) = r.run(&["callers", &format!("{APP}/Fmt.java:{line}")]);

@@ -1713,12 +1713,22 @@ impl<'a> Resolver<'a> {
     /// language of `from`; an empty list when it reads it and finds no file.
     pub fn import_files(&mut self, from: &str, line: i64, module: &str) -> Option<Vec<String>> {
         let fi = self.file(from);
-        let lang = fi.lang.filter(|&l| l != Lang::Java)?;
+        let lang = fi.lang?;
         let mut out: Vec<String> = Vec::new();
         match lang {
+            Lang::Java => {
+                // `a.b.*` names a package, or the members of a class (`import static a.b.C.*`)
+                let name = module.trim_end_matches(".*");
+                if module.ends_with(".*") {
+                    out.extend(self.java_package_files(name).unwrap_or_default());
+                }
+                if out.is_empty() {
+                    out.extend(self.java_path(name).ok().and_then(|id| self.def_row(id)).map(|(path, _)| path));
+                }
+            }
             Lang::Js => out.extend(self.js_module(from, module)),
             Lang::Go => out.extend(self.module_files(from, lang, module).unwrap_or_default()),
-            Lang::Python | Lang::Rust | Lang::Java => {
+            Lang::Python | Lang::Rust => {
                 let kinds: &[&str] = if lang == Lang::Python { &["import_from_statement"] } else { &["use_declaration"] };
                 let range = statement_at(&fi, line, kinds);
                 let named = fi.bindings.iter().filter(|b| range.as_ref().is_some_and(|r| b.sites.first().is_some_and(|s| r.contains(s))));
