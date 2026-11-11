@@ -1,5 +1,7 @@
 # Release: binaries for every declared platform, abi3, cp314t and abi3t wheels, checksums, SBOM and
 # build provenance attestations (Sigstore, via GitHub artifact attestations). Triggered by a tag.
+# A manual run is a rehearsal: it builds, tests and packages on every platform, and publishes
+# and signs nothing.
 # The build jobs can only read the repository. The one job that signs and publishes runs in the
 # `release` environment, and the release stays a draft until every file is attached. Nothing is
 # published unless the tag names the version the code declares and every ci.yml job passed on the
@@ -8,6 +10,7 @@ name: release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
@@ -18,14 +21,22 @@ jobs:
     name: the tag matches the code's version
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: python3 tools/check_version.py "${GITHUB_REF_NAME#v}"
+      # a rehearsal has no tag: it takes the version the code declares
+      - id: version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then v=${GITHUB_REF_NAME#v}; else v=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/scrutate/Cargo.toml | head -1); fi
+          python3 tools/check_version.py "$v"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
   ci:
     name: ci on the tagged commit
     needs: version
+    if: github.ref_type == 'tag'
     # the documented form for a workflow of the same repository and commit; actionlint rejects $/
     uses: ./.github/workflows/ci.yml # zizmor: ignore[self-repository]
   binaries:
@@ -47,6 +58,7 @@ jobs:
           - { os: windows-11-arm,    target: aarch64-pc-windows-msvc }
     env:
       TARGET: ${{ matrix.target }}
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -67,7 +79,7 @@ jobs:
         shell: bash
         run: |
           set -e
-          v=${GITHUB_REF_NAME#v}
+          v=$VERSION
           mkdir -p dist
           bin=target/$TARGET/release/scrutate
           [ -f "$bin.exe" ] && bin="$bin.exe"
@@ -137,6 +149,7 @@ jobs:
   release:
     name: sign and publish
     needs: [ci, binaries, wheels]
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: release
