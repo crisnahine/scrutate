@@ -289,6 +289,19 @@ fn a_call_the_resolver_does_not_read_runs_the_definition_in_its_own_file() {
 }
 
 #[test]
+fn a_macro_of_the_repository_is_a_callee() {
+    let c = "#define SQUARE(x) ((x) * (x))\n\nint twice(int v) {\n    return v * 2;\n}\n\nint use(int v) {\n    return SQUARE(v) + twice(v);\n}\n";
+    let rs = "macro_rules! square {\n    ($x:expr) => {\n        $x * $x\n    };\n}\n\npub fn area(v: i32) -> i32 {\n    square!(v)\n}\n";
+    let r = Repo::new("macro_callee", &[("m.c", c), ("src/lib.rs", rs)]);
+    for (spec, name) in [("m.c:8", "SQUARE"), ("src/lib.rs:8", "square")] {
+        let (code, out) = r.run(&["callees", spec]);
+        assert_eq!(code, 0, "{spec}: {out}");
+        assert!(out.lines().any(|l| l.contains("[macro]") && l.ends_with(name)), "{spec}: {out}");
+        assert!(!out.lines().any(|l| l.starts_with("external:") && l.contains(name)), "{spec}: {out}");
+    }
+}
+
+#[test]
 fn a_bare_python_import_inside_a_package_is_not_the_module_next_door() {
     // the directory of a package is not on `sys.path`: `import logging` there is the standard library
     let core = "import logging\nimport json\n\n\ndef run():\n    logging.info(\"x\")\n    return json.dumps({})\n";

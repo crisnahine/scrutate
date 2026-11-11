@@ -829,7 +829,8 @@ fn has_word(text: &str, word: &str) -> bool {
 /// the same language family, and the names it calls that have none.
 pub(crate) fn callees(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit>, Vec<String>, Vec<String>)> {
     let kinds = crate::search::CODE_KINDS.iter().map(|k| format!("'{k}'")).collect::<Vec<_>>().join(",");
-    let mut named = s.ix.db.prepare(&format!("SELECT {} FROM chunks WHERE name=?1 AND kind IN ({kinds},'key') ORDER BY is_test", crate::index::CHUNK_COLS))?;
+    let mut named =
+        s.ix.db.prepare(&format!("SELECT {} FROM chunks WHERE name=?1 AND kind IN ({kinds},'key','macro') ORDER BY is_test", crate::index::CHUNK_COLS))?;
     let langs = Langs { root: &s.ix.root, seen: Default::default() };
     // a key is what a call runs only in the caller's own language (Nix, whose functions are keys)
     let callable = |from: &str, r: &ChunkRow| langs.same_family(from, &r.path) && (r.kind != "key" || langs.id(from) == langs.id(&r.path));
