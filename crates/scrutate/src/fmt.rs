@@ -5,9 +5,8 @@ use std::borrow::Cow;
 
 use crate::search::Hit;
 
-/// Text as one line a terminal shows as it is: control characters written as escapes (`\n`,
-/// `\x1b`), so a file name cannot start a line of its own or move the cursor.
-/// What `shown` wrote, read back: `\\n`, `\\r`, `\\t`, `\\xHH` and `\\u{H}` become the characters.
+/// What `shown` wrote, read back: `\\n`, `\\r`, `\\t`, `\\xHH` and `\\u{H}` become the characters,
+/// and `\\\\` one backslash.
 pub fn unshown(s: &str) -> Cow<'_, str> {
     if !s.contains('\\') {
         return Cow::Borrowed(s);
@@ -19,6 +18,7 @@ pub fn unshown(s: &str) -> Cow<'_, str> {
         let tail = &rest[i + 1..];
         let hex = |digits: Option<&str>| digits.and_then(|d| u32::from_str_radix(d, 16).ok()).and_then(char::from_u32);
         let (c, used) = match tail.as_bytes().first() {
+            Some(b'\\') => (Some('\\'), 1),
             Some(b'n') => (Some('\n'), 1),
             Some(b'r') => (Some('\r'), 1),
             Some(b't') => (Some('\t'), 1),
@@ -44,13 +44,21 @@ pub fn unshown(s: &str) -> Cow<'_, str> {
     Cow::Owned(out)
 }
 
+/// Text as one line a terminal shows as it is: control characters written as escapes (`\n`,
+/// `\x1b`), so a file name cannot start a line of its own or move the cursor, and a backslash
+/// written as two, so an escape and a real backslash never print alike.
 pub fn shown(s: &str) -> Cow<'_, str> {
-    if !s.chars().any(char::is_control) {
+    escaped(s, true)
+}
+
+fn escaped(s: &str, backslash: bool) -> Cow<'_, str> {
+    if !s.chars().any(|c| c.is_control() || (backslash && c == '\\')) {
         return Cow::Borrowed(s);
     }
     let mut out = String::with_capacity(s.len() + 8);
     for c in s.chars() {
         match c {
+            '\\' if backslash => out.push_str("\\\\"),
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
@@ -65,14 +73,15 @@ pub fn shown(s: &str) -> Cow<'_, str> {
 /// Characters of an argument an error message repeats.
 const ECHO_CHARS: usize = 200;
 
-/// An argument as an error message repeats it: `shown`, and cut to its first 200 characters.
+/// An argument as an error message repeats it: control characters escaped as `shown` does (a
+/// backslash stays one, as the caller wrote it), and cut to its first 200 characters.
 pub fn echo(s: &str) -> String {
     let n = s.chars().count();
     if n <= ECHO_CHARS {
-        return shown(s).into_owned();
+        return escaped(s, false).into_owned();
     }
     let head: String = s.chars().take(ECHO_CHARS).collect();
-    format!("{}... (cut: {n} characters in all)", shown(&head))
+    format!("{}... (cut: {n} characters in all)", escaped(&head, false))
 }
 
 /// `path:start-end` of a hit, as text.
@@ -92,7 +101,7 @@ pub fn hit_blocks(hits: &[Hit], words: &[String], snippet: bool, why: bool) -> V
     let mut out = Vec::with_capacity(hits.len());
     for h in hits {
         let name = if h.qualname.is_empty() { &h.name } else { &h.qualname };
-        let mut head = format!("{}  [{}] {}", loc(h), h.kind, name);
+        let mut head = format!("{}  [{}] {}", loc(h), h.kind, shown(name));
         if why && !h.why.is_empty() {
             head.push_str(&format!("  ({})", h.why.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>().join(", ")));
         }

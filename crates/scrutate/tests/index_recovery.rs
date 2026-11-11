@@ -102,7 +102,7 @@ fn symlinked_index_dir_is_refused() {
 }
 
 #[test]
-fn forced_update_sees_an_edit_that_keeps_size_and_mtime() {
+fn an_edit_that_keeps_size_and_mtime_is_seen() {
     let t = Tmp::new("samestat");
     let f = t.0.join("a.py");
     fs::write(&f, "def alpha():\n    return 1\n").unwrap();
@@ -111,7 +111,9 @@ fn forced_update_sees_an_edit_that_keeps_size_and_mtime() {
     ix.update(false).unwrap();
     fs::write(&f, "def omega():\n    return 1\n").unwrap();
     fs::File::options().write(true).open(&f).unwrap().set_modified(mtime).unwrap();
-    assert_eq!(ix.update(false).unwrap().files_changed, 0);
+    // the write moved the change time, which no one can set back
+    let expect = if cfg!(unix) { 1 } else { 0 };
+    assert_eq!(ix.update(false).unwrap().files_changed, expect);
     assert_eq!(ix.update(true).unwrap().files_changed, 1);
     let n: i64 = ix.db.query_row("SELECT COUNT(*) FROM chunks WHERE name='omega'", [], |r| r.get(0)).unwrap();
     assert_eq!(n, 1);
@@ -400,6 +402,94 @@ fn unreadable_file_loses_its_chunks() {
     chmod(&f, 0o644);
     r.unwrap();
     assert_eq!(n.unwrap(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_chmod_alone_drops_a_file_and_brings_it_back_without_a_forced_update() {
+    let t = Tmp::new("chmod_only");
+    let f = t.0.join("a.py");
+    fs::write(&f, "def alpha():\n    return 1\n").unwrap();
+    fs::write(t.0.join("b.py"), "def beta():\n    return 2\n").unwrap();
+    let mut ix = Index::open(&t.0, None).unwrap();
+    ix.update(false).unwrap();
+    let alphas = |ix: &Index| ix.db.query_row("SELECT COUNT(*) FROM chunks WHERE name='alpha'", [], |r| r.get::<_, i64>(0)).unwrap();
+    chmod(&f, 0o000);
+    let held = fs::read(&f).is_err();
+    let r = ix.update(false);
+    let n = alphas(&ix);
+    chmod(&f, 0o644);
+    if !held {
+        return;
+    }
+    r.unwrap();
+    assert_eq!(n, 0);
+    ix.update(false).unwrap();
+    assert_eq!(alphas(&ix), 1);
+    // a change of ctime alone costs a read and a hash, no parse
+    chmod(&f, 0o600);
+    assert_eq!(ix.update(false).unwrap().files_changed, 0);
+    assert_eq!(alphas(&ix), 1);
+}
+
+#[test]
+fn an_emptied_chunks_table_is_damage_and_is_rebuilt() {
+    let t = Tmp::new("emptied");
+    fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+    let damage = |sql: &str| rusqlite::Connection::open(t.0.join(".scrutate/index.db")).unwrap().execute_batch(sql).unwrap();
+    // under an open repository
+    let mut repo = scrutate::Repo::open(&t.0).unwrap();
+    repo.update(false).unwrap();
+    damage("DELETE FROM refs; DELETE FROM chunks;");
+    assert!(text(&mut repo, "find_symbol", serde_json::json!({"name": "alpha"})).contains("a.py"));
+    drop(repo);
+    // at the next start
+    damage("DELETE FROM refs; DELETE FROM chunks;");
+    let mut repo = scrutate::Repo::open(&t.0).unwrap();
+    assert!(text(&mut repo, "find_symbol", serde_json::json!({"name": "alpha"})).contains("a.py"));
+    drop(repo);
+    // some rows gone: found when the statistics are read
+    fs::write(t.0.join("b.py"), "def beta():\n    return 2\n").unwrap();
+    scrutate::Repo::open(&t.0).unwrap().update(false).unwrap();
+    damage("DELETE FROM chunks WHERE name='beta'");
+    let mut repo = scrutate::Repo::open(&t.0).unwrap();
+    assert!(text(&mut repo, "search_code", serde_json::json!({"query": "beta"})).contains("b.py"));
+}
+
+#[test]
+fn an_index_whose_files_table_has_no_ctime_column_is_read_and_upgraded() {
+    let t = Tmp::new("no_ctime");
+    fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+    Index::open(&t.0, None).unwrap().update(false).unwrap();
+    // the table as the reference engine creates it, with a row written its way
+    let con = rusqlite::Connection::open(t.0.join(".scrutate/index.db")).unwrap();
+    con.execute_batch(
+        "CREATE TABLE f2(path TEXT PRIMARY KEY, size INTEGER, mtime_ns INTEGER, hash TEXT);
+         INSERT INTO f2 SELECT path, size, mtime_ns, hash FROM files; DROP TABLE files; ALTER TABLE f2 RENAME TO files;",
+    )
+    .unwrap();
+    drop(con);
+    let mut repo = scrutate::Repo::open(&t.0).unwrap();
+    assert!(text(&mut repo, "find_symbol", serde_json::json!({"name": "alpha"})).contains("a.py"));
+    // the first update reads the file again (no ctime on record), parses nothing, and records one
+    assert_eq!(repo.update(false).unwrap().files_changed, 0);
+    let ctime: Option<i64> = repo.ix.db.query_row("SELECT ctime_ns FROM files WHERE path='a.py'", [], |r| r.get(0)).unwrap();
+    assert!(ctime.is_some());
+    repo.ix.db.execute("INSERT OR REPLACE INTO files(path,size,mtime_ns,hash) VALUES('b.py',1,1,'x')", []).unwrap();
+}
+
+#[test]
+fn an_index_of_files_without_chunks_is_not_taken_for_damage() {
+    let t = Tmp::new("no_chunks");
+    fs::write(t.0.join("empty.py"), "").unwrap();
+    let mut ix = Index::open(&t.0, None).unwrap();
+    ix.update(false).unwrap();
+    let before = ix.meta("data_version");
+    drop(ix);
+    let mut ix = Index::open(&t.0, None).unwrap();
+    ix.update(false).unwrap();
+    ix.lex().unwrap();
+    assert_eq!(ix.meta("data_version"), before);
 }
 
 #[cfg(unix)]

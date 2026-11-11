@@ -604,7 +604,7 @@ impl Searcher {
 
     /// -> (resolved definitions, unresolved external names), as the `callees` tool answers.
     pub fn callees(&self, name: &str, limit: usize) -> Result<(Vec<Hit>, Vec<String>)> {
-        crate::ops::callees(self, name, limit)
+        crate::ops::callees(self, name, limit).map(|(resolved, external, _)| (resolved, external))
     }
 
     pub fn read(&self, path: &str, start: i64, end: Option<i64>, max_lines: i64) -> String {

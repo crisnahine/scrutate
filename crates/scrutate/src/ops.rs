@@ -104,7 +104,7 @@ pub enum Op {
         query: String,
         limit: usize,
     },
-    /// `force`: read every file again, also one whose size and modification time are unchanged.
+    /// `force`: read every file again, also one whose size, modification and change times are unchanged.
     Reindex {
         force: bool,
     },
@@ -188,6 +188,23 @@ impl Op {
     }
 }
 
+impl Op {
+    /// Repository files the arguments name (a path, or the file of a location), whose index
+    /// entries an answer depends on even when it cites nothing.
+    pub fn named_paths(&self) -> Vec<String> {
+        let loc = |n: &str| crate::intel::location(n).map(|(p, _)| p.to_string());
+        let plain = |p: &str| p.trim_start_matches("./").to_string();
+        match self {
+            Op::Symbol { name, .. } | Op::Callers { name, .. } | Op::Callees { name, .. } => loc(name).into_iter().collect(),
+            Op::Similar { target, .. } => loc(target).into_iter().collect(),
+            Op::Read { path, symbol: Some(symbol), .. } => loc(symbol).into_iter().chain(path.as_deref().map(plain)).collect(),
+            Op::Outline { path } | Op::Deps { path } => vec![plain(path)],
+            Op::Refs { def: Some(def), .. } => vec![loc(def).unwrap_or_else(|| plain(def))],
+            _ => Vec::new(),
+        }
+    }
+}
+
 /// Whether the tool leaves everything as it was (`reindex` rewrites the index, a cache).
 pub fn read_only(tool: &str) -> bool {
     tool != "reindex"
@@ -244,29 +261,54 @@ pub fn output_schema(tool: &str) -> Value {
             obj(json!({"files_changed": ty("integer"), "files_removed": ty("integer"), "chunks": ty("integer")}), &["files_changed", "files_removed", "chunks"])
         }
     };
+    let stopped = json!({"type": "integer", "description": "present when the answer stopped at this limit and more exist: the text's last line says which argument raises it"});
     let complete =
         json!({"type": "boolean", "description": "false when the answer is larger than max_bytes: result is then null and text holds the part that fits"});
     obj(
-        json!({"schema": ty("integer"), "complete": complete, "result": {"anyOf": [result, ty("null")]}, "text": ty("string")}),
+        json!({"schema": ty("integer"), "complete": complete, "result": {"anyOf": [result, ty("null")]}, "text": ty("string"), "stopped_at": stopped}),
         &["schema", "complete", "result"],
     )
 }
 
+/// Where an answer stopped because it reached its limit, and what to pass to see more.
+#[derive(Clone, Copy, Debug)]
+pub struct Stop {
+    pub at: usize,
+    pub how: &'static str,
+}
+
+const RAISE_LIMIT: &str = "raise limit to see more";
+
+/// `items` cut to `limit`, and where they stopped when there were more (ask for `limit + 1`).
+fn cut<T>(mut items: Vec<T>, limit: usize, how: &'static str) -> (Vec<T>, Option<Stop>) {
+    if items.len() <= limit {
+        return (items, None);
+    }
+    items.truncate(limit);
+    (items, Some(Stop { at: limit, how }))
+}
+
 pub enum Answer {
+    /// `stopped`: the limit the answer stopped at, when there were more.
     Hits {
         hits: Vec<Hit>,
         words: Vec<String>,
         snippet: bool,
+        stopped: Option<Stop>,
     },
     /// `undecided`: callers kept although the resolver could not tell whether they call this
     /// definition or another of the same name.
     Callers {
         hits: Vec<Hit>,
         undecided: usize,
+        stopped: Option<Stop>,
     },
+    /// `from`: the files of the definitions whose calls these are.
     Callees {
         resolved: Vec<Hit>,
         external: Vec<String>,
+        from: Vec<String>,
+        stopped: Option<Stop>,
     },
     /// `stopped_at`: the limit the search stopped at, when it did.
     Grep {
@@ -281,7 +323,7 @@ pub enum Answer {
         total: i64,
     },
     /// Whole definitions, each with its numbered lines.
-    Definitions(Vec<(ChunkRow, String)>),
+    Definitions(Vec<(ChunkRow, String)>, Option<Stop>),
     Outline {
         path: String,
         rows: Vec<ChunkRow>,
@@ -308,7 +350,7 @@ pub enum Answer {
     },
     Similar(Vec<(Hit, f32, f32)>),
     Dupes(Vec<DupGroup>),
-    Captures(Vec<Capture>),
+    Captures(Vec<Capture>, Option<Stop>),
     Reindexed(UpdateStats),
 }
 
@@ -319,7 +361,7 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
             let mut qs = vec![query.clone()];
             qs.extend(alt.iter().filter(|a| !a.is_empty() && *a != query).cloned());
             let hits = if qs.len() == 1 { s.search(query, *k, true)? } else { s.search_many(&qs, *k, true)? };
-            Answer::Hits { hits, words: qs.iter().flat_map(|q| query_words(q)).collect(), snippet: true }
+            Answer::Hits { hits, words: qs.iter().flat_map(|q| query_words(q)).collect(), snippet: true, stopped: None }
         }
         Op::Grep { pattern, max_results } => {
             let o = crate::instant::Options {
@@ -335,20 +377,29 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
             let (groups, stopped) = crate::intel::grouped_grep(s, &o)?;
             Answer::Grep { groups, stopped_at: stopped.then_some(*max_results) }
         }
-        Op::Symbol { name, limit } => Answer::Hits { hits: targets(s, name, *limit)?, words: Vec::new(), snippet: true },
+        Op::Symbol { name, limit } => {
+            let (hits, stopped) = cut(targets(s, name, limit + 1)?, *limit, RAISE_LIMIT);
+            Answer::Hits { hits, words: Vec::new(), snippet: true, stopped }
+        }
         Op::Callers { name, limit } => {
-            let (hits, undecided) = callers(s, name, *limit)?;
-            Answer::Callers { hits, undecided }
+            let (hits, mut undecided) = callers(s, name, limit + 1)?;
+            let (hits, stopped) = cut(hits, *limit, RAISE_LIMIT);
+            // the undecided ones come last, so the one cut off was one of them
+            if stopped.is_some() && undecided > 0 {
+                undecided -= 1;
+            }
+            Answer::Callers { hits, undecided, stopped }
         }
         Op::Callees { name, limit } => {
-            let (resolved, external) = callees(s, name, *limit)?;
-            Answer::Callees { resolved, external }
+            let (resolved, external, from) = callees(s, name, limit + 1)?;
+            let (resolved, stopped) = cut(resolved, *limit, RAISE_LIMIT);
+            Answer::Callees { resolved, external, from, stopped }
         }
         Op::Read { path, symbol: Some(symbol), .. } => {
             let mut rows = match crate::intel::location(symbol) {
                 Some((path, line)) => s.ix.chunk_at(&repo_path(s, path), line)?.into_iter().collect(),
                 None => {
-                    let hits = s.find_symbol(symbol, READ_DEFINITIONS)?;
+                    let hits = s.find_symbol(symbol, READ_DEFINITIONS + 1)?;
                     hits.iter().filter_map(|h| s.ix.chunk(h.id).transpose()).collect::<Result<Vec<_>>>()?
                 }
             };
@@ -366,13 +417,16 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
                 }
                 (r, text)
             };
-            Answer::Definitions(rows.into_iter().map(read).collect())
+            let (rows, stopped) = cut(rows, READ_DEFINITIONS, "pass path to keep the ones of one file, or a location (path:start-end) for one");
+            Answer::Definitions(rows.into_iter().map(read).collect(), stopped)
         }
         Op::Read { path, start, end, .. } => {
             let path = path.as_deref().unwrap_or("");
             // a path copied from an answer has its control characters written as escapes
             let read_back = crate::fmt::unshown(path);
-            let path = if read_back != path && !s.ix.root.join(path).exists() { read_back.as_ref() } else { path };
+            let exists = |p: &str| s.ix.root.join(p).exists();
+            let printed = read_back != path && crate::fmt::shown(&read_back) == path && exists(&read_back);
+            let path = if printed || (read_back != path && !exists(path)) { read_back.as_ref() } else { path };
             let start = (*start).max(1);
             let (lines, total) = s.read_lines(path, start, end.unwrap_or(start.saturating_add(READ_LINES - 1)))?;
             Answer::Read { path: path.trim_start_matches("./").to_string(), lines, start, total }
@@ -404,7 +458,11 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
         }
         Op::Similar { target, k } => Answer::Similar(crate::intel::similar(s, target, *k)?),
         Op::Dupes { min_tokens, threshold, limit } => Answer::Dupes(crate::intel::dupes(&s.ix, *min_tokens, *threshold, *limit)?),
-        Op::Tsquery { lang, query, limit } => Answer::Captures(crate::intel::tsquery(lang, query, std::slice::from_ref(&s.ix.root), *limit, Some(&s.ix.root))?),
+        Op::Tsquery { lang, query, limit } => {
+            let caps = crate::intel::tsquery(lang, query, std::slice::from_ref(&s.ix.root), limit + 1, Some(&s.ix.root))?;
+            let (caps, stopped) = cut(caps, *limit, RAISE_LIMIT);
+            Answer::Captures(caps, stopped)
+        }
         Op::Reindex { force } => Answer::Reindexed(s.ix.update(*force)?),
     })
 }
@@ -424,12 +482,17 @@ fn repo_path(s: &Searcher, path: &str) -> String {
     }
     let plain = parts.join("/");
     let indexed = |p: &str| s.ix.db.query_row("SELECT 1 FROM files WHERE path=?1", [p], |_| Ok(())).is_ok();
+    // a path copied from an answer has its control characters and backslashes written as
+    // escapes; the text an answer prints for a file names that file, whatever else exists
+    let read_back = crate::fmt::unshown(&plain);
+    let escaped = read_back != plain;
+    if escaped && crate::fmt::shown(&read_back) == plain && indexed(&read_back) {
+        return read_back.into_owned();
+    }
     if path.is_empty() || indexed(&plain) {
         return plain;
     }
-    // a path copied from an answer has its control characters written as escapes
-    let read_back = crate::fmt::unshown(&plain);
-    if read_back != plain && indexed(&read_back) {
+    if escaped && indexed(&read_back) {
         return read_back.into_owned();
     }
     std::fs::canonicalize(s.ix.root.join(path))
@@ -473,30 +536,60 @@ fn same_family(a: &str, b: &str) -> bool {
     }
 }
 
-/// What the resolver makes of the occurrences of `name` in lines `start..=end` of `path`: the
-/// definitions they resolve to, and whether one stayed unresolved (or none was found).
-fn resolve_in(rv: &mut Resolver, s: &Searcher, path: &str, (start, end): (i64, i64), name: &str) -> (HashSet<i64>, bool) {
-    let mut got = HashSet::new();
-    let Some(src) = crate::resolve::repo_text(&s.ix.root, path) else { return (got, true) };
+/// What the resolver makes of the occurrences of `name` in lines `start..=end` of `path`.
+struct Uses {
+    /// the definitions they resolve to
+    got: HashSet<i64>,
+    /// one stayed unresolved (or none was found)
+    unsure: bool,
+    /// one stayed unresolved that may call a free function: not `x.name(..)` where a method
+    /// call never reaches a free function
+    unsure_free: bool,
+}
+
+/// Languages where `x.f()` calls a method, never a free function `f` (in Python `x` may be a
+/// module, and the resolver decides those through the import).
+fn methods_only(path: &str) -> bool {
+    crate::langs::spec_for(path).is_some_and(|s| matches!(s.id, "rust" | "javascript" | "typescript" | "tsx" | "go" | "java"))
+}
+
+fn resolve_in(rv: &mut Resolver, s: &Searcher, path: &str, (start, end): (i64, i64), name: &str) -> Uses {
+    let mut uses = Uses { got: HashSet::new(), unsure: true, unsure_free: true };
+    let Some(src) = crate::resolve::repo_text(&s.ix.root, path) else { return uses };
     let ident = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
-    let mut undecided = false;
-    let mut seen = false;
+    let methods = methods_only(path);
+    let (mut unsure, mut unsure_free, mut seen) = (false, false, false);
     for (i, line) in src.lines().enumerate().skip((start.max(1) - 1) as usize).take((end - start + 1).max(0) as usize) {
         for (col, _) in line.match_indices(name) {
             if ident(line[..col].chars().next_back()) || ident(line[col + name.len()..].chars().next()) {
                 continue;
             }
-            seen = true;
             match rv.resolve_at(path, i as u64 + 1, col, name) {
+                // the name of a definition is not a call of it
+                Ok((_, "definition")) => {}
                 Ok((id, _)) => {
-                    got.insert(id);
+                    seen = true;
+                    uses.got.insert(id);
                 }
                 // an import from outside, a local, a field or a string is decided: not this definition
-                Err(why) => undecided |= matches!(why, "receiver" | "not found" | "no grammar"),
+                Err(why) => {
+                    seen = true;
+                    if matches!(why, "receiver" | "not found" | "no grammar") {
+                        unsure = true;
+                        unsure_free |= !(methods && line[..col].trim_end().ends_with('.'));
+                    }
+                }
             }
         }
     }
-    (got, undecided || !seen)
+    uses.unsure = unsure || !seen;
+    uses.unsure_free = unsure_free || !seen;
+    uses
+}
+
+/// A definition outside any class or type: `x.f()` does not call it where `methods_only` holds.
+fn free(qualname: &str) -> bool {
+    !qualname.contains('.')
 }
 
 /// The directory a file's package starts at: what comes before its `src/`, else its top directory.
@@ -527,6 +620,7 @@ pub(crate) fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit
     let mut rv = Resolver::new(&s.ix)?;
     let names_owner = |text: &str| owners.iter().any(|o| has_word(text, o));
     let likely = |r: &ChunkRow| (!names_owner(&r.text), !packages.contains(package(&r.path)), r.path.clone(), r.start);
+    let all_free = |n: &str| targets.iter().filter(|t| t.name == n).all(|t| free(&t.qualname));
     let mut asked = 0;
     for n in names {
         let rows: Vec<(i64, String)> = namesakes.query_map([n], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
@@ -544,8 +638,9 @@ pub(crate) fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit
                 continue;
             }
             asked += 1;
-            let (got, unsure) = resolve_in(&mut rv, s, &row.path, (row.start, row.end), n);
-            if got.is_disjoint(&ids) {
+            let uses = resolve_in(&mut rv, s, &row.path, (row.start, row.end), n);
+            let unsure = if all_free(n) { uses.unsure_free } else { uses.unsure };
+            if uses.got.is_disjoint(&ids) {
                 // with no other definition of the name, a call the resolver cannot place is this one's
                 if unsure && rivals {
                     unsure_rows.push(row);
@@ -575,13 +670,15 @@ fn has_word(text: &str, word: &str) -> bool {
 
 /// What the code of the definitions `name` stands for calls: definitions of the repository in
 /// the same language family, and the names it calls that have none.
-pub(crate) fn callees(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit>, Vec<String>)> {
+pub(crate) fn callees(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit>, Vec<String>, Vec<String>)> {
     let kinds = crate::search::CODE_KINDS.iter().map(|k| format!("'{k}'")).collect::<Vec<_>>().join(",");
     let mut named = s.ix.db.prepare(&format!("SELECT {} FROM chunks WHERE name=?1 AND kind IN ({kinds}) ORDER BY is_test", crate::index::CHUNK_COLS))?;
     let mut calls = s.ix.db.prepare("SELECT DISTINCT callee FROM refs WHERE chunk_id=?1 ORDER BY callee")?;
     let mut rv = Resolver::new(&s.ix)?;
     let (mut resolved, mut external, mut seen) = (Vec::new(), Vec::new(), HashSet::new());
-    for d in targets(s, name, 5)? {
+    let defs = targets(s, name, 5)?;
+    let from = defs.iter().map(|d| d.path.clone()).collect();
+    for d in defs {
         let names: Vec<String> = calls.query_map([d.id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
         for n in names {
             let rows: Vec<ChunkRow> = named
@@ -594,12 +691,12 @@ pub(crate) fn callees(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit
                 }
                 continue;
             }
-            let (got, unsure) = resolve_in(&mut rv, s, &d.path, (d.start, d.end), &n);
-            let tied: Vec<&ChunkRow> = rows.iter().filter(|r| got.contains(&r.id)).collect();
+            let uses = resolve_in(&mut rv, s, &d.path, (d.start, d.end), &n);
+            let tied: Vec<&ChunkRow> = rows.iter().filter(|r| uses.got.contains(&r.id)).collect();
             let picked: Vec<&ChunkRow> = if !tied.is_empty() {
                 tied
-            } else if unsure {
-                rows.iter().take(3).collect()
+            } else if uses.unsure {
+                rows.iter().filter(|r| uses.unsure_free || !free(&r.qualname)).take(3).collect()
             } else {
                 Vec::new()
             };
@@ -611,7 +708,7 @@ pub(crate) fn callees(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit
     }
     external.sort();
     resolved.truncate(limit);
-    Ok((resolved, external))
+    Ok((resolved, external, from))
 }
 
 /// The definition of `name` that `spec` (a path or a location) points at: the innermost one
@@ -627,6 +724,20 @@ fn definition_at(s: &Searcher, refs: &Resolved, name: &str, spec: &str) -> Resul
         .min_by_key(|d| (line.is_some().then_some(d.end - d.start), d.start))
         .map(|d| d.id)
         .ok_or_else(|| anyhow!("no definition of {} in {}", echo(name), echo(spec)))
+}
+
+/// The closing line of an answer that stopped at its limit.
+fn stop_line(stopped: Option<Stop>, noun: &str) -> String {
+    stopped.map(|s| format!("(stopped at {} {noun}: {})", s.at, s.how)).unwrap_or_default()
+}
+
+/// Two closing lines, either of them possibly empty.
+fn joined(a: String, b: String) -> String {
+    match (a.is_empty(), b.is_empty()) {
+        (true, _) => b,
+        (_, true) => a,
+        _ => format!("{a}\n{b}"),
+    }
 }
 
 /// The closing line of a `references` answer whose occurrence search stopped at `max_results`.
@@ -714,14 +825,35 @@ impl Parts {
 }
 
 impl Answer {
+    /// The repository files whose indexed content or positions this answer shows. A line range
+    /// and a structural search read the files themselves and cite none.
+    pub fn cited(&self) -> Vec<&str> {
+        fn rows(rows: &[ChunkRow]) -> Vec<&str> {
+            rows.iter().map(|r| r.path.as_str()).collect()
+        }
+        match self {
+            Answer::Hits { hits, .. } | Answer::Callers { hits, .. } => hits.iter().map(|h| h.path.as_str()).collect(),
+            Answer::Callees { resolved, from, .. } => resolved.iter().map(|h| h.path.as_str()).chain(from.iter().map(String::as_str)).collect(),
+            Answer::Grep { groups, .. } => groups.iter().map(|g| g.path.as_str()).collect(),
+            Answer::Definitions(defs, _) => defs.iter().map(|(c, _)| c.path.as_str()).collect(),
+            Answer::Outline { path, .. } | Answer::Deps { path, .. } => vec![path.as_str()],
+            Answer::Rdeps { rows, .. } => rows.iter().map(|r| r.0.as_str()).collect(),
+            Answer::Refs { refs, .. } => rows(&refs.definitions).into_iter().chain(refs.groups.iter().map(|g| g.path.as_str())).collect(),
+            Answer::Resolved { refs, .. } => rows(&refs.definitions).into_iter().chain(refs.occurrences.iter().map(|o| o.path.as_str())).collect(),
+            Answer::Similar(v) => v.iter().map(|h| h.0.path.as_str()).collect(),
+            Answer::Dupes(groups) => groups.iter().flat_map(|g| g.members.iter().map(|m| m.0.as_str())).collect(),
+            Answer::Read { .. } | Answer::Captures(..) | Answer::Reindexed(_) => Vec::new(),
+        }
+    }
+
     /// Nothing was found (the CLI's exit code 1).
     pub fn is_empty(&self) -> bool {
         match self {
             Answer::Hits { hits, .. } | Answer::Callers { hits, .. } => hits.is_empty(),
-            Answer::Callees { resolved, external } => resolved.is_empty() && external.is_empty(),
+            Answer::Callees { resolved, external, .. } => resolved.is_empty() && external.is_empty(),
             Answer::Grep { groups, .. } => groups.is_empty(),
             Answer::Read { lines, .. } => lines.is_empty(),
-            Answer::Definitions(defs) => defs.is_empty(),
+            Answer::Definitions(defs, _) => defs.is_empty(),
             Answer::Outline { rows, .. } => rows.is_empty(),
             Answer::Deps { deps, .. } => deps.is_empty(),
             Answer::Rdeps { rows, .. } => rows.is_empty(),
@@ -732,7 +864,7 @@ impl Answer {
             },
             Answer::Similar(v) => v.is_empty(),
             Answer::Dupes(v) => v.is_empty(),
-            Answer::Captures(v) => v.is_empty(),
+            Answer::Captures(v, _) => v.is_empty(),
             Answer::Reindexed(_) => false,
         }
     }
@@ -764,26 +896,36 @@ impl Answer {
         let nothing = |sentence: String| Parts { head: sentence, ..Parts::default() };
         match self {
             Answer::Hits { hits, .. } if hits.is_empty() => nothing("(no results)".to_string()),
-            Answer::Hits { hits, words, snippet } => Parts { items: hit_blocks(hits, words, *snippet, false), noun: "results", ..Parts::default() },
+            Answer::Hits { hits, words, snippet, stopped } => {
+                Parts { items: hit_blocks(hits, words, *snippet, false), tail: stop_line(*stopped, "results"), noun: "results", ..Parts::default() }
+            }
             Answer::Callers { hits, .. } if hits.is_empty() => nothing("(no results)".to_string()),
-            Answer::Callers { hits, undecided } => Parts {
+            Answer::Callers { hits, undecided, stopped } => Parts {
                 items: hit_blocks(hits, &[], false, false),
-                tail: match *undecided {
-                    0 => String::new(),
-                    n if n == hits.len() => "(the resolver could not tell whether any of these calls this definition or another of the same name)".to_string(),
-                    n => format!("({n} of these call a definition of that name the resolver could not identify: it may be another one)"),
-                },
+                tail: joined(
+                    match *undecided {
+                        0 => String::new(),
+                        n if n == hits.len() => {
+                            "(the resolver could not tell whether any of these calls this definition or another of the same name)".to_string()
+                        }
+                        n => format!("({n} of these call a definition of that name the resolver could not identify: it may be another one)"),
+                    },
+                    stop_line(*stopped, "results"),
+                ),
                 noun: "results",
                 ..Parts::default()
             },
-            Answer::Callees { resolved, external } => Parts {
+            Answer::Callees { resolved, external, stopped, .. } => Parts {
                 head: if resolved.is_empty() { "(no results)".to_string() } else { String::new() },
                 items: hit_blocks(resolved, &[], false, false),
-                tail: if external.is_empty() {
-                    String::new()
-                } else {
-                    format!("external: {}", external.iter().take(EXTERNAL_CALLEES).cloned().collect::<Vec<_>>().join(", "))
-                },
+                tail: joined(
+                    if external.is_empty() {
+                        String::new()
+                    } else {
+                        format!("external: {}", external.iter().take(EXTERNAL_CALLEES).map(|e| shown(e)).collect::<Vec<_>>().join(", "))
+                    },
+                    stop_line(*stopped, "callees"),
+                ),
                 noun: "callees",
                 ..Parts::default()
             },
@@ -804,8 +946,12 @@ impl Answer {
             Answer::Read { path, lines, start, total } => {
                 Parts { items: lines.clone(), noun: "lines", file: Some((path.clone(), *start, *total)), ..Parts::default() }
             }
-            Answer::Definitions(defs) => Parts {
-                items: defs.iter().map(|(c, text)| format!("{}:{}-{}  [{}] {}\n{text}", shown(&c.path), c.start, c.end, c.kind, symbol_name(c))).collect(),
+            Answer::Definitions(defs, stopped) => Parts {
+                items: defs
+                    .iter()
+                    .map(|(c, text)| format!("{}:{}-{}  [{}] {}\n{text}", shown(&c.path), c.start, c.end, c.kind, shown(symbol_name(c))))
+                    .collect(),
+                tail: stop_line(*stopped, "definitions"),
                 noun: "definitions",
                 ..Parts::default()
             },
@@ -813,7 +959,7 @@ impl Answer {
             Answer::Outline { rows, .. } => Parts {
                 items: rows
                     .iter()
-                    .map(|r| format!("{:>5}-{:<5} {}{:<9} {}", r.start, r.end, "  ".repeat(r.qualname.matches('.').count()), r.kind, r.qualname))
+                    .map(|r| format!("{:>5}-{:<5} {}{:<9} {}", r.start, r.end, "  ".repeat(r.qualname.matches('.').count()), r.kind, shown(&r.qualname)))
                     .collect(),
                 noun: "symbols",
                 ..Parts::default()
@@ -823,7 +969,13 @@ impl Answer {
                 items: deps
                     .iter()
                     .map(|d| {
-                        format!("{}:{}  {}{}", shown(path), d.line, d.module, d.resolved.as_ref().map(|r| format!("  -> {}", shown(r))).unwrap_or_default())
+                        format!(
+                            "{}:{}  {}{}",
+                            shown(path),
+                            d.line,
+                            shown(&d.module),
+                            d.resolved.as_ref().map(|r| format!("  -> {}", shown(r))).unwrap_or_default()
+                        )
                     })
                     .collect(),
                 noun: "imports",
@@ -831,7 +983,7 @@ impl Answer {
             },
             Answer::Rdeps { target, rows } if rows.is_empty() => nothing(format!("nothing imports {}", echo(target))),
             Answer::Rdeps { rows, .. } => {
-                Parts { items: rows.iter().map(|(p, l, m)| format!("{}:{l}  {m}", shown(p))).collect(), noun: "importers", ..Parts::default() }
+                Parts { items: rows.iter().map(|(p, l, m)| format!("{}:{l}  {}", shown(p), shown(m))).collect(), noun: "importers", ..Parts::default() }
             }
             Answer::Refs { refs, max_results, .. } => {
                 if refs.is_empty() {
@@ -848,7 +1000,7 @@ impl Answer {
             Answer::Similar(v) => Parts {
                 items: v
                     .iter()
-                    .map(|(h, cos, jac)| format!("{:.3} cos  {:.2} jaccard  {}  [{}] {}", cos, jac, crate::fmt::loc(h), h.kind, h.qualname))
+                    .map(|(h, cos, jac)| format!("{:.3} cos  {:.2} jaccard  {}  [{}] {}", cos, jac, crate::fmt::loc(h), h.kind, shown(&h.qualname)))
                     .collect(),
                 noun: "results",
                 ..Parts::default()
@@ -860,7 +1012,7 @@ impl Answer {
                     .map(|g| {
                         let mut out = format!("{} ({} tokens, similarity {:.2})", g.kind, g.tokens, g.similarity);
                         for (p, q, a, b) in &g.members {
-                            out.push_str(&format!("\n    {}:{a}-{b}  {q}", shown(p)));
+                            out.push_str(&format!("\n    {}:{a}-{b}  {}", shown(p), shown(q)));
                         }
                         out
                     })
@@ -868,8 +1020,9 @@ impl Answer {
                 noun: "groups",
                 ..Parts::default()
             },
-            Answer::Captures(caps) if caps.is_empty() => nothing("no matches".to_string()),
-            Answer::Captures(caps) => Parts {
+            Answer::Captures(caps, _) if caps.is_empty() => nothing("no matches".to_string()),
+            Answer::Captures(caps, stopped) => Parts {
+                tail: stop_line(*stopped, "matches"),
                 items: caps.iter().map(|c| format!("{}:{}:{}  @{} ({})  {}", shown(&c.path), c.line, c.column, c.capture, c.kind, c.text)).collect(),
                 noun: "matches",
                 ..Parts::default()
@@ -884,14 +1037,27 @@ impl Answer {
     pub fn structured(&self, text_len: usize, max_bytes: usize, offset: usize) -> Value {
         let result = self.json();
         let complete = offset == 0 && text_len + result.to_string().len() <= max_bytes.saturating_add(max_bytes / 2);
-        json!({"schema": SCHEMA, "complete": complete, "result": if complete { result } else { Value::Null }})
+        let mut v = json!({"schema": SCHEMA, "complete": complete, "result": if complete { result } else { Value::Null }});
+        if let Some(stop) = self.stopped() {
+            v["stopped_at"] = json!(stop.at);
+        }
+        v
+    }
+
+    /// The limit the answer stopped at, when there were more.
+    pub fn stopped(&self) -> Option<Stop> {
+        match self {
+            Answer::Hits { stopped, .. } | Answer::Callers { stopped, .. } | Answer::Callees { stopped, .. } => *stopped,
+            Answer::Definitions(_, stopped) | Answer::Captures(_, stopped) => *stopped,
+            _ => None,
+        }
     }
 
     /// The answer as JSON, the shape `--json` prints.
     pub fn json(&self) -> Value {
         match self {
             Answer::Hits { hits, .. } | Answer::Callers { hits, .. } => hits_json(hits),
-            Answer::Callees { resolved, external } => json!({"resolved": hits_json(resolved), "external": external}),
+            Answer::Callees { resolved, external, .. } => json!({"resolved": hits_json(resolved), "external": external}),
             Answer::Grep { groups, stopped_at } => json!({
                 "schema": SCHEMA,
                 "groups": groups.iter().map(|g| json!({
@@ -904,7 +1070,7 @@ impl Answer {
             Answer::Read { lines, start, total, .. } => {
                 json!({"text": lines.join("\n"), "start": start, "end": start + lines.len() as i64 - 1, "file_lines": total})
             }
-            Answer::Definitions(defs) => json!({
+            Answer::Definitions(defs, _) => json!({
                 "definitions": defs.iter().map(|(c, text)| {
                     let mut v = chunk_json(c);
                     v["text"] = json!(text);
@@ -952,7 +1118,7 @@ impl Answer {
                 .map(|(h, cos, jac)| json!({"path": h.path, "start": h.start, "end": h.end, "kind": h.kind, "qualname": h.qualname, "cosine": cos, "jaccard": jac}))
                 .collect(),
             Answer::Dupes(groups) => serde_json::to_value(groups).unwrap_or_default(),
-            Answer::Captures(caps) => serde_json::to_value(caps).unwrap_or_default(),
+            Answer::Captures(caps, _) => serde_json::to_value(caps).unwrap_or_default(),
             Answer::Reindexed(st) => json!({"files_changed": st.files_changed, "files_removed": st.files_removed, "chunks": st.chunks}),
         }
     }
@@ -995,7 +1161,7 @@ mod tests {
     #[test]
     fn a_long_answer_is_cut_at_whole_items_and_says_how_to_continue() {
         let hit = |i: usize| Hit { path: format!("src/f{i}.rs"), start: 1, end: 9, name: format!("f{i}"), kind: "function".into(), ..Hit::default() };
-        let answer = Answer::Hits { hits: (0..5).map(hit).collect(), words: vec![], snippet: false };
+        let answer = Answer::Hits { hits: (0..5).map(hit).collect(), words: vec![], snippet: false, stopped: None };
         let all = answer.text();
         assert_eq!(all.lines().count(), 5);
         assert_eq!(answer.text_within(usize::MAX, 0), all);
@@ -1020,8 +1186,8 @@ mod tests {
     fn an_empty_answer_says_so_in_words() {
         assert_eq!(Answer::Outline { path: "a.py".into(), rows: vec![] }.text(), "no symbols in a.py (not indexed or no definitions)");
         assert_eq!(Answer::Rdeps { target: "m".into(), rows: vec![] }.text(), "nothing imports m");
-        assert_eq!(Answer::Hits { hits: vec![], words: vec![], snippet: true }.text(), "(no results)");
-        assert!(Answer::Dupes(vec![]).is_empty() && Answer::Captures(vec![]).is_empty());
+        assert_eq!(Answer::Hits { hits: vec![], words: vec![], snippet: true, stopped: None }.text(), "(no results)");
+        assert!(Answer::Dupes(vec![]).is_empty() && Answer::Captures(vec![], None).is_empty());
         assert_eq!(
             Answer::Rdeps { target: "m".into(), rows: vec![("a.py".into(), 3, "m".into())] }.json(),
             json!([{"path": "a.py", "line": 3, "module": "m"}])

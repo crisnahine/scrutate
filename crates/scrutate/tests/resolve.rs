@@ -182,3 +182,24 @@ fn go_two_areas() {
     let (c, s) = ("circle/area.go", "square/area.go");
     assert_eq!(r.resolved("Area"), expect(&[(c, 3, c), (s, 3, s), ("square/twice.go", 3, s), ("main.go", 9, c), ("main.go", 10, s)]));
 }
+
+#[test]
+fn javascript_var_belongs_to_the_function_and_let_to_the_block() {
+    let use_js = "import { helper } from './lib';\nfunction viaVar(flag) {\n  if (flag) {\n    var helper = other();\n  }\n  return helper();\n}\nfunction viaLet(flag) {\n  if (flag) {\n    let helper = other();\n  }\n  return helper();\n}\nfunction viaConst(flag) {\n  {\n    const helper = 3;\n  }\n  for (var i = 0; i < 1; i++) {\n    var other = helper();\n  }\n  return helper();\n}\n";
+    let r = Repo::new("js_var", &[("lib.js", "export function helper() { return 1; }\n"), ("use.js", use_js)]);
+    let h = "lib.js";
+    assert_eq!(
+        r.resolved("helper"),
+        expect(&[
+            (h, 1, h),
+            ("use.js", 1, h),
+            ("use.js", 4, "-"),
+            ("use.js", 6, "-"),
+            ("use.js", 10, "-"),
+            ("use.js", 12, h),
+            ("use.js", 16, "-"),
+            ("use.js", 19, h),
+            ("use.js", 21, h)
+        ])
+    );
+}

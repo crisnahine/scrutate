@@ -134,9 +134,34 @@ impl Repo {
         self.run_as_is(op)
     }
 
-    /// Run one operation on the index as it is, without refreshing it; a damaged database is
-    /// still rebuilt and the operation run again.
+    /// Run one operation on the index without a scan of the tree. The files the answer cites
+    /// (and the ones its arguments name) are checked against the index, one `stat` each: when
+    /// one changed or is gone, those files alone are updated and the answer computed again,
+    /// once. A file no answer cites waits for the next scan. A damaged database is rebuilt and
+    /// the operation run again.
     pub fn run_as_is(&mut self, op: &ops::Op) -> Result<ops::Answer> {
+        let first = self.run_once(op);
+        let mut paths = op.named_paths();
+        if let Ok(a) = &first {
+            paths.extend(a.cited().into_iter().map(str::to_string));
+        }
+        let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+        let stale = match self.ix.stale(&paths) {
+            Ok(s) if !s.is_empty() => s,
+            _ => return first,
+        };
+        match self.ix.update_paths(&stale) {
+            Ok(_) => self.run_once(op),
+            Err(e) if index::error_is_corruption(&e) => {
+                self.rebuild(&e)?;
+                self.run_once(op)
+            }
+            // another writer holds the lock, or the index cannot be written: answer as it is
+            Err(_) => first,
+        }
+    }
+
+    fn run_once(&mut self, op: &ops::Op) -> Result<ops::Answer> {
         match ops::run(self, op) {
             Err(e) if index::error_is_corruption(&e) => {
                 self.rebuild(&e)?;

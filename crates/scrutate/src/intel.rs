@@ -201,7 +201,7 @@ pub fn similar(s: &mut Searcher, target: &str, k: usize) -> Result<Vec<(Hit, f32
     let Some(row) = locate(s, target)? else { bail!("no symbol or location matches {}", echo(target)) };
     let (_, b) = s.ix.lex()?.vec_of(row.id).ok_or_else(|| anyhow!("the index has no vectors (semantic model disabled)"))?;
     if b.iter().all(|x| *x == 0.0) {
-        bail!("{} has no implementation vector (empty body)", row.qualname);
+        bail!("{} has no implementation vector (its body is too short to compare)", shown(&row.qualname));
     }
     let near = s.ix.lex()?.scan_b(&b, k * 3, row.id);
     let my_tokens: HashSet<String> = tokenize2(&row.text, Some(BODY_CAP)).0.into_iter().collect();
@@ -659,7 +659,7 @@ pub fn groups_text(groups: &[RefGroup], out: &mut String) {
 /// A group as text: its symbol, then its matching lines.
 pub fn group_text(g: &RefGroup) -> String {
     let mut out = match &g.symbol {
-        Some(c) => format!("  {}:{}-{}  [{}] {}", shown(&c.path), c.start, c.end, c.kind, if c.qualname.is_empty() { &c.name } else { &c.qualname }),
+        Some(c) => format!("  {}:{}-{}  [{}] {}", shown(&c.path), c.start, c.end, c.kind, shown(if c.qualname.is_empty() { &c.name } else { &c.qualname })),
         None => format!("  {}  (no enclosing symbol)", shown(&g.path)),
     };
     for h in &g.lines {
@@ -690,13 +690,13 @@ pub fn references_render(r: &References) -> String {
     if !r.definitions.is_empty() {
         out.push_str("definitions:\n");
         for d in &r.definitions {
-            out.push_str(&format!("    {}:{}-{}  [{}] {}\n", shown(&d.path), d.start, d.end, d.kind, d.qualname));
+            out.push_str(&format!("    {}:{}-{}  [{}] {}\n", shown(&d.path), d.start, d.end, d.kind, shown(&d.qualname)));
         }
     }
     if !r.callers.is_empty() {
         out.push_str("callers:\n");
         for h in &r.callers {
-            out.push_str(&format!("    {}  [{}] {}\n", crate::fmt::loc(h), h.kind, h.qualname));
+            out.push_str(&format!("    {}  [{}] {}\n", crate::fmt::loc(h), h.kind, shown(&h.qualname)));
         }
     }
     out.push_str(&format!("references ({} lines in {} symbols):\n", r.total_lines(), r.groups.len()));

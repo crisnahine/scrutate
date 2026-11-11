@@ -38,7 +38,7 @@ pub const TF_CAP: u32 = 4; // a token counts at most this many times per field
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
-CREATE TABLE IF NOT EXISTS files(path TEXT PRIMARY KEY, size INTEGER, mtime_ns INTEGER, hash TEXT);
+CREATE TABLE IF NOT EXISTS files(path TEXT PRIMARY KEY, size INTEGER, mtime_ns INTEGER, hash TEXT, ctime_ns INTEGER);
 CREATE TABLE IF NOT EXISTS chunks(
   id INTEGER PRIMARY KEY, path TEXT NOT NULL, kind TEXT, name TEXT, qualname TEXT,
   name_key TEXT, qual_key TEXT, start INTEGER, end INTEGER, is_test INTEGER,
@@ -319,13 +319,41 @@ pub fn build_rows(rel: &str, source: &str, model: Option<&SemanticModel>, prev: 
 
 enum Processed {
     Gone,
-    Skip(u64, i64),
-    Same(u64, i64),
-    New(u64, i64, String, Vec<NewRow>, Box<FileLex>, Vec<(i64, String)>, Option<PrevParse>),
+    Skip(Stat),
+    Same(Stat),
+    New(Stat, String, Vec<NewRow>, Box<FileLex>, Vec<(i64, String)>, Option<PrevParse>),
 }
 
 fn mtime_ns(md: &std::fs::Metadata) -> i64 {
     md.modified().ok().and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok()).map(|d| d.as_nanos() as i64).unwrap_or(0)
+}
+
+/// What one `stat` says about a file, as the `files` table records it.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Stat {
+    pub size: i64,
+    pub mtime: i64,
+    /// status change time: moves on a chmod, which leaves size and mtime alone (0 where unknown)
+    pub ctime: i64,
+}
+
+impl Stat {
+    pub fn of(md: &std::fs::Metadata) -> Stat {
+        #[cfg(unix)]
+        let ctime = {
+            use std::os::unix::fs::MetadataExt;
+            md.ctime().saturating_mul(1_000_000_000).saturating_add(md.ctime_nsec())
+        };
+        #[cfg(not(unix))]
+        let ctime = 0;
+        Stat { size: md.len() as i64, mtime: mtime_ns(md), ctime }
+    }
+
+    /// Whether a recorded row still describes the file; a row without a ctime (written by the
+    /// reference engine, or before the column existed) is read again once.
+    fn matches(&self, size: i64, mtime: i64, ctime: Option<i64>) -> bool {
+        self.size == size && self.mtime == mtime && ctime == Some(self.ctime)
+    }
 }
 
 fn process(root: &Path, rel: &str, known_hash: Option<&str>, model: Option<&SemanticModel>, prev: Option<PrevParse>) -> Processed {
@@ -333,26 +361,26 @@ fn process(root: &Path, rel: &str, known_hash: Option<&str>, model: Option<&Sema
     let Ok(md) = std::fs::metadata(&full) else {
         return Processed::Gone;
     };
-    let (size, mtime) = (md.len(), mtime_ns(&md));
-    if size > MAX_FILE_BYTES {
-        return Processed::Skip(size, mtime);
+    let stat = Stat::of(&md);
+    if md.len() > MAX_FILE_BYTES {
+        return Processed::Skip(stat);
     }
     let Ok(raw) = std::fs::read(&full) else {
         return Processed::Gone; // unreadable now: its old chunks must not answer
     };
     let Some(source) = decode_source(&raw) else {
-        return Processed::Skip(size, mtime);
+        return Processed::Skip(stat);
     };
     let h = format!("{:x}", Sha1::digest(&raw));
     if Some(h.as_str()) == known_hash {
-        return Processed::Same(size, mtime);
+        return Processed::Same(stat);
     }
     let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| build_rows(rel, &source, model, prev)));
     match built {
-        Ok((rows, lex, imports, tree)) => Processed::New(size, mtime, h, rows, Box::new(lex), imports, tree),
+        Ok((rows, lex, imports, tree)) => Processed::New(stat, h, rows, Box::new(lex), imports, tree),
         Err(_) => {
             eprintln!("[scrutate] skipped {rel}: parser failure");
-            Processed::Skip(size, mtime)
+            Processed::Skip(stat)
         }
     }
 }
@@ -378,6 +406,12 @@ pub fn decode_source(raw: &[u8]) -> Option<std::borrow::Cow<'_, str>> {
         return None;
     }
     Some(String::from_utf8_lossy(raw))
+}
+
+/// The chunk count `chunks_at` ("<data version> <count>") records, when it was written for `ver`.
+fn counted(at: Option<&str>, ver: Option<&str>) -> Option<i64> {
+    let (v, n) = at?.split_once(' ')?;
+    (Some(v) == ver).then(|| n.parse().ok()).flatten()
 }
 
 /// SQLite errors that mean the file is not a usable database (as opposed to busy or I/O trouble).
@@ -621,7 +655,8 @@ impl Index {
         let old = self.segments();
         self.db.execute_batch("DELETE FROM refs; DELETE FROM imports; DELETE FROM chunks; DELETE FROM files;")?;
         self.set_meta("segments", "[]")?;
-        self.bump_version()?;
+        let ver = self.bump_version()?;
+        self.set_meta("chunks_at", &format!("{ver} 0"))?;
         retry_busy(|| self.db.execute_batch("COMMIT"))?;
         for n in old {
             let _ = std::fs::remove_dir_all(self.seg_dir.join(n));
@@ -667,7 +702,21 @@ impl Index {
         if get("segments").is_some_and(|v| serde_json::from_str::<Vec<String>>(&v).is_err()) {
             return Triage::Rebuild("segment list unreadable");
         }
+        if let Ok(Some(why)) = Self::chunks_lost(&con) {
+            return Triage::Rebuild(why);
+        }
         Triage::Reuse
+    }
+
+    /// The `chunks` table is empty although the commit that wrote the current data version
+    /// counted rows in it. O(1); a version written by another engine is not judged.
+    fn chunks_lost(db: &Connection) -> rusqlite::Result<Option<&'static str>> {
+        let (ver, at, any): (Option<String>, Option<String>, bool) = db.query_row(
+            "SELECT (SELECT value FROM meta WHERE key='data_version'), (SELECT value FROM meta WHERE key='chunks_at'), EXISTS(SELECT 1 FROM chunks)",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        Ok((!any && counted(at.as_deref(), ver.as_deref()).is_some_and(|n| n > 0)).then_some("the chunks table lost its rows"))
     }
 
     pub(crate) fn wipe(dir: &Path, seg_dir: &Path) {
@@ -769,7 +818,15 @@ impl Index {
         if self.lex_ver.as_deref() != Some(ver.as_str()) {
             let store = self.lex.as_mut().unwrap();
             let n_rows: usize = store.segs.iter().map(|s| s.n).sum();
-            let n_live: i64 = self.db.query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))?;
+            // one statement, so the count and the version it is checked against are of one commit
+            let (at_ver, at, n_live): (Option<String>, Option<String>, i64) = self.db.query_row(
+                "SELECT (SELECT value FROM meta WHERE key='data_version'), (SELECT value FROM meta WHERE key='chunks_at'), (SELECT COUNT(*) FROM chunks)",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )?;
+            if counted(at.as_deref(), at_ver.as_deref()).is_some_and(|n| n != n_live) {
+                return Err(Damaged("the chunks table lost rows").into());
+            }
             if n_rows as i64 == n_live {
                 store.prepare(None); // nothing was ever deleted: no need to read every id
             } else {
@@ -784,11 +841,44 @@ impl Index {
 
     // ---- update
     pub fn update(&mut self, force: bool) -> Result<UpdateStats> {
-        self.update_with(force, true)
+        self.update_with(force, true, None)
+    }
+
+    /// Of `paths` (repository paths the index may hold), the ones whose file is gone or whose
+    /// stat differs from what the index recorded. One `stat` and one indexed lookup per path.
+    pub fn stale(&self, paths: &[&str]) -> Result<Vec<String>> {
+        let ctime = if self.has_ctime() { "ctime_ns" } else { "NULL" };
+        let mut q = self.db.prepare_cached(&format!("SELECT size, mtime_ns, {ctime} FROM files WHERE path=?1 AND hash != 'SKIP'"))?;
+        let mut out: Vec<String> = Vec::new();
+        for &p in paths {
+            if out.iter().any(|o| o == p) {
+                continue;
+            }
+            let Some((size, mtime, ct)) = q.query_row([p], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, Option<i64>>(2)?))).optional()? else {
+                continue;
+            };
+            let fresh = std::fs::metadata(self.root.join(p)).ok().filter(|m| m.is_file()).map(|m| Stat::of(&m));
+            // a row without a ctime is judged by size and mtime here; the next scan reads it again
+            if fresh.is_none_or(|s| !s.matches(size, mtime, ct.or(Some(s.ctime)))) {
+                out.push(p.to_string());
+            }
+        }
+        Ok(out)
+    }
+
+    /// `update` of just these files, without a walk of the tree; fails at once when another
+    /// process holds the write lock.
+    pub fn update_paths(&mut self, paths: &[String]) -> Result<UpdateStats> {
+        self.update_with(false, false, Some(paths))
+    }
+
+    fn has_ctime(&self) -> bool {
+        self.db.prepare_cached("SELECT 1 FROM pragma_table_info('files') WHERE name='ctime_ns'").and_then(|mut q| q.exists([])).unwrap_or(false)
     }
 
     /// `update`; with `wait` false a write lock held by another process is an error at once.
-    fn update_with(&mut self, force: bool, wait: bool) -> Result<UpdateStats> {
+    /// `only`: look at these files alone, instead of every file of the tree.
+    fn update_with(&mut self, force: bool, wait: bool, only: Option<&[String]>) -> Result<UpdateStats> {
         if !self.dir.join("index.db").is_file() {
             return Err(Damaged("index database deleted").into());
         }
@@ -814,7 +904,7 @@ impl Index {
         let cur_ver = self.meta("data_version").unwrap_or_else(|| "0".into());
         let in_sync =
             self.lex.is_some() && self.lex_ver.as_deref() == Some(cur_ver.as_str()) && self.lex.as_ref().map(|l| l.names == self.segments()).unwrap_or(false);
-        let changed = match self.update_inner(force, &mut st, &mut removed, &mut seg_names) {
+        let changed = match self.update_inner(force, only, &mut st, &mut removed, &mut seg_names) {
             Ok(c) => c,
             Err(e) => {
                 let _ = self.db.execute_batch("ROLLBACK");
@@ -844,9 +934,10 @@ impl Index {
             rayon::broadcast(|_| crate::text::clear_caches());
             crate::text::clear_caches();
         }
-        st.chunks = self.db.query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))?;
         st.seconds = t0.elapsed().as_secs_f64();
-        self.last_refresh = Some(Instant::now());
+        if only.is_none() {
+            self.last_refresh = Some(Instant::now());
+        }
         if prof::enabled() {
             prof::report(st.seconds);
         }
@@ -854,19 +945,45 @@ impl Index {
     }
 
     /// Body of `update()`, inside the write transaction. -> whether anything changed.
-    fn update_inner(&mut self, force: bool, st: &mut UpdateStats, removed: &mut Vec<i64>, seg_names: &mut Vec<String>) -> Result<bool> {
+    fn update_inner(
+        &mut self,
+        force: bool,
+        only: Option<&[String]>,
+        st: &mut UpdateStats,
+        removed: &mut Vec<i64>,
+        seg_names: &mut Vec<String>,
+    ) -> Result<bool> {
+        if let Some(why) = Self::chunks_lost(&self.db)? {
+            return Err(Damaged(why).into());
+        }
+        if !self.has_ctime() {
+            // an index built by the reference engine, or before the column existed
+            self.db.execute_batch("ALTER TABLE files ADD COLUMN ctime_ns INTEGER")?;
+        }
         let mut changed = false;
         let scan_t0 = Instant::now();
-        let mut known: HashMap<String, (i64, i64, String)> = HashMap::new();
-        {
-            let mut q = self.db.prepare("SELECT path,size,mtime_ns,hash FROM files")?;
-            for r in q.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?)))? {
-                let (p, s, m, h) = r?;
-                known.insert(p, (s, m, h));
+        type Known = HashMap<String, (i64, i64, Option<i64>, String)>;
+        let mut known: Known = HashMap::new();
+        let row =
+            |r: &rusqlite::Row| Ok((r.get::<_, String>(0)?, (r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, Option<i64>>(3)?, r.get::<_, String>(4)?)));
+        let files = match only {
+            None => {
+                let mut q = self.db.prepare("SELECT path,size,mtime_ns,ctime_ns,hash FROM files")?;
+                known = q.query_map([], row)?.collect::<rusqlite::Result<Known>>()?;
+                let files = crate::files::list_files(&self.root);
+                st.files_total = files.len();
+                files
             }
-        }
-        let files = crate::files::list_files(&self.root);
-        st.files_total = files.len();
+            Some(paths) => {
+                let mut q = self.db.prepare_cached("SELECT path,size,mtime_ns,ctime_ns,hash FROM files WHERE path=?1")?;
+                for p in paths {
+                    if let Some((p, k)) = q.query_row([p], row).optional()? {
+                        known.insert(p, k);
+                    }
+                }
+                paths.iter().filter(|p| std::fs::metadata(self.root.join(p)).is_ok_and(|m| m.is_file())).cloned().collect()
+            }
+        };
         let fileset: HashSet<&String> = files.iter().collect();
         let mut gone: Vec<String> = known.keys().filter(|p| !fileset.contains(p)).cloned().collect();
         gone.sort();
@@ -877,14 +994,16 @@ impl Index {
             };
             if !force {
                 if let Some(k) = known.get(rel) {
-                    if k.0 == md.len() as i64 && k.1 == mtime_ns(&md) {
+                    if Stat::of(&md).matches(k.0, k.1, k.2) {
                         continue; // stat unchanged: no read, no hash
                     }
                 }
             }
-            todo.push((rel.clone(), if force { None } else { known.get(rel).map(|k| k.2.clone()) }));
+            todo.push((rel.clone(), if force { None } else { known.get(rel).map(|k| k.3.clone()) }));
         }
-        self.scan_cost = scan_t0.elapsed().as_secs_f64();
+        if only.is_none() {
+            self.scan_cost = scan_t0.elapsed().as_secs_f64();
+        }
         let mut next_id: i64 = self.meta("next_id").and_then(|v| v.parse().ok()).unwrap_or(1); // ids are never reused
         for g in &gone {
             removed.extend(self.delete_file(g)?);
@@ -913,16 +1032,19 @@ impl Index {
             for (rel, res) in results {
                 match res {
                     Processed::Gone => removed.extend(self.delete_file(&rel)?),
-                    Processed::Skip(size, mtime) => {
+                    Processed::Skip(s) => {
                         // binary / too large / unparsable: remember so we never re-read it
                         removed.extend(self.delete_file(&rel)?);
-                        self.db.execute("INSERT OR REPLACE INTO files(path,size,mtime_ns,hash) VALUES(?1,?2,?3,'SKIP')", params![rel, size as i64, mtime])?;
+                        self.db.execute(
+                            "INSERT OR REPLACE INTO files(path,size,mtime_ns,hash,ctime_ns) VALUES(?1,?2,?3,'SKIP',?4)",
+                            params![rel, s.size, s.mtime, s.ctime],
+                        )?;
                     }
-                    Processed::Same(size, mtime) => {
-                        // content identical, only the mtime moved
-                        self.db.execute("UPDATE files SET size=?1, mtime_ns=?2 WHERE path=?3", params![size as i64, mtime, rel])?;
+                    Processed::Same(s) => {
+                        // content identical, only the stat moved
+                        self.db.execute("UPDATE files SET size=?1, mtime_ns=?2, ctime_ns=?3 WHERE path=?4", params![s.size, s.mtime, s.ctime, rel])?;
                     }
-                    Processed::New(size, mtime, h, rows, lex, imports, tree) => {
+                    Processed::New(s, h, rows, lex, imports, tree) => {
                         if let Some(tree) = tree.filter(|t| t.source_len() <= TREE_CACHE_BYTES) {
                             self.tree_tick += 1;
                             self.trees.insert(rel.clone(), (self.tree_tick, tree));
@@ -939,7 +1061,10 @@ impl Index {
                             }
                         }
                         builder.add_file(first, *lex);
-                        self.db.execute("INSERT OR REPLACE INTO files(path,size,mtime_ns,hash) VALUES(?1,?2,?3,?4)", params![rel, size as i64, mtime, h])?;
+                        self.db.execute(
+                            "INSERT OR REPLACE INTO files(path,size,mtime_ns,hash,ctime_ns) VALUES(?1,?2,?3,?4,?5)",
+                            params![rel, s.size, s.mtime, h, s.ctime],
+                        )?;
                         st.files_changed += 1;
                         changed = true;
                         if builder.n >= SEGMENT_ROWS {
@@ -960,8 +1085,10 @@ impl Index {
         }
         self.set_meta("next_id", &next_id.to_string())?;
         changed = changed || !removed.is_empty();
+        st.chunks = self.db.query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))?;
         if changed {
-            self.bump_version()?; // same transaction as the manifest: readers never see one without the other
+            let ver = self.bump_version()?; // same transaction as the manifest: readers never see one without the other
+            self.set_meta("chunks_at", &format!("{ver} {}", st.chunks))?;
         }
         Ok(changed)
     }
@@ -1014,7 +1141,7 @@ impl Index {
                 return Ok(None);
             }
         }
-        let st = self.update_with(false, wait);
+        let st = self.update_with(false, wait, None);
         // a failing update is not retried on every call either; a busy lock costs nothing to try
         if !st.as_ref().is_err_and(|e| e.is::<Busy>()) {
             self.last_refresh = Some(Instant::now());
@@ -1028,10 +1155,16 @@ impl Index {
         self.update(true)
     }
 
+    /// A new data version, inside the caller's write transaction; a chunk count recorded for the
+    /// old one carries over (a compaction moves segment rows, not chunks).
     fn bump_version(&self) -> Result<String> {
-        let v = self.meta("data_version").and_then(|v| v.parse::<i64>().ok()).unwrap_or(0) + 1;
-        self.set_meta("data_version", &v.to_string())?;
-        Ok(v.to_string())
+        let old = self.meta("data_version");
+        let v = (old.as_deref().and_then(|v| v.parse::<i64>().ok()).unwrap_or(0) + 1).to_string();
+        self.set_meta("data_version", &v)?;
+        if let Some(n) = counted(self.meta("chunks_at").as_deref(), old.as_deref()) {
+            self.set_meta("chunks_at", &format!("{v} {n}"))?;
+        }
+        Ok(v)
     }
 
     /// Drop dead segments and merge small ones so queries touch few files.
