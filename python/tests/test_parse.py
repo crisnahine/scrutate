@@ -371,3 +371,11 @@ def test_a_typescript_literal_wrapped_in_as_satisfies_or_parentheses_keeps_its_o
         chunks = parse_source(path, TS_WRAPPED_LITERALS)
         assert [c.qualname for c in chunks if c.kind == "method"] == [
             "api.get", "store.inc", "store.sub.deep", "box.open", "tool.run"], path
+
+
+def test_a_computed_or_quoted_method_name_is_named_without_its_brackets_or_quotes():
+    src = "class Limiter {\n  [kRun]() {}\n  'quoted'() {}\n  [Symbol.iterator]() {}\n}\n"
+    got = [(c.name, c.qualname) for c in parse_source("l.js", src) if c.kind == "method"]
+    assert got == [("kRun", "Limiter.kRun"), ("quoted", "Limiter.quoted"), ("Symbol.iterator", "Limiter.Symbol.iterator")]
+    rs = [c.qualname for c in parse_source("m.rs", "impl Hi for [u32] {\n    fn hi(&self) {}\n}\n") if c.kind != "module"]
+    assert rs == ["u32", "u32.hi"]

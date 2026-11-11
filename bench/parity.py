@@ -3,8 +3,8 @@
 
 usage: parity.py REPO_DIR RUST_BINARY [--queries N]
 
-1. Both engines index a copy of REPO_DIR; chunk tables, call edges, postings (per chunk, field and
-   token: tf), document lengths and vectors are compared.
+1. Both engines index a copy of REPO_DIR's files in the reference's six languages; chunk tables,
+   call edges, postings (per chunk, field and token: tf), document lengths and vectors are compared.
 2. Benchmark queries (all five types: the package's query file when one was generated, else made
    from the corpus's own documented functions by the same rules) run through both engines on the *Python-built* index; candidate sets, the 47 features, the
    ranker scores and the final top-10 are compared.
@@ -239,14 +239,32 @@ def compare_search(py, rs, ix: Index) -> list[str]:
     return problems
 
 
+def reference_files():
+    """A copytree ignore that keeps the files of the reference's languages: the Rust engine parses
+    others (JSON, Markdown, plain text) with grammars and heuristics the reference does not have."""
+    from scrutate_ref.parse import language_for
+
+    def ignore(d, entries):
+        skip = {".scrutate", ".git"}
+        out = {e for e in entries if e in skip or language_for(e) is None and os.path.isfile(os.path.join(d, e))}
+        ignore.left_out |= {os.path.join(d, e) for e in out - skip}
+        return out
+
+    ignore.left_out = set()
+    return ignore
+
+
 def main():
     repo, binary = sys.argv[1], sys.argv[2]
     nq = int(sys.argv[sys.argv.index("--queries") + 1]) if "--queries" in sys.argv else 300
     work = tempfile.mkdtemp(prefix="parity_")
     atexit.register(shutil.rmtree, work, ignore_errors=True)  # also when a failed check exits early
     a_root, b_root = os.path.join(work, "py"), os.path.join(work, "rs")
-    shutil.copytree(repo, a_root, ignore=shutil.ignore_patterns(".scrutate"))
-    shutil.copytree(repo, b_root, ignore=shutil.ignore_patterns(".scrutate"))
+    ignore = reference_files()
+    shutil.copytree(repo, a_root, ignore=ignore)
+    shutil.copytree(repo, b_root, ignore=ignore)
+    if ignore.left_out:
+        print(f"left out: {len(ignore.left_out)} files in other languages, e.g. {sorted(os.path.relpath(f, repo) for f in ignore.left_out)[:3]}")
     a = Index(a_root)
     st = a.update()
     print(f"python index: {st.chunks} chunks in {st.seconds:.1f}s")
@@ -254,8 +272,9 @@ def main():
     print(f"rust index:   {r.stdout.strip()} {r.stderr.strip()[-300:]}")
     assert r.returncode == 0
     b = Index(b_root)
-    assert b.stats()["chunks"] == st.chunks, (b.stats(), st)
     problems = compare_indexes(a, b)
+    if b.stats()["chunks"] != st.chunks:
+        problems.insert(0, f"chunk counts differ: {st.chunks} in python, {b.stats()['chunks']} in rust")
     print("index parity:", "OK" if not problems else "PROBLEMS")
     for p in problems:
         print("   -", p)

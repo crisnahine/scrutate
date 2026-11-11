@@ -233,6 +233,13 @@ def _def_name(node, src: bytes) -> str | None:
     name = src[n.start_byte : n.end_byte].decode("utf8", "replace") if n is not None else None
     if name is not None and node.type == "impl_item":  # the bare type: `impl<T> crate::Stack<T>` is `Stack`
         name = name.split("<", 1)[0].rsplit("::", 1)[-1].strip() or name
+    if name is not None:
+        # a quoted (`'run'() {}`) or computed (`[kRun]() {}`) name is named by what it holds
+        name = name.strip().strip('"`')
+        if name.startswith("'"):
+            name = name.strip("'")
+        if name.startswith("[") and name.endswith("]") and len(name) > 2:
+            name = name[1:-1]
     return name
 
 

@@ -162,7 +162,7 @@ docs/RELEASING.md, public, tag `v0.1.0`.
   not from a copy of the package alone.
 - The Python reference cuts a `.txt` or Markdown file into windows only, where the engine gives
   a `.txt` file a module chunk and Markdown its sections. Parity holds for the languages the
-  reference has a grammar for, and `bench/parity.py` runs on Python and Rust sources.
+  reference has a grammar for, and `bench/parity.py` leaves the other files out.
 - Windows and Intel macOS are tested on GitHub's runners only (CI run 43013926055 passed on
   `windows-latest`, `windows-11-arm` and `macos-15-intel`): no release archive for them has been
   built by the release workflow or installed on a machine, and no benchmark has run there. Five

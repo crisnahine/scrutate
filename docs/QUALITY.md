@@ -9,7 +9,9 @@ numbers hold for the shipped binary. `bench/parity.py` checks it with no toleran
 in the chunk tables, a feature, a score, a top 10 or the end-to-end result fails, and so does a
 run that cannot make as many queries as asked. Its queries are built from the corpus's documented
 functions by the benchmark's rules: 300 on networkx and 50 on the engine's own sources
-(`crates/scrutate/src`, a CI step).
+(`crates/scrutate/src`, a CI step). `bench/parity_repos.sh` runs it with 40 queries on 19 real
+repositories of the six languages the reference has a grammar for; parity indexes only a
+repository's files in those six languages.
 
 ## Protocol
 

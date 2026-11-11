@@ -26,6 +26,7 @@ cargo test --release -p scrutate                  # unit + samples + robustness 
 cargo audit
 cd python && python -m pytest -q                  # reference engine (+ bindings if installed)
 python bench/parity.py <repo> target/release/scrutate --queries 300   # Rust == Python, bit for bit
+bench/parity_repos.sh target/release/scrutate     # the same on real repositories of all six languages
 python bench/differential.py --cases 200          # Engine A == ripgrep on random inputs
 ```
 
