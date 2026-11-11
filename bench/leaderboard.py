@@ -311,7 +311,11 @@ def group_argv(cmd, k):
     """`cmd` started k times at once by one shell, which exits when all of them have; every tool pays
     the same shell start. The environment of `cmd` reaches the copies through the shell's."""
     one = " ".join(shlex.quote(x) for x in cmd)
-    return ["/bin/sh", "-c", " & ".join([one] * k) + " & wait"]
+    # the shell waits for each copy by its id and exits with a failed copy's status, so a copy that
+    # fails only when several run at once is seen like a failed single run
+    starts = " ".join(f"{one} & p{i}=$!;" for i in range(k))
+    waits = " ".join(f"wait $p{i} || s=$?;" for i in range(k))
+    return ["/bin/sh", "-c", f"{starts} s=0; {waits} exit $s"]
 
 
 # ------------------------------------------------------------------------- output normalisation
@@ -818,7 +822,10 @@ def check_hyperfine():
 
 def _selfcheck() -> None:
     g = group_argv(["/x/rg", "-e", "it's", "."], 2)
-    assert g[:2] == ["/bin/sh", "-c"] and shlex.split(g[2]) == ["/x/rg", "-e", "it's", ".", "&", "/x/rg", "-e", "it's", ".", "&", "wait"]
+    copy = ["/x/rg", "-e", "it's", ".", "&"]
+    assert g[:2] == ["/bin/sh", "-c"] and shlex.split(g[2])[:12] == copy + ["p0=$!;"] + copy + ["p1=$!;"], g
+    run = lambda c: subprocess.run(group_argv(["/bin/sh", "-c", c], 3)).returncode
+    assert (run("exit 0"), run("exit 2")) == (0, 2)
     ok = lambda xs: {"status": "ok", "cpu": xs}
     tools = {"scrutate": ok([1.0, 1.1, 0.9] * 10), "ugrep": ok([2.0, 2.1, 1.9] * 10), "ack": ok([0.5] * 3), "ag": {"status": "wrong"}}
     m = metric_verdict(tools, "scrutate", ["scrutate", "ugrep", "ack"], "cpu", 30)
