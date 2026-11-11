@@ -1248,7 +1248,9 @@ impl Index {
                 // segments too small for an inverted-file index are folded together once they add
                 // up to one; everything in the group is merged when there are too many segments or
                 // one of them is mostly dead; a lone mostly-dead segment is rewritten to purge it
-                let smalls: Vec<usize> = group.iter().copied().filter(|&i| counts[i] < crate::lex::IVF_MIN_ROWS).collect();
+                // by its size as written: a segment that has an inverted-file index stays out when a
+                // few of its rows die, else every save near that size would write it again
+                let smalls: Vec<usize> = group.iter().copied().filter(|&i| sizes[i] < crate::lex::IVF_MIN_ROWS).collect();
                 let smalls_sum: usize = smalls.iter().map(|&i| counts[i]).sum();
                 if group.len() > 1 && (many || group_dead) {
                     merge = group;
@@ -1464,6 +1466,29 @@ mod tests {
         });
         let _ = std::fs::remove_dir_all(&root);
         assert_eq!(left, 0);
+    }
+
+    #[test]
+    fn a_large_segment_is_not_rewritten_when_a_few_of_its_rows_die() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_compact_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let funcs = |from: usize, n: usize| (from..from + n).map(|i| format!("def f{i}():\n    return {i}\n\n")).collect::<String>();
+        // one segment just over the size that gets an inverted-file index
+        std::fs::write(root.join("big.py"), funcs(0, crate::lex::IVF_MIN_ROWS - 2)).unwrap();
+        std::fs::write(root.join("small.py"), funcs(100_000, 10)).unwrap();
+        let mut ix = super::Index::open(&root, None).unwrap();
+        ix.update(false).unwrap();
+        let first = ix.segments();
+        let rows = ix.db.query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get::<_, i64>(0)).unwrap() as usize;
+        assert!(first.len() == 1 && rows >= crate::lex::IVF_MIN_ROWS && rows - 11 < crate::lex::IVF_MIN_ROWS, "{first:?} {rows}");
+        // a few of its rows die, and the edit arrives as a small segment of its own
+        std::fs::write(root.join("small.py"), funcs(200_000, 10)).unwrap();
+        ix.update(false).unwrap();
+        let now = ix.segments();
+        assert!(now.contains(&first[0]) && now.len() == 2, "the large segment was written again: {first:?} -> {now:?}");
+        drop(ix);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
