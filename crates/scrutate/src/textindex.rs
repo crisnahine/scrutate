@@ -978,6 +978,7 @@ fn lock_exclusive(f: &File) -> Result<()> {
 /// segments are merged when there are too many or too many dead documents.
 pub fn update(root: &Path, force: bool, progress: bool) -> Result<TextStats> {
     let t0 = Instant::now();
+    crate::files::index_dir(root)?;
     let dir = dir_of(root);
     std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
     let gi = root.join(".scrutate").join(".gitignore");

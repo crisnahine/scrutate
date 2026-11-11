@@ -399,8 +399,9 @@ pub fn error_is_corruption(e: &anyhow::Error) -> bool {
 /// Delete the index files of `root` (used after an operation reported database corruption on a
 /// database too large for the open-time integrity check). The caller reopens afterwards.
 pub fn wipe_index(root: &Path) {
-    let dir = root.join(".scrutate");
-    Index::wipe(&dir, &dir.join("seg"));
+    if let Ok(dir) = crate::files::index_dir(root) {
+        Index::wipe(&dir, &dir.join("seg"));
+    }
 }
 
 /// Run `f` again while it fails with SQLITE_BUSY/LOCKED (statements the busy handler does not cover,
@@ -448,8 +449,9 @@ pub struct Index {
 
 impl Index {
     pub fn open(root: &Path, model: Option<Arc<SemanticModel>>) -> Result<Index> {
-        let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-        let dir = root.join(".scrutate");
+        crate::files::index_dir(root)?;
+        let root = std::fs::canonicalize(root).with_context(|| format!("open {}", root.display()))?;
+        let dir = crate::files::index_dir(&root)?;
         let seg_dir = dir.join("seg");
         std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
         let gi = dir.join(".gitignore");
@@ -592,10 +594,22 @@ impl Index {
         serde_json::from_str(&self.meta("segments").unwrap_or_else(|| "[]".into())).unwrap_or_default()
     }
 
+    /// Call inside a write transaction: then a directory already under the new name was left by a
+    /// writer stopped before COMMIT, since no live writer holds an uncommitted name.
     fn new_segment_name(&self) -> Result<String> {
-        let n: i64 = self.meta("seg_counter").and_then(|v| v.parse().ok()).unwrap_or(0) + 1;
+        let listed = self.segments();
+        let mut n: i64 = self.meta("seg_counter").and_then(|v| v.parse().ok()).unwrap_or(0) + 1;
+        while listed.contains(&format!("s{n:06}")) {
+            n += 1;
+        }
         self.set_meta("seg_counter", &n.to_string())?;
-        Ok(format!("s{n:06}"))
+        let name = format!("s{n:06}");
+        for p in [self.seg_dir.join(&name), self.seg_dir.join(format!("{name}.tmp"))] {
+            if p.exists() {
+                std::fs::remove_dir_all(&p).with_context(|| format!("remove leftover {}", p.display()))?;
+            }
+        }
+        Ok(name)
     }
 
     /// Delete segment directories no manifest refers to (left by a crash), unless brand new.

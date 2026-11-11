@@ -87,6 +87,7 @@ impl Cache {
             }
         }
         let scrutate = self.dir.parent().unwrap_or(&self.dir);
+        crate::files::index_dir(scrutate.parent().unwrap_or(scrutate))?;
         std::fs::create_dir_all(&self.dir)?;
         let gi = scrutate.join(".gitignore");
         if !gi.exists() {

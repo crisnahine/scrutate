@@ -12,6 +12,21 @@ use crate::parse::is_indexable;
 /// Where the indexes live under the repository root; no walk enters it.
 pub const INDEX_DIR: &str = ".scrutate";
 
+/// `root/.scrutate`, once `root` is an existing directory and nothing the indexes write into is
+/// a symbolic link (which would put the index, and its deletions, outside the repository).
+pub fn index_dir(root: &Path) -> anyhow::Result<PathBuf> {
+    if !root.is_dir() {
+        anyhow::bail!("{}: {}", root.display(), if root.exists() { "not a directory" } else { "no such directory" });
+    }
+    let dir = root.join(INDEX_DIR);
+    for p in [dir.clone(), dir.join("seg"), dir.join("text"), dir.join("tsquery"), dir.join("index.db")] {
+        if std::fs::symlink_metadata(&p).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+            anyhow::bail!("{} is a symbolic link; the index is only written inside the repository (remove it)", p.display());
+        }
+    }
+    Ok(dir)
+}
+
 const SKIP_DIRS: &[&str] = &[
     ".git",
     INDEX_DIR,
