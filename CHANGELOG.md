@@ -53,8 +53,11 @@ First release.
   `--max-results`, `-l` and multiline searches keep the single pass.
 - A regex with no literal prefix whose matches all end in one of a few literals
   (`\w+_(suspend|resume)\(`) finds candidate lines by searching for those literals.
-- Roots that hold no directory to enter are walked on one thread while three threads search what
-  it finds; past 256 files the parallel walk takes over.
+- Roots that hold no directory to enter are walked on the calling thread while three threads
+  search what it finds; past 256 files the parallel walk takes over. A tree of one file starts no
+  thread, the global git excludes file is read only when a walk meets a repository, and the
+  current directory is looked up once: a search of a one-file directory went from 21.1 M to
+  19.2 M instructions (GNU grep in the C locale: 20.8 M).
 - A large file without line breaks to split at is read into one buffer of its exact size (the
   stream reader grew its buffer by doubling), each search thread filling its own part: 100 MB in
   one line took 12.6 ms to read on one thread and 4.0 ms on five. `^(a|aa)+$` over that line and

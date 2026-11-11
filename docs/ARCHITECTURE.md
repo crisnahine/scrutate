@@ -83,9 +83,12 @@ capabilities those crates do not provide rather than re-implementing what they a
   the time is the kernel copying pages, which spreads as far as opening files does (100 MB on an
   M3 Pro: 12.6 ms on one thread, 4.0 ms on the five performance cores, 6.7 ms on all eleven).
 - **Roots without directories**: when no root holds a directory the walk would enter, a sequential
-  walk with the same rules runs first, and three threads search the files as it finds them; when
-  those files turn out to come from the disk, it adds threads. Past 256 files it stops, and the
-  parallel walk takes over, skipping the files already searched. For three large files this beats
+  walk with the same rules runs first on the calling thread, and three threads search the files
+  as it finds them; when those files turn out to come from the disk, it adds threads. The first
+  file waits for a second before any thread starts, so a tree of one file is searched with no
+  thread at all (four threads cost about 1 M instructions, a third of a one-file search past
+  process start). Past 256 files the walk stops, and the parallel walk takes over, skipping the
+  files already searched. For three large files this beats
   the parallel walk (40.6 ms against 41.9). Any directory to enter sends the search straight to the
   parallel walk: one thread reading every directory held up the searches (the ripgrep repository,
   60 directories: 5.6 ms in parallel against 6.0).
@@ -97,7 +100,13 @@ capabilities those crates do not provide rather than re-implementing what they a
   first call and jump to it, keeping every argument register and the stack; `fork` binds all of
   them first, so a child never does a lookup. And clap builds every subcommand's argument
   definitions before parsing, so `scrutate grep` uses a definition of that subcommand alone.
-  Start-up went from 2.4 ms to 1.9 ms (a Rust hello-world: 1.5 ms). Measured and left alone: the
+  Start-up went from 2.4 ms to 1.9 ms (a Rust hello-world: 1.5 ms). Counted in instructions, a
+  search of a one-file directory then cost 21.1 M against GNU grep's 20.8 M in the C locale (a
+  Rust hello-world: 14.8 M), and on macOS each `open` or `getcwd` is 150 to 200 thousand of them.
+  So the global git excludes file is read the first time a walk meets a repository (reading git's
+  configuration and compiling the file cost 0.5 M in every walk outside one), the walk takes the
+  current directory the command line already has for `.`, a search without the index does not
+  resolve the repository root, and a tree of one file starts no thread: 19.2 M. Measured and left alone: the
   binary's 37,000 pointer fix-ups (applied lazily by the kernel, no cost), its code-signature page
   size (no difference), and its 85 MB size (0.05 to 0.2 ms).
 - **What bounds a search on macOS**: opening a file. On APFS `open` costs 8 to 11 µs for a file
