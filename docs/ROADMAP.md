@@ -134,9 +134,6 @@ docs/RELEASING.md, public, tag `v0.1.0`.
 - In `refs`, a plain name inside the arguments of a Rust macro, one the token rules do not read
   as a field, a field name or a local, is tied by name to a definition: the `text` in
   `mymac!(text, 3)` counts as a reference to a function `text`, whatever the macro does with it.
-- Java: `deps` and `rdeps` map an import to the file at its dotted path from the repository root
-  (`com.x.a.Sq` to `com/x/a/Sq.java`), so an import into a source root such as `src/main/java`
-  resolves to no file there; `refs`, `callers` and `callees` find packages in any source root.
 - Java: `refs` ties no occurrence to a field, an enum constant or a record accessor. They are
   listed as unresolved (`field or key`), a `static final` field included, which `symbol` finds as
   a constant.

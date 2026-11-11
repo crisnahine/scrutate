@@ -163,6 +163,11 @@ First release.
   fields, inherited members, nested and anonymous classes, records, default methods, calls typed
   by declared types and return types, and method references. The number of arguments picks an
   overload; a call it does not tie to one is a caller of every overload.
+- `callers` of an override or an implementation lists a call through its base class, interface
+  or trait as undecided, at any depth, and a variable declared as the base type and built by a
+  constructor in the same function is typed by the constructor (`Base b = new Big()`), so its
+  call is a decided caller of the override. TypeScript resolves inherited members through
+  `extends`.
 - `refs` finds a name in its composed and decomposed Unicode spelling.
 - `tsquery` keeps each file's captures in `.scrutate/tsquery/` by content hash: a repeated query
   re-parses only changed files (the Linux tree: about 25 s, then 1.6 s), output identical to
@@ -286,7 +291,9 @@ First release.
 - `deps` and `rdeps` resolve imports as `refs` does (Rust `crate::`, `self::`, `super::` and `mod`,
   Go through `go.mod`, Python `from . import`, TypeScript `.js` names and `.d.ts` files), and
   `rdeps` says how many unresolved imports may name the file, counting only those that could:
-  a relative import with the file's path, or a bare one with a part spelled as its module name.
+  a relative import with the file's path, or a bare one with a part spelled as its module name. A Java
+  import resolves through the package declarations, in any source root: a class import to the
+  class's file, a package import to the package's files, a static import to its class's file.
 - An index built with older parsing rules reads every file again once (`content_rev` in `meta`).
 - An update can be cancelled and rolls back; an update that panics rolls back at once, and the
   next update clears a transaction left open.
