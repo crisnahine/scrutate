@@ -110,7 +110,17 @@ or none; the later wins, and `--json` keeps them), `-j THREADS` (at most 256, as
 macOS the performance cores; more when the files come from the disk, a cold cache: up to 64 on
 Linux, elsewhere twice the cores, at most 24), `--sort`,
 `--json`, `--stats`, `--symbols` (group lines by the enclosing function using the index, when one
-exists). Files that cannot be read, or not to the end, are named in warnings on stderr (the first
+exists). On macOS, searches of one user that run at the same time split the default threads
+between them and take them back as the others end: each gets the default divided by the number
+running, at least 1 (py-big, four at once: 244 ms each before, 185 ms now; one alone is
+unchanged). A search joins that count once it has searched 1,000 files; one given a thread count
+(`-j`, `SCRUTATE_THREADS`, `threads`) keeps it and is not counted, and neither is one waiting on a
+reader that does not read or one stopped with Ctrl-Z, until it goes on. A search stopped with
+SIGSTOP, which no program can see coming, stays counted until it continues or ends. The count
+is a System V semaphore of the user, listed by `ipcs -s` until the machine restarts; a killed
+search leaves nothing in it, and where the system gives none a search runs as it would alone.
+`SCRUTATE_GREP_DEBUG=1` prints the count and the threads taken on stderr each time they change.
+Files that cannot be read, or not to the end, are named in warnings on stderr (the first
 ten); they do not change the exit code. A search path that does not exist is named in a warning
 and the exit code is 2; matches in the other paths are still printed. On Linux, files on `/proc`,
 `/sys` or another kernel pseudo filesystem (debugfs, tracefs, securityfs, configfs, cgroup) are
@@ -529,7 +539,7 @@ is safe to delete at any time.
 ### Environment variables
 `SCRUTATE_ROOT`, `SCRUTATE_THREADS`, `SCRUTATE_GREP_{HIDDEN,NO_IGNORE,FOLLOW,SMART_CASE,MAX_FILESIZE,MAX_DEPTH,GLOBS,TYPES}`,
 `SCRUTATE_INDEX_EXCLUDE_DIRS`, `SCRUTATE_REFRESH_INTERVAL`, `SCRUTATE_MAX_BYTES`,
-`SCRUTATE_MCP_STRUCTURED`, `SCRUTATE_CONFIG`, `SCRUTATE_WATCH_DEBUG`, `SCRUTATE_SEMANTIC`
+`SCRUTATE_MCP_STRUCTURED`, `SCRUTATE_CONFIG`, `SCRUTATE_WATCH_DEBUG`, `SCRUTATE_GREP_DEBUG`, `SCRUTATE_SEMANTIC`
 (path or `none`), `SCRUTATE_RANKER` (path or `none`), `SCRUTATE_PROFILE` (print indexing phase
 timings), `SCRUTATE_DIAGNOSTICS` (`json`: errors as JSON records), `NO_COLOR` (any non-empty
 value). On/off variables follow the rule under Conventions.

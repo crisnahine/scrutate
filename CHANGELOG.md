@@ -82,6 +82,12 @@ First release.
   every core, and when the files of a tree take as long to read as a disk read (the page cache
   does not hold them) the walk adds a thread for every 16 slow reads, up to twice the cores, at
   most 24: the Linux tree with a cold cache, 2.9 s on 5 threads, 1.4 s this way, ripgrep 1.8 s.
+- On macOS, searches of one user that run at the same time split the threads between them and
+  take them back as the others end, because the kernel there serves about four file-reading
+  threads at full speed across all processes: two at once on py-big went from 113 ms to 91 ms
+  each, four from 244 ms to 185 ms, eight from 482 ms to 413 ms. A search given `-j`, one waiting
+  on its reader and one stopped with Ctrl-Z are not counted; `SCRUTATE_GREP_DEBUG=1` shows the
+  count.
 - On Linux a tree read from the disk gets up to 64 threads, whatever the cores: the Linux tree
   with a cold cache in a 5-CPU VM, 1.22 s on 5 threads, 0.37 s this way (git grep 1.23 s, ugrep
   0.64 s). A small tree stops before many threads start (231 files cold: 5.8 ms, ripgrep 7.5 ms).

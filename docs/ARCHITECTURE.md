@@ -59,6 +59,20 @@ capabilities those crates do not provide rather than re-implementing what they a
   5% there on one tree and lost 4% on another). Threads come one at a time because starting one
   costs about a slow read, which a small tree never earns back (231 files cold on Linux: 5.8 ms
   this way, 8.3 ms with a thread per slow read). `-j` overrides all of it.
+- **Searches at the same time (macOS)**: the kernel there serves about four file-reading threads
+  at full speed across all processes, so four searches on five threads each are slower than four
+  on one (py-big: 244 ms against 189 ms). A walk that has searched 1,000 files adds 1 to a
+  System V semaphore kept per user (`running.rs`), with `SEM_UNDO` so the kernel takes it back
+  however the process dies, and looks at the value every 64 files: its share is the default
+  thread count divided by the searches running, and the threads over the share pause between
+  directories (`pause` in the vendored walker) until the share rises again. Two at once: 113 ms
+  to 91 ms; four: 244 ms to 185 ms; eight: 482 ms to 413 ms; one alone and a tree under 1,000
+  files make no system call for it. A process leaves the count while a write to a pipe or a
+  terminal may block and while it is stopped from its terminal: the SIGTSTP handler, installed
+  only while a search is counted and only when nothing else handles the signal, takes the process
+  out, stops it with the default action, and puts it back when it continues. On Linux the cores
+  are the limit and splitting them never won (py-big on 5 CPUs, four at once: 53 ms on 5 threads
+  each, 60 ms on 1), so nothing is counted there.
 - **One large file, every core**: a file of 64 MB or more is cut into ranges of whole lines (8 MB
   each). A first pass counts each range's newlines for the line numbers and stops at a NUL byte,
   which sends the file back to the single pass so binary handling is unchanged. The second pass
