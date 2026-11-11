@@ -306,6 +306,38 @@ fn a_call_of_a_class_is_a_call_of_its_constructor() {
 }
 
 #[test]
+fn a_call_outside_every_definition_has_the_chunk_that_holds_it_as_caller() {
+    let r = Repo::new(
+        "toplevel_calls",
+        &[
+            ("job.py", "# job.py\ndef helper(x):\n    return x + 1\n\nif __name__ == \"__main__\":\n    total = helper(2)\n"),
+            ("run.sh", "main() {\n  echo hi\n}\n\nmain \"$@\"\n"),
+            ("a.py", "def load():\n    return 1\n"),
+            ("b.py", "def load():\n    return 2\n"),
+            ("script.py", "from b import load\nload()\n"),
+        ],
+    );
+    let (code, out) = r.run(&["callers", "helper"]);
+    assert_eq!((code, out.trim()), (0, "job.py:5-6  [window] job"));
+    let (code, out) = r.run(&["callers", "main"]);
+    assert_eq!((code, out.trim()), (0, "run.sh:5-5  [window] run"));
+    // the resolver decides a call outside every definition as it does one inside
+    assert_eq!(split_callers(&r, "b.py:1"), (strs(&["script"]), strs(&[])));
+    assert_eq!(r.run(&["callers", "a.py:1"]).1.trim(), "(no results)");
+    let (code, out) = r.run(&["callees", "job.py:6"]);
+    assert_eq!((code, out.trim()), (0, "job.py:2-3  [function] helper"));
+    let (code, out) = r.run(&["callees", "run.sh:5"]);
+    assert_eq!((code, out.trim()), (0, "run.sh:1-3  [function] main"));
+    // a window is never a definition elsewhere
+    for args in [&["symbol", "job.py:6"][..], &["callers", "job.py:6"], &["refs", "x", "--def", "job.py:6"]] {
+        let (code, out) = r.run(args);
+        assert_ne!(code, 0, "{args:?}: {out}");
+    }
+    let (_, out) = r.run(&["outline", "job.py"]);
+    assert!(!out.contains("window"), "{out}");
+}
+
+#[test]
 fn callers_says_which_call_sites_it_did_not_check() {
     let mut files: Vec<(String, String)> = vec![
         ("a/__init__.py".into(), String::new()),

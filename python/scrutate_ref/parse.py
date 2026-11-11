@@ -6,6 +6,7 @@ overlapping line windows so it stays searchable.
 """
 from __future__ import annotations
 
+import bisect
 import inspect
 import os
 import re
@@ -639,6 +640,7 @@ def parse_source(path: str, source: str) -> list[Chunk]:
     consts: list[Chunk] = []
     stack: list[tuple[Chunk, str]] = []  # (current definition, qualname)
     spans: list[tuple[int, int]] = []  # the lines each definition's text keeps whole
+    loose: list[tuple[int, str]] = []  # calls outside every definition, by line
     is_py = lang == "python"
 
     def visit(node):
@@ -722,12 +724,15 @@ def parse_source(path: str, source: str) -> list[Chunk]:
                 consts.append(Chunk(cname, _qualify(stack[-1][1] if stack else "", cname), "constant", shown.start_point[0] + 1,
                                     _last_row(shown) + 1, _head(txt(shown.start_byte, shown.end_byte), MAX_CHUNK_LINES),
                                     doc=_leading_comment(shown, src)))
-        elif t in calls and stack:
+        elif t in calls:
+            got = stack[-1][0].calls if stack else set()
             callee = _callee_name(lang, node, calls[t], src)
             if callee:
-                stack[-1][0].calls.add(callee)
+                got.add(callee)
             if t == "macro_invocation":
-                _macro_arg_calls(node, src, stack[-1][0].calls)
+                _macro_arg_calls(node, src, got)
+            if not stack:
+                loose.extend((node.start_point[0] + 1, c) for c in got)
         for ch in node.children:
             visit(ch)
         if new is not None:
@@ -749,15 +754,28 @@ def parse_source(path: str, source: str) -> list[Chunk]:
         spans.append((k + 1, c.start - 1))
     spans.append((1, min(head_end, _kept(head, 1 << 62))))
     head = _capped(head)
+    module = None
     if head.strip():
         mdoc = ""
         if is_py:
             s, _ = _py_docstring_node(tree.root_node)
             if s is not None:
                 mdoc = _py_string_content(txt(s.start_byte, s.end_byte))
-        chunks.insert(0, Chunk(stem_name, stem_name, "module", 1, head_end, head, "", mdoc, head))
+        module = Chunk(stem_name, stem_name, "module", 1, head_end, head, "", mdoc, head)
+        chunks.insert(0, module)
     # every line no chunk keeps (constants have no postings) is searchable as windows
-    chunks.extend(_uncovered_windows(lines, spans, defs, stem_name))
+    windows = _uncovered_windows(lines, spans, defs, stem_name)
+    # a call outside every definition goes to the module chunk, else the first window holding its line
+    ends = [w.end for w in windows]  # they rise with the starts
+    for line, callee in loose:
+        if line <= head_end:
+            if module is not None:
+                module.calls.add(callee)
+            continue
+        i = bisect.bisect_left(ends, line)
+        if i < len(windows) and windows[i].start <= line:
+            windows[i].calls.add(callee)
+    chunks.extend(windows)
     chunks += consts  # last: the index gives the chunks before them their lexical rows (constants get none)
     if not chunks:
         return window_chunks(source)

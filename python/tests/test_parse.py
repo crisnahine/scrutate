@@ -405,6 +405,23 @@ def test_lines_no_chunk_keeps_are_windows_named_after_the_definition_that_holds_
     assert _windows("a.go", "package p\n\nfunc f() {}\n\nconst Max = 3\n") == [("a", 5, 5)]
 
 
+def _outside_calls(path, src):
+    return [(c.kind, c.start, c.end, sorted(c.calls)) for c in parse_source(path, src) if c.kind in ("module", "window") and c.calls]
+
+
+def test_a_call_outside_every_definition_belongs_to_the_chunk_that_holds_its_line():
+    py = "# job.py\ndef helper(x):\n    return x + 1\n\nif __name__ == \"__main__\":\n    total = helper(2)\n"
+    assert _outside_calls("job.py", py) == [("window", 5, 6, ["helper"])]
+    js = "function onReady() {}\nfunction main() {\n  return 1;\n}\napp.listen(port, onReady);\nmain().catch(console.error);\n"
+    assert _outside_calls("server.js", js) == [("window", 5, 6, ["catch", "listen", "main"])]
+    # a call before the first definition is the module chunk's
+    assert _outside_calls("app.js", "setup();\n\nfunction setup() {\n  return 1;\n}\n") == [("module", 1, 2, ["setup"])]
+    # where two windows overlap, the first takes the call; a call inside a definition stays there
+    long = "function f() {\n  return 1;\n}\n" + "x = 1;\n" * 44 + "f();\n" + "y = 2;\n" * 20
+    assert _outside_calls("long.js", long) == [("window", 4, 53, ["f"])]
+    assert not next(c for c in parse_source("long.js", long) if c.qualname == "f").calls
+
+
 def test_a_definition_starts_at_the_attribute_lines_right_above_it():
     rs = "/// Shows one.\n#[get(\"/users/show\")]\n#[inline]\npub fn show() {}\n\n#[cfg(test)]\n\nmod tests {}\n"
     chunks = {c.qualname: c for c in parse_source("a.rs", rs)}

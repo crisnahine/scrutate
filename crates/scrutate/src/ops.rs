@@ -387,7 +387,7 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
             Answer::Grep { groups, stopped_at: stopped.then_some(*max_results) }
         }
         Op::Symbol { name, limit } => {
-            let (hits, stopped) = cut(targets(s, name, limit + 1)?, *limit, RAISE_LIMIT);
+            let (hits, stopped) = cut(targets(s, name, limit + 1, false)?, *limit, RAISE_LIMIT);
             Answer::Hits { hits, words: Vec::new(), snippet: true, stopped }
         }
         Op::Callers { name, limit } => {
@@ -612,14 +612,19 @@ fn repo_path(s: &Searcher, path: &str) -> String {
 }
 
 /// The definitions `name` stands for: the one at a location (the `path:start-end` an earlier
-/// answer printed), else every one `find_symbol` finds.
-fn targets(s: &Searcher, name: &str, limit: usize) -> Result<Vec<Hit>> {
-    match crate::intel::location(name) {
-        Some((path, line)) => match s.ix.chunk_at(&repo_path(s, path), line)?.filter(|c| c.kind != "window") {
-            Some(c) => Ok(vec![Hit::from_row(&c, true)]),
-            None => bail!("no symbol at {}", echo(name)),
-        },
-        None => s.find_symbol(name, limit),
+/// answer printed), else every one `find_symbol` finds. With `windows`, a line outside every
+/// definition stands for the first window that holds it, which holds that line's calls.
+fn targets(s: &Searcher, name: &str, limit: usize, windows: bool) -> Result<Vec<Hit>> {
+    let Some((path, line)) = crate::intel::location(name) else { return s.find_symbol(name, limit) };
+    let path = repo_path(s, path);
+    let mut at = s.ix.chunk_at(&path, line)?;
+    if windows && at.as_ref().is_some_and(|c| c.kind == "window") {
+        let sql = format!("SELECT {} FROM chunks WHERE path=?1 AND kind='window' AND start<=?2 AND end>=?2 ORDER BY start LIMIT 1", crate::index::CHUNK_COLS);
+        at = rusqlite::OptionalExtension::optional(s.ix.db.query_row(&sql, rusqlite::params![path, line], ChunkRow::from_row))?;
+    }
+    match at.filter(|c| windows || c.kind != "window") {
+        Some(c) => Ok(vec![Hit::from_row(&c, true)]),
+        None => bail!("no symbol at {}", echo(name)),
     }
 }
 
@@ -760,7 +765,7 @@ const CALLERS_RESOLVED: usize = 400;
 /// -> (callers: decided, then undecided, then unchecked; how many are undecided; how many unchecked)
 pub(crate) fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit>, usize, usize)> {
     let langs = Langs { root: &s.ix.root, seen: Default::default() };
-    let mut targets = targets(s, name, 500)?;
+    let mut targets = targets(s, name, 500, false)?;
     // a call of a class runs its constructor: `Point(1)`, `new Widget()`, Ruby `Invoice.new`
     let (classes, made_by_new) = constructed(s, &langs, &targets)?;
     targets.extend(classes);
@@ -885,7 +890,7 @@ pub(crate) fn callees(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit
     let mut calls = s.ix.db.prepare("SELECT DISTINCT callee FROM refs WHERE chunk_id=?1 ORDER BY callee")?;
     let mut rv = Resolver::new(&s.ix)?;
     let (mut resolved, mut external, mut seen) = (Vec::new(), Vec::new(), HashSet::new());
-    let defs = targets(s, name, 5)?;
+    let defs = targets(s, name, 5, true)?;
     let from = defs.iter().map(|d| d.path.clone()).collect();
     for d in defs {
         let names: Vec<String> = calls.query_map([d.id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;

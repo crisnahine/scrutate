@@ -531,6 +531,55 @@ fn lines_no_chunk_keeps_are_windows_named_after_the_definition_that_holds_them()
     assert_eq!(windows("a.go", "package p\n\nfunc f() {}\n\nconst Max = 3\n"), [("a".into(), 5, 5)]);
 }
 
+/// (kind, start, end, calls) of the module chunk and the windows that hold calls.
+fn outside_calls(path: &str, src: &str) -> Vec<(String, i64, i64, Vec<String>)> {
+    parse_source(path, src)
+        .into_iter()
+        .filter(|c| matches!(c.kind, "module" | "window") && !c.calls.is_empty())
+        .map(|c| (c.kind.to_string(), c.start, c.end, c.calls.into_iter().collect()))
+        .collect()
+}
+
+fn owned(v: &[(&str, i64, i64, &[&str])]) -> Vec<(String, i64, i64, Vec<String>)> {
+    v.iter().map(|(k, a, b, c)| (k.to_string(), *a, *b, c.iter().map(|s| s.to_string()).collect())).collect()
+}
+
+#[test]
+fn a_call_outside_every_definition_belongs_to_the_chunk_that_holds_its_line() {
+    let py = "# job.py\ndef helper(x):\n    return x + 1\n\nif __name__ == \"__main__\":\n    total = helper(2)\n";
+    assert_eq!(outside_calls("job.py", py), owned(&[("window", 5, 6, &["helper"])]));
+    let js = "function onReady() {}\nfunction main() {\n  return 1;\n}\napp.listen(port, onReady);\nmain().catch(console.error);\n";
+    assert_eq!(outside_calls("server.js", js), owned(&[("window", 5, 6, &["catch", "listen", "main"])]));
+    let sh = "main() {\n  echo hi\n}\n\nmain \"$@\"\n";
+    let got = outside_calls("run.sh", sh);
+    assert!(got.len() == 1 && got[0].0 == "window" && got[0].3.contains(&"main".to_string()), "{got:?}");
+    // a call before the first definition is the module chunk's
+    let header = "setup();\n\nfunction setup() {\n  return 1;\n}\n";
+    assert_eq!(outside_calls("app.js", header), owned(&[("module", 1, 2, &["setup"])]));
+    // where two windows overlap, the first takes the call; a call inside a definition stays there
+    let mut long = String::from("function f() {\n  return 1;\n}\n");
+    long += &"x = 1;\n".repeat(44);
+    long += "f();\n";
+    long += &"y = 2;\n".repeat(20);
+    let got = outside_calls("long.js", &long);
+    assert_eq!(got, owned(&[("window", 4, 53, &["f"])]));
+    assert!(find(&parse_source("long.js", &long), "f").calls.is_empty());
+}
+
+#[test]
+fn many_top_level_calls_parse_in_linear_time() {
+    assert_parse_scales_linearly(
+        "a.py",
+        25_000,
+        |n| "f(1)\n".repeat(n),
+        |n, chunks| {
+            let windows = chunks.iter().filter(|c| c.kind == "window").count();
+            assert!(windows >= n / 40 - 2, "{windows} windows for {n} lines");
+            assert!(chunks.iter().filter(|c| c.kind == "window").all(|c| c.calls.contains("f")));
+        },
+    );
+}
+
 #[test]
 fn a_definition_starts_at_the_attribute_lines_right_above_it() {
     let rs = "/// Shows one.\n#[get(\"/users/show\")]\n#[inline]\npub fn show() {}\n\n#[cfg(test)]\n\nmod tests {}\n";

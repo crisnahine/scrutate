@@ -1421,7 +1421,9 @@ fn with_parser<R>(spec: &'static LangSpec, f: impl FnOnce(&mut Parser) -> R) -> 
 }
 
 /// Module-level header chunk (module docstring / imports / constants) + fallbacks shared by all tiers.
-fn finish(path: &str, source: &str, mut chunks: Vec<Chunk>, module_doc: String) -> Vec<Chunk> {
+/// A call outside every definition goes to the chunk that holds its line: the module chunk, else
+/// the first window that does.
+fn finish(path: &str, source: &str, mut chunks: Vec<Chunk>, module_doc: String, loose: Vec<(i64, String)>) -> Vec<Chunk> {
     let base = basename(path);
     let stem_name = match base.rfind('.') {
         Some(i) if i > 0 => &base[..i],
@@ -1451,7 +1453,19 @@ fn finish(path: &str, source: &str, mut chunks: Vec<Chunk>, module_doc: String) 
         spans.push((k as i64 + 1, c.start - 1));
     }
     let defs: Vec<(i64, i64, &str)> = chunks.iter().filter(|c| c.kind != "constant").map(|c| (c.start, c.end, c.qualname.as_str())).collect();
-    let windows = uncovered_windows(source, &lines, &spans, &defs, stem_name);
+    let mut windows = uncovered_windows(source, &lines, &spans, &defs, stem_name);
+    let mut module_calls = BTreeSet::new();
+    for (line, callee) in loose {
+        if line <= head_end as i64 {
+            module_calls.insert(callee);
+            continue;
+        }
+        // window ends rise with their starts
+        let w = windows.partition_point(|w| w.end < line);
+        if let Some(w) = windows.get_mut(w).filter(|w| w.start <= line) {
+            w.calls.insert(callee);
+        }
+    }
     let head_txt = capped(head_all);
     if !head_txt.trim().is_empty() {
         chunks.insert(
@@ -1466,7 +1480,7 @@ fn finish(path: &str, source: &str, mut chunks: Vec<Chunk>, module_doc: String) 
                 sig: String::new(),
                 doc: module_doc,
                 body: head_txt,
-                calls: BTreeSet::new(),
+                calls: module_calls,
                 lazy: None,
             },
         );
@@ -1482,8 +1496,8 @@ fn finish(path: &str, source: &str, mut chunks: Vec<Chunk>, module_doc: String) 
 }
 
 // ------------------------------------------------------------------------- tier 1: grammars
-/// (chunks, module docstring, imports as (line, module))
-type GrammarOutput = (Vec<Chunk>, String, Vec<(i64, String)>);
+/// (chunks, module docstring, imports as (line, module), calls outside every definition as (line, callee))
+type GrammarOutput = (Vec<Chunk>, String, Vec<(i64, String)>, Vec<(i64, String)>);
 
 /// A file's last grammar parse, kept in memory so the next version of the file is parsed
 /// incrementally (tree-sitter reuses the unchanged subtrees).
@@ -1570,6 +1584,8 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
     let mut chunks: Vec<Chunk> = Vec::new();
     let mut consts: Vec<Chunk> = Vec::new();
     let mut imports: Vec<(i64, String)> = Vec::new();
+    // calls outside every definition, by line: the module chunk or a window takes them
+    let mut loose: Vec<(i64, String)> = Vec::new();
     let mut def_stack: Vec<usize> = Vec::new();
     let mut heads: std::collections::HashSet<usize> = std::collections::HashSet::new();
     let mut stack: Vec<(Node, bool, bool, usize)> = vec![(tree.root_node(), false, false, 0)];
@@ -1736,22 +1752,29 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
         } else if let Some(call) = spec.calls.iter().find(|c| c.node == t) {
             let in_signature = ancestors.last().map(|p| matches!(p.0.kind(), "signature" | "function_signature" | "method_signature")).unwrap_or(false);
             let in_head = !heads.is_empty() && (heads.contains(&node.id()) || ancestors.iter().any(|(a, _)| heads.contains(&a.id())));
-            if let (Some(&top), false) = (def_stack.last(), in_signature || in_head) {
+            if !(in_signature || in_head) {
+                let mut outside = BTreeSet::new();
+                let calls = match def_stack.last() {
+                    Some(&top) => &mut chunks[top].calls,
+                    None => &mut outside,
+                };
                 let callee = match (spec.id, t, ancestors.last()) {
                     ("jsonnet", _, Some((_, siblings))) => sibling_callee(siblings, at, src),
                     ("vhdl", _, Some((p, _))) => vhdl_callee(node, *p, src),
                     _ => callee_name(spec.id, node, call.field, src),
                 };
                 if let Some(c) = callee.filter(|c| !call.skip.contains(&c.as_str())) {
-                    chunks[top].calls.insert(c);
+                    calls.insert(c);
                 }
                 if t == "macro_invocation" && spec.id == "rust" {
-                    macro_arg_calls(node, src, &mut chunks[top].calls);
+                    macro_arg_calls(node, src, calls);
                 }
                 if t == "raw_text" && spec.id == "make" {
                     let raw = txt(src, node.start_byte(), node.end_byte());
-                    chunks[top].calls.extend(MAKE_CALL.captures_iter(&raw).map(|m| m[1].to_string()));
+                    calls.extend(MAKE_CALL.captures_iter(&raw).map(|m| m[1].to_string()));
                 }
+                let line = node.start_position().row as i64 + 1;
+                loose.extend(outside.into_iter().map(|c| (line, c)));
             }
         }
         stack.push((node, true, pushed_now, at));
@@ -1768,7 +1791,7 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
     // a tree with errors is not kept: the next parse would likely redo it from scratch anyway
     let keep = (!tree.root_node().has_error() && INCREMENTAL.contains(&spec.id)).then(|| PrevParse { lang: spec.id, source: source.to_string(), tree });
     chunks.extend(consts);
-    Some(((chunks, mdoc, imports), keep))
+    Some(((chunks, mdoc, imports, loose), keep))
 }
 
 // ------------------------------------------------------------------------- tier 2: heuristics
@@ -2069,17 +2092,17 @@ pub fn parse_file(path: &str, source: &str) -> Parsed {
 /// this version's tree for the next call. The result is the same as a fresh parse.
 pub fn parse_file_with(path: &str, source: &str, prev: Option<PrevParse>) -> (Parsed, Option<PrevParse>) {
     if let Some(spec) = spec_for(path, source) {
-        if let Some(((chunks, mdoc, imports), tree)) = grammar_chunks(spec, path, source, prev) {
+        if let Some(((chunks, mdoc, imports, loose), tree)) = grammar_chunks(spec, path, source, prev) {
             // a parsed file is the grammar's verdict even when it holds no definitions: the
             // keyword heuristics would invent symbols from prose ("namespace so the ...")
-            return (Parsed { chunks: finish(path, source, chunks, mdoc), imports }, tree);
+            return (Parsed { chunks: finish(path, source, chunks, mdoc, loose), imports }, tree);
         }
     }
     // prose has keyword-looking lines ("module will be called foo" in Kconfig help text)
     let base = basename(path);
     let prose = base.starts_with("Kconfig") || base.to_ascii_lowercase().ends_with(".txt");
     let chunks = if prose { Vec::new() } else { heuristic_chunks(source) };
-    (Parsed { chunks: finish(path, source, chunks, String::new()), imports: Vec::new() }, None)
+    (Parsed { chunks: finish(path, source, chunks, String::new(), Vec::new()), imports: Vec::new() }, None)
 }
 
 pub fn parse_source(path: &str, source: &str) -> Vec<Chunk> {
