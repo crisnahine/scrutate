@@ -19,9 +19,9 @@ Scrutate is one binary with two independent engines and a thin unifying layer.
         └───────────────────────┘   └──────────────────────────────────────┘
 ```
 
-## Engine A — universal instant search (`crates/scrutate/src/instant.rs`)
+## Engine A: universal instant search (`crates/scrutate/src/instant.rs`)
 
-Built on the `grep-searcher`, `grep-regex`, `grep-matcher` and `ignore` crates — the published
+Built on the `grep-searcher`, `grep-regex`, `grep-matcher` and `ignore` crates, the published
 components ripgrep itself is assembled from (their crates.io pages describe them as ripgrep's
 searching, regex, matcher-trait and ignore-aware directory-walking libraries). Scrutate adds the
 capabilities those crates do not provide rather than re-implementing what they already do:
@@ -98,7 +98,10 @@ capabilities those crates do not provide rather than re-implementing what they a
   takes a read per 64 KB, moves the rest of each buffer down and counts the lines of everything it
   passes, and half the bytes of the Linux tree are in files of that size. A NUL byte or a
   byte-order mark sends the file to the stream reader, whose binary and encoding handling is
-  unchanged. On Linux, where opening a file is cheap, this and the matcher change above took the
+  unchanged. Files of the kernel's pseudo filesystems give their size as 0 and answer a first
+  read short (4 KB of the 7.3 MB `/proc/kallsyms`), so on Linux one `statfs` per root (for `/`,
+  of its `proc` and `sys` too) finds procfs, sysfs, debugfs, tracefs, securityfs, configfs and
+  cgroup, and their files are read until the kernel has no more. On Linux, where opening a file is cheap, this and the matcher change above took the
   Linux-tree search from 144 ms to 120 ms in the test VM (ripgrep: 135 ms), with 316,000 system
   calls against ripgrep's 526,000.
 - **One run, one translation**: every file search of a run shares a `Run` (matcher, options,
@@ -136,7 +139,7 @@ capabilities those crates do not provide rather than re-implementing what they a
 - **No dependency on Engine B**: `grep` never opens the index. `grep --symbols` is the one
   opt-in bridge (group matches by the enclosing function using the index if one exists).
 
-## Engine B — code intelligence (`index.rs`, `lex.rs`, `parse.rs`, `langs.rs`, `search.rs`, `intel.rs`)
+## Engine B: code intelligence (`index.rs`, `lex.rs`, `parse.rs`, `langs.rs`, `search.rs`, `intel.rs`)
 
 ### Parsing (`parse.rs`, `langs.rs`)
 Three tiers so every file yields something useful (see docs/LANGUAGES.md): tree-sitter grammars
@@ -144,13 +147,31 @@ driven by a **data-driven rule registry** (per language: which node kinds are de
 name is found, what a call is, how imports look); a keyword heuristic tier; and overlapping line
 windows. Each definition becomes a *chunk* with fields name / qualified name / signature /
 documentation / body / path, plus call edges and imports. Adding a language is a registry entry
-and a sample file, not new code.
+and a sample file, not new code. A chunk's text and body keep at most 200 lines (40 for a
+container such as a class) and 32 KiB, cut at a character boundary, and a chunk ends on the last
+line that holds its text. A method's qualified name uses its owner's bare type (`Stack.push` for
+`impl<T> Stack<T>`), and qualified names keep at most 32 segments. The tree walk keeps its own
+list of ancestors and visits children with a cursor, so a deeply nested or a very wide file
+indexes in linear time. Constants (`const`, `static`, enum members, `#define` values and the
+like) are chunks of kind `constant` that get no postings and no vectors: name lookups find them,
+ranked search never sees them.
+
+### Tokens (`text.rs`)
+Index and query use one tokenizer, in both engines. An ASCII word is split at `_` and case
+changes, lowercased and stemmed (Snowball English); a compound identifier also gives its joined
+form. A word with other characters is normalised to NFC first: runs of Han, kana and Thai, which
+are written without spaces, give overlapping character bigrams (a lone character itself), and
+any other script gives one lowercased token per word, with the final sigma folded. A text that
+is all ASCII gives the tokens it gave before Unicode words were added, so its postings did not
+change. Names are compared through a key that ignores case and `_`, in NFC with the final sigma
+folded, so two spellings of one accented name are one name.
 
 ### Storage (`index.rs`, `lex.rs`)
-- **SQLite** (bundled, WAL, `synchronous=NORMAL`): `files` (size, mtime, SHA-1 content hash),
-  `chunks` (metadata + zlib-compressed text), `refs` (call edges), `imports`, `meta`
-  (schema version, model signature, segment manifest, data version).
-- **Segments** (`.scrutate/seg/sNNNNNN/`): immutable, memory-mapped `.npy` arrays — Lucene-style.
+- **SQLite** (bundled, WAL, `synchronous=NORMAL`): `files` (size, mtime, status-change time
+  `ctime_ns`, SHA-1 content hash), `chunks` (metadata + zlib-compressed text), `refs` (call
+  edges), `imports`, `meta` (schema version, model signature, segment manifest, data version,
+  and `chunks_at`, the chunk count of the commit that wrote that data version).
+- **Segments** (`.scrutate/seg/sNNNNNN/`): immutable, memory-mapped `.npy` arrays, Lucene-style.
   Per field (name, qualified name, signature, docs, body, path): BM25 postings (`ptr`, `doc`, `tf`)
   over a shared 63-bit token-hash vocabulary; `ids`, `dl`; int8 semantic vectors (`vec`, two
   views per chunk: description and implementation) with one float32 scale per view (`vscale`:
@@ -159,26 +180,35 @@ and a sample file, not new code.
   measurements) stored in **IVF cluster order** for
   segments ≥ 20 000 rows (spherical k-means, K = clamp(2√n, 32, 1024); a query probes 48
   clusters, measured at ±0.000 MRR against the exhaustive scan).
-- **Lifecycle**: content hashing (mtime/size fast path, SHA-1 verification), one `BEGIN IMMEDIATE`
+  Constant chunks have no segment rows.
+- **Lifecycle**: content hashing (fast path when size, mtime and, on Unix, `ctime_ns` match, so
+  a `chmod` alone costs a read and a hash; a row without `ctime_ns`, from the reference engine or
+  an older index, is read once; SHA-1 verification), one `BEGIN IMMEDIATE`
   transaction per update (readers never see a half state), new segments written to a temp
   directory and renamed (the name is taken inside that transaction, so a directory already under
   it was left by a writer stopped before its commit, and is removed), deletions as liveness
   bitmaps, background **compaction** (merge small segments / purge dead rows) that aborts if
   another writer moved the manifest, segment **GC** with an age guard inside the update's
   transaction, **corruption detection** (`PRAGMA quick_check` on open, structural validation of
-  every array on segment open, deep validation in `scrutate check`) with automatic **rebuild**,
+  every array on segment open, deep validation in `scrutate check`; also a chunk text that does
+  not inflate, a segment list that is not JSON, a segment without vectors under a model, an
+  `index.db` that is deleted under an open index or is a directory, a `seg` that is a file, an
+  emptied `chunks` table, and a chunk count that differs from `chunks_at` when the statistics
+  are read) with automatic **rebuild**,
   **schema and model versioning** (a different schema or model clears and re-indexes inside the
   database so concurrent processes stay consistent), and multi-process safety (busy-timeout +
   retry on `SQLITE_BUSY`, never deleting a live database; a read never waits for another
-  process's writer and answers from the last committed index).
+  process's writer and answers from the last committed index). A `.scrutate` that is a
+  symbolic link, or that holds one, is refused, and files of fixed names are written with remove
+  and `create_new`, so the index never writes through a link.
 
 ### Retrieval and ranking (`search.rs`, `semantic.rs`, `rank.rs`)
-A query produces candidates from three sources — field-weighted BM25 (name 10, qualified name 3,
+A query produces candidates from three sources: field-weighted BM25 (name 10, qualified name 3,
 signature 3, docs 5, body 1, path 2), exact name/qualified-name lookup, and semantic nearest
 neighbours (the query is encoded into the same 256-d space as the chunks by a contrastively
 trained code-word model, inference only, bundled in the binary). 47 features per candidate
 (lexical scores and ranks per field, z-scored semantic similarities of both views, literal hits,
-name coverage, kind, lengths, test-path flags…) go through a LightGBM LambdaRank ensemble
+name coverage, kind, lengths, test-path flags...) go through a LightGBM LambdaRank ensemble
 exported to plain arrays and evaluated in Rust. All arithmetic is specified to the bit: the Python
 reference implementation (`python/scrutate_ref`, which also trains the models) and the Rust engine
 return identical features, scores and rankings (`bench/parity.py`: 300/300 queries; the IVF path
@@ -213,10 +243,15 @@ compares sizes with Zoekt and livegrep, whose indexes hold the text), so a query
 candidate files from the source tree.
 
 ### Watching (`watch.rs`)
-`scrutate watch` and `serve --watch` turn filesystem events (the `notify` crate: FSEvents,
-inotify, ReadDirectoryChangesW) into index updates. Events are filtered with the indexes' own
-ignore rules, a burst ends after 200 ms of quiet, and each burst runs the existing incremental
-updates (`Index::update`, `textindex::update` when a text index exists). No new write path: the
+`scrutate watch` and `serve --watch` turn filesystem events (the `notify` crate: inotify,
+ReadDirectoryChangesW) into index updates; macOS runs the index's own incremental check on a
+timer instead, since the FSEvents backend would link CoreServices into every command. The watch
+is in place before the first update runs. On Linux each directory the indexes can hold gets a
+non-recursive inotify watch, so ignored trees cost none, and the set is walked again after every
+burst. Events are filtered with the indexes' own ignore rules, read again after every burst, a
+burst ends after 200 ms of quiet, and each burst runs the existing incremental updates
+(`Index::update`, `textindex::update` when a text index exists). The watch ends with an error
+when its root is gone. No new write path: the
 watcher is one more writer behind the same SQLite transaction and text index lock file, so a crash
 mid-update leaves the previous snapshot. Reads by the update itself are not events, so updates do
 not trigger themselves. Not a daemon: it runs only while the command (or server) runs.
@@ -224,8 +259,8 @@ not trigger themselves. Not a daemon: it runs only while the command (or server)
 ### Intelligence (`intel.rs`)
 Definitions and references, callers/callees, outline, imports with best-effort
 module→file resolution and reverse dependencies, **similar code** (implementation-view vectors +
-token Jaccard), **duplicates** (exact token-sequence hash and MinHash/LSH near-duplicates over
-token 3-grams, nested chunks excluded), and **structural search** (`tsquery`: tree-sitter query
+token Jaccard), **duplicates** (exact: the same body text once runs of whitespace are squeezed;
+near: MinHash/LSH over token 3-grams, nested chunks excluded), and **structural search** (`tsquery`: tree-sitter query
 language over all files of a language, parallel, no index needed).
 
 `refs` resolves names (`resolve.rs`). Engine A finds the whole-word occurrences; for each file
@@ -235,11 +270,13 @@ imports bind, while definitions and their nesting come from the index's `chunks`
 occurrence goes to the innermost scope that defines the name, then the file's top level, then
 an import binding, the Go package directory or a wildcard import; a qualifier goes through the
 module it names or the class or type it names, and a variable through the type its declaration
-states. Import paths are mapped onto repository files
+states or infers (a function's declared return type, a field's type, a module-level or static
+variable, a constructor). A type from outside the repository makes a call external. Import paths
+are mapped onto repository files
 (Python packages and relative imports, JavaScript paths, `index` files and `tsconfig.json`
 aliases, Rust `crate`/`self`/
-`super` paths, module files and workspace crates from `Cargo.toml`, Go import paths by
-directory), following re-exports with a depth limit. It is a query-time step: no schema change,
+`super` paths, module files and workspace crates from `Cargo.toml`, Go import paths through the
+module path in `go.mod`, by directory without one), following re-exports with a depth limit. It is a query-time step: no schema change,
 nothing for the Python reference to mirror, and `refs --textual` keeps the unresolved answer.
 The LSP references request uses it for the definition under the cursor.
 
@@ -267,8 +304,11 @@ long tool result where it likes (Codex at 10,000 tokens, from the middle).
 
 `Repo` (`lib.rs`) is an open repository: the searcher on its index and the one copy of the rules
 for keeping the index usable (bring it up to date; when the database is corrupt, delete it and
-build it again). The MCP server, the Python bindings and `watch` hold one; the MCP server builds
-the first index in the background and answers "still building" after a 20 second wait.
+build it again). After an operation it checks the files the answer cites, and the files its
+arguments name, against the index with one `stat` each; when one changed or is gone, those
+files alone are updated and the operation runs again, once. The MCP server, the Python bindings
+and `watch` hold one; the MCP server builds the first index in the background and answers
+"still building" after a 20 second wait.
 
 The MCP server (`mcp.rs`) is an adapter: the tool table with its hints for clients (`readOnlyHint`,
 `openWorldHint`) and output schemas, server instructions, and the protocol loop. The loop serves

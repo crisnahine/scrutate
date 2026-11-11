@@ -170,7 +170,7 @@ Counts: PASS 121 · PARTIAL 14 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 |---|---|---|---|---|
 | R-12.1 | Filesystem edge cases | long names, spaces/unicode names, dotfiles, no extension, uppercase extensions, case-colliding paths (benchmark corpora) | robustness | PASS |
 | R-12.2 | Operating-system differences | portable code, CRLF/CR handling, `/`-normalised paths, SMB lock semantics | tests pass on macOS (APFS, SMB share) and Linux (ext4 in a container); the Windows-only code (console handler, path handling) compiles and links for x86_64-pc-windows-gnu | PARTIAL (no Windows run) |
-| R-12.3 | Unicode | lossy decoding, boundary safety, Unicode case folding in the trigram conditions | robustness, proptest, `textindex::tests::unicode_case_folding_is_covered` | PASS |
+| R-12.3 | Unicode | lossy decoding, boundary safety, Unicode case folding in the trigram conditions; search tokens for words of every script (Han, kana and Thai as character bigrams) and names compared in NFC, in both engines | robustness, proptest, `textindex::tests::unicode_case_folding_is_covered`, `tests/unicode_text.rs` | PASS |
 | R-12.4 | Binary files | NUL sniff (Engine B), `BinaryDetection::quit` (Engine A), text index keeps the bytes before the first NUL | robustness; LEADERBOARD `binheavy/literal` | PASS |
 | R-12.5 | Invalid encodings | invalid UTF-8 lossy; UTF-16 with a BOM transcoded by both engines | `cli.rs::utf16_bom_is_searched_by_engine_a_and_indexed_by_engine_b` | PASS |
 | R-12.6 | Symlinks | not followed by default, loop-safe with `-L` | robustness | PASS |
@@ -222,7 +222,7 @@ Counts: PASS 121 · PARTIAL 14 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 | R-14.12 | Trade-off modes documented and benchmarked | text index stores no contents (small, needs the source tree) | ARCHITECTURE.md, LEADERBOARD.md Engine B section: the one configuration leads all eight metrics on both platforms, size and latency included, so no pair of metrics is left for a second mode to trade | PASS |
 | R-14.13 | Leaderboard with medians, CIs and our rank; status per benchmark | `bench/make_leaderboard_md.py` | LEADERBOARD.md | PASS |
 | R-14.14 | Claims of #1 only for PASS rows, linked to raw data | docs reviewed | README.md, COMPETITIVE.md | PASS |
-| R-14.15 | Every benchmark tracked in CI; regressions beyond noise block the change | `benchmarks.yml` job + `leaderboard_regression.py` | workflow not executed | PARTIAL |
+| R-14.15 | Every benchmark tracked in CI; regressions beyond noise block the change | `benchmarks.yml` job: the change and its base timed in one interleaved `leaderboard.py` run (`SCRUTATE_BASE_BIN`), compared by `leaderboard_regression.py --within` | workflow not executed | PARTIAL |
 | R-14.16 | Rank #1 on every benchmark, every metric, every declared platform | everything in R-4.6 | LEADERBOARD.md: #1 with significance on every row measured: 37 of 37 warm and 5 of 5 cold benchmarks on macOS arm64, 14 of 14 warm and 4 of 4 cold in the Linux aarch64 VM, 8 of 8 indexed metrics against Zoekt on macOS and 8 of 8 against Zoekt and livegrep in the Linux VM. Linux x86_64, the third declared platform, has no benchmark run (it is tested under emulation), and no result comes from dedicated idle hardware, which section 14 requires for a published #1 | PARTIAL |
 
 ## Tally

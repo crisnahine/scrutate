@@ -21,6 +21,10 @@ and the scope line of `docs/SECURITY.md`.
 `integrations/vscode/package.json` differs from the one given. The release workflow runs it on
 the tag (without its `v`) before anything else and refuses a tag that does not match.
 
+The oldest compiler that builds is `rust-version` in the workspace `Cargo.toml`: 1.91, which the
+locked `notify-types` needs. A `ci.yml` job runs `cargo check` with that version, so a
+dependency update that raises it fails there; README.md and docs/INSTALL.md name it too.
+
 ## 2. Benchmarks on the release binary
 
 Move the previous results out of the way first: the harness resumes from an existing file. Each
@@ -49,9 +53,14 @@ after the first. Colima shares only the home directory with containers.
 Then read the results before going on:
 
 - Every row's status, and the rows marked "measured again".
-- `python3 bench/leaderboard_regression.py OLD.json NEW.json` against the previous run of each
-  file. A flagged row that every tool shares is the machine; one that only scrutate shows is
-  the code. `/usr/bin/time -l` gives instructions retired, which a busy machine does not move.
+- The regression gate measures the change and its base in one run. With
+  `SCRUTATE_BASE_BIN=<the previous release binary>` set, `bench/leaderboard.py` times that binary
+  as `scrutate base` in the same interleaved blocks as `scrutate` (never ranked, and left out of
+  the published tables), and `python3 bench/leaderboard_regression.py --within FILE.json` compares
+  the two inside that file: a row regresses when the 95% interval of the ratio of medians lies
+  above 1.10. A slow minute slows both binaries, so two runs taken minutes apart are no gate.
+  `leaderboard_regression.py OLD.json NEW.json` still compares two recorded runs of one machine.
+  `/usr/bin/time -l` gives instructions retired, which a busy machine does not move.
 
 ## 3. Generated documents
 

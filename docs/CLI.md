@@ -23,10 +23,14 @@
 - **Paths**: `scrutate grep` prints a path as the walk reached it from the path given, as grep and
   ripgrep do: `dir/a.txt` for `dir/`, `./dir/a.txt` for `.`, an absolute path for an absolute one,
   and relative to `.` when no path is given (text, `--json`, `-c` and `-l` alike; with `--symbols`
-  a path is the file's path under `--root`, as the index names it). A single
-  file argument is printed with its name, where ripgrep leaves the name out. `find`, the index
-  commands, the MCP tools and the LSP server print paths relative to the repository root. Paths
-  are `/`-separated on every platform.
+  a path is the file's path under `--root`, as the index names it). As in ripgrep, each line
+  and count carries its file's path unless the only path given is one file; `-H`
+  (`--with-filename`) and `-I` (`--no-filename`) choose, and of the two the later wins. `-l` and
+  `--json` always carry the path. `find`, the index commands, the MCP tools and the LSP server
+  print paths relative to the repository root. On Windows `\` is printed as `/`; on Unix a
+  backslash is part of a file name and stays. The index commands and the MCP tools show a control
+  character in a name as an escape (`\n`, `\x1b`) and a backslash doubled (`\\`); a path or a
+  location written that way is read back by every command that takes one.
 - **Configuration**: `.scrutate.toml` in the repository, `$XDG_CONFIG_HOME/scrutate/config.toml`,
   or `$SCRUTATE_CONFIG`; `scrutate config` shows what is in effect. Precedence: command line >
   environment variable > configuration file > built-in default. Every configurable option names its
@@ -38,7 +42,7 @@
 - **Cancellation**: Ctrl-C stops a search between files and exits 130; a closed pipe
   (`| head`) stops it silently.
 
-## Engine A — `grep` (alias `g`)
+## Engine A: `grep` (alias `g`)
 
 ```
 scrutate grep [OPTIONS] PATTERN [PATHS...]
@@ -65,7 +69,10 @@ cold cache: up to 64 on Linux, elsewhere twice the cores, at most 24), `--sort`,
 `--json`, `--stats`, `--symbols` (group lines by the enclosing function using the index, when one
 exists). Files that cannot be read, or not to the end, are named in warnings on stderr (the first
 ten); they do not change the exit code. A search path that does not exist is named in a warning
-and the exit code is 2; matches in the other paths are still printed.
+and the exit code is 2; matches in the other paths are still printed. On Linux, files under a
+root on `/proc`, `/sys` or another kernel pseudo filesystem (debugfs, tracefs, securityfs,
+configfs, cgroup), and under the `proc` and `sys` directories of a root `/`, are read until the
+kernel has no more: such a file gives its size as 0 and can answer the first read short.
 
 Where the details differ between tools, scrutate does what ripgrep does. `-m N` stops the search
 of a file at its Nth matching line: the trailing context after it is printed, and a match inside
@@ -96,8 +103,8 @@ often while files change.
 | `index [--force] [--text \| --no-text]` | Build or incrementally update `.scrutate/`: the code-intelligence index and the text index for `grep --index` (`--text`: only the text index; `--no-text`: skip it). Progress on a terminal. |
 | `search QUERY [-k N] [-a ALT]... [--also ROOT]... [--why] [--json]` (alias `s`) | Ranked search by meaning, name or identifier; `--alt` fuses alternative phrasings; `--also` searches other repositories too (paths prefixed with the repository name). |
 | `find QUERY` | Unified: regex-looking → `grep`; otherwise ranked search (indexing a small repository on the spot); otherwise identifier grep. A regex-looking query that finds nothing, or is not a valid regex, goes to ranked search when an index exists. A question with a space and a trailing `?` (`how is the token refreshed?`) is taken as words. |
-| `symbol NAME` | Where is it defined (`Class.method` works; `Type::method`, `Type#method` and `p->method` are read the same way, here and in `callers`, `callees`, `similar` and `read_code symbol`). |
-| `callers NAME` / `callees NAME` | Call graph edges resolved to definitions (callee names outside the repository listed after `external:`). A call matches a definition by the name as the call writes it (`Ok(1)` is not a call of `ok`) and in its own language family only: JavaScript and TypeScript; C, C++, CUDA and Objective-C; Java, Kotlin, Scala and Groovy; Erlang, Elixir and Gleam; C# and F#; every other language alone (a file of no known language matches any); an unknown qualifier (`Nope.refresh`) gives no results, and so does a name with a leading dot. A call the resolver ties to something else (a function of an imported module such as `subprocess.run`, a local variable, a field) is not a call of a namesake in the repository; `callees` lists such a name after `external:`. `callers` lists first the callers the resolver ties to that definition, then those it could not decide (the ones that name the owner type or sit in the same package first), and says how many are undecided; for a name with thousands of call sites it asks the resolver about the 400 likeliest. |
+| `symbol NAME` | Where is it defined (`Class.method` works; `Type::method`, `Type#method` and `p->method` are read the same way, here and in `callers`, `callees`, `similar`, `refs` and `read_code symbol`). A method is named by its owner's bare type: `Stack.push` for `impl<T> Stack<T>` in Rust and for `void Stack<T>::push()` in C++. A dotted Lua or Elixir name is split off its owner: `function M.helper` is `helper` with the qualified name `M.helper`, `defmodule MyApp.Accounts.User` is `User`. |
+| `callers NAME` / `callees NAME` | Call graph edges resolved to definitions (callee names outside the repository listed after `external:`). A call matches a definition by the name as the call writes it (`Ok(1)` is not a call of `ok`) and in its own language family only: JavaScript and TypeScript; C, C++, CUDA and Objective-C; Java, Kotlin, Scala and Groovy; Erlang, Elixir and Gleam; C# and F#; every other language alone (a file of no known language matches any); an unknown qualifier (`Nope.refresh`) gives no results, and so does a name with a leading dot. A call the resolver ties to something else (a function of an imported module such as `subprocess.run`, a local variable, a field) is not a call of a namesake in the repository; `callees` lists such a name after `external:`. A method call `x.m()` is never a call of a free function `m` in Rust, JavaScript, TypeScript, Go and Java, a receiver whose type comes from outside the repository makes the call external, and a definition's own name is not a call of it. Calls inside the arguments of a Rust macro (`println!("{}", f(x))`, `vec![k(1)]`) count. `callers` lists first the callers the resolver ties to that definition, then those it could not decide (the ones that name the owner type or sit in the same package first), and says how many are undecided; for a name with thousands of call sites it asks the resolver about the 400 likeliest. |
 | `refs NAME [--def PATH[:LINE]] [--textual] [--max-results N]` | Every whole-word occurrence, each resolved to the definition it refers to, or listed as unresolved with a reason (see below). |
 | `outline FILE` | Symbols of a file in source order. |
 | `deps FILE` / `rdeps TARGET` | Imports of a file (resolved to repository files when possible) / files importing a module or file. An `#include "util.h"` resolves to the file next to the including one; `rdeps` matches an import by its base name only when it resolves to no file. |
@@ -118,7 +125,21 @@ binary files, files over 1 MB, `.git/`, `.scrutate/`, the directories named in
 `SCRUTATE_INDEX_EXCLUDE_DIRS`, and cache and tool directories by name (`node_modules`,
 `__pycache__`, `.venv`, `.mypy_cache`, `.pytest_cache`, `.next`, `.tox`, `.idea`, `.vscode`).
 `build`, `dist`, `target` and `venv` are skipped by name outside a git repository; inside one,
-the ignore files decide, so a `target/` that `.gitignore` does not list is indexed.
+the ignore files decide, so a `target/` that `.gitignore` does not list is indexed. A comma
+inside a name in `SCRUTATE_INDEX_EXCLUDE_DIRS` is written `\,`.
+
+Constants are symbols of kind `constant`: Rust `const` and `static`, Go package-level `const`
+and `var`, a JavaScript or TypeScript top-level `const` that is not a function, TypeScript enum
+members, Java `static final` fields, Python module-level names written in capitals, C and C++
+`#define NAME value` and enumerators.
+`symbol`, `outline`, `read_code symbol` and `refs` find them; ranked search (`search`, `find`,
+the MCP `search_code`) never returns one.
+
+Ranked search reads words of every script. Han, kana and Thai, written without spaces, become
+overlapping pairs of characters, so `天気` finds `東京の天気`; any other script gives one
+lowercased token per word. Only ASCII words are split at case changes and stemmed. Names
+compare in Unicode NFC, so a name typed with a combining accent finds the precomposed spelling.
+A definition name longer than 200 bytes is still a symbol when it holds no whitespace.
 
 ### `refs`
 ```
@@ -136,9 +157,12 @@ refers to. For Python, JavaScript, TypeScript, Rust and Go the rules are, in ord
    `this.N`, `cls.N` and `Self::N` look in the enclosing class or impl. A receiver that is a
    local variable or a parameter (`x.N`) is looked up in the type its declaration states: an
    annotation (`x: T`, `x T`, `x: &T`) or what it is built from (`T(...)`, `new T(...)`,
-   `T::new(...)`, `T { .. }`, `&T{}`), the nearest declaration before the use. A Go method is
-   found by its receiver type in any file of the package. A variable whose declaration does not
-   say its type is unresolved.
+   `T::new(...)`, `T { .. }`, `&T{}`), the nearest declaration before the use. A variable that
+   gets its value from a function call takes the function's declared return type (through `?`
+   and holders such as `Box`, `Rc` and `Arc` in Rust, `await` in TypeScript); `self.x.N` takes
+   the declared type of the field `x`, and a module-level or static variable its declared or
+   built type. A Go method is found by its receiver type in any file of the package. A variable
+   whose type none of these gives is unresolved.
 3. A plain occurrence is, first, a definition nested in an enclosing function (or directly in an
    enclosing class body); a parameter or local variable of that name hides everything else
    within its own scope (a lambda's parameter inside the lambda, a block-scoped name inside its
@@ -157,8 +181,9 @@ path in `go.mod` (by the directory they end with when there is no `go.mod`). `ts
 `jsconfig.json`, `Cargo.toml` and `go.mod` are read only when they are regular files inside the
 repository, of at most 1 MB. Re-exports (`from .x import N` in `__init__.py`, `export {N} from`,
 `pub use`) are followed. Occurrences in comments and strings, in other languages and in files without a
-grammar are unresolved, and so is anything the rules do not reach (method calls on a variable
-that got its value from a function call or a field, enum variants, local variables). Imports of modules outside the repository give `external`.
+grammar are unresolved, and so is anything the rules do not reach (method calls on a value
+whose type they cannot infer, enum variants, local variables). In JavaScript a `var` belongs to
+its function, `let` and `const` to their block. Imports of modules outside the repository give `external`.
 
 The output lists each definition with its references, then the unresolved occurrences with the
 reason. `--def PATH[:LINE]` keeps one definition of `NAME`: the one in `PATH`, or the one
@@ -177,7 +202,10 @@ operations (`ops.rs`): the CLI, the MCP server, `batch` and the Python bindings 
 with the same defaults (search `k` 8, callers 30, callees 40, references 200, duplicates 50,
 structural search 1000) and print the same text or JSON. An empty answer has exit code 1;
 `outline`, `deps`, `rdeps`, `similar` and `dupes` then print nothing on standard output and one
-sentence on standard error.
+sentence on standard error. When `symbol`, `callers`, `callees`, `read_code symbol` or
+`structural_search` stops at its limit with more left, the answer ends with a line that says so
+and names the MCP argument that raises it (`(stopped at 30 results: raise limit to see more)`);
+with `serve --structured` the JSON carries `stopped_at`.
 
 `--max-bytes BYTES` (or `SCRUTATE_MAX_BYTES`) limits the size of such an answer. A cut answer
 keeps whole items and ends with a line like `(12 more results not shown: call again with
@@ -195,8 +223,11 @@ Fourteen tools over stdio, each one an operation above (`search_code`, `grep_cod
 Before a call the server checks the repository for changed files and updates the index. Without
 `--refresh-interval` the wait between scans is at most a second, and shorter when a scan is
 cheap; with `--refresh-interval S` (or `SCRUTATE_REFRESH_INTERVAL`) no scan comes sooner than S
-seconds after the last one. With `--watch`, each update the watcher makes counts as a scan. Inside that window
-an answer can miss an edit made since the last scan. At the end of its input (EOF) the server
+seconds after the last one. With `--watch`, each update the watcher makes counts as a scan.
+Inside that window an answer still checks the files it cites and the files its arguments name,
+one `stat` each: when one changed or is gone, those files alone are indexed again and the answer
+is computed again, once. A change in a file the answer does not cite waits for the next scan.
+At the end of its input (EOF) the server
 answers the calls in flight, lets a running index build finish, and exits.
 
 - Every tool but `reindex` is marked read-only (`readOnlyHint`), and all are marked as staying on
@@ -296,22 +327,31 @@ requires. The exit code is 0 after `shutdown` then `exit`, 1 otherwise. Logs go 
 ```
 scrutate watch [PATH]
 ```
-Updates the index of `PATH` (default `--root`) once, prints `watching PATH` on stderr, then waits
-for filesystem events (inotify on Linux, ReadDirectoryChangesW on Windows). On macOS it runs the
-index's own incremental check instead, every second or, on a large tree, after a pause ten times as
-long as the last check took: the FSEvents backend would link CoreServices into every `scrutate`
-command (about 1 ms of start-up), and the check compares sizes and nanosecond times, so it misses
-no edit. Events under `.scrutate/` and `.git/` are dropped, and so are paths that
-neither index would hold under its usual rules (ignore files; the skipped build and vendor
-directories and `SCRUTATE_INDEX_EXCLUDE_DIRS` for the code index; hidden paths for the text
-index). A burst of events is collected until 200 ms pass without one (at
-most 2 s), then the usual incremental update runs: the code index, and the text index when
-`.scrutate/text/` exists (`watch` never creates one; `scrutate index` does). Each update that
-changed something prints one line on stderr. Ctrl-C stops it after the update in progress (exit
-130). Other processes can read and update the same index meanwhile; the indexes' own locks order
-the writers, and stopping the process mid-update leaves the previous state in place.
+Sets up the watch on `PATH` (default `--root`), then updates the index once, so a change made
+during that first update is seen, prints `watching PATH` on stderr, and waits for filesystem
+events. On Linux each directory the indexes can hold gets one inotify watch of its own, and an
+ignored tree gets none (2 watches instead of 7,012 on a tree with an ignored `node_modules` and
+`target`); the set is walked again after every burst, so new, moved and replaced
+directories are watched, and a directory that cannot be watched is named on stderr. Windows uses
+one recursive ReadDirectoryChangesW watch on `PATH`. On macOS it runs the index's own incremental check
+instead, every second or, on a large tree, after a pause ten times as long as the last check took
+(at most 30 s): the FSEvents backend would link CoreServices into every `scrutate` command
+(about 1 ms of start-up), and the check compares sizes and nanosecond times, so it misses no
+edit. Events under `.scrutate/` and `.git/` are dropped, and so are paths that neither index
+would hold under its usual rules (ignore files; the skipped build and vendor directories and
+`SCRUTATE_INDEX_EXCLUDE_DIRS` for the code index; hidden paths for the text index); the ignore
+files are read again after every burst. A burst of events is collected until 200 ms pass
+without one (at most 2 s), then the usual incremental update runs: the code index, and the text
+index when `.scrutate/text/` exists (`watch` never creates one; `scrutate index` does). Each
+update that changed something prints one line on stderr. A failed first update stops the
+watch; a later one that fails is reported and the watch goes on. Ctrl-C stops it after the
+update in progress (exit 130). When `PATH` is removed or moved away, `watch` stops with an error
+(exit 2). Other processes can read and update
+the same index meanwhile; the indexes' own locks order the writers, and stopping the process
+mid-update leaves the previous state in place.
 
-`serve --watch` runs the same watcher in a background thread while the server answers requests.
+`serve --watch` runs the same watcher in a background thread while the server answers requests;
+when the watcher stops, stderr says why and the server goes on answering.
 The watcher and the tool calls share one engine, so a code index update and a request never run at
 the same time in that process.
 

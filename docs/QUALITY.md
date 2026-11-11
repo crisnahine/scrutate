@@ -15,7 +15,7 @@ functions by the benchmark's rules: 300 on networkx and 50 on the engine's own s
 
 - A query is generated from a real function; the function it came from is the one correct answer.
 - The indexed copy has that function's docstring removed (**variant A**: every docstring in the
-  package removed — an undocumented code base; **variant B**: only the first sentence of each
+  package removed, an undocumented code base; **variant B**: only the first sentence of each
   docstring removed), so the answer text is not sitting in the index.
 - Query types: **doc** = the first docstring sentence written as a natural-language request;
   **kw** = three content words sampled from it; **name** = the function name as words
@@ -29,7 +29,7 @@ functions by the benchmark's rules: 300 on networkx and 50 on the engine's own s
   *semantic only* ranks by the vector similarity alone; *linear blend* is the hand-set fallback
   used when no ranker is present; *learned* is the shipped pipeline.
 
-## Variant A — every docstring removed (MRR@10, n queries)
+## Variant A: every docstring removed (MRR@10, n queries)
 
 | Query type | n | BM25 | semantic only | linear blend | **learned ranker** | learned − BM25 [95 % CI] | hit@1 / hit@5 / hit@10 (learned) |
 |---|---:|---:|---:|---:|---:|---:|---|
@@ -39,7 +39,7 @@ functions by the benchmark's rules: 300 on networkx and 50 on the engine's own s
 | id | 893 | 0.929 | 0.680 | 0.981 | **0.993** [0.988, 0.997] | +0.064 [+0.050, +0.077] | 0.988 / 0.998 / 0.998 |
 | qid | 753 | 0.893 | 0.627 | 0.897 | **0.990** [0.985, 0.996] | +0.097 [+0.079, +0.115] | 0.983 / 0.997 / 1.000 |
 
-## Variant B — first docstring sentence removed
+## Variant B: first docstring sentence removed
 
 | Query type | n | BM25 | **learned ranker** | learned − BM25 [95 % CI] |
 |---|---:|---:|---:|---:|
@@ -77,7 +77,10 @@ for Rust, Java and TypeScript they describe an index without those chunks. The s
 the definitions both engines cut later, in the Rust, Go, JavaScript and TypeScript rows:
 Rust `macro_rules!` and trait methods without a body, Go methods qualified by their receiver type
 (`Type.Method`), JavaScript class field functions and `module.exports.X` / `exports.X`, and
-TypeScript abstract methods, `declare function` and namespaces. The rows above predate them.
+TypeScript abstract methods, `declare function` and namespaces. The rows above predate them, and
+two later changes as well: a Rust method of a generic type is qualified by the bare type
+(`Stack.push`, where it was `Stack<T>.push`), and constants are chunks that ranked search never
+returns. Tokens of an all-ASCII text did not change when words of other scripts became tokens.
 
 ## What these numbers say and do not say
 

@@ -1,6 +1,6 @@
 # Project name: **Scrutate**
 
-*scrutate* — an English verb descended from Latin *scrūtor / scrūtārī*, "to search carefully,
+*scrutate*: an English verb descended from Latin *scrūtor / scrūtārī*, "to search carefully,
 search into or out, examine thoroughly, investigate" (Lewis & Short, *A Latin Dictionary*, 1879,
 as cited by Wiktionary's entry for *scrutor*, which lists English *scrutate* among the word's
 descendants next to *scrutinize*). The CLI is `scrutate`, the crate is `scrutate`, the Python
@@ -39,7 +39,7 @@ the top GitHub match).
 
 | Candidate | crates.io | PyPI | npm | GitHub name matches | Most-starred exact-name repo | Verdict |
 |---|---|---|---|---|---|---|
-| **scrutate** | free | free | free | 3 (all *Scrutateur…*, none exact) | none | **selected** |
+| **scrutate** | free | free | free | 3 (all *Scrutateur...*, none exact) | none | **selected** |
 | greplex | free | free | free | 0 | none | runner-up: confusable with the existing tools *greple* (Perl grep) and *Greptile* |
 | grepnova | free | free | free | 3 | none, but a `grepNova` GitHub account owns `grepNova/ruby`, `grepNova/proyectos` | rejected: account collision |
 | sondel | free | free | free | 28 | none | rejected: a surname, no meaning for users |

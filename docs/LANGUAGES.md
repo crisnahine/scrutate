@@ -19,10 +19,10 @@ Engine A (instant search) needs none of this: it searches every readable file of
 | autohotkey (extra-langs) | `.ahk` | function | yes | no | no | `tests/samples_extra/sample.ahk` |
 | bash | `.sh .bash .zsh .ksh .bashrc .zshrc .profile` | function | yes | yes | no | `tests/samples/sample.sh` |
 | bicep | `.bicep` | block, function, type | yes | no | no | `tests/samples/sample.bicep` |
-| c | `.c .h` | enum, function, struct, type | yes | yes | no | `tests/samples/sample.c` |
+| c | `.c .h` | constant, enum, function, struct, type | yes | yes | no | `tests/samples/sample.c` |
 | cmake | `.cmake CMakeLists.txt` | function, macro | yes | no | no | `tests/samples/CMakeLists.txt` |
 | commonlisp | `.lisp .cl .asd` | class, function, key, macro | yes | no | no | `tests/samples/sample.lisp` |
-| cpp | `.cc .cpp .cxx .c++ .hpp .hh .hxx .h++ .inl .ipp` | class, function, struct | yes | yes | no | `tests/samples/sample.cpp` |
+| cpp | `.cc .cpp .cxx .c++ .hpp .hh .hxx .h++ .inl .ipp` | class, function, method, struct | yes | yes | no | `tests/samples/sample.cpp` |
 | csharp | `.cs` | class, enum, interface, method, struct | yes | yes | no | `tests/samples/sample.cs` |
 | css | `.css .scss .less` | block | no | no | no | `tests/samples/sample.css` |
 | cuda (extra-langs) | `.cu .cuh` | function | yes | yes | no | `tests/samples_extra/sample.cu` |
@@ -80,7 +80,7 @@ Engine A (instant search) needs none of this: it searches every readable file of
 | tlaplus (extra-langs) | `.tla` | function | no | no | no | `tests/samples_extra/sample.tla` |
 | toml | `.toml Cargo.lock Pipfile poetry.lock` | block | no | no | no | `tests/samples/sample.toml` |
 | tsx | `.tsx` | class, function, interface, method | yes | yes | no | `tests/samples/sample.tsx` |
-| typescript | `.ts .mts .cts` | class, enum, function, interface, method, type | yes | yes | no | `tests/samples/sample.ts` |
+| typescript | `.ts .mts .cts` | class, constant, enum, function, interface, method, type | yes | yes | no | `tests/samples/sample.ts` |
 | verilog (extra-langs) | `.v .sv .svh .vh` | (module only) | no | no | no | `tests/samples_extra/sample.v` |
 | vhdl (extra-langs) | `.vhd .vhdl` | class, impl | no | no | no | `tests/samples_extra/sample.vhd` |
 | vim | `.vim .vimrc` | function | yes | no | no | `tests/samples/sample.vim` |
