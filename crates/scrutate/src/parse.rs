@@ -1113,9 +1113,12 @@ fn leading_comment(lang: &str, node: Node, ancestors: &[(Node, Vec<Node>)], pos:
         if first_in_body && (py_body || up > 2) {
             header_row = ancestors[up - 2].0.start_position().row as i64;
         }
+        // Go's `type T ...` on its own line: the comment stands above the declaration that holds T
+        let lone_type = p.kind() == "type_declaration" && at > 0 && ancestors[up - 1].1[at - 1].kind() == "type";
         if !(wrappers.contains(&p.kind())
             || p.kind() == "decorated_definition"
             || first_in_body
+            || lone_type
             || matches!((anchor.kind(), p.kind()), ("defun", "list_lit") | ("bind", "local_expr")))
         {
             break;

@@ -532,7 +532,7 @@ const CORE: &[LangSpec] = &[
         exts: &[".go"],
         files: &[],
         language: || tree_sitter_go::LANGUAGE.into(),
-        defs: &[d("function_declaration", "function", N), d("method_declaration", "method", N), d("type_spec", "type", N)],
+        defs: &[d("function_declaration", "function", N), d("method_declaration", "method", N), d("type_spec", "type", N), d("type_alias", "type", N)],
         calls: &[c("call_expression", "function")],
         docstring: false,
         wrappers: &[],

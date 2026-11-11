@@ -67,7 +67,7 @@ LANGS: dict[str, dict] = {
     "tsx": dict(load=_load("tree_sitter_typescript", "language_tsx"), defs=_TS_DEFS, calls=_JS_CALLS),
     "go": dict(load=_load("tree_sitter_go"),
                defs={"function_declaration": "function", "method_declaration": "method",
-                     "type_spec": "type"},
+                     "type_spec": "type", "type_alias": "type"},
                calls={"call_expression": "function"}),
     "rust": dict(load=_load("tree_sitter_rust"),
                  defs={"function_item": "function", "struct_item": "struct", "enum_item": "enum",
@@ -456,6 +456,12 @@ def _leading_comment(node, src: bytes) -> str:
         if p.type == "block" and anchor.prev_sibling is None and p.parent is not None and p.parent.type in (
                 "class_definition", "function_definition"):
             header_row = p.parent.start_point[0]
+        elif p.type == "type_declaration" and anchor.prev_sibling is not None and anchor.prev_sibling.type == "type":
+            pass  # Go's `type T ...` on its own line: the comment stands above the declaration that holds T
+        elif p.type == "statement_list" and anchor.prev_sibling is None:
+            # Go: the comment above the first statement of a body sits outside the list
+            if p.parent is not None and p.parent.parent is not None:
+                header_row = p.parent.start_point[0]
         elif p.type not in ("export_statement", "decorated_definition", "lexical_declaration",
                             "variable_declaration", "decorator", "assignment_expression", "expression_statement"):
             break

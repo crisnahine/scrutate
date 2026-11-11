@@ -167,6 +167,9 @@ First release.
   another case (`burst_files`), and a struct and its `impl` block are separate results.
   `bench/retrain_ranker.sh` runs the whole fit and refuses a ranker that is worse on a function
   row of the held-out set.
+- A Go type declared on its own line (`type Server struct`) takes the comment above it as its
+  documentation, also as the first statement of a function body, and a Go type alias
+  (`type Celsius = float64`) is a definition.
 - `symbol`, `callers`, `callees`, `refs`, `outline`, `deps`, `rdeps`, `similar`, `dupes`
   (exact + MinHash/LSH near-duplicates), `tsquery` (tree-sitter structural search),
   cross-repository `search --also`.

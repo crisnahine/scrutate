@@ -475,6 +475,13 @@ fn the_comment_right_above_a_definition_is_its_documentation() {
         ("a.rb", "class K\n  # First.\n  def f; end\nend\n", "K.f", 3, "First."),
         // constants
         ("a.go", "package p\n\n// LockSeconds is the lock time.\nconst LockSeconds = 30\n", "LockSeconds", 4, "LockSeconds is the lock time."),
+        ("a.go", "package p\n\n// Server holds the listeners.\ntype Server struct {\n\tn int\n}\n", "Server", 4, "Server holds the listeners."),
+        ("a.go", "package p\n\n// Mode says how it runs.\ntype Mode int\n", "Mode", 4, "Mode says how it runs."),
+        ("a.go", "package p\n\n// Celsius is a unit.\ntype Celsius = float64\n", "Celsius", 4, "Celsius is a unit."),
+        ("a.go", "package p\n\nfunc f() {\n\t// M maps names.\n\ttype M = map[string]int\n\t_ = M{}\n}\n", "f.M", 5, "M maps names."),
+        ("a.go", "package p\n\nfunc g() { // not about N\n\ttype N int\n}\n", "g.N", 4, ""),
+        ("a.go", "package p\n\n// The kinds.\ntype (\n\t// Pair keeps two.\n\tPair struct{ a, b int }\n\tBare int\n)\n", "Pair", 6, "Pair keeps two."),
+        ("a.go", "package p\n\n// The kinds.\ntype (\n\t// Pair keeps two.\n\tPair struct{ a, b int }\n\tBare int\n)\n", "Bare", 7, ""),
         ("a.go", "package p\n\nconst (\n\t// A doc.\n\tA = 1\n\tB = 2\n)\n", "A", 5, "A doc."),
         ("a.go", "package p\n\nconst (\n\t// A doc.\n\tA = 1\n\tB = 2\n)\n", "B", 6, ""),
         ("a.rb", "# Lock time.\nLOCK_SECONDS = 30\n", "LOCK_SECONDS", 2, "Lock time."),
