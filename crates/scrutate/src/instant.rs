@@ -928,6 +928,8 @@ pub struct PlainSink {
     start: Instant,
     /// the reader went away (`| head`)
     pub broken: AtomicBool,
+    /// a file searched with context lines has written output (later files start with `--`)
+    grouped: AtomicBool,
 }
 
 /// The longest output waits for more to leave with it, unless no thread starts a file meanwhile.
@@ -941,6 +943,7 @@ impl PlainSink {
             holding: AtomicBool::new(false),
             start: Instant::now(),
             broken: AtomicBool::new(false),
+            grouped: AtomicBool::new(false),
         }
     }
 
@@ -972,15 +975,30 @@ impl PlainSink {
         }
     }
 
-    fn write(&self, buf: &[u8], cancel: &AtomicBool) {
+    /// `first`: the first output of a file searched with context, which another file's output
+    /// before it separates with `--`.
+    fn write(&self, buf: &[u8], first: bool, cancel: &AtomicBool) {
         if !buf.is_empty() {
-            self.with(cancel, |w| w.write_all(buf));
+            self.with(cancel, |w| self.separate(w, first).and_then(|_| w.write_all(buf)));
         }
     }
 
     /// `before`, `head`, `text` with invalid UTF-8 replaced, and a line break, as one unit.
-    fn write_line(&self, before: &[u8], head: &[u8], text: &[u8], cancel: &AtomicBool) {
-        self.with(cancel, |w| w.write_all(before).and_then(|_| w.write_all(head)).and_then(|_| write_lossy(w, text, 1 << 18)).and_then(|_| w.write_all(b"\n")));
+    fn write_line(&self, before: &[u8], head: &[u8], text: &[u8], first: bool, cancel: &AtomicBool) {
+        self.with(cancel, |w| {
+            self.separate(w, first)
+                .and_then(|_| w.write_all(before))
+                .and_then(|_| w.write_all(head))
+                .and_then(|_| write_lossy(w, text, 1 << 18))
+                .and_then(|_| w.write_all(b"\n"))
+        });
+    }
+
+    fn separate(&self, w: &mut dyn Write, first: bool) -> std::io::Result<()> {
+        if first && self.grouped.swap(true, Ordering::Relaxed) {
+            w.write_all(b"--\n")?;
+        }
+        Ok(())
     }
 
     /// Lets held output go once it has waited. Threads call this between files, so output waits
@@ -1090,6 +1108,8 @@ struct Collector<'a> {
     binary: bool,
     /// a match may span lines (otherwise a matched line holds no line break)
     multiline: bool,
+    /// context lines are asked for and this file has written no plain output yet
+    first: bool,
 }
 
 fn spans_in(matcher: &AnyMatcher, line: &[u8]) -> Vec<(usize, usize)> {
@@ -1153,13 +1173,13 @@ impl<'a> Sink for Collector<'a> {
                 let mut head = Vec::with_capacity(self.path.len() + 24);
                 format_plain(&mut head, &self.path, number, b"", false);
                 head.pop(); // the newline: the text goes between
-                p.write_line(&self.out, &head, line, self.cancel);
+                p.write_line(&self.out, &head, line, std::mem::take(&mut self.first), self.cancel);
                 self.out.clear();
             } else {
                 format_plain(&mut self.out, &self.path, number, lossy(line).as_bytes(), false);
             }
             if self.out.len() >= 1 << 16 && !self.hold {
-                p.write(&self.out, self.cancel);
+                p.write(&self.out, std::mem::take(&mut self.first), self.cancel);
                 self.out.clear();
             }
             if let Some(max) = self.max_results {
@@ -1207,6 +1227,13 @@ impl<'a> Sink for Collector<'a> {
         Ok(true)
     }
 
+    fn context_break(&mut self, _s: &Searcher) -> Result<bool, std::io::Error> {
+        if self.plain.is_some() {
+            self.out.extend_from_slice(b"--\n");
+        }
+        Ok(true)
+    }
+
     fn finish(&mut self, _s: &Searcher, f: &grep_searcher::SinkFinish) -> Result<(), std::io::Error> {
         self.binary = f.binary_byte_offset().is_some();
         self.flush();
@@ -1232,8 +1259,8 @@ impl Collector<'_> {
         }
     }
     fn flush(&mut self) {
-        if let (Some(p), false) = (self.plain, self.hold) {
-            p.write(&self.out, self.cancel);
+        if let (Some(p), false, false) = (self.plain, self.hold, self.out.is_empty()) {
+            p.write(&self.out, std::mem::take(&mut self.first), self.cancel);
             self.out.clear();
         }
         if !self.batch.is_empty() {
@@ -1578,6 +1605,7 @@ impl<'a> Run<'a> {
             hold: false,
             binary: false,
             multiline: o.multiline,
+            first: o.before > 0 || o.after > 0,
         }
     }
 }
@@ -1948,7 +1976,7 @@ mod split {
                 matched |= part.matched;
                 count += part.count;
                 if let Some(p) = plain {
-                    p.write(&part.out, cancel);
+                    p.write(&part.out, false, cancel);
                 } else if !part.hits.is_empty() {
                     let _ = tx.send(part.hits);
                 }
@@ -2599,7 +2627,7 @@ mod tests {
         let mut all = Vec::new();
         for i in 0..1000 {
             let line = format!("file{i}:1:text\n");
-            sink.write(line.as_bytes(), &cancel);
+            sink.write(line.as_bytes(), false, &cancel);
             all.extend_from_slice(line.as_bytes());
         }
         assert!(writes.lock().unwrap().len() < 500, "a burst leaves in few writes");
@@ -2607,11 +2635,11 @@ mod tests {
         sink.tick(&cancel);
         assert_eq!(written(), all, "held output leaves once it has waited");
         quiet();
-        sink.write(b"late:1:text\n", &cancel);
+        sink.write(b"late:1:text\n", false, &cancel);
         all.extend_from_slice(b"late:1:text\n");
         assert_eq!(written(), all, "output after a quiet spell leaves at once");
-        sink.write(b"last:1:text\n", &cancel);
-        sink.write_line(b"", b"long:1:", b"x\xFFy", &cancel);
+        sink.write(b"last:1:text\n", false, &cancel);
+        sink.write_line(b"", b"long:1:", b"x\xFFy", false, &cancel);
         sink.flush().unwrap();
         all.extend_from_slice("last:1:text\nlong:1:x\u{FFFD}y\n".as_bytes());
         assert_eq!(written(), all);

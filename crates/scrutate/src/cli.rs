@@ -138,10 +138,11 @@ pub struct GrepArgs {
     #[arg(short = 'z', long)]
     pub search_zip: bool,
     /// case-insensitive
-    #[arg(short = 'i', long)]
+    #[arg(short = 'i', long, overrides_with = "smart_case")]
     pub ignore_case: bool,
-    /// case-insensitive unless the pattern has an uppercase letter
-    #[arg(short = 'S', long, env = "SCRUTATE_GREP_SMART_CASE", value_parser = clap::builder::FalseyValueParser::new())]
+    /// case-insensitive unless the pattern has an uppercase letter (of -i and -S the later wins;
+    /// SCRUTATE_GREP_SMART_CASE turns it on when neither is given)
+    #[arg(short = 'S', long, overrides_with = "ignore_case")]
     pub smart_case: bool,
     /// match whole words only
     #[arg(short = 'w', long)]
@@ -173,8 +174,9 @@ pub struct GrepArgs {
     /// stop everything after N matches in total
     #[arg(long)]
     pub max_results: Option<u64>,
-    /// include/exclude files by glob (prefix ! to exclude); repeatable
-    #[arg(short = 'g', long = "glob", env = "SCRUTATE_GREP_GLOBS", value_delimiter = ',')]
+    /// include/exclude files by glob (prefix ! to exclude); repeatable; SCRUTATE_GREP_GLOBS takes a
+    /// comma-separated list (commas inside {} belong to the glob)
+    #[arg(short = 'g', long = "glob")]
     pub globs: Vec<String>,
     /// only files of this type (see --type-list); prefix ! to exclude; repeatable
     #[arg(short = 't', long = "type", env = "SCRUTATE_GREP_TYPES", value_delimiter = ',')]
@@ -449,6 +451,26 @@ pub fn looks_like_regex(q: &str) -> bool {
     q.chars().any(|c| matches!(c, '*' | '+' | '?' | '[' | ']' | '(' | ')' | '|' | '^' | '$' | '\\' | '{' | '}'))
 }
 
+/// A comma-separated list of globs, split at the commas outside `{}`.
+fn split_globs(list: &str) -> Vec<String> {
+    let (mut out, mut cur, mut depth) = (Vec::new(), String::new(), 0usize);
+    for c in list.chars() {
+        match c {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                out.push(std::mem::take(&mut cur));
+                continue;
+            }
+            _ => {}
+        }
+        cur.push(c);
+    }
+    out.push(cur);
+    out.retain(|g| !g.is_empty());
+    out
+}
+
 pub fn run() -> Result<i32> {
     // configuration file -> environment -> clap (command line still wins)
     let args: Vec<String> = std::env::args_os().map(|a| a.to_string_lossy().into_owned()).collect();
@@ -505,6 +527,12 @@ pub fn run() -> Result<i32> {
             stats,
             symbols,
         }) => {
+            // read here, not by clap: with an environment value clap rejects -i as conflicting
+            let smart_case = smart_case
+                || !ignore_case
+                    && std::env::var("SCRUTATE_GREP_SMART_CASE")
+                        .is_ok_and(|v| !matches!(v.to_ascii_lowercase().as_str(), "" | "0" | "n" | "no" | "f" | "false" | "off"));
+            let globs = if globs.is_empty() { std::env::var("SCRUTATE_GREP_GLOBS").map(|v| split_globs(&v)).unwrap_or_default() } else { globs };
             if type_list {
                 for (name, globs) in instant::type_list() {
                     println!("{name}: {}", globs.join(", "));
@@ -940,12 +968,21 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
     let bookkeeping = out.count || out.files_with_matches;
     let mut found = false;
     let mut linebuf: Vec<u8> = Vec::with_capacity(512);
+    let groups = o.before > 0 || o.after > 0;
+    let mut last: Option<(Arc<str>, u64)> = None;
     let mut emit = |h: &instant::Hit, w: &mut termcolor::BufferedStandardStream| -> Result<()> {
         if out.json {
             let rec = serde_json::json!({"type": if h.context { "context" } else { "match" }, "schema": SCHEMA, "path": h.path, "line": h.line,
                 "column": h.column, "text": h.text, "spans": h.spans.iter().map(|(a, b)| serde_json::json!({"start": a, "end": b})).collect::<Vec<_>>()});
             writeln!(w, "{rec}")?;
             return Ok(());
+        }
+        if groups {
+            // `--` between lines that are not adjacent in one file, as the plain path's searcher does
+            if last.as_ref().is_some_and(|(p, l)| **p != *h.path || h.line > l + 1) {
+                w.write_all(b"--\n")?;
+            }
+            last = Some((Arc::clone(&h.path), h.line + h.text.matches('\n').count() as u64));
         }
         if !colour {
             // plain output: one assembled line, one write (the common piped case)

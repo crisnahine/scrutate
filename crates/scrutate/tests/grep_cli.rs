@@ -298,3 +298,86 @@ fn symbols_are_found_for_matches_under_a_path_argument() {
     let (_, out, _) = d.run(&["grep", "--symbols", "needle", abs.to_str().unwrap()]);
     assert!(out.contains("sub/c.py:1-3  [function] holder"), "{out}");
 }
+
+#[test]
+fn a_glob_on_the_command_line_is_taken_whole() {
+    let d = Dir::new("globcomma");
+    for f in ["a.txt", "b.log", "c.rs"] {
+        d.write(f, b"foo\n");
+    }
+    let (code, out, err) = d.run(&["grep", "-l", "-g", "*.{txt,log}", "foo"]);
+    assert_eq!((code, sorted(&out)), (0, vec!["a.txt".to_string(), "b.log".to_string()]), "{err}");
+    // as ripgrep: one glob that holds a comma, so no file matches
+    let (code, out, _) = d.run(&["grep", "-l", "-g", "*.txt,*.log", "foo"]);
+    assert_eq!((code, out.as_str()), (1, ""));
+    let (_, out, _) = d.run(&["grep", "-l", "-g", "*.txt", "-g", "*.rs", "foo"]);
+    assert_eq!(sorted(&out), ["a.txt", "c.rs"]);
+    let (_, out, _) = d.run_env(&["grep", "-l", "foo"], &[("SCRUTATE_GREP_GLOBS", "*.txt,*.log")]);
+    assert_eq!(sorted(&out), ["a.txt", "b.log"]);
+    let (_, out, _) = d.run_env(&["grep", "-l", "foo"], &[("SCRUTATE_GREP_GLOBS", "*.{txt,log},!b.*")]);
+    assert_eq!(sorted(&out), ["a.txt"]);
+    let (_, out, _) = d.run_env(&["grep", "-l", "-g", "*.rs", "foo"], &[("SCRUTATE_GREP_GLOBS", "*.txt")]);
+    assert_eq!(sorted(&out), ["c.rs"]);
+    d.write(".scrutate.toml", b"[grep]\nglobs = [\"*.{txt,log}\"]\n");
+    let (code, out, err) = d.run(&["grep", "-l", "foo"]);
+    assert_eq!((code, sorted(&out)), (0, vec!["a.txt".to_string(), "b.log".to_string()]), "{err}");
+}
+
+#[test]
+fn context_groups_are_separated_as_ripgrep_does() {
+    let d = Dir::new("ctxsep");
+    d.write("a.txt", b"foo\na\nb\nc\nd\nfoo\ne\n");
+    d.write("b.txt", b"x\nfoo\ny\nfoo\nz\n");
+    d.write("t.txt", b"foo\nb\nc\nfoo\ne\nf\ng\nfoo\n");
+    let a = "a.txt:1:foo\na.txt-2-a\n--\na.txt:6:foo\na.txt-7-e\n";
+    let b = "b.txt:2:foo\nb.txt-3-y\nb.txt:4:foo\nb.txt-5-z\n";
+    for sort in [false, true] {
+        let with = |args: &[&str]| {
+            let mut v = vec!["grep", "-j", "1"];
+            if sort {
+                v.push("--sort");
+            }
+            v.extend(args);
+            d.run(&v).1
+        };
+        assert_eq!(with(&["-A1", "foo", "a.txt"]), a, "sort {sort}");
+        assert_eq!(with(&["-A1", "foo", "a.txt", "b.txt"]), format!("{a}--\n{b}"), "sort {sort}");
+        assert_eq!(with(&["-A1", "foo", "b.txt"]), b, "sort {sort}");
+        assert_eq!(with(&["-C1", "foo", "t.txt"]), "t.txt:1:foo\nt.txt-2-b\nt.txt-3-c\nt.txt:4:foo\nt.txt-5-e\n--\nt.txt-7-g\nt.txt:8:foo\n", "sort {sort}");
+        assert_eq!(with(&["-A0", "foo", "a.txt"]), "a.txt:1:foo\na.txt:6:foo\n", "sort {sort}");
+        assert_eq!(with(&["-U", "-A1", r"c\nd", "a.txt", "b.txt"]), "a.txt:4:c\na.txt:5:d\na.txt-6-foo\n", "sort {sort}");
+    }
+    // many threads: one separator between any two groups, wherever each file's lines land
+    let (_, out, _) = d.run(&["grep", "-A1", "foo", "a.txt", "b.txt", "t.txt"]);
+    assert_eq!(out.lines().filter(|l| *l == "--").count(), 5, "{out}");
+    assert!(!out.starts_with("--") && !out.ends_with("--\n"), "{out}");
+    for flags in [["--json", "-A1"], ["-c", "-A1"], ["-l", "-A1"]] {
+        let (_, out, _) = d.run(&["grep", flags[0], flags[1], "foo", "a.txt", "b.txt"]);
+        assert!(!out.lines().any(|l| l == "--"), "{flags:?}: {out}");
+    }
+    // a file large enough to be searched in ranges gives the same lines
+    let big: String = (0..3000).map(|i| if i % 100 == 0 { "foo here\n".to_string() } else { format!("line {i}\n") }).collect();
+    d.write("big.txt", big.as_bytes());
+    let (_, whole, _) = d.run(&["grep", "-C1", "foo", "big.txt"]);
+    let (_, split, _) = d.run_env(&["grep", "-C1", "foo", "big.txt"], &[("SCRUTATE_SPLIT_FILE_BYTES", "4096"), ("SCRUTATE_THREADS", "4")]);
+    assert_eq!(whole, split);
+    assert_eq!(whole.lines().filter(|l| *l == "--").count(), 29, "{whole}");
+}
+
+#[test]
+fn the_later_case_flag_wins() {
+    let d = Dir::new("caseflags");
+    d.write("c.txt", b"Foo\nfoo\nFOO\n");
+    let count = |args: &[&str], env: &[(&str, &str)]| {
+        let mut v = vec!["grep", "-c"];
+        v.extend(args);
+        v.extend(["Foo", "c.txt"]);
+        d.run_env(&v, env).1
+    };
+    assert_eq!(count(&["-i", "-S"], &[]), "c.txt:1\n");
+    assert_eq!(count(&["-S", "-i"], &[]), "c.txt:3\n");
+    assert_eq!(count(&["--ignore-case", "--smart-case"], &[]), "c.txt:1\n");
+    assert_eq!(count(&["-i"], &[("SCRUTATE_GREP_SMART_CASE", "1")]), "c.txt:3\n");
+    assert_eq!(count(&["-S", "-i"], &[("SCRUTATE_GREP_SMART_CASE", "1")]), "c.txt:3\n");
+    assert_eq!(count(&[], &[("SCRUTATE_GREP_SMART_CASE", "1")]), "c.txt:1\n");
+}
