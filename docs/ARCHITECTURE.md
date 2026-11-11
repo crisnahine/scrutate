@@ -279,7 +279,7 @@ near: MinHash/LSH over token 3-grams, nested chunks excluded), and **structural 
 language over all files of a language, parallel, no index needed).
 
 `refs` resolves names (`resolve.rs`). Engine A finds the whole-word occurrences; for each file
-that holds one (Python, JavaScript/TypeScript, Rust, Go), the file is parsed again with
+that holds one (Python, JavaScript/TypeScript, Rust, Go, Java), the file is parsed again with
 tree-sitter to find the identifier node, its qualifier, the enclosing scopes and the names its
 imports bind, while definitions and their nesting come from the index's `chunks` rows. An
 occurrence goes to the innermost scope that defines the name, then the file's top level, then
@@ -288,7 +288,11 @@ a `catch` or a Go statement initializer counts only inside its own branch or sta
 closure sees the locals of the function around it; a qualifier goes through the
 module it names or the class or type it names, and a variable through the type its declaration
 states or infers (a function's declared return type, a field's type, a module-level or static
-variable, a constructor). A type from outside the repository makes a call external. Import paths
+variable, a constructor), and the result of a call through the type its callee declares it
+returns. A type from outside the repository makes a call external, unless a trait or interface
+of the repository declares a method of that name. Java finds a file's package from its `package`
+declaration, so any source root works; its overloads share one qualified name in the index, and
+the number of arguments picks one or the call stands for all of them. Import paths
 are mapped onto repository files
 (Python packages and relative imports, JavaScript paths, `index` files and `tsconfig.json`
 aliases, Rust `crate`/`self`/
@@ -326,7 +330,9 @@ arguments name, against the index with one `stat` each; when one changed or is g
 files alone are updated and the operation runs again, once. `read_code` by path streams the file
 through a 64 KB buffer and stops after the last line it shows. The MCP server, the Python bindings
 and `watch` hold one; the MCP server builds the first index in the background and answers
-"still building" after a 20 second wait.
+"still building" after a 20 second wait, and waits as long for another process that builds it.
+A cancelled call sets the flag the index update checks between batches, so a `reindex` or the
+scan before a read rolls back there.
 
 The MCP server (`mcp.rs`) is an adapter: the tool table with its hints for clients (`readOnlyHint`,
 `openWorldHint`) and output schemas, server instructions, and the protocol loop. The loop serves

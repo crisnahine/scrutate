@@ -65,7 +65,9 @@ First release.
 - `--fuzzy` patterns up to 4096 characters (64-bit blocks beyond 128); an edit is one character
   (`naïve` is one edit from `naive`), and `-i` and `-S` fold case as for a regex. `grep --index
   --fuzzy` agrees with the walk. `--fuzzy-regex[=N]`: a regex within N edits (bit-parallel
-  Glushkov automaton, up to 64 character positions, byte-oriented).
+  Glushkov automaton, up to 64 character positions); an edit is one character, classes are
+  Unicode, `-i` and `-S` fold case as for a regex, and a pattern within N edits of the empty
+  string is refused.
 - `grep --index --update`: refresh the text index (changed files only), then search it.
 - Files that could not be searched, or not to the end, are named in warnings.
 - Regexes are built with `^` and `$` as line anchors in every mode, as ripgrep builds them. Before,
@@ -87,7 +89,8 @@ First release.
   absolute path for an absolute root. When the only path given is one file, lines and counts
   leave its name out, as in ripgrep; `-H` (`--with-filename`) and `-I` (`--no-filename`) choose,
   the later of the two wins, and `-l` and `--json` always carry the path.
-- On Unix a backslash in a file name stays in the printed path; only Windows turns `\` into `/`.
+- On Unix a backslash in a file name stays in the printed path; only Windows turns `\` into `/`,
+  and prints a verbatim drive path (`\\?\C:\x`) as `C:/x`, a form that can be passed back.
 - On Linux, files on `/proc`, `/sys` and the other kernel pseudo filesystems are read to the end
   (the first read of `/proc/kallsyms` returns about 4 KB of 7.3 MB, and its size reads as 0).
 - A `-g` glob is taken whole, commas included (`-g '*.{txt,log}'`); `SCRUTATE_GREP_GLOBS` and
@@ -114,6 +117,9 @@ First release.
   and `-l`, so `-v -l`, `-v` and `-v -c` agree.
 - `-c` and `-l` give one record per path given, as ripgrep does, also for a file two paths reach.
 - `--sort` with `--max-results N` prints the first N matches in path order, the same on every run.
+- `--sort` prints in the order of `rg --sort path`: the paths as given, and under each its files
+  by their paths compared part by part (`sub/deep/a.txt` before `sub/deep-x/b.txt`, `foo/mod.rs`
+  before `foo.rs`); it ordered all results by the whole path.
 - `-n` is accepted and `-N` drops line numbers. `-j`, `SCRUTATE_THREADS` and the configuration
   file's `threads` stop at 256, and a failed thread start says to lower `-j`.
 - `.rgignore` files are read by `grep`, the code index, `watch` and `tsquery`, as ripgrep reads them.
@@ -150,8 +156,14 @@ First release.
   (exact + MinHash/LSH near-duplicates), `tsquery` (tree-sitter structural search),
   cross-repository `search --also`.
 - `refs` resolves each occurrence to the definition it refers to (scopes, imports, qualified
-  names) for Python, JavaScript/TypeScript, Rust and Go; `--def` keeps one definition and
+  names) for Python, JavaScript/TypeScript, Rust, Go and Java; `--def` keeps one definition and
   `--textual` gives every whole-word occurrence as before.
+- Java in `refs`, `callers`, `callees` and the language server's references: packages from each
+  file's `package` declaration in any source root, single, on-demand and static imports, locals,
+  fields, inherited members, nested and anonymous classes, records, default methods, calls typed
+  by declared types and return types, and method references. The number of arguments picks an
+  overload; a call it does not tie to one is a caller of every overload.
+- `refs` finds a name in its composed and decomposed Unicode spelling.
 - `tsquery` keeps each file's captures in `.scrutate/tsquery/` by content hash: a repeated query
   re-parses only changed files (the Linux tree: about 25 s, then 1.6 s), output identical to
   `--no-cache`; it also accepts a single file as its path.
@@ -174,8 +186,10 @@ First release.
   other: ranked search folds Han to simplified forms in index and query (a Unihan 18.0.0 table,
   Unicode License v3, listed in the notices and the SBOM); names and stored text are not folded.
 - Constants are symbols of kind `constant` (Rust `const` and `static`, Go package `const` and
-  `var`, JavaScript and TypeScript top-level `const`, TypeScript enum members, Java
-  `static final`, Python module-level capitals, C and C++ `#define` values and enumerators):
+  `var`, JavaScript and TypeScript top-level `const`, TypeScript enum members and `static
+  readonly` fields, JavaScript `static` fields in capitals, Java `static final`, Python
+  module-level and class-level capitals and tuple targets, C and C++ `#define` values,
+  enumerators and file or namespace `const` and `constexpr` with a value):
   `symbol`, `outline`, `read_code` and `refs` find them, ranked search never returns them. Every
   name of a Go or Java declaration with several (`var X, Y int`) is a constant.
 - A method is named by its owner's bare type (`Stack.push` for `impl<T> Stack<T>`, `Box.put`
@@ -190,7 +204,9 @@ First release.
   (constructors, destructors, member templates, conversion operators) and out-of-line methods
   split at `::`; C and C++ function-like macros; JavaScript class field functions and
   `module.exports.X`; TypeScript abstract classes and methods, `declare function` and
-  namespaces; Java records; Swift protocol requirements; Kotlin type aliases; Elixir guards; a C
+  namespaces; Java records; Swift protocol requirements; Kotlin type aliases; Elixir guards;
+  Objective-C methods declared in an `@interface`; a function pointer typedef by its own name
+  (`cb` in `typedef int (*cb)(int)`); a C
   or C++ function declared without a body, also inside an include guard (`symbol` lists the
   definition before the prototype). A `.h` file written in C++ or Objective-C is parsed with that
   grammar, where it lost its classes and methods as C.
@@ -212,8 +228,8 @@ First release.
 - The model signature is a hash of the model file, so a retrained model of the same shape
   rebuilds the vectors.
 - A read never waits for another process's writer: it answers from the last committed index and
-  says so once on stderr. A read during another process's first build exits 2, and `serve`
-  answers that the index is still being built.
+  says so once on stderr. A read during another process's first build exits 2, and a `serve`
+  call waits up to 20 seconds for that build, as for its own.
 - Rebuilt as damage: a chunk text that does not inflate, a segment list that is not JSON, a
   segment without vectors, an `index.db` deleted under an open index or that is a directory, a
   `seg` that is a file, an emptied `chunks` table. A writer stopped before its commit no longer
@@ -225,7 +241,11 @@ First release.
   not an existing directory is an error; nothing is written or deleted outside the repository.
 - `refs`, `callers` and `callees` infer a receiver's type from declared return types, fields,
   module-level and static variables, constructors, Rust `?` and holders such as `Box`, and
-  TypeScript `await`; a type from outside the repository makes the call external. `x.m()` is
+  TypeScript `await`, and a call on the result of a call from the type its callee declares it
+  returns; a type from outside the repository makes the call external, unless a trait or
+  interface of the repository declares that method. `this` in a JavaScript or TypeScript object
+  literal method is the literal. In Rust macro arguments a name after `.` is a field or a method,
+  `name:` in braces a field name, and a closure parameter or `let` a local. `x.m()` is
   never a call of a free function in Rust, JavaScript, TypeScript, Go and Java, a definition's
   own name is not a call of it, and a JavaScript `var` belongs to its function.
 - A call matches a definition only in its own language family and by the name as written
@@ -236,14 +256,19 @@ First release.
   `Type.method`, then compare owners without generic arguments and path (`Stack<T>.push`,
   `crate::config::Config::new`), and last, for a path, a top-level definition of its last part;
   they find one method among many namesakes; `operator->` and `operator*` are found by those
-  names. The language server's definition request takes the whole name under the cursor
+  names. A leading dot is dropped (`callers .helper`). The name spelled as typed comes before its
+  namesakes in another case, then non-test files, types before functions and methods, and a
+  definition with a body before one without. The language server's definition request takes the whole name under the cursor
   (`get-user`, `Foo::Bar`).
 - A location (`path:start-end`) names exactly one definition in `symbol`, `callers` and
   `callees`. `callers` lists the callers the resolver ties to the definition first, then the
   undecided ones that name the owner type or share its package, and asks the resolver about at
   most 400 call sites (`callers Builder.new` on 300 crates: 3.2 s to 0.4 to 0.6 s).
-- `callers`, `callees`, `symbol`, `read_code symbol` and `structural_search` end with a line
-  when they stopped at their limit, naming the argument that raises it.
+- `callers`, `callees`, `symbol`, `dupes`, `tsquery`, `read_code symbol`, `duplicates` and
+  `structural_search` end with a line when they stopped at their limit, naming the argument that
+  raises it.
+- `tsquery` reads a path that does not exist from the current directory under `--root`, and
+  names a path that exists in neither place in a warning, exit code 2.
 - Imports: Go binds a directory through the module path in `go.mod`; a Python module drops its
   first segment only when that is the checkout's own name; an `#include "util.h"` resolves
   beside the including file; `rdeps` matches by base name only an import that resolves to no
@@ -260,7 +285,8 @@ First release.
 - `grep --symbols` with a path argument finds the file by its path under the root.
 - `deps` and `rdeps` resolve imports as `refs` does (Rust `crate::`, `self::`, `super::` and `mod`,
   Go through `go.mod`, Python `from . import`, TypeScript `.js` names and `.d.ts` files), and
-  `rdeps` says how many unresolved imports may name the file.
+  `rdeps` says how many unresolved imports may name the file, counting only those that could:
+  a relative import with the file's path, or a bare one with a part spelled as its module name.
 - An index built with older parsing rules reads every file again once (`content_rev` in `meta`).
 - An update can be cancelled and rolls back; an update that panics rolls back at once, and the
   next update clears a transaction left open.
@@ -302,9 +328,13 @@ First release.
   file was not read to its end.
 - Commands run in a subdirectory use the index and the `.scrutate.toml` above it and read path
   arguments from the current directory. `search --also` prints another repository's results by
-  the path given, searches a root given twice once, and adds `root` to its JSON.
+  the path given, searches a root given twice once, and adds `root` to its JSON. A path or
+  location such a result prints is answered from that repository's index. The search for an
+  index above stops at the top of a repository, so a nested clone, submodule or worktree does
+  not use the outer index.
 - `symbol`, `callers` and `callees` take `--limit`. `check --json` counts the indexed files
-  without `--files`. `batch` reports a line that is not JSON by its number and runs the rest.
+  without `--files`. `check` counts the constants, which have no segment rows (`constants` in
+  its JSON). `batch` reports a line that is not JSON by its number and runs the rest.
 - `reindex` takes `force`, which reads every file again. `grep_code` searches the files the
   index holds: hidden ones such as `.github/`, not `.git/` or `node_modules/`.
 - JSON-RPC answers as the specification gives them: batches answered as one array, -32700 for a
@@ -313,8 +343,8 @@ First release.
 - MCP revision 2026-07-28 beside the handshake revisions: `server/discover`, a protocol version in
   each request's `_meta`, `resultType` on results, `ttlMs` and `cacheScope` on lists. With
   `serve --structured` every tool has an `outputSchema` and every result `structuredContent`
-  (the `--json` form, or `null` and the text page when the answer is larger than its budget). `notifications/cancelled` stops a call that is waiting
-  and drops the answer of one that is computing; a call with a `progressToken` gets progress
+  (the `--json` form, or `null` and the text page when the answer is larger than its budget). `notifications/cancelled` stops a call that is waiting,
+  stops and rolls back an index update it runs, and drops the answer of one that is computing; a call with a `progressToken` gets progress
   reports while the first index is built, and then its answer.
 - `read_code` reads a whole definition with `symbol` (a name, `Class.method`, or a location). The
   location at the start of every result (`path:start-end`) is accepted wherever a tool takes a
@@ -332,7 +362,8 @@ First release.
   patterns (the matcher was rooted at `.git/info` and panicked on the first changed path).
 - `-U` with `--fuzzy` or `--fuzzy-regex` is an error (it found nothing across lines).
 - An MCP answer checks the files it cites, and the files its arguments name, with one `stat`
-  each; a changed or deleted file is indexed again alone and the answer computed again, once.
+  each; a changed or deleted file, or a new file an argument names, is indexed again alone and
+  the answer computed again, once. A scan that could not run does not start the interval.
   Without `--refresh-interval` the server scans at most a second apart, sooner when a scan is
   cheap; an explicit `--refresh-interval` is a floor. `serve` refuses `--offset`.
 - At the end of its input the server answers the calls in flight and lets the first index build
@@ -353,6 +384,8 @@ First release.
   stops with an error when its root is removed.
 - `find` takes a question with a space and a trailing `?` as words, and goes to ranked search
   when a regex-looking query finds nothing and an index exists.
+- Text files check out with LF line ends on every platform (`.gitattributes`), so a Windows
+  build compiles the same data into the binary.
 - Licensed under Apache-2.0. Toolchain pinned to Rust 1.99.1 (`rust-version` 1.91).
 - Python bindings (PyO3 0.30; abi3, abi3t and cp314t wheels; GIL released, in `stats()` and
   `read()` too; streaming iterator; free-threading declaration after review). Three wheels per

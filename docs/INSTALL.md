@@ -47,6 +47,9 @@ cargo test --release -p scrutate                     # the Rust test suite
 `rust-toolchain.toml` pins the compiler (1.99.1) so builds are reproducible; rustup installs it on
 first use. Add `--features extra-langs` for the optional heavy grammars (Fortran, OCaml, F#,
 Verilog, VHDL, CUDA, TLA+, D, AutoHotkey, Odin, QML, LLVM IR; about 80 MB more).
+`.gitattributes` checks text files out with LF line ends on every platform: in a Windows checkout
+with CRLF, the data compiled into the binary (`crates/scrutate/data`) would differ from every
+other build.
 
 ## Python package
 

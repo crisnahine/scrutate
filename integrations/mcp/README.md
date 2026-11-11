@@ -8,7 +8,9 @@ no handshake (`server/discover`, a protocol version in every request's `_meta`).
 itself before a call: by default the wait between scans is at most a second, shorter when a scan
 is cheap; with `--refresh-interval S`, no scan comes sooner than S seconds after the last one.
 Inside that window an answer checks the files it cites and the files its arguments name, and
-reads a changed one again first; an edit to another file waits for the next scan.
+reads a changed one, or a new one an argument names, first; an edit to another file waits for
+the next scan. A call waits up to 20 seconds for a first index build, also one that another
+process runs.
 
 What a client gets (details in docs/CLI.md, `serve`):
 - every tool except `reindex` is marked read-only and local, so clients that ask before a write
@@ -30,8 +32,9 @@ What a client gets (details in docs/CLI.md, `serve`):
   as the JSON that `--json` prints. Leave it off for Claude Code, which then shows its model the
   JSON in place of the text with the snippets; turn it on for a client whose scripts read tool
   results (Codex in Code Mode);
-- cancellation (`notifications/cancelled`) and, for a call that sends a `progressToken`,
-  progress reports while the first index is built.
+- cancellation (`notifications/cancelled`), which also stops an index update the call runs
+  (`reindex`, or the scan before a read) and rolls it back, and, for a call that sends a
+  `progressToken`, progress reports while the first index is built.
 
 ## Client configuration
 
