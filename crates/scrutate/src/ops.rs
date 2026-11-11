@@ -327,6 +327,9 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
                 mode: crate::instant::Mode::Regex,
                 case: crate::instant::Case::Sensitive,
                 max_results: Some(*max_results),
+                // the files the index holds: hidden ones too, never git's own
+                hidden: true,
+                globs: vec!["!.git".to_string()],
                 ..crate::instant::Options::default()
             };
             let (groups, stopped) = crate::intel::grouped_grep(s, &o)?;

@@ -67,7 +67,7 @@ fn tool_table() -> Value {
              "query": {"type": "string"},
              "alt_queries": {"type": ["array", "null"], "items": {"type": "string"}, "default": null},
              "k": {"type": "integer", "default": ops::SEARCH_K}}, "required": ["query"]}},
-        {"name": "grep_code", "description": "Exact regex search of the repository's files (case-sensitive; (?i) in the pattern for any case), matching lines grouped by the enclosing function/class.",
+        {"name": "grep_code", "description": "Exact regex search of the repository's files, hidden ones such as .github/ included, ignored ones and .git/ not (case-sensitive; (?i) in the pattern for any case), matching lines grouped by the enclosing function/class.",
          "inputSchema": {"type": "object", "properties": {"pattern": {"type": "string"}, "max_results": {"type": "integer", "default": ops::GREP_MAX}}, "required": ["pattern"]}},
         {"name": "find_symbol", "description": "Where is this function/class/method defined? (`Class.method` works, and so does a location from another answer).",
          "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "limit": {"type": "integer", "default": ops::SYMBOL_LIMIT}}, "required": ["name"]}},

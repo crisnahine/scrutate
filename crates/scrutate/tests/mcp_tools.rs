@@ -250,3 +250,15 @@ fn structural_search_says_what_is_wrong_with_a_query() {
     assert!(e.contains("#nope?"), "{e}");
     assert!(!r.ok("structural_search", json!({"lang": "python", "query": "((identifier) @x (#eq? @x \"dup_name\"))"})).contains("no matches"));
 }
+
+#[test]
+fn grep_code_searches_the_hidden_files_the_index_holds_but_not_git_internals() {
+    let mut r = Repo::new(
+        "hidden",
+        &[("src/a.py", "def needle_fn():\n    return 1\n"), (".github/ci.yml", "name: needle_ci\n"), (".git/logs/HEAD", "needle commit\n")],
+    );
+    let found = r.ok("grep_code", json!({"pattern": "needle"}));
+    assert!(found.contains("src/a.py") && found.contains(".github/ci.yml"), "{found}");
+    assert!(!found.contains(".git/"), "{found}");
+    assert!(r.ok("search_code", json!({"query": "needle_ci"})).contains(".github/ci.yml"));
+}
