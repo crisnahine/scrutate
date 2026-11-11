@@ -873,3 +873,28 @@ fn similar_on_a_constant_says_constants_are_not_compared() {
     assert!(out.contains("MAX_SIZE is a constant") && out.contains("not compared") && !out.contains("no vectors"), "{out}");
     assert_eq!(out.trim().lines().count(), 1, "{out}");
 }
+
+#[test]
+fn refs_finds_a_name_in_its_composed_and_decomposed_spelling() {
+    let (nfc, nfd) = ("caf\u{e9}_total", "cafe\u{301}_total");
+    let r = Repo::new(
+        "refs_nfd",
+        &[
+            ("nfc.py", &format!("def {nfc}():\n    return 1\n\n\ndef caller_nfc():\n    return {nfc}()\n")),
+            ("nfd.py", &format!("def caller_nfd():\n    return {nfd}() + {nfd}_two()\n")),
+            ("notes.txt", &format!("{nfd}\n")),
+        ],
+    );
+    for typed in [nfc, nfd] {
+        let got = r.resolved(typed);
+        assert_eq!(got, pairs(&[("nfc.py:1", "nfc.py"), ("nfc.py:6", "nfc.py"), ("nfd.py:2", "-"), ("notes.txt:1", "-")]), "{typed:?}");
+        let t = r.json(&["refs", typed, "--textual", "--json"]);
+        let lines: Vec<String> = t["references"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|g| g["lines"].as_array().unwrap().iter().map(move |l| format!("{}:{}", g["path"].as_str().unwrap(), l["line"])))
+            .collect();
+        assert_eq!(lines, ["nfc.py:1", "nfc.py:6", "nfd.py:2", "notes.txt:1"], "{typed:?}: {t}");
+    }
+}

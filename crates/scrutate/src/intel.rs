@@ -756,15 +756,7 @@ pub fn references(s: &Searcher, name: &str, max_results: u64) -> Result<Referenc
     let bare = bare_name(s, name)?;
     let definitions = definitions(&s.ix, &bare)?;
     let callers = s.callers(name, 200)?;
-    let o = crate::instant::Options {
-        pattern: bare,
-        mode: crate::instant::Mode::Literal,
-        word: true,
-        max_results: Some(max_results),
-        first_in_path_order: true,
-        ..crate::instant::Options::default()
-    };
-    let (groups, truncated) = grouped_grep(s, &o)?;
+    let (groups, truncated) = grouped_grep(s, &crate::resolve::name_search(&bare, max_results))?;
     Ok(References { definitions, callers, groups, truncated })
 }
 
@@ -789,12 +781,14 @@ pub fn references_render(r: &References) -> String {
 }
 
 /// The name the occurrences of `name` are written with: the stored name of a definition
-/// `find_symbol` finds for it that ends the typed text (`list->vec`, `#secret`, the `call` of
+/// `find_symbol` finds for it that ends the typed text in NFC (`list->vec`, `#secret`, the `call` of
 /// `Foo::Bar.call`), else the last part of its dotted form.
 pub fn bare_name(s: &Searcher, name: &str) -> Result<String> {
     let typed = name.trim();
     let hits = s.find_symbol(typed, 50)?;
-    let found = hits.iter().map(|h| h.name.as_str()).filter(|n| !n.is_empty() && typed.ends_with(n)).max_by_key(|n| n.len());
+    let typed_nfc: String = unicode_normalization::UnicodeNormalization::nfc(typed).collect();
+    let ends = |n: &str| typed.ends_with(n) || typed_nfc.ends_with(&unicode_normalization::UnicodeNormalization::nfc(n).collect::<String>());
+    let found = hits.iter().map(|h| h.name.as_str()).filter(|n| !n.is_empty() && ends(n)).max_by_key(|n| n.len());
     Ok(match found {
         Some(n) => n.to_string(),
         None => crate::search::dotted(typed).rsplit('.').next().unwrap_or(typed).to_string(),

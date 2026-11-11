@@ -716,8 +716,11 @@ impl<'a> Resolver<'a> {
     }
 
     fn defs_of(&self, path: &str) -> Result<Vec<Def>> {
-        let stem = path.rsplit('/').next().unwrap_or(path);
-        let stem = stem.split_once('.').map(|(s, _)| s).unwrap_or(stem);
+        let base = path.rsplit('/').next().unwrap_or(path);
+        let stem = match base.rfind('.') {
+            Some(i) if i > 0 => &base[..i],
+            _ => base,
+        };
         let mut st = self
             .ix
             .db
@@ -736,9 +739,10 @@ impl<'a> Resolver<'a> {
             .collect::<rusqlite::Result<_>>()?;
         let mut defs: Vec<Def> = Vec::new();
         let mut stack: Vec<usize> = Vec::new();
-        for (i, (id, name, qualname, kind, start, end)) in rows.into_iter().enumerate() {
-            // the header chunk (docstring and imports) is named after the file, not defined in it
-            if i == 0 && kind == "module" && start == 1 && name == stem {
+        for (id, name, qualname, kind, start, end) in rows {
+            // the header chunk (docstring and imports) is named after the file, not defined in it;
+            // a definition that starts on line 1 too sorts before it
+            if kind == "module" && start == 1 && name == stem && qualname == stem {
                 continue;
             }
             while stack.last().is_some_and(|&t| defs[t].end < start) {
@@ -1984,8 +1988,63 @@ fn macro_token(n: Node, src: &str) -> Option<&'static str> {
         let call = next.is_some_and(|x| x.kind() == "::" || (x.kind() == "token_tree" && text(x, src).starts_with('(')));
         return Some(if call { "receiver" } else { "field or key" });
     }
+    if macro_local(n, src) {
+        return Some("local variable");
+    }
     let braced = n.parent().is_some_and(|p| text(p, src).starts_with('{'));
     (braced && next.is_some_and(|x| x.kind() == ":")).then_some("field or key")
+}
+
+/// Whether a name in a Rust macro argument is bound in the tokens before it: a parameter of a
+/// closure (`|(a, name)| ..`) or a `let`, in its own token tree or one around it.
+fn macro_local(n: Node, src: &str) -> bool {
+    let name = text(n, src);
+    let binds = |tokens: &[Node]| {
+        let mut names = Vec::new();
+        for t in tokens {
+            token_idents(*t, src, &mut names);
+        }
+        names.contains(&name)
+    };
+    let mut child = n;
+    while let Some(tt) = child.parent().filter(|p| p.kind() == "token_tree") {
+        let mut cur = tt.walk();
+        let kids: Vec<Node> = tt.children(&mut cur).collect();
+        let at = kids.iter().position(|k| k.id() == child.id()).unwrap_or(kids.len());
+        let mut open: Option<usize> = None;
+        for (i, k) in kids.iter().enumerate().take(at) {
+            match k.kind() {
+                "|" => match open.take() {
+                    Some(o) if binds(&kids[o + 1..i]) => return true,
+                    Some(_) => {}
+                    None => open = Some(i),
+                },
+                "let" => {
+                    let bound = i + 1 + usize::from(kids.get(i + 1).is_some_and(|m| m.kind() == "mut"));
+                    if bound == at || (bound < at && binds(&kids[bound..bound + 1])) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        // between the bars of a closure: one of its parameters
+        if open.is_some() {
+            return true;
+        }
+        child = tt;
+    }
+    false
+}
+
+fn token_idents<'s>(n: Node, src: &'s str, out: &mut Vec<&'s str>) {
+    if n.kind() == "identifier" {
+        out.push(text(n, src));
+    }
+    let mut cur = n.walk();
+    for c in n.named_children(&mut cur) {
+        token_idents(c, src, out);
+    }
 }
 
 /// When `this` at `n` is bound by a method of an object literal: the literal's qualified name,
@@ -2907,6 +2966,12 @@ fn java_params(fi: &FileInfo, id: i64) -> Option<(usize, bool)> {
 }
 
 // ------------------------------------------------------------------------- refs
+/// Whether two spellings are one name: they compare in NFC.
+pub fn same_name(a: &str, b: &str) -> bool {
+    use unicode_normalization::UnicodeNormalization;
+    a == b || a.nfc().eq(b.nfc())
+}
+
 pub struct Occurrence {
     pub path: String,
     pub line: u64,
@@ -2936,29 +3001,36 @@ impl Resolved {
     }
 }
 
+/// The Engine A search for the whole-word occurrences of `bare`, the first `max_results` in path
+/// order, in its composed and its decomposed spelling: names compare in NFC, and a file may hold
+/// either.
+pub fn name_search(bare: &str, max_results: u64) -> crate::instant::Options {
+    use unicode_normalization::UnicodeNormalization;
+    let (nfc, nfd): (String, String) = (bare.nfc().collect(), bare.nfd().collect());
+    let (pattern, mode) = if nfc == nfd {
+        (bare.to_string(), crate::instant::Mode::Literal)
+    } else {
+        (format!("(?:{}|{})", regex::escape(&nfc), regex::escape(&nfd)), crate::instant::Mode::Regex)
+    };
+    crate::instant::Options { pattern, mode, word: true, max_results: Some(max_results), first_in_path_order: true, ..crate::instant::Options::default() }
+}
+
 /// Every whole-word occurrence of `name` (Engine A), each resolved to the definition it refers to.
 pub fn resolved_references(s: &Searcher, name: &str, max_results: u64) -> Result<Resolved> {
     let bare = &crate::intel::bare_name(s, name)?;
-    let o = crate::instant::Options {
-        pattern: bare.to_string(),
-        mode: crate::instant::Mode::Literal,
-        word: true,
-        want_spans: true,
-        max_results: Some(max_results),
-        first_in_path_order: true,
-        ..crate::instant::Options::default()
-    };
+    let o = crate::instant::Options { want_spans: true, ..name_search(bare, max_results) };
     let (hits, truncated) = crate::intel::occurrences(&s.ix.root, &o)?;
     let mut rv = Resolver::new(&s.ix)?;
     let mut occurrences = Vec::new();
     for h in hits {
         let line_text = h.text.trim_end_matches(['\n', '\r']).to_string();
-        for &(a, _) in &h.spans {
-            let resolution = rv.resolve_at(&h.path, h.line, a, bare);
+        for &(a, b) in &h.spans {
+            // the occurrence as this file spells it
+            let resolution = rv.resolve_at(&h.path, h.line, a, h.text.get(a..b).unwrap_or(bare));
             occurrences.push(Occurrence { path: h.path.to_string(), line: h.line, column: a as u64 + 1, text: line_text.clone(), resolution });
         }
     }
-    let mut definitions: Vec<ChunkRow> = crate::intel::definitions(&s.ix, bare)?.into_iter().filter(|d| d.name == *bare).collect();
+    let mut definitions: Vec<ChunkRow> = crate::intel::definitions(&s.ix, bare)?.into_iter().filter(|d| same_name(&d.name, bare)).collect();
     let mut known: HashSet<i64> = definitions.iter().map(|d| d.id).collect();
     for o in &occurrences {
         if let Ok((id, _)) = o.resolution {
@@ -3472,6 +3544,33 @@ mod tests {
                 ("src/lib.rs", "crate::text()", "text", "src/lib.rs text"),
             ],
         );
+    }
+
+    #[test]
+    fn a_closure_parameter_or_let_in_a_macro_is_a_local() {
+        let rs = "pub fn text() -> u8 {\n    1\n}\n\npub fn run(rows: &[(u8, u8)]) -> Vec<String> {\n    let a = format!(\"{:?}\", rows.iter().map(|(c, text)| c + text).collect::<Vec<_>>());\n    let b = format!(\"{} {}\", text(), { let text = 2; text });\n    vec![a, b]\n}\n\npub fn param(text: u8) -> String {\n    format!(\"{}\", text)\n}\n";
+        resolver_case(
+            "macro_locals",
+            &[("src/lib.rs", rs), ("Cargo.toml", "[package]\nname = \"demo\"\n")],
+            &[
+                ("src/lib.rs", "|(c, text)|", "text", "local variable"),
+                ("src/lib.rs", "c + text)", "text", "local variable"),
+                ("src/lib.rs", "text(), {", "text", "src/lib.rs text"),
+                ("src/lib.rs", "let text = 2", "text", "local variable"),
+                ("src/lib.rs", "2; text }", "text", "local variable"),
+                ("src/lib.rs", "\"{}\", text)", "text", "local variable"),
+            ],
+        );
+    }
+
+    #[test]
+    fn the_header_chunk_is_no_definition_wherever_it_sorts() {
+        let (root, s) = indexed("header", &[("store.js", "export const store = {\n  total() {\n    return 1;\n  },\n};\n")]);
+        let rv = Resolver::new(&s.ix).unwrap();
+        let defs: Vec<String> = rv.defs_of("store.js").unwrap().iter().map(|d| format!("{}-{} {} {}", d.start, d.end, d.kind, d.qualname)).collect();
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(defs.iter().all(|d| !d.contains(" module ")) && !defs.is_empty(), "{defs:?}");
     }
 
     #[test]
