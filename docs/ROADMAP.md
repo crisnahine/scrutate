@@ -64,6 +64,12 @@ settings in docs/RELEASING.md, public, tag `v0.1.0`.
   have to go upstream or out as a fork first.
 - The GitHub App / GitLab integration that comments reports on merge requests (R-12.12), and
   weekly benchmark runs for the dashboard (R-4.5).
+- After the first green run of `ci.yml`, each one job or one setting
+  (docs/research/github-ci-2026-11.md): wheels to PyPI through trusted publishing, CodeQL default
+  setup for Rust, OpenSSF Scorecard, `zizmor` and `cargo deny` as jobs, and an instruction-count
+  benchmark on pull requests. For the integrations
+  (docs/research/integrations-setup-2026-11.md): an LSP4IJ template so JetBrains needs one
+  import, and a GitLab Code Quality report so duplicates show in the merge request.
 
 ## Next
 

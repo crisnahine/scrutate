@@ -87,6 +87,21 @@ read-files ceiling whose threads shared a directory and read a cold tree at a th
 speed, and warm runs that were not warm once other applications had taken the memory the page
 cache needs.
 
+Found on 2026-11-11 by running every install and usage path before the repository goes to
+GitHub. None of these was in the search engines; all of them would have met the first user or
+the first CI run. In the workflows, which had never run: the musl jobs added their target to
+the runner's default toolchain, not the pinned one; the audit job lacked a permission its action
+needs; one job ran `pip install` on a system Python that refuses it; the musl comparison had no
+`--sort` and compared a run time; a check written with `!` could not fail; the benchmark gate
+compared with a baseline from another machine and skipped itself when the file was missing;
+`compare_tools.py --out` with a bare file name crashed. The declared `rust-version` (1.89) did
+not build: a locked dependency needs 1.91. The GitLab and Bitbucket templates failed on a
+repository with no duplicates (exit status 1 means "nothing found") and unpacked the tool
+inside the checkout, where it indexed its own files. The pre-commit entry was not valid YAML and
+passed when the tool failed. The MCP page gave one configuration for clients that read three
+different ones. The wheel put its third-party notices at the top of `site-packages`. The Python
+reference lacked four definition kinds the engine has, so parity failed on Rust sources.
+
 ## Recommendation
 
 Use 0.1.0 for development work on macOS arm64 and Linux: both engines are verified there, the
