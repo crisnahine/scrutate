@@ -289,6 +289,23 @@ fn a_call_the_resolver_does_not_read_runs_the_definition_in_its_own_file() {
 }
 
 #[test]
+fn a_call_of_a_class_is_a_call_of_its_constructor() {
+    let r = Repo::new(
+        "ctor",
+        &[
+            ("geo.py", "class Point:\n    def __init__(self, x):\n        self.x = x\n\n\nclass Other:\n    def __init__(self):\n        pass\n\n\ndef make():\n    return Point(1)\n\n\ndef other():\n    return Other()\n"),
+            ("w.js", "class Widget {\n  constructor(n) {\n    this.n = n;\n  }\n}\n\nfunction build() {\n  return new Widget(1);\n}\n"),
+            ("Box.java", "public class Box {\n    private final int n;\n\n    public Box(int n) {\n        this.n = n;\n    }\n\n    static Box of() {\n        return new Box(1);\n    }\n}\n"),
+            ("inv.rb", "class Invoice\n  def initialize(n)\n    @n = n\n  end\nend\n\nclass Receipt\n  def initialize\n  end\nend\n\ndef bill\n  Invoice.new(1)\nend\n\ndef slip\n  Receipt.new\nend\n"),
+        ],
+    );
+    assert_eq!(split_callers(&r, "Point.__init__"), (strs(&["make"]), strs(&[])));
+    assert_eq!(split_callers(&r, "Widget.constructor"), (strs(&["build"]), strs(&[])));
+    assert_eq!(split_callers(&r, "Box.java:4"), (strs(&["Box.of"]), strs(&[])));
+    assert_eq!(split_callers(&r, "Invoice.initialize"), (strs(&["bill"]), strs(&[])));
+}
+
+#[test]
 fn callers_says_which_call_sites_it_did_not_check() {
     let mut files: Vec<(String, String)> = vec![
         ("a/__init__.py".into(), String::new()),

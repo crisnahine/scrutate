@@ -759,13 +759,19 @@ const CALLERS_RESOLVED: usize = 400;
 
 /// -> (callers: decided, then undecided, then unchecked; how many are undecided; how many unchecked)
 pub(crate) fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit>, usize, usize)> {
-    let targets = targets(s, name, 500)?;
+    let langs = Langs { root: &s.ix.root, seen: Default::default() };
+    let mut targets = targets(s, name, 500)?;
+    // a call of a class runs its constructor: `Point(1)`, `new Widget()`, Ruby `Invoice.new`
+    let (classes, made_by_new) = constructed(s, &langs, &targets)?;
+    targets.extend(classes);
     let ids: HashSet<i64> = targets.iter().map(|t| t.id).collect();
-    let names: std::collections::BTreeSet<&str> = targets.iter().map(|t| t.name.as_str()).collect();
+    let mut names: std::collections::BTreeSet<&str> = targets.iter().map(|t| t.name.as_str()).collect();
+    if !made_by_new.is_empty() {
+        names.insert("new");
+    }
     let owners: HashSet<&str> =
         targets.iter().filter_map(|t| t.qualname.rsplit_once('.').map(|(o, _)| o.rsplit('.').next().unwrap_or(o))).filter(|o| !o.is_empty()).collect();
     let packages: HashSet<&str> = targets.iter().map(|t| package(&t.path)).collect();
-    let langs = Langs { root: &s.ix.root, seen: Default::default() };
     let fits = |path: &str| targets.iter().any(|t| langs.same_family(&t.path, path));
     let cols = crate::index::CHUNK_COLS.split(',').map(|c| format!("c.{c}")).collect::<Vec<_>>().join(",");
     let mut calls = s.ix.db.prepare(&format!("SELECT DISTINCT {cols} FROM refs r JOIN chunks c ON c.id=r.chunk_id WHERE r.callee=?1 ORDER BY c.is_test"))?;
@@ -785,6 +791,9 @@ pub(crate) fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit
         let rivals = rows.iter().any(|(id, path, ..)| !ids.contains(id) && fits(path));
         let mut sites: Vec<ChunkRow> = calls.query_map([n], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
         sites.retain(|r| fits(&r.path) && seen.insert(r.id));
+        if n == "new" && !targets.iter().any(|t| t.name == "new") {
+            sites.retain(|r| made_by_new.iter().any(|class| has_word(&r.text, &format!("{class}.new"))));
+        }
         if rivals {
             sites.sort_by_cached_key(&likely);
         }
@@ -825,6 +834,37 @@ pub(crate) fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit
     let unchecked = unchecked_rows.len().min(limit - out.len());
     out.extend(unchecked_rows.iter().take(unchecked).map(|r| Hit::from_row(r, true)));
     Ok((out, undecided, unchecked))
+}
+
+/// The classes whose constructor is among `targets`, and the names of the Ruby ones, which a
+/// call of `new` on the class makes.
+fn constructed(s: &Searcher, langs: &Langs, targets: &[Hit]) -> Result<(Vec<Hit>, Vec<String>)> {
+    let mut class_at =
+        s.ix.db.prepare(&format!("SELECT {} FROM chunks WHERE path=?1 AND qualname=?2 AND kind IN ('class','struct') LIMIT 1", crate::index::CHUNK_COLS))?;
+    let (mut classes, mut made_by_new) = (Vec::<Hit>::new(), Vec::new());
+    for t in targets {
+        let Some((owner, name)) = t.qualname.rsplit_once('.') else { continue };
+        let lang = langs.id(&t.path).unwrap_or("");
+        let constructor = match lang {
+            "python" => name == "__init__",
+            "javascript" | "typescript" | "tsx" => name == "constructor",
+            "ruby" => name == "initialize",
+            "php" => name == "__construct",
+            "swift" => name == "init",
+            // Java, C#, C++, Dart: the method named as its class
+            _ => name == owner.rsplit('.').next().unwrap_or(owner),
+        };
+        if !constructor {
+            continue;
+        }
+        let class: Option<ChunkRow> = rusqlite::OptionalExtension::optional(class_at.query_row((&t.path, owner), ChunkRow::from_row))?;
+        let Some(class) = class.filter(|c| !targets.iter().chain(&classes).any(|x| x.id == c.id)) else { continue };
+        if lang == "ruby" {
+            made_by_new.push(class.name.clone());
+        }
+        classes.push(Hit::from_row(&class, true));
+    }
+    Ok((classes, made_by_new))
 }
 
 /// Whether `word` is in `text` where it is not part of a longer identifier.
