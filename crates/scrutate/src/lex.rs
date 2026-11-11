@@ -1257,6 +1257,20 @@ mod tests {
     }
 
     #[test]
+    fn dot64_matches_python_reference_bit_for_bit() {
+        // the same digest is asserted in python/tests/test_lex.py test_the_scan_dot_product_matches_the_rust_engine_bit_for_bit
+        let mut rng = Rng(777);
+        let (n, k) = (200, 259);
+        let mut value = || (rng.below(20001) as f32 - 10000.0) * 2f32.powi(-14);
+        let m: Vec<f32> = (0..n * k).map(|_| value()).collect();
+        let q: Vec<f32> = (0..k).map(|_| value()).collect();
+        let digest: u64 = (0..n).map(|r| dot64(&m[r * k..(r + 1) * k], &q).to_bits() as u64).sum();
+        assert_eq!(digest, DOT_DIGEST);
+    }
+
+    const DOT_DIGEST: u64 = 438482546770;
+
+    #[test]
     fn kmeans_matches_python_reference_bit_for_bit() {
         // the same digest is asserted in python/tests/test_lex.py test_kmeans_matches_the_rust_engine_bit_for_bit
         let mut rng = Rng(12345);

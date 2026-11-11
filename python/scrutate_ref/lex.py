@@ -387,9 +387,22 @@ def merge_segments(dest: str, segs: list, alive: list) -> None:
 
 
 def _dot64(m: np.ndarray, q: np.ndarray) -> np.ndarray:
-    """m @ q accumulated in float64 and rounded once to float32: the Rust engine sums in another
-    order, and float32 sums would let near-tied rows swap places between the two engines."""
-    return (np.asarray(m, np.float64) @ q.astype(np.float64)).astype(np.float32)
+    """m @ q accumulated in float64 and rounded once to float32, in the order of `dot64` in lex.rs:
+    four running sums over the columns taken four at a time, added left to right, then the last
+    columns. A library product has no fixed order, and float32 sums would let near-tied rows swap
+    places between the two engines."""
+    m = np.asarray(m, np.float64)
+    q = q.astype(np.float64)
+    full = m.shape[1] - m.shape[1] % 4
+    acc = np.zeros((m.shape[0], 4))
+    for j in range(0, full, 4):
+        acc += m[:, j:j + 4] * q[j:j + 4]
+    s = np.zeros(m.shape[0])
+    for lane in range(4):
+        s += acc[:, lane]
+    for j in range(full, m.shape[1]):
+        s += m[:, j] * q[j]
+    return s.astype(np.float32)
 
 
 def _top(sc: np.ndarray, limit: int, mask: np.ndarray) -> np.ndarray:

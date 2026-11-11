@@ -376,6 +376,25 @@ def test_quantize_round_trip():
     assert np.array_equal(quantize(d)[0], q)  # quantizing a decoded vector gives the same codes
 
 
+def test_the_scan_dot_product_matches_the_rust_engine_bit_for_bit():
+    """The digest below is also asserted in lex.rs `dot64_matches_python_reference_bit_for_bit`."""
+    from scrutate_ref.lex import Rng, _dot64
+
+    rng = Rng(777)
+    n, k = 200, 259  # three columns past the last four
+    m = np.zeros((n, k), np.float32)
+    for r in range(n):
+        for j in range(k):
+            m[r, j] = np.float32(rng.below(20001) - 10000) * np.float32(2 ** -14)
+    q = np.array([np.float32(rng.below(20001) - 10000) * np.float32(2 ** -14) for _ in range(k)], np.float32)
+    got = _dot64(m, q)
+    assert got.dtype == np.float32
+    assert int(got.view(np.uint32).astype(np.uint64).sum()) == DOT_DIGEST
+
+
+DOT_DIGEST = 438482546770
+
+
 def test_kmeans_matches_the_rust_engine_bit_for_bit():
     """The same vectors give the same clusters in both engines: the digest below is also asserted in
     lex.rs `kmeans_matches_python_reference_bit_for_bit`."""
