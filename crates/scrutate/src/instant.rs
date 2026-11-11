@@ -60,6 +60,8 @@ pub struct Options {
     pub no_ignore: bool,
     pub follow_links: bool,
     pub globs: Vec<String>,
+    /// globs matched from one directory, whatever path is searched (a configuration file's)
+    pub scoped_globs: Option<Arc<ScopedGlobs>>,
     /// language ids / type names from the registry (`py`, `rust`, ...); negative with a leading `!`
     pub types: Vec<String>,
     pub max_filesize: Option<u64>,
@@ -123,6 +125,7 @@ impl Default for Options {
             no_ignore: false,
             follow_links: false,
             globs: Vec::new(),
+            scoped_globs: None,
             types: Vec::new(),
             max_filesize: None,
             max_depth: None,
@@ -1621,6 +1624,80 @@ pub fn overrides(root: &Path, o: &Options) -> Result<ignore::overrides::Override
     Ok(ob.build()?)
 }
 
+/// Globs matched against each path from `dir`, the directory of the file that holds them. A path
+/// outside `dir` is not touched; a path named on the command line is searched whatever they say.
+#[derive(Debug)]
+pub struct ScopedGlobs {
+    /// canonical, as the roots are compared with it
+    dir: PathBuf,
+    ov: ignore::overrides::Override,
+}
+
+/// Where a searched root lies from `ScopedGlobs::dir`.
+enum Scope {
+    /// at or below it: the root's path from it
+    Below(PathBuf),
+    /// above it: its path from the root
+    Above(PathBuf),
+    Outside,
+}
+
+impl ScopedGlobs {
+    pub fn new(dir: &Path, globs: &[String]) -> Result<ScopedGlobs> {
+        let mut ob = OverrideBuilder::new(".");
+        for g in globs {
+            ob.add(g).with_context(|| format!("invalid glob {g:?}"))?;
+        }
+        Ok(ScopedGlobs { dir: std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf()), ov: ob.build()? })
+    }
+
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    fn scope(&self, root: &Path) -> Scope {
+        let Ok(root) = std::fs::canonicalize(root) else { return Scope::Outside };
+        if let Ok(p) = root.strip_prefix(&self.dir) {
+            Scope::Below(p.to_path_buf())
+        } else if let Ok(p) = self.dir.strip_prefix(&root) {
+            Scope::Above(p.to_path_buf())
+        } else {
+            Scope::Outside
+        }
+    }
+
+    /// Whether the globs leave out `rest`, a path below a root in `scope`.
+    fn excludes(&self, scope: &Scope, rest: &Path, is_dir: bool) -> bool {
+        thread_local! {
+            static JOINED: std::cell::RefCell<PathBuf> = const { std::cell::RefCell::new(PathBuf::new()) };
+        }
+        match scope {
+            Scope::Below(p) if p.as_os_str().is_empty() => self.ov.matched(rest, is_dir).is_ignore(),
+            Scope::Below(p) => JOINED.with_borrow_mut(|j| {
+                j.as_mut_os_string().clear();
+                j.push(p);
+                j.push(rest);
+                self.ov.matched(&*j, is_dir).is_ignore()
+            }),
+            Scope::Above(p) => rest.strip_prefix(p).is_ok_and(|r| !r.as_os_str().is_empty() && self.ov.matched(r, is_dir).is_ignore()),
+            Scope::Outside => false,
+        }
+    }
+
+    /// Whether the globs leave out `rel`, a file below a root in `scope` named with `/`, or a
+    /// directory on the way down to it.
+    fn excludes_file(&self, scope: &Scope, rel: &str) -> bool {
+        let mut at = 0;
+        while let Some(i) = rel[at..].find('/') {
+            if self.excludes(scope, Path::new(&rel[..at + i]), true) {
+                return true;
+            }
+            at += i + 1;
+        }
+        self.excludes(scope, Path::new(rel), false)
+    }
+}
+
 pub fn build_walker(roots: &[PathBuf], o: &Options) -> Result<ignore::WalkParallel> {
     Ok(walk_builder(roots, o)?.build_parallel())
 }
@@ -1646,6 +1723,16 @@ fn walk_builder(roots: &[PathBuf], o: &Options) -> Result<WalkBuilder> {
     // anchored at a root that is a file, the filters would miss the files of the other roots
     let anchor = if roots[0].is_dir() { roots[0].as_path() } else { roots[0].parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new(".")) };
     wb.overrides(overrides(anchor, o)?);
+    if let Some(sg) = o.scoped_globs.clone() {
+        let scopes: Vec<(PathBuf, Scope)> = roots.iter().map(|r| (r.clone(), sg.scope(r))).collect();
+        wb.filter_entry(move |e| {
+            let path = e.path();
+            match scopes.iter().find_map(|(r, s)| path.strip_prefix(r).ok().map(|rest| (s, rest))) {
+                Some((s, rest)) => !sg.excludes(s, rest, e.file_type().is_some_and(|t| t.is_dir())),
+                None => true,
+            }
+        });
+    }
     Ok(wb)
 }
 
@@ -2550,8 +2637,12 @@ fn run_files(root: &Path, files: Vec<String>, o: &Options, cancel: Arc<AtomicBoo
     let t0 = Instant::now();
     let matcher = build_matcher(o)?;
     let ov = overrides(root, o)?;
-    let mut files: Vec<(PathBuf, Arc<str>, bool)> =
-        files.into_iter().filter(|rel| !filtered_out(&ov, rel)).map(|rel| (root.join(&rel), Arc::from(rel), false)).collect();
+    let scoped = o.scoped_globs.as_ref().map(|sg| (sg, sg.scope(root)));
+    let mut files: Vec<(PathBuf, Arc<str>, bool)> = files
+        .into_iter()
+        .filter(|rel| !filtered_out(&ov, rel) && !scoped.as_ref().is_some_and(|(sg, s)| sg.excludes_file(s, rel)))
+        .map(|rel| (root.join(&rel), Arc::from(rel), false))
+        .collect();
     let counters = Counters::default();
     if o.first_in_path_order {
         if plain.is_some() {

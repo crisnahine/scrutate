@@ -880,6 +880,68 @@ fn the_configuration_file_is_the_nearest_one_up_to_the_repository_top() {
 }
 
 #[test]
+fn the_globs_of_the_configuration_file_match_from_its_directory_whatever_path_is_searched() {
+    let r = Repo::new("cfgglobs");
+    r.write(".git/HEAD", b"ref: refs/heads/main\n");
+    r.write(".scrutate.toml", b"[grep]\nglobs = [\"!gen/**\", \"!*.min.js\", \"!src/deep/**\"]\n");
+    for f in ["top.txt", "docs/f.md", "gen/a.txt", "src/e.txt", "src/d.min.js", "src/deep/c.txt", "src/gen/b.txt"] {
+        r.write(f, b"needle\n");
+    }
+    let src = r.root.join("src");
+    let files = |cwd: &Path, args: &[&str]| {
+        let (code, out, err) = run_in(cwd, &[&["grep", "-l", "needle"][..], args].concat(), &[]);
+        assert!(code < 2, "{args:?}: {err}");
+        sorted_lines(&out)
+    };
+    assert_eq!(files(&r.root, &["."]), ["./docs/f.md", "./src/e.txt", "./src/gen/b.txt", "./top.txt"]);
+    assert_eq!(files(&src, &["."]), ["./e.txt", "./gen/b.txt"]);
+    assert_eq!(files(&src, &[".."]), ["../docs/f.md", "../src/e.txt", "../src/gen/b.txt", "../top.txt"]);
+    // printed as given, never in the canonical form (a Windows temp directory may be an 8.3 name)
+    let abs = r.root.to_str().unwrap();
+    let slashed = |p: &str| p.replace('\\', "/");
+    let want: Vec<String> = ["docs/f.md", "src/e.txt", "src/gen/b.txt", "top.txt"].iter().map(|f| slashed(&format!("{abs}/{f}"))).collect();
+    let got: Vec<String> = files(&src, &[abs]).iter().map(|p| slashed(p)).collect();
+    assert_eq!(got, want);
+    assert_eq!(files(&src, &["deep", "../gen", "../docs"]), ["../docs/f.md"]);
+    // a file named on the command line is searched whatever the globs, as with -g and in ripgrep
+    assert_eq!(files(&src, &["deep/c.txt", "d.min.js", "../gen/a.txt"]), ["../gen/a.txt", "d.min.js", "deep/c.txt"]);
+    assert_eq!(files(&src, &["-g", "!*.txt", "e.txt"]), ["e.txt"]);
+    let (_, out, _) = run_in(&src, &["config"], &[]);
+    let dir = r.root.file_name().unwrap().to_str().unwrap();
+    assert!(out.lines().any(|l| l.starts_with("grep globs, matched from ") && l.ends_with(&format!("{dir}: !gen/**, !*.min.js, !src/deep/**"))), "{out}");
+    assert!(!out.contains("SCRUTATE_GREP_GLOBS"), "{out}");
+    // -g and SCRUTATE_GREP_GLOBS replace the file's globs and match from each searched path
+    assert_eq!(
+        files(&src, &["-g", "!e.txt", ".."]),
+        ["../docs/f.md", "../gen/a.txt", "../src/d.min.js", "../src/deep/c.txt", "../src/gen/b.txt", "../top.txt"]
+    );
+    let (_, out, _) = run_in(&src, &["grep", "-l", "needle", "."], &[("SCRUTATE_GREP_GLOBS", "!gen/**")]);
+    assert_eq!(sorted_lines(&out), ["./d.min.js", "./deep/c.txt", "./e.txt"]);
+    // the index answers with the files the walk finds
+    let (code, _, err) = r.run(&["index", "--text"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(files(&r.root, &["--index"]), ["docs/f.md", "src/e.txt", "src/gen/b.txt", "top.txt"]);
+    assert_eq!(files(&src, &["--index"]), ["e.txt", "gen/b.txt"]);
+    // alternatives and classes in a directory part
+    r.write(".scrutate.toml", b"[grep]\nglobs = [\"!{src,lib}/deep/**\", \"![sx]rc/gen/**\"]\n");
+    assert_eq!(files(&src, &["."]), ["./d.min.js", "./e.txt"]);
+    assert_eq!(files(&src, &["--index"]), ["d.min.js", "e.txt"]);
+    assert_eq!(files(&r.root, &["src"]), ["src/d.min.js", "src/e.txt"]);
+}
+
+#[test]
+fn a_path_outside_the_directory_of_the_configuration_file_is_not_touched_by_its_globs() {
+    let r = Repo::new("cfgoutside");
+    r.write(".git/HEAD", b"ref: refs/heads/main\n");
+    r.write("sub/.scrutate.toml", b"[grep]\nglobs = [\"!gen/**\"]\n");
+    for f in ["gen/a.txt", "other/gen/b.txt", "sub/gen/c.txt", "sub/d.txt"] {
+        r.write(f, b"needle\n");
+    }
+    let (_, out, err) = run_in(&r.root.join("sub"), &["grep", "-l", "needle", "..", "../other"], &[]);
+    assert_eq!(sorted_lines(&out), ["../gen/a.txt", "../other/gen/b.txt", "../other/gen/b.txt", "../sub/d.txt"], "{err}");
+}
+
+#[test]
 fn serve_and_watch_in_a_subdirectory_use_the_index_above() {
     use std::io::BufRead;
     let r = nested_repo("subserve");

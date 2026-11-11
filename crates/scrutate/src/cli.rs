@@ -499,19 +499,18 @@ fn split_globs(list: &str) -> Vec<String> {
 
 const CONFIG_FILE: &str = ".scrutate.toml";
 
-/// The directory whose configuration file applies, with the path of the current directory below
-/// it: the nearest one holding the file, from `cwd` up to the repository top (a directory holding
-/// `.git` or an index); `cwd` when there is none.
-fn nearest_config(cwd: &Path) -> (PathBuf, Vec<String>) {
+/// The directory whose configuration file applies: the nearest one holding the file, from `cwd`
+/// up to the repository top (a directory holding `.git` or an index); `cwd` when there is none.
+fn nearest_config(cwd: &Path) -> PathBuf {
     for dir in cwd.ancestors() {
         if dir.join(CONFIG_FILE).is_file() {
-            return (dir.to_path_buf(), names_below(cwd, dir));
+            return dir.to_path_buf();
         }
         if dir.join(".git").exists() || dir.join(crate::files::INDEX_DIR).is_dir() {
             break;
         }
     }
-    (cwd.to_path_buf(), Vec::new())
+    cwd.to_path_buf()
 }
 
 /// The names of the directories from `top` down to `dir`; empty when `dir` is not below `top`.
@@ -532,49 +531,6 @@ fn index_above(cwd: &Path) -> Option<PathBuf> {
         }
     }
     None
-}
-
-/// A glob of the configuration file of a directory above, for a walk from `below` (the names of
-/// the directories down to the current one): a glob with a slash names paths from the file's
-/// directory, the walk matches globs from the current one. None for an exclusion that can match
-/// nothing down here.
-fn rebase_glob(glob: &str, below: &[String]) -> Option<String> {
-    let (neg, body) = match glob.strip_prefix('!') {
-        Some(b) => ("!", b),
-        None => ("", glob),
-    };
-    if !body.trim_end_matches('/').contains('/') {
-        return Some(glob.to_string());
-    }
-    let parts: Vec<&str> = body.trim_start_matches('/').split('/').collect();
-    for (i, dir) in below.iter().enumerate() {
-        match parts.get(i).copied() {
-            // the glob names a directory holding this one: all of it
-            None | Some("") => return Some(format!("{neg}**")),
-            Some("**") => return Some(format!("{neg}{}", parts[i..].join("/"))),
-            Some(p) if p == dir => {}
-            // shortcut: a class or alternatives on the way down are not matched against the name; such a glob applies as written
-            Some(p) if p.contains(['[', '{', '\\']) => return Some(glob.to_string()),
-            Some(p) if wildcard_matches(&p.chars().collect::<Vec<_>>(), &dir.chars().collect::<Vec<_>>()) => {}
-            Some(_) => return neg.is_empty().then(|| glob.to_string()),
-        }
-    }
-    let rest = parts[below.len()..].join("/");
-    Some(match rest.as_str() {
-        "" => format!("{neg}**"),
-        r if r.trim_end_matches('/').contains('/') => format!("{neg}{r}"),
-        r => format!("{neg}/{r}"),
-    })
-}
-
-/// Whether a glob of one path component, with `*` and `?` only, matches `name`.
-fn wildcard_matches(glob: &[char], name: &[char]) -> bool {
-    match glob.split_first() {
-        None => name.is_empty(),
-        Some(('*', rest)) => (0..=name.len()).any(|i| wildcard_matches(rest, &name[i..])),
-        Some(('?', rest)) => !name.is_empty() && wildcard_matches(rest, &name[1..]),
-        Some((c, rest)) => name.first() == Some(c) && wildcard_matches(rest, &name[1..]),
-    }
 }
 
 /// Where a command runs in the repository: its path arguments are the shell's, relative to the
@@ -697,23 +653,28 @@ pub fn run() -> Result<i32> {
     let args: Vec<String> = std::env::args_os().map(|a| a.to_string_lossy().into_owned()).collect();
     let cwd = std::env::current_dir().ok();
     let root_given = std::env::var_os("SCRUTATE_ROOT").is_some() || args.iter().any(|a| a == "--root" || a.starts_with("--root="));
-    let (cfg_root, cfg_below) = match &cwd {
+    let cfg_root = match &cwd {
         Some(cwd) if !root_given => nearest_config(cwd),
-        _ => (crate::config::root_from_args(&args), Vec::new()),
+        _ => crate::config::root_from_args(&args),
     };
     let cfg_path = crate::config::locate(&cfg_root);
     let local = cfg_path.as_deref() == Some(cfg_root.join(CONFIG_FILE).as_path());
+    // the globs of a .scrutate.toml match from its directory, so they do not go through the
+    // environment, where -g's meaning (from each searched path) would apply
+    let mut cfg_globs = Vec::new();
     // a bad file stops the commands that read it, after clap has had --help and --version
     let cfg_error = cfg_path.as_deref().and_then(|p| {
         crate::config::load(p)
             .map(|mut cfg| {
-                if local && !cfg_below.is_empty() {
-                    cfg.grep.globs = cfg.grep.globs.iter().filter_map(|g| rebase_glob(g, &cfg_below)).collect();
+                if local {
+                    cfg_globs = std::mem::take(&mut cfg.grep.globs);
                 }
                 crate::config::apply_as_env(&cfg)
             })
             .err()
     });
+    // as with every other setting, the environment and the command line replace the file's globs
+    let cfg_globs = if std::env::var_os("SCRUTATE_GREP_GLOBS").is_none() { cfg_globs } else { Vec::new() };
     let mut cli = if matches!(args.get(1).map(String::as_str), Some("grep" | "g")) {
         let GrepCli { root, no_color, cmd: GrepCmd::Grep(grep) } = GrepCli::parse();
         Cli { root, no_color, max_bytes: None, offset: 0, cmd: Cmd::Grep(grep) }
@@ -806,6 +767,7 @@ pub fn run() -> Result<i32> {
                 || !ignore_case
                     && std::env::var("SCRUTATE_GREP_SMART_CASE")
                         .is_ok_and(|v| !matches!(v.to_ascii_lowercase().as_str(), "" | "0" | "n" | "no" | "f" | "false" | "off"));
+            let scoped_globs = if globs.is_empty() && !cfg_globs.is_empty() { Some(Arc::new(instant::ScopedGlobs::new(&cfg_root, &cfg_globs)?)) } else { None };
             let globs = if globs.is_empty() { std::env::var("SCRUTATE_GREP_GLOBS").map(|v| split_globs(&v)).unwrap_or_default() } else { globs };
             if type_list {
                 for (name, globs) in instant::type_list() {
@@ -857,6 +819,7 @@ pub fn run() -> Result<i32> {
                 no_ignore,
                 follow_links: follow,
                 globs,
+                scoped_globs,
                 types,
                 max_filesize: max_filesize.as_deref().map(parse_size).transpose()?,
                 max_depth,
@@ -987,6 +950,9 @@ pub fn run() -> Result<i32> {
                 Some(p) => {
                     println!("configuration file: {}", p.display());
                     println!("{}", std::fs::read_to_string(p)?.trim_end());
+                    if !cfg_globs.is_empty() {
+                        println!("\ngrep globs, matched from {}: {}", cfg_root.display().to_string().trim_start_matches(r"\\?\"), cfg_globs.join(", "));
+                    }
                 }
                 None if root_given => println!(
                     "no configuration file (looked for $SCRUTATE_CONFIG, {}/{CONFIG_FILE}, $XDG_CONFIG_HOME/scrutate/config.toml)",
