@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import functools
 import itertools
+import os
 import re
 import unicodedata
 
@@ -62,10 +63,23 @@ def _fold(s: str) -> str:
     return s.lower().replace("ς", "σ")
 
 
+def han_fold_path() -> str:
+    """The traditional-to-simplified Han table the Rust engine embeds (tools/gen_han_fold.py)."""
+    return os.path.join(os.path.dirname(__file__), "..", "..", "crates", "scrutate", "data", "han_fold.txt")
+
+
+@functools.cache
+def _han_fold() -> dict[int, str]:
+    with open(han_fold_path(), encoding="utf-8") as f:
+        pairs = "".join(line.rstrip("\n") for line in f if not line.startswith("#"))
+    return {ord(t): s for t, s in zip(pairs[0::2], pairs[1::2])}
+
+
 def unicode_tokens(word: str) -> list[str]:
-    """Tokens of a word that is not all ASCII: NFC first; runs of unspaced scripts give overlapping
-    character bigrams (a lone character itself), other `_`-separated parts are one folded token
-    each, and an ASCII part goes through the identifier rules (split, stemmed)."""
+    """Tokens of a word that is not all ASCII: NFC first; runs of unspaced scripts have traditional
+    Han folded to simplified and give overlapping character bigrams (a lone character itself),
+    other `_`-separated parts are one folded token each, and an ASCII part goes through the
+    identifier rules (split, stemmed)."""
     out: list[str] = []
     for u, grp in itertools.groupby(unicodedata.normalize("NFC", word), _unspaced):
         seg = "".join(grp)
@@ -73,7 +87,9 @@ def unicode_tokens(word: str) -> list[str]:
             for part in seg.split("_"):
                 if part:
                     out.extend(ident_tokens(part)[0] if part.isascii() else (_fold(part),))
-        elif len(seg) == 1:
+            continue
+        seg = seg.translate(_han_fold())
+        if len(seg) == 1:
             out.append(seg)
         else:
             out.extend(seg[i:i + 2] for i in range(len(seg) - 1))

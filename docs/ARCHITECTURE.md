@@ -163,7 +163,11 @@ form. A word with other characters is normalised to NFC first: runs of a script 
 spaces (Han, kana, Thai, Lao, Tibetan, Myanmar, Khmer, the Tai scripts, Balinese and Javanese)
 give overlapping character bigrams (a lone character itself), and any other script gives one
 lowercased token per word, with the final sigma folded. A Tibetan run ends at the tsheg that
-closes each syllable. A text that
+closes each syllable. Before the bigrams are cut, every Han character with a simplified form is
+replaced by it (Unihan `kSimplifiedVariant`, the table `crates/scrutate/data/han_fold.txt` that
+both engines read), in index and query alike, so traditional and simplified text meet. The fold
+applies to every Han run, Japanese included; names and stored text keep their own characters. A
+text that
 is all ASCII gives the tokens it gave before Unicode words were added, so its postings did not
 change. Names are compared through a key that ignores case and `_`, in NFC with the final sigma
 folded, so two spellings of one accented name are one name.

@@ -2,7 +2,8 @@
 """Software bill of materials (CycloneDX 1.5 JSON) from the resolved Cargo dependency graph.
 
 Uses `cargo metadata` (the authoritative, locked graph) so the SBOM lists exactly what the binary
-was built from: name, version, license expression, source registry and purl for every crate.
+was built from: name, version, license expression, source registry and purl for every crate, and
+one `data` component per data file from outside the project (`third_party_notices.data_files`).
 
 usage: sbom.py [--out FILE] [--package scrutate]
 """
@@ -15,6 +16,8 @@ import subprocess
 import sys
 import time
 import uuid
+
+from third_party_notices import data_files
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -55,6 +58,17 @@ def main() -> int:
             rel = os.path.relpath(os.path.dirname(p["manifest_path"]), os.path.join(HERE, ".."))
             comps[-1]["pedigree"] = {"notes": f"modified copy of the crates.io release, in {rel}"}
             comps[-1]["externalReferences"][0]["url"] = rel
+    for d in data_files():
+        comps.append({
+            "type": "data",
+            "bom-ref": f"data:{d['name']}@{d['version']}",
+            "name": d["name"],
+            "version": d["version"],
+            "description": d["purpose"],
+            "licenses": [{"expression": d["license"]}],
+            "externalReferences": [{"type": "distribution", "url": d["url"]}],
+            "pedigree": {"notes": f"derived file, compiled in from {d['file']}"},
+        })
     root = by_id[root_id]
     bom = {
         "bomFormat": "CycloneDX",

@@ -117,8 +117,9 @@ fn unspaced_scripts_are_bigrams_and_spaced_scripts_are_words() {
     assert_eq!(tokenize2("Вычисляет ОБЩУЮ", None).0, vec!["вычисляет", "общую"]);
     // an ASCII part of a mixed word is stemmed like any ASCII word; the rest is not
     assert_eq!(tokenize2("parsing_выручки", None).0, vec!["pars", "выручки"]);
-    assert_eq!(tokenize2("x関数y", None).0, vec!["関数"]);
-    assert_eq!(query_terms("合計 合計"), vec!["合計"]);
+    // Unihan gives the Japanese 関 a simplified form too (U+2CBA6)
+    assert_eq!(tokenize2("x関数y", None).0, vec!["\u{2CBA6}数"]);
+    assert_eq!(query_terms("合計 合計"), vec!["合计"]);
     // Thai, Lao, Myanmar, Khmer, Javanese: no spaces between words either
     for run in ["ภาษาไทย", "ພາສາລາວ", "မြန်မာစာ", "ភាសាខ្មែរ", "ꦧꦱꦗꦮ"] {
         let chars: Vec<char> = run.chars().collect();
@@ -127,6 +128,57 @@ fn unspaced_scripts_are_bigrams_and_spaced_scripts_are_words() {
     }
     // Tibetan marks its syllables: the tsheg between them ends a run
     assert_eq!(tokenize2("བོད་སྐད", None).0, vec!["བོ", "ོད", "སྐ", "ྐད"]);
+}
+
+const HAN_FOLD: &str = include_str!("../data/han_fold.txt");
+
+#[test]
+fn traditional_and_simplified_han_give_the_same_tokens() {
+    // a regenerated table must update these numbers
+    assert_eq!(HAN_FOLD.len(), 46094);
+    assert!(HAN_FOLD.starts_with("# Unihan 18.0.0 kSimplifiedVariant"));
+    assert_eq!(HAN_FOLD.lines().nth(1).unwrap().chars().count(), 2 * 6776);
+    assert_eq!(tokenize2("資料庫", None), tokenize2("资料库", None));
+    assert_eq!(tokenize2("資料庫", None).0, vec!["资料", "料库"]);
+    assert_eq!(tokenize2("庫", None).0, vec!["库"]);
+    assert_eq!(tokenize2("資料库", None).0, vec!["资料", "料库"]);
+    // several simplified variants: the first that is not the character itself
+    assert_eq!(tokenize2("乾", None).0, vec!["干"]);
+    assert_eq!(tokenize2("噁", None).0, vec!["恶"]);
+    assert_eq!(tokenize2("データ庫の", None).0, vec!["デー", "ータ", "タ库", "库の"]);
+    assert_eq!(tokenize2("ひらがな", None).0, vec!["ひら", "らが", "がな"]);
+    assert_eq!(query_terms("讀取 资料库"), query_terms("读取 資料庫"));
+    assert_eq!(name_key("資料庫"), "資料庫");
+}
+
+const HAN_FORMS: &str = r#"def load_settings(path):
+    """連接資料庫並讀取使用者設定"""
+    return path
+
+
+def notify_admin(msg):
+    """发送电子邮件通知给管理员"""
+    return msg
+
+
+def parse_config(path):
+    """Read the configuration file."""
+    return path
+"#;
+
+#[test]
+fn a_query_in_either_han_form_finds_text_in_the_other() {
+    let r = Repo::new("hanforms", &[("m.py", HAN_FORMS.to_string())]);
+    let cases = [("资料库", "load_settings"), ("读取使用者设定", "load_settings"), ("電子郵件", "notify_admin"), ("發送通知給管理員", "notify_admin")];
+    let mut missed = Vec::new();
+    for (q, want) in cases {
+        let out = r.top("search", q);
+        let first = out.lines().next().unwrap_or("");
+        if !first.ends_with(&format!("] {want}")) {
+            missed.push(format!("{q} -> {first:?}"));
+        }
+    }
+    assert!(missed.is_empty(), "{missed:#?}");
 }
 
 #[test]

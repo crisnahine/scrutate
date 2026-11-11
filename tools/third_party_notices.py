@@ -4,7 +4,8 @@
 MIT, BSD and Apache-2.0 all ask that their notices travel with the binary; release archives
 include this file next to LICENSE. The crate set is the one `tools/sbom.py` lists (normal and
 build dependencies of the package, from the locked `cargo metadata` graph). A crate that ships no
-licence file is listed with its declared licence expression, so the gap is visible.
+licence file is listed with its declared licence expression, so the gap is visible. Data files
+from outside the project (`data_files`, the Unihan-derived Han fold) come first, with their licence.
 
 usage: third_party_notices.py [--out FILE] [--package scrutate]
 """
@@ -55,6 +56,56 @@ def shipped(package: str) -> list[dict]:
 # C libraries compiled into the binary whose licence lives only in their source headers
 BUNDLED = {"pcre2-sys": ("PCRE2", "upstream/src/pcre2_compile.c")}
 
+UNICODE_V3 = """UNICODE LICENSE V3
+
+COPYRIGHT AND PERMISSION NOTICE
+
+Copyright © 1991-2026 Unicode, Inc.
+
+NOTICE TO USER: Carefully read the following legal agreement. BY
+DOWNLOADING, INSTALLING, COPYING OR OTHERWISE USING DATA FILES, AND/OR
+SOFTWARE, YOU UNEQUIVOCALLY ACCEPT, AND AGREE TO BE BOUND BY, ALL OF THE
+TERMS AND CONDITIONS OF THIS AGREEMENT. IF YOU DO NOT AGREE, DO NOT
+DOWNLOAD, INSTALL, COPY, DISTRIBUTE OR USE THE DATA FILES OR SOFTWARE.
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of data files and any associated documentation (the "Data Files") or
+software and any associated documentation (the "Software") to deal in the
+Data Files or Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, and/or sell
+copies of the Data Files or Software, and to permit persons to whom the
+Data Files or Software are furnished to do so, provided that either (a)
+this copyright and permission notice appear with all copies of the Data
+Files or Software, or (b) this copyright and permission notice appear in
+associated Documentation.
+
+THE DATA FILES AND SOFTWARE ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY
+KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF
+THIRD PARTY RIGHTS.
+
+IN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS NOTICE
+BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES,
+OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS,
+WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION,
+ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THE DATA
+FILES OR SOFTWARE.
+
+Except as contained in this notice, the name of a copyright holder shall
+not be used in advertising or otherwise to promote the sale, use or other
+dealings in these Data Files or Software without prior written
+authorization of the copyright holder."""
+
+
+def data_files() -> list[dict]:
+    """Data from outside the project compiled into the scrutate crate (and so into every package built on it)."""
+    path = os.path.join(HERE, "..", "crates", "scrutate", "data", "han_fold.txt")
+    with open(path, encoding="utf-8") as f:
+        version = f.readline().split()[2]
+    return [{"name": "unihan-kSimplifiedVariant", "version": version, "license": "Unicode-3.0", "licence_text": UNICODE_V3,
+             "url": "https://www.unicode.org/Public/UCD/latest/ucd/Unihan.zip", "file": "crates/scrutate/data/han_fold.txt",
+             "purpose": "traditional-to-simplified Han fold of ranked search, from the Unihan field kSimplifiedVariant (tools/gen_han_fold.py)"}]
+
 
 def header_licence(path: str) -> str:
     """The comment of a C source file that holds its licence (copyright lines included)."""
@@ -83,7 +134,16 @@ def main() -> int:
     ap.add_argument("--package", default="scrutate")
     a = ap.parse_args()
     pkgs = shipped(a.package)
-    out = [f"Third-party software in {a.package}: {len(pkgs)} crates, with their licence and notice files.", ""]
+    data = data_files()
+    out = [f"Third-party software in {a.package}: {len(pkgs)} crates and {len(data)} data file(s), with their licence and notice files.", ""]
+    for d in data:
+        out.append("=" * 78)
+        out.append(f"{d['name']} {d['version']}  ({d['license']}), data compiled in as {d['file']}")
+        out.append(d["url"])
+        out.append(d["purpose"])
+        out.append("-" * 78)
+        out.append(d["licence_text"])
+        out.append("")
     missing = 0
     for p in pkgs:
         out.append("=" * 78)
@@ -123,7 +183,7 @@ def main() -> int:
     if a.out:
         with open(a.out, "w") as f:
             f.write(text)
-        print(f"wrote {a.out}: {len(pkgs)} crates, {missing} without a licence file", file=sys.stderr)
+        print(f"wrote {a.out}: {len(pkgs)} crates, {missing} without a licence file, {len(data)} data file(s)", file=sys.stderr)
     else:
         sys.stdout.write(text)
     return 0

@@ -134,8 +134,6 @@ settings in docs/RELEASING.md, public, tag `v0.1.0`.
   ripgrep does; `grep_code` skips them, as the index does.
 - The Python reference reads `.rgignore` files (ripgrep reads them for it) and the engine does
   not; without ripgrep installed, the reference ignores `.gitignore` as well.
-- In ranked search, traditional and simplified Chinese characters are different tokens: a query
-  in one form does not find text written in the other.
 - A C++ function declared at the top level without a body (`Shape make();`) is not a symbol. A
   method declared in its class and defined outside it is two symbols with one qualified name: the
   declaration (`method`) and the definition (`function`).

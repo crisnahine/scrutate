@@ -152,7 +152,9 @@ First release.
   Lao, Tibetan, Myanmar, Khmer, the Tai scripts, Balinese and Javanese) become overlapping
   character pairs, other scripts one lowercased token per word; an all-ASCII text gives the tokens it gave
   before. Names compare in NFC (new dependency `unicode-normalization`), and a definition name
-  over 200 bytes is a symbol when it has no whitespace.
+  over 200 bytes is a symbol when it has no whitespace. Traditional and simplified Han find each
+  other: ranked search folds Han to simplified forms in index and query (a Unihan 18.0.0 table,
+  Unicode License v3, listed in the notices and the SBOM); names and stored text are not folded.
 - Constants are symbols of kind `constant` (Rust `const` and `static`, Go package `const` and
   `var`, JavaScript and TypeScript top-level `const`, TypeScript enum members, Java
   `static final`, Python module-level capitals, C and C++ `#define` values and enumerators):

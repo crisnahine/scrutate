@@ -133,14 +133,21 @@ fn unspaced(c: char) -> bool {
     matches!(c as u32, 0x0E00..=0x109F | 0x1780..=0x17FF | 0x1950..=0x19DF | 0x1A20..=0x1AAF | 0x1B00..=0x1B7F | 0xA980..=0xA9FF | 0xAA60..=0xAADF | 0x3005..=0x3007 | 0x3040..=0x30FF | 0x31F0..=0x31FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF | 0xFF66..=0xFF9F | 0x20000..=0x323AF)
 }
 
+/// Traditional Han character -> simplified form, from Unihan `kSimplifiedVariant` (tools/gen_han_fold.py).
+static HAN_FOLD: LazyLock<HashMap<char, char>> = LazyLock::new(|| {
+    let pairs: Vec<char> = include_str!("../data/han_fold.txt").lines().filter(|l| !l.starts_with('#')).flat_map(str::chars).collect();
+    pairs.as_chunks::<2>().0.iter().map(|&[t, s]| (t, s)).collect()
+});
+
 /// Lowercase with the final sigma folded, so a word compares the same in any case.
 fn fold(s: &str) -> String {
     s.to_lowercase().replace('ς', "σ")
 }
 
-/// Tokens of a word that is not all ASCII: NFC first; runs of unspaced scripts give overlapping
-/// character bigrams (a lone character itself), other `_`-separated parts are one folded token
-/// each, and an ASCII part goes through the identifier rules (split, stemmed).
+/// Tokens of a word that is not all ASCII: NFC first; runs of unspaced scripts have traditional
+/// Han folded to simplified and give overlapping character bigrams (a lone character itself),
+/// other `_`-separated parts are one folded token each, and an ASCII part goes through the
+/// identifier rules (split, stemmed).
 pub fn unicode_tokens(word: &str, out: &mut Vec<String>) {
     let w: Vec<char> = word.nfc().collect();
     let mut i = 0;
@@ -160,10 +167,13 @@ pub fn unicode_tokens(word: &str, out: &mut Vec<String>) {
                     out.push(fold(part));
                 }
             }
-        } else if seg.len() == 1 {
-            out.push(seg[0].to_string());
         } else {
-            out.extend(seg.windows(2).map(|p| p.iter().collect::<String>()));
+            let seg: Vec<char> = seg.iter().map(|c| HAN_FOLD.get(c).copied().unwrap_or(*c)).collect();
+            if seg.len() == 1 {
+                out.push(seg[0].to_string());
+            } else {
+                out.extend(seg.windows(2).map(|p| p.iter().collect::<String>()));
+            }
         }
         i = j;
     }

@@ -1,7 +1,9 @@
 """Text that is not Latin script: words of every script, names compared in NFC, long names."""
 from scrutate_ref.index import Index
 from scrutate_ref.search import Searcher
-from scrutate_ref.text import name_key, query_terms, tokenize2
+import hashlib
+
+from scrutate_ref.text import han_fold_path, name_key, query_terms, tokenize2
 
 SCRIPTS = '''def calc_total(items):
     """计算订单总价，包括税费和运费。"""
@@ -67,13 +69,55 @@ def test_unspaced_scripts_are_bigrams_and_spaced_scripts_are_words():
     assert tokenize2("税")[0] == ["税"]
     assert tokenize2("Вычисляет ОБЩУЮ")[0] == ["вычисляет", "общую"]
     assert tokenize2("parsing_выручки")[0] == ["pars", "выручки"]
-    assert tokenize2("x関数y")[0] == ["関数"]
-    assert query_terms("合計 合計") == ["合計"]
+    # Unihan gives the Japanese 関 a simplified form too (U+2CBA6)
+    assert tokenize2("x関数y")[0] == ["\U0002CBA6数"]
+    assert query_terms("合計 合計") == ["合计"]
     # Thai, Lao, Myanmar, Khmer, Javanese: no spaces between words either
     for run in ["ภาษาไทย", "ພາສາລາວ", "မြန်မာစာ", "ភាសាខ្មែរ", "ꦧꦱꦗꦮ"]:
         assert tokenize2(run)[0] == [run[i:i + 2] for i in range(len(run) - 1)], run
     # Tibetan marks its syllables: the tsheg between them ends a run
     assert tokenize2("བོད་སྐད")[0] == ["བོ", "ོད", "སྐ", "ྐད"]
+
+
+def test_traditional_and_simplified_han_give_the_same_tokens():
+    # a regenerated table must update this hash, here and the numbers in the Rust test
+    with open(han_fold_path(), "rb") as f:
+        assert hashlib.sha256(f.read()).hexdigest() == "483e5590b59db72686a992fc5c5ed2e94e5ccd37fb01f558785a7e103012dcd0"
+    assert tokenize2("資料庫") == tokenize2("资料库")
+    assert tokenize2("資料庫")[0] == ["资料", "料库"]
+    assert tokenize2("庫")[0] == ["库"]
+    assert tokenize2("資料库")[0] == ["资料", "料库"]
+    # several simplified variants: the first that is not the character itself
+    assert tokenize2("乾")[0] == ["干"]
+    assert tokenize2("噁")[0] == ["恶"]
+    assert tokenize2("データ庫の")[0] == ["デー", "ータ", "タ库", "库の"]
+    assert tokenize2("ひらがな")[0] == ["ひら", "らが", "がな"]
+    assert query_terms("讀取 资料库") == query_terms("读取 資料庫")
+    assert name_key("資料庫") == "資料庫"
+
+
+HAN_FORMS = '''def load_settings(path):
+    """連接資料庫並讀取使用者設定"""
+    return path
+
+
+def notify_admin(msg):
+    """发送电子邮件通知给管理员"""
+    return msg
+
+
+def parse_config(path):
+    """Read the configuration file."""
+    return path
+'''
+
+
+def test_a_query_in_either_han_form_finds_text_in_the_other(tmp_path):
+    s = _searcher(tmp_path, {"m.py": HAN_FORMS})
+    cases = [("资料库", "load_settings"), ("读取使用者设定", "load_settings"), ("電子郵件", "notify_admin"),
+             ("發送通知給管理員", "notify_admin")]
+    assert [(q, [h.name for h in s.search(q, k=1)]) for q, want in cases
+            if [h.name for h in s.search(q, k=1)] != [want]] == []
 
 
 def test_names_compare_in_nfc(tmp_path):

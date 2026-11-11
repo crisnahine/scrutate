@@ -9,6 +9,8 @@ import re
 import subprocess
 import sys
 
+from third_party_notices import data_files
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..")
 
@@ -92,6 +94,11 @@ def main() -> int:
     out.append("|---|---|---|---|")
     for n, v, l, o in grammars:
         out.append(f"| {n} | {v} | {l} | {'yes' if o else ''} |")
+    out.append("\n## Data compiled into the binary\n")
+    out.append("| Data | Version | Licence | Source | Purpose |")
+    out.append("|---|---|---|---|---|")
+    for d in data_files():
+        out.append(f"| `{d['file']}` | Unicode {d['version']} | {d['license']} | {d['url']} | {d['purpose']} |")
     out.append(f"\n## Transitive graph\n\n{shipped} crates are compiled into the release binary (normal + build dependencies, dev dependencies excluded); "
                "the exact set with licences and purls is the SBOM produced by `tools/sbom.py` (CycloneDX 1.5). `cargo audit` result: see docs/TEST_RESULTS.md.\n")
     out.append("## Policy\n")

@@ -138,7 +138,9 @@ the MCP `search_code`) never returns one.
 Ranked search reads words of every script. Scripts written without spaces (Han, kana, Thai, Lao,
 Tibetan, Myanmar, Khmer, the Tai scripts, Balinese and Javanese) become overlapping pairs of
 characters, so `天気` finds `東京の天気`; any other script gives one
-lowercased token per word. Only ASCII words are split at case changes and stemmed. Names
+lowercased token per word. Han characters are folded to their simplified form for matching, in
+the index and in the query, so `资料库` finds `資料庫` and the reverse; this applies to Japanese
+text too. Names, `symbol`, `grep` and the text shown in results keep the characters as written. Only ASCII words are split at case changes and stemmed. Names
 compare in Unicode NFC, so a name typed with a combining accent finds the precomposed spelling.
 A definition name longer than 200 bytes is still a symbol when it holds no whitespace.
 
