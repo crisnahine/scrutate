@@ -20,7 +20,7 @@ Counts: PASS 121 · PARTIAL 14 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 | ID | Requirement | Implementation | Verification | Status |
 |---|---|---|---|---|
 | R-2A.1 | Universal plain-text search, no index | `instant.rs` (`search`, `build_walker`, `search_one`, `Collector`) | `cli.rs::exit_codes_and_plain_output`, `json_lines_schema_and_modes`; differential vs ripgrep (`bench/differential.py`); every Engine A row of LEADERBOARD.md (each answer checked against an independent reference) | PASS |
-| R-2A.2 | Literal, regex, fuzzy, approximate matching | `Mode::{Literal,Regex,Fuzzy,FuzzyRegex,Pcre2}`; `FuzzyMatcher` (Myers, one word up to 128 bytes, 64-bit blocks up to 4096, pigeonhole prefilter); `fuzzyre.rs` (approximate regex, bit-parallel Glushkov automaton); PCRE2 for look-around and backreferences within its match limit; `-z` for archives and compressed files; `-e` for several patterns | unit tests `instant::tests` (blocks against the dynamic programme), `fuzzyre::tests` (against Myers and the regex engine), proptest `fuzzy_finds_edited_patterns`, `cli.rs::pcre2_*`, `search_zip_*`, `fuzzy_regex_*`, differential against `rg -P`, fuzz target `fuzzy_matcher` | PASS |
+| R-2A.2 | Literal, regex, fuzzy, approximate matching | `Mode::{Literal,Regex,Fuzzy,FuzzyRegex,Pcre2}`; `FuzzyMatcher` (Myers, counted in characters: one word up to 128, 64-bit blocks up to 4096, pigeonhole prefilter); `fuzzyre.rs` (approximate regex, bit-parallel Glushkov automaton); PCRE2 for look-around and backreferences within its match limit; `-z` for archives and compressed files; `-e` for several patterns | unit tests `instant::tests` (blocks against the dynamic programme), `fuzzyre::tests` (against Myers and the regex engine), proptest `fuzzy_finds_edited_patterns`, `cli.rs::pcre2_*`, `search_zip_*`, `fuzzy_regex_*`, differential against `rg -P`, fuzz target `fuzzy_matcher` | PASS |
 | R-2A.3 | Multiline and identifier searching | `-U` (each line of a multi-line match printed with its number), `--ident` (`ident_parts`, `identifier_regex`) | unit tests, proptest, `cli.rs::multiline_matches_print_every_line`, LEADERBOARD rows "multiline", "identifier" | PASS |
 | R-2A.4 | SIMD acceleration where beneficial | via `regex`/`aho-corasick`/`memchr` (vectorised literal and prefilter scanning), `half` F16C conversion; 128-bit bit-parallel Myers; word-at-a-time UTF-8 validation before the replacing decoder | LEADERBOARD.md; no hand-written intrinsics | PASS |
 | R-2A.5 | Parallel filesystem traversal | `ignore::WalkParallel` (work stealing), threads = min(cores, 12) or `-j` | robustness symlink tests; LEADERBOARD (11 threads on the M3 Pro) | PASS |
@@ -86,7 +86,7 @@ Counts: PASS 121 · PARTIAL 14 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 | R-5.1 | Stable Rust, evaluated dependencies | pinned stable 1.99.1, `rust-version` 1.91; DEPENDENCIES.md with purpose per crate | `cargo build` on stable; `cargo audit` | PASS |
 | R-5.2 | Modular, cohesive, independently testable | 17 modules; tests per module | test layout | PASS |
 | R-5.3 | Correctness, memory safety, predictable resources, concurrency, maintainability | parity with the reference; unsafe inventory (SECURITY.md); fuzzing with AddressSanitizer; bounded buffers | parity, robustness, fuzzing | PASS |
-| R-5.4 | Minimal dependencies | 170 shipped crates (the `ctrlc` crate and its objc2 chain removed for 50 lines of signal handling) | DEPENDENCIES.md | PASS |
+| R-5.4 | Minimal dependencies | 210 crates in the release binary (the `ctrlc` crate and its objc2 chain removed for 50 lines of signal handling) | DEPENDENCIES.md | PASS |
 | R-5.5 | No dead code, duplicated logic, unnecessary allocations, unjustified abstractions | `-D warnings`, clippy clean; Engine A's per-file search shared by the walk and the indexed path | `cargo clippy --all-targets -D warnings` | PASS |
 | R-5.6 | Async only where beneficial | none used | design note | PASS |
 | R-5.7 | `cargo fmt`, `cargo clippy`, `cargo test`, dependency auditing | all gates | TEST_RESULTS.md | PASS |
@@ -95,18 +95,18 @@ Counts: PASS 121 · PARTIAL 14 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 
 | ID | Requirement | Implementation | Verification | Status |
 |---|---|---|---|---|
-| R-6.1 | Target Linux, macOS, Windows | portable code; CI matrix for 6 runners | macOS arm64 natively; Linux aarch64 and x86_64 in clean containers (x86_64 under emulation); macOS x86_64 and Windows x86_64 cross-built with their test binaries compiled but not run (`bench/results/platforms/`, INSTALL.md) | PARTIAL (Windows and Intel macOS never executed; the CI matrix has not run) |
+| R-6.1 | Target Linux, macOS, Windows | portable code; CI matrix for 6 runners | macOS arm64 natively; Linux aarch64 and x86_64 in clean containers (x86_64 under emulation); macOS x86_64 and Windows x86_64 cross-built (`bench/results/platforms/`, INSTALL.md); CI run 42997088157 (`3ba45e5`) ran 11 of 13 jobs and passed 8: the Rust tests passed on macOS arm64, Intel macOS, Linux x86_64 and Linux arm64, and failed on Windows x64 and arm64 on one test (fixed in `8511cfb`, not yet run again) | PARTIAL (no passing run on Windows) |
 | R-6.2 | Secure filesystem access | path confinement in `read`, no symlink following by default, index only under root | SECURITY.md; robustness; bindings | PASS |
 | R-6.3 | Permission-aware indexing | unreadable files counted and skipped (text index: searched by Engine A, retried on the next update) | robustness `unreadable_files_are_reported_not_fatal` | PASS |
 | R-6.4 | Repository isolation | one `.scrutate/` per repository | design; concurrency tests | PASS |
 | R-6.5 | Resource exhaustion protection | regex size limits, file size caps, binary skip, bounded buffers, overflow-checked array sizes | robustness; fuzz target `npy` | PASS |
 | R-6.6 | Index corruption detection and recovery | triage on open, segment validation, `check`, auto rebuild; text index: structural checks on open, deep checks in `check`, rebuild with `--force` | robustness `corrupted_index_is_detected_and_rebuilt`; `cli.rs::indexed_grep_equals_walk` (damaged segment) | PASS |
-| R-6.7 | Versioned storage and migration | `schema_version` 12 (line splitting changed), text index `format` 1, model signature; mismatch → rebuild | robustness; `Triage::Rebuild` | PASS (migration policy = rebuild the cache) |
+| R-6.7 | Versioned storage and migration | `schema_version` 13 (int8 vectors), text index `format` 2, model signature; mismatch → rebuild; a different `content_rev` (parsing rules) reads every file again | robustness; `Triage::Rebuild` | PASS (migration policy = rebuild the cache) |
 | R-6.8 | Offline and air-gapped operation | no network code; models embedded | code review | PASS |
 | R-6.9 | No unauthorized source-code transmission | nothing leaves the machine | code review | PASS |
 | R-6.10 | Dependency and supply-chain security | `Cargo.lock`, `cargo audit`, SBOM (CycloneDX), licences reviewed | TEST_RESULTS.md, `tools/sbom.py` | PASS |
 | R-6.11 | Reproducible builds | pinned toolchain, lock file, release profile | two clean builds on macOS give the same hash (TEST_RESULTS.md); two different Linux images (`rust:1-slim-bookworm`, `golang:1.26-bookworm` with rustup) give the same SHA-256 (`bench/results/platforms/repro/`) | PASS |
-| R-6.12 | CI/CD integration | `.github/workflows/{ci,release,benchmarks}.yml`, GitLab/Bitbucket templates | YAML validated; **not executed** (no remote repository: publishing was declined for this release) | PARTIAL |
+| R-6.12 | CI/CD integration | `.github/workflows/{ci,release,benchmarks}.yml`, GitLab/Bitbucket templates | YAML validated; CI run 42997088157 (`3ba45e5`) ran 11 of 13 jobs and passed 8 (Windows failed on one test and the extra-langs job on one timing test, both fixed since and not yet run again); the release workflow has not run | PARTIAL |
 | R-6.13 | JSON and JSONL output | `--json` everywhere; JSONL schema 1; JSON error records | `cli.rs::json_lines_schema_and_modes`, `errors_are_json_when_asked` | PASS |
 | R-6.14 | Stable, versioned integration interfaces | JSONL `schema`, MCP protocol versions, SemVer policy | docs | PASS |
 | R-6.15 | IDE, automation, Git-platform, MCP integrations | MCP server (`serve --watch` keeps its index fresh); `scrutate lsp` language server; VS Code extension as its client; JetBrains through LSP4IJ; Neovim, GitHub action, GitLab/Bitbucket templates, pre-commit | MCP: `cli.rs::mcp_protocol_round_trip`, `serve_watch_updates_the_index_while_serving`; LSP: `tests/lsp.rs` (every request, UTF-16 columns); the VS Code extension type-checks and packages (`vsce`); the rest syntax-validated; none run inside its host | MCP and LSP PASS; others PARTIAL |
@@ -126,7 +126,7 @@ Counts: PASS 121 · PARTIAL 14 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 |---|---|---|---|
 | R-8.1 to 8.10 | Inspect, research, foundation, Engine A, Engine B, unify, benchmark/optimise, security/reliability testing, documentation/installation, deliver 0.1.0 | PASS | this repository; `git log`; TEST_RESULTS.md; LEADERBOARD.md; docs/ |
 | R-8.11 | Preserve existing user work | PASS | earlier work untouched; the reference implementation lives on as `python/scrutate_ref` |
-| R-8.12 | Decide autonomously | PASS | decisions recorded in CHANGELOG/ARCHITECTURE; one question asked (publishing to GitHub: declined on 2026-11-08, asked for on 2026-11-11 once every install and usage path is verified) |
+| R-8.12 | Decide autonomously | PASS | decisions recorded in CHANGELOG/ARCHITECTURE; one question asked (publishing to GitHub: declined on 2026-11-08, asked for on 2026-11-11 once every install and usage path is verified; the repository is on GitHub now, private) |
 
 ## 9. Zero-gap quality assurance
 
@@ -135,13 +135,13 @@ Counts: PASS 121 · PARTIAL 14 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 | R-9.1 | Unit tests | `cargo test` lib tests | PASS |
 | R-9.2 | Integration tests | `tests/samples.rs`, `tests/samples_extra.rs`, `tests/robustness.rs`, `tests/cli.rs` | PASS |
 | R-9.3 | End-to-end tests | `tests/cli.rs` runs the real binary | PASS |
-| R-9.4 | Differential tests | `bench/differential.py` (vs ripgrep; `--index` vs the walk); `bench/parity.py` (Rust vs Python); every leaderboard answer vs a Python reference | PASS |
+| R-9.4 | Differential tests | `bench/differential.py` (vs ripgrep; `--index` vs the walk); `bench/fuzz_grep.py` (`scrutate grep` vs ripgrep on random trees) and `bench/fuzz_incremental.py` (an updated index vs a fresh one after random edits), 20 seconds each in CI, failing when nothing was compared; `bench/parity.py` (Rust vs Python); every leaderboard answer vs a Python reference | PASS |
 | R-9.5 | Property-based tests | `tests/properties.rs`, `textindex::tests::property_condition_never_rejects_a_matching_text` | PASS |
 | R-9.6 | Fuzz tests | four cargo-fuzz targets (`fuzz/`), AddressSanitizer, ten-minute rounds; four defects found and fixed, crash inputs replayed by the test gate | PASS |
 | R-9.7 | Regression tests | snapshot `expected.json`; fuzz regressions; `bench/leaderboard_regression.py`; `bench/regression.py` | PASS |
 | R-9.8 | Stress tests | robustness (5 MB line, 200k lines, deep nesting, 3 writers + 2 readers x 30); 12 concurrent text-index updates on SMB | PASS |
 | R-9.9 | Security tests | regex limits, path confinement, symlink escape, corruption, panic containment, fuzzing | PASS |
-| R-9.10 | Cross-platform tests | full test suite on macOS arm64, Linux aarch64 and Linux x86_64; Windows and Intel macOS test binaries compile but were not run (`bench/results/platforms/`) | PARTIAL |
+| R-9.10 | Cross-platform tests | full test suite on macOS arm64, Linux aarch64 and Linux x86_64 (`bench/results/platforms/`); in CI run 42997088157 (`3ba45e5`) ran 11 of 13 jobs and passed 8, the Rust tests passed on Intel macOS and failed on Windows x64 and arm64 on one test, fixed since and not yet run again | PARTIAL |
 | R-9.11 | Traceability matrix | this document | PASS |
 | R-9.12 | Continuous gap analysis | RELEASE_READINESS.md; ROADMAP.md | PASS |
 
@@ -169,7 +169,7 @@ Counts: PASS 121 · PARTIAL 14 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 | ID | Requirement | Implementation | Verification | Status |
 |---|---|---|---|---|
 | R-12.1 | Filesystem edge cases | long names, spaces/unicode names, dotfiles, no extension, uppercase extensions, case-colliding paths (benchmark corpora) | robustness | PASS |
-| R-12.2 | Operating-system differences | portable code, CRLF/CR handling, `/`-normalised paths, SMB lock semantics | tests pass on macOS (APFS, SMB share) and Linux (ext4 in a container); the Windows-only code (console handler, path handling) compiles and links for x86_64-pc-windows-gnu | PARTIAL (no Windows run) |
+| R-12.2 | Operating-system differences | portable code, CRLF/CR handling, `/`-normalised paths, SMB lock semantics | tests pass on macOS (APFS, SMB share) and Linux (ext4 in a container); the Windows-only code (console handler, path handling) compiles and links for x86_64-pc-windows-gnu; on the Windows runners of CI run 42997088157 one test failed (a positioned read moves the file cursor on Windows; fixed in `8511cfb`) | PARTIAL (no passing Windows run) |
 | R-12.3 | Unicode | lossy decoding, boundary safety, Unicode case folding in the trigram conditions; search tokens for words of every script (scripts written without spaces as character bigrams) and names compared in NFC, in both engines | robustness, proptest, `textindex::tests::unicode_case_folding_is_covered`, `tests/unicode_text.rs` | PASS |
 | R-12.4 | Binary files | NUL sniff (Engine B), `BinaryDetection::quit` (Engine A), text index keeps the bytes before the first NUL | robustness; LEADERBOARD `binheavy/literal` | PASS |
 | R-12.5 | Invalid encodings | invalid UTF-8 lossy; UTF-16 with a BOM transcoded by both engines | `cli.rs::utf16_bom_is_searched_by_engine_a_and_indexed_by_engine_b` | PASS |
@@ -185,7 +185,7 @@ Counts: PASS 121 · PARTIAL 14 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 | R-12.15 | Verification: unit, integration, differential, property, fuzz, stress, security, regression, cross-platform | section 9 | TEST_RESULTS.md (unit, integration, property, robustness, differential, parity, fuzz regressions, audit, reproducible build); `bench/results/platforms/` (cross-platform) | PARTIAL (cross-platform part: see R-9.10) |
 | R-12.16 | Real integrations | `integrations/` + `.github/` | MCP and LSP automated; VS Code (packaged), Neovim, JetBrains, GitHub action, GitLab, Bitbucket: not run in their hosts | MCP and LSP PASS; rest PARTIAL |
 | R-12.17 | Installation, updates, uninstallation, packaging, signed releases, checksums, SBOMs, reproducible builds | INSTALL.md; release workflow; `tools/sbom.py`; `tools/third_party_notices.py`; `packaging/` (Homebrew, Scoop, winget, `.deb`, `.rpm`); checksums for delivered artifacts | SBOM, notices and checksums generated; reproducible across two build images; `.deb` and `.rpm` installed, run and removed in clean Debian and Fedora containers, the Homebrew formula in a Linux Homebrew (bench/results/platforms/packages/); signing and publishing need the published repository | PARTIAL (signing and publishing) |
-| R-12.18 | Reproducible benchmarks and regression tracking | `leaderboard.py`, `leaderboard_regression.py`, `regression.py`, `benchmarks.yml` | LEADERBOARD.md; workflow not executed | PARTIAL |
+| R-12.18 | Reproducible benchmarks and regression tracking | `leaderboard.py`, `leaderboard_regression.py`, `regression.py`, `benchmarks.yml` | LEADERBOARD.md; `benchmarks.yml` has not completed a run | PARTIAL |
 | R-12.19 | Every edge case/integration/requirement has explicit status and evidence | this matrix | | PASS |
 
 ## 13. Hybrid Rust + Python stack
@@ -200,7 +200,7 @@ Counts: PASS 121 · PARTIAL 14 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 | R-13.6 | abi3 wheels for standard Python | `pyo3/abi3-py39`, maturin | `cp39-abi3` wheel installed and tested on CPython 3.10 to 3.13 on macOS arm64 and on 3.10, 3.12, 3.13 on Linux aarch64 and x86_64 (`wheels-macos-arm64.json`, `linux-*/wheels.json`) | PASS |
 | R-13.7 | Free-threaded `cp314t` wheel; `gil_used = false` after review | `#[pymodule(gil_used = false)]` with the review in `lib.rs` | `cp314t` wheel on free-threaded 3.14: the abi3 wheel is refused, the GIL stays disabled after import with warnings as errors, bindings tests pass (macOS arm64, Linux aarch64 and x86_64) | PASS |
 | R-13.8 | Linux static musl binaries, identical output, measured difference | `tools/linux_verify.sh` + `bench/musl_vs_glibc.py` | static musl binaries for aarch64 and x86_64; byte-identical JSON output on three queries; timing on aarch64 0.85x to 1.25x of glibc on 3 to 9 ms runs, inside the run-to-run noise measured with two copies of one binary (`linux-*/musl-*.txt`) | PASS |
-| R-13.9 | Wheels and binaries for Linux/macOS/Windows in CI; declare a platform only after testing there | `release.yml`; INSTALL.md declares only tested platforms | workflow not run; platforms verified locally instead (R-6.1) | PARTIAL |
+| R-13.9 | Wheels and binaries for Linux/macOS/Windows in CI; declare a platform only after testing there | `release.yml`; INSTALL.md declares only tested platforms | `release.yml` not run; platforms verified locally (R-6.1); CI run 42997088157 (`3ba45e5`) ran 11 of 13 jobs and passed 8 | PARTIAL |
 | R-13.10 | Never cite unverified external claims | external claims limited to primary sources and measured numbers | review | PASS |
 | R-13.11 | Hybrid requirements carry PASS/PARTIAL/FAIL/BLOCKED | this section | | PASS |
 
@@ -222,7 +222,7 @@ Counts: PASS 121 · PARTIAL 14 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 | R-14.12 | Trade-off modes documented and benchmarked | text index stores no contents (small, needs the source tree) | ARCHITECTURE.md, LEADERBOARD.md Engine B section: the one configuration leads all eight metrics on both platforms, size and latency included, so no pair of metrics is left for a second mode to trade | PASS |
 | R-14.13 | Leaderboard with medians, CIs and our rank; status per benchmark | `bench/make_leaderboard_md.py` | LEADERBOARD.md | PASS |
 | R-14.14 | Claims of #1 only for PASS rows, linked to raw data | docs reviewed | README.md, COMPETITIVE.md | PASS |
-| R-14.15 | Every benchmark tracked in CI; regressions beyond noise block the change | `benchmarks.yml` job: the change and its base timed in one interleaved `leaderboard.py` run (`SCRUTATE_BASE_BIN`), compared by `leaderboard_regression.py --within` | workflow not executed | PARTIAL |
+| R-14.15 | Every benchmark tracked in CI; regressions beyond noise block the change | `benchmarks.yml` job: the change and its base timed in one interleaved `leaderboard.py` run (`SCRUTATE_BASE_BIN`), compared by `leaderboard_regression.py --within`, the ratio taken inside each block | `benchmarks.yml` has not completed a run | PARTIAL |
 | R-14.16 | Rank #1 on every benchmark, every metric, every declared platform | everything in R-4.6 | LEADERBOARD.md: #1 with significance on every row measured: 37 of 37 warm and 5 of 5 cold benchmarks on macOS arm64, 14 of 14 warm and 4 of 4 cold in the Linux aarch64 VM, 8 of 8 indexed metrics against Zoekt on macOS and 8 of 8 against Zoekt and livegrep in the Linux VM. Linux x86_64, the third declared platform, has no benchmark run (it is tested under emulation), and no result comes from dedicated idle hardware, which section 14 requires for a published #1 | PARTIAL |
 
 ## Tally

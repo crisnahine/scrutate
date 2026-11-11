@@ -31,14 +31,19 @@ THIRD_PARTY_NOTICES.txt, docs/ and integrations/. The `.deb` and `.rpm` packages
 | Artifact | Platform | Binary SHA-256 |
 |---|---|---|
 | `scrutate-0.1.0-aarch64-apple-darwin.tar.gz` | macOS arm64 | `9aa0a14ec4b0e10b...`, the binary docs/LEADERBOARD.md measured on macOS |
-| `scrutate-0.1.0-cp39-abi3-macosx_13_0_arm64.whl` | macOS arm64 (macOS 13 or newer), CPython 3.9 or newer | |
+| `scrutate-0.1.0-cp39-abi3-macosx_13_0_arm64.whl` | macOS arm64 (macOS 13 or newer), standard CPython 3.9 to 3.14 | |
+| `scrutate-0.1.0-cp314-cp314t-macosx_13_0_arm64.whl` | macOS arm64, free-threaded CPython 3.14 | |
+| `scrutate-0.1.0-cp315-abi3.abi3t-macosx_13_0_arm64.whl` | macOS arm64, CPython 3.15 and newer, standard and free-threaded | |
 | `scrutate-0.1.0-aarch64-unknown-linux-gnu.tar.gz` | Linux aarch64 (glibc) | `261ed1a2a4613e19...`, identical from two build images (`bench/results/platforms/repro/`) and the binary measured in the Linux VM |
-| `scrutate-0.1.0-cp39-abi3-manylinux_2_34_aarch64.whl` | Linux aarch64, CPython 3.9 or newer | |
+| `scrutate-0.1.0-cp39-abi3-manylinux_2_34_aarch64.whl` | Linux aarch64, standard CPython 3.9 to 3.14 | |
+| `scrutate-0.1.0-cp314-cp314t-manylinux_2_34_aarch64.whl` | Linux aarch64, free-threaded CPython 3.14 | |
+| `scrutate-0.1.0-cp315-abi3.abi3t-manylinux_2_34_aarch64.whl` | Linux aarch64, CPython 3.15 and newer, standard and free-threaded | |
 | `scrutate-0.1.0.cdx.json` | | CycloneDX SBOM of the binary's dependencies |
 
-The free-threaded wheels (cp314t) and the static musl binary are built and tested by
-`tools/linux_verify.sh` but not packaged here. Signed archives, attestations and the other
-platforms come from `.github/workflows/release.yml` once the repository is public.
+`tools/release_local.sh` builds one wheel of each kind when `uv` finds the interpreters (3.12,
+3.14t and 3.15), and only the one for `python3` otherwise. The static musl binary is built and
+tested by `tools/linux_verify.sh` but not packaged here. Signed archives, attestations and the
+other platforms come from `.github/workflows/release.yml` once the repository is public.
 
 Previous work is preserved untouched in the sibling directory that held the Python prototype
 ("Titan"); its engine lives on here as `python/scrutate_ref`, the reference implementation the Rust

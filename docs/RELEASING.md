@@ -25,6 +25,12 @@ The oldest compiler that builds is `rust-version` in the workspace `Cargo.toml`:
 locked `notify-types` needs. A `ci.yml` job runs `cargo check` with that version, so a
 dependency update that raises it fails there; README.md and docs/INSTALL.md name it too.
 
+`CONTENT_REVISION` in `crates/scrutate/src/index.rs` and `python/scrutate_ref/index.py` names
+the parsing rules an index was built with, and the index keeps it in `meta` as `content_rev`.
+After a release, a change to `langs.rs`, `parse.rs`, `text.rs`, `parse.py` or `text.py` raises
+it by one in both files, so an index of the older rules reads every file again on its next
+update. It stays 1 until 0.1.0 is out.
+
 ## 2. Benchmarks on the release binary
 
 Move the previous results out of the way first: the harness resumes from an existing file. Each
@@ -57,8 +63,11 @@ Then read the results before going on:
   `SCRUTATE_BASE_BIN=<the previous release binary>` set, `bench/leaderboard.py` times that binary
   as `scrutate base` in the same interleaved blocks as `scrutate` (never ranked, and left out of
   the published tables), and `python3 bench/leaderboard_regression.py --within FILE.json` compares
-  the two inside that file: a row regresses when the 95% interval of the ratio of medians lies
-  above 1.10. A slow minute slows both binaries, so two runs taken minutes apart are no gate.
+  the two inside that file. The ratio is taken inside each block: the median over the blocks of
+  median(new) / median(base) in that block, with the interval from resampling inside each block.
+  A row regresses when that 95% interval lies above 1.10. A slow minute slows both binaries, so
+  two runs taken minutes apart are no gate. `--redo-unstable` refuses to continue a run whose
+  `scrutate` binary or base binary is not the one it measured.
   `leaderboard_regression.py OLD.json NEW.json` still compares two recorded runs of one machine.
   `/usr/bin/time -l` gives instructions retired, which a busy machine does not move.
 
@@ -145,9 +154,15 @@ for Linux, docs/TEST_RESULTS.md for macOS). The archives contain `docs/`, so bui
 A tag `v*` starts `.github/workflows/release.yml` (every platform, signing, attestations). It
 checks the version first, then runs all of `ci.yml` on the tagged commit (`workflow_call`); the
 release job waits for that run and for the binaries and wheels. The package definitions in
-`packaging/` need the release checksums (packaging/README.md). None of it has run: the
-repository is not public. The workflows pass `actionlint` and `zizmor`, and the Linux jobs of
-`ci.yml` pass in a container (`tools/ci_rehearsal.sh`).
+`packaging/` need the release checksums (packaging/README.md). The release workflow has not
+run. The repository is on GitHub, private, with `main` only. The first run of `ci.yml`
+(42997088157, on `3ba45e5`) ran 11 of its 13 jobs and passed 8: the Rust tests on macOS arm64,
+Intel macOS, Linux x86_64 and Linux arm64, the musl build, the fuzz regressions, the Python
+reference, bindings, parity and differential job, and the advisories. The Windows x64 and arm64
+jobs failed on one test and the extra-langs job on one timing test; both are fixed in `8511cfb`
+and not yet run again. The two jobs that wait for the others were skipped. The workflows pass
+`actionlint` and `zizmor`, and the Linux jobs of `ci.yml` pass in a container
+(`tools/ci_rehearsal.sh`).
 
 Before the first tag, in the repository's settings: a ruleset on `main` (pull request, the `ci`
 checks required, no force push), a tag ruleset on `v*`, an environment named `release` with a
@@ -155,8 +170,8 @@ required reviewer (the publishing job waits for it), immutable releases, push pr
 CodeQL default setup. The release job makes a draft, attaches every file, then publishes, which
 is the order immutable releases need. Its notes are the version's section of `CHANGELOG.md`.
 
-After the first run of `ci.yml`: flip R-6.1, R-6.12 and R-9.10 in docs/TRACEABILITY.md from the
-recorded run, not before.
+After the first green run of `ci.yml`: flip R-6.1, R-6.12 and R-9.10 in docs/TRACEABILITY.md
+from the recorded run, not before.
 
 After the release is out: take `open-pull-requests-limit: 0` out of `.github/dependabot.yml`.
 Version updates are paused until then, because each Dependabot pull request runs `ci.yml` on six

@@ -13,14 +13,14 @@ on it. Every row below names the evidence; `bench/results/platforms/` holds the 
 | macOS arm64 (Apple Silicon; macOS 13 or newer, tested on macOS 27) | built and tested natively | `cp39-abi3` on CPython 3.10, 3.11, 3.12, 3.13; `cp314t` on free-threaded 3.14 | **supported** | docs/TEST_RESULTS.md; `wheels-macos-arm64.json` |
 | Linux aarch64 (glibc and static musl) | built and tested in a clean `rust:1-slim-bookworm` container (no Python on the image); the static musl binary prints byte-identical output | `cp39-abi3` on CPython 3.10, 3.12, 3.13; `cp314t` on free-threaded 3.14 | **supported** | `linux-aarch64/verify.log`, `musl-identical.txt`, `wheels.json` |
 | Linux x86_64 (glibc and static musl) | the same script in a `linux/amd64` container, run under emulation on the Apple Silicon host: it verifies behaviour, not x86 speed. For the release commit, gcc crashed under that emulation, so the binary and every test binary were cross-built on arm64 and all 118 Linux tests run in an amd64 container (the other four of the 122 are for macOS on Apple silicon) | same as aarch64 (from the full run on an earlier commit) | **supported** | `linux-x86_64/cross-verify.log` (release commit); `verify.log`, `musl-identical.txt`, `wheels.json` (earlier full run) |
-| macOS x86_64 | cross-built; the test binaries compile and link, none was run (Rosetta 2 is not installed on the build machine) | not built | **not supported yet** | `macos-x86_64/verify.log` |
-| Windows x86_64 | cross-built with MinGW-w64; the test binaries compile and link, none was run | not built | **not supported yet** | `windows-x86_64-cross/build.log` |
-| Windows ARM64 | not built | not built | **not supported yet** | no toolchain or machine; the CI matrix (`.github/workflows/ci.yml`, `release.yml`) covers Windows and Intel macOS but has not run, because the repository is not published yet |
+| macOS x86_64 | cross-built here; the test binaries compile and link (Rosetta 2 is not installed on the build machine). The Rust tests passed on GitHub's `macos-15-intel` runner in CI run 42997088157 | not built | **not supported yet** | `macos-x86_64/verify.log`; CI run 42997088157 |
+| Windows x86_64 | cross-built with MinGW-w64; the test binaries compile and link. On GitHub's `windows-latest` runner (CI run 42997088157) one test failed and the test files after it did not run; the bug is fixed and the run not yet repeated | not built | **not supported yet** | `windows-x86_64-cross/build.log`; CI run 42997088157 |
+| Windows ARM64 | not built here | not built | **not supported yet** | no toolchain or machine here; on GitHub's `windows-11-arm` runner (CI run 42997088157) the same test failed as on x86_64 |
 
 ## From a release archive
 
-No archive is published for 0.1.0: the repository is not public yet. Once releases exist, the steps
-are:
+No archive is published for 0.1.0: the repository is on GitHub but private, and the release
+workflow has not run. Once releases exist, the steps are:
 
 ```sh
 v=0.1.0; t=x86_64-unknown-linux-gnu
@@ -37,7 +37,7 @@ Windows: unzip, put `scrutate.exe` on `PATH`, `scrutate completions powershell |
 
 ## From source (any platform with stable Rust 1.91 or newer)
 
-From a copy of the source tree (the clone URL works once the repository is published):
+From a copy of the source tree (the clone URL works for everyone once the repository is public):
 
 ```sh
 git clone https://github.com/crisnahine/scrutate && cd scrutate
@@ -61,11 +61,22 @@ one: `cp39-abi3` for standard CPython 3.9 to 3.14, `cp314t` for free-threaded 3.
 stable ABI), and `cp315-abi3.abi3t` for 3.15 and newer, standard and free-threaded alike. The
 build above makes the one for the interpreter that runs it; `-i python3.14t` names another.
 
+In Python, Ctrl-C stops `scrutate.grep(...)` and `Repo.index()` within about 100 ms; an
+interrupted `index()` stops the update at its next batch of files, and the index stays as it was.
+`grep` raises its argument errors when it is called: `ValueError` for no paths, a bad pattern,
+glob or type, `FileNotFoundError` for a path that does not exist. `sort=True` returns the matches
+in path and line order (the first one then waits for the whole search), and `threads=` is capped
+at 256. `Repo.read()` raises `FileNotFoundError` for a missing file, `ValueError` for a path
+outside the repository and `OSError` otherwise. After a panic inside the engine, raised as an
+exception, the `Repo` stays usable, and an update that panicked has rolled back.
+
 ## Updating
 
 Replace the binary with the new release (same steps). Indexes are caches: a new version that
 changes the index schema or the bundled model re-indexes repositories automatically on first use
-(the message `index schema changed; rebuilding the index` is normal).
+(the message `index schema changed; rebuilding the index` is normal). A version that parses or
+tokenizes files differently reads every file of an index once, on its next update (`index built
+with other parsing rules; every file is read again on the next update`).
 
 ## Uninstalling
 

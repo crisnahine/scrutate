@@ -25,10 +25,12 @@ below). Every PASS refers to a test, benchmark or audit output in this repositor
 
 ## Why not "production-ready" yet
 
-1. **Platform coverage.** Windows and Intel macOS hardware were not available. Both binaries are
-   cross-built and their test binaries compile and link, but none of them ran; the CI matrix that
-   would run them has not run either, because the repository is not on GitHub yet. Linux
-   x86_64 was tested under emulation, not on x86 hardware.
+1. **Platform coverage.** The repository is on GitHub, private, and its first CI run
+   (42997088157, commit `3ba45e5`) ran 11 of its 13 jobs and passed 8. The Rust tests passed on
+   Intel macOS, macOS arm64, Linux x86_64 and Linux arm64 runners. On Windows x64 and arm64 one
+   test failed (`a_file_searched_in_ranges_equals_one_pass`) and the test files after it did not
+   run; the extra-langs job failed on one timing test. Both are fixed in `8511cfb`, and CI has
+   not run again since.
 2. **No independent security review**; fuzzing ran in ten-minute rounds on one machine.
 3. **Release pipeline unexercised**: signed releases, attestations and package-manager packages exist
    only as workflow definitions.
@@ -44,8 +46,8 @@ Status words as in docs/TRACEABILITY.md. "Resolution" says what closes the item.
 |---|---|---|---|
 | R-4.6, R-14.16 | #1 on every benchmark, metric and declared platform: every row measured is won with significance (macOS arm64: 37 warm, 5 cold, 8 indexed; Linux aarch64 VM: 14 warm, 4 cold, 8 indexed), but Linux x86_64 has no benchmark run and nothing was measured on dedicated hardware | PARTIAL | a run of `bench/run_macos.sh` and `bench/competitors/linux_bench.sh` on a dedicated Mac and on dedicated aarch64 and x86_64 Linux machines |
 | R-14.11 | Results from dedicated, otherwise idle hardware | BLOCKED | a dedicated Mac and Linux machine; the harness and corpora are ready |
-| R-6.1, R-9.10, R-12.2, R-13.9 | Windows and Intel macOS executed, not only cross-built | PARTIAL | a Windows machine or the CI matrix; Intel macOS with Rosetta 2 installed on the build Mac |
-| R-6.12, R-14.15, R-12.18 | CI runs, benchmark regression tracking in CI | PARTIAL | publishing the repository: the workflows are linted and their Linux jobs rehearsed in a container, but only a runner can run them |
+| R-6.1, R-9.10, R-12.2, R-13.9 | Windows and Intel macOS executed, not only cross-built | PARTIAL | CI run 42997088157 passed on Intel macOS and failed on Windows on one test, fixed since; a passing run of the CI matrix on the current commit |
+| R-6.12, R-14.15, R-12.18 | CI runs, benchmark regression tracking in CI | PARTIAL | CI run 42997088157 ran 11 of 13 jobs and passed 8; a green run of `ci.yml`, and `benchmarks.yml` run on a runner |
 | R-12.17 | Signed releases and published packages | PARTIAL | the release workflow's Sigstore steps and the package pull requests, which need the published repository |
 | R-6.15, R-12.16 | GitHub App / GitLab integration exercised against a real platform | PARTIAL | the published repository |
 | R-12.15 | The cross-platform part of verification | PARTIAL | as R-9.10 |
@@ -106,6 +108,6 @@ reference lacked four definition kinds the engine has, so parity failed on Rust 
 
 Use 0.1.0 for development work on macOS arm64 and Linux: both engines are verified there, the
 results are reproducible from this repository, and the remaining gaps are listed above with what
-closes each. Before calling it production-ready: run the CI matrix (publishing the repository),
-execute the Windows and Intel macOS builds, get an independent security review, and repeat the
+closes each. Before calling it production-ready: a green run of the CI matrix, the Windows tests
+passing on it, get an independent security review, and repeat the
 benchmarks on dedicated hardware.

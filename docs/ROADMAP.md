@@ -10,7 +10,7 @@ docs/TRACEABILITY.md.
 |---|---|
 | Searching inside archives (zip, tar) and compressed files (R-2A.2) | `grep -z`, `src/archive.rs`, docs/CLI.md |
 | Look-around and backreferences with a step budget (R-2A.2) | `grep -P` (PCRE2, stopped by its match limit with a warning) |
-| Fuzzy patterns longer than 128 bytes (R-2A.2) | `--fuzzy`, up to 4096 bytes (64-bit blocks with carries) |
+| Fuzzy patterns longer than 128 bytes (R-2A.2) | `--fuzzy`, up to 4096 characters (64-bit blocks with carries) |
 | Fuzzy regex (R-2A.2) | `--fuzzy-regex[=N]`, `src/fuzzyre.rs` (bit-parallel Glushkov automaton, up to 64 positions) |
 | Small trees (R-4.6) | the parallel walk from the first directory of any root that holds directories (one thread used to read all 60 directories of a 211-file repository while the search threads waited), and a sequential walk feeding three search threads only for a flat root of up to 256 files; ignore files matched without a regex (each built a `GlobSet`: 100 to 400 µs, the global excludes file 0.3 ms of every run); 133 system functions bound on first use (0.4 ms); a grep-only argument parser (0.1 ms) |
 | One very long line (R-4.6) | read into one exactly sized buffer, each thread filling its own part (100 MB: 12.6 ms on one thread, 4.0 ms on five), and its UTF-8 checked a piece at a time as it is written: 60.5 ms to 32 ms on a 100 MB line (ugrep 38.8 ms) |
@@ -49,12 +49,16 @@ docs/TRACEABILITY.md.
 ## Blocked: needs the repository published
 
 Publishing was declined on 2026-11-08 and asked for on 2026-11-11, on one condition: every way
-to install and use the tool works first. docs/RELEASE_READINESS.md lists what ran here and what
-only GitHub can run. The order from there: a private repository, one green run of `ci.yml`, the
-settings in docs/RELEASING.md, public, tag `v0.1.0`.
+to install and use the tool works first. The repository now exists on GitHub, private
+(`github.com/crisnahine/scrutate`, branch `main` only). docs/RELEASE_READINESS.md lists what ran
+here and what ran on GitHub. The order from there: one green run of `ci.yml`, the settings in
+docs/RELEASING.md, public, tag `v0.1.0`.
 
-- Run the CI matrix and the release workflow; flip the Windows and Intel macOS rows to PASS only
-  with a recorded run (R-6.1, R-9.10). Both are cross-built here and their test binaries link.
+- A green run of the CI matrix, then the release workflow; flip the Windows and Intel macOS rows
+  to PASS only with a recorded passing run (R-6.1, R-9.10). The first run (42997088157) passed
+  8 of its 11 jobs that ran: the Rust tests on Intel macOS, macOS arm64, Linux x86_64 and Linux
+  arm64 passed, the Windows x64 and arm64 jobs failed on one test, and the extra-langs job on one
+  timing test. Both are fixed in `8511cfb` and not yet run again.
 - Signed releases with Sigstore attestations (`release.yml` has the steps; they need the
   repository's OIDC identity) and the free-threaded wheels built in CI (built and tested locally).
 - Publish the packages: tap, bucket and winget pull requests with the release checksums
@@ -116,31 +120,46 @@ settings in docs/RELEASING.md, public, tag `v0.1.0`.
 
 ### Known limits that stay in 0.1.0
 
-- An MCP answer checks the files it cites, and the files its arguments name, and re-reads a
-  changed one first. A change in a file the answer does not cite (a new definition or a new caller
-  somewhere else) is seen at the next scan: within about a second by default, or after
-  `--refresh-interval` seconds when that is given.
 - On Windows the index has no status-change time, so a file made unreadable without a change of
   size or modification time keeps its chunks until `index --force` or `reindex` with `force`.
-  Unix compares the status-change time too.
+  Unix compares the status-change time too. The standard library's
+  `MetadataExt::change_time` is still unstable in Rust 1.99.1 (feature `windows_change_time`),
+  and reading the time another way needs an open handle per file on every scan.
 - A method call on a value whose type the resolver cannot infer (the result of a function it
   does not know, or of a chain such as `file.metadata().ok()`) still matches a definition of
   that name in the same language family.
-- A one-line file with 8,000 nested functions costs about 1.1 GB of memory to index (0.75 GB
-  with `SCRUTATE_SEMANTIC=none`): chunk text and body are cut at 32 KiB each, but every one of
-  the 8,000 chunks holds its own.
-- Directories the code index skips by name (`node_modules`, and outside git also `build`, `dist`,
-  `target` and `venv`) are still searched by `scrutate grep` when no ignore file excludes them, as
-  ripgrep does; `grep_code` skips them, as the index does.
-- The Python reference reads `.rgignore` files (ripgrep reads them for it) and the engine does
-  not; without ripgrep installed, the reference ignores `.gitignore` as well.
-- A C++ function declared at the top level without a body (`Shape make();`) is not a symbol. A
-  method declared in its class and defined outside it is two symbols with one qualified name: the
-  declaration (`method`) and the definition (`function`).
-- The Windows and Intel macOS binaries are cross-built here, and their test binaries compile and
-  link, but none of them has run. Rosetta 2 on the build Mac would run the Intel macOS tests, a
-  Windows 11 machine or virtual machine the Windows ones, and the CI matrix both, once the
-  repository is on GitHub.
+- In `refs`, a name inside the arguments of a Rust macro that is not a call is tied by name to a
+  definition: the field `text` in `vec![H { text: 1 }]` counts as a reference to a function
+  `text`. The same field outside a macro is not.
+- Some calls record no call edge, so `callers` and `callees` miss them: a Verilog task call, a
+  function in a VHDL package body (it is not a symbol either), Jsonnet, Make `$(call ...)` and
+  assembly.
+- A one-line file with 8,000 nested functions takes 542 MB of memory to index (462 MB with
+  `SCRUTATE_SEMANTIC=none`) and 3.1 to 3.5 s (release build, macOS arm64). Each of the 8,000
+  chunks keeps its own text of up to 32 KiB, so the index holds 40 MB of compressed chunk text
+  for that file, and the postings of those chunks.
+- `--fuzzy-regex` is byte-oriented: a character outside ASCII counts as several positions and
+  edits, and `-i` folds ASCII letters only. `--fuzzy` counts characters and folds case as `-i`
+  does.
+- A glob with a slash in a `.scrutate.toml` above the current directory is read from the file's
+  directory, except when a directory part on the way down holds `[...]`, `{...}` or a
+  backslash: such a glob applies as written, from the current directory.
+- `rg --sort path` orders the results of each root in command-line order; `scrutate grep --sort`
+  orders all results by path. With two roots the lines can come in another order.
+- Traditional and simplified Han meet in ranked search through the Unihan simplified forms.
+  The Japanese form 関 has its own entry there, the rare 𬮦, so it does not meet Chinese 关 or
+  traditional 關.
+- The Python reference finds the Han table through its path in the source tree
+  (`crates/scrutate/data/han_fold.txt`), so it works from a checkout or an editable install,
+  not from a copy of the package alone.
+- The Python reference cuts a `.txt` or Markdown file into windows only, where the engine gives
+  a `.txt` file a module chunk and Markdown its sections. Parity holds for the languages the
+  reference has a grammar for, and `bench/parity.py` runs on Python and Rust sources.
+- The Windows and Intel macOS builds are not verified on a recorded passing run. In CI run
+  42997088157 (commit `3ba45e5`), the Rust tests passed on macOS arm64, Intel macOS (`macos-15-intel`),
+  Linux x86_64 and Linux arm64. On Windows x64 and Windows arm64 one test failed
+  (`a_file_searched_in_ranges_equals_one_pass`), and the test files after it did not run. The
+  bug it found is fixed in `8511cfb`; the run on Windows has not been repeated.
 - No benchmark has run on x86_64 Linux or on dedicated, otherwise idle hardware: every number
   comes from the development Mac, shared with other work, and a 5-CPU Linux VM on it. A run of
   `bench/run_macos.sh` and `bench/competitors/linux_bench.sh` on dedicated machines closes it
