@@ -567,6 +567,8 @@ fn corruption_found_during_use_triggers_a_rebuild() {
 fn indexed_grep_equals_walk() {
     let r = Repo::new("textindex");
     r.write(".gitignore", b"ignored/\n*.log\n");
+    r.write(".rgignore", b"!debug.log\nsrc/rg_only.rs\n");
+    r.write("src/rg_only.rs", b"fn make_widget_0() {}\n");
     fs::create_dir_all(r.root.join(".git")).unwrap();
     for i in 0..40 {
         r.write(
@@ -614,7 +616,7 @@ fn indexed_grep_equals_walk() {
     };
     let (code, out, err) = r.run(&["index", "--text"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(out.contains("text index: 45 files"), "{out}");
+    assert!(out.contains("text index: 46 files"), "{out}");
     check("fresh");
     // edit, add, delete, rename
     r.write("src/m3.rs", b"fn make_widget_1000() {}\n");
@@ -645,6 +647,22 @@ fn indexed_grep_equals_walk() {
     // flags that change the file set are refused rather than silently ignored
     let (code, _, err) = r.run(&["grep", "--index", "--hidden", "x"]);
     assert_eq!(code, 2, "{err}");
+}
+
+#[test]
+fn rgignore_files_keep_files_out_of_the_code_index() {
+    let r = Repo::new("rgignore");
+    r.write(".ignore", b"*.py\n");
+    r.write(".rgignore", b"gen/\n!keep.py\n");
+    r.write("keep.py", b"def kept_fn():\n    return 1\n");
+    r.write("gen/x.py", b"def generated_fn():\n    return 2\n");
+    r.write("other.py", b"def other_fn():\n    return 3\n");
+    assert_eq!(r.run(&["index"]).0, 0);
+    assert_eq!(r.run(&["symbol", "kept_fn"]).0, 0, ".rgignore speaks before .ignore");
+    assert_eq!(r.run(&["symbol", "generated_fn"]).0, 1);
+    assert_eq!(r.run(&["symbol", "other_fn"]).0, 1);
+    assert_eq!(r.run(&["grep", "--index", "-F", "generated_fn"]).0, 1);
+    assert_eq!(r.run(&["grep", "--index", "-F", "kept_fn"]).0, 0);
 }
 
 /// Each line of a multi-line match is printed with its own number, as grep-class tools do.

@@ -589,10 +589,80 @@ fn named_files_are_searched_as_ripgrep_does() {
             assert_eq!(d.run(&v).0, code, "{v:?}");
         }
     }
-    // a file named twice is searched twice, as ripgrep does, but counted and listed once per path
+    // a file named twice is searched, counted and listed twice, as ripgrep does
     assert_eq!(d.run(&["grep", "foo", "a.txt", "a.txt"]).1, "a.txt:1:foo\na.txt:1:foo\n");
-    assert_eq!(d.run(&["grep", "-c", "foo", "a.txt", "a.txt"]).1, "a.txt:2\n");
-    assert_eq!(d.run(&["grep", "-l", "foo", "a.txt", "a.txt"]).1, "a.txt\n");
+    assert_eq!(d.run(&["grep", "-c", "foo", "a.txt", "a.txt"]).1, "a.txt:1\na.txt:1\n");
+    assert_eq!(d.run(&["grep", "-l", "foo", "a.txt", "a.txt"]).1, "a.txt\na.txt\n");
+}
+
+#[test]
+fn repeated_and_overlapping_paths_are_searched_once_per_path_as_ripgrep_does() {
+    let d = Dir::new("overlap");
+    d.write("sub/deep/a.txt", b"end one\nx\nend two\n");
+    d.write("sub/b.txt", b"end three\n");
+    d.write("sub/c.rs", b"fn end() {}\n");
+    // ripgrep 15 (`rg -n`, `-T rust` for `-t '!rust'`), sorted
+    let cases: &[(&[&str], &[&str])] = &[
+        (&["-c", "end", "sub/deep", "sub"], &["sub/b.txt:1", "sub/c.rs:1", "sub/deep/a.txt:2", "sub/deep/a.txt:2"]),
+        (&["-c", "end", "sub/b.txt", "sub/b.txt"], &["sub/b.txt:1", "sub/b.txt:1"]),
+        (&["-c", "end", "sub/deep/a.txt", "sub/deep", "sub"], &["sub/b.txt:1", "sub/c.rs:1", "sub/deep/a.txt:2", "sub/deep/a.txt:2", "sub/deep/a.txt:2"]),
+        (&["-l", "end", "sub/deep", "sub"], &["sub/b.txt", "sub/c.rs", "sub/deep/a.txt", "sub/deep/a.txt"]),
+        (&["-l", "end", "sub/b.txt", "sub/b.txt"], &["sub/b.txt", "sub/b.txt"]),
+        (
+            &["end", "sub/deep", "sub"],
+            &[
+                "sub/b.txt:1:end three",
+                "sub/c.rs:1:fn end() {}",
+                "sub/deep/a.txt:1:end one",
+                "sub/deep/a.txt:1:end one",
+                "sub/deep/a.txt:3:end two",
+                "sub/deep/a.txt:3:end two",
+            ],
+        ),
+        (
+            &["end", "sub/b.txt", "sub"],
+            &["sub/b.txt:1:end three", "sub/b.txt:1:end three", "sub/c.rs:1:fn end() {}", "sub/deep/a.txt:1:end one", "sub/deep/a.txt:3:end two"],
+        ),
+        (
+            &["-t", "!rust", "end", "sub/c.rs", "sub"],
+            &["sub/b.txt:1:end three", "sub/c.rs:1:fn end() {}", "sub/deep/a.txt:1:end one", "sub/deep/a.txt:3:end two"],
+        ),
+        (&["-t", "!rust", "-c", "end", "sub/c.rs", "sub"], &["sub/b.txt:1", "sub/c.rs:1", "sub/deep/a.txt:2"]),
+        (&["-g", "!*.rs", "-l", "end", "sub/c.rs", "sub"], &["sub/b.txt", "sub/c.rs", "sub/deep/a.txt"]),
+        (&["-c", "end", "sub", "./sub"], &["./sub/b.txt:1", "./sub/c.rs:1", "./sub/deep/a.txt:2", "sub/b.txt:1", "sub/c.rs:1", "sub/deep/a.txt:2"]),
+    ];
+    // both walks (the one-thread walk stopping early and the parallel walk), and the sorted output
+    let envs: &[&[(&str, &str)]] = &[&[], &[("SCRUTATE_SMALL_TREE", "1")], &[("SCRUTATE_SMALL_TREE", "0")]];
+    for &(args, want) in cases {
+        for extra in [&[][..], &["--sort"], &["-j1"], &["--sort", "--max-results", "100"]] {
+            for env in envs {
+                let v = [&["grep"][..], extra, args].concat();
+                let (code, out, err) = d.run_env(&v, env);
+                assert_eq!((code, sorted(&out)), (0, want.iter().map(|s| s.to_string()).collect::<Vec<_>>()), "{v:?} {env:?}: {err}");
+            }
+        }
+    }
+    let (_, out, _) = d.run(&["grep", "--json", "-c", "end", "sub/b.txt", "sub/b.txt"]);
+    assert_eq!(out.lines().filter(|l| l.contains("\"type\":\"count\"") && l.contains("\"count\":1")).count(), 2, "{out}");
+    assert_eq!(d.run(&["grep", "-c", "zzz", "sub", "sub"]).0, 1);
+}
+
+#[test]
+fn rgignore_files_are_read_before_ignore_and_gitignore_files_as_ripgrep_does() {
+    let d = Dir::new("rgignore");
+    fs::create_dir_all(d.0.join(".git")).unwrap();
+    d.write(".rgignore", b"*.log\n!keep.txt\n");
+    d.write(".ignore", b"keep.txt\n*.tmp\n");
+    d.write("sub/.gitignore", b"!b.log\n");
+    d.write("sub/.rgignore", b"!c.log\n");
+    for f in ["a.log", "keep.txt", "x.tmp", "plain.txt", "sub/b.log", "sub/c.log"] {
+        d.write(f, b"foo\n");
+    }
+    // ripgrep 15
+    assert_eq!(sorted(&d.run(&["grep", "-l", "foo"]).1), ["keep.txt", "plain.txt", "sub/c.log"]);
+    assert_eq!(sorted(&d.run(&["grep", "-l", "foo", "sub"]).1), ["sub/c.log"]);
+    assert_eq!(sorted(&run(&d.0.join("sub"), &["grep".as_ref(), "-l".as_ref(), "foo".as_ref()], &[]).1), ["c.log"]);
+    assert_eq!(sorted(&d.run(&["grep", "-l", "--no-ignore", "foo"]).1), ["a.log", "keep.txt", "plain.txt", "sub/b.log", "sub/c.log", "x.tmp"]);
 }
 
 #[test]
@@ -695,6 +765,22 @@ fn a_sorted_search_with_a_cap_keeps_the_first_matches_in_path_order() {
         let files: String = counts.keys().take(3).map(|p| format!("{p}\n")).collect();
         assert_eq!(d.run_env(&["grep", "--sort", "-l", "--max-results", "3", "foo"], env).1, files, "{env:?}");
     }
+}
+
+#[test]
+fn flags_that_need_no_pattern_work_alone() {
+    let d = Dir::new("nopattern");
+    let (code, out, err) = d.run(&["grep", "--type-list"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.lines().any(|l| l.starts_with("rust: ") && l.contains("*.rs")), "{out}");
+    for flag in ["--version", "-V"] {
+        let (code, out, err) = d.run(&["grep", flag]);
+        assert!(code == 0 && out.contains(env!("CARGO_PKG_VERSION")), "{flag}: {out}{err}");
+    }
+    for flag in ["--help", "-h"] {
+        assert_eq!(d.run(&["grep", flag]).0, 0, "{flag}");
+    }
+    assert_eq!(d.run(&["grep"]).0, 2);
 }
 
 #[test]

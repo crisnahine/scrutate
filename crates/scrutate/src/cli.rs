@@ -104,7 +104,7 @@ pub enum Shell {
 #[derive(clap::Args)]
 pub struct GrepArgs {
     /// the pattern (omit it when patterns are given with -e)
-    #[arg(required_unless_present = "regexp")]
+    #[arg(required_unless_present_any = ["regexp", "type_list"])]
     pub pattern: Option<String>,
     /// files or directories to search, `-` for standard input (default: standard input when it is
     /// a pipe or a file, otherwise the current directory)
@@ -250,14 +250,14 @@ struct GrepCli {
 #[derive(Subcommand)]
 enum GrepCmd {
     /// Engine A: instant search of files (no index). PATTERN is a regex unless -F, --ident or --fuzzy
-    #[command(alias = "g")]
+    #[command(alias = "g", version)]
     Grep(GrepArgs),
 }
 
 #[derive(Subcommand)]
 pub enum Cmd {
     /// Engine A: instant search of files (no index). PATTERN is a regex unless -F, --ident or --fuzzy
-    #[command(alias = "g")]
+    #[command(alias = "g", version)]
     Grep(GrepArgs),
     /// Engine B: build or update the index (code intelligence and the text index for `grep --index`)
     Index {
@@ -1005,11 +1005,8 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
     match_color.set_fg(Some(Color::Red)).set_bold(true);
     let mut collected: Vec<instant::Hit> = Vec::new();
     let mut pipe_closed = false; // the reader went away (`| head`): stop quietly, like ripgrep (exit 0)
-    let mut counts: std::collections::BTreeMap<Arc<str>, u64> = std::collections::BTreeMap::new();
-    let mut files: Vec<Arc<str>> = Vec::new();
-    let mut seen_files: std::collections::HashSet<Arc<str>> = std::collections::HashSet::new();
+    let mut counts: Vec<(Arc<str>, u64)> = Vec::new();
     let defer = out.sort || out.count || out.files_with_matches || out.symbols;
-    let bookkeeping = out.count || out.files_with_matches;
     let mut found = false;
     let mut linebuf: Vec<u8> = Vec::with_capacity(512);
     let groups = o.before > 0 || o.after > 0;
@@ -1089,17 +1086,8 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
                 found = true;
                 if o.count_only || o.files_only {
                     // per-file record: `line` carries the count
-                    *counts.entry(Arc::clone(&h.path)).or_insert(0) += h.line;
-                    if seen_files.insert(Arc::clone(&h.path)) {
-                        files.push(Arc::clone(&h.path));
-                    }
+                    counts.push((h.path, h.line));
                     return;
-                }
-                if bookkeeping {
-                    *counts.entry(Arc::clone(&h.path)).or_insert(0) += 1;
-                    if seen_files.insert(Arc::clone(&h.path)) {
-                        files.push(Arc::clone(&h.path));
-                    }
                 }
             }
             if defer {
@@ -1122,6 +1110,8 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
     if pipe_closed {
         return Ok(if found { 0 } else { 1 });
     }
+    // a record per file searched: a file two paths reach is counted and listed twice, as ripgrep does
+    counts.sort_by(|a, b| a.0.cmp(&b.0));
     if out.count {
         for (p, c) in &counts {
             if out.json {
@@ -1133,8 +1123,7 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
             }
         }
     } else if out.files_with_matches {
-        files.sort();
-        for p in &files {
+        for (p, _) in &counts {
             if out.json {
                 writeln!(w, "{}", serde_json::json!({"type": "file", "schema": SCHEMA, "path": p}))?;
             } else {

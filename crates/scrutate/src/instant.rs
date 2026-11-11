@@ -1464,6 +1464,9 @@ fn performance_cores() -> Option<usize> {
     None
 }
 
+/// ripgrep's own ignore file: read before `.ignore` and `.gitignore`, switched off with them.
+pub const RGIGNORE: &str = ".rgignore";
+
 /// The glob and file-type filters of `o`, plus the index directory, which is never searched.
 pub fn overrides(root: &Path, o: &Options) -> Result<ignore::overrides::Override> {
     let mut ob = OverrideBuilder::new(root);
@@ -1503,7 +1506,12 @@ fn walk_builder(roots: &[PathBuf], o: &Options) -> Result<WalkBuilder> {
         .max_depth(o.max_depth)
         .max_filesize(o.max_filesize)
         .threads(default_threads(o));
-    wb.overrides(overrides(&roots[0], o)?);
+    if !o.no_ignore {
+        wb.add_custom_ignore_filename(RGIGNORE);
+    }
+    // anchored at a root that is a file, the filters would miss the files of the other roots
+    let anchor = if roots[0].is_dir() { roots[0].as_path() } else { roots[0].parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new(".")) };
+    wb.overrides(overrides(anchor, o)?);
     Ok(wb)
 }
 
@@ -1533,8 +1541,9 @@ fn has_dirs(roots: &[PathBuf], o: &Options) -> bool {
 
 enum Small {
     Done,
-    /// more files than the budget: the paths already searched, for the parallel walk to skip
-    Big(std::collections::HashSet<PathBuf>),
+    /// more files than the budget: the paths already searched, each with the times it was (overlapping
+    /// roots reach a file more than once), for the parallel walk to skip that many times
+    Big(std::collections::HashMap<PathBuf, AtomicUsize>),
 }
 
 /// Walks on one thread while a few threads search the files it finds, so a small tree pays
@@ -1587,7 +1596,8 @@ fn small_first(
         let (more, mut added) = (tx.clone(), 0);
         drop(tx);
         let walker = s.spawn(move || {
-            let mut seen = std::collections::HashSet::new();
+            let mut seen = std::collections::HashMap::<PathBuf, AtomicUsize>::new();
+            let mut taken = 0;
             let mut errors = Vec::new();
             for entry in wb.build() {
                 if cancel.load(Ordering::Relaxed) {
@@ -1604,14 +1614,15 @@ fn small_first(
                     c.met_dir(&entry);
                     continue;
                 }
-                if seen.len() == limit {
+                if taken == limit {
                     return (seen, errors, true);
                 }
+                taken += 1;
                 let size = if o.want_bytes { entry.metadata().ok().map(|m| m.len()) } else { None };
                 let rel = label(entry.path(), labels, o);
                 let named = o.paths_as_given && entry.depth() == 0;
                 let path = entry.into_path();
-                seen.insert(path.clone());
+                *seen.entry(path.clone()).or_default().get_mut() += 1;
                 if work_tx.send((path, rel, size, named)).is_err() {
                     break;
                 }
@@ -2352,8 +2363,14 @@ fn walk(
                     c.met_dir(&entry);
                     return WalkState::Continue;
                 }
-                if !searched.is_empty() && searched.contains(entry.path()) {
-                    return WalkState::Continue;
+                if let Some(n) = if searched.is_empty() { None } else { searched.get(entry.path()) } {
+                    let mut left = n.load(Ordering::Relaxed);
+                    while left > 0 {
+                        match n.compare_exchange_weak(left, left - 1, Ordering::Relaxed, Ordering::Relaxed) {
+                            Ok(_) => return WalkState::Continue,
+                            Err(now) => left = now,
+                        }
+                    }
                 }
                 let size = if opts.want_bytes { entry.metadata().ok().map(|m| m.len()) } else { None };
                 let rel = label(entry.path(), &labels, &opts);

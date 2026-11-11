@@ -112,6 +112,7 @@ pub fn list_files(root: &Path) -> Vec<String> {
         .git_exclude(true)
         .ignore(true)
         .parents(true)
+        .add_custom_ignore_filename(crate::instant::RGIGNORE)
         .follow_links(false)
         .filter_entry(move |e| !(e.file_type().map(|t| t.is_dir()).unwrap_or(false) && skip(&e.file_name().to_string_lossy())))
         .build();
@@ -145,8 +146,8 @@ pub struct Membership {
     git_top: Option<PathBuf>,
     exclude: Gitignore,
     global: Gitignore,
-    /// per directory: its `.ignore`, then its `.gitignore` (inside a git repository)
-    dirs: HashMap<PathBuf, [Option<Gitignore>; 2]>,
+    /// per directory: its `.rgignore`, its `.ignore`, then its `.gitignore` (inside a git repository)
+    dirs: HashMap<PathBuf, [Option<Gitignore>; 3]>,
 }
 
 #[cfg_attr(target_os = "macos", allow(dead_code))]
@@ -166,20 +167,20 @@ impl Membership {
         Membership { root: root.to_path_buf(), skip: skip_dirs(git_top.is_some()), git_top, exclude, global, dirs: HashMap::new() }
     }
 
-    fn matchers(&mut self, dir: &Path) -> &[Option<Gitignore>; 2] {
+    fn matchers(&mut self, dir: &Path) -> &[Option<Gitignore>; 3] {
         let git = self.git_top.is_some();
         self.dirs.entry(dir.to_path_buf()).or_insert_with(|| {
             let read = |name: &str| Some(dir.join(name)).filter(|p| p.is_file()).map(|p| Gitignore::new(&p).0);
-            [read(".ignore"), if git { read(".gitignore") } else { None }]
+            [read(crate::instant::RGIGNORE), read(".ignore"), if git { read(".gitignore") } else { None }]
         })
     }
 
     fn ignored(&mut self, path: &Path) -> bool {
         let is_dir = path.is_dir();
         let top = self.git_top.clone().unwrap_or_else(|| self.root.clone());
-        // as the walk decides: a `.ignore` at any level speaks before every `.gitignore`, and
-        // within one kind the nearest directory speaks first
-        for kind in 0..2 {
+        // as the walk decides: a `.rgignore` at any level speaks before every `.ignore`, which speaks
+        // before every `.gitignore`, and within one kind the nearest directory speaks first
+        for kind in 0..3 {
             let mut dir = path.parent();
             while let Some(d) = dir {
                 if let Some(m) = &self.matchers(d)[kind] {
@@ -212,7 +213,7 @@ impl Membership {
         if names.first().map(|n| n == INDEX_DIR || n == ".git").unwrap_or(false) {
             return false;
         }
-        if names.last().map(|n| n == ".gitignore" || n == ".ignore").unwrap_or(false) {
+        if names.last().map(|n| n == ".gitignore" || n == ".ignore" || n == crate::instant::RGIGNORE).unwrap_or(false) {
             self.dirs.clear(); // the rules changed: what is indexed may change too
             return true;
         }
@@ -253,16 +254,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join(".git")).unwrap();
         std::fs::create_dir_all(root.join("sub")).unwrap();
-        std::fs::write(root.join(".ignore"), "*.log\n").unwrap();
+        std::fs::write(root.join(".ignore"), "*.log\nrg.rs\n").unwrap();
         std::fs::write(root.join(".gitignore"), "*.tmp\n").unwrap();
         std::fs::write(root.join("sub/.gitignore"), "!keep.log\n!keep.tmp\n").unwrap();
-        for name in ["sub/keep.log", "sub/keep.tmp", "sub/a.rs", "sub/other.tmp"] {
+        std::fs::write(root.join(".rgignore"), "!rg.rs\n!rg.tmp\n").unwrap();
+        for name in ["sub/keep.log", "sub/keep.tmp", "sub/a.rs", "sub/other.tmp", "sub/rg.rs", "sub/rg.tmp"] {
             std::fs::write(root.join(name), "x\n").unwrap();
         }
         let root = std::fs::canonicalize(&root).unwrap();
         let walked = list_files(&root);
         let mut f = Membership::new(&root);
-        for (name, kept) in [("sub/keep.log", false), ("sub/keep.tmp", true), ("sub/a.rs", true), ("sub/other.tmp", false)] {
+        for (name, kept) in
+            [("sub/keep.log", false), ("sub/keep.tmp", true), ("sub/a.rs", true), ("sub/other.tmp", false), ("sub/rg.rs", true), ("sub/rg.tmp", true)]
+        {
             assert_eq!(walked.iter().any(|p| p == name), kept, "the walk on {name}: {walked:?}");
             assert_eq!(f.may_contain(&root.join(name)), kept, "membership of {name}");
         }

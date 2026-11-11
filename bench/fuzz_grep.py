@@ -4,12 +4,13 @@
 usage: fuzz_grep.py [--bin SCRUTATE] [--seconds 60] [--seed 1]
 
 Each tree has a `.git` directory, CRLF and BOM files, NUL bytes, invalid UTF-8, hidden files,
-`.gitignore` and `.ignore` files and a symlink. Six random flag sets run on it with both tools,
-each on `.`, one file, one directory or a file and a directory, with each tool's default for
-printing file names unless -H or -I is drawn; sorted output and exit codes must agree. The file
-given by name is `plain.txt`, text no ignore rule names, outside the directories given, and no
-glob is drawn with named paths: an explicitly named binary file, a file named twice (alone and
-under its directory) and globs under a named directory are ripgrep differences of their own. A tree that differs is kept, with its arguments in
+`.gitignore`, `.ignore` and `.rgignore` files and a symlink. Six random flag sets run on it with
+both tools, each on `.`, one file, one directory, a file and a directory, or paths that repeat or
+overlap (a file twice, a directory twice, a directory and one inside it, `.` and a directory or
+`plain.txt`), with each tool's default for printing file names unless -H or -I is drawn; sorted
+output and exit codes must agree. The file given by name is `plain.txt`, text no ignore rule
+names, and no glob is drawn with named paths: an explicitly named binary file and globs under a
+named directory are ripgrep differences of their own. A tree that differs is kept, with its arguments in
 ARGS.txt, under the temporary directory printed at the end. One difference is ripgrep's and is
 counted apart: with `-v` or `^$` it prints one line before a NUL byte and stops, so differences
 in the lines of the files that got a NUL byte are excused. Runs whose arguments ripgrep rejects
@@ -63,7 +64,7 @@ def make():
             with open(os.path.join(WORK, d, n), "wb") as f:
                 f.write(data)
         if rnd.random() < 0.3:
-            with open(os.path.join(WORK, d, rnd.choice([".gitignore", ".ignore"])), "w") as f:
+            with open(os.path.join(WORK, d, rnd.choice([".gitignore", ".ignore", ".rgignore"])), "w") as f:
                 f.write("\n".join(rnd.sample(IGN, rnd.randint(1, 3))) + "\n")
     with open(os.path.join(WORK, "plain.txt"), "w") as f:
         f.write("\n".join(line() for _ in range(rnd.randint(0, 8))) + "\n")
@@ -116,7 +117,8 @@ def args():
     return out
 
 def paths(a):
-    """`.` mostly; otherwise `plain.txt`, one directory, or both (with `a`'s globs dropped)."""
+    """`.` mostly; otherwise `plain.txt`, one directory, both, or repeated and overlapping paths
+    (with `a`'s globs dropped)."""
     dirs = sorted(os.path.relpath(d, WORK) for d, _, _ in os.walk(WORK) if ".git" not in d.split(os.sep))[1:]
     r = rnd.random()
     if r < 0.6:
@@ -126,9 +128,13 @@ def paths(a):
         del a[i : i + 2]
     if r < 0.8 or not dirs:
         return a + ["plain.txt"]
-    if r < 0.9:
+    if r < 0.85:
         return a + [rnd.choice(dirs)]
-    return a + ["plain.txt", rnd.choice(dirs)]
+    if r < 0.9:
+        return a + ["plain.txt", rnd.choice(dirs)]
+    d = rnd.choice(dirs)
+    inner = [x for x in dirs if x.startswith(d + os.sep)]
+    return a + rnd.choice([["plain.txt", "plain.txt"], [d, d], [".", d], [d, "."], ["plain.txt", "."], [d] + inner[:1], inner[:1] + [d]])
 
 
 def run(tool, a):
