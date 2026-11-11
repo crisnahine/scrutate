@@ -5,6 +5,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex, MutexGuard};
 
 use anyhow::{bail, Context, Result};
@@ -20,6 +21,18 @@ const MAX_MESSAGE: usize = 256 << 20;
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// Put a fresh index in place of a damaged one. The caller has closed its own connection; the
+/// readers' one closes here, and requests wait on the lock until the new index is there.
+fn replace_damaged(shared: &Shared, root: &Path) {
+    let mut g = lock(shared);
+    *g = None;
+    crate::index::wipe_index(root);
+    match crate::open_updated(root, true) {
+        Ok((s, _)) => *g = Some(s),
+        Err(e) => eprintln!("scrutate: index rebuild failed: {e:#}"),
+    }
 }
 
 fn send(msg: &Value) {
@@ -227,6 +240,8 @@ struct Server {
     /// open documents by repository-relative path (by URI when outside the root)
     docs: HashMap<String, String>,
     saves: Option<mpsc::Sender<()>>,
+    /// a request met a damaged database: the save worker replaces the index
+    damaged: Arc<AtomicBool>,
     initialized: bool,
     shutdown: bool,
 }
@@ -302,22 +317,30 @@ impl Server {
     /// Saves are indexed on a second connection, so requests keep reading meanwhile (WAL).
     fn save_worker(&self) -> Option<mpsc::Sender<()>> {
         let (tx, rx) = mpsc::channel::<()>();
-        let (shared, root) = (Arc::clone(&self.searcher), self.root.clone());
+        let (shared, root, damaged) = (Arc::clone(&self.searcher), self.root.clone(), Arc::clone(&self.damaged));
         std::thread::Builder::new()
             .name("scrutate-save".into())
             .spawn(move || {
                 let mut ix: Option<Index> = None;
                 while rx.recv().is_ok() {
                     while rx.try_recv().is_ok() {} // one update covers every save queued meanwhile
+                    if damaged.swap(false, Ordering::Relaxed) {
+                        ix = None;
+                        replace_damaged(&shared, &root);
+                        continue;
+                    }
                     if ix.is_none() {
                         // the main index's model: another signature would make the index rebuild itself
                         let Some(model) = lock(&shared).as_ref().map(|s| s.ix.model.clone()) else { continue };
                         ix = Index::open(&root, model).map_err(|e| eprintln!("scrutate: {e:#}")).ok();
                     }
-                    if let Some(ix) = ix.as_mut() {
-                        if let Err(e) = ix.update(false) {
-                            eprintln!("scrutate: index update failed: {e:#}");
+                    match ix.as_mut().and_then(|ix| ix.update(false).err()) {
+                        Some(e) if crate::index::error_is_corruption(&e) => {
+                            ix = None;
+                            replace_damaged(&shared, &root);
                         }
+                        Some(e) => eprintln!("scrutate: index update failed: {e:#}"),
+                        None => {}
                     }
                 }
             })
@@ -371,7 +394,17 @@ impl Server {
         let g = lock(&self.searcher);
         let run = |f: &dyn Fn(&Searcher) -> Result<Value>| -> Reply {
             let s = g.as_ref().ok_or((-32603, "the index is not available (see the log)".to_string()))?;
-            f(s).map_err(|e| (-32603, format!("{e:#}")))
+            f(s).map_err(|e| {
+                if crate::index::error_is_corruption(&e) {
+                    // the index is a cache: the save worker builds it again
+                    self.damaged.store(true, Ordering::Relaxed);
+                    if let Some(tx) = &self.saves {
+                        let _ = tx.send(());
+                    }
+                    return (-32603, "the index database is damaged and is being rebuilt; ask again".to_string());
+                }
+                (-32603, format!("{e:#}"))
+            })
         };
         match method {
             "textDocument/definition" => run(&|s| self.definition(s, p)),
@@ -534,6 +567,7 @@ pub fn serve(root: &Path) -> Result<i32> {
         searcher: Arc::new(Mutex::new(None)),
         docs: HashMap::new(),
         saves: None,
+        damaged: Arc::new(AtomicBool::new(false)),
         initialized: false,
         shutdown: false,
     };
@@ -595,6 +629,22 @@ mod tests {
         let uri = path_to_uri(&p);
         assert!(uri.contains("a%20b/%C3%A9.rs"), "{uri}");
         assert_eq!(uri_to_path(&uri).unwrap(), PathBuf::from(p.to_string_lossy().replace('\\', "/")));
+    }
+
+    #[test]
+    fn a_damaged_index_is_replaced_under_the_readers() {
+        let root = std::env::temp_dir().join(format!("scrutate_lsp_damaged_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/geo.py"), "def make_point():\n    return 1\n").unwrap();
+        let shared: Shared = Arc::new(Mutex::new(Some(crate::open_updated(&root, false).unwrap().0)));
+        let db = root.join(".scrutate/index.db");
+        std::fs::write(&db, vec![0xA5u8; std::fs::metadata(&db).unwrap().len() as usize]).unwrap();
+        replace_damaged(&shared, &root);
+        let hits = lock(&shared).as_ref().expect("an index after the rebuild").find_symbol("make_point", 5).unwrap();
+        assert_eq!(hits.len(), 1, "the rebuilt index answers");
+        drop(shared);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
