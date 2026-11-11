@@ -102,6 +102,8 @@ build in a workspace of their own, with its own `[patch]` for `vendor/ignore`). 
 actionlint && uvx zizmor --offline --persona pedantic .github   # the workflows, when one changed
 docker run --rm -i --platform linux/arm64 -v "$PWD":/src:ro python:3.13-slim-bookworm \
   bash /src/tools/ci_rehearsal.sh | tee bench/results/platforms/linux-aarch64/ci-rehearsal.log
+docker run --rm --platform linux/arm64 -e BASE=<the previous release> -v "$PWD":/src:ro python:3.13-slim-bookworm \
+  bash /src/tools/bench_rehearsal.sh | tee bench/results/platforms/linux-aarch64/benchmarks-rehearsal.log
 tools/repro_docker.sh                                   # one hash from two build images
 docker run --rm --platform linux/arm64 -v "$PWD":/src:ro -v "$PWD/bench/results/platforms":/out \
   rust:1-slim-bookworm bash /src/tools/linux_verify.sh  # tests with no Python, musl, wheels
