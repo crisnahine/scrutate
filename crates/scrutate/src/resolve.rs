@@ -12,6 +12,7 @@ use anyhow::Result;
 use rusqlite::params;
 use tree_sitter::{Node, Parser, Point, Tree};
 
+use crate::fmt::shown;
 use crate::index::{ChunkRow, Index};
 use crate::search::Searcher;
 use crate::text::name_key;
@@ -1387,9 +1388,9 @@ pub fn resolved_text(r: &Resolved, only: Option<i64>) -> String {
     let mut out = String::new();
     for d in r.definitions.iter().filter(|d| only.is_none_or(|id| d.id == id)) {
         let occ: Vec<&Occurrence> = r.of(d.id).collect();
-        out.push_str(&format!("{}:{}-{}  [{}] {}  ({} references)\n", d.path, d.start, d.end, d.kind, d.qualname, occ.len()));
+        out.push_str(&format!("{}:{}-{}  [{}] {}  ({} references)\n", shown(&d.path), d.start, d.end, d.kind, d.qualname, occ.len()));
         for o in occ {
-            out.push_str(&format!("    {}:{}:{}: {}\n", o.path, o.line, o.column, o.text.trim()));
+            out.push_str(&format!("    {}:{}:{}: {}\n", shown(&o.path), o.line, o.column, o.text.trim()));
         }
     }
     let unresolved: Vec<&Occurrence> = r.unresolved().collect();
@@ -1399,9 +1400,9 @@ pub fn resolved_text(r: &Resolved, only: Option<i64>) -> String {
             out.push_str(&format!("({elsewhere} other occurrences resolve to other definitions, {} are unresolved)\n", unresolved.len()));
         }
         None => {
-            out.push_str(&format!("unresolved ({}{}):\n", unresolved.len(), if r.truncated { ", truncated" } else { "" }));
+            out.push_str(&format!("unresolved ({}):\n", unresolved.len()));
             for o in unresolved {
-                out.push_str(&format!("    {}:{}:{}: {}  ({})\n", o.path, o.line, o.column, o.text.trim(), o.resolution.err().unwrap_or("")));
+                out.push_str(&format!("    {}:{}:{}: {}  ({})\n", shown(&o.path), o.line, o.column, o.text.trim(), o.resolution.err().unwrap_or("")));
             }
         }
     }

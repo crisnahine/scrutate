@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, bail, Result};
 use rusqlite::params;
 
+use crate::fmt::{echo, shown};
 use crate::index::{ChunkRow, Index, CHUNK_COLS};
 use crate::search::{Hit, Searcher, CODE_KINDS};
 use crate::text::{name_key, tokenize2, BODY_CAP};
@@ -198,7 +199,7 @@ pub fn locate(s: &Searcher, target: &str) -> Result<Option<ChunkRow>> {
 
 /// Chunks whose implementation vector is closest to the target's, with token-set Jaccard as a second opinion.
 pub fn similar(s: &mut Searcher, target: &str, k: usize) -> Result<Vec<(Hit, f32, f32)>> {
-    let Some(row) = locate(s, target)? else { bail!("no symbol or location matches {target:?}") };
+    let Some(row) = locate(s, target)? else { bail!("no symbol or location matches {}", echo(target)) };
     let (_, b) = s.ix.lex()?.vec_of(row.id).ok_or_else(|| anyhow!("the index has no vectors (semantic model disabled)"))?;
     if b.iter().all(|x| *x == 0.0) {
         bail!("{} has no implementation vector (empty body)", row.qualname);
@@ -392,9 +393,19 @@ pub struct Capture {
 /// Returns the number of captures delivered (stops at `limit`).
 pub fn tsquery_each(lang: &str, query: &str, roots: &[PathBuf], limit: usize, cache_root: Option<&Path>, on_capture: &mut dyn FnMut(Capture)) -> Result<usize> {
     use rayon::prelude::*;
-    let spec = crate::langs::by_id(lang).ok_or_else(|| anyhow!("unknown language {lang:?} (see `scrutate languages`)"))?;
+    let spec = crate::langs::by_id(lang).ok_or_else(|| anyhow!("unknown language {} (see `scrutate languages`)", echo(lang)))?;
+    if query.trim().is_empty() {
+        bail!("empty query: give a tree-sitter pattern with a @capture, such as (identifier) @name");
+    }
     let language = (spec.language)();
     let q = tree_sitter::Query::new(&language, query).map_err(|e| anyhow!("bad query: {e}"))?;
+    if q.capture_names().is_empty() {
+        bail!("the query has no @capture, so it can match nothing to report: add one, such as (identifier) @name");
+    }
+    // predicates tree-sitter does not evaluate itself would silently match everything
+    if let Some(p) = (0..q.pattern_count()).flat_map(|i| q.general_predicates(i)).next() {
+        bail!("unknown predicate #{} (supported: #eq?, #match?, #any-of? and their not- and any- forms)", p.operator);
+    }
     let names: Vec<String> = q.capture_names().iter().map(|n| n.to_string()).collect();
     let mut files: Vec<(PathBuf, String)> = Vec::new();
     for root in roots {
@@ -620,8 +631,8 @@ pub fn groups_text(groups: &[RefGroup], out: &mut String) {
 /// A group as text: its symbol, then its matching lines.
 pub fn group_text(g: &RefGroup) -> String {
     let mut out = match &g.symbol {
-        Some(c) => format!("  {}:{}-{}  [{}] {}", c.path, c.start, c.end, c.kind, if c.qualname.is_empty() { &c.name } else { &c.qualname }),
-        None => format!("  {}  (no enclosing symbol)", g.path),
+        Some(c) => format!("  {}:{}-{}  [{}] {}", shown(&c.path), c.start, c.end, c.kind, if c.qualname.is_empty() { &c.name } else { &c.qualname }),
+        None => format!("  {}  (no enclosing symbol)", shown(&g.path)),
     };
     for h in &g.lines {
         out.push_str(&format!("\n    {}: {}", h.line, h.text.trim_end()));
@@ -651,16 +662,16 @@ pub fn references_render(r: &References) -> String {
     if !r.definitions.is_empty() {
         out.push_str("definitions:\n");
         for d in &r.definitions {
-            out.push_str(&format!("    {}:{}-{}  [{}] {}\n", d.path, d.start, d.end, d.kind, d.qualname));
+            out.push_str(&format!("    {}:{}-{}  [{}] {}\n", shown(&d.path), d.start, d.end, d.kind, d.qualname));
         }
     }
     if !r.callers.is_empty() {
         out.push_str("callers:\n");
         for h in &r.callers {
-            out.push_str(&format!("    {}  [{}] {}\n", h.loc(), h.kind, h.qualname));
+            out.push_str(&format!("    {}  [{}] {}\n", crate::fmt::loc(h), h.kind, h.qualname));
         }
     }
-    out.push_str(&format!("references ({} lines in {} symbols{}):\n", r.total_lines(), r.groups.len(), if r.truncated { ", truncated" } else { "" }));
+    out.push_str(&format!("references ({} lines in {} symbols):\n", r.total_lines(), r.groups.len()));
     groups_text(&r.groups, &mut out);
     out
 }

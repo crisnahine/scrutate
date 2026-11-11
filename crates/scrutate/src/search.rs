@@ -604,25 +604,26 @@ impl Searcher {
     }
 
     pub fn read(&self, path: &str, start: i64, end: Option<i64>, max_lines: i64) -> String {
-        let full = self.ix.root.join(path);
-        let Ok(canon) = std::fs::canonicalize(&full) else {
-            return format!("error: cannot read {path}");
-        };
-        if !canon.starts_with(&self.ix.root) {
-            return "error: path outside repo".to_string();
+        let end = end.unwrap_or(i64::MAX).min(start.saturating_add(max_lines - 1));
+        match self.read_lines(path, start, end) {
+            Ok((lines, _)) => lines.join("\n"),
+            Err(e) => format!("error: {e}"),
         }
-        let Ok(bytes) = std::fs::read(&canon) else {
-            return format!("error: cannot read {path}");
-        };
+    }
+
+    /// Lines `start..=end` of a repository file, numbered, and how many lines the file has.
+    pub fn read_lines(&self, path: &str, start: i64, end: i64) -> Result<(Vec<String>, i64)> {
+        let shown = crate::fmt::echo(path);
+        let canon = std::fs::canonicalize(self.ix.root.join(path)).map_err(|_| anyhow::anyhow!("cannot read {shown}"))?;
+        if !canon.starts_with(&self.ix.root) {
+            anyhow::bail!("path outside repo");
+        }
+        let bytes = std::fs::read(&canon).map_err(|_| anyhow::anyhow!("cannot read {shown}"))?;
         let text = String::from_utf8_lossy(&bytes);
         let lines = crate::text::split_lines(&text);
         let n = lines.len() as i64;
-        let end = end.unwrap_or(start + max_lines - 1).min(n).min(start + max_lines - 1);
-        let mut out = Vec::new();
-        for i in start.max(1)..=end {
-            out.push(format!("{i:>5}  {}", lines[(i - 1) as usize]));
-        }
-        out.join("\n")
+        let out = (start.max(1)..=end.min(n)).map(|i| format!("{i:>5}  {}", lines[(i - 1) as usize])).collect();
+        Ok((out, n))
     }
 }
 
