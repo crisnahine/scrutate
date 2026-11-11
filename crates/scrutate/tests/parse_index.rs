@@ -738,10 +738,20 @@ fn a_name_as_typed_is_a_feature_and_an_impl_is_its_own_hit() {
     let c = repo.candidates("BurstFiles", true).unwrap();
     assert_eq!(get(&c, "struct", "BurstFiles", "exact_case"), 1.0);
     assert_eq!(get(&c, "function", "burst_files", "exact_case"), 0.0);
+    // typed in a style neither is written in: both are as near as it gets
+    let c = repo.candidates("burstFiles", true).unwrap();
+    assert_eq!((get(&c, "struct", "BurstFiles", "exact_case"), get(&c, "function", "burst_files", "exact_case")), (1.0, 1.0));
     // the struct and its impl block share a qualified name and are still two hits
     let hits = repo.search("BurstFiles", 10, false).unwrap();
     let kinds: Vec<&str> = hits.iter().filter(|h| h.name == "BurstFiles").map(|h| h.kind.as_str()).collect();
     assert!(kinds.contains(&"struct") && kinds.contains(&"impl"), "{kinds:?}");
+    // the same name in another Unicode form is the name as typed
+    let root = tree("case_nfc", &[("a.py", "def caf\u{e9}():\n    return 1\n\n\ndef cafe\u{301}_x():\n    return 2\n")]);
+    let mut repo = scrutate::Repo::open(&root).unwrap();
+    repo.update(false).unwrap();
+    let c = repo.candidates("cafe\u{301}", true).unwrap();
+    assert_eq!(get(&c, "function", "caf\u{e9}", "exact_case"), 1.0);
+    assert_eq!(get(&c, "function", "cafe\u{301}_x", "exact_case"), 0.0);
 }
 
 #[test]

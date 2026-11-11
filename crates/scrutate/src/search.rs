@@ -11,6 +11,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use regex::Regex;
 use rusqlite::params_from_iter;
+use unicode_normalization::UnicodeNormalization;
 
 use crate::index::{ChunkRow, Index, CHUNK_COLS};
 use crate::lex::tok_key;
@@ -484,10 +485,13 @@ impl Searcher {
             f[fi("qual_depth")] = row.qualname.matches('.').count() as f32;
             f[fi("is_private")] = (name.starts_with('_') && !name.starts_with("__")) as i32 as f32;
         }
-        // a name the query has as typed, case included: `BurstFiles` is not `burst_files`
-        let typed: HashSet<&str> = Words::new(&q.text).collect();
-        for (r, nm) in names.iter().enumerate() {
-            x[r][fi("exact_case")] = (!nm.is_empty() && typed.contains(nm.as_str())) as i32 as f32;
+        // a name the query has as typed, case included (`BurstFiles` is not `burst_files`), in one
+        // Unicode form; when no candidate is spelled as typed, every exact name is as near as it gets
+        let typed: HashSet<String> = Words::new(&q.text).map(|w| w.nfc().collect()).collect();
+        let as_typed: Vec<bool> = names.iter().map(|nm| !nm.is_empty() && typed.contains(&nm.nfc().collect::<String>())).collect();
+        let any = as_typed.contains(&true);
+        for (r, typed) in as_typed.iter().enumerate() {
+            x[r][fi("exact_case")] = if any { *typed as i32 as f32 } else { x[r][fi("exact_name")] };
         }
         self.ncallers(&names)?;
         for (r, nm) in names.iter().enumerate() {

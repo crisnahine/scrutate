@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import subprocess
+import unicodedata
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -272,9 +273,14 @@ class Searcher:
             X[r, FI["log_ndoc"]] = math.log1p(row["ndoc"] or 0)
             X[r, FI["qual_depth"]] = (row["qualname"] or "").count(".")
             X[r, FI["is_private"]] = 1.0 if name.startswith("_") and not name.startswith("__") else 0.0
-        # a name the query has as typed, case included: `BurstFiles` is not `burst_files`
-        typed = set(text_words(q.text))
-        X[:, FI["exact_case"]] = [1.0 if nm and nm in typed else 0.0 for nm in names]
+        # a name the query has as typed, case included (`BurstFiles` is not `burst_files`), in one
+        # Unicode form; when no candidate is spelled as typed, every exact name is as near as it gets
+        typed = {unicodedata.normalize("NFC", w) for w in text_words(q.text)}
+        as_typed = [bool(nm) and unicodedata.normalize("NFC", nm) in typed for nm in names]
+        if any(as_typed):
+            X[:, FI["exact_case"]] = [1.0 if t else 0.0 for t in as_typed]
+        else:
+            X[:, FI["exact_case"]] = X[:, FI["exact_name"]]
         nc = self._ncallers(names)
         X[:, FI["log_ncallers"]] = [math.log1p(nc.get(nm, 0)) for nm in names]
         # --- query level + file cohesion

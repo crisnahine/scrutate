@@ -193,6 +193,15 @@ def test_a_name_as_typed_is_a_feature_and_an_impl_is_its_own_hit(tmp_path):
 
     assert get("BurstFiles", "struct", "BurstFiles", "exact_case") == 1.0
     assert get("BurstFiles", "function", "burst_files", "exact_case") == 0.0
+    # typed in a style neither is written in: both are as near as it gets
+    assert get("burstFiles", "struct", "BurstFiles", "exact_case") == 1.0
+    assert get("burstFiles", "function", "burst_files", "exact_case") == 1.0
     # the struct and its impl block share a qualified name and are still two hits
     kinds = [h.kind for h in s.search("BurstFiles", k=10, with_text=False) if h.name == "BurstFiles"]
     assert "struct" in kinds and "impl" in kinds, kinds
+    # the same name in another Unicode form is the name as typed
+    (tmp_path / "nfc").mkdir()
+    (tmp_path / "nfc" / "a.py").write_text("def caf\u00e9():\n    return 1\n\n\ndef cafe\u0301_x():\n    return 2\n")
+    s = make(str(tmp_path / "nfc"))
+    assert get("cafe\u0301", "function", "caf\u00e9", "exact_case") == 1.0
+    assert get("cafe\u0301", "function", "cafe\u0301_x", "exact_case") == 0.0
