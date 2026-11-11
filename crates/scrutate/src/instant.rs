@@ -82,6 +82,11 @@ pub struct Options {
     /// report each path as the walk reached it from the root it was given (`dir/a.rs`, `./a.rs`),
     /// as grep does; otherwise relative to the root
     pub paths_as_given: bool,
+    /// plain output starts each line with the file's path (`-H`); off, `line:text` as for one file
+    pub with_filename: bool,
+    /// files under these paths are read until a read returns nothing (procfs and sysfs return a
+    /// page or less per read); set by the search from its roots, on Linux
+    pub read_to_end_under: Vec<PathBuf>,
     /// regex size limits (resource exhaustion protection)
     pub regex_size_limit: usize,
     pub dfa_size_limit: usize,
@@ -120,6 +125,8 @@ impl Default for Options {
             want_spans: false,
             search_zip: false,
             paths_as_given: false,
+            with_filename: true,
+            read_to_end_under: Vec::new(),
             regex_size_limit: 20 * (1 << 20),
             dfa_size_limit: 10 * (1 << 20),
             split_file_bytes: 64 << 20,
@@ -452,6 +459,19 @@ pub enum AnyMatcher {
 }
 
 impl AnyMatcher {
+    /// A match may hold a line break (the searcher's own test for searching across lines).
+    fn spans_lines(&self) -> bool {
+        fn can<M: Matcher>(m: &M) -> bool {
+            m.line_terminator().is_none() && !m.non_matching_bytes().is_some_and(|b| b.contains(b'\n'))
+        }
+        match self {
+            AnyMatcher::Regex(m) => can(m),
+            AnyMatcher::Fuzzy(m) => can(m.as_ref()),
+            AnyMatcher::Pcre2(m) => can(m),
+            AnyMatcher::FuzzyRegex(m) => can(m.as_ref()),
+        }
+    }
+
     fn search_slice<S: Sink>(&self, searcher: &mut Searcher, slice: &[u8], sink: S) -> Result<(), S::Error> {
         match self {
             AnyMatcher::Regex(m) => searcher.search_slice(m, slice, sink),
@@ -1058,13 +1078,16 @@ fn write_lossy(w: &mut dyn Write, b: &[u8], piece: usize) -> std::io::Result<()>
     Ok(())
 }
 
-/// `path:line:text\n` (`-` separators for context lines), the CLI's plain format. A multi-line
-/// match prints each of its lines with its own number, as grep-class tools do.
+/// `path:line:text\n` (`-` separators for context lines), the CLI's plain format; an empty `path`
+/// leaves out the name and its separator. A multi-line match prints each of its lines with its
+/// own number, as grep-class tools do.
 pub fn format_plain(out: &mut Vec<u8>, path: &str, line: u64, text: &[u8], context: bool) {
     let sep = if context { b'-' } else { b':' };
     for (k, part) in text.split(|&b| b == b'\n').enumerate() {
-        out.extend_from_slice(path.as_bytes());
-        out.push(sep);
+        if !path.is_empty() {
+            out.extend_from_slice(path.as_bytes());
+            out.push(sep);
+        }
         let mut n = line + k as u64;
         let mut digits = [0u8; 20];
         let mut i = digits.len();
@@ -1110,10 +1133,23 @@ struct Collector<'a> {
     multiline: bool,
     /// context lines are asked for and this file has written no plain output yet
     first: bool,
+    /// plain lines start with `path`
+    named: bool,
+    /// `-c` counts each match of a multi-line search, not each merged group of lines
+    count_each: bool,
 }
 
 fn spans_in(matcher: &AnyMatcher, line: &[u8]) -> Vec<(usize, usize)> {
     let mut out = Vec::new();
+    each_match(matcher, line, |a, b| {
+        out.push((a, b));
+        out.len() < 64
+    });
+    out
+}
+
+/// Calls `f` with each match in `line` until it returns false.
+fn each_match(matcher: &AnyMatcher, line: &[u8], mut f: impl FnMut(usize, usize) -> bool) {
     let mut at = 0;
     let find = |at: usize| -> Option<MatchSpan> {
         match matcher {
@@ -1126,16 +1162,14 @@ fn spans_in(matcher: &AnyMatcher, line: &[u8]) -> Vec<(usize, usize)> {
     while at <= line.len() {
         match find(at) {
             Some(m) => {
-                out.push((m.start(), m.end()));
                 at = if m.end() > m.start() { m.end() } else { m.end() + 1 };
-                if out.len() >= 64 {
+                if !f(m.start(), m.end()) {
                     break;
                 }
             }
             None => break,
         }
     }
-    out
 }
 
 impl<'a> Sink for Collector<'a> {
@@ -1151,7 +1185,17 @@ impl<'a> Sink for Collector<'a> {
                 return Ok(false);
             }
             self.matched = true;
-            self.file_count += 1;
+            // as ripgrep: merged matches that span lines count one by one
+            self.file_count += if self.count_each {
+                let mut n = 0;
+                each_match(self.matcher, mat.bytes(), |_, _| {
+                    n += 1;
+                    true
+                });
+                n.max(1)
+            } else {
+                1
+            };
             if self.max_results.is_some_and(|max| n >= max) {
                 self.cancel.store(true, Ordering::Relaxed);
                 return Ok(false);
@@ -1171,12 +1215,12 @@ impl<'a> Sink for Collector<'a> {
             if line.len() >= 1 << 16 && !self.hold && !(self.multiline && memchr::memchr(b'\n', line).is_some()) {
                 // a very long line is written from where it is instead of being copied into the buffer
                 let mut head = Vec::with_capacity(self.path.len() + 24);
-                format_plain(&mut head, &self.path, number, b"", false);
+                format_plain(&mut head, if self.named { &self.path } else { "" }, number, b"", false);
                 head.pop(); // the newline: the text goes between
                 p.write_line(&self.out, &head, line, std::mem::take(&mut self.first), self.cancel);
                 self.out.clear();
             } else {
-                format_plain(&mut self.out, &self.path, number, lossy(line).as_bytes(), false);
+                format_plain(&mut self.out, if self.named { &self.path } else { "" }, number, lossy(line).as_bytes(), false);
             }
             if self.out.len() >= 1 << 16 && !self.hold {
                 p.write(&self.out, std::mem::take(&mut self.first), self.cancel);
@@ -1212,7 +1256,8 @@ impl<'a> Sink for Collector<'a> {
         let bytes = ctx.bytes();
         let line = bytes.strip_suffix(b"\n").map(|b| b.strip_suffix(b"\r").unwrap_or(b)).unwrap_or(bytes);
         if self.plain.is_some() {
-            format_plain(&mut self.out, &self.path, ctx.line_number().unwrap_or(0) + self.line_base, lossy(line).as_bytes(), true);
+            let name = if self.named { &self.path } else { "" };
+            format_plain(&mut self.out, name, ctx.line_number().unwrap_or(0) + self.line_base, lossy(line).as_bytes(), true);
             return Ok(true);
         }
         let text = lossy(line).into_owned();
@@ -1606,6 +1651,8 @@ impl<'a> Run<'a> {
             binary: false,
             multiline: o.multiline,
             first: o.before > 0 || o.after > 0,
+            named: o.with_filename,
+            count_each: o.multiline && o.count_only && !o.invert && self.matcher.spans_lines(),
         }
     }
 }
@@ -1637,7 +1684,7 @@ fn search_one(w: &mut FileWorker, r: &Run, path: &Path, rel: Arc<str>, size: Opt
     };
     let mut owned = None;
     let mut small = None;
-    if splittable(o) {
+    if splittable(o) && (o.read_to_end_under.is_empty() || !o.read_to_end_under.iter().any(|p| path.starts_with(p))) {
         // most files are small: one read of up to SMALL_FILE + 1 bytes takes such a file whole and
         // tells a larger one apart, with no call for the size (a `statx` per file otherwise: 96,000
         // of them on the Linux tree)
@@ -2071,6 +2118,14 @@ fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Opti
     }
     let matcher = Arc::new(build_matcher(o)?);
     let counters = Arc::new(Counters::default());
+    let pseudo = pseudo_roots(roots);
+    let with_pseudo;
+    let o = if pseudo.is_empty() {
+        o
+    } else {
+        with_pseudo = Options { read_to_end_under: pseudo, ..o.clone() };
+        &with_pseudo
+    };
     // the overrides are anchored at one root: a glob naming a directory needs a walk per root
     if roots.len() > 1 && o.globs.iter().any(|g| g.contains('/')) {
         for root in roots.chunks(1) {
@@ -2241,24 +2296,77 @@ fn filtered_out(ov: &ignore::overrides::Override, rel: &str) -> bool {
     ov.matched(rel, false).is_ignore()
 }
 
+/// The roots, and the `proc` and `sys` directories of a root, that lie on a kernel pseudo
+/// filesystem: one `statfs` per root and per such directory, none per file.
+#[cfg(target_os = "linux")]
+fn pseudo_roots(roots: &[PathBuf]) -> Vec<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+    extern "C" {
+        fn statfs(path: *const std::ffi::c_char, buf: *mut u64) -> std::ffi::c_int;
+    }
+    fn pseudo(p: &Path) -> bool {
+        let Ok(c) = std::ffi::CString::new(p.as_os_str().as_bytes()) else { return false };
+        // larger than `struct statfs` on every Linux ABI; `f_type` is its first field
+        let mut buf = [0u64; 32];
+        if unsafe { statfs(c.as_ptr(), buf.as_mut_ptr()) } != 0 {
+            return false;
+        }
+        #[cfg(target_arch = "s390x")]
+        let f_type = (buf[0] >> 32) as u32;
+        #[cfg(not(target_arch = "s390x"))]
+        let f_type = unsafe { *(buf.as_ptr() as *const std::ffi::c_long) } as u32;
+        // proc, sysfs, debugfs, tracefs, securityfs, configfs, cgroup, cgroup2
+        matches!(f_type, 0x9fa0 | 0x6265_6572 | 0x6462_6720 | 0x7472_6163 | 0x7363_6673 | 0x6265_6570 | 0x0027_e0eb | 0x6367_7270)
+    }
+    let mut out = Vec::new();
+    for r in roots {
+        if pseudo(r) {
+            out.push(r.clone());
+            continue;
+        }
+        // only a root that may be `/` holds `proc` and `sys`
+        if (r.has_root() && r.parent().is_none()) || r.components().all(|c| matches!(c, std::path::Component::CurDir | std::path::Component::ParentDir)) {
+            out.extend(["proc", "sys"].map(|d| r.join(d)).into_iter().filter(|p| pseudo(p)));
+        }
+    }
+    out
+}
+
+#[cfg(not(target_os = "linux"))]
+fn pseudo_roots(_roots: &[PathBuf]) -> Vec<PathBuf> {
+    Vec::new()
+}
+
 /// How a file found under `roots` is reported (see `Options::paths_as_given`).
 fn label(path: &Path, roots: &[PathBuf], o: &Options) -> Arc<str> {
     if !o.paths_as_given {
         return Arc::from(relative(path, roots));
     }
-    match path.to_string_lossy() {
-        std::borrow::Cow::Borrowed(s) if !cfg!(windows) => Arc::from(s),
-        s => Arc::from(s.replace('\\', "/")),
+    let s = path.to_string_lossy();
+    if cfg!(windows) {
+        Arc::from(slashed(s))
+    } else {
+        Arc::from(&*s)
+    }
+}
+
+/// A path as reported: `/` between its parts. Only Windows has `\` as a separator; elsewhere it is
+/// a character of the name.
+pub fn slashed(s: std::borrow::Cow<'_, str>) -> String {
+    if cfg!(windows) {
+        s.replace('\\', "/")
+    } else {
+        s.into_owned()
     }
 }
 
 pub fn relative(path: &Path, roots: &[PathBuf]) -> String {
     for r in roots {
         if let Ok(rel) = path.strip_prefix(r) {
-            let s = rel.to_string_lossy().replace('\\', "/");
+            let s = slashed(rel.to_string_lossy());
             if s.is_empty() {
                 // the root is the file itself
-                return r.to_string_lossy().replace('\\', "/");
+                return slashed(r.to_string_lossy());
             }
             if roots.len() == 1 {
                 return s;

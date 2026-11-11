@@ -766,7 +766,8 @@ fn a_file_searched_in_ranges_equals_one_pass() {
             assert_eq!(one, split, "{a:?}");
             assert!(one.0 == 0 || one.0 == 1, "{a:?}: {one:?}");
             if one.0 == 0 && !a.contains(&"-c") && !a.contains(&"--json") {
-                assert!(one.1.iter().all(|l| l.starts_with(&format!("{file}:"))), "{a:?}: {:?}", &one.1[..1]);
+                // one file given: lines without its name, as ripgrep prints them
+                assert!(one.1.iter().all(|l| l.split(':').next().is_some_and(|n| n.parse::<u64>().is_ok())), "{a:?}: {:?}", &one.1[..1]);
             }
         }
     }
@@ -900,13 +901,13 @@ fn pcre2_look_around_backreferences_and_the_match_limit() {
     r.write("t.txt", b"foobar\nbazbar\nabba\nabc\n");
     r.write("trap.txt", format!("{}!\n", "a".repeat(40)).repeat(50).as_bytes());
     let (code, out, _) = r.run(&["grep", "-P", "(?<=foo)bar", "t.txt"]);
-    assert_eq!((code, out.as_str()), (0, "t.txt:1:foobar\n"));
+    assert_eq!((code, out.as_str()), (0, "1:foobar\n"));
     let (code, out, _) = r.run(&["grep", "-P", r"(\w)\1", "t.txt"]);
-    assert_eq!((code, out.as_str()), (0, "t.txt:1:foobar\nt.txt:3:abba\n"));
+    assert_eq!((code, out.as_str()), (0, "1:foobar\n3:abba\n"));
     let (code, _, _) = r.run(&["grep", "-P", "-F", "a(b", "t.txt"]);
     assert_eq!(code, 1, "-F makes the pattern literal");
     let (code, out, _) = r.run(&["grep", "-P", "-w", "-e", "ab", "-e", "abc", "t.txt"]);
-    assert_eq!((code, out.as_str()), (0, "t.txt:4:abc\n"));
+    assert_eq!((code, out.as_str()), (0, "4:abc\n"));
     // exponential backtracking stops at PCRE2's match limit and says so
     let t0 = std::time::Instant::now();
     let (code, out, err) = r.run(&["grep", "-P", "^(a|aa)+$", "trap.txt"]);
@@ -1112,9 +1113,9 @@ fn fuzzy_regex_finds_near_misses_of_a_regex() {
     let r = Repo::new("fuzzyre");
     r.write("a.txt", b"def get_value(x):\ndef set_valu(y):\ndef fetch_all():\n");
     let (code, out, _) = r.run(&["grep", "--fuzzy-regex=1", "(get|set)_value", "a.txt"]);
-    assert_eq!((code, out.as_str()), (0, "a.txt:1:def get_value(x):\na.txt:2:def set_valu(y):\n"));
+    assert_eq!((code, out.as_str()), (0, "1:def get_value(x):\n2:def set_valu(y):\n"));
     let (code, out, _) = r.run(&["grep", "--fuzzy-regex", "-e", "fetch_al+x", "-e", "nothing", "a.txt"]);
-    assert_eq!((code, out.as_str()), (0, "a.txt:3:def fetch_all():\n"));
+    assert_eq!((code, out.as_str()), (0, "3:def fetch_all():\n"));
     let (code, _, err) = r.run(&["grep", "--fuzzy-regex=1", "^def", "a.txt"]);
     assert_eq!(code, 2, "{err}");
     let (code, _, _) = r.run(&["grep", "--fuzzy-regex=1", "-F", "x", "a.txt"]);

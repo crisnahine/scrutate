@@ -159,6 +159,14 @@ pub struct GrepArgs {
     /// print only the number of matching lines per file
     #[arg(short = 'c', long)]
     pub count: bool,
+    /// print the file's path with each line and count (the default unless one file is the only
+    /// path given); of -H and -I the later wins
+    #[arg(short = 'H', long, overrides_with = "no_filename")]
+    pub with_filename: bool,
+    /// never print the file's path with each line and count (the default when one file is the
+    /// only path given); -l and --json still print it
+    #[arg(short = 'I', long, overrides_with = "with_filename")]
+    pub no_filename: bool,
     /// lines of context after each match
     #[arg(short = 'A', long, default_value_t = 0)]
     pub after: usize,
@@ -508,6 +516,8 @@ pub fn run() -> Result<i32> {
             invert_match,
             files_with_matches,
             count,
+            with_filename,
+            no_filename,
             after,
             before,
             context,
@@ -593,6 +603,8 @@ pub fn run() -> Result<i32> {
                 want_spans: json || color_choice(no_color) != ColorChoice::Never,
                 search_zip,
                 paths_as_given: !paths.is_empty(),
+                // as ripgrep: one path that is not a directory is searched without its name
+                with_filename: with_filename || (!no_filename && !(paths.len() == 1 && !paths[0].is_dir())),
                 small_tree: std::env::var("SCRUTATE_SMALL_TREE").ok().and_then(|v| v.parse().ok()),
                 ..Options::default()
             };
@@ -987,14 +999,16 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
         if !colour {
             // plain output: one assembled line, one write (the common piped case)
             linebuf.clear();
-            instant::format_plain(&mut linebuf, &h.path, h.line, h.text.as_bytes(), h.context);
+            instant::format_plain(&mut linebuf, if o.with_filename { &h.path } else { "" }, h.line, h.text.as_bytes(), h.context);
             w.write_all(&linebuf)?;
             return Ok(());
         }
-        w.set_color(&path_color)?;
-        write!(w, "{}", h.path)?;
-        w.reset()?;
-        write!(w, "{}", if h.context { "-" } else { ":" })?;
+        if o.with_filename {
+            w.set_color(&path_color)?;
+            write!(w, "{}", h.path)?;
+            w.reset()?;
+            write!(w, "{}", if h.context { "-" } else { ":" })?;
+        }
         w.set_color(&line_color)?;
         write!(w, "{}", h.line)?;
         w.reset()?;
@@ -1062,8 +1076,10 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
         for (p, c) in &counts {
             if out.json {
                 writeln!(w, "{}", serde_json::json!({"type": "count", "schema": SCHEMA, "path": p, "count": c}))?;
-            } else {
+            } else if o.with_filename {
                 writeln!(w, "{p}:{c}")?;
+            } else {
+                writeln!(w, "{c}")?;
             }
         }
     } else if out.files_with_matches {
@@ -1185,7 +1201,7 @@ fn grouped_by_symbol(root: &Path, hits: &mut Vec<instant::Hit>, w: &mut termcolo
     // the index names a file by its path under the root, whatever path the search was given
     let mut named: std::collections::HashMap<std::sync::Arc<str>, std::sync::Arc<str>> = std::collections::HashMap::new();
     for h in &mut lines {
-        let under = |p: &str| std::fs::canonicalize(p).ok().and_then(|c| c.strip_prefix(&s.ix.root).ok().map(|r| r.to_string_lossy().replace('\\', "/")));
+        let under = |p: &str| std::fs::canonicalize(p).ok().and_then(|c| c.strip_prefix(&s.ix.root).ok().map(|r| instant::slashed(r.to_string_lossy())));
         h.path = named.entry(h.path.clone()).or_insert_with_key(|p| under(p).map_or_else(|| p.clone(), Into::into)).clone();
     }
     lines.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
