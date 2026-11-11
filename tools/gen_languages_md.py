@@ -42,6 +42,15 @@ def header_rule() -> tuple[list[str], str]:
     return re.findall(r'"([^"]*)"', branch.group(1)), pattern.group(1)
 
 
+def marker_rule(ext: str, first: str) -> list[str]:
+    """The texts `sniff` in langs.rs looks for in a file with `ext` before it reads it as `first`."""
+    src = open(LANGS_RS).read()
+    branch = re.search(r'ends_with\("' + re.escape(ext) + r'"\) \{\s*if \[([^\]]*)\]\.iter\(\)\.any\([^{]*\{\s*"' + first + '"', src)
+    if not branch:
+        raise SystemExit(f"{LANGS_RS}: the {ext} rule of sniff no longer reads as expected; update marker_rule")
+    return re.findall(r'"([^"]*)"', branch.group(1))
+
+
 def main() -> int:
     regs = json.loads(subprocess.run([BIN, "languages", "--json"], capture_output=True, text=True, check=True).stdout)
     default_ids = {r["id"] for r in regs}
@@ -79,7 +88,8 @@ def main() -> int:
     h_markers, h_pattern = header_rule()
     for r in sorted(regs, key=lambda x: x["id"]):
         exts = " ".join(r["extensions"] + r["filenames"])
-        h_note = {"c": " (`.h`: see below)", "cpp": " and `.h` by its content", "objc": " and `.h` by its content"}.get(r["id"], "")
+        shared = " ".join(f"`{e}`" for e in r["extensions_by_content"])
+        h_note = " (`.h`: see below)" if r["id"] == "c" else (" and " if exts else "") + shared + " by its content" if shared else ""
         optional = " (extra-langs)" if r["id"] not in default_ids else ""
         sample = None
         for e in r["extensions"]:
@@ -101,9 +111,13 @@ def main() -> int:
         else:
             kinds_s = "not verified by a sample"
             evidence = "registry only"
-        out.append(f"| {r['id']}{optional} | `{exts}`{h_note} | {kinds_s} | {'yes' if r['call_edges'] else 'no'} | {'yes' if r['imports'] else 'no'} | {'yes' if r['docstrings'] else 'no'} | {evidence} |")
+        out.append(f"| {r['id']}{optional} | {f'`{exts}`' if exts else ''}{h_note} | {kinds_s} | {'yes' if r['call_edges'] else 'no'} | {'yes' if r['imports'] else 'no'} | {'yes' if r['docstrings'] else 'no'} | {evidence} |")
     out.append("\nA `.h` file is read as objc when it holds " + ", ".join(f"`{m}`" for m in h_markers)
                + f", else as cpp when a line matches `{h_pattern}`, else as c (`sniff` in `crates/scrutate/src/langs.rs`).")
+    listed = lambda marks: ", ".join(f"`{m}`" for m in marks)
+    out.append("A `.m` file is read as objc when its first 4000 bytes hold " + listed(marker_rule(".m", "objc")) + ", else as matlab. "
+               "A `.pp` file is read as pascal when it holds " + listed(marker_rule(".pp", "pascal"))
+               + " and its first 4000 bytes hold no `$`, else as puppet.")
     n_opt = sum(r["id"] not in default_ids for r in regs)
     out.append(f"\n{len(regs) - n_opt} grammars in the default build" + (f", {n_opt} more with `--features extra-langs`" if n_opt else "")
                + f"; {n_verified} verified by snapshot samples. "

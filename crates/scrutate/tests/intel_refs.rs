@@ -254,6 +254,41 @@ fn python_imports_through_the_checkout_name_still_bind() {
 }
 
 #[test]
+fn a_call_the_resolver_does_not_read_runs_the_definition_in_its_own_file() {
+    let mut files: Vec<(String, String)> = Vec::new();
+    for x in ["a", "b", "c", "d", "e"] {
+        files.push((format!("{x}.c"), format!("static int helper(void) {{\n    return 1;\n}}\n\nint run_{x}(void) {{\n    return helper();\n}}\n")));
+        files.push((format!("t{x}.rb"), format!("class T{x}\n  def helper\n    1\n  end\n\n  def run_{x}\n    helper()\n  end\nend\n")));
+    }
+    // no definition in the caller's file: the nearest ones, its directory first
+    files.push(("lib/near.c".into(), "int far(void) {\n    return 1;\n}\n".into()));
+    files.push(("lib/user.c".into(), "int use(void) {\n    return far();\n}\n".into()));
+    for x in ["a", "b", "c"] {
+        files.push((format!("aa{x}/far.c"), "int far(void) {\n    return 2;\n}\n".into()));
+    }
+    files.push(("fns.nix".into(), "{\n  calleeFn = x: x + 1;\n  callerFn = y: calleeFn y;\n}\n".into()));
+    files.push(("view.m".into(), "#import <Foundation/Foundation.h>\n\nint shade(int v);\n\nint draw(int v) {\n    return shade(v);\n}\n".into()));
+    files.push(("shade.c".into(), "int shade(int v) {\n    return v;\n}\n".into()));
+    files.push(("plot.m".into(), "function y = shade(v)\n    y = v;\nend\n".into()));
+    let files: Vec<(&str, &str)> = files.iter().map(|(p, b)| (p.as_str(), b.as_str())).collect();
+    let r = Repo::new("own_file", &files);
+    let listed = |spec: &str| -> Vec<String> {
+        let (code, out) = r.run(&["callees", spec]);
+        assert_eq!(code, 0, "{spec}: {out}");
+        out.lines().filter(|l| l.contains("] ")).map(|l| l.split(':').next().unwrap().to_string()).collect()
+    };
+    assert_eq!(listed("e.c:5"), ["e.c"]);
+    assert_eq!(listed("te.rb:6"), ["te.rb"]);
+    assert_eq!(listed("lib/user.c:1")[0], "lib/near.c");
+    // a Nix function is a key, and a `.m` file of MATLAB is no Objective-C
+    assert_eq!(listed("fns.nix:3"), ["fns.nix"]);
+    assert_eq!(listed("view.m:5"), ["shade.c"]);
+    // and the other way round: a helper is called by the function of its own file alone
+    assert_eq!(split_callers(&r, "a.c:1"), (strs(&["run_a"]), strs(&[])));
+    assert_eq!(split_callers(&r, "te.rb:2"), (strs(&["Te.run_e"]), strs(&[])));
+}
+
+#[test]
 fn a_bare_python_import_inside_a_package_is_not_the_module_next_door() {
     // the directory of a package is not on `sys.path`: `import logging` there is the standard library
     let core = "import logging\nimport json\n\n\ndef run():\n    logging.info(\"x\")\n    return json.dumps({})\n";

@@ -620,10 +620,9 @@ fn targets(s: &Searcher, name: &str, limit: usize) -> Result<Vec<Hit>> {
     }
 }
 
-/// Languages whose code calls each other's definitions directly; `None` for a file of no known
-/// language, which may call or be called by any.
-fn family(path: &str) -> Option<&'static str> {
-    Some(match crate::langs::spec_for(path)?.id {
+/// Languages whose code calls each other's definitions directly.
+fn family(id: &'static str) -> &'static str {
+    match id {
         "javascript" | "typescript" | "tsx" => "js",
         "c" | "cpp" | "cuda" | "objc" => "c",
         "java" | "kotlin" | "scala" | "groovy" => "jvm",
@@ -631,13 +630,34 @@ fn family(path: &str) -> Option<&'static str> {
         "ocaml" | "ocaml_interface" => "ocaml",
         "csharp" | "fsharp" => "dotnet",
         id => id,
-    })
+    }
 }
 
-fn same_family(a: &str, b: &str) -> bool {
-    match (family(a), family(b)) {
-        (Some(x), Some(y)) => x == y,
-        _ => true,
+/// The language of each file an answer asks about, by its text where the extension names two.
+struct Langs<'a> {
+    root: &'a std::path::Path,
+    seen: std::cell::RefCell<std::collections::HashMap<String, Option<&'static str>>>,
+}
+
+impl Langs<'_> {
+    fn id(&self, path: &str) -> Option<&'static str> {
+        if let Some(id) = self.seen.borrow().get(path) {
+            return *id;
+        }
+        let lower = path.to_lowercase();
+        let shared = crate::langs::BY_CONTENT.iter().any(|(e, _)| lower.ends_with(e));
+        let text = shared.then(|| crate::resolve::repo_text(self.root, path)).flatten();
+        let id = text.and_then(|t| crate::langs::sniff(path, &t)).or_else(|| crate::langs::spec_for(path)).map(|s| s.id);
+        self.seen.borrow_mut().insert(path.to_string(), id);
+        id
+    }
+
+    /// A file of no known language may call or be called by any.
+    fn same_family(&self, a: &str, b: &str) -> bool {
+        match (self.id(a), self.id(b)) {
+            (Some(x), Some(y)) => family(x) == family(y),
+            _ => true,
+        }
     }
 }
 
@@ -652,6 +672,17 @@ struct Uses {
     /// one stayed unresolved that may call a free function: not `x.name(..)` where a method
     /// call never reaches a free function
     unsure_free: bool,
+    /// every unresolved one is a call without a receiver in a language the resolver does not
+    /// read: it runs the definition in its own file when there is one (`own`)
+    own_file: bool,
+}
+
+/// Whether the definition (`path`, `kind`, `qualname`) is what a call without a receiver in the
+/// caller (its path and qualified name) runs: a free function of the caller's file, or a method
+/// of the caller's own type.
+fn own((from, caller): (&str, &str), path: &str, kind: &str, qualname: &str) -> bool {
+    let owner = |q: &str| q.rsplit_once('.').map(|(o, _)| o.to_string());
+    path == from && (free(kind, qualname) || owner(qualname) == owner(caller))
 }
 
 /// Languages where `x.f()` calls a method, never a free function `f` (in Python `x` may be a
@@ -661,11 +692,11 @@ fn methods_only(path: &str) -> bool {
 }
 
 fn resolve_in(rv: &mut Resolver, s: &Searcher, path: &str, (start, end): (i64, i64), name: &str) -> Uses {
-    let mut uses = Uses { got: HashSet::new(), dispatched: HashSet::new(), unsure: true, unsure_free: true };
+    let mut uses = Uses { got: HashSet::new(), dispatched: HashSet::new(), unsure: true, unsure_free: true, own_file: false };
     let Some(src) = crate::resolve::repo_text(&s.ix.root, path) else { return uses };
     let ident = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
     let methods = methods_only(path);
-    let (mut unsure, mut unsure_free, mut seen) = (false, false, false);
+    let (mut unsure, mut unsure_free, mut seen, mut elsewhere) = (false, false, false, false);
     for (i, line) in src.lines().enumerate().skip((start.max(1) - 1) as usize).take((end - start + 1).max(0) as usize) {
         for (col, _) in line.match_indices(name) {
             if ident(line[..col].chars().next_back()) || ident(line[col + name.len()..].chars().next()) {
@@ -689,6 +720,8 @@ fn resolve_in(rv: &mut Resolver, s: &Searcher, path: &str, (start, end): (i64, i
                     if matches!(why, "receiver" | "not found" | "no grammar") {
                         unsure = true;
                         unsure_free |= !(methods && line[..col].trim_end().ends_with('.'));
+                        let receiver = [".", "->", "::"].iter().any(|r| line[..col].trim_end().ends_with(r));
+                        elsewhere |= receiver || why != "no grammar";
                     }
                 }
             }
@@ -696,6 +729,7 @@ fn resolve_in(rv: &mut Resolver, s: &Searcher, path: &str, (start, end): (i64, i
     }
     uses.unsure = unsure || !seen;
     uses.unsure_free = unsure_free || !seen;
+    uses.own_file = unsure && !elsewhere;
     uses
 }
 
@@ -725,10 +759,11 @@ pub(crate) fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit
     let owners: HashSet<&str> =
         targets.iter().filter_map(|t| t.qualname.rsplit_once('.').map(|(o, _)| o.rsplit('.').next().unwrap_or(o))).filter(|o| !o.is_empty()).collect();
     let packages: HashSet<&str> = targets.iter().map(|t| package(&t.path)).collect();
-    let fits = |path: &str| targets.iter().any(|t| same_family(&t.path, path));
+    let langs = Langs { root: &s.ix.root, seen: Default::default() };
+    let fits = |path: &str| targets.iter().any(|t| langs.same_family(&t.path, path));
     let cols = crate::index::CHUNK_COLS.split(',').map(|c| format!("c.{c}")).collect::<Vec<_>>().join(",");
     let mut calls = s.ix.db.prepare(&format!("SELECT DISTINCT {cols} FROM refs r JOIN chunks c ON c.id=r.chunk_id WHERE r.callee=?1 ORDER BY c.is_test"))?;
-    let mut namesakes = s.ix.db.prepare("SELECT id, path FROM chunks WHERE name=?1 AND kind != 'window'")?;
+    let mut namesakes = s.ix.db.prepare("SELECT id, path, kind, qualname FROM chunks WHERE name=?1 AND kind != 'window'")?;
     let (mut out, mut unsure_rows, mut seen) = (Vec::new(), Vec::new(), HashSet::new());
     let mut rv = Resolver::new(&s.ix)?;
     // a call of a method a target overrides or implements may run the target
@@ -738,9 +773,10 @@ pub(crate) fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit
     let all_free = |n: &str| targets.iter().filter(|t| t.name == n).all(|t| free(&t.kind, &t.qualname));
     let mut asked = 0;
     for n in names {
-        let rows: Vec<(i64, String)> = namesakes.query_map([n], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+        let rows: Vec<(i64, String, String, String)> =
+            namesakes.query_map([n], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?.collect::<rusqlite::Result<_>>()?;
         // with another definition of the name about, the likeliest call sites are asked first
-        let rivals = rows.iter().any(|(id, path)| !ids.contains(id) && fits(path));
+        let rivals = rows.iter().any(|(id, path, ..)| !ids.contains(id) && fits(path));
         let mut sites: Vec<ChunkRow> = calls.query_map([n], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
         sites.retain(|r| fits(&r.path) && seen.insert(r.id));
         if rivals {
@@ -758,10 +794,16 @@ pub(crate) fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit
             if uses.got.is_disjoint(&ids) {
                 // with no other definition of the name, a call the resolver cannot place is this one's
                 if unsure && rivals {
-                    unsure_rows.push(row);
-                    continue;
-                }
-                if !unsure {
+                    let mine = |(_, p, k, q): &&(i64, String, String, String)| own((&row.path, &row.qualname), p, k, q);
+                    let mine: Vec<i64> = rows.iter().filter(|r| uses.own_file && mine(r)).map(|r| r.0).collect();
+                    if mine.is_empty() {
+                        unsure_rows.push(row);
+                        continue;
+                    }
+                    if mine.iter().all(|id| !ids.contains(id)) {
+                        continue;
+                    }
+                } else if !unsure {
                     continue;
                 }
             }
@@ -787,7 +829,10 @@ fn has_word(text: &str, word: &str) -> bool {
 /// the same language family, and the names it calls that have none.
 pub(crate) fn callees(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit>, Vec<String>, Vec<String>)> {
     let kinds = crate::search::CODE_KINDS.iter().map(|k| format!("'{k}'")).collect::<Vec<_>>().join(",");
-    let mut named = s.ix.db.prepare(&format!("SELECT {} FROM chunks WHERE name=?1 AND kind IN ({kinds}) ORDER BY is_test", crate::index::CHUNK_COLS))?;
+    let mut named = s.ix.db.prepare(&format!("SELECT {} FROM chunks WHERE name=?1 AND kind IN ({kinds},'key') ORDER BY is_test", crate::index::CHUNK_COLS))?;
+    let langs = Langs { root: &s.ix.root, seen: Default::default() };
+    // a key is what a call runs only in the caller's own language (Nix, whose functions are keys)
+    let callable = |from: &str, r: &ChunkRow| langs.same_family(from, &r.path) && (r.kind != "key" || langs.id(from) == langs.id(&r.path));
     let mut calls = s.ix.db.prepare("SELECT DISTINCT callee FROM refs WHERE chunk_id=?1 ORDER BY callee")?;
     let mut rv = Resolver::new(&s.ix)?;
     let (mut resolved, mut external, mut seen) = (Vec::new(), Vec::new(), HashSet::new());
@@ -796,10 +841,8 @@ pub(crate) fn callees(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit
     for d in defs {
         let names: Vec<String> = calls.query_map([d.id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
         for n in names {
-            let rows: Vec<ChunkRow> = named
-                .query_map([&n], ChunkRow::from_row)?
-                .filter(|r| r.as_ref().map_or(true, |r| same_family(&d.path, &r.path)))
-                .collect::<rusqlite::Result<_>>()?;
+            let rows: Vec<ChunkRow> =
+                named.query_map([&n], ChunkRow::from_row)?.filter(|r| r.as_ref().map_or(true, |r| callable(&d.path, r))).collect::<rusqlite::Result<_>>()?;
             if rows.is_empty() {
                 if !external.contains(&n) {
                     external.push(n);
@@ -811,7 +854,16 @@ pub(crate) fn callees(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit
             let picked: Vec<&ChunkRow> = if !tied.is_empty() {
                 tied
             } else if uses.unsure {
-                rows.iter().filter(|r| uses.unsure_free || !free(&r.kind, &r.qualname)).take(3).collect()
+                let mut near: Vec<&ChunkRow> = rows.iter().filter(|r| uses.unsure_free || !free(&r.kind, &r.qualname)).collect();
+                let mine = |r: &&ChunkRow| own((&d.path, &d.qualname), &r.path, &r.kind, &r.qualname);
+                if uses.own_file && near.iter().any(mine) {
+                    near.retain(mine);
+                }
+                // the nearest three: the caller's file, then its directory
+                let dir = |p: &str| p.rsplit_once('/').map_or(String::new(), |(d, _)| d.to_string());
+                near.sort_by_key(|r| (r.path != d.path, dir(&r.path) != dir(&d.path)));
+                near.truncate(3);
+                near
             } else {
                 Vec::new()
             };

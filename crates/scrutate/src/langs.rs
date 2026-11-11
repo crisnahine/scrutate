@@ -2039,6 +2039,10 @@ static CPP_HEADER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(
     .unwrap()
 });
 
+/// The extensions `sniff` reads the text of, with the languages it picks between.
+pub const BY_CONTENT: &[(&str, &[&str])] =
+    &[(".m", &["objc", "matlab"]), (".h", &["objc", "cpp"]), (".pp", &["pascal", "puppet"]), (".cls", &["latex", "apex"])];
+
 pub fn sniff(path: &str, source: &str) -> Option<&'static LangSpec> {
     let lower = path.rsplit('/').next().unwrap_or(path).to_lowercase();
     let head = crate::text::prefix_bytes(source, 4000);

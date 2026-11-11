@@ -460,6 +460,11 @@ fn parse_size(s: &str) -> Result<u64> {
     num.parse::<u64>().ok().and_then(|n| n.checked_mul(mult)).with_context(|| format!("bad size {s:?}"))
 }
 
+/// The extensions a file of language `id` may have that another language shares: its text decides.
+fn by_content(id: &str) -> Vec<&'static str> {
+    crate::langs::BY_CONTENT.iter().filter(|(_, ids)| ids.contains(&id)).map(|(e, _)| *e).collect()
+}
+
 fn open_fresh(root: &Path) -> Result<crate::search::Searcher> {
     let (s, st) = crate::open_updated(root, false)?;
     if st.files_changed > 0 || st.files_removed > 0 {
@@ -1128,7 +1133,7 @@ pub fn run() -> Result<i32> {
                     kinds.sort();
                     kinds.dedup();
                     serde_json::json!({
-                        "id": spec.id, "extensions": spec.exts, "filenames": spec.files,
+                        "id": spec.id, "extensions": spec.exts, "extensions_by_content": by_content(spec.id), "filenames": spec.files,
                         "definitions": !spec.defs.is_empty(), "definition_kinds": kinds,
                         "call_edges": !spec.calls.is_empty(), "imports": !spec.imports.is_empty(),
                         "docstrings": spec.docstring, "tier": "grammar"
@@ -1140,12 +1145,9 @@ pub fn run() -> Result<i32> {
         }
         Cmd::Languages { json: false } => {
             for spec in crate::langs::LANGS.iter() {
-                println!(
-                    "{:<16} {}{}",
-                    spec.id,
-                    spec.exts.join(" "),
-                    if spec.files.is_empty() { String::new() } else { format!("  files: {}", spec.files.join(" ")) }
-                );
+                let labelled = |label: &str, v: &[&str]| (!v.is_empty()).then(|| format!("{label}{}", v.join(" ")));
+                let parts = [labelled("", spec.exts), labelled("by content: ", &by_content(spec.id)), labelled("files: ", spec.files)];
+                println!("{:<16} {}", spec.id, parts.into_iter().flatten().collect::<Vec<_>>().join("  "));
             }
             Ok(0)
         }
