@@ -1,0 +1,10 @@
+[leaderboard] linux/literal
+  PASS: scrutate 1315.1 ms; best competitor ripgrep 1791.1 ms; ratio 0.734 [0.726550602933823, 0.7418349471127405]
+[leaderboard] linux/case-insensitive
+  PASS: scrutate 1298.8 ms; best competitor ripgrep 1785.3 ms; ratio 0.728 [0.7190146120744475, 0.7411417620834257]
+[leaderboard] llvm/literal
+  PASS: scrutate 2181.3 ms; best competitor ripgrep 2907.9 ms; ratio 0.750 [0.7411550201506973, 0.7599027622781457]
+[leaderboard] ripgrep/literal
+  PASS: scrutate 9.0 ms; best competitor git grep 12.4 ms; ratio 0.722 [0.6823588536990759, 0.7562574025733498]
+[leaderboard] smallfiles/literal
+  PASS: scrutate 1784.2 ms; best competitor ripgrep 2328.3 ms; ratio 0.766 [0.7586524293462017, 0.7785885366191145]
