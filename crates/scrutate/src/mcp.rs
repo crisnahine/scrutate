@@ -38,15 +38,17 @@ Results are capped; a tool says when it stopped early and which argument raises 
 Each result begins with its location (path:start-end). Pass that location wherever a tool takes a symbol name \
 to mean that one definition: read_code symbol, find_symbol, callers, callees, similar_code, references def.";
 
-/// The tools, each with the hints clients use to decide whether a call needs approval and the
-/// schema of its structured result.
-pub fn tools() -> Value {
+/// The tools, each with the hints clients use to decide whether a call needs approval and, with
+/// `structured`, the schema of the JSON its results carry.
+pub fn tools(structured: bool) -> Value {
     let mut tools = tool_table();
     for tool in tools.as_array_mut().into_iter().flatten() {
         let name = tool["name"].as_str().unwrap_or("").to_string();
         let read_only = ops::read_only(&name);
         tool["annotations"] = json!({"readOnlyHint": read_only, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false});
-        tool["outputSchema"] = ops::output_schema(&name);
+        if structured {
+            tool["outputSchema"] = ops::output_schema(&name);
+        }
         if read_only {
             let properties = &mut tool["inputSchema"]["properties"];
             properties["max_bytes"] = json!({"type": "integer", "default": ops::AGENT_BYTES, "description": "size limit of the answer"});
@@ -108,7 +110,8 @@ pub struct Called {
 impl Called {
     /// A sentence in place of an answer.
     fn note(text: String, is_error: bool) -> Called {
-        Called { text, structured: json!({"schema": ops::SCHEMA, "complete": false, "result": null}), is_error }
+        let structured = json!({"schema": ops::SCHEMA, "complete": false, "result": null, "text": text});
+        Called { text, structured, is_error }
     }
 }
 
@@ -119,7 +122,11 @@ pub fn call_tool(repo: &mut Repo, name: &str, args: &Value, refresh_interval: f6
     match ops::Op::from_tool(name, args).and_then(|op| repo.run(&op, refresh_interval)) {
         Ok(answer) => {
             let text = answer.text_within(max_bytes, offset);
-            let structured = answer.structured(text.len(), max_bytes, offset);
+            let mut structured = answer.structured(text.len(), max_bytes, offset);
+            if structured["result"].is_null() {
+                // a client that shows only the structured form still gets the part that fits
+                structured["text"] = json!(text);
+            }
             Called { text, structured, is_error: false }
         }
         Err(e) => Called::note(format!("error: {e}"), true),
@@ -177,6 +184,8 @@ struct Call {
     name: String,
     args: Value,
     stateless: bool,
+    /// send the answer as JSON too (`serve --structured`)
+    structured: bool,
     /// the client's token for progress reports; null when it did not ask for any
     progress: Value,
     cancelled: Arc<AtomicBool>,
@@ -193,7 +202,7 @@ const MAX_CALLS: usize = 32;
 /// One tool call from its first wait to its answer. A cancelled call sends nothing more: it
 /// stops waiting for the index or for its turn, and an answer already being computed is dropped.
 fn run_call(send: &Wire, repo: &Mutex<Repo>, building: &AtomicBool, calls: &Calls, refresh_interval: f64, call: Call) {
-    let Call { id, name, args, stateless, progress, cancelled } = call;
+    let Call { id, name, args, stateless, structured, progress, cancelled } = call;
     let (started, mut reported) = (Instant::now(), 0);
     let gone = || cancelled.load(Ordering::Relaxed);
     while building.load(Ordering::Acquire) && !gone() && (!progress.is_null() || started.elapsed() < BUILD_WAIT) {
@@ -222,14 +231,22 @@ fn run_call(send: &Wire, repo: &Mutex<Repo>, building: &AtomicBool, calls: &Call
     };
     calls.map().remove(&id.to_string());
     if let Some(c) = called.filter(|_| !gone()) {
-        respond(send, &id, stateless, json!({"content": [{"type": "text", "text": c.text}], "structuredContent": c.structured, "isError": c.is_error}));
+        let mut result = json!({"content": [{"type": "text", "text": c.text}], "isError": c.is_error});
+        if structured {
+            result["structuredContent"] = c.structured;
+        }
+        respond(send, &id, stateless, result);
     }
 }
 
 /// Serve until stdin closes. The first indexing runs in the background so a client is answered
 /// at once; tool calls that arrive meanwhile wait for it (`BUILD_WAIT`). Each call runs on a
 /// thread of its own, so the reader still sees a `notifications/cancelled` for it.
-pub fn serve(repo: Arc<Mutex<Repo>>, refresh_interval: f64, version: &str) -> Result<()> {
+///
+/// `structured`: every tool declares an `outputSchema` and every result carries the answer as
+/// JSON beside its text. Off unless asked for: Claude Code (2.1.322) shows its model that JSON in
+/// place of the text, which has the snippets and says how to page.
+pub fn serve(repo: Arc<Mutex<Repo>>, refresh_interval: f64, version: &str, structured: bool) -> Result<()> {
     let building = Arc::new(AtomicBool::new(true));
     {
         let (repo, building) = (Arc::clone(&repo), Arc::clone(&building));
@@ -303,7 +320,7 @@ pub fn serve(repo: Arc<Mutex<Repo>>, refresh_interval: f64, version: &str) -> Re
                 "notifications/cancelled" => calls.cancel(&params["requestId"]),
                 "notifications/initialized" | "notifications/roots/list_changed" => {}
                 "ping" => respond(send, &id, stateless, json!({})),
-                "tools/list" => list(json!({"tools": tools()})),
+                "tools/list" => list(json!({"tools": tools(structured)})),
                 "resources/list" => list(json!({"resources": []})),
                 "resources/templates/list" => list(json!({"resourceTemplates": []})),
                 "prompts/list" => list(json!({"prompts": []})),
@@ -312,6 +329,7 @@ pub fn serve(repo: Arc<Mutex<Repo>>, refresh_interval: f64, version: &str) -> Re
                         name: params.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                         args: params.get("arguments").cloned().unwrap_or(json!({})),
                         stateless,
+                        structured,
                         progress: params.get("_meta").and_then(|m| m.get("progressToken")).cloned().unwrap_or(Value::Null),
                         cancelled: calls.begin(&id),
                         id,
@@ -351,7 +369,7 @@ mod tests {
 
     fn call(calls: &Calls, id: i64, progress: Value) -> Call {
         let id = json!(id);
-        Call { name: "find_symbol".into(), args: json!({"name": "make_point"}), stateless: true, progress, cancelled: calls.begin(&id), id }
+        Call { name: "find_symbol".into(), args: json!({"name": "make_point"}), stateless: true, structured: true, progress, cancelled: calls.begin(&id), id }
     }
 
     #[test]

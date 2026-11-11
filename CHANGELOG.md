@@ -146,9 +146,9 @@ First release.
   `--max-bytes` (`SCRUTATE_MAX_BYTES`) and `--offset`; a first index build no longer blocks a tool
   call for longer than 20 seconds.
 - MCP revision 2026-07-28 beside the handshake revisions: `server/discover`, a protocol version in
-  each request's `_meta`, `resultType` on results, `ttlMs` and `cacheScope` on lists. Every tool
-  has an `outputSchema` and every result `structuredContent` (the `--json` form, or `null` when
-  the answer is larger than its budget). `notifications/cancelled` stops a call that is waiting
+  each request's `_meta`, `resultType` on results, `ttlMs` and `cacheScope` on lists. With
+  `serve --structured` every tool has an `outputSchema` and every result `structuredContent`
+  (the `--json` form, or `null` and the text page when the answer is larger than its budget). `notifications/cancelled` stops a call that is waiting
   and drops the answer of one that is computing; a call with a `progressToken` gets progress
   reports while the first index is built, and then its answer.
 - `read_code` reads a whole definition with `symbol` (a name, `Class.method`, or a location). The

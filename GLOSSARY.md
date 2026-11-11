@@ -35,8 +35,9 @@ limits, and the rule for refreshing the index first. Front ends parse into opera
 no defaults of their own.
 
 **Answer**: the typed result of an operation (`ops::Answer`), with one text form and one JSON
-form. Every front end renders the same answer; the MCP server sends both, the JSON form as the
-**structured** result when it fits the budget (`Answer::structured`).
+form. Every front end renders the same answer; the MCP server sends the text, and with
+`serve --structured` the JSON form too, as the **structured** result, when it fits the budget
+(`Answer::structured`).
 
 **Location**: where a symbol is, written `path:start-end` (or `path:line`). Every answer begins
 each result with one, and every operation that takes a symbol accepts one in place of a name, to

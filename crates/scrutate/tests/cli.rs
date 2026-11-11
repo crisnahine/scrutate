@@ -382,6 +382,9 @@ fn mcp_protocol_round_trip() {
     assert!(text.starts_with("12 matching lines in 12 symbols"), "{text}");
     assert_eq!(text.lines().filter(|l| l.contains(": import os")).count(), 2, "{text}");
     assert!(tools.iter().all(|t| t["name"] == "reindex" || t["inputSchema"]["properties"]["max_bytes"]["default"] == 24_000));
+    // text is the whole answer unless the server was started with --structured
+    assert!(tools.iter().all(|t| t.get("outputSchema").is_none()));
+    assert!(by_id(3)["result"].get("structuredContent").is_none());
     assert!(lines.iter().any(|v| v["error"]["code"] == -32700), "parse error for non-JSON input");
 }
 
@@ -432,7 +435,7 @@ fn conforms(schema: &serde_json::Value, v: &serde_json::Value) -> Result<(), Str
 fn mcp_stateless_revision_and_structured_results() {
     let r = python_repo("mcp2");
     let mut child = Command::new(BIN)
-        .args(["--root", r.root.to_str().unwrap(), "serve"])
+        .args(["--root", r.root.to_str().unwrap(), "serve", "--structured"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -520,7 +523,8 @@ fn mcp_stateless_revision_and_structured_results() {
     assert_eq!(text(29), text(12), "a location names the symbol at it");
     // an answer too large for its budget pages as text and says so in the structured form
     let big = &by_id(27)["result"];
-    assert_eq!(big["structuredContent"], serde_json::json!({"schema": 1, "complete": false, "result": null}));
+    assert_eq!((&big["structuredContent"]["complete"], &big["structuredContent"]["result"]), (&serde_json::json!(false), &serde_json::Value::Null));
+    assert_eq!(big["structuredContent"]["text"], big["content"][0]["text"], "a client that reads only the structured form gets the page too");
     assert!(big["content"][0]["text"].as_str().unwrap().contains("not shown: call again with offset="), "{big}");
     for id in [28, 30] {
         assert_eq!(by_id(id)["result"]["isError"], true);

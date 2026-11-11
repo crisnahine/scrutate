@@ -17,8 +17,10 @@ What a client gets (details in docs/CLI.md, `serve`):
 - `grep_code` at the speed of `scrutate grep`, with matches grouped by enclosing symbol;
 - a location (`path:start-end`) at the start of every result, accepted wherever a tool takes a
   symbol, and `read_code symbol=...` for a whole definition by name or location;
-- `structuredContent` with an `outputSchema` on every tool: the answer as the JSON that
-  `--json` prints, or `null` when it is larger than the budget;
+- with `serve --structured`, `structuredContent` and an `outputSchema` on every tool: the answer
+  as the JSON that `--json` prints. Leave it off for Claude Code, which then shows its model the
+  JSON in place of the text with the snippets; turn it on for a client whose scripts read tool
+  results (Codex in Code Mode);
 - cancellation (`notifications/cancelled`) and, for a call that sends a `progressToken`,
   progress reports while the first index is built.
 

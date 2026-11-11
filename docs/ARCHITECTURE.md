@@ -273,8 +273,9 @@ two eras on one pipe: the `initialize` handshake of the revisions up to 2025-11-
 2026-07-28, where each request names its version in `_meta` and nothing is remembered between
 requests. Each tool call runs on a thread of its own, so the loop keeps reading and a
 `notifications/cancelled` finds the call it names; the calls still take turns on the one index.
-A result carries the answer twice, as text cut to the byte budget and as the JSON form in
-`structuredContent` when both fit. The Python bindings expose both
+A result is text cut to the byte budget; with `serve --structured` it also carries the JSON
+form in `structuredContent` when both fit. That is a switch because clients differ in which
+form they show their model, and the text is the one written for a model. The Python bindings expose both
 engines with the GIL released and streaming results.
 
 `lsp.rs` is a language server for editors (`scrutate lsp`), hand-written like the MCP server: a

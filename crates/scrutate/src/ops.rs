@@ -204,8 +204,11 @@ pub fn output_schema(tool: &str) -> Value {
         }
     };
     let complete =
-        json!({"type": "boolean", "description": "false when the answer is larger than max_bytes: result is then null and the text holds the first part"});
-    obj(json!({"schema": ty("integer"), "complete": complete, "result": {"anyOf": [result, ty("null")]}}), &["schema", "complete", "result"])
+        json!({"type": "boolean", "description": "false when the answer is larger than max_bytes: result is then null and text holds the part that fits"});
+    obj(
+        json!({"schema": ty("integer"), "complete": complete, "result": {"anyOf": [result, ty("null")]}, "text": ty("string")}),
+        &["schema", "complete", "result"],
+    )
 }
 
 pub enum Answer {

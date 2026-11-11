@@ -378,6 +378,11 @@ pub enum Cmd {
         /// also update the index from filesystem events, in the background
         #[arg(long)]
         watch: bool,
+        /// also send each answer as JSON (`structuredContent`, with an `outputSchema` per tool), for
+        /// clients whose scripts read tool results; a client that shows its model the JSON in
+        /// place of the text loses the text's snippets
+        #[arg(long, env = "SCRUTATE_MCP_STRUCTURED")]
+        structured: bool,
     },
     /// run a Language Server Protocol server on stdio (definitions, references, symbols from the index)
     Lsp,
@@ -696,7 +701,7 @@ pub fn run() -> Result<i32> {
             let _ = w.flush();
             Ok(if n == 0 { 1 } else { 0 })
         }
-        Cmd::Serve { refresh_interval, watch } => {
+        Cmd::Serve { refresh_interval, watch, structured } => {
             let s = crate::Repo::open(&cli.root)?;
             let root = s.ix.root.clone();
             let s = Arc::new(Mutex::new(s));
@@ -724,7 +729,7 @@ pub fn run() -> Result<i32> {
                     }
                 })?;
             }
-            crate::mcp::serve(s, refresh_interval, crate::VERSION)?;
+            crate::mcp::serve(s, refresh_interval, crate::VERSION, structured)?;
             Ok(0)
         }
         Cmd::Lsp => crate::lsp::serve(&cli.root),

@@ -84,7 +84,7 @@ often while files change.
 | `stats` | Index statistics (files, chunks, symbols, call edges, imports, segments, and the text index's files, segments and bytes). |
 | `languages [--json]` | The verified capability registry. |
 | `watch [PATH]` | Keep the index (and the text index, if there is one) up to date from filesystem events (see below). |
-| `serve [--refresh-interval S] [--watch]` | MCP server on stdio (see below); `--watch` also runs the watcher in a background thread. |
+| `serve [--refresh-interval S] [--watch] [--structured]` | MCP server on stdio (see below); `--watch` also runs the watcher in a background thread; `--structured` also sends each answer as JSON. |
 | `lsp` | Language Server Protocol server on stdio (see below). |
 | `config` | Show the configuration file in effect. |
 | `batch FILE [--features] [--timing]` | Run requests from a JSON-lines file with one index open. A line `{"query": ..., "k": ...}` is a ranked search; a line `{"op": TOOL, ...}` runs any operation, named and given arguments as the MCP tool is (`{"op": "callers", "name": "parse"}`), and prints `{"op", "result"}` or `{"op", "error"}`. |
@@ -169,11 +169,15 @@ Fourteen tools over stdio, each one an operation above (`search_code`, `grep_cod
 - `read_code` reads a line range of a file (`path`, `start`, `end`), or with `symbol` a whole
   definition: a name, `Class.method` or a location. A name with several definitions returns each
   (up to 20), and `path` keeps the ones in that file.
-- Every tool declares an `outputSchema`, and every result carries `structuredContent` beside its
-  text: `{"schema": 1, "complete": true, "result": ...}`, where `result` is what the matching CLI
-  command prints with `--json`. When the text and the JSON together pass one and a half times
-  `max_bytes`, `result` is `null` and `complete` is `false`: the text then pages through the answer
-  with `offset`, and a larger `max_bytes` gets the whole answer as JSON.
+- `serve --structured` (`SCRUTATE_MCP_STRUCTURED=1`) adds an `outputSchema` to every tool and
+  `structuredContent` to every result, beside its text: `{"schema": 1, "complete": true,
+  "result": ...}`, where `result` is what the matching CLI command prints with `--json`. When the
+  text and the JSON together pass one and a half times `max_bytes`, `result` is `null`,
+  `complete` is `false` and `text` holds the page that fits; a larger `max_bytes` gets the whole
+  answer as JSON. It is off by default because clients differ in what they show their model:
+  Claude Code 2.1.322 shows the JSON in place of the text, and the text is the form with the
+  snippets (measured with that client on 2026-11-11). Turn it on for a client whose scripts read
+  tool results, such as Codex in Code Mode.
 - A call runs on a thread of its own, so `notifications/cancelled` reaches it: a call waiting for
   the index or for its turn stops, and the answer of one already computing is dropped. Nothing
   more is sent for a cancelled request.
