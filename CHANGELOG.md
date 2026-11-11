@@ -230,7 +230,9 @@ First release.
   functions hold their bodies.
 - Chunk text and body are cut at 32 KiB, and a chunk ends on the last line that holds its text.
   A file of many sibling definitions or of deep nesting indexes in linear time (20,000 one-line
-  JavaScript functions: 58 s to 0.8 s).
+  JavaScript functions: 58 s to 0.8 s). A segment of 20,000 rows or more is not written again
+  when a few of its rows die: compaction judged it by its live rows, so every save near that
+  size rewrote it.
 - Inside a git repository the ignore files decide for `build`, `dist`, `target` and `venv`;
   outside one they are skipped by name. `\,` keeps a comma in `SCRUTATE_INDEX_EXCLUDE_DIRS`.
 - The heuristic tier skips leading modifiers and reads OCaml `let f x =` as a function; Kconfig
@@ -397,9 +399,12 @@ First release.
   name is an error. `search_code` takes at most 10 `alt_queries`.
 - `watch` and `serve --watch` set the watch before the first update, so changes made during it
   are seen. On Linux each directory the indexes can hold gets one inotify watch (2 instead of
-  7,012 on a tree with an ignored `node_modules` and `target`), walked again after every burst;
-  failed watches are named. The ignore rules are read again after every burst, and the watch
-  stops with an error when its root is removed.
+  7,012 on a tree with an ignored `node_modules` and `target`); failed watches are named, and
+  the watch stops with an error when its root is removed. On Linux and Windows a burst of file
+  events updates those files alone, in both indexes, with no walk of the tree; a burst with a
+  new, removed or moved directory, a changed ignore file or `.scrutate.toml`, or lost events
+  walks the tree, sets the watches again and reads the ignore rules again. `.git/info/exclude`
+  is watched.
 - `find` takes a question with a space and a trailing `?` as words, and goes to ranked search
   when a regex-looking query finds nothing and an index exists.
 - Text files check out with LF line ends on every platform (`.gitattributes`), so a Windows

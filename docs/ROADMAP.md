@@ -136,6 +136,13 @@ docs/RELEASING.md, public, tag `v0.1.0`.
 - Java: `refs` ties no occurrence to a field, an enum constant or a record accessor. They are
   listed as unresolved (`field or key`), a `static final` field included, which `symbol` finds as
   a constant.
+- On Windows a burst of changes too large for the watch buffer is dropped by the `notify` crate
+  (8.2.2, read in its source: an empty read is not reported), so `watch` indexes those changes
+  with the next change it sees; a command run meanwhile scans the tree and finds them.
+- On macOS `watch` checks the tree on a timer, every second or ten times as long as the last
+  check took (at most 30 s), so on a tree of 20,000 directories a saved file is indexed after
+  11 to 14 s (debug build); the FSEvents backend would add about 1 ms to the start of every
+  command. Linux and Windows update the saved file alone.
 - A few call forms the grammars do not tell apart: a Verilog task call without parentheses
   (`h;`) or on a member (`obj.m(1);`) records no call edge, a VHDL indexed signal `a(i)` is
   recorded as a call, and an assembly call under a local label counts for that label and for

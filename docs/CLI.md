@@ -448,18 +448,26 @@ Sets up the watch on `PATH` (default `--root`), then updates the index once, so 
 during that first update is seen, prints `watching PATH` on stderr, and waits for filesystem
 events. On Linux each directory the indexes can hold gets one inotify watch of its own, and an
 ignored tree gets none (2 watches instead of 7,012 on a tree with an ignored `node_modules` and
-`target`); the set is walked again after every burst, so new, moved and replaced
-directories are watched, and a directory that cannot be watched is named on stderr. Windows uses
+`target`); the set is walked again after a burst that creates, removes or moves a directory, so
+new, moved and replaced directories are watched, and a directory that cannot be watched is named
+on stderr. `.git/info` gets a watch too, for its `exclude` file. Windows uses
 one recursive ReadDirectoryChangesW watch on `PATH`. On macOS it runs the index's own incremental check
 instead, every second or, on a large tree, after a pause ten times as long as the last check took
 (at most 30 s): the FSEvents backend would link CoreServices into every `scrutate` command
 (about 1 ms of start-up), and the check compares sizes and nanosecond times, so it misses no
 edit. Events under `.scrutate/` and `.git/` are dropped, and so are paths that neither index
 would hold under its usual rules (ignore files; the skipped build and vendor directories and
-`SCRUTATE_INDEX_EXCLUDE_DIRS` for the code index; hidden paths for the text index); the ignore
-files are read again after every burst. A burst of events is collected until 200 ms pass
-without one (at most 2 s), then the usual incremental update runs: the code index, and the text
-index when `.scrutate/text/` exists (`watch` never creates one; `scrutate index` does). Each
+`SCRUTATE_INDEX_EXCLUDE_DIRS` for the code index; hidden paths for the text index). A burst of
+events is collected until 200 ms pass without one (at most 2 s). On Linux and Windows a burst
+that names only files (written, created, removed or renamed in directories already watched)
+updates those files alone, with no walk of the tree and no new watches, so a saved file costs
+the same in a tree of 20,000 directories as in a small one. A burst that creates, removes or
+moves a directory, changes an ignore file (`.gitignore`, `.ignore`, `.rgignore`,
+`.git/info/exclude`) or `.scrutate.toml`, or reports lost events runs the usual incremental
+update of the whole tree and reads the ignore files again. Either way the code index is
+updated, and the text index when `.scrutate/text/` exists (`watch` never creates one;
+`scrutate index` does). `SCRUTATE_WATCH_DEBUG=1` prints one line per burst on stderr (the
+number of paths, and whether the tree was walked). Each
 update that changed something prints one line on stderr. A failed first update stops the
 watch; a later one that fails is reported and the watch goes on. Ctrl-C stops it after the
 update in progress (exit 130). When `PATH` is removed or moved away, `watch` stops with an error
@@ -484,7 +492,7 @@ is safe to delete at any time.
 ### Environment variables
 `SCRUTATE_ROOT`, `SCRUTATE_THREADS`, `SCRUTATE_GREP_{HIDDEN,NO_IGNORE,FOLLOW,SMART_CASE,MAX_FILESIZE,MAX_DEPTH,GLOBS,TYPES}`,
 `SCRUTATE_INDEX_EXCLUDE_DIRS`, `SCRUTATE_REFRESH_INTERVAL`, `SCRUTATE_MAX_BYTES`,
-`SCRUTATE_MCP_STRUCTURED`, `SCRUTATE_CONFIG`, `SCRUTATE_SEMANTIC`
+`SCRUTATE_MCP_STRUCTURED`, `SCRUTATE_CONFIG`, `SCRUTATE_WATCH_DEBUG`, `SCRUTATE_SEMANTIC`
 (path or `none`), `SCRUTATE_RANKER` (path or `none`), `SCRUTATE_PROFILE` (print indexing phase
 timings), `SCRUTATE_DIAGNOSTICS` (`json`: errors as JSON records), `NO_COLOR` (any non-empty
 value). On/off variables follow the rule under Conventions.

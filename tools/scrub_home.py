@@ -21,6 +21,8 @@ def main() -> int:
     files = subprocess.run(["git", "ls-files", "-z", "bench/results", "docs"], cwd=ROOT, capture_output=True, check=True).stdout.split(b"\0")
     hit = 0
     for rel in filter(None, files):
+        if rel.startswith(b"docs/research/"):
+            continue  # notes that are left as they were written
         path = os.path.join(ROOT.encode(), rel)
         try:
             with open(path, "rb") as f:
