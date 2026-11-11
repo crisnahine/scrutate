@@ -113,8 +113,20 @@ fn outer_rules<'a>(root: &Path, dirs: impl Iterator<Item = &'a PathBuf>) -> Hash
     rules.extend(dirs.filter(|d| *d != root && d.join(".git").exists()).filter_map(|d| git_exclude(d)));
     // the walks apply the global file inside a repository only
     if top.is_some() {
-        let global = ignore::gitignore::gitconfig_excludes_path();
-        rules.extend(global.and_then(|p| Some(std::fs::canonicalize(p.parent()?).ok()?.join(p.file_name()?))));
+        // as an event names it: its directory resolved, and no entry when that does not exist
+        let named = |p: PathBuf| Some(std::fs::canonicalize(p.parent()?).ok()?.join(p.file_name()?));
+        rules.extend(ignore::gitignore::gitconfig_excludes_path().and_then(named));
+        // and the configuration files that say where it is
+        let var = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
+        let home = var(if cfg!(windows) { "USERPROFILE" } else { "HOME" });
+        let config = match var("GIT_CONFIG_GLOBAL") {
+            Some(file) => vec![file],
+            None => {
+                let xdg = var("XDG_CONFIG_HOME").or_else(|| home.as_ref().map(|h| h.join(".config")));
+                home.iter().map(|h| h.join(".gitconfig")).chain(xdg.map(|x| x.join("git").join("config"))).collect()
+            }
+        };
+        rules.extend(config.into_iter().filter_map(named));
     }
     rules
 }

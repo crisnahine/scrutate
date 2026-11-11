@@ -59,12 +59,17 @@ impl Drop for KillOnDrop {
 
 /// Start `watch` in `root`; stderr lines arrive on the receiver.
 fn start_watch(root: &Path) -> (KillOnDrop, Receiver<String>) {
+    // no global git excludes file from the user's own configuration
+    start_watch_with(root, Path::new("/nonexistent"))
+}
+
+/// `start_watch` with `git_config` as git's global configuration file.
+fn start_watch_with(root: &Path, git_config: &Path) -> (KillOnDrop, Receiver<String>) {
     let mut child = Command::new(BIN)
         .args(["watch", "."])
         .current_dir(root)
         .env("SCRUTATE_WATCH_DEBUG", "1")
-        // no global git excludes file from the user's own configuration
-        .env("GIT_CONFIG_GLOBAL", "/nonexistent")
+        .env("GIT_CONFIG_GLOBAL", git_config)
         .env("XDG_CONFIG_HOME", "/nonexistent")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -373,6 +378,31 @@ fn a_file_the_exclude_file_of_a_nested_repository_starts_to_list_leaves_the_inde
     r.write("vendor/lib/.git/info/exclude", b"x.py\n");
     burst_was(&wait_update(&rx, 0, 1), Some(0), true);
     assert!(!r.indexed("excluded_later"));
+}
+
+#[test]
+fn a_change_of_the_git_configuration_that_names_the_excludes_file_walks_the_tree() {
+    let above = Repo::new("gitconfig");
+    let r = Repo { root: above.root.join("repo") };
+    r.write(".git/HEAD", b"ref: refs/heads/main\n");
+    r.write("src/a.py", b"def alpha():\n    return 1\n");
+    r.write("src/b.py", b"def listed_globally():\n    return 2\n");
+    above.write("rules", b"b.py\n");
+    let config = above.root.join("gitconfig");
+    let names = |file: &str| format!("[core]\n\texcludesFile = {}\n", above.root.join(file).display());
+    above.write("gitconfig", names("none").as_bytes());
+    let run = |args: &[&str]| {
+        let mut cmd = Command::new(BIN);
+        cmd.args(args).current_dir(&r.root).env("GIT_CONFIG_GLOBAL", &config).env("XDG_CONFIG_HOME", "/nonexistent");
+        cmd.stdin(Stdio::null()).output().unwrap().status.code()
+    };
+    assert_eq!(run(&["index"]), Some(0));
+    assert_eq!(run(&["grep", "--index", "-F", "listed_globally"]), Some(0));
+    let (_child, rx) = start_watch_with(&r.root, &config);
+    wait_watching(&rx);
+    above.write("gitconfig", names("rules").as_bytes());
+    burst_was(&wait_update(&rx, 0, 1), Some(0), true);
+    assert_eq!(run(&["grep", "--index", "-F", "listed_globally"]), Some(1));
 }
 
 #[test]
