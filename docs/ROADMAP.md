@@ -45,7 +45,12 @@ docs/TRACEABILITY.md.
 | Limits left in 0.1.0's first draft (R-2A, R-12.4) | smart case sees a letter written by its code point (`\x41`); the LSP server replaces a damaged index, from a save or from a request; the watcher's test of one path decides in the walk's order (a `.ignore` at any level before every `.gitignore`) |
 | Benchmark corpora without hard links (R-14) | `bench/corpora.py` copies (APFS clones) where it linked: a hard-linked file costs every tool twice as long to open on macOS |
 
-## Blocked: needs the repository published (declined for this release)
+## Blocked: needs the repository published
+
+Publishing was declined on 2026-11-08 and asked for on 2026-11-11, on one condition: every way
+to install and use the tool works first. docs/RELEASE_READINESS.md lists what ran here and what
+only GitHub can run. The order from there: a private repository, one green run of `ci.yml`, the
+settings in docs/RELEASING.md, public, tag `v0.1.0`.
 
 - Run the CI matrix and the release workflow; flip the Windows and Intel macOS rows to PASS only
   with a recorded run (R-6.1, R-9.10). Both are cross-built here and their test binaries link.

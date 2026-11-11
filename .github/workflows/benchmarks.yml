@@ -52,7 +52,7 @@ jobs:
         run: |
           for b in old new; do
             [ -x "$RUNNER_TEMP/$b" ] || continue
-            SCRUTATE_BIN="$RUNNER_TEMP/$b" python3 bench/compare_tools.py --corpus "networkx=$RUNNER_TEMP/networkx" --runs 7 --out "compare-$b.json"
+            SCRUTATE_BIN="$RUNNER_TEMP/$b" python3 bench/compare_tools.py --corpus "networkx=$RUNNER_TEMP/networkx" --only text,index --runs 21 --out "compare-$b.json"
           done
           [ ! -f compare-old.json ] || python3 bench/regression.py --relative compare-old.json compare-new.json
       - name: leaderboard suite on the ripgrep corpus

@@ -6,6 +6,10 @@ Fails (exit 1) when scrutate's median wall time for any (corpus, query) is slowe
 by more than the tolerance, when a match count changed, or when the index grew by more than the
 tolerance. Only scrutate's own rows are gated; competitor rows are informational.
 
+When both files hold the single run times (`wall_ms`), a row regresses only if the 95% bootstrap
+confidence interval of median(current) / median(baseline) lies entirely above 1 + tolerance, so
+one noisy median does not fail the gate. An older file has only medians, and those are compared.
+
 --relative is for a machine whose speed moves between the two runs (a shared CI runner): each
 median is first divided by the fastest competitor's median for the same query in the same file.
 """
@@ -13,7 +17,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from leaderboard import boot_ratio  # noqa: E402
 
 
 def rows(d, tool="scrutate"):
@@ -48,11 +56,15 @@ def main() -> int:
             continue
         if cr["matches"] != br["matches"]:
             problems.append(f"{key}: match count {br['matches']} -> {cr['matches']}")
-        ratio = cr["wall_median_ms"] / max(br["wall_median_ms"], 1e-9)
-        if a.relative and mb.get(key) and mc.get(key):
-            ratio *= mb[key] / mc[key]
-        flag = "  <-- REGRESSION" if ratio > 1 + a.tolerance else ""
-        print(f"{key[0]:10} {key[1]:26} {br['wall_median_ms']:9.1f} -> {cr['wall_median_ms']:9.1f} ms  x{ratio:.2f}{flag}")
+        scale = mb[key] / mc[key] if a.relative and mb.get(key) and mc.get(key) else 1.0
+        if br.get("wall_ms") and cr.get("wall_ms"):
+            ratio, low, high = boot_ratio([t * scale for t in cr["wall_ms"]], br["wall_ms"])
+            shown = f"x{ratio:.2f} (CI {low:.2f} to {high:.2f})"
+        else:
+            ratio = low = scale * cr["wall_median_ms"] / max(br["wall_median_ms"], 1e-9)
+            shown = f"x{ratio:.2f}"
+        flag = "  <-- REGRESSION" if low > 1 + a.tolerance else ""
+        print(f"{key[0]:10} {key[1]:26} {br['wall_median_ms']:9.1f} -> {cr['wall_median_ms']:9.1f} ms  {shown}{flag}")
         if flag:
             problems.append(f"{key}: {ratio:.2f}x slower")
     for bi in base.get("index", []):

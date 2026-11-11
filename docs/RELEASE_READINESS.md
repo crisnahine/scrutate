@@ -27,8 +27,8 @@ below). Every PASS refers to a test, benchmark or audit output in this repositor
 
 1. **Platform coverage.** Windows and Intel macOS hardware were not available. Both binaries are
    cross-built and their test binaries compile and link, but none of them ran; the CI matrix that
-   would run them has not run either, because publishing the repository was declined for this
-   release. Linux x86_64 was tested under emulation, not on x86 hardware.
+   would run them has not run either, because the repository is not on GitHub yet. Linux
+   x86_64 was tested under emulation, not on x86 hardware.
 2. **No independent security review**; fuzzing ran in ten-minute rounds on one machine.
 3. **Release pipeline unexercised**: signed releases, attestations and package-manager packages exist
    only as workflow definitions.
@@ -45,7 +45,7 @@ Status words as in docs/TRACEABILITY.md. "Resolution" says what closes the item.
 | R-4.6, R-14.16 | #1 on every benchmark, metric and declared platform: every row measured is won with significance (macOS arm64: 37 warm, 5 cold, 8 indexed; Linux aarch64 VM: 14 warm, 4 cold, 8 indexed), but Linux x86_64 has no benchmark run and nothing was measured on dedicated hardware | PARTIAL | a run of `bench/run_macos.sh` and `bench/competitors/linux_bench.sh` on a dedicated Mac and on dedicated aarch64 and x86_64 Linux machines |
 | R-14.11 | Results from dedicated, otherwise idle hardware | BLOCKED | a dedicated Mac and Linux machine; the harness and corpora are ready |
 | R-6.1, R-9.10, R-12.2, R-13.9 | Windows and Intel macOS executed, not only cross-built | PARTIAL | a Windows machine or the CI matrix; Intel macOS with Rosetta 2 installed on the build Mac |
-| R-6.12, R-14.15, R-12.18 | CI runs, benchmark regression tracking in CI | PARTIAL | publishing the repository (declined for this release) |
+| R-6.12, R-14.15, R-12.18 | CI runs, benchmark regression tracking in CI | PARTIAL | publishing the repository: the workflows are linted and their Linux jobs rehearsed in a container, but only a runner can run them |
 | R-12.17 | Signed releases and published packages | PARTIAL | the release workflow's Sigstore steps and the package pull requests, which need the published repository |
 | R-6.15, R-12.16 | GitHub App / GitLab integration exercised against a real platform | PARTIAL | the published repository |
 | R-12.15 | The cross-platform part of verification | PARTIAL | as R-9.10 |

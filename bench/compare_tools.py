@@ -412,7 +412,7 @@ def bench_text_search(tools: dict, corpora: dict, runs: int, cold: bool) -> list
                     cpus.append(r["cpu"])
                 row = {
                     "corpus": cname, "query": q["name"], "tool": tool, "status": "ok", "matches": n,
-                    "wall_median_ms": 1000 * statistics.median(walls), "wall_min_ms": 1000 * min(walls),
+                    "wall_median_ms": 1000 * statistics.median(walls), "wall_min_ms": 1000 * min(walls), "wall_ms": [1000 * w for w in walls],
                     "cpu_median_s": statistics.median(cpus), "maxrss_mb": peak_rss_mb(cmd, cdir, exe),
                     "cmd": " ".join(shlex_quote(c) for c in cmd),
                 }

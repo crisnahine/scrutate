@@ -7,7 +7,7 @@ release URLs below do not exist yet. Logs of every test are in `bench/results/pl
 |---|---|
 | `homebrew/scrutate.rb` | Homebrew formula. Builds from the source tarball of tag `v0.1.0` with the Homebrew `rust`, installs bash, zsh and fish completions. |
 | `scoop/scrutate.json` | Scoop manifest for the Windows x86_64 and ARM64 release zips, with `checkver` and `autoupdate` (hashes from `SHA256SUMS`). |
-| `winget/manifests/c/crisnahine/Scrutate/0.1.0/` | winget manifests (version, installer, default locale; schema 1.9.0). Portable install from the same zips. |
+| `winget/manifests/c/crisnahine/Scrutate/0.1.0/` | winget manifests (version, installer, default locale; schema 1.12.0). Portable install from the same zips. |
 | `linux/build-packages.sh` | Builds the `.deb` (cargo-deb) and `.rpm` (cargo-generate-rpm) in a `rust:1-slim-bookworm` container. The package metadata is in `crates/scrutate/Cargo.toml` under `[package.metadata.deb]` and `[package.metadata.generate-rpm]`. |
 | `linux/test-packages.sh` | Installs a package in a clean container, runs `scrutate --version` and a `scrutate grep`, removes it. |
 | `validate_manifests.py` | Parses the Scoop and winget files and checks them against the published schemas. |

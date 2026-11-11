@@ -126,7 +126,7 @@ Counts: PASS 121 · PARTIAL 14 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 |---|---|---|---|
 | R-8.1 to 8.10 | Inspect, research, foundation, Engine A, Engine B, unify, benchmark/optimise, security/reliability testing, documentation/installation, deliver 0.1.0 | PASS | this repository; `git log`; TEST_RESULTS.md; LEADERBOARD.md; docs/ |
 | R-8.11 | Preserve existing user work | PASS | earlier work untouched; the reference implementation lives on as `python/scrutate_ref` |
-| R-8.12 | Decide autonomously | PASS | decisions recorded in CHANGELOG/ARCHITECTURE; one question asked (publishing to GitHub, declined) |
+| R-8.12 | Decide autonomously | PASS | decisions recorded in CHANGELOG/ARCHITECTURE; one question asked (publishing to GitHub: declined on 2026-11-08, asked for on 2026-11-11 once every install and usage path is verified) |
 
 ## 9. Zero-gap quality assurance
 
