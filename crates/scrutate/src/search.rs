@@ -178,6 +178,10 @@ impl QueryInfo {
                 }
             }
         }
+        // one word, or stop words alone, is most likely a name: `find`, `get`, `id`
+        if keys.is_empty() || words.len() == 1 {
+            keys.extend(words.iter().map(|w| name_key(w)).filter(|k| !k.is_empty() && seen.insert(k.clone())));
+        }
         let dotted_re = Regex::new(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+").unwrap();
         let mut dotted = Vec::new();
         let mut dseen = HashSet::new();

@@ -86,6 +86,9 @@ class QueryInfo:
     def parse(cls, text: str) -> "QueryInfo":
         words = [w.lower() for w in text_words(text)]
         keys = list(dict.fromkeys(name_key(w) for w in words if len(w) >= 3 and w not in QUERY_STOP))
+        # one word, or stop words alone, is most likely a name: `find`, `get`, `id`
+        if not keys or len(words) == 1:
+            keys = list(dict.fromkeys(keys + [k for k in map(name_key, words) if k]))
         dotted = [".".join(name_key(p) for p in d.split("."))
                   for d in re.findall(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+", text)]
         return cls(text, query_terms(text), query_wholes(text), literal_candidates(text), words, keys,

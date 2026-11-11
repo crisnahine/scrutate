@@ -644,6 +644,18 @@ fn corruption_found_during_use_triggers_a_rebuild() {
 }
 
 #[test]
+fn search_finds_a_definition_named_by_a_stop_word() {
+    let r = Repo::new("stopname");
+    r.write("a.py", b"def where(x):\n    return x\n\n\ndef find(x):\n    return x\n\n\ndef get(x):\n    return x\n\n\ndef id(x):\n    return x\n");
+    r.run(&["index"]);
+    for (query, line) in [("find", "a.py:5-6"), ("where", "a.py:1-2"), ("get", "a.py:9-10"), ("id", "a.py:13-14"), ("where is it", "a.py:1-2")] {
+        let (code, out, err) = r.run(&["search", query, "-k", "1"]);
+        assert_eq!(code, 0, "{query}: {out}{err}");
+        assert!(out.starts_with(line), "{query}: {out}");
+    }
+}
+
+#[test]
 fn a_posting_row_outside_its_segment_triggers_a_rebuild() {
     let r = python_repo("badposting");
     r.run(&["index"]);
