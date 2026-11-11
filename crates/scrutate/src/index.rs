@@ -862,8 +862,10 @@ impl Index {
     }
 
     // ---- update
+    /// Inside `watch`'s handling of a burst that named files only, the update looks at those alone.
     pub fn update(&mut self, force: bool) -> Result<UpdateStats> {
-        self.update_with(force, true, None)
+        let named = if force { None } else { crate::watch::burst_files().map(|b| b.code) };
+        self.update_with(force, true, named.as_deref())
     }
 
     /// Of `paths` (repository paths the index may hold), the ones whose file is gone or whose
@@ -1019,7 +1021,8 @@ impl Index {
                         known.insert(p, k);
                     }
                 }
-                paths.iter().filter(|p| std::fs::metadata(self.root.join(p)).is_ok_and(|m| m.is_file())).cloned().collect()
+                // the walk does not follow symbolic links
+                paths.iter().filter(|p| std::fs::symlink_metadata(self.root.join(p)).is_ok_and(|m| m.is_file())).cloned().collect()
             }
         };
         let fileset: HashSet<&String> = files.iter().collect();
@@ -1461,5 +1464,33 @@ mod tests {
         });
         let _ = std::fs::remove_dir_all(&root);
         assert_eq!(left, 0);
+    }
+
+    #[test]
+    fn a_watch_burst_of_files_updates_those_files_alone() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_burst_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        for name in ["a.py", "b.py", "c.py"] {
+            std::fs::write(root.join(name), "def one():\n    return 1\n").unwrap();
+        }
+        let mut ix = super::Index::open(&root, None).unwrap();
+        ix.update(false).unwrap();
+        let paths = |ix: &super::Index| {
+            ix.db.prepare("SELECT path FROM files ORDER BY path").unwrap().query_map([], |r| r.get(0)).unwrap().collect::<Result<Vec<String>, _>>().unwrap()
+        };
+        std::fs::write(root.join("a.py"), "def two():\n    return 2\n").unwrap();
+        std::fs::write(root.join("b.py"), "def two():\n    return 2\n").unwrap();
+        std::fs::remove_file(root.join("c.py")).unwrap();
+        std::fs::write(root.join("d.py"), "def new():\n    return 3\n").unwrap();
+        let named = crate::watch::BurstFiles { code: vec!["a.py".into(), "c.py".into(), "d.py".into()], text: vec![] };
+        let st = crate::watch::with_burst(Some(named), || ix.update(false)).unwrap();
+        assert_eq!((st.files_changed, st.files_removed), (2, 1));
+        assert_eq!(paths(&ix), ["a.py", "b.py", "d.py"]);
+        // b.py was not named, so only a walk sees it
+        assert_eq!(ix.stale(&["b.py"]).unwrap(), ["b.py"]);
+        assert_eq!(ix.update(false).unwrap().files_changed, 1);
+        drop(ix);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

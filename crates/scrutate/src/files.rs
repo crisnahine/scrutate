@@ -206,6 +206,42 @@ impl Membership {
         false
     }
 
+    /// The names of `path` from the root, unless it is outside the root, the root itself, or under
+    /// the index directory or `.git`.
+    fn names(&self, path: &Path) -> Option<Vec<String>> {
+        let rel = path.strip_prefix(&self.root).ok()?;
+        let names: Vec<String> = rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
+        (!names.is_empty() && names[0] != INDEX_DIR && names[0] != ".git").then_some(names)
+    }
+
+    /// `.git/info` of the repository holding the root, when it is a directory.
+    pub fn git_info(&self) -> Option<PathBuf> {
+        self.git_top.as_ref().map(|t| t.join(".git").join("info")).filter(|p| p.is_dir())
+    }
+
+    /// Whether `path` holds rules for what is indexed: an ignore file, `.git/info/exclude`, or a
+    /// `.scrutate.toml`.
+    pub fn sets_rules(&self, path: &Path) -> bool {
+        if self.git_top.as_ref().is_some_and(|t| path == t.join(".git").join("info").join("exclude")) {
+            return true;
+        }
+        self.names(path)
+            .and_then(|n| n.last().cloned())
+            .is_some_and(|n| [".gitignore", ".ignore", crate::instant::RGIGNORE, ".scrutate.toml"].contains(&n.as_str()))
+    }
+
+    /// Whether the code index's walk (`list_files`) lists `path`.
+    pub fn code_lists(&mut self, path: &Path) -> bool {
+        let Some(names) = self.names(path) else { return false };
+        !names.iter().any(|n| self.skip.contains(n)) && is_indexable(&names.join("/")) && regular_file(path) && !self.ignored(path)
+    }
+
+    /// Whether the text index's walk (Engine A's default) lists `path`.
+    pub fn text_lists(&mut self, path: &Path) -> bool {
+        let Some(names) = self.names(path) else { return false };
+        !names.iter().any(|n| n.starts_with('.')) && regular_file(path) && !self.ignored(path)
+    }
+
     /// Whether a change of `path` can matter to the code index or (when there is one) the text index.
     pub fn may_contain(&mut self, path: &Path) -> bool {
         let Ok(rel) = path.strip_prefix(&self.root) else { return false };
@@ -221,6 +257,12 @@ impl Membership {
         let text = !names.iter().any(|n| n.starts_with('.')) && crate::textindex::dir_of(&self.root).join("manifest.json").exists();
         (code || text) && !self.ignored(path)
     }
+}
+
+/// The walks do not follow symbolic links.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn regular_file(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|m| m.is_file())
 }
 
 #[cfg(test)]
@@ -270,6 +312,44 @@ mod tests {
             assert_eq!(walked.iter().any(|p| p == name), kept, "the walk on {name}: {walked:?}");
             assert_eq!(f.may_contain(&root.join(name)), kept, "membership of {name}");
         }
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn one_path_is_listed_as_the_walks_list_it() {
+        let root = std::env::temp_dir().join(format!("scrutate_membership_lists_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".git/info")).unwrap();
+        std::fs::write(root.join(".gitignore"), "gen/\n*.tmp\n").unwrap();
+        let names = ["src/a.py", "src/a.tmp", "gen/b.py", ".github/ci.yml", "node_modules/x/i.js", "src/img.png", "src/.hidden.py", ".scrutate/x.py"];
+        for name in names {
+            std::fs::create_dir_all(root.join(name).parent().unwrap()).unwrap();
+            std::fs::write(root.join(name), "x\n").unwrap();
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(root.join("src/a.py"), root.join("src/link.py")).unwrap();
+        let root = std::fs::canonicalize(&root).unwrap();
+        let walked = list_files(&root);
+        let mut f = Membership::new(&root);
+        for name in names.iter().chain(&["src/link.py", "src/gone.py"]) {
+            assert_eq!(f.code_lists(&root.join(name)), walked.iter().any(|p| p == name), "code index: {name} ({walked:?})");
+        }
+        for (name, listed) in [
+            ("src/a.py", true),
+            ("src/a.tmp", false),
+            ("src/.hidden.py", false),
+            (".github/ci.yml", false),
+            ("node_modules/x/i.js", true),
+            ("src/link.py", false),
+        ] {
+            assert_eq!(f.text_lists(&root.join(name)), listed, "text index: {name}");
+        }
+        for (name, rules) in
+            [(".gitignore", true), ("src/.ignore", true), (".git/info/exclude", true), (".scrutate.toml", true), (".git/config", false), ("src/a.py", false)]
+        {
+            assert_eq!(f.sets_rules(&root.join(name)), rules, "{name}");
+        }
+        assert_eq!(f.git_info(), Some(root.join(".git/info")));
         std::fs::remove_dir_all(&root).unwrap();
     }
 

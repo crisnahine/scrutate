@@ -51,7 +51,15 @@ impl Drop for KillOnDrop {
 
 /// Start `watch` in `root`; stderr lines arrive on the receiver.
 fn start_watch(root: &Path) -> (KillOnDrop, Receiver<String>) {
-    let mut child = Command::new(BIN).args(["watch", "."]).current_dir(root).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().unwrap();
+    let mut child = Command::new(BIN)
+        .args(["watch", "."])
+        .current_dir(root)
+        .env("SCRUTATE_WATCH_DEBUG", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
     let stderr = child.stderr.take().unwrap();
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
@@ -197,4 +205,126 @@ fn only_directories_the_index_holds_are_watched() {
     fs::remove_dir_all(r.root.join("src/new")).unwrap();
     wait_for(20, "the removal", || !r.indexed("beta"));
     assert_eq!(inotify_watches(child.0.id()), 2, "a removed directory's watch is gone");
+}
+
+/// Stderr lines up to and including the first update line that reports `changed` and `removed`
+/// files (for each index that has a change).
+fn wait_update(rx: &Receiver<String>, changed: usize, removed: usize) -> Vec<String> {
+    let want = format!("[scrutate] {changed} changed, {removed} removed");
+    let t0 = Instant::now();
+    let mut seen = Vec::new();
+    loop {
+        let left = Duration::from_secs(30).checked_sub(t0.elapsed()).unwrap_or_else(|| panic!("no line {want:?} in {seen:?}"));
+        let line = rx.recv_timeout(left).unwrap_or_else(|_| panic!("no line {want:?} in {seen:?}"));
+        let done = line.starts_with(&want);
+        seen.push(line);
+        if done {
+            return seen;
+        }
+    }
+}
+
+/// The last burst line among `lines`, where events drive the watcher (macOS checks on a timer).
+#[cfg(not(target_os = "macos"))]
+fn last_burst(lines: &[String]) -> &str {
+    lines.iter().rev().find(|l| l.contains("burst:")).map(String::as_str).unwrap_or_else(|| panic!("no burst line in {lines:?}"))
+}
+
+/// Assert that the burst before the update named `paths` (when given) and walked the tree or not.
+fn burst_was(_lines: &[String], _paths: Option<usize>, _full: bool) {
+    #[cfg(not(target_os = "macos"))]
+    {
+        let line = last_burst(_lines);
+        assert!(line.ends_with(&format!("full walk: {}", if _full { "yes" } else { "no" })), "{_lines:?}");
+        if let Some(n) = _paths {
+            assert!(line.contains(&format!("burst: {n} paths,")), "{_lines:?}");
+        }
+    }
+}
+
+/// A repository with an index and a watcher that has said it is watching.
+fn watched(name: &str, files: &[(&str, &str)]) -> (Repo, KillOnDrop, Receiver<String>) {
+    let r = Repo::new(name);
+    for (rel, text) in files {
+        r.write(rel, text.as_bytes());
+    }
+    assert_eq!(r.run(&["index"]), 0);
+    let (child, rx) = start_watch(&r.root);
+    wait_watching(&rx);
+    (r, child, rx)
+}
+
+#[test]
+fn a_save_deep_in_a_wide_tree_updates_that_file_without_a_walk() {
+    let r = Repo::new("wide");
+    for i in 0..400 {
+        r.write(&format!("m{}/p{i}/a.py", i % 20), format!("def f_{i}():\n    return {i}\n").as_bytes());
+    }
+    assert_eq!(r.run(&["index"]), 0);
+    let (_child, rx) = start_watch(&r.root);
+    wait_watching(&rx);
+    #[cfg(target_os = "linux")]
+    let before = inotify_watches(_child.0.id());
+    r.write("m3/p123/a.py", b"def saved_deep():\n    return 1\n");
+    burst_was(&wait_update(&rx, 1, 0), Some(1), false);
+    #[cfg(target_os = "linux")]
+    assert_eq!(inotify_watches(_child.0.id()), before, "no directory is watched again");
+    assert!(r.indexed("saved_deep"));
+}
+
+#[test]
+fn a_file_created_next_to_another_is_indexed_without_a_walk() {
+    let (r, _child, rx) = watched("created", &[("src/a.py", "def alpha():\n    return 1\n")]);
+    r.write("src/b.py", b"def created_next():\n    return 2\n");
+    burst_was(&wait_update(&rx, 1, 0), Some(1), false);
+    assert!(r.indexed("created_next"));
+}
+
+#[test]
+fn a_removed_file_leaves_the_index_without_a_walk() {
+    let (r, _child, rx) = watched("removed", &[("src/a.py", "def alpha():\n    return 1\n"), ("src/b.py", "def removed_one():\n    return 2\n")]);
+    fs::remove_file(r.root.join("src/b.py")).unwrap();
+    burst_was(&wait_update(&rx, 0, 1), Some(1), false);
+    assert!(!r.indexed("removed_one"));
+}
+
+#[test]
+fn a_file_renamed_in_its_directory_is_moved_in_the_index_without_a_walk() {
+    let (r, _child, rx) = watched("renamed", &[("src/a.py", "def alpha():\n    return 1\n"), ("src/b.py", "def renamed_one():\n    return 2\n")]);
+    fs::rename(r.root.join("src/b.py"), r.root.join("src/c.py")).unwrap();
+    burst_was(&wait_update(&rx, 1, 1), Some(2), false);
+    assert_eq!(r.run(&["grep", "--index", "-l", "renamed_one"]), 0);
+    assert_eq!(r.run(&["check", "--files"]), 0);
+}
+
+#[test]
+fn an_editor_save_through_a_temporary_file_is_indexed_without_a_walk() {
+    let (r, _child, rx) = watched("editor", &[("src/a.py", "def before_save():\n    return 1\n")]);
+    r.write("src/.a.py.swp", b"def after_save():\n    return 2\n");
+    fs::rename(r.root.join("src/.a.py.swp"), r.root.join("src/a.py")).unwrap();
+    burst_was(&wait_update(&rx, 1, 0), Some(2), false);
+    assert!(r.indexed("after_save") && !r.indexed("before_save"));
+}
+
+#[test]
+fn a_save_with_a_new_directory_in_the_same_burst_walks_the_tree() {
+    let (r, _child, rx) = watched("mixed", &[("src/a.py", "def alpha():\n    return 1\n")]);
+    r.write("src/a.py", b"def alpha_saved():\n    return 1\n");
+    r.write("src/new/b.py", b"def in_new_dir():\n    return 2\n");
+    burst_was(&wait_update(&rx, 2, 0), None, true);
+    assert!(r.indexed("alpha_saved") && r.indexed("in_new_dir"));
+}
+
+#[test]
+fn a_save_of_an_ignored_file_starts_no_update() {
+    let (r, _child, rx) = watched("ignored", &[(".ignore", "skip.py\n"), ("src/a.py", "def alpha():\n    return 1\n")]);
+    r.write("src/skip.py", b"def ignored_one():\n    return 2\n");
+    // longer than a burst's quiet time, and than macOS's first pause between checks
+    std::thread::sleep(Duration::from_millis(2500));
+    let lines: Vec<String> = rx.try_iter().collect();
+    assert!(lines.iter().all(|l| !l.contains("changed")), "{lines:?}");
+    #[cfg(not(target_os = "macos"))]
+    assert!(lines.iter().all(|l| !l.contains("burst:")), "{lines:?}");
+    r.write("src/a.py", b"def alpha_two():\n    return 1\n");
+    burst_was(&wait_update(&rx, 1, 0), Some(1), false);
 }

@@ -975,6 +975,16 @@ fn lock_exclusive(f: &File) -> Result<()> {
 /// changed and new files are read into new segments, removed files are marked dead, and the
 /// segments are merged when there are too many or too many dead documents.
 pub fn update(root: &Path, force: bool, progress: bool) -> Result<TextStats> {
+    update_with(root, force, progress, None)
+}
+
+/// `update` of just these files (relative to `root`; each one a file the walk lists, or gone),
+/// without a walk of the tree. With no usable index yet it is a full `update`.
+pub fn update_paths(root: &Path, paths: &[String]) -> Result<TextStats> {
+    update_with(root, false, false, Some(paths))
+}
+
+fn update_with(root: &Path, force: bool, progress: bool, only: Option<&[String]>) -> Result<TextStats> {
     let t0 = Instant::now();
     crate::files::index_dir(root)?;
     let dir = dir_of(root);
@@ -983,20 +993,36 @@ pub fn update(root: &Path, force: bool, progress: bool) -> Result<TextStats> {
     let lock = File::options().create(true).truncate(false).write(true).open(dir.join("lock"))?;
     lock_exclusive(&lock)?;
     let old = if force { None } else { read_manifest(&dir)? };
+    let mut damaged = false;
     let mut segs: Vec<Segment> = match &old {
         Some(m) => m.segments.iter().map(|s| Segment::open(&dir, &s.name, &s.live)).collect::<Result<_>>().unwrap_or_else(|e| {
             eprintln!("[scrutate] text index damaged ({e:#}); rebuilding");
+            damaged = true;
             Vec::new()
         }),
         None => Vec::new(),
     };
+    // a new or rebuilt index needs every file
+    let only = only.filter(|_| old.is_some() && !damaged);
     let generation = old.as_ref().map(|m| m.generation).unwrap_or(0) + 1;
     let live_name = format!("live-{generation:08}.bin");
-    let files = walk(root)?;
+    let files = match only {
+        None => walk(root)?,
+        Some(paths) => {
+            let mut v: Vec<(String, u64, i64)> = paths
+                .iter()
+                .filter_map(|p| std::fs::symlink_metadata(root.join(p)).ok().filter(|m| m.is_file()).map(|m| (p.clone(), m.len(), mtime_ns(&m))))
+                .collect();
+            v.sort();
+            v.dedup();
+            v
+        }
+    };
+    let named: Option<std::collections::HashSet<&str>> = only.map(|p| p.iter().map(String::as_str).collect());
     let mut known: std::collections::HashMap<String, (usize, usize)> = std::collections::HashMap::new();
     for (i, s) in segs.iter().enumerate() {
         for d in 0..s.ndocs {
-            if s.is_live(d) {
+            if s.is_live(d) && named.as_ref().is_none_or(|n| n.contains(s.path(d))) {
                 known.insert(s.path(d).to_string(), (i, d));
             }
         }
@@ -1345,5 +1371,29 @@ mod tests {
             }
         }
         assert!(matched > 1000, "only {matched} matches");
+    }
+
+    #[test]
+    fn an_update_of_named_files_leaves_the_others_alone() {
+        let root = std::env::temp_dir().join(format!("scrutate_text_paths_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        for name in ["a.txt", "b.txt", "c.txt"] {
+            std::fs::write(root.join(name), "one\n").unwrap();
+        }
+        let root = std::fs::canonicalize(&root).unwrap();
+        assert_eq!(update(&root, false, false).unwrap().files, 3);
+        std::fs::write(root.join("a.txt"), "two two\n").unwrap();
+        std::fs::write(root.join("b.txt"), "two two\n").unwrap();
+        std::fs::remove_file(root.join("c.txt")).unwrap();
+        std::fs::write(root.join("d.txt"), "three\n").unwrap();
+        let st = update_paths(&root, &["a.txt".into(), "c.txt".into(), "d.txt".into(), "never.txt".into()]).unwrap();
+        assert_eq!((st.files, st.files_changed, st.files_removed), (3, 2, 1));
+        let ix = TextIndex::open(&root).unwrap().unwrap();
+        let two = query_for(&Options { pattern: "two two".into(), ..Options::default() }).unwrap();
+        assert_eq!(ix.candidates(&two, false).unwrap(), ["a.txt"], "b.txt was not named");
+        drop(ix);
+        assert_eq!(update(&root, false, false).unwrap().files_changed, 1);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }
