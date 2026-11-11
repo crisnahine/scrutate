@@ -520,10 +520,17 @@ fn names_below(dir: &Path, top: &Path) -> Vec<String> {
 
 /// The directory above `cwd` that holds an index, when `cwd` holds none.
 fn index_above(cwd: &Path) -> Option<PathBuf> {
-    if cwd.join(crate::files::INDEX_DIR).is_dir() {
-        return None;
+    for (up, dir) in cwd.ancestors().enumerate() {
+        if dir.join(crate::files::INDEX_DIR).is_dir() {
+            return (up > 0).then(|| dir.to_path_buf());
+        }
+        // the top of a repository (a submodule and a worktree keep `.git` as a file): an index
+        // further up belongs to the repository around it
+        if dir.join(".git").exists() {
+            return None;
+        }
     }
-    cwd.ancestors().skip(1).find(|d| d.join(crate::files::INDEX_DIR).is_dir()).map(Path::to_path_buf)
+    None
 }
 
 /// A glob of the configuration file of a directory above, for a walk from `below` (the names of

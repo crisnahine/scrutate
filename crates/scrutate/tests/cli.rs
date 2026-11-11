@@ -736,6 +736,31 @@ fn nested_repo(name: &str) -> Repo {
 }
 
 #[test]
+fn a_repository_inside_another_does_not_use_the_outer_index() {
+    let r = nested_repo("inner_repo");
+    // a submodule or a git worktree: `.git` is a file there, a directory in a clone
+    for (dir, git_is_file) in [("vendor/sub", true), ("vendor/clone", false)] {
+        let inner = r.root.join(dir);
+        fs::create_dir_all(inner.join("pkg")).unwrap();
+        if git_is_file {
+            fs::write(inner.join(".git"), "gitdir: ../../.git/modules/sub\n").unwrap();
+        } else {
+            fs::create_dir_all(inner.join(".git")).unwrap();
+        }
+        fs::write(inner.join("pkg/own.py"), "def inner_fn():\n    return 1\n").unwrap();
+        for cwd in [inner.clone(), inner.join("pkg")] {
+            let (code, out, err) = run_in(&cwd, &["symbol", "inner_fn"], &[]);
+            assert_eq!(code, 0, "{dir}: {err}");
+            assert!(out.contains("own.py:1"), "{dir}: {out}");
+            // from `pkg` the index of the inner repository is the one above
+            let outer = err.lines().any(|l| l.starts_with("[scrutate] using the index in ") && !l.contains(dir.rsplit('/').next().unwrap()));
+            assert!(!outer, "{dir}: {err}");
+            assert_eq!(run_in(&cwd, &["symbol", "top_fn"], &[]).0, 1, "{dir}: the outer repository is not searched");
+        }
+    }
+}
+
+#[test]
 fn index_commands_in_a_subdirectory_answer_from_the_index_above() {
     let r = nested_repo("subdir");
     let deep = r.root.join("src/deep");
