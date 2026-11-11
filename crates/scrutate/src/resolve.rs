@@ -2242,13 +2242,16 @@ fn export_targets(exports: &serde_json::Value, key: &str) -> Vec<String> {
 }
 
 /// The paths an `exports` target stands for, best first. `types` leads because it names the
-/// TypeScript source or its declarations, where `import` and `require` often name built JavaScript.
+/// TypeScript source or its declarations, where `import` and `require` often name built JavaScript;
+/// conditions outside the list (`browser`, `deno`) come last, by name.
 fn conditions(v: &serde_json::Value, depth: usize) -> Vec<String> {
+    const FIRST: [&str; 5] = ["types", "import", "default", "require", "node"];
     match v {
         serde_json::Value::String(s) => vec![s.clone()],
         serde_json::Value::Array(a) => a.iter().flat_map(|x| conditions(x, depth)).collect(),
-        serde_json::Value::Object(o) if depth < 2 => {
-            ["types", "import", "default", "require"].iter().filter_map(|c| o.get(*c)).flat_map(|x| conditions(x, depth + 1)).collect()
+        serde_json::Value::Object(o) if depth < 4 => {
+            let rest = o.iter().filter(|(k, _)| !FIRST.contains(&k.as_str())).map(|(_, v)| v);
+            FIRST.iter().filter_map(|c| o.get(*c)).chain(rest).flat_map(|x| conditions(x, depth + 1)).collect()
         }
         _ => Vec::new(),
     }
@@ -3734,6 +3737,9 @@ mod tests {
             ("packages/cond/src/imp.js", "export const i = 1;\n"),
             ("packages/nested/package.json", "{\"name\": \"nested\", \"exports\": {\"import\": {\"types\": \"./lib/n.d.ts\", \"default\": \"./lib/n.js\"}}}\n"),
             ("packages/nested/lib/n.js", "export const n = 1;\n"),
+            ("packages/plat/package.json", "{\"name\": \"plat\", \"exports\": {\"browser\": \"./src/web.ts\", \"node\": {\"import\": {\"default\": \"./src/node.ts\"}}}}\n"),
+            ("packages/plat/src/node.ts", "export const p = 1;\n"),
+            ("packages/plat/src/web.ts", "export const p = 2;\n"),
             ("packages/mod/package.json", "{\"name\": \"modpkg\", \"module\": \"esm/m.js\", \"main\": \"cjs/m.js\"}\n"),
             ("packages/mod/esm/m.js", "export const m = 1;\n"),
             ("packages/mod/cjs/m.js", "exports.m = 1;\n"),
@@ -3770,6 +3776,8 @@ mod tests {
             (app, "cond", Some("packages/cond/src/index.ts")),
             (app, "cond/x", Some("packages/cond/src/imp.js")),
             (app, "nested", Some("packages/nested/lib/n.js")),
+            // no condition of the usual four: `node`, then the others
+            (app, "plat", Some("packages/plat/src/node.ts")),
             (app, "modpkg", Some("packages/mod/esm/m.js")),
             (app, "bare", Some("packages/bare/index.js")),
             (app, "bare/tools", Some("packages/bare/tools.ts")),
