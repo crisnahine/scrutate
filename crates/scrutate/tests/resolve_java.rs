@@ -73,8 +73,6 @@ struct Repo {
 
 impl Repo {
     fn new() -> Repo {
-        let root = std::env::temp_dir().join(format!("scrutate_resolve_java_{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
         let files = [
             ("pom.xml".to_string(), "<project><artifactId>acme</artifactId></project>\n"),
             (format!("{SHAPES}/Shape.java"), "package com.acme.shapes;\n\npublic interface Shape {\n    double area();\n}\n"),
@@ -98,7 +96,13 @@ impl Repo {
             (format!("{APP}/Main.java"), MAIN),
             ("src/test/java/com/acme/app/MainTest.java".to_string(), MAIN_TEST),
         ];
-        for (rel, body) in &files {
+        Repo::with("acme", &files)
+    }
+
+    fn with(tag: &str, files: &[(String, &str)]) -> Repo {
+        let root = std::env::temp_dir().join(format!("scrutate_resolve_java_{tag}_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        for (rel, body) in files {
             let p = root.join(rel);
             fs::create_dir_all(p.parent().unwrap()).unwrap();
             fs::write(&p, body).unwrap();
@@ -154,8 +158,9 @@ fn java_calls_resolve_through_packages_types_imports_and_overloads() {
     assert_eq!(r.refs_of("area", &circle), ["Circle.java:10", "Circle.java:19", "Main.java:10"]);
     assert_eq!(r.refs_of("area", &square), ["Main.java:15", "Square.java:4"]);
     assert_eq!(r.refs_of("area", &shape), ["Main.java:19", "Shape.java:4"]);
-    assert_eq!(r.names(&["callers", &format!("{circle}:10"), "--json"]), ["Main.circles", "Circle.summary"]);
-    assert_eq!(r.names(&["callers", &format!("{square}:4"), "--json"]), ["Main.squares"]);
+    // a call through the interface may reach either: it comes last, undecided
+    assert_eq!(r.names(&["callers", &format!("{circle}:10"), "--json"]), ["Main.circles", "Circle.summary", "Main.any"]);
+    assert_eq!(r.names(&["callers", &format!("{square}:4"), "--json"]), ["Main.squares", "Main.any"]);
 
     // a chain typed by declared return types; `names.size()` is a call of `java.util`
     assert_eq!(r.names(&["callees", "Main.chain", "--json"]), ["Report.ok", "Circle.summary", "Circle.unit"]);
@@ -174,4 +179,39 @@ fn java_calls_resolve_through_packages_types_imports_and_overloads() {
         let (_, text) = r.run(&["callers", &format!("{APP}/Fmt.java:{line}")]);
         assert!(text.contains("Fmt.both"), "{line}: {text}");
     }
+}
+
+#[test]
+fn a_call_through_a_base_type_is_an_undecided_caller_of_an_override() {
+    let files: Vec<(String, &str)> = vec![
+        ("j/Sized.java".to_string(), "public interface Sized {\n    int size();\n}\n"),
+        ("j/Base.java".to_string(), "public class Base implements Sized {\n    public int size() { return 0; }\n}\n"),
+        ("j/Mid.java".to_string(), "public class Mid extends Base {\n}\n"),
+        ("j/Big.java".to_string(), "public class Big extends Mid {\n    @Override\n    public int size() { return 9; }\n}\n"),
+        ("j/Small.java".to_string(), "public class Small extends Base {\n    public int size() { return 1; }\n}\n"),
+        (
+            "j/Use.java".to_string(),
+            "public class Use {\n    int viaSized(Sized s) { return s.size(); }\n    int viaBase(Base b) { return b.size(); }\n    int viaMid(Mid m) { return m.size(); }\n    int viaSub(Big b) { return b.size(); }\n    int viaNew() { Base b = new Big(); return b.size(); }\n    int viaSmall(Small s) { return s.size(); }\n    int viaAgain() { Base b = new Big(); b = new Small(); return b.size(); }\n    int viaMade() { Base b = make(); return b.size(); }\n    Base make() { return new Big(); }\n}\n",
+        ),
+    ];
+    let r = Repo::with("override", &files);
+    let split = |spec: &str| {
+        let (_, text) = r.run(&["callers", spec]);
+        let names: Vec<String> = text.lines().filter_map(|l| l.split("] ").nth(1)).map(str::to_string).collect();
+        let n = text.split_once(" of these call").and_then(|(a, _)| a.rsplit('(').next()?.parse().ok()).unwrap_or(0);
+        let (mut d, mut u) = (names[..names.len() - n].to_vec(), names[names.len() - n..].to_vec());
+        d.sort();
+        u.sort();
+        (d, u)
+    };
+    let strs = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let unsure = strs(&["Use.viaAgain", "Use.viaBase", "Use.viaMade", "Use.viaMid", "Use.viaSized"]);
+    assert_eq!(split("j/Big.java:3"), (strs(&["Use.viaNew", "Use.viaSub"]), unsure.clone()));
+    assert_eq!(split("j/Small.java:2"), (strs(&["Use.viaSmall"]), unsure));
+    assert_eq!(split("j/Base.java:2"), (strs(&["Use.viaAgain", "Use.viaBase", "Use.viaMade", "Use.viaMid"]), strs(&["Use.viaSized"])));
+    assert_eq!(r.names(&["callees", "Use.viaBase", "--json"]), ["Base.size"]);
+    // `new Big()` also calls the class
+    assert_eq!(r.names(&["callees", "Use.viaNew", "--json"]), ["Big", "Big.size"]);
+    assert_eq!(r.refs_of("size", "j/Big.java:3"), ["Big.java:3", "Use.java:5", "Use.java:6"]);
+    assert_eq!(r.refs_of("size", "j/Base.java:2"), ["Base.java:2", "Use.java:3", "Use.java:4", "Use.java:8", "Use.java:9"]);
 }

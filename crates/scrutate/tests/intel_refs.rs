@@ -898,3 +898,81 @@ fn refs_finds_a_name_in_its_composed_and_decomposed_spelling() {
         assert_eq!(lines, ["nfc.py:1", "nfc.py:6", "nfd.py:2", "notes.txt:1"], "{typed:?}: {t}");
     }
 }
+
+/// What `callers SPEC` prints: the decided names and the undecided ones after them, each sorted.
+fn split_callers(r: &Repo, spec: &str) -> (Vec<String>, Vec<String>) {
+    let (code, out) = r.run(&["callers", spec]);
+    assert_eq!(code, 0, "{out}");
+    let names: Vec<String> = out.lines().filter_map(|l| l.split("] ").nth(1)).map(str::to_string).collect();
+    let undecided = if out.contains("could not tell whether any") {
+        names.len()
+    } else {
+        out.split_once(" of these call").and_then(|(a, _)| a.rsplit('(').next()?.parse().ok()).unwrap_or(0)
+    };
+    let (mut decided, mut unsure) = (names[..names.len() - undecided].to_vec(), names[names.len() - undecided..].to_vec());
+    decided.sort();
+    unsure.sort();
+    (decided, unsure)
+}
+
+/// The occurrences `refs NAME --def DEF` ties to that definition, as sorted `path:line`.
+fn ref_lines(r: &Repo, name: &str, def: &str) -> Vec<String> {
+    let v = r.json(&["refs", name, "--def", def, "--json"]);
+    let refs = v["definitions"][0]["references"].as_array().unwrap_or_else(|| panic!("{v}"));
+    let mut out: Vec<String> = refs.iter().map(|o| format!("{}:{}", o["path"].as_str().unwrap(), o["line"])).collect();
+    out.sort();
+    out
+}
+
+fn callee_names(r: &Repo, name: &str) -> Vec<String> {
+    let v = r.json(&["callees", name, "--json"]);
+    v["resolved"].as_array().unwrap().iter().map(|h| h["name"].as_str().unwrap().to_string()).collect()
+}
+
+fn strs(v: &[&str]) -> Vec<String> {
+    v.iter().map(|s| s.to_string()).collect()
+}
+
+#[test]
+fn a_call_through_a_base_class_is_an_undecided_caller_of_an_override() {
+    let ts = "export class Base {\n  size(): number {\n    return 0;\n  }\n}\nexport class Mid extends Base {}\nexport class Big extends Mid {\n  size(): number {\n    return 9;\n  }\n}\nexport class Small extends Base {\n  size(): number {\n    return 1;\n  }\n}\nexport function viaBase(b: Base): number {\n  return b.size();\n}\nexport function viaMid(m: Mid): number {\n  return m.size();\n}\nexport function viaSub(b: Big): number {\n  return b.size();\n}\nexport function viaNew(): number {\n  const b: Base = new Big();\n  return b.size();\n}\nexport function viaSmall(s: Small): number {\n  return s.size();\n}\nexport function viaAgain(): number {\n  let b: Base = new Big();\n  b = new Small();\n  return b.size();\n}\n";
+    let r = Repo::new("override_ts", &[("shapes.ts", ts)]);
+    assert_eq!(split_callers(&r, "shapes.ts:8"), (strs(&["viaNew", "viaSub"]), strs(&["viaAgain", "viaBase", "viaMid"])));
+    assert_eq!(split_callers(&r, "shapes.ts:13"), (strs(&["viaSmall"]), strs(&["viaAgain", "viaBase", "viaMid"])));
+    assert_eq!(split_callers(&r, "shapes.ts:2"), (strs(&["viaAgain", "viaBase", "viaMid"]), strs(&[])));
+    assert_eq!(callee_names(&r, "viaBase"), ["Base.size"]);
+    let built = callee_names(&r, "viaNew");
+    assert!(built.contains(&"Big.size".to_string()) && !built.contains(&"Base.size".to_string()), "{built:?}");
+    assert_eq!(ref_lines(&r, "size", "shapes.ts:8"), ["shapes.ts:24", "shapes.ts:28", "shapes.ts:8"]);
+    assert_eq!(ref_lines(&r, "size", "shapes.ts:2"), ["shapes.ts:18", "shapes.ts:2", "shapes.ts:21", "shapes.ts:36"]);
+
+    let js = "export class Base {\n  size() {\n    return 0;\n  }\n}\nexport class Mid extends Base {}\nexport class Big extends Mid {\n  size() {\n    return 9;\n  }\n}\nexport function viaMid() {\n  return new Mid().size();\n}\nexport function viaSub() {\n  return new Big().size();\n}\n";
+    let r = Repo::new("override_js", &[("shapes.js", js)]);
+    assert_eq!(split_callers(&r, "shapes.js:8"), (strs(&["viaSub"]), strs(&["viaMid"])));
+    assert_eq!(split_callers(&r, "shapes.js:2"), (strs(&["viaMid"]), strs(&[])));
+
+    let py = "class Base:\n    def size(self):\n        return 0\n\n\nclass Mid(Base):\n    pass\n\n\nclass Big(Mid):\n    def size(self):\n        return 9\n\n\nclass Small(Base):\n    def size(self):\n        return 1\n\n\ndef via_base(b: Base):\n    return b.size()\n\n\ndef via_mid(m: Mid):\n    return m.size()\n\n\ndef via_sub(b: Big):\n    return b.size()\n\n\ndef via_new():\n    b: Base = Big()\n    return b.size()\n\n\ndef via_small(s: Small):\n    return s.size()\n\n\ndef via_again():\n    b: Base = Big()\n    b = Small()\n    return b.size()\n";
+    let r = Repo::new("override_py", &[("zoo.py", py)]);
+    assert_eq!(split_callers(&r, "zoo.py:11"), (strs(&["via_new", "via_sub"]), strs(&["via_base", "via_mid"])));
+    // a plain assignment binds the name again in Python: `b = Small()` types the call
+    assert_eq!(split_callers(&r, "zoo.py:16"), (strs(&["via_again", "via_small"]), strs(&["via_base", "via_mid"])));
+    assert_eq!(split_callers(&r, "zoo.py:2"), (strs(&["via_base", "via_mid"]), strs(&[])));
+    assert_eq!(callee_names(&r, "via_base"), ["Base.size"]);
+    assert_eq!(ref_lines(&r, "size", "zoo.py:11"), ["zoo.py:11", "zoo.py:29", "zoo.py:34"]);
+}
+
+#[test]
+fn a_call_through_an_interface_or_a_trait_is_an_undecided_caller_of_an_implementation() {
+    let go = "package gp\n\ntype Sizer interface{ Size() int }\n\ntype Big struct{}\n\nfunc (b Big) Size() int { return 9 }\n\ntype Small struct{}\n\nfunc (s Small) Size() int { return 1 }\n\nfunc viaIface(s Sizer) int { return s.Size() }\n\nfunc viaSub(b Big) int { return b.Size() }\n\nfunc viaNew() int {\n\tvar s Sizer = Big{}\n\treturn s.Size()\n}\n\nfunc viaPtr() int {\n\tvar s Sizer = &Big{}\n\treturn s.Size()\n}\n\nfunc viaSmall(s Small) int { return s.Size() }\n\nfunc viaAgain() int {\n\tvar s Sizer = Big{}\n\ts = Small{}\n\treturn s.Size()\n}\n";
+    let r = Repo::new("override_go", &[("gp/i.go", go)]);
+    assert_eq!(split_callers(&r, "gp/i.go:7"), (strs(&["viaNew", "viaPtr", "viaSub"]), strs(&["viaAgain", "viaIface"])));
+    assert_eq!(split_callers(&r, "gp/i.go:11"), (strs(&["viaSmall"]), strs(&["viaAgain", "viaIface"])));
+    assert_eq!(ref_lines(&r, "Size", "gp/i.go:7"), ["gp/i.go:15", "gp/i.go:19", "gp/i.go:24", "gp/i.go:7"]);
+
+    let rs = "pub trait Sizer {\n    fn size(&self) -> u8;\n}\n\npub struct Big;\n\nimpl Sizer for Big {\n    fn size(&self) -> u8 {\n        9\n    }\n}\n\npub struct Small;\n\nimpl Sizer for Small {\n    fn size(&self) -> u8 {\n        1\n    }\n}\n\npub fn via_dyn(s: &dyn Sizer) -> u8 {\n    s.size()\n}\n\npub fn via_path() -> u8 {\n    Sizer::size(&Small)\n}\n\npub fn via_sub(b: &Big) -> u8 {\n    b.size()\n}\n\npub fn via_new() -> u8 {\n    let s: Box<dyn Sizer> = Box::new(Big);\n    s.size()\n}\n\npub fn via_ref() -> u8 {\n    let s: &dyn Sizer = &Big;\n    s.size()\n}\n\npub fn via_small(s: &Small) -> u8 {\n    s.size()\n}\n\npub fn via_again() -> u8 {\n    let mut s: Box<dyn Sizer> = Box::new(Big);\n    s = Box::new(Small);\n    s.size()\n}\n";
+    let r = Repo::new("override_rs", &[("src/lib.rs", rs)]);
+    assert_eq!(split_callers(&r, "src/lib.rs:8"), (strs(&["via_new", "via_ref", "via_sub"]), strs(&["via_again", "via_dyn", "via_path"])));
+    assert_eq!(split_callers(&r, "src/lib.rs:16"), (strs(&["via_small"]), strs(&["via_again", "via_dyn", "via_path"])));
+    assert_eq!(callee_names(&r, "via_path"), ["Sizer.size"]);
+    assert_eq!(ref_lines(&r, "size", "src/lib.rs:8"), ["src/lib.rs:30", "src/lib.rs:35", "src/lib.rs:40", "src/lib.rs:8"]);
+}

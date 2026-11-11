@@ -728,6 +728,8 @@ pub(crate) fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit
     let mut namesakes = s.ix.db.prepare("SELECT id, path FROM chunks WHERE name=?1 AND kind != 'window'")?;
     let (mut out, mut unsure_rows, mut seen) = (Vec::new(), Vec::new(), HashSet::new());
     let mut rv = Resolver::new(&s.ix)?;
+    // a call of a method a target overrides or implements may run the target
+    let overridden: HashSet<i64> = targets.iter().flat_map(|t| rv.overridden(t.id)).filter(|id| !ids.contains(id)).collect();
     let names_owner = |text: &str| owners.iter().any(|o| has_word(text, o));
     let likely = |r: &ChunkRow| (!names_owner(&r.text), !packages.contains(package(&r.path)), r.path.clone(), r.start);
     let all_free = |n: &str| targets.iter().filter(|t| t.name == n).all(|t| free(&t.kind, &t.qualname));
@@ -749,7 +751,7 @@ pub(crate) fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit
             }
             asked += 1;
             let uses = resolve_in(&mut rv, s, &row.path, (row.start, row.end), n);
-            let unsure = if all_free(n) { uses.unsure_free } else { uses.unsure };
+            let unsure = (if all_free(n) { uses.unsure_free } else { uses.unsure }) || !uses.got.is_disjoint(&overridden);
             if uses.got.is_disjoint(&ids) {
                 // with no other definition of the name, a call the resolver cannot place is this one's
                 if unsure && rivals {

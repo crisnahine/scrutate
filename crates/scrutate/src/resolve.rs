@@ -1210,11 +1210,68 @@ impl<'a> Resolver<'a> {
                 }
             }
         }
-        let (ty, value) = declared(binder?);
+        let binder = binder?;
+        let (ty, value) = declared(binder);
         if let Some(t) = ty {
-            return self.ty_of_type(path, fi, lang, t);
+            return self.built_ty(path, fi, lang, binder, value, at).or_else(|| self.ty_of_type(path, fi, lang, t));
         }
         self.type_of(path, fi, lang, value?)
+    }
+
+    /// `Base b = new Big()` and its likes: the type the constructor form `value` of the binder
+    /// builds, which a use `at` in the same function sees until an assignment to the variable.
+    fn built_ty(&mut self, path: &str, fi: &FileInfo, lang: Lang, binder: Node, value: Option<Node>, at: Node) -> Option<Ty> {
+        let func = enclosing_function(at);
+        if func.map(|f| f.id()) != enclosing_function(binder).map(|f| f.id()) {
+            return None;
+        }
+        let scope = func.or_else(|| fi.tree.as_ref().map(|t| t.root_node()))?;
+        if assigned_between(scope, text(at, &fi.src), binder.end_byte(), at.start_byte(), &fi.src) {
+            return None;
+        }
+        self.constructed(path, fi, lang, value?)
+    }
+
+    /// The repository type a constructor form builds: `new T()`, `T{}`, `&T{}`, a Python call of a
+    /// class, a Rust unit struct and `Box::new(..)` of one of these.
+    fn constructed(&mut self, path: &str, fi: &FileInfo, lang: Lang, v: Node) -> Option<Ty> {
+        let src = fi.src.as_str();
+        let line = v.start_position().row as i64 + 1;
+        let built = match v.kind() {
+            "new_expression" | "object_creation_expression" | "composite_literal" | "struct_expression" => self.type_of(path, fi, lang, v),
+            "unary_expression" | "reference_expression" | "parenthesized_expression" => {
+                return self.constructed(
+                    path,
+                    fi,
+                    lang,
+                    v.child_by_field_name("operand").or_else(|| v.child_by_field_name("value")).or_else(|| v.named_child(0))?,
+                )
+            }
+            "call" | "call_expression" => {
+                let f = v.child_by_field_name("function")?;
+                if lang == Lang::Rust {
+                    let holder = f.kind() == "scoped_identifier"
+                        && f.child_by_field_name("name").is_some_and(|n| text(n, src) == "new")
+                        && f.child_by_field_name("path").is_some_and(|p| RUST_DEREF.contains(&text(p, src)));
+                    return if holder { self.constructed(path, fi, lang, v.child_by_field_name("arguments")?.named_child(0)?) } else { None };
+                }
+                if lang != Lang::Python {
+                    return None;
+                }
+                let leaf = member_parts(f).map(|(_, m)| m).unwrap_or(f);
+                let found = match qualifier(leaf) {
+                    Some(q) => self.resolve_qualified(path, fi, lang, q, leaf, text(leaf, src), line),
+                    None => self.resolve_bare(path, fi, lang, leaf, text(leaf, src), line),
+                };
+                found.ok().map(|(id, _)| id).filter(|&id| self.def_kind(id).is_some_and(|k| concrete(&k))).map(Ty::Local)
+            }
+            "identifier" if lang == Lang::Rust => {
+                let id = self.resolve_bare(path, fi, lang, v, text(v, src), line).ok()?.0;
+                self.def_kind(id).filter(|k| k == "struct").map(|_| Ty::Local(id))
+            }
+            _ => None,
+        };
+        built.filter(|t| matches!(t, Ty::Local(_)))
     }
 
     /// The type a type expression names, past references, pointers, `Box`-like holders and
@@ -1390,25 +1447,48 @@ impl<'a> Resolver<'a> {
         if depth >= 3 {
             return None;
         }
-        // Python and JS base classes
-        let lang = fi.lang?;
-        let tree = fi.tree.as_ref()?;
-        let d = fi.defs.iter().find(|d| d.id == id)?;
-        let mut bases: Vec<Node> = Vec::new();
+        for bid in self.bases(id) {
+            if let Some(m) = self.member(bid, name, depth + 1) {
+                return Some(m);
+            }
+        }
+        None
+    }
+
+    /// The types container `id` extends or implements, each resolved: Java supertypes, Python
+    /// and JavaScript base classes, TypeScript `extends` and `implements`, the trait of a Rust
+    /// `impl Trait for T`.
+    fn bases(&mut self, id: i64) -> Vec<i64> {
+        let Some((path, _)) = self.def_row(id) else { return Vec::new() };
+        let fi = self.file(&path);
+        let (Some(lang), Some(tree), Some(d)) = (fi.lang, fi.tree.as_ref(), fi.defs.iter().find(|d| d.id == id)) else { return Vec::new() };
+        if lang == Lang::Java {
+            return self.java_bases(id).iter().filter_map(|b| b.ok()).filter(|&b| b != id).collect();
+        }
+        let mut named: Vec<Node> = Vec::new();
         let mut stack = vec![tree.root_node()];
         while let Some(n) = stack.pop() {
             let (s, e) = (n.start_position().row as i64 + 1, n.end_position().row as i64 + 1);
             if e < d.start || s > d.end {
                 continue;
             }
-            if matches!(n.kind(), "class_definition" | "class_declaration" | "class")
+            if n.kind() == "impl_item" && e == d.end {
+                named.extend(n.child_by_field_name("trait"));
+                break;
+            }
+            if matches!(n.kind(), "class_definition" | "class_declaration" | "abstract_class_declaration" | "class")
                 && n.child_by_field_name("name").map(|x| text(x, &fi.src)) == Some(d.name.as_str())
             {
                 let mut cur = n.walk();
-                for ch in n.children(&mut cur) {
-                    if matches!(ch.kind(), "argument_list" | "class_heritage") {
-                        let mut c2 = ch.walk();
-                        bases.extend(ch.named_children(&mut c2).filter(|b| matches!(b.kind(), "identifier" | "attribute" | "member_expression")));
+                for ch in n.children(&mut cur).filter(|c| matches!(c.kind(), "argument_list" | "class_heritage")) {
+                    let mut c2 = ch.walk();
+                    for b in ch.named_children(&mut c2) {
+                        if matches!(b.kind(), "extends_clause" | "implements_clause") {
+                            let mut c3 = b.walk();
+                            named.extend(b.named_children(&mut c3));
+                        } else {
+                            named.push(b);
+                        }
                     }
                 }
                 break;
@@ -1416,23 +1496,47 @@ impl<'a> Resolver<'a> {
             let mut cur = n.walk();
             stack.extend(n.named_children(&mut cur));
         }
-        for b in bases {
-            let base = if b.kind() == "identifier" {
-                self.resolve_bare(&path, &fi, lang, b, text(b, &fi.src), d.start).ok().map(|x| x.0)
-            } else {
-                let leaf = b.child_by_field_name("attribute").or_else(|| b.child_by_field_name("property"));
-                match (leaf, b.child_by_field_name("object")) {
-                    (Some(leaf), Some(obj)) => self.resolve_qualified(&path, &fi, lang, obj, leaf, text(leaf, &fi.src), d.start).ok().map(|x| x.0),
-                    _ => None,
-                }
+        let mut out = Vec::new();
+        for b in named {
+            let Some(leaf) = type_name(b) else { continue };
+            let found = match qualifier(leaf) {
+                Some(q) => self.resolve_qualified(&path, &fi, lang, q, leaf, text(leaf, &fi.src), d.start),
+                None => self.resolve_bare(&path, &fi, lang, leaf, text(leaf, &fi.src), d.start),
             };
-            if let Some(bid) = base.filter(|&x| x != id) {
-                if let Some(m) = self.member(bid, name, depth + 1) {
-                    return Some(m);
-                }
-            }
+            out.extend(found.ok().map(|x| x.0).filter(|&x| x != id));
         }
-        None
+        out
+    }
+
+    /// The methods method `id` overrides or implements: the ones of its name declared in the
+    /// types its owner extends or implements, at any depth; a Java overload of another arity is none.
+    pub fn overridden(&mut self, id: i64) -> Vec<i64> {
+        let Some((path, _)) = self.def_row(id) else { return Vec::new() };
+        // an owner whose header names no base needs no parse
+        let defs = self.defs_of(&path).unwrap_or_default();
+        let Some(owner) = defs.iter().find(|d| d.id == id).and_then(|d| d.parent) else { return Vec::new() };
+        let head: String =
+            self.ix.db.query_row("SELECT text FROM chunks WHERE id=?1", [defs[owner].id], |r| crate::index::unpack_text(r.get_ref(0)?)).unwrap_or_default();
+        let head = &head[..head.find('{').into_iter().chain(head.find(":\n")).min().unwrap_or(head.len())];
+        if !head.contains('(') && !head.split(|c: char| !c.is_alphanumeric()).any(|w| matches!(w, "for" | "extends" | "implements")) {
+            return Vec::new();
+        }
+        let fi = self.file(&path);
+        let Some(d) = fi.defs.iter().find(|d| d.id == id) else { return Vec::new() };
+        let Some(owner) = d.parent.map(|p| &fi.defs[p]).filter(|o| CONTAINER_KINDS.contains(&o.kind.as_str())) else { return Vec::new() };
+        let arity = java_params(&fi, id).filter(|_| fi.lang == Some(Lang::Java));
+        let (mut out, mut todo, mut seen) = (Vec::new(), self.bases(owner.id), HashSet::from([owner.id]));
+        while let Some(b) = todo.pop() {
+            if seen.len() > 64 || !seen.insert(b) {
+                continue;
+            }
+            let Some((bpath, _)) = self.def_row(b) else { continue };
+            let bf = self.file(&bpath);
+            let declared = bf.defs.iter().filter(|m| m.name == d.name && m.parent.is_some_and(|p| bf.defs[p].id == b));
+            out.extend(declared.filter(|m| arity.is_none() || java_params(&bf, m.id) == arity).map(|m| m.id));
+            todo.extend(self.bases(b));
+        }
+        out
     }
 
     /// Definition `name` at the top level of one of `files`, following re-exports and wildcard imports.
@@ -2149,6 +2253,28 @@ fn enclosing_function(node: Node) -> Option<Node> {
     None
 }
 
+/// Whether code of `scope` between bytes `from` and `to` assigns to the variable `name`.
+fn assigned_between(scope: Node, name: &str, from: usize, to: usize, src: &str) -> bool {
+    let mut stack = vec![scope];
+    while let Some(n) = stack.pop() {
+        if n.end_byte() <= from || n.start_byte() >= to {
+            continue;
+        }
+        if n.start_byte() >= from && matches!(n.kind(), "assignment_expression" | "assignment" | "assignment_statement") {
+            if let Some(l) = n.child_by_field_name("left") {
+                let mut cur = l.walk();
+                let hit = if l.kind() == "expression_list" { l.named_children(&mut cur).any(|x| text(x, src) == name) } else { text(l, src) == name };
+                if hit {
+                    return true;
+                }
+            }
+        }
+        let mut cur = n.walk();
+        stack.extend(n.named_children(&mut cur));
+    }
+    false
+}
+
 /// A binder declared with JavaScript `var`, which belongs to the whole function around it.
 fn is_js_var(b: Node) -> bool {
     let mut n = b;
@@ -2850,7 +2976,7 @@ impl<'a> Resolver<'a> {
         if let Some(b) = java_local(e, name, src) {
             let (ty, value) = java_declared(b, src);
             return match ty {
-                Some(t) => self.ty_of_type(path, fi, Lang::Java, t),
+                Some(t) => self.built_ty(path, fi, Lang::Java, b, value, e).or_else(|| self.ty_of_type(path, fi, Lang::Java, t)),
                 None => self.type_of(path, fi, Lang::Java, value?),
             };
         }
@@ -3559,6 +3685,32 @@ mod tests {
                 ("src/lib.rs", "let text = 2", "text", "local variable"),
                 ("src/lib.rs", "2; text }", "text", "local variable"),
                 ("src/lib.rs", "\"{}\", text)", "text", "local variable"),
+            ],
+        );
+    }
+
+    #[test]
+    fn a_variable_declared_as_a_base_type_has_the_type_its_constructor_builds() {
+        let ts = "export class Base {\n  size() { return 0; }\n}\nexport class Big extends Base {\n  size() { return 9; }\n}\nexport function f(): number {\n  const a: Base = new Big();\n  let b: Base = new Big();\n  b = new Base();\n  const c: Base = pick();\n  return a.size() + b.size() + c.size();\n}\nexport function pick(): Base { return new Big(); }\n";
+        let py = "class Base:\n    def size(self):\n        return 0\n\n\nclass Big(Base):\n    def size(self):\n        return 9\n\n\ndef f():\n    a: Base = Big()\n    c: Base = make()\n    return a.size() + c.size()\n\n\ndef make():\n    return Big()\n";
+        let go = "package g\n\ntype Sizer interface{ Size() int }\n\ntype Big struct{}\n\nfunc (b *Big) Size() int { return 9 }\n\nfunc f() int {\n\tvar a Sizer = &Big{}\n\tvar b Sizer = Big{}\n\tb = nil\n\treturn a.Size() + b.Size()\n}\n";
+        let rs = "pub trait Sizer {\n    fn size(&self) -> u8;\n}\n\npub struct Big;\n\nimpl Sizer for Big {\n    fn size(&self) -> u8 {\n        9\n    }\n}\n\npub fn f() -> u8 {\n    let a: Box<dyn Sizer> = Box::new(Big);\n    let b: &dyn Sizer = &Big {};\n    a.size() + b.size()\n}\n";
+        let java = "class Base { int size() { return 0; } }\nclass Big extends Base { int size() { return 9; } }\nclass J {\n    int f() {\n        Base a = new Big();\n        Base b = new Big();\n        b = new Base();\n        return a.size() + b.size();\n    }\n}\n";
+        resolver_case(
+            "built",
+            &[("t.ts", ts), ("p.py", py), ("g/g.go", go), ("src/lib.rs", rs), ("J.java", java)],
+            &[
+                ("t.ts", "a.size()", "size", "t.ts Big.size"),
+                ("t.ts", "b.size()", "size", "t.ts Base.size"),
+                ("t.ts", "c.size()", "size", "t.ts Base.size"),
+                ("p.py", "a.size()", "size", "p.py Big.size"),
+                ("p.py", "c.size()", "size", "p.py Base.size"),
+                ("g/g.go", "a.Size()", "Size", "g/g.go Big.Size"),
+                ("g/g.go", "b.Size()", "Size", "not found"),
+                ("src/lib.rs", "a.size()", "size", "src/lib.rs Big.size"),
+                ("src/lib.rs", "b.size()", "size", "src/lib.rs Big.size"),
+                ("J.java", "a.size()", "size", "J.java Big.size"),
+                ("J.java", "b.size()", "size", "J.java Base.size"),
             ],
         );
     }
