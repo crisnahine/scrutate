@@ -217,7 +217,14 @@ First release.
   (`M.f = function`, `f = function` in a table), a JavaScript or TypeScript function assigned
   to a member (`Foo.prototype.bar = function` is the method `Foo.bar`), a Julia method added to
   another module's function (`function Base.show(...)` is `show`, owned by `Base`), the C++
-  call operator as `operator()`, a Haskell operator definition, and an R6 method.
+  call operator as `operator()`, a Haskell operator definition, and an R6 method (also of
+  `R6::R6Class`). In JavaScript and TypeScript also `this.x = function` in a function or a
+  constructor (`Widget.x`), `obj["k"] = function`, `exports.a.b = function`, the members of an
+  object assigned to `module.exports`, and a default export written as an expression, which
+  keeps its own name or takes the file's (`app` for `lib/app.js`); a call through
+  `const app = require("./app")` resolves to it. A Lua multiple assignment of functions and a
+  Julia `Base.:(==)` method are definitions too. The comment above such an assignment is the
+  function's documentation.
 - `search` looks a query of one word, or of stop words alone, up as a name: `search find` and
   `search get` find the functions of that name; they printed "(no results)".
 - A Java file counts as a test by `Test.java` or `Tests.java` with the capital (`Contest.java`
