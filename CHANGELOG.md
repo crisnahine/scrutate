@@ -442,7 +442,9 @@ First release.
   what a burst holds, so an ignore file above the repository top and a nested repository's own
   rules apply to a saved file as they do to a scan. Watches are set root first, then shallow
   directories by path; when some directory gets no watch stderr says how many, and a burst
-  walks the tree while one is unwatched or once the last walk is 30 s old.
+  walks the tree while one is unwatched or once the last walk is 30 s old. A change to a rule
+  file outside the tree walks it too: an ignore file above the root, the exclude file of a
+  nested repository, git's global excludes file and the configuration that names it.
 - `find` takes a question with a space and a trailing `?` as words, and goes to ranked search
   when a regex-looking query finds nothing and an index exists.
 - Text files check out with LF line ends on every platform (`.gitattributes`), so a Windows

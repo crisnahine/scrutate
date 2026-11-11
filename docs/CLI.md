@@ -491,7 +491,14 @@ updates those files alone, with no walk of the tree and no new watches, so a sav
 the same in a tree of 20,000 directories as in a small one. A burst that creates, removes or
 moves a directory, changes an ignore file (`.gitignore`, `.ignore`, `.rgignore`,
 `.git/info/exclude`) or `.scrutate.toml`, or reports lost events runs the usual incremental
-update of the whole tree and reads the ignore files again. So does a burst that changes an
+update of the whole tree and reads the ignore files again. The rule files outside the tree
+count too: an `.ignore` or `.rgignore` in any directory above the root, a `.gitignore` above it
+up to the repository top, `.git/info/exclude` of each repository nested in the tree, git's
+global excludes file and the git configuration files that name it. On Linux each directory
+above the root gets one watch of its own for this, and another file written there costs a
+filter and nothing more; when such a directory cannot be watched the watcher says so once, and
+a change to its rules, like one in a rule directory made after the last walk, applies with the
+next walk of the tree. So does a burst that changes an
 indexed file while a directory has no watch, or once the last walk is 30 s old, which is how a
 change the watcher did not see is found. Either way the code index is
 updated, and the text index when `.scrutate/text/` exists (`watch` never creates one;

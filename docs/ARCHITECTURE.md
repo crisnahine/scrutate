@@ -265,7 +265,12 @@ is in place before the first update runs. On Linux each directory the indexes ca
 non-recursive inotify watch, so ignored trees cost none; the set is walked again after a burst
 that changes a directory or a rule file, while a directory has no watch, and when the last walk
 is 30 s old. A burst of files is decided by listing their directories with the indexes' own
-walks (`files::CodeWalk`, `textindex::walk_entries`), so no ignore rule is written by hand. A
+walks (`files::CodeWalk`, `textindex::walk_entries`), so no ignore rule is written by hand.
+Each walk also records the rule files the walks read that no event in the tree names (ignore
+files above the root, the exclude file of every nested repository, git's global excludes file
+and the configuration files that name it). On Linux their directories are watched after the
+tree's own, and a failure there does not make every burst walk; on Windows they are watched
+next to the recursive watch on the root. An event naming one of them walks the tree. A
 burst ends after 200 ms of quiet, and each burst runs the existing incremental updates
 (`Index::update`, `textindex::update` when a text index exists). The watch ends with an error
 when its root is gone. No new write path: the
