@@ -91,6 +91,10 @@ impl Repo {
                 format!("{APP}/Util.java"),
                 "package com.acme.app;\n\npublic class Util {\n    public static int scale(int x) {\n        return x * 2;\n    }\n\n    public static int scale(int x, int y) {\n        return x * y;\n    }\n}\n",
             ),
+            (
+                format!("{APP}/Fmt.java"),
+                "package com.acme.app;\n\npublic class Fmt {\n    public static String show(int x) {\n        return \"i\";\n    }\n\n    public static String show(String s) {\n        return \"s\";\n    }\n\n    String both() {\n        return show(1);\n    }\n}\n",
+            ),
             (format!("{APP}/Main.java"), MAIN),
             ("src/test/java/com/acme/app/MainTest.java".to_string(), MAIN_TEST),
         ];
@@ -165,4 +169,9 @@ fn java_calls_resolve_through_packages_types_imports_and_overloads() {
     assert_eq!(v["unresolved"], serde_json::json!([]), "{v}");
     let (_, text) = r.run(&["callers", "scale"]);
     assert!(!text.contains("could not"), "every call of scale is decided: {text}");
+    // two overloads of one arity: the call stands for both, and each lists it among its callers
+    for line in [4, 8] {
+        let (_, text) = r.run(&["callers", &format!("{APP}/Fmt.java:{line}")]);
+        assert!(text.contains("Fmt.both"), "{line}: {text}");
+    }
 }

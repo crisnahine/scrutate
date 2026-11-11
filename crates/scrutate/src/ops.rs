@@ -672,9 +672,13 @@ fn resolve_in(rv: &mut Resolver, s: &Searcher, path: &str, (start, end): (i64, i
             match rv.resolve_at(path, i as u64 + 1, col, name) {
                 // the name of a definition is not a call of it
                 Ok((_, "definition")) => {}
-                Ok((id, _)) => {
+                Ok((id, why)) => {
                     seen = true;
                     uses.got.insert(id);
+                    // a use the arguments do not tie to one overload stands for all of them
+                    if why == "overload" {
+                        uses.got.extend(rv.overloads(id));
+                    }
                 }
                 // an import from outside, a local, a field or a string is decided: not this definition
                 Err(why) => {
