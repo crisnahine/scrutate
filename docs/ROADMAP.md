@@ -40,6 +40,7 @@ docs/TRACEABILITY.md.
 | A read-files ceiling that is one (R-14.8) | `bench/rawread.c` gives each thread 64 neighbouring paths at a time, and the harness keeps the fastest of several thread counts; handing out one path at a time, its threads shared a directory and read a cold tree at a third of the speed the disk allows |
 | Measurements a busy machine spoiled (R-14.9) | a benchmark where some tool's block medians differ by more than 25% is measured again, once, whatever its status, and keeps its first result beside the second; a warm row records how much of its corpus was in the page cache (on this 18 GB laptop the LLVM tree, 4.9 GB in 16 KB pages, no longer fits once a browser and an editor are open) |
 | What agents ask of an MCP server now (R-6.15) | revision 2026-07-28 beside the handshake revisions (`server/discover`, a version in each request, `resultType`, cache hints on lists); an `outputSchema` on every tool and the `--json` form of each answer in `structuredContent`; `notifications/cancelled` honoured, each call on a thread of its own; progress reports while the first index is built; `read_code` of a whole definition by name; the location at the start of every result accepted wherever a tool takes a symbol |
+| Method calls on variables (R-2B.4) | `x.m()` resolves through the type the declaration of `x` states, as an annotation or as the thing it is built from, in Python, JavaScript/TypeScript, Rust and Go; Go methods are found by their receiver type across the files of a package |
 | TypeScript path aliases (R-2B.4) | an import through `paths` or `baseUrl` of the nearest `tsconfig.json` or `jsconfig.json` (comments, trailing commas and a relative `extends` included) resolves to its file, in `refs`, `deps` and `rdeps` |
 | Limits left in 0.1.0's first draft (R-2A, R-12.4) | smart case sees a letter written by its code point (`\x41`); the LSP server replaces a damaged index, from a save or from a request; the watcher's test of one path decides in the walk's order (a `.ignore` at any level before every `.gitignore`) |
 | Benchmark corpora without hard links (R-14) | `bench/corpora.py` copies (APFS clones) where it linked: a hard-linked file costs every tool twice as long to open on macOS |
@@ -91,8 +92,9 @@ docs/TRACEABILITY.md.
   on 64 threads against 16 MB warm (`-j` bounds both).
 - Windows: nothing is measured. Its thread count (the cores, at most 12), its cold thread count
   (twice the cores, at most 24) and its disk-read time (75 µs) are the macOS values.
-- References: type inference for method calls on variables; more languages (Java, C#, C/C++
-  includes).
+- References: the type of a variable that got its value from a function call (the function's
+  declared return type), of a field (`self.x.m()`) and of a module-level variable; more
+  languages (Java, C#, C/C++ includes).
 - `cargo install`: int8 weights for the semantic model, with the quality check QUALITY.md uses.
 - Benchmark leadership on dedicated idle hardware (R-14.11): every number here comes from a
   developer laptop shared with other work, and Linux x86_64 has no benchmark run at all. In the

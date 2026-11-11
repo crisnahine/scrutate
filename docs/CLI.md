@@ -102,8 +102,12 @@ refers to. For Python, JavaScript, TypeScript, Rust and Go the rules are, in ord
    a module bound by an import (`import x`, `import * as x`, `use crate::a`, a Go import), a
    module path (`crate::`, `self::`, `super::`, a workspace crate, a Rust child module), or a
    class or type (`Class.N`, `Type::N`, then its Python and JavaScript base classes). `self.N`,
-   `this.N`, `cls.N` and `Self::N` look in the enclosing class or impl. Any other receiver
-   (`x.N` with `x` a variable) is unresolved.
+   `this.N`, `cls.N` and `Self::N` look in the enclosing class or impl. A receiver that is a
+   local variable or a parameter (`x.N`) is looked up in the type its declaration states: an
+   annotation (`x: T`, `x T`, `x: &T`) or what it is built from (`T(...)`, `new T(...)`,
+   `T::new(...)`, `T { .. }`, `&T{}`), the nearest declaration before the use. A Go method is
+   found by its receiver type in any file of the package. A variable whose declaration does not
+   say its type is unresolved.
 3. A plain occurrence is, first, a definition nested in an enclosing function (or directly in an
    enclosing class body); a parameter or local variable of that name hides everything else;
    then a top-level definition of the file; then a name an import binds (`from x import N`,
@@ -113,12 +117,13 @@ refers to. For Python, JavaScript, TypeScript, Rust and Go the rules are, in ord
 
 Import paths resolve to repository files: Python relative imports, packages (`__init__.py`) and
 a repository root inside the package; JavaScript relative paths with the usual extensions and
-`index` files (a `.js` import finds the `.ts` source); Rust module files (`a.rs`, `a/mod.rs`) from
+`index` files (a `.js` import finds the `.ts` source), and the names a project gives its own
+folders in `tsconfig.json` or `jsconfig.json` (`paths`, `baseUrl`); Rust module files (`a.rs`, `a/mod.rs`) from
 the crate root, workspace crates by their `Cargo.toml` name; Go import paths by the directory
 they end with. Re-exports (`from .x import N` in `__init__.py`, `export {N} from`, `pub use`) are
 followed. Occurrences in comments and strings, in other languages and in files without a
-grammar are unresolved, and so is anything the rules do not reach (method calls on variables,
-enum variants, local variables). Imports of modules outside the repository give `external`.
+grammar are unresolved, and so is anything the rules do not reach (method calls on a variable
+that got its value from a function call or a field, enum variants, local variables). Imports of modules outside the repository give `external`.
 
 The output lists each definition with its references, then the unresolved occurrences with the
 reason. `--def PATH[:LINE]` keeps one definition of `NAME`: the one in `PATH`, or the one

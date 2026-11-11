@@ -156,6 +156,9 @@ First release.
   symbol, so one of several same-named definitions can be followed up; JSON hits carry it as `id`.
 - The index recovers from a corrupt database in every front end that stays open (the MCP server,
   the LSP server, the Python bindings, `watch`), not only in the CLI.
+- `refs` resolves a method call on a local variable or a parameter through the type its
+  declaration states (`x: T`, `x = T()`, `new T()`, `T::new()`, `T {}`, `&T{}`), and finds a Go
+  method by its receiver type.
 - TypeScript and JavaScript imports through `paths` or `baseUrl` of a `tsconfig.json` or
   `jsconfig.json` resolve to their files: `refs` follows them, and `deps` and `rdeps` list them.
 - Smart case sees a letter written by its code point (`\x41`). The watcher's test of one changed

@@ -131,7 +131,7 @@ fn javascript_and_typescript_two_areas() {
             ("geo/index.ts", 1, x),
             ("use.ts", 2, x),
             ("use.ts", 4, x),
-            ("use.ts", 5, "-"),
+            ("use.ts", 5, p), // `s` is built with `new Shape()`
         ])
     );
 }

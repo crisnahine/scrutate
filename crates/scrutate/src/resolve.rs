@@ -205,6 +205,59 @@ fn qualifier(n: Node) -> Option<Node> {
     None
 }
 
+/// The type expression the binder `b` of a variable is declared with: its annotation, or what
+/// its value is built from.
+fn stated_type(b: Node) -> Option<Node> {
+    let p = b.parent()?;
+    if let Some(t) = p.child_by_field_name("type") {
+        return Some(t);
+    }
+    let value = match p.kind() {
+        "assignment" => p.child_by_field_name("right"),
+        "variable_declarator" | "let_declaration" => p.child_by_field_name("value"),
+        // Go `a, b := x, y`: the value at the binder's place
+        "expression_list" => {
+            let mut cur = p.walk();
+            let place = p.named_children(&mut cur).position(|c| c.id() == b.id())?;
+            p.parent()?.child_by_field_name("right")?.named_child(place as u32)
+        }
+        _ => None,
+    }?;
+    built_from(value)
+}
+
+/// The type named by an expression that builds a value of it.
+fn built_from(value: Node) -> Option<Node> {
+    match value.kind() {
+        "call" => value.child_by_field_name("function"),
+        "new_expression" => value.child_by_field_name("constructor"),
+        // Rust `Type::new(..)`: the path in front of the function is the type
+        "call_expression" => value.child_by_field_name("function").filter(|f| f.kind() == "scoped_identifier")?.child_by_field_name("path"),
+        "struct_expression" => value.child_by_field_name("name"),
+        "composite_literal" => value.child_by_field_name("type"),
+        "unary_expression" => built_from(value.child_by_field_name("operand")?),
+        "reference_expression" | "await_expression" | "parenthesized_expression" => built_from(value.named_child(0)?),
+        _ => None,
+    }
+}
+
+/// The identifier that names the type in a type expression, past references, pointers and
+/// generic arguments; the last name of a path (`a.b.T`, `a::T`, `pkg.T`).
+fn type_name(mut t: Node) -> Option<Node> {
+    loop {
+        t = match t.kind() {
+            "identifier" | "type_identifier" => return Some(t),
+            "attribute" => t.child_by_field_name("attribute")?,
+            "member_expression" => t.child_by_field_name("property")?,
+            "scoped_identifier" | "scoped_type_identifier" | "qualified_type" | "nested_type_identifier" => t.child_by_field_name("name")?,
+            "generic_type" => t.child_by_field_name("type").or_else(|| t.child_by_field_name("name"))?,
+            "reference_type" => t.child_by_field_name("type")?,
+            "type" | "type_annotation" | "pointer_type" | "parenthesized_type" => t.named_child(0)?,
+            _ => return None,
+        };
+    }
+}
+
 fn string_content(n: Node, src: &str) -> String {
     text(n, src).trim_matches(|c| c == '"' || c == '\'' || c == '`').to_string()
 }
@@ -686,6 +739,12 @@ impl<'a> Resolver<'a> {
         // `Class.N`, `Type::N`: the head names a definition
         let head = if q.kind() == "identifier" || q.named_child_count() == 0 { q } else { first_leaf(q) };
         let Ok((mut cur, _)) = self.resolve_bare(path, fi, lang, head, segs[0], line) else {
+            // `x.N` with `x` a variable: the type its declaration states, when it states one
+            if segs.len() == 1 {
+                if let Some(owner) = self.variable_type(path, fi, lang, head, segs[0]) {
+                    return self.member(owner, name, 0).map(|id| (id, "variable")).ok_or("not found");
+                }
+            }
             let imported = fi.bindings.iter().any(|b| b.local == segs[0]) || matches!(segs[0], "std" | "core" | "alloc");
             return Err(if imported { "external" } else { "receiver" });
         };
@@ -696,6 +755,42 @@ impl<'a> Resolver<'a> {
             }
         }
         Ok((cur, "qualified"))
+    }
+
+    /// The class or type of the variable `name` used at `at`: what its nearest declaration before
+    /// that use says, as an annotation (`x: T`, `x T`) or as the thing it is built from (`T(...)`,
+    /// `new T(...)`, `T::new(...)`, `T { .. }`, `&T{...}`). None when the function does not say.
+    fn variable_type(&mut self, path: &str, fi: &FileInfo, lang: Lang, at: Node, name: &str) -> Option<i64> {
+        let mut scope = at;
+        while let Some(p) = scope.parent() {
+            scope = p;
+            if FUNCTION_NODES.contains(&p.kind()) {
+                break;
+            }
+        }
+        let (mut binder, mut stack) = (None::<Node>, vec![scope]);
+        while let Some(n) = stack.pop() {
+            if n.start_byte() >= at.start_byte() {
+                continue;
+            }
+            if n.kind() == "identifier" && text(n, &fi.src) == name && is_local_binder(n) && binder.is_none_or(|b| b.start_byte() < n.start_byte()) {
+                binder = Some(n);
+            }
+            let mut cur = n.walk();
+            stack.extend(n.named_children(&mut cur));
+        }
+        let leaf = type_name(stated_type(binder?)?)?;
+        if self.nest > 32 {
+            return None;
+        }
+        self.nest += 1;
+        let line = leaf.start_position().row as i64 + 1;
+        let found = match qualifier(leaf) {
+            Some(q) => self.resolve_qualified(path, fi, lang, q, leaf, text(leaf, &fi.src), line),
+            None => self.resolve_bare(path, fi, lang, leaf, text(leaf, &fi.src), line),
+        };
+        self.nest -= 1;
+        found.ok().map(|(id, _)| id)
     }
 
     fn def_row(&self, id: i64) -> Option<(String, String)> {
@@ -733,6 +828,27 @@ impl<'a> Resolver<'a> {
                 .collect();
             let common = |p: &str| p.split('/').zip(path.split('/')).take_while(|(a, b)| a == b).count();
             return rows.into_iter().filter(|(_, _, q)| strip_generics(q) == want).max_by_key(|(_, p, _)| common(p)).map(|(id, _, _)| id);
+        }
+        // a Go method is declared outside its type, in any file of the package: its receiver names the type
+        if fi.lang == Some(Lang::Go) {
+            let owner = strip_generics(&qualname);
+            for f in self.go_dir(dir_of(&path)) {
+                let gf = self.file(&f);
+                let Some(tree) = gf.tree.as_ref() else { continue };
+                let root = tree.root_node();
+                let mut cur = root.walk();
+                for m in root.named_children(&mut cur).filter(|n| n.kind() == "method_declaration") {
+                    let receiver =
+                        m.child_by_field_name("receiver").and_then(|r| r.named_child(0)).and_then(|r| r.child_by_field_name("type")).and_then(type_name);
+                    if m.child_by_field_name("name").map(|n| text(n, &gf.src)) == Some(name) && receiver.map(|r| text(r, &gf.src)) == Some(owner.as_str()) {
+                        let line = m.start_position().row as i64 + 1;
+                        if let Some(d) = gf.defs.iter().find(|d| d.name == name && d.start <= line && line <= d.end) {
+                            return Some(d.id);
+                        }
+                    }
+                }
+            }
+            return None;
         }
         if depth >= 3 {
             return None;
@@ -1496,6 +1612,74 @@ mod tests {
     }
 
     #[test]
+    fn a_method_call_on_a_variable_follows_the_type_its_declaration_states() {
+        resolver_case(
+            "vartype_py",
+            &[
+                ("shapes.py", "class Point:\n    def norm(self):\n        return 1\n\n\nclass Line:\n    def norm(self):\n        return 2\n"),
+                (
+                    "use.py",
+                    "import shapes\nfrom shapes import Point, Line\n\n\ndef built():\n    p = Point()\n    return p.norm()\n\n\ndef annotated(q: Line, r: shapes.Point):\n    return q.norm() + r.norm()\n\n\ndef unknown(s):\n    t = make()\n    return s.norm() + t.norm()\n\n\ndef rebound():\n    v = Point()\n    v = Line()\n    return v.norm()\n",
+                ),
+            ],
+            &[
+                ("use.py", "p.norm()", "norm", "shapes.py Point.norm"),
+                ("use.py", "q.norm()", "norm", "shapes.py Line.norm"),
+                ("use.py", "r.norm()", "norm", "shapes.py Point.norm"),
+                ("use.py", "s.norm()", "norm", "receiver"),
+                ("use.py", "t.norm()", "norm", "receiver"),
+                ("use.py", "v.norm()", "norm", "shapes.py Line.norm"),
+            ],
+        );
+        resolver_case(
+            "vartype_ts",
+            &[
+                ("shapes.ts", "export class Point {\n  norm() { return 1; }\n}\nexport class Line {\n  norm() { return 2; }\n}\n"),
+                (
+                    "use.ts",
+                    "import { Point, Line } from './shapes';\n\nexport function built() {\n  const p = new Point();\n  return p.norm();\n}\n\nexport function annotated(q: Line) {\n  const r: Point = make();\n  return q.norm() + r.norm();\n}\n",
+                ),
+            ],
+            &[("use.ts", "p.norm()", "norm", "shapes.ts Point.norm"), ("use.ts", "q.norm()", "norm", "shapes.ts Line.norm"), ("use.ts", "r.norm()", "norm", "shapes.ts Point.norm")],
+        );
+        resolver_case(
+            "vartype_rs",
+            &[
+                ("lib.rs", "mod shapes;\nmod user;\n"),
+                ("shapes.rs", "pub struct Point;\n\nimpl Point {\n    pub fn new() -> Point {\n        Point\n    }\n    pub fn norm(&self) -> u32 {\n        1\n    }\n}\n\npub struct Line;\n\nimpl Line {\n    pub fn norm(&self) -> u32 {\n        2\n    }\n}\n"),
+                (
+                    "user.rs",
+                    "use crate::shapes::{Line, Point};\n\npub fn built() -> u32 {\n    let p = Point::new();\n    let l = Line {};\n    p.norm() + l.norm()\n}\n\npub fn annotated(q: &Line, r: &mut crate::shapes::Point) -> u32 {\n    q.norm() + r.norm()\n}\n",
+                ),
+            ],
+            &[
+                ("user.rs", "p.norm()", "norm", "shapes.rs Point.norm"),
+                ("user.rs", "l.norm()", "norm", "shapes.rs Line.norm"),
+                ("user.rs", "q.norm()", "norm", "shapes.rs Line.norm"),
+                ("user.rs", "r.norm()", "norm", "shapes.rs Point.norm"),
+            ],
+        );
+        resolver_case(
+            "vartype_go",
+            &[
+                ("go.mod", "module example.com/m\n"),
+                ("shapes/point.go", "package shapes\n\ntype Point struct{}\n\nfunc (p *Point) Norm() int {\n\treturn 1\n}\n"),
+                ("shapes/line.go", "package shapes\n\ntype Line struct{}\n\nfunc (l Line) Norm() int {\n\treturn 2\n}\n"),
+                (
+                    "main.go",
+                    "package main\n\nimport \"example.com/m/shapes\"\n\nfunc built() int {\n\tp := &shapes.Point{}\n\tl := shapes.Line{}\n\treturn p.Norm() + l.Norm()\n}\n\nfunc annotated(q *shapes.Point) int {\n\tvar r shapes.Line\n\treturn q.Norm() + r.Norm()\n}\n",
+                ),
+            ],
+            &[
+                ("main.go", "p.Norm()", "Norm", "shapes/point.go Norm"),
+                ("main.go", "l.Norm()", "Norm", "shapes/line.go Norm"),
+                ("main.go", "q.Norm()", "Norm", "shapes/point.go Norm"),
+                ("main.go", "r.Norm()", "Norm", "shapes/line.go Norm"),
+            ],
+        );
+    }
+
+    #[test]
     fn rust_rules() {
         let lib = "mod a;\nmod b;\npub use b::Thing;\n\nfn top() {}\n";
         let a = "pub fn make() {}\n\npub struct Thing;\n\nimpl Thing {\n    pub fn new() -> Self {\n        Self::helper();\n        Thing\n    }\n    fn helper() {}\n}\n";
@@ -1514,7 +1698,7 @@ mod tests {
                 ("src/a.rs", "Self::helper()", "helper", "src/a.rs Thing.helper"),
                 ("src/c.rs", "    make();", "make", "src/a.rs make"),
                 ("src/c.rs", "x: Thing", "Thing", "src/b.rs Thing"),
-                ("src/c.rs", "x.make()", "make", "receiver"),
+                ("src/c.rs", "x.make()", "make", "not found"), // `x` is a `Thing`, which has no `make`
                 ("src/b.rs", "::f()", "f", "external"),
             ],
         );

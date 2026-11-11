@@ -231,8 +231,10 @@ tree-sitter to find the identifier node, its qualifier, the enclosing scopes and
 imports bind, while definitions and their nesting come from the index's `chunks` rows. An
 occurrence goes to the innermost scope that defines the name, then the file's top level, then
 an import binding, the Go package directory or a wildcard import; a qualifier goes through the
-module it names or the class or type it names. Import paths are mapped onto repository files
-(Python packages and relative imports, JavaScript paths and `index` files, Rust `crate`/`self`/
+module it names or the class or type it names, and a variable through the type its declaration
+states. Import paths are mapped onto repository files
+(Python packages and relative imports, JavaScript paths, `index` files and `tsconfig.json`
+aliases, Rust `crate`/`self`/
 `super` paths, module files and workspace crates from `Cargo.toml`, Go import paths by
 directory), following re-exports with a depth limit. It is a query-time step: no schema change,
 nothing for the Python reference to mirror, and `refs --textual` keeps the unresolved answer.
