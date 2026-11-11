@@ -54,12 +54,14 @@ def corpus(tmp_path_factory):
         if not fn.endswith(".py"):
             continue
         for c in parse_source(fn, (root / fn).read_text()):
+            if c.kind == "constant":  # symbols only, never scored
+                continue
             row = ix.db.execute("SELECT id FROM chunks WHERE path=? AND kind=? AND name=? AND start=?",
                                 (fn, c.kind, c.name, c.start)).fetchone()
             fts.execute("INSERT INTO fts(rowid,name,qual,sig,doc,body,path) VALUES(?,?,?,?,?,?,?)",
                         (row[0], *fts_strings(fn, c)))
             n += 1
-    assert n == ix.stats()["chunks"] > 100
+    assert n == ix.db.execute("SELECT COUNT(*) FROM chunks WHERE kind != 'constant'").fetchone()[0] > 100
     return ix, fts, root
 
 
@@ -80,7 +82,7 @@ def test_weighted_and_per_field_scores_match_fts5(corpus, text):
     store = ix.lex
     toks = query_tokens(text)
     keys = [tok_key(t) for t in toks]
-    all_ids = np.array(sorted(r[0] for r in ix.db.execute("SELECT id FROM chunks")), np.int64)
+    all_ids = np.array(sorted(r[0] for r in ix.db.execute("SELECT id FROM chunks WHERE kind != 'constant'")), np.int64)
     got = store.field_scores(keys, all_ids)
     expect = [fts_scores(fts, toks, WEIGHTS)] + [
         fts_scores(fts, toks, [1.0 if j == i else 0.0 for j in range(NF)]) for i in range(NF)]
@@ -202,7 +204,7 @@ def test_crash_during_update_leaves_a_working_index(tmp_path, monkeypatch):
 def assert_same_statistics(ix):
     """The store `ix` keeps in memory (patched by update()) equals one computed from scratch."""
     got = ix.lex
-    live = np.fromiter((r[0] for r in ix.db.execute("SELECT id FROM chunks ORDER BY id")), np.int64)
+    live = np.fromiter((r[0] for r in ix.db.execute("SELECT id FROM chunks WHERE kind != 'constant' ORDER BY id")), np.int64)
     ref = LexStore(ix.seg_dir, ix.segments())
     ref.prepare(live)
     assert got.names == ref.names
@@ -248,7 +250,7 @@ def test_statistics_patched_by_update_equal_recomputed_ones(tmp_path, monkeypatc
     (root / "text.py").write_bytes(b"\x00\x01\x02" * 50)  # turns into a binary file: its chunks must vanish
     ix.update()
     assert_same_statistics(ix)
-    assert ix.lex.n_alive == ix.stats()["chunks"]
+    assert ix.lex.n_alive == ix.db.execute("SELECT COUNT(*) FROM chunks WHERE kind != 'constant'").fetchone()[0]
     assert len(applied) >= 4  # the incremental path really was the one exercised
 
 

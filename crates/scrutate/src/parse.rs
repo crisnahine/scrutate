@@ -325,9 +325,38 @@ pub fn first_line_end(src: &[u8], a: usize, b: usize) -> usize {
     src[a..b.max(a)].iter().position(|&c| c == b'\n').map_or(b, |i| a + i)
 }
 
+/// `s` without its template or generic arguments: `ns::Map<K, std::vector<V>>` gives `ns::Map`.
+fn strip_generics(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut depth = 0usize;
+    for c in s.chars() {
+        match c {
+            '<' => depth += 1,
+            '>' if depth > 0 => depth -= 1,
+            _ if depth == 0 => out.push(c),
+            _ => {}
+        }
+    }
+    out.trim().to_string()
+}
+
 /// The owner a definition names outside its own body: a Go method's receiver type (`*Store[K]`
-/// gives `Store`), the class of a C++ method defined out of line (`Widget::draw`).
+/// gives `Store`), the class of a C++ method defined out of line (`Widget::draw`), the table of
+/// a Lua function (`M.sub.deep`), the namespace of an Elixir module (`MyApp.Accounts.User`).
+/// A Rust impl is named by its bare type: `impl<T> crate::Stack<T>` gives `Stack`.
 fn split_owner(lang: &str, node: Node, name: String, src: &[u8]) -> (Option<String>, String) {
+    if lang == "rust" && node.kind() == "impl_item" {
+        let bare = name.split('<').next().unwrap_or(&name).rsplit("::").next().unwrap_or("").trim();
+        return (None, if bare.is_empty() { name.clone() } else { bare.to_string() });
+    }
+    if lang == "lua" || lang == "elixir" {
+        if let Some(i) = name.rfind(|c| c == '.' || lang == "lua" && c == ':') {
+            if i > 0 && i + 1 < name.len() {
+                return (Some(name[..i].replace(':', ".")), name[i + 1..].to_string());
+            }
+        }
+        return (None, name);
+    }
     if lang == "go" && node.kind() == "method_declaration" {
         let mut stack: Vec<Node> = node.child_by_field_name("receiver").into_iter().collect();
         while let Some(n) = stack.pop() {
@@ -342,7 +371,7 @@ fn split_owner(lang: &str, node: Node, name: String, src: &[u8]) -> (Option<Stri
         // `int& operator*()`: the declarator's reference or pointer mark is not part of the name
         let name = name.trim_start_matches(['&', '*', ' ']).to_string();
         if let Some(i) = name.rfind("::") {
-            let owner = name[..i].replace("::", ".");
+            let owner = strip_generics(&name[..i]).replace("::", ".");
             if !owner.is_empty() {
                 return (Some(owner), name[i + 2..].to_string());
             }
@@ -361,7 +390,11 @@ fn callee_name(node: Node, field: &str, src: &[u8]) -> Option<String> {
     if target.is_none() && node.named_child_count() > 0 {
         target = node.named_child(0);
     }
-    let target = target?;
+    let mut target = target?;
+    if target.kind() == "generic_function" {
+        // `f::<T>(x)`: the name is before the turbofish
+        target = target.child_by_field_name("function")?;
+    }
     let mut t = txt(src, target.start_byte(), target.end_byte());
     for sep in ["::", ".", "->"] {
         if let Some(i) = t.rfind(sep) {
@@ -408,6 +441,65 @@ fn macro_arg_calls(node: Node, src: &[u8], out: &mut BTreeSet<String>) {
             }
         }
     }
+}
+
+static CAPS_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^_*[A-Z][A-Z0-9_]*$").unwrap());
+
+/// A named constant at `node`: its name and the node whose text the chunk shows. Constants are
+/// module or type level: Rust `const`/`static`, Go package `const`/`var`, a JS/TS top-level
+/// `const` that is not a function, a TS enum member, a Java `static final` field, a Python
+/// module-level ALL_CAPS assignment, a C/C++ `#define NAME value` and enumerator.
+fn constant_of<'t>(lang: &str, node: Node<'t>, ancestors: &[(Node<'t>, Vec<Node<'t>>)], src: &[u8]) -> Option<(String, Node<'t>)> {
+    let up = |i: usize| ancestors.len().checked_sub(i).map(|j| ancestors[j].0);
+    let kind_up = |i: usize| up(i).map_or("", |n| n.kind());
+    let text_of = |n: Node| txt(src, n.start_byte(), n.end_byte());
+    let field = |n: Node<'t>, f: &str| n.child_by_field_name(f);
+    let (name, shown) = match (lang, node.kind()) {
+        ("rust", "const_item" | "static_item") if matches!(kind_up(1), "source_file" | "declaration_list") => (text_of(field(node, "name")?), node),
+        ("go", "const_spec" | "var_spec") => {
+            let at = if kind_up(1) == "var_spec_list" { 2 } else { 1 };
+            if !matches!(kind_up(at), "const_declaration" | "var_declaration") || kind_up(at + 1) != "source_file" {
+                return None;
+            }
+            let decl = up(at)?;
+            (text_of(field(node, "name")?), if at == 1 && decl.named_child_count() == 1 { decl } else { node })
+        }
+        ("javascript" | "typescript" | "tsx", "variable_declarator") => {
+            let decl = up(1).filter(|d| d.kind() == "lexical_declaration" && d.child(0).is_some_and(|k| k.kind() == "const"))?;
+            let shown = match kind_up(2) {
+                "program" => decl,
+                "export_statement" if kind_up(3) == "program" => up(2)?,
+                _ => return None,
+            };
+            let name = field(node, "name").filter(|n| n.kind() == "identifier")?;
+            if field(node, "value").is_some_and(|v| crate::langs::JS_FUNCS.contains(&v.kind())) {
+                return None;
+            }
+            (text_of(name), shown)
+        }
+        ("typescript" | "tsx", "property_identifier") if kind_up(1) == "enum_body" => (text_of(node), node),
+        ("typescript" | "tsx", "enum_assignment") if kind_up(1) == "enum_body" => (text_of(field(node, "name")?), node),
+        ("java", "field_declaration") => {
+            let mods = node.children(&mut node.walk()).find(|c| c.kind() == "modifiers")?;
+            let words: Vec<&str> = mods.children(&mut mods.walk()).map(|c| c.kind()).collect();
+            if !(words.contains(&"static") && words.contains(&"final")) {
+                return None;
+            }
+            (text_of(field(field(node, "declarator")?, "name")?), node)
+        }
+        ("python", "expression_statement") if kind_up(1) == "module" && node.named_child_count() == 1 => {
+            let a = node.named_child(0).filter(|a| a.kind() == "assignment")?;
+            let left = field(a, "left").filter(|l| l.kind() == "identifier")?;
+            (text_of(left), node)
+        }
+        ("c" | "cpp", "preproc_def") if field(node, "value").is_some() => (text_of(field(node, "name")?), node),
+        ("c" | "cpp", "enumerator") => (text_of(field(node, "name")?), node),
+        _ => return None,
+    };
+    if name == "_" || lang == "python" && !CAPS_NAME.is_match(&name) {
+        return None;
+    }
+    Some((name, shown))
 }
 
 /// The chunk kind named by the first declaration keyword on the node's first line.
@@ -700,7 +792,7 @@ fn finish(path: &str, source: &str, mut chunks: Vec<Chunk>, module_doc: String) 
         Some(i) if i > 0 => &base[..i],
         _ => base,
     };
-    let first_def = chunks.iter().map(|c| c.start).min();
+    let first_def = chunks.iter().filter(|c| c.kind != "constant").map(|c| c.start).min();
     let lines = split_lines(source);
     let head_end = match first_def {
         Some(fd) => (fd - 1).max(0) as usize,
@@ -729,6 +821,8 @@ fn finish(path: &str, source: &str, mut chunks: Vec<Chunk>, module_doc: String) 
         // no definitions: the rest of the file stays searchable as windows
         chunks.extend(window_chunks_from(source, head_end));
     }
+    // constants last: the index gives the chunks before them their lexical rows (constants get none)
+    chunks.sort_by_key(|c| c.kind == "constant");
     if chunks.is_empty() {
         return window_chunks(source);
     }
@@ -822,6 +916,7 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
         crate::index::prof::add(&crate::index::prof::TREESITTER, t);
     }
     let mut chunks: Vec<Chunk> = Vec::new();
+    let mut consts: Vec<Chunk> = Vec::new();
     let mut imports: Vec<(i64, String)> = Vec::new();
     let mut def_stack: Vec<usize> = Vec::new();
     let mut stack: Vec<(Node, bool, bool, usize)> = vec![(tree.root_node(), false, false, 0)];
@@ -877,7 +972,8 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
         if let Some((mut kind, name)) = matched {
             if kind == "function" {
                 if let Some(&top) = def_stack.last() {
-                    if chunks[top].kind == "class" {
+                    // a C++ struct body is a class body
+                    if chunks[top].kind == "class" || spec.id == "cpp" && chunks[top].kind == "struct" {
                         kind = "method";
                     }
                 }
@@ -935,6 +1031,20 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
             });
             def_stack.push(chunks.len() - 1);
             pushed_now = true;
+        } else if let Some((name, shown)) = constant_of(spec.id, node, &ancestors, src) {
+            // not on def_stack: calls in the initializer stay with the enclosing definition
+            let parent_q = def_stack.last().map(|&i| chunks[i].qualname.as_str()).unwrap_or_default();
+            let doc = if spec.docstring { String::new() } else { leading_comment(node, &ancestors, &pos, src, spec.wrappers) };
+            consts.push(Chunk {
+                qualname: qualify(parent_q, &name),
+                name,
+                kind: "constant",
+                start: shown.start_position().row as i64 + 1,
+                end: last_row(shown) + 1,
+                text: head_bytes(src, shown.start_byte(), shown.end_byte(), MAX_CHUNK_LINES),
+                doc,
+                ..Default::default()
+            });
         } else if let Some(call) = spec.calls.iter().find(|c| c.node == t) {
             let in_signature = ancestors.last().map(|p| matches!(p.0.kind(), "signature" | "function_signature" | "method_signature")).unwrap_or(false);
             if let (Some(&top), false) = (def_stack.last(), in_signature) {
@@ -959,6 +1069,7 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
     }
     // a tree with errors is not kept: the next parse would likely redo it from scratch anyway
     let keep = (!tree.root_node().has_error() && INCREMENTAL.contains(&spec.id)).then(|| PrevParse { lang: spec.id, source: source.to_string(), tree });
+    chunks.extend(consts);
     Some(((chunks, mdoc, imports), keep))
 }
 

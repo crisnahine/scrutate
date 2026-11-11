@@ -176,6 +176,8 @@ def _callee_name(node, how: str, src: bytes) -> str | None:
     target = node.child_by_field_name(how)
     if target is None and node.named_children:
         target = node.named_children[0]
+    if target is not None and target.type == "generic_function":  # `f::<T>(x)`: the name is before the turbofish
+        target = target.child_by_field_name("function")
     if target is None:
         return None
     txt = src[target.start_byte : target.end_byte].decode("utf8", "replace")
@@ -219,7 +221,73 @@ def _def_name(node, src: bytes) -> str | None:
     n = node.child_by_field_name("name")
     if n is None and node.type == "impl_item":
         n = node.child_by_field_name("type")
-    return src[n.start_byte : n.end_byte].decode("utf8", "replace") if n is not None else None
+    name = src[n.start_byte : n.end_byte].decode("utf8", "replace") if n is not None else None
+    if name is not None and node.type == "impl_item":  # the bare type: `impl<T> crate::Stack<T>` is `Stack`
+        name = name.split("<", 1)[0].rsplit("::", 1)[-1].strip() or name
+    return name
+
+
+_CAPS_NAME = re.compile(r"_*[A-Z][A-Z0-9_]*\Z")
+
+
+def _constant_of(lang: str, node, src: bytes):
+    """-> (name, node whose text the chunk shows) of a module or type level constant, or None."""
+    def text(n):
+        return src[n.start_byte : n.end_byte].decode("utf8", "replace")
+
+    def kind_up(i):
+        n = node
+        for _ in range(i):
+            n = n.parent if n is not None else None
+        return n.type if n is not None else ""
+
+    t, shown, name_node = node.type, node, None
+    if lang == "rust" and t in ("const_item", "static_item") and kind_up(1) in ("source_file", "declaration_list"):
+        name_node = node.child_by_field_name("name")
+    elif lang == "go" and t in ("const_spec", "var_spec"):
+        at = 2 if kind_up(1) == "var_spec_list" else 1
+        if kind_up(at) not in ("const_declaration", "var_declaration") or kind_up(at + 1) != "source_file":
+            return None
+        if at == 1 and node.parent.named_child_count == 1:
+            shown = node.parent
+        name_node = node.child_by_field_name("name")
+    elif lang in ("javascript", "typescript", "tsx") and t == "variable_declarator":
+        decl = node.parent
+        if decl.type != "lexical_declaration" or decl.child_count == 0 or decl.children[0].type != "const":
+            return None
+        if kind_up(2) == "program":
+            shown = decl
+        elif kind_up(2) == "export_statement" and kind_up(3) == "program":
+            shown = decl.parent
+        else:
+            return None
+        name_node = node.child_by_field_name("name")
+        if name_node is None or name_node.type != "identifier":
+            return None
+        val = node.child_by_field_name("value")
+        if val is not None and val.type in _JS_FUNCS:
+            return None
+    elif lang in ("typescript", "tsx") and t == "property_identifier" and kind_up(1) == "enum_body":
+        name_node = node
+    elif lang in ("typescript", "tsx") and t == "enum_assignment" and kind_up(1) == "enum_body":
+        name_node = node.child_by_field_name("name")
+    elif lang == "java" and t == "field_declaration":
+        mods = next((c for c in node.children if c.type == "modifiers"), None)
+        words = [c.type for c in mods.children] if mods is not None else []
+        if "static" not in words or "final" not in words:
+            return None
+        decl = node.child_by_field_name("declarator")
+        name_node = decl.child_by_field_name("name") if decl is not None else None
+    elif lang == "python" and t == "expression_statement" and kind_up(1) == "module" and node.named_child_count == 1:
+        a = node.named_children[0]
+        left = a.child_by_field_name("left") if a.type == "assignment" else None
+        name_node = left if left is not None and left.type == "identifier" else None
+    if name_node is None:
+        return None
+    name = text(name_node)
+    if name == "_" or lang == "python" and not _CAPS_NAME.match(name):
+        return None
+    return name, shown
 
 
 def _last_row(node) -> int:
@@ -296,6 +364,7 @@ def parse_source(path: str, source: str) -> list[Chunk]:
         return src[a:b].decode("utf8", "replace")
 
     chunks: list[Chunk] = []
+    consts: list[Chunk] = []
     stack: list[tuple[Chunk, str]] = []  # (current definition, qualname)
     is_py = lang == "python"
 
@@ -356,6 +425,12 @@ def parse_source(path: str, source: str) -> list[Chunk]:
                         full, sig, doc, body)
             chunks.append(new)
             stack.append((new, q))
+        elif (const := _constant_of(lang, node, src)) is not None:
+            # not on the stack: calls in the initializer stay with the enclosing definition
+            cname, shown = const
+            consts.append(Chunk(cname, _qualify(stack[-1][1] if stack else "", cname), "constant", shown.start_point[0] + 1,
+                                _last_row(shown) + 1, _head(txt(shown.start_byte, shown.end_byte), MAX_CHUNK_LINES),
+                                doc="" if is_py else _leading_comment(node, src)))
         elif t in calls and stack:
             callee = _callee_name(node, calls[t], src)
             if callee:
@@ -384,6 +459,7 @@ def parse_source(path: str, source: str) -> list[Chunk]:
     if first_def is None and head_end < len(lines):
         # no definitions: the rest of the file stays searchable as windows
         chunks.extend(window_chunks(source, first_line=head_end))
+    chunks += consts  # last: the index gives the chunks before them their lexical rows (constants get none)
     if not chunks:
         return window_chunks(source)
     return chunks

@@ -122,3 +122,49 @@ def test_chunk_text_has_a_byte_cap_on_a_one_line_file_of_nested_functions():
 def test_a_rust_comment_a_blank_line_away_is_not_documentation():
     chunks = {c.name: c for c in parse_source("d.rs", "/// stray note\n\nfn f() {}\n/// Doc.\nfn g() {}\n")}
     assert (chunks["f"].doc, chunks["g"].doc) == ("", "Doc.")
+
+
+def test_a_generic_owner_is_named_by_its_bare_type():
+    rs = ("pub struct Stack<T> { items: Vec<T> }\nimpl<T> Stack<T> {\n    pub fn push(&mut self, x: T) {}\n}\n"
+          "impl<'a, T: Clone> Wrapper<'a, T> {\n    pub fn get(&self) -> T { todo!() }\n}\n"
+          "impl<T: Clone> Clone for Wrapper<'_, T> {\n    fn clone(&self) -> Self { todo!() }\n}\n"
+          "impl std::fmt::Display for Wrapper<'_, u8> {\n    fn fmt(&self) {}\n}\nimpl crate::Thing {\n    pub fn run(&self) {}\n}\n")
+    chunks = parse_source("more.rs", rs)
+    c = by_q(chunks)
+    for q, name in [("Stack.push", "push"), ("Wrapper.get", "get"), ("Wrapper.clone", "clone"), ("Wrapper.fmt", "fmt"),
+                    ("Thing.run", "run")]:
+        assert c[q].name == name
+    assert [x.name for x in chunks if x.kind == "impl"] == ["Stack", "Wrapper", "Wrapper", "Wrapper", "Thing"]
+
+
+def _consts(path, src):
+    return [(c.qualname, c.text) for c in parse_source(path, src) if c.kind == "constant"]
+
+
+def test_constants_are_symbols():
+    rs = _consts("c.rs", "/// The cap.\npub const LIMIT: usize = 3;\npub static NAME: &str = \"x\";\nimpl<T> S<T> {\n"
+                         "    const N: u8 = 1;\n    fn f() {\n        const IN: u8 = 2;\n    }\n}\nconst _: () = ();\n")
+    assert [q for q, _ in rs] == ["LIMIT", "NAME", "S.N"] and rs[0][1] == "pub const LIMIT: usize = 3;"
+    go = _consts("c.go", "package p\n\nconst A = 1\nconst (\n\tB = 2\n\tC\n)\nvar X, Y int\nvar (\n\tZ = 3\n)\nvar _ = 4\n"
+                         "func f() { const L = 1 }\n")
+    assert [q for q, _ in go] == ["A", "B", "C", "X", "Z"] and (go[0][1], go[1][1]) == ("const A = 1", "B = 2")
+    ts = _consts("c.ts", "export const MAX = 3;\nconst f = () => 1, k = 2;\nlet notc = 1;\nconst { a, b } = o;\n"
+                         "enum Color { Red, Green = 2 }\nfunction g() { const inner = 1; }\n")
+    assert [q for q, _ in ts] == ["MAX", "k", "Color.Red", "Color.Green"] and ts[0][1] == "export const MAX = 3;"
+    assert [q for q, _ in _consts("c.js", "export const MAX = 3;\nconst f = function () {};\nvar v = 1;\n")] == ["MAX"]
+    java = _consts("C.java", "class C {\n  public static final int MAX = 3;\n  static int n;\n  final int m = 1;\n}\n")
+    assert [q for q, _ in java] == ["C.MAX"]
+    py = _consts("c.py", "LIMIT = 3\n_PRIVATE_CAP: int = 4\nlower = 5\nA, B = 1, 2\nclass K:\n    INNER = 1\n"
+                         "def f():\n    LOCAL = 2\n")
+    assert [q for q, _ in py] == ["LIMIT", "_PRIVATE_CAP"]
+
+
+def test_constants_come_last_and_do_not_move_the_file_header():
+    chunks = parse_source("m.rs", "use std::fmt;\n\npub const LIMIT: usize = 3;\n\nfn f() -> usize {\n    LIMIT\n}\n")
+    assert [c.kind for c in chunks] == ["module", "function", "constant"]
+    assert (chunks[0].start, chunks[0].end) == (1, 4)
+
+
+def test_a_turbofish_call_is_a_call():
+    f = next(c for c in parse_source("t.rs", "fn f() {\n    g::<u8>(1);\n    x.collect::<Vec<_>>();\n}\n") if c.name == "f")
+    assert sorted(f.calls) == ["collect", "g"]

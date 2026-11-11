@@ -140,11 +140,11 @@ class Searcher:
         if q.keys:
             ph = ",".join("?" * len(q.keys))
             out += [r[0] for r in db.execute(
-                f"SELECT id FROM chunks WHERE name_key IN ({ph}) AND kind!='window' LIMIT ?",
+                f"SELECT id FROM chunks WHERE name_key IN ({ph}) AND kind NOT IN ('window','constant') LIMIT ?",
                 (*q.keys, limit))]
         for d in q.dotted:
             last = d.rsplit(".", 1)[-1]
-            for r in db.execute("SELECT id, qual_key FROM chunks WHERE name_key=? AND kind!='window' "
+            for r in db.execute("SELECT id, qual_key FROM chunks WHERE name_key=? AND kind NOT IN ('window','constant') "
                                 "LIMIT 200", (last,)):
                 parts = r[1]
                 if parts == d.replace(".", ".") or parts.endswith("." + d) or parts == d:

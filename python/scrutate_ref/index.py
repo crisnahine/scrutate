@@ -158,6 +158,10 @@ def build_rows(rel: str, source: str, model: SemanticModel | None):
         sig_s, sig_w = tokenize2(c.sig, 80)
         doc_s, doc_w = tokenize2(c.doc, 200)
         body_s, body_w = tokenize2(c.body, BODY_CAP)
+        rows.append(((c.kind, c.name, c.qualname, name_key(c.name), name_key(c.qualname), c.start, c.end,
+                      is_test, len(doc_s), len(body_s), pack_text(c.text), " ".join(dict.fromkeys(name_s))), sorted(c.calls)))
+        if c.kind == "constant":  # a symbol only: no postings, no vector, never a ranked candidate
+            continue
         bags.append((Counter(name_s + name_w), Counter(qual_s + qual_w), _bag(sig_s + sig_w, TF_CAP),
                      _bag(doc_s + doc_w, TF_CAP), _bag(body_s + body_w, TF_CAP), path_bag))
         if model is not None:
@@ -170,8 +174,6 @@ def build_rows(rel: str, source: str, model: SemanticModel | None):
             if zb is not None:
                 z[1] = zb
             vecs.append(z)
-        rows.append(((c.kind, c.name, c.qualname, name_key(c.name), name_key(c.qualname), c.start, c.end,
-                      is_test, len(doc_s), len(body_s), pack_text(c.text), " ".join(dict.fromkeys(name_s))), sorted(c.calls)))
     return rows, pack_bags(bags, quantize(np.stack(vecs)) if vecs else None)
 
 
@@ -317,7 +319,7 @@ class Index:
             self._lex_ver = None
         if self._lex_ver != ver:
             n_rows = sum(s.n for s in self._lex.segs)
-            n_live = self.db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+            n_live = self.db.execute("SELECT COUNT(*) FROM chunks WHERE kind != 'constant'").fetchone()[0]
             # as many segment rows as chunks: nothing was ever deleted, so skip reading every id
             live = None if n_rows == n_live else np.fromiter(
                 (r[0] for r in self.db.execute("SELECT id FROM chunks ORDER BY id")), np.int64)

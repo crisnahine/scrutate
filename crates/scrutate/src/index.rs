@@ -70,6 +70,7 @@ pub struct CheckReport {
     pub database_ok: bool,
     pub segments: usize,
     pub segments_ok: bool,
+    /// chunks with a segment row: every chunk but the constants
     pub chunks_db: i64,
     pub chunks_alive: i64,
     pub files_indexed: usize,
@@ -255,19 +256,23 @@ pub fn build_rows(rel: &str, source: &str, model: Option<&SemanticModel>, prev: 
         let (sig_s, sig_w) = tokenize2(&c.sig, Some(80));
         let (doc_s, doc_w) = tokenize2(&c.doc, Some(200));
         let (body_s, body_w) = tokenize2(&c.body, Some(BODY_CAP));
-        bags.push(vec![
-            bag(name_s.iter().chain(&name_w).cloned(), None),
-            bag(qual_s.iter().chain(&qual_w).cloned(), None),
-            bag(sig_s.iter().chain(&sig_w).cloned(), Some(TF_CAP)),
-            bag(doc_s.iter().chain(&doc_w).cloned(), Some(TF_CAP)),
-            bag(body_s.iter().chain(&body_w).cloned(), Some(TF_CAP)),
-            path_bag.clone(),
-        ]);
+        // a constant is a symbol only: no postings, no vector, never a ranked candidate
+        let lexed = c.kind != "constant";
+        bags.extend(lexed.then(|| {
+            vec![
+                bag(name_s.iter().chain(&name_w).cloned(), None),
+                bag(qual_s.iter().chain(&qual_w).cloned(), None),
+                bag(sig_s.iter().chain(&sig_w).cloned(), Some(TF_CAP)),
+                bag(doc_s.iter().chain(&doc_w).cloned(), Some(TF_CAP)),
+                bag(body_s.iter().chain(&body_w).cloned(), Some(TF_CAP)),
+                path_bag.clone(),
+            ]
+        }));
         if prof {
             prof::add(&prof::TOKENIZE, t);
         }
         let t = Instant::now();
-        if let Some(m) = model {
+        if let Some(m) = model.filter(|_| lexed) {
             let mut z = vec![0f32; 2 * k];
             if c.kind != "window" {
                 if let Some(za) = m.encode_chunk(&name_s, &qual_s, &sig_s, &doc_s, &[]) {
@@ -818,13 +823,14 @@ impl Index {
         if self.lex_ver.as_deref() != Some(ver.as_str()) {
             let store = self.lex.as_mut().unwrap();
             let n_rows: usize = store.segs.iter().map(|s| s.n).sum();
-            // one statement, so the count and the version it is checked against are of one commit
-            let (at_ver, at, n_live): (Option<String>, Option<String>, i64) = self.db.query_row(
-                "SELECT (SELECT value FROM meta WHERE key='data_version'), (SELECT value FROM meta WHERE key='chunks_at'), (SELECT COUNT(*) FROM chunks)",
+            // one statement, so the counts and the version they are checked against are of one commit
+            let (at_ver, at, n_all, n_live): (Option<String>, Option<String>, i64, i64) = self.db.query_row(
+                "SELECT (SELECT value FROM meta WHERE key='data_version'), (SELECT value FROM meta WHERE key='chunks_at'), \
+                 (SELECT COUNT(*) FROM chunks), (SELECT COUNT(*) FROM chunks WHERE kind != 'constant')",
                 [],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )?;
-            if counted(at.as_deref(), at_ver.as_deref()).is_some_and(|n| n != n_live) {
+            if counted(at.as_deref(), at_ver.as_deref()).is_some_and(|n| n != n_all) {
                 return Err(Damaged("the chunks table lost rows").into());
             }
             if n_rows as i64 == n_live {
@@ -1309,7 +1315,7 @@ impl Index {
         if !r.database_ok {
             r.problems.push(format!("database integrity: {integrity}"));
         }
-        r.chunks_db = self.db.query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))?;
+        r.chunks_db = self.db.query_row("SELECT COUNT(*) FROM chunks WHERE kind != 'constant'", [], |row| row.get(0))?;
         let names = self.segments();
         r.segments = names.len();
         match LexStore::open(&self.seg_dir, &names) {

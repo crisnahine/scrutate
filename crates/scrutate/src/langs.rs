@@ -178,6 +178,8 @@ fn second_symbol(node: Node, src: &[u8]) -> Option<String> {
             if !ch.is_named() {
                 continue;
             }
+            // `defguard is_big(x) when x > 100`: the head is left of `when`
+            let ch = if ch.kind() == "binary_operator" { ch.child_by_field_name("left").unwrap_or(ch) } else { ch };
             let t = if ch.kind() == "call" {
                 ch.child_by_field_name("target").map(|n| text(src, n.start_byte(), n.end_byte()))
             } else if ch.kind() == "alias" || ch.kind() == "identifier" {
@@ -259,7 +261,7 @@ const CSHARP_DEFS: &[Def] = &[
     d("namespace_declaration", "module", N),
     d("delegate_declaration", "type", N),
 ];
-const JS_FUNCS: &[&str] = &["arrow_function", "function_expression", "function"];
+pub(crate) const JS_FUNCS: &[&str] = &["arrow_function", "function_expression", "function"];
 const fn dv(node: &'static str, name: &'static [NameRule]) -> Def {
     Def { node, kind: "function", name, value_kinds: JS_FUNCS, head_words: &[], needs_field: "", kind_by_head: false, parents: &[] }
 }
@@ -599,6 +601,7 @@ const CORE: &[LangSpec] = &[
             d("function_declaration", "function", &[NameRule::Field("name"), NameRule::ChildKind(&["identifier", "simple_identifier"])]),
             dk("class_declaration", "class", &[NameRule::Field("name"), NameRule::ChildKind(&["identifier", "type_identifier", "simple_identifier"])]),
             d("object_declaration", "class", &[NameRule::Field("name"), NameRule::ChildKind(&["identifier", "type_identifier", "simple_identifier"])]),
+            d("type_alias", "type", &[NameRule::Field("type")]),
         ],
         calls: &[c("call_expression", "")],
         docstring: false,
@@ -617,6 +620,7 @@ const CORE: &[LangSpec] = &[
             dk("class_declaration", "class", &[NameRule::Field("name"), NameRule::ChildKind(&["type_identifier", "user_type"])]),
             d("protocol_declaration", "interface", &[NameRule::Field("name"), NameRule::ChildKind(&["type_identifier"])]),
             d("init_declaration", "method", &[NameRule::ChildKind(&["init"])]),
+            d("protocol_function_declaration", "function", N),
         ],
         calls: &[c("call_expression", "")],
         docstring: false,

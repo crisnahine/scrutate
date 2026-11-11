@@ -191,6 +191,14 @@
     [
       "function",
       "make_ptr"
+    ],
+    [
+      "constant",
+      "color.RED"
+    ],
+    [
+      "constant",
+      "color.GREEN"
     ]
   ],
   "sample.cpp": [
@@ -830,7 +838,7 @@
     ],
     [
       "function",
-      "Account:deposit"
+      "Account.deposit"
     ]
   ],
   "sample.m": [
@@ -1379,6 +1387,10 @@
       "Shape"
     ],
     [
+      "function",
+      "Shape.area"
+    ],
+    [
       "struct",
       "Pt"
     ],
@@ -1471,6 +1483,14 @@
     [
       "method",
       "Base.run"
+    ],
+    [
+      "constant",
+      "Color.Red"
+    ],
+    [
+      "constant",
+      "Color.Green"
     ]
   ],
   "sample.tsx": [

@@ -133,7 +133,7 @@ fn c_and_cpp_function_like_macros_are_symbols() {
     let src = "#define MAX(a, b) ((a) > (b) ? (a) : (b))\n#define LIMIT 5\n";
     for path in ["m.h", "m.hpp"] {
         let got = symbols(path, src);
-        assert_eq!(got, vec![("macro".to_string(), "MAX".to_string())], "{path}");
+        assert_eq!(got, vec![("macro".to_string(), "MAX".to_string()), ("constant".to_string(), "LIMIT".to_string())], "{path}");
     }
 }
 
@@ -262,4 +262,135 @@ fn a_chunk_ends_on_the_last_line_that_holds_its_text() {
 #[test]
 fn an_escaped_comma_is_part_of_an_excluded_directory_name() {
     assert_eq!(scrutate::files::split_names(r"gen\,dir, vendor ,,a\b"), vec!["gen,dir", "vendor", r"a\b"]);
+}
+
+fn find<'a>(chunks: &'a [scrutate::parse::Chunk], qualname: &str) -> &'a scrutate::parse::Chunk {
+    chunks.iter().find(|c| c.qualname == qualname).unwrap_or_else(|| panic!("no {qualname} in {:?}", chunks.iter().map(|c| &c.qualname).collect::<Vec<_>>()))
+}
+
+#[test]
+fn a_generic_owner_is_named_by_its_bare_type() {
+    let rs = "pub struct Stack<T> { items: Vec<T> }\nimpl<T> Stack<T> {\n    pub fn push(&mut self, x: T) {}\n}\n\
+              impl<'a, T: Clone> Wrapper<'a, T> {\n    pub fn get(&self) -> T { todo!() }\n}\n\
+              impl<T: Clone> Clone for Wrapper<'_, T> {\n    fn clone(&self) -> Self { todo!() }\n}\n\
+              impl std::fmt::Display for Wrapper<'_, u8> {\n    fn fmt(&self) {}\n}\nimpl crate::Thing {\n    pub fn run(&self) {}\n}\n";
+    let chunks = parse_source("more.rs", rs);
+    for (q, name) in [("Stack.push", "push"), ("Wrapper.get", "get"), ("Wrapper.clone", "clone"), ("Wrapper.fmt", "fmt"), ("Thing.run", "run")] {
+        assert_eq!(find(&chunks, q).name, name);
+    }
+    let impls: Vec<&str> = chunks.iter().filter(|c| c.kind == "impl").map(|c| c.name.as_str()).collect();
+    assert_eq!(impls, ["Stack", "Wrapper", "Wrapper", "Wrapper", "Thing"]);
+    let cpp = parse_source("box.cpp", "template <class T>\nvoid Box<T>::put(T x) {}\nvoid ns::Map<K, std::vector<V>>::get() {}\n");
+    assert_eq!(find(&cpp, "Box.put").name, "put");
+    assert_eq!(find(&cpp, "ns.Map.get").name, "get");
+}
+
+#[test]
+fn a_dotted_definition_name_is_its_last_part_under_its_owner() {
+    let lua =
+        parse_source("mod.lua", "local M = {}\n\nfunction M.helper(x)\n  return x\nend\n\nfunction M.sub.deep(x)\n  return x\nend\n\nfunction M:meth()\nend\n");
+    for (q, name) in [("M.helper", "helper"), ("M.sub.deep", "deep"), ("M.meth", "meth")] {
+        assert_eq!(find(&lua, q).name, name);
+    }
+    let caller = parse_source("use.lua", "local function go()\n  return M.helper(1)\nend\n");
+    assert!(find(&caller, "go").calls.contains("helper"));
+    let ex =
+        parse_source("mix.ex", "defmodule MyApp.Accounts.User do\n  def changeset(user), do: user\nend\n\ndefprotocol MyApp.Sizeable do\n  def size(x)\nend\n");
+    assert_eq!(find(&ex, "MyApp.Accounts.User").name, "User");
+    assert_eq!(find(&ex, "MyApp.Accounts.User.changeset").name, "changeset");
+    assert_eq!(find(&ex, "MyApp.Sizeable").name, "Sizeable");
+    // a dot is part of an R name
+    let r = parse_source("stats.R", "read.table2 <- function(x) x\nprint.myclass <- function(x) x\n");
+    assert_eq!(find(&r, "read.table2").name, "read.table2");
+    assert_eq!(find(&r, "print.myclass").name, "print.myclass");
+}
+
+fn constants(path: &str, src: &str) -> Vec<(String, String, String)> {
+    parse_source(path, src).into_iter().filter(|c| c.kind == "constant").map(|c| (c.name, c.qualname, c.text)).collect()
+}
+
+fn named(got: &[(String, String, String)]) -> Vec<&str> {
+    got.iter().map(|(_, q, _)| q.as_str()).collect()
+}
+
+#[test]
+fn constants_are_symbols_in_every_language_the_reference_has() {
+    let rs = constants(
+        "c.rs",
+        "/// The cap.\npub const LIMIT: usize = 3;\npub static NAME: &str = \"x\";\nimpl<T> S<T> {\n    const N: u8 = 1;\n    fn f() {\n        const IN: u8 = 2;\n    }\n}\nconst _: () = ();\n",
+    );
+    assert_eq!(named(&rs), ["LIMIT", "NAME", "S.N"]);
+    assert_eq!(rs[0].2, "pub const LIMIT: usize = 3;");
+    let go = constants("c.go", "package p\n\nconst A = 1\nconst (\n\tB = 2\n\tC\n)\nvar X, Y int\nvar (\n\tZ = 3\n)\nvar _ = 4\nfunc f() { const L = 1 }\n");
+    assert_eq!(named(&go), ["A", "B", "C", "X", "Z"]);
+    assert_eq!((go[0].2.as_str(), go[1].2.as_str()), ("const A = 1", "B = 2"));
+    let ts_src = "export const MAX = 3;\nconst f = () => 1, k = 2;\nlet notc = 1;\nconst { a, b } = o;\nenum Color { Red, Green = 2 }\nfunction g() { const inner = 1; }\n";
+    let ts = constants("c.ts", ts_src);
+    assert_eq!(named(&ts), ["MAX", "k", "Color.Red", "Color.Green"]);
+    assert_eq!(ts[0].2, "export const MAX = 3;");
+    assert_eq!(named(&constants("c.js", "export const MAX = 3;\nconst f = function () {};\nvar v = 1;\n")), ["MAX"]);
+    let java = constants("C.java", "class C {\n  public static final int MAX = 3;\n  static int n;\n  final int m = 1;\n}\n");
+    assert_eq!(named(&java), ["C.MAX"]);
+    let py = constants("c.py", "LIMIT = 3\n_PRIVATE_CAP: int = 4\nlower = 5\nA, B = 1, 2\nclass K:\n    INNER = 1\ndef f():\n    LOCAL = 2\n");
+    assert_eq!(named(&py), ["LIMIT", "_PRIVATE_CAP"]);
+    let c = constants("c.h", "#define LIMIT 5\n#define GUARD_H\n#define MAX(a, b) ((a) > (b) ? (a) : (b))\nenum Color { RED, GREEN = 2 };\n");
+    assert_eq!(named(&c), ["LIMIT", "Color.RED", "Color.GREEN"]);
+    assert_eq!(named(&constants("c.cpp", "#define LIMIT 5\nenum class Mode { On, Off };\n")), ["LIMIT", "Mode.On", "Mode.Off"]);
+}
+
+#[test]
+fn constants_come_last_and_do_not_move_the_file_header() {
+    let src = "use std::fmt;\n\npub const LIMIT: usize = 3;\n\nfn f() -> usize {\n    LIMIT\n}\n";
+    let chunks = parse_source("m.rs", src);
+    let kinds: Vec<&str> = chunks.iter().map(|c| c.kind).collect();
+    assert_eq!(kinds, ["module", "function", "constant"]);
+    assert_eq!((chunks[0].start, chunks[0].end), (1, 4));
+}
+
+#[test]
+fn constants_are_found_by_name_but_never_ranked() {
+    let root = tree(
+        "constants",
+        &[("src/lib.rs", "/// How many retries.\npub const RETRY_LIMIT: usize = 3;\n\n/// Retries a request up to the limit.\npub fn retry_request() -> usize {\n    RETRY_LIMIT\n}\n")],
+    );
+    let mut repo = scrutate::Repo::open(&root).unwrap();
+    repo.update(false).unwrap();
+    let hits = repo.find_symbol("RETRY_LIMIT", 5).unwrap();
+    assert_eq!(hits.iter().map(|h| (h.kind.as_str(), h.qualname.as_str())).collect::<Vec<_>>(), [("constant", "RETRY_LIMIT")]);
+    let outline = scrutate::intel::outline(&repo.ix, "src/lib.rs").unwrap();
+    assert!(outline.iter().any(|r| r.kind == "constant" && r.name == "RETRY_LIMIT"));
+    for q in ["RETRY_LIMIT", "retry limit", "how many retries"] {
+        let cands = repo.candidates(q, true).unwrap();
+        assert!(cands.rows.iter().all(|r| r.kind != "constant"), "{q}: {:?}", cands.rows.iter().map(|r| &r.qualname).collect::<Vec<_>>());
+    }
+    let lexed = |repo: &scrutate::Repo| -> i64 { repo.ix.db.query_row("SELECT COUNT(*) FROM chunks WHERE kind != 'constant'", [], |r| r.get(0)).unwrap() };
+    let n = lexed(&repo);
+    assert_eq!(repo.ix.lex().unwrap().n_alive as i64, n);
+    let report = repo.ix.check(false).unwrap();
+    assert!(report.ok(), "{report:?}");
+    std::fs::write(root.join("src/lib.rs"), "pub const RETRY_LIMIT: usize = 4;\npub fn retry_request() {}\n").unwrap();
+    repo.update(false).unwrap();
+    let n = lexed(&repo);
+    assert_eq!(repo.ix.lex().unwrap().n_alive as i64, n);
+    let report = repo.ix.check(false).unwrap();
+    assert!(report.ok(), "{report:?}");
+}
+
+#[test]
+fn swift_protocol_requirements_kotlin_type_aliases_and_elixir_guards_are_symbols() {
+    let swift = symbols("c.swift", "protocol Payable {\n    func pay(amount: Int)\n}\n");
+    assert!(has(&swift, "function", "Payable.pay"), "{swift:?}");
+    let kt = symbols("b.kt", "package shop\n\ntypealias Handler = (Int) -> Unit\n");
+    assert!(has(&kt, "type", "Handler"), "{kt:?}");
+    let ex = symbols("f.ex", "defmodule Shop.Invoice do\n  defguard is_big(x) when x > 100\n  def f(x) when is_integer(x), do: x\nend\n");
+    assert!(has(&ex, "function", "Shop.Invoice.is_big") && has(&ex, "function", "Shop.Invoice.f"), "{ex:?}");
+}
+
+#[test]
+fn a_turbofish_call_is_a_call_and_a_struct_body_holds_methods() {
+    let rs = parse_source("t.rs", "fn f() {\n    g::<u8>(1);\n    x.collect::<Vec<_>>();\n}\n");
+    let calls: Vec<&str> = find(&rs, "f").calls.iter().map(|s| s.as_str()).collect();
+    assert_eq!(calls, ["collect", "g"]);
+    let got = symbols("p.hpp", "struct P {\n  ~P() = default;\n  P() {}\n};\n");
+    assert_eq!(got, vec![("struct".into(), "P".into()), ("method".into(), "P.~P".into()), ("method".into(), "P.P".into())]);
 }

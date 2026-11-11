@@ -260,7 +260,7 @@ impl Searcher {
         let mut out: Vec<i64> = Vec::new();
         if !q.keys.is_empty() {
             let ph = vec!["?"; q.keys.len()].join(",");
-            let mut st = self.ix.db.prepare(&format!("SELECT id FROM chunks WHERE name_key IN ({ph}) AND kind!='window' LIMIT {limit}"))?;
+            let mut st = self.ix.db.prepare(&format!("SELECT id FROM chunks WHERE name_key IN ({ph}) AND kind NOT IN ('window','constant') LIMIT {limit}"))?;
             let rows = st.query_map(params_from_iter(q.keys.iter()), |r| r.get::<_, i64>(0))?;
             for r in rows {
                 out.push(r?);
@@ -268,7 +268,7 @@ impl Searcher {
         }
         for d in &q.dotted {
             let last = d.rsplit('.').next().unwrap_or(d);
-            let mut st = self.ix.db.prepare_cached("SELECT id, qual_key FROM chunks WHERE name_key=?1 AND kind!='window' LIMIT 200")?;
+            let mut st = self.ix.db.prepare_cached("SELECT id, qual_key FROM chunks WHERE name_key=?1 AND kind NOT IN ('window','constant') LIMIT 200")?;
             let rows = st.query_map([last], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?.unwrap_or_default())))?;
             for r in rows {
                 let (id, qk) = r?;

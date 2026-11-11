@@ -12,6 +12,18 @@ def names(hits):
     return [h.qualname or h.name for h in hits]
 
 
+def test_constants_are_found_by_name_but_never_ranked(repo):
+    import os
+
+    with open(os.path.join(repo, "app/auth.py"), "a") as f:
+        f.write("\n\nMAX_RETRIES = 3\n")
+    s = make(repo)
+    assert [(h.kind, h.qualname) for h in s.find_symbol("MAX_RETRIES")] == [("constant", "MAX_RETRIES")]
+    for q in ("MAX_RETRIES", "max retries", "TokenStore.MAX_RETRIES"):
+        _, rows, _ = s.candidates(q)
+        assert all(r["kind"] != "constant" for r in rows), q
+
+
 def test_exact_identifier(repo):
     s = make(repo)
     assert names(s.search("send_request", k=3))[0] == "send_request"

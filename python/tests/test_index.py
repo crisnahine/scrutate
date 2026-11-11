@@ -129,12 +129,15 @@ def test_switching_semantic_model_rebuilds(repo):
 
 
 def test_store_always_agrees_with_the_chunk_table(repo):
-    """Whatever happens to the files, the live rows the search engine scores are exactly the chunks in SQLite."""
+    """Whatever happens to the files, the live rows the search engine scores are exactly the chunks in SQLite
+    that ranked search sees (constants are symbols only)."""
+    with open(os.path.join(repo, "app/auth.py"), "a") as f:
+        f.write("\n\nMAX_RETRIES = 3\n")
     ix = Index(repo, model=None)
     ix.update()
 
     def check():
-        assert ix.lex.n_alive == ix.db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+        assert ix.lex.n_alive == ix.db.execute("SELECT COUNT(*) FROM chunks WHERE kind != 'constant'").fetchone()[0]
 
     check()
     with open(os.path.join(repo, "app/auth.py"), "a") as f:
