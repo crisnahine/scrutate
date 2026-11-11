@@ -29,8 +29,9 @@ capabilities those crates do not provide rather than re-implementing what they a
 - **Matching modes**: regex (Rust `regex`: linear time, no backtracking, size-limited), literal,
   **identifier** (one spelling matches every casing: `refreshToken` ≡ `refresh_token` ≡
   `REFRESH_TOKEN`; digits and acronyms are parts), **fuzzy/approximate** (Myers' bit-parallel
-  edit-distance matcher: one 128-bit word for patterns up to 128 bytes, 64-bit blocks with carries up to 4096 bytes, with a pigeonhole prefilter so only candidate lines
-  pay for the DP), multiline, inverted, whole-word, smart case.
+  edit-distance matcher, counted in characters: one 128-bit word for patterns up to 128, 64-bit
+  blocks with carries up to 4096, with a pigeonhole prefilter so only candidate lines pay for the
+  DP; `-i` folds case as a regex does), multiline, inverted, whole-word, smart case.
 - **Traversal**: the `ignore` parallel walker (work-stealing across threads, `.gitignore` /
   `.ignore` / global excludes, hidden files off by default, symlink loop detection, max depth and
   size filters, type globs derived from the language registry). The crate is vendored
@@ -99,9 +100,9 @@ capabilities those crates do not provide rather than re-implementing what they a
   passes, and half the bytes of the Linux tree are in files of that size. A NUL byte or a
   byte-order mark sends the file to the stream reader, whose binary and encoding handling is
   unchanged. Files of the kernel's pseudo filesystems give their size as 0 and answer a first
-  read short (4 KB of the 7.3 MB `/proc/kallsyms`), so on Linux one `statfs` per root (for `/`,
-  of its `proc` and `sys` too) finds procfs, sysfs, debugfs, tracefs, securityfs, configfs and
-  cgroup, and their files are read until the kernel has no more. On Linux, where opening a file is cheap, this and the matcher change above took the
+  read short (4 KB of the 7.3 MB `/proc/kallsyms`), so on Linux one `statfs` per root, and per
+  directory named `proc` or `sys` the walk meets, finds procfs, sysfs, debugfs, tracefs,
+  securityfs, configfs and cgroup, and their files are read until the kernel has no more. On Linux, where opening a file is cheap, this and the matcher change above took the
   Linux-tree search from 144 ms to 120 ms in the test VM (ripgrep: 135 ms), with 316,000 system
   calls against ripgrep's 526,000.
 - **One run, one translation**: every file search of a run shares a `Run` (matcher, options,
@@ -149,12 +150,17 @@ windows. Each definition becomes a *chunk* with fields name / qualified name / s
 documentation / body / path, plus call edges and imports. Adding a language is a registry entry
 and a sample file, not new code. A chunk's text and body keep at most 200 lines (40 for a
 container such as a class) and 32 KiB, cut at a character boundary, and a chunk ends on the last
-line that holds its text. A method's qualified name uses its owner's bare type (`Stack.push` for
+line that holds its text. The parser hands over byte ranges; the index cuts each chunk's text
+from the source when it stores that chunk, one chunk at a time, so a file of thousands of nested
+definitions never holds all their copies at once. A `.h` file is parsed as C++ or Objective-C
+when its text shows it (docs/CLI.md lists the signs), as C otherwise. A method's qualified name uses its owner's bare type (`Stack.push` for
 `impl<T> Stack<T>`), and qualified names keep at most 32 segments. The tree walk keeps its own
 list of ancestors and visits children with a cursor, so a deeply nested or a very wide file
 indexes in linear time. Constants (`const`, `static`, enum members, `#define` values and the
 like) are chunks of kind `constant` that get no postings and no vectors: name lookups find them,
-ranked search never sees them.
+ranked search never sees them. A JavaScript or TypeScript object literal's methods are owned by
+the name that holds the literal (`api.get`), so `callers` treats them as methods, never as free
+functions.
 
 ### Tokens (`text.rs`)
 Index and query use one tokenizer, in both engines. An ASCII word is split at `_` and case
@@ -200,7 +206,10 @@ folded, so two spellings of one accented name are one name.
   not inflate, a segment list that is not JSON, a segment without vectors under a model, an
   `index.db` that is deleted under an open index or is a directory, a `seg` that is a file, an
   emptied `chunks` table, and a chunk count that differs from `chunks_at` when the statistics
-  are read) with automatic **rebuild**,
+  are read) with automatic **rebuild**, **cancellation** (an update checks a cancel flag between
+  batches of 256 files and rolls back; a panic inside an update rolls back at once, and the next
+  update clears a transaction left open), a **content revision** (`content_rev` in `meta`: an
+  index built with other parsing rules reads every file again on its next full update),
   **schema and model versioning** (a different schema or model clears and re-indexes inside the
   database so concurrent processes stay consistent), and multi-process safety (busy-timeout +
   retry on `SQLITE_BUSY`, never deleting a live database; a read never waits for another
@@ -263,8 +272,8 @@ mid-update leaves the previous snapshot. Reads by the update itself are not even
 not trigger themselves. Not a daemon: it runs only while the command (or server) runs.
 
 ### Intelligence (`intel.rs`)
-Definitions and references, callers/callees, outline, imports with best-effort
-module→file resolution and reverse dependencies, **similar code** (implementation-view vectors +
+Definitions and references, callers/callees, outline, imports mapped to files by the same
+resolver `refs` uses, and reverse dependencies, **similar code** (implementation-view vectors +
 token Jaccard), **duplicates** (exact: the same body text once runs of whitespace are squeezed;
 near: MinHash/LSH over token 3-grams, nested chunks excluded), and **structural search** (`tsquery`: tree-sitter query
 language over all files of a language, parallel, no index needed).
@@ -274,7 +283,9 @@ that holds one (Python, JavaScript/TypeScript, Rust, Go), the file is parsed aga
 tree-sitter to find the identifier node, its qualifier, the enclosing scopes and the names its
 imports bind, while definitions and their nesting come from the index's `chunks` rows. An
 occurrence goes to the innermost scope that defines the name, then the file's top level, then
-an import binding, the Go package directory or a wildcard import; a qualifier goes through the
+an import binding, the Go package directory or a wildcard import. A local bound by a pattern,
+a `catch` or a Go statement initializer counts only inside its own branch or statement, and a
+closure sees the locals of the function around it; a qualifier goes through the
 module it names or the class or type it names, and a variable through the type its declaration
 states or infers (a function's declared return type, a field's type, a module-level or static
 variable, a constructor). A type from outside the repository makes a call external. Import paths
@@ -312,7 +323,8 @@ long tool result where it likes (Codex at 10,000 tokens, from the middle).
 for keeping the index usable (bring it up to date; when the database is corrupt, delete it and
 build it again). After an operation it checks the files the answer cites, and the files its
 arguments name, against the index with one `stat` each; when one changed or is gone, those
-files alone are updated and the operation runs again, once. The MCP server, the Python bindings
+files alone are updated and the operation runs again, once. `read_code` by path streams the file
+through a 64 KB buffer and stops after the last line it shows. The MCP server, the Python bindings
 and `watch` hold one; the MCP server builds the first index in the background and answers
 "still building" after a 20 second wait.
 

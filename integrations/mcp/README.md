@@ -6,8 +6,9 @@ no handshake (`server/discover`, a protocol version in every request's `_meta`).
 `find_symbol`, `callers`, `callees`, `read_code`, `outline`, `dependencies`, `dependents`,
 `references`, `similar_code`, `duplicates`, `structural_search`, `reindex`. The index refreshes
 itself before a call: by default the wait between scans is at most a second, shorter when a scan
-is cheap; with `--refresh-interval S`, no scan comes sooner than S seconds after the last one. An edit made inside that
-window can be missing from an answer until the next scan.
+is cheap; with `--refresh-interval S`, no scan comes sooner than S seconds after the last one.
+Inside that window an answer checks the files it cites and the files its arguments name, and
+reads a changed one again first; an edit to another file waits for the next scan.
 
 What a client gets (details in docs/CLI.md, `serve`):
 - every tool except `reindex` is marked read-only and local, so clients that ask before a write
@@ -17,11 +18,14 @@ What a client gets (details in docs/CLI.md, `serve`):
   default), closing line included, cut at whole items, with the `offset` that continues them;
 - `grep_code` at the speed of `scrutate grep`, with matches grouped by enclosing symbol; it
   searches the files the index holds: hidden ones such as `.github/`, not ignored files, `.git/`
-  or `node_modules/`;
+  or `node_modules/`; a capped answer holds the first matches in path order, so the next page
+  neither repeats nor skips a line (`references` too);
 - `reindex` with `force: true` to read every file again, also one whose size and modification
   time did not change;
 - a location (`path:start-end`) at the start of every result, accepted wherever a tool takes a
   symbol, and `read_code symbol=...` for a whole definition by name or location;
+- `read_code path=...` reads only as far as the last line asked for, at most 1 MB of line text,
+  and refuses a file with a NUL byte in its first 8 KB;
 - with `serve --structured`, `structuredContent` and an `outputSchema` on every tool: the answer
   as the JSON that `--json` prints. Leave it off for Claude Code, which then shows its model the
   JSON in place of the text with the snippets; turn it on for a client whose scripts read tool

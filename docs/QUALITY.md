@@ -79,8 +79,9 @@ Rust `macro_rules!` and trait methods without a body, Go methods qualified by th
 (`Type.Method`), JavaScript class field functions and `module.exports.X` / `exports.X`, and
 TypeScript abstract methods, `declare function` and namespaces. The rows above predate them, and
 two later changes as well: a Rust method of a generic type is qualified by the bare type
-(`Stack.push`, where it was `Stack<T>.push`), and constants are chunks that ranked search never
-returns. Tokens of an all-ASCII text did not change when words of other scripts became tokens.
+(`Stack.push`, where it was `Stack<T>.push`), a JavaScript or TypeScript object literal's
+methods are qualified by the name that holds the literal (`api.get`), and constants are chunks
+that ranked search never returns. Tokens of an all-ASCII text did not change when words of other scripts became tokens.
 
 ## What these numbers say and do not say
 

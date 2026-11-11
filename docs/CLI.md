@@ -7,7 +7,7 @@
 - **Exit codes**: `0` results found, `1` no results, `2` error (bad arguments, unreadable index,
   invalid pattern, a `--root` that is not an existing directory, a search path that does not
   exist...), `130` interrupted (Ctrl-C, or stopped early for a reason other than
-  `--max-results`).
+  `--max-results`). `grep --type-list` and `grep --version` need no pattern.
 - **Diagnostics**: errors are one line on stderr (`scrutate: error: ...`). With `--json`, or with
   `SCRUTATE_DIAGNOSTICS=json` for any command, an error is one JSON record instead:
   `{"type": "error", "schema": 1, "message": "..."}` (`"internal_error"` for a bug).
@@ -15,8 +15,9 @@
   when stdout is not a terminal; colour only on a terminal (`--no-color`, or `NO_COLOR` set to
   any non-empty value, disables it).
 - **Determinism**: `--sort` orders Engine A output by path then line (default output is in
-  completion order for speed; `-c`, `-l`, `--symbols` are always sorted). Engine B output is fully
-  deterministic (ties broken by id).
+  completion order for speed; `-c`, `-l`, `--symbols` are always sorted). It orders all results
+  together, where `rg --sort path` orders the results of each root in command-line order. Engine B
+  output is fully deterministic (ties broken by id).
 - **Machine-readable output**: `--json` on every command. Engine A emits JSON Lines with
   `"schema": 1` and `"type"` ∈ {`match`, `context`, `count`, `file`, `summary`, `symbol_group`};
   Engine B commands emit one JSON document. The schema number changes only on incompatible changes.
@@ -31,13 +32,25 @@
   backslash is part of a file name and stays. The index commands and the MCP tools show a control
   character in a name as an escape (`\n`, `\x1b`) and a backslash doubled (`\\`); a path or a
   location written that way is read back by every command that takes one.
-- **Configuration**: `.scrutate.toml` in the repository, `$XDG_CONFIG_HOME/scrutate/config.toml`,
-  or `$SCRUTATE_CONFIG`; `scrutate config` shows what is in effect. Precedence: command line >
+- **Configuration**: the nearest `.scrutate.toml` from the current directory up to the top of
+  the repository (the directory that holds `.git` or `.scrutate`), else
+  `$XDG_CONFIG_HOME/scrutate/config.toml`; `$SCRUTATE_CONFIG` names a file, and with `--root` the
+  file in that directory is used. A glob with a slash in the file applies from the file's
+  directory, also when the command runs below it. `scrutate config` names the file and shows what
+  is in effect. A file with an unknown field stops every command that reads it (exit 2, naming the
+  file and the field); `--help`, `--version`, `config` and `completions` still run. Precedence: command line >
   environment variable > configuration file > built-in default. Every configurable option names its
   variable in `--help` (e.g. `--hidden` ↔ `SCRUTATE_GREP_HIDDEN`). An on/off variable is off when
   it is `0`, `false`, `no`, `off` or empty, and on for any other value (`1`, `true`, `yes`, `on`).
   `--root` (`SCRUTATE_ROOT`) must be an existing directory; otherwise the command exits 2 and
   creates nothing.
+- **Running in a subdirectory**: without `--root` (or `SCRUTATE_ROOT`), a command that uses the
+  index runs on the nearest directory above that holds `.scrutate`, and says so on stderr
+  (`[scrutate] using the index in <path>`). A path argument is read from the current directory
+  when it exists there, else as given (a path from the repository root, as answers print it).
+  `grep --index` from a subdirectory answers for that subdirectory; `tsquery` walks from the
+  current directory and keeps its cache in the root's index; `serve` and `watch` use the index
+  above. The language server takes the editor's `rootUri` first.
 - **Shell completion**: `scrutate completions bash|zsh|fish|powershell|elvish`.
 - **Cancellation**: Ctrl-C stops a search between files and exits 130; a closed pipe
   (`| head`) stops it silently.
@@ -47,14 +60,19 @@
 ```
 scrutate grep [OPTIONS] PATTERN [PATHS...]
 ```
+With no path, `grep` searches standard input when it is a pipe or a file, and the current
+directory otherwise; `-` names standard input among other paths. Its lines carry the label
+`<stdin>` where a path would stand (`-H`, `--json`); `--index` ignores standard input.
 `PATTERN` is a regex unless `-F` (literal), `--ident` (identifier in any casing) or `--fuzzy[=N]`
-(within N edits, default 1, literal, at most 4096 bytes). The default regex engine runs in linear
+(within N edits, default 1, literal, at most 4096 characters; an edit is one character inserted,
+deleted or substituted, a byte of invalid UTF-8 counts as one, and `-i` and `-S` fold case as
+they do for a regex). The default regex engine runs in linear
 time and has no look-around or backreferences; `-P` (`--pcre2`) switches to PCRE2 for those. PCRE2
 backtracks, so a pattern can take exponential time; its match limit stops the search of a file
 then, and `scrutate` prints a warning naming that file. With `-P`, `--index` cannot narrow the
 files and searches all of them. `--fuzzy-regex[=N]` matches a regex within N edits
-(default 1): byte-oriented, ASCII classes, no anchors or word boundaries, at most 64 character
-positions (a bounded repeat counts each copy), and it must not match the empty string. `-z` also searches inside zip and tar archives (members are shown as
+(default 1): byte-oriented, ASCII classes and ASCII case folding, no anchors or word boundaries,
+at most 64 character positions (a bounded repeat counts each copy), and it must not match the empty string. `-z` also searches inside zip and tar archives (members are shown as
 `archive.zip{dir/file}`) and compressed files: gzip in process; bzip2, xz, zstd, lz4, brotli and
 `.Z` through the system's tools, as ripgrep does. An archive or compressed file stops at 8 GiB
 expanded or a million members. Archives inside archives are not opened, and `--index` does not
@@ -63,21 +81,36 @@ patterns; a line matching any of them matches, and the first positional argument
 Options mirror grep/ripgrep where the meaning is identical: `-i`, `-S` (smart case), `-w`, `-U`
 (multiline: each line of a multi-line match is printed with its own number), `-v`, `-l`, `-c`,
 `-A/-B/-C`, `-m`, `--max-results`, `-g GLOB` (`!` excludes), `-t TYPE` / `--type-list`, `--hidden`,
-`--no-ignore`, `-L` (follow links), `--max-filesize`, `--max-depth`, `-j THREADS` (default: the
-cores, at most 12; on macOS the performance cores; more when the files come from the disk, a
-cold cache: up to 64 on Linux, elsewhere twice the cores, at most 24), `--sort`,
+`--no-ignore`, `-L` (follow links), `--max-filesize`, `--max-depth`, `-n` / `-N` (line numbers
+or none; the later wins, and `--json` keeps them), `-j THREADS` (at most 256, as are
+`SCRUTATE_THREADS` and the configuration file's `threads`; default: the cores, at most 12; on
+macOS the performance cores; more when the files come from the disk, a cold cache: up to 64 on
+Linux, elsewhere twice the cores, at most 24), `--sort`,
 `--json`, `--stats`, `--symbols` (group lines by the enclosing function using the index, when one
 exists). Files that cannot be read, or not to the end, are named in warnings on stderr (the first
 ten); they do not change the exit code. A search path that does not exist is named in a warning
-and the exit code is 2; matches in the other paths are still printed. On Linux, files under a
-root on `/proc`, `/sys` or another kernel pseudo filesystem (debugfs, tracefs, securityfs,
-configfs, cgroup), and under the `proc` and `sys` directories of a root `/`, are read until the
-kernel has no more: such a file gives its size as 0 and can answer the first read short.
+and the exit code is 2; matches in the other paths are still printed. On Linux, files on `/proc`,
+`/sys` or another kernel pseudo filesystem (debugfs, tracefs, securityfs, configfs, cgroup) are
+read until the kernel has no more: such a file gives its size as 0 and can answer the first read
+short. The walk finds them by one `statfs` per root and per directory named `proc` or `sys`
+below one (with `-L`, a link of another name to such a directory is not checked).
+
+The ignore files are `.gitignore`, `.ignore`, `.rgignore`, the global git excludes and
+`.git/info/exclude`, read as ripgrep reads them (`.rgignore` before `.ignore` before
+`.gitignore`); `--no-ignore` turns them off. As in ripgrep, `scrutate grep` searches
+`node_modules` and the other directories the code index skips by name, unless an ignore file
+excludes them.
 
 Where the details differ between tools, scrutate does what ripgrep does. `-m N` stops the search
 of a file at its Nth matching line: the trailing context after it is printed, and a match inside
 that context is shown as a match. `--max-results N` stops after N matching lines in total, with
-`-c` and `-l` too. Smart case folds only a pattern that has a literal and no uppercase letter in
+`-c` and `-l` too; with `--sort` they are the first N in path order, the same on every run. A
+file named on the command line that holds a NUL byte is searched as ripgrep does it: the NUL
+ends a line, counts and lists include the file, and line output prints one line in place of its
+lines, `binary file matches (found "\0" byte around offset N)` (with `--json`, a record
+`{"type": "binary", "path", "text"}`). A file the walk finds with a NUL byte is left out of `-c`
+and `-l`, so `-v -l`, `-v` and `-v -c` agree. `-c` and `-l` give one record per path given: a
+file that two paths reach is counted or listed twice. Smart case folds only a pattern that has a literal and no uppercase letter in
 it, so `-S '\p{Ll}'` stays case-sensitive and matches lowercase letters only. Of `-i` and `-S`
 the later one wins, and `SCRUTATE_GREP_SMART_CASE` applies only when neither is given. With
 `-A`, `-B` or `-C`, groups that are not adjacent, and different files, are separated by a line
@@ -101,24 +134,24 @@ often while files change.
 | Command | Purpose |
 |---|---|
 | `index [--force] [--text \| --no-text]` | Build or incrementally update `.scrutate/`: the code-intelligence index and the text index for `grep --index` (`--text`: only the text index; `--no-text`: skip it). Progress on a terminal. |
-| `search QUERY [-k N] [-a ALT]... [--also ROOT]... [--why] [--json]` (alias `s`) | Ranked search by meaning, name or identifier; `--alt` fuses alternative phrasings; `--also` searches other repositories too (paths prefixed with the repository name). |
+| `search QUERY [-k N] [-a ALT]... [--also ROOT]... [--why] [--json]` (alias `s`) | Ranked search by meaning, name or identifier; `--alt` fuses alternative phrasings; `--also` searches other repositories too: their results print by the path given (`../two/src/db.py:5-6`), the repository's own as without it, and a root given twice is searched once; with `--json` each result keeps its path in its repository and gains `root`. |
 | `find QUERY` | Unified: regex-looking → `grep`; otherwise ranked search (indexing a small repository on the spot); otherwise identifier grep. A regex-looking query that finds nothing, or is not a valid regex, goes to ranked search when an index exists. A question with a space and a trailing `?` (`how is the token refreshed?`) is taken as words. |
-| `symbol NAME` | Where is it defined (`Class.method` works; `Type::method`, `Type#method` and `p->method` are read the same way, here and in `callers`, `callees`, `similar`, `refs` and `read_code symbol`). A method is named by its owner's bare type: `Stack.push` for `impl<T> Stack<T>` in Rust and for `void Stack<T>::push()` in C++. A dotted Lua or Elixir name is split off its owner: `function M.helper` is `helper` with the qualified name `M.helper`, `defmodule MyApp.Accounts.User` is `User`. |
-| `callers NAME` / `callees NAME` | Call graph edges resolved to definitions (callee names outside the repository listed after `external:`). A call matches a definition by the name as the call writes it (`Ok(1)` is not a call of `ok`) and in its own language family only: JavaScript and TypeScript; C, C++, CUDA and Objective-C; Java, Kotlin, Scala and Groovy; Erlang, Elixir and Gleam; C# and F#; every other language alone (a file of no known language matches any); an unknown qualifier (`Nope.refresh`) gives no results, and so does a name with a leading dot. A call the resolver ties to something else (a function of an imported module such as `subprocess.run`, a local variable, a field) is not a call of a namesake in the repository; `callees` lists such a name after `external:`. A method call `x.m()` is never a call of a free function `m` in Rust, JavaScript, TypeScript, Go and Java, a receiver whose type comes from outside the repository makes the call external, and a definition's own name is not a call of it. Calls inside the arguments of a Rust macro (`println!("{}", f(x))`, `vec![k(1)]`) count. `callers` lists first the callers the resolver ties to that definition, then those it could not decide (the ones that name the owner type or sit in the same package first), and says how many are undecided; for a name with thousands of call sites it asks the resolver about the 400 likeliest. |
-| `refs NAME [--def PATH[:LINE]] [--textual] [--max-results N]` | Every whole-word occurrence, each resolved to the definition it refers to, or listed as unresolved with a reason (see below). |
+| `symbol NAME [--limit N]` | Where is it defined (`Class.method` works). The name is looked up as typed first: a whole stored name (`list->vec`, `Foo::Bar`, `#main`), a qualified name, or the end of one. Only when that finds nothing, `Type::method`, `Type#method` and `p->method` are read as `Type.method`; then a stored owner is compared without its generic arguments and path (`Stack<T>.push`, `crate::config::Config::new`, `App\Models\User::find`); last, for a name written as a path, a top-level definition of its last part. `callers`, `callees`, `similar`, `refs` and `read_code symbol` take names the same way. A method is named by its owner's bare type: `Stack.push` for `impl<T> Stack<T>` in Rust and for `void Stack<T>::push()` in C++. A dotted Lua or Elixir name is split off its owner: `function M.helper` is `helper` with the qualified name `M.helper`, `defmodule MyApp.Accounts.User` is `User`. A method of a JavaScript or TypeScript object literal, and a property whose value is a function, is named under what holds the literal: `api.get`, `store.sub.m`, `tool.build` for `module.exports.tool`, also through `as`, `satisfies` and parentheses; a literal nothing names keeps the bare name. A C or C++ function declared without a body (at file scope, in a namespace, in `extern "C"`, inside an include guard) is a `function` symbol, so a prototype and its definition are two symbols, the definition listed first; a method declared in its class and defined outside it is likewise two, the declaration (`method`) and the definition (`function`). At most 20 definitions, or `--limit`. |
+| `callers NAME` / `callees NAME` (`--limit N`) | Call graph edges resolved to definitions (callee names outside the repository listed after `external:`). A call matches a definition by the name as the call writes it (`Ok(1)` is not a call of `ok`) and in its own language family only: JavaScript and TypeScript; C, C++, CUDA and Objective-C; Java, Kotlin, Scala and Groovy; Erlang, Elixir and Gleam; C# and F#; every other language alone (a file of no known language matches any); an unknown qualifier (`Nope.refresh`) gives no results, and so does a name with a leading dot. A call the resolver ties to something else (a function of an imported module such as `subprocess.run`, a local variable, a field) is not a call of a namesake in the repository; `callees` lists such a name after `external:`. A method call `x.m()` is never a call of a free function `m` in Rust, JavaScript, TypeScript, Go and Java, a receiver whose type comes from outside the repository makes the call external, and a definition's own name is not a call of it. Calls inside the arguments of a Rust macro (`println!("{}", f(x))`, `vec![k(1)]`) count. A method call records the method, not the receiver: Lua `obj:meth()`, Objective-C `[obj meth]`, R `obj$meth()`, PowerShell `$obj.Meth()`, PHP `$o?->m()`; `new Point()` in C++, Scala, Groovy, Dart, D and Solidity records `Point`. A Lisp name is recorded whole (`list->vec`, `set-car!`), and a JavaScript private method with its `#`. Dart, Groovy, Elixir, LLVM IR (`call @g`), TLA+ and Verilog (`g(x)` in an expression) record calls; an Elixir `def`, `use`, `alias` or `if` and the head of a definition are not calls. No call is recorded for a Verilog task call, a VHDL package body, Jsonnet, Make `$(call ...)` or assembly. `callers` lists first the callers the resolver ties to that definition, then those it could not decide (the ones that name the owner type or sit in the same package first), and says how many are undecided; for a name with thousands of call sites it asks the resolver about the 400 likeliest. |
+| `refs NAME [--def PATH[:LINE]] [--textual] [--max-results N]` | Every whole-word occurrence, each resolved to the definition it refers to, or listed as unresolved with a reason (see below). It takes the names `symbol` takes (`Stack::push`). |
 | `outline FILE` | Symbols of a file in source order. |
-| `deps FILE` / `rdeps TARGET` | Imports of a file (resolved to repository files when possible) / files importing a module or file. An `#include "util.h"` resolves to the file next to the including one; `rdeps` matches an import by its base name only when it resolves to no file. |
-| `similar TARGET [-k N]` | Code similar to a symbol or `path:line` (vector cosine + token Jaccard). |
+| `deps FILE` / `rdeps TARGET` | Imports of a file (resolved to repository files when possible) / files importing a module or file. Imports resolve as in `refs`: Rust `crate::`, `self::` and `super::` paths and `mod` declarations (`deps` lists a `mod` line too), Go imports through `go.mod`, also from a module in a subdirectory, Python `from . import b`, TypeScript `./lib/c.js` to `c.ts` and `./types` to `types.d.ts`. `deps` gives one line per file a statement names. An `#include "util.h"` resolves to the file next to the including one; `rdeps` matches an import by its base name only when it resolves to no file. When nothing resolves to the target but some imports could not be resolved, `rdeps` says so: `no import resolves to X, but N imports could not be resolved and may name it`. |
+| `similar TARGET [-k N]` | Code similar to a symbol or `path:line` (vector cosine + token Jaccard). A constant has no vector: `similar` on one is an error that says so. |
 | `dupes [--min-tokens N] [--threshold J] [--limit N]` | Exact and near-duplicate functions. `exact` means the same body text once runs of whitespace are squeezed; a pair with the same words written differently is `near` with similarity 1.00. `--threshold 1` prints the exact groups only. |
 | `tsquery LANG QUERY [PATHS] [--limit N] [--no-cache]` | Tree-sitter structural query over every file of a language up to 1 MB (no index; per-file results are cached, see below). An empty query, a query without a `@capture` and an unknown predicate are errors. |
-| `check [--files] [--json]` | Verify database integrity, segment consistency and (with `--files`) that indexed files are unchanged. Exit 1 on problems. |
+| `check [--files] [--json]` | Verify database integrity, segment consistency and (with `--files`) that indexed files are unchanged. Exit 1 on problems. The line `chunks: N in database, M alive in segments` counts the chunks that have segment rows, which leaves out constants. `--json` counts the indexed files also without `--files` (`files_changed` and `files_missing` are then 0: not checked). |
 | `stats` | Index statistics (files, chunks, symbols, call edges, imports, segments, and the text index's files, segments and bytes). |
 | `languages [--json]` | The verified capability registry. |
 | `watch [PATH]` | Keep the index (and the text index, if there is one) up to date from filesystem events (see below). |
 | `serve [--refresh-interval S] [--max-bytes N] [--watch] [--structured]` | MCP server on stdio (see below); `--watch` also runs the watcher in a background thread; `--structured` also sends each answer as JSON. |
 | `lsp` | Language Server Protocol server on stdio (see below). |
 | `config` | Show the configuration file in effect. |
-| `batch FILE [--features] [--timing]` | Run requests from a JSON-lines file with one index open. A line `{"query": ..., "k": ...}` is a ranked search; a line `{"op": TOOL, ...}` runs any operation, named and given arguments as the MCP tool is (`{"op": "callers", "name": "parse"}`), and prints `{"op", "result"}` or `{"op", "error"}`. |
+| `batch FILE [--features] [--timing]` | Run requests from a JSON-lines file with one index open. A line `{"query": ..., "k": ...}` is a ranked search; a line `{"op": TOOL, ...}` runs any operation, named and given arguments as the MCP tool is (`{"op": "callers", "name": "parse"}`), and prints `{"op", "result"}` or `{"op", "error"}`. A line that is not JSON prints `{"error": "line 3, column 2: not JSON (...)"}` and the other lines still run. |
 
 The code index holds every file the ignore rules let through, hidden files included, except
 binary files, files over 1 MB, `.git/`, `.scrutate/`, the directories named in
@@ -126,12 +159,17 @@ binary files, files over 1 MB, `.git/`, `.scrutate/`, the directories named in
 `__pycache__`, `.venv`, `.mypy_cache`, `.pytest_cache`, `.next`, `.tox`, `.idea`, `.vscode`).
 `build`, `dist`, `target` and `venv` are skipped by name outside a git repository; inside one,
 the ignore files decide, so a `target/` that `.gitignore` does not list is indexed. A comma
-inside a name in `SCRUTATE_INDEX_EXCLUDE_DIRS` is written `\,`.
+inside a name in `SCRUTATE_INDEX_EXCLUDE_DIRS` is written `\,`. The ignore files are the ones
+`grep` reads, `.rgignore` included. A `.h` file is read as Objective-C when it holds
+`@interface`, `@protocol`, `@implementation` or `@class`, as C++ when a line starts with
+`namespace`, `class`, `template <`, `using namespace`, an access label (`public:`), `extern
+"C++"` or a standard C++ include (`#include <vector>`), and as C otherwise.
 
 Constants are symbols of kind `constant`: Rust `const` and `static`, Go package-level `const`
 and `var`, a JavaScript or TypeScript top-level `const` that is not a function, TypeScript enum
 members, Java `static final` fields, Python module-level names written in capitals, C and C++
-`#define NAME value` and enumerators.
+`#define NAME value` and enumerators. Every name of a Go or Java declaration with several
+(`var X, Y int`, `const A, B = 1, 2`) is a constant with the whole declaration as its text.
 `symbol`, `outline`, `read_code symbol` and `refs` find them; ranked search (`search`, `find`,
 the MCP `search_code`) never returns one.
 
@@ -169,7 +207,13 @@ refers to. For Python, JavaScript, TypeScript, Rust and Go the rules are, in ord
 3. A plain occurrence is, first, a definition nested in an enclosing function (or directly in an
    enclosing class body); a parameter or local variable of that name hides everything else
    within its own scope (a lambda's parameter inside the lambda, a block-scoped name inside its
-   block); then a top-level definition of the file; then a name an import binds (`from x import N`,
+   block). A name bound by a pattern hides only in its own branch (Rust `if let`, `while let`
+   and a `match` arm, a Python `case`), a `catch` binding and a Go `:=` in an `if`, `for`,
+   `switch` or type switch only in that statement, a Python parameter only in the function body
+   (defaults and annotations are outside it), a `let` or `for` not in its own value, and an
+   import inside a function only in that function. A closure sees the locals of the function it
+   is written in; a Rust `fn` item inside a function does not. Then a top-level definition of the
+   file; then a name an import binds (`from x import N`,
    `import {N} from './x'`, `use a::N`, `require`); then, in Go, a top-level definition of another
    file of the same package directory; then wildcard imports (`from x import *`, `export * from`,
    `use a::*`, Go dot imports).
@@ -207,10 +251,12 @@ structural search 1000) and print the same text or JSON. An empty answer has exi
 `outline`, `deps`, `rdeps`, `similar` and `dupes` then print nothing on standard output and one
 sentence on standard error. When `symbol`, `callers`, `callees`, `read_code symbol` or
 `structural_search` stops at its limit with more left, the answer ends with a line that says so
-and names the MCP argument that raises it (`(stopped at 30 results: raise limit to see more)`);
-with `serve --structured` the JSON carries `stopped_at`.
+and names the argument that raises it (`(stopped at 30 results: raise limit to see more)`): the
+MCP argument `limit`, and `--limit` for `symbol`, `callers`, `callees` and `tsquery`; with
+`serve --structured` the JSON carries `stopped_at`.
 
-`--max-bytes BYTES` (or `SCRUTATE_MAX_BYTES`) limits the size of such an answer. A cut answer
+`--max-bytes BYTES` (or `SCRUTATE_MAX_BYTES`) limits the size of such an answer, and of the
+answers of `search` and `tsquery` (`--json` ignores both). A cut answer
 keeps whole items and ends with a line like `(12 more results not shown: call again with
 offset=8, or narrow the request)`; `--offset 8` continues it. The whole answer, that line
 included, fits the budget; only a budget smaller than one item and that line together is
@@ -252,7 +298,9 @@ answers the calls in flight, lets a running index build finish, and exits.
   (`node_modules` and the like) are not (`scrutate grep` skips hidden files unless `--hidden`,
   and reads those directories unless an ignore file excludes them). The pattern is a case-sensitive regex (`(?i)` for any
   case); matching lines are grouped by enclosing symbol; `max_results` (default 100) stops it,
-  and the answer says so. An invalid pattern is an error.
+  and the answer says so. A capped answer holds the first matches in path order, so the same call
+gives the same lines every time and a second page neither repeats nor skips one; `references`
+does the same. An invalid pattern is an error.
 - `search_code` takes at most 10 `alt_queries`; a cancelled search stops between them.
 - Every answer begins each result with its location (`path:start-end`). A location can be passed
   wherever a tool takes a symbol, to mean exactly that definition among several of the same name:
@@ -266,7 +314,10 @@ answers the calls in flight, lets a running index build finish, and exits.
   read; without it, 400 lines. The answer closes with `(lines A-B of N in P: read_code path=P
   start=B+1 for more)` while lines are left. An empty file answers `P is empty`, a `start` past
   the end `P has N lines: start=S is past the end`; an `end` before `start` and a path that is
-  not a regular file are errors.
+  not a regular file are errors. A file is read through a 64 KB buffer and only as far as the last
+  line asked for, with at most 1 MB of line text (a longer line is cut and says so). A file with
+  a NUL byte in its first 8 KB is refused. A file over 1 MB that was not read to its end closes
+  with `of P, more lines follow` in place of the line count, and the JSON `file_lines` is `null`.
 - `references` ends with a closing line when `max_results` cut the search, answers `(no
   results)` when nothing is found, and refuses an empty name.
 - `structural_search` refuses an empty query, a query without a `@capture` and an unknown
@@ -313,7 +364,7 @@ editor sends none. It answers from the Engine B index:
 
 | Request | Answer |
 |---|---|
-| `textDocument/definition` | definitions of the identifier under the cursor, as `symbol` finds them; with a qualifier (`Point.norm`, `a::b`), only the definitions whose qualified name matches, when there are any; definitions in the same file first |
+| `textDocument/definition` | definitions of the name under the cursor, as `symbol` finds them: first the run of characters around it (`get-user`, `list->vec`, `Foo::Bar`), then the plain word; with a qualifier (`Point.norm`, `a::b`), only the definitions whose qualified name matches, when there are any; definitions in the same file first |
 | `textDocument/references` | the occurrences `refs` resolves to the definition under the cursor, and that definition (left out when `includeDeclaration` is false); when the cursor's occurrence is unresolved, every whole-word occurrence, as `refs --textual` |
 | `workspace/symbol` | symbols whose name contains the query (case and underscores ignored), exact and prefix matches first, at most 200 |
 | `textDocument/documentSymbol` | the `outline` of the file, nested (methods under their class) |
