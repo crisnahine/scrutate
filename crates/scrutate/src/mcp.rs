@@ -119,16 +119,30 @@ impl Called {
 pub fn call_tool(repo: &mut Repo, name: &str, args: &Value, settings: &Settings) -> Called {
     let max_bytes = args.get("max_bytes").and_then(Value::as_u64).map_or(settings.max_bytes, |n| clamp_bytes(n as usize));
     let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
-    let run = |op: ops::Op| {
+    let mut scan_and_run = |op: &ops::Op| {
         if !settings.floor {
-            return repo.run(&op, settings.refresh_interval);
+            return repo.run(op, settings.refresh_interval);
         }
         let mut last = settings.last_scan.lock().unwrap_or_else(|p| p.into_inner());
         if last.is_some_and(|t| t.elapsed().as_secs_f64() < settings.refresh_interval) {
-            return repo.run_as_is(&op);
+            return repo.run_as_is(op);
         }
-        *last = Some(Instant::now());
-        repo.run(&op, 0.0)
+        let answer = repo.run(op, 0.0);
+        // a scan that could not run (another process holds the write lock) does not start the interval
+        if answer.is_ok() && !repo.is_stale() {
+            *last = Some(Instant::now());
+        }
+        answer
+    };
+    let run = |op: ops::Op| {
+        let started = Instant::now();
+        loop {
+            match scan_and_run(&op) {
+                // another process is building the first index: wait for it as for a build of our own
+                Err(e) if e.is::<crate::index::BeingBuilt>() && started.elapsed() < BUILD_WAIT => std::thread::sleep(Duration::from_millis(200)),
+                answer => return answer,
+            }
+        }
     };
     match ops::Op::from_tool(name, args).and_then(run) {
         Ok(answer) => {
@@ -474,6 +488,27 @@ mod tests {
     fn call(calls: &Calls, id: i64, progress: Value) -> Call {
         let id = json!(id);
         Call { name: "find_symbol".into(), args: json!({"name": "make_point"}), stateless: true, structured: true, progress, cancelled: calls.begin(&id), id }
+    }
+
+    #[test]
+    fn a_call_waits_for_another_process_that_builds_the_first_index() {
+        let root = std::env::temp_dir().join(format!("scrutate_mcp_other_build_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/geo.py"), "def make_point():\n    return 1\n").unwrap();
+        let mut repo = Repo::open(&root).unwrap();
+        // what another process holds while it builds the first index
+        let other = rusqlite::Connection::open(root.join(crate::files::INDEX_DIR).join("index.db")).unwrap();
+        other.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(600));
+            other.execute_batch("ROLLBACK").unwrap();
+        });
+        let settings = Settings::new(None, Some(3600.0));
+        let called = call_tool(&mut repo, "find_symbol", &json!({"name": "make_point"}), &settings);
+        release.join().unwrap();
+        assert!(called.text.contains("src/geo.py"), "{}", called.text);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

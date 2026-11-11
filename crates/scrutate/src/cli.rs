@@ -581,7 +581,8 @@ impl Here {
     fn new(cwd: Option<PathBuf>, root: &Path) -> Here {
         let cwd = cwd.unwrap_or_default();
         let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-        let below = names_below(&cwd, &root);
+        // both in one form: a Windows temp directory may come as an 8.3 short name
+        let below = names_below(&std::fs::canonicalize(&cwd).unwrap_or_else(|_| cwd.clone()), &root);
         Here { cwd, below }
     }
 

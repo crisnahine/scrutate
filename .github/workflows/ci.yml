@@ -41,7 +41,8 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --exclude scrutate-py -- -D warnings
       # the core must build and pass its tests with no Python involved (the bindings crate is excluded)
-      - run: cargo test --release -p scrutate --locked
+      # every test file runs, so one failure does not hide the next
+      - run: cargo test --release -p scrutate --locked --no-fail-fast
       - run: cargo build --release -p scrutate --locked
       - name: smoke test the binary
         run: |
@@ -148,7 +149,7 @@ jobs:
           persist-credentials: false
       - run: rustup toolchain install --no-self-update
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - run: cargo test --release -p scrutate --features extra-langs --locked
+      - run: cargo test --release -p scrutate --features extra-langs --locked --no-fail-fast
       - name: build with the rust-version Cargo.toml declares
         env:
           RUSTFLAGS: "" # an older compiler does not know the newer lints

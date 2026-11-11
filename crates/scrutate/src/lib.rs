@@ -93,6 +93,11 @@ impl Repo {
         self.searcher.expect("the index was not reopened after a rebuild")
     }
 
+    /// Whether the last refresh could not update the index, so answers come from it as it was.
+    pub fn is_stale(&self) -> bool {
+        self.stale
+    }
+
     /// The cancel flag of the next operation; nothing to set while the index is closed.
     pub fn set_cancel(&mut self, cancel: std::sync::Arc<std::sync::atomic::AtomicBool>) {
         if let Some(s) = &mut self.searcher {
