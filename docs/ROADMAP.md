@@ -13,7 +13,7 @@ docs/TRACEABILITY.md.
 | Fuzzy patterns longer than 128 bytes (R-2A.2) | `--fuzzy`, up to 4096 bytes (64-bit blocks with carries) |
 | Fuzzy regex (R-2A.2) | `--fuzzy-regex[=N]`, `src/fuzzyre.rs` (bit-parallel Glushkov automaton, up to 64 positions) |
 | Small trees (R-4.6) | the parallel walk from the first directory of any root that holds directories (one thread used to read all 60 directories of a 211-file repository while the search threads waited), and a sequential walk feeding three search threads only for a flat root of up to 256 files; ignore files matched without a regex (each built a `GlobSet`: 100 to 400 µs, the global excludes file 0.3 ms of every run); 133 system functions bound on first use (0.4 ms); a grep-only argument parser (0.1 ms) |
-| One very long line (R-4.6) | read into one exactly sized buffer, each thread filling its own part (100 MB: 12.6 ms on one thread, 4.0 ms on five), and its UTF-8 checked a piece at a time as it is written: 60.5 ms to about 31 ms on a 100 MB line (ugrep 37.7 ms) |
+| One very long line (R-4.6) | read into one exactly sized buffer, each thread filling its own part (100 MB: 12.6 ms on one thread, 4.0 ms on five), and its UTF-8 checked a piece at a time as it is written: 60.5 ms to 32 ms on a 100 MB line (ugrep 38.8 ms) |
 | Incremental re-search for editors (R-4.1) | `grep --index --update` (refresh the text index, then search only candidate files); `watch` and `serve --watch` keep the index fresh |
 | Structural search without re-parsing (R-2B.2) | `tsquery` keeps captures per file by content hash: the Linux tree took about 25 s, the repeated query 1.6 s |
 | Cross-file reference resolution with scope awareness (R-2B.4) | `refs` resolves occurrences through scopes, imports and qualified names for Python, JavaScript/TypeScript, Rust and Go (60 of 60 hand-checked resolutions right) |
@@ -26,9 +26,9 @@ docs/TRACEABILITY.md.
 | Third-party notices in releases | `tools/third_party_notices.py`; archives and wheels include `THIRD_PARTY_NOTICES.txt` |
 | Incremental parsing of edited files (R-2B.1) | a long-running index (`watch`, `serve`, `lsp`) reparses an edited file against its previous tree, for the 21 grammars without an external scanner (with one, a reparse was seen to differ from a fresh parse); a 66 KB Go file: 5.5 ms to 2.0 ms per edit; `tests/incremental.rs` |
 | Ranking quality beyond Python (R-2B.12) | ranker v8 fitted on Python plus Rust, Go, Java, JavaScript and TypeScript repositories; held-out results per language in docs/QUALITY.md |
-| Indexed search precision (R-2B.1, R-4.6) | text index format 2: next-byte and position masks per posting; concurrent throughput against Zoekt from 4% behind to 5% ahead, p50 latency 0.46 of Zoekt's |
-| Many files on macOS (R-4.6) | as many threads as performance cores when walking (kernel contention made 11 threads slower than 5); the Linux and LLVM trees, 200,000 small files and the binary-heavy tree went from behind or level with ugrep to 13 to 21% ahead |
-| Regexes anchored at line starts (R-4.6) | only line starts beginning with the regex's prefix literals are examined: `^(a|aa)+$` on the pathological corpus, 52 ms to 18 ms |
+| Indexed search precision (R-2B.1, R-4.6) | text index format 2: next-byte and position masks per posting; with it, concurrent throughput against Zoekt went from 4% behind to 5% ahead and the p50 latency to 0.46 of Zoekt's (20% ahead and 0.37 in the final run) |
+| Many files on macOS (R-4.6) | as many threads as performance cores when walking (kernel contention made 11 threads slower than 5); the Linux and LLVM trees, 200,000 small files and the binary-heavy tree went from behind or level with ugrep to 13 to 21% ahead (15 to 30% in the final run) |
+| Regexes anchored at line starts (R-4.6) | only line starts beginning with the regex's prefix literals are examined: `^(a|aa)+$` on the pathological corpus, 52 ms to 18 ms (13 ms since its one-line file is read on several threads) |
 | Start-up in git repositories (R-4.6) | `vendor/ignore` reads the global excludes path without compiling a regex: 0.4 ms of a 6 ms search of a 220-file repository |
 | One definition of every index operation (R-6.15, R-13) | `ops.rs`: the CLI, the MCP server, `batch` and the Python bindings share arguments, defaults, limits, text and JSON; they had drifted (three limits for `callers`, references textual in MCP and resolved in the CLI) |
 | An MCP server that fits how agents work today (R-6.15) | read-only and local hints on every tool, server instructions, answers within a byte budget with an offset to continue, `grep_code` on Engine A, no tool call blocked for more than 20 s by a first index build; from docs/research/agent-facing-search-2026-11.md |
@@ -58,7 +58,7 @@ docs/TRACEABILITY.md.
 
 ## Next
 
-- Small trees (a few hundred files), what is left: of a 3.8 ms search of a 211-file repository,
+- Small trees (a few hundred files), what is left: of a 3.6 ms search of a 211-file repository,
   1.5 ms is the cost of starting any Rust program, and opening the files costs 8 µs each. Ruled
   out by measurement: code-signature page size, the binary's pointer fix-ups, its size (0.05 to
   0.2 ms at 85 MB), code layout (a linker order file putting the 979 functions a search runs
@@ -66,8 +66,8 @@ docs/TRACEABILITY.md.
   variable instead of short sleeps (slower: 3.9 ms against 3.7). Profile-guided optimisation
   measured 2 to 3.5% on the 220-file tree; not adopted, since it needs a 13 MB profile in the
   repository and in every release build.
-- Large trees on macOS are bound by `open` (docs/ARCHITECTURE.md): the Linux tree takes 0.56 s to
-  open and read on the five performance cores with no search at all, and a search takes 0.65 s.
+- Large trees on macOS are bound by `open` (docs/ARCHITECTURE.md): the Linux tree takes 0.52 s to
+  open and read on the five performance cores with no search at all, and a search takes 0.58 s.
   The benchmark corpora `linux` and `linux-nodot` shared files through hard links, which doubles
   the cost of every open on macOS for every tool; `bench/corpora.py` now makes copies (APFS
   clones). What is left above the floor is the search itself.
@@ -88,8 +88,8 @@ docs/TRACEABILITY.md.
   check on an NVMe disk and on a network disk: the read time that counts as a disk read (30 µs)
   and the most threads for a cold tree (64). A cold tree also costs memory there: about 90 MB
   on 64 threads against 16 MB warm (`-j` bounds both).
-- Windows: nothing is measured. Its thread count (the cores, at most 12), its cold thread count (twice the
-  cores, at most 24) and its disk-read time (75 µs) are the macOS values.
+- Windows: nothing is measured. Its thread count (the cores, at most 12), its cold thread count
+  (twice the cores, at most 24) and its disk-read time (75 µs) are the macOS values.
 - References: type inference for method calls on variables; more languages (Java, C#, C/C++
   includes); TypeScript path aliases.
 - `cargo install`: int8 weights for the semantic model, with the quality check QUALITY.md uses.
