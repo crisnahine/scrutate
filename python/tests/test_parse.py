@@ -141,6 +141,24 @@ def test_the_comment_right_above_a_python_definition_is_its_documentation():
         assert (c.start, c.doc) == (start, doc), (src, qualname)
 
 
+def test_documentation_is_taken_across_attributes_and_onto_go_constants():
+    cases = [  # (file, source, qualname, first line of the chunk, documentation)
+        ("a.rs", "/// A target.\n#[derive(Debug, Clone)]\npub struct Target {\n    x: i32,\n}\n", "Target", 3, "A target."),
+        ("a.rs", "/// Two.\n#[derive(Debug)]\n#[repr(u8)]\npub enum E {\n    A,\n}\n", "E", 4, "Two."),
+        ("a.rs", "pub struct T;\nimpl T {\n    /// Fast.\n    #[inline]\n    pub fn go(&self) {}\n}\n", "T.go", 5, "Fast."),
+        ("a.rs", "/// The cap.\n#[allow(dead_code)]\nconst CAP: usize = 3;\n", "CAP", 3, "The cap."),
+        ("a.rs", "/// stray\n\n#[derive(Debug)]\nstruct S;\n", "S", 4, ""),
+        ("a.rs", "/// stray\n#[derive(Debug)]\n\nstruct S;\n", "S", 4, ""),
+        ("a.ts", "class A {\n  /** Gets x. */\n  @Get('/x')\n  target() {\n    return 1;\n  }\n}\n", "A.target", 4, "Gets x."),
+        ("a.go", "package p\n\n// LockSeconds is the lock time.\nconst LockSeconds = 30\n", "LockSeconds", 4, "LockSeconds is the lock time."),
+        ("a.go", "package p\n\nconst (\n\t// A doc.\n\tA = 1\n\tB = 2\n)\n", "A", 5, "A doc."),
+        ("a.go", "package p\n\nconst (\n\t// A doc.\n\tA = 1\n\tB = 2\n)\n", "B", 6, ""),
+    ]
+    for path, src, qualname, start, doc in cases:
+        c = next(c for c in parse_source(path, src) if c.qualname == qualname)
+        assert (c.start, c.doc) == (start, doc), (path, src, qualname)
+
+
 def test_a_generic_owner_is_named_by_its_bare_type():
     rs = ("pub struct Stack<T> { items: Vec<T> }\nimpl<T> Stack<T> {\n    pub fn push(&mut self, x: T) {}\n}\n"
           "impl<'a, T: Clone> Wrapper<'a, T> {\n    pub fn get(&self) -> T { todo!() }\n}\n"

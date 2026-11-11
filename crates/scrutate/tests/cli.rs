@@ -215,6 +215,16 @@ fn search_finds_a_python_function_by_the_comment_above_it() {
 }
 
 #[test]
+fn search_finds_a_rust_struct_by_the_doc_comment_above_its_derive() {
+    let r = Repo::new("derive_doc");
+    r.write("src/lib.rs", b"pub fn open() {}\n\n/// Holds the zqvortex lease.\n#[derive(Debug, Clone)]\npub struct Lease {\n    id: u32,\n}\n");
+    let (code, out, err) = r.run(&["search", "zqvortex", "-k", "3", "--json"]);
+    assert_eq!(code, 0, "{err}");
+    let hits: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
+    assert!(hits.first().is_some_and(|h| h["path"] == "src/lib.rs" && h["name"] == "Lease"), "{out}");
+}
+
+#[test]
 fn search_also_merges_repositories() {
     let a = python_repo("also_a");
     let b = Repo::new("also_b");

@@ -88,6 +88,7 @@ EXT_LANG = {".py": "python", ".js": "javascript", ".jsx": "javascript", ".mjs": 
 _parsers: dict[str, Parser] = {}
 _CONTAINERS = {"class", "impl", "interface", "trait", "enum", "struct", "type", "module"}
 _COMMENT_TYPES = {"comment", "line_comment", "block_comment", "doc_comment"}
+_ATTRIBUTE_TYPES = {"attribute_item", "decorator", "annotation"}
 MAX_CONTAINER_LINES = 40
 MAX_QUAL_DEPTH = 32  # qualified names keep at most this many segments, so deep nesting stays linear
 MAX_CHUNK_LINES = 200
@@ -406,6 +407,11 @@ def _leading_comment(node, src: bytes) -> str:
         if prev.type == "\n" or prev.start_byte == prev.end_byte:
             prev = prev.prev_sibling
             continue
+        if prev.type in _ATTRIBUTE_TYPES and _last_row(prev) >= want - 1:
+            # a Rust attribute or a decorator between the comment and the definition
+            want = prev.start_point[0]
+            prev = prev.prev_sibling
+            continue
         if prev.type not in _COMMENT_TYPES or _last_row(prev) < want - 1 or prev.start_point[0] == header_row:
             break
         text = src[prev.start_byte : prev.end_byte].decode("utf8", "replace")
@@ -542,7 +548,7 @@ def parse_source(path: str, source: str) -> list[Chunk]:
                     cname = cname[2:]
                 consts.append(Chunk(cname, _qualify(stack[-1][1] if stack else "", cname), "constant", shown.start_point[0] + 1,
                                     _last_row(shown) + 1, _head(txt(shown.start_byte, shown.end_byte), MAX_CHUNK_LINES),
-                                    doc=_leading_comment(node, src)))
+                                    doc=_leading_comment(shown, src)))
         elif t in calls and stack:
             callee = _callee_name(lang, node, calls[t], src)
             if callee:

@@ -63,7 +63,10 @@ pub struct Parsed {
 
 pub const CONTAINERS: &[&str] = &["class", "impl", "interface", "trait", "enum", "struct", "type", "module", "block", "section", "key"];
 const COMMENT_TYPES: &[&str] =
-    &["comment", "line_comment", "block_comment", "doc_comment", "documentation_comment", "comment_block", "statement_comment", "module_comment"];
+    &["comment", "line_comment", "block_comment", "doc_comment", "documentation_comment", "comment_block", "statement_comment", "module_comment", "haddock"];
+/// Nodes that list the statements of a body or file: a comment above the first one sits outside the list.
+const BODY_LISTS: &[&str] =
+    &["declarations", "statement_list", "non_empty_declarative_part", "binding_set", "body", "body_statement", "document", "block_node", "block_mapping"];
 pub const MAX_CONTAINER_LINES: usize = 40;
 pub const MAX_CHUNK_LINES: usize = 200;
 /// Chunk text and body keep at most this many bytes (cut at a character, then "\n..."): a file
@@ -179,7 +182,7 @@ pub fn spec_for(path: &str, source: &str) -> Option<&'static LangSpec> {
 
 // ------------------------------------------------------------------------- helpers
 static PYSTR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"^[rRuUbBfF]{0,2}("""|'''|"|')"#).unwrap());
-static COMMENT_MARK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"^\s*(/\*+|\*+/|\*|//+!?|#+|--|;+|%+|'|!|"|\{-\|?|-\})\s?"#).unwrap());
+static COMMENT_MARK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"^\s*(/\*+|\*+/|\*|//+!?|<#|#>|#+|--\s?[|^]|--|;+|%+|'|!|"|\{-\|?|-\})\s?"#).unwrap());
 static IDENT_START: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z_$][\w$]*(?:-[A-Za-z_]\w*)*").unwrap());
 
 fn expandtabs(s: &str) -> String {
@@ -715,7 +718,8 @@ static CAPS_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^_*[A-Z][A-Z0-
 /// `const` that is not a function, a TS enum member, a Java `static final` field, a Python
 /// module- or class-level ALL_CAPS assignment, a TS `static readonly` and JS ALL_CAPS `static`
 /// class field, a C/C++ `#define NAME value`, enumerator and file or namespace `const` with a value
-/// (GLSL and Objective-C too), and a C++ `static const` or `constexpr` class member with a value.
+/// (GLSL and Objective-C too), a C++ `static const` or `constexpr` class member with a value, and a
+/// Ruby assignment to a capitalized name at file, module or class level.
 fn constant_of<'t>(lang: &str, node: Node<'t>, ancestors: &[(Node<'t>, Vec<Node<'t>>)], src: &[u8]) -> Option<(Vec<String>, Node<'t>)> {
     let up = |i: usize| ancestors.len().checked_sub(i).map(|j| ancestors[j].0);
     let kind_up = |i: usize| up(i).map_or("", |n| n.kind());
@@ -825,6 +829,10 @@ fn constant_of<'t>(lang: &str, node: Node<'t>, ancestors: &[(Node<'t>, Vec<Node<
         }
         ("c" | "cpp", "preproc_def") if field(node, "value").is_some() => (vec![text_of(field(node, "name")?)], node),
         ("c" | "cpp", "enumerator") => (vec![text_of(field(node, "name")?)], node),
+        // a capitalized name is a constant in Ruby
+        ("ruby", "assignment") if kind_up(1) == "program" || kind_up(1) == "body_statement" && matches!(kind_up(2), "class" | "module") => {
+            (vec![text_of(field(node, "left").filter(|l| l.kind() == "constant")?)], node)
+        }
         _ => return None,
     };
     let names: Vec<String> = names.into_iter().filter(|n| n != "_" && (lang != "python" || CAPS_NAME.is_match(n))).collect();
@@ -1071,7 +1079,7 @@ fn imports_of(node: Node, spec: &LangSpec, src: &[u8], out: &mut Vec<(i64, Strin
 /// position of `ancestors[i]` in its parent and `pos[len]` the node's (Node::parent and
 /// prev_sibling walk down from the root, which makes deep nesting quadratic). The `lead`
 /// siblings right above the node belong to the definition (a type signature).
-fn leading_comment(node: Node, ancestors: &[(Node, Vec<Node>)], pos: &[usize], src: &[u8], wrappers: &[&str], lead: usize) -> String {
+fn leading_comment(lang: &str, node: Node, ancestors: &[(Node, Vec<Node>)], pos: &[usize], src: &[u8], wrappers: &[&str], lead: usize) -> String {
     let mut up = ancestors.len();
     let mut at = pos[up] - lead;
     let mut anchor = if lead > 0 { ancestors[up - 1].1[at] } else { node };
@@ -1080,12 +1088,13 @@ fn leading_comment(node: Node, ancestors: &[(Node, Vec<Node>)], pos: &[usize], s
     while up > 0 {
         let p = ancestors[up - 1].0;
         // a Common Lisp defun is its list's only child; a Jsonnet bind follows the `local` keyword;
-        // the comment above the first statement of a Python body or Haskell file sits outside it
+        // the comment above the first statement of a body or file sits outside the node that lists them
         let py_body = at == 0 && p.kind() == "block" && up >= 2 && matches!(ancestors[up - 2].0.kind(), "class_definition" | "function_definition");
-        if py_body {
+        let first_in_body = py_body || at == 0 && BODY_LISTS.contains(&p.kind());
+        // the list's owner opens on the header line, unless the owner is the file
+        if first_in_body && (py_body || up > 2) {
             header_row = ancestors[up - 2].0.start_position().row as i64;
         }
-        let first_in_body = py_body || at == 0 && p.kind() == "declarations";
         if !(wrappers.contains(&p.kind())
             || p.kind() == "decorated_definition"
             || first_in_body
@@ -1111,6 +1120,19 @@ fn leading_comment(node: Node, ancestors: &[(Node, Vec<Node>)], pos: &[usize], s
             prev = prev_sibling();
             continue;
         }
+        if last_row(p) >= want - 1 && p.start_position().row as i64 != header_row {
+            if let Some(doc) = doc_form(lang, p, src) {
+                if parts.is_empty() {
+                    return doc;
+                }
+                break;
+            }
+            if is_attribute(lang, p, src) {
+                want = p.start_position().row as i64;
+                prev = prev_sibling();
+                continue;
+            }
+        }
         if COMMENT_TYPES.contains(&p.kind()) && last_row(p) >= want - 1 && p.start_position().row as i64 != header_row {
             let t = txt(src, p.start_byte(), p.end_byte());
             if t.starts_with("#!") {
@@ -1128,6 +1150,40 @@ fn leading_comment(node: Node, ancestors: &[(Node, Vec<Node>)], pos: &[usize], s
     }
     parts.reverse();
     clean_comment(&parts.join("\n"))
+}
+
+/// The name of an Elixir module attribute (`spec` for `@spec ...`) and its call.
+fn elixir_attribute<'t>(node: Node<'t>, src: &[u8]) -> Option<(String, Node<'t>)> {
+    let call = node.child_by_field_name("operand").filter(|c| node.kind() == "unary_operator" && c.kind() == "call")?;
+    let name = call.child_by_field_name("target")?;
+    Some((txt(src, name.start_byte(), name.end_byte()), call))
+}
+
+/// Text of an Elixir `@doc` or `@moduledoc` given as a string or a sigil.
+fn elixir_doc(node: Node, src: &[u8], word: &str) -> Option<String> {
+    let (_, call) = elixir_attribute(node, src).filter(|(n, _)| n == word)?;
+    let args = call.named_children(&mut call.walk()).find(|c| c.kind() == "arguments")?;
+    let arg = args.named_child(0).filter(|a| matches!(a.kind(), "string" | "sigil"))?;
+    let text: String = arg.named_children(&mut arg.walk()).filter(|c| c.kind() == "quoted_content").map(|c| txt(src, c.start_byte(), c.end_byte())).collect();
+    Some(cleandoc(&text))
+}
+
+/// Documentation a language writes above a definition as something other than a comment.
+fn doc_form(lang: &str, p: Node, src: &[u8]) -> Option<String> {
+    match (lang, p.kind()) {
+        ("elixir", "unary_operator") => elixir_doc(p, src, "doc"),
+        ("julia", "string_literal") => Some(py_string_content(&txt(src, p.start_byte(), p.end_byte())).trim().to_string()),
+        _ => None,
+    }
+}
+
+/// An attribute, decorator, annotation or type spec written between a definition and its documentation.
+fn is_attribute(lang: &str, p: Node, src: &[u8]) -> bool {
+    match (lang, p.kind()) {
+        (_, "attribute_item" | "decorator" | "annotation") | ("erlang", "spec") => true,
+        ("elixir", "unary_operator") => elixir_attribute(p, src).is_some_and(|(n, _)| matches!(n.as_str(), "spec" | "impl" | "deprecated")),
+        _ => false,
+    }
 }
 
 /// Position among `siblings` of the type signature Haskell and Elm write right above function `name`.
@@ -1429,8 +1485,12 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
             let mut body_start = sig_end;
             let mut doc = match node.child_by_field_name("docstring").or_else(|| lisp_docstring(node)) {
                 Some(ds) if !spec.docstring => py_string_content(&txt(src, ds.start_byte(), ds.end_byte())),
-                _ => leading_comment(node, &ancestors, &pos, src, spec.wrappers, lead),
+                _ => leading_comment(spec.id, node, &ancestors, &pos, src, spec.wrappers, lead),
             };
+            if doc.is_empty() && spec.id == "elixir" && kind == "module" {
+                let body = node.named_children(&mut node.walk()).find(|c| c.kind() == "do_block");
+                doc = body.and_then(|b| b.named_children(&mut b.walk()).find_map(|c| elixir_doc(c, src, "moduledoc"))).unwrap_or_default();
+            }
             if let Some((s, stmt)) = body_node.filter(|_| spec.docstring).and_then(py_docstring_node) {
                 // the comment above comes first, then the docstring
                 let ds = py_string_content(&txt(src, s.start_byte(), s.end_byte()));
@@ -1463,7 +1523,9 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
         } else if let Some((names, shown)) = constant_of(spec.id, node, &ancestors, src) {
             // not on def_stack: calls in the initializer stay with the enclosing definition
             let parent_q = def_stack.last().map(|&i| chunks[i].qualname.as_str()).unwrap_or_default();
-            let doc = leading_comment(node, &ancestors, &pos, src, spec.wrappers, 0);
+            // the comment sits above the node the chunk shows: a Go `const` above its only spec
+            let up = ancestors.iter().rposition(|(a, _)| a.id() == shown.id()).unwrap_or(ancestors.len());
+            let doc = leading_comment(spec.id, shown, &ancestors[..up], &pos[..=up], src, spec.wrappers, 0);
             let text = head_bytes(src, shown.start_byte(), shown.end_byte(), MAX_CHUNK_LINES);
             for name in names {
                 // `const int Config::kSize = 2;` is owned by `Config`

@@ -956,7 +956,7 @@ const CORE: &[LangSpec] = &[
         ],
         calls: &[c("call_expression", "function"), c("new_expression", "type"), c("const_object_expression", "type"), c("cascade_call_expression", "property")],
         docstring: false,
-        wrappers: &[],
+        wrappers: &["member_declaration"],
         outer: &[],
         body: "body",
         imports: &[imp("import_or_export", ImportHow::FirstString)],
@@ -2144,7 +2144,7 @@ static CPP_HEADER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(
 });
 
 /// The languages `parse::constant_of` reads constants in.
-pub const CONSTANT_LANGS: &[&str] = &["c", "cpp", "glsl", "go", "java", "javascript", "objc", "python", "rust", "tsx", "typescript"];
+pub const CONSTANT_LANGS: &[&str] = &["c", "cpp", "glsl", "go", "java", "javascript", "objc", "python", "ruby", "rust", "tsx", "typescript"];
 
 /// The definition kinds the index gives a language: the kinds of its rules, `method` for a
 /// function in a class, `constant` where constants are read, and for a rule that takes its kind

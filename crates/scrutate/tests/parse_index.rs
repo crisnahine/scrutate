@@ -388,6 +388,38 @@ fn the_comment_right_above_a_definition_is_its_documentation() {
         ("a.s", ".text\n# Returns.\nf:\n    ret\n", "f", 3, "Returns."),
         ("a.jsonnet", "local x = 1;\n// Adds one.\nlocal add(a) = a + 1;\nadd(x)\n", "add", 3, "Adds one."),
         ("a.jsonnet", "// About x.\nlocal x = 1;\nlocal add(a) = a + 1;\nadd(x)\n", "add", 3, ""),
+        // attributes, decorators and annotations between the comment and the definition
+        ("a.rs", "/// A target.\n#[derive(Debug, Clone)]\npub struct Target {\n    x: i32,\n}\n", "Target", 3, "A target."),
+        ("a.rs", "/// Two.\n#[derive(Debug)]\n#[repr(u8)]\npub enum E {\n    A,\n}\n", "E", 4, "Two."),
+        ("a.rs", "pub struct T;\nimpl T {\n    /// Fast.\n    #[inline]\n    pub fn go(&self) {}\n}\n", "T.go", 5, "Fast."),
+        ("a.rs", "/// The cap.\n#[allow(dead_code)]\nconst CAP: usize = 3;\n", "CAP", 3, "The cap."),
+        ("a.rs", "/// stray\n\n#[derive(Debug)]\nstruct S;\n", "S", 4, ""),
+        ("a.rs", "/// stray\n#[derive(Debug)]\n\nstruct S;\n", "S", 4, ""),
+        ("a.ts", "class A {\n  /** Gets x. */\n  @Get('/x')\n  target() {\n    return 1;\n  }\n}\n", "A.target", 4, "Gets x."),
+        ("a.dart", "class A {\n  /// Plain.\n  int f() => 1;\n  /// Overrides.\n  @override\n  int g() => 1;\n}\n", "A.f", 3, "Plain."),
+        ("a.dart", "class A {\n  /// Plain.\n  int f() => 1;\n  /// Overrides.\n  @override\n  int g() => 1;\n}\n", "A.g", 5, "Overrides."),
+        ("a.ex", "defmodule M do\n  # Adds one.\n  @spec f(integer()) :: integer()\n  def f(x), do: x + 1\nend\n", "M.f", 4, "Adds one."),
+        ("a.ex", "defmodule M do\n  # The timeout.\n  @timeout 5000\n  def f, do: @timeout\nend\n", "M.f", 4, ""),
+        ("a.erl", "-module(a).\n\n%% Adds one.\n-spec f(integer()) -> integer().\nf(X) -> X + 1.\n", "f", 5, "Adds one."),
+        // the language's own documentation form
+        ("a.ex", "defmodule M do\n  @moduledoc \"\"\"\n  The module.\n  \"\"\"\n  @doc \"\"\"\n  Adds one.\n  \"\"\"\n  @spec f(integer()) :: integer()\n  def f(x), do: x + 1\nend\n", "M.f", 9, "Adds one."),
+        ("a.ex", "defmodule M do\n  @moduledoc \"\"\"\n  The module.\n  \"\"\"\n  @doc ~S\"\"\"\n  Adds one.\n  \"\"\"\n  def f(x), do: x + 1\nend\n", "M", 1, "The module."),
+        ("a.ex", "defmodule M do\n  @doc ~S\"Adds one.\"\n  def f(x), do: x + 1\nend\n", "M.f", 3, "Adds one."),
+        ("a.hs", "module A where\n\n-- | Adds one.\nadd :: Int -> Int\nadd x = x + 1\n", "add", 4, "Adds one."),
+        ("a.hs", "module A where\n\n{-| Adds one.\n-}\nadd :: Int -> Int\nadd x = x + 1\n", "add", 5, "Adds one."),
+        ("a.jl", "x = 1\n\"\"\"Adds one.\"\"\"\nfunction add(x)\n    x + 1\nend\n", "add", 3, "Adds one."),
+        ("a.ps1", "<#\n.SYNOPSIS\nAdds one.\n#>\nfunction Add-One {\n    1\n}\n", "Add-One", 5, ".SYNOPSIS\nAdds one."),
+        ("a.adb", "procedure A is\n   --  Adds one.\n   function F return Integer is\n   begin\n      return 1;\n   end F;\nbegin\n   null;\nend A;\n", "A.F", 3, "Adds one."),
+        ("a.nix", "{\n  # Adds one.\n  add = x: x + 1;\n}\n", "add", 3, "Adds one."),
+        ("a.tf", "# The web server.\nresource \"aws_instance\" \"web\" {\n  ami = \"x\"\n}\n", "resource aws_instance web", 2, "The web server."),
+        ("a.yml", "# The target.\ntarget:\n  key: 1\n", "target", 2, "The target."),
+        ("a.rb", "class K\n  # First.\n  def f; end\nend\n", "K.f", 3, "First."),
+        // constants
+        ("a.go", "package p\n\n// LockSeconds is the lock time.\nconst LockSeconds = 30\n", "LockSeconds", 4, "LockSeconds is the lock time."),
+        ("a.go", "package p\n\nconst (\n\t// A doc.\n\tA = 1\n\tB = 2\n)\n", "A", 5, "A doc."),
+        ("a.go", "package p\n\nconst (\n\t// A doc.\n\tA = 1\n\tB = 2\n)\n", "B", 6, ""),
+        ("a.rb", "# Lock time.\nLOCK_SECONDS = 30\n", "LOCK_SECONDS", 2, "Lock time."),
+        ("a.rb", "module M\n  class K\n    # The name.\n    Name = \"x\".freeze\n  end\nend\n", "M.K.Name", 4, "The name."),
     ];
     let mut wrong = Vec::new();
     for &(path, src, qualname, start, doc) in cases {
