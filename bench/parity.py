@@ -13,6 +13,7 @@ Exits non-zero on any difference, or when fewer queries than asked can be made.
 """
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import shutil
@@ -242,6 +243,7 @@ def main():
     repo, binary = sys.argv[1], sys.argv[2]
     nq = int(sys.argv[sys.argv.index("--queries") + 1]) if "--queries" in sys.argv else 300
     work = tempfile.mkdtemp(prefix="parity_")
+    atexit.register(shutil.rmtree, work, ignore_errors=True)  # also when a failed check exits early
     a_root, b_root = os.path.join(work, "py"), os.path.join(work, "rs")
     shutil.copytree(repo, a_root, ignore=shutil.ignore_patterns(".scrutate"))
     shutil.copytree(repo, b_root, ignore=shutil.ignore_patterns(".scrutate"))
@@ -275,7 +277,6 @@ def main():
     problems += p2
     if differ:
         problems.append(f"end-to-end top-10 differs for {len(differ)} queries")
-    shutil.rmtree(work, ignore_errors=True)
     if problems:
         print(f"\nPARITY FAILED: {len(problems)} problem(s)")
         sys.exit(1)
