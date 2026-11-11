@@ -140,6 +140,8 @@ fn new_nested_directories_are_watched() {
     wait_for(20, "a change inside the new directories", || r.indexed("nested_second") && !r.indexed("nested_first"));
 }
 
+// Windows does not let a directory that is being watched be removed
+#[cfg(unix)]
 #[test]
 fn watch_stops_with_an_error_when_its_root_is_removed() {
     let r = Repo::new("rootgone");

@@ -194,6 +194,8 @@ fn segments_entry_that_is_not_json() {
     });
 }
 
+// Windows does not let a file that is open be removed or replaced
+#[cfg(unix)]
 #[test]
 fn database_replaced_by_a_directory() {
     survives("db_dir", |r, _| {
@@ -247,6 +249,8 @@ fn segment_without_vectors_is_rebuilt() {
     survives("no_vec", |r, ix| fs::remove_file(seg_dir(r).join(&ix.segments()[0]).join("vec.npy")).unwrap());
 }
 
+// Windows does not let a directory with open files be removed
+#[cfg(unix)]
 #[test]
 fn index_dir_deleted_under_an_open_repo_is_rebuilt_whole() {
     let t = Tmp::new("dir_gone");
