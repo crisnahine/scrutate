@@ -598,6 +598,11 @@ impl Here {
         Here { inside: canonical_cwd.starts_with(&canonical_root), cwd, root: root.to_path_buf(), canonical_root, below }
     }
 
+    /// For a command that never asks: not inside the root, and nothing below it.
+    fn unused() -> Here {
+        Here { cwd: PathBuf::new(), root: PathBuf::new(), canonical_root: PathBuf::new(), inside: false, below: Vec::new() }
+    }
+
     /// The current directory from the root, when it is below it.
     fn below(&self) -> Option<String> {
         (!self.below.is_empty()).then(|| self.below.join("/"))
@@ -732,7 +737,11 @@ pub fn run() -> Result<i32> {
             found_index = Some(top);
         }
     }
-    let mut here = Here::new(cwd.clone(), &cli.root);
+    // a search without the index never looks at the root: two canonical paths, 0.3 M instructions
+    let mut here = match &cli.cmd {
+        Cmd::Grep(g) if !g.index => Here::unused(),
+        _ => Here::new(cwd.clone(), &cli.root),
+    };
     // a file of another indexed repository (a path `search --also` printed) is answered from its index
     let mut outside = None;
     if let Some(arg) = named_file(&cli.cmd) {
@@ -879,6 +888,7 @@ pub fn run() -> Result<i32> {
                 with_filename: with_filename || (!no_filename && !(paths.len() == 1 && !paths[0].is_dir())),
                 line_numbers: !no_line_number,
                 small_tree: std::env::var("SCRUTATE_SMALL_TREE").ok().and_then(|v| v.parse().ok()),
+                cwd: cwd.clone(),
                 ..Options::default()
             };
             if let Some(n) = std::env::var("SCRUTATE_SPLIT_FILE_BYTES").ok().and_then(|v| v.parse().ok()) {

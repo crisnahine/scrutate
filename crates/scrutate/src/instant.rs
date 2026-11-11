@@ -110,6 +110,9 @@ pub struct Options {
     /// files the one-thread walk takes before the parallel walk does the rest (0 skips it); `None`
     /// chooses from the roots (`small_tree_files`)
     pub small_tree: Option<usize>,
+    /// the process's current directory as `std::env::current_dir` gave it, when the caller has it:
+    /// the walk then does not look it up again (0.17 M instructions on macOS)
+    pub cwd: Option<PathBuf>,
 }
 
 impl Default for Options {
@@ -148,6 +151,7 @@ impl Default for Options {
             dfa_size_limit: 10 * (1 << 20),
             split_file_bytes: 64 << 20,
             small_tree: None,
+            cwd: None,
         }
     }
 }
@@ -1720,6 +1724,9 @@ fn walk_builder(roots: &[PathBuf], o: &Options) -> Result<WalkBuilder> {
     if !o.no_ignore {
         wb.add_custom_ignore_filename(RGIGNORE);
     }
+    if let Some(cwd) = &o.cwd {
+        wb.process_current_dir(cwd);
+    }
     // anchored at a root that is a file, the filters would miss the files of the other roots
     let anchor = if roots[0].is_dir() { roots[0].as_path() } else { roots[0].parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new(".")) };
     wb.overrides(overrides(anchor, o)?);
@@ -1767,10 +1774,12 @@ enum Small {
     Big(std::collections::HashMap<PathBuf, AtomicUsize>),
 }
 
-/// Walks on one thread while a few threads search the files it finds, so a small tree pays
-/// neither for a parallel walk nor for walking before searching. Past `small_tree_files` files the
-/// walk stops; the caller's parallel walk then skips what was searched here. Walk errors count only
-/// when this walk finished (the parallel walk meets them again otherwise).
+/// Walks on the calling thread while a few threads search the files it finds, so a small tree pays
+/// neither for a parallel walk nor for walking before searching. The first file waits for a second
+/// before any thread starts: a tree of one file is searched on the calling thread, with no thread
+/// (four threads cost about 1 M instructions, a third of a one-file search past start-up). Past
+/// `small_tree_files` files the walk stops; the caller's parallel walk then skips what was searched
+/// here. Walk errors count only when this walk finished (the parallel walk meets them again otherwise).
 #[allow(clippy::too_many_arguments)]
 fn small_first(
     roots: &[PathBuf],
@@ -1787,13 +1796,16 @@ fn small_first(
         return Small::Big(Default::default());
     }
     let Ok(wb) = walk_builder(roots, o) else { return Small::Big(Default::default()) };
-    let (work_tx, work_rx) = mpsc::channel::<(PathBuf, Arc<str>, Option<u64>, bool)>();
+    type Job = (PathBuf, Arc<str>, Option<u64>, bool);
+    let (work_tx, work_rx) = mpsc::channel::<Job>();
     let work_rx = Mutex::new(work_rx);
     let (tx, rx) = mpsc::channel::<Vec<Hit>>();
     let workers = default_threads(o).min(3);
-    let walked = std::thread::scope(|s| {
+    let (seen, errors, big) = std::thread::scope(|s| {
         let work_rx = &work_rx;
-        let worker = move |tx: mpsc::Sender<Vec<Hit>>| {
+        let worker = |tx: mpsc::Sender<Vec<Hit>>| {
+            #[cfg(test)]
+            tests::SMALL_WORKERS.with(|n| n.set(n.get() + 1));
             // a clone per thread: each gets its own regex cache pool instead of contending for one
             let matcher = matcher.clone();
             s.spawn(move || {
@@ -1810,63 +1822,77 @@ fn small_first(
                 }
             });
         };
-        for _ in 0..workers {
-            worker(tx.clone());
-        }
-        // for the workers added as the files turn out to come from the disk
-        let (more, mut added) = (tx.clone(), 0);
-        drop(tx);
-        let walker = s.spawn(move || {
-            let mut seen = std::collections::HashMap::<PathBuf, AtomicUsize>::new();
-            let mut taken = 0;
-            let mut errors = Vec::new();
-            for entry in wb.build() {
-                if cancel.load(Ordering::Relaxed) {
-                    break;
-                }
-                let entry = match entry {
-                    Ok(e) => e,
-                    Err(e) => {
-                        errors.push(e.to_string());
-                        continue;
-                    }
-                };
-                if !entry.file_type().is_some_and(|t| t.is_file()) {
-                    c.met_dir(&entry);
+        let (mut started, mut added) = (false, 0);
+        let mut held: Option<Job> = None;
+        let mut seen = std::collections::HashMap::<PathBuf, AtomicUsize>::new();
+        let mut taken = 0;
+        let mut errors = Vec::new();
+        let mut big = false;
+        for entry in wb.build() {
+            if cancel.load(Ordering::Relaxed) {
+                break;
+            }
+            let entry = match entry {
+                Ok(e) => e,
+                Err(e) => {
+                    errors.push(e.to_string());
                     continue;
                 }
-                if taken == limit {
-                    return (seen, errors, true);
+            };
+            if !entry.file_type().is_some_and(|t| t.is_file()) {
+                c.met_dir(&entry);
+                continue;
+            }
+            if taken == limit {
+                big = true;
+                break;
+            }
+            taken += 1;
+            let size = if o.want_bytes { entry.metadata().ok().map(|m| m.len()) } else { None };
+            let rel = label(entry.path(), labels, o);
+            let named = o.paths_as_given && entry.depth() == 0;
+            let path = entry.into_path();
+            *seen.entry(path.clone()).or_default().get_mut() += 1;
+            let job = (path, rel, size, named);
+            if !started {
+                let Some(first) = held.take() else {
+                    held = Some(job);
+                    continue;
+                };
+                for _ in 0..workers {
+                    worker(tx.clone());
                 }
-                taken += 1;
-                let size = if o.want_bytes { entry.metadata().ok().map(|m| m.len()) } else { None };
-                let rel = label(entry.path(), labels, o);
-                let named = o.paths_as_given && entry.depth() == 0;
-                let path = entry.into_path();
-                *seen.entry(path.clone()).or_default().get_mut() += 1;
-                if work_tx.send((path, rel, size, named)).is_err() {
+                started = true;
+                if work_tx.send(first).is_err() {
                     break;
                 }
-                while added < cold_extra(o, c) {
-                    worker(more.clone());
-                    added += 1;
-                }
             }
-            (seen, errors, false)
-        });
-        drain(rx, &mut *on_hit);
-        walker.join()
-    });
-    match walked {
-        Ok((seen, _, true)) if !cancel.load(Ordering::Relaxed) => Small::Big(seen),
-        Ok((_, errors, _)) => {
-            for e in errors {
-                c.failed(e);
+            if work_tx.send(job).is_err() {
+                break;
             }
-            Small::Done
+            while added < cold_extra(o, c) {
+                worker(tx.clone());
+                added += 1;
+            }
+            while let Ok(batch) = rx.try_recv() {
+                batch.into_iter().for_each(&mut *on_hit);
+            }
         }
-        Err(_) => Small::Done,
+        drop(work_tx);
+        if let Some((path, rel, size, named)) = held.filter(|_| !cancel.load(Ordering::Relaxed)) {
+            search_one(&mut file_worker(o), &Run { matcher, o, c, cancel, tx: &tx, plain }, &path, rel, size, named);
+        }
+        drop(tx);
+        drain(rx, &mut *on_hit);
+        (seen, errors, big)
+    });
+    if big && !cancel.load(Ordering::Relaxed) {
+        return Small::Big(seen);
     }
+    for e in errors {
+        c.failed(e);
+    }
+    Small::Done
 }
 
 #[derive(Default)]
@@ -2936,6 +2962,33 @@ pub fn relative(path: &Path, roots: &[PathBuf]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    thread_local! {
+        /// the threads `small_first` started on this thread
+        pub(super) static SMALL_WORKERS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    #[test]
+    fn a_tree_of_one_file_is_searched_without_a_thread() {
+        let root = std::env::temp_dir().join(format!("scrutate_small_threads_{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.txt"), "hello\n").unwrap();
+        let o = Options { pattern: "hello".into(), mode: Mode::Literal, threads: 2, ..Options::default() };
+        let found = |o: &Options| {
+            SMALL_WORKERS.with(|n| n.set(0));
+            let mut lines = Vec::new();
+            search(std::slice::from_ref(&root), o, Arc::new(AtomicBool::new(false)), |h| lines.push(h.text)).unwrap();
+            lines.sort();
+            (lines, SMALL_WORKERS.with(|n| n.get()))
+        };
+        assert_eq!(found(&o), (vec!["hello".to_string()], 0));
+        std::fs::write(root.join("b.txt"), "hello again\n").unwrap();
+        assert_eq!(found(&o), (vec!["hello".to_string(), "hello again".to_string()], 2));
+        // a walk cut after the first file still searches it, and the parallel walk the rest
+        let cut = Options { small_tree: Some(1), ..o.clone() };
+        assert_eq!(found(&cut), (vec!["hello".to_string(), "hello again".to_string()], 0));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     #[test]
     fn a_windows_path_is_printed_with_slashes_and_a_verbatim_drive_path_in_its_plain_form() {

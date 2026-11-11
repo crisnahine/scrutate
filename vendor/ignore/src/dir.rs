@@ -19,7 +19,7 @@ use std::{
     fs::{self, File, FileType},
     io::{self, BufRead},
     path::{Path, PathBuf},
-    sync::{Arc, RwLock, Weak},
+    sync::{Arc, OnceLock, RwLock, Weak},
 };
 
 use crate::{
@@ -157,7 +157,14 @@ struct IgnoreInner {
     /// The matcher for .ignore files.
     ignore_matcher: Gitignore,
     /// A global gitignore matcher, usually from $XDG_CONFIG_HOME/git/ignore.
-    git_global_matcher: Arc<Gitignore>,
+    /// Built on first use: it applies only inside a repository, and reading
+    /// git's configuration and compiling the file cost about 0.5 M
+    /// instructions in every walk outside one.
+    git_global_matcher: Arc<OnceLock<Gitignore>>,
+    /// The process's current directory as `std::env::current_dir` gave it,
+    /// when known: the canonical form of `.`, so `add_parents` need not look
+    /// it up again (on macOS that costs as much as `getcwd`).
+    process_cwd: Option<Arc<PathBuf>>,
     /// The matcher for .gitignore files.
     git_ignore_matcher: Gitignore,
     /// Special matcher for `.git/info/exclude` files.
@@ -166,6 +173,31 @@ struct IgnoreInner {
     has_git: bool,
     /// Ignore config.
     opts: IgnoreOptions,
+}
+
+impl IgnoreInner {
+    fn git_global(&self) -> &Gitignore {
+        self.git_global_matcher.get_or_init(|| {
+            if !self.opts.git_global {
+                return Gitignore::empty();
+            }
+            let Some(ref cwd) = self.global_gitignores_relative_to else {
+                log::debug!(
+                    "ignoring global gitignore file because CWD is not known"
+                );
+                return Gitignore::empty();
+            };
+            let mut builder = GitignoreBuilder::new(cwd);
+            builder
+                .case_insensitive(self.opts.ignore_case_insensitive)
+                .unwrap();
+            let (gi, err) = builder.build_global();
+            if let Some(err) = err {
+                log::debug!("{}", err);
+            }
+            gi
+        })
+    }
 }
 
 impl Ignore {
@@ -208,8 +240,16 @@ impl Ignore {
         if !self.is_root() {
             panic!("Ignore::add_parents called on non-root matcher");
         }
-        let absolute_base = match path.as_ref().canonicalize() {
-            Ok(path) => Arc::new(path),
+        let cwd = self
+            .inner
+            .process_cwd
+            .as_ref()
+            .filter(|_| cfg!(unix) && path.as_ref() == Path::new("."));
+        let absolute_base = match cwd
+            .map(|c| Ok(c.clone()))
+            .unwrap_or_else(|| path.as_ref().canonicalize().map(Arc::new))
+        {
+            Ok(path) => path,
             Err(_) => {
                 // There's not much we can do here, so just return our
                 // existing matcher. We drop the error to be consistent
@@ -491,6 +531,7 @@ impl Ignore {
             git_ignore_matcher: gi_matcher,
             git_exclude_matcher: gi_exclude_matcher,
             has_git,
+            process_cwd: self.inner.process_cwd.clone(),
             opts: self.inner.opts,
         };
         (ig, errs.into_error_option())
@@ -699,7 +740,7 @@ impl Ignore {
         }
         let m_global = if any_git {
             self.inner
-                .git_global_matcher
+                .git_global()
                 .matched(&path, is_dir)
                 .map(IgnoreMatch::gitignore)
         } else {
@@ -837,34 +878,23 @@ impl IgnoreBuilder {
     /// The matcher returned won't match anything until ignore rules from
     /// directories are added to it.
     pub(crate) fn build(&self) -> Ignore {
-        self.build_with_cwd(None)
+        self.build_with_cwd(None, false)
     }
 
     /// Builds a new `Ignore` matcher using the given CWD directory.
     ///
     /// The matcher returned won't match anything until ignore rules from
-    /// directories are added to it.
-    pub(crate) fn build_with_cwd(&self, cwd: Option<PathBuf>) -> Ignore {
+    /// directories are added to it. `process`: `cwd` is the process's
+    /// current directory.
+    pub(crate) fn build_with_cwd(
+        &self,
+        cwd: Option<PathBuf>,
+        process: bool,
+    ) -> Ignore {
+        let process_cwd =
+            cwd.as_ref().filter(|_| process).map(|c| Arc::new(c.clone()));
         let global_gitignores_relative_to =
             cwd.or_else(|| self.global_gitignores_relative_to.clone());
-        let git_global_matcher = if !self.opts.git_global {
-            Gitignore::empty()
-        } else if let Some(ref cwd) = global_gitignores_relative_to {
-            let mut builder = GitignoreBuilder::new(cwd);
-            builder
-                .case_insensitive(self.opts.ignore_case_insensitive)
-                .unwrap();
-            let (gi, err) = builder.build_global();
-            if let Some(err) = err {
-                log::debug!("{}", err);
-            }
-            gi
-        } else {
-            log::debug!(
-                "ignoring global gitignore file because CWD is not known"
-            );
-            Gitignore::empty()
-        };
 
         Ignore {
             inner: Arc::new(IgnoreInner {
@@ -882,10 +912,11 @@ impl IgnoreBuilder {
                 ),
                 custom_ignore_matcher: Gitignore::empty(),
                 ignore_matcher: Gitignore::empty(),
-                git_global_matcher: Arc::new(git_global_matcher),
+                git_global_matcher: Arc::new(OnceLock::new()),
                 git_ignore_matcher: Gitignore::empty(),
                 git_exclude_matcher: Gitignore::empty(),
                 has_git: false,
+                process_cwd,
                 opts: self.opts,
             }),
             absolute_base: None,

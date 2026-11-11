@@ -510,6 +510,8 @@ pub struct WalkBuilder {
     /// that fails, then global gitignores are ignored (an error is logged).
     global_gitignores_relative_to:
         OnceLock<Result<PathBuf, Arc<std::io::Error>>>,
+    /// Set by `current_dir`: that directory need not be the process's.
+    cwd_given: bool,
 }
 
 #[derive(Clone)]
@@ -573,6 +575,7 @@ impl WalkBuilder {
             skip: None,
             filter: None,
             global_gitignores_relative_to: OnceLock::new(),
+            cwd_given: false,
         }
     }
 
@@ -1085,6 +1088,18 @@ impl WalkBuilder {
             // OK because `Err` from `set` implies a value exists.
             *self.global_gitignores_relative_to.get_mut().unwrap() = cwd;
         }
+        self.cwd_given = true;
+        self
+    }
+
+    /// Like `current_dir`, with the process's current directory as
+    /// `std::env::current_dir` gave it, so the walk does not ask again.
+    pub fn process_current_dir(
+        &mut self,
+        cwd: impl Into<PathBuf>,
+    ) -> &mut WalkBuilder {
+        self.current_dir(cwd);
+        self.cwd_given = false;
         self
     }
 
@@ -1119,7 +1134,10 @@ impl WalkBuilder {
     /// Build the root ignore matcher shared by all consumers of this builder.
     fn build_ignore(&self) -> Ignore {
         self.get_or_set_current_dir()
-            .map(|cwd| self.ig_builder.build_with_cwd(Some(cwd.to_path_buf())))
+            .map(|cwd| {
+                self.ig_builder
+                    .build_with_cwd(Some(cwd.to_path_buf()), !self.cwd_given)
+            })
             .unwrap_or_else(|| self.ig_builder.build())
     }
 }
