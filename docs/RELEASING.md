@@ -29,7 +29,8 @@ dependency update that raises it fails there; README.md and docs/INSTALL.md name
 the parsing rules an index was built with, and the index keeps it in `meta` as `content_rev`.
 After a release, a change to `langs.rs`, `parse.rs`, `text.rs`, `parse.py` or `text.py` raises
 it by one in both files, so an index of the older rules reads every file again on its next
-update. It stays 1 until 0.1.0 is out.
+update. 0.1.0 ships with 2: builds with the first rules were in use before the release, and
+their indexes must not keep chunks cut by those rules.
 
 ## 2. Benchmarks on the release binary
 

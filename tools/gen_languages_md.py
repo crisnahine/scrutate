@@ -79,7 +79,9 @@ def main() -> int:
                "(`def`, `fn`, `function`, `sub`, `proc`, `class`, `struct`, `module`, Lisp `(def...`, SQL `CREATE ...`, "
                "shell `name() {`) with the indented block below them. No call edges or imports.\n"
                "3. **Windows**: every other readable text file is indexed as overlapping 50-line windows, so it is "
-               "searchable by Engine B (and, always, by Engine A).\n")
+               "searchable by Engine B (and, always, by Engine A). In the first two tiers the lines no definition's "
+               "chunk keeps (code outside the definitions, the rest of a long one) are windows too, named after the "
+               "definition or file they are part of.\n")
     out.append("Engine A (instant search) needs none of this: it searches every readable file of any language or no language.\n")
     out.append("## Grammar tier\n")
     out.append("| Language | Extensions / files | Definition kinds verified | Calls | Imports | Docstrings | Evidence |")

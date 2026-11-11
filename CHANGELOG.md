@@ -167,6 +167,12 @@ First release.
   another case (`burst_files`), and a struct and its `impl` block are separate results.
   `bench/retrain_ranker.sh` runs the whole fit and refuses a ranker that is worse on a function
   row of the held-out set.
+- Ranked search reads every line of an indexed file. A chunk keeps at most 200 lines (40 for a
+  class or another container), and code outside the definitions of a file had no chunk once the
+  file held one definition; those lines are now in 50-line windows named after the definition or
+  file they are part of, and a definition with its windows is one result. A definition starts
+  at the attribute lines right above it (Rust `#[...]`, decorators and annotations), so
+  `#[get("/users")]` above a handler is found with it.
 - A Go type declared on its own line (`type Server struct`) takes the comment above it as its
   documentation, also as the first statement of a function body, and a Go type alias
   (`type Celsius = float64`) is a definition.

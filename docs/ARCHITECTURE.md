@@ -179,7 +179,15 @@ does too. A Haskell or Elm function starts at its type signature, and the
 comment above the signature is its documentation. Adding a language is a registry entry
 and a sample file, not new code. A chunk's text and body keep at most 200 lines (40 for a
 container such as a class) and 32 KiB, cut at a character boundary, and a chunk ends on the last
-line that holds its text. The parser hands over byte ranges; the index cuts each chunk's text
+line that holds its text. Every line no chunk keeps (past those caps, outside the definitions, or
+only in a constant) is in overlapping 50-line windows named after the definition that holds it,
+the file's stem outside them, so ranked search reads every line of an indexed file; a line of
+only brackets or a closing word (`end`, `fi`, `done`, `esac`) is in a window only next to other
+lines. A window is no symbol: `symbol`, `callers`, `callees`, `refs --def`, `outline` and the
+language server never return one. In Rust, PHP, JavaScript, TypeScript, Java, Kotlin, Scala,
+Groovy, Dart, Swift, Elixir and Gleam a definition starts at the attribute lines right above it
+(`#[...]` or `@...`), as a Python definition starts at its decorators. On the Linux kernel tree
+the windows add 8.9% chunks and 11.9% to the code index (the text index is not touched). The parser hands over byte ranges; the index cuts each chunk's text
 from the source when it stores that chunk, one chunk at a time, so a file of thousands of nested
 definitions never holds all their copies at once. A `.h` file is parsed as C++ or Objective-C
 when its text shows it (docs/CLI.md lists the signs), as C otherwise. A method's qualified name uses its owner's bare type (`Stack.push` for
