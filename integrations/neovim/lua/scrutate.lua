@@ -4,11 +4,21 @@
 local M = {}
 M.config = { bin = "scrutate", results = 15 }
 
+-- The directory the CLI answers from (the repository top), so every path in an answer opens from it.
+local function root()
+  local cwd = vim.fn.getcwd()
+  local ok, r = pcall(function() return vim.system({ M.config.bin, "config", "--json" }, { text = true }):wait() end)
+  if not ok or r.code ~= 0 then return cwd end
+  local decoded, v = pcall(vim.json.decode, r.stdout)
+  return decoded and type(v) == "table" and type(v.root) == "string" and v.root or cwd
+end
+
 local function run(args)
   local cmd = { M.config.bin }
   vim.list_extend(cmd, args)
+  local dir = root()
   -- stdout alone: scrutate reports index updates on stderr
-  local ok, r = pcall(function() return vim.system(cmd, { text = true }):wait() end)
+  local ok, r = pcall(function() return vim.system(cmd, { text = true, cwd = dir }):wait() end)
   if not ok then
     vim.notify("scrutate: " .. tostring(r), vim.log.levels.ERROR)
     return nil
@@ -17,13 +27,13 @@ local function run(args)
     vim.notify("scrutate: " .. vim.trim(r.stderr ~= "" and r.stderr or r.stdout), vim.log.levels.ERROR)
     return nil
   end
-  return r.stdout
+  return r.stdout, dir
 end
 
-local function to_qf(hits)
+local function to_qf(hits, dir)
   local items = {}
   for _, h in ipairs(hits) do
-    table.insert(items, { filename = h.path, lnum = h.start or h.line or 1, col = h.column or 1,
+    table.insert(items, { filename = dir .. "/" .. h.path, lnum = h.start or h.line or 1, col = h.column or 1,
       text = (h.kind and ("[" .. h.kind .. "] ") or "") .. (h.qualname or h.name or h.text or "") })
   end
   vim.fn.setqflist({}, " ", { title = "scrutate", items = items })
@@ -31,29 +41,29 @@ local function to_qf(hits)
 end
 
 function M.search(query)
-  local out = run({ "search", "-k", tostring(M.config.results), "--json", "--", query })
-  if out then to_qf(vim.json.decode(out ~= "" and out or "[]")) end
+  local out, dir = run({ "search", "-k", tostring(M.config.results), "--json", "--", query })
+  if out then to_qf(vim.json.decode(out ~= "" and out or "[]"), dir) end
 end
 
 function M.grep(pattern)
-  local out = run({ "grep", "--json", "--sort", "--max-results", "1000", "--", pattern, "." })
+  local out, dir = run({ "grep", "--json", "--sort", "--max-results", "1000", "--", pattern, "." })
   if not out then return end
   local hits = {}
   for line in out:gmatch("[^\n]+") do
     local ok, r = pcall(vim.json.decode, line)
     if ok and r.type == "match" then table.insert(hits, { path = r.path, line = r.line, column = r.column, text = r.text }) end
   end
-  to_qf(hits)
+  to_qf(hits, dir)
 end
 
 function M.symbol(name)
-  local out = run({ "symbol", "--json", "--", name })
-  if out then to_qf(vim.json.decode(out ~= "" and out or "[]")) end
+  local out, dir = run({ "symbol", "--json", "--", name })
+  if out then to_qf(vim.json.decode(out ~= "" and out or "[]"), dir) end
 end
 
 function M.callers(name)
-  local out = run({ "callers", "--json", "--", name })
-  if out then to_qf(vim.json.decode(out ~= "" and out or "[]")) end
+  local out, dir = run({ "callers", "--json", "--", name })
+  if out then to_qf(vim.json.decode(out ~= "" and out or "[]"), dir) end
 end
 
 function M.setup(opts)

@@ -6,6 +6,9 @@ vim.opt.runtimepath:append(here .. "..")
 local bin = arg[1] or "scrutate"
 require("scrutate").setup({ bin = bin })
 
+-- a repository top, so the CLI run in a subdirectory finds it
+vim.fn.mkdir(".git", "p")
+
 local failed = 0
 local function check(what, ok, got)
   if not ok then
@@ -91,6 +94,29 @@ if vim.lsp.config then
 else
   io.stdout:write("skip the language server check: this Neovim has no vim.lsp.config\n")
 end
+
+-- from a folder below the top: answers name files from the top, and each one opens from here
+vim.cmd("cd src")
+-- no buffer left from the runs above: each name is resolved from here
+vim.cmd("silent! %bwipeout!")
+local function opens(list, tail, line)
+  for _, e in ipairs(list) do
+    if e.line == line and vim.fn.filereadable(e.file) == 1 and vim.fn.fnamemodify(e.file, ":p"):sub(-#tail) == tail then return true end
+  end
+  return false
+end
+for _, c in ipairs({
+  { "ScrutateSymbol make_point", "src/geo.py", 6 },
+  { "Scrutate build the origin point", "src/geo.py", 6 },
+  { "ScrutateCallers make_point", "src/app.py", 4 },
+  { [[ScrutateGrep def use_it]], "src/geo.py", 11 },
+}) do
+  ok, e = pcall(vim.cmd, c[1])
+  q = quickfix()
+  check(":" .. c[1] .. " from a subdirectory", ok and opens(q, c[2], c[3]), ok and q or e)
+end
+check("no index in the subdirectory", vim.fn.isdirectory(".scrutate") == 0, vim.fn.getcwd())
+vim.cmd("cd ..")
 
 -- qa! would end Neovim with status 0 whatever failed
 vim.cmd(failed > 0 and "cquit 1" or "qa!")

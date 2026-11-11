@@ -245,6 +245,8 @@ fn split_lines(text: &str) -> Vec<String> {
 
 struct Server {
     root: PathBuf,
+    /// `--root` named the root: without a folder from the editor it is used as given
+    root_given: bool,
     searcher: Shared,
     /// open documents by repository-relative path (by URI when outside the root)
     docs: HashMap<String, String>,
@@ -274,12 +276,21 @@ impl Server {
     }
 
     fn initialize(&mut self, p: &Value) -> Value {
-        let root = p["workspaceFolders"][0]["uri"]
-            .as_str()
-            .or(p["rootUri"].as_str())
-            .and_then(uri_to_path)
-            .or_else(|| p["rootPath"].as_str().map(PathBuf::from))
-            .unwrap_or_else(|| self.root.clone());
+        // the first folder decides: files of another repository's folder are not answered
+        let folder =
+            p["workspaceFolders"][0]["uri"].as_str().or(p["rootUri"].as_str()).and_then(uri_to_path).or_else(|| p["rootPath"].as_str().map(PathBuf::from));
+        let from_editor = folder.is_some();
+        let ruled = from_editor || !self.root_given;
+        let folder = folder.unwrap_or_else(|| self.root.clone());
+        let folder = std::path::absolute(&folder).unwrap_or(folder);
+        // the CLI's rule, so the editor and a shell in the same folder share the index at the top
+        let top = ruled.then(|| crate::cli::index_above(&folder)).flatten();
+        if let Some(top) = &top {
+            eprintln!("[scrutate] using the index in {}", top.display().to_string().trim_start_matches(r"\\?\"));
+        }
+        // a folder from the editor is the user's choice; the server's own directory is not
+        let refused = (!from_editor && !self.root_given && top.is_none()).then(|| crate::cli::no_first_build(&folder)).flatten();
+        let root = top.unwrap_or(folder);
         self.root = std::fs::canonicalize(&root).unwrap_or(root);
         let existed = crate::index::exists(&self.root);
         let (ready_tx, ready_rx) = mpsc::channel();
@@ -287,6 +298,10 @@ impl Server {
         let builder = std::thread::Builder::new().name("scrutate-index".into()).spawn(move || {
             let mut g = lock(&shared);
             let _ = ready_tx.send(()); // requests now wait for the index instead of seeing an empty one
+            if let Some(why) = refused {
+                eprintln!("{why}");
+                return log(1, &why);
+            }
             if !existed {
                 log(3, &format!("scrutate: no index in {}; building it", root.display()));
             }
@@ -586,9 +601,10 @@ fn document_symbol(lines: &mut Lines, rel: &str, r: &ChunkRow) -> Value {
 }
 
 /// Serve until `exit` or end of input. -> the process exit code (0 only after `shutdown`).
-pub fn serve(root: &Path) -> Result<i32> {
+pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
     let mut srv = Server {
-        root: std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()),
+        root: root.to_path_buf(),
+        root_given,
         searcher: Arc::new(Mutex::new(None)),
         docs: HashMap::new(),
         saves: None,

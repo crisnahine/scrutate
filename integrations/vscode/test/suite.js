@@ -1,6 +1,8 @@
 // Runs inside VS Code (test/run.js): the language server through VS Code's own providers, then
-// every command with its pickers answered by the test.
+// every command with its pickers answered by the test. The folder may be below the repository top.
 const assert = require("assert");
+const fs = require("fs");
+const path = require("path");
 const vscode = require("vscode");
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -16,7 +18,9 @@ async function until(what, f) {
 }
 
 exports.run = async function () {
-  const root = vscode.workspace.workspaceFolders[0].uri;
+  const folder = vscode.workspace.workspaceFolders[0].uri;
+  const top = process.env.SCRUTATE_TEST_TOP || folder.fsPath;
+  const root = vscode.Uri.file(top);
   const app = vscode.Uri.joinPath(root, "src/app.py");
   const geo = vscode.Uri.joinPath(root, "src/geo.py");
   const doc = await vscode.workspace.openTextDocument(app);
@@ -56,7 +60,7 @@ exports.run = async function () {
   };
   const at = () => {
     const e = vscode.window.activeTextEditor;
-    return `${vscode.workspace.asRelativePath(e.document.uri)}:${e.selection.active.line + 1}`;
+    return `${path.relative(top, e.document.uri.fsPath).split(path.sep).join("/")}:${e.selection.active.line + 1}`;
   };
   try {
     typed = "build the origin point";
@@ -95,6 +99,9 @@ exports.run = async function () {
     said = undefined;
     await vscode.commands.executeCommand("scrutate.grep");
     assert.strictEqual(said, "Scrutate: no matches");
+
+    assert.ok(fs.existsSync(path.join(top, ".scrutate")), "the index is at the top");
+    if (folder.fsPath !== top) assert.ok(!fs.existsSync(path.join(folder.fsPath, ".scrutate")), "no index in the folder");
   } finally {
     Object.assign(vscode.window, { showInputBox, showQuickPick, showInformationMessage });
   }

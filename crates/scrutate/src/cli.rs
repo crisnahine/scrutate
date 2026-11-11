@@ -423,7 +423,11 @@ pub enum Cmd {
         json: bool,
     },
     /// print the configuration file in effect and the variables it sets
-    Config,
+    Config {
+        /// the root an index command run here uses and the configuration file, as JSON (for editors)
+        #[arg(long)]
+        json: bool,
+    },
     /// list the languages this build parses structurally (--json: the capability registry)
     Languages {
         #[arg(long)]
@@ -522,7 +526,7 @@ fn names_below(dir: &Path, top: &Path) -> Vec<String> {
 /// repository is at its top (the first directory upward that holds `.git`: a directory, or a
 /// file in a submodule or worktree): a first build lands there, and the top's index wins over
 /// one an earlier run left in a subdirectory. Outside a repository: the nearest index above.
-fn index_above(cwd: &Path) -> Option<PathBuf> {
+pub(crate) fn index_above(cwd: &Path) -> Option<PathBuf> {
     let has_index = |d: &Path| d.join(crate::files::INDEX_DIR).is_dir();
     let mut nearest = None;
     for dir in cwd.ancestors() {
@@ -540,6 +544,20 @@ fn index_above(cwd: &Path) -> Option<PathBuf> {
         }
     }
     nearest.filter(|d| *d != cwd).map(Path::to_path_buf)
+}
+
+/// Why no first index is built in `dir`: it is the home directory or a filesystem root, so the
+/// index would read everything below it. None when `dir` is neither, or already has an index.
+pub(crate) fn no_first_build(dir: &Path) -> Option<String> {
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" });
+    let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let wide = dir.parent().is_none() || home.is_some_and(|h| canonical(Path::new(&h)) == canonical(dir));
+    (wide && !dir.join(crate::files::INDEX_DIR).is_dir()).then(|| {
+        format!(
+            "[scrutate] {} is the home directory or a filesystem root and has no index: pass --root DIR for a project, or run `scrutate index` here to index everything below it",
+            dir.display().to_string().trim_start_matches(r"\\?\")
+        )
+    })
 }
 
 /// Where a command runs in the repository: its path arguments are the shell's, relative to the
@@ -691,14 +709,15 @@ pub fn run() -> Result<i32> {
         Cli::parse()
     };
     if let Some(e) = cfg_error {
-        if !matches!(cli.cmd, Cmd::Config | Cmd::Completions { .. }) {
+        if !matches!(cli.cmd, Cmd::Config { .. } | Cmd::Completions { .. }) {
             return Err(e);
         }
         diagnostic("warning", &format!("{e:#}"));
     }
     let uses_index = match &cli.cmd {
         Cmd::Grep(g) => g.index || g.symbols,
-        Cmd::Config | Cmd::Completions { .. } | Cmd::Languages { .. } | Cmd::Sexp { .. } | Cmd::Watch { path: Some(_) } => false,
+        // the language server applies the rule to the editor's folder
+        Cmd::Config { .. } | Cmd::Completions { .. } | Cmd::Languages { .. } | Cmd::Sexp { .. } | Cmd::Watch { path: Some(_) } | Cmd::Lsp => false,
         _ => true,
     };
     let mut found_index = None;
@@ -717,10 +736,17 @@ pub fn run() -> Result<i32> {
                 Some(top) => {
                     cli.root = top.to_path_buf();
                     found_index = Some(top.to_path_buf());
-                    here = Here::new(cwd, &cli.root);
+                    here = Here::new(cwd.clone(), &cli.root);
                 }
                 None => outside = Some(format!("{} is outside the repository", crate::fmt::echo(arg))),
             }
+        }
+    }
+    // `index` there is the user's stated wish; any other first build there is not
+    if uses_index && !root_given && found_index.is_none() && !matches!(cli.cmd, Cmd::Index { .. }) {
+        if let Some(why) = cwd.as_deref().and_then(no_first_build) {
+            eprintln!("{why}");
+            return Ok(2);
         }
     }
     if let Some(top) = found_index {
@@ -954,7 +980,15 @@ pub fn run() -> Result<i32> {
             Ok(if hits.is_empty() { 1 } else { 0 })
         }
         Cmd::Check { files, json } => check_command(&cli.root, files, json),
-        Cmd::Config => {
+        Cmd::Config { json: true } => {
+            let root = match (root_given, &cwd) {
+                (false, Some(cwd)) => index_above(cwd).unwrap_or_else(|| cwd.clone()),
+                _ => std::path::absolute(&cli.root).unwrap_or(cli.root),
+            };
+            println!("{}", serde_json::json!({"root": root.to_string_lossy(), "configuration_file": cfg_path.map(|p| p.to_string_lossy().into_owned())}));
+            Ok(0)
+        }
+        Cmd::Config { json: false } => {
             match &cfg_path {
                 Some(p) => {
                     println!("configuration file: {}", p.display());
@@ -1083,7 +1117,7 @@ pub fn run() -> Result<i32> {
             crate::mcp::serve(s, crate::mcp::Settings::new(cli.max_bytes, refresh_interval), crate::VERSION, structured)?;
             Ok(0)
         }
-        Cmd::Lsp => crate::lsp::serve(&cli.root),
+        Cmd::Lsp => crate::lsp::serve(&cli.root, root_given),
         Cmd::Watch { path } => watch_command(path.as_deref().unwrap_or(&cli.root)),
         Cmd::Languages { json: true } => {
             // the verified capability registry: what each grammar's rules extract

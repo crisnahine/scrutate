@@ -210,6 +210,103 @@ fn lsp_round_trip() {
     assert_eq!(child.wait().unwrap().code(), Some(0), "exit after shutdown is a clean exit");
 }
 
+/// The file a location names, from the repository top, after checking that it exists.
+fn real_file(top: &Path, loc: &Value) -> String {
+    let p = scrutate::lsp::uri_to_path(loc["uri"].as_str().unwrap()).unwrap();
+    assert!(p.is_file(), "{p:?} does not exist: {loc}");
+    let (p, top) = (fs::canonicalize(&p).unwrap(), fs::canonicalize(top).unwrap());
+    p.strip_prefix(&top).unwrap().to_string_lossy().replace('\\', "/")
+}
+
+#[test]
+fn an_editor_folder_below_the_top_is_answered_from_the_index_at_the_top() {
+    let r = Repo::new("subfolder");
+    fs::create_dir_all(r.root.join(".git")).unwrap();
+    r.write("lib/util.py", "def lib_fn():\n    return 1\n");
+    let main = "from lib.util import lib_fn\n\n\ndef app_fn():\n    return lib_fn()\n";
+    r.write("pkg/app/main.py", main);
+    let other = Repo::new("subfolder_other");
+    other.write("x.py", "def other_fn():\n    return 2\n");
+    let sub = r.root.join("pkg/app");
+
+    let mut child = Command::new(BIN).arg("lsp").current_dir(&sub).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    let stderr = child.stderr.take().unwrap();
+    let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
+    // the first folder decides; the second, in another repository, is not indexed
+    let folders = json!([{"uri": uri(&sub), "name": "app"}, {"uri": uri(&other.root), "name": "other"}]);
+    c.request("initialize", json!({"processId": null, "rootUri": uri(&sub), "workspaceFolders": folders, "capabilities": {}}));
+    c.notify("initialized", json!({}));
+
+    // the editor's text, two lines down from the disk's: the open document is found by its path from the top
+    let file = uri(&sub.join("main.py"));
+    c.notify("textDocument/didOpen", json!({"textDocument": {"uri": file, "languageId": "python", "version": 1, "text": format!("\n\n{main}")}}));
+    let at = json!({"textDocument": {"uri": file}, "position": {"line": 6, "character": 13}});
+    let def = c.request("textDocument/definition", at.clone());
+    let got: Vec<String> = def["result"].as_array().unwrap_or_else(|| panic!("{def}")).iter().map(|l| real_file(&r.root, l)).collect();
+    assert_eq!(got, ["lib/util.py"], "{def}");
+
+    let mut refs_at = at.clone();
+    refs_at["context"] = json!({"includeDeclaration": true});
+    let refs = c.request("textDocument/references", refs_at);
+    let mut got: Vec<String> = refs["result"].as_array().unwrap_or_else(|| panic!("{refs}")).iter().map(|l| real_file(&r.root, l)).collect();
+    got.dedup();
+    assert_eq!(got, ["lib/util.py", "pkg/app/main.py"], "{refs}");
+
+    for (q, want) in [("lib_fn", "lib/util.py"), ("app_fn", "pkg/app/main.py")] {
+        let ws = c.request("workspace/symbol", json!({"query": q}));
+        let syms = ws["result"].as_array().unwrap_or_else(|| panic!("{ws}"));
+        assert_eq!(syms.len(), 1, "{ws}");
+        assert_eq!(real_file(&r.root, &syms[0]["location"]), want, "{ws}");
+    }
+    let ws = c.request("workspace/symbol", json!({"query": "other_fn"}));
+    assert_eq!(ws["result"], json!([]), "{ws}");
+
+    let outline = c.request("textDocument/documentSymbol", json!({"textDocument": {"uri": file}}));
+    let names: Vec<&str> = outline["result"].as_array().unwrap_or_else(|| panic!("{outline}")).iter().map(|s| s["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"app_fn"), "{outline}");
+
+    c.request("shutdown", Value::Null);
+    c.notify("exit", Value::Null);
+    drop(c);
+    child.wait().unwrap();
+    let mut log = String::new();
+    BufReader::new(stderr).read_to_string(&mut log).unwrap();
+    assert_eq!(log.matches("using the index in").count(), 1, "the root in use, said once: {log}");
+    assert!(!sub.join(".scrutate").exists(), "no index in the editor's folder");
+    assert!(r.root.join(".scrutate").is_dir(), "the index is at the top");
+    assert!(!other.root.join(".scrutate").exists(), "the second folder is not indexed");
+}
+
+#[test]
+fn no_first_index_of_the_home_directory_when_the_editor_names_no_folder() {
+    let h = Repo::new("home");
+    h.write("Documents/notes.py", "def stray_fn():\n    return 1\n");
+    let mut child = Command::new(BIN)
+        .arg("lsp")
+        .current_dir(&h.root)
+        .env(if cfg!(windows) { "USERPROFILE" } else { "HOME" }, &h.root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
+    c.request("initialize", json!({"processId": null, "capabilities": {}}));
+    c.notify("initialized", json!({}));
+    let ws = c.request("workspace/symbol", json!({"query": "stray_fn"}));
+    assert!(ws["error"]["message"].as_str().is_some_and(|m| m.contains("not available")), "{ws}");
+    assert!(
+        c.notifications.iter().any(|n| n["params"]["message"].as_str().is_some_and(|m| m.contains("--root") && m.contains("scrutate index"))),
+        "{:?}",
+        c.notifications
+    );
+    c.request("shutdown", Value::Null);
+    c.notify("exit", Value::Null);
+    drop(c);
+    child.wait().unwrap();
+    assert!(!h.root.join(".scrutate").exists(), "no index built in the home directory");
+}
+
 #[test]
 fn definition_takes_the_name_with_dashes_arrows_and_colons_around_the_cursor() {
     let r = Repo::new("names");

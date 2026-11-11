@@ -3,32 +3,37 @@
 const vscode = require("vscode");
 const { execFile } = require("child_process");
 const { LanguageClient } = require("vscode-languageclient/node");
+const { findRoot, fileOf } = require("./root");
 
 /** @type {LanguageClient | undefined} */
 let client;
 
-function root() {
+function folder() {
   const f = vscode.workspace.workspaceFolders;
   return f && f.length ? f[0].uri.fsPath : undefined;
 }
 
-/** @returns {Promise<string>} */
-function run(args) {
-  const bin = vscode.workspace.getConfiguration("scrutate").get("path", "scrutate");
-  const cwd = root();
+const binary = () => vscode.workspace.getConfiguration("scrutate").get("path", "scrutate");
+
+/** The command's output, and the root its paths are from. @returns {Promise<{out: string, root: string}>} */
+async function run(args) {
+  const bin = binary();
+  const dir = folder();
   // without a folder the command would run in the editor's own directory (index could index $HOME)
-  if (!cwd) return Promise.reject(new Error("open a folder first"));
+  if (!dir) throw new Error("open a folder first");
+  // the repository top, which may be above the folder: index answers and grep paths are both from it
+  const cwd = await findRoot(bin, dir);
   return new Promise((resolve, reject) => {
     execFile(bin, args, { cwd, maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
       // exit 1 = no results, which is not an error
       if (err && err.code !== 1) return reject(new Error(stderr || err.message));
-      resolve(stdout);
+      resolve({ out: stdout, root: cwd });
     });
   });
 }
 
-async function open(path, line) {
-  const uri = vscode.Uri.joinPath(vscode.workspace.workspaceFolders[0].uri, path);
+async function open(root, path, line) {
+  const uri = vscode.Uri.file(fileOf(root, path));
   const doc = await vscode.workspace.openTextDocument(uri);
   const ed = await vscode.window.showTextDocument(doc);
   const pos = new vscode.Position(Math.max(0, line - 1), 0);
@@ -36,8 +41,10 @@ async function open(path, line) {
   ed.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
 }
 
-/** @param {any[]} hits @param {string} placeHolder */
-async function pickHits(hits, placeHolder) {
+/** @param {{out: string, root: string}} r @param {string} placeHolder */
+async function pickHits(r, placeHolder) {
+  /** @type {any[]} */
+  const hits = JSON.parse(r.out || "[]");
   if (!hits.length) return vscode.window.showInformationMessage("Scrutate: no results");
   const items = hits.map((h) => ({
     label: `${h.kind ? "[" + h.kind + "] " : ""}${h.qualname || h.name || ""}`,
@@ -46,7 +53,7 @@ async function pickHits(hits, placeHolder) {
     hit: h,
   }));
   const pick = await vscode.window.showQuickPick(items, { placeHolder, matchOnDescription: true });
-  if (pick) await open(pick.hit.path, pick.hit.start);
+  if (pick) await open(r.root, pick.hit.path, pick.hit.start);
 }
 
 function wordUnderCursor() {
@@ -65,9 +72,10 @@ async function withErrors(f) {
 }
 
 function startClient() {
-  const cwd = root();
+  const cwd = folder();
   if (!cwd) return;
-  const bin = vscode.workspace.getConfiguration("scrutate").get("path", "scrutate");
+  const bin = binary();
+  // the server finds the repository top above the folder itself
   client = new LanguageClient(
     "scrutate",
     "Scrutate",
@@ -85,15 +93,14 @@ function activate(context) {
       withErrors(async () => {
         const q = await vscode.window.showInputBox({ prompt: "Scrutate search (meaning, name or identifier)" });
         if (!q) return;
-        const out = await run(["search", "-k", String(k()), "--json", "--", q]);
-        await pickHits(JSON.parse(out || "[]"), q);
+        await pickHits(await run(["search", "-k", String(k()), "--json", "--", q]), q);
       })
     ),
     vscode.commands.registerCommand("scrutate.grep", () =>
       withErrors(async () => {
         const q = await vscode.window.showInputBox({ prompt: "Scrutate grep (regex; instant, no index)" });
         if (!q) return;
-        const out = await run(["grep", "--json", "--max-results", "500", "--sort", "--", q, "."]);
+        const { out, root } = await run(["grep", "--json", "--max-results", "500", "--sort", "--", q, "."]);
         const items = out
           .split("\n")
           .filter((l) => l.trim())
@@ -102,28 +109,29 @@ function activate(context) {
           .map((r) => ({ label: `${r.path}:${r.line}`, description: r.text.trim(), r }));
         if (!items.length) return vscode.window.showInformationMessage("Scrutate: no matches");
         const pick = await vscode.window.showQuickPick(items, { matchOnDescription: true });
-        if (pick) await open(pick.r.path, pick.r.line);
+        if (pick) await open(root, pick.r.path, pick.r.line);
       })
     ),
     vscode.commands.registerCommand("scrutate.symbol", () =>
       withErrors(async () => {
         const name = wordUnderCursor() || (await vscode.window.showInputBox({ prompt: "Symbol (Class.method works)" }));
         if (!name) return;
-        await pickHits(JSON.parse((await run(["symbol", "--json", "--", name])) || "[]"), `definitions of ${name}`);
+        await pickHits(await run(["symbol", "--json", "--", name]), `definitions of ${name}`);
       })
     ),
     vscode.commands.registerCommand("scrutate.callers", () =>
       withErrors(async () => {
         const name = wordUnderCursor() || (await vscode.window.showInputBox({ prompt: "Function name" }));
         if (!name) return;
-        await pickHits(JSON.parse((await run(["callers", "--json", "--", name])) || "[]"), `callers of ${name}`);
+        await pickHits(await run(["callers", "--json", "--", name]), `callers of ${name}`);
       })
     ),
     vscode.commands.registerCommand("scrutate.refs", () =>
       withErrors(async () => {
         const name = wordUnderCursor();
         if (!name) return;
-        const r = JSON.parse((await run(["refs", "--json", "--", name])) || "{}");
+        const { out, root } = await run(["refs", "--json", "--", name]);
+        const r = JSON.parse(out || "{}");
         const items = [];
         for (const d of r.definitions || []) {
           items.push({ label: `[def] ${d.qualname}`, description: `${d.path}:${d.start}`, path: d.path, line: d.start });
@@ -134,12 +142,12 @@ function activate(context) {
         for (const o of r.unresolved || []) items.push({ label: `(unresolved: ${o.reason})`, description: `${o.path}:${o.line}  ${o.text.trim()}`, path: o.path, line: o.line });
         if (!items.length) return vscode.window.showInformationMessage("Scrutate: no references");
         const pick = await vscode.window.showQuickPick(items, { matchOnDescription: true });
-        if (pick) await open(pick.path, pick.line);
+        if (pick) await open(root, pick.path, pick.line);
       })
     ),
     vscode.commands.registerCommand("scrutate.index", () =>
       withErrors(async () => {
-        const out = await run(["index"]);
+        const { out } = await run(["index"]);
         vscode.window.showInformationMessage(`Scrutate: ${out.trim()}`);
       })
     )

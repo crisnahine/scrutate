@@ -9,6 +9,9 @@ Needs Neovim 0.10 or newer (the plugin runs the CLI through `vim.system`).
 
 Commands: `:Scrutate <query>` (ranked search), `:ScrutateGrep <regex>`, `:ScrutateSymbol [name]`,
 `:ScrutateCallers [name]` (default: word under cursor). Results go to the quickfix list.
+Each command runs at the top of the repository Neovim's current directory is in, the directory
+whose index scrutate uses (`scrutate config --json` names it), so from a subdirectory every
+result opens and `:ScrutateGrep` searches the whole repository.
 
 The language server (definitions, references, symbols), on Neovim 0.11 or newer. The plugin
 ships `lsp/scrutate.lua`, so with the plugin loaded one line turns it on:
@@ -26,5 +29,6 @@ vim.lsp.enable("scrutate")
 
 Test: in a repository made by `integrations/fixture.sh`,
 `nvim --headless -u NONE -l integrations/neovim/test/run.lua /path/to/scrutate` runs every
-command, before any index and after an edit, and a go-to-definition through the language
-server. It last passed on Neovim 0.12.6 (2026-11-11).
+command, before any index and after an edit, a go-to-definition through the language
+server, and the commands again from a subdirectory (the test makes a `.git` directory at the
+top). It last passed on Neovim 0.12.6 (2026-11-11).

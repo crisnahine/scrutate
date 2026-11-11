@@ -18,7 +18,7 @@
   "main": "./extension.js",
   "scripts": {
     "check": "tsc -p .",
-    "test": "node test/run.js"
+    "test": "node test/root.test.js && node test/run.js"
   },
   "dependencies": {
     "vscode-languageclient": "9.0.1"

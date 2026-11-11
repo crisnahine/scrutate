@@ -771,6 +771,24 @@ fn the_index_of_a_repository_is_at_its_top_whichever_directory_a_command_runs_in
 }
 
 #[test]
+fn config_json_names_the_root_an_index_command_uses() {
+    let r = Repo::new("config_root");
+    fs::create_dir_all(r.root.join(".git")).unwrap();
+    r.write("src/deep/d.py", b"def deep_fn():\n    return 2\n");
+    let deep = r.root.join("src/deep");
+    let root_of = |args: &[&str]| {
+        let (code, out, err) = run_in(&deep, args, &[]);
+        assert_eq!(code, 0, "{args:?}: {err}");
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"));
+        assert!(v["configuration_file"].is_null(), "{out}");
+        fs::canonicalize(v["root"].as_str().unwrap()).unwrap()
+    };
+    assert_eq!(root_of(&["config", "--json"]), fs::canonicalize(&r.root).unwrap(), "the top, before any index");
+    assert!(!r.root.join(".scrutate").exists(), "config builds no index");
+    assert_eq!(root_of(&["--root", ".", "config", "--json"]), fs::canonicalize(&deep).unwrap(), "--root as given");
+}
+
+#[test]
 fn a_repository_inside_another_does_not_use_the_outer_index() {
     let r = nested_repo("inner_repo");
     // a submodule or a git worktree: `.git` is a file there, a directory in a clone
@@ -1000,6 +1018,48 @@ fn serve_and_watch_in_a_subdirectory_use_the_index_above() {
     let line = std::io::BufReader::new(stderr).lines().map_while(Result::ok).find(|l| l.contains("watching")).unwrap();
     assert!(line.ends_with(&format!("watching {}", top.display())), "{line}");
     assert!(!deep.join(".scrutate").exists());
+}
+
+#[test]
+fn no_first_index_of_the_home_directory_without_asking() {
+    let h = Repo::new("home");
+    h.write("Documents/notes.py", b"def stray_fn():\n    return 1\n");
+    let home = h.root.to_string_lossy().into_owned();
+    let env = [(if cfg!(windows) { "USERPROFILE" } else { "HOME" }, home.as_str())];
+    let refused = |args: &[&str]| {
+        let (code, out, err) = run_in(&h.root, args, &env);
+        assert_eq!(code, 2, "{args:?}: {out}{err}");
+        assert_eq!(err.lines().count(), 1, "{args:?}: {err}");
+        assert!(err.contains("--root") && err.contains("scrutate index"), "{args:?}: {err}");
+        assert!(!h.root.join(".scrutate").exists(), "{args:?} built an index");
+    };
+    for args in [
+        &["symbol", "stray_fn"][..],
+        &["search", "stray"],
+        &["stats"],
+        &["grep", "--index", "stray_fn"],
+        &["grep", "--index", "--update", "stray_fn"],
+        &["serve"],
+        &["watch"],
+    ] {
+        refused(args);
+    }
+    // a plain grep needs no index
+    let (code, out, _) = run_in(&h.root, &["grep", "-F", "stray_fn"], &env);
+    assert!(code == 0 && out.contains("notes.py"), "{out}");
+    assert!(!h.root.join(".scrutate").exists());
+    // --root, SCRUTATE_ROOT and `index` say where to build
+    let (code, out, err) = run_in(&h.root, &["--root", ".", "symbol", "stray_fn"], &env);
+    assert!(code == 0 && out.contains("notes.py:1"), "{out}{err}");
+    fs::remove_dir_all(h.root.join(".scrutate")).unwrap();
+    let (code, _, err) = run_in(&h.root, &["symbol", "stray_fn"], &[env[0], ("SCRUTATE_ROOT", ".")]);
+    assert_eq!(code, 0, "{err}");
+    fs::remove_dir_all(h.root.join(".scrutate")).unwrap();
+    let (code, _, err) = run_in(&h.root, &["index"], &env);
+    assert_eq!(code, 0, "{err}");
+    // an index built there on purpose is used
+    let (code, out, err) = run_in(&h.root, &["symbol", "stray_fn"], &env);
+    assert!(code == 0 && out.contains("notes.py:1"), "{out}{err}");
 }
 
 #[test]
