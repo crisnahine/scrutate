@@ -798,9 +798,10 @@ def main() -> int:
         json.dump(data, open(a.out, "w"), indent=1)
         return 0
     if a.redo_unstable:
-        # the same run, continued: its environment and settings stand, so the binary must be the same
-        if environment().get("scrutate_sha256") != data.get("environment", {}).get("scrutate_sha256"):
-            raise SystemExit("--redo-unstable: the scrutate binary is not the one this run measured")
+        # the same run, continued: its environment and settings stand, so the binaries must be the same
+        env, was = environment(), data.get("environment", {})
+        if any(env.get(k) != was.get(k) for k in ("scrutate_sha256", "scrutate_base_sha256")):
+            raise SystemExit("--redo-unstable: the scrutate binary, or its base, is not the one this run measured")
     else:
         data["environment"] = environment()
         data["corpora"] = json.load(open(os.path.join(a.corpora, "manifest.json")))

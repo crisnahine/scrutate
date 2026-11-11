@@ -7,6 +7,8 @@ usage: leaderboard_regression.py FILE.json [--tolerance T]              (or --wi
 With one file (the gate): `scrutate` against `scrutate base`, both measured in the same run, in the
 same interleaved blocks (bench/leaderboard.py with SCRUTATE_BASE_BIN set). A slow minute on a shared
 machine slows both, so their ratio stays put; two runs minutes apart cannot be compared that way.
+The ratio is taken inside each block and the interval comes from resampling inside each block, so
+a block that ran on a busier machine drops out of both.
 
 With two files (recorded runs, same machine): scrutate's runs in NEW against those in BASELINE.
 
@@ -19,6 +21,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
+import statistics
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -27,8 +31,18 @@ from leaderboard import boot_ratio  # noqa: E402
 MIN_RUNS = 10
 
 
-def compare(pairs, tolerance):
-    """pairs: (id, base tool record, new tool record). Returns (failures, compared)."""
+def block_ratio(new, base, blocks, B=10000, seed=1):
+    """The median over the blocks of median(new) / median(base) in that block, with its 95% interval."""
+    rng, med = random.Random(seed), statistics.median
+    per = len(new) // blocks
+    nb = [(new[i * per:(i + 1) * per], base[i * per:(i + 1) * per]) for i in range(blocks)]
+    rs = sorted(med(med(rng.choices(n, k=per)) / med(rng.choices(b, k=per)) for n, b in nb) for _ in range(B))
+    return med(med(n) / med(b) for n, b in nb), rs[int(0.025 * B)], rs[int(0.975 * B) - 1]
+
+
+def compare(pairs, tolerance, paired=False):
+    """pairs: (id, base tool record, new tool record); paired: both were measured in the same blocks.
+    Returns (failures, compared)."""
     bad = compared = 0
     for bid, b, n in pairs:
         if n.get("status") != "ok":
@@ -41,7 +55,11 @@ def compare(pairs, tolerance):
         if b.get("status") != "ok" or len(b.get("times", [])) < MIN_RUNS or len(n.get("times", [])) < MIN_RUNS:
             print(f"skip       {bid}: not enough runs to compare (base {b.get('status')}, {len(b.get('times', []))} runs)")
             continue
-        r, lo, hi = boot_ratio(n["times"], b["times"])
+        blocks = n.get("blocks") if paired else None
+        if blocks and blocks == b.get("blocks") and len(n["times"]) == len(b["times"]) and len(n["times"]) % blocks == 0:
+            r, lo, hi = block_ratio(n["times"], b["times"], blocks)
+        else:
+            r, lo, hi = boot_ratio(n["times"], b["times"])
         verdict = "REGRESSION" if lo > 1 + tolerance else "faster" if hi < 1 else "same"
         bad += verdict == "REGRESSION"
         compared += 1
@@ -68,7 +86,7 @@ def main() -> int:
     else:
         base, new = (json.load(open(f))["benchmarks"] for f in files)
         pairs = [(bid, base[bid]["tools"].get("scrutate", {}), new[bid]["tools"].get("scrutate", {})) for bid in sorted(set(base) & set(new))]
-    bad, compared = compare(pairs, a.tolerance)
+    bad, compared = compare(pairs, a.tolerance, paired=len(files) == 1)
     if not bad and not compared:
         print("nothing compared")
         return 2
