@@ -38,6 +38,7 @@ PURPOSE = {
     "regex": "identifier/heuristic patterns",
     "regex-syntax": "pattern syntax trees: the text index's trigram conditions and the suffix literals of a regex",
     "rusqlite": "SQLite (bundled)",
+    "unicode-normalization": "NFC form of names and non-ASCII words, so two spellings of one name match",
     "rust-stemmers": "Snowball English stemmer",
     "serde": "serialisation",
     "serde_json": "JSON output / MCP / config",

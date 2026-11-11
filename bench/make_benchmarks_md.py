@@ -18,7 +18,7 @@ LABEL = {"scrutate": "scrutate", "rg": "ripgrep", "grep": "GNU grep", "git": "gi
 
 
 def fmt_ms(v):
-    return "—" if v is None else (f"{v:,.0f}" if v >= 100 else f"{v:.1f}")
+    return "-" if v is None else (f"{v:,.0f}" if v >= 100 else f"{v:.1f}")
 
 
 def main() -> int:
@@ -43,7 +43,7 @@ def main() -> int:
     w("- Tools (absolute paths; shell aliases bypassed):")
     for k, v in env["tools"].items():
         if v.get("version"):
-            note = f" — {v['note']}" if v.get("note") else ""
+            note = f" ({v['note']})" if v.get("note") else ""
             w(f"  - {LABEL.get(k, k)}: `{v['version']}`{note}")
         else:
             w(f"  - {LABEL.get(k, k)}: **not available on this machine** (not benchmarked)")
@@ -91,7 +91,7 @@ def main() -> int:
                     return v
                 s = fmt_ms(v)
                 return f"**{s}**" if v == best else s
-            w(f"| {q} | " + " | ".join(cell(t) for t in tools) + f" | {n:,} |" if n is not None else f"| {q} | " + " | ".join(cell(t) for t in tools) + " | — |")
+            w(f"| {q} | " + " | ".join(cell(t) for t in tools) + f" | {n:,} |" if n is not None else f"| {q} | " + " | ".join(cell(t) for t in tools) + " | - |")
         w("")
     # summary: wins and geometric mean ratio vs each tool
     w("### Summary across all comparable rows\n")
@@ -169,8 +169,8 @@ def main() -> int:
         w("| Corpus | Files | Lines | Corpus MB | Index build s (cold) | peak RSS MB | no-op update s | 1-file edit update s | Index MB | Index/corpus | ranked search p50 / p95 ms (in-process) | `scrutate search` whole process ms (warm / cold) |")
         w("|---|---|---|---|---|---|---|---|---|---|---|---|")
         for r in d["index"]:
-            p = f"{r['search_p50_ms']:.1f} / {r['search_p95_ms']:.1f}" if "search_p50_ms" in r else "—"
-            proc = f"{r.get('search_process_median_ms', 0):.0f} / {fmt_ms(r.get('search_process_cold_ms'))}" if "search_process_median_ms" in r else "—"
+            p = f"{r['search_p50_ms']:.1f} / {r['search_p95_ms']:.1f}" if "search_p50_ms" in r else "-"
+            proc = f"{r.get('search_process_median_ms', 0):.0f} / {fmt_ms(r.get('search_process_cold_ms'))}" if "search_process_median_ms" in r else "-"
             w(f"| {r['corpus']} | {r['files']:,} | {r['lines']:,} | {r['corpus_mb']:.0f} | {r['index_build_s']:.1f} | {r['index_build_maxrss_mb']:.0f} | {r['index_noop_s']:.2f} | {r['index_incremental_s']:.2f} | {r['index_mb']:.0f} | {r['index_ratio']:.2f}× | {p} | {proc} |")
         w("")
         w("No competitor in this comparison builds a persistent index, so there is nothing to compare these numbers with; they are the cost side of the "

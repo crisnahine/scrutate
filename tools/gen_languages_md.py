@@ -54,7 +54,7 @@ def main() -> int:
                "call edges and imports as listed per language below. Every row with a sample file is re-verified by "
                "`cargo test` (`tests/samples.rs` compares the parse of `tests/samples/<file>` with `expected.json`).\n"
                "2. **Heuristic**: languages without a grammar in this build get keyword-introduced definitions "
-               "(`def`, `fn`, `function`, `sub`, `proc`, `class`, `struct`, `module`, Lisp `(def…`, SQL `CREATE …`, "
+               "(`def`, `fn`, `function`, `sub`, `proc`, `class`, `struct`, `module`, Lisp `(def...`, SQL `CREATE ...`, "
                "shell `name() {`) with the indented block below them. No call edges or imports.\n"
                "3. **Windows**: every other readable text file is indexed as overlapping 50-line windows, so it is "
                "searchable by Engine B (and, always, by Engine A).\n")
