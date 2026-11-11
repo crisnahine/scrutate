@@ -352,7 +352,7 @@ class Searcher:
         key = name_key(name.split(".")[-1])
         rows = self.ix.db.execute(
             "SELECT * FROM chunks WHERE name_key=? AND kind!='window' ORDER BY is_test, "
-            "(kind IN ('class','function','method')) DESC LIMIT ?", (key, limit * 3)).fetchall()
+            "(kind IN ('class','function','method')) DESC, (nbody = 0) LIMIT ?", (key, limit * 3)).fetchall()
         if "." in name:
             suffix = name_key(name)
             rows = [r for r in rows if r["qual_key"] == suffix or r["qual_key"].endswith("." + suffix)]

@@ -1980,6 +1980,14 @@ pub fn by_id(id: &str) -> Option<&'static LangSpec> {
 }
 
 /// Extensions shared by several languages are decided by looking at the text.
+/// Lines only C++ writes: what tells a C++ header named `.h` from a C one.
+static CPP_HEADER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(
+        r#"(?m)^[ \t]*(?:namespace\b[^;]*\{|namespace\s+\w[\w:]*\s*$|class\s+\w+|template\s*<|using\s+namespace\b|(?:public|private|protected)\s*:|extern\s+"C\+\+"|#\s*include\s*<[a-z_]+>)"#,
+    )
+    .unwrap()
+});
+
 pub fn sniff(path: &str, source: &str) -> Option<&'static LangSpec> {
     let lower = path.rsplit('/').next().unwrap_or(path).to_lowercase();
     let head = crate::text::prefix_bytes(source, 4000);
@@ -1988,6 +1996,14 @@ pub fn sniff(path: &str, source: &str) -> Option<&'static LangSpec> {
             "objc"
         } else {
             "matlab"
+        }
+    } else if lower.ends_with(".h") {
+        if ["@interface", "@protocol", "@implementation", "@class "].iter().any(|k| source.contains(k)) {
+            "objc"
+        } else if CPP_HEADER.is_match(source) {
+            "cpp"
+        } else {
+            return None;
         }
     } else if lower.ends_with(".pp") {
         if ["procedure ", "function ", "begin", "end;", "unit ", "program "].iter().any(|k| source.contains(k)) && !head.contains("$") {

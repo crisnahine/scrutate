@@ -644,6 +644,19 @@ fn a_method_of_an_object_literal_keeps_its_callers_and_callees() {
 }
 
 #[test]
+fn a_definition_is_listed_before_its_prototype() {
+    let h = "#pragma once\nnamespace geo {\nstruct Shape { int w; };\nShape make();\n}\n";
+    let cpp = "#include \"a_shape.h\"\nnamespace geo {\nShape make() {\n  Shape s;\n  s.w = 1;\n  return s;\n}\n}\n";
+    let user = "#include \"a_shape.h\"\nint use() {\n  return geo::make().w;\n}\n";
+    let r = Repo::new("proto_order", &[("a_shape.h", h), ("b_shape.cpp", cpp), ("c_use.cpp", user)]);
+    let lib = r.lib();
+    let places = |n: &str| lib.find_symbol(n, 10).unwrap().into_iter().map(|h| h.path).collect::<Vec<_>>();
+    assert_eq!(places("make"), ["b_shape.cpp", "a_shape.h"]);
+    assert_eq!(places("geo::make"), ["b_shape.cpp", "a_shape.h"]);
+    assert_eq!(lib.callers("make", 10).unwrap().into_iter().map(|h| h.name).collect::<Vec<_>>(), ["use"]);
+}
+
+#[test]
 fn a_recursive_function_is_its_own_caller_and_callee() {
     let rs = "pub fn fact(n: u64) -> u64 {\n    if n == 0 {\n        1\n    } else {\n        n * fact(n - 1)\n    }\n}\n\npub fn main_entry() -> u64 {\n    fact(5)\n}\n";
     let py = "def walk(n):\n    if n:\n        return walk(n - 1)\n    return 0\n";

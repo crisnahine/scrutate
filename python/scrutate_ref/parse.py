@@ -173,7 +173,7 @@ def window_chunks(source: str, size: int = 50, overlap: int = 10, first_line: in
     return out
 
 
-def _callee_name(node, how: str, src: bytes) -> str | None:
+def _callee_name(lang: str, node, how: str, src: bytes) -> str | None:
     """Last identifier of a call target: a.b.c(x) -> 'c'."""
     target = node.child_by_field_name(how)
     if target is None and node.named_children:
@@ -189,8 +189,10 @@ def _callee_name(node, how: str, src: bytes) -> str | None:
         if sep in txt:
             txt = txt.rsplit(sep, 1)[-1]
     txt = txt.strip().rstrip("!")
-    m = re.match(r"[A-Za-z_$][\w$]*", txt)
-    return m.group(0) if m else None
+    # a JavaScript private method is named with its `#`
+    private = txt.startswith("#") and lang in ("javascript", "typescript", "tsx")
+    m = re.match(r"[A-Za-z_$][\w$]*", txt[1:] if private else txt)
+    return ("#" if private else "") + m.group(0) if m else None
 
 
 def _macro_arg_calls(node, src: bytes, out: set[str]) -> None:
@@ -475,7 +477,7 @@ def parse_source(path: str, source: str) -> list[Chunk]:
                                     _last_row(shown) + 1, _head(txt(shown.start_byte, shown.end_byte), MAX_CHUNK_LINES),
                                     doc="" if is_py else _leading_comment(node, src)))
         elif t in calls and stack:
-            callee = _callee_name(node, calls[t], src)
+            callee = _callee_name(lang, node, calls[t], src)
             if callee:
                 stack[-1][0].calls.add(callee)
             if t == "macro_invocation":

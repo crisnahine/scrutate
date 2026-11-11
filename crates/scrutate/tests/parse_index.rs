@@ -595,6 +595,36 @@ fn a_definition_head_and_the_definition_macros_are_not_calls() {
 }
 
 #[test]
+fn a_call_records_a_lisp_name_whole_and_a_private_method_with_its_mark() {
+    assert_eq!(calls_of("m.scm", "(define (use x)\n  (list->vec (my-string->list x)))\n", "use"), ["list->vec", "my-string->list"]);
+    assert_eq!(calls_of("m.el", "(defun use (x)\n  (my-pkg--trim! x))\n", "use"), ["my-pkg--trim!"]);
+    let js = parse_source("c.js", "class Cart {\n  #secret() {\n    return 1;\n  }\n  run() {\n    return this.#secret();\n  }\n}\n");
+    assert_eq!(find(&js, "Cart.run").calls.iter().collect::<Vec<_>>(), ["#secret"]);
+    // a C arrow is still a member access
+    assert_eq!(calls_of("m.c", "void use(struct s *p) {\n  p->run(1);\n}\n", "use"), ["run"]);
+}
+
+#[test]
+fn a_header_is_read_in_the_language_it_is_written_in() {
+    let quals = |src: &str| parse_source("shape.h", src).iter().map(|c| format!("{} {}", c.kind, c.qualname)).collect::<Vec<_>>();
+    let cpp = quals("// a licence line\n#pragma once\nnamespace geo {\nclass Shape {\npublic:\n  void draw();\n};\nShape make();\n}\n");
+    for want in ["class geo.Shape", "method geo.Shape.draw", "function geo.make"] {
+        assert!(cpp.iter().any(|q| q == want), "{want} not in {cpp:?}");
+    }
+    let templ = quals("#ifndef T_H\n#define T_H\ntemplate <typename T>\nT tmax(T a, T b);\n#endif\n");
+    assert!(templ.iter().any(|q| q == "function tmax"), "{templ:?}");
+    // a prototype inside an include guard is at file scope; one inside a function body is not
+    let guarded =
+        quals("#ifndef A_H\n#define A_H\nint add(int a, int b);\nstatic int use(void) {\n#ifdef X\n  int inner(int);\n#endif\n  return 0;\n}\n#endif\n");
+    assert!(guarded.iter().any(|q| q == "function add") && !guarded.iter().any(|q| q.ends_with("inner")), "{guarded:?}");
+    let objc = quals("#import <Foundation/Foundation.h>\n@interface Greeter : NSObject\n- (void)greet;\n@end\n");
+    assert!(objc.iter().any(|q| q.ends_with("Greeter")), "{objc:?}");
+    // plain C stays C: `class` and `namespace` are ordinary names there
+    assert_eq!(scrutate::parse::spec_for("a.h", "struct s { int class; };\nint add(int a, int b);\n/* namespace of the driver */\n").map(|s| s.id), Some("c"));
+    assert_eq!(scrutate::parse::spec_for("a.h", "namespace geo { int f(); }\n").map(|s| s.id), Some("cpp"));
+}
+
+#[test]
 fn an_objc_multi_part_selector_call_is_a_call_of_its_definition() {
     let chunks = parse_source("m.mm", "@implementation Foo\n- (void)a:(int)x b:(int)y {\n}\n- (void)run {\n  [obj a:1 b:2];\n}\n@end\n");
     assert_eq!(find(&chunks, "Foo.a").name, "a");

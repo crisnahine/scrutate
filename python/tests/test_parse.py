@@ -165,6 +165,13 @@ def test_constants_come_last_and_do_not_move_the_file_header():
     assert (chunks[0].start, chunks[0].end) == (1, 4)
 
 
+def test_a_call_of_a_private_method_keeps_its_mark():
+    src = "class Cart {\n  #secret() {\n    return 1;\n  }\n  run() {\n    return this.#secret();\n  }\n}\n"
+    for path in ("c.js", "c.ts"):
+        run = next(c for c in parse_source(path, src) if c.name == "run")
+        assert run.calls == {"#secret"}, path
+
+
 def test_a_turbofish_call_is_a_call():
     f = next(c for c in parse_source("t.rs", "fn f() {\n    g::<u8>(1);\n    x.collect::<Vec<_>>();\n}\n") if c.name == "f")
     assert sorted(f.calls) == ["collect", "g"]

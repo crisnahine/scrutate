@@ -614,7 +614,7 @@ impl Searcher {
         let Some((_, last)) = q.rsplit_once('.') else { return Ok(out) };
         let mut st = self.ix.db.prepare_cached(
             "SELECT id, qualname FROM chunks WHERE name_key=?1 AND kind!='window' \
-             ORDER BY is_test, (kind IN ('class','function','method')) DESC LIMIT 10000",
+             ORDER BY is_test, (kind IN ('class','function','method')) DESC, (nbody = 0) LIMIT 10000",
         )?;
         let cands: Vec<(i64, String)> = st.query_map([last], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
         let stored: Vec<(i64, String)> = cands.into_iter().map(|(id, qn)| (id, name_key(&plain(&dotted(&qn))))).collect();
@@ -647,7 +647,7 @@ impl Searcher {
         let mut st = self.ix.db.prepare_cached(&format!(
             "SELECT {CHUNK_COLS} FROM chunks WHERE kind!='window' \
              AND (name_key = ?1 OR qual_key = ?1 OR (name_key = ?3 AND substr(qual_key, -(length(?1) + 1)) = '.' || ?1)) \
-             ORDER BY is_test, (kind IN ('class','function','method')) DESC LIMIT ?2"
+             ORDER BY is_test, (kind IN ('class','function','method')) DESC, (nbody = 0) LIMIT ?2"
         ))?;
         let rows: Vec<ChunkRow> = st.query_map(rusqlite::params![key, limit as i64, last], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
         Ok(rows.iter().map(|r| Hit::from_row(r, true)).collect())

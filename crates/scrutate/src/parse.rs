@@ -426,7 +426,10 @@ fn txt(src: &[u8], a: usize, b: usize) -> String {
     String::from_utf8_lossy(&src[a.min(src.len())..b.min(src.len())]).into_owned()
 }
 
-fn callee_name(node: Node, field: &str, src: &[u8]) -> Option<String> {
+/// A Lisp symbol in call position: one name whatever it holds (`list->vec`, `set-car!`, `empty?`).
+static LISP_SYMBOL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"^[^\s()\[\]{}"'`,;#\d][^\s()\[\]{}"'`,;]*"#).unwrap());
+
+fn callee_name(lang: &str, node: Node, field: &str, src: &[u8]) -> Option<String> {
     let mut target =
         if field.is_empty() { None } else { node.child_by_field_name(field).or_else(|| node.children(&mut node.walk()).find(|c| c.kind() == field)) };
     if target.is_none() && node.named_child_count() > 0 {
@@ -446,6 +449,12 @@ fn callee_name(node: Node, field: &str, src: &[u8]) -> Option<String> {
         target = target.child_by_field_name("rhs")?;
     }
     let mut t = txt(src, target.start_byte(), target.end_byte());
+    if matches!(lang, "scheme" | "racket" | "elisp" | "commonlisp") {
+        // an operator such as `-` or `<=` is not a name; a Common Lisp package prefix is not part of it
+        let name = LISP_SYMBOL.find(t.trim())?.as_str();
+        let name = if lang == "commonlisp" { name.rsplit(':').next().unwrap_or(name) } else { name };
+        return name.chars().any(char::is_alphabetic).then(|| name.to_string());
+    }
     // D and Solidity `new Point(1, 2)` is a call whose callee is `new Point`
     if let Some(rest) = t.strip_prefix("new").filter(|r| r.starts_with(char::is_whitespace)) {
         t = rest.trim_start().to_string();
@@ -456,6 +465,10 @@ fn callee_name(node: Node, field: &str, src: &[u8]) -> Option<String> {
         }
     }
     let t = t.trim().trim_end_matches('!').trim_start_matches('@');
+    // a JavaScript private method is named with its `#`
+    if let Some(private) = t.strip_prefix('#').filter(|_| matches!(lang, "javascript" | "typescript" | "tsx")) {
+        return IDENT_START.find(private).map(|m| format!("#{}", m.as_str()));
+    }
     IDENT_START.find(t).map(|m| m.as_str().to_string())
 }
 
@@ -1029,7 +1042,8 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
                 continue;
             }
             if !def.parents.is_empty() {
-                let parent = ancestors.iter().rev().map(|(p, _)| p.kind()).find(|k| !spec.outer.contains(k));
+                // an include guard or `#if` block is no scope of its own
+                let parent = ancestors.iter().rev().map(|(p, _)| p.kind()).find(|k| !spec.outer.contains(k) && !k.starts_with("preproc_"));
                 if !parent.is_some_and(|k| def.parents.contains(&k)) {
                     continue;
                 }
@@ -1128,7 +1142,7 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
             let in_signature = ancestors.last().map(|p| matches!(p.0.kind(), "signature" | "function_signature" | "method_signature")).unwrap_or(false);
             let in_head = !heads.is_empty() && (heads.contains(&node.id()) || ancestors.iter().any(|(a, _)| heads.contains(&a.id())));
             if let (Some(&top), false) = (def_stack.last(), in_signature || in_head) {
-                if let Some(c) = callee_name(node, call.field, src).filter(|c| !call.skip.contains(&c.as_str())) {
+                if let Some(c) = callee_name(spec.id, node, call.field, src).filter(|c| !call.skip.contains(&c.as_str())) {
                     chunks[top].calls.insert(c);
                 }
                 if t == "macro_invocation" && spec.id == "rust" {
