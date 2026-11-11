@@ -528,3 +528,25 @@ fn write_new_replaces_a_planted_link_instead_of_following_it() {
     assert_eq!(fs::read(t.0.join("victim")).unwrap(), b"mine");
     assert_eq!(fs::read(t.0.join("link")).unwrap(), b"new");
 }
+
+#[test]
+fn an_index_built_with_older_parsing_rules_is_read_again_once() {
+    let t = Tmp::new("content_rev");
+    fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+    fs::write(t.0.join("b.py"), "def beta():\n    return 2\n").unwrap();
+    let mut ix = Index::open(&t.0, None).unwrap();
+    ix.update(false).unwrap();
+    assert_eq!(ix.meta("content_rev").as_deref(), Some(scrutate::index::CONTENT_REVISION.to_string().as_str()));
+    // what an older build left: its own symbol names and an older revision
+    ix.db.execute_batch("UPDATE chunks SET name='old_alpha' WHERE name='alpha'; UPDATE meta SET value='0' WHERE key='content_rev';").unwrap();
+    drop(ix);
+    let mut ix = Index::open(&t.0, None).unwrap();
+    let st = ix.update(false).unwrap();
+    assert_eq!(st.files_changed, 2);
+    let names: i64 = ix.db.query_row("SELECT COUNT(*) FROM chunks WHERE name='alpha'", [], |r| r.get(0)).unwrap();
+    assert_eq!(names, 1);
+    assert_eq!(ix.meta("content_rev").as_deref(), Some(scrutate::index::CONTENT_REVISION.to_string().as_str()));
+    assert_eq!(ix.update(false).unwrap().files_changed, 0);
+    drop(ix);
+    assert_eq!(Index::open(&t.0, None).unwrap().update(false).unwrap().files_changed, 0);
+}

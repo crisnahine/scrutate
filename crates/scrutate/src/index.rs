@@ -18,6 +18,10 @@ use crate::semantic::SemanticModel;
 use crate::text::{is_test_path, name_key, tokenize2, BODY_CAP};
 
 pub const SCHEMA_VERSION: u32 = 13;
+/// What the parser and tokenizer make of a file. Bump it with every change of the rules in
+/// `langs.rs`, `parse.rs` or `text.rs` (and the same in the reference's `parse.py` and `text.py`):
+/// an index of another revision reads every file again on its next update.
+pub const CONTENT_REVISION: u32 = 1;
 pub const MAX_SEGMENTS: usize = 6; // more live segments than this triggers a merge of the small ones
 pub const SMALL_INDEX_ROWS: usize = 8000; // an index this small is kept as ONE segment
 /// Rows per segment flushed during one update: bounds the memory of building the inverted index
@@ -623,11 +627,19 @@ impl Index {
             ix.clear()?;
             ix.set_meta("schema_version", &SCHEMA_VERSION.to_string())?;
             ix.set_meta("model_sig", &sem_sig)?;
+            ix.set_meta("content_rev", &CONTENT_REVISION.to_string())?;
         } else {
             // a reader must not need the write lock: another process may hold it for minutes
             for (k, v) in [("schema_version", SCHEMA_VERSION.to_string()), ("model_sig", sem_sig)] {
                 if ix.meta(k).as_deref() != Some(v.as_str()) {
                     ix.set_meta(k, &v)?;
+                }
+            }
+            if ix.meta("content_rev").as_deref() != Some(CONTENT_REVISION.to_string().as_str()) {
+                if ix.has_files()? {
+                    eprintln!("[scrutate] index built with other parsing rules; every file is read again on the next update");
+                } else {
+                    ix.set_meta("content_rev", &CONTENT_REVISION.to_string())?;
                 }
             }
         }
@@ -967,6 +979,9 @@ impl Index {
             self.db.execute_batch("ALTER TABLE files ADD COLUMN ctime_ns INTEGER")?;
         }
         let mut changed = false;
+        let rev = CONTENT_REVISION.to_string();
+        let reparse = only.is_none() && self.meta("content_rev").as_deref() != Some(rev.as_str());
+        let force = force || reparse;
         let scan_t0 = Instant::now();
         type Known = HashMap<String, (i64, i64, Option<i64>, String)>;
         let mut known: Known = HashMap::new();
@@ -1090,6 +1105,9 @@ impl Index {
             self.flush_segment(builder, seg_names)?;
         }
         self.set_meta("next_id", &next_id.to_string())?;
+        if reparse {
+            self.set_meta("content_rev", &rev)?;
+        }
         changed = changed || !removed.is_empty();
         st.chunks = self.db.query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))?;
         if changed {
@@ -1344,10 +1362,10 @@ impl Index {
                 r.problems.push(format!("segments unreadable: {e:#}"));
             }
         }
+        r.files_indexed = self.db.query_row("SELECT COUNT(*) FROM files WHERE hash != 'SKIP'", [], |row| row.get::<_, i64>(0))? as usize;
         if files {
             let mut st = self.db.prepare("SELECT path, hash FROM files WHERE hash != 'SKIP'")?;
             let rows: Vec<(String, String)> = st.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
-            r.files_indexed = rows.len();
             for (rel, hash) in rows {
                 match std::fs::read(self.root.join(&rel)) {
                     Ok(raw) => {

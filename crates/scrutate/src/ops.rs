@@ -37,6 +37,8 @@ pub const DUPES_LIMIT: usize = 50;
 pub const TSQUERY_LIMIT: usize = 1000;
 /// Lines one `read` returns at most.
 pub const READ_LINES: i64 = 400;
+/// Bytes of line text one `read_code` of a line range collects at most; a longer line is cut.
+pub const READ_BYTES: usize = 1_000_000;
 /// Definitions one `read` of a name returns at most.
 pub const READ_DEFINITIONS: usize = 20;
 /// Bytes of text an agent gets from one call unless it asks for more: about 6,000 tokens, under
@@ -231,7 +233,7 @@ pub fn output_schema(tool: &str) -> Value {
             obj(json!({"groups": list(group), "stopped_at": {"type": ["integer", "null"]}}), &["groups", "stopped_at"])
         }
         "read_code" => obj(
-            json!({"text": ty("string"), "start": ty("integer"), "end": ty("integer"), "file_lines": ty("integer"), "definitions": list(span("qualname"))}),
+            json!({"text": ty("string"), "start": ty("integer"), "end": ty("integer"), "file_lines": {"type": ["integer", "null"]}, "definitions": list(span("qualname"))}),
             &[],
         ),
         "outline" => list(obj(
@@ -315,12 +317,13 @@ pub enum Answer {
         groups: Vec<RefGroup>,
         stopped_at: Option<u64>,
     },
-    /// Numbered lines of `path` from line `start` on, and how many lines the file has.
+    /// Numbered lines of `path` from line `start` on, and how many lines the file has (None
+    /// for a large file read only up to the lines asked for: more lines follow).
     Read {
         path: String,
         lines: Vec<String>,
         start: i64,
-        total: i64,
+        total: Option<i64>,
     },
     /// Whole definitions, each with its numbered lines.
     Definitions(Vec<(ChunkRow, String)>, Option<Stop>),
@@ -332,9 +335,11 @@ pub enum Answer {
         path: String,
         deps: Vec<Dependency>,
     },
+    /// `unresolved`: imports that resolved to no file and may name `target`.
     Rdeps {
         target: String,
         rows: Vec<(String, i64, String)>,
+        unresolved: usize,
     },
     Refs {
         name: String,
@@ -428,7 +433,7 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
             let printed = read_back != path && crate::fmt::shown(&read_back) == path && exists(&read_back);
             let path = if printed || (read_back != path && !exists(path)) { read_back.as_ref() } else { path };
             let start = (*start).max(1);
-            let (lines, total) = s.read_lines(path, start, end.unwrap_or(start.saturating_add(READ_LINES - 1)))?;
+            let (lines, total) = read_range(s, path, start, end.unwrap_or(start.saturating_add(READ_LINES - 1)))?;
             Answer::Read { path: path.trim_start_matches("./").to_string(), lines, start, total }
         }
         Op::Outline { path } => {
@@ -441,7 +446,8 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
         }
         Op::Rdeps { target } => {
             let target = repo_path(s, target);
-            Answer::Rdeps { rows: crate::intel::rdeps(&s.ix, &target)?, target }
+            let (rows, unresolved) = crate::intel::rdeps_counted(&s.ix, &target)?;
+            Answer::Rdeps { rows, target, unresolved }
         }
         Op::Refs { name, max_results, textual: true, .. } => {
             let name = &dotted(name);
@@ -465,6 +471,100 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
         }
         Op::Reindex { force } => Answer::Reindexed(s.ix.update(*force)?),
     })
+}
+
+/// Lines `start..=end` of a repository file, numbered, read only as far as they go and at most
+/// `READ_BYTES` of them; and how many lines the file has, when the read reached its end or the
+/// file is small enough to count them.
+fn read_range(s: &Searcher, path: &str, start: i64, end: i64) -> Result<(Vec<String>, Option<i64>)> {
+    use std::io::BufRead;
+    let shown = echo(path);
+    let canon = std::fs::canonicalize(s.ix.root.join(path)).map_err(|_| anyhow!("cannot read {shown}"))?;
+    if !canon.starts_with(&s.ix.root) {
+        bail!("path outside repo");
+    }
+    if !canon.is_file() {
+        bail!("{shown} is not a regular file");
+    }
+    let file = std::fs::File::open(&canon).map_err(|_| anyhow!("cannot read {shown}"))?;
+    let small = file.metadata()?.len() <= crate::index::MAX_FILE_BYTES;
+    let mut r = std::io::BufReader::with_capacity(64 * 1024, file);
+    // a NUL byte in the first 8 KB, the test grep tools use
+    if r.fill_buf().map(|b| b[..b.len().min(8192)].contains(&0))? {
+        bail!("{shown} is not a text file (it holds a NUL byte): read_code shows text only");
+    }
+    // one line into `line`, up to its first `keep` bytes, where the read stops when `keep` is
+    // not 0 -> (anything read, the line goes on past what was read)
+    let mut next_line = |line: &mut Vec<u8>, keep: usize| -> std::io::Result<(bool, bool)> {
+        let mut any = false;
+        loop {
+            let buf = r.fill_buf()?;
+            if buf.is_empty() {
+                return Ok((any, false));
+            }
+            any = true;
+            let (body, done) = match buf.iter().position(|&b| b == b'\n') {
+                Some(i) => (i, i + 1),
+                None => (buf.len(), buf.len()),
+            };
+            let room = keep.saturating_sub(line.len());
+            if keep > 0 && body > room {
+                line.extend_from_slice(&buf[..room]);
+                r.consume(room);
+                return Ok((any, true));
+            }
+            line.extend_from_slice(&buf[..body.min(room)]);
+            let newline = done > body;
+            r.consume(done);
+            if newline {
+                return Ok((any, false));
+            }
+        }
+    };
+    let (mut out, mut used, mut n, mut line, mut mid_line) = (Vec::new(), 0usize, 0i64, Vec::new(), false);
+    loop {
+        if n >= end || (n + 1 >= start && used >= READ_BYTES) {
+            break;
+        }
+        let wanted = n + 1 >= start;
+        line.clear();
+        let (any, cut) = next_line(&mut line, if wanted { READ_BYTES - used } else { 0 })?;
+        if !any {
+            return Ok((out, Some(n)));
+        }
+        n += 1;
+        if wanted {
+            if !cut && line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            used += line.len().max(1);
+            let mut text = format!("{n:>5}  {}", String::from_utf8_lossy(&line));
+            if cut {
+                text.push_str(&format!("  (line cut at {} bytes)", line.len()));
+                mid_line = true;
+            }
+            out.push(text);
+        }
+    }
+    if !small {
+        return Ok((out, (!mid_line && r.fill_buf()?.is_empty()).then_some(n)));
+    }
+    if mid_line {
+        next_line(&mut line, 0)?;
+    }
+    loop {
+        line.clear();
+        if !next_line(&mut line, 0)?.0 {
+            return Ok((out, Some(n)));
+        }
+        n += 1;
+    }
+}
+
+/// One line for a structural match: where, the capture, and its text (the first line of the
+/// node, with control characters written as escapes).
+pub fn capture_line(c: &Capture) -> String {
+    format!("{}:{}:{}  @{} ({})  {}", shown(&c.path), c.line, c.column, c.capture, c.kind, shown(&c.text))
 }
 
 /// `path` as the index spells it, when it names a repository file in a spelling `read_code`
@@ -769,12 +869,29 @@ struct Parts {
     tail: String,
     noun: &'static str,
     /// the items are lines of a file: its path, the number of the first, and the file's length
-    file: Option<(String, i64, i64)>,
+    /// (None: unknown, more lines follow)
+    file: Option<(String, i64, Option<i64>)>,
 }
 
 const CUT_ITEM: &str = "(this item is cut: pass a larger max_bytes to see all of it)";
 
+/// `items` (one result each, possibly of several lines) as `Answer::text_within` pages them.
+pub fn paged(items: Vec<String>, noun: &'static str, max_bytes: usize, offset: usize) -> String {
+    Parts { items, noun, ..Parts::default() }.within(max_bytes, offset)
+}
+
 impl Parts {
+    fn within(&self, max_bytes: usize, offset: usize) -> String {
+        let mut room = max_bytes;
+        loop {
+            let (out, shown, cut) = self.render(max_bytes, room, offset);
+            if out.len() <= max_bytes || room == 0 || (shown <= 1 && !cut) {
+                return out;
+            }
+            room = room.saturating_sub(out.len() - max_bytes);
+        }
+    }
+
     /// The text with the items from `offset` on that fit `room` bytes (at least one; one longer
     /// than `max_bytes` is cut to fit `room`), how many were shown, and whether one was cut.
     fn render(&self, max_bytes: usize, room: usize, offset: usize) -> (String, usize, bool) {
@@ -807,9 +924,13 @@ impl Parts {
         let next = offset.min(self.items.len()) + count;
         if let Some((path, first, total)) = &self.file {
             let last = first + next as i64 - 1;
-            if count > 0 && last < *total {
+            if count > 0 && total.is_none_or(|t| last < t) {
                 let path = shown(path);
-                push(&mut out, &format!("(lines {}-{last} of {total} in {path}: read_code path={path} start={} for more)", first + offset as i64, last + 1));
+                let of = match total {
+                    Some(t) => format!("of {t} in {path}"),
+                    None => format!("of {path}, more lines follow"),
+                };
+                push(&mut out, &format!("(lines {}-{last} {of}: read_code path={path} start={} for more)", first + offset as i64, last + 1));
             }
         } else if next < self.items.len() {
             push(&mut out, &format!("({} more {} not shown: call again with offset={next}, or narrow the request)", self.items.len() - next, self.noun));
@@ -880,15 +1001,7 @@ impl Answer {
     /// and tells the agent what to do next. Only a budget smaller than one item and that line
     /// together is exceeded.
     pub fn text_within(&self, max_bytes: usize, offset: usize) -> String {
-        let parts = self.parts();
-        let mut room = max_bytes;
-        loop {
-            let (out, shown, cut) = parts.render(max_bytes, room, offset);
-            if out.len() <= max_bytes || room == 0 || (shown <= 1 && !cut) {
-                return out;
-            }
-            room = room.saturating_sub(out.len() - max_bytes);
-        }
+        self.parts().within(max_bytes, offset)
     }
 
     fn parts(&self) -> Parts {
@@ -939,10 +1052,11 @@ impl Answer {
                     ..Parts::default()
                 }
             }
-            Answer::Read { path, total: 0, .. } => nothing(format!("{} is empty", shown(path))),
-            Answer::Read { path, lines, start, total } if lines.is_empty() => {
+            Answer::Read { path, total: Some(0), .. } => nothing(format!("{} is empty", shown(path))),
+            Answer::Read { path, lines, start, total: Some(total) } if lines.is_empty() => {
                 nothing(format!("{} has {total} lines: start={start} is past the end", shown(path)))
             }
+            Answer::Read { path, lines, start, total: None } if lines.is_empty() => nothing(format!("{}: no lines from start={start}", shown(path))),
             Answer::Read { path, lines, start, total } => {
                 Parts { items: lines.clone(), noun: "lines", file: Some((path.clone(), *start, *total)), ..Parts::default() }
             }
@@ -981,10 +1095,21 @@ impl Answer {
                 noun: "imports",
                 ..Parts::default()
             },
-            Answer::Rdeps { target, rows } if rows.is_empty() => nothing(format!("nothing imports {}", echo(target))),
-            Answer::Rdeps { rows, .. } => {
-                Parts { items: rows.iter().map(|(p, l, m)| format!("{}:{l}  {}", shown(p), shown(m))).collect(), noun: "importers", ..Parts::default() }
-            }
+            Answer::Rdeps { target, rows, unresolved: 0 } if rows.is_empty() => nothing(format!("nothing imports {}", echo(target))),
+            Answer::Rdeps { target, rows, unresolved } if rows.is_empty() => nothing(format!(
+                "no import resolves to {}, but {unresolved} {} could not be resolved and may name it",
+                echo(target),
+                if *unresolved == 1 { "import" } else { "imports" }
+            )),
+            Answer::Rdeps { rows, unresolved, .. } => Parts {
+                items: rows.iter().map(|(p, l, m)| format!("{}:{l}  {}", shown(p), shown(m))).collect(),
+                tail: match unresolved {
+                    0 => String::new(),
+                    n => format!("({n} more {} could not be resolved and may name it)", if *n == 1 { "import" } else { "imports" }),
+                },
+                noun: "importers",
+                ..Parts::default()
+            },
             Answer::Refs { refs, max_results, .. } => {
                 if refs.is_empty() {
                     nothing("(no results)".to_string())
@@ -1021,12 +1146,9 @@ impl Answer {
                 ..Parts::default()
             },
             Answer::Captures(caps, _) if caps.is_empty() => nothing("no matches".to_string()),
-            Answer::Captures(caps, stopped) => Parts {
-                tail: stop_line(*stopped, "matches"),
-                items: caps.iter().map(|c| format!("{}:{}:{}  @{} ({})  {}", shown(&c.path), c.line, c.column, c.capture, c.kind, c.text)).collect(),
-                noun: "matches",
-                ..Parts::default()
-            },
+            Answer::Captures(caps, stopped) => {
+                Parts { tail: stop_line(*stopped, "matches"), items: caps.iter().map(capture_line).collect(), noun: "matches", ..Parts::default() }
+            }
             Answer::Reindexed(st) => nothing(format!("{} files changed, {} removed, {} chunks", st.files_changed, st.files_removed, st.chunks)),
         }
     }
@@ -1177,7 +1299,7 @@ mod tests {
         assert!(rest.starts_with("src/f2.rs"));
         assert_eq!(answer.text_within(140, 5), "(no more results: 5 in all)");
         // an item larger than the budget keeps its start
-        let one = Answer::Read { path: "a.txt".into(), lines: vec!["x".repeat(500)], start: 1, total: 1 };
+        let one = Answer::Read { path: "a.txt".into(), lines: vec!["x".repeat(500)], start: 1, total: Some(1) };
         let cut = one.text_within(100, 0);
         assert!(cut.len() <= 100 && cut.starts_with(&"x".repeat(30)) && cut.ends_with(CUT_ITEM), "{cut}");
     }
@@ -1185,11 +1307,11 @@ mod tests {
     #[test]
     fn an_empty_answer_says_so_in_words() {
         assert_eq!(Answer::Outline { path: "a.py".into(), rows: vec![] }.text(), "no symbols in a.py (not indexed or no definitions)");
-        assert_eq!(Answer::Rdeps { target: "m".into(), rows: vec![] }.text(), "nothing imports m");
+        assert_eq!(Answer::Rdeps { target: "m".into(), rows: vec![], unresolved: 0 }.text(), "nothing imports m");
         assert_eq!(Answer::Hits { hits: vec![], words: vec![], snippet: true, stopped: None }.text(), "(no results)");
         assert!(Answer::Dupes(vec![]).is_empty() && Answer::Captures(vec![], None).is_empty());
         assert_eq!(
-            Answer::Rdeps { target: "m".into(), rows: vec![("a.py".into(), 3, "m".into())] }.json(),
+            Answer::Rdeps { target: "m".into(), rows: vec![("a.py".into(), 3, "m".into())], unresolved: 0 }.json(),
             json!([{"path": "a.py", "line": 3, "module": "m"}])
         );
     }

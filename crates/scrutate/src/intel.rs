@@ -22,15 +22,38 @@ pub struct Dependency {
 }
 
 /// Modules a file imports, resolved to repository files where the module path maps onto one.
+/// A statement naming several files (`from . import a, b`) is listed once per file.
 pub fn deps(ix: &Index, path: &str) -> Result<Vec<Dependency>> {
     let mut st = ix.db.prepare_cached("SELECT line, module FROM imports WHERE path=?1 ORDER BY line")?;
     let rows: Vec<(i64, String)> = st.query_map([path], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
     let files: HashSet<String> = all_files(ix)?;
     let mut names = crate::resolve::Resolver::new(ix)?;
-    Ok(rows
-        .into_iter()
-        .map(|(line, module)| Dependency { resolved: resolve(&module, path, &files, &ix.root).or_else(|| names.alias(path, &module)), line, module })
-        .collect())
+    let mut out = Vec::new();
+    for (line, module) in rows {
+        let mut found = import_files(&mut names, &module, path, line, &files, &ix.root);
+        if path.ends_with(".go") && found.len() > 1 {
+            // a Go import names a package directory: the file named after it stands for it
+            let dir = found[0].rsplit_once('/').map_or("", |(d, _)| d);
+            let named = format!("{}/{}.go", dir, dir.rsplit('/').next().unwrap_or(dir));
+            let pick = found.iter().find(|f| **f == named).or_else(|| found.iter().find(|f| !f.ends_with("_test.go"))).unwrap_or(&found[0]).clone();
+            found = vec![pick];
+        }
+        if found.is_empty() {
+            out.push(Dependency { line, module: module.clone(), resolved: None });
+        }
+        out.extend(found.into_iter().map(|f| Dependency { line, module: module.clone(), resolved: Some(f) }));
+    }
+    for (line, name, file) in names.rust_mods(path) {
+        out.push(Dependency { line, module: name, resolved: file });
+    }
+    out.sort_by_key(|d| d.line);
+    Ok(out)
+}
+
+/// The files one recorded import names: through the resolver `refs` uses for the languages it
+/// reads, else by mapping the module path onto the repository's files.
+fn import_files(names: &mut crate::resolve::Resolver, module: &str, from: &str, line: i64, files: &HashSet<String>, root: &Path) -> Vec<String> {
+    names.import_files(from, line, module).unwrap_or_else(|| resolve(module, from, files, root).into_iter().collect())
 }
 
 fn all_files(ix: &Index) -> Result<HashSet<String>> {
@@ -126,30 +149,55 @@ pub fn resolve(module: &str, from: &str, files: &HashSet<String>, root: &Path) -
     crate::resolve::below_own_package(root, &segs).and_then(|rest| try_one(&rest.join("/")))
 }
 
+/// (importing file, line, module as written)
+pub type Importer = (String, i64, String);
+
 /// Files that import `target`: a module name as written, or a repository file (every file whose
 /// imports resolve to it, plus modules spelled like its path).
-pub fn rdeps(ix: &Index, target: &str) -> Result<Vec<(String, i64, String)>> {
+pub fn rdeps(ix: &Index, target: &str) -> Result<Vec<Importer>> {
+    Ok(rdeps_counted(ix, target)?.0)
+}
+
+/// `rdeps`, and how many imports resolved to no file although their module path names one
+/// spelled like `target` (they may import it).
+pub fn rdeps_counted(ix: &Index, target: &str) -> Result<(Vec<Importer>, usize)> {
     let files = all_files(ix)?;
     let mut st = ix.db.prepare("SELECT path, line, module FROM imports ORDER BY path, line")?;
     let rows: Vec<(String, i64, String)> = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<rusqlite::Result<_>>()?;
     let is_file = files.contains(target);
     let stem = target.rsplit_once('.').map(|(s, _)| s).unwrap_or(target);
+    let stem = stem.strip_suffix(".d").unwrap_or(stem);
     let dotted: String = stem.replace('/', ".");
     let dotted_pkg = dotted.strip_suffix(".__init__").or_else(|| dotted.strip_suffix(".index")).or_else(|| dotted.strip_suffix(".mod")).map(|s| s.to_string());
+    // the last name of the module the file is: `a/b.py` -> `b`, `a/b/__init__.py` -> `b`
+    let own = {
+        let mut parts = stem.rsplit('/');
+        let last = parts.next().unwrap_or(stem);
+        if matches!(last, "__init__" | "index" | "mod" | "lib" | "main") {
+            parts.next().unwrap_or(last)
+        } else {
+            last
+        }
+    };
     let mut names = crate::resolve::Resolver::new(ix)?;
-    let mut out = Vec::new();
+    let (mut out, mut unsure) = (Vec::new(), 0);
     for (path, line, module) in rows {
         if path == target {
             continue;
         }
         let hit = if is_file {
-            let found = resolve(&module, &path, &files, &ix.root).or_else(|| names.alias(&path, &module));
-            found.as_deref() == Some(target)
+            let found = import_files(&mut names, &module, &path, line, &files, &ix.root);
+            let hit = found.iter().any(|f| f == target)
                 || module == dotted
                 || module.replace("::", ".") == dotted
                 || dotted_pkg.as_deref().map(|p| module == p || module.replace("::", ".") == p).unwrap_or(false)
                 // an include found through a search path the index does not know
-                || (found.is_none() && module.rsplit('/').next() == Some(target.rsplit('/').next().unwrap_or(target)))
+                || (found.is_empty() && module.rsplit('/').next() == Some(target.rsplit('/').next().unwrap_or(target)));
+            let relative = module.starts_with('.') && module.trim_start_matches('.').is_empty();
+            if !hit && found.is_empty() && (relative || module.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '-')).any(|seg| seg == own)) {
+                unsure += 1;
+            }
+            hit
         } else {
             module == target
                 || module.starts_with(&format!("{target}."))
@@ -163,7 +211,18 @@ pub fn rdeps(ix: &Index, target: &str) -> Result<Vec<(String, i64, String)>> {
             out.push((path, line, module));
         }
     }
-    Ok(out)
+    if is_file && target.ends_with(".rs") {
+        for parent in names.rust_mod_parents(target) {
+            for (line, name, file) in names.rust_mods(&parent) {
+                if file.as_deref() == Some(target) {
+                    out.push((parent.clone(), line, name));
+                }
+            }
+        }
+        out.sort();
+        out.dedup();
+    }
+    Ok((out, unsure))
 }
 
 /// Symbols of a file in source order.

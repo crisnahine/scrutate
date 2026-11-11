@@ -462,3 +462,176 @@ fn refs_reads_type_colon_colon_method_like_type_dot_method() {
         assert!(out.contains("Config.make  (2 references)") && out.contains("src/lib.rs:8:13"), "{out}");
     }
 }
+
+/// (module, resolved file) of every import `deps` lists for `path`.
+fn deps_of(r: &Repo, path: &str) -> Vec<(String, String)> {
+    let v = r.json(&["deps", path, "--json"]);
+    let mut out: Vec<(String, String)> =
+        v.as_array().unwrap().iter().map(|d| (d["module"].as_str().unwrap().to_string(), d["resolved"].as_str().unwrap_or("-").to_string())).collect();
+    out.sort();
+    out
+}
+
+/// The files `rdeps` lists as importing `target`.
+fn importers(r: &Repo, target: &str) -> Vec<String> {
+    let (_, out, _) = r.exec(&["rdeps", target, "--json"]);
+    let v: Value = serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"));
+    let mut files: Vec<String> = v.as_array().unwrap().iter().map(|d| d["path"].as_str().unwrap().to_string()).collect();
+    files.sort();
+    files.dedup();
+    files
+}
+
+#[test]
+fn deps_and_rdeps_resolve_rust_paths_in_a_crate_below_the_root() {
+    for base in ["crates/app/src", "src"] {
+        let at = |f: &str| format!("{base}/{f}");
+        let (lib, a, b) = (at("lib.rs"), at("a.rs"), at("b.rs"));
+        let r = Repo::new(
+            "deps_rust",
+            &[
+                (lib.as_str(), "mod a;\nmod b;\nuse crate::a::thing;\nuse self::b::one;\n\npub fn f() {\n    thing();\n    one();\n}\n"),
+                (a.as_str(), "pub fn thing() {}\n"),
+                (b.as_str(), "use super::a;\n\npub fn one() {\n    a::thing();\n}\n"),
+            ],
+        );
+        let want = |v: &[(&str, &str)]| v.iter().map(|(m, f)| (m.to_string(), f.to_string())).collect::<Vec<_>>();
+        assert_eq!(deps_of(&r, &lib), want(&[("a", &a), ("b", &b), ("crate::a::thing", &a), ("self::b::one", &b)]), "{base}");
+        assert_eq!(deps_of(&r, &b), want(&[("super::a", &a)]), "{base}");
+        assert_eq!(importers(&r, &a), [b.clone(), lib.clone()], "{base}");
+        assert_eq!(importers(&r, &b), [lib.as_str()], "{base}");
+    }
+}
+
+#[test]
+fn deps_and_rdeps_resolve_go_imports_through_go_mod() {
+    let r = Repo::new(
+        "deps_go",
+        &[
+            ("go.mod", "module example.com/app\n\ngo 1.22\n"),
+            ("main.go", "package main\n\nimport \"example.com/app/util\"\n\nfunc main() {\n\tutil.Do()\n}\n"),
+            ("util/util.go", "package util\n\nfunc Do() {}\n"),
+            ("svc/go.mod", "module example.com/svc\n"),
+            ("svc/cmd/main.go", "package main\n\nimport (\n\t\"fmt\"\n\t\"example.com/svc/lib\"\n)\n\nfunc main() {\n\tfmt.Println(lib.Run())\n}\n"),
+            ("svc/lib/lib.go", "package lib\n\nfunc Run() int { return 1 }\n"),
+        ],
+    );
+    assert_eq!(deps_of(&r, "main.go"), [("example.com/app/util".to_string(), "util/util.go".to_string())]);
+    assert_eq!(deps_of(&r, "svc/cmd/main.go"), [("example.com/svc/lib".to_string(), "svc/lib/lib.go".to_string()), ("fmt".to_string(), "-".to_string())]);
+    assert_eq!(importers(&r, "util/util.go"), ["main.go"]);
+    assert_eq!(importers(&r, "svc/lib/lib.go"), ["svc/cmd/main.go"]);
+}
+
+#[test]
+fn deps_and_rdeps_resolve_python_names_imported_from_a_package() {
+    let r = Repo::new(
+        "deps_py",
+        &[
+            ("pkg/__init__.py", ""),
+            ("pkg/a.py", "from . import b\nfrom . import c as cc\nfrom pkg import c\nfrom pkg import helper\n"),
+            ("pkg/b.py", "X = 1\n"),
+            ("pkg/c.py", "Y = 2\n"),
+            ("ns/x.py", "from . import y\n"),
+            ("ns/y.py", "Z = 3\n"),
+        ],
+    );
+    let got = deps_of(&r, "pkg/a.py");
+    for want in [(".", "pkg/b.py"), (".", "pkg/c.py"), ("pkg", "pkg/c.py"), ("pkg", "pkg/__init__.py")] {
+        assert!(got.contains(&(want.0.to_string(), want.1.to_string())), "{want:?} in {got:?}");
+    }
+    assert!(!got.iter().any(|(m, f)| m == "." && f == "pkg/__init__.py"), "{got:?}");
+    assert_eq!(importers(&r, "pkg/c.py"), ["pkg/a.py"]);
+    assert_eq!(importers(&r, "pkg/b.py"), ["pkg/a.py"]);
+    assert_eq!(deps_of(&r, "ns/x.py"), [(".".to_string(), "ns/y.py".to_string())]);
+    assert_eq!(importers(&r, "ns/y.py"), ["ns/x.py"]);
+}
+
+#[test]
+fn deps_and_rdeps_resolve_typescript_esm_names_and_declaration_files() {
+    let r = Repo::new(
+        "deps_ts",
+        &[
+            ("src/main.ts", "import { c } from './lib/c.js';\nimport type { T } from './types';\n\nexport const v: T = c;\n"),
+            ("src/lib/c.ts", "export const c = 1;\n"),
+            ("src/types.d.ts", "export type T = number;\n"),
+        ],
+    );
+    assert_eq!(deps_of(&r, "src/main.ts"), [("./lib/c.js".to_string(), "src/lib/c.ts".to_string()), ("./types".to_string(), "src/types.d.ts".to_string())]);
+    assert_eq!(importers(&r, "src/lib/c.ts"), ["src/main.ts"]);
+    assert_eq!(importers(&r, "src/types.d.ts"), ["src/main.ts"]);
+}
+
+#[test]
+fn rdeps_counts_unresolved_imports_that_may_name_the_file_instead_of_saying_nothing_imports_it() {
+    let r = Repo::new("rdeps_unsure", &[("lib/zz.py", "Q = 1\n"), ("app.py", "import zz\nimport os\n")]);
+    let (code, out) = r.run(&["rdeps", "lib/zz.py"]);
+    assert_ne!(code, 2, "{out}");
+    assert!(!out.contains("nothing imports"), "{out}");
+    assert!(out.contains("1 import") && out.contains("could not be resolved"), "{out}");
+    let lone = Repo::new("rdeps_none", &[("lib/zz.py", "Q = 1\n"), ("app.py", "import os\n")]);
+    assert_eq!(lone.run(&["rdeps", "lib/zz.py"]).1.trim(), "nothing imports lib/zz.py");
+}
+
+#[test]
+fn a_method_that_wraps_a_namesake_is_not_its_own_caller_or_callee() {
+    let rs = "pub struct Inner;\n\nimpl Inner {\n    pub fn len(&self) -> usize {\n        0\n    }\n}\n\npub struct Outer {\n    inner: Inner,\n}\n\nimpl Outer {\n    pub fn len(&self) -> usize {\n        self.inner.len()\n    }\n}\n\npub fn use_outer(o: &Outer) -> usize {\n    o.len()\n}\n";
+    let py = "class Inner:\n    def close(self):\n        return 1\n\n\nclass Outer:\n    def __init__(self):\n        self.inner = Inner()\n\n    def close(self):\n        return self.inner.close()\n\n\ndef shutdown(o: Outer):\n    return o.close()\n";
+    let r = Repo::new("wrapper", &[("src/lib.rs", rs), ("wrap.py", py)]);
+    let lib = r.lib();
+    let callers = |n: &str| lib.callers(n, 50).unwrap().into_iter().map(|h| h.qualname).collect::<Vec<_>>();
+    let callees = |n: &str| lib.callees(n, 50).unwrap().0.into_iter().map(|h| h.qualname).collect::<Vec<_>>();
+    assert_eq!(callers("Outer.len"), ["use_outer"]);
+    assert_eq!(callees("Outer.len"), ["Inner.len"]);
+    assert_eq!(callers("Outer.close"), ["shutdown"]);
+    assert_eq!(callees("Outer.close"), ["Inner.close"]);
+}
+
+#[test]
+fn a_recursive_function_is_its_own_caller_and_callee() {
+    let rs = "pub fn fact(n: u64) -> u64 {\n    if n == 0 {\n        1\n    } else {\n        n * fact(n - 1)\n    }\n}\n\npub fn main_entry() -> u64 {\n    fact(5)\n}\n";
+    let py = "def walk(n):\n    if n:\n        return walk(n - 1)\n    return 0\n";
+    let r = Repo::new("recursion", &[("src/lib.rs", rs), ("rec.py", py)]);
+    let lib = r.lib();
+    let mut callers: Vec<String> = lib.callers("fact", 50).unwrap().into_iter().map(|h| h.qualname).collect();
+    callers.sort();
+    assert_eq!(callers, ["fact", "main_entry"]);
+    assert_eq!(lib.callees("fact", 50).unwrap().0.into_iter().map(|h| h.qualname).collect::<Vec<_>>(), ["fact"]);
+    assert_eq!(lib.callers("walk", 50).unwrap().into_iter().map(|h| h.qualname).collect::<Vec<_>>(), ["walk"]);
+    assert_eq!(lib.callees("walk", 50).unwrap().0.into_iter().map(|h| h.qualname).collect::<Vec<_>>(), ["walk"]);
+}
+
+#[test]
+fn search_and_tsquery_page_by_max_bytes_and_offset() {
+    let src: String = (0..12).map(|i| format!("def parse_header_{i}(value):\n    \"\"\"Parse header value {i}.\"\"\"\n    return value\n\n\n")).collect();
+    let r = Repo::new("paging", &[("h.py", &src), ("cr.py", "S = 'a\rb'\n")]);
+    let (_, all) = r.run(&["search", "parse header value", "-k", "10"]);
+    let (code, cut) = r.run(&["--max-bytes", "400", "search", "parse header value", "-k", "10"]);
+    assert_eq!(code, 0, "{cut}");
+    assert!(cut.len() <= 401 && cut.len() < all.len() && cut.contains("call again with offset="), "{cut}");
+    let (_, rest) = r.run(&["--offset", "9", "search", "parse header value", "-k", "10"]);
+    assert_eq!(rest.lines().filter(|l| l.starts_with("h.py:")).count(), 1, "{rest}");
+
+    let q = "(function_definition) @f";
+    let (_, whole) = r.run(&["tsquery", "python", q, "."]);
+    assert_eq!(whole.lines().count(), 12, "one line per match: {whole}");
+    assert!(whole.lines().all(|l| l.ends_with("(value):")), "{whole}");
+    let (_, cr) = r.run(&["tsquery", "python", "(string) @s", "cr.py"]);
+    assert_eq!(cr.lines().count(), 1, "a lone carriage return is not a line break: {cr:?}");
+    assert!(cr.contains("a\\rb"), "{cr:?}");
+    let (_, cut) = r.run(&["--max-bytes", "300", "tsquery", "python", q, "."]);
+    assert!(cut.len() <= 301 && cut.contains("call again with offset="), "{cut}");
+}
+
+#[test]
+fn check_counts_files_and_batch_reports_a_bad_line_and_goes_on() {
+    let r = Repo::new("check_batch", &[("a.py", "def alpha():\n    return 1\n"), ("b.py", "def beta():\n    return alpha()\n")]);
+    assert_eq!(r.json(&["check", "--json"])["files_indexed"], 2);
+    let file = r.root.join("calls.jsonl");
+    fs::write(&file, "{\"op\": \"find_symbol\", \"name\": \"alpha\"}\n\n{nope\n{\"op\": \"callers\", \"name\": \"alpha\"}\n").unwrap();
+    let (code, out, err) = r.exec(&["batch", file.to_str().unwrap()]);
+    assert_eq!(code, 0, "{out}{err}");
+    let recs: Vec<Value> = out.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    assert_eq!(recs.len(), 3, "{out}");
+    assert!(recs[1]["error"].as_str().unwrap().starts_with("line 3, column 2: not JSON"), "{out}");
+    assert_eq!(recs[2]["result"][0]["name"], "beta", "{out}");
+}

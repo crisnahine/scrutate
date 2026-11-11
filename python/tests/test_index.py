@@ -20,6 +20,18 @@ def test_second_update_does_no_work(repo):
     assert st.files_changed == 0 and st.files_removed == 0
 
 
+def test_index_of_another_content_revision_is_read_again_once(repo):
+    from scrutate_ref.index import CONTENT_REVISION
+    ix = Index(repo, model=None)
+    n = ix.update().files_changed
+    assert ix.meta("content_rev") == str(CONTENT_REVISION)
+    ix.set_meta("content_rev", "0")
+    ix = Index(repo, model=None)
+    assert ix.update().files_changed == n
+    assert ix.meta("content_rev") == str(CONTENT_REVISION)
+    assert ix.update().files_changed == 0
+
+
 def test_touch_without_change_does_not_reindex(repo):
     ix = Index(repo, model=None)
     ix.update()

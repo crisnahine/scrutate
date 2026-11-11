@@ -680,7 +680,12 @@ pub fn run() -> Result<i32> {
                 hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal).then(a.path.cmp(&b.path)));
                 hits.truncate(k);
             }
-            print_hits(&hits, &qs, why, json)?;
+            if json || hits.is_empty() {
+                print_hits(&hits, &qs, why, json)?;
+            } else {
+                let words: Vec<String> = qs.iter().flat_map(|q| query_words(q)).collect();
+                println!("{}", crate::ops::paged(crate::fmt::hit_blocks(&hits, &words, true, why), "results", page.0, page.1));
+            }
             Ok(if hits.is_empty() { 1 } else { 0 })
         }
         Cmd::Check { files, json } => check_command(&cli.root, files, json),
@@ -719,8 +724,15 @@ pub fn run() -> Result<i32> {
             let mut w = std::io::BufWriter::new(stdout.lock());
             let mut err: Option<std::io::Error> = None;
             let cache_root = (!no_cache).then_some(cli.root.as_path());
+            // with a size limit or an offset the lines are collected and paged as other answers are
+            let paging = !json && page != (usize::MAX, 0);
+            let mut lines: Vec<String> = Vec::new();
             let n = crate::intel::tsquery_each(&lang, &query, &paths, limit, cache_root, &mut |c| {
                 if err.is_some() {
+                    return;
+                }
+                if paging {
+                    lines.push(crate::ops::capture_line(&c));
                     return;
                 }
                 let r = if json {
@@ -728,12 +740,15 @@ pub fn run() -> Result<i32> {
                         .map_err(|e| std::io::Error::new(e.io_error_kind().unwrap_or(std::io::ErrorKind::Other), e))
                         .and_then(|_| w.write_all(b"\n"))
                 } else {
-                    writeln!(w, "{}:{}:{}  @{} ({})  {}", crate::fmt::shown(&c.path), c.line, c.column, c.capture, c.kind, c.text)
+                    writeln!(w, "{}", crate::ops::capture_line(&c))
                 };
                 if let Err(e) = r {
                     err = Some(e);
                 }
             })?;
+            if paging && !lines.is_empty() {
+                err = writeln!(w, "{}", crate::ops::paged(lines, "matches", page.0, page.1)).err();
+            }
             if let Some(e) = err {
                 if e.kind() != std::io::ErrorKind::BrokenPipe {
                     return Err(e.into());
@@ -1281,19 +1296,30 @@ fn find_command(root: &Path, query: &str, k: usize, json: bool, no_color: bool) 
 }
 
 fn batch_command(root: &Path, file: &Path, features: bool, timing: bool) -> Result<i32> {
-    let mut s = open_fresh(root)?;
+    let mut s = crate::Repo::open(root)?;
+    if let Some(st) = s.refresh(0.0)?.filter(|st| st.files_changed > 0 || st.files_removed > 0) {
+        eprintln!("[scrutate] indexed {} changed files ({} chunks, {:.1}s)", st.files_changed, st.chunks, st.seconds);
+    }
     let f = std::fs::File::open(file)?;
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
-    for line in std::io::BufReader::new(f).lines() {
+    for (n, line) in std::io::BufReader::new(f).lines().enumerate() {
         let line = line?;
         if line.trim().is_empty() {
             continue;
         }
-        let req: serde_json::Value = serde_json::from_str(&line)?;
+        let req: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(e) => {
+                let why = e.to_string();
+                let why = why.rsplit_once(" at line ").map_or(why.as_str(), |(w, _)| w);
+                writeln!(out, "{}", serde_json::json!({"error": format!("line {}, column {}: not JSON ({why})", n + 1, e.column())}))?;
+                continue;
+            }
+        };
         if let Some(tool) = req.get("op").and_then(|v| v.as_str()) {
             // any operation, named and given arguments as an MCP tool call is
-            let rec = match Op::from_tool(tool, &req).and_then(|op| crate::ops::run(&mut s, &op)) {
+            let rec = match Op::from_tool(tool, &req).and_then(|op| s.run_as_is(&op)) {
                 Ok(answer) => serde_json::json!({"op": tool, "result": answer.json()}),
                 Err(e) => serde_json::json!({"op": tool, "error": e.to_string()}),
             };

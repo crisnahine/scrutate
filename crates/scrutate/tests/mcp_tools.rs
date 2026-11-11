@@ -153,6 +153,37 @@ fn read_code_says_where_it_stopped() {
 }
 
 #[test]
+fn read_code_of_a_huge_file_reads_only_what_the_answer_needs() {
+    let mut r = Repo::new("read_huge", &[("a.py", "a = 1\n")]);
+    // 3 GB and 1 GB sparse files: text at the start, zeros after it, no disk used
+    let big = r.root.join("big.log");
+    fs::write(&big, many_lines(2000)).unwrap();
+    fs::OpenOptions::new().write(true).open(&big).unwrap().set_len(3 << 30).unwrap();
+    let wide = r.root.join("wide.txt");
+    fs::write(&wide, "w".repeat(20_000)).unwrap();
+    fs::OpenOptions::new().write(true).open(&wide).unwrap().set_len(1 << 30).unwrap();
+    let zeros = r.root.join("zeros.bin");
+    fs::File::create(&zeros).unwrap().set_len(1 << 30).unwrap();
+
+    let t = std::time::Instant::now();
+    let text = r.ok("read_code", json!({"path": "big.log", "start": 1500, "end": 1502}));
+    assert_eq!(text.lines().count(), 4, "{text}");
+    assert!(text.starts_with(" 1500  x_1500 = 1500"), "{text}");
+    assert!(text.lines().last().unwrap().contains("more lines follow") && text.contains("start=1503"), "{text}");
+    let json = r.repo.run(&scrutate::ops::Op::from_tool("read_code", &json!({"path": "big.log", "end": 2})).unwrap(), 0.0).unwrap().json();
+    assert_eq!(json["file_lines"], Value::Null);
+
+    // one line of a gigabyte is cut at the byte budget
+    let text = r.ok("read_code", json!({"path": "wide.txt", "max_bytes": 1_000_000}));
+    assert!(text.len() <= 1_000_000 && text.starts_with("    1  www"), "{}", &text[text.len().saturating_sub(300)..]);
+    assert!(text.contains("more lines follow") || text.contains("cut"), "{}", &text[text.len().saturating_sub(300)..]);
+
+    let msg = r.err("read_code", json!({"path": "zeros.bin"}));
+    assert!(msg.contains("not a text file"), "{msg}");
+    assert!(t.elapsed() < std::time::Duration::from_secs(5), "{:?}", t.elapsed());
+}
+
+#[test]
 fn arguments_of_the_wrong_type_are_errors() {
     let mut r = two_dup_names();
     for (tool, args, name, ty) in [

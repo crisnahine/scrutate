@@ -1377,15 +1377,88 @@ impl<'a> Resolver<'a> {
         ts.base.as_ref().and_then(|base| self.js_file(&join(base, module)))
     }
 
-    /// The repository file a TypeScript or JavaScript import names through its project's `paths`
-    /// or `baseUrl`, for the callers that map imports to files without resolving symbols.
-    pub fn alias(&mut self, from: &str, module: &str) -> Option<String> {
-        let js = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"].iter().any(|e| from.ends_with(e));
-        if js && !module.starts_with('.') {
-            self.js_module(from, module)
-        } else {
-            None
+    /// The repository files the import statement of `from` at `line`, recorded as `module`, names:
+    /// the files `refs` would look its names up in. None when the resolver does not read the
+    /// language of `from`; an empty list when it reads it and finds no file.
+    pub fn import_files(&mut self, from: &str, line: i64, module: &str) -> Option<Vec<String>> {
+        let fi = self.file(from);
+        let lang = fi.lang?;
+        let mut out: Vec<String> = Vec::new();
+        match lang {
+            Lang::Js => out.extend(self.js_module(from, module)),
+            Lang::Go => out.extend(self.module_files(from, lang, module).unwrap_or_default()),
+            Lang::Python | Lang::Rust => {
+                let kinds: &[&str] = if lang == Lang::Python { &["import_from_statement"] } else { &["use_declaration"] };
+                let range = statement_at(&fi, line, kinds);
+                let named = fi.bindings.iter().filter(|b| range.as_ref().is_some_and(|r| b.sites.first().is_some_and(|s| r.contains(s))));
+                for b in named {
+                    let found = match (lang, &b.item) {
+                        // `from m import x` names the submodule `m.x` when there is one, else `m`
+                        (Lang::Python, Some(item)) => {
+                            let sub = if b.module.ends_with('.') { format!("{}{item}", b.module) } else { format!("{}.{item}", b.module) };
+                            self.py_module(from, &sub).or_else(|| self.py_module(from, &b.module))
+                        }
+                        (Lang::Python, None) => None,
+                        _ => {
+                            let full = match &b.item {
+                                Some(item) if b.module.is_empty() => item.clone(),
+                                Some(item) => format!("{}::{item}", b.module),
+                                None => b.module.clone(),
+                            };
+                            let segs: Vec<&str> = full.split("::").filter(|s| !s.is_empty()).collect();
+                            // the longest prefix that is a module: `crate::a::thing` is in `crate::a`
+                            (1..=segs.len()).rev().find_map(|n| self.rust_module(from, &segs[..n])).and_then(|v| v.into_iter().next())
+                        }
+                    };
+                    out.extend(found);
+                }
+                if out.is_empty() {
+                    out.extend(match lang {
+                        Lang::Python => self.py_module(from, module),
+                        _ => self.module_files(from, lang, module).and_then(|v| v.into_iter().next()),
+                    });
+                }
+            }
         }
+        out.retain(|f| f != from);
+        let mut seen = HashSet::new();
+        out.retain(|f| seen.insert(f.clone()));
+        Some(out)
+    }
+
+    /// The `mod name;` declarations of a Rust file: (line, name, the file of that module).
+    pub fn rust_mods(&mut self, from: &str) -> Vec<(i64, String, Option<String>)> {
+        let fi = self.file(from);
+        let (Some(Lang::Rust), Some(tree)) = (fi.lang, &fi.tree) else { return Vec::new() };
+        let mut out = Vec::new();
+        let mut stack = vec![(tree.root_node(), Self::rust_mod_dir(from))];
+        while let Some((n, dir)) = stack.pop() {
+            let mut cur = n.walk();
+            for ch in n.named_children(&mut cur) {
+                if ch.kind() != "mod_item" {
+                    continue;
+                }
+                let Some(name) = ch.child_by_field_name("name").map(|x| text(x, &fi.src).to_string()) else { continue };
+                let sub = join(&dir, &name);
+                match ch.child_by_field_name("body") {
+                    Some(body) => stack.push((body, sub)),
+                    None => out.push((ch.start_position().row as i64 + 1, name, self.rust_mod_file(&sub))),
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+
+    /// The Rust files that may declare `mod` for `path`: the module files of its parent directory.
+    pub fn rust_mod_parents(&self, path: &str) -> Vec<String> {
+        let d = dir_of(&Self::rust_mod_dir(path)).to_string();
+        let mut cands = vec![format!("{d}/mod.rs"), format!("{d}/lib.rs"), format!("{d}/main.rs"), format!("{d}.rs")];
+        if d.is_empty() {
+            cands = vec!["lib.rs".into(), "main.rs".into()];
+        }
+        cands.retain(|c| self.files.contains(c) && c != path);
+        cands
     }
 
     /// The file an import path without its extension stands for.
@@ -1615,6 +1688,21 @@ fn plain_json(text: &str) -> String {
         }
     }
     out
+}
+
+/// Byte range of the statement of one of `kinds` that starts on (1-based) `line`.
+fn statement_at(fi: &FileInfo, line: i64, kinds: &[&str]) -> Option<std::ops::Range<usize>> {
+    let row = usize::try_from(line - 1).ok()?;
+    let text_line = fi.src.lines().nth(row)?;
+    let column = text_line.len() - text_line.trim_start().len();
+    let at = Point { row, column };
+    let mut n = fi.tree.as_ref()?.root_node().named_descendant_for_point_range(at, at)?;
+    loop {
+        if kinds.contains(&n.kind()) && n.start_position().row == row {
+            return Some(n.byte_range());
+        }
+        n = n.parent()?;
+    }
 }
 
 fn first_leaf(mut n: Node) -> Node {

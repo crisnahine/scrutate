@@ -35,6 +35,10 @@ def unpack_text(blob) -> str:
     return zlib.decompress(blob).decode("utf8")
 
 SCHEMA_VERSION = 13
+# What the parser and tokenizer make of a file; the engine's index.rs holds the same value. Bump it
+# with every change of the rules in parse.py or text.py (and langs.rs, parse.rs, text.rs): an index
+# of another revision reads every file again on its next update.
+CONTENT_REVISION = 1
 MAX_SEGMENTS = 6          # more live segments than this triggers a merge of the small ones
 SMALL_INDEX_ROWS = 8000   # an index this small is kept as ONE segment (a rewrite costs a few ms)
 GC_AGE_S = 600            # unreferenced segment directories younger than this may be in flight
@@ -241,6 +245,8 @@ class Index:
         self.db.executescript(SCHEMA)
         self.set_meta("schema_version", str(SCHEMA_VERSION))
         self.set_meta("model_sig", sem_sig)
+        if self.meta("content_rev") != str(CONTENT_REVISION) and not self.db.execute("SELECT 1 FROM files LIMIT 1").fetchone():
+            self.set_meta("content_rev", str(CONTENT_REVISION))
         self._lex: LexStore | None = None
         self._lex_ver: str | None = None
         self._last_refresh = 0.0
@@ -342,6 +348,8 @@ class Index:
             # patched afterwards instead of recomputed
             in_sync = (self._lex is not None and self._lex_ver == (self.meta("data_version") or "0")
                        and self._lex.names == self.segments())
+            reparse = self.meta("content_rev") != str(CONTENT_REVISION)
+            force = force or reparse
             scan_t0 = time.monotonic()
             known = {r["path"]: (r["size"], r["mtime_ns"], r["hash"])
                      for r in self.db.execute("SELECT path,size,mtime_ns,hash FROM files")}
@@ -392,6 +400,8 @@ class Index:
                 builder.write(os.path.join(self.seg_dir, seg_name))
                 self.set_meta("segments", json.dumps(self.segments() + [seg_name]))
             self.set_meta("next_id", str(next_id))
+            if reparse:
+                self.set_meta("content_rev", str(CONTENT_REVISION))
             changed = changed or bool(removed)
             if changed:
                 new_ver = self._bump_version()  # same transaction as the manifest: readers never see one without the other
