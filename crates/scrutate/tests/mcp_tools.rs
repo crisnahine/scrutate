@@ -283,3 +283,34 @@ fn read_code_takes_the_smallest_start_as_line_one() {
     let text = r.ok("read_code", json!({"path": "m.py", "start": i64::MIN}));
     assert!(text.contains("a = 1") && !text.contains("past the end"), "{text}");
 }
+
+#[test]
+fn type_colon_colon_method_names_one_definition_like_type_dot_method() {
+    let mut r = Repo::new(
+        "scoped",
+        &[
+            (
+                "src/config.rs",
+                "pub struct Config;\n\nimpl Config {\n    pub fn new() -> Config {\n        Config::helper();\n        Config\n    }\n    fn helper() {}\n}\n\npub struct Other;\n\nimpl Other {\n    pub fn new() -> Other {\n        Other\n    }\n}\n\npub fn make() -> Config {\n    Config::new()\n}\n",
+            ),
+            ("widget.cpp", "class Widget { public: void draw(); };\n\nvoid Widget::draw() {\n    int x = 1;\n}\n"),
+            ("store.go", "package store\n\ntype Store struct{}\n\nfunc (s *Store) Get() int {\n\treturn 1\n}\n"),
+            ("store.rb", "class Shelf\n  def get\n    1\n  end\nend\n"),
+            ("a::b.py", "def in_odd_file():\n    return 1\n"),
+        ],
+    );
+    for (dotted, scoped) in [("Config.new", "Config::new"), ("Widget.draw", "Widget::draw"), ("Store.Get", "Store::Get"), ("Shelf.get", "Shelf#get")] {
+        let want = r.ok("find_symbol", json!({"name": dotted}));
+        assert_ne!(want, "(no results)", "{dotted}");
+        assert_eq!(r.ok("find_symbol", json!({"name": scoped})), want, "{scoped}");
+    }
+    assert_eq!(heads(&r.ok("find_symbol", json!({"name": "Config::new"}))), ["src/config.rs:4-7  [function] Config.new"]);
+    assert_eq!(r.ok("find_symbol", json!({"name": "Widget->draw"})), r.ok("find_symbol", json!({"name": "Widget.draw"})));
+    assert_eq!(r.ok("find_symbol", json!({"name": "::make"})), r.ok("find_symbol", json!({"name": "make"})));
+    for (tool, key) in [("read_code", "symbol"), ("callers", "name"), ("callees", "name"), ("similar_code", "target")] {
+        assert_eq!(r.call(tool, json!({key: "Config::new"})), r.call(tool, json!({key: "Config.new"})), "{tool}");
+    }
+    assert!(r.ok("callers", json!({"name": "Config::new"})).contains("make"));
+    assert!(r.ok("read_code", json!({"symbol": "a::b.py:1-2"})).contains("in_odd_file"));
+    assert!(r.ok("find_symbol", json!({"name": "a::b.py:1"})).contains("a::b.py:1-2"));
+}

@@ -421,3 +421,32 @@ fn functions_that_differ_only_in_a_literal_are_near_duplicates() {
     let (_, out) = three.run(&["dupes", "--min-tokens", "1", "--threshold", "0"]);
     assert!(out.contains("exact") && out.contains("near") && out.contains("sum_b"), "{out}");
 }
+
+#[test]
+fn callers_of_a_common_name_list_the_resolved_ones_first() {
+    let unsure = |f: &str| format!("pub fn {f}(x: &dyn Make) {{\n    x.new();\n}}\n");
+    let r = Repo::new(
+        "callers_order",
+        &[
+            ("crates/aaa/src/lib.rs", &unsure("a_far")),
+            (
+                "crates/one/src/lib.rs",
+                "pub struct Id;\n\nimpl Id {\n    pub fn new() -> Id {\n        Id\n    }\n}\n\npub fn z_resolved() -> Id {\n    Id::new()\n}\n",
+            ),
+            ("crates/one/src/near.rs", &unsure("n_near")),
+            ("crates/bbb/src/lib.rs", "pub fn b_names_owner(y: &dyn Make) -> Option<Id> {\n    y.new()\n}\n"),
+            ("crates/two/src/lib.rs", "pub struct Other;\n\nimpl Other {\n    pub fn new() -> Other {\n        Other\n    }\n}\n"),
+        ],
+    );
+    let lib = r.lib();
+    let names = |name: &str, limit: usize| -> Vec<String> { lib.callers(name, limit).unwrap().into_iter().map(|h| h.qualname).collect() };
+    assert_eq!(names("Id.new", 1), ["z_resolved"]);
+    assert_eq!(names("Id.new", 4), ["z_resolved", "b_names_owner", "n_near", "a_far"]);
+    assert_eq!(names("Other.new", 4), ["a_far", "b_names_owner", "n_near"]);
+
+    let (code, out) = r.run(&["callers", "Other.new"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.trim_end().ends_with("(the resolver could not tell whether any of these calls this definition or another of the same name)"), "{out}");
+    let (_, out) = r.run(&["callers", "Id.new"]);
+    assert!(out.contains("(3 of these call a definition of that name"), "{out}");
+}

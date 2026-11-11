@@ -102,10 +102,12 @@ impl Repo {
 
     /// `update` before a read, unless the index was checked less than `min_interval` seconds
     /// ago. When it cannot run (another process holds the write lock, the index directory is
-    /// read-only) the read answers from the last committed index, and stderr says why once.
+    /// read-only) the read answers from the last committed index, and stderr says why once. A
+    /// lock held while the committed index has no file is a first build: `index::BeingBuilt`.
     pub fn refresh(&mut self, min_interval: f64) -> Result<Option<index::UpdateStats>> {
         match self.ix.refresh_or_fail(min_interval) {
             Err(e) if index::error_is_corruption(&e) => self.rebuild(&e).map(Some),
+            Err(e) if e.is::<index::Busy>() && !self.ix.has_files()? => Err(index::BeingBuilt.into()),
             Err(e) => {
                 if !self.stale {
                     eprintln!("[scrutate] index not updated ({e:#}); answering from it as it is");
@@ -129,6 +131,12 @@ impl Repo {
         if !matches!(op, ops::Op::Read { symbol: None, .. }) {
             self.refresh(min_interval)?;
         }
+        self.run_as_is(op)
+    }
+
+    /// Run one operation on the index as it is, without refreshing it; a damaged database is
+    /// still rebuilt and the operation run again.
+    pub fn run_as_is(&mut self, op: &ops::Op) -> Result<ops::Answer> {
         match ops::run(self, op) {
             Err(e) if index::error_is_corruption(&e) => {
                 self.rebuild(&e)?;

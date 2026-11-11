@@ -69,7 +69,7 @@ fn tool_table() -> Value {
              "k": {"type": "integer", "default": ops::SEARCH_K}}, "required": ["query"]}},
         {"name": "grep_code", "description": "Exact regex search of the files the index holds: hidden ones such as .github/ included; ignored files, .git/ and dependency or cache directories such as node_modules/ not (case-sensitive; (?i) in the pattern for any case), matching lines grouped by the enclosing function/class.",
          "inputSchema": {"type": "object", "properties": {"pattern": {"type": "string"}, "max_results": {"type": "integer", "default": ops::GREP_MAX}}, "required": ["pattern"]}},
-        {"name": "find_symbol", "description": "Where is this function/class/method defined? (`Class.method` works, and so does a location from another answer).",
+        {"name": "find_symbol", "description": "Where is this function/class/method defined? (`Class.method` works, as do `Class::method`, `Class#method` and a location from another answer).",
          "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "limit": {"type": "integer", "default": ops::SYMBOL_LIMIT}}, "required": ["name"]}},
         {"name": "callers", "description": "Which functions call this function?",
          "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "limit": {"type": "integer", "default": ops::CALLERS_LIMIT}}, "required": ["name"]}},
@@ -125,7 +125,7 @@ pub fn call_tool(repo: &mut Repo, name: &str, args: &Value, settings: &Settings)
         }
         let mut last = settings.last_scan.lock().unwrap_or_else(|p| p.into_inner());
         if last.is_some_and(|t| t.elapsed().as_secs_f64() < settings.refresh_interval) {
-            return ops::run(repo, &op);
+            return repo.run_as_is(&op);
         }
         *last = Some(Instant::now());
         repo.run(&op, 0.0)
@@ -140,9 +140,14 @@ pub fn call_tool(repo: &mut Repo, name: &str, args: &Value, settings: &Settings)
             }
             Called { text, structured, is_error: false }
         }
+        Err(e) if e.is::<crate::index::BeingBuilt>() => Called::note(STILL_BUILDING.to_string(), false),
         Err(e) => Called::note(format!("error: {e}"), true),
     }
 }
+
+/// The answer to a call that came before the first index of the repository is ready.
+const STILL_BUILDING: &str =
+    "scrutate is still building its index of this repository (first use, or many files changed). Call the tool again in a little while.";
 
 /// Where messages go: stdout in the server, a list in its tests.
 type Wire<'a> = dyn Fn(Value) + Sync + 'a;
@@ -228,8 +233,7 @@ fn run_call(send: &Wire, repo: &Mutex<Repo>, building: &AtomicBool, calls: &Call
     let called = if gone() {
         None
     } else if building.load(Ordering::Acquire) {
-        let wait = "scrutate is still building its index of this repository (first use, or many files changed). Call the tool again in a little while.";
-        Some(Called::note(wait.to_string(), false))
+        Some(Called::note(STILL_BUILDING.to_string(), false))
     } else {
         // a panic in an earlier call poisons the lock; the repository behind it is whole
         let mut repo = repo.lock().unwrap_or_else(|p| p.into_inner());

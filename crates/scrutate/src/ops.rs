@@ -488,17 +488,29 @@ fn resolve_in(rv: &mut Resolver, s: &Searcher, path: &str, (start, end): (i64, i
     (got, undecided || !seen)
 }
 
+/// The directory a file's package starts at: what comes before its `src/`, else its top directory.
+fn package(path: &str) -> &str {
+    match path.strip_prefix("src/").map(|_| 0).or_else(|| path.find("/src/")) {
+        Some(i) => &path[..i],
+        None => path.split_once('/').map_or("", |(top, _)| top),
+    }
+}
+
 /// The definitions whose code calls what `name` stands for, and how many of them were kept only
-/// because the resolver could not tell which same-named definition they call.
+/// because the resolver could not tell which same-named definition they call. Those come after
+/// the decided ones, first the ones whose code names the target's type, then the ones in its package.
 pub(crate) fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit>, usize)> {
     let targets = targets(s, name, 500)?;
     let ids: HashSet<i64> = targets.iter().map(|t| t.id).collect();
     let names: std::collections::BTreeSet<&str> = targets.iter().map(|t| t.name.as_str()).collect();
+    let owners: HashSet<&str> =
+        targets.iter().filter_map(|t| t.qualname.rsplit_once('.').map(|(o, _)| o.rsplit('.').next().unwrap_or(o))).filter(|o| !o.is_empty()).collect();
+    let packages: HashSet<&str> = targets.iter().map(|t| package(&t.path)).collect();
     let fits = |path: &str| targets.iter().any(|t| same_family(&t.path, path));
     let cols = crate::index::CHUNK_COLS.split(',').map(|c| format!("c.{c}")).collect::<Vec<_>>().join(",");
     let mut calls = s.ix.db.prepare(&format!("SELECT DISTINCT {cols} FROM refs r JOIN chunks c ON c.id=r.chunk_id WHERE r.callee=?1 ORDER BY c.is_test"))?;
     let mut namesakes = s.ix.db.prepare("SELECT id, path FROM chunks WHERE name=?1 AND kind != 'window'")?;
-    let (mut out, mut undecided, mut seen) = (Vec::new(), 0, HashSet::new());
+    let (mut out, mut unsure_rows, mut seen) = (Vec::new(), Vec::new(), HashSet::new());
     let mut rv = Resolver::new(&s.ix)?;
     for n in names {
         let rows: Vec<(i64, String)> = namesakes.query_map([n], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
@@ -512,19 +524,29 @@ pub(crate) fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit
             if rivals {
                 let (got, unsure) = resolve_in(&mut rv, s, &row.path, (row.start, row.end), n);
                 if got.is_disjoint(&ids) {
-                    if !unsure {
-                        continue;
+                    if unsure {
+                        unsure_rows.push(row);
                     }
-                    undecided += 1;
+                    continue;
                 }
             }
             out.push(Hit::from_row(&row, true));
             if out.len() >= limit {
-                return Ok((out, undecided));
+                return Ok((out, 0));
             }
         }
     }
+    let names_owner = |text: &str| owners.iter().any(|o| has_word(text, o));
+    unsure_rows.sort_by_cached_key(|r| (!names_owner(&r.text), !packages.contains(package(&r.path)), r.path.clone(), r.start));
+    let undecided = unsure_rows.len().min(limit - out.len());
+    out.extend(unsure_rows.iter().take(undecided).map(|r| Hit::from_row(r, true)));
     Ok((out, undecided))
+}
+
+/// Whether `word` is in `text` where it is not part of a longer identifier.
+fn has_word(text: &str, word: &str) -> bool {
+    let ident = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+    text.match_indices(word).any(|(i, _)| !ident(text[..i].chars().next_back()) && !ident(text[i + word.len()..].chars().next()))
 }
 
 /// What the code of the definitions `name` stands for calls: definitions of the repository in
@@ -719,8 +741,9 @@ impl Answer {
             Answer::Callers { hits, .. } if hits.is_empty() => nothing("(no results)".to_string()),
             Answer::Callers { hits, undecided } => Parts {
                 items: hit_blocks(hits, &[], false, false),
-                tail: match undecided {
+                tail: match *undecided {
                     0 => String::new(),
+                    n if n == hits.len() => "(the resolver could not tell whether any of these calls this definition or another of the same name)".to_string(),
                     n => format!("({n} of these call a definition of that name the resolver could not identify: it may be another one)"),
                 },
                 noun: "results",

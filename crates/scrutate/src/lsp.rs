@@ -281,7 +281,12 @@ impl Server {
             if !existed {
                 log(3, &format!("scrutate: no index in {}; building it", root.display()));
             }
-            match crate::open_updated(&root, false) {
+            // another process's first build: read what it commits as it commits it
+            let opened = crate::open_updated(&root, false).or_else(|e| match e.is::<crate::index::BeingBuilt>() {
+                true => crate::open(&root).map(|s| (s, Default::default())),
+                false => Err(e),
+            });
+            match opened {
                 Ok((s, st)) => {
                     if !existed || st.files_changed > 0 || st.files_removed > 0 {
                         log(

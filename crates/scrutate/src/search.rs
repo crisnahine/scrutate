@@ -557,6 +557,9 @@ impl Searcher {
 
     // ----------------------------------------------------------------- navigation
     pub fn find_symbol(&self, name: &str, limit: usize) -> Result<Vec<Hit>> {
+        // `Type::method`, `Type#method` and `p->method` are spelled `Type.method` in the index
+        let name = &name.replace("::", ".").replace("->", ".").replace('#', ".");
+        let name = name.trim_start_matches('.');
         let key = name_key(name.rsplit('.').next().unwrap_or(name));
         // An empty ?3 means no qualifier; the qualifier filter must run before LIMIT.
         let qual = if name.contains('.') { name_key(name) } else { String::new() };

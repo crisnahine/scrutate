@@ -428,6 +428,30 @@ impl std::fmt::Display for Damaged {
 
 impl std::error::Error for Damaged {}
 
+/// Another process holds the write lock.
+#[derive(Debug)]
+pub struct Busy;
+
+impl std::fmt::Display for Busy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("another process is updating the index")
+    }
+}
+
+impl std::error::Error for Busy {}
+
+/// A read found no committed file while another process holds the write lock: a first build.
+#[derive(Debug)]
+pub struct BeingBuilt;
+
+impl std::fmt::Display for BeingBuilt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the index is being built by another process; try again when it finishes")
+    }
+}
+
+impl std::error::Error for BeingBuilt {}
+
 /// True when an error anywhere in `e`'s chain is SQLite corruption or other damage to the index
 /// files (a chunk text that does not inflate, `Damaged`).
 pub fn error_is_corruption(e: &anyhow::Error) -> bool {
@@ -446,6 +470,28 @@ pub fn error_is_corruption(e: &anyhow::Error) -> bool {
 pub fn wipe_index(root: &Path) {
     if let Ok(dir) = crate::files::index_dir(root) {
         Index::wipe(&dir, &dir.join("seg"));
+    }
+}
+
+/// An update that changed at least this many files hands the memory it freed back to the system.
+const RELEASE_AFTER_FILES: usize = 1000;
+
+/// Give the pages the allocator keeps after a large update back to the system (macOS, glibc).
+fn release_free_memory() {
+    #[cfg(target_os = "macos")]
+    {
+        extern "C" {
+            fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
+        }
+        // a null zone means every zone; a goal of 0 means as much as possible
+        unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
+    }
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        extern "C" {
+            fn malloc_trim(pad: usize) -> std::ffi::c_int;
+        }
+        unsafe { malloc_trim(0) };
     }
 }
 
@@ -782,9 +828,7 @@ impl Index {
             let r = self.db.execute_batch("BEGIN IMMEDIATE");
             self.db.busy_timeout(Duration::from_secs(30))?;
             match r {
-                Err(rusqlite::Error::SqliteFailure(f, _)) if f.code == rusqlite::ffi::ErrorCode::DatabaseBusy => {
-                    anyhow::bail!("another process is updating the index")
-                }
+                Err(rusqlite::Error::SqliteFailure(f, _)) if f.code == rusqlite::ffi::ErrorCode::DatabaseBusy => return Err(Busy.into()),
                 r => r?,
             }
         }
@@ -821,6 +865,9 @@ impl Index {
             // a long-running process would otherwise keep a build's word caches for its whole life
             rayon::broadcast(|_| crate::text::clear_caches());
             crate::text::clear_caches();
+            if st.files_changed + st.files_removed >= RELEASE_AFTER_FILES {
+                release_free_memory();
+            }
         }
         st.chunks = self.db.query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))?;
         st.seconds = t0.elapsed().as_secs_f64();
@@ -993,8 +1040,10 @@ impl Index {
             }
         }
         let st = self.update_with(false, wait);
-        // a failing update is not retried on every call either
-        self.last_refresh = Some(Instant::now());
+        // a failing update is not retried on every call either; a busy lock costs nothing to try
+        if !st.as_ref().is_err_and(|e| e.is::<Busy>()) {
+            self.last_refresh = Some(Instant::now());
+        }
         st.map(Some)
     }
 
@@ -1203,6 +1252,11 @@ impl Index {
             }
         }
         Ok(r)
+    }
+
+    /// Whether the committed index holds any file.
+    pub fn has_files(&self) -> Result<bool> {
+        Ok(self.db.query_row("SELECT EXISTS(SELECT 1 FROM files)", [], |r| r.get(0))?)
     }
 
     pub fn stats(&self) -> Result<serde_json::Value> {

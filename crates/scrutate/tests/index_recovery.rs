@@ -219,6 +219,19 @@ fn damaged_chunk_text_is_rebuilt_on_the_next_call() {
     assert!(answer.text_within(100_000, 0).contains("alpha"));
 }
 
+#[test]
+fn damaged_chunk_text_is_rebuilt_inside_an_explicit_refresh_interval() {
+    let t = Tmp::new("blob_interval");
+    fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+    let mut repo = scrutate::Repo::open(&t.0).unwrap();
+    let settings = scrutate::mcp::Settings::new(None, Some(3600.0));
+    let args = serde_json::json!({"query": "alpha"});
+    assert!(scrutate::mcp::call_tool(&mut repo, "search_code", &args, &settings).text.contains("alpha"));
+    repo.ix.db.execute("UPDATE chunks SET text=x'00112233'", []).unwrap();
+    let c = scrutate::mcp::call_tool(&mut repo, "search_code", &args, &settings);
+    assert!(!c.is_error && c.text.contains("alpha"), "{}", c.text);
+}
+
 fn op(tool: &str, args: serde_json::Value) -> scrutate::ops::Op {
     scrutate::ops::Op::from_tool(tool, &args).unwrap()
 }
@@ -269,6 +282,27 @@ fn a_held_write_lock_does_not_block_readers() {
     other.execute_batch("ROLLBACK").unwrap();
     assert_eq!(writer.join().unwrap().files_changed, 1);
     assert_eq!(repo.find_symbol("beta", 5).unwrap().len(), 1);
+}
+
+#[test]
+fn a_read_while_another_process_builds_the_first_index_says_so() {
+    let t = Tmp::new("first_build");
+    fs::write(t.0.join("a.py"), "def only_here():\n    return 1\n").unwrap();
+    drop(scrutate::Repo::open(&t.0).unwrap());
+    let other = rusqlite::Connection::open(t.0.join(".scrutate/index.db")).unwrap();
+    other.execute_batch("BEGIN IMMEDIATE").unwrap();
+
+    let (code, err) = run(&t.0, &["symbol", "only_here"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("being built by another process"), "{err}");
+
+    let mut repo = scrutate::Repo::open(&t.0).unwrap();
+    let c = scrutate::mcp::call_tool(&mut repo, "find_symbol", &serde_json::json!({"name": "only_here"}), &scrutate::mcp::Settings::new(None, Some(0.0)));
+    assert!(!c.is_error && c.text.contains("still building its index"), "{}", c.text);
+
+    other.execute_batch("ROLLBACK").unwrap();
+    let (code, err) = run(&t.0, &["symbol", "only_here"]);
+    assert_eq!(code, 0, "{err}");
 }
 
 #[cfg(unix)]
