@@ -285,6 +285,9 @@ pub fn dupes(ix: &Index, min_tokens: usize, threshold: f32, limit: usize) -> Res
         })?
         .collect::<rusqlite::Result<_>>()?;
     let mut exact: HashMap<u64, Vec<usize>> = HashMap::new();
+    // the same words in the same order: bodies that differ in operators, numbers or spacing
+    let mut same_words: HashMap<u64, Vec<usize>> = HashMap::new();
+    let mut word_key: Vec<u64> = Vec::with_capacity(rows.len());
     let mut sets: Vec<HashSet<u64>> = Vec::with_capacity(rows.len());
     let mut sizes: Vec<usize> = Vec::with_capacity(rows.len());
     let mut buckets: HashMap<(usize, u64), Vec<usize>> = HashMap::new();
@@ -301,8 +304,17 @@ pub fn dupes(ix: &Index, min_tokens: usize, threshold: f32, limit: usize) -> Res
             }
             seq = (seq ^ 0x20).wrapping_mul(1099511628211);
         }
+        let mut words = 1469598103934665603u64;
+        for t in &toks {
+            for b in t.as_bytes() {
+                words = (words ^ *b as u64).wrapping_mul(1099511628211);
+            }
+            words = (words ^ 0x2e).wrapping_mul(1099511628211);
+        }
+        word_key.push(words);
         if toks.len() >= min_tokens {
             exact.entry(seq).or_default().push(i);
+            same_words.entry(words).or_default().push(i);
         }
         let sh = shingles(&toks);
         if sh.len() >= 8 {
@@ -335,14 +347,29 @@ pub fn dupes(ix: &Index, min_tokens: usize, threshold: f32, limit: usize) -> Res
             members: ms.iter().map(|&i| (rows[i].1.clone(), rows[i].2.clone(), rows[i].3, rows[i].4)).collect(),
         });
     }
+    // a threshold of 1 asks for exact duplicates only
+    for members in same_words.values().filter(|m| threshold < 1.0 && m.len() > 1) {
+        let mut ms: Vec<usize> = members.clone();
+        ms.sort();
+        ms.dedup_by(|b, a| rows[*a].1 == rows[*b].1 && rows[*a].3 <= rows[*b].4 && rows[*b].3 <= rows[*a].4);
+        // one text for all of them is the exact group above
+        if ms.len() < 2 || ms.iter().all(|i| in_exact.contains_key(i) && in_exact.get(i) == in_exact.get(&ms[0])) {
+            continue;
+        }
+        out.push(DupGroup {
+            kind: "near",
+            similarity: 1.0,
+            tokens: sizes[ms[0]],
+            members: ms.iter().map(|&i| (rows[i].1.clone(), rows[i].2.clone(), rows[i].3, rows[i].4)).collect(),
+        });
+    }
     let mut seen_pairs: HashSet<(usize, usize)> = HashSet::new();
     let mut near: Vec<(f32, usize, usize)> = Vec::new();
-    // a threshold of 1 asks for exact duplicates only
     for (_, members) in buckets.iter().filter(|(_, m)| threshold < 1.0 && m.len() > 1 && m.len() <= 64) {
         for a in 0..members.len() {
             for b in a + 1..members.len() {
                 let (i, j) = (members[a].min(members[b]), members[a].max(members[b]));
-                if i == j || (in_exact.contains_key(&i) && in_exact.get(&i) == in_exact.get(&j)) || !seen_pairs.insert((i, j)) {
+                if i == j || word_key[i] == word_key[j] || !seen_pairs.insert((i, j)) {
                     continue;
                 }
                 // a container and the symbol nested inside it share text: not a duplicate

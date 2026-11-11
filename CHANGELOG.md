@@ -149,8 +149,8 @@ First release.
   (`max_bytes`), cut at whole items, with the `offset` that continues it; the CLI has the same as
   `--max-bytes` (`SCRUTATE_MAX_BYTES`) and `--offset`; a first index build blocks a tool call for
   at most 20 seconds. `serve --max-bytes` sets the server's default.
-- `reindex` takes `force`, which reads every file again. `grep_code` searches hidden files such
-  as `.github/`, as the index holds them.
+- `reindex` takes `force`, which reads every file again. `grep_code` searches the files the
+  index holds: hidden ones such as `.github/`, not `.git/` or `node_modules/`.
 - JSON-RPC answers as the specification gives them: batches answered as one array, -32700 for a
   line that is not JSON or not UTF-8, -32600 for a message that is not an object or has no `method`, -32601 for an
   unknown method, -32602 for an unknown tool; notifications are never answered.

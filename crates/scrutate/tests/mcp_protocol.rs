@@ -228,3 +228,10 @@ fn an_explicit_refresh_interval_is_a_floor() {
     assert!(!floor.text(2, "find_symbol", find("arrived_late")).contains("pkg/late.py"), "no scan within the interval");
     assert!(default.text(2, "find_symbol", find("arrived_late")).contains("pkg/late.py"), "a cheap scan is not held back by default");
 }
+
+#[test]
+fn serve_refuses_an_offset_it_would_not_use() {
+    let r = Repo::new("offset", 3);
+    let out = spawn(&r, &["--offset", "2", "serve"], &[]).wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(2));
+}

@@ -16,7 +16,8 @@ What a client gets (details in docs/CLI.md, `serve`):
 - answers of at most 24,000 bytes by default (`max_bytes`, or `serve --max-bytes` for another
   default), closing line included, cut at whole items, with the `offset` that continues them;
 - `grep_code` at the speed of `scrutate grep`, with matches grouped by enclosing symbol; it
-  searches hidden files such as `.github/` (not ignored files, not `.git/`), as the index does;
+  searches the files the index holds: hidden ones such as `.github/`, not ignored files, `.git/`
+  or `node_modules/`;
 - `reindex` with `force: true` to read every file again, also one whose size and modification
   time did not change;
 - a location (`path:start-end`) at the start of every result, accepted wherever a tool takes a

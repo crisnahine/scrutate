@@ -77,6 +77,11 @@ fn skip_dirs(git: bool) -> Vec<String> {
     skip
 }
 
+/// The directory names the code index of `root` never enters.
+pub fn skipped_dirs(root: &Path) -> Vec<String> {
+    skip_dirs(in_git(root))
+}
+
 /// Relative paths ('/' separated, sorted) of the files worth indexing: the same rules as ripgrep's
 /// file listing (.gitignore, hidden files) plus the usual build/vendor directories.
 pub fn list_files(root: &Path) -> Vec<String> {

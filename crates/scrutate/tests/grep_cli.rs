@@ -283,3 +283,18 @@ fn tsquery_shows_control_characters_in_paths_as_escapes() {
     assert_eq!(out.lines().count(), 1, "{out}");
     assert!(out.contains(r"a\nb\x1b.py:1:"), "{out}");
 }
+
+#[test]
+fn symbols_are_found_for_matches_under_a_path_argument() {
+    let d = Dir::new("symbols_sub");
+    d.write("sub/c.py", b"def holder():\n    needle = 1\n    return needle\n");
+    assert_eq!(d.run(&["index"]).0, 0);
+    for path in ["sub", "sub/", "./sub", "."] {
+        let (code, out, _) = d.run(&["grep", "--symbols", "needle", path]);
+        assert_eq!(code, 0);
+        assert!(out.contains("sub/c.py:1-3  [function] holder"), "{path}: {out}");
+    }
+    let abs = d.0.join("sub");
+    let (_, out, _) = d.run(&["grep", "--symbols", "needle", abs.to_str().unwrap()]);
+    assert!(out.contains("sub/c.py:1-3  [function] holder"), "{out}");
+}

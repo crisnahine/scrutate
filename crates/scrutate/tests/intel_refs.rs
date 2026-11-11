@@ -401,3 +401,23 @@ fn searcher_callers_and_callees_keep_namesakes_apart() {
     let refs = scrutate::intel::references(&lib, "dup_name", 100).unwrap();
     assert_eq!(refs.callers.len(), 2);
 }
+
+#[test]
+fn functions_that_differ_only_in_a_literal_are_near_duplicates() {
+    let f = |name: &str, k: u32| format!("def {name}(items):\n    total = 0\n    for item in items:\n        total += item * {k}\n    return total\n");
+    let (a, b, c) = (f("sum_a", 2), f("sum_b", 5), f("sum_c", 2));
+    let two = Repo::new("dupes_literal", &[("a.py", &a), ("b.py", &b)]);
+    let (_, out) = two.run(&["dupes", "--min-tokens", "1", "--threshold", "0"]);
+    assert!(out.contains("near") && out.contains("1.00") && out.contains("sum_a") && out.contains("sum_b"), "{out}");
+    let (_, exact_only) = two.run(&["dupes", "--min-tokens", "1", "--threshold", "1"]);
+    assert!(!exact_only.contains("sum_a"), "{exact_only}");
+    // one group however many share the words: the pairwise search gives up on large buckets
+    let many: Vec<(String, String)> = (0..100).map(|i| (format!("m{i}.py"), f(&format!("sum_{i}"), i))).collect();
+    let refs: Vec<(&str, &str)> = many.iter().map(|(p, s)| (p.as_str(), s.as_str())).collect();
+    let big = Repo::new("dupes_many", &refs);
+    let (_, out) = big.run(&["dupes", "--min-tokens", "1", "--threshold", "0.5", "--limit", "5"]);
+    assert!(out.contains("near") && out.matches("sum_").count() >= 100, "{out}");
+    let three = Repo::new("dupes_three", &[("a.py", &a), ("b.py", &b), ("c.py", &c)]);
+    let (_, out) = three.run(&["dupes", "--min-tokens", "1", "--threshold", "0"]);
+    assert!(out.contains("exact") && out.contains("near") && out.contains("sum_b"), "{out}");
+}

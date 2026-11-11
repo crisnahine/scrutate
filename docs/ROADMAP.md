@@ -128,8 +128,8 @@ settings in docs/RELEASING.md, public, tag `v0.1.0`.
   until chunk text gets a byte cap in both engines.
 - `refs` treats a JavaScript `var` declared in a nested block as block-scoped.
 - Directories the code index skips by name (`node_modules`, and outside git also `build`, `dist`,
-  `target` and `venv`) are still searched by `scrutate grep` and `grep_code` when no ignore file
-  excludes them.
+  `target` and `venv`) are still searched by `scrutate grep` when no ignore file excludes them; `grep_code` skips
+  them, as the index does.
 - For a single file argument ripgrep leaves out the file name and `scrutate grep` prints it.
 - A `chunks` table that has been emptied is a valid index, not damage, so it is not rebuilt.
 - The Python reference skips a few files the engine indexes (`.gitignore` among them) and ignores

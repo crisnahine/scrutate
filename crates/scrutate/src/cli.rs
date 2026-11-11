@@ -84,7 +84,7 @@ pub struct Cli {
     /// size limit, in bytes, of an answer from the index; a cut answer says how many items are left
     #[arg(long, global = true, value_name = "BYTES", env = "SCRUTATE_MAX_BYTES")]
     pub max_bytes: Option<usize>,
-    /// items of an answer to skip, to continue one that --max-bytes cut
+    /// items of an answer to skip, to continue one that --max-bytes cut (not with serve: a tool call takes its own offset)
     #[arg(long, global = true, value_name = "N", default_value_t = 0)]
     pub offset: usize,
     #[command(subcommand)]
@@ -564,7 +564,7 @@ pub fn run() -> Result<i32> {
                 want_bytes: stats || json,
                 want_spans: json || color_choice(no_color) != ColorChoice::Never,
                 search_zip,
-                paths_as_given: !paths.is_empty() && !symbols,
+                paths_as_given: !paths.is_empty(),
                 small_tree: std::env::var("SCRUTATE_SMALL_TREE").ok().and_then(|v| v.parse().ok()),
                 ..Options::default()
             };
@@ -703,6 +703,9 @@ pub fn run() -> Result<i32> {
             Ok(if n == 0 { 1 } else { 0 })
         }
         Cmd::Serve { refresh_interval, watch, structured } => {
+            if cli.offset != 0 {
+                anyhow::bail!("--offset does nothing with serve: a tool call takes its own offset");
+            }
             let s = crate::Repo::open(&cli.root)?;
             let root = s.ix.root.clone();
             let s = Arc::new(Mutex::new(s));
@@ -1142,6 +1145,12 @@ fn grep_plain(roots: Vec<PathBuf>, o: Options, out: GrepOutput, cancel: Arc<Atom
 fn grouped_by_symbol(root: &Path, hits: &mut Vec<instant::Hit>, w: &mut termcolor::BufferedStandardStream, json: bool) -> Result<()> {
     let s = open_fresh(root)?;
     let mut lines: Vec<instant::Hit> = std::mem::take(hits).into_iter().filter(|h| !h.context).collect();
+    // the index names a file by its path under the root, whatever path the search was given
+    let mut named: std::collections::HashMap<std::sync::Arc<str>, std::sync::Arc<str>> = std::collections::HashMap::new();
+    for h in &mut lines {
+        let under = |p: &str| std::fs::canonicalize(p).ok().and_then(|c| c.strip_prefix(&s.ix.root).ok().map(|r| r.to_string_lossy().replace('\\', "/")));
+        h.path = named.entry(h.path.clone()).or_insert_with_key(|p| under(p).map_or_else(|| p.clone(), Into::into)).clone();
+    }
     lines.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
     for g in crate::intel::group_by_symbol(&s.ix, lines)? {
         let name =

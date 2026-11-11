@@ -23,7 +23,7 @@
 - **Paths**: `scrutate grep` prints a path as the walk reached it from the path given, as grep and
   ripgrep do: `dir/a.txt` for `dir/`, `./dir/a.txt` for `.`, an absolute path for an absolute one,
   and relative to `.` when no path is given (text, `--json`, `-c` and `-l` alike; with `--symbols`
-  a path is relative to the searched root, and a root that is a file is shown as given). A single
+  a path is the file's path under `--root`, as the index names it). A single
   file argument is printed with its name, where ripgrep leaves the name out. `find`, the index
   commands, the MCP tools and the LSP server print paths relative to the repository root. Paths
   are `/`-separated on every platform.
@@ -93,7 +93,7 @@ often while files change.
 | `search QUERY [-k N] [-a ALT]... [--also ROOT]... [--why] [--json]` (alias `s`) | Ranked search by meaning, name or identifier; `--alt` fuses alternative phrasings; `--also` searches other repositories too (paths prefixed with the repository name). |
 | `find QUERY` | Unified: regex-looking → `grep`; otherwise ranked search (indexing a small repository on the spot); otherwise identifier grep. A regex-looking query that finds nothing, or is not a valid regex, goes to ranked search when an index exists. A question with a space and a trailing `?` (`how is the token refreshed?`) is taken as words. |
 | `symbol NAME` | Where is it defined (`Class.method` works). |
-| `callers NAME` / `callees NAME` | Call graph edges resolved to definitions (callee names outside the repository listed after `external:`). A call matches definitions of its own language family only: JavaScript and TypeScript; C, C++, CUDA and Objective-C; Java, Kotlin, Scala and Groovy; Erlang, Elixir and Gleam; C# and F#; every other language alone (a file of no known language matches any); an unknown qualifier (`Nope.refresh`) gives no results, and so does a name with a leading dot. |
+| `callers NAME` / `callees NAME` | Call graph edges resolved to definitions (callee names outside the repository listed after `external:`). A call matches a definition by the name as the call writes it (`Ok(1)` is not a call of `ok`) and in its own language family only: JavaScript and TypeScript; C, C++, CUDA and Objective-C; Java, Kotlin, Scala and Groovy; Erlang, Elixir and Gleam; C# and F#; every other language alone (a file of no known language matches any); an unknown qualifier (`Nope.refresh`) gives no results, and so does a name with a leading dot. |
 | `refs NAME [--def PATH[:LINE]] [--textual] [--max-results N]` | Every whole-word occurrence, each resolved to the definition it refers to, or listed as unresolved with a reason (see below). |
 | `outline FILE` | Symbols of a file in source order. |
 | `deps FILE` / `rdeps TARGET` | Imports of a file (resolved to repository files when possible) / files importing a module or file. An `#include "util.h"` resolves to the file next to the including one; `rdeps` matches an import by its base name only when it resolves to no file. |
@@ -202,15 +202,16 @@ answers the calls in flight, lets a running index build finish, and exits.
   the whole answer, closing line included, fits `max_bytes`. The default is 24,000 bytes (about
   6,000 tokens); `serve --max-bytes N` (or `SCRUTATE_MAX_BYTES`) sets another default, and
   `tools/list` shows it. Both a call's `max_bytes` and the server's default are held between
-  1,000 and 1,000,000, and a call's own value wins. `serve --offset` has no effect.
+  1,000 and 1,000,000, and a call's own value wins. `serve` refuses `--offset`: every tool call takes its own.
 - Arguments: a wrong type or a negative number is a tool error that names the argument (`k must be a
   non-negative integer`), and JSON `null` is the same as leaving an argument out. An error quotes
   at most 200 characters of an argument. Every path argument may be written `./x` or `pkg/../x`.
   In text answers, control characters in a path are shown as escapes (`\n`, `\x1b`); the JSON
   form keeps them as they are.
-- `grep_code` is an Engine A search of the repository's files: hidden files such as `.github/`
-  are searched, as the index holds them; ignored files and `.git/` are not (`scrutate grep`
-  skips hidden files unless `--hidden`). The pattern is a case-sensitive regex (`(?i)` for any
+- `grep_code` is an Engine A search of the files the index holds: hidden files such as `.github/`
+  are searched; ignored files, `.git/` and the directories the index skips by name
+  (`node_modules` and the like) are not (`scrutate grep` skips hidden files unless `--hidden`,
+  and reads those directories unless an ignore file excludes them). The pattern is a case-sensitive regex (`(?i)` for any
   case); matching lines are grouped by enclosing symbol; `max_results` (default 100) stops it,
   and the answer says so. An invalid pattern is an error.
 - `search_code` takes at most 10 `alt_queries`; a cancelled search stops between them.

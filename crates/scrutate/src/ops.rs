@@ -14,7 +14,7 @@ use std::collections::HashSet;
 use crate::fmt::{echo, shown};
 use crate::resolve::{Resolved, Resolver};
 use crate::search::{Hit, Searcher};
-use crate::text::{name_key, query_words};
+use crate::text::query_words;
 
 /// Version of every JSON record scrutate emits.
 pub const SCHEMA: u32 = 1;
@@ -327,9 +327,9 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
                 mode: crate::instant::Mode::Regex,
                 case: crate::instant::Case::Sensitive,
                 max_results: Some(*max_results),
-                // the files the index holds: hidden ones too, never git's own
+                // the files the index holds: hidden ones too, none of the directories it skips
                 hidden: true,
-                globs: vec!["!.git".to_string()],
+                globs: crate::files::skipped_dirs(&s.ix.root).iter().map(|d| format!("!{d}")).collect(),
                 ..crate::instant::Options::default()
             };
             let (groups, stopped) = crate::intel::grouped_grep(s, &o)?;
@@ -370,8 +370,9 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
         }
         Op::Read { path, start, end, .. } => {
             let path = path.as_deref().unwrap_or("");
-            let (lines, total) = s.read_lines(path, *start, end.unwrap_or(start.saturating_add(READ_LINES - 1)))?;
-            Answer::Read { path: path.trim_start_matches("./").to_string(), lines, start: (*start).max(1), total }
+            let start = (*start).max(1);
+            let (lines, total) = s.read_lines(path, start, end.unwrap_or(start.saturating_add(READ_LINES - 1)))?;
+            Answer::Read { path: path.trim_start_matches("./").to_string(), lines, start, total }
         }
         Op::Outline { path } => {
             let path = repo_path(s, path);
@@ -530,7 +531,7 @@ pub(crate) fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit
 /// the same language family, and the names it calls that have none.
 pub(crate) fn callees(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit>, Vec<String>)> {
     let kinds = crate::search::CODE_KINDS.iter().map(|k| format!("'{k}'")).collect::<Vec<_>>().join(",");
-    let mut named = s.ix.db.prepare(&format!("SELECT {} FROM chunks WHERE name_key=?1 AND kind IN ({kinds}) ORDER BY is_test", crate::index::CHUNK_COLS))?;
+    let mut named = s.ix.db.prepare(&format!("SELECT {} FROM chunks WHERE name=?1 AND kind IN ({kinds}) ORDER BY is_test", crate::index::CHUNK_COLS))?;
     let mut calls = s.ix.db.prepare("SELECT DISTINCT callee FROM refs WHERE chunk_id=?1 ORDER BY callee")?;
     let mut rv = Resolver::new(&s.ix)?;
     let (mut resolved, mut external, mut seen) = (Vec::new(), Vec::new(), HashSet::new());
@@ -538,7 +539,7 @@ pub(crate) fn callees(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit
         let names: Vec<String> = calls.query_map([d.id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
         for n in names {
             let rows: Vec<ChunkRow> = named
-                .query_map([name_key(&n)], ChunkRow::from_row)?
+                .query_map([&n], ChunkRow::from_row)?
                 .filter(|r| r.as_ref().map_or(true, |r| same_family(&d.path, &r.path)))
                 .collect::<rusqlite::Result<_>>()?;
             if rows.is_empty() {

@@ -255,10 +255,31 @@ fn structural_search_says_what_is_wrong_with_a_query() {
 fn grep_code_searches_the_hidden_files_the_index_holds_but_not_git_internals() {
     let mut r = Repo::new(
         "hidden",
-        &[("src/a.py", "def needle_fn():\n    return 1\n"), (".github/ci.yml", "name: needle_ci\n"), (".git/logs/HEAD", "needle commit\n")],
+        &[
+            ("src/a.py", "def needle_fn():\n    return 1\n"),
+            (".github/ci.yml", "name: needle_ci\n"),
+            (".git/logs/HEAD", "needle commit\n"),
+            ("node_modules/pkg/index.js", "function needle_dep() {}\n"),
+        ],
     );
     let found = r.ok("grep_code", json!({"pattern": "needle"}));
     assert!(found.contains("src/a.py") && found.contains(".github/ci.yml"), "{found}");
-    assert!(!found.contains(".git/"), "{found}");
+    assert!(!found.contains(".git/") && !found.contains("node_modules"), "{found}");
     assert!(r.ok("search_code", json!({"query": "needle_ci"})).contains(".github/ci.yml"));
+}
+
+#[test]
+fn callees_match_the_name_as_the_call_writes_it() {
+    let src = "pub struct Report;\nimpl Report {\n    pub fn ok(&self) -> bool {\n        true\n    }\n}\npub fn returns_ok() -> Result<i32, ()> {\n    Ok(1)\n}\npub fn some(x: i32) -> i32 {\n    x\n}\npub fn makes_some() -> Option<i32> {\n    Some(1)\n}\npub fn asks(r: &Report) -> bool {\n    r.ok()\n}\n";
+    let mut r = Repo::new("callee_case", &[("src/lib.rs", src)]);
+    assert!(!r.ok("callees", json!({"name": "returns_ok"})).contains("Report.ok"));
+    assert!(!r.ok("callees", json!({"name": "makes_some"})).contains("] some"));
+    assert!(r.ok("callees", json!({"name": "asks"})).contains("Report.ok"));
+}
+
+#[test]
+fn read_code_takes_the_smallest_start_as_line_one() {
+    let mut r = Repo::new("read_min", &[("m.py", "a = 1\nb = 2\n")]);
+    let text = r.ok("read_code", json!({"path": "m.py", "start": i64::MIN}));
+    assert!(text.contains("a = 1") && !text.contains("past the end"), "{text}");
 }
