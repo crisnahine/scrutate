@@ -121,3 +121,54 @@ def test_candidate_cut_keeps_the_lowest_indices_on_tied_scores():
     lin = np.full(10, 0.5, np.float32)
     lin[7] = 2.0
     assert sorted(prune_indices(lin, 3)) == [0, 1, 7]
+
+
+def _tree(root, files):
+    import os
+
+    for rel, body in files.items():
+        p = os.path.join(root, rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w") as f:
+            f.write(body)
+    return make(root)
+
+
+def test_find_symbol_puts_the_name_as_typed_before_thirty_case_folded_namesakes(tmp_path):
+    files = {f"src/m{i:02}.rs": "pub fn error() -> u8 { 1 }\n" for i in range(30)}
+    files["src/zz.rs"] = "pub struct Error { pub code: u8 }\n"
+    s = _tree(str(tmp_path), files)
+    got = [(h.kind, h.qualname) for h in s.find_symbol("Error", limit=20)]
+    assert len(got) == 20 and got[0] == ("struct", "Error")
+    assert all(g == ("function", "error") for g in got[1:])
+    lower = [h.qualname for h in s.find_symbol("error", limit=40)]
+    assert lower == ["error"] * 30 + ["Error"]
+
+
+def test_find_symbol_puts_a_constant_before_a_method_whose_name_differs_in_case(tmp_path):
+    java = "public class Config {\n    public static final int MAX = 5;\n    public int max() { return MAX; }\n}\n"
+    s = _tree(str(tmp_path), {"Config.java": java})
+    want = [("constant", "Config.MAX"), ("method", "Config.max")]
+    assert [(h.kind, h.qualname) for h in s.find_symbol("MAX")] == want
+    assert [(h.kind, h.qualname) for h in s.find_symbol("Config.MAX")] == want
+    assert [(h.kind, h.qualname) for h in s.find_symbol("max")] == want[::-1]
+
+
+def test_find_symbol_puts_a_struct_before_a_function_of_the_same_name(tmp_path):
+    s = _tree(str(tmp_path), {"a.rs": "pub fn Point() -> u8 { 1 }\n", "b.rs": "pub struct Point { pub x: u8 }\n"})
+    assert [(h.kind, h.path) for h in s.find_symbol("Point")] == [("struct", "b.rs"), ("function", "a.rs")]
+
+
+def test_find_symbol_puts_test_files_last_within_the_exact_and_the_folded_answers(tmp_path):
+    s = _tree(str(tmp_path), {"tests/t.rs": "pub struct Error;\npub fn error() {}\n", "src/a.rs": "pub fn error() {}\n",
+                              "src/b.rs": "pub enum Error { A }\n"})
+    assert [(h.qualname, h.path) for h in s.find_symbol("Error")] == [
+        ("Error", "src/b.rs"), ("Error", "tests/t.rs"), ("error", "src/a.rs"), ("error", "tests/t.rs")]
+
+
+def test_find_symbol_puts_a_definition_before_its_prototype(tmp_path):
+    trait = "pub trait Run {\n    fn run(&self);\n}\n"
+    body = "impl Run for u8 {\n    fn run(&self) { let total = self.count(); println!(\"{}\", total); }\n}\n"
+    s = _tree(str(tmp_path), {"a.rs": trait, "b.rs": body})
+    # the trait `Run` matches only after case folding
+    assert [(h.path, h.name) for h in s.find_symbol("run")] == [("b.rs", "run"), ("a.rs", "run"), ("a.rs", "Run")]

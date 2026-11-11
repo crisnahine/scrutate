@@ -240,6 +240,17 @@ pub(crate) fn dotted(name: &str) -> String {
     out
 }
 
+/// The order of a name lookup, `typed` being the parameter that holds the last part of the name as
+/// typed: that exact name before its case-folded namesakes, then non-test files, types, functions,
+/// the rest, and a definition before its prototype.
+fn symbol_order(typed: &str) -> String {
+    format!(
+        "ORDER BY (name IS NOT {typed}), is_test, \
+         CASE WHEN kind IN ('class','struct','enum','trait','interface','type','impl') THEN 0 WHEN kind IN ('function','method') THEN 1 ELSE 2 END, \
+         (nbody = 0)"
+    )
+}
+
 /// A dotted name with a PHP namespace's `\` as a dot and generic arguments (`<T>`, `<'a, T>`)
 /// dropped, so `Stack<T>.push` and `App\Models\User.find` compare with `Stack.push`, `User.find`.
 fn plain(name: &str) -> String {
@@ -612,11 +623,10 @@ impl Searcher {
         }
         let q = name_key(&plain(d));
         let Some((_, last)) = q.rsplit_once('.') else { return Ok(out) };
-        let mut st = self.ix.db.prepare_cached(
-            "SELECT id, qualname FROM chunks WHERE name_key=?1 AND kind!='window' \
-             ORDER BY is_test, (kind IN ('class','function','method')) DESC, (nbody = 0) LIMIT 10000",
-        )?;
-        let cands: Vec<(i64, String)> = st.query_map([last], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+        let typed_last = plain(d).rsplit('.').next().unwrap_or_default().to_string();
+        let mut st =
+            self.ix.db.prepare_cached(&format!("SELECT id, qualname FROM chunks WHERE name_key=?1 AND kind!='window' {} LIMIT 10000", symbol_order("?2")))?;
+        let cands: Vec<(i64, String)> = st.query_map(rusqlite::params![last, typed_last], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
         let stored: Vec<(i64, String)> = cands.into_iter().map(|(id, qn)| (id, name_key(&plain(&dotted(&qn))))).collect();
         let tail = |a: &str, b: &str| a == b || a.ends_with(&format!(".{b}"));
         let ids: Vec<i64> = if !out.is_empty() {
@@ -647,9 +657,11 @@ impl Searcher {
         let mut st = self.ix.db.prepare_cached(&format!(
             "SELECT {CHUNK_COLS} FROM chunks WHERE kind!='window' \
              AND (name_key = ?1 OR qual_key = ?1 OR (name_key = ?3 AND substr(qual_key, -(length(?1) + 1)) = '.' || ?1)) \
-             ORDER BY is_test, (kind IN ('class','function','method')) DESC, (nbody = 0) LIMIT ?2"
+             {} LIMIT ?2",
+            symbol_order("?4")
         ))?;
-        let rows: Vec<ChunkRow> = st.query_map(rusqlite::params![key, limit as i64, last], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
+        let typed_last = name.rsplit('.').next().unwrap_or(name);
+        let rows: Vec<ChunkRow> = st.query_map(rusqlite::params![key, limit as i64, last, typed_last], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
         Ok(rows.iter().map(|r| Hit::from_row(r, true)).collect())
     }
 

@@ -97,6 +97,13 @@ def _lex_keys(q: QueryInfo) -> list[int]:
     return [tok_key(t) for t in toks if t]
 
 
+# the name as typed before its case-folded namesakes, then non-test files, types, functions, the rest,
+# and a definition before its prototype
+_SYMBOL_ORDER = ("ORDER BY (name IS NOT ?), is_test, "
+                 "CASE WHEN kind IN ('class','struct','enum','trait','interface','type','impl') THEN 0 "
+                 "WHEN kind IN ('function','method') THEN 1 ELSE 2 END, (nbody = 0)")
+
+
 class Searcher:
     def __init__(self, index: Index, ranker: TreeEnsemble | None | str = "default"):
         self.ix = index
@@ -349,10 +356,10 @@ class Searcher:
                    r["kind"], unpack_text(r["text"]) if with_text else "")
 
     def find_symbol(self, name: str, limit: int = 20) -> list[Hit]:
-        key = name_key(name.split(".")[-1])
+        typed = name.split(".")[-1]
         rows = self.ix.db.execute(
-            "SELECT * FROM chunks WHERE name_key=? AND kind!='window' ORDER BY is_test, "
-            "(kind IN ('class','function','method')) DESC, (nbody = 0) LIMIT ?", (key, limit * 3)).fetchall()
+            "SELECT * FROM chunks WHERE name_key=? AND kind!='window' " + _SYMBOL_ORDER + " LIMIT ?",
+            (name_key(typed), typed, limit * 3)).fetchall()
         if "." in name:
             suffix = name_key(name)
             rows = [r for r in rows if r["qual_key"] == suffix or r["qual_key"].endswith("." + suffix)]
