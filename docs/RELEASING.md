@@ -157,3 +157,8 @@ is the order immutable releases need. Its notes are the version's section of `CH
 
 After the first run of `ci.yml`: flip R-6.1, R-6.12 and R-9.10 in docs/TRACEABILITY.md from the
 recorded run, not before.
+
+After the release is out: take `open-pull-requests-limit: 0` out of `.github/dependabot.yml`.
+Version updates are paused until then, because each Dependabot pull request runs `ci.yml` on six
+runners, and on a private repository macOS minutes count ten times. A bump of `snowballstemmer`
+changes stems: merge it only with a parity run (`bench/parity.py`) that still ends in `PARITY OK`.

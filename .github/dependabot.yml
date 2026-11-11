@@ -1,9 +1,12 @@
 # One pull request per group, and no version younger than a week. A cargo update changes the binary, so it also means a new benchmark
 # run before a release (docs/RELEASING.md).
+# Version updates are paused until 0.1.0 is out (open-pull-requests-limit: 0): each pull request runs CI on six runners.
+# Security updates still open pull requests.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
+    open-pull-requests-limit: 0
     schedule:
       interval: weekly
     cooldown:
@@ -13,6 +16,7 @@ updates:
         patterns: ["*"]
   - package-ecosystem: cargo
     directory: /
+    open-pull-requests-limit: 0
     schedule:
       interval: monthly
     cooldown:
@@ -22,6 +26,7 @@ updates:
         patterns: ["*"]
   - package-ecosystem: pip
     directory: /python
+    open-pull-requests-limit: 0
     schedule:
       interval: monthly
     cooldown:
@@ -31,6 +36,7 @@ updates:
         patterns: ["*"]
   - package-ecosystem: npm
     directory: /integrations/vscode
+    open-pull-requests-limit: 0
     schedule:
       interval: monthly
     cooldown:
