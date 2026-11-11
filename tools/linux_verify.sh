@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Verify one Linux platform from a clean container: build and cargo test on an image with no Python
 # at all, the static musl binary (statically linked, byte-identical output, timed against glibc),
-# and the abi3 + free-threaded wheels installed and tested on several interpreters.
+# and the abi3, cp314t and abi3t wheels installed and tested on several interpreters.
 #
 #   docker run --rm --platform linux/arm64 -v "$PWD":/src:ro -v "$PWD/bench/results/platforms":/out \
 #     rust:1-slim-bookworm bash /src/tools/linux_verify.sh
@@ -55,14 +55,15 @@ for q in '-F fn ' '\w+::\w+\(' '--ident parseFile'; do
 done | tee "$out/musl-identical.txt"
 python3 bench/musl_vs_glibc.py target/release/scrutate "$m" crates --runs 41 | tee "$out/musl-timing.txt"
 
-step "wheels (abi3 + free-threaded)"
-uv python install 3.10 3.12 3.13 3.14t
+step "wheels (abi3, cp314t, abi3t)"
+uv python install 3.10 3.12 3.13 3.14t 3.15 3.15t
 uv tool install maturin
 rm -rf target/wheels
 maturin build --release --strip -m crates/scrutate-py/Cargo.toml -o target/wheels -i "$(uv python find 3.12)"
 maturin build --release --strip -m crates/scrutate-py/Cargo.toml -o target/wheels -i "$(uv python find 3.14t)"
+maturin build --release --strip -m crates/scrutate-py/Cargo.toml -o target/wheels -i "$(uv python find 3.15)"
 ls target/wheels
 uv run --no-project --python 3.12 python tools/wheel_matrix.py --wheels target/wheels --cli "$PWD/target/release/scrutate" \
-  --json "$out/wheels.json" 3.10 3.12 3.13 3.14t | tee "$out/wheels.md"
+  --json "$out/wheels.json" 3.10 3.12 3.13 3.14t 3.15 3.15t | tee "$out/wheels.md"
 
 step "done"

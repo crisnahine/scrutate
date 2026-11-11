@@ -4,10 +4,11 @@ bindings tests there.
 
 usage: wheel_matrix.py --wheels DIR --cli PATH [--json OUT] PYTHON...
 
-PYTHON is anything `uv venv --python` accepts (3.12, 3.14t, a path). Standard interpreters get the
-cp39-abi3 wheel; free-threaded ones get the cp3XXt wheel and must refuse the abi3 one. For
-free-threaded interpreters the GIL must still be disabled after `import scrutate`, with warnings
-treated as errors. Exit status 0 only when every check passed.
+PYTHON is anything `uv venv --python` accepts (3.12, 3.14t, a path). The installer picks the wheel
+from DIR, as it would from an index: cp39-abi3 on a standard interpreter up to 3.14, cp314t on
+free-threaded 3.14, and the abi3t wheel on 3.15 and newer, both builds. A free-threaded
+interpreter must refuse the abi3 wheel, and its GIL must still be disabled after
+`import scrutate`, with warnings treated as errors. Exit status 0 only when every check passed.
 """
 from __future__ import annotations
 
@@ -28,6 +29,12 @@ def sh(cmd, **kw):
     return r.returncode, (r.stdout + r.stderr).strip()
 
 
+def tags(wheel):
+    """The tag triples a wheel file name stands for (cp315-abi3.abi3t-x is two)."""
+    py, abi, plat = os.path.basename(wheel)[:-4].split("-")[-3:]
+    return {f"{p}-{a}-{q}" for p in py.split(".") for a in abi.split(".") for q in plat.split(".")}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--wheels", required=True)
@@ -36,7 +43,7 @@ def main() -> int:
     ap.add_argument("pythons", nargs="+")
     a = ap.parse_args()
     abi3 = glob.glob(os.path.join(a.wheels, "scrutate-*-abi3-*.whl"))
-    ft = glob.glob(os.path.join(a.wheels, "scrutate-*-cp3*t-*.whl"))
+    wheels = glob.glob(os.path.join(a.wheels, "scrutate-*.whl"))
     rows, ok_all = [], True
     for py in a.pythons:
         with tempfile.TemporaryDirectory() as d:
@@ -50,30 +57,29 @@ def main() -> int:
             _, info = sh([exe, "-c", "import sys,sysconfig,json,platform;print(json.dumps([sys.version.split()[0], bool(sysconfig.get_config_var('Py_GIL_DISABLED')), platform.system() + ' ' + platform.machine()]))"])
             version, free, arch = json.loads(info.splitlines()[-1])
             row = {"python": version, "free_threaded": free, "platform": arch, "checks": {}}
-            if free:
-                if abi3:
-                    rc, out = sh(["uv", "pip", "install", "-q", "--python", exe, abi3[0]])
-                    row["checks"]["abi3 wheel refused"] = rc != 0
-                wheel = next((w for w in ft if f"cp{version.replace('.', '')[:3]}t" in os.path.basename(w).replace("-", "")), ft[0] if ft else None)
-            else:
-                wheel = abi3[0] if abi3 else None
-            if not wheel:
-                row["checks"]["wheel available"] = False
-            else:
-                row["wheel"] = os.path.basename(wheel)
-                rc, out = sh(["uv", "pip", "install", "-q", "--python", exe, wheel, "pytest"])
-                row["checks"]["installed"] = rc == 0
-                if rc == 0:
-                    probe = "import sys, scrutate; print(getattr(sys, '_is_gil_enabled', lambda: True)())"
-                    rc, out = sh([exe, "-W", "error", "-c", probe])
-                    if free:
-                        row["checks"]["GIL stays disabled after import (-W error)"] = rc == 0 and out.splitlines()[-1] == "False"
-                    else:
-                        row["checks"]["imports"] = rc == 0
-                    rc, out = sh([exe, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_bindings.py"],
-                                 cwd=os.path.join(ROOT, "python"), env={**os.environ, "SCRUTATE_BIN": a.cli})
-                    row["checks"]["bindings tests"] = rc == 0
-                    row["pytest"] = out.splitlines()[-1] if out else ""
+            if free and abi3:
+                rc, out = sh(["uv", "pip", "install", "-q", "--python", exe, abi3[0]])
+                row["checks"]["abi3 wheel refused"] = rc != 0
+            rc, out = sh(["uv", "pip", "install", "-q", "--python", exe, "--no-index", "--find-links", a.wheels, "scrutate"])
+            row["checks"]["installed"] = rc == 0
+            if rc == 0:
+                _, meta = sh([exe, "-c", "import importlib.metadata as m; print(m.distribution('scrutate').read_text('WHEEL'))"])
+                got = {line.split(": ", 1)[1] for line in meta.splitlines() if line.startswith("Tag: ")}
+                row["wheel"] = next((os.path.basename(w) for w in wheels if tags(w) == got), "?")
+                if free:
+                    row["checks"]["free-threaded wheel chosen"] = "t-" in row["wheel"]
+                rc, out = sh(["uv", "pip", "install", "-q", "--python", exe, "pytest"])
+            if rc == 0:
+                probe = "import sys, scrutate; print(getattr(sys, '_is_gil_enabled', lambda: True)())"
+                rc, out = sh([exe, "-W", "error", "-c", probe])
+                if free:
+                    row["checks"]["GIL stays disabled after import (-W error)"] = rc == 0 and out.splitlines()[-1] == "False"
+                else:
+                    row["checks"]["imports"] = rc == 0
+                rc, out = sh([exe, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_bindings.py"],
+                             cwd=os.path.join(ROOT, "python"), env={**os.environ, "SCRUTATE_BIN": a.cli})
+                row["checks"]["bindings tests"] = rc == 0
+                row["pytest"] = out.splitlines()[-1] if out else ""
             row["ok"] = bool(row["checks"]) and all(row["checks"].values())
             ok_all &= row["ok"]
             rows.append(row)

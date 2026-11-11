@@ -73,7 +73,7 @@ exactly what is and is not verified.
 
 ## Install
 
-From source, with Rust 1.89 or newer (`rust-toolchain.toml` pins 1.99.1):
+From source, with Rust 1.91 or newer (`rust-toolchain.toml` pins 1.99.1):
 
 ```sh
 cargo build --release -p scrutate --locked      # target/release/scrutate
@@ -83,7 +83,7 @@ No release archive is published yet. `.github/workflows/release.yml` builds arch
 Sigstore attestations, musl binaries and wheels for every platform once the repository is public
 (docs/INSTALL.md).
 
-Python bindings (`pip install` the abi3 wheel built by maturin from `crates/scrutate-py`):
+Python bindings (`pip install` the wheel built by maturin from `crates/scrutate-py`):
 
 ```python
 import scrutate

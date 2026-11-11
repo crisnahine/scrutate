@@ -50,7 +50,7 @@ docs/TRACEABILITY.md.
 - Run the CI matrix and the release workflow; flip the Windows and Intel macOS rows to PASS only
   with a recorded run (R-6.1, R-9.10). Both are cross-built here and their test binaries link.
 - Signed releases with Sigstore attestations (`release.yml` has the steps; they need the
-  repository's OIDC identity) and the free-threaded wheel built in CI (built and tested locally).
+  repository's OIDC identity) and the free-threaded wheels built in CI (built and tested locally).
 - Publish the packages: tap, bucket and winget pull requests with the release checksums
   (packaging/README.md lists the steps).
 - `cargo install scrutate`: crates.io refuses crates over 10 MB, and the semantic model is 14.6 MB.

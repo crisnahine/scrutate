@@ -44,7 +44,7 @@ def main() -> int:
     ap.add_argument("--differential-cases", type=int, default=200)
     ap.add_argument("--reproducible", action="store_true", help="also run tools/reproducible_check.sh (two clean release builds)")
     ap.add_argument("--wheels", help="directory of built wheels to install and test (tools/wheel_matrix.py)")
-    ap.add_argument("--pythons", nargs="*", default=["3.10", "3.11", "3.12", "3.13", "3.14t"])
+    ap.add_argument("--pythons", nargs="*", default=["3.10", "3.11", "3.12", "3.13", "3.14t", "3.15", "3.15t"])
     a = ap.parse_args()
     rustc = subprocess.run(["rustc", "--version"], capture_output=True, text=True).stdout.strip()
     cargo = subprocess.run(["cargo", "--version"], capture_output=True, text=True).stdout.strip()

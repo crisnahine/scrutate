@@ -1,7 +1,9 @@
 # scrutate (Python bindings)
 
-Python access to the Scrutate engines through PyO3, built with maturin against the stable ABI
-(`abi3`, CPython 3.9+): one wheel per operating system and architecture.
+Python access to the Scrutate engines through PyO3, built with maturin against the stable ABI:
+per operating system and architecture, one `abi3` wheel for standard CPython 3.9 to 3.14, one
+`abi3t` wheel for 3.15 and newer (standard and free-threaded), and a `cp314t` wheel for
+free-threaded 3.14.
 
 ```python
 import scrutate

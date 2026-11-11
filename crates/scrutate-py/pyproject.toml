@@ -1,5 +1,5 @@
 [build-system]
-requires = ["maturin>=1.5,<2"]
+requires = ["maturin>=1.14,<2"]
 build-backend = "maturin"
 
 [project]
@@ -7,7 +7,9 @@ name = "scrutate"
 description = "Universal instant code search and persistent code intelligence (Rust engines, Python bindings)"
 readme = "README.md"
 requires-python = ">=3.9"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
+# the notices are written by tools/third_party_notices.py before a release build
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES*"]
 dynamic = ["version"]
 classifiers = [
   "Programming Language :: Rust",
@@ -17,9 +19,6 @@ classifiers = [
 ]
 
 [tool.maturin]
-features = ["pyo3/extension-module"]
 module-name = "scrutate._native"
 python-source = "python"
 strip = true
-# written by tools/third_party_notices.py before a release build; absent in a development build
-include = [{ path = "THIRD_PARTY_NOTICES.txt", format = "wheel" }]
