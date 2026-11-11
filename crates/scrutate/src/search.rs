@@ -641,7 +641,7 @@ pub fn why(x: &Features) -> Vec<(String, serde_json::Value)> {
 pub fn prune_indices(lin: &[f32], n: usize) -> Vec<usize> {
     let mut idx: Vec<usize> = (0..lin.len()).collect();
     if idx.len() > n {
-        idx.select_nth_unstable_by(n - 1, |&a, &b| lin[b].partial_cmp(&lin[a]).unwrap_or(std::cmp::Ordering::Equal));
+        idx.select_nth_unstable_by(n - 1, |&a, &b| lin[b].partial_cmp(&lin[a]).unwrap_or(std::cmp::Ordering::Equal).then(a.cmp(&b)));
         idx.truncate(n);
     }
     idx

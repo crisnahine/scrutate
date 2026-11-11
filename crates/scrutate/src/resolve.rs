@@ -1753,10 +1753,10 @@ mod tests {
                 ),
             ],
             &[
-                ("main.go", "p.Norm()", "Norm", "shapes/point.go Norm"),
-                ("main.go", "l.Norm()", "Norm", "shapes/line.go Norm"),
-                ("main.go", "q.Norm()", "Norm", "shapes/point.go Norm"),
-                ("main.go", "r.Norm()", "Norm", "shapes/line.go Norm"),
+                ("main.go", "p.Norm()", "Norm", "shapes/point.go Point.Norm"),
+                ("main.go", "l.Norm()", "Norm", "shapes/line.go Line.Norm"),
+                ("main.go", "q.Norm()", "Norm", "shapes/point.go Point.Norm"),
+                ("main.go", "r.Norm()", "Norm", "shapes/line.go Line.Norm"),
             ],
         );
     }

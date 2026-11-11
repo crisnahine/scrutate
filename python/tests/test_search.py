@@ -99,3 +99,13 @@ def test_works_without_ripgrep(repo, monkeypatch):
     assert "Server.remove_tool" in names(s.grep(r"del self\.tools"))
     assert names(s.search('"/token"', k=3))[0] == "TokenStore._post" or "TokenStore.refresh_token" in names(s.search('"/token"', k=3))
     assert names(s.search("send_ping", k=1)) == ["send_ping"]
+
+
+def test_candidate_cut_keeps_the_lowest_indices_on_tied_scores():
+    import numpy as np
+    from scrutate_ref.search import prune_indices
+
+    assert sorted(prune_indices(np.ones(300, np.float32), 200)) == list(range(200))
+    lin = np.full(10, 0.5, np.float32)
+    lin[7] = 2.0
+    assert sorted(prune_indices(lin, 3)) == [0, 1, 7]

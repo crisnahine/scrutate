@@ -526,7 +526,7 @@
     ],
     [
       "method",
-      "Len"
+      "Point.Len"
     ],
     [
       "function",
@@ -1147,6 +1147,10 @@
       "Shape"
     ],
     [
+      "function",
+      "Shape.area"
+    ],
+    [
       "impl",
       "Point"
     ],
@@ -1443,6 +1447,10 @@
     [
       "class",
       "Base"
+    ],
+    [
+      "method",
+      "Base.run"
     ]
   ],
   "sample.tsx": [

@@ -267,6 +267,56 @@ pub fn window_chunks_from(source: &str, first_line: usize) -> Vec<Chunk> {
     out
 }
 
+/// Qualified names keep at most this many segments, so deep nesting stays linear.
+pub const MAX_QUAL_DEPTH: usize = 32;
+
+fn qualify(parent: &str, name: &str) -> String {
+    if parent.is_empty() {
+        return name.to_string();
+    }
+    let parent = if parent.matches('.').count() + 1 >= MAX_QUAL_DEPTH { parent.split_once('.').map_or(parent, |(_, r)| r) } else { parent };
+    format!("{parent}.{name}")
+}
+
+/// `head` of src[a..b], copying only the first `n` lines.
+fn head_bytes(src: &[u8], a: usize, b: usize, n: usize) -> String {
+    let (a, b) = (a.min(src.len()), b.min(src.len()));
+    match src[a..b.max(a)].iter().enumerate().filter(|&(_, &c)| c == b'\n').nth(n - 1) {
+        Some((i, _)) => txt(src, a, a + i) + "\n...",
+        None => txt(src, a, b),
+    }
+}
+
+/// End of the first line of src[a..b], at most 1 KB on: keywords sit at the start of a line.
+pub fn first_line_end(src: &[u8], a: usize, b: usize) -> usize {
+    let (a, b) = (a.min(src.len()), b.min(src.len()).min(a + 1024));
+    src[a..b.max(a)].iter().position(|&c| c == b'\n').map_or(b, |i| a + i)
+}
+
+/// The owner a definition names outside its own body: a Go method's receiver type (`*Store[K]`
+/// gives `Store`), the class of a C++ method defined out of line (`Widget::draw`).
+fn split_owner(lang: &str, node: Node, name: String, src: &[u8]) -> (Option<String>, String) {
+    if lang == "go" && node.kind() == "method_declaration" {
+        let mut stack: Vec<Node> = node.child_by_field_name("receiver").into_iter().collect();
+        while let Some(n) = stack.pop() {
+            if n.kind() == "type_identifier" {
+                return (Some(txt(src, n.start_byte(), n.end_byte())), name);
+            }
+            let kids: Vec<Node> = n.children(&mut n.walk()).collect();
+            stack.extend(kids.into_iter().rev());
+        }
+    }
+    if matches!(lang, "c" | "cpp") {
+        if let Some(i) = name.rfind("::") {
+            let owner = name[..i].replace("::", ".");
+            if !owner.is_empty() {
+                return (Some(owner), name[i + 2..].to_string());
+            }
+        }
+    }
+    (None, name)
+}
+
 fn txt(src: &[u8], a: usize, b: usize) -> String {
     String::from_utf8_lossy(&src[a.min(src.len())..b.min(src.len())]).into_owned()
 }
@@ -289,7 +339,7 @@ fn callee_name(node: Node, field: &str, src: &[u8]) -> Option<String> {
 
 /// The chunk kind named by the first declaration keyword on the node's first line.
 fn kind_from_head(node: Node, src: &[u8]) -> Option<&'static str> {
-    let t = txt(src, node.start_byte(), node.end_byte());
+    let t = txt(src, node.start_byte(), first_line_end(src, node.start_byte(), node.end_byte()));
     let line = t.lines().next().unwrap_or("");
     for w in line.split(|c: char| c.is_whitespace() || matches!(c, '(' | ')' | '{' | ':' | '<' | ',' | '[')) {
         if let Some((_, k)) = crate::langs::KIND_WORDS.iter().find(|(kw, _)| *kw == w) {
@@ -467,18 +517,24 @@ fn imports_of(node: Node, spec: &LangSpec, src: &[u8], out: &mut Vec<(i64, Strin
 }
 
 /// Contiguous comment block directly above a definition.
-fn leading_comment(node: Node, src: &[u8], wrappers: &[&str]) -> String {
+/// `ancestors` are the node's ancestors, root first (Node::parent and prev_sibling walk down from
+/// the root, which makes deep nesting quadratic).
+fn leading_comment(node: Node, ancestors: &[Node], src: &[u8], wrappers: &[&str]) -> String {
     let mut anchor = node;
-    while let Some(p) = anchor.parent() {
-        if wrappers.contains(&p.kind()) || p.kind() == "decorated_definition" {
-            anchor = p;
-        } else {
-            break;
-        }
+    let mut up = ancestors.len();
+    while up > 0 && (wrappers.contains(&ancestors[up - 1].kind()) || ancestors[up - 1].kind() == "decorated_definition") {
+        up -= 1;
+        anchor = ancestors[up];
     }
+    let siblings: Vec<Node> = if up > 0 { ancestors[up - 1].children(&mut ancestors[up - 1].walk()).collect() } else { Vec::new() };
+    let mut at = siblings.iter().position(|&n| n == anchor).unwrap_or(0);
+    let mut prev_sibling = || -> Option<Node> {
+        at = at.checked_sub(1)?;
+        Some(siblings[at])
+    };
     let mut parts: Vec<String> = Vec::new();
     let mut want = anchor.start_position().row as i64;
-    let mut prev = anchor.prev_sibling();
+    let mut prev = prev_sibling();
     while let Some(p) = prev {
         if COMMENT_TYPES.contains(&p.kind()) && p.end_position().row as i64 >= want - 1 {
             let t = txt(src, p.start_byte(), p.end_byte());
@@ -487,7 +543,7 @@ fn leading_comment(node: Node, src: &[u8], wrappers: &[&str]) -> String {
             }
             parts.push(t);
             want = p.start_position().row as i64;
-            prev = p.prev_sibling();
+            prev = prev_sibling();
         } else {
             break;
         }
@@ -694,8 +750,10 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
     let mut imports: Vec<(i64, String)> = Vec::new();
     let mut def_stack: Vec<usize> = Vec::new();
     let mut stack: Vec<(Node, bool, bool)> = vec![(tree.root_node(), false, false)];
+    let mut ancestors: Vec<Node> = Vec::new();
     while let Some((node, exiting, pushed)) = stack.pop() {
         if exiting {
+            ancestors.pop();
             if pushed {
                 def_stack.pop();
             }
@@ -740,10 +798,14 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
                     }
                 }
             }
-            let parent_q = def_stack.last().map(|&i| chunks[i].qualname.clone()).unwrap_or_default();
-            let q = if parent_q.is_empty() { name.clone() } else { format!("{parent_q}.{name}") };
+            let (prefix, name) = split_owner(spec.id, node, name, src);
+            let parent_q = def_stack.last().map(|&i| chunks[i].qualname.as_str()).unwrap_or_default();
+            let q = match &prefix {
+                Some(p) => qualify(&qualify(parent_q, p), &name),
+                None => qualify(parent_q, &name),
+            };
             let mut outer = node;
-            while let Some(p) = outer.parent() {
+            for &p in ancestors.iter().rev() {
                 if spec.outer.contains(&p.kind()) {
                     outer = p;
                 } else {
@@ -769,12 +831,12 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
                 if let Some(ds) = node.child_by_field_name("docstring").or_else(|| lisp_docstring(node)) {
                     doc = py_string_content(&txt(src, ds.start_byte(), ds.end_byte()));
                 } else {
-                    doc = leading_comment(node, src, spec.wrappers);
+                    doc = leading_comment(node, &ancestors, src, spec.wrappers);
                 }
             }
             let cap = if CONTAINERS.contains(&kind) { MAX_CONTAINER_LINES } else { MAX_CHUNK_LINES };
-            let full = head(&txt(src, outer.start_byte(), node.end_byte()), cap);
-            let body = head(&txt(src, body_start, node.end_byte()), cap);
+            let full = head_bytes(src, outer.start_byte(), node.end_byte(), cap);
+            let body = head_bytes(src, body_start, node.end_byte(), cap);
             chunks.push(Chunk {
                 name,
                 qualname: q,
@@ -790,7 +852,7 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
             def_stack.push(chunks.len() - 1);
             pushed_now = true;
         } else if let Some(call) = spec.calls.iter().find(|c| c.node == t) {
-            let in_signature = node.parent().map(|p| matches!(p.kind(), "signature" | "function_signature" | "method_signature")).unwrap_or(false);
+            let in_signature = ancestors.last().map(|p| matches!(p.kind(), "signature" | "function_signature" | "method_signature")).unwrap_or(false);
             if let (Some(&top), false) = (def_stack.last(), in_signature) {
                 if let Some(c) = callee_name(node, call.field, src) {
                     chunks[top].calls.insert(c);
@@ -798,12 +860,10 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
             }
         }
         stack.push((node, true, pushed_now));
-        let n = node.child_count();
-        for i in (0..n).rev() {
-            if let Some(ch) = node.child(i as u32) {
-                stack.push((ch, false, false));
-            }
-        }
+        ancestors.push(node);
+        let first_child = stack.len();
+        stack.extend(node.children(&mut node.walk()).map(|ch| (ch, false, false)));
+        stack[first_child..].reverse();
     }
     let mut mdoc = String::new();
     if spec.docstring {
@@ -919,7 +979,27 @@ static SQL_DEF: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^[ \t]*create[ \t]+(?:or[ \t]+replace[ \t]+)?(?:temp(?:orary)?[ \t]+)?(?:materialized[ \t]+)?(function|procedure|table|view|trigger|index|type|schema)[ \t]+(?:if[ \t]+not[ \t]+exists[ \t]+)?([\w.\x22`\[\]]+)").unwrap()
 });
 
+fn is_keyword(w: &str) -> bool {
+    MODIFIERS.contains(&w) || FUNC_WORDS.contains(&w) || TYPE_WORDS.iter().any(|(t, _)| *t == w)
+}
+
+/// `line` without its leading modifier words (`private def x` -> `def x`); a modifier that is
+/// followed by a name stays (`data Foo = ...`).
+fn strip_modifiers(line: &str) -> &str {
+    let mut rest = line.trim_start();
+    while let Some((w, after)) = rest.split_once([' ', '\t']) {
+        let after = after.trim_start();
+        let next = after.split([' ', '\t']).next().unwrap_or("");
+        if !(MODIFIERS.contains(&w) && is_keyword(next)) {
+            break;
+        }
+        rest = after;
+    }
+    rest
+}
+
 fn heuristic_def(line: &str) -> Option<(&'static str, String)> {
+    let line = strip_modifiers(line);
     let trimmed = line.trim_start();
     if trimmed.is_empty() || trimmed.starts_with(['#', '/', '*', ';', '-', '%', '\'', '"', '<']) {
         return None;
@@ -953,8 +1033,11 @@ fn heuristic_def(line: &str) -> Option<(&'static str, String)> {
             if matches!(word, "let" | "val" | "var" | "const" | "lambda") {
                 let rest = &line[m.get(0).unwrap().end()..];
                 let r = rest.trim_start();
-                let is_fn =
-                    r.starts_with('(') || r.contains("=>") || r.contains("fun ") || r.contains("function") || r.contains("\\") || r.starts_with(':') && false;
+                // OCaml and F#: `let add x y =` takes parameters, `let limit = 5` does not
+                let ml_params = word == "let"
+                    && r.split_once('=')
+                        .is_some_and(|(p, _)| !p.trim().is_empty() && p.split_whitespace().all(|w| w.starts_with(|c: char| c.is_alphabetic() || c == '_')));
+                let is_fn = r.starts_with('(') || r.contains("=>") || r.contains("fun ") || r.contains("function") || r.contains("\\") || ml_params;
                 if !is_fn {
                     return None;
                 }
@@ -1094,7 +1177,10 @@ pub fn parse_file_with(path: &str, source: &str, prev: Option<PrevParse>) -> (Pa
             return (Parsed { chunks: finish(path, source, chunks, mdoc), imports }, tree);
         }
     }
-    let chunks = heuristic_chunks(source);
+    // prose has keyword-looking lines ("module will be called foo" in Kconfig help text)
+    let base = basename(path);
+    let prose = base.starts_with("Kconfig") || base.to_ascii_lowercase().ends_with(".txt");
+    let chunks = if prose { Vec::new() } else { heuristic_chunks(source) };
     (Parsed { chunks: finish(path, source, chunks, String::new()), imports: Vec::new() }, None)
 }
 

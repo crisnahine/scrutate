@@ -97,3 +97,21 @@ def test_agent_tools_refresh_the_index_too(repo):
         f.write("def quokka_counter():\n    return 3\n")
     ix._last_refresh = 0.0
     assert "quokka_counter" in run_tool(s, "find_symbol", {"name": "quokka_counter"})
+
+
+def test_read_refuses_paths_that_leave_the_repo(tmp_path):
+    from conftest import write_repo
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_repo(str(root))
+    secrets = tmp_path / "repo-secrets"
+    secrets.mkdir()
+    (secrets / ".env").write_text("TOKEN=hunter2\n")
+    os.symlink(secrets / ".env", root / "link.env")
+    ix = Index(str(root), model=None)
+    ix.update()
+    s = Searcher(ix, ranker=None)
+    assert s.read("../repo-secrets/.env").startswith("error")
+    assert s.read("link.env").startswith("error")
+    assert "TokenStore" in s.read("app/auth.py")

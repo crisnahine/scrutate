@@ -77,3 +77,21 @@ def test_weight_matrices_are_stored_raw_and_the_file_is_a_plain_npz(tmp_path):
     assert kinds["va.npy"] == zipfile.ZIP_DEFLATED
     z = np.load(p, allow_pickle=False)  # np.load must keep working on it
     assert z["U"].dtype == np.float16 and z["va"].tolist() == ["remov", "delet", "tool", "ping"]
+
+
+def test_a_retrained_model_of_the_same_shape_rebuilds_the_index(tmp_path):
+    from scrutate_ref.index import Index
+
+    a, b = tiny_model(), tiny_model()
+    b.U0 = b.U0 * 2  # other weights, same k, n_pairs and vocabulary sizes
+    pa, pb = str(tmp_path / "a.npz"), str(tmp_path / "b.npz")
+    a.save(pa)
+    b.save(pb)
+    root = tmp_path / "repo"
+    root.mkdir()
+    sigs = []
+    for p in (pa, pb):
+        ix = Index(str(root), model=SemanticModel.load(p))
+        sigs.append(ix.meta("model_sig"))
+        ix.db.close()
+    assert sigs[0] != sigs[1]

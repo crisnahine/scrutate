@@ -411,8 +411,9 @@ class Searcher:
         return list(seen.values())
 
     def read(self, path: str, start: int = 1, end: int | None = None, max_lines: int = 400) -> str:
-        full = os.path.normpath(os.path.join(self.ix.root, path))
-        if not full.startswith(self.ix.root):
+        root = os.path.realpath(self.ix.root)
+        full = os.path.realpath(os.path.join(root, path))
+        if os.path.commonpath([full, root]) != root:
             return "error: path outside repo"
         try:
             with open(full, encoding="utf8", errors="replace") as f:
@@ -451,7 +452,7 @@ def _why(x: np.ndarray) -> dict:
 def prune_indices(lin: np.ndarray, n: int = PRUNE) -> np.ndarray:
     if len(lin) <= n:
         return np.arange(len(lin))
-    return np.argpartition(-lin, n)[:n]
+    return np.argsort(-lin, kind="stable")[:n]  # ties: lower index first, as in the Rust engine
 
 
 def linear_score(X: np.ndarray) -> np.ndarray:

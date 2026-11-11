@@ -11,6 +11,7 @@ static model (a few MB): no GPU, no downloads, incremental indexing never needs 
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -51,6 +52,7 @@ class SemanticModel:
         self.U0 = np.asarray(U)  # kept in the precision they are stored in (float16 on disk)
         self.V0 = np.asarray(V)
         self.cfg = cfg or {}
+        self.file_sig: str | None = None  # set by load
         self.k = self.U0.shape[1]
         self._U: np.ndarray | None = None
         self._V: np.ndarray | None = None
@@ -152,8 +154,11 @@ class SemanticModel:
     @classmethod
     def load(cls, path: str) -> "SemanticModel":
         z = np.load(path, allow_pickle=False)
-        return cls(z["va"].tolist(), z["vb"].tolist(), z["idf_a"], z["idf_b"], z["U"], z["V"],
-                   z["s"], json.loads(str(z["cfg"])))
+        m = cls(z["va"].tolist(), z["vb"].tolist(), z["idf_a"], z["idf_b"], z["U"], z["V"],
+                z["s"], json.loads(str(z["cfg"])))
+        with open(path, "rb") as f:
+            m.file_sig = "blake2b:" + hashlib.blake2b(f.read(), digest_size=16).hexdigest()  # as SemanticModel::signature
+        return m
 
 
 def default_model_path() -> str:

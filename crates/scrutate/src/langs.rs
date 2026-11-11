@@ -223,6 +223,7 @@ fn heading_text(node: Node, src: &[u8]) -> Option<String> {
 
 const C_DEFS: &[Def] = &[
     d("function_definition", "function", &[NameRule::Dig("declarator", ID_KINDS)]),
+    d("preproc_function_def", "macro", N),
     db("struct_specifier", "struct", N),
     db("union_specifier", "struct", N),
     db("enum_specifier", "enum", N),
@@ -230,6 +231,7 @@ const C_DEFS: &[Def] = &[
 ];
 const CPP_DEFS: &[Def] = &[
     d("function_definition", "function", &[NameRule::Dig("declarator", ID_KINDS)]),
+    d("preproc_function_def", "macro", N),
     db("class_specifier", "class", N),
     db("struct_specifier", "struct", N),
     db("union_specifier", "struct", N),
@@ -251,20 +253,29 @@ const CSHARP_DEFS: &[Def] = &[
     d("namespace_declaration", "module", N),
     d("delegate_declaration", "type", N),
 ];
+const JS_FUNCS: &[&str] = &["arrow_function", "function_expression", "function"];
+const fn dv(node: &'static str, name: &'static [NameRule]) -> Def {
+    Def { node, kind: "function", name, value_kinds: JS_FUNCS, head_words: &[], needs_field: "", kind_by_head: false }
+}
+/// CommonJS `module.exports.NAME = function ...` and `exports.NAME = () => ...`
+fn js_export_name(node: Node, src: &[u8]) -> Option<String> {
+    let right = node.child_by_field_name("right")?;
+    if !JS_FUNCS.contains(&right.kind()) {
+        return None;
+    }
+    let left = node.child_by_field_name("left")?;
+    let t = text(src, left.start_byte(), left.end_byte());
+    let name = t.strip_prefix("module.exports.").or_else(|| t.strip_prefix("exports."))?;
+    Some(name.to_string()).filter(|n| !n.contains('.'))
+}
 const JS_DEFS: &[Def] = &[
     d("function_declaration", "function", N),
     d("generator_function_declaration", "function", N),
     d("class_declaration", "class", N),
     d("method_definition", "method", N),
-    Def {
-        node: "variable_declarator",
-        kind: "function",
-        name: N,
-        value_kinds: &["arrow_function", "function_expression", "function"],
-        head_words: &[],
-        needs_field: "",
-        kind_by_head: false,
-    },
+    dv("variable_declarator", N),
+    dv("field_definition", &[NameRule::Field("property")]),
+    d("assignment_expression", "function", &[NameRule::Custom(js_export_name)]),
 ];
 const TS_DEFS: &[Def] = &[
     d("function_declaration", "function", N),
@@ -275,15 +286,11 @@ const TS_DEFS: &[Def] = &[
     d("interface_declaration", "interface", N),
     d("type_alias_declaration", "type", N),
     d("enum_declaration", "enum", N),
-    Def {
-        node: "variable_declarator",
-        kind: "function",
-        name: N,
-        value_kinds: &["arrow_function", "function_expression", "function"],
-        head_words: &[],
-        needs_field: "",
-        kind_by_head: false,
-    },
+    d("abstract_method_signature", "method", N),
+    d("function_signature", "function", N),
+    d("internal_module", "module", N),
+    dv("variable_declarator", N),
+    dv("public_field_definition", N),
 ];
 const JS_CALLS: &[Call] = &[c("call_expression", "function"), c("new_expression", "constructor")];
 const JS_WRAPPERS: &[&str] = &["export_statement", "lexical_declaration", "variable_declaration", "decorator"];
@@ -374,6 +381,8 @@ const CORE: &[LangSpec] = &[
             d("impl_item", "impl", &[NameRule::Field("name"), NameRule::Field("type")]),
             d("mod_item", "module", N),
             d("type_item", "type", N),
+            d("macro_definition", "macro", N),
+            d("function_signature_item", "function", N),
         ],
         calls: &[c("call_expression", "function"), c("macro_invocation", "macro")],
         docstring: false,
@@ -1875,7 +1884,7 @@ fn cmake_def_name(node: Node, src: &[u8]) -> Option<String> {
 
 /// The first word of a node's text (for `head_words` matching).
 pub fn head_word(node: Node, src: &[u8]) -> String {
-    let t = text(src, node.start_byte(), node.end_byte());
+    let t = text(src, node.start_byte(), crate::parse::first_line_end(src, node.start_byte(), node.end_byte()));
     t.trim_start_matches(['(', ' ', '\t']).split(|c: char| c.is_whitespace() || c == '(').next().unwrap_or("").to_string()
 }
 

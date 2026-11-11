@@ -59,9 +59,18 @@ const SKIP_DIRS: &[&str] = &[
     ".vscode",
 ];
 
-/// Directory names the code index never enters: `SKIP_DIRS` plus those in `SCRUTATE_INDEX_EXCLUDE_DIRS`.
-fn skip_dirs() -> Vec<String> {
-    let mut skip: Vec<String> = SKIP_DIRS.iter().map(|s| s.to_string()).collect();
+/// Build and environment directories some projects commit; inside a git repository the ignore
+/// files decide for them.
+const SKIP_UNLESS_GIT: &[&str] = &["build", "dist", "target", "venv"];
+
+fn in_git(root: &Path) -> bool {
+    root.ancestors().any(|a| a.join(".git").exists())
+}
+
+/// Directory names the code index never enters: `SKIP_DIRS` (less `SKIP_UNLESS_GIT` inside a git
+/// repository) plus those in `SCRUTATE_INDEX_EXCLUDE_DIRS`.
+fn skip_dirs(git: bool) -> Vec<String> {
+    let mut skip: Vec<String> = SKIP_DIRS.iter().filter(|d| !(git && SKIP_UNLESS_GIT.contains(d))).map(|s| s.to_string()).collect();
     if let Ok(v) = std::env::var("SCRUTATE_INDEX_EXCLUDE_DIRS") {
         skip.extend(v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()));
     }
@@ -74,7 +83,7 @@ pub fn list_files(root: &Path) -> Vec<String> {
     let mut out = Vec::new();
     // hidden files are indexed (.github/workflows/*.yml, .eslintrc.js, .env.example are code or
     // config people search for); SKIP_DIRS prunes VCS internals and caches
-    let skip_list = skip_dirs();
+    let skip_list = skip_dirs(in_git(root));
     let skip = move |name: &str| skip_list.iter().any(|s| s == name);
     let skip2 = skip.clone();
     let walker = ignore::WalkBuilder::new(root)
@@ -135,7 +144,7 @@ impl Membership {
             }
             None => (Gitignore::empty(), Gitignore::empty()),
         };
-        Membership { root: root.to_path_buf(), skip: skip_dirs(), git_top, exclude, global, dirs: HashMap::new() }
+        Membership { root: root.to_path_buf(), skip: skip_dirs(git_top.is_some()), git_top, exclude, global, dirs: HashMap::new() }
     }
 
     fn matchers(&mut self, dir: &Path) -> &[Option<Gitignore>; 2] {

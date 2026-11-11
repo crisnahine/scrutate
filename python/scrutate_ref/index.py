@@ -42,6 +42,7 @@ MAX_FILE_BYTES = 1_000_000
 TF_CAP = 4  # a token counts at most this many times per field (keeps the index small)
 SKIP_DIRS = {".git", ".scrutate", "node_modules", "__pycache__", ".venv", "venv", "dist", "build",
              ".mypy_cache", ".pytest_cache", "target", ".next", ".tox", ".idea", ".vscode"}
+SKIP_UNLESS_GIT = {"build", "dist", "target", "venv"}  # some projects commit these
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
@@ -83,12 +84,25 @@ def list_files(root: str) -> list[str]:
             files = [l for l in out.splitlines() if l]
         except OSError:
             files = []
+    skip = SKIP_DIRS
     if not files:
         for dp, dns, fns in os.walk(root):
             dns[:] = [d for d in dns if d not in SKIP_DIRS]
             files.extend(os.path.relpath(os.path.join(dp, fn), root) for fn in fns)
+    elif _in_git(root):
+        skip = SKIP_DIRS - SKIP_UNLESS_GIT  # the ignore files ripgrep read decide for these
     return sorted(f for f in files if is_indexable(f)
-                  and not any(p in SKIP_DIRS for p in f.split(os.sep)))
+                  and not any(p in skip for p in f.split(os.sep)))
+
+
+def _in_git(root: str) -> bool:
+    d = os.path.abspath(root)
+    while True:
+        if os.path.exists(os.path.join(d, ".git")):
+            return True
+        if os.path.dirname(d) == d:
+            return False
+        d = os.path.dirname(d)
 
 
 # ------------------------------------------------------------------------ workers
@@ -253,6 +267,8 @@ class Index:
     def _model_signature(self) -> str:
         if self.model is None:
             return "none"
+        if self.model.file_sig:
+            return self.model.file_sig
         return f"{self.model.k}:{self.model.cfg.get('n_pairs')}:{len(self.model.va)}:{len(self.model.vb)}"
 
     # ---- segments
@@ -447,7 +463,7 @@ class Index:
             return
         init, initargs = (None, ()) if method == "fork" else (_worker_init, (model_path,))
         with mp.get_context(method).Pool(nworkers, initializer=init, initargs=initargs) as pool:
-            yield from pool.imap_unordered(_process, todo, chunksize=8)
+            yield from pool.imap(_process, todo, chunksize=8)  # in file order: chunk ids, and so ties, as in the Rust engine
 
     def _insert(self, rel: str, rows, next_id: int) -> int:
         crow, rrow = [], []

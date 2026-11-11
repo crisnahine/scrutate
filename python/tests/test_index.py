@@ -181,3 +181,23 @@ def test_refresh_is_throttled_but_a_cheap_scan_is_not_held_back_for_long(repo):
     st = ix.refresh(1e6)
     assert st is not None and st.files_changed == 1
     assert ix.refresh(0) is not None  # interval 0 means: always scan
+
+
+def test_inside_git_the_ignore_rules_decide_for_build_dist_target_and_venv(tmp_path):
+    import shutil
+
+    import pytest
+    from scrutate_ref.index import list_files
+
+    if not shutil.which("rg"):
+        pytest.skip("the ignore files are read through ripgrep")
+    files = {"build/maker.py": "def tracked_builder():\n    pass\n", "target/gen.rs": "fn g() {}\n",
+             "dist/out.py": "def x():\n    pass\n", "node_modules/m/i.js": "function m() {}\n",
+             "src/a.py": "def a():\n    pass\n", ".gitignore": "dist/\n"}
+    repo, plain = tmp_path / "repo", tmp_path / "plain"
+    for root in (repo, plain):
+        root.mkdir()
+        write_repo(str(root), files)
+    (repo / ".git").mkdir()
+    assert list_files(str(repo)) == ["build/maker.py", "src/a.py", "target/gen.rs"]
+    assert list_files(str(plain)) == ["src/a.py"]

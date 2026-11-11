@@ -46,7 +46,13 @@ def _load(modname: str, func: str = "language"):
 _JS_DEFS = {"function_declaration": "function", "generator_function_declaration": "function",
             "class_declaration": "class", "method_definition": "method"}
 _TS_DEFS = {**_JS_DEFS, "abstract_class_declaration": "class", "interface_declaration": "interface",
-            "type_alias_declaration": "type", "enum_declaration": "enum"}
+            "type_alias_declaration": "type", "enum_declaration": "enum",
+            "abstract_method_signature": "method", "function_signature": "function", "internal_module": "module"}
+_JS_FUNCS = ("arrow_function", "function_expression", "function")
+_TS_HOLDERS = {"variable_declarator": "name", "public_field_definition": "name"}
+# node -> the field holding its name, when its value is a function
+_JS_FUNC_HOLDERS = {"javascript": {"variable_declarator": "name", "field_definition": "property"},
+                    "typescript": _TS_HOLDERS, "tsx": _TS_HOLDERS}
 _JS_CALLS = {"call_expression": "function", "new_expression": "constructor"}
 
 LANGS: dict[str, dict] = {
@@ -63,7 +69,8 @@ LANGS: dict[str, dict] = {
                calls={"call_expression": "function"}),
     "rust": dict(load=_load("tree_sitter_rust"),
                  defs={"function_item": "function", "struct_item": "struct", "enum_item": "enum",
-                       "trait_item": "trait", "impl_item": "impl", "mod_item": "module", "type_item": "type"},
+                       "trait_item": "trait", "impl_item": "impl", "mod_item": "module", "type_item": "type",
+                       "macro_definition": "macro", "function_signature_item": "function"},
                  calls={"call_expression": "function", "macro_invocation": "macro"}),
     "java": dict(load=_load("tree_sitter_java"),
                  defs={"class_declaration": "class", "interface_declaration": "interface",
@@ -87,6 +94,7 @@ _parsers: dict[str, Parser] = {}
 _CONTAINERS = {"class", "impl", "interface", "trait", "enum", "struct", "type", "module"}
 _COMMENT_TYPES = {"comment", "line_comment", "block_comment", "doc_comment"}
 MAX_CONTAINER_LINES = 40
+MAX_QUAL_DEPTH = 32  # qualified names keep at most this many segments, so deep nesting stays linear
 MAX_CHUNK_LINES = 200
 
 
@@ -200,6 +208,24 @@ def _py_docstring_node(block):
     return None, None
 
 
+def _qualify(parent: str, name: str) -> str:
+    if not parent:
+        return name
+    if parent.count(".") + 1 >= MAX_QUAL_DEPTH:
+        parent = parent.split(".", 1)[-1]
+    return f"{parent}.{name}"
+
+
+def _first_of_type(node, kind: str):
+    stack = [node] if node is not None else []
+    while stack:
+        n = stack.pop()
+        if n.type == kind:
+            return n
+        stack.extend(reversed(n.children))
+    return None
+
+
 # ------------------------------------------------------------------------- main
 def parse_source(path: str, source: str) -> list[Chunk]:
     lang = language_for(path)
@@ -227,19 +253,31 @@ def parse_source(path: str, source: str) -> list[Chunk]:
         new = None
         kind = defs.get(t)
         name = None
-        if kind is None and t == "variable_declarator" and lang in ("javascript", "typescript", "tsx"):
+        field = _JS_FUNC_HOLDERS.get(lang, {}).get(t)
+        if kind is None and field:
             val = node.child_by_field_name("value")
-            if val is not None and val.type in ("arrow_function", "function_expression", "function"):
+            if val is not None and val.type in _JS_FUNCS:
                 kind = "function"
-                nn = node.child_by_field_name("name")
+                nn = node.child_by_field_name(field)
                 name = txt(nn.start_byte, nn.end_byte) if nn is not None else None
+        if kind is None and t == "assignment_expression" and lang == "javascript":
+            left, right = node.child_by_field_name("left"), node.child_by_field_name("right")
+            if left is not None and right is not None and right.type in _JS_FUNCS:
+                lt = txt(left.start_byte, left.end_byte)
+                for pre in ("module.exports.", "exports."):
+                    if lt.startswith(pre) and "." not in lt[len(pre):]:
+                        kind, name = "function", lt[len(pre):]
+                        break
         if kind is not None:
             name = name or _def_name(node, src)
         if kind is not None and name:
             if kind == "function" and stack and stack[-1][0].kind == "class":
                 kind = "method"
-            parent_q = stack[-1][1] if stack else ""
-            q = f"{parent_q}.{name}" if parent_q else name
+            q = _qualify(stack[-1][1] if stack else "", name)
+            if t == "method_declaration" and lang == "go":
+                owner = _first_of_type(node.child_by_field_name("receiver"), "type_identifier")
+                if owner is not None:
+                    q = _qualify(_qualify(stack[-1][1] if stack else "", txt(owner.start_byte, owner.end_byte)), name)
 
             outer = node
             if is_py and node.parent is not None and node.parent.type == "decorated_definition":

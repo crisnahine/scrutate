@@ -5,11 +5,11 @@ usage: parity.py REPO_DIR RUST_BINARY [--queries N]
 
 1. Both engines index a copy of REPO_DIR; chunk tables, call edges, postings (per chunk, field and
    token: tf), document lengths and vectors are compared.
-2. Benchmark-style queries (all five types, when a query file for the package exists, else generic
-   ones) run through both engines on the *Python-built* index; candidate sets, the 47 features, the
+2. Benchmark queries (all five types: the package's query file when one was generated, else made
+   from the corpus's own documented functions by the same rules) run through both engines on the *Python-built* index; candidate sets, the 47 features, the
    ranker scores and the final top-10 are compared.
 3. The Rust engine searches its own index; final top-10 compared with Python on the Python index.
-Exits non-zero when any tolerance is exceeded.
+Exits non-zero on any difference, or when fewer queries than asked can be made.
 """
 from __future__ import annotations
 
@@ -28,8 +28,8 @@ from scrutate_ref.index import Index, unpack_text  # noqa: E402
 from scrutate_ref.lex import FIELDS, LexStore, NF  # noqa: E402
 from scrutate_ref.search import FEATURES, Searcher  # noqa: E402
 
-TOL_FEAT = 2e-3      # features (float32 pipelines; z-scores amplify 1e-7 differences)
-TOL_SCORE = 2e-3     # ranker output
+TOL_FEAT = 0.0       # features, compared as the float32 both engines compute
+TOL_SCORE = 0.0      # ranker output
 TOL_VEC = 0.0        # int8 codes times float32 scales: same quantization in both engines
 
 
@@ -106,21 +106,65 @@ def compare_indexes(a: Index, b: Index) -> list[str]:
     return problems
 
 
+def corpus_queries(repo: str) -> list[str]:
+    """The benchmark's five query types, made from the repository's own documented functions."""
+    import re
+
+    import make_bench
+    import make_bench_code
+    from scrutate_ref.parse import language_for
+    from scrutate_ref.text import STOPWORDS, is_test_path, split_identifier
+
+    targets = []
+    for dp, dns, fns in os.walk(repo):
+        dns[:] = sorted(d for d in dns if d not in (".git", ".scrutate", "__pycache__", "node_modules"))
+        for fn in sorted(fns):
+            rel = os.path.relpath(os.path.join(dp, fn), repo)
+            lang = language_for(rel)
+            if lang is None or is_test_path(rel):
+                continue
+            try:
+                with open(os.path.join(dp, fn), encoding="utf8") as f:
+                    src = f.read()
+                if lang == "python":
+                    found = make_bench.process_file(src, rel, with_targets=True)[2]
+                else:
+                    lang = "typescript" if lang in ("typescript", "tsx") else lang
+                    found = make_bench_code.process_file(src, rel, lang, with_targets=True)[2]
+            except (UnicodeDecodeError, SyntaxError, ValueError):
+                continue
+            targets += found
+    qs = []
+    for t in targets:
+        qs.append(t["query"])
+        words = [w for w in re.findall(r"[A-Za-z][A-Za-z0-9_]{2,}", t["query"]) if w.lower() not in STOPWORDS]
+        if len(words) >= 3:
+            qs.append(" ".join(words[:3]))
+        if len(split_identifier(t["name"])) >= 2:
+            qs.append(" ".join(split_identifier(t["name"])))
+        qs.append(t["name"])
+        if "." in t["qualname"]:
+            qs.append(re.sub(r"<[^.]*>", "", ".".join(t["qualname"].split(".")[-2:])))
+    return list(dict.fromkeys(qs))
+
+
 def load_queries(pkg_dir: str, n: int) -> list[str]:
+    """The benchmark's query file for this package when one was generated, else queries made from
+    the corpus by the same rules; exits when fewer than n are found."""
     import random
     from groups import BENCH
 
     base = os.path.basename(pkg_dir.rstrip("/"))
-    qs = []
-    for cand in (base, "networkx"):
-        p = os.path.join(BENCH, "queries", f"{cand}.json")
-        if os.path.exists(p):
-            qs = [q["query"] for q in json.load(open(p))]
-            break
-    if not qs:
-        qs = ["shortest path between two nodes", "parse source file", "remove tool", "add_edge", "Graph.add_node",
-              "refresh an expired token", "write csv header", "RuntimeError", "compute the degree of a node"]
+    p = os.path.join(BENCH, "queries", f"{base}.json")
+    if os.path.exists(p):
+        qs, source = list(dict.fromkeys(q["query"] for q in json.load(open(p)))), p
+    else:
+        qs, source = corpus_queries(pkg_dir), "the corpus doc comments"
     random.Random(7).shuffle(qs)
+    if len(qs) < n:
+        print(f"\nPARITY FAILED: only {len(qs)} queries from {source}, {n} asked")
+        sys.exit(1)
+    print(f"queries: {n} of {len(qs)} from {source}")
     return qs[:n]
 
 
@@ -169,15 +213,14 @@ def compare_search(py, rs, ix: Index) -> list[str]:
         for k in set(rc) & set(p["cands"]):
             xa, sa = p["cands"][k]
             xb, sb = rc[k]
-            feat_worst = np.maximum(feat_worst, np.abs(np.array(xa) - np.array(xb)))
-            if sa > -1e8 and sb > -1e8:
+            feat_worst = np.maximum(feat_worst, np.abs(np.array(xa, np.float32) - np.array(xb, np.float32)))
+            if sa > -1e8 or sb > -1e8:
                 score_worst = max(score_worst, abs(sa - sb))
-        py_hits = [(h[0], h[1], h[2]) for h in p["hits"]]
-        rs_hits = [(h["path"], h["name"], h["start"]) for h in r["hits"]]
-        py_hits_n = [(a, b, c) for a, b, c in py_hits]
-        if [h[0:3:2] for h in py_hits_n] != [h[0:3:2] for h in rs_hits]:
+        py_hits = [h[0:3:2] for h in p["hits"]]
+        rs_hits = [(h["path"], h["start"]) for h in r["hits"]]
+        if py_hits != rs_hits:
             top10_mismatch += 1
-            if py_hits_n[:1] and rs_hits[:1] and py_hits_n[0][0:3:2] != rs_hits[0][0:3:2]:
+            if py_hits[:1] != rs_hits[:1]:
                 top1_mismatch += 1
         if p["terms"] != r["terms"]:
             problems.append(f"query terms differ for {q!r}: {p['terms']} vs {r['terms']}")
@@ -190,8 +233,8 @@ def compare_search(py, rs, ix: Index) -> list[str]:
         problems.append(f"feature difference {feat_worst.max():.3g} > {TOL_FEAT} ({FEATURES[int(feat_worst.argmax())]})")
     if score_worst > TOL_SCORE:
         problems.append(f"score difference {score_worst:.3g} > {TOL_SCORE}")
-    if top1_mismatch > max(1, n // 50):
-        problems.append(f"top-1 differs for {top1_mismatch} of {n} queries")
+    if top10_mismatch:
+        problems.append(f"top-10 differs for {top10_mismatch} of {n} queries")
     return problems
 
 
@@ -224,9 +267,14 @@ def main():
     for p in p2:
         print("   -", p)
     rs_own = rust_features(binary, b_root, queries, features=False)
-    same = sum(1 for q in queries if [h[0:3:2] for h in py[q]["hits"]] == [(h[0], h[2]) for h in rs_own[q]["hits"]])
+    differ = [q for q in queries if [h[0:3:2] for h in py[q]["hits"]] != [(h[0], h[2]) for h in rs_own[q]["hits"]]]
+    same = len(queries) - len(differ)
+    for q in differ[:3]:
+        print(f"   {q!r}: python {[h[0:3:2] for h in py[q]['hits']]}\n   rust   {[(h[0], h[2]) for h in rs_own[q]['hits']]}")
     print(f"end-to-end (rust index + rust search vs python): top-10 identical for {same}/{len(queries)} queries")
     problems += p2
+    if differ:
+        problems.append(f"end-to-end top-10 differs for {len(differ)} queries")
     shutil.rmtree(work, ignore_errors=True)
     if problems:
         print(f"\nPARITY FAILED: {len(problems)} problem(s)")
