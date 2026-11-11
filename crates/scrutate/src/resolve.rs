@@ -2250,7 +2250,9 @@ fn conditions(v: &serde_json::Value, depth: usize) -> Vec<String> {
         serde_json::Value::String(s) => vec![s.clone()],
         serde_json::Value::Array(a) => a.iter().flat_map(|x| conditions(x, depth)).collect(),
         serde_json::Value::Object(o) if depth < 4 => {
-            let rest = o.iter().filter(|(k, _)| !FIRST.contains(&k.as_str())).map(|(_, v)| v);
+            let mut rest: Vec<_> = o.iter().filter(|(k, _)| !FIRST.contains(&k.as_str())).collect();
+            rest.sort_by_key(|(k, _)| k.as_str());
+            let rest = rest.into_iter().map(|(_, v)| v);
             FIRST.iter().filter_map(|c| o.get(*c)).chain(rest).flat_map(|x| conditions(x, depth + 1)).collect()
         }
         _ => Vec::new(),
@@ -3739,6 +3741,9 @@ mod tests {
             ("packages/nested/lib/n.js", "export const n = 1;\n"),
             ("packages/plat/package.json", "{\"name\": \"plat\", \"exports\": {\"browser\": \"./src/web.ts\", \"node\": {\"import\": {\"default\": \"./src/node.ts\"}}}}\n"),
             ("packages/plat/src/node.ts", "export const p = 1;\n"),
+            ("packages/rt/package.json", "{\"name\": \"rt\", \"exports\": {\"deno\": \"./src/deno.ts\", \"browser\": \"./src/web.ts\"}}\n"),
+            ("packages/rt/src/deno.ts", "export const r = 1;\n"),
+            ("packages/rt/src/web.ts", "export const r = 2;\n"),
             ("packages/plat/src/web.ts", "export const p = 2;\n"),
             ("packages/mod/package.json", "{\"name\": \"modpkg\", \"module\": \"esm/m.js\", \"main\": \"cjs/m.js\"}\n"),
             ("packages/mod/esm/m.js", "export const m = 1;\n"),
@@ -3778,6 +3783,7 @@ mod tests {
             (app, "nested", Some("packages/nested/lib/n.js")),
             // no condition of the usual four: `node`, then the others
             (app, "plat", Some("packages/plat/src/node.ts")),
+            (app, "rt", Some("packages/rt/src/web.ts")),
             (app, "modpkg", Some("packages/mod/esm/m.js")),
             (app, "bare", Some("packages/bare/index.js")),
             (app, "bare/tools", Some("packages/bare/tools.ts")),
