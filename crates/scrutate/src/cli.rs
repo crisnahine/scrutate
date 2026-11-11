@@ -1129,9 +1129,7 @@ pub fn run() -> Result<i32> {
             let v: Vec<serde_json::Value> = crate::langs::LANGS
                 .iter()
                 .map(|spec| {
-                    let mut kinds: Vec<&str> = spec.defs.iter().map(|d| d.kind).collect();
-                    kinds.sort();
-                    kinds.dedup();
+                    let kinds = crate::langs::definition_kinds(spec);
                     serde_json::json!({
                         "id": spec.id, "extensions": spec.exts, "extensions_by_content": by_content(spec.id), "filenames": spec.files,
                         "definitions": !spec.defs.is_empty(), "definition_kinds": kinds,

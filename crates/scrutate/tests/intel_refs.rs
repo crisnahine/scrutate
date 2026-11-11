@@ -289,6 +289,41 @@ fn a_call_the_resolver_does_not_read_runs_the_definition_in_its_own_file() {
 }
 
 #[test]
+fn callers_says_which_call_sites_it_did_not_check() {
+    let mut files: Vec<(String, String)> = vec![
+        ("a/__init__.py".into(), String::new()),
+        ("a/helper.py".into(), "def helper():\n    return 1\n".into()),
+        ("b/helper.py".into(), "def helper():\n    return 2\n".into()),
+    ];
+    for i in 0..410 {
+        files.push((format!("u/u{i:03}.py"), format!("from a.helper import helper\n\n\ndef f{i:03}():\n    return helper()\n")));
+    }
+    let files: Vec<(&str, &str)> = files.iter().map(|(p, b)| (p.as_str(), b.as_str())).collect();
+    let r = Repo::new("unchecked", &files);
+    let (code, out) = r.run(&["callers", "a/helper.py:1", "--limit", "500"]);
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(out.lines().filter(|l| l.contains("] f")).count(), 410, "{out}");
+    assert!(out.contains("(the last 10 were not checked: the resolver is asked about the 400 likeliest call sites)"), "{out}");
+    assert!(!out.contains("could not"), "{out}");
+}
+
+#[test]
+fn refs_names_a_language_the_resolver_does_not_read_apart_from_one_without_a_grammar() {
+    let r = Repo::new(
+        "unread",
+        &[
+            ("m.c", "int helper(void) {\n    return 1;\n}\n\nint run(void) {\n    return helper();\n}\n"),
+            ("m.pl", "sub helper {\n    return 1;\n}\n\nhelper();\n"),
+        ],
+    );
+    let (_, out) = r.run(&["refs", "helper"]);
+    let reason_of = |file: &str| out.lines().filter(|l| l.contains(file)).map(|l| l.rsplit('(').next().unwrap_or("").to_string()).collect::<Vec<_>>();
+    assert!(reason_of("m.c").iter().any(|w| w.starts_with("not resolved in this language")), "{out}");
+    assert!(reason_of("m.c").iter().all(|w| !w.starts_with("no grammar")), "{out}");
+    assert!(reason_of("m.pl").iter().any(|w| w.starts_with("no grammar")), "{out}");
+}
+
+#[test]
 fn a_macro_of_the_repository_is_a_callee() {
     let c = "#define SQUARE(x) ((x) * (x))\n\nint twice(int v) {\n    return v * 2;\n}\n\nint use(int v) {\n    return SQUARE(v) + twice(v);\n}\n";
     let rs = "macro_rules! square {\n    ($x:expr) => {\n        $x * $x\n    };\n}\n\npub fn area(v: i32) -> i32 {\n    square!(v)\n}\n";

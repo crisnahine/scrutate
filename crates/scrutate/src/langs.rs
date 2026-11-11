@@ -140,6 +140,7 @@ pub const KIND_WORDS: &[(&str, &str)] = &[
     ("define", "function"),
     ("defmacro", "macro"),
     ("define-syntax", "macro"),
+    ("define-syntax-rule", "macro"),
     ("defclass", "class"),
     ("defstruct", "struct"),
     ("define-struct", "struct"),
@@ -1039,7 +1040,7 @@ const CORE: &[LangSpec] = &[
             kind: "function",
             name: &[NameRule::Custom(lisp_define_name)],
             value_kinds: &[],
-            head_words: &["define", "define-syntax", "struct", "define-struct"],
+            head_words: &["define", "define-syntax", "define-syntax-rule", "struct", "define-struct"],
             needs_field: "",
             kind_by_head: true,
             parents: &[],
@@ -2038,6 +2039,36 @@ static CPP_HEADER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(
     )
     .unwrap()
 });
+
+/// The languages `parse::constant_of` reads constants in.
+pub const CONSTANT_LANGS: &[&str] = &["c", "cpp", "glsl", "go", "java", "javascript", "objc", "python", "rust", "tsx", "typescript"];
+
+/// The definition kinds the index gives a language: the kinds of its rules, `method` for a
+/// function in a class, `constant` where constants are read, and for a rule that takes its kind
+/// from the keyword at the head of the definition, the kinds of the keywords the language has.
+pub fn definition_kinds(spec: &LangSpec) -> Vec<&'static str> {
+    let mut kinds: Vec<&str> = spec.defs.iter().map(|d| d.kind).collect();
+    if kinds.contains(&"function") && (kinds.contains(&"class") || spec.id == "cpp") {
+        kinds.push("method");
+    }
+    if CONSTANT_LANGS.contains(&spec.id) {
+        kinds.push("constant");
+    }
+    // a rule that lists its head keywords takes the kind of each; the three that do not list
+    // them read `interface`, `enum class`, `struct`, `extension` and `defmacro` off the head
+    for d in spec.defs.iter().filter(|d| d.kind_by_head) {
+        kinds.extend(d.head_words.iter().filter_map(|w| KIND_WORDS.iter().find(|(kw, _)| kw == w).map(|(_, k)| *k)));
+    }
+    kinds.extend(match spec.id {
+        "kotlin" => &["interface", "enum"][..],
+        "swift" => &["struct", "enum", "impl"][..],
+        "commonlisp" => &["macro"][..],
+        _ => &[][..],
+    });
+    kinds.sort();
+    kinds.dedup();
+    kinds
+}
 
 /// The extensions `sniff` reads the text of, with the languages it picks between.
 pub const BY_CONTENT: &[(&str, &[&str])] =

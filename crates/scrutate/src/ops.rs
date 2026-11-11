@@ -299,10 +299,12 @@ pub enum Answer {
         stopped: Option<Stop>,
     },
     /// `undecided`: callers kept although the resolver could not tell whether they call this
-    /// definition or another of the same name.
+    /// definition or another of the same name. `unchecked`: the ones after them that it was not
+    /// asked about.
     Callers {
         hits: Vec<Hit>,
         undecided: usize,
+        unchecked: usize,
         stopped: Option<Stop>,
     },
     /// `from`: the files of the definitions whose calls these are.
@@ -389,13 +391,14 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
             Answer::Hits { hits, words: Vec::new(), snippet: true, stopped }
         }
         Op::Callers { name, limit } => {
-            let (hits, mut undecided) = callers(s, name, limit + 1)?;
+            let (hits, mut undecided, mut unchecked) = callers(s, name, limit + 1)?;
             let (hits, stopped) = cut(hits, *limit, RAISE_LIMIT);
-            // the undecided ones come last, so the one cut off was one of them
-            if stopped.is_some() && undecided > 0 {
-                undecided -= 1;
+            // the unchecked ones come last and the undecided before them, so the one cut off was one of those
+            if stopped.is_some() {
+                let last = if unchecked > 0 { &mut unchecked } else { &mut undecided };
+                *last = last.saturating_sub(1);
             }
-            Answer::Callers { hits, undecided, stopped }
+            Answer::Callers { hits, undecided, unchecked, stopped }
         }
         Op::Callees { name, limit } => {
             let (resolved, external, from) = callees(s, name, limit + 1)?;
@@ -717,11 +720,12 @@ fn resolve_in(rv: &mut Resolver, s: &Searcher, path: &str, (start, end): (i64, i
                 // an import from outside, a local, a field or a string is decided: not this definition
                 Err(why) => {
                     seen = true;
-                    if matches!(why, "receiver" | "not found" | "no grammar") {
+                    let unread = matches!(why, "no grammar" | crate::resolve::UNREAD);
+                    if unread || matches!(why, "receiver" | "not found") {
                         unsure = true;
                         unsure_free |= !(methods && line[..col].trim_end().ends_with('.'));
                         let receiver = [".", "->", "::"].iter().any(|r| line[..col].trim_end().ends_with(r));
-                        elsewhere |= receiver || why != "no grammar";
+                        elsewhere |= receiver || !unread;
                     }
                 }
             }
@@ -750,9 +754,11 @@ fn package(path: &str) -> &str {
 /// The definitions whose code calls what `name` stands for, and how many of them were kept only
 /// because the resolver could not tell which same-named definition they call. Those come after
 /// the decided ones, first the ones whose code names the target's type, then the ones in its package.
-pub(crate) fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit>, usize)> {
-    /// Call sites the resolver is asked about in one answer, likeliest first.
-    const CALLERS_RESOLVED: usize = 400;
+/// Call sites the resolver is asked about in one `callers` answer, likeliest first.
+const CALLERS_RESOLVED: usize = 400;
+
+/// -> (callers: decided, then undecided, then unchecked; how many are undecided; how many unchecked)
+pub(crate) fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit>, usize, usize)> {
     let targets = targets(s, name, 500)?;
     let ids: HashSet<i64> = targets.iter().map(|t| t.id).collect();
     let names: std::collections::BTreeSet<&str> = targets.iter().map(|t| t.name.as_str()).collect();
@@ -764,7 +770,7 @@ pub(crate) fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit
     let cols = crate::index::CHUNK_COLS.split(',').map(|c| format!("c.{c}")).collect::<Vec<_>>().join(",");
     let mut calls = s.ix.db.prepare(&format!("SELECT DISTINCT {cols} FROM refs r JOIN chunks c ON c.id=r.chunk_id WHERE r.callee=?1 ORDER BY c.is_test"))?;
     let mut namesakes = s.ix.db.prepare("SELECT id, path, kind, qualname FROM chunks WHERE name=?1 AND kind != 'window'")?;
-    let (mut out, mut unsure_rows, mut seen) = (Vec::new(), Vec::new(), HashSet::new());
+    let (mut out, mut unsure_rows, mut unchecked_rows, mut seen) = (Vec::new(), Vec::new(), Vec::new(), HashSet::new());
     let mut rv = Resolver::new(&s.ix)?;
     // a call of a method a target overrides or implements may run the target
     let overridden: HashSet<i64> = targets.iter().flat_map(|t| rv.overridden(t.id)).filter(|id| !ids.contains(id)).collect();
@@ -785,7 +791,7 @@ pub(crate) fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit
         for row in sites {
             // a common name has thousands of call sites: the likeliest are resolved, the rest stay undecided
             if asked >= CALLERS_RESOLVED {
-                unsure_rows.push(row);
+                unchecked_rows.push(row);
                 continue;
             }
             asked += 1;
@@ -809,14 +815,16 @@ pub(crate) fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit
             }
             out.push(Hit::from_row(&row, true));
             if out.len() >= limit {
-                return Ok((out, 0));
+                return Ok((out, 0, 0));
             }
         }
     }
     unsure_rows.sort_by_cached_key(&likely);
     let undecided = unsure_rows.len().min(limit - out.len());
     out.extend(unsure_rows.iter().take(undecided).map(|r| Hit::from_row(r, true)));
-    Ok((out, undecided))
+    let unchecked = unchecked_rows.len().min(limit - out.len());
+    out.extend(unchecked_rows.iter().take(unchecked).map(|r| Hit::from_row(r, true)));
+    Ok((out, undecided, unchecked))
 }
 
 /// Whether `word` is in `text` where it is not part of a longer identifier.
@@ -1081,16 +1089,22 @@ impl Answer {
                 Parts { items: hit_blocks(hits, words, *snippet, false), tail: stop_line(*stopped, "results"), noun: "results", ..Parts::default() }
             }
             Answer::Callers { hits, .. } if hits.is_empty() => nothing("(no results)".to_string()),
-            Answer::Callers { hits, undecided, stopped } => Parts {
+            Answer::Callers { hits, undecided, unchecked, stopped } => Parts {
                 items: hit_blocks(hits, &[], false, false),
                 tail: joined(
-                    match *undecided {
-                        0 => String::new(),
-                        n if n == hits.len() => {
-                            "(the resolver could not tell whether any of these calls this definition or another of the same name)".to_string()
-                        }
-                        n => format!("({n} of these call a definition of that name the resolver could not identify: it may be another one)"),
-                    },
+                    joined(
+                        match *undecided {
+                            0 => String::new(),
+                            n if n == hits.len() => {
+                                "(the resolver could not tell whether any of these calls this definition or another of the same name)".to_string()
+                            }
+                            n => format!("({n} of these call a definition of that name the resolver could not identify: it may be another one)"),
+                        },
+                        match *unchecked {
+                            0 => String::new(),
+                            n => format!("(the last {n} were not checked: the resolver is asked about the {CALLERS_RESOLVED} likeliest call sites)"),
+                        },
+                    ),
                     stop_line(*stopped, "results"),
                 ),
                 noun: "results",

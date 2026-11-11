@@ -63,6 +63,9 @@ struct Binding {
     sites: Vec<usize>,
 }
 
+/// Why an occurrence stays unresolved in a language that has a grammar but no resolver rules.
+pub const UNREAD: &str = "not resolved in this language";
+
 struct FileInfo {
     lang: Option<Lang>,
     src: String,
@@ -770,7 +773,9 @@ impl<'a> Resolver<'a> {
     pub fn resolve_at(&mut self, path: &str, line: u64, col: usize, name: &str) -> Resolution {
         self.looked_up.clear();
         let fi = self.file(path);
-        let (Some(lang), Some(tree)) = (fi.lang, fi.tree.as_ref()) else { return Err("no grammar") };
+        let (Some(lang), Some(tree)) = (fi.lang, fi.tree.as_ref()) else {
+            return Err(if crate::parse::spec_for(path, &fi.src).is_some() { UNREAD } else { "no grammar" });
+        };
         let row = line.saturating_sub(1) as usize;
         let Some(node) = tree.root_node().descendant_for_point_range(Point { row, column: col }, Point { row, column: col + name.len() }) else {
             return Err("not found");

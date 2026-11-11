@@ -45,6 +45,37 @@ fn samples_yield_the_recorded_symbols() {
     assert!(got.len() >= 60, "fewer samples than expected: {}", got.len());
 }
 
+/// `languages --json` must name every kind the index gives a language's sample.
+#[test]
+fn the_registry_names_every_kind_a_sample_yields() {
+    let mut missing = Vec::new();
+    for sub in ["tests/samples", "tests/samples_extra"] {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(sub);
+        for entry in fs::read_dir(&dir).unwrap() {
+            let p = entry.unwrap().path();
+            let name = p.file_name().unwrap().to_string_lossy().into_owned();
+            let Ok(src) = fs::read_to_string(&p) else { continue };
+            let Some(spec) = scrutate::parse::spec_for(&name, &src) else { continue };
+            let known = scrutate::langs::definition_kinds(spec);
+            for c in parse_source(&name, &src) {
+                if !matches!(c.kind, "module" | "window") && !known.contains(&c.kind) {
+                    missing.push(format!("{}: {} ({name})", spec.id, c.kind));
+                }
+            }
+        }
+    }
+    missing.sort();
+    missing.dedup();
+    assert!(missing.is_empty(), "kinds the registry does not name:\n{}", missing.join("\n"));
+}
+
+#[test]
+fn a_racket_define_syntax_rule_is_a_macro() {
+    let chunks = parse_source("m.rkt", "#lang racket\n(define-syntax-rule (twice e) (begin e e))\n(define (f x) (twice x))\n");
+    let found: Vec<(&str, &str)> = chunks.iter().map(|c| (c.kind, c.name.as_str())).collect();
+    assert!(found.contains(&("macro", "twice")) && found.contains(&("function", "f")), "{found:?}");
+}
+
 #[test]
 fn every_text_file_is_searchable_even_without_symbols() {
     let chunks = parse_source("notes.whatever", "line one\nline two\n");
