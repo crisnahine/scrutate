@@ -1899,8 +1899,11 @@ impl<'a> Resolver<'a> {
         if sub.is_empty() {
             targets.extend(pkg.module.iter().chain(&pkg.main).cloned());
         }
-        if let Some(f) = targets.iter().find_map(|t| self.package_file(&pkg.dir, t)) {
-            return Some(f);
+        // `types` may name a declaration that sits beside the implementation a later target names
+        let found: Vec<String> = targets.iter().filter_map(|t| self.package_file(&pkg.dir, t)).collect();
+        let declares = |f: &&String| DECLARATIONS.iter().any(|e| f.ends_with(e));
+        if let Some(f) = found.iter().find(|f| !declares(f)).or(found.first()) {
+            return Some(f.clone());
         }
         let rel = if sub.is_empty() { "index" } else { sub };
         self.js_file(&join(&pkg.dir, rel)).or_else(|| self.js_file(&join(&pkg.dir, &format!("src/{rel}"))))
@@ -1914,7 +1917,7 @@ impl<'a> Resolver<'a> {
             return Some(f);
         }
         let (_, below) = rel.split_once('/')?;
-        let stem = [".d.ts", ".d.mts", ".d.cts", ".js", ".mjs", ".cjs"].iter().find_map(|e| below.strip_suffix(e)).unwrap_or(below);
+        let stem = DECLARATIONS.iter().chain(&[".js", ".mjs", ".cjs"]).find_map(|e| below.strip_suffix(e)).unwrap_or(below);
         self.js_file(&join(dir, &format!("src/{stem}")))
     }
 
@@ -2040,9 +2043,11 @@ impl<'a> Resolver<'a> {
         }
         // TypeScript sources are imported with the `.js` name they compile to
         let stem = base.strip_suffix(".js").or_else(|| base.strip_suffix(".mjs")).unwrap_or(base);
-        let mut cands: Vec<String> = [".ts", ".tsx", ".d.ts", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"].iter().map(|e| format!("{stem}{e}")).collect();
+        let mut cands: Vec<String> = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"].iter().map(|e| format!("{stem}{e}")).collect();
         cands.push(base.to_string());
-        cands.extend(["index.ts", "index.tsx", "index.js", "index.jsx", "index.mjs"].iter().map(|i| join(base, i)));
+        // a declaration stands in only when no implementation has the name
+        cands.extend(DECLARATIONS.iter().map(|e| format!("{stem}{e}")));
+        cands.extend(["index.ts", "index.tsx", "index.js", "index.jsx", "index.mjs", "index.d.ts"].iter().map(|i| join(base, i)));
         self.first_file(&cands)
     }
 
@@ -2191,6 +2196,8 @@ impl<'a> Resolver<'a> {
         self.go_dirs().get(dir).cloned().unwrap_or_default()
     }
 }
+
+const DECLARATIONS: [&str; 3] = [".d.ts", ".d.mts", ".d.cts"];
 
 /// `baseUrl` and `paths` of the config at `path`; what it does not set comes from the config it
 /// extends by a relative path. None when neither is set anywhere.
@@ -3745,6 +3752,15 @@ mod tests {
             ("packages/rt/src/deno.ts", "export const r = 1;\n"),
             ("packages/rt/src/web.ts", "export const r = 2;\n"),
             ("packages/plat/src/web.ts", "export const p = 2;\n"),
+            ("packages/typed/package.json", "{\"name\": \"typed\", \"types\": \"index.d.ts\", \"main\": \"index.js\"}\n"),
+            ("packages/typed/index.js", "export function t() { return 1; }\n"),
+            ("packages/typed/index.d.ts", "export function t(): number;\n"),
+            ("packages/typed2/package.json", "{\"name\": \"typed2\", \"exports\": {\"types\": \"./index.d.ts\", \"default\": \"./index.js\"}}\n"),
+            ("packages/typed2/index.js", "export function t() { return 1; }\n"),
+            ("packages/typed2/index.d.ts", "export function t(): number;\n"),
+            ("packages/app/src/m.js", "export function f() { return 1; }\n"),
+            ("packages/app/src/m.d.ts", "export function f(): number;\n"),
+            ("packages/app/src/only.d.ts", "export function o(): number;\n"),
             ("packages/mod/package.json", "{\"name\": \"modpkg\", \"module\": \"esm/m.js\", \"main\": \"cjs/m.js\"}\n"),
             ("packages/mod/esm/m.js", "export const m = 1;\n"),
             ("packages/mod/cjs/m.js", "exports.m = 1;\n"),
@@ -3785,6 +3801,12 @@ mod tests {
             (app, "plat", Some("packages/plat/src/node.ts")),
             (app, "rt", Some("packages/rt/src/web.ts")),
             (app, "modpkg", Some("packages/mod/esm/m.js")),
+            // a declaration beside its implementation: the implementation
+            (app, "./m", Some("packages/app/src/m.js")),
+            (app, "./m.js", Some("packages/app/src/m.js")),
+            (app, "./only", Some("packages/app/src/only.d.ts")),
+            (app, "typed", Some("packages/typed/index.js")),
+            (app, "typed2", Some("packages/typed2/index.js")),
             (app, "bare", Some("packages/bare/index.js")),
             (app, "bare/tools", Some("packages/bare/tools.ts")),
             (app, "bare/dir", Some("packages/bare/dir/index.ts")),
