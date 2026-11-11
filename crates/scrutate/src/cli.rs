@@ -518,19 +518,28 @@ fn names_below(dir: &Path, top: &Path) -> Vec<String> {
     dir.strip_prefix(top).map(|r| r.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect()).unwrap_or_default()
 }
 
-/// The directory above `cwd` that holds an index, when `cwd` holds none.
+/// The directory whose index a command run in `cwd` uses, when that is not `cwd`. The index of a
+/// repository is at its top (the first directory upward that holds `.git`: a directory, or a
+/// file in a submodule or worktree): a first build lands there, and the top's index wins over
+/// one an earlier run left in a subdirectory. Outside a repository: the nearest index above.
 fn index_above(cwd: &Path) -> Option<PathBuf> {
-    for (up, dir) in cwd.ancestors().enumerate() {
-        if dir.join(crate::files::INDEX_DIR).is_dir() {
-            return (up > 0).then(|| dir.to_path_buf());
+    let has_index = |d: &Path| d.join(crate::files::INDEX_DIR).is_dir();
+    let mut nearest = None;
+    for dir in cwd.ancestors() {
+        if nearest.is_none() && has_index(dir) {
+            nearest = Some(dir);
         }
-        // the top of a repository (a submodule and a worktree keep `.git` as a file): an index
-        // further up belongs to the repository around it
         if dir.join(".git").exists() {
-            return None;
+            // a home directory kept in git is no project: nothing is built there from below
+            let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" });
+            let build_here = nearest.is_none() && home.as_deref().map(Path::new) != Some(dir);
+            if has_index(dir) || build_here {
+                nearest = Some(dir);
+            }
+            break;
         }
     }
-    None
+    nearest.filter(|d| *d != cwd).map(Path::to_path_buf)
 }
 
 /// Where a command runs in the repository: its path arguments are the shell's, relative to the

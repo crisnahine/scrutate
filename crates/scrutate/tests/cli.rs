@@ -743,6 +743,34 @@ fn nested_repo(name: &str) -> Repo {
 }
 
 #[test]
+fn the_index_of_a_repository_is_at_its_top_whichever_directory_a_command_runs_in() {
+    // no index anywhere: the first command, run in a subdirectory, builds it at the top
+    let r = Repo::new("first_build");
+    fs::create_dir_all(r.root.join(".git")).unwrap();
+    r.write("top.py", b"def top_fn():\n    return 1\n");
+    r.write("src/deep/d.py", b"def deep_fn():\n    return 2\n");
+    let deep = r.root.join("src/deep");
+    let (code, out, err) = run_in(&deep, &["symbol", "top_fn"], &[]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.starts_with("top.py:1"), "{out}");
+    assert!(r.root.join(".scrutate").is_dir() && !deep.join(".scrutate").exists(), "the index is at the top");
+    assert_eq!(err.lines().filter(|l| l.starts_with("[scrutate] using the index in ")).count(), 1, "{err}");
+    // an index an earlier run left below the top does not hide the top's
+    let (code, _, err) = run_in(&deep, &["--root", ".", "index"], &[]);
+    assert_eq!(code, 0, "{err}");
+    assert!(deep.join(".scrutate").is_dir());
+    let (code, out, err) = run_in(&deep, &["symbol", "top_fn"], &[]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.starts_with("top.py:1"), "{out}");
+    // with no index at the top, the one in the subdirectory is the repository's only one: it is used
+    fs::remove_dir_all(r.root.join(".scrutate")).unwrap();
+    let (code, out, _) = run_in(&deep, &["symbol", "deep_fn"], &[]);
+    assert_eq!(code, 0);
+    assert!(out.starts_with("d.py:1"), "{out}");
+    assert!(!r.root.join(".scrutate").exists(), "no second index is built at the top");
+}
+
+#[test]
 fn a_repository_inside_another_does_not_use_the_outer_index() {
     let r = nested_repo("inner_repo");
     // a submodule or a git worktree: `.git` is a file there, a directory in a clone

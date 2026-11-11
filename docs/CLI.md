@@ -50,10 +50,14 @@
   `--root` (`SCRUTATE_ROOT`) must be an existing directory; otherwise the command exits 2 and
   creates nothing.
 - **Running in a subdirectory**: without `--root` (or `SCRUTATE_ROOT`), a command that uses the
-  index runs on the nearest directory above that holds `.scrutate`, and says so on stderr
-  (`[scrutate] using the index in <path>`). The search stops at the top of a repository (a
-  directory that holds `.git`, a file or a directory), so a clone, a submodule or a git worktree
-  inside an indexed checkout has its own index or none. A path argument is read from the current
+  index runs on the top of the repository the current directory is in (the first directory
+  upward that holds `.git`, a file or a directory), and says so on stderr
+  (`[scrutate] using the index in <path>`). A first index is built there, whichever
+  subdirectory the first command runs in, and the top's index wins over one an earlier run left
+  in a subdirectory; with no index at the top, an index in a directory between is used. A
+  clone, a submodule or a git worktree inside an indexed checkout is its own repository, with
+  its own index. Outside a repository the nearest directory above that holds `.scrutate` is
+  used, else the current directory. A home directory kept in git is not taken for a top. A path argument is read from the current
   directory when it exists there, else as given (a path from the repository root, as answers
   print it). A file or a location of another indexed repository, as `search --also` prints it
   (`../two/src/db.py:5-6`), is answered from that repository's index by `symbol`, `callers`,
