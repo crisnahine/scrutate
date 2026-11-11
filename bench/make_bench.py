@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Build a leakage-free code-search benchmark from real packages (CodeSearchNet-style).
 
-For every documented function we create queries from its docstring, then index a *masked*
-copy of the package in which docstrings no longer contain the answer:
+For every documented function and class we create queries from its docstring, then index a
+*masked* copy of the package in which docstrings no longer contain the answer:
 
   variant A  every function/class docstring removed        ("undocumented codebase")
   variant B  first sentence of every docstring removed     ("partially documented")
@@ -13,6 +13,12 @@ Query types
   name  the function name written as words                 ("remove tool" for remove_tool)
   id    bare identifier                                    (exact lookup)
   qid   Class.method                                       (qualified exact lookup)
+
+Each query has a `target_kind`: "function" (a function or method) or "type" (a class; in the other
+languages also a struct, enum, trait, interface or type alias). A package's type queries come
+after its function queries and from their own random stream, so the function queries are the
+same as when functions were the only answers. A type query is answered by the type's own chunk,
+not by an impl block or a constructor of the same name.
 
 usage: python bench/make_bench.py [pkg ...]      (default: all DEV + TEST packages)
 """
@@ -115,14 +121,16 @@ def process_file(src: str, path: str, with_targets: bool):
             editsB.append((st.lineno, st.end_lineno, [indent + '"""' + esc + '"""']))
         else:
             editsB.append((st.lineno, st.end_lineno, [indent + "pass"]))
-        if (with_targets and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and not node.name.startswith("__") and not node.name.startswith("test")
+        is_func = isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        if (with_targets and not node.name.startswith("__")
+                and not node.name.startswith("test" if is_func else ("test", "Test"))
                 and not (decorator_names(node) & {"overload", "setter", "deleter", "getter"})
                 and not SECTION_START.match(first)):
             q = clean_rst(first).rstrip(".:;, ")
             n = len(q.split())
             if 4 <= n <= 30:
-                targets.append({"name": node.name, "qualname": qual, "query": q})
+                targets.append({"name": node.name, "qualname": qual, "query": q,
+                                "target_kind": "function" if is_func else "type"})
 
     def apply(edits):
         out = list(lines)
@@ -163,40 +171,64 @@ def build_package(pkg: str, rng: random.Random) -> dict:
                 t["path"] = rel
             all_targets.extend(targets)
 
-    # drop ambiguous queries (same description on several functions)
-    cnt = Counter(t["query"].lower() for t in all_targets)
-    all_targets = [t for t in all_targets if cnt[t["query"].lower()] == 1]
-    name_cnt = Counter(t["name"] for t in all_targets)
-
-    queries: list[dict] = []
-
-    def add(kind, items):
-        rng.shuffle(items)
-        for t, q, extra in items[: LIMITS[kind]]:
-            queries.append({"type": kind, "query": q, "path": t["path"], "qualname": t["qualname"],
-                            "name": t["name"], **extra})
-
-    add("doc", [(t, t["query"], {"match": "qualname"}) for t in all_targets])
-    kw_items = []
-    for t in all_targets:
-        words = [w for w in re.findall(r"[A-Za-z][A-Za-z0-9_]{2,}", t["query"])
-                 if w.lower() not in STOPWORDS]
-        if len(words) >= 3:
-            idx = sorted(rng.sample(range(len(words)), 3))
-            kw_items.append((t, " ".join(words[i] for i in idx), {"match": "qualname"}))
-    add("kw", kw_items)
-    add("name", [(t, " ".join(split_identifier(t["name"])), {"match": "name"})
-                 for t in all_targets if len(split_identifier(t["name"])) >= 2])
-    add("id", [(t, t["name"], {"match": "name"}) for t in all_targets
-               if len(t["name"]) >= 4 and name_cnt[t["name"]] == 1])
-    add("qid", [(t, ".".join(t["qualname"].split(".")[-2:]), {"match": "qualname_suffix"})
-                for t in all_targets if "." in t["qualname"]])
-
+    queries = make_queries(all_targets, rng, random.Random("types " + pkg))
     os.makedirs(os.path.join(BENCH, "queries"), exist_ok=True)
     with open(os.path.join(BENCH, "queries", f"{pkg}.json"), "w") as f:
         json.dump(queries, f)
-    by_type = Counter(q["type"] for q in queries)
-    return {"pkg": pkg, "files": nfiles, "documented_targets": len(all_targets), **by_type}
+    return summary(pkg, nfiles, all_targets, queries)
+
+
+def summary(pkg: str, nfiles: int, targets: list[dict], queries: list[dict]) -> dict:
+    """Counts of the unambiguous targets and of the queries, the type ones apart."""
+    fcnt = Counter(t["query"].lower() for t in targets if t["target_kind"] == "function")
+    acnt = Counter(t["query"].lower() for t in targets)
+    by = Counter(q["type"] + ("" if q["target_kind"] == "function" else "_type") for q in queries)
+    return {"pkg": pkg, "files": nfiles,
+            "documented_targets": sum(t["target_kind"] == "function" and fcnt[t["query"].lower()] == 1
+                                      for t in targets),
+            "documented_types": sum(t["target_kind"] == "type" and acnt[t["query"].lower()] == 1
+                                    for t in targets), **by}
+
+
+def make_queries(targets: list[dict], rng: random.Random, type_rng: random.Random,
+                 qid_text=lambda qual: ".".join(qual.split(".")[-2:])) -> list[dict]:
+    """The five query types for the function targets, drawn from ``rng``, then for the type
+    targets, drawn from ``type_rng``: adding types moves no function query."""
+    funcs = [t for t in targets if t["target_kind"] == "function"]
+    types = [t for t in targets if t["target_kind"] == "type"]
+    queries: list[dict] = []
+
+    def draw(items_of, rng, text_cnt, name_cnt):
+        def add(kind, items):
+            rng.shuffle(items)
+            for t, q, extra in items[: LIMITS[kind]]:
+                queries.append({"type": kind, "query": q, "path": t["path"], "qualname": t["qualname"],
+                                "name": t["name"], **extra, "target_kind": t["target_kind"]})
+
+        # drop ambiguous queries (same description on several definitions)
+        ts = [t for t in items_of if text_cnt[t["query"].lower()] == 1]
+        add("doc", [(t, t["query"], {"match": "qualname"}) for t in ts])
+        kw_items = []
+        for t in ts:
+            words = [w for w in re.findall(r"[A-Za-z][A-Za-z0-9_]{2,}", t["query"])
+                     if w.lower() not in STOPWORDS]
+            if len(words) >= 3:
+                idx = sorted(rng.sample(range(len(words)), 3))
+                kw_items.append((t, " ".join(words[i] for i in idx), {"match": "qualname"}))
+        add("kw", kw_items)
+        add("name", [(t, " ".join(split_identifier(t["name"])), {"match": "name"})
+                     for t in ts if len(split_identifier(t["name"])) >= 2])
+        add("id", [(t, t["name"], {"match": "name"}) for t in ts
+                   if len(t["name"]) >= 4 and name_cnt[t["name"]] == 1])
+        add("qid", [(t, qid_text(t["qualname"]), {"match": "qualname_suffix"})
+                    for t in ts if "." in t["qualname"]])
+
+    fcnt = Counter(t["query"].lower() for t in funcs)
+    draw(funcs, rng, fcnt, Counter(t["name"] for t in funcs if fcnt[t["query"].lower()] == 1))
+    # a type query must be unambiguous against the functions too
+    acnt = Counter(t["query"].lower() for t in targets)
+    draw(types, type_rng, acnt, Counter(t["name"] for t in targets if acnt[t["query"].lower()] == 1))
+    return queries
 
 
 def main() -> None:

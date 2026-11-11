@@ -5,14 +5,21 @@ usage:
   train_ranker.py cv      TAG                  3-fold package-held-out CV on DEV features
   train_ranker.py fit     TAG OUT.npz          fit on all DEV features, save ensemble
   train_ranker.py eval    TAG [OUT.npz]        evaluate scorers on TEST features (+ ranker if given)
-  train_ranker.py compare TAG OLD.npz NEW.npz [OUT.json]   two rankers on TEST, per language
+  train_ranker.py compare TAG OLD.npz NEW.npz [OUT.json] [--gate]
+                                               two rankers on TEST, all languages and each one;
+                                               --gate exits 1 when the new ranker is worse on a
+                                               function row by more than its confidence interval
 
+Each query type is reported twice: the queries whose answer is a function or method ("doc"), and
+those whose answer is a type ("doc:type"). Older feature files have function answers only.
 DEV and TEST include the other-language packages of groups.CODE_DEV / CODE_TEST unless
-PYTHON_ONLY=1. RANKER_PARAMS='{"n_estimators": 400}' overrides PARAMS (for tuning with cv).
+PYTHON_ONLY=1. RANKER_PARAMS='{"n_estimators": 400}' overrides PARAMS (for tuning with cv);
+TYPE_WEIGHT=0.5 overrides the weight of a type query's rows in training (0 leaves them out).
 """
 from __future__ import annotations
 
 import glob
+import gzip
 import json
 import os
 import pickle
@@ -34,10 +41,18 @@ PARAMS = dict(objective="lambdarank", metric="ndcg", n_estimators=250, learning_
               num_leaves=31, min_child_samples=40, subsample=0.8, subsample_freq=1,
               colsample_bytree=0.8, reg_lambda=1.0, lambdarank_truncation_level=20,
               verbose=-1, n_jobs=2)
+if os.environ.get("THREADS"):
+    PARAMS["n_jobs"] = int(os.environ["THREADS"])
 PARAMS.update(json.loads(os.environ.get("RANKER_PARAMS", "{}")))
 if not os.environ.get("PYTHON_ONLY"):
     DEV, TEST = DEV + CODE_DEV, TEST + CODE_TEST
+TYPE_WEIGHT = float(os.environ.get("TYPE_WEIGHT", 0.1))  # chosen by cv: more lifts the types and costs the function doc and kw rows
 TYPES = ("doc", "kw", "name", "id", "qid")
+ROWS = TYPES + tuple(t + ":type" for t in TYPES)  # function answers, then type answers
+
+
+def row_of(rec) -> str:
+    return rec["type"] + (":type" if rec["q"].get("target_kind") == "type" else "")
 
 
 def folds() -> list[list[str]]:
@@ -59,6 +74,8 @@ def load(tag: str, pkgs: list[str]):
         recs = []
         for f in sorted(glob.glob(os.path.join(WORK, "feat", tag, f"*_{pkg}.pkl"))):
             with open(f, "rb") as fh:
+                gz = fh.read(2) == b"\x1f\x8b"
+            with (gzip.open if gz else open)(f, "rb") as fh:
                 d = pickle.load(fh)
             assert d["features"] == FEATURES, "feature set changed; regenerate features"
             drop = [i for i, n in enumerate(FEATURES) if any(n.startswith(p) for p in DROP)]
@@ -80,22 +97,24 @@ def pruned(rec):
 
 
 def build(recs):
-    Xs, ys, groups = [], [], []
+    """-> (X, y, group sizes, row weights); a type query's rows weigh TYPE_WEIGHT."""
+    Xs, ys, groups, ws = [], [], [], []
     for r in recs:
-        if r["y"].sum() == 0:
+        w = TYPE_WEIGHT if r["q"].get("target_kind") == "type" else 1.0
+        if r["y"].sum() == 0 or w == 0:
             continue
         X, y, _ = pruned(r)
         if y.sum() == 0:
             continue
-        Xs.append(X); ys.append(y); groups.append(len(y))
-    return np.vstack(Xs), np.concatenate(ys), np.array(groups)
+        Xs.append(X); ys.append(y); groups.append(len(y)); ws.append(np.full(len(y), w))
+    return np.vstack(Xs), np.concatenate(ys), np.array(groups), np.concatenate(ws)
 
 
 def fit(recs, params=None) -> "lightgbm.LGBMRanker":
     import lightgbm as lgb
-    X, y, g = build(recs)
+    X, y, g, w = build(recs)
     m = lgb.LGBMRanker(**(params or PARAMS))
-    m.fit(X, y, group=g)
+    m.fit(X, y, group=g, sample_weight=None if (w == 1).all() else w)
     return m
 
 
@@ -112,7 +131,7 @@ SCORERS = {
 }
 
 
-def evaluate(recs, ranker=None, types=TYPES):
+def evaluate(recs, ranker=None, types=ROWS):
     res = {}
     scorers = dict(SCORERS)
     if ranker is not None:
@@ -123,7 +142,9 @@ def evaluate(recs, ranker=None, types=TYPES):
             return out
         scorers["LEARNED ranker"] = ltr
     for t in types:
-        rs = [r for r in recs if r["type"] == t]
+        rs = [r for r in recs if row_of(r) == t]
+        if not rs:
+            continue
         for name, fn in scorers.items():
             res.setdefault(t, {})[name] = [rank_of_first(fn(r["X"]), r["y"]) for r in rs]
     return res
@@ -145,7 +166,7 @@ def main() -> None:
     if cmd == "cv":
         data = load(tag, DEV)
         allres: dict = {}
-        print("params:", PARAMS)
+        print("params:", PARAMS, "type weight:", TYPE_WEIGHT)
         langs = sorted({r["lang"] for rs in data.values() for r in rs})
         for held in folds():
             train = [r for p, rs in data.items() if p not in held for r in rs]
@@ -159,8 +180,10 @@ def main() -> None:
             print(f"held-out {held}: done", flush=True)
         for lang, res in allres.items():
             print_eval(res, f"3-fold package-held-out CV on DEV, {lang}")
-            mrr = np.mean([v for d in res.values() for v in mrr_values(d["LEARNED ranker"])])
-            print(f"  learned ranker MRR@10 over all {lang} queries: {mrr:.4f}")
+            for label, sel in (("function", lambda t: ":" not in t), ("type", lambda t: ":" in t)):
+                v = [v for t, d in res.items() if sel(t) for v in mrr_values(d["LEARNED ranker"])]
+                if v:
+                    print(f"  learned ranker MRR@10 over all {lang} {label} queries: {np.mean(v):.4f} (n={len(v)})")
     elif cmd == "fit":
         data = load(tag, DEV)
         recs = [r for rs in data.values() for r in rs]
@@ -182,34 +205,40 @@ def main() -> None:
             print_eval(evaluate([r for r in recs if r["variant"] == variant], ens),
                        f"TEST (held-out packages), variant {variant}")
     elif cmd == "compare":
+        args = [a for a in sys.argv[3:] if a != "--gate"]
         data = load(tag, TEST)
-        old, new = TreeEnsemble.load(sys.argv[3]), TreeEnsemble.load(sys.argv[4])
+        old, new = TreeEnsemble.load(args[0]), TreeEnsemble.load(args[1])
         recs = [r for rs in data.values() for r in rs]
         out: dict = {}
-        for lang in sorted({r["lang"] for r in recs}):
+        worse = []
+        for lang in ["all"] + sorted({r["lang"] for r in recs}):
             for variant in ("A", "B"):
-                sub = [r for r in recs if r["lang"] == lang and r["variant"] == variant]
+                sub = [r for r in recs if lang in ("all", r["lang"]) and r["variant"] == variant]
                 a, b = evaluate(sub, old), evaluate(sub, new)
                 print(f"\n=== TEST {lang}, variant {variant}: old ranker -> new ranker")
-                for t in TYPES:
-                    ro, rn = a[t]["LEARNED ranker"], b[t]["LEARNED ranker"]
-                    if not ro:
+                for t in ROWS:
+                    if t not in a:
                         continue
+                    ro, rn = a[t]["LEARNED ranker"], b[t]["LEARNED ranker"]
                     so, sn = summarize(ro), summarize(rn)
                     (lo1, hi1), (lo2, hi2) = bootstrap_ci(mrr_values(ro)), bootstrap_ci(mrr_values(rn))
                     m, lo, hi = paired_diff_ci(rn, ro)
                     bm = summarize(a[t]["bm25 (lexical)"])["MRR"]
-                    print(f"  {t:<5} n={so['n']:<5} bm25 {bm:.3f}  old {so['MRR']:.3f} [{lo1:.3f},{hi1:.3f}]  "
+                    print(f"  {t:<8} n={so['n']:<5} bm25 {bm:.3f}  old {so['MRR']:.3f} [{lo1:.3f},{hi1:.3f}]  "
                           f"new {sn['MRR']:.3f} [{lo2:.3f},{hi2:.3f}]  new-old {m:+.3f} [{lo:+.3f},{hi:+.3f}]  "
                           f"hit@1/5/10 old {so['hit@1']:.3f}/{so['hit@5']:.3f}/{so['hit@10']:.3f} "
                           f"new {sn['hit@1']:.3f}/{sn['hit@5']:.3f}/{sn['hit@10']:.3f}")
                     out.setdefault(lang, {}).setdefault(variant, {})[t] = {
                         "n": so["n"], "bm25": bm, "old": {**so, "ci": [lo1, hi1]},
                         "new": {**sn, "ci": [lo2, hi2]}, "new_minus_old": [m, lo, hi]}
-        if len(sys.argv) > 5:
-            with open(sys.argv[5], "w") as f:
+                    if ":" not in t and hi < 0:
+                        worse.append(f"{lang} {variant} {t}: {m:+.3f} [{lo:+.3f},{hi:+.3f}]")
+        if len(args) > 2:
+            with open(args[2], "w") as f:
                 json.dump(out, f, indent=1)
-
+        print("\nfunction rows worse beyond the confidence interval:", "; ".join(worse) or "none")
+        if worse and "--gate" in sys.argv:
+            sys.exit(1)
 
 if __name__ == "__main__":
     main()

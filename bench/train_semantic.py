@@ -238,7 +238,8 @@ def dev_data(variant="A"):
                                            tokenize2(c.sig, 80)[0], tokenize2(c.doc, 200)[0], tokenize2(c.body, BODY_CAP)[0]))
                     except Exception:
                         pass
-        data.append((pkg, chunks, load_queries(pkg)))
+        # its chunks carry no kind, so the type answers are left out
+        data.append((pkg, chunks, [q for q in load_queries(pkg) if q.get("target_kind") != "type"]))
     _DEV_CACHE[variant] = data
     return data
 

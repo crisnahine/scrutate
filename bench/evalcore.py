@@ -17,7 +17,13 @@ def load_queries(pkg: str, types: tuple[str, ...] | None = None) -> list[dict]:
     return [q for q in qs if types is None or q["type"] in types]
 
 
-def is_relevant(q: dict, path: str, qualname: str, name: str) -> bool:
+TYPE_KINDS = ("class", "struct", "enum", "trait", "interface", "type")
+
+
+def is_relevant(q: dict, path: str, qualname: str, name: str, kind: str | None = None) -> bool:
+    # a struct's impl block and a class's constructor share its name; the type's own chunk answers
+    if q.get("target_kind") == "type" and kind not in TYPE_KINDS:
+        return False
     m = q["match"]
     if m == "qualname":
         return path == q["path"] and qualname == q["qualname"]
@@ -34,7 +40,7 @@ def first_relevant_rank(q: dict, hits, limit: int = 10) -> int | None:
     for i, h in enumerate(hits, 1):
         if i > limit:
             break
-        if is_relevant(q, h.path, h.qualname, h.name):
+        if is_relevant(q, h.path, h.qualname, h.name, getattr(h, "kind", None)):
             return i
     return None
 

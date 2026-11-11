@@ -2,10 +2,11 @@
 """Run benchmark queries through the engine; save candidate features + relevance labels.
 
 usage: gen_features.py MODEL.npz TAG GROUP[DEV|TEST] [--variants A,B] [--pkgs a,b]
-Writes $SCRUTATE_WORK/feat/TAG/{variant}_{pkg}.pkl
+Writes $SCRUTATE_WORK/feat/TAG/{variant}_{pkg}.pkl (gzip-compressed)
 """
 from __future__ import annotations
 
+import gzip
 import os
 import pickle
 import sys
@@ -46,11 +47,12 @@ def main() -> None:
             recs = []
             for q in load_queries(pkg):
                 _, rows, X = s.candidates(q["query"])
-                y = np.array([1 if is_relevant(q, r["path"], r["qualname"] or "", r["name"] or "") else 0
+                y = np.array([1 if is_relevant(q, r["path"], r["qualname"] or "", r["name"] or "", r["kind"]) else 0
                               for r in rows], np.int8)
                 names = [(r["path"], r["qualname"] or "", r["name"] or "") for r in rows]
                 recs.append({"type": q["type"], "X": X, "y": y, "meta": names, "q": q})
-            with open(os.path.join(outdir, f"{variant}_{pkg}.pkl"), "wb") as f:
+            # gzip: the features are about four times smaller (train_ranker.py reads both forms)
+            with gzip.open(os.path.join(outdir, f"{variant}_{pkg}.pkl"), "wb", compresslevel=1) as f:
                 pickle.dump({"features": FEATURES, "recs": recs}, f)
             dt = time.time() - t0
             print(f"{variant} {pkg}: {len(recs)} queries, {st.chunks} chunks, {dt:.0f}s "

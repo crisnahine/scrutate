@@ -3,8 +3,9 @@
 
 Doc comments take the place of docstrings: JSDoc and Javadoc `/** */` blocks, Rust `///` and
 `//!` lines, and Go `//` comment blocks directly above a top-level declaration. Targets are
-functions and methods with a doc comment directly above them (Rust attributes may sit between);
-the first sentence of that comment becomes the query.
+functions and methods with a doc comment directly above them (Rust attributes may sit between),
+and as `target_kind` "type" the classes, structs, enums, traits, interfaces and type aliases with
+one; the first sentence of that comment becomes the query.
 
   variant A  every doc comment removed
   variant B  first sentence of every doc comment removed
@@ -24,15 +25,15 @@ import re
 import shutil
 import subprocess
 import sys
-from collections import Counter
 
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
+from evalcore import TYPE_KINDS  # noqa: E402
 from groups import BENCH, CODE, CODE_SRC  # noqa: E402
-from make_bench import LIMITS, SECTION_START, clean_rst, split_docstring  # noqa: E402
+from make_bench import SECTION_START, clean_rst, make_queries, split_docstring, summary  # noqa: E402
 
 from scrutate_ref.parse import language_for, parse_source  # noqa: E402
-from scrutate_ref.text import STOPWORDS, is_test_path, split_identifier  # noqa: E402
+from scrutate_ref.text import is_test_path  # noqa: E402
 
 LANG_EXT = {"rust": (".rs",), "go": (".go",), "java": (".java",),
             "javascript": (".js", ".mjs", ".cjs"), "typescript": (".ts", ".js")}
@@ -94,10 +95,12 @@ def rebuild(rest: str, tags: list[str], prefix: str | None) -> str:
 
 def process_file(src: str, rel: str, lang: str, with_targets: bool):
     """-> (variantA_src, variantB_src, targets)."""
-    starts = {}
+    starts, type_starts = {}, {}
     for c in parse_source(rel, src):
         if c.kind in ("function", "method"):
             starts.setdefault(c.start, c)
+        elif c.kind in TYPE_KINDS:
+            type_starts.setdefault(c.start, c)
     lines = src.split("\n")
     targets, editsA, editsB = [], [], []
     for a, b, desc, tags, prefix in doc_blocks(src, lang):
@@ -109,18 +112,21 @@ def process_file(src: str, rel: str, lang: str, with_targets: bool):
         line = src.count("\n", 0, b) + 2  # 1-based line after the comment
         while lang == "rust" and line <= len(lines) and lines[line - 1].lstrip().startswith("#["):
             line += 1
-        c = starts.get(line)
+        # a function on the line wins, as when functions were the only answers
+        c = starts.get(line) or type_starts.get(line)
         if not (with_targets and c is not None and first):
             continue
         name = c.name
         if lang == "go" and first.startswith(name + " "):
             first = first[len(name) + 1:]
+        is_func = c.kind in ("function", "method")
         if name == "constructor" or name.startswith("__") or name.startswith("test") \
-                or SECTION_START.match(first):
+                or (not is_func and name.startswith("Test")) or SECTION_START.match(first):
             continue
         q = clean_rst(first).rstrip(".:;, ")
         if 4 <= len(q.split()) <= 30:
-            targets.append({"name": name, "qualname": c.qualname, "query": q})
+            targets.append({"name": name, "qualname": c.qualname, "query": q,
+                            "target_kind": "function" if is_func else "type"})
 
     def apply(edits):
         out, pos = [], 0
@@ -178,39 +184,13 @@ def build_package(tag: str, rng: random.Random) -> dict:
             t["path"] = rel
         all_targets.extend(targets)
 
-    cnt = Counter(t["query"].lower() for t in all_targets)
-    all_targets = [t for t in all_targets if cnt[t["query"].lower()] == 1]
-    name_cnt = Counter(t["name"] for t in all_targets)
-    queries: list[dict] = []
-
-    def add(kind, items):
-        rng.shuffle(items)
-        for t, q, extra in items[: LIMITS[kind]]:
-            queries.append({"type": kind, "query": q, "path": t["path"], "qualname": t["qualname"],
-                            "name": t["name"], **extra})
-
-    add("doc", [(t, t["query"], {"match": "qualname"}) for t in all_targets])
-    kw = []
-    for t in all_targets:
-        words = [w for w in re.findall(r"[A-Za-z][A-Za-z0-9_]{2,}", t["query"]) if w.lower() not in STOPWORDS]
-        if len(words) >= 3:
-            idx = sorted(rng.sample(range(len(words)), 3))
-            kw.append((t, " ".join(words[i] for i in idx), {"match": "qualname"}))
-    add("kw", kw)
-    add("name", [(t, " ".join(split_identifier(t["name"])), {"match": "name"})
-                 for t in all_targets if len(split_identifier(t["name"])) >= 2])
-    add("id", [(t, t["name"], {"match": "name"}) for t in all_targets
-               if len(t["name"]) >= 4 and name_cnt[t["name"]] == 1])
     # Rust impl names carry generics (`Block<T>.write`); a user types `Block.write`
-    add("qid", [(t, re.sub(r"<[^.]*>", "", ".".join(t["qualname"].split(".")[-2:])),
-                 {"match": "qualname_suffix"})
-                for t in all_targets if "." in t["qualname"]])
-
+    queries = make_queries(all_targets, rng, random.Random("types " + tag),
+                           lambda qual: re.sub(r"<[^.]*>", "", ".".join(qual.split(".")[-2:])))
     os.makedirs(os.path.join(BENCH, "queries"), exist_ok=True)
     with open(os.path.join(BENCH, "queries", f"{tag}.json"), "w") as f:
         json.dump(queries, f)
-    return {"pkg": tag, "files": nfiles, "documented_targets": len(all_targets),
-            **Counter(q["type"] for q in queries)}
+    return summary(tag, nfiles, all_targets, queries)
 
 
 def fetch() -> None:

@@ -176,7 +176,7 @@ def cmd_features(name: str, tag: str, group: str) -> None:
             recs = []
             for q in load_queries(pkg):
                 _, rows, X = s.candidates(q["query"])
-                y = np.array([1 if is_relevant(q, r["path"], r["qualname"] or "", r["name"] or "") else 0
+                y = np.array([1 if is_relevant(q, r["path"], r["qualname"] or "", r["name"] or "", r["kind"]) else 0
                               for r in rows], np.int8)
                 recs.append({"type": q["type"], "X": X, "y": y,
                              "meta": [(r["path"], r["qualname"] or "", r["name"] or "") for r in rows], "q": q})
