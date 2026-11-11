@@ -688,8 +688,9 @@ fn resolve_in(rv: &mut Resolver, s: &Searcher, path: &str, (start, end): (i64, i
 }
 
 /// A definition outside any class or type: `x.f()` does not call it where `methods_only` holds.
-fn free(qualname: &str) -> bool {
-    !qualname.contains('.')
+/// A method of an object literal has no owner in its name and is still called through one.
+fn free(kind: &str, qualname: &str) -> bool {
+    kind != "method" && !qualname.contains('.')
 }
 
 /// The directory a file's package starts at: what comes before its `src/`, else its top directory.
@@ -720,7 +721,7 @@ pub(crate) fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit
     let mut rv = Resolver::new(&s.ix)?;
     let names_owner = |text: &str| owners.iter().any(|o| has_word(text, o));
     let likely = |r: &ChunkRow| (!names_owner(&r.text), !packages.contains(package(&r.path)), r.path.clone(), r.start);
-    let all_free = |n: &str| targets.iter().filter(|t| t.name == n).all(|t| free(&t.qualname));
+    let all_free = |n: &str| targets.iter().filter(|t| t.name == n).all(|t| free(&t.kind, &t.qualname));
     let mut asked = 0;
     for n in names {
         let rows: Vec<(i64, String)> = namesakes.query_map([n], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
@@ -796,7 +797,7 @@ pub(crate) fn callees(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit
             let picked: Vec<&ChunkRow> = if !tied.is_empty() {
                 tied
             } else if uses.unsure {
-                rows.iter().filter(|r| uses.unsure_free || !free(&r.qualname)).take(3).collect()
+                rows.iter().filter(|r| uses.unsure_free || !free(&r.kind, &r.qualname)).take(3).collect()
             } else {
                 Vec::new()
             };

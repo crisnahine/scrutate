@@ -587,6 +587,21 @@ fn a_method_that_wraps_a_namesake_is_not_its_own_caller_or_callee() {
 }
 
 #[test]
+fn a_method_of_an_object_literal_keeps_its_callers_and_callees() {
+    let ts = "export const store = {\n  count: 0,\n  increment() {\n    this.count += 1;\n    return this.total();\n  },\n  total() {\n    return this.count;\n  },\n};\n\nexport function bump() {\n  return store.increment();\n}\n";
+    let js = "export default {\n  methods: {\n    save() {\n      return 1;\n    },\n    run() {\n      return this.save();\n    },\n  },\n};\n";
+    let r = Repo::new("literal", &[("vue.ts", ts), ("api.js", js)]);
+    let lib = r.lib();
+    let callers = |n: &str| lib.callers(n, 50).unwrap().into_iter().map(|h| h.name).collect::<Vec<_>>();
+    let callees = |n: &str| lib.callees(n, 50).unwrap().0.into_iter().map(|h| h.name).collect::<Vec<_>>();
+    assert_eq!(callers("increment"), ["bump"]);
+    assert_eq!(callers("total"), ["increment"]);
+    assert_eq!(callers("save"), ["run"]);
+    assert_eq!(callees("bump"), ["increment"]);
+    assert_eq!(callees("run"), ["save"]);
+}
+
+#[test]
 fn a_recursive_function_is_its_own_caller_and_callee() {
     let rs = "pub fn fact(n: u64) -> u64 {\n    if n == 0 {\n        1\n    } else {\n        n * fact(n - 1)\n    }\n}\n\npub fn main_entry() -> u64 {\n    fact(5)\n}\n";
     let py = "def walk(n):\n    if n:\n        return walk(n - 1)\n    return 0\n";
