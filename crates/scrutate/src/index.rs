@@ -21,7 +21,7 @@ pub const SCHEMA_VERSION: u32 = 13;
 /// What the parser and tokenizer make of a file. Bump it with every change of the rules in
 /// `langs.rs`, `parse.rs` or `text.rs` (and the same in the reference's `parse.py` and `text.py`):
 /// an index of another revision reads every file again on its next update.
-pub const CONTENT_REVISION: u32 = 1;
+pub const CONTENT_REVISION: u32 = 2;
 pub const MAX_SEGMENTS: usize = 6; // more live segments than this triggers a merge of the small ones
 pub const SMALL_INDEX_ROWS: usize = 8000; // an index this small is kept as ONE segment
 /// Rows per segment flushed during one update: bounds the memory of building the inverted index

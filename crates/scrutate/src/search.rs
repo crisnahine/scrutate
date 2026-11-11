@@ -542,8 +542,9 @@ impl Searcher {
             let mut h = Hit::from_row(row, false);
             h.score = scores[r];
             h.why = why(&c.x[r]);
-            let key = (h.path.clone(), h.qualname.clone(), h.kind == "impl"); // a struct and its impl block are two hits
-                                                                              // a window is a part of the definition it names: one hit per definition, its best part
+            // a struct and its impl block are two hits
+            let key = (h.path.clone(), h.qualname.clone(), h.kind == "impl");
+            // a window is a part of the definition it names: one hit per definition, its best part
             let grouped = !h.qualname.is_empty() && (CODE_KINDS.contains(&h.kind.as_str()) || h.kind == "window");
             if grouped {
                 if let Some(&pi) = best_by_key.get(&key) {

@@ -198,10 +198,16 @@ def _is_closer(line: str) -> bool:
 _COMMENT_STARTS = ("//", "#", "--", ";", "/*", "*", "%")
 
 
-def _attr_start(src: bytes, at: int) -> tuple[int, int]:
-    """Where a definition's text starts when the attribute lines right above ``at`` (``#[...]``,
-    ``@...``) are its own, and how many lines that adds."""
+# how an attribute line above a definition starts, where the language writes them outside the node
+_ATTR_MARK = {"rust": b"#[", "javascript": b"@", "typescript": b"@", "tsx": b"@", "python": b"@", "java": b"@"}
+
+
+def _attr_start(src: bytes, at: int, mark: bytes) -> tuple[int, int]:
+    """Where a definition's text starts when the attribute lines right above ``at`` are its own,
+    and how many lines that adds."""
     above = 0
+    if not mark:
+        return at, 0
     while True:
         i = at
         while i > 0 and src[i - 1] in b" \t\r\x0c":  # only blanks may stand before `at` on its line
@@ -210,7 +216,7 @@ def _attr_start(src: bytes, at: int) -> tuple[int, int]:
             return at, above
         prev = src.rfind(b"\n", 0, i - 1) + 1
         t = src[prev:i].lstrip(b" \t")
-        if not t.startswith((b"#[", b"@")):
+        if not t.startswith(mark):
             return at, above
         at = i - len(t)
         above += 1
@@ -687,7 +693,7 @@ def parse_source(path: str, source: str) -> list[Chunk]:
             body_node = node.child_by_field_name("body")
             sig_end = body_node.start_byte if body_node is not None else min(
                 node.end_byte, node.start_byte + 200)
-            text_start, above = _attr_start(src, outer.start_byte)
+            text_start, above = _attr_start(src, outer.start_byte, _ATTR_MARK.get(lang, b""))
             sig = txt(text_start, sig_end).strip()
             doc = _leading_comment(node, src)
             body_start = sig_end

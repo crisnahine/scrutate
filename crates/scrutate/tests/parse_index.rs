@@ -544,6 +544,17 @@ fn a_definition_starts_at_the_attribute_lines_right_above_it() {
     let m = find(&chunks, "A.onResize");
     assert_eq!(m.start, 2);
     assert!(m.text.starts_with("@HostListener"), "{:?}", m.text);
+    // where a line that starts with @ is no attribute, the definition starts on its own line
+    let chunks = parse_source("Makefile", "build:\n\t@echo building\ntest: build\n\t@cargo test\n");
+    assert_eq!((find(&chunks, "build").start, find(&chunks, "test").start), (1, 3));
+    let chunks = parse_source("a.rb", "class A\n  @count = 0\n  def incr\n    1\n  end\nend\n");
+    assert_eq!(find(&chunks, "A.incr").start, 3);
+    let chunks = parse_source("a.m", "@interface Greeter : NSObject\n- (void)greet;\n@end\n@implementation Greeter\n- (void)greet {}\n@end\n");
+    assert!(
+        chunks.iter().filter(|c| c.name == "greet").all(|c| c.start == 2 || c.start == 5),
+        "{:?}",
+        chunks.iter().map(|c| (c.qualname.as_str(), c.start)).collect::<Vec<_>>()
+    );
 }
 
 #[test]

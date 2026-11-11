@@ -38,7 +38,7 @@ SCHEMA_VERSION = 13
 # What the parser and tokenizer make of a file; the engine's index.rs holds the same value. Bump it
 # with every change of the rules in parse.py or text.py (and langs.rs, parse.rs, text.rs): an index
 # of another revision reads every file again on its next update.
-CONTENT_REVISION = 1
+CONTENT_REVISION = 2
 MAX_SEGMENTS = 6          # more live segments than this triggers a merge of the small ones
 SMALL_INDEX_ROWS = 8000   # an index this small is kept as ONE segment (a rewrite costs a few ms)
 GC_AGE_S = 600            # unreferenced segment directories younger than this may be in flight

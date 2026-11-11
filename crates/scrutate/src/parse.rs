@@ -351,10 +351,24 @@ fn is_closer(line: &str) -> bool {
     matches!(t.trim_end_matches([';', ',']), "end" | "fi" | "done" | "esac") || t.chars().all(|c| "{}[]();,".contains(c))
 }
 
-/// Where a definition's text starts when the attribute lines right above `at` (`#[...]`, `@...`)
-/// are its own, and how many lines that adds.
-fn attr_start(src: &[u8], mut at: usize) -> (usize, usize) {
+/// How an attribute line above a definition starts in a language that writes them outside the
+/// definition's node. Elsewhere a line that starts so is something else: a Makefile recipe
+/// (`@echo`), a Ruby instance variable, an Objective-C directive.
+fn attr_mark(lang: &str) -> &'static [u8] {
+    match lang {
+        "rust" | "php" => b"#[",
+        "javascript" | "typescript" | "tsx" | "python" | "java" | "kotlin" | "scala" | "groovy" | "dart" | "swift" | "elixir" | "gleam" => b"@",
+        _ => b"",
+    }
+}
+
+/// Where a definition's text starts when the attribute lines right above `at` are its own, and
+/// how many lines that adds.
+fn attr_start(src: &[u8], mut at: usize, mark: &[u8]) -> (usize, usize) {
     let mut above = 0;
+    if mark.is_empty() {
+        return (at, 0);
+    }
     loop {
         // only blanks may stand before `at` on its line (scanning no further keeps it linear)
         let Some(nl) = src[..at].iter().rposition(|b| !b.is_ascii_whitespace() || *b == b'\n').filter(|&i| src[i] == b'\n') else {
@@ -364,7 +378,7 @@ fn attr_start(src: &[u8], mut at: usize) -> (usize, usize) {
         let prev = src[..line - 1].iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
         let indent = src[prev..line].iter().take_while(|&&b| b == b' ' || b == b'\t').count();
         let t = &src[prev + indent..line];
-        if !(t.starts_with(b"#[") || t.starts_with(b"@")) {
+        if !t.starts_with(mark) {
             return (at, above);
         }
         at = prev + indent;
@@ -1657,8 +1671,7 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
                 Some(b) => b.start_byte(),
                 None => node.end_byte().min(node.start_byte() + 200),
             };
-            // an Objective-C line that starts with @ is a directive (@interface, @property), not an attribute
-            let (text_start, above) = if spec.id == "objc" { (outer.start_byte(), 0) } else { attr_start(src, outer.start_byte()) };
+            let (text_start, above) = attr_start(src, outer.start_byte(), attr_mark(spec.id));
             let sig = txt(src, text_start, sig_end).trim().to_string();
             let mut body_start = sig_end;
             let mut doc = match node.child_by_field_name("docstring").or_else(|| lisp_docstring(node)) {
