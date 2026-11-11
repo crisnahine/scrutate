@@ -3,6 +3,8 @@
 # its maintainers publish it (release binaries where they exist, source builds otherwise), then the
 # Engine A leaderboard (warm and cold cache); linux_indexed.sh then runs the indexed comparison.
 #
+# (for x86_64 on an arm64 host: --platform linux/amd64, its own volume, and
+#  -e SCRUTATE_PREBUILT=/prebuilt/scrutate with the cross-built binary mounted at /prebuilt)
 #   docker run --rm --privileged --platform linux/arm64 -v "$PWD":/src:ro \
 #     -v "$HOME/.cache/scrutate-bench/corpora":/corpora:ro -v "$HOME/.cache/scrutate-bench/livegrep":/livegrep:ro \
 #     -v scrutate-bench-linux:/bench -v "$PWD/bench/results":/results rust:1-slim-bookworm bash /src/bench/competitors/linux_bench.sh
@@ -24,8 +26,10 @@ apt-get install -y -qq make g++ pkg-config file perl python3 python3-venv silver
 fetch() { [ -f "$B/src/$2" ] || curl -fsSL -o "$B/src/$2" "$1"; }
 if [ ! -x $B/bin/rg ]; then
   step "ripgrep 15.2.0 (release binary)"
-  fetch https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-$arch-unknown-linux-gnu.tar.gz rg.tgz
-  tar -C $B/src -xzf $B/src/rg.tgz && cp $B/src/ripgrep-15.2.0-$arch-unknown-linux-gnu/rg $B/bin/
+  # its x86_64 Linux release is the musl build; aarch64 has a glibc one
+  rgt=$arch-unknown-linux-gnu; [ "$arch" = x86_64 ] && rgt=x86_64-unknown-linux-musl
+  fetch https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-$rgt.tar.gz rg.tgz
+  tar -C $B/src -xzf $B/src/rg.tgz && cp $B/src/ripgrep-15.2.0-$rgt/rg $B/bin/
 fi
 if [ ! -x $B/bin/hyperfine ]; then
   step "hyperfine 2.0.0 (release binary)"
@@ -53,7 +57,8 @@ if [ ! -x $B/bin/ack ]; then
 fi
 if [ ! -x $B/go/bin/zoekt ]; then
   step "Go and Zoekt (go install, as its README says)"
-  fetch "https://go.dev/dl/go1.25.4.linux-${arch/aarch64/arm64}.tar.gz" go.tgz
+  goarch=${arch/aarch64/arm64}
+  fetch "https://go.dev/dl/go1.25.4.linux-${goarch/x86_64/amd64}.tar.gz" go.tgz
   tar -C $B -xzf $B/src/go.tgz
   GOPATH=$B/go GOFLAGS=-mod=mod $B/go/bin/go install github.com/sourcegraph/zoekt/cmd/zoekt-index@a5a933bc043e github.com/sourcegraph/zoekt/cmd/zoekt@a5a933bc043e
   mv $B/go/bin/zoekt $B/go/bin/zoekt-index $B/bin/ 2>/dev/null || true
@@ -67,7 +72,13 @@ fi
 step "scrutate (release build)"
 rm -rf $B/scrutate && mkdir -p $B/scrutate
 tar -C /src --exclude=./target --exclude=./dist --exclude=.scrutate --exclude=./fuzz -cf - . | tar -C $B/scrutate -xf -
-(cd $B/scrutate && cargo build --release -p scrutate --locked -q)
+if [ -n "${SCRUTATE_PREBUILT:-}" ]; then
+  # x86_64 on an arm64 host: gcc crashes on the grammar sources under emulation, so the binary is
+  # cross-built first (tools/linux_x86_cross_verify.sh) and handed in
+  mkdir -p $B/scrutate/target/release && cp "$SCRUTATE_PREBUILT" $B/scrutate/target/release/scrutate
+else
+  (cd $B/scrutate && cargo build --release -p scrutate --locked -q)
+fi
 export SCRUTATE_BIN=$B/scrutate/target/release/scrutate ZOEKT_BIN_DIR=$B/bin
 
 step "corpora onto the container disk"
@@ -77,6 +88,7 @@ for c in linux linux-nodot ripgrep; do
 done
 cp /corpora/manifest.json $B/corpora/
 git config --global --add safe.directory '*'
+if [ -n "${SETUP_ONLY:-}" ]; then step "set up; no benchmark asked for"; exit 0; fi
 
 out=/results/linux-$arch
 mkdir -p $out
