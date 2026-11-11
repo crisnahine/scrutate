@@ -24,7 +24,7 @@ rustc --version
 step "rust job: fmt, clippy, test, build, smoke"
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --exclude scrutate-py -- -D warnings 2>&1 | tail -1
-cargo test --release -p scrutate --locked 2>&1 | grep -E "^test result|FAILED|panicked" | awk '{p+=$4; f+=$6} END {print "tests passed:", p, "failed:", f}'
+cargo test --release -p scrutate --locked 2>&1 | grep -E "^test result|FAILED|panicked" | awk '/^test result/ {p+=$4; f+=$6; next} {print} END {print "tests passed:", p, "failed:", f}'
 cargo build --release -p scrutate --locked 2>&1 | tail -1
 ./target/release/scrutate --version
 ./target/release/scrutate grep -F "fn main" crates/scrutate/src | head -2
@@ -55,7 +55,7 @@ python bench/differential.py --cases 200 --seed 3 2>&1 | tail -2
 python bench/parity.py crates/scrutate/src target/release/scrutate --queries 50 2>&1 | tail -1
 
 step "compat job"
-cargo test --release -p scrutate --features extra-langs --locked 2>&1 | grep -E "^test result|FAILED|panicked" | awk '{p+=$4; f+=$6} END {print "tests passed:", p, "failed:", f}'
+cargo test --release -p scrutate --features extra-langs --locked 2>&1 | grep -E "^test result|FAILED|panicked" | awk '/^test result/ {p+=$4; f+=$6; next} {print} END {print "tests passed:", p, "failed:", f}'
 msrv=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
 rustup toolchain install "$msrv" --profile minimal --no-self-update 2>&1 | tail -1
 RUSTFLAGS="" cargo "+$msrv" check -p scrutate --locked 2>&1 | tail -1
