@@ -27,6 +27,9 @@ converted to Python objects one batch at a time, never materialised as one giant
 or no paths, `FileNotFoundError` for a path that does not exist. Matches come in the order the
 files are searched; `sort=True` gives path and line order (the first match then waits for the
 whole search). `Repo.read` raises `FileNotFoundError` for a missing file and `ValueError` for a
-path outside the repository. Ctrl-C stops a `grep` within about 100 ms. During `Repo.index()` it
-returns as quickly, but the update runs to its end in the background, and the next call on that
-`Repo` waits for it.
+path outside the repository. Ctrl-C stops a `grep` or a `Repo.index()` within about 100 ms; an
+interrupted update stops at its next batch of files and leaves the index as it was.
+
+`Repo.symbol`, `Repo.callers`, `Repo.duplicates` and the hits of `Repo.callees` come as a
+`scrutate.Results` list. It is a `list` with one more field: `stopped_at` is the limit when more
+results were left, else `None`.

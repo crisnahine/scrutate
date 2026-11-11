@@ -273,7 +273,10 @@ First release.
   `structural_search` end with a line when they stopped at their limit, naming the argument that
   raises it.
 - `tsquery` reads a path that does not exist from the current directory under `--root`, and
-  names a path that exists in neither place in a warning, exit code 2.
+  names a path that exists in neither place in a warning, exit code 2. It prints paths as
+  `grep PATH...` prints them (`src/a.py` for the argument `src`), in plain output and `--json`,
+  so a printed path can be passed to the other commands. `dupes` lists groups of equal size in
+  one fixed order, so a limit keeps the same groups on every run.
 - Imports: Go binds a directory through the module path in `go.mod`; a Python module drops its
   first segment only when that is the checkout's own name; an `#include "util.h"` resolves
   beside the including file; `rdeps` matches by base name only an import that resolves to no
@@ -404,7 +407,9 @@ First release.
   as the tools do. Ctrl-C stops `grep` and `Repo.index()` within about 100 ms (an interrupted
   update rolls back); `Repo.read()` raises `FileNotFoundError`, `ValueError` or `OSError`;
   `grep` raises its argument errors at call time and takes `sort=True`; a panic no longer leaves
-  the `Repo` unusable.
+  the `Repo` unusable. `Repo.symbol`, `Repo.callers`, `Repo.duplicates` and the hits of
+  `Repo.callees` are a `scrutate.Results` list whose `stopped_at` is the limit when more
+  results were left.
 - Integrations: one MCP configuration per client (VS Code `servers`, Codex TOML, Zed
   `context_servers`); the GitLab and Bitbucket templates pass on a repository with no
   duplicates and unpack the tool outside the checkout; the pre-commit hook is valid YAML, fails

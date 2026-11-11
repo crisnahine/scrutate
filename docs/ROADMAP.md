@@ -139,8 +139,6 @@ docs/RELEASING.md, public, tag `v0.1.0`.
 - An Objective-C `@property` is not a symbol, and neither is a C++ `static const` member declared
   in a class body: in C and C++ only a `const` or `constexpr` with a value at file level, in a
   namespace or in `extern "C"` is a constant.
-- `tsquery` prints a path relative to the directory it was given: `tsquery python Q src` prints
-  `a.py` for `src/a.py`, a path that the other commands do not read back.
 - Some calls record no call edge, so `callers` and `callees` miss them: a Verilog task call, a
   function in a VHDL package body (it is not a symbol either), Jsonnet, Make `$(call ...)` and
   assembly.
