@@ -106,7 +106,8 @@ pub struct GrepArgs {
     /// the pattern (omit it when patterns are given with -e)
     #[arg(required_unless_present = "regexp")]
     pub pattern: Option<String>,
-    /// files or directories to search (default: current directory)
+    /// files or directories to search, `-` for standard input (default: standard input when it is
+    /// a pipe or a file, otherwise the current directory)
     pub paths: Vec<PathBuf>,
     /// a pattern to search for; repeatable, a line matching any of them matches
     #[arg(short = 'e', long = "regexp", value_name = "PATTERN")]
@@ -167,6 +168,12 @@ pub struct GrepArgs {
     /// only path given); -l and --json still print it
     #[arg(short = 'I', long, overrides_with = "with_filename")]
     pub no_filename: bool,
+    /// print the line number of each line (the default); of -n and -N the later wins
+    #[arg(short = 'n', long, overrides_with = "no_line_number")]
+    pub line_number: bool,
+    /// print no line numbers (--json still has them)
+    #[arg(short = 'N', long, overrides_with = "line_number")]
+    pub no_line_number: bool,
     /// lines of context after each match
     #[arg(short = 'A', long, default_value_t = 0)]
     pub after: usize,
@@ -207,10 +214,11 @@ pub struct GrepArgs {
     /// descend at most this many directory levels
     #[arg(long, env = "SCRUTATE_GREP_MAX_DEPTH")]
     pub max_depth: Option<usize>,
-    /// number of search threads (default: the cores, at most 12; on macOS the performance cores; more when the files come from the disk)
+    /// number of search threads, at most 256 (default: the cores, at most 12; on macOS the performance cores; more when the files come from the disk)
     #[arg(short = 'j', long, default_value_t = 0, env = "SCRUTATE_THREADS")]
     pub threads: usize,
-    /// sort results by path (deterministic, waits for the search to finish)
+    /// sort results by path (deterministic, waits for the search to finish); with --max-results,
+    /// the first N matches in path order
     #[arg(long)]
     pub sort: bool,
     /// one JSON object per line
@@ -484,16 +492,20 @@ pub fn run() -> Result<i32> {
     let args: Vec<String> = std::env::args_os().map(|a| a.to_string_lossy().into_owned()).collect();
     let cfg_root = crate::config::root_from_args(&args);
     let cfg_path = crate::config::locate(&cfg_root);
-    if let Some(p) = &cfg_path {
-        let cfg = crate::config::load(p)?;
-        crate::config::apply_as_env(&cfg);
-    }
+    // a bad file stops the commands that read it, after clap has had --help and --version
+    let cfg_error = cfg_path.as_deref().and_then(|p| crate::config::load(p).map(|cfg| crate::config::apply_as_env(&cfg)).err());
     let cli = if matches!(args.get(1).map(String::as_str), Some("grep" | "g")) {
         let GrepCli { root, no_color, cmd: GrepCmd::Grep(grep) } = GrepCli::parse();
         Cli { root, no_color, max_bytes: None, offset: 0, cmd: Cmd::Grep(grep) }
     } else {
         Cli::parse()
     };
+    if let Some(e) = cfg_error {
+        if !matches!(cli.cmd, Cmd::Config | Cmd::Completions { .. }) {
+            return Err(e);
+        }
+        diagnostic("warning", &format!("{e:#}"));
+    }
     let no_color = cli.no_color;
     let page = (cli.max_bytes.unwrap_or(usize::MAX), cli.offset);
     match cli.cmd {
@@ -518,6 +530,8 @@ pub fn run() -> Result<i32> {
             count,
             with_filename,
             no_filename,
+            line_number: _,
+            no_line_number,
             after,
             before,
             context,
@@ -572,6 +586,10 @@ pub fn run() -> Result<i32> {
                 }
                 instant::join_patterns(&regexp, mode, fixed_strings)?
             };
+            // as ripgrep: no path, and a pipe or a file on standard input, searches standard input
+            if paths.is_empty() && !index && grep_cli::is_readable_stdin() {
+                paths.push(PathBuf::from("-"));
+            }
             let mut o = Options {
                 pattern,
                 mode,
@@ -594,6 +612,7 @@ pub fn run() -> Result<i32> {
                 max_depth,
                 max_count,
                 max_results,
+                first_in_path_order: sort,
                 before: context.unwrap_or(before),
                 after: context.unwrap_or(after),
                 threads,
@@ -605,6 +624,7 @@ pub fn run() -> Result<i32> {
                 paths_as_given: !paths.is_empty(),
                 // as ripgrep: one path that is not a directory is searched without its name
                 with_filename: with_filename || (!no_filename && !(paths.len() == 1 && !paths[0].is_dir())),
+                line_numbers: !no_line_number,
                 small_tree: std::env::var("SCRUTATE_SMALL_TREE").ok().and_then(|v| v.parse().ok()),
                 ..Options::default()
             };
@@ -995,6 +1015,16 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
     let groups = o.before > 0 || o.after > 0;
     let mut last: Option<(Arc<str>, u64)> = None;
     let mut emit = |h: &instant::Hit, w: &mut termcolor::BufferedStandardStream| -> Result<()> {
+        if h.line == instant::NOTE_LINE {
+            if out.json {
+                writeln!(w, "{}", serde_json::json!({"type": "binary", "schema": SCHEMA, "path": h.path, "text": h.text}))?;
+            } else if o.with_filename {
+                writeln!(w, "{}: {}", h.path, h.text)?;
+            } else {
+                writeln!(w, "{}", h.text)?;
+            }
+            return Ok(());
+        }
         if out.json {
             let rec = serde_json::json!({"type": if h.context { "context" } else { "match" }, "schema": SCHEMA, "path": h.path, "line": h.line,
                 "column": h.column, "text": h.text, "spans": h.spans.iter().map(|(a, b)| serde_json::json!({"start": a, "end": b})).collect::<Vec<_>>()});
@@ -1011,7 +1041,13 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
         if !colour {
             // plain output: one assembled line, one write (the common piped case)
             linebuf.clear();
-            instant::format_plain(&mut linebuf, if o.with_filename { &h.path } else { "" }, h.line, h.text.as_bytes(), h.context);
+            instant::format_plain(
+                &mut linebuf,
+                if o.with_filename { &h.path } else { "" },
+                if o.line_numbers { h.line } else { 0 },
+                h.text.as_bytes(),
+                h.context,
+            );
             w.write_all(&linebuf)?;
             return Ok(());
         }
@@ -1021,10 +1057,12 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
             w.reset()?;
             write!(w, "{}", if h.context { "-" } else { ":" })?;
         }
-        w.set_color(&line_color)?;
-        write!(w, "{}", h.line)?;
-        w.reset()?;
-        write!(w, "{}", if h.context { "-" } else { ":" })?;
+        if o.line_numbers {
+            w.set_color(&line_color)?;
+            write!(w, "{}", h.line)?;
+            w.reset()?;
+            write!(w, "{}", if h.context { "-" } else { ":" })?;
+        }
         if h.spans.is_empty() {
             writeln!(w, "{}", h.text)?;
         } else {
@@ -1149,7 +1187,7 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
 /// A path given to search does not exist or cannot be opened (grep's exit 2); files the walk
 /// cannot read do not count.
 fn missing_root(roots: &[PathBuf], stats: &instant::Stats) -> bool {
-    stats.errors > 0 && roots.iter().any(|r| std::fs::metadata(r).is_err())
+    stats.errors > 0 && roots.iter().any(|r| r.as_os_str() != "-" && std::fs::metadata(r).is_err())
 }
 
 /// The first files a search could not read, or not to the end (PCRE2's match limit, I/O errors).
@@ -1209,7 +1247,7 @@ fn grep_plain(roots: Vec<PathBuf>, o: Options, out: GrepOutput, cancel: Arc<Atom
 /// Engine B enrichment of Engine A results: group matching lines by the enclosing symbol.
 fn grouped_by_symbol(root: &Path, hits: &mut Vec<instant::Hit>, w: &mut termcolor::BufferedStandardStream, json: bool) -> Result<()> {
     let s = open_fresh(root)?;
-    let mut lines: Vec<instant::Hit> = std::mem::take(hits).into_iter().filter(|h| !h.context).collect();
+    let mut lines: Vec<instant::Hit> = std::mem::take(hits).into_iter().filter(|h| !h.context && h.line != instant::NOTE_LINE).collect();
     // the index names a file by its path under the root, whatever path the search was given
     let mut named: std::collections::HashMap<std::sync::Arc<str>, std::sync::Arc<str>> = std::collections::HashMap::new();
     for h in &mut lines {
@@ -1377,18 +1415,21 @@ fn diagnostic(kind: &str, message: &str) {
     }
 }
 
+/// The one line a panic prints. Only a panic that may come from the index advises rebuilding it.
+fn panic_text(msg: &str, location: &str) -> String {
+    if msg.contains("failed to spawn thread") {
+        format!("{msg} ({location}). The system refused another thread: lower -j or SCRUTATE_THREADS, or raise the process limit.")
+    } else {
+        format!("{msg} ({location}). If this persists run `scrutate index --force`; please report it with RUST_BACKTRACE=1.")
+    }
+}
+
 pub fn main_exit() {
     // a panic is a bug, but the user still gets a one-line diagnosis and a stable exit code
     // (2 = error) instead of a backtrace dump; RUST_BACKTRACE=1 shows the details
     std::panic::set_hook(Box::new(|info| {
         let msg = info.payload().downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| info.payload().downcast_ref::<String>().cloned()).unwrap_or_default();
-        diagnostic(
-            "internal_error",
-            &format!(
-                "{msg} ({}). If this persists run `scrutate index --force`; please report it with RUST_BACKTRACE=1.",
-                info.location().map(|l| l.to_string()).unwrap_or_default()
-            ),
-        );
+        diagnostic("internal_error", &panic_text(&msg, &info.location().map(|l| l.to_string()).unwrap_or_default()));
     }));
     let code = match std::panic::catch_unwind(run) {
         Ok(Ok(c)) => c,
@@ -1409,5 +1450,12 @@ mod tests {
         assert_eq!(super::parse_size("17179869183G").unwrap(), 17179869183 << 30);
         assert!(super::parse_size("17179869184G").is_err());
         assert!(super::parse_size("x").is_err());
+    }
+
+    #[test]
+    fn a_failed_thread_spawn_does_not_blame_the_index() {
+        let t = super::panic_text("failed to spawn thread: Os { code: 35 }", "x.rs:1:1");
+        assert!(!t.contains("index") && t.contains("-j"), "{t}");
+        assert!(super::panic_text("index out of bounds", "x.rs:1:1").contains("index --force"));
     }
 }

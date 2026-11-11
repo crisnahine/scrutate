@@ -766,8 +766,9 @@ fn a_file_searched_in_ranges_equals_one_pass() {
             assert_eq!(one, split, "{a:?}");
             assert!(one.0 == 0 || one.0 == 1, "{a:?}: {one:?}");
             if one.0 == 0 && !a.contains(&"-c") && !a.contains(&"--json") {
-                // one file given: lines without its name, as ripgrep prints them
-                assert!(one.1.iter().all(|l| l.split(':').next().is_some_and(|n| n.parse::<u64>().is_ok())), "{a:?}: {:?}", &one.1[..1]);
+                // one file given: lines without its name, as ripgrep prints them, and its note on a NUL byte
+                let line = |l: &String| l.split(':').next().is_some_and(|n| n.parse::<u64>().is_ok()) || l.starts_with("binary file matches (found ");
+                assert!(one.1.iter().all(line), "{a:?}: {:?}", &one.1[..1]);
             }
         }
     }

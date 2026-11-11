@@ -452,7 +452,14 @@ fn files_under_proc_and_sys_are_read_to_the_end() {
         let Ok(text) = fs::read_to_string(file) else { continue };
         let want = text.lines().filter(|l| l.contains(pat)).count();
         let (dir, name) = file.rsplit_once('/').unwrap();
-        for args in [&["grep", "-c", pat, file][..], &["grep", "-c", "--stats", pat, file], &["grep", "-c", "--max-depth", "1", "-g", name, pat, dir]] {
+        // reached from a root above it that is not `/` by its path (a procfs mounted deeper)
+        let (depth, rel) = (file.matches('/').count().to_string(), &file[1..]);
+        let mut cases: Vec<Vec<&str>> =
+            vec![vec!["grep", "-c", pat, file], vec!["grep", "-c", "--stats", pat, file], vec!["grep", "-c", "--max-depth", "1", "-g", name, pat, dir]];
+        if !file.contains("/self/") {
+            cases.push(vec!["grep", "-c", "--max-depth", &depth, "-g", rel, pat, "/etc/.."]);
+        }
+        for args in &cases {
             let (_, out, err) = d.run(args);
             let got: usize = out.trim().rsplit(':').next().unwrap_or("").parse().unwrap_or(usize::MAX);
             assert_eq!(got, want, "{args:?}: {out} {err}");
@@ -493,4 +500,215 @@ fn a_multi_line_count_counts_matches_that_share_a_line() {
         v.extend(args);
         assert_eq!(d.run(&v).1, want, "{args:?}");
     }
+}
+
+#[test]
+fn a_bad_configuration_file_stops_only_the_commands_that_use_it() {
+    let d = Dir::new("badcfg");
+    d.write("a.txt", b"foo\n");
+    d.write(".scrutate.toml", b"[grep]\nhiden = true\n");
+    for args in [&["--version"][..], &["--help"], &["grep", "--help"], &["refs", "--help"], &["help", "grep"], &["completions", "bash"]] {
+        let (code, out, err) = d.run(args);
+        assert_eq!(code, 0, "{args:?}: {err}");
+        assert!(!out.is_empty(), "{args:?}");
+    }
+    let (code, out, err) = d.run(&["config"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("hiden"), "{out}");
+    assert!(err.contains(".scrutate.toml") && err.contains("hiden"), "{err}");
+    for args in [&["grep", "foo"][..], &["grep", "foo", "a.txt"], &["languages"]] {
+        let (code, _, err) = d.run(args);
+        assert_eq!(code, 2, "{args:?}");
+        assert!(err.contains(".scrutate.toml") && err.contains("hiden"), "{args:?}: {err}");
+    }
+}
+
+#[test]
+fn the_thread_count_has_a_ceiling() {
+    let d = Dir::new("threads");
+    for i in 0..11 {
+        d.write(&format!("sub/f{i}.txt"), b"foo\n");
+    }
+    let t = std::time::Instant::now();
+    let (code, out, err) = d.run(&["grep", "-j", "100000", "-c", "foo", "."]);
+    assert_eq!((code, out.lines().count()), (0, 11), "{err}");
+    let (code, out, err) = d.run_env(&["grep", "-c", "foo", "."], &[("SCRUTATE_THREADS", "100000")]);
+    assert_eq!((code, out.lines().count()), (0, 11), "{err}");
+    d.write("big.txt", &b"foo\n".repeat(5000));
+    let (code, out, err) = d.run_env(&["grep", "-j", "100000", "-c", "foo", "big.txt"], &[("SCRUTATE_SPLIT_FILE_BYTES", "4096")]);
+    assert_eq!((code, out.as_str()), (0, "5000\n"), "{err}");
+    assert!(t.elapsed().as_secs() < 20, "{:?}", t.elapsed());
+    assert!(d.run(&["grep", "--help"]).1.contains("256"));
+}
+
+/// A file of 300 KB: a match, then a NUL byte past the first read buffer, then two more matches.
+fn late_nul_file() -> Vec<u8> {
+    let mut v = b"foo first\n".to_vec();
+    v.extend_from_slice(&[b'x'; 80]);
+    v.push(b'\n');
+    for _ in 0..3000 {
+        v.extend_from_slice(&[b'y'; 99]);
+        v.push(b'\n');
+    }
+    v.extend_from_slice(b"nul\0here foo\nfoo last\n");
+    v
+}
+
+#[test]
+fn named_files_are_searched_as_ripgrep_does() {
+    let d = Dir::new("named");
+    d.write(".ignore", b"ign.txt\n");
+    d.write("ign.txt", b"foo\n");
+    d.write("a.txt", b"foo\n");
+    d.write("nul.txt", b"foo\nbar\0baz\nfoo2\n");
+    d.write("big.bin", &late_nul_file());
+    let note = |off: u64| format!("binary file matches (found \"\\0\" byte around offset {off})");
+    // ripgrep 15's output and exit status for each
+    for (args, code, want) in [
+        (&["foo", "ign.txt"][..], 0, "1:foo\n".to_string()),
+        (&["-c", "foo", "ign.txt", "nul.txt"], 0, "ign.txt:1\nnul.txt:2\n".into()),
+        (&["foo", "nul.txt"], 0, format!("{}\n", note(7))),
+        (&["-H", "foo", "nul.txt"], 0, format!("nul.txt: {}\n", note(7))),
+        (&["--sort", "foo", "nul.txt", "a.txt"], 0, format!("a.txt:1:foo\nnul.txt: {}\n", note(7))),
+        (&["-c", "foo", "nul.txt"], 0, "2\n".into()),
+        (&["-l", "foo", "nul.txt"], 0, "nul.txt\n".into()),
+        (&["-v", "foo", "nul.txt"], 0, format!("{}\n", note(7))),
+        (&["-v", "-c", "foo", "nul.txt"], 0, "2\n".into()),
+        (&["-v", "-l", "foo", "nul.txt"], 0, "nul.txt\n".into()),
+        (&["zzz", "nul.txt"], 1, String::new()),
+        (&["foo", "big.bin"], 0, format!("1:foo first\n{}\n", note(300094))),
+        (&["-c", "foo", "big.bin"], 0, "3\n".into()),
+    ] {
+        let mut v = vec!["grep"];
+        v.extend(args);
+        let (c, out, err) = d.run(&v);
+        assert_eq!((c, out), (code, want), "{args:?}: {err}");
+        // the same through the sorted (non-streaming) output
+        if !args.contains(&"-c") && !args.contains(&"-l") && !args.contains(&"--sort") {
+            v.insert(1, "--sort");
+            assert_eq!(d.run(&v).0, code, "{v:?}");
+        }
+    }
+    // a file named twice is searched twice, as ripgrep does, but counted and listed once per path
+    assert_eq!(d.run(&["grep", "foo", "a.txt", "a.txt"]).1, "a.txt:1:foo\na.txt:1:foo\n");
+    assert_eq!(d.run(&["grep", "-c", "foo", "a.txt", "a.txt"]).1, "a.txt:2\n");
+    assert_eq!(d.run(&["grep", "-l", "foo", "a.txt", "a.txt"]).1, "a.txt\n");
+}
+
+#[test]
+fn a_file_with_a_nul_byte_found_by_the_walk_is_left_out_of_counts_and_lists() {
+    let d = Dir::new("walknul");
+    d.write("d/keep.log", b"\n\n\nx\na.b\nfoobar e\0binnd\n");
+    d.write("d/ok.txt", b"zzz\n");
+    d.write("d/big.bin", &late_nul_file());
+    let run = |args: &[&str]| sorted(&d.run(&[&["grep"][..], args, &["d"]].concat()).1);
+    // ripgrep 15: -v -l and -v -c agree, and a count stops at the NUL byte
+    assert_eq!(run(&["-v", "-l", "baz"]), ["d/ok.txt"]);
+    assert_eq!(run(&["-v", "-c", "baz"]), ["d/ok.txt:1"]);
+    assert!(run(&["-c", "foo"]).is_empty());
+    assert_eq!(run(&["-l", "foo"]), ["d/big.bin"]);
+}
+
+/// `scrutate ARGS` in `cwd` with `input` as its standard input: a pipe, or with `None` a regular
+/// file (`file`).
+fn run_stdin(cwd: &Path, args: &[&str], input: Option<&[u8]>, file: Option<&Path>) -> (i32, String, String) {
+    let mut c = Command::new(BIN);
+    c.args(args).current_dir(cwd).env_remove("NO_COLOR").stdout(Stdio::piped()).stderr(Stdio::piped());
+    match file {
+        Some(f) => c.stdin(fs::File::open(f).unwrap()),
+        None => c.stdin(Stdio::piped()),
+    };
+    let mut child = c.spawn().unwrap();
+    if let Some(bytes) = input {
+        use std::io::Write;
+        child.stdin.take().unwrap().write_all(bytes).unwrap();
+    }
+    drop(child.stdin.take());
+    let out = child.wait_with_output().unwrap();
+    (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
+}
+
+#[test]
+fn standard_input_is_searched_when_it_is_a_pipe_or_a_file() {
+    let d = Dir::new("stdin");
+    d.write("a.txt", b"foo in a file\n");
+    let pipe = |args: &[&str], input: &[u8]| run_stdin(&d.0, &[&["grep"][..], args].concat(), Some(input), None);
+    // ripgrep 15 with -n
+    assert_eq!(pipe(&["foo"], b"x\nfoo\n"), (0, "2:foo\n".into(), String::new()));
+    assert_eq!(pipe(&["-H", "foo"], b"foo\n").1, "<stdin>:1:foo\n");
+    assert_eq!(pipe(&["-c", "foo"], b"foo\nfoo\n").1, "2\n");
+    assert_eq!(pipe(&["-c", "-H", "foo"], b"foo\n").1, "<stdin>:1\n");
+    assert_eq!(pipe(&["-l", "foo"], b"foo\n").1, "<stdin>\n");
+    assert_eq!(pipe(&["--sort", "foo"], b"foo\n").1, "1:foo\n");
+    assert!(pipe(&["--json", "foo"], b"foo\n").1.contains("\"path\":\"<stdin>\""));
+    assert_eq!(pipe(&["foo"], b"bar\n").0, 1);
+    assert_eq!(pipe(&["foo"], b"foo\0\nfoo\n").1, "binary file matches (found \"\\0\" byte around offset 3)\n");
+    assert_eq!(pipe(&["-c", "foo"], b"foo\0\nfoo\n").1, "2\n");
+    // `-` names standard input among other paths
+    assert_eq!(sorted(&pipe(&["foo", "-", "a.txt"], b"foo\n").1), ["<stdin>:1:foo", "a.txt:1:foo in a file"]);
+    assert_eq!(pipe(&["foo", "a.txt"], b"foo\n").1, "1:foo in a file\n");
+    // a regular file as standard input
+    d.write("in.txt", b"foo from a redirect\n");
+    assert_eq!(run_stdin(&d.0, &["grep", "foo"], None, Some(&d.0.join("in.txt"))).1, "1:foo from a redirect\n");
+    // no standard input to read (`/dev/null`, the tests' default): the current directory
+    assert_eq!(sorted(&d.run(&["grep", "-l", "foo"]).1), ["a.txt", "in.txt"]);
+    // --index answers from the index whatever standard input is
+    let (code, _, err) = pipe(&["--index", "foo"], b"foo\n");
+    assert!(code == 2 && err.contains("text index"), "{code} {err}");
+}
+
+#[test]
+fn a_sorted_search_with_a_cap_keeps_the_first_matches_in_path_order() {
+    let d = Dir::new("orderedcap");
+    for i in 0..40 {
+        let body: String = (0..30).map(|k| if k % 3 == 0 { format!("foo {i} {k}\n") } else { format!("x {k}\n") }).collect();
+        d.write(&format!("d{}/s{}/f{i:02}.txt", i % 4, i % 3), body.as_bytes());
+    }
+    d.write("d9/big.txt", &(0..3000).map(|k| format!("foo big {k}\n")).collect::<String>().into_bytes());
+    for env in [&[][..], &[("SCRUTATE_SPLIT_FILE_BYTES", "4096")], &[("SCRUTATE_SMALL_TREE", "0"), ("SCRUTATE_THREADS", "8")]] {
+        let full = d.run_env(&["grep", "--sort", "foo"], env).1;
+        for (n, extra) in [(50usize, &[][..]), (7, &["-v"][..]), (380, &[]), (5000, &[])] {
+            let mut args = vec!["grep", "--sort", "--max-results"];
+            let n_s = n.to_string();
+            args.push(&n_s);
+            args.extend(extra);
+            args.push("foo");
+            let want: String = if extra.is_empty() {
+                full.lines().take(n).map(|l| format!("{l}\n")).collect()
+            } else {
+                d.run_env(&["grep", "--sort", "-v", "foo"], env).1.lines().take(n).map(|l| format!("{l}\n")).collect()
+            };
+            for _ in 0..5 {
+                let (code, out, err) = d.run_env(&args, env);
+                assert_eq!(code, 0, "{err}");
+                assert_eq!(out, want, "{args:?} {env:?}");
+            }
+        }
+        // counts and file lists are cut at the same line
+        let firsts: Vec<&str> = full.lines().take(50).collect();
+        let mut counts: std::collections::BTreeMap<&str, usize> = Default::default();
+        for l in &firsts {
+            *counts.entry(l.split(':').next().unwrap()).or_default() += 1;
+        }
+        let want: String = counts.iter().map(|(p, c)| format!("{p}:{c}\n")).collect();
+        assert_eq!(d.run_env(&["grep", "--sort", "-c", "--max-results", "50", "foo"], env).1, want, "{env:?}");
+        let files: String = counts.keys().take(3).map(|p| format!("{p}\n")).collect();
+        assert_eq!(d.run_env(&["grep", "--sort", "-l", "--max-results", "3", "foo"], env).1, files, "{env:?}");
+    }
+}
+
+#[test]
+fn line_number_flags_are_accepted() {
+    let d = Dir::new("lineno");
+    d.write("a.txt", b"x\nfoo\n");
+    d.write("b.txt", b"foo\n");
+    assert_eq!(d.run(&["grep", "-n", "foo", "a.txt"]).1, "2:foo\n");
+    assert_eq!(d.run(&["grep", "--line-number", "foo", "a.txt"]).1, "2:foo\n");
+    assert_eq!(d.run(&["grep", "-N", "foo", "a.txt"]).1, "foo\n");
+    assert_eq!(d.run(&["grep", "--no-line-number", "-H", "foo", "a.txt"]).1, "a.txt:foo\n");
+    assert_eq!(d.run(&["grep", "-N", "-C1", "foo", "a.txt"]).1, "x\nfoo\n");
+    assert_eq!(d.run(&["grep", "-N", "--sort", "foo", "a.txt", "b.txt"]).1, "a.txt:foo\nb.txt:foo\n");
+    // the later of the two wins, as in ripgrep
+    assert_eq!(d.run(&["grep", "-N", "-n", "foo", "a.txt"]).1, "2:foo\n");
+    assert_eq!(d.run(&["grep", "-n", "-N", "foo", "a.txt"]).1, "foo\n");
 }

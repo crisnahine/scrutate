@@ -4,6 +4,8 @@
 # it, survive concurrent updates and pass `check --files`.
 #   tools/netfs_check.sh MOUNTED_DIR LOCAL_REPO
 set -euo pipefail
+# `scrutate grep` with no path searches a piped standard input
+exec < /dev/null
 S=${SCRUTATE_BIN:-$(cd "$(dirname "$0")/.." && pwd)/target/release/scrutate}
 mnt=$1; src=$2
 work="$mnt/netfs-check"
