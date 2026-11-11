@@ -161,6 +161,10 @@ First release.
   the D, LLVM IR, AutoHotkey, VHDL and OCaml rules.
 - Ranked search: field-weighted BM25 + exact lookup + semantic vectors (IVF) + LightGBM
   LambdaRank ranker; bit-identical with the Python reference implementation.
+- The Rust engine and the Python reference cluster a large index segment (20,000 chunks or
+  more) the same way, bit for bit, so their results are identical on a large repository too,
+  each engine on its own index (before, only when both read one index). `bench/parity.py`
+  compares the clusters, and `bench/parity_repos.sh` runs two large repositories more.
 - The ranker is trained with documented types as answers too (classes, structs, enums, traits,
   interfaces, type aliases), so a type ranks for its own documentation and name as a function
   does; one more feature tells a name typed with its case (`BurstFiles`) from the same words in

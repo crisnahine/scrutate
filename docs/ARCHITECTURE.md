@@ -263,9 +263,17 @@ trained code-word model, inference only, bundled in the binary). 48 features per
 name coverage, the name as typed (case included), kind, lengths, test-path flags...) go through a
 LightGBM LambdaRank ensemble exported to plain arrays and evaluated in Rust. All arithmetic is
 specified to the bit: the Python reference implementation (`python/scrutate_ref`, which also trains the models) and the Rust engine
-return identical features, scores and rankings (`bench/parity.py`: 300/300 queries; the IVF path
-200/200 on a 135k-chunk index). Vector dot products are summed in float64 and rounded once, so
-the two engines' different summation orders cannot reorder near-tied chunks.
+return identical features, scores and rankings, each on the index it built itself
+(`bench/parity.py`: networkx 300/300 queries; the clustered path on go_protobuf, 41,377 chunks,
+40/40, and `bench/parity_repos.sh` runs 21 repositories). Vector dot products are summed in
+float64 in one fixed order (four running sums, added left to right) and rounded once, so no
+summation order can reorder near-tied chunks. The clustering of a large segment is identical
+too: one xorshift64* generator draws the sample, the first centroids and the re-seeds of empty
+clusters in the same order, and every float32 sum (row norms, cluster sums) runs in index order.
+The nearest centroid comes from a float32 matrix product in any order; that is within k·2^-24
+of the true dot product, so a row with more than one centroid within 4·k·eps of the best is
+decided by exact float64 products summed in a fixed order, and the lower cluster number wins a
+tie.
 
 ### Text index (`textindex.rs`)
 The indexed counterpart of Engine A, for repeated grep-style queries on large trees (the job Zoekt

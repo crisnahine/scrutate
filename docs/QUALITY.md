@@ -144,8 +144,12 @@ Query latency (`scrutate search` on the large index, warm, 4 queries, 3 alternat
 Parity (`bench/parity.py`, release build): bit-identical vectors, features and scores on the
 networkx package (300 queries) and on a 119 358-chunk index that uses the clustered scan (the
 `.py` files of the same 10 packages, 200 queries). To get there on the clustered path, both
-engines now sum the vector-scan dot products in float64 and round once to float32; with float32
-sums, two near-tied rows could swap places between the engines.
+engines sum the vector-scan dot products in float64 in one fixed order and round once to
+float32; with float32 sums, two near-tied rows could swap places between the engines. Parity
+holds end to end too, each engine on its own index, also on segments of 20 000 rows or more:
+both engines build the same clusters bit for bit (go_protobuf, 41 377 chunks: 40/40), and parity
+compares the centroids, cluster pointers, cluster order and stored vectors directly.
+`bench/parity_repos.sh` covers the clustered path with go_protobuf.
 
 Not shipped: compressing chunk text with a zstd dictionary trained on the repository's chunks.
 On a 20 000-chunk sample of the large index, per-chunk zstd with a 110 KB trained dictionary is
