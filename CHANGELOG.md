@@ -177,6 +177,12 @@ First release.
   file they are part of, and a definition with its windows is one result. A definition starts
   at the attribute lines right above it (Rust `#[...]`, decorators and annotations), so
   `#[get("/users")]` above a handler is found with it.
+- `callers` lists calls written outside every definition (a script's main block, the last line
+  of a shell script, top-level JavaScript), under the module chunk or the window that holds the
+  line, and `callees FILE:LINE` answers for such a line.
+- Elixir `@doc false` leaves a function undocumented, PowerShell help inside a function body and
+  an Erlang `-doc` attribute are documentation, a one-line `<# #>` comment loses its closing
+  mark, and `this["k"] = function` is the member `k`.
 - A Go type declared on its own line (`type Server struct`) takes the comment above it as its
   documentation, also as the first statement of a function body, and a Go type alias
   (`type Celsius = float64`) is a definition.
