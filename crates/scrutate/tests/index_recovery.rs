@@ -530,6 +530,23 @@ fn write_new_replaces_a_planted_link_instead_of_following_it() {
 }
 
 #[test]
+fn a_cancelled_update_leaves_the_index_as_it_was() {
+    let t = Tmp::new("cancel");
+    fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+    let mut ix = Index::open(&t.0, None).unwrap();
+    ix.update(false).unwrap();
+    fs::write(t.0.join("b.py"), "def beta():\n    return 2\n").unwrap();
+    ix.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+    let e = ix.update(false).unwrap_err();
+    assert_eq!(e.to_string(), "cancelled");
+    let files: i64 = ix.db.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0)).unwrap();
+    assert_eq!(files, 1, "the update was rolled back");
+    assert!(ix.check(false).unwrap().ok());
+    ix.cancel.store(false, std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(ix.update(false).unwrap().files_changed, 1);
+}
+
+#[test]
 fn an_index_built_with_older_parsing_rules_is_read_again_once() {
     let t = Tmp::new("content_rev");
     fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();

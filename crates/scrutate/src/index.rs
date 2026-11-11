@@ -550,6 +550,8 @@ pub struct Index {
     pub db: Connection,
     /// print indexing progress to stderr when it is a terminal (set by the CLI)
     pub progress: bool,
+    /// set to stop an update between batches of files; the update is rolled back
+    pub cancel: Arc<std::sync::atomic::AtomicBool>,
     lex: Option<LexStore>,
     lex_ver: Option<String>,
     last_refresh: Option<Instant>,
@@ -619,6 +621,7 @@ impl Index {
             scan_cost: 1.0,
             trees: HashMap::new(),
             tree_tick: 0,
+            cancel: Arc::default(),
         };
         if let Triage::Rebuild(why) = triage {
             // an index of another schema or model: drop its contents *inside* the database, so
@@ -1042,6 +1045,9 @@ impl Index {
         let mut done = 0usize;
         let mut last_tick = Instant::now();
         for batch in todo.chunks(256) {
+            if self.cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                anyhow::bail!("cancelled");
+            }
             let prevs: Vec<Option<PrevParse>> = batch.iter().map(|(rel, _)| self.trees.remove(rel).map(|t| t.1)).collect();
             let results: Vec<(String, Processed)> =
                 batch.par_iter().zip(prevs).map(|((rel, kh), prev)| (rel.clone(), process(&root, rel, kh.as_deref(), model.as_deref(), prev))).collect();

@@ -118,6 +118,19 @@ impl Repo {
         }
     }
 
+    /// `update` that stops between batches of files once `cancel` is set, and then leaves the
+    /// index as it was.
+    // shortcut: a rebuild after damage does not see the flag, give `reopen` the flag if that matters
+    pub fn update_until(&mut self, force: bool, cancel: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<index::UpdateStats> {
+        self.reopened()?;
+        self.ix.cancel = cancel;
+        let r = self.update(force);
+        if let Some(s) = &mut self.searcher {
+            s.ix.cancel = Default::default();
+        }
+        r
+    }
+
     /// `update` before a read, unless the index was checked less than `min_interval` seconds
     /// ago. When it cannot run (another process holds the write lock, the index directory is
     /// read-only) the read answers from the last committed index, and stderr says why once. A

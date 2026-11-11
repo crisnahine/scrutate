@@ -394,19 +394,22 @@ impl Repo {
     }
 
     /// Bring the index up to date (incremental: only changed files are parsed). GIL released.
-    /// Ctrl-C returns at once; the update itself runs to its end in the background, and the next
-    /// call on this Repo waits for it.
+    /// Ctrl-C returns at once and stops the update at its next batch of files; the index stays
+    /// as it was before the call.
     #[pyo3(signature = (force=false))]
     fn index<'py>(&self, py: Python<'py>, force: bool) -> PyResult<Bound<'py, PyDict>> {
         let (tx, rx) = mpsc::channel();
         let inner = Arc::clone(&self.inner);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let c2 = Arc::clone(&cancel);
         std::thread::Builder::new()
             .name("scrutate-index".into())
             .spawn(move || {
-                let _ = tx.send(lock(&inner).update(force));
+                let _ = tx.send(lock(&inner).update_until(force, c2));
             })
             .map_err(err)?;
-        let st = wait(py, &Mutex::new(rx))?
+        let st = wait(py, &Mutex::new(rx))
+            .inspect_err(|_| cancel.store(true, Ordering::Relaxed))?
             .unwrap_or_else(|| Err(anyhow::anyhow!("index update panicked")))
             .map_err(err)?;
         let d = PyDict::new(py);

@@ -145,7 +145,9 @@ def test_ctrl_c_interrupts_index_and_grep(tmp_path):
     if late is None:
         pytest.skip("index finished before the signal")
     assert late < 1.0, f"KeyboardInterrupt came {late:.2f}s after the signal"
-    assert r.symbol("f_3_7")  # waits for the update the interrupt left running
+    # the interrupted update stopped and was rolled back: the next call starts from the index as it was
+    assert r.index()["files_changed"] == 3000
+    assert r.symbol("f_3_7")
     # each line costs PCRE2 about 15 ms of backtracking: a few seconds in all
     slow = tmp_path / "slow"
     slow.mkdir()
