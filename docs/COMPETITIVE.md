@@ -44,8 +44,8 @@ fastest on five threads, one per performance core: 518 ms. Scrutate searches the
 581 ms, 12% above that floor; the next tool takes 711 ms. On LLVM it is 10% above the floor, and
 on 200,000 small files within 1%. Threads opening and reading files at once wait on each other in
 the kernel, so Scrutate walks with as many threads as performance cores, and adds threads when its
-reads show the files coming from the disk rather than the page cache (cold, the disk serves many
-reads at once): up to twice the cores on macOS, up to 64 on Linux. The other margins come from the
+reads show the files coming from the disk (a cold cache, where the disk serves many reads at
+once): up to twice the cores on macOS, up to 64 on Linux. The other margins come from the
 matcher and the output path: one large file searched on every core, regexes anchored at line
 starts examined only there, and search threads that format their own output and write it in 64 KB
 pieces.

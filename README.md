@@ -51,7 +51,7 @@ exactly what is and is not verified.
   walk forced, and with every file searched in ranges.
 - **Benchmarks** (docs/LEADERBOARD.md, generated from the raw results in `bench/results/`; 30 runs
   per contender, 95% intervals): on the development Mac (Apple M3 Pro, shared with other work, so
-  these are measurements rather than publishable #1 claims), Engine A is significantly fastest in
+  none of this is a publishable #1 claim), Engine A is significantly fastest in
   all 37 warm-cache benchmarks and all 5 cold-cache ones: 15 to 30% ahead of the next tool on 12 of
   13 text searches of the Linux kernel tree and 45% ahead on the one with 1.3 million matching
   lines, 15 to 30% on five of six LLVM rows, 24 to 26% on 200,000 small files, 17 to 24% on a
