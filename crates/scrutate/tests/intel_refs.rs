@@ -1275,6 +1275,30 @@ fn functions_assigned_to_names_and_members_are_symbols_callers_and_callees_find(
 }
 
 #[test]
+fn a_function_set_on_this_and_a_default_export_are_symbols_callers_and_callees_find() {
+    let widget = "function Widget() {\n  this.render = function () {\n    return paint();\n  };\n}\n\nfunction paint() {\n  return 1;\n}\n\nfunction useWidget() {\n  const w = new Widget();\n  return w.render();\n}\n";
+    let app = "module.exports = function () {\n  return helper();\n};\n\nfunction helper() {\n  return 2;\n}\n";
+    let main = "const app = require(\"./app\");\n\nfunction start() {\n  return app();\n}\n";
+    let r = Repo::new("this_and_default", &[("lib/widget.js", widget), ("lib/app.js", app), ("lib/main.js", main)]);
+    for (name, at) in [("Widget.render", "lib/widget.js:2"), ("render", "lib/widget.js:2"), ("app", "lib/app.js:1")] {
+        let (code, out) = r.run(&["symbol", name]);
+        assert!(code == 0 && out.lines().any(|l| l.starts_with(&format!("{at}-")) || l.starts_with(&format!("{at} "))), "symbol {name}: {out}");
+    }
+    let (code, out) = r.run(&["outline", "lib/app.js"]);
+    assert!(code == 0 && out.lines().any(|l| l.contains("function") && l.trim_end().ends_with(" app")), "outline: {out}");
+    assert!(callee_names(&r, "useWidget").contains(&"Widget.render".to_string()));
+    assert_eq!(callee_names(&r, "Widget.render"), ["paint"]);
+    assert_eq!(callee_names(&r, "start"), ["app"]);
+    assert_eq!(callee_names(&r, "app"), ["helper"]);
+    for (def, caller) in [("lib/widget.js:2", "useWidget"), ("lib/app.js:1", "start")] {
+        let (code, out) = r.run(&["callers", def]);
+        assert!(code == 0 && out.lines().any(|l| l.ends_with(caller)), "callers {def}: {out}");
+    }
+    let (code, out) = r.run(&["search", "paint", "-k", "20"]);
+    assert!(code == 0 && out.contains("Widget.render"), "search: {out}");
+}
+
+#[test]
 fn a_super_call_is_a_decided_call_of_the_base_method_and_no_call_of_the_override() {
     let ts = "export class Base {\n  size(): number {\n    return 0;\n  }\n}\nexport class Big extends Base {\n  size(): number {\n    return super.size() + 9;\n  }\n  other(): number {\n    return this.size();\n  }\n}\nexport class Bigger extends Big {\n  size(): number {\n    return super.size() + 1;\n  }\n}\nexport function viaBase(b: Base): number {\n  return b.size();\n}\n";
     let far = "import { Outer } from 'outside';\nexport class Far extends Outer {\n  size(): number {\n    return super.size() + 3;\n  }\n}\n";

@@ -352,23 +352,27 @@ pub(crate) const JS_FUNCS: &[&str] = &["arrow_function", "function_expression", 
 const fn dv(node: &'static str, name: &'static [NameRule]) -> Def {
     Def { node, kind: "function", name, value_kinds: JS_FUNCS, head_words: &[], needs_field: "", kind_by_head: false, parents: &[] }
 }
-/// `a.b.c` of a member expression made of names only (no `this`, call or subscript).
+/// `a.b.c` of a member expression made of names only (no `this` or call), `a["b"]` read as `a.b`.
 fn js_member_path(node: Node, src: &[u8]) -> Option<String> {
-    match node.kind() {
-        "identifier" => Some(text(src, node.start_byte(), node.end_byte())),
-        "member_expression" => {
-            let prop = node.child_by_field_name("property").filter(|p| p.kind() == "property_identifier")?;
-            Some(format!("{}.{}", js_member_path(node.child_by_field_name("object")?, src)?, text(src, prop.start_byte(), prop.end_byte())))
-        }
-        _ => None,
+    let key = match node.kind() {
+        "identifier" => return Some(text(src, node.start_byte(), node.end_byte())),
+        "member_expression" => node.child_by_field_name("property").filter(|p| p.kind() == "property_identifier")?,
+        // a computed key (`handlers[i]`) is no name
+        "subscript_expression" => node.child_by_field_name("index").filter(|i| i.kind() == "string" && i.named_child_count() == 1)?.named_child(0)?,
+        _ => return None,
+    };
+    let key = text(src, key.start_byte(), key.end_byte());
+    if key.is_empty() || key.contains(|c: char| c == '.' || c.is_whitespace()) {
+        return None;
     }
+    Some(format!("{}.{key}", js_member_path(node.child_by_field_name("object")?, src)?))
 }
 /// The member path a function is assigned to: `Foo.prototype.bar = function ...`, `$.fn.plugin = () => ...`
 fn js_assigned_path(node: Node, src: &[u8]) -> Option<String> {
     if !JS_FUNCS.contains(&node.child_by_field_name("right")?.kind()) {
         return None;
     }
-    js_member_path(node.child_by_field_name("left").filter(|l| l.kind() == "member_expression")?, src)
+    js_member_path(node.child_by_field_name("left").filter(|l| l.kind() != "identifier")?, src)
 }
 /// `Foo.prototype.bar = function ...` is the method `Foo.bar`.
 fn js_prototype_name(node: Node, src: &[u8]) -> Option<String> {
@@ -377,14 +381,47 @@ fn js_prototype_name(node: Node, src: &[u8]) -> Option<String> {
     (!name.contains('.')).then(|| format!("{owner}.{name}"))
 }
 /// A function assigned to a member: `Foo.staticFn` keeps its owner; CommonJS
-/// `module.exports.NAME` and `exports.NAME` are the bare `NAME`.
+/// `module.exports.NAME` and `exports.NAME` are the bare `NAME`, `exports.a.b` is `b` of `a`.
 fn js_member_name(node: Node, src: &[u8]) -> Option<String> {
     let path = js_assigned_path(node, src)?;
     match path.strip_prefix("module.exports.").or_else(|| path.strip_prefix("exports.")) {
-        Some(name) => Some(name.to_string()).filter(|n| !n.contains('.')),
+        Some(name) => Some(name.to_string()),
         None if path == "module.exports" => None,
         None => Some(path),
     }
+}
+/// `this.x = function ...`: the member `x` of what the enclosing function or class builds.
+pub(crate) fn js_this_member(node: Node, src: &[u8]) -> Option<String> {
+    if !JS_FUNCS.contains(&node.child_by_field_name("right")?.kind()) {
+        return None;
+    }
+    let left = node.child_by_field_name("left").filter(|l| l.kind() == "member_expression")?;
+    left.child_by_field_name("object").filter(|o| o.kind() == "this")?;
+    let prop = left.child_by_field_name("property").filter(|p| p.kind() == "property_identifier")?;
+    Some(text(src, prop.start_byte(), prop.end_byte()))
+}
+/// The kind of a file's default export written as an expression: `export default function () {}`,
+/// `export default class {}`, `module.exports = () => ...`. A declaration is a definition already.
+pub(crate) fn js_default_export(node: Node, src: &[u8]) -> Option<&'static str> {
+    let kind = match node.kind() {
+        "class" => "class",
+        k if JS_PROPERTY_FUNCS.contains(&k) => "function",
+        _ => return None,
+    };
+    // the `function` and `class` keywords are nodes too, and finding a parent costs the depth
+    if !node.is_named() {
+        return None;
+    }
+    let p = node.parent()?;
+    let exported = match p.kind() {
+        "export_statement" => p.child_by_field_name("value") == Some(node) && p.children(&mut p.walk()).any(|c| c.kind() == "default"),
+        "assignment_expression" => {
+            p.child_by_field_name("right") == Some(node)
+                && p.child_by_field_name("left").and_then(|l| js_member_path(l, src)).as_deref() == Some("module.exports")
+        }
+        _ => false,
+    };
+    exported.then_some(kind)
 }
 /// The values that make an object literal's property a method: `post: function () {}`, `put: () => 3`.
 const JS_PROPERTY_FUNCS: &[&str] = &["arrow_function", "function_expression", "function", "generator_function"];
@@ -399,7 +436,9 @@ const JS_DEFS: &[Def] = &[
     dv("field_definition", &[NameRule::Field("property")]),
     JS_PROTOTYPE_METHOD,
     JS_MEMBER_FUNCTION,
+    JS_THIS_MEMBER,
 ];
+const JS_THIS_MEMBER: Def = d("assignment_expression", "method", &[NameRule::Custom(js_this_member)]);
 const JS_PROTOTYPE_METHOD: Def = d("assignment_expression", "method", &[NameRule::Custom(js_prototype_name)]);
 const JS_MEMBER_FUNCTION: Def = d("assignment_expression", "function", &[NameRule::Custom(js_member_name)]);
 const TS_DEFS: &[Def] = &[
@@ -419,6 +458,7 @@ const TS_DEFS: &[Def] = &[
     dv("public_field_definition", N),
     JS_PROTOTYPE_METHOD,
     JS_MEMBER_FUNCTION,
+    JS_THIS_MEMBER,
 ];
 const JS_CALLS: &[Call] = &[c("call_expression", "function"), c("new_expression", "constructor")];
 const JS_WRAPPERS: &[&str] = &["export_statement", "lexical_declaration", "variable_declaration", "decorator"];
@@ -803,6 +843,8 @@ const CORE: &[LangSpec] = &[
         defs: &[
             d("function_declaration", "function", N),
             d("assignment_statement", "function", &[NameRule::Custom(lua_assigned_function)]),
+            // `parents` skips most anonymous functions before the name rule walks up the tree
+            Def { parents: &["expression_list"], ..d("function_definition", "function", &[NameRule::Custom(lua_listed_function)]) },
             Def { value_kinds: &["function_definition"], ..d("field", "function", N) },
         ],
         calls: &[c("function_call", "name")],
@@ -1752,6 +1794,19 @@ fn lua_assigned_function(node: Node, src: &[u8]) -> Option<String> {
     (value.kind() == "function_definition").then(|| lua_target(target, src))?
 }
 
+/// A function in a multiple assignment `local a, M.b = function ... end, function ... end`: named
+/// by the target in its position.
+fn lua_listed_function(node: Node, src: &[u8]) -> Option<String> {
+    let values = node.parent().filter(|p| p.kind() == "expression_list")?;
+    let assignment = values.parent().filter(|a| a.kind() == "assignment_statement")?;
+    if lua_single_assignment(assignment).is_some() {
+        return None;
+    }
+    let at = values.named_children(&mut values.walk()).position(|v| v == node)?;
+    let targets = assignment.named_children(&mut assignment.walk()).find(|c| c.kind() == "variable_list")?;
+    lua_target(targets.named_child(at as u32)?, src)
+}
+
 /// Jsonnet `local f(x) = ...` and the object method `f(x): ...`: a binding with parameters.
 fn jsonnet_function(node: Node, src: &[u8]) -> Option<String> {
     node.children(&mut node.walk()).any(|c| c.kind() == "params").then(|| child_text(node, src, &["ident", "field_name"]))?
@@ -1836,7 +1891,7 @@ fn julia_name(node: Node, src: &[u8]) -> Option<String> {
             while !matches!(inner.kind(), "identifier" | "field_expression") && inner.named_child_count() > 0 {
                 inner = inner.named_child(0)?;
             }
-            return Some(text(src, inner.start_byte(), inner.end_byte()));
+            return Some(julia_unquote(text(src, inner.start_byte(), inner.end_byte())));
         }
         if ch.kind() == "identifier" {
             return Some(text(src, ch.start_byte(), ch.end_byte()));
@@ -1863,7 +1918,15 @@ fn julia_assignment(node: Node, src: &[u8]) -> Option<String> {
         return None;
     }
     let f = lhs.named_child(0)?;
-    Some(text(src, f.start_byte(), f.end_byte()))
+    Some(julia_unquote(text(src, f.start_byte(), f.end_byte())))
+}
+
+/// `Base.:(==)` is `Base.:==`: the parentheses only quote the operator.
+fn julia_unquote(name: String) -> String {
+    match name.split_once(".:(").and_then(|(owner, op)| Some((owner, op.strip_suffix(')')?))) {
+        Some((owner, op)) => format!("{owner}.:{op}"),
+        None => name,
+    }
 }
 
 /// Dart: a function_signature directly inside a method_signature is the method itself (already a chunk)

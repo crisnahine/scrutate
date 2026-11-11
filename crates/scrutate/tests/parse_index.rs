@@ -129,7 +129,7 @@ fn triples(v: &[(&str, &str, &str)]) -> Vec<(String, String, String)> {
 
 #[test]
 fn a_lua_function_assigned_to_a_name_or_a_table_field_is_a_definition() {
-    let src = "local helper = function(x)\n  return x\nend\nM.assigned = function(x)\n  return helper(x)\nend\nM[\"bracket\"] = function(x) return x end\nM.a.b = function() end\nlocal obj = {\n  inline = function(x) return x end,\n  n = 1,\n  sub = { deep = function() end },\n}\nlocal x, y = function() end, 1\nlocal t = {}\n";
+    let src = "local helper = function(x)\n  return x\nend\nM.assigned = function(x)\n  return helper(x)\nend\nM[\"bracket\"] = function(x) return x end\nM.a.b = function() end\nlocal obj = {\n  inline = function(x) return x end,\n  n = 1,\n  sub = { deep = function() end },\n}\nlocal x, y = function() end, 1\nlocal t = {}\np, M.q = function() end, function() end\n";
     let want = [
         ("function", "helper", "helper"),
         ("function", "assigned", "M.assigned"),
@@ -137,6 +137,9 @@ fn a_lua_function_assigned_to_a_name_or_a_table_field_is_a_definition() {
         ("function", "b", "M.a.b"),
         ("function", "inline", "obj.inline"),
         ("function", "deep", "obj.sub.deep"),
+        ("function", "x", "x"),
+        ("function", "p", "p"),
+        ("function", "q", "M.q"),
     ];
     assert_eq!(defs("a.lua", src), triples(&want));
     let chunks = parse_source("a.lua", src);
@@ -155,6 +158,9 @@ fn a_js_function_assigned_to_a_member_is_a_definition() {
         ("function", "plugin", "$.fn.plugin"),
         ("function", "one", "one"),
         ("function", "two", "two"),
+        ("function", "a", "a"),
+        ("function", "b", "a.b"),
+        ("function", "k", "obj.k"),
     ];
     for path in ["a.js", "a.ts"] {
         assert_eq!(defs(path, src), triples(&want), "{path}");
@@ -165,14 +171,61 @@ fn a_js_function_assigned_to_a_member_is_a_definition() {
 }
 
 #[test]
+fn a_js_function_set_on_this_belongs_to_the_enclosing_function_or_class() {
+    let src = "function Widget() {\n  this.render = function () {\n    return draw();\n  };\n  this.size = () => 3;\n}\nclass Panel {\n  constructor() {\n    this.open = function () {};\n  }\n  init() {\n    this.close = () => 1;\n  }\n}\nconst Box = function () {\n  this.fill = function () {};\n};\nfor (let i = 0; i < 3; i++) {\n  handlers[i] = function () {};\n}\n";
+    let want = [
+        ("function", "Widget", "Widget"),
+        ("method", "render", "Widget.render"),
+        ("method", "size", "Widget.size"),
+        ("class", "Panel", "Panel"),
+        ("method", "constructor", "Panel.constructor"),
+        ("method", "open", "Panel.open"),
+        ("method", "init", "Panel.init"),
+        ("method", "close", "Panel.close"),
+        ("function", "Box", "Box"),
+        ("method", "fill", "Box.fill"),
+    ];
+    for path in ["w.js", "w.ts"] {
+        assert_eq!(defs(path, src), triples(&want), "{path}");
+    }
+    let render = parse_source("w.js", src).into_iter().find(|c| c.qualname == "Widget.render").unwrap();
+    assert!(render.calls.contains("draw") && render.start == 2, "{:?} {}", render.calls, render.start);
+}
+
+#[test]
+fn a_default_export_is_named_by_its_function_or_else_by_the_file() {
+    type Case = (&'static str, &'static str, &'static [(&'static str, &'static str, &'static str)]);
+    let cases: &[Case] = &[
+        ("lib/app.js", "module.exports = function () {\n  return 1;\n};\n", &[("function", "app", "app")]),
+        ("lib/named.js", "module.exports = function createApp() {};\n", &[("function", "createApp", "createApp")]),
+        ("lib/arrow.ts", "module.exports = () => 5;\n", &[("function", "arrow", "arrow")]),
+        ("lib/widget/index.js", "export default function () {}\n", &[("function", "widget", "widget")]),
+        ("index.ts", "export default () => 1;\n", &[("function", "index", "index")]),
+        ("lib/cls.ts", "export default class {\n  m() {}\n}\n", &[("class", "cls", "cls"), ("method", "m", "cls.m")]),
+        ("lib/k.js", "module.exports = class {\n  m() {}\n};\n", &[("class", "k", "k"), ("method", "m", "k.m")]),
+        ("lib/named2.ts", "export default function make() {}\n", &[("function", "make", "make")]),
+        (
+            "lib/obj.js",
+            "module.exports = {\n  run() {},\n  stop: function () {},\n  sub: { deep() {} },\n};\n",
+            &[("method", "run", "run"), ("method", "stop", "stop"), ("method", "deep", "sub.deep")],
+        ),
+    ];
+    for (path, src, want) in cases {
+        assert_eq!(defs(path, src), triples(want), "{path}");
+    }
+}
+
+#[test]
 fn a_julia_method_of_another_modules_function_is_named_by_the_function() {
-    let src = "module Geo\nfunction Base.show(io::IO, p::Point)\n    print(io, p)\nend\nBase.length(p::Point) = 1\nfunction Base.:+(a::Point, b::Point)\n    a\nend\nfunction plain(x)\n    x\nend\nend\n";
+    let src = "module Geo\nfunction Base.show(io::IO, p::Point)\n    print(io, p)\nend\nBase.length(p::Point) = 1\nfunction Base.:+(a::Point, b::Point)\n    a\nend\nfunction plain(x)\n    x\nend\nBase.:(==)(a::Point, b::Point) = true\nfunction Base.:(==)(a::Line, b::Line)\n    false\nend\nend\n";
     let want = [
         ("module", "Geo", "Geo"),
         ("function", "show", "Geo.Base.show"),
         ("function", "length", "Geo.Base.length"),
         ("function", "+", "Geo.Base.+"),
         ("function", "plain", "Geo.plain"),
+        ("function", "==", "Geo.Base.=="),
+        ("function", "==", "Geo.Base.=="),
     ];
     let got: Vec<_> = parse_source("geo.jl", src).into_iter().filter(|c| c.kind != "window").map(|c| (c.kind.to_string(), c.name, c.qualname)).collect();
     assert_eq!(got, triples(&want));

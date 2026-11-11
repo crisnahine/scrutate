@@ -331,6 +331,9 @@ def _object_owner(node, src: bytes) -> str | None:
             named = named if named is not None and named.type == "identifier" else None
         elif holder.type == "assignment_expression":
             left = holder.child_by_field_name("left")
+            # `module.exports = {...}` exports its members under their own names
+            if left is not None and src[left.start_byte : left.end_byte] == b"module.exports":
+                left = None
             if left is not None and left.type == "identifier":
                 named = left
             elif left is not None and left.type == "member_expression":
@@ -345,24 +348,74 @@ def _object_owner(node, src: bytes) -> str | None:
 
 
 def _js_member_path(node, src: bytes) -> str | None:
-    """`a.b.c` of a member expression made of names only (no `this`, call or subscript)."""
+    """`a.b.c` of a member expression made of names only (no `this` or call), `a["b"]` read as `a.b`."""
     if node.type == "identifier":
         return src[node.start_byte : node.end_byte].decode("utf8", "replace")
-    if node.type != "member_expression":
+    if node.type == "member_expression":
+        key = node.child_by_field_name("property")
+        if key is None or key.type != "property_identifier":
+            return None
+    elif node.type == "subscript_expression":
+        # a computed key (`handlers[i]`) is no name
+        index = node.child_by_field_name("index")
+        if index is None or index.type != "string" or index.named_child_count != 1:
+            return None
+        key = index.named_children[0]
+    else:
         return None
-    prop, obj = node.child_by_field_name("property"), node.child_by_field_name("object")
-    if prop is None or prop.type != "property_identifier" or obj is None:
+    key = src[key.start_byte : key.end_byte].decode("utf8", "replace")
+    obj = node.child_by_field_name("object")
+    if not key or "." in key or any(c.isspace() for c in key) or obj is None:
         return None
     base = _js_member_path(obj, src)
-    return None if base is None else base + "." + src[prop.start_byte : prop.end_byte].decode("utf8", "replace")
+    return None if base is None else base + "." + key
+
+
+def _js_this_member(node, src: bytes) -> str | None:
+    """`this.x = function ...`: the member `x` of what the enclosing function or class builds."""
+    left, right = node.child_by_field_name("left"), node.child_by_field_name("right")
+    if left is None or right is None or right.type not in _JS_FUNCS or left.type != "member_expression":
+        return None
+    obj, prop = left.child_by_field_name("object"), left.child_by_field_name("property")
+    if obj is None or obj.type != "this" or prop is None or prop.type != "property_identifier":
+        return None
+    return src[prop.start_byte : prop.end_byte].decode("utf8", "replace")
+
+
+def _js_default_export(node, src: bytes) -> str | None:
+    """The kind of a file's default export written as an expression: `export default function () {}`,
+    `export default class {}`, `module.exports = () => ...`. A declaration is a definition already."""
+    kind = "class" if node.type == "class" else "function" if node.type in _JS_PROPERTY_FUNCS else None
+    if kind is None or not node.is_named:
+        return None
+    p = node.parent
+    if p is None:
+        return None
+    if p.type == "export_statement":
+        value = p.child_by_field_name("value")
+        ok = value is not None and value.id == node.id and any(c.type == "default" for c in p.children)
+    elif p.type == "assignment_expression":
+        right, left = p.child_by_field_name("right"), p.child_by_field_name("left")
+        ok = right is not None and right.id == node.id and left is not None and _js_member_path(left, src) == "module.exports"
+    else:
+        ok = False
+    return kind if ok else None
+
+
+def _default_export_name(path: str) -> str:
+    """The name of a file's anonymous default export: the file's stem, or its directory's name for an index file."""
+    stem = os.path.splitext(os.path.basename(path))[0]
+    folder = os.path.basename(os.path.dirname(path))
+    return folder if stem == "index" and folder else stem
 
 
 def _js_assigned(node, src: bytes):
     """-> (kind, owner, name) of a function assigned to a member: `Foo.prototype.bar = function`
     is the method `bar` of `Foo`, `$.fn.plugin = () => 1` the function `plugin` of `$.fn`, CommonJS
-    `exports.NAME` and `module.exports.NAME` the bare `NAME`; (None, None, None) otherwise."""
+    `exports.NAME` and `module.exports.NAME` the bare `NAME`, `exports.a.b` the function `b` of `a`;
+    (None, None, None) otherwise."""
     left, right = node.child_by_field_name("left"), node.child_by_field_name("right")
-    if left is None or right is None or right.type not in _JS_FUNCS or left.type != "member_expression":
+    if left is None or right is None or right.type not in _JS_FUNCS or left.type == "identifier":
         return None, None, None
     path = _js_member_path(left, src)
     if path is None:
@@ -372,8 +425,8 @@ def _js_assigned(node, src: bytes):
         return "method", owner, name
     for pre in ("module.exports.", "exports."):
         if path.startswith(pre):
-            rest = path[len(pre):]
-            return ("function", None, rest) if "." not in rest else (None, None, None)
+            owner, _, name = path[len(pre):].rpartition(".")
+            return "function", owner or None, name
     if path == "module.exports":
         return None, None, None
     owner, _, name = path.rpartition(".")
@@ -495,8 +548,14 @@ def parse_source(path: str, source: str) -> list[Chunk]:
             if key is not None and key.type == "property_identifier" and val is not None and val.type in _JS_PROPERTY_FUNCS:
                 kind, name = "method", txt(key.start_byte, key.end_byte)
         member_owner = None
+        this_member = False
         if kind is None and t == "assignment_expression" and is_js:
             kind, member_owner, name = _js_assigned(node, src)
+            if kind is None and stack and (name := _js_this_member(node, src)):
+                kind, this_member = "method", True
+        if kind is None and is_js and (kind := _js_default_export(node, src)):
+            nn = node.child_by_field_name("name")
+            name = txt(nn.start_byte, nn.end_byte) if nn is not None else _default_export_name(path)
         if kind is not None:
             name = name or _def_name(node, src)
             if lang == "rust" and name and name.startswith("r#"):
@@ -513,6 +572,9 @@ def parse_source(path: str, source: str) -> list[Chunk]:
                 q = _qualify(_qualify(stack[-1][1] if stack else "", owner), name)
             if member_owner:
                 q = _qualify(_qualify(stack[-1][1] if stack else "", member_owner), name)
+            if this_member and stack[-1][0].kind == "method":
+                # `this` in a method or a constructor is the method's owner
+                q = _qualify(stack[-1][1].rpartition(".")[0], name)
 
             outer = node
             if is_py and node.parent is not None and node.parent.type == "decorated_definition":

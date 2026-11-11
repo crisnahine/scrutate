@@ -298,8 +298,60 @@ def test_a_function_assigned_to_a_member_is_a_definition_owned_by_the_member():
         assert [(c.kind, c.name, c.qualname) for c in chunks] == [
             ("function", "Foo", "Foo"), ("method", "bar", "Foo.bar"), ("function", "staticFn", "Foo.staticFn"),
             ("method", "arrow", "Foo.arrow"), ("function", "plugin", "$.fn.plugin"), ("function", "one", "one"),
-            ("function", "two", "two")], path
+            ("function", "two", "two"), ("function", "m", "m"), ("function", "b", "a.b"), ("function", "k", "obj.k")], path
         assert by_q(chunks)["Foo.bar"].calls == {"helper"}
+
+
+THIS_MEMBERS = """function Widget() {
+  this.render = function () {
+    return draw();
+  };
+  this.size = () => 3;
+}
+class Panel {
+  constructor() {
+    this.open = function () {};
+  }
+  init() {
+    this.close = () => 1;
+  }
+}
+const Box = function () {
+  this.fill = function () {};
+};
+for (let i = 0; i < 3; i++) {
+  handlers[i] = function () {};
+}
+"""
+
+
+def test_a_function_set_on_this_belongs_to_the_enclosing_function_or_class():
+    for path in ("w.js", "w.ts"):
+        chunks = [c for c in parse_source(path, THIS_MEMBERS) if c.kind != "module"]
+        assert [(c.kind, c.name, c.qualname) for c in chunks] == [
+            ("function", "Widget", "Widget"), ("method", "render", "Widget.render"), ("method", "size", "Widget.size"),
+            ("class", "Panel", "Panel"), ("method", "constructor", "Panel.constructor"), ("method", "open", "Panel.open"),
+            ("method", "init", "Panel.init"), ("method", "close", "Panel.close"), ("function", "Box", "Box"),
+            ("method", "fill", "Box.fill")], path
+        assert by_q(chunks)["Widget.render"].calls == {"draw"}
+
+
+def test_a_default_export_is_named_by_its_function_or_else_by_the_file():
+    cases = [
+        ("lib/app.js", "module.exports = function () {\n  return 1;\n};\n", [("function", "app", "app")]),
+        ("lib/named.js", "module.exports = function createApp() {};\n", [("function", "createApp", "createApp")]),
+        ("lib/arrow.ts", "module.exports = () => 5;\n", [("function", "arrow", "arrow")]),
+        ("lib/widget/index.js", "export default function () {}\n", [("function", "widget", "widget")]),
+        ("index.ts", "export default () => 1;\n", [("function", "index", "index")]),
+        ("lib/cls.ts", "export default class {\n  m() {}\n}\n", [("class", "cls", "cls"), ("method", "m", "cls.m")]),
+        ("lib/k.js", "module.exports = class {\n  m() {}\n};\n", [("class", "k", "k"), ("method", "m", "k.m")]),
+        ("lib/named2.ts", "export default function make() {}\n", [("function", "make", "make")]),
+        ("lib/obj.js", "module.exports = {\n  run() {},\n  stop: function () {},\n  sub: { deep() {} },\n};\n",
+         [("method", "run", "run"), ("method", "stop", "stop"), ("method", "deep", "sub.deep")]),
+    ]
+    for path, src, want in cases:
+        got = [(c.kind, c.name, c.qualname) for c in parse_source(path, src) if c.kind not in ("module", "window")]
+        assert got == want, path
 
 
 TS_WRAPPED_LITERALS = """export const api = { get() {} } as const;

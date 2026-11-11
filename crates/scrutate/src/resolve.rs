@@ -412,13 +412,13 @@ fn string_content(n: Node, src: &str) -> String {
 }
 
 // ------------------------------------------------------------------------- import bindings
-fn bindings_of(lang: Lang, root: Node, src: &str) -> Vec<Binding> {
+fn bindings_of(lang: Lang, path: &str, root: Node, src: &str) -> Vec<Binding> {
     let mut out = Vec::new();
     let mut stack = vec![root];
     while let Some(n) = stack.pop() {
         let handled = match lang {
             Lang::Python => py_bindings(n, src, &mut out),
-            Lang::Js => js_bindings(n, src, &mut out),
+            Lang::Js => js_bindings(n, path, src, &mut out),
             Lang::Rust => {
                 if n.kind() == "use_declaration" {
                     if let Some(a) = n.child_by_field_name("argument") {
@@ -487,7 +487,12 @@ fn py_bindings(n: Node, src: &str, out: &mut Vec<Binding>) -> bool {
     }
 }
 
-fn js_bindings(n: Node, src: &str, out: &mut Vec<Binding>) -> bool {
+fn js_bindings(n: Node, path: &str, src: &str, out: &mut Vec<Binding>) -> bool {
+    // the definition a file's default export expression is: its own name, else the file's
+    let default_of = |v: Node| {
+        crate::langs::js_default_export(v, src.as_bytes())
+            .map(|_| v.child_by_field_name("name").map_or_else(|| crate::parse::default_export_name(path), |n| text(n, src).to_string()))
+    };
     match n.kind() {
         "import_statement" => {
             let Some(source) = n.child_by_field_name("source") else { return true };
@@ -522,8 +527,9 @@ fn js_bindings(n: Node, src: &str, out: &mut Vec<Binding>) -> bool {
                     .child_by_field_name("declaration")
                     .and_then(|d| d.child_by_field_name("name"))
                     .or_else(|| n.child_by_field_name("value").filter(|v| v.kind() == "identifier"));
-                if let Some(t) = target {
-                    out.push(Binding { local: "default".into(), module: String::new(), item: Some(text(t, src).into()), sites: vec![] });
+                let item = target.map(|t| text(t, src).to_string()).or_else(|| n.child_by_field_name("value").and_then(default_of));
+                if let Some(item) = item {
+                    out.push(Binding { local: "default".into(), module: String::new(), item: Some(item), sites: vec![] });
                 }
                 return false; // the declaration inside is still walked
             }
@@ -575,6 +581,12 @@ fn js_bindings(n: Node, src: &str, out: &mut Vec<Binding>) -> bool {
                 _ => {}
             }
             true
+        }
+        "assignment_expression" => {
+            if let Some(item) = n.child_by_field_name("right").and_then(default_of) {
+                out.push(Binding { local: "default".into(), module: String::new(), item: Some(item), sites: vec![] });
+            }
+            false
         }
         _ => false,
     }
@@ -722,7 +734,7 @@ impl<'a> Resolver<'a> {
             _ => None,
         };
         let bindings = match (lang, &tree) {
-            (Some(l), Some(t)) => bindings_of(l, t.root_node(), &src),
+            (Some(l), Some(t)) => bindings_of(l, path, t.root_node(), &src),
             _ => Vec::new(),
         };
         let defs = self.defs_of(path).unwrap_or_default();
@@ -876,7 +888,9 @@ impl<'a> Resolver<'a> {
         if local_import.is_none() && shadowed(lang, node, name, &fi.src) {
             return Err("local variable");
         }
-        if let Some(d) = top_level(fi, name).filter(|_| local_import.is_none()) {
+        // `const app = require("./app")` is a constant and an import: the import says what it is
+        let required = |d: &&Def| lang == Lang::Js && d.kind == "constant" && fi.bindings.iter().any(|b| b.local == name);
+        if let Some(d) = top_level(fi, name).filter(|d| local_import.is_none() && !required(d)) {
             return Ok((d.id, "module"));
         }
         if let Some(b) = local_import.or_else(|| fi.bindings.iter().find(|b| b.local == name).cloned()) {
@@ -1743,7 +1757,12 @@ impl<'a> Resolver<'a> {
     }
 
     fn resolve_binding(&mut self, from: &str, lang: Lang, b: &Binding, depth: usize) -> Option<i64> {
-        let item = b.item.as_deref()?;
+        let item = match b.item.as_deref() {
+            Some(item) => item,
+            // the module itself, called or named bare: what it exports as `module.exports`
+            None if lang == Lang::Js && !b.module.is_empty() => "default",
+            None => return None,
+        };
         if b.module.is_empty() && b.local == item {
             return None; // `export {a}` names the file's own `a`, already looked up
         }
@@ -3507,7 +3526,7 @@ mod tests {
         let mut p = Parser::new();
         p.set_language(&(spec.language)()).unwrap();
         let t = p.parse(src.as_bytes(), None).unwrap();
-        bindings_of(lang, t.root_node(), src).into_iter().map(|b| Binding { sites: vec![], ..b }).collect()
+        bindings_of(lang, "m.js", t.root_node(), src).into_iter().map(|b| Binding { sites: vec![], ..b }).collect()
     }
 
     fn b(local: &str, module: &str, item: Option<&str>) -> Binding {

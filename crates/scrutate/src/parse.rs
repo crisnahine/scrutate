@@ -455,11 +455,14 @@ fn object_owner<'t>(node: Node<'t>, src: &[u8]) -> Option<String> {
         let named = match holder.kind() {
             "pair" => holder.child_by_field_name("key").filter(|k| k.kind() == "property_identifier"),
             "variable_declarator" => holder.child_by_field_name("name").filter(|n| n.kind() == "identifier"),
-            "assignment_expression" => holder.child_by_field_name("left").and_then(|l| match l.kind() {
-                "identifier" => Some(l),
-                "member_expression" => l.child_by_field_name("property"),
-                _ => None,
-            }),
+            // `module.exports = {...}` exports its members under their own names
+            "assignment_expression" => {
+                holder.child_by_field_name("left").filter(|l| txt(src, l.start_byte(), l.end_byte()) != "module.exports").and_then(|l| match l.kind() {
+                    "identifier" => Some(l),
+                    "member_expression" => l.child_by_field_name("property"),
+                    _ => None,
+                })
+            }
             _ => None,
         };
         let Some(n) = named else { break };
@@ -498,6 +501,16 @@ fn lua_table_owner(node: Node, src: &[u8]) -> Option<String> {
     }
     parts.reverse();
     (!parts.is_empty()).then(|| parts.join("."))
+}
+
+/// The name of a file's anonymous default export: the file's stem, or its directory's name for an index file.
+pub(crate) fn default_export_name(path: &str) -> String {
+    let p = std::path::Path::new(path);
+    let stem = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    match p.parent().and_then(|d| d.file_name()) {
+        Some(dir) if stem == "index" => dir.to_string_lossy().into_owned(),
+        _ => stem,
+    }
 }
 
 fn txt(src: &[u8], a: usize, b: usize) -> String {
@@ -578,6 +591,11 @@ fn callee_name(lang: &str, node: Node, field: &str, src: &[u8]) -> Option<String
         return IDENT_START.find(private).map(|m| format!("#{}", m.as_str()));
     }
     let t = if lang == "rust" { t.strip_prefix("r#").unwrap_or(t) } else { t };
+    // Julia `==(a, b)` and `Base.:(==)(a, b)` call the operator a method definition names
+    let op = t.trim_start_matches(':').trim_start_matches('(').trim_end_matches(')');
+    if lang == "julia" && !op.is_empty() && op.chars().all(|c| c.is_ascii_punctuation()) {
+        return Some(op.to_string());
+    }
     let name = match lang {
         "ruby" | "elixir" => &*PREDICATE_NAME,
         "julia" => &*BANG_NAME,
@@ -1385,7 +1403,7 @@ fn parse_tree(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>) ->
     Some(tree)
 }
 
-fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>) -> Option<(GrammarOutput, Option<PrevParse>)> {
+fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Option<PrevParse>) -> Option<(GrammarOutput, Option<PrevParse>)> {
     let src = source.as_bytes();
     let t = std::time::Instant::now();
     let tree = parse_tree(spec, source, prev)?;
@@ -1444,6 +1462,17 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
                 break;
             }
         }
+        let js = matches!(spec.id, "javascript" | "typescript" | "tsx");
+        let this_member = js && t == "assignment_expression" && matches!(matched, Some(("method", _))) && crate::langs::js_this_member(node, src).is_some();
+        if this_member && def_stack.is_empty() {
+            matched = None;
+        }
+        if matched.is_none() && js {
+            if let Some(kind) = crate::langs::js_default_export(node, src) {
+                let name = node.child_by_field_name("name").map(|n| txt(src, n.start_byte(), n.end_byte()));
+                matched = Some((kind, name.unwrap_or_else(|| default_export_name(path))));
+            }
+        }
         let mut pushed_now = false;
         if matches!(matched, Some(("key", _))) && def_stack.len() >= 2 {
             matched = None; // deeply nested keys of data files are searchable text, not symbols
@@ -1458,7 +1487,11 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
                 }
             }
             let (prefix, name) = split_owner(spec.id, node, name, src);
-            let parent_q = def_stack.last().map(|&i| chunks[i].qualname.as_str()).unwrap_or_default();
+            let mut parent_q = def_stack.last().map(|&i| chunks[i].qualname.as_str()).unwrap_or_default();
+            if this_member && def_stack.last().is_some_and(|&i| chunks[i].kind == "method") {
+                // `this` in a method or a constructor is the method's owner
+                parent_q = parent_q.rsplit_once('.').map_or("", |(owner, _)| owner);
+            }
             let q = match &prefix {
                 Some(p) => qualify(&qualify(parent_q, p), &name),
                 None => qualify(parent_q, &name),
@@ -1878,7 +1911,7 @@ pub fn parse_file(path: &str, source: &str) -> Parsed {
 /// this version's tree for the next call. The result is the same as a fresh parse.
 pub fn parse_file_with(path: &str, source: &str, prev: Option<PrevParse>) -> (Parsed, Option<PrevParse>) {
     if let Some(spec) = spec_for(path, source) {
-        if let Some(((chunks, mdoc, imports), tree)) = grammar_chunks(spec, source, prev) {
+        if let Some(((chunks, mdoc, imports), tree)) = grammar_chunks(spec, path, source, prev) {
             // a parsed file is the grammar's verdict even when it holds no definitions: the
             // keyword heuristics would invent symbols from prose ("namespace so the ...")
             return (Parsed { chunks: finish(path, source, chunks, mdoc), imports }, tree);
