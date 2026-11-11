@@ -13,7 +13,7 @@ Evidence files: `docs/TEST_RESULTS.md` (test and audit output, generated), `docs
 `docs/SECURITY.md`, `docs/LANGUAGES.md`, `docs/NAMING.md`, `bench/results/platforms/` (per-platform
 logs). Test names refer to `crates/scrutate/tests/*.rs`, `crates/scrutate/src/*.rs` unit tests and
 `python/tests/*.py`.
-Counts: PASS 121 · PARTIAL 14 · BLOCKED 1 · FAIL 0 over 136 rows (computed by `tools/traceability_tally.py`).
+Counts: PASS 124 · PARTIAL 11 · BLOCKED 1 · FAIL 0 over 136 rows (computed by `tools/traceability_tally.py`).
 
 ## 2A. Engine A: universal instant search
 
@@ -95,7 +95,7 @@ Counts: PASS 121 · PARTIAL 14 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 
 | ID | Requirement | Implementation | Verification | Status |
 |---|---|---|---|---|
-| R-6.1 | Target Linux, macOS, Windows | portable code; CI matrix for 6 runners | macOS arm64 natively; Linux aarch64 and x86_64 in clean containers (x86_64 under emulation); macOS x86_64 and Windows x86_64 cross-built (`bench/results/platforms/`, INSTALL.md); CI run 43005147220 (`bd9ec0b`) ran 11 of 13 jobs and passed 9: the Rust tests passed on macOS arm64, Intel macOS, Linux x86_64 and Linux arm64, and failed on Windows, 8 tests on x64 and 9 on arm64 (fixed since or now Unix-only; the next run has not finished) | PARTIAL (no passing run on Windows) |
+| R-6.1 | Target Linux, macOS, Windows | portable code; CI matrix for 6 runners | macOS arm64 natively; Linux aarch64 and x86_64 in clean containers (x86_64 under emulation); macOS x86_64 and Windows x86_64 cross-built (`bench/results/platforms/`, INSTALL.md); in CI run 43013926055 (`9384c18`) the Rust tests and a smoke test of the release binary passed on all six runners: macOS arm64, Intel macOS, Linux x86_64, Linux arm64, Windows x64 and Windows arm64 | PASS |
 | R-6.2 | Secure filesystem access | path confinement in `read`, no symlink following by default, index only under root | SECURITY.md; robustness; bindings | PASS |
 | R-6.3 | Permission-aware indexing | unreadable files counted and skipped (text index: searched by Engine A, retried on the next update) | robustness `unreadable_files_are_reported_not_fatal` | PASS |
 | R-6.4 | Repository isolation | one `.scrutate/` per repository | design; concurrency tests | PASS |
@@ -106,7 +106,7 @@ Counts: PASS 121 · PARTIAL 14 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 | R-6.9 | No unauthorized source-code transmission | nothing leaves the machine | code review | PASS |
 | R-6.10 | Dependency and supply-chain security | `Cargo.lock`, `cargo audit`, SBOM (CycloneDX), licences reviewed | TEST_RESULTS.md, `tools/sbom.py` | PASS |
 | R-6.11 | Reproducible builds | pinned toolchain, lock file, release profile | two clean builds on macOS give the same hash (TEST_RESULTS.md); two different Linux images (`rust:1-slim-bookworm`, `golang:1.26-bookworm` with rustup) give the same SHA-256 (`bench/results/platforms/repro/`) | PASS |
-| R-6.12 | CI/CD integration | `.github/workflows/{ci,release,benchmarks}.yml`, GitLab/Bitbucket templates | YAML validated; CI run 43005147220 (`bd9ec0b`) ran 11 of 13 jobs and passed 9 (the two Windows jobs failed, fixed since; the next run has not finished); the release workflow has not run | PARTIAL |
+| R-6.12 | CI/CD integration | `.github/workflows/{ci,release,benchmarks}.yml`, GitLab/Bitbucket templates | YAML validated; CI run 43013926055 (`9384c18`) passed all 12 jobs of a push; the release and benchmark workflows have not run | PARTIAL |
 | R-6.13 | JSON and JSONL output | `--json` everywhere; JSONL schema 1; JSON error records | `cli.rs::json_lines_schema_and_modes`, `errors_are_json_when_asked` | PASS |
 | R-6.14 | Stable, versioned integration interfaces | JSONL `schema`, MCP protocol versions, SemVer policy | docs | PASS |
 | R-6.15 | IDE, automation, Git-platform, MCP integrations | MCP server (`serve --watch` keeps its index fresh); `scrutate lsp` language server; VS Code extension as its client; JetBrains through LSP4IJ; Neovim, GitHub action, GitLab/Bitbucket templates, pre-commit | MCP: `cli.rs::mcp_protocol_round_trip`, `serve_watch_updates_the_index_while_serving`; LSP: `tests/lsp.rs` (every request, UTF-16 columns); the VS Code extension type-checks and packages (`vsce`); the rest syntax-validated; none run inside its host | MCP and LSP PASS; others PARTIAL |
@@ -141,7 +141,7 @@ Counts: PASS 121 · PARTIAL 14 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 | R-9.7 | Regression tests | snapshot `expected.json`; fuzz regressions; `bench/leaderboard_regression.py`; `bench/regression.py` | PASS |
 | R-9.8 | Stress tests | robustness (5 MB line, 200k lines, deep nesting, 3 writers + 2 readers x 30); 12 concurrent text-index updates on SMB | PASS |
 | R-9.9 | Security tests | regex limits, path confinement, symlink escape, corruption, panic containment, fuzzing | PASS |
-| R-9.10 | Cross-platform tests | full test suite on macOS arm64, Linux aarch64 and Linux x86_64 (`bench/results/platforms/`); in CI run 43005147220 (`bd9ec0b`), which ran 11 of 13 jobs and passed 9, the Rust tests passed on Intel macOS and failed on Windows (8 tests on x64, 9 on arm64), fixed since; the next run has not finished | PARTIAL |
+| R-9.10 | Cross-platform tests | full test suite on macOS arm64, Linux aarch64 and Linux x86_64 (`bench/results/platforms/`); in CI run 43013926055 (`9384c18`) the Rust tests passed on macOS arm64, Intel macOS, Linux x86_64, Linux arm64, Windows x64 and Windows arm64 (five tests of files removed while open and of file names Windows forbids run on Unix only) | PASS |
 | R-9.11 | Traceability matrix | this document | PASS |
 | R-9.12 | Continuous gap analysis | RELEASE_READINESS.md; ROADMAP.md | PASS |
 
@@ -169,7 +169,7 @@ Counts: PASS 121 · PARTIAL 14 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 | ID | Requirement | Implementation | Verification | Status |
 |---|---|---|---|---|
 | R-12.1 | Filesystem edge cases | long names, spaces/unicode names, dotfiles, no extension, uppercase extensions, case-colliding paths (benchmark corpora) | robustness | PASS |
-| R-12.2 | Operating-system differences | portable code, CRLF/CR handling, `/`-normalised paths, SMB lock semantics | tests pass on macOS (APFS, SMB share) and Linux (ext4 in a container); the Windows-only code (console handler, path handling) compiles and links for x86_64-pc-windows-gnu; on the Windows runners of CI run 43005147220, 8 tests failed on x64 and 9 on arm64 (removing an open file and control characters in file names, which Windows forbids, a CRLF checkout, the printed path form, a test fixture and, on arm64, two servers started at once in one test; fixed since or now Unix-only) | PARTIAL (no passing Windows run) |
+| R-12.2 | Operating-system differences | portable code, CRLF/CR handling, `/`-normalised paths, SMB lock semantics | tests pass on macOS (APFS, SMB share) and Linux (ext4 in a container); the Windows-only code (console handler, path handling) compiles and links for x86_64-pc-windows-gnu; the tests pass on the Windows x64 and arm64 runners (CI run 43013926055); the three runs before it found a stream search that read from a moved file cursor, a CRLF checkout of compiled-in data and the printed form of verbatim paths, all fixed | PASS |
 | R-12.3 | Unicode | lossy decoding, boundary safety, Unicode case folding in the trigram conditions; search tokens for words of every script (scripts written without spaces as character bigrams) and names compared in NFC, in both engines | robustness, proptest, `textindex::tests::unicode_case_folding_is_covered`, `tests/unicode_text.rs` | PASS |
 | R-12.4 | Binary files | NUL sniff (Engine B), `BinaryDetection::quit` (Engine A), text index keeps the bytes before the first NUL | robustness; LEADERBOARD `binheavy/literal` | PASS |
 | R-12.5 | Invalid encodings | invalid UTF-8 lossy; UTF-16 with a BOM transcoded by both engines | `cli.rs::utf16_bom_is_searched_by_engine_a_and_indexed_by_engine_b` | PASS |
@@ -200,7 +200,7 @@ Counts: PASS 121 · PARTIAL 14 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 | R-13.6 | abi3 wheels for standard Python | `pyo3/abi3-py39`, maturin | `cp39-abi3` wheel installed and tested on CPython 3.10 to 3.13 on macOS arm64 and on 3.10, 3.12, 3.13 on Linux aarch64 and x86_64 (`wheels-macos-arm64.json`, `linux-*/wheels.json`) | PASS |
 | R-13.7 | Free-threaded `cp314t` wheel; `gil_used = false` after review | `#[pymodule(gil_used = false)]` with the review in `lib.rs` | `cp314t` wheel on free-threaded 3.14: the abi3 wheel is refused, the GIL stays disabled after import with warnings as errors, bindings tests pass (macOS arm64, Linux aarch64 and x86_64) | PASS |
 | R-13.8 | Linux static musl binaries, identical output, measured difference | `tools/linux_verify.sh` + `bench/musl_vs_glibc.py` | static musl binaries for aarch64 and x86_64; byte-identical JSON output on three queries; timing on aarch64 0.85x to 1.25x of glibc on 3 to 9 ms runs, inside the run-to-run noise measured with two copies of one binary (`linux-*/musl-*.txt`) | PASS |
-| R-13.9 | Wheels and binaries for Linux/macOS/Windows in CI; declare a platform only after testing there | `release.yml`; INSTALL.md declares only tested platforms | `release.yml` not run; platforms verified locally (R-6.1); CI run 43005147220 (`bd9ec0b`) ran 11 of 13 jobs and passed 9 | PARTIAL |
+| R-13.9 | Wheels and binaries for Linux/macOS/Windows in CI; declare a platform only after testing there | `release.yml`; INSTALL.md declares only tested platforms | `release.yml` not run; platforms verified locally and on the six CI runners (R-6.1, CI run 43013926055); no wheel has been built or installed on Windows or Intel macOS | PARTIAL |
 | R-13.10 | Never cite unverified external claims | external claims limited to primary sources and measured numbers | review | PASS |
 | R-13.11 | Hybrid requirements carry PASS/PARTIAL/FAIL/BLOCKED | this section | | PASS |
 
@@ -227,5 +227,5 @@ Counts: PASS 121 · PARTIAL 14 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 
 ## Tally
 
-PASS 121 · PARTIAL 14 · BLOCKED 1 · FAIL 0 over 136 rows. The PARTIAL, BLOCKED and FAIL rows are listed with their
+PASS 124 · PARTIAL 11 · BLOCKED 1 · FAIL 0 over 136 rows. The PARTIAL, BLOCKED and FAIL rows are listed with their
 resolution in RELEASE_READINESS.md ("Remaining defects and incomplete requirements").

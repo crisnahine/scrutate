@@ -25,11 +25,11 @@ below). Every PASS refers to a test, benchmark or audit output in this repositor
 
 ## Why not "production-ready" yet
 
-1. **Platform coverage.** The repository is on GitHub, private, and its last finished CI run
-   (43005147220, commit `bd9ec0b`) ran 11 of its 13 jobs and passed 9. The Rust tests passed on
-   Intel macOS, macOS arm64, Linux x86_64 and Linux arm64 runners. On Windows x64 8 tests failed
-   and on arm64 9; each is fixed since or now runs on Unix only (docs/ROADMAP.md, known limits).
-   The next run (43013926055, commit `9384c18`) has not finished.
+1. **Platform coverage.** The repository is on GitHub, private. CI run 43013926055 (commit
+   `9384c18`) passed every job that runs on a push: the Rust tests on macOS arm64, Intel macOS,
+   Linux x86_64, Linux arm64, Windows x64 and Windows arm64, and the editor integrations. What is
+   still missing for Windows and Intel macOS: a release archive built by the release workflow
+   and installed on a machine, and a benchmark run (docs/ROADMAP.md, known limits).
 2. **No independent security review**; fuzzing ran in ten-minute rounds on one machine.
 3. **Release pipeline unexercised**: signed releases, attestations and package-manager packages exist
    only as workflow definitions.
@@ -45,8 +45,8 @@ Status words as in docs/TRACEABILITY.md. "Resolution" says what closes the item.
 |---|---|---|---|
 | R-4.6, R-14.16 | #1 on every benchmark, metric and declared platform: every row measured is won with significance (macOS arm64: 37 warm, 5 cold, 8 indexed; Linux aarch64 VM: 14 warm, 4 cold, 8 indexed), but Linux x86_64 has no benchmark run and nothing was measured on dedicated hardware | PARTIAL | a run of `bench/run_macos.sh` and `bench/competitors/linux_bench.sh` on a dedicated Mac and on dedicated aarch64 and x86_64 Linux machines |
 | R-14.11 | Results from dedicated, otherwise idle hardware | BLOCKED | a dedicated Mac and Linux machine; the harness and corpora are ready |
-| R-6.1, R-9.10, R-12.2, R-13.9 | Windows and Intel macOS executed, not only cross-built | PARTIAL | CI run 43005147220 passed on Intel macOS and failed on Windows (8 tests on x64, 9 on arm64), fixed since; a passing run of the CI matrix on the current commit |
-| R-6.12, R-14.15, R-12.18 | CI runs, benchmark regression tracking in CI | PARTIAL | CI run 43005147220 ran 11 of 13 jobs and passed 9; a green run of `ci.yml`, and `benchmarks.yml` run on a runner |
+| R-6.1, R-9.10, R-12.2, R-13.9 | Windows and Intel macOS executed, not only cross-built | PARTIAL | CI run 43013926055 passed on Intel macOS, Windows x64 and Windows arm64 (Rust tests and a smoke test of the release binary); wheels and release archives built and installed there by `release.yml` |
+| R-6.12, R-14.15, R-12.18 | CI runs, benchmark regression tracking in CI | PARTIAL | `ci.yml` has a green run (43013926055, all 12 jobs of a push); `benchmarks.yml` and `release.yml` run on a runner |
 | R-12.17 | Signed releases and published packages | PARTIAL | the release workflow's Sigstore steps and the package pull requests, which need the published repository |
 | R-6.15, R-12.16 | GitHub App / GitLab integration exercised against a real platform | PARTIAL | the published repository |
 | R-12.15 | The cross-platform part of verification | PARTIAL | as R-9.10 |

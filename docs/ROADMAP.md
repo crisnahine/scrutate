@@ -54,13 +54,12 @@ to install and use the tool works first. The repository now exists on GitHub, pr
 here and what ran on GitHub. The order from there: one green run of `ci.yml`, the settings in
 docs/RELEASING.md, public, tag `v0.1.0`.
 
-- A green run of the CI matrix, then the release workflow; flip the Windows and Intel macOS rows
-  to PASS only with a recorded passing run (R-6.1, R-9.10). The last finished run
-  (43005147220, on `bd9ec0b`) passed 9 of the 11 jobs that ran: the Rust tests on Intel macOS,
-  macOS arm64, Linux x86_64 and Linux arm64, the musl build, the extra-langs job, the fuzz
-  regressions, the Python job and the advisories. The Windows x64 job failed 8 tests and the
-  Windows arm64 job 9 (see the known limits below). The next run (43013926055, on `9384c18`) has
-  not finished.
+- The release workflow. The CI matrix has a green run: in run 43013926055 (on `9384c18`) all 12
+  jobs that run on a push passed: the Rust tests on macOS arm64, Intel macOS, Linux x86_64, Linux
+  arm64, Windows x64 and Windows arm64, the musl build, the extra-langs job on the oldest
+  supported Rust, the fuzz regressions, the Python job, the advisories and the editor
+  integrations. The dependency review runs only on pull requests. Three runs before it failed
+  on Windows; what they found is in the changelog.
 - Signed releases with Sigstore attestations (`release.yml` has the steps; they need the
   repository's OIDC identity) and the free-threaded wheels built in CI (built and tested locally).
 - Publish the packages: tap, bucket and winget pull requests with the release checksums
@@ -158,12 +157,11 @@ docs/RELEASING.md, public, tag `v0.1.0`.
 - The Python reference cuts a `.txt` or Markdown file into windows only, where the engine gives
   a `.txt` file a module chunk and Markdown its sections. Parity holds for the languages the
   reference has a grammar for, and `bench/parity.py` runs on Python and Rust sources.
-- Windows has no recorded passing run. In CI run 43005147220 (commit `bd9ec0b`), the Rust tests
-  passed on macOS arm64, Intel macOS (`macos-15-intel`), Linux x86_64 and Linux arm64, and failed
-  on Windows: 8 tests on x64, 9 on arm64. Five of them need what Windows does not allow (removing
-  a file that is open, a control character in a file name) and now run on Unix only; the others
-  are fixed in the tests, in `.gitattributes` (LF line ends) and in the Windows path form
-  (`5b247c7`, `ba1b122`, `9384c18`). Run 43013926055 (commit `9384c18`) has not finished.
+- Windows and Intel macOS are tested on GitHub's runners only (CI run 43013926055 passed on
+  `windows-latest`, `windows-11-arm` and `macos-15-intel`): no release archive for them has been
+  built by the release workflow or installed on a machine, and no benchmark has run there. Five
+  tests run on Unix only, because they need what Windows does not allow (removing a file that is
+  open, a control character in a file name).
 - No benchmark has run on x86_64 Linux or on dedicated, otherwise idle hardware: every number
   comes from the development Mac, shared with other work, and a 5-CPU Linux VM on it. A run of
   `bench/run_macos.sh` and `bench/competitors/linux_bench.sh` on dedicated machines closes it

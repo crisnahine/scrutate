@@ -155,14 +155,12 @@ A tag `v*` starts `.github/workflows/release.yml` (every platform, signing, atte
 checks the version first, then runs all of `ci.yml` on the tagged commit (`workflow_call`); the
 release job waits for that run and for the binaries and wheels. The package definitions in
 `packaging/` need the release checksums (packaging/README.md). The release workflow has not
-run. The repository is on GitHub, private, with `main` only. The last finished run of `ci.yml`
-(43005147220, on `bd9ec0b`) ran 11 of its 13 jobs and passed 9: the Rust tests on macOS arm64,
-Intel macOS, Linux x86_64 and Linux arm64, the musl build, the extra-langs job on the oldest
-supported Rust, the fuzz regressions, the Python reference, bindings, parity and differential
-job, and the advisories. The Windows x64 job failed 8 tests and the arm64 job 9; all are fixed
-or limited to Unix since (docs/ROADMAP.md, known limits). The dependency review runs only on pull
-requests, and the editor job waits for every Rust job, so both were skipped. The next run
-(43013926055, on `9384c18`) has not finished. The workflows pass
+run. The repository is on GitHub, private, with `main` only. Run 43013926055 of `ci.yml` (on
+`9384c18`) is the first green one: all 12 jobs that run on a push passed, the Rust tests on
+macOS arm64, Intel macOS, Linux x86_64, Linux arm64, Windows x64 and Windows arm64, the musl
+build, the extra-langs job on the oldest supported Rust, the fuzz regressions, the Python
+reference, bindings, parity and differential job, the advisories and the editor integrations.
+The dependency review runs only on pull requests. The workflows pass
 `actionlint` and `zizmor`, and the Linux jobs of `ci.yml` pass in a container
 (`tools/ci_rehearsal.sh`).
 
@@ -172,8 +170,9 @@ required reviewer (the publishing job waits for it), immutable releases, push pr
 CodeQL default setup. The release job makes a draft, attaches every file, then publishes, which
 is the order immutable releases need. Its notes are the version's section of `CHANGELOG.md`.
 
-After the first green run of `ci.yml`: flip R-6.1, R-6.12 and R-9.10 in docs/TRACEABILITY.md
-from the recorded run, not before.
+R-6.1, R-9.10 and R-12.2 in docs/TRACEABILITY.md are PASS from run 43013926055, the first green
+run of `ci.yml`. R-6.12 and R-13.9 stay PARTIAL until `release.yml` and `benchmarks.yml` have run
+on a runner: flip them from the recorded runs, not before.
 
 After the release is out: take `open-pull-requests-limit: 0` out of `.github/dependabot.yml`.
 Version updates are paused until then, because each Dependabot pull request runs `ci.yml` on six
