@@ -158,9 +158,29 @@ Fourteen tools over stdio, each one an operation above (`search_code`, `grep_cod
 - `grep_code` is an Engine A search of the files `scrutate grep` searches (case-sensitive regex;
   `(?i)` for any case), matching lines grouped by enclosing symbol; `max_results` (default 100)
   stops it, and the answer says so. An invalid pattern is an error.
+- Every answer begins each result with its location (`path:start-end`). A location can be passed
+  wherever a tool takes a symbol, to mean that one definition among several of the same name:
+  `read_code symbol`, `find_symbol`, `callers`, `callees`, `similar_code target`, `references def`.
+- `read_code` reads a line range of a file (`path`, `start`, `end`), or with `symbol` a whole
+  definition: a name, `Class.method` or a location. A name with several definitions returns each
+  (up to 20), and `path` keeps the ones in that file.
+- Every tool declares an `outputSchema`, and every result carries `structuredContent` beside its
+  text: `{"schema": 1, "complete": true, "result": ...}`, where `result` is what the matching CLI
+  command prints with `--json`. When the text and the JSON together pass one and a half times
+  `max_bytes`, `result` is `null` and `complete` is `false`: the text then pages through the answer
+  with `offset`, and a larger `max_bytes` gets the whole answer as JSON.
+- A call runs on a thread of its own, so `notifications/cancelled` reaches it: a call waiting for
+  the index or for its turn stops, and the answer of one already computing is dropped. Nothing
+  more is sent for a cancelled request.
 - While the first index of a repository is being built, a call waits up to 20 seconds and then
-  answers that the index is still being built.
-- Protocol versions 2024-11-05, 2025-03-26, 2025-06-18 and 2025-11-25.
+  answers that the index is still being built. A call that carries a `progressToken` waits for
+  the index instead, with a `notifications/progress` every two seconds, and gets its answer.
+- Protocol: a client that opens with `initialize` is served revisions 2024-11-05, 2025-03-26,
+  2025-06-18 and 2025-11-25. A request that names its version in `_meta`
+  (`io.modelcontextprotocol/protocolVersion`) is served by revision 2026-07-28, which has no
+  handshake: `server/discover` describes the server, every result carries `resultType`, lists
+  carry `ttlMs` and `cacheScope`, and another version in `_meta` is answered with error -32022 and
+  the supported one. Both eras work on the same pipe.
 
 ### `lsp`
 

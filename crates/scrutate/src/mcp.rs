@@ -1,9 +1,17 @@
 //! MCP server over stdio (JSON-RPC 2.0, newline-delimited), exposing the search tools to Claude Code
 //! and other MCP clients. No SDK: the protocol surface a tools-only server needs is small, and a
 //! dependency-free implementation is one less thing to break over the years.
+//!
+//! Two eras of the protocol are served on the same pipe. A client that opens with `initialize`
+//! gets the handshake revisions. A request that names its protocol version in `_meta` is served
+//! by revision 2026-07-28, which has no handshake: every result then carries `resultType`, and
+//! lists say how long they may be cached.
 
+use std::collections::HashMap;
 use std::io::{BufRead, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use serde_json::{json, Value};
@@ -11,21 +19,34 @@ use serde_json::{json, Value};
 use crate::ops;
 use crate::Repo;
 
-const KNOWN_VERSIONS: &[&str] = &["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
+/// Revisions that open with the `initialize` handshake.
+const HANDSHAKE_VERSIONS: &[&str] = &["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
+/// The revision without a handshake.
+const STATELESS_VERSION: &str = "2026-07-28";
+const VERSION_KEY: &str = "io.modelcontextprotocol/protocolVersion";
+const SERVER_INFO_KEY: &str = "io.modelcontextprotocol/serverInfo";
+/// How long a client may keep a list, in milliseconds: the tools change only with the binary.
+const LIST_TTL_MS: u64 = 3_600_000;
 
 /// What a client shows its model before any tool is loaded; the first sentences stand alone.
 const INSTRUCTIONS: &str = "scrutate searches the code of this repository from a local index. \
 Start with search_code for a question in words or a name; use grep_code for an exact pattern, find_symbol for a definition, \
-references for every use of a name, callers and callees to follow calls, outline and read_code to read a file in pieces. \
+references for every use of a name, callers and callees to follow calls, outline and read_code to read a file in pieces \
+or one whole definition. \
 Every tool only reads, except reindex, which refreshes the index (a cache under .scrutate/). \
-Results are capped; a tool says when it stopped early and which argument raises the limit.";
+Results are capped; a tool says when it stopped early and which argument raises the limit. \
+Each result begins with its location (path:start-end). Pass that location wherever a tool takes a symbol name \
+to mean that one definition: read_code symbol, find_symbol, callers, callees, similar_code, references def.";
 
-/// The tools, each with the hints clients use to decide whether a call needs approval.
+/// The tools, each with the hints clients use to decide whether a call needs approval and the
+/// schema of its structured result.
 pub fn tools() -> Value {
     let mut tools = tool_table();
     for tool in tools.as_array_mut().into_iter().flatten() {
-        let read_only = ops::read_only(tool["name"].as_str().unwrap_or(""));
+        let name = tool["name"].as_str().unwrap_or("").to_string();
+        let read_only = ops::read_only(&name);
         tool["annotations"] = json!({"readOnlyHint": read_only, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false});
+        tool["outputSchema"] = ops::output_schema(&name);
         if read_only {
             let properties = &mut tool["inputSchema"]["properties"];
             properties["max_bytes"] = json!({"type": "integer", "default": ops::AGENT_BYTES, "description": "size limit of the answer"});
@@ -46,16 +67,16 @@ fn tool_table() -> Value {
              "k": {"type": "integer", "default": ops::SEARCH_K}}, "required": ["query"]}},
         {"name": "grep_code", "description": "Exact regex search of the repository's files (case-sensitive; (?i) in the pattern for any case), matching lines grouped by the enclosing function/class.",
          "inputSchema": {"type": "object", "properties": {"pattern": {"type": "string"}, "max_results": {"type": "integer", "default": ops::GREP_MAX}}, "required": ["pattern"]}},
-        {"name": "find_symbol", "description": "Where is this function/class/method defined? (`Class.method` works).",
+        {"name": "find_symbol", "description": "Where is this function/class/method defined? (`Class.method` works, and so does a location from another answer).",
          "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "limit": {"type": "integer", "default": ops::SYMBOL_LIMIT}}, "required": ["name"]}},
         {"name": "callers", "description": "Which functions call this function?",
          "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "limit": {"type": "integer", "default": ops::CALLERS_LIMIT}}, "required": ["name"]}},
         {"name": "callees", "description": "Which functions does this function call?",
          "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "limit": {"type": "integer", "default": ops::CALLEES_LIMIT}}, "required": ["name"]}},
-        {"name": "read_code", "description": "Read a line range from a file in the repo.",
+        {"name": "read_code", "description": "Read a line range of a file (`path`, `start`, `end`), or one whole definition: `symbol` is a name, `Class.method`, or a location from another answer (`src/a.py:12-40`). A name with several definitions returns each; `path` then keeps the ones in that file.",
          "inputSchema": {"type": "object", "properties": {
-             "path": {"type": "string"}, "start": {"type": "integer", "default": 1},
-             "end": {"type": ["integer", "null"], "default": null}}, "required": ["path"]}},
+             "path": {"type": ["string", "null"], "default": null}, "symbol": {"type": ["string", "null"], "default": null},
+             "start": {"type": "integer", "default": 1}, "end": {"type": ["integer", "null"], "default": null}}}},
         {"name": "outline", "description": "Symbols of a file in source order (kind, name, line range).",
          "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}},
         {"name": "dependencies", "description": "Modules a file imports, resolved to repository files where possible.",
@@ -76,36 +97,140 @@ fn tool_table() -> Value {
     ])
 }
 
-/// Run one tool; errors become text for the model.
-pub fn call_tool(repo: &mut Repo, name: &str, args: &Value, refresh_interval: f64) -> (String, bool) {
-    let max_bytes = args.get("max_bytes").and_then(Value::as_u64).map_or(ops::AGENT_BYTES, |n| (n as usize).clamp(1_000, 1_000_000));
-    let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
-    match ops::Op::from_tool(name, args).and_then(|op| repo.run(&op, refresh_interval)) {
-        Ok(answer) => (answer.text_within(max_bytes, offset), false),
-        Err(e) => (format!("error: {e}"), true),
+/// What a tool call returns: text for the model, the same answer as JSON for a client that
+/// reads structured results, and whether it failed.
+pub struct Called {
+    pub text: String,
+    pub structured: Value,
+    pub is_error: bool,
+}
+
+impl Called {
+    /// A sentence in place of an answer.
+    fn note(text: String, is_error: bool) -> Called {
+        Called { text, structured: json!({"schema": ops::SCHEMA, "complete": false, "result": null}), is_error }
     }
 }
 
-fn respond(out: &mut impl Write, id: &Value, result: Value) {
-    let msg = json!({"jsonrpc": "2.0", "id": id, "result": result});
+/// Run one tool; errors become text for the model.
+pub fn call_tool(repo: &mut Repo, name: &str, args: &Value, refresh_interval: f64) -> Called {
+    let max_bytes = args.get("max_bytes").and_then(Value::as_u64).map_or(ops::AGENT_BYTES, |n| (n as usize).clamp(1_000, 1_000_000));
+    let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
+    match ops::Op::from_tool(name, args).and_then(|op| repo.run(&op, refresh_interval)) {
+        Ok(answer) => {
+            let text = answer.text_within(max_bytes, offset);
+            let structured = answer.structured(text.len(), max_bytes, offset);
+            Called { text, structured, is_error: false }
+        }
+        Err(e) => Called::note(format!("error: {e}"), true),
+    }
+}
+
+/// Where messages go: stdout in the server, a list in its tests.
+type Wire<'a> = dyn Fn(Value) + Sync + 'a;
+
+/// One line on stdout: a message leaves whole whichever thread writes it.
+fn to_stdout(msg: Value) {
+    let mut out = std::io::stdout().lock();
     let _ = writeln!(out, "{msg}");
     let _ = out.flush();
 }
 
-fn respond_err(out: &mut impl Write, id: &Value, code: i64, message: &str) {
-    let msg = json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}});
-    let _ = writeln!(out, "{msg}");
-    let _ = out.flush();
+/// `stateless`: the request came under the revision whose results all say what kind they are.
+fn respond(send: &Wire, id: &Value, stateless: bool, mut result: Value) {
+    if stateless {
+        result["resultType"] = json!("complete");
+    }
+    send(json!({"jsonrpc": "2.0", "id": id, "result": result}));
+}
+
+fn respond_err(send: &Wire, id: &Value, code: i64, message: &str, data: Option<Value>) {
+    let mut error = json!({"code": code, "message": message});
+    if let Some(data) = data {
+        error["data"] = data;
+    }
+    send(json!({"jsonrpc": "2.0", "id": id, "error": error}));
+}
+
+/// Tool calls in flight, by request id, each with the flag `notifications/cancelled` sets.
+#[derive(Default)]
+struct Calls(Mutex<HashMap<String, Arc<AtomicBool>>>);
+
+impl Calls {
+    fn map(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<AtomicBool>>> {
+        self.0.lock().unwrap_or_else(|p| p.into_inner())
+    }
+    fn begin(&self, id: &Value) -> Arc<AtomicBool> {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.map().insert(id.to_string(), Arc::clone(&cancelled));
+        cancelled
+    }
+    fn cancel(&self, id: &Value) {
+        if let Some(cancelled) = self.map().get(&id.to_string()) {
+            cancelled.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
+struct Call {
+    id: Value,
+    name: String,
+    args: Value,
+    stateless: bool,
+    /// the client's token for progress reports; null when it did not ask for any
+    progress: Value,
+    cancelled: Arc<AtomicBool>,
 }
 
 /// How long a tool call waits for an index that is still being built before it answers that it
-/// is (well under the 60 s after which Codex gives a call up).
-const BUILD_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
+/// is (well under the 60 s after which Codex gives a call up). A client that sent a progress
+/// token hears every `PROGRESS_SECONDS` that the build goes on, and gets the real answer.
+const BUILD_WAIT: Duration = Duration::from_secs(20);
+const PROGRESS_SECONDS: u64 = 2;
+/// Calls beyond this many in flight run on the thread that reads requests.
+const MAX_CALLS: usize = 32;
 
-/// Serve until stdin closes. The first indexing runs in the background so the handshake is instant;
-/// tool calls that arrive meanwhile wait for it, up to `BUILD_WAIT`.
+/// One tool call from its first wait to its answer. A cancelled call sends nothing more: it
+/// stops waiting for the index or for its turn, and an answer already being computed is dropped.
+fn run_call(send: &Wire, repo: &Mutex<Repo>, building: &AtomicBool, calls: &Calls, refresh_interval: f64, call: Call) {
+    let Call { id, name, args, stateless, progress, cancelled } = call;
+    let (started, mut reported) = (Instant::now(), 0);
+    let gone = || cancelled.load(Ordering::Relaxed);
+    while building.load(Ordering::Acquire) && !gone() && (!progress.is_null() || started.elapsed() < BUILD_WAIT) {
+        std::thread::sleep(Duration::from_millis(20));
+        let seconds = started.elapsed().as_secs();
+        if !progress.is_null() && seconds >= reported + PROGRESS_SECONDS {
+            reported = seconds;
+            let params = json!({"progressToken": progress, "progress": seconds, "message": "building the index of this repository"});
+            send(json!({"jsonrpc": "2.0", "method": "notifications/progress", "params": params}));
+        }
+    }
+    let called = if gone() {
+        None
+    } else if building.load(Ordering::Acquire) {
+        let wait = "scrutate is still building its index of this repository (first use, or many files changed). Call the tool again in a little while.";
+        Some(Called::note(wait.to_string(), false))
+    } else {
+        // a panic in an earlier call poisons the lock; the repository behind it is whole
+        let mut repo = repo.lock().unwrap_or_else(|p| p.into_inner());
+        // a panic inside one tool call must not take the server down: it becomes a tool error
+        (!gone()).then(|| {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| call_tool(&mut repo, &name, &args, refresh_interval))).unwrap_or_else(|_| {
+                Called::note(format!("error: internal failure while running {name} (a bug: please report it); the server keeps running"), true)
+            })
+        })
+    };
+    calls.map().remove(&id.to_string());
+    if let Some(c) = called.filter(|_| !gone()) {
+        respond(send, &id, stateless, json!({"content": [{"type": "text", "text": c.text}], "structuredContent": c.structured, "isError": c.is_error}));
+    }
+}
+
+/// Serve until stdin closes. The first indexing runs in the background so a client is answered
+/// at once; tool calls that arrive meanwhile wait for it (`BUILD_WAIT`). Each call runs on a
+/// thread of its own, so the reader still sees a `notifications/cancelled` for it.
 pub fn serve(repo: Arc<Mutex<Repo>>, refresh_interval: f64, version: &str) -> Result<()> {
-    let building = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let building = Arc::new(AtomicBool::new(true));
     {
         let (repo, building) = (Arc::clone(&repo), Arc::clone(&building));
         std::thread::Builder::new().name("scrutate-index".into()).spawn(move || {
@@ -114,81 +239,171 @@ pub fn serve(repo: Arc<Mutex<Repo>>, refresh_interval: f64, version: &str) -> Re
                     eprintln!("[scrutate] indexing failed: {e:#}");
                 }
             }
-            building.store(false, std::sync::atomic::Ordering::Release);
+            building.store(false, Ordering::Release);
         })?;
     }
-    let stdin = std::io::stdin();
-    let stdout = std::io::stdout();
-    let mut out = stdout.lock();
-    for line in stdin.lock().lines() {
-        let line = line?;
-        if line.trim().is_empty() {
-            continue;
-        }
-        let msg: Value = match serde_json::from_str(&line) {
-            Ok(v) => v,
-            Err(_) => {
-                respond_err(&mut out, &Value::Null, -32700, "parse error");
+    let calls = Calls::default();
+    let (repo, building, calls, send) = (&*repo, &*building, &calls, &to_stdout as &Wire);
+    std::thread::scope(|scope| -> Result<()> {
+        for line in std::io::stdin().lock().lines() {
+            let line = line?;
+            if line.trim().is_empty() {
                 continue;
             }
-        };
-        let id = msg.get("id").cloned().unwrap_or(Value::Null);
-        let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("");
-        let params = msg.get("params").cloned().unwrap_or(json!({}));
-        let is_notification = msg.get("id").is_none();
-        match method {
-            "initialize" => {
-                let asked = params.get("protocolVersion").and_then(|v| v.as_str()).unwrap_or("2025-06-18");
-                let ver = if KNOWN_VERSIONS.contains(&asked) { asked } else { "2025-06-18" };
-                respond(
-                    &mut out,
-                    &id,
-                    json!({
-                        "protocolVersion": ver,
-                        "capabilities": {"tools": {"listChanged": false}},
-                        "serverInfo": {"name": "scrutate", "version": version},
-                        "instructions": INSTRUCTIONS,
-                    }),
-                );
-            }
-            "notifications/initialized" | "notifications/cancelled" | "notifications/roots/list_changed" => {}
-            "ping" => respond(&mut out, &id, json!({})),
-            "tools/list" => respond(&mut out, &id, json!({"tools": tools()})),
-            "resources/list" => respond(&mut out, &id, json!({"resources": []})),
-            "resources/templates/list" => respond(&mut out, &id, json!({"resourceTemplates": []})),
-            "prompts/list" => respond(&mut out, &id, json!({"prompts": []})),
-            "tools/call" => {
-                let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let args = params.get("arguments").cloned().unwrap_or(json!({}));
-                // a panic inside one tool call must not take the server down: report it as a tool
-                // error and keep serving (the mutex is poisoned afterwards; clear it)
-                let waited = std::time::Instant::now();
-                while building.load(std::sync::atomic::Ordering::Acquire) && waited.elapsed() < BUILD_WAIT {
-                    std::thread::sleep(std::time::Duration::from_millis(20));
+            let msg: Value = match serde_json::from_str(&line) {
+                Ok(v) => v,
+                Err(_) => {
+                    respond_err(send, &Value::Null, -32700, "parse error", None);
+                    continue;
                 }
-                let (text, is_error) = if building.load(std::sync::atomic::Ordering::Acquire) {
-                    (
-                        "scrutate is still building its index of this repository (first use, or many files changed). Call the tool again in a little while."
-                            .to_string(),
-                        false,
-                    )
-                } else {
-                    match repo.lock().or_else(|p| Ok::<_, ()>(p.into_inner())) {
-                        Ok(mut r) => match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| call_tool(&mut r, &name, &args, refresh_interval))) {
-                            Ok(r) => r,
-                            Err(_) => (format!("error: internal failure while running {name} (a bug: please report it); the server keeps running"), true),
-                        },
-                        Err(()) => ("error: engine unavailable".to_string(), true),
-                    }
-                };
-                respond(&mut out, &id, json!({"content": [{"type": "text", "text": text}], "isError": is_error}));
-            }
-            _ => {
+            };
+            let id = msg.get("id").cloned().unwrap_or(Value::Null);
+            let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("");
+            let params = msg.get("params").cloned().unwrap_or(json!({}));
+            let is_notification = msg.get("id").is_none();
+            let asked = params.get("_meta").and_then(|m| m.get(VERSION_KEY)).and_then(Value::as_str);
+            if let Some(other) = asked.filter(|v| *v != STATELESS_VERSION) {
                 if !is_notification {
-                    respond_err(&mut out, &id, -32601, &format!("method not found: {method}"));
+                    respond_err(send, &id, -32022, "Unsupported protocol version", Some(json!({"supported": [STATELESS_VERSION], "requested": other})));
+                }
+                continue;
+            }
+            let stateless = asked.is_some();
+            // a list a client may cache, under the revision that asks every list to say so
+            let list = |mut result: Value| {
+                if stateless {
+                    result["ttlMs"] = json!(LIST_TTL_MS);
+                    result["cacheScope"] = json!("public");
+                }
+                respond(send, &id, stateless, result);
+            };
+            match method {
+                "server/discover" if stateless => list(json!({
+                    "supportedVersions": [STATELESS_VERSION],
+                    "capabilities": {"tools": {}},
+                    "instructions": INSTRUCTIONS,
+                    "_meta": {SERVER_INFO_KEY: {"name": "scrutate", "version": version}},
+                })),
+                "server/discover" => respond_err(send, &id, -32602, &format!("_meta has no {VERSION_KEY}"), None),
+                "initialize" => {
+                    let asked = params.get("protocolVersion").and_then(|v| v.as_str()).unwrap_or("2025-06-18");
+                    let ver = if HANDSHAKE_VERSIONS.contains(&asked) { asked } else { "2025-06-18" };
+                    respond(
+                        send,
+                        &id,
+                        false,
+                        json!({
+                            "protocolVersion": ver,
+                            "capabilities": {"tools": {"listChanged": false}},
+                            "serverInfo": {"name": "scrutate", "version": version},
+                            "instructions": INSTRUCTIONS,
+                        }),
+                    );
+                }
+                "notifications/cancelled" => calls.cancel(&params["requestId"]),
+                "notifications/initialized" | "notifications/roots/list_changed" => {}
+                "ping" => respond(send, &id, stateless, json!({})),
+                "tools/list" => list(json!({"tools": tools()})),
+                "resources/list" => list(json!({"resources": []})),
+                "resources/templates/list" => list(json!({"resourceTemplates": []})),
+                "prompts/list" => list(json!({"prompts": []})),
+                "tools/call" => {
+                    let call = Call {
+                        name: params.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        args: params.get("arguments").cloned().unwrap_or(json!({})),
+                        stateless,
+                        progress: params.get("_meta").and_then(|m| m.get("progressToken")).cloned().unwrap_or(Value::Null),
+                        cancelled: calls.begin(&id),
+                        id,
+                    };
+                    let run = move || run_call(send, repo, building, calls, refresh_interval, call);
+                    if calls.map().len() > MAX_CALLS {
+                        run();
+                    } else {
+                        scope.spawn(run);
+                    }
+                }
+                _ => {
+                    if !is_notification {
+                        respond_err(send, &id, -32601, &format!("method not found: {method}"), None);
+                    }
                 }
             }
         }
+        Ok(())
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A repository with one function, its index built, and the messages a call sends.
+    fn fixture(name: &str) -> (std::path::PathBuf, Mutex<Repo>, Mutex<Vec<Value>>) {
+        let root = std::env::temp_dir().join(format!("scrutate_mcp_{name}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/geo.py"), "def make_point():\n    return 1\n").unwrap();
+        let mut repo = Repo::open(&root).unwrap();
+        repo.update(false).unwrap();
+        (root, Mutex::new(repo), Mutex::new(Vec::new()))
     }
-    Ok(())
+
+    fn call(calls: &Calls, id: i64, progress: Value) -> Call {
+        let id = json!(id);
+        Call { name: "find_symbol".into(), args: json!({"name": "make_point"}), stateless: true, progress, cancelled: calls.begin(&id), id }
+    }
+
+    #[test]
+    fn a_call_with_a_progress_token_reports_while_the_index_is_built_and_then_answers() {
+        let (root, repo, sent) = fixture("progress");
+        let (building, calls) = (AtomicBool::new(true), Calls::default());
+        let send = |m: Value| sent.lock().unwrap().push(m);
+        std::thread::scope(|s| {
+            let job = s.spawn(|| run_call(&send, &repo, &building, &calls, 0.0, call(&calls, 7, json!("tok"))));
+            std::thread::sleep(Duration::from_millis(2300));
+            assert!(!job.is_finished(), "the call waits for the index as long as it reports progress");
+            building.store(false, Ordering::Release);
+        });
+        let sent = sent.lock().unwrap().clone();
+        let (last, progress) = sent.split_last().unwrap();
+        assert!(!progress.is_empty(), "{sent:?}");
+        for p in progress {
+            assert_eq!(p["method"], "notifications/progress");
+            assert_eq!(p["params"]["progressToken"], "tok");
+            assert!(p["params"]["progress"].as_u64().unwrap() >= PROGRESS_SECONDS);
+        }
+        assert_eq!(last["id"], 7);
+        assert_eq!(last["result"]["resultType"], "complete");
+        assert!(last["result"]["content"][0]["text"].as_str().unwrap().starts_with("src/geo.py:1-2"), "{last}");
+        assert_eq!(last["result"]["structuredContent"]["result"][0]["id"], "src/geo.py:1-2");
+        assert!(calls.map().is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_cancelled_call_sends_nothing() {
+        let (root, repo, sent) = fixture("cancel");
+        let (building, calls) = (AtomicBool::new(true), Calls::default());
+        let send = |m: Value| sent.lock().unwrap().push(m);
+        std::thread::scope(|s| {
+            // waiting for the index: the notice ends the wait
+            let waiting = call(&calls, 1, Value::Null);
+            let job = s.spawn(|| run_call(&send, &repo, &building, &calls, 0.0, waiting));
+            calls.cancel(&json!(1));
+            job.join().unwrap();
+            building.store(false, Ordering::Release);
+            // waiting for its turn: it gives the turn up when it comes
+            let turn = repo.lock().unwrap();
+            let queued = call(&calls, 2, Value::Null);
+            let job = s.spawn(|| run_call(&send, &repo, &building, &calls, 0.0, queued));
+            calls.cancel(&json!(2));
+            drop(turn);
+            job.join().unwrap();
+            calls.cancel(&json!(99)); // a notice for a request that is not there is ignored
+        });
+        assert_eq!(*sent.lock().unwrap(), Vec::<Value>::new());
+        assert!(calls.map().is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

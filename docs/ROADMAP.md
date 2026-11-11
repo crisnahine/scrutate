@@ -39,6 +39,8 @@ docs/TRACEABILITY.md.
 | Heavy output through a pipe (R-4.6) | output that follows other output within a millisecond waits in a 64 KB buffer and leaves in one write, where every matching file used to cost a write and a wake-up of the reader: `return` in the Linux tree (1.3 million lines) in the Linux VM, from 0.95 of ripgrep's time to 0.60 |
 | A read-files ceiling that is one (R-14.8) | `bench/rawread.c` gives each thread 64 neighbouring paths at a time, and the harness keeps the fastest of several thread counts; handing out one path at a time, its threads shared a directory and read a cold tree at a third of the speed the disk allows |
 | Measurements a busy machine spoiled (R-14.9) | a benchmark where some tool's block medians differ by more than 25% is measured again, once, whatever its status, and keeps its first result beside the second; a warm row records how much of its corpus was in the page cache (on this 18 GB laptop the LLVM tree, 4.9 GB in 16 KB pages, no longer fits once a browser and an editor are open) |
+| What agents ask of an MCP server now (R-6.15) | revision 2026-07-28 beside the handshake revisions (`server/discover`, a version in each request, `resultType`, cache hints on lists); an `outputSchema` on every tool and the `--json` form of each answer in `structuredContent`; `notifications/cancelled` honoured, each call on a thread of its own; progress reports while the first index is built; `read_code` of a whole definition by name; the location at the start of every result accepted wherever a tool takes a symbol |
+| Limits left in 0.1.0's first draft (R-2A, R-12.4) | smart case sees a letter written by its code point (`\x41`); the LSP server replaces a damaged index, from a save or from a request; the watcher's test of one path decides in the walk's order (a `.ignore` at any level before every `.gitignore`) |
 | Benchmark corpora without hard links (R-14) | `bench/corpora.py` copies (APFS clones) where it linked: a hard-linked file costs every tool twice as long to open on macOS |
 
 ## Blocked: needs the repository published (declined for this release)
@@ -70,19 +72,17 @@ docs/TRACEABILITY.md.
   open and read on the five performance cores with no search at all, and a search takes 0.58 s.
   The benchmark corpora `linux` and `linux-nodot` shared files through hard links, which doubles
   the cost of every open on macOS for every tool; `bench/corpora.py` now makes copies (APFS
-  clones). What is left above the floor is the search itself.
-- Agents, next: `outputSchema` and `structuredContent` on the MCP tools (Codex turns an output
-  schema into a typed return value for its scripts; clients still differ on which form reaches
-  the model, so the text stays); the stateless protocol revision 2026-07-28 (`server/discover`,
-  `resultType`, cache hints on `tools/list`; today clients fall back to the handshake); honouring
-  `notifications/cancelled` (a tool call runs on the thread that reads requests); symbol-scoped
-  reads (`read_code` by symbol name) and result ids an agent can pass back. Sources and client
-  support are in docs/research/agent-facing-search-2026-11.md.
-- Known limits left in place: smart case does not see `\x41` as an uppercase letter; the LSP
-  server's save worker updates the index without the corrupt-database rebuild; the watcher's test
-  of one path (`files::Membership`) walks the ignore files by hand, because the walker's own
-  per-directory matcher is private to the `ignore` crate, and lets a nested `.gitignore` win over
-  a parent `.ignore` (the walk does the opposite), which can only cause an extra wake-up.
+  clones). What is left above the floor is the search itself. Opening a file through its
+  directory's descriptor (`openat`) does not lower the floor: 13.3 µs a file against 12.4 µs by
+  path.
+- Agents, next: results an agent can page in the structured form too (today a large answer
+  pages as text and its `structuredContent` is `null`); stopping an Engine A search that is
+  already running when its call is cancelled (its answer is dropped today); the count of files
+  indexed so far in progress reports; a `response_format` switch for shorter answers. Sources
+  and client support are in docs/research/agent-facing-search-2026-11.md.
+- The watcher's test of one path (`files::Membership`) still reads the ignore files by hand,
+  because the walker's own per-directory matcher is private to the `ignore` crate; a test holds
+  it to the walk's answers.
 - Linux on dedicated hardware: every Linux number here comes from a 5-CPU VM on the development
   Mac, whose disk is a virtual one on the Mac's SSD. Two values were fitted there and need a
   check on an NVMe disk and on a network disk: the read time that counts as a disk read (30 µs)
@@ -95,4 +95,7 @@ docs/TRACEABILITY.md.
 - `cargo install`: int8 weights for the semantic model, with the quality check QUALITY.md uses.
 - Benchmark leadership on dedicated idle hardware (R-14.11): every number here comes from a
   developer laptop shared with other work, and Linux x86_64 has no benchmark run at all. In the
-  last macOS run six of 37 warm rows had to be measured twice for that reason.
+  last macOS run six of 37 warm rows had to be measured twice for that reason. An x86_64 run
+  under emulation on this laptop was set up and dropped: gcc crashes there building GNU grep,
+  and ripgrep's allocator reports that it falls back to a slower path, so the times would
+  measure the emulator. `bench/competitors/linux_bench.sh` takes an x86_64 host as it is.

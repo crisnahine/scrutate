@@ -35,7 +35,12 @@ limits, and the rule for refreshing the index first. Front ends parse into opera
 no defaults of their own.
 
 **Answer**: the typed result of an operation (`ops::Answer`), with one text form and one JSON
-form. Every front end renders the same answer.
+form. Every front end renders the same answer; the MCP server sends both, the JSON form as the
+**structured** result when it fits the budget (`Answer::structured`).
+
+**Location**: where a symbol is, written `path:start-end` (or `path:line`). Every answer begins
+each result with one, and every operation that takes a symbol accepts one in place of a name, to
+mean that definition and no other of the same name (`intel::location`).
 
 **Budget**: the size limit of an answer as text (`Answer::text_within`). A cut answer keeps whole
 items and ends with how many are left and the `offset` that continues it.

@@ -145,8 +145,19 @@ First release.
   (`max_bytes`), cut at whole items, with the `offset` that continues it; the CLI has the same as
   `--max-bytes` (`SCRUTATE_MAX_BYTES`) and `--offset`; a first index build no longer blocks a tool
   call for longer than 20 seconds.
+- MCP revision 2026-07-28 beside the handshake revisions: `server/discover`, a protocol version in
+  each request's `_meta`, `resultType` on results, `ttlMs` and `cacheScope` on lists. Every tool
+  has an `outputSchema` and every result `structuredContent` (the `--json` form, or `null` when
+  the answer is larger than its budget). `notifications/cancelled` stops a call that is waiting
+  and drops the answer of one that is computing; a call with a `progressToken` gets progress
+  reports while the first index is built, and then its answer.
+- `read_code` reads a whole definition with `symbol` (a name, `Class.method`, or a location). The
+  location at the start of every result (`path:start-end`) is accepted wherever a tool takes a
+  symbol, so one of several same-named definitions can be followed up; JSON hits carry it as `id`.
 - The index recovers from a corrupt database in every front end that stays open (the MCP server,
-  the Python bindings, `watch`), not only in the CLI.
+  the LSP server, the Python bindings, `watch`), not only in the CLI.
+- Smart case sees a letter written by its code point (`\x41`). The watcher's test of one changed
+  path decides in the walk's order (a `.ignore` at any level before every `.gitignore`).
 - `watch` and `serve --watch` no longer stop on Linux and Windows when `.git/info/exclude` has
   patterns (the matcher was rooted at `.git/info` and panicked on the first changed path).
 - `-U` with `--fuzzy` or `--fuzzy-regex` is an error (it found nothing across lines).

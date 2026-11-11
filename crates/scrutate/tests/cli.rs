@@ -385,6 +385,155 @@ fn mcp_protocol_round_trip() {
     assert!(lines.iter().any(|v| v["error"]["code"] == -32700), "parse error for non-JSON input");
 }
 
+/// A value against the subset of JSON Schema the tool definitions use.
+fn conforms(schema: &serde_json::Value, v: &serde_json::Value) -> Result<(), String> {
+    use serde_json::Value;
+    if let Some(options) = schema.get("anyOf").and_then(Value::as_array) {
+        return if options.iter().any(|o| conforms(o, v).is_ok()) { Ok(()) } else { Err(format!("{v} fits none of {schema}")) };
+    }
+    let kind = match v {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(n) if n.is_i64() || n.is_u64() => "integer",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    };
+    let allowed: Vec<&str> = match &schema["type"] {
+        Value::String(t) => vec![t.as_str()],
+        Value::Array(ts) => ts.iter().filter_map(Value::as_str).collect(),
+        _ => vec![kind],
+    };
+    if !allowed.contains(&kind) && !(kind == "integer" && allowed.contains(&"number")) {
+        return Err(format!("{v} is a {kind}, not one of {allowed:?}"));
+    }
+    for name in schema["required"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+        if v.get(name).is_none() {
+            return Err(format!("{v} has no {name}"));
+        }
+    }
+    for (name, sub) in schema["properties"].as_object().into_iter().flatten() {
+        if let Some(field) = v.get(name) {
+            conforms(sub, field).map_err(|e| format!("{name}: {e}"))?;
+        }
+    }
+    if let (Some(items), Some(list)) = (schema.get("items"), v.as_array()) {
+        for item in list {
+            conforms(items, item)?;
+        }
+    }
+    Ok(())
+}
+
+/// The revision without a handshake, structured results that fit their schemas, whole definitions
+/// by name or by a location from another answer, and the same call under both eras.
+#[test]
+fn mcp_stateless_revision_and_structured_results() {
+    let r = python_repo("mcp2");
+    let mut child = Command::new(BIN)
+        .args(["--root", r.root.to_str().unwrap(), "serve"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let meta = r#""_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}"#;
+    let call = |id: i64, name: &str, args: &str| {
+        format!(r#"{{"jsonrpc":"2.0","id":{id},"method":"tools/call","params":{{"name":"{name}","arguments":{args},{meta}}}}}"#)
+    };
+    let msgs = [
+        format!(r#"{{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{{{meta}}}}}"#),
+        r#"{"jsonrpc":"2.0","id":2,"method":"server/discover","params":{}}"#.to_string(),
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"1900-01-01"}}}"#.to_string(),
+        format!(r#"{{"jsonrpc":"2.0","id":4,"method":"tools/list","params":{{{meta}}}}}"#),
+        call(10, "search_code", r#"{"query":"build a widget","k":3}"#),
+        call(11, "find_symbol", r#"{"name":"make_widget_7"}"#),
+        call(12, "callers", r#"{"name":"make_widget_7"}"#),
+        call(13, "callees", r#"{"name":"make_widget_7"}"#),
+        call(14, "grep_code", r#"{"pattern":"import os","max_results":3}"#),
+        call(15, "read_code", r#"{"path":"pkg/m7.py","start":1,"end":3}"#),
+        call(16, "read_code", r#"{"symbol":"make_widget_7"}"#),
+        call(17, "read_code", r#"{"symbol":"pkg/m7.py:7-9"}"#),
+        call(18, "outline", r#"{"path":"pkg/m7.py"}"#),
+        call(19, "dependencies", r#"{"path":"pkg/m7.py"}"#),
+        call(20, "dependents", r#"{"target":"pkg.m7"}"#),
+        call(21, "references", r#"{"name":"make_widget_7"}"#),
+        call(22, "references", r#"{"name":"make_widget_7","textual":true}"#),
+        call(23, "similar_code", r#"{"target":"make_widget_7","k":3}"#),
+        call(24, "duplicates", r#"{}"#),
+        call(25, "structural_search", r#"{"lang":"python","query":"(function_definition name: (identifier) @f)","limit":5}"#),
+        call(26, "reindex", r#"{}"#),
+        call(27, "grep_code", r#"{"pattern":"widget","max_bytes":1000}"#),
+        call(28, "read_code", r#"{}"#),
+        call(29, "callers", r#"{"name":"pkg/m7.py:7-9"}"#),
+        call(30, "read_code", r#"{"symbol":"no_such_symbol_anywhere"}"#),
+        r#"{"jsonrpc":"2.0","id":40,"method":"tools/call","params":{"name":"find_symbol","arguments":{"name":"make_widget_7"}}}"#.to_string(),
+    ];
+    for m in &msgs {
+        writeln!(stdin, "{m}").unwrap();
+    }
+    drop(stdin);
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    let lines: Vec<serde_json::Value> = String::from_utf8_lossy(&out.stdout).lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    let by_id = |id: i64| lines.iter().find(|v| v["id"] == id).unwrap_or_else(|| panic!("no response {id}"));
+
+    let found = &by_id(1)["result"];
+    assert_eq!(found["resultType"], "complete", "{found}");
+    assert_eq!(found["supportedVersions"], serde_json::json!(["2026-07-28"]));
+    assert!(found["capabilities"]["tools"].is_object());
+    assert_eq!(found["_meta"]["io.modelcontextprotocol/serverInfo"]["name"], "scrutate");
+    assert_eq!(found["cacheScope"], "public");
+    assert!(found["ttlMs"].as_u64().unwrap() > 0);
+    assert!(found["instructions"].as_str().unwrap().len() < 4096);
+    assert_eq!(by_id(2)["error"]["code"], -32602, "a request of this revision must name its version");
+    assert_eq!(by_id(3)["error"]["code"], -32022);
+    assert_eq!(by_id(3)["error"]["data"], serde_json::json!({"supported": ["2026-07-28"], "requested": "1900-01-01"}));
+    let list = &by_id(4)["result"];
+    assert_eq!((&list["resultType"], &list["cacheScope"]), (&serde_json::json!("complete"), &serde_json::json!("public")));
+    assert!(list["ttlMs"].as_u64().unwrap() > 0);
+    let tools = list["tools"].as_array().unwrap();
+
+    // every structured result fits the schema its tool declares, and carries the whole answer
+    for id in 10..=26 {
+        let (m, res) = (&msgs[(id - 10 + 4) as usize], &by_id(id)["result"]);
+        assert_eq!(res["resultType"], "complete", "{m}");
+        assert_eq!(res["isError"], false, "{m}: {res}");
+        let name = serde_json::from_str::<serde_json::Value>(m).unwrap()["params"]["name"].as_str().unwrap().to_string();
+        let schema = &tools.iter().find(|t| t["name"] == name.as_str()).unwrap()["outputSchema"];
+        let structured = &res["structuredContent"];
+        conforms(schema, structured).unwrap_or_else(|e| panic!("{name}: {e}\nschema {schema}"));
+        assert_eq!(structured["complete"], true, "{name}: {structured}");
+        assert!(!structured["result"].is_null(), "{name}");
+    }
+    let sc = |id: i64| &by_id(id)["result"]["structuredContent"]["result"];
+    let text = |id: i64| by_id(id)["result"]["content"][0]["text"].as_str().unwrap();
+    assert_eq!(sc(11)[0]["id"], "pkg/m7.py:7-9", "{}", sc(11));
+    // a whole definition by name, and by the location another answer printed
+    assert!(text(16).starts_with("pkg/m7.py:7-9  [function] make_widget_7\n    7  def make_widget_7(size):"), "{}", text(16));
+    assert_eq!(text(16), text(17));
+    assert_eq!(sc(16)["definitions"][0]["id"], "pkg/m7.py:7-9");
+    assert!(sc(16)["definitions"][0]["text"].as_str().unwrap().contains("def make_widget_7"));
+    assert_eq!(sc(15)["text"].as_str().unwrap().lines().count(), 3);
+    assert_eq!(text(29), text(12), "a location names the symbol at it");
+    // an answer too large for its budget pages as text and says so in the structured form
+    let big = &by_id(27)["result"];
+    assert_eq!(big["structuredContent"], serde_json::json!({"schema": 1, "complete": false, "result": null}));
+    assert!(big["content"][0]["text"].as_str().unwrap().contains("not shown: call again with offset="), "{big}");
+    for id in [28, 30] {
+        assert_eq!(by_id(id)["result"]["isError"], true);
+        assert_eq!(by_id(id)["result"]["structuredContent"]["result"], serde_json::Value::Null);
+    }
+    assert!(text(28).contains("missing path or symbol"), "{}", text(28));
+    assert!(text(30).contains("no definition matches"), "{}", text(30));
+    // the same call without the per-request version: the older shape, structured result included
+    let old = &by_id(40)["result"];
+    assert!(old.get("resultType").is_none(), "{old}");
+    assert_eq!(old["structuredContent"]["result"], *sc(11));
+}
+
 #[test]
 fn corruption_found_during_use_triggers_a_rebuild() {
     // large databases skip the open-time page walk; damage inside a page must still be caught by

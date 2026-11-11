@@ -31,6 +31,8 @@ pub const DUPES_LIMIT: usize = 50;
 pub const TSQUERY_LIMIT: usize = 1000;
 /// Lines one `read` returns at most.
 pub const READ_LINES: i64 = 400;
+/// Definitions one `read` of a name returns at most.
+pub const READ_DEFINITIONS: usize = 20;
 /// Bytes of text an agent gets from one call unless it asks for more: about 6,000 tokens, under
 /// the 10,000 at which Codex cuts a tool result and Claude Code warns.
 pub const AGENT_BYTES: usize = 24_000;
@@ -57,8 +59,11 @@ pub enum Op {
         name: String,
         limit: usize,
     },
+    /// A line range of `path`, or with `symbol` (a name or a location) every definition it names,
+    /// whole; `path` then keeps the definitions in that file.
     Read {
-        path: String,
+        path: Option<String>,
+        symbol: Option<String>,
         start: i64,
         end: Option<i64>,
     },
@@ -117,7 +122,11 @@ impl Op {
             "callers" => Op::Callers { name: text("name")?, limit: count("limit", CALLERS_LIMIT as u64, 500) as usize },
             "callees" => Op::Callees { name: text("name")?, limit: count("limit", CALLEES_LIMIT as u64, 500) as usize },
             "read_code" => {
-                Op::Read { path: text("path")?, start: args.get("start").and_then(Value::as_i64).unwrap_or(1), end: args.get("end").and_then(Value::as_i64) }
+                let (path, symbol) = (text("path").ok(), text("symbol").ok());
+                if path.is_none() && symbol.is_none() {
+                    bail!("missing path or symbol");
+                }
+                Op::Read { path, symbol, start: args.get("start").and_then(Value::as_i64).unwrap_or(1), end: args.get("end").and_then(Value::as_i64) }
             }
             "outline" => Op::Outline { path: text("path")? },
             "dependencies" => Op::Deps { path: text("path")? },
@@ -146,6 +155,59 @@ pub fn read_only(tool: &str) -> bool {
     tool != "reindex"
 }
 
+/// The JSON Schema of what `Answer::structured` returns for one tool: the answer's JSON form in
+/// `result`, or `null` there when the answer is too large to send whole.
+pub fn output_schema(tool: &str) -> Value {
+    let ty = |t: &str| json!({"type": t});
+    let obj = |properties: Value, required: &[&str]| json!({"type": "object", "properties": properties, "required": required});
+    let list = |items: Value| json!({"type": "array", "items": items});
+    // a symbol: where it is, and its name under the key this answer uses
+    let span = |name: &str| {
+        let mut properties = json!({"id": ty("string"), "path": ty("string"), "start": ty("integer"), "end": ty("integer"), "kind": ty("string")});
+        properties[name] = ty("string");
+        obj(properties, &["path", "start", "end", "kind", name])
+    };
+    let result = match tool {
+        "search_code" | "find_symbol" | "callers" => list(span("name")),
+        "callees" => obj(json!({"resolved": list(span("name")), "external": list(ty("string"))}), &["resolved", "external"]),
+        "grep_code" => {
+            let line = obj(json!({"line": ty("integer"), "text": ty("string")}), &["line", "text"]);
+            let group = obj(json!({"symbol": {"anyOf": [span("name"), ty("null")]}, "path": ty("string"), "lines": list(line)}), &["symbol", "path", "lines"]);
+            obj(json!({"groups": list(group), "stopped_at": {"type": ["integer", "null"]}}), &["groups", "stopped_at"])
+        }
+        "read_code" => obj(json!({"text": ty("string"), "definitions": list(span("qualname"))}), &[]),
+        "outline" => list(obj(
+            json!({"kind": ty("string"), "name": ty("string"), "qualname": ty("string"), "start": ty("integer"), "end": ty("integer")}),
+            &["kind", "name", "qualname", "start", "end"],
+        )),
+        "dependencies" => list(obj(json!({"line": ty("integer"), "module": ty("string"), "resolved": {"type": ["string", "null"]}}), &["line", "module"])),
+        "dependents" => list(obj(json!({"path": ty("string"), "line": ty("integer"), "module": ty("string")}), &["path", "line", "module"])),
+        "references" => {
+            obj(json!({"name": ty("string"), "definitions": list(span("qualname")), "truncated": ty("boolean")}), &["name", "definitions", "truncated"])
+        }
+        "similar_code" => {
+            let mut hit = span("qualname");
+            hit["properties"]["cosine"] = ty("number");
+            hit["properties"]["jaccard"] = ty("number");
+            list(hit)
+        }
+        "duplicates" => list(obj(
+            json!({"kind": ty("string"), "similarity": ty("number"), "tokens": ty("integer"), "members": ty("array")}),
+            &["kind", "similarity", "tokens", "members"],
+        )),
+        "structural_search" => list(obj(
+            json!({"path": ty("string"), "line": ty("integer"), "column": ty("integer"), "capture": ty("string"), "kind": ty("string"), "text": ty("string")}),
+            &["path", "line", "column", "capture", "kind", "text"],
+        )),
+        _ => {
+            obj(json!({"files_changed": ty("integer"), "files_removed": ty("integer"), "chunks": ty("integer")}), &["files_changed", "files_removed", "chunks"])
+        }
+    };
+    let complete =
+        json!({"type": "boolean", "description": "false when the answer is larger than max_bytes: result is then null and the text holds the first part"});
+    obj(json!({"schema": ty("integer"), "complete": complete, "result": {"anyOf": [result, ty("null")]}}), &["schema", "complete", "result"])
+}
+
 pub enum Answer {
     Hits {
         hits: Vec<Hit>,
@@ -162,6 +224,8 @@ pub enum Answer {
         stopped_at: Option<u64>,
     },
     Read(String),
+    /// Whole definitions, each with its numbered lines.
+    Definitions(Vec<(ChunkRow, String)>),
     Outline {
         path: String,
         rows: Vec<ChunkRow>,
@@ -210,14 +274,37 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
             let (groups, stopped) = crate::intel::grouped_grep(s, &o)?;
             Answer::Grep { groups, stopped_at: stopped.then_some(*max_results) }
         }
-        Op::Symbol { name, limit } => Answer::Hits { hits: s.find_symbol(name, *limit)?, words: Vec::new(), snippet: true },
-        Op::Callers { name, limit } => Answer::Hits { hits: s.callers(name, *limit)?, words: Vec::new(), snippet: false },
+        Op::Symbol { name, limit } => Answer::Hits { hits: s.find_symbol(&named(s, name)?, *limit)?, words: Vec::new(), snippet: true },
+        Op::Callers { name, limit } => Answer::Hits { hits: s.callers(&named(s, name)?, *limit)?, words: Vec::new(), snippet: false },
         Op::Callees { name, limit } => {
-            let (resolved, external) = s.callees(name, *limit)?;
+            let (resolved, external) = s.callees(&named(s, name)?, *limit)?;
             Answer::Callees { resolved, external }
         }
-        Op::Read { path, start, end } => {
-            let text = s.read(path, *start, *end, READ_LINES);
+        Op::Read { path, symbol: Some(symbol), .. } => {
+            let mut rows = match crate::intel::location(symbol) {
+                Some((path, line)) => s.ix.chunk_at(path, line)?.into_iter().collect(),
+                None => {
+                    let hits = s.find_symbol(symbol, READ_DEFINITIONS)?;
+                    hits.iter().filter_map(|h| s.ix.chunk(h.id).transpose()).collect::<Result<Vec<_>>>()?
+                }
+            };
+            if let Some(path) = path {
+                rows.retain(|r| r.path == path.trim_start_matches("./"));
+            }
+            if rows.is_empty() {
+                bail!("no definition matches {symbol}");
+            }
+            let read = |r: ChunkRow| {
+                let mut text = s.read(&r.path, r.start, Some(r.end), READ_LINES);
+                if r.end - r.start + 1 > READ_LINES {
+                    text.push_str(&format!("\n(the definition goes on to line {}: read_code path={} start={})", r.end, r.path, r.start + READ_LINES));
+                }
+                (r, text)
+            };
+            Answer::Definitions(rows.into_iter().map(read).collect())
+        }
+        Op::Read { path, start, end, .. } => {
+            let text = s.read(path.as_deref().unwrap_or(""), *start, *end, READ_LINES);
             match text.strip_prefix("error: ") {
                 Some(e) => bail!("{e}"),
                 None => Answer::Read(text),
@@ -242,14 +329,26 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
     })
 }
 
-/// The definition of `name` that `spec` (`path` or `path:line`) points at: the innermost one
+/// What a caller meant by `name`: itself, or the symbol at the location it gave (the
+/// `path:start-end` an earlier answer printed), so one of several same-named definitions can be
+/// followed up.
+fn named(s: &Searcher, name: &str) -> Result<String> {
+    match crate::intel::location(name) {
+        Some((path, line)) => match s.ix.chunk_at(path, line)? {
+            Some(c) => Ok(symbol_name(&c).to_string()),
+            None => bail!("no symbol at {name}"),
+        },
+        None => Ok(name.to_string()),
+    }
+}
+
+/// The definition of `name` that `spec` (a path or a location) points at: the innermost one
 /// around the line, or the first in the file.
 fn definition_at(refs: &Resolved, name: &str, spec: &str) -> Result<i64> {
-    let (path, line) = match spec.rsplit_once(':') {
-        Some((p, l)) if l.parse::<i64>().is_ok() => (p, l.parse::<i64>().ok()),
-        _ => (spec, None),
+    let (path, line) = match crate::intel::location(spec) {
+        Some((path, line)) => (path, Some(line)),
+        None => (spec.trim_start_matches("./"), None),
     };
-    let path = path.trim_start_matches("./");
     refs.definitions
         .iter()
         .filter(|d| d.path == path && line.is_none_or(|l| d.start <= l && l <= d.end))
@@ -267,7 +366,7 @@ fn symbol_name(c: &ChunkRow) -> &str {
 }
 
 fn chunk_json(c: &ChunkRow) -> Value {
-    json!({"path": c.path, "start": c.start, "end": c.end, "kind": c.kind, "qualname": c.qualname})
+    json!({"id": format!("{}:{}-{}", c.path, c.start, c.end), "path": c.path, "start": c.start, "end": c.end, "kind": c.kind, "qualname": c.qualname})
 }
 
 /// An answer as text: a first line, the items that can be counted and cut, and a last line.
@@ -287,6 +386,7 @@ impl Answer {
             Answer::Callees { resolved, external } => resolved.is_empty() && external.is_empty(),
             Answer::Grep { groups, .. } => groups.is_empty(),
             Answer::Read(text) => text.is_empty(),
+            Answer::Definitions(defs) => defs.is_empty(),
             Answer::Outline { rows, .. } => rows.is_empty(),
             Answer::Deps { deps, .. } => deps.is_empty(),
             Answer::Rdeps { rows, .. } => rows.is_empty(),
@@ -377,6 +477,11 @@ impl Answer {
                 }
             }
             Answer::Read(text) => lines(text.clone(), "lines"),
+            Answer::Definitions(defs) => Parts {
+                items: defs.iter().map(|(c, text)| format!("{}:{}-{}  [{}] {}\n{text}", c.path, c.start, c.end, c.kind, symbol_name(c))).collect(),
+                noun: "definitions",
+                ..Parts::default()
+            },
             Answer::Outline { path, rows } if rows.is_empty() => nothing(format!("no symbols in {path} (not indexed or no definitions)")),
             Answer::Outline { rows, .. } => Parts {
                 items: rows
@@ -432,6 +537,15 @@ impl Answer {
         }
     }
 
+    /// The answer for a client that reads structured results, sent beside a text of `text_len`
+    /// bytes that starts at item `offset`: the whole JSON form when both together fit one and a
+    /// half times `max_bytes`, else `null` (the text then pages through the answer).
+    pub fn structured(&self, text_len: usize, max_bytes: usize, offset: usize) -> Value {
+        let result = self.json();
+        let complete = offset == 0 && text_len + result.to_string().len() <= max_bytes.saturating_add(max_bytes / 2);
+        json!({"schema": SCHEMA, "complete": complete, "result": if complete { result } else { Value::Null }})
+    }
+
     /// The answer as JSON, the shape `--json` prints.
     pub fn json(&self) -> Value {
         match self {
@@ -447,6 +561,13 @@ impl Answer {
                 "stopped_at": stopped_at,
             }),
             Answer::Read(text) => json!({"text": text}),
+            Answer::Definitions(defs) => json!({
+                "definitions": defs.iter().map(|(c, text)| {
+                    let mut v = chunk_json(c);
+                    v["text"] = json!(text);
+                    v
+                }).collect::<Vec<_>>(),
+            }),
             Answer::Outline { rows, .. } => {
                 rows.iter().map(|r| json!({"kind": r.kind, "name": r.name, "qualname": r.qualname, "start": r.start, "end": r.end})).collect()
             }
@@ -506,7 +627,9 @@ mod tests {
         assert!(matches!(op("find_symbol", json!({"name": "n"})), Op::Symbol { limit: SYMBOL_LIMIT, .. }));
         assert!(matches!(op("callers", json!({"name": "n"})), Op::Callers { limit: CALLERS_LIMIT, .. }));
         assert!(matches!(op("callees", json!({"name": "n"})), Op::Callees { limit: CALLEES_LIMIT, .. }));
-        assert!(matches!(op("read_code", json!({"path": "p"})), Op::Read { start: 1, end: None, .. }));
+        assert!(matches!(op("read_code", json!({"path": "p"})), Op::Read { start: 1, end: None, symbol: None, .. }));
+        assert!(matches!(op("read_code", json!({"symbol": "Point.norm"})), Op::Read { path: None, symbol: Some(_), .. }));
+        assert_eq!(Op::from_tool("read_code", &json!({})).err().unwrap().to_string(), "missing path or symbol");
         assert!(matches!(op("references", json!({"name": "n"})), Op::Refs { max_results: REFS_MAX, textual: false, def: None, .. }));
         assert!(matches!(op("similar_code", json!({"target": "t"})), Op::Similar { k: SIMILAR_K, .. }));
         assert!(matches!(op("duplicates", json!({})), Op::Dupes { min_tokens: DUPES_MIN_TOKENS, limit: DUPES_LIMIT, .. }));

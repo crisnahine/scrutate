@@ -170,12 +170,18 @@ pub fn outline(ix: &Index, path: &str) -> Result<Vec<ChunkRow>> {
     Ok(rows)
 }
 
-/// The chunk a target refers to: `path:line`, a qualified name, or a plain name (first definition).
+/// The path and line a location names: `path:line`, or `path:start-end` as every answer prints
+/// it, so a location copied from one answer can be handed to the next call.
+pub fn location(target: &str) -> Option<(&str, i64)> {
+    let (path, tail) = target.rsplit_once(':')?;
+    let line = tail.split_once('-').map_or(tail, |(start, _)| start).parse().ok()?;
+    Some((path.trim_start_matches("./"), line))
+}
+
+/// The chunk a target refers to: a location, a qualified name, or a plain name (first definition).
 pub fn locate(s: &Searcher, target: &str) -> Result<Option<ChunkRow>> {
-    if let Some((p, l)) = target.rsplit_once(':') {
-        if let Ok(line) = l.parse::<i64>() {
-            return s.ix.chunk_at(p, line);
-        }
+    if let Some((path, line)) = location(target) {
+        return s.ix.chunk_at(path, line);
     }
     let hits = s.find_symbol(target, 1)?;
     match hits.first() {

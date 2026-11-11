@@ -266,7 +266,13 @@ build it again). The MCP server, the Python bindings and `watch` hold one; the M
 the first index in the background and answers "still building" after a 20 second wait.
 
 The MCP server (`mcp.rs`) is an adapter: the tool table with its hints for clients (`readOnlyHint`,
-`openWorldHint`), server instructions, and the protocol loop. The Python bindings expose both
+`openWorldHint`) and output schemas, server instructions, and the protocol loop. The loop serves
+two eras on one pipe: the `initialize` handshake of the revisions up to 2025-11-25, and revision
+2026-07-28, where each request names its version in `_meta` and nothing is remembered between
+requests. Each tool call runs on a thread of its own, so the loop keeps reading and a
+`notifications/cancelled` finds the call it names; the calls still take turns on the one index.
+A result carries the answer twice, as text cut to the byte budget and as the JSON form in
+`structuredContent` when both fit. The Python bindings expose both
 engines with the GIL released and streaming results.
 
 `lsp.rs` is a language server for editors (`scrutate lsp`), hand-written like the MCP server: a

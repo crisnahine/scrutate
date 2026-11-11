@@ -35,7 +35,7 @@ pub fn hits_json(hits: &[Hit]) -> serde_json::Value {
             .map(|h| {
                 let why: serde_json::Map<String, serde_json::Value> = h.why.iter().cloned().collect();
                 serde_json::json!({
-                    "path": h.path, "start": h.start, "end": h.end,
+                    "id": h.loc(), "path": h.path, "start": h.start, "end": h.end,
                     "name": if h.qualname.is_empty() { &h.name } else { &h.qualname },
                     "kind": h.kind, "score": h.score, "why": why,
                 })

@@ -108,7 +108,7 @@ impl Repo {
     /// Run one operation on an index refreshed as `refresh` does (operations that do not read
     /// the index skip that).
     pub fn run(&mut self, op: &ops::Op, min_interval: f64) -> Result<ops::Answer> {
-        if !matches!(op, ops::Op::Read { .. } | ops::Op::Reindex) {
+        if !matches!(op, ops::Op::Read { symbol: None, .. } | ops::Op::Reindex) {
             self.refresh(min_interval)?;
         }
         ops::run(self, op)
