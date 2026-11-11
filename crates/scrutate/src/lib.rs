@@ -101,6 +101,8 @@ impl Repo {
     /// The cancel flag of the next operation; nothing to set while the index is closed.
     pub fn set_cancel(&mut self, cancel: std::sync::Arc<std::sync::atomic::AtomicBool>) {
         if let Some(s) = &mut self.searcher {
+            // an update the operation runs (a reindex, the scan before a read) stops at its next batch
+            s.ix.cancel = std::sync::Arc::clone(&cancel);
             s.cancel = cancel;
         }
     }

@@ -219,9 +219,10 @@ fn max_bytes_given_to_serve_is_the_default_answer_size() {
 fn an_explicit_refresh_interval_is_a_floor() {
     let r = Repo::new("refresh", 2);
     let find = |n: &str| json!({"name": n});
+    // one after the other: a scan that another server's write holds off does not start the interval
     let mut floor = Session::start(&r, &["serve", "--refresh-interval", "3600"], &[]);
-    let mut default = Session::start(&r, &["serve"], &[]);
     assert!(floor.text(1, "find_symbol", find("make_widget_1")).contains("pkg/m1.py"));
+    let mut default = Session::start(&r, &["serve"], &[]);
     assert!(default.text(1, "find_symbol", find("make_widget_1")).contains("pkg/m1.py"));
     fs::write(r.root.join("pkg/late.py"), "def arrived_late():\n    return 1\n").unwrap();
     std::thread::sleep(std::time::Duration::from_millis(300));

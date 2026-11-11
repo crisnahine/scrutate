@@ -491,6 +491,21 @@ mod tests {
     }
 
     #[test]
+    fn a_cancelled_call_stops_the_reindex_it_runs() {
+        let (root, repo, _) = fixture("cancel_reindex");
+        let mut repo = repo.into_inner().unwrap();
+        let settings = Settings::new(None, Some(0.0));
+        // what `notifications/cancelled` sets for the call in flight
+        repo.set_cancel(Arc::new(AtomicBool::new(true)));
+        let called = call_tool(&mut repo, "reindex", &json!({"force": true}), &settings);
+        assert!(called.is_error && called.text.contains("cancelled"), "{}", called.text);
+        repo.set_cancel(Arc::default());
+        let called = call_tool(&mut repo, "find_symbol", &json!({"name": "make_point"}), &settings);
+        assert!(called.text.contains("src/geo.py"), "the index is as it was: {}", called.text);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn a_call_waits_for_another_process_that_builds_the_first_index() {
         let root = std::env::temp_dir().join(format!("scrutate_mcp_other_build_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);

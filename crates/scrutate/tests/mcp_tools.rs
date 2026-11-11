@@ -260,6 +260,8 @@ fn errors_echo_a_short_prefix_of_a_long_argument() {
     }
 }
 
+// control characters and a colon are not allowed in a Windows file name
+#[cfg(unix)]
 #[test]
 fn control_characters_in_a_file_name_are_shown_escaped() {
     let mut r = Repo::new(
@@ -350,9 +352,12 @@ fn type_colon_colon_method_names_one_definition_like_type_dot_method() {
             ("widget.cpp", "class Widget { public: void draw(); };\n\nvoid Widget::draw() {\n    int x = 1;\n}\n"),
             ("store.go", "package store\n\ntype Store struct{}\n\nfunc (s *Store) Get() int {\n\treturn 1\n}\n"),
             ("store.rb", "class Shelf\n  def get\n    1\n  end\nend\n"),
-            ("a::b.py", "def in_odd_file():\n    return 1\n"),
         ],
     );
+    // a colon is not allowed in a Windows file name
+    if cfg!(unix) {
+        fs::write(r.root.join("a::b.py"), "def in_odd_file():\n    return 1\n").unwrap();
+    }
     for (dotted, scoped) in [("Config.new", "Config::new"), ("Widget.draw", "Widget::draw"), ("Store.Get", "Store::Get"), ("Shelf.get", "Shelf#get")] {
         let want = r.ok("find_symbol", json!({"name": dotted}));
         assert_ne!(want, "(no results)", "{dotted}");
@@ -365,8 +370,10 @@ fn type_colon_colon_method_names_one_definition_like_type_dot_method() {
         assert_eq!(r.call(tool, json!({key: "Config::new"})), r.call(tool, json!({key: "Config.new"})), "{tool}");
     }
     assert!(r.ok("callers", json!({"name": "Config::new"})).contains("make"));
-    assert!(r.ok("read_code", json!({"symbol": "a::b.py:1-2"})).contains("in_odd_file"));
-    assert!(r.ok("find_symbol", json!({"name": "a::b.py:1"})).contains("a::b.py:1-2"));
+    if cfg!(unix) {
+        assert!(r.ok("read_code", json!({"symbol": "a::b.py:1-2"})).contains("in_odd_file"));
+        assert!(r.ok("find_symbol", json!({"name": "a::b.py:1"})).contains("a::b.py:1-2"));
+    }
 }
 
 #[test]
@@ -388,6 +395,8 @@ fn a_call_through_an_imported_module_is_not_a_call_of_a_local_namesake() {
     assert!(!callees.contains("paths.py") && callees.contains("join"), "{callees}");
 }
 
+// a line break or a tab is not allowed in a Windows file name
+#[cfg(unix)]
 #[test]
 fn a_location_printed_with_escapes_can_be_passed_back() {
     let mut r = Repo::new(
