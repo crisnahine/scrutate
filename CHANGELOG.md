@@ -170,7 +170,8 @@ First release.
   `extends`. A `super` call is a decided call of the nearest base method that defines it
   (Python by its method resolution order, also for `super(C, self)`), never of the override it
   sits in. A bare Python import finds the module beside the importing file when no module from
-  the root has the name (`from helpers import x` in `tests/`).
+  the root has the name and the file's directory is not a package (`from helpers import x` in
+  `tests/`; `import logging` in a package with its own `logging.py` stays outside).
 - `refs` finds a name in its composed and decomposed Unicode spelling.
 - `tsquery` keeps each file's captures in `.scrutate/tsquery/` by content hash: a repeated query
   re-parses only changed files (the Linux tree: about 25 s, then 1.6 s), output identical to

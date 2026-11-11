@@ -254,6 +254,27 @@ fn python_imports_through_the_checkout_name_still_bind() {
 }
 
 #[test]
+fn a_bare_python_import_inside_a_package_is_not_the_module_next_door() {
+    // the directory of a package is not on `sys.path`: `import logging` there is the standard library
+    let core = "import logging\nimport json\n\n\ndef run():\n    logging.info(\"x\")\n    return json.dumps({})\n";
+    let r = Repo::new(
+        "pypkg_sibling",
+        &[
+            ("mypkg/__init__.py", ""),
+            ("mypkg/logging.py", "def info(s):\n    return s\n"),
+            ("mypkg/json.py", "def dumps(o):\n    return str(o)\n"),
+            ("mypkg/core.py", core),
+        ],
+    );
+    for name in ["info", "dumps"] {
+        let (code, out) = r.run(&["callers", name]);
+        assert_eq!((code, out.trim()), (1, "(no results)"), "{name}");
+    }
+    let (_, deps) = r.run(&["deps", "mypkg/core.py"]);
+    assert!(!deps.contains("mypkg/logging.py") && !deps.contains("mypkg/json.py"), "{deps}");
+}
+
+#[test]
 fn a_bare_python_import_of_the_module_next_door_binds_it() {
     let r = Repo::new(
         "pysib",

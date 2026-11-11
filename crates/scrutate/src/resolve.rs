@@ -1812,9 +1812,11 @@ impl<'a> Resolver<'a> {
 
     /// An absolute import in the directory of `from`: Python puts a script's own directory first
     /// on `sys.path`, and pytest a test's, so a sibling wins even over a standard library module.
+    /// A package's directory is never on `sys.path`, so a file in one gets no such answer.
     fn py_beside(&self, from: &str, module: &str) -> Option<String> {
         let dir = dir_of(from);
-        if dir.is_empty() || module.starts_with('.') {
+        let in_package = || ["py", "pyi"].iter().any(|e| self.files.contains(format!("{dir}/__init__.{e}").as_str()));
+        if dir.is_empty() || module.starts_with('.') || in_package() {
             return None;
         }
         self.py_try_base(&format!("{dir}/{}", module.replace('.', "/")))

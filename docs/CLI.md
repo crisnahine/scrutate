@@ -279,10 +279,12 @@ their occurrences are listed as `field or key`.
 
 Import paths resolve to repository files: Python relative imports, packages (`__init__.py`), and
 an absolute import whose first part is the name of the checkout directory (`networkx.classes` in
-a checkout named `networkx`), and, when no module from the root has the name, the module beside
-the importing file (`from helpers import make_items` in `tests/` finds `tests/helpers.py`, as
-Python finds it when it runs the script; such a sibling wins over a standard library module of
-the same name); JavaScript relative paths with the usual extensions and
+a checkout named `networkx`), and, when no module from the root has the name and the importing
+file's directory is not a package (it holds no `__init__.py`), the module beside the importing
+file (`from helpers import make_items` in `tests/` finds `tests/helpers.py`, as Python finds it
+when it runs the script; such a sibling wins over a standard library module of the same name,
+while `import logging` in a package that has its own `logging.py` stays the standard library);
+JavaScript relative paths with the usual extensions and
 `index` files (a `.js` import finds the `.ts` source), and the names a project gives its own
 folders in `tsconfig.json` or `jsconfig.json` (`paths`, `baseUrl`); Rust module files (`a.rs`, `a/mod.rs`) from
 the crate root, workspace crates by their `Cargo.toml` name; Go import paths through the module
