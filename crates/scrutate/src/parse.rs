@@ -1019,16 +1019,35 @@ fn imports_of(node: Node, spec: &LangSpec, src: &[u8], out: &mut Vec<(i64, Strin
 /// Contiguous comment block directly above a definition.
 /// `ancestors` are the node's ancestors, root first, each with its children; `pos[i]` is the
 /// position of `ancestors[i]` in its parent and `pos[len]` the node's (Node::parent and
-/// prev_sibling walk down from the root, which makes deep nesting quadratic).
-fn leading_comment(node: Node, ancestors: &[(Node, Vec<Node>)], pos: &[usize], src: &[u8], wrappers: &[&str]) -> String {
-    let mut anchor = node;
+/// prev_sibling walk down from the root, which makes deep nesting quadratic). The `lead`
+/// siblings right above the node belong to the definition (a type signature).
+fn leading_comment(node: Node, ancestors: &[(Node, Vec<Node>)], pos: &[usize], src: &[u8], wrappers: &[&str], lead: usize) -> String {
     let mut up = ancestors.len();
-    while up > 0 && (wrappers.contains(&ancestors[up - 1].0.kind()) || ancestors[up - 1].0.kind() == "decorated_definition") {
+    let mut at = pos[up] - lead;
+    let mut anchor = if lead > 0 { ancestors[up - 1].1[at] } else { node };
+    // the definition's own header line: a comment there is not about a nested definition
+    let mut header_row = -1;
+    while up > 0 {
+        let p = ancestors[up - 1].0;
+        // a Common Lisp defun is its list's only child; a Jsonnet bind follows the `local` keyword;
+        // the comment above the first statement of a Python body or Haskell file sits outside it
+        let py_body = at == 0 && p.kind() == "block" && up >= 2 && matches!(ancestors[up - 2].0.kind(), "class_definition" | "function_definition");
+        if py_body {
+            header_row = ancestors[up - 2].0.start_position().row as i64;
+        }
+        let first_in_body = py_body || at == 0 && p.kind() == "declarations";
+        if !(wrappers.contains(&p.kind())
+            || p.kind() == "decorated_definition"
+            || first_in_body
+            || matches!((anchor.kind(), p.kind()), ("defun", "list_lit") | ("bind", "local_expr")))
+        {
+            break;
+        }
         up -= 1;
-        anchor = ancestors[up].0;
+        anchor = p;
+        at = pos[up];
     }
     let siblings: &[Node] = if up > 0 { &ancestors[up - 1].1 } else { &[] };
-    let mut at = if up > 0 { pos[up] } else { 0 };
     let mut prev_sibling = || -> Option<Node> {
         at = at.checked_sub(1)?;
         Some(siblings[at])
@@ -1037,7 +1056,12 @@ fn leading_comment(node: Node, ancestors: &[(Node, Vec<Node>)], pos: &[usize], s
     let mut want = anchor.start_position().row as i64;
     let mut prev = prev_sibling();
     while let Some(p) = prev {
-        if COMMENT_TYPES.contains(&p.kind()) && last_row(p) >= want - 1 {
+        // fish and assembly put line break tokens, assembly also empty nodes, below a comment
+        if p.kind() == "\n" || p.start_byte() == p.end_byte() {
+            prev = prev_sibling();
+            continue;
+        }
+        if COMMENT_TYPES.contains(&p.kind()) && last_row(p) >= want - 1 && p.start_position().row as i64 != header_row {
             let t = txt(src, p.start_byte(), p.end_byte());
             if t.starts_with("#!") {
                 break; // a shebang is not documentation
@@ -1054,6 +1078,18 @@ fn leading_comment(node: Node, ancestors: &[(Node, Vec<Node>)], pos: &[usize], s
     }
     parts.reverse();
     clean_comment(&parts.join("\n"))
+}
+
+/// Position among `siblings` of the type signature Haskell and Elm write right above function `name`.
+fn type_signature(lang: &str, name: &str, siblings: &[Node], at: usize, src: &[u8]) -> Option<usize> {
+    let kind = match lang {
+        "haskell" => "signature",
+        "elm" => "type_annotation",
+        _ => return None,
+    };
+    let i = at.checked_sub(1)?;
+    let s = siblings[i];
+    (s.kind() == kind && s.child_by_field_name("name").is_some_and(|n| txt(src, n.start_byte(), n.end_byte()) == name)).then_some(i)
 }
 
 /// Lisp forms: a string literal that follows the parameter list is documentation.
@@ -1329,27 +1365,27 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
                     break;
                 }
             }
+            let mut lead = 0;
+            if let Some(i) = ancestors.last().and_then(|(_, kids)| type_signature(spec.id, &name, kids, at, src)) {
+                outer = ancestors.last().unwrap().1[i];
+                lead = at - i;
+            }
             let body_node = if spec.body.is_empty() { None } else { node.child_by_field_name(spec.body).or_else(|| objc_method_body(node)) };
             let sig_end = match body_node {
                 Some(b) => b.start_byte(),
                 None => node.end_byte().min(node.start_byte() + 200),
             };
             let sig = txt(src, outer.start_byte(), sig_end).trim().to_string();
-            let mut doc = String::new();
             let mut body_start = sig_end;
-            if spec.docstring {
-                if let Some(b) = body_node {
-                    if let Some((s, stmt)) = py_docstring_node(b) {
-                        doc = py_string_content(&txt(src, s.start_byte(), s.end_byte()));
-                        body_start = stmt.end_byte();
-                    }
-                }
-            } else {
-                if let Some(ds) = node.child_by_field_name("docstring").or_else(|| lisp_docstring(node)) {
-                    doc = py_string_content(&txt(src, ds.start_byte(), ds.end_byte()));
-                } else {
-                    doc = leading_comment(node, &ancestors, &pos, src, spec.wrappers);
-                }
+            let mut doc = match node.child_by_field_name("docstring").or_else(|| lisp_docstring(node)) {
+                Some(ds) if !spec.docstring => py_string_content(&txt(src, ds.start_byte(), ds.end_byte())),
+                _ => leading_comment(node, &ancestors, &pos, src, spec.wrappers, lead),
+            };
+            if let Some((s, stmt)) = body_node.filter(|_| spec.docstring).and_then(py_docstring_node) {
+                // the comment above comes first, then the docstring
+                let ds = py_string_content(&txt(src, s.start_byte(), s.end_byte()));
+                doc = if doc.is_empty() { ds } else { format!("{doc}\n{ds}") };
+                body_start = stmt.end_byte();
             }
             let cap = if CONTAINERS.contains(&kind) { MAX_CONTAINER_LINES } else { MAX_CHUNK_LINES };
             chunks.push(Chunk {
@@ -1377,7 +1413,7 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
         } else if let Some((names, shown)) = constant_of(spec.id, node, &ancestors, src) {
             // not on def_stack: calls in the initializer stay with the enclosing definition
             let parent_q = def_stack.last().map(|&i| chunks[i].qualname.as_str()).unwrap_or_default();
-            let doc = if spec.docstring { String::new() } else { leading_comment(node, &ancestors, &pos, src, spec.wrappers) };
+            let doc = leading_comment(node, &ancestors, &pos, src, spec.wrappers, 0);
             let text = head_bytes(src, shown.start_byte(), shown.end_byte(), MAX_CHUNK_LINES);
             for name in names {
                 // `const int Config::kSize = 2;` is owned by `Config`

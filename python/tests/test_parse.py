@@ -124,6 +124,23 @@ def test_a_rust_comment_a_blank_line_away_is_not_documentation():
     assert (chunks["f"].doc, chunks["g"].doc) == ("", "Doc.")
 
 
+def test_the_comment_right_above_a_python_definition_is_its_documentation():
+    cases = [  # (source, qualname, first line of the chunk, documentation)
+        ("import os\n# Adds one.\ndef f(x):\n    return x + 1\n", "f", 3, "Adds one."),
+        ("# Adds one.\n# Twice.\ndef f(x):\n    \"\"\"Returns x.\"\"\"\n    return x\n", "f", 3, "Adds one.\nTwice.\nReturns x."),
+        ("x = 1\n# A box.\nclass Box:\n    # Its size.\n    SIZE = 3\n", "Box", 3, "A box."),
+        ("x = 1\n# A box.\nclass Box:\n    # Its size.\n    SIZE = 3\n", "Box.SIZE", 5, "Its size."),
+        ("x = 1\nclass Box:  # not about SIZE\n    SIZE = 3\n", "Box.SIZE", 3, ""),
+        ("x = 1\n# The cap.\nLIMIT = 3\n", "LIMIT", 3, "The cap."),
+        ("x = 1\n# Cached.\n@cache\ndef f():\n    pass\n", "f", 3, "Cached."),
+        ("x = 1\n# stray note\n\ndef f():\n    pass\n", "f", 4, ""),
+        ("#!/usr/bin/env python\ndef f():\n    pass\n", "f", 2, ""),
+    ]
+    for src, qualname, start, doc in cases:
+        c = next(c for c in parse_source("a.py", src) if c.qualname == qualname)
+        assert (c.start, c.doc) == (start, doc), (src, qualname)
+
+
 def test_a_generic_owner_is_named_by_its_bare_type():
     rs = ("pub struct Stack<T> { items: Vec<T> }\nimpl<T> Stack<T> {\n    pub fn push(&mut self, x: T) {}\n}\n"
           "impl<'a, T: Clone> Wrapper<'a, T> {\n    pub fn get(&self) -> T { todo!() }\n}\n"

@@ -288,6 +288,40 @@ fn a_chunk_ends_on_the_last_line_that_holds_its_text() {
 }
 
 #[test]
+fn the_comment_right_above_a_definition_is_its_documentation() {
+    // (file, source, qualname, first line of the chunk, documentation)
+    let cases: &[(&str, &str, &str, i64, &str)] = &[
+        ("a.py", "import os\n# Adds one.\ndef f(x):\n    return x + 1\n", "f", 3, "Adds one."),
+        ("a.py", "# Adds one.\n# Twice.\ndef f(x):\n    \"\"\"Returns x.\"\"\"\n    return x\n", "f", 3, "Adds one.\nTwice.\nReturns x."),
+        ("a.py", "x = 1\n# A box.\nclass Box:\n    # Its size.\n    SIZE = 3\n", "Box", 3, "A box."),
+        ("a.py", "x = 1\n# A box.\nclass Box:\n    # Its size.\n    SIZE = 3\n", "Box.SIZE", 5, "Its size."),
+        ("a.py", "x = 1\nclass Box:  # not about SIZE\n    SIZE = 3\n", "Box.SIZE", 3, ""),
+        ("a.py", "x = 1\n# The cap.\nLIMIT = 3\n", "LIMIT", 3, "The cap."),
+        ("a.py", "x = 1\n# Cached.\n@cache\ndef f():\n    pass\n", "f", 3, "Cached."),
+        ("a.py", "x = 1\n# stray note\n\ndef f():\n    pass\n", "f", 4, ""),
+        ("a.py", "#!/usr/bin/env python\ndef f():\n    pass\n", "f", 2, ""),
+        ("BUILD.bazel", "x = 1\n# Makes a rule.\ndef rule_fn(name):\n    pass\n", "rule_fn", 3, "Makes a rule."),
+        ("a.hs", "module A where\n\n-- Adds one.\nadd :: Int -> Int\nadd x = x + 1\n", "add", 4, "Adds one."),
+        ("a.hs", "module A where\n\nadd :: Int -> Int\nadd x = x + 1\n", "add", 3, ""),
+        ("A.elm", "module A exposing (..)\n\n-- Adds one.\nadd : Int -> Int\nadd x =\n    x + 1\n", "add", 4, "Adds one."),
+        ("a.fish", "set -g x 1\n# Says hi.\nfunction greet\n    echo hi\nend\n", "greet", 3, "Says hi."),
+        ("a.lisp", "(defvar *x* 1)\n;; Adds one.\n(defun add (x)\n  (+ x 1))\n", "add", 3, "Adds one."),
+        ("a.s", ".text\n# Returns.\nf:\n    ret\n", "f", 3, "Returns."),
+        ("a.jsonnet", "local x = 1;\n// Adds one.\nlocal add(a) = a + 1;\nadd(x)\n", "add", 3, "Adds one."),
+        ("a.jsonnet", "// About x.\nlocal x = 1;\nlocal add(a) = a + 1;\nadd(x)\n", "add", 3, ""),
+    ];
+    let mut wrong = Vec::new();
+    for &(path, src, qualname, start, doc) in cases {
+        let chunks = parse_source(path, src);
+        let got = chunks.iter().find(|c| c.qualname == qualname).map(|c| (c.start, c.doc.as_str()));
+        if got != Some((start, doc)) {
+            wrong.push(format!("{path} {qualname}: {got:?}, want {:?}", (start, doc)));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+#[test]
 fn an_escaped_comma_is_part_of_an_excluded_directory_name() {
     assert_eq!(scrutate::files::split_names(r"gen\,dir, vendor ,,a\b"), vec!["gen,dir", "vendor", r"a\b"]);
 }

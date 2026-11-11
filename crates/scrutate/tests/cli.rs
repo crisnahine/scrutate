@@ -205,6 +205,16 @@ fn find_routes_by_query_shape() {
 }
 
 #[test]
+fn search_finds_a_python_function_by_the_comment_above_it() {
+    let r = Repo::new("comment");
+    r.write("lib/tokens.py", b"def open_session():\n    return 1\n\n\n# Renews the zqvortex lease.\ndef renew(session):\n    return session.renew()\n");
+    let (code, out, err) = r.run(&["search", "zqvortex", "-k", "3", "--json"]);
+    assert_eq!(code, 0, "{err}");
+    let hits: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
+    assert!(hits.first().is_some_and(|h| h["path"] == "lib/tokens.py" && h["name"] == "renew"), "{out}");
+}
+
+#[test]
 fn search_also_merges_repositories() {
     let a = python_repo("also_a");
     let b = Repo::new("also_b");

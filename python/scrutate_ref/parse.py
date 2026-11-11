@@ -351,17 +351,31 @@ def _last_row(node) -> int:
 
 
 def _leading_comment(node, src: bytes) -> str:
-    """Contiguous comment block directly above a definition (non-Python languages)."""
+    """Contiguous comment block directly above a definition."""
     anchor = node
-    while anchor.parent is not None and anchor.parent.type in (
-            "export_statement", "decorated_definition", "lexical_declaration",
-            "variable_declaration", "decorator"):
-        anchor = anchor.parent
+    header_row = -1  # the definition's own header line: a comment there is not about a nested definition
+    while (p := anchor.parent) is not None:
+        # the comment above the first statement of a Python body sits outside the body
+        if p.type == "block" and anchor.prev_sibling is None and p.parent is not None and p.parent.type in (
+                "class_definition", "function_definition"):
+            header_row = p.parent.start_point[0]
+        elif p.type not in ("export_statement", "decorated_definition", "lexical_declaration",
+                            "variable_declaration", "decorator"):
+            break
+        anchor = p
     parts: list[str] = []
     want = anchor.start_point[0]
     prev = anchor.prev_sibling
-    while prev is not None and prev.type in _COMMENT_TYPES and _last_row(prev) >= want - 1:
-        parts.append(src[prev.start_byte : prev.end_byte].decode("utf8", "replace"))
+    while prev is not None:
+        if prev.type == "\n" or prev.start_byte == prev.end_byte:
+            prev = prev.prev_sibling
+            continue
+        if prev.type not in _COMMENT_TYPES or _last_row(prev) < want - 1 or prev.start_point[0] == header_row:
+            break
+        text = src[prev.start_byte : prev.end_byte].decode("utf8", "replace")
+        if text.startswith("#!"):
+            break  # a shebang is not documentation
+        parts.append(text)
         want = prev.start_point[0]
         prev = prev.prev_sibling
     return _clean_comment("\n".join(reversed(parts))) if parts else ""
@@ -468,15 +482,15 @@ def parse_source(path: str, source: str) -> list[Chunk]:
             sig_end = body_node.start_byte if body_node is not None else min(
                 node.end_byte, node.start_byte + 200)
             sig = txt(outer.start_byte, sig_end).strip()
-            doc = ""
+            doc = _leading_comment(node, src)
             body_start = sig_end
             if is_py and body_node is not None:
                 s, stmt = _py_docstring_node(body_node)
                 if s is not None:
-                    doc = _py_string_content(txt(s.start_byte, s.end_byte))
+                    # the comment above comes first, then the docstring
+                    ds = _py_string_content(txt(s.start_byte, s.end_byte))
+                    doc = f"{doc}\n{ds}" if doc else ds
                     body_start = stmt.end_byte
-            elif not is_py:
-                doc = _leading_comment(node, src)
             full = txt(outer.start_byte, node.end_byte)
             body = txt(body_start, node.end_byte)
             if kind in _CONTAINERS:
@@ -495,7 +509,7 @@ def parse_source(path: str, source: str) -> list[Chunk]:
                     cname = cname[2:]
                 consts.append(Chunk(cname, _qualify(stack[-1][1] if stack else "", cname), "constant", shown.start_point[0] + 1,
                                     _last_row(shown) + 1, _head(txt(shown.start_byte, shown.end_byte), MAX_CHUNK_LINES),
-                                    doc="" if is_py else _leading_comment(node, src)))
+                                    doc=_leading_comment(node, src)))
         elif t in calls and stack:
             callee = _callee_name(lang, node, calls[t], src)
             if callee:
