@@ -5,6 +5,7 @@
 #![cfg(target_os = "macos")]
 
 use std::io::{BufRead, BufReader};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
@@ -60,6 +61,9 @@ impl Search {
             .current_dir(tree())
             .env("SCRUTATE_GREP_DEBUG", "1")
             .env_remove("SCRUTATE_THREADS")
+            // a group of its own, as a shell gives a job: in a group with no parent outside it
+            // the system drops SIGTSTP
+            .process_group(0)
             .stdin(Stdio::null())
             .stdout(out)
             .stderr(Stdio::piped())
@@ -83,9 +87,14 @@ impl Search {
     }
 
     fn signal(&self, sig: &str) {
+        assert!(self.try_signal(sig));
+    }
+
+    /// `false` when the search has ended.
+    fn try_signal(&self, sig: &str) -> bool {
         // the shell's own `kill`: some systems have no kill program
-        let cmd = format!("kill {sig} {}", self.child.id());
-        assert!(Command::new("sh").args(["-c", &cmd]).status().unwrap().success());
+        let cmd = format!("kill {sig} {} 2>/dev/null", self.child.id());
+        Command::new("sh").args(["-c", &cmd]).status().unwrap().success()
     }
 
     fn finish(mut self) -> Vec<(usize, usize)> {
@@ -132,6 +141,75 @@ fn a_stopped_search_is_counted_and_a_killed_one_is_not() {
     a.signal("-KILL");
     a.finish();
     assert!(ok, "a stopped search added 1 to the count and its kill took it back");
+}
+
+/// Waits until the process is stopped, as `ps` shows it.
+fn stopped(pid: u32) -> bool {
+    for _ in 0..200 {
+        let out = Command::new("ps").args(["-o", "state=", "-p", &pid.to_string()]).output().unwrap();
+        if String::from_utf8_lossy(&out.stdout).contains('T') {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    false
+}
+
+#[test]
+fn a_search_stopped_from_its_terminal_leaves_the_count_and_joins_again() {
+    let _one = lock();
+    let mut seen = Vec::new();
+    // another search of this user may start or end between the probes: try again
+    for _ in 0..5 {
+        let (alone, _) = probe();
+        let a = Search::start(&["-F", "nothing-matches-this"], Stdio::null());
+        a.next();
+        // what Ctrl-Z sends
+        a.signal("-TSTP");
+        assert!(stopped(a.child.id()), "SIGTSTP stops the search");
+        let (while_stopped, _) = probe();
+        a.signal("-CONT");
+        // SIGSTOP cannot be caught: the search stays counted, so this shows that it joined again
+        a.signal("-STOP");
+        assert!(stopped(a.child.id()));
+        let (again, _) = probe();
+        a.signal("-KILL");
+        a.finish();
+        let (after, _) = probe();
+        seen.push((alone, while_stopped, again, after));
+        if while_stopped == alone && again == alone + 1 && after == alone {
+            return;
+        }
+    }
+    panic!("(alone, stopped with Ctrl-Z, continued, killed): {seen:?}");
+}
+
+#[test]
+fn a_search_stopped_and_continued_prints_what_it_would_have() {
+    let _one = lock();
+    let run = |stop: bool| {
+        let file = std::env::temp_dir().join(format!("scrutate_running_out_{}_{stop}", std::process::id()));
+        let a = Search::start(&["-F", "needle"], Stdio::from(std::fs::File::create(&file).unwrap()));
+        let mut stops = 0;
+        if stop {
+            a.next();
+            while stops < 3 && a.try_signal("-TSTP") {
+                assert!(stopped(a.child.id()));
+                a.signal("-CONT");
+                stops += 1;
+            }
+            assert!(stops > 0, "the search ended before it could be stopped");
+        }
+        let mut a = a;
+        assert!(a.child.wait().unwrap().success());
+        let mut lines: Vec<String> = std::fs::read_to_string(&file).unwrap().lines().map(str::to_owned).collect();
+        let _ = std::fs::remove_file(&file);
+        lines.sort();
+        lines
+    };
+    let whole = run(false);
+    assert_eq!(whole.len(), 8000);
+    assert!(run(true) == whole, "the output of a search stopped three times differs");
 }
 
 #[test]

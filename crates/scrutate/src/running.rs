@@ -7,8 +7,7 @@
 //! on 1, 53 ms on 2).
 
 use std::io::Write;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 
 /// Threads for each of `running` big searches when one alone takes `alone`. On macOS the kernel
 /// serves about four file-reading threads at full speed across all processes, so the threads are
@@ -17,50 +16,126 @@ pub fn threads(alone: usize, running: usize) -> usize {
     (alone / running.max(1)).max(1)
 }
 
-/// This process's counted searches, and its writes to stdout in progress (while one runs, none of
-/// its searches is counted: a reader that stopped reading must not slow the others).
-struct State {
-    held: usize,
-    writing: usize,
+/// What this process does to the count: `HELD` searches, none while a write to stdout may block
+/// (a reader that stopped reading must not slow the others) or while the process is stopped from
+/// its terminal. All changed under `LOCK`, a flag and no mutex so that the signal handler can try
+/// it without waiting.
+static LOCK: AtomicBool = AtomicBool::new(false);
+static HELD: AtomicUsize = AtomicUsize::new(0);
+static WRITING: AtomicUsize = AtomicUsize::new(0);
+static STOPPING: AtomicUsize = AtomicUsize::new(0);
+/// what the process has in the count now
+static COUNTED: AtomicUsize = AtomicUsize::new(0);
+/// the set, once a search has asked for it
+static SET: AtomicI32 = AtomicI32::new(-1);
+/// SIGTSTP is ours to handle while a search is held
+static WATCHING: AtomicBool = AtomicBool::new(false);
+/// SIGTSTP came while the lock was held: its holder stops the process when it lets go
+static STOP_ASKED: AtomicBool = AtomicBool::new(false);
+
+fn lock() {
+    while LOCK.swap(true, Ordering::Acquire) {
+        std::hint::spin_loop();
+    }
 }
 
-static STATE: Mutex<State> = Mutex::new(State { held: 0, writing: 0 });
-/// `State::held`, read without the lock on every write
-static HELD: AtomicUsize = AtomicUsize::new(0);
+fn locked<T>(f: impl FnOnce() -> T) -> T {
+    lock();
+    let r = f();
+    LOCK.store(false, Ordering::Release);
+    if STOP_ASKED.swap(false, Ordering::Relaxed) {
+        lock();
+        stop();
+    }
+    r
+}
 
-fn state() -> std::sync::MutexGuard<'static, State> {
-    STATE.lock().unwrap_or_else(|p| p.into_inner())
+/// Brings the count to what the state asks for; `false` when the system refused.
+fn settle() -> bool {
+    let out = WRITING.load(Ordering::Relaxed) > 0 || STOPPING.load(Ordering::Relaxed) > 0;
+    let want = if out { 0 } else { HELD.load(Ordering::Relaxed) };
+    let have = COUNTED.load(Ordering::Relaxed);
+    if want != have {
+        if !sys::add(SET.load(Ordering::Relaxed), want as i32 - have as i32) {
+            return false;
+        }
+        COUNTED.store(want, Ordering::Relaxed);
+    }
+    true
+}
+
+/// Ctrl-Z while a search is counted. A stopped search must not keep threads from the others, so
+/// it leaves the count, stops as it would have, and joins again when it is continued. SIGSTOP
+/// cannot be caught: a search stopped that way stays counted.
+extern "C" fn on_stop(_: std::ffi::c_int) {
+    if LOCK.swap(true, Ordering::Acquire) {
+        // the thread this interrupted may be the holder: no waiting here
+        STOP_ASKED.store(true, Ordering::Relaxed);
+        return;
+    }
+    stop();
+}
+
+/// Called with the lock held; lets it go. Only atomics and system calls: it runs in the handler.
+fn stop() {
+    loop {
+        STOPPING.fetch_add(1, Ordering::Relaxed);
+        settle();
+        LOCK.store(false, Ordering::Release);
+        // a stop asked for until here is this one
+        STOP_ASKED.store(false, Ordering::Relaxed);
+        sys::stop_self();
+        lock();
+        STOPPING.fetch_sub(1, Ordering::Relaxed);
+        if HELD.load(Ordering::Relaxed) > 0 && WATCHING.load(Ordering::Relaxed) {
+            sys::watch_stop(on_stop);
+        }
+        settle();
+        LOCK.store(false, Ordering::Release);
+        if !STOP_ASKED.swap(false, Ordering::Relaxed) {
+            return;
+        }
+        lock();
+    }
 }
 
 /// One big search, counted while this lives.
-pub struct Counted(sys::Id);
+pub struct Counted(());
 
 impl Counted {
     pub fn start() -> Option<Counted> {
         let id = sys::id()?;
-        let mut s = state();
-        if s.writing == 0 && !sys::add(id, 1) {
-            return None;
-        }
-        s.held += 1;
-        HELD.fetch_add(1, Ordering::Relaxed);
-        Some(Counted(id))
+        locked(|| {
+            // a set made again after someone removed it: what was counted went with the old one
+            if SET.swap(id, Ordering::Relaxed) != id {
+                COUNTED.store(0, Ordering::Relaxed);
+            }
+            HELD.fetch_add(1, Ordering::Relaxed);
+            if !settle() {
+                HELD.fetch_sub(1, Ordering::Relaxed);
+                return None;
+            }
+            if HELD.load(Ordering::Relaxed) == 1 {
+                WATCHING.store(sys::watch_stop(on_stop), Ordering::Relaxed);
+            }
+            Some(Counted(()))
+        })
     }
 
     /// The big searches running now, this one included.
     pub fn running(&self) -> Option<usize> {
-        sys::value(self.0).map(|n| n.max(1))
+        sys::value(SET.load(Ordering::Relaxed)).map(|n| n.max(1))
     }
 }
 
 impl Drop for Counted {
     fn drop(&mut self) {
-        let mut s = state();
-        s.held -= 1;
-        HELD.fetch_sub(1, Ordering::Relaxed);
-        if s.writing == 0 {
-            sys::add(self.0, -1);
-        }
+        locked(|| {
+            if HELD.fetch_sub(1, Ordering::Relaxed) == 1 && WATCHING.swap(false, Ordering::Relaxed) {
+                sys::unwatch_stop(on_stop);
+            }
+            settle();
+        });
     }
 }
 
@@ -72,25 +147,15 @@ impl GivesWay {
         if HELD.load(Ordering::Relaxed) == 0 || !sys::stdout_may_block() {
             return f(&mut self.0);
         }
-        let id = sys::id();
-        let step = |s: &mut State, into: bool| {
-            if let (Some(id), true) = (id, s.held > 0) {
-                sys::add(id, if into { s.held as i32 } else { -(s.held as i32) });
-            }
-        };
-        {
-            let mut s = state();
-            s.writing += 1;
-            if s.writing == 1 {
-                step(&mut s, false);
-            }
-        }
+        locked(|| {
+            WRITING.fetch_add(1, Ordering::Relaxed);
+            settle();
+        });
         let r = f(&mut self.0);
-        let mut s = state();
-        s.writing -= 1;
-        if s.writing == 0 {
-            step(&mut s, true);
-        }
+        locked(|| {
+            WRITING.fetch_sub(1, Ordering::Relaxed);
+            settle();
+        });
         r
     }
 }
@@ -118,11 +183,22 @@ mod sys {
         flg: i16,
     }
 
+    // as `struct sigaction` in <sys/signal.h>
+    #[repr(C)]
+    struct Sigaction {
+        handler: usize,
+        mask: u32,
+        flags: c_int,
+    }
+
     extern "C" {
         fn semget(key: c_int, nsems: c_int, flags: c_int) -> c_int;
         fn semop(id: c_int, ops: *mut Sembuf, n: usize) -> c_int;
         fn semctl(id: c_int, num: c_int, cmd: c_int, ...) -> c_int;
         fn getuid() -> u32;
+        fn sigaction(sig: c_int, act: *const Sigaction, old: *mut Sigaction) -> c_int;
+        fn raise(sig: c_int) -> c_int;
+        fn pthread_sigmask(how: c_int, set: *const u32, old: *mut u32) -> c_int;
     }
 
     const IPC_CREAT: c_int = 0o1000;
@@ -132,34 +208,45 @@ mod sys {
     const GETVAL: c_int = 5;
     /// Byte offset of `sem_perm.cuid` in `struct semid_ds`
     const CUID_AT: usize = 8;
+    const SIGTSTP: c_int = 18;
+    const SIG_DFL: usize = 0;
+    const SIG_UNBLOCK: c_int = 2;
+    const SA_RESTART: c_int = 2;
+    const DEFAULT: Sigaction = Sigaction { handler: SIG_DFL, mask: 0, flags: 0 };
 
-    /// The set, made on first use: one semaphore, read and written by this user only.
+    /// The set, made when it is not there: one semaphore, read and written by this user only.
+    /// Asked for by every big search (two system calls), so a process that lives long finds a
+    /// set made again after its first one was removed.
     pub fn id() -> Option<Id> {
-        static ID: std::sync::OnceLock<Option<Id>> = std::sync::OnceLock::new();
-        *ID.get_or_init(|| {
-            // SAFETY: no arguments
-            let uid = unsafe { getuid() };
-            // 0 is IPC_PRIVATE, a new set on every call
-            let key = (0x5343_5254 ^ uid) as c_int;
-            if key == 0 {
-                return None;
-            }
-            // SAFETY: plain integers
-            let id = unsafe { semget(key, 1, IPC_CREAT | 0o600) };
-            if id < 0 {
-                return None;
-            }
-            // a set another user made with this key and opened to others is not ours to count in
-            let mut ds = [0u64; 64];
-            // SAFETY: larger than `struct semid_ds` (72 bytes); IPC_STAT takes a pointer to it as
-            // the fourth argument
-            if unsafe { semctl(id, 0, IPC_STAT, ds.as_mut_ptr()) } != 0 {
-                return None;
-            }
-            let bytes: &[u8] = unsafe { std::slice::from_raw_parts(ds.as_ptr().cast(), 16) };
-            let cuid = u32::from_ne_bytes(bytes[CUID_AT..CUID_AT + 4].try_into().ok()?);
-            (cuid == uid).then_some(id)
-        })
+        // SAFETY: no arguments
+        let uid = unsafe { getuid() };
+        // 0 is IPC_PRIVATE, a new set on every call
+        let key = (0x5343_5254 ^ uid) as c_int;
+        if key == 0 {
+            return None;
+        }
+        // SAFETY: plain integers
+        let id = unsafe { semget(key, 1, IPC_CREAT | 0o600) };
+        if id < 0 {
+            return None;
+        }
+        // a set another user made with this key and opened to others is not ours to count in
+        let mut ds = [0u64; 64];
+        // SAFETY: larger than `struct semid_ds` (72 bytes); IPC_STAT takes a pointer to it as
+        // the fourth argument
+        if unsafe { semctl(id, 0, IPC_STAT, ds.as_mut_ptr()) } != 0 {
+            return None;
+        }
+        let bytes: &[u8] = unsafe { std::slice::from_raw_parts(ds.as_ptr().cast(), 16) };
+        let cuid = u32::from_ne_bytes(bytes[CUID_AT..CUID_AT + 4].try_into().ok()?);
+        (cuid == uid).then_some(id)
+    }
+
+    #[cfg(test)]
+    pub fn remove(id: Id) {
+        const IPC_RMID: c_int = 0;
+        // SAFETY: IPC_RMID takes no fourth argument
+        unsafe { semctl(id, 0, IPC_RMID) };
     }
 
     /// Adds `n` to the count, undone by the kernel when the process ends; never waits.
@@ -173,6 +260,47 @@ mod sys {
         // SAFETY: GETVAL takes no fourth argument
         let v = unsafe { semctl(id, 0, GETVAL) };
         (v >= 0).then_some(v as usize)
+    }
+
+    /// Takes SIGTSTP when nothing else handles it; `false` leaves the signal as it was.
+    pub fn watch_stop(handler: extern "C" fn(c_int)) -> bool {
+        // system calls the signal interrupts start again, as they do without a handler
+        let ours = Sigaction { handler: handler as usize, mask: 0, flags: SA_RESTART };
+        let mut old = DEFAULT;
+        // SAFETY: both point to structs laid out as `struct sigaction`
+        if unsafe { sigaction(SIGTSTP, &ours, &mut old) } != 0 {
+            return false;
+        }
+        if old.handler == SIG_DFL || old.handler == ours.handler {
+            return true;
+        }
+        // ignored, or the program this runs in has its own handler
+        // SAFETY: what `sigaction` filled in
+        unsafe { sigaction(SIGTSTP, &old, std::ptr::null_mut()) };
+        false
+    }
+
+    /// Gives SIGTSTP back, unless the program has set a handler of its own since.
+    pub fn unwatch_stop(handler: extern "C" fn(c_int)) {
+        let mut now = DEFAULT;
+        // SAFETY: structs laid out as `struct sigaction`
+        unsafe {
+            if sigaction(SIGTSTP, std::ptr::null(), &mut now) == 0 && now.handler == handler as usize {
+                sigaction(SIGTSTP, &DEFAULT, std::ptr::null_mut());
+            }
+        }
+    }
+
+    /// Stops the process as SIGTSTP does when nothing handles it; returns once it is continued.
+    pub fn stop_self() {
+        let set: u32 = 1 << (SIGTSTP - 1);
+        // SAFETY: pointers to a constant and a local; sent to this thread with the signal open,
+        // so the stop comes before `raise` returns
+        unsafe {
+            sigaction(SIGTSTP, &DEFAULT, std::ptr::null_mut());
+            pthread_sigmask(SIG_UNBLOCK, &set, std::ptr::null_mut());
+            raise(SIGTSTP);
+        }
     }
 
     /// Stdout is a pipe, a socket or a terminal, where a write waits for the reader; a file never
@@ -205,6 +333,11 @@ mod sys {
     pub fn stdout_may_block() -> bool {
         false
     }
+    pub fn watch_stop(_: extern "C" fn(std::ffi::c_int)) -> bool {
+        false
+    }
+    pub fn unwatch_stop(_: extern "C" fn(std::ffi::c_int)) {}
+    pub fn stop_self() {}
 }
 
 #[cfg(test)]
@@ -220,5 +353,19 @@ mod tests {
         assert_eq!(threads(5, 9), 1);
         assert_eq!(threads(12, 4), 3);
         assert_eq!(threads(5, 0), 5, "an unknown count is one search");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_set_removed_under_a_running_process_is_made_again() {
+        let a = Counted::start().expect("System V semaphores");
+        assert!(a.running().is_some());
+        sys::remove(SET.load(Ordering::Relaxed));
+        assert!(a.running().is_none(), "the set is gone");
+        let b = Counted::start().expect("a new set");
+        let n = b.running().expect("the new set answers");
+        assert!(n >= 2, "both searches of this process are in the new set, {n} counted");
+        drop(b);
+        assert!(a.running().is_some_and(|n| n >= 1));
     }
 }
