@@ -167,7 +167,8 @@ First release.
   or trait as undecided, at any depth, and a variable declared as the base type and built by a
   constructor in the same function is typed by the constructor (`Base b = new Big()`), so its
   call is a decided caller of the override. TypeScript resolves inherited members through
-  `extends`.
+  `extends`. A `super` call is a decided call of the nearest base method that defines it
+  (Python by its method resolution order), never of the override it sits in.
 - `refs` finds a name in its composed and decomposed Unicode spelling.
 - `tsquery` keeps each file's captures in `.scrutate/tsquery/` by content hash: a repeated query
   re-parses only changed files (the Linux tree: about 25 s, then 1.6 s), output identical to
