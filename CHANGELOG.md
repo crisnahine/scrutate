@@ -168,7 +168,9 @@ First release.
   constructor in the same function is typed by the constructor (`Base b = new Big()`), so its
   call is a decided caller of the override. TypeScript resolves inherited members through
   `extends`. A `super` call is a decided call of the nearest base method that defines it
-  (Python by its method resolution order), never of the override it sits in.
+  (Python by its method resolution order, also for `super(C, self)`), never of the override it
+  sits in. A bare Python import finds the module beside the importing file when no module from
+  the root has the name (`from helpers import x` in `tests/`).
 - `refs` finds a name in its composed and decomposed Unicode spelling.
 - `tsquery` keeps each file's captures in `.scrutate/tsquery/` by content hash: a repeated query
   re-parses only changed files (the Linux tree: about 25 s, then 1.6 s), output identical to
