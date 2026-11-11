@@ -38,9 +38,11 @@
 - **Configuration**: the nearest `.scrutate.toml` from the current directory up to the top of
   the repository (the directory that holds `.git` or `.scrutate`), else
   `$XDG_CONFIG_HOME/scrutate/config.toml`; `$SCRUTATE_CONFIG` names a file, and with `--root` the
-  file in that directory is used. A glob with a slash in the file applies from the file's
-  directory, also when the command runs below it. `scrutate config` names the file and shows what
-  is in effect. A file with an unknown field stops every command that reads it (exit 2, naming the
+  file in that directory is used. The globs of a `.scrutate.toml` match each path from the file's
+  directory, whatever path is searched and wherever the command runs. A path outside that
+  directory and a path named on the command line are not filtered by them, and `-g` or
+  `SCRUTATE_GREP_GLOBS` replaces them. `scrutate config` names the file and shows what is in
+  effect, with the directory the globs match from. A file with an unknown field stops every command that reads it (exit 2, naming the
   file and the field); `--help`, `--version`, `config` and `completions` still run. Precedence: command line >
   environment variable > configuration file > built-in default. Every configurable option names its
   variable in `--help` (e.g. `--hidden` ↔ `SCRUTATE_GREP_HIDDEN`). An on/off variable is off when
@@ -127,9 +129,10 @@ it, so `-S '\p{Ll}'` stays case-sensitive and matches lowercase letters only. Of
 the later one wins, and `SCRUTATE_GREP_SMART_CASE` applies only when neither is given. With
 `-A`, `-B` or `-C`, groups that are not adjacent, and different files, are separated by a line
 `--` (not in `--json`). A `-g` value is one glob, commas included (`-g '*.{txt,log}'`); the
-variable `SCRUTATE_GREP_GLOBS` and the configuration file's `globs` are split at commas outside
-braces. One difference: a `-g` glob with a slash (`-g 'sub/*.rs'`) applies under every searched
-path, where ripgrep matches it from the current directory.
+variable `SCRUTATE_GREP_GLOBS` is split at commas outside braces. One difference: a `-g` glob
+with a slash (`-g 'sub/*.rs'`) applies under every searched path, where ripgrep matches it from
+the current directory. The globs of a `.scrutate.toml` match from that file's directory (see
+Configuration above).
 
 `--index` answers from Engine B's text index (`scrutate index`): the index names the files that
 can contain a match (trigram postings), and Engine A's matcher searches only those, so the output

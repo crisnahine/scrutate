@@ -152,9 +152,6 @@ docs/RELEASING.md, public, tag `v0.1.0`.
   `SCRUTATE_SEMANTIC=none`) and 3.1 to 3.5 s (release build, macOS arm64). Each of the 8,000
   chunks keeps its own text of up to 32 KiB, so the index holds 40 MB of compressed chunk text
   for that file, and the postings of those chunks.
-- A glob with a slash in a `.scrutate.toml` above the current directory is read from the file's
-  directory, except when a directory part on the way down holds `[...]`, `{...}` or a
-  backslash: such a glob applies as written, from the current directory.
 - Traditional and simplified Han meet in ranked search through the Unihan simplified forms.
   The Japanese form 関 has its own entry there, the rare 𬮦, so it does not meet Chinese 关 or
   traditional 關.

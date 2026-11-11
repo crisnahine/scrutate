@@ -3,7 +3,8 @@
 //! always: command line > environment > configuration file > built-in default, and every option
 //! documents the variable that configures it (`scrutate grep --help`).
 //!
-//! Resolution order (first file found wins): `$SCRUTATE_CONFIG`, `<root>/.scrutate.toml`,
+//! Resolution order (first file found wins): `$SCRUTATE_CONFIG`, the nearest `.scrutate.toml` from
+//! the current directory up to the top of the repository (or `<root>/.scrutate.toml` with `--root`),
 //! `$XDG_CONFIG_HOME/scrutate/config.toml` (or `~/.config/scrutate/config.toml`).
 //!
 //! ```toml
@@ -12,7 +13,7 @@
 //! no_ignore = false        # SCRUTATE_GREP_NO_IGNORE
 //! threads = 4              # SCRUTATE_THREADS
 //! max_filesize = "10M"     # SCRUTATE_GREP_MAX_FILESIZE
-//! globs = ["!vendor/**"]   # SCRUTATE_GREP_GLOBS (comma separated)
+//! globs = ["!vendor/**"]   # a `.scrutate.toml`: matched from the file's directory; else SCRUTATE_GREP_GLOBS
 //! types = ["py", "rs"]     # SCRUTATE_GREP_TYPES
 //! smart_case = true        # SCRUTATE_GREP_SMART_CASE
 //!

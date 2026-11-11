@@ -331,7 +331,9 @@ First release.
   the path given, searches a root given twice once, and adds `root` to its JSON. A path or
   location such a result prints is answered from that repository's index. The search for an
   index above stops at the top of a repository, so a nested clone, submodule or worktree does
-  not use the outer index.
+  not use the outer index. The globs of a `.scrutate.toml` match each path from the file's
+  directory, whatever path is searched and wherever the command runs; a path outside that
+  directory and a path named on the command line are not filtered by them.
 - `symbol`, `callers` and `callees` take `--limit`. `check --json` counts the indexed files
   without `--files`. `check` counts the constants, which have no segment rows (`constants` in
   its JSON). `batch` reports a line that is not JSON by its number and runs the rest.
