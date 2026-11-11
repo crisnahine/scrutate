@@ -1,0 +1,40 @@
+# One pull request per group, and no version younger than a week. A cargo update changes the binary, so it also means a new benchmark
+# run before a release (docs/RELEASING.md).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      crates:
+        patterns: ["*"]
+  - package-ecosystem: pip
+    directory: /python
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      python:
+        patterns: ["*"]
+  - package-ecosystem: npm
+    directory: /integrations/vscode
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      npm:
+        patterns: ["*"]

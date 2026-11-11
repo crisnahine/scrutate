@@ -83,7 +83,7 @@ Counts: PASS 121 · PARTIAL 14 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 
 | ID | Requirement | Implementation | Verification | Status |
 |---|---|---|---|---|
-| R-5.1 | Stable Rust, evaluated dependencies | pinned stable 1.99.1, `rust-version` 1.89; DEPENDENCIES.md with purpose per crate | `cargo build` on stable; `cargo audit` | PASS |
+| R-5.1 | Stable Rust, evaluated dependencies | pinned stable 1.99.1, `rust-version` 1.91; DEPENDENCIES.md with purpose per crate | `cargo build` on stable; `cargo audit` | PASS |
 | R-5.2 | Modular, cohesive, independently testable | 17 modules; tests per module | test layout | PASS |
 | R-5.3 | Correctness, memory safety, predictable resources, concurrency, maintainability | parity with the reference; unsafe inventory (SECURITY.md); fuzzing with AddressSanitizer; bounded buffers | parity, robustness, fuzzing | PASS |
 | R-5.4 | Minimal dependencies | 170 shipped crates (the `ctrlc` crate and its objc2 chain removed for 50 lines of signal handling) | DEPENDENCIES.md | PASS |

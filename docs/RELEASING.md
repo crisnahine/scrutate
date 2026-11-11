@@ -70,19 +70,27 @@ inventory and the crate count), `docs/DELIVERY.md` (binary hashes and wheel name
 
 ## 5. Quality gates
 
-In a virtual environment with the reference's dependencies, a copy of networkx 3.4.2 as the
-parity repository, and both wheels:
+In a virtual environment with the reference's dependencies (the versions in
+`python/constraints.txt`), a copy of networkx 3.4.2 as the parity repository, and the three
+wheels: `cp39-abi3`, `cp314t` and `cp315-abi3.abi3t`.
 
 ```sh
 V=/some/scratch/venv W=/some/scratch/wheels P=/some/scratch/pmid
-uv venv --python 3.13 $V && uv pip install --python $V/bin/python -e "python[test]" networkx==3.4.2
+uv venv --python 3.13 $V && uv pip install --python $V/bin/python -e "python[test]" networkx==3.4.2 -c python/constraints.txt
 cp -r $V/lib/python3.13/site-packages/networkx $P && find $P -name __pycache__ -prune -exec rm -rf {} +
 export MACOSX_DEPLOYMENT_TARGET=13.0
-maturin build --release --strip -m crates/scrutate-py/Cargo.toml -o $W
-maturin build --release --strip -m crates/scrutate-py/Cargo.toml -o $W -i "$(uv python find 3.14t)"
-uv pip install --python $V/bin/python --reinstall $W/*abi3*.whl
+python3 tools/third_party_notices.py --package scrutate-py --out crates/scrutate-py/THIRD_PARTY_NOTICES.txt
+for py in 3.13 3.14t 3.15; do
+  maturin build --release --strip -m crates/scrutate-py/Cargo.toml -o $W -i "$(uv python find $py)"
+done
+uv pip install --python $V/bin/python --reinstall $W/*cp39-abi3*.whl
 $V/bin/python tools/gen_test_results.py --repo $P --differential-cases 2000 --reproducible --wheels $W
 ```
+
+The wheel gate installs on 3.10 to 3.13, 3.14t, 3.15 and 3.15t. A final free-threaded 3.15 needs
+uv 0.13 or newer; with an older uv, install one elsewhere
+(`UV_PYTHON_INSTALL_DIR=/some/scratch uvx uv@latest python install 3.15t --no-bin`) and name every
+interpreter: `--pythons 3.10 3.11 3.12 3.13 3.14t 3.15 /some/scratch/.../bin/python3.15t`.
 
 It writes `docs/TEST_RESULTS.md`. Every gate must say PASS, the fuzz regressions included (they
 build in a workspace of their own, with its own `[patch]` for `vendor/ignore`). The hash under
@@ -91,6 +99,9 @@ build in a workspace of their own, with its own `[patch]` for `vendor/ignore`). 
 ## 6. Platform checks and artifacts
 
 ```sh
+actionlint && uvx zizmor --offline --persona pedantic .github   # the workflows, when one changed
+docker run --rm -i --platform linux/arm64 -v "$PWD":/src:ro python:3.13-slim-bookworm \
+  bash /src/tools/ci_rehearsal.sh | tee bench/results/platforms/linux-aarch64/ci-rehearsal.log
 tools/repro_docker.sh                                   # one hash from two build images
 docker run --rm --platform linux/arm64 -v "$PWD":/src:ro -v "$PWD/bench/results/platforms":/out \
   rust:1-slim-bookworm bash /src/tools/linux_verify.sh  # tests with no Python, musl, wheels
@@ -111,4 +122,14 @@ for Linux, docs/TEST_RESULTS.md for macOS). The archives contain `docs/`, so bui
 
 A tag `v*` starts `.github/workflows/release.yml` (every platform, signing, attestations); the
 package definitions in `packaging/` need the release checksums (packaging/README.md). None of it
-has run: the repository is not public.
+has run: the repository is not public. The workflows pass `actionlint` and `zizmor`, and the
+Linux jobs of `ci.yml` pass in a container (`tools/ci_rehearsal.sh`).
+
+Before the first tag, in the repository's settings: a ruleset on `main` (pull request, the `ci`
+checks required, no force push), a tag ruleset on `v*`, an environment named `release` with a
+required reviewer (the publishing job waits for it), immutable releases, push protection, and
+CodeQL default setup. The release job makes a draft, attaches every file, then publishes, which
+is the order immutable releases need. Its notes are the version's section of `CHANGELOG.md`.
+
+After the first run of `ci.yml`: flip R-6.1, R-6.12 and R-9.10 in docs/TRACEABILITY.md from the
+recorded run, not before.

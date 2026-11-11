@@ -1,45 +1,73 @@
-# Benchmark regression tracking: weekly and on demand. Compares the current binary with the
-# committed baseline (bench/baseline.json) and fails when a tracked metric regresses by more than
-# the tolerance in bench/regression.py.
+# Benchmark regression gate. A shared runner is not the machine a committed baseline came from, so
+# the job builds two binaries on the runner it has, the change and the commit it is measured
+# against, and compares them there: the base of a pull request, or the last release tag on the
+# weekly run. Each binary is judged relative to the other tools timed beside it, so an hour when
+# the runner is slow does not read as a regression. Numbers from here never reach docs/LEADERBOARD.md.
 name: benchmarks
 on:
+  pull_request:
+    paths: ["crates/scrutate/**", "vendor/**", "Cargo.lock", "Cargo.toml", "rust-toolchain.toml", "bench/**", ".github/workflows/benchmarks.yml"]
   schedule:
     - cron: "17 3 * * 1"
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: benchmarks-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  bench:
+  gate:
+    name: this change against its base, on one runner
     runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      BASE: ${{ github.event.pull_request.base.sha }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: sudo apt-get install -y ripgrep
-      - run: cargo build --release -p scrutate --locked
-      - name: corpus (pinned revision for reproducibility)
-        run: git clone --depth 1 --branch networkx-3.4.2 https://github.com/networkx/networkx /tmp/networkx
-      - run: python3 bench/compare_tools.py --corpus networkx=/tmp/networkx --runs 7 --out bench_results.json
-      - run: python3 bench/regression.py bench/baseline.json bench_results.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          name: bench-results
-          path: bench_results.json
-  leaderboard:
-    # the section-14 suite on the small corpus: shared runners are too noisy for #1 claims, so this
-    # job only tracks regressions against the baseline recorded on the same runner type
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: sudo apt-get install -y ripgrep ugrep silversearcher-ag ack hyperfine && pip install uv
-      - run: cargo build --release -p scrutate --locked
-      - run: python3 bench/corpora.py --root /tmp/corpora --only ripgrep
-      - run: python3 bench/leaderboard.py --corpora /tmp/corpora --out leaderboard-ci.json --only ripgrep/ --max-load 64
-      - name: regression gate (when a baseline from this runner type is committed)
+          persist-credentials: false
+          fetch-depth: 0
+      - run: rustup toolchain install --no-self-update
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      - run: sudo apt-get install -y ripgrep ugrep silversearcher-ag ack hyperfine
+      - name: build the change and its base
         run: |
-          if [ -f bench/results/ci/leaderboard-baseline.json ]; then
-            python3 bench/leaderboard_regression.py bench/results/ci/leaderboard-baseline.json leaderboard-ci.json
+          [ -n "$BASE" ] || BASE=$(git describe --tags --abbrev=0 --match 'v*' 2> /dev/null || true)
+          cargo build --release -p scrutate --locked
+          cp target/release/scrutate "$RUNNER_TEMP/new"
+          if [ -n "$BASE" ] && [ "$(git rev-parse "$BASE^{commit}")" != "$(git rev-parse HEAD)" ]; then
+            git worktree add --detach "$RUNNER_TEMP/base" "$BASE"
+            (cd "$RUNNER_TEMP/base" && cargo build --release -p scrutate --locked --target-dir "$GITHUB_WORKSPACE/target")
+            cp target/release/scrutate "$RUNNER_TEMP/old"
+          else
+            echo "nothing to compare with: the results are recorded and the gate is skipped"
           fi
-      - uses: actions/upload-artifact@v4
+      - name: corpora (pinned revisions)
+        run: |
+          git clone --depth 1 --branch networkx-3.4.2 https://github.com/networkx/networkx "$RUNNER_TEMP/networkx"
+          python3 bench/corpora.py --root "$RUNNER_TEMP/corpora" --only ripgrep
+      - name: tool comparison on networkx
+        run: |
+          for b in old new; do
+            [ -x "$RUNNER_TEMP/$b" ] || continue
+            SCRUTATE_BIN="$RUNNER_TEMP/$b" python3 bench/compare_tools.py --corpus "networkx=$RUNNER_TEMP/networkx" --runs 7 --out "compare-$b.json"
+          done
+          [ ! -f compare-old.json ] || python3 bench/regression.py --relative compare-old.json compare-new.json
+      - name: leaderboard suite on the ripgrep corpus
+        if: ${{ !cancelled() }}
+        run: |
+          for b in old new; do
+            [ -x "$RUNNER_TEMP/$b" ] || continue
+            SCRUTATE_BIN="$RUNNER_TEMP/$b" python3 bench/leaderboard.py --corpora "$RUNNER_TEMP/corpora" --out "leaderboard-$b.json" --only ripgrep/ --max-load 2 --max-wait 300
+          done
+          [ ! -f leaderboard-old.json ] || python3 bench/leaderboard_regression.py --relative leaderboard-old.json leaderboard-new.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
         with:
-          name: leaderboard-ci
-          path: leaderboard-ci.json
+          name: benchmark-results
+          path: |
+            compare-*.json
+            leaderboard-*.json
+          retention-days: 30

@@ -1,13 +1,20 @@
-# Continuous integration: quality gates for every push and pull request.
-# Core crate only needs Rust; the Python jobs cover the reference engine, the bindings and the
-# differential/parity harnesses.
+# Continuous integration: quality gates for every push and pull request, and once a week so a new
+# advisory, runner image or editor release shows up without a code change.
+# The core crate only needs Rust; the Python job covers the reference engine, the bindings and the
+# differential and parity harnesses. Every action is pinned to a commit; .github/dependabot.yml
+# moves the pins. The Rust version, rustfmt and clippy come from rust-toolchain.toml.
 name: ci
 on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "23 4 * * 1"
 permissions:
   contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
@@ -15,21 +22,22 @@ jobs:
   rust:
     name: rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest, windows-11-arm]
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+          persist-credentials: false
+      - run: rustup toolchain install --no-self-update
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --exclude scrutate-py -- -D warnings
       # the core must build and pass its tests with no Python involved (the bindings crate is excluded)
-      - run: cargo test --release -p scrutate
-      - run: cargo build --release -p scrutate
+      - run: cargo test --release -p scrutate --locked
+      - run: cargo build --release -p scrutate --locked
       - name: smoke test the binary
         shell: bash
         run: |
@@ -38,30 +46,53 @@ jobs:
           ./target/release/scrutate --root crates/scrutate index
           ./target/release/scrutate --root crates/scrutate search "parse a file into chunks" -k 3
           ./target/release/scrutate --root crates/scrutate check
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: scrutate-${{ matrix.os }}
-          path: target/release/scrutate*
+          path: |
+            target/release/scrutate
+            target/release/scrutate.exe
           if-no-files-found: error
+          retention-days: 3
   audit:
+    name: advisories against Cargo.lock
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: rustsec/audit-check@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: false
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-audit
+          fallback: none
+      - run: cargo-audit audit
+  dependency-review:
+    name: dependencies a pull request adds
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
   python:
     name: python reference, bindings, parity, differential
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install --no-self-update
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
-      - run: pip install maturin pytest numpy "snowballstemmer>=2.2,<3" tree-sitter tree-sitter-python tree-sitter-javascript tree-sitter-typescript tree-sitter-go tree-sitter-rust tree-sitter-java
-      - run: cargo build --release -p scrutate
+      # the versions parity was last checked with: a new grammar release can move a parse tree
+      - run: pip install -e "python[test]" maturin -c python/constraints.txt
+      - run: cargo build --release -p scrutate --locked
       - name: bindings wheel (abi3) and tests
         run: |
           maturin build --release --strip -m crates/scrutate-py/Cargo.toml -o target/wheels
@@ -76,19 +107,91 @@ jobs:
   musl:
     name: fully static linux binary (musl)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          targets: x86_64-unknown-linux-musl
+          persist-credentials: false
+      # after the install, so the target lands on the pinned toolchain and not on the runner's default
+      - run: rustup toolchain install --no-self-update && rustup target add x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: sudo apt-get install -y musl-tools
-      - run: cargo build --release -p scrutate
-      - run: cargo build --release -p scrutate --target x86_64-unknown-linux-musl
+      - run: cargo build --release -p scrutate --locked
+      - run: cargo build --release -p scrutate --locked --target x86_64-unknown-linux-musl
       - name: static, identical output, performance difference
         run: |
-          file target/x86_64-unknown-linux-musl/release/scrutate | grep -q "statically linked"
-          ! ldd target/x86_64-unknown-linux-musl/release/scrutate 2>/dev/null | grep -q "=>"
-          ./target/release/scrutate grep --json -F "fn " crates > /tmp/glibc.jsonl
-          ./target/x86_64-unknown-linux-musl/release/scrutate grep --json -F "fn " crates > /tmp/musl.jsonl
+          m=target/x86_64-unknown-linux-musl/release/scrutate
+          file "$m" | grep -qE "statically linked|static-pie linked"
+          if ldd "$m" 2>&1 | grep -q "=>"; then echo "the musl binary loads a shared library"; exit 1; fi
+          untimed() { sed -E 's/"elapsed_ms":[0-9.eE+-]+,?//'; } # the summary's run time differs on every run
+          ./target/release/scrutate grep --sort --json -F "fn " crates | untimed > /tmp/glibc.jsonl
+          "$m" grep --sort --json -F "fn " crates | untimed > /tmp/musl.jsonl
           cmp /tmp/glibc.jsonl /tmp/musl.jsonl
-          python3 bench/musl_vs_glibc.py target/release/scrutate target/x86_64-unknown-linux-musl/release/scrutate crates
+          python3 bench/musl_vs_glibc.py target/release/scrutate "$m" crates
+  compat:
+    name: extra-langs feature, oldest supported Rust
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install --no-self-update
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo test --release -p scrutate --features extra-langs --locked
+      - name: build with the rust-version Cargo.toml declares
+        env:
+          RUSTFLAGS: "" # an older compiler does not know the newer lints
+        run: |
+          msrv=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
+          rustup toolchain install "$msrv" --profile minimal --no-self-update
+          cargo "+$msrv" check -p scrutate --locked
+  fuzz:
+    name: fuzz regressions
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RUSTFLAGS: ""
+      NIGHTLY: nightly-2026-10-26
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$NIGHTLY" --profile minimal --no-self-update
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: fuzz
+      - run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: every input that once crashed a target
+        run: |
+          for f in fuzz/regressions/*/*; do
+            cargo "+$NIGHTLY" fuzz run -O "$(basename "$(dirname "$f")")" "$f"
+          done
+  editors:
+    name: editor integrations (VS Code, Neovim)
+    needs: rust
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: scrutate-ubuntu-latest
+          path: bin
+      - run: chmod +x bin/scrutate
+      - name: the extension in a real VS Code
+        working-directory: integrations/vscode
+        run: |
+          npm ci
+          SCRUTATE_BIN=$GITHUB_WORKSPACE/bin/scrutate xvfb-run -a npm test
+      - name: the plugin in a headless Neovim
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -sSfL -o nvim.tar.gz https://github.com/neovim/neovim/releases/download/v0.12.6/nvim-linux-x86_64.tar.gz
+          echo "474430d53e6264f6d6dd18db42d6dc9df3a1b56ca9e88a325bbf860e1a811d87  nvim.tar.gz" | sha256sum -c -
+          tar xzf nvim.tar.gz
+          bash "$GITHUB_WORKSPACE/integrations/fixture.sh" repo
+          cd repo
+          ../nvim-linux-x86_64/bin/nvim --headless -u NONE -l "$GITHUB_WORKSPACE/integrations/neovim/test/run.lua" "$GITHUB_WORKSPACE/bin/scrutate"
