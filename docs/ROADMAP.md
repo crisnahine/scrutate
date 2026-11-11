@@ -23,7 +23,7 @@ docs/TRACEABILITY.md.
 | `scrutate watch` (R-2B.1) | inotify on Linux, ReadDirectoryChangesW on Windows, the index's own check on a timer on macOS |
 | Benchmark dashboard (R-4.5) | `bench/make_dashboard.py` writes `docs/dashboard.html` from the results in `bench/results/` |
 | Package definitions (R-12.13) | `packaging/`: Homebrew formula (installed and tested in a Linux Homebrew), Scoop and winget manifests (schema-validated), `.deb` and `.rpm` (built and install-tested in clean Debian and Fedora containers) |
-| Third-party notices in releases | `tools/third_party_notices.py`; archives and wheels include `THIRD_PARTY_NOTICES.txt` |
+| Third-party notices in releases | `tools/third_party_notices.py`; archives, wheels and the `.deb` and `.rpm` packages include `THIRD_PARTY_NOTICES.txt` |
 | Incremental parsing of edited files (R-2B.1) | a long-running index (`watch`, `serve`, `lsp`) reparses an edited file against its previous tree, for the 21 grammars without an external scanner (with one, a reparse was seen to differ from a fresh parse); a 66 KB Go file: 5.5 ms to 2.0 ms per edit; `tests/incremental.rs` |
 | Ranking quality beyond Python (R-2B.12) | ranker v8 fitted on Python plus Rust, Go, Java, JavaScript and TypeScript repositories; held-out results per language in docs/QUALITY.md |
 | Indexed search precision (R-2B.1, R-4.6) | text index format 2: next-byte and position masks per posting; with it, concurrent throughput against Zoekt went from 4% behind to 5% ahead and the p50 latency to 0.46 of Zoekt's (20% ahead and 0.37 in the final run) |
@@ -113,3 +113,24 @@ settings in docs/RELEASING.md, public, tag `v0.1.0`.
   under emulation on this laptop was set up and dropped: gcc crashes there building GNU grep,
   and ripgrep's allocator reports that it falls back to a slower path, so the times would
   measure the emulator. `bench/competitors/linux_bench.sh` takes an x86_64 host as it is.
+
+### Known limits that stay in 0.1.0
+
+- Calls inside the arguments of a Rust macro (`println!("{}", f(x))`) are not seen as calls.
+- The MCP server scans for changed files at most once per refresh interval, so inside that window
+  an answer can miss an edit.
+- A file under `/proc` or `/sys` may be read short.
+- A file made unreadable without a change of size or modification time (a plain `chmod 000`) keeps
+  its chunks until `index --force` or `reindex` with `force`.
+- `.ok()` called on a value whose type is not known still matches an `ok` definition of the same
+  language by name.
+- A one-line file with thousands of nested functions still costs about 1.2 GB of memory to index,
+  until chunk text gets a byte cap in both engines.
+- `refs` treats a JavaScript `var` declared in a nested block as block-scoped.
+- Directories the code index skips by name (`node_modules`, and outside git also `build`, `dist`,
+  `target` and `venv`) are still searched by `scrutate grep` and `grep_code` when no ignore file
+  excludes them.
+- For a single file argument ripgrep leaves out the file name and `scrutate grep` prints it.
+- A `chunks` table that has been emptied is a valid index, not damage, so it is not rebuilt.
+- The Python reference skips a few files the engine indexes (`.gitignore` among them) and ignores
+  `SCRUTATE_INDEX_EXCLUDE_DIRS`.

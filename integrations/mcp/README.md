@@ -5,16 +5,20 @@ revisions 2024-11-05 / 2025-03-26 / 2025-06-18 / 2025-11-25, and revision 2026-0
 no handshake (`server/discover`, a protocol version in every request's `_meta`). Tools: `search_code`, `grep_code`,
 `find_symbol`, `callers`, `callees`, `read_code`, `outline`, `dependencies`, `dependents`,
 `references`, `similar_code`, `duplicates`, `structural_search`, `reindex`. The index refreshes
-itself between calls (at most once per `--refresh-interval` seconds), so edits made by the agent
-are searchable immediately.
+itself before a call: by default the wait between scans is at most a second, shorter when a scan
+is cheap; with `--refresh-interval S`, no scan comes sooner than S seconds after the last one. An edit made inside that
+window can be missing from an answer until the next scan.
 
 What a client gets (details in docs/CLI.md, `serve`):
 - every tool except `reindex` is marked read-only and local, so clients that ask before a write
   do not ask for these;
 - server instructions that say which tool to start with;
-- answers of at most 24,000 bytes by default (`max_bytes`), cut at whole items, with the
-  `offset` that continues them;
-- `grep_code` at the speed of `scrutate grep`, with matches grouped by enclosing symbol;
+- answers of at most 24,000 bytes by default (`max_bytes`, or `serve --max-bytes` for another
+  default), closing line included, cut at whole items, with the `offset` that continues them;
+- `grep_code` at the speed of `scrutate grep`, with matches grouped by enclosing symbol; it
+  searches hidden files such as `.github/` (not ignored files, not `.git/`), as the index does;
+- `reindex` with `force: true` to read every file again, also one whose size and modification
+  time did not change;
 - a location (`path:start-end`) at the start of every result, accepted wherever a tool takes a
   symbol, and `read_code symbol=...` for a whole definition by name or location;
 - with `serve --structured`, `structuredContent` and an `outputSchema` on every tool: the answer

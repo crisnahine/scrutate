@@ -161,13 +161,16 @@ and a sample file, not new code.
   clusters, measured at ±0.000 MRR against the exhaustive scan).
 - **Lifecycle**: content hashing (mtime/size fast path, SHA-1 verification), one `BEGIN IMMEDIATE`
   transaction per update (readers never see a half state), new segments written to a temp
-  directory and renamed, deletions as liveness bitmaps, background **compaction** (merge small
-  segments / purge dead rows) that aborts if another writer moved the manifest, segment **GC** with
-  an age guard, **corruption detection** (`PRAGMA quick_check` on open, structural validation of
+  directory and renamed (the name is taken inside that transaction, so a directory already under
+  it was left by a writer stopped before its commit, and is removed), deletions as liveness
+  bitmaps, background **compaction** (merge small segments / purge dead rows) that aborts if
+  another writer moved the manifest, segment **GC** with an age guard inside the update's
+  transaction, **corruption detection** (`PRAGMA quick_check` on open, structural validation of
   every array on segment open, deep validation in `scrutate check`) with automatic **rebuild**,
   **schema and model versioning** (a different schema or model clears and re-indexes inside the
   database so concurrent processes stay consistent), and multi-process safety (busy-timeout +
-  retry on `SQLITE_BUSY`, never deleting a live database).
+  retry on `SQLITE_BUSY`, never deleting a live database; a read never waits for another
+  process's writer and answers from the last committed index).
 
 ### Retrieval and ranking (`search.rs`, `semantic.rs`, `rank.rs`)
 A query produces candidates from three sources — field-weighted BM25 (name 10, qualified name 3,
@@ -289,8 +292,9 @@ writes.
 ## Models (`models/`)
 `semantic.npz` (14.6 MB: code-word vocabulary tables and projections) and `ranker.npz` (87 KB)
 are embedded in the binary with `include_bytes!`; `SCRUTATE_SEMANTIC` / `SCRUTATE_RANKER` can
-point at other files or `none`. The index records the model signature and re-indexes when it
-changes. Training (numpy + LightGBM) lives in `bench/train_semantic.py` and the reference package.
+point at other files or `none`. The index records the model signature (a blake2b hash of the
+model file) and re-indexes when it changes. Training (numpy + LightGBM) lives in
+`bench/train_semantic.py` and the reference package.
 
 ## Design rules for the next decade
 - Formats are versioned (`schema_version`, `.npy` headers, JSONL `schema`) and migrations are a

@@ -4,8 +4,12 @@ How good are the answers, as opposed to how fast? Numbers below are produced by
 `bench/train_ranker.py eval v8` (log: `test_eval_v8_py.log`, 2026-11-09) and
 `bench/train_ranker.py compare v8` (log: `compare_v8.log`) on packages that were never used to
 train the semantic model, fit the ranker or choose hyper-parameters. The Rust engine produces
-bit-identical candidates, features and scores to the Python code that ran this evaluation
-(`bench/parity.py`), so the numbers hold for the shipped binary.
+bit-identical candidates, features and scores to the Python code that ran this evaluation, so the
+numbers hold for the shipped binary. `bench/parity.py` checks it with no tolerance: any difference
+in the chunk tables, a feature, a score, a top 10 or the end-to-end result fails, and so does a
+run that cannot make as many queries as asked. Its queries are built from the corpus's documented
+functions by the benchmark's rules: 300 on networkx and 50 on the engine's own sources
+(`crates/scrutate/src`, a CI step).
 
 ## Protocol
 
@@ -65,11 +69,15 @@ Across both variants, six languages (Python included) and the query types each h
 v7 in 56 of 58 cells. The other two are in JavaScript, variant B: name queries −0.001 [−0.016,
 +0.013] and qualified names unchanged at 1.000. No cell's interval lies below zero. Per-cell numbers, hit@k and intervals: `compare_v8.log`.
 
-One caveat for three of these rows. When the Python code ran this section it did not yet cut
+A caveat for these rows. When the Python code ran this section it did not yet cut
 chunks for Rust `mod` and `type` items, Java records or TypeScript abstract classes, which the
 Rust engine does. It does now, and the two engines agree bit for bit on Rust sources as well
 (`bench/parity.py crates/scrutate/src`, a CI step), but the rows above were not measured again:
-for Rust, Java and TypeScript they describe an index without those chunks.
+for Rust, Java and TypeScript they describe an index without those chunks. The same holds for
+the definitions both engines cut later, in the Rust, Go, JavaScript and TypeScript rows:
+Rust `macro_rules!` and trait methods without a body, Go methods qualified by their receiver type
+(`Type.Method`), JavaScript class field functions and `module.exports.X` / `exports.X`, and
+TypeScript abstract methods, `declare function` and namespaces. The rows above predate them.
 
 ## What these numbers say and do not say
 

@@ -66,8 +66,10 @@ exactly what is and is not verified.
   the text index leads Zoekt and livegrep on all 8 indexed metrics (3.9 times the throughput of the
   next).
 - **Engine B** gives bit-identical features, scores and rankings to the Python reference it was
-  developed against (300 queries in the parity harness), and its learned ranker beats its own
-  lexical layer on every held-out query type, in Python and five more languages (docs/QUALITY.md).
+  developed against: the parity check fails on any difference in a feature, a score or a top 10,
+  over 300 queries built from the documented functions of networkx and 50 from the engine's own
+  sources. Its learned ranker beats its own lexical layer on every held-out query type, in Python
+  and five more languages (docs/QUALITY.md).
 - `cargo clippy -D warnings` and `cargo fmt` are clean; `cargo audit` reports no vulnerabilities;
   an SBOM is generated.
 
@@ -120,5 +122,6 @@ print(repo.search("parse a date string", k=5))
 
 Apache-2.0. See [LICENSE](LICENSE). Every crate compiled into the binary is under a licence
 compatible with it (MIT, BSD, Zlib, Unicode-3.0 or Apache-2.0); their licence and notice files are
-collected in `THIRD_PARTY_NOTICES.txt`, which release archives and wheels include
+collected in `THIRD_PARTY_NOTICES.txt`, which release archives, wheels and the `.deb` and `.rpm`
+packages include
 (`tools/third_party_notices.py`).

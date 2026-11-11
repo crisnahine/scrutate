@@ -17,6 +17,10 @@ The version is written in `crates/scrutate/Cargo.toml`, `crates/scrutate-py/Carg
 directory name too). The date is in the `CHANGELOG.md` heading, the title of `docs/DELIVERY.md`
 and the scope line of `docs/SECURITY.md`.
 
+`python3 tools/check_version.py 0.1.0` fails when the version in either `Cargo.toml` or in
+`integrations/vscode/package.json` differs from the one given. The release workflow runs it on
+the tag (without its `v`) before anything else and refuses a tag that does not match.
+
 ## 2. Benchmarks on the release binary
 
 Move the previous results out of the way first: the harness resumes from an existing file. Each
@@ -111,7 +115,13 @@ tools/linux_x86_cross_verify.sh ~/.cache/scrutate-bench/x86work
 tools/windows_cross_check.sh
 tools/macos_x86_verify.sh
 tools/release_local.sh                                  # dist/ on macOS
+uvx --with jsonschema --with pyyaml python packaging/validate_manifests.py --draft   # Scoop, winget
 ```
+
+`--draft` lets the all-zero sha256 placeholders through; without it the check fails on them, so
+it is run without `--draft` only once the manifests carry the release checksums. The `.deb` and
+`.rpm` (`packaging/linux/build-packages.sh`) carry `THIRD_PARTY_NOTICES.txt`
+(`/usr/share/doc/scrutate/` in the `.deb`, `/usr/share/licenses/scrutate/` in the `.rpm`).
 
 `dist-linux/` is `tools/release_local.sh` run in a clean `rust:1-slim-bookworm` container on a
 copy of the tree at `/build`, with `maturin[patchelf]` installed in a virtual environment.
@@ -122,10 +132,12 @@ for Linux, docs/TEST_RESULTS.md for macOS). The archives contain `docs/`, so bui
 
 ## 7. What a published release adds
 
-A tag `v*` starts `.github/workflows/release.yml` (every platform, signing, attestations); the
-package definitions in `packaging/` need the release checksums (packaging/README.md). None of it
-has run: the repository is not public. The workflows pass `actionlint` and `zizmor`, and the
-Linux jobs of `ci.yml` pass in a container (`tools/ci_rehearsal.sh`).
+A tag `v*` starts `.github/workflows/release.yml` (every platform, signing, attestations). It
+checks the version first, then runs all of `ci.yml` on the tagged commit (`workflow_call`); the
+release job waits for that run and for the binaries and wheels. The package definitions in
+`packaging/` need the release checksums (packaging/README.md). None of it has run: the
+repository is not public. The workflows pass `actionlint` and `zizmor`, and the Linux jobs of
+`ci.yml` pass in a container (`tools/ci_rehearsal.sh`).
 
 Before the first tag, in the repository's settings: a ruleset on `main` (pull request, the `ci`
 checks required, no force push), a tag ruleset on `v*`, an environment named `release` with a

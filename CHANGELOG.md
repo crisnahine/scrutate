@@ -81,13 +81,15 @@ First release.
 - On Linux a tree read from the disk gets up to 64 threads, whatever the cores: the Linux tree
   with a cold cache in a 5-CPU VM, 1.22 s on 5 threads, 0.37 s this way (git grep 1.23 s, ugrep
   0.64 s). A small tree stops before many threads start (231 files cold: 5.8 ms, ripgrep 7.5 ms).
-- Fixed: a file given directly as the search root was printed with an empty path (`:1:text`).
+- Paths print as given, as in grep and ripgrep: `./a.txt` for `.`, `dir/a.txt` for `dir/`, an
+  absolute path for an absolute root; a single file is printed with its name.
 - `ignore` 0.4.34 is vendored (`vendor/ignore`) with two changes: the global git excludes path is
   read from `~/.gitconfig` without compiling a regex (about 0.4 ms of every search in a git
   repository), and an idle walker thread waits 10 µs at first instead of 1 ms before it looks for
   work again (a 598-file package: 10.7 ms to 8.1 ms).
-- Fixed: `--max-results N` could report one or two matches more than N when several threads found
-  matches at once.
+- `--max-results N` stops at exactly N matching lines, also when several threads find matches at
+  once and with `-c` and `-l`; `-m N` is a per-file limit of the search, with trailing context.
+- A search path that does not exist is a warning and exit code 2; the other paths are searched.
 
 ### Engine B — code intelligence
 - Incremental index (SQLite + memory-mapped segments), content hashing, atomic updates,
@@ -136,6 +138,8 @@ First release.
 - Unified `find`, MCP server (14 tools), configuration files with environment-variable precedence,
   shell completions, progress reporting; errors as JSON records with `--json` or
   `SCRUTATE_DIAGNOSTICS=json`.
+- On/off environment variables are off for `0`, `false`, `no`, `off` or empty and on for any other
+  value; `NO_COLOR` turns colour off for any non-empty value.
 - One definition of every index operation for the CLI, the MCP server, `batch` and the Python
   bindings (`ops.rs`): the same defaults, limits, text and JSON everywhere. `batch` runs any
   operation by name.
@@ -143,8 +147,13 @@ First release.
   instructions; `grep_code` is an Engine A search with matches grouped by enclosing symbol;
   `references` resolves each use to its definition; an answer is at most 24,000 bytes by default
   (`max_bytes`), cut at whole items, with the `offset` that continues it; the CLI has the same as
-  `--max-bytes` (`SCRUTATE_MAX_BYTES`) and `--offset`; a first index build no longer blocks a tool
-  call for longer than 20 seconds.
+  `--max-bytes` (`SCRUTATE_MAX_BYTES`) and `--offset`; a first index build blocks a tool call for
+  at most 20 seconds. `serve --max-bytes` sets the server's default.
+- `reindex` takes `force`, which reads every file again. `grep_code` searches hidden files such
+  as `.github/`, as the index holds them.
+- JSON-RPC answers as the specification gives them: batches answered as one array, -32700 for a
+  line that is not JSON or not UTF-8, -32600 for a message that is not an object or has no `method`, -32601 for an
+  unknown method, -32602 for an unknown tool; notifications are never answered.
 - MCP revision 2026-07-28 beside the handshake revisions: `server/discover`, a protocol version in
   each request's `_meta`, `resultType` on results, `ttlMs` and `cacheScope` on lists. With
   `serve --structured` every tool has an `outputSchema` and every result `structuredContent`
@@ -169,13 +178,15 @@ First release.
 - Licensed under Apache-2.0. Toolchain pinned to Rust 1.99.1 (`rust-version` 1.91).
 - Python bindings (PyO3 0.30; abi3, abi3t and cp314t wheels; GIL released; streaming iterator;
   free-threading declaration after review).
+- The GitHub Action puts scrutate's exit code in its `exit-code` output and fails its step only on
+  an error (2), so a job can gate on results.
 - Benchmark suite (`bench/leaderboard.py`, `bench/indexed.py`): grep, ripgrep, ack, ag, git grep,
   ugrep, ast-grep, Zoekt and livegrep on pinned corpora, every answer checked against an
   independent reference, 30+ runs per contender, bootstrap confidence intervals, hardware-ceiling
   baseline, warm and cold cache; regression gate; CI/release workflows; SBOM; IDE and Git-platform
   integrations.
 - Packaging: Homebrew formula, Scoop and winget manifests, `.deb` and `.rpm` packages (built and
-  install-tested in clean containers); release archives and wheels carry
+  install-tested in clean containers); release archives, wheels and the `.deb` and `.rpm` carry
   `THIRD_PARTY_NOTICES.txt`; `docs/dashboard.html` charts the benchmark runs.
 - Fuzz targets (`fuzz/`): the `.npy` reader (three defects fixed: a panic on truncated string
   arrays, a wrapping element count in release builds, a huge allocation for zero-width strings),
