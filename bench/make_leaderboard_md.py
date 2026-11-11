@@ -89,7 +89,7 @@ def engine_a(data, label):
     if any(r.get("resident") is not None for r in data["benchmarks"].values()):
         out.append("- A warm-cache benchmark records how much of its corpus was in the page cache when it ended (`bench/evict.c --resident`); "
                    "a row under 95% says so in its status column.")
-    out.append("- Tool versions: " + "; ".join(f"{t}: `{v}`" for t, v in env["tools"].items() if v and t != "scrutate --index") + ".")
+    out.append("- Tool versions: " + "; ".join(f"{t}: `{v}`" for t, v in env["tools"].items() if v and t not in ("scrutate --index", "scrutate base")) + ".")
     if env.get("scrutate_sha256"):
         out.append(f"- scrutate binary measured: SHA-256 `{env['scrutate_sha256']}`.")
     out.append("")
@@ -152,7 +152,7 @@ def engine_a(data, label):
     out.append("| Benchmark | scrutate CPU s | lowest competitor CPU s | CPU rank | scrutate MB | lowest competitor MB | memory rank |")
     out.append("|---|---|---|---|---|---|---|")
     for bid, r in data["benchmarks"].items():
-        ok = {t: x for t, x in r["tools"].items() if x.get("status") == "ok" and x.get("cpu_median") is not None and t != "scrutate --index"}
+        ok = {t: x for t, x in r["tools"].items() if x.get("status") == "ok" and x.get("cpu_median") is not None and t not in ("scrutate --index", "scrutate base")}
         us = ok.get("scrutate")
         if not us:
             continue
