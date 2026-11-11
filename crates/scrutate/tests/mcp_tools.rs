@@ -30,7 +30,7 @@ impl Repo {
 
     /// (failed, text)
     fn call(&mut self, tool: &str, args: Value) -> (bool, String) {
-        let c = scrutate::mcp::call_tool(&mut self.repo, tool, &args, 0.0);
+        let c = scrutate::mcp::call_tool(&mut self.repo, tool, &args, &scrutate::mcp::Settings::new(None, Some(0.0)));
         (c.is_error, c.text)
     }
 
