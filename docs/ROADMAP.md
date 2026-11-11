@@ -43,6 +43,7 @@ docs/TRACEABILITY.md.
 | Method calls on variables (R-2B.4) | `x.m()` resolves through the type the declaration of `x` states, as an annotation or as the thing it is built from, in Python, JavaScript/TypeScript, Rust and Go; Go methods are found by their receiver type across the files of a package |
 | TypeScript path aliases (R-2B.4) | an import through `paths` or `baseUrl` of the nearest `tsconfig.json` or `jsconfig.json` (comments, trailing commas and a relative `extends` included) resolves to its file, in `refs`, `deps` and `rdeps` |
 | Limits left in 0.1.0's first draft (R-2A, R-12.4) | smart case sees a letter written by its code point (`\x41`); the LSP server replaces a damaged index, from a save or from a request; the watcher's test of one path decides in the walk's order (a `.ignore` at any level before every `.gitignore`) |
+| Limits left in 0.1.0's second draft (R-2A, R-2B.1, R-2B.4) | calls inside Rust macro arguments are call edges; an MCP answer checks the files it cites and re-reads a changed one; files on `/proc`, `/sys` and the other kernel pseudo filesystems are read to the end; on Unix a `chmod` alone is seen (the index keeps the status-change time); an emptied `chunks` table is damage and is rebuilt; a JavaScript `var` belongs to its function; one file argument prints without its name, as in ripgrep, with `-H` and `-I`; C++ constructors, destructors, member templates and conversion operators declared in a class body are methods; the Python reference indexes the engine's file set; `\,` keeps a comma in `SCRUTATE_INDEX_EXCLUDE_DIRS` |
 | Benchmark corpora without hard links (R-14) | `bench/corpora.py` copies (APFS clones) where it linked: a hard-linked file costs every tool twice as long to open on macOS |
 
 ## Blocked: needs the repository published
@@ -103,9 +104,8 @@ settings in docs/RELEASING.md, public, tag `v0.1.0`.
   on 64 threads against 16 MB warm (`-j` bounds both).
 - Windows: nothing is measured. Its thread count (the cores, at most 12), its cold thread count
   (twice the cores, at most 24) and its disk-read time (75 µs) are the macOS values.
-- References: the type of a variable that got its value from a function call (the function's
-  declared return type), of a field (`self.x.m()`) and of a module-level variable; more
-  languages (Java, C#, C/C++ includes).
+- References: resolution for more languages (Java, C#, C/C++ includes); today `refs` resolves
+  Python, JavaScript/TypeScript, Rust and Go.
 - `cargo install`: int8 weights for the semantic model, with the quality check QUALITY.md uses.
 - Benchmark leadership on dedicated idle hardware (R-14.11): every number here comes from a
   developer laptop shared with other work, and Linux x86_64 has no benchmark run at all. In the
@@ -116,21 +116,35 @@ settings in docs/RELEASING.md, public, tag `v0.1.0`.
 
 ### Known limits that stay in 0.1.0
 
-- Calls inside the arguments of a Rust macro (`println!("{}", f(x))`) are not seen as calls.
-- The MCP server scans for changed files at most once per refresh interval, so inside that window
-  an answer can miss an edit.
-- A file under `/proc` or `/sys` may be read short.
-- A file made unreadable without a change of size or modification time (a plain `chmod 000`) keeps
-  its chunks until `index --force` or `reindex` with `force`.
-- `.ok()` called on a value whose type is not known still matches an `ok` definition of the same
-  language by name.
-- A one-line file with thousands of nested functions still costs about 1.2 GB of memory to index,
-  until chunk text gets a byte cap in both engines.
-- `refs` treats a JavaScript `var` declared in a nested block as block-scoped.
+- An MCP answer checks the files it cites, and the files its arguments name, and re-reads a
+  changed one first. A change in a file the answer does not cite (a new definition or a new caller
+  somewhere else) is seen at the next scan: within about a second by default, or after
+  `--refresh-interval` seconds when that is given.
+- On Windows the index has no status-change time, so a file made unreadable without a change of
+  size or modification time keeps its chunks until `index --force` or `reindex` with `force`.
+  Unix compares the status-change time too.
+- A method call on a value whose type the resolver cannot infer (the result of a function it
+  does not know, or of a chain such as `file.metadata().ok()`) still matches a definition of
+  that name in the same language family.
+- A one-line file with 8,000 nested functions costs about 1.1 GB of memory to index (0.75 GB
+  with `SCRUTATE_SEMANTIC=none`): chunk text and body are cut at 32 KiB each, but every one of
+  the 8,000 chunks holds its own.
 - Directories the code index skips by name (`node_modules`, and outside git also `build`, `dist`,
-  `target` and `venv`) are still searched by `scrutate grep` when no ignore file excludes them; `grep_code` skips
-  them, as the index does.
-- For a single file argument ripgrep leaves out the file name and `scrutate grep` prints it.
-- A `chunks` table that has been emptied is a valid index, not damage, so it is not rebuilt.
-- The Python reference skips a few files the engine indexes (`.gitignore` among them) and ignores
-  `SCRUTATE_INDEX_EXCLUDE_DIRS`.
+  `target` and `venv`) are still searched by `scrutate grep` when no ignore file excludes them, as
+  ripgrep does; `grep_code` skips them, as the index does.
+- The Python reference reads `.rgignore` files (ripgrep reads them for it) and the engine does
+  not; without ripgrep installed, the reference ignores `.gitignore` as well.
+- In ranked search, a word of a script other than Han, kana and Thai is a whole run of letters.
+  Lao, Khmer and Myanmar are written without spaces, so a word inside a longer run there is not a
+  token of its own. Traditional and simplified Chinese characters are different tokens.
+- A C++ function declared at the top level without a body (`Shape make();`) is not a symbol. A
+  method declared in its class and defined outside it is two symbols with one qualified name: the
+  declaration (`method`) and the definition (`function`).
+- The Windows and Intel macOS binaries are cross-built here, and their test binaries compile and
+  link, but none of them has run. Rosetta 2 on the build Mac would run the Intel macOS tests, a
+  Windows 11 machine or virtual machine the Windows ones, and the CI matrix both, once the
+  repository is on GitHub.
+- No benchmark has run on x86_64 Linux or on dedicated, otherwise idle hardware: every number
+  comes from the development Mac, shared with other work, and a 5-CPU Linux VM on it. A run of
+  `bench/run_macos.sh` and `bench/competitors/linux_bench.sh` on dedicated machines closes it
+  (docs/research/known-limits-2026-11.md prices the hardware).
