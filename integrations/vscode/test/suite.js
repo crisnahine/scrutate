@@ -1,0 +1,97 @@
+// Runs inside VS Code (test/run.js): the language server through VS Code's own providers, then
+// every command with its pickers answered by the test.
+const assert = require("assert");
+const vscode = require("vscode");
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Ask until the server (and its first index) answers. */
+async function until(what, f) {
+  for (let i = 0; i < 150; i++) {
+    const v = await f();
+    if (v && v.length) return v;
+    await sleep(200);
+  }
+  throw new Error(`no answer: ${what}`);
+}
+
+exports.run = async function () {
+  const root = vscode.workspace.workspaceFolders[0].uri;
+  const app = vscode.Uri.joinPath(root, "src/app.py");
+  const geo = vscode.Uri.joinPath(root, "src/geo.py");
+  const doc = await vscode.workspace.openTextDocument(app);
+  await vscode.window.showTextDocument(doc);
+  const onCall = new vscode.Position(4, 13); // `make_point` in `return make_point().norm()`
+  const onTheCall = async () => {
+    const editor = await vscode.window.showTextDocument(doc);
+    editor.selection = new vscode.Selection(onCall, onCall);
+  };
+
+  const defs = await until("definition", () => vscode.commands.executeCommand("vscode.executeDefinitionProvider", app, onCall));
+  assert.strictEqual(defs.length, 1);
+  assert.ok((defs[0].uri || defs[0].targetUri).path.endsWith("/src/geo.py"));
+  assert.strictEqual((defs[0].range || defs[0].targetRange).start.line, 5);
+
+  const refs = await vscode.commands.executeCommand("vscode.executeReferenceProvider", app, onCall);
+  assert.ok(refs.some((r) => r.uri.path.endsWith("/src/app.py") && r.range.start.line === 4), JSON.stringify(refs));
+  assert.ok(refs.some((r) => r.uri.path.endsWith("/src/geo.py") && r.range.start.line === 11), JSON.stringify(refs));
+
+  const symbols = await vscode.commands.executeCommand("vscode.executeWorkspaceSymbolProvider", "make_po");
+  assert.ok(symbols.some((s) => s.name === "make_point"), JSON.stringify(symbols));
+
+  const outline = await vscode.commands.executeCommand("vscode.executeDocumentSymbolProvider", geo);
+  assert.deepStrictEqual(outline.map((s) => s.name), ["Point", "make_point", "use_it"]);
+  assert.strictEqual(outline[0].children[0].name, "norm");
+
+  // the commands: the test types the query and takes the pick it wants
+  const { showInputBox, showQuickPick, showInformationMessage } = vscode.window;
+  let typed, want, shown, said;
+  vscode.window.showInputBox = async () => typed;
+  vscode.window.showQuickPick = async (items) => {
+    shown = items;
+    return items.find(want) || items[0];
+  };
+  vscode.window.showInformationMessage = async (message) => {
+    said = message;
+  };
+  const at = () => {
+    const e = vscode.window.activeTextEditor;
+    return `${vscode.workspace.asRelativePath(e.document.uri)}:${e.selection.active.line + 1}`;
+  };
+  try {
+    typed = "build the origin point";
+    want = () => false;
+    await vscode.commands.executeCommand("scrutate.search");
+    assert.strictEqual(at(), "src/geo.py:6", "search opens the first hit");
+
+    typed = "def use_it";
+    await vscode.commands.executeCommand("scrutate.grep");
+    assert.strictEqual(at(), "src/geo.py:11", "grep opens the match");
+
+    await onTheCall();
+    await vscode.commands.executeCommand("scrutate.symbol");
+    assert.strictEqual(at(), "src/geo.py:6", "symbol takes the word under the cursor");
+
+    await onTheCall();
+    want = (item) => item.description.startsWith("src/geo.py:");
+    await vscode.commands.executeCommand("scrutate.callers");
+    assert.strictEqual(at(), "src/geo.py:11", "callers lists use_it");
+
+    await onTheCall();
+    want = (item) => item.description.startsWith("src/geo.py:12");
+    await vscode.commands.executeCommand("scrutate.refs");
+    assert.ok(shown.some((i) => i.label === "[def] make_point"), JSON.stringify(shown));
+    assert.ok(shown.some((i) => i.description.startsWith("src/app.py:5")), JSON.stringify(shown));
+    assert.strictEqual(at(), "src/geo.py:12", "refs opens the reference picked");
+
+    await vscode.commands.executeCommand("scrutate.index");
+    assert.ok(/^Scrutate: /.test(said), said);
+
+    typed = "zzzz_no_such_thing_qqqq";
+    said = undefined;
+    await vscode.commands.executeCommand("scrutate.grep");
+    assert.strictEqual(said, "Scrutate: no matches");
+  } finally {
+    Object.assign(vscode.window, { showInputBox, showQuickPick, showInformationMessage });
+  }
+};

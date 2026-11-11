@@ -122,8 +122,13 @@ function activate(context) {
         if (!name) return;
         const r = JSON.parse((await run(["refs", name, "--json"])) || "{}");
         const items = [];
-        for (const d of r.definitions || []) items.push({ label: `[def] ${d.qualname}`, description: `${d.path}:${d.start}`, path: d.path, line: d.start });
-        for (const g of r.references || []) for (const l of g.lines) items.push({ label: `${g.symbol ? g.symbol.qualname : "(file)"}`, description: `${g.path}:${l.line}  ${l.text.trim()}`, path: g.path, line: l.line });
+        for (const d of r.definitions || []) {
+          items.push({ label: `[def] ${d.qualname}`, description: `${d.path}:${d.start}`, path: d.path, line: d.start });
+          for (const o of d.references || []) {
+            if (o.via !== "definition") items.push({ label: d.qualname, description: `${o.path}:${o.line}  ${o.text.trim()}`, path: o.path, line: o.line });
+          }
+        }
+        for (const o of r.unresolved || []) items.push({ label: `(unresolved: ${o.reason})`, description: `${o.path}:${o.line}  ${o.text.trim()}`, path: o.path, line: o.line });
         if (!items.length) return vscode.window.showInformationMessage("Scrutate: no references");
         const pick = await vscode.window.showQuickPick(items, { matchOnDescription: true });
         if (pick) await open(pick.path, pick.line);

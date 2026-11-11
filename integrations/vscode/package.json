@@ -5,27 +5,70 @@
   "version": "0.1.0",
   "publisher": "scrutate",
   "license": "Apache-2.0",
-  "engines": { "vscode": "^1.85.0" },
-  "categories": ["Other"],
-  "activationEvents": ["onStartupFinished"],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./extension.js",
-  "scripts": { "check": "tsc -p ." },
-  "dependencies": { "vscode-languageclient": "9.0.1" },
-  "devDependencies": { "@types/node": "20.19.43", "@types/vscode": "1.85.0", "typescript": "5.9.3" },
+  "scripts": {
+    "check": "tsc -p .",
+    "test": "node test/run.js"
+  },
+  "dependencies": {
+    "vscode-languageclient": "9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.43",
+    "@types/vscode": "1.85.0",
+    "@vscode/test-electron": "3.1.0",
+    "typescript": "5.9.3"
+  },
   "contributes": {
     "commands": [
-      { "command": "scrutate.search", "title": "Scrutate: Search (ranked, by meaning or name)" },
-      { "command": "scrutate.grep", "title": "Scrutate: Grep (instant, no index)" },
-      { "command": "scrutate.symbol", "title": "Scrutate: Go to symbol definition" },
-      { "command": "scrutate.callers", "title": "Scrutate: Who calls this?" },
-      { "command": "scrutate.refs", "title": "Scrutate: References of the word under the cursor" },
-      { "command": "scrutate.index", "title": "Scrutate: Update index" }
+      {
+        "command": "scrutate.search",
+        "title": "Scrutate: Search (ranked, by meaning or name)"
+      },
+      {
+        "command": "scrutate.grep",
+        "title": "Scrutate: Grep (instant, no index)"
+      },
+      {
+        "command": "scrutate.symbol",
+        "title": "Scrutate: Go to symbol definition"
+      },
+      {
+        "command": "scrutate.callers",
+        "title": "Scrutate: Who calls this?"
+      },
+      {
+        "command": "scrutate.refs",
+        "title": "Scrutate: References of the word under the cursor"
+      },
+      {
+        "command": "scrutate.index",
+        "title": "Scrutate: Update index"
+      }
     ],
     "configuration": {
       "title": "Scrutate",
       "properties": {
-        "scrutate.path": { "type": "string", "default": "scrutate", "description": "Path to the scrutate binary." },
-        "scrutate.results": { "type": "number", "default": 15, "description": "Number of ranked results to show." }
+        "scrutate.path": {
+          "type": "string",
+          "default": "scrutate",
+          "scope": "machine",
+          "description": "Path to the scrutate binary. A machine setting: a workspace cannot change which program runs."
+        },
+        "scrutate.results": {
+          "type": "number",
+          "default": 15,
+          "description": "Number of ranked results to show."
+        }
       }
     }
   }
