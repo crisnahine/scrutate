@@ -530,6 +530,21 @@ fn write_new_replaces_a_planted_link_instead_of_following_it() {
 }
 
 #[test]
+fn a_transaction_left_open_by_a_failed_update_is_rolled_back_by_the_next() {
+    let t = Tmp::new("left_open");
+    fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+    let mut ix = Index::open(&t.0, None).unwrap();
+    ix.update(false).unwrap();
+    // what a panic in the middle of an update leaves on the connection
+    ix.db.execute_batch("BEGIN IMMEDIATE; DELETE FROM chunks;").unwrap();
+    fs::write(t.0.join("b.py"), "def beta():\n    return 2\n").unwrap();
+    assert_eq!(ix.update(false).unwrap().files_changed, 1);
+    let names: i64 = ix.db.query_row("SELECT COUNT(*) FROM chunks WHERE name IN ('alpha', 'beta')", [], |r| r.get(0)).unwrap();
+    assert_eq!(names, 2);
+    assert!(ix.check(false).unwrap().ok());
+}
+
+#[test]
 fn a_cancelled_update_leaves_the_index_as_it_was() {
     let t = Tmp::new("cancel");
     fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();

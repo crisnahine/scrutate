@@ -909,6 +909,10 @@ impl Index {
         // patched afterwards instead of recomputed
         let mut removed: Vec<i64> = Vec::new();
         let mut seg_names: Vec<String> = Vec::new();
+        // a panic in an earlier update may have left its transaction open on this connection
+        if !self.db.is_autocommit() {
+            let _ = self.db.execute_batch("ROLLBACK");
+        }
         // one writer at a time; readers keep working (WAL)
         if wait {
             retry_busy(|| self.db.execute_batch("BEGIN IMMEDIATE"))?;
@@ -925,14 +929,23 @@ impl Index {
         let cur_ver = self.meta("data_version").unwrap_or_else(|| "0".into());
         let in_sync =
             self.lex.is_some() && self.lex_ver.as_deref() == Some(cur_ver.as_str()) && self.lex.as_ref().map(|l| l.names == self.segments()).unwrap_or(false);
-        let changed = match self.update_inner(force, only, &mut st, &mut removed, &mut seg_names) {
-            Ok(c) => c,
-            Err(e) => {
+        let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.update_inner(force, only, &mut st, &mut removed, &mut seg_names)));
+        let changed = match run {
+            Ok(Ok(c)) => c,
+            failed => {
                 let _ = self.db.execute_batch("ROLLBACK");
                 for name in &seg_names {
                     let _ = std::fs::remove_dir_all(self.seg_dir.join(name));
                 }
-                return Err(e);
+                match failed {
+                    Ok(r) => return r.map(|_| st),
+                    // the database is as it was; what is held in memory may describe half an update
+                    Err(panic) => {
+                        self.lex = None;
+                        self.lex_ver = None;
+                        std::panic::resume_unwind(panic)
+                    }
+                }
             }
         };
         retry_busy(|| self.db.execute_batch("COMMIT"))?;
