@@ -49,3 +49,5 @@ def test_ident_tokens_cache_is_consistent():
 def test_is_test_path():
     assert is_test_path("pkg/tests/test_a.py") and is_test_path("a/b_test.go") and is_test_path("conftest.py")
     assert not is_test_path("pkg/mod.py") and not is_test_path("src/latest.py")
+    assert is_test_path("src/main/java/FooTest.java") and is_test_path("a/FooTests.java") and is_test_path("app/tests.py")
+    assert not is_test_path("src/main/java/Contest.java") and not is_test_path("a/Latest.java")

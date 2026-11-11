@@ -208,9 +208,11 @@ _TEST_PARTS = {"test", "tests", "testing", "__tests__", "spec", "specs", "e2e", 
 def is_test_path(path: str) -> bool:
     parts = path.lower().replace("\\", "/").split("/")
     base = parts[-1]
+    # JUnit names a test class `FooTest` or `FooTests`: with the capital, `Contest.java` is none
+    junit = path.endswith(("Test.java", "Tests.java"))
     return (any(p in _TEST_PARTS for p in parts[:-1]) or base.startswith("test_")
             or base.endswith(("_test.py", "_test.go", ".test.js", ".test.ts", ".test.tsx",
-                              ".spec.js", ".spec.ts", ".spec.tsx", "test.java")) or base == "conftest.py")
+                              ".spec.js", ".spec.ts", ".spec.tsx")) or junit or base in ("conftest.py", "tests.py"))
 
 
 def tokenize_words(text: str, cap: int | None = None) -> list[str]:

@@ -298,10 +298,13 @@ pub fn is_test_path(path: &str) -> bool {
     let low = path.to_lowercase().replace('\\', "/");
     let parts: Vec<&str> = low.split('/').collect();
     let base = parts[parts.len() - 1];
+    // JUnit names a test class `FooTest` or `FooTests`: with the capital, `Contest.java` is none
+    let junit = ["Test.java", "Tests.java"].iter().any(|s| path.ends_with(s));
     parts[..parts.len() - 1].iter().any(|p| TEST_PARTS.contains(p))
         || base.starts_with("test_")
-        || ["_test.py", "_test.go", ".test.js", ".test.ts", ".test.tsx", ".spec.js", ".spec.ts", ".spec.tsx", "test.java"].iter().any(|s| base.ends_with(s))
-        || base == "conftest.py"
+        || ["_test.py", "_test.go", ".test.js", ".test.ts", ".test.tsx", ".spec.js", ".spec.ts", ".spec.tsx"].iter().any(|s| base.ends_with(s))
+        || junit
+        || matches!(base, "conftest.py" | "tests.py")
 }
 
 // --- query analysis -------------------------------------------------------------------------
@@ -416,6 +419,16 @@ pub fn query_words(q: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_test_file_is_told_by_its_directory_or_its_name() {
+        for p in ["pkg/tests/a.py", "a/b_test.go", "conftest.py", "src/main/java/FooTest.java", "a/FooTests.java", "app/tests.py", "web/app.spec.ts"] {
+            assert!(is_test_path(p), "{p}");
+        }
+        for p in ["pkg/mod.py", "src/latest.py", "src/main/java/Contest.java", "a/Latest.java", "a/attest.java"] {
+            assert!(!is_test_path(p), "{p}");
+        }
+    }
 
     #[test]
     fn camel_split_matches_python_regex() {
