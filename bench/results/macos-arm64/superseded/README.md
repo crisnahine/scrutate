@@ -15,6 +15,7 @@ measured with an older binary or an older version of the harness, as its own `en
 | `leaderboard-warm-fb3b.json` (and `-cold`, `indexed-`, `compare-`, `chain-`) | 37 | 3 | `fb3bd578c6d9...` |
 | `leaderboard-warm-b57d.json` (and `-cold`, `indexed-`, `compare-`, `chain-`) | 37 | 3 | `b57d2a666dba...` |
 | `leaderboard-warm-587a.json` (and `chain-`; `leaderboard-cold-587a-partial.json`: 2 rows) | 37 | 3 | `587a75a9b4dd...` |
+| `leaderboard-warm-9aa0.json` (and `-cold`, `indexed-`, `compare-`, `chain-`) | 37 | 3 | `9aa0a14ec4b0...` |
 
 `leaderboard-warm-prevbin` stopped at `patho/backtracking trap`, where the reference (Python's
 backtracking regex engine) never finished. Its binary predates searching a large file on all
@@ -47,3 +48,9 @@ held for a millisecond and a large one-line file was read on several threads. It
 `patho/backtracking trap`: 17.0 ms against ugrep's 17.0 ms, where the b57d run had 15.8 against
 16.2. `leaderboard-cold-587a-partial.json` holds the two rows measured before that chain was
 stopped to work on the tie.
+
+`*-9aa0` is a complete run (37 of 37 warm, 5 of 5 cold and every indexed metric PASS) of the build
+before the MCP server served revision 2026-07-28 and `refs` followed the types of variables and
+TypeScript path aliases. Engine A was the same code. Six of its warm rows were measured twice
+because other work on the laptop disturbed them; `llvm/case-insensitive` was measured the second
+time with the LLVM tree no longer in the page cache.

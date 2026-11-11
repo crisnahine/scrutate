@@ -7,6 +7,7 @@ Earlier runs, kept as raw data. No document is generated from them.
 | `leaderboard-warm-6602.json` (and `-cold`, `indexed-`, `bench-`) | `6602bbe58900...` | 8 |
 | `leaderboard-warm-558e.json` (and `-cold`, `indexed-`, `bench-`) | `558e6e6b109f...` | 5 |
 | `leaderboard-warm-e49f.json` (and `-cold`, `indexed-`, `bench-`) | `e49f3fbf80a2...` | 5 |
+| `leaderboard-warm-261e.json` (and `-cold`, `indexed-`, `bench-`) | `261ed1a2a461...` | 5 |
 
 `*-6602` is the run of the first 0.1.0 build, in a virtual machine with 8 CPUs on a host with 5
 performance cores: three virtual CPUs ran on efficiency cores at any time, and the medians of every
@@ -23,3 +24,7 @@ read-files ceiling used five threads that shared a directory, which is slower th
 before output was held for a millisecond and a large one-line file was read on several threads.
 Its thinnest row was `linux/very many matches`, 0.950 of ripgrep's time with an interval up to
 0.995.
+
+`*-261e` is a complete run (14 of 14 warm, 4 of 4 cold and every indexed metric PASS) of the build
+before the MCP server served revision 2026-07-28 and `refs` followed the types of variables and
+TypeScript path aliases. Engine A was the same code.

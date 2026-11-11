@@ -23,7 +23,8 @@ HISTORY = ["leaderboard-warm-prelim", "leaderboard-warm-blocks", "leaderboard-wa
            "indexed-fb5c", "leaderboard-warm-fb3b", "leaderboard-cold-fb3b", "indexed-fb3b", "leaderboard-warm-6602",
            "leaderboard-cold-6602", "indexed-6602", "leaderboard-warm-b57d", "leaderboard-cold-b57d", "indexed-b57d",
            "leaderboard-warm-558e", "leaderboard-cold-558e", "indexed-558e", "leaderboard-warm-e49f", "leaderboard-cold-e49f",
-           "indexed-e49f", "leaderboard-warm-587a", "leaderboard-cold-587a-partial"]
+           "indexed-e49f", "leaderboard-warm-587a", "leaderboard-cold-587a-partial", "leaderboard-warm-261e", "leaderboard-cold-261e",
+           "indexed-261e", "leaderboard-warm-9aa0", "leaderboard-cold-9aa0", "indexed-9aa0"]
 STATUSES = ["PASS", "PARTIAL", "BLOCKED", "FAIL"]
 MARK = {"PASS": "P", "PARTIAL": "~", "BLOCKED": "B", "FAIL": "F"}
 
