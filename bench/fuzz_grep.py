@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Random differential test: `scrutate grep` against ripgrep on small random trees.
 
-usage: fuzz_grep.py [--bin SCRUTATE] [--seconds 60] [--seed 1]
+usage: fuzz_grep.py [--bin SCRUTATE] [--seconds 60] [--seed 1] [--ordered]
 
 Each tree has a `.git` directory, CRLF and BOM files, NUL bytes, invalid UTF-8, hidden files,
 `.gitignore`, `.ignore` and `.rgignore` files and a symlink. Six random flag sets run on it with
@@ -15,7 +15,9 @@ ARGS.txt, under the temporary directory printed at the end. One difference is ri
 counted apart: with `-v` or `^$` it prints one line before a NUL byte and stops, so differences
 in the lines of the files that got a NUL byte are excused. Runs whose arguments ripgrep rejects
 (exit 2 with a message) are not compared; on any other exit 2 the output is. Exit status 1 when
-anything else differs, or when no compared run had any output.
+anything else differs, or when no compared run had any output. With --ordered, a run draws
+`--sort path` (scrutate's `--sort`) for both tools four times in ten, and then their lines are
+compared in the order printed.
 """
 import argparse, os, random, shutil, subprocess, sys, tempfile, time
 from collections import Counter
@@ -24,8 +26,9 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--bin", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "target", "release", "scrutate"))
 ap.add_argument("--seconds", type=float, default=60)
 ap.add_argument("--seed", type=int, default=1)
+ap.add_argument("--ordered", action="store_true")
 a_ = ap.parse_args()
-BIN, SECONDS, SEED = os.path.abspath(a_.bin), a_.seconds, a_.seed
+BIN, SECONDS, SEED, ORDERED = os.path.abspath(a_.bin), a_.seconds, a_.seed, a_.ordered
 HERE = tempfile.mkdtemp(prefix="scrutate-fuzz-")
 WORK = os.path.join(HERE, f"work{SEED}")
 KEEP = os.path.join(HERE, f"diffs{SEED}")
@@ -139,12 +142,15 @@ def paths(a):
 
 def run(tool, a):
     cmd = (["rg", "-n", "--no-heading", "--no-messages"] if tool == "rg" else [BIN, "grep"]) + a
+    if tool == "rg" and "--sort" in a:
+        cmd.insert(cmd.index("--sort") + 1, "path")
     try:
         p = subprocess.run(cmd, cwd=WORK, capture_output=True, timeout=20)
     except subprocess.TimeoutExpired:
         return ["<timeout>"], -9, b""
     out = p.stdout.replace(b"\r", b"").decode("utf-8", "replace").splitlines()
-    return sorted(l[2:] if l.startswith("./") else l for l in out if "WARNING: stopped searching binary file" not in l), p.returncode, p.stderr
+    lines = [l[2:] if l.startswith("./") else l for l in out if "WARNING: stopped searching binary file" not in l]
+    return (lines if "--sort" in a else sorted(lines)), p.returncode, p.stderr
 
 def in_nul_file(l):
     return any(l == f or l.startswith((f + ":", f + "-")) for f in STATE["nul"])
@@ -161,6 +167,8 @@ while time.time() - t0 < SECONDS:
     make()
     for _ in range(6):
         a = paths(args())
+        if ORDERED and rnd.random() < 0.4:
+            a.insert(0, "--sort")
         n += 1
         r, rc, rerr = run("rg", a)
         if rc == 2 and rerr.strip():

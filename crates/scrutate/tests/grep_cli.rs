@@ -800,6 +800,69 @@ fn line_number_flags_are_accepted() {
 }
 
 #[test]
+#[ignore = "needs grep --sort in cli.rs to print in the order the search hands over"]
+fn a_sorted_search_orders_each_root_by_path_with_the_roots_in_command_line_order_as_ripgrep_does() {
+    let d = Dir::new("rootorder");
+    let body = |f: &str| -> &[(u64, &str)] {
+        match f.rsplit('/').next().unwrap() {
+            "a.txt" => &[(1, "end one"), (3, "end two")],
+            "z.txt" => &[(1, "end z")],
+            "deep.txt" => &[(1, "end d")],
+            "b.txt" => &[(1, "end b")],
+            "o.txt" => &[(1, "end o")],
+            _ => &[(1, "end t")],
+        }
+    };
+    for f in ["sub/deep/a.txt", "sub/deep-x/z.txt", "sub/deep.txt", "sub/b.txt", "other/o.txt", "top.txt"] {
+        let text: String =
+            (1..=body(f).last().unwrap().0).map(|n| body(f).iter().find(|l| l.0 == n).map_or("x\n".to_string(), |l| format!("{}\n", l.1))).collect();
+        d.write(f, text.as_bytes());
+    }
+    // ripgrep 15, `rg --sort path -l end ROOTS`; its -c and -n follow the same file order
+    let all = ["sub/b.txt", "sub/deep/a.txt", "sub/deep-x/z.txt", "sub/deep.txt"];
+    let dot = ["./other/o.txt", "./sub/b.txt", "./sub/deep/a.txt", "./sub/deep-x/z.txt", "./sub/deep.txt", "./top.txt"];
+    let cases: Vec<(Vec<&str>, Vec<&str>)> = vec![
+        (vec!["sub", "other"], [&all[..], &["other/o.txt"]].concat()),
+        (vec!["other", "sub"], [&["other/o.txt"][..], &all].concat()),
+        (vec!["sub/b.txt", "sub/b.txt"], vec!["sub/b.txt", "sub/b.txt"]),
+        (vec!["sub", "sub"], [all, all].concat()),
+        (vec!["sub/deep", "sub"], [&["sub/deep/a.txt"][..], &all].concat()),
+        (vec![".", "sub"], [&dot[..], &all].concat()),
+        (vec!["top.txt", "sub", "other/o.txt"], [&["top.txt"][..], &all, &["other/o.txt"]].concat()),
+        (vec![], vec!["other/o.txt", "sub/b.txt", "sub/deep/a.txt", "sub/deep-x/z.txt", "sub/deep.txt", "top.txt"]),
+    ];
+    for (roots, files) in &cases {
+        let l: String = files.iter().map(|f| format!("{f}\n")).collect();
+        let c: String = files.iter().map(|f| format!("{f}:{}\n", body(f).len())).collect();
+        let n: Vec<String> = files.iter().flat_map(|f| body(f).iter().map(move |(k, t)| format!("{f}:{k}:{t}\n"))).collect();
+        for extra in [&[][..], &["-j1"], &["-j8"]] {
+            let run = |args: &[&str]| d.run(&[&["grep", "--sort"][..], extra, args, &["end"], roots].concat()).1;
+            assert_eq!(run(&["-l"]), l, "{roots:?} {extra:?}");
+            assert_eq!(run(&["-c"]), c, "{roots:?} {extra:?}");
+            assert_eq!(run(&["-n"]), n.concat(), "{roots:?} {extra:?}");
+            let json: Vec<String> = run(&["--json"])
+                .lines()
+                .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
+                .filter(|r| r["type"] == "match")
+                .map(|r| format!("{}:{}:{}\n", r["path"].as_str().unwrap(), r["line"], r["text"].as_str().unwrap().trim_end()))
+                .collect();
+            assert_eq!(json, n, "{roots:?} {extra:?}");
+            for cap in [1, 3, 5] {
+                assert_eq!(run(&["-n", "--max-results", &cap.to_string()]), n.iter().take(cap).cloned().collect::<String>(), "{roots:?} {extra:?} {cap}");
+            }
+        }
+    }
+    // ripgrep 15: `--` before each search of a file, the same file too
+    let a = "sub/deep/a.txt:1:end one\nsub/deep/a.txt-2-x\nsub/deep/a.txt:3:end two\n";
+    assert_eq!(d.run(&["grep", "--sort", "-n", "-A1", "end", "sub/deep", "sub/deep/a.txt", "sub/b.txt"]).1, format!("{a}--\n{a}--\nsub/b.txt:1:end b\n"));
+    // the text index gives the order of the walk
+    assert_eq!(d.run(&["index", "--text"]).0, 0);
+    let walk = d.run(&["grep", "--sort", "-n", "end"]).1;
+    assert_eq!(d.run(&["grep", "--sort", "--index", "-n", "end"]).1, walk);
+    assert_eq!(d.run(&["grep", "--sort", "--index", "--max-results", "3", "-n", "end"]).1, walk.lines().take(3).map(|l| format!("{l}\n")).collect::<String>());
+}
+
+#[test]
 fn a_fuzzy_regex_counts_an_edit_as_one_character_and_folds_case_as_without_it() {
     let d = Dir::new("fuzzyreuni");
     d.write("a.txt", "ÉTÉ\nnaïve\nKelvin \u{212A}\nnaive\n".as_bytes());

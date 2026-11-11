@@ -66,10 +66,12 @@ pub struct Options {
     pub max_depth: Option<usize>,
     pub max_count: Option<u64>,
     pub max_results: Option<u64>,
-    /// with `max_results`: the hits are exactly the first `max_results` matches in path order, then
-    /// line order, the same on every run, and they arrive in that order (files are listed and
-    /// sorted first, and searched in that order until enough matches are in). Off, a capped search
-    /// keeps whichever matches it finds first. Needs a hit sink: `search_plain` refuses it
+    /// the hits arrive in the order of `rg --sort path`: the roots as given, each one's files by
+    /// their path compared part by part (`a/b` before `a-b`), then by line; with `max_results`
+    /// they are exactly the first `max_results` matches in that order, the same on every run
+    /// (files are listed and sorted first, and searched in that order until enough matches are
+    /// in). Off, a capped search keeps whichever matches it finds first. Needs a hit sink:
+    /// `search_plain` refuses it
     pub first_in_path_order: bool,
     pub before: usize,
     pub after: usize,
@@ -2379,6 +2381,7 @@ fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Opti
     let counters = Arc::new(Counters::default());
     let rest: Vec<PathBuf>;
     let stdin_too = o.paths_as_given && roots.iter().any(|r| r.as_os_str() == "-");
+    let given = roots;
     let roots = if stdin_too {
         rest = roots.iter().filter(|r| r.as_os_str() != "-").cloned().collect();
         &rest[..]
@@ -2393,22 +2396,22 @@ fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Opti
         with_pseudo = Options { read_to_end_under: pseudo, ..o.clone() };
         &with_pseudo
     };
-    if let Some(n) = o.max_results.filter(|_| o.first_in_path_order) {
+    if o.first_in_path_order {
         if plain.is_some() {
             bail!("first_in_path_order needs a hit sink, not plain output");
         }
+        // as `rg --sort path`: the roots in the order given, each walked in path order
         let mut files = Vec::new();
-        if stdin_too {
-            files.push((PathBuf::from("-"), Arc::from(STDIN_LABEL), true));
-        }
-        if roots.len() > 1 && o.globs.iter().any(|g| g.contains('/')) {
-            for root in roots.chunks(1) {
-                files.extend(list_files(root, roots, o, &counters)?);
+        for root in given {
+            if stdin_too && root.as_os_str() == "-" {
+                files.push((PathBuf::from("-"), Arc::from(STDIN_LABEL), true));
+                continue;
             }
-        } else if !roots.is_empty() {
-            files.extend(list_files(roots, roots, o, &counters)?);
+            let at = files.len();
+            files.extend(list_files(std::slice::from_ref(root), roots, o, &counters)?);
+            files[at..].sort_by(|a, b| Path::new(&*a.1).cmp(Path::new(&*b.1)));
         }
-        return Ok(first_in_path_order(files, n, &matcher, o, &counters, &cancel, on_hit, t0));
+        return Ok(first_in_path_order(files, o.max_results, &matcher, o, &counters, &cancel, on_hit, t0));
     }
     if stdin_too {
         search_stdin(o, &matcher, &counters, &cancel, plain.as_deref(), &mut on_hit);
@@ -2547,14 +2550,15 @@ fn run_files(root: &Path, files: Vec<String>, o: &Options, cancel: Arc<AtomicBoo
     let t0 = Instant::now();
     let matcher = build_matcher(o)?;
     let ov = overrides(root, o)?;
-    let files: Vec<(PathBuf, Arc<str>, bool)> =
+    let mut files: Vec<(PathBuf, Arc<str>, bool)> =
         files.into_iter().filter(|rel| !filtered_out(&ov, rel)).map(|rel| (root.join(&rel), Arc::from(rel), false)).collect();
     let counters = Counters::default();
-    if let Some(n) = o.max_results.filter(|_| o.first_in_path_order) {
+    if o.first_in_path_order {
         if plain.is_some() {
             bail!("first_in_path_order needs a hit sink, not plain output");
         }
-        return Ok(first_in_path_order(files, n, &matcher, o, &counters, &cancel, on_hit, t0));
+        files.sort_by(|a, b| Path::new(&*a.1).cmp(Path::new(&*b.1)));
+        return Ok(first_in_path_order(files, o.max_results, &matcher, o, &counters, &cancel, on_hit, t0));
     }
     let threads = default_threads(o).min(files.len().max(1));
     search_list(&files, threads, None, &matcher, o, &counters, &cancel, plain.as_deref(), on_hit);
@@ -2581,12 +2585,13 @@ fn list_files(roots: &[PathBuf], labels: &[PathBuf], o: &Options, c: &Counters) 
     Ok(found.into_inner().unwrap_or_else(|p| p.into_inner()))
 }
 
-/// `Options::first_in_path_order`: search `files` in path order until `n` matches are in, let the
-/// files started meanwhile finish, then hand over the first `n` matches in path and line order.
+/// `Options::first_in_path_order`: search `files` in their order until `n` matches are in, let the
+/// files started meanwhile finish, then hand over the first `n` matches (all without `n`) in file
+/// and line order.
 #[allow(clippy::too_many_arguments)]
 fn first_in_path_order(
-    mut files: Vec<(PathBuf, Arc<str>, bool)>,
-    n: u64,
+    files: Vec<(PathBuf, Arc<str>, bool)>,
+    n: Option<u64>,
     matcher: &AnyMatcher,
     o: &Options,
     c: &Counters,
@@ -2594,15 +2599,42 @@ fn first_in_path_order(
     mut on_hit: impl FnMut(Hit),
     t0: Instant,
 ) -> Stats {
-    files.sort_by(|a, b| a.1.cmp(&b.1));
     // no file holds more than `n` of the first `n`; the cut below stops the rest
-    let o = Options { max_results: None, max_count: Some(o.max_count.map_or(n, |m| m.min(n))), ..o.clone() };
+    let o = Options { max_results: None, max_count: n.map(|n| o.max_count.map_or(n, |m| m.min(n))).or(o.max_count), ..o.clone() };
     let mut hits = Vec::new();
     let threads = default_threads(&o).min(files.len().max(1));
-    search_list(&files, threads, Some(n), matcher, &o, c, cancel, None, |h| hits.push(h));
-    hits.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
-    let (mut left, mut files_matched, mut last) = (n, 0u64, None::<Arc<str>>);
-    for mut h in hits {
+    search_list(&files, threads, n, matcher, &o, c, cancel, None, |h| hits.push(h));
+    // a file that several roots reach is listed once per root under one label: the k-th copy of a
+    // hit belongs to its k-th listing
+    let mut listed: std::collections::HashMap<&str, Vec<usize>> = Default::default();
+    for (i, f) in files.iter().enumerate() {
+        listed.entry(&*f.1).or_default().push(i);
+    }
+    let listing = |label: &str| {
+        let mut s = label;
+        loop {
+            if let Some(v) = listed.get(s) {
+                return Some(v);
+            }
+            // an archive member, `archive.zip{member}`
+            s = &s[..s.rfind('{')?];
+        }
+    };
+    let at: Vec<usize> = {
+        let mut copies: std::collections::HashMap<(&str, u64, u64), usize> = Default::default();
+        hits.iter()
+            .map(|h| {
+                let copy = copies.entry((&h.path, h.line, h.column)).or_insert(0);
+                *copy += 1;
+                listing(&h.path).map_or(usize::MAX, |v| v[(*copy - 1).min(v.len() - 1)])
+            })
+            .collect()
+    };
+    let mut keyed: Vec<(usize, Hit)> = at.into_iter().zip(hits).collect();
+    keyed.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.path.cmp(&b.1.path)).then(a.1.line.cmp(&b.1.line)));
+    let cap = n.unwrap_or(u64::MAX);
+    let (mut left, mut files_matched, mut last) = (cap, 0u64, None::<Arc<str>>);
+    for (_, mut h) in keyed {
         if left == 0 {
             break;
         }
@@ -2620,7 +2652,10 @@ fn first_in_path_order(
         on_hit(h);
     }
     let total = c.matches.load(Ordering::Relaxed);
-    Stats { matches: n - left, files_matched, cancelled: cancel.load(Ordering::Relaxed) || total >= n, ..stats(c, t0, cancel) }
+    match n {
+        Some(n) => Stats { matches: n - left, files_matched, cancelled: cancel.load(Ordering::Relaxed) || total >= n, ..stats(c, t0, cancel) },
+        None => stats(c, t0, cancel),
+    }
 }
 
 /// Search a known list of files (path, path as reported, named) on `threads` threads, handed out
