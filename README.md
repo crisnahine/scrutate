@@ -43,8 +43,9 @@ exactly what is and is not verified.
 - **Platforms**: macOS arm64, Linux aarch64 and Linux x86_64 are built and tested (Linux in clean
   containers with no Python on the image, including static musl binaries and wheels for CPython
   3.10 to 3.13 and free-threaded 3.14). macOS x86_64 and Windows x86_64 are cross-built here.
-  On GitHub's runners (CI run 42997088157, private repository) the Rust tests passed on macOS
-  x86_64 and failed on Windows on one test, fixed since and not yet run again (docs/INSTALL.md).
+  On GitHub's runners (CI run 43005147220, private repository) the Rust tests passed on macOS
+  x86_64 and failed on Windows, 8 tests on x64 and 9 on arm64, fixed since; the next run has not
+  finished (docs/INSTALL.md).
 - **Tests**: 122 Rust tests (unit, 60-language snapshot, robustness, property, end-to-end CLI and
   MCP, incremental parsing), 82 Python reference tests, the bindings tests, Rust/Python parity, fuzz
   regressions and a reproducible-build check, all passing (docs/TEST_RESULTS.md). Engine A agrees

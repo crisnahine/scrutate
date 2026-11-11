@@ -16,7 +16,7 @@ docs/TRACEABILITY.md.
 | One very long line (R-4.6) | read into one exactly sized buffer, each thread filling its own part (100 MB: 12.6 ms on one thread, 4.0 ms on five), and its UTF-8 checked a piece at a time as it is written: 60.5 ms to 32 ms on a 100 MB line (ugrep 38.8 ms) |
 | Incremental re-search for editors (R-4.1) | `grep --index --update` (refresh the text index, then search only candidate files); `watch` and `serve --watch` keep the index fresh |
 | Structural search without re-parsing (R-2B.2) | `tsquery` keeps captures per file by content hash: the Linux tree took about 25 s, the repeated query 1.6 s |
-| Cross-file reference resolution with scope awareness (R-2B.4) | `refs` resolves occurrences through scopes, imports and qualified names for Python, JavaScript/TypeScript, Rust and Go (60 of 60 hand-checked resolutions right) |
+| Cross-file reference resolution with scope awareness (R-2B.4) | `refs` resolves occurrences through scopes, imports and qualified names for Python, JavaScript/TypeScript, Rust and Go (60 of 60 hand-checked resolutions right), and Java (`tests/resolve_java.rs`) |
 | Language server (R-6.15) | `scrutate lsp`; the VS Code extension starts it; JetBrains through LSP4IJ |
 | Sample for `ocaml_interface` (R-3.4) | all 73 grammars verified by samples (docs/LANGUAGES.md) |
 | int8 semantic vectors (R-4.3) | schema 13: index about a fifth smaller, ranking quality within 0.001 MRR (docs/QUALITY.md) |
@@ -55,10 +55,12 @@ here and what ran on GitHub. The order from there: one green run of `ci.yml`, th
 docs/RELEASING.md, public, tag `v0.1.0`.
 
 - A green run of the CI matrix, then the release workflow; flip the Windows and Intel macOS rows
-  to PASS only with a recorded passing run (R-6.1, R-9.10). The first run (42997088157) passed
-  8 of its 11 jobs that ran: the Rust tests on Intel macOS, macOS arm64, Linux x86_64 and Linux
-  arm64 passed, the Windows x64 and arm64 jobs failed on one test, and the extra-langs job on one
-  timing test. Both are fixed in `8511cfb` and not yet run again.
+  to PASS only with a recorded passing run (R-6.1, R-9.10). The last finished run
+  (43005147220, on `bd9ec0b`) passed 9 of the 11 jobs that ran: the Rust tests on Intel macOS,
+  macOS arm64, Linux x86_64 and Linux arm64, the musl build, the extra-langs job, the fuzz
+  regressions, the Python job and the advisories. The Windows x64 job failed 8 tests and the
+  Windows arm64 job 9 (see the known limits below). The next run (43013926055, on `9384c18`) has
+  not finished.
 - Signed releases with Sigstore attestations (`release.yml` has the steps; they need the
   repository's OIDC identity) and the free-threaded wheels built in CI (built and tested locally).
 - Publish the packages: tap, bucket and winget pull requests with the release checksums
@@ -108,8 +110,8 @@ docs/RELEASING.md, public, tag `v0.1.0`.
   on 64 threads against 16 MB warm (`-j` bounds both).
 - Windows: nothing is measured. Its thread count (the cores, at most 12), its cold thread count
   (twice the cores, at most 24) and its disk-read time (75 µs) are the macOS values.
-- References: resolution for more languages (Java, C#, C/C++ includes); today `refs` resolves
-  Python, JavaScript/TypeScript, Rust and Go.
+- References: resolution for more languages (C#, C/C++ includes); today `refs` resolves
+  Python, JavaScript/TypeScript, Rust, Go and Java.
 - `cargo install`: int8 weights for the semantic model, with the quality check QUALITY.md uses.
 - Benchmark leadership on dedicated idle hardware (R-14.11): every number here comes from a
   developer laptop shared with other work, and Linux x86_64 has no benchmark run at all. In the
@@ -125,12 +127,24 @@ docs/RELEASING.md, public, tag `v0.1.0`.
   Unix compares the status-change time too. The standard library's
   `MetadataExt::change_time` is still unstable in Rust 1.99.1 (feature `windows_change_time`),
   and reading the time another way needs an open handle per file on every scan.
-- A method call on a value whose type the resolver cannot infer (the result of a function it
-  does not know, or of a chain such as `file.metadata().ok()`) still matches a definition of
-  that name in the same language family.
-- In `refs`, a name inside the arguments of a Rust macro that is not a call is tied by name to a
-  definition: the field `text` in `vec![H { text: 1 }]` counts as a reference to a function
-  `text`. The same field outside a macro is not.
+- A method call on the result of a call is resolved through the type the callee declares it
+  returns. It stays undecided when the callee declares no type, returns a type parameter or an
+  outside type that holds a repository type, or is itself a method of an outside type
+  (`file.metadata().ok()`).
+- In `refs`, a plain name inside the arguments of a Rust macro, one the token rules do not read
+  as a field, a field name or a local, is tied by name to a definition: the `text` in
+  `mymac!(text, 3)` counts as a reference to a function `text`, whatever the macro does with it.
+- Java: `deps` and `rdeps` map an import to the file at its dotted path from the repository root
+  (`com.x.a.Sq` to `com/x/a/Sq.java`), so an import into a source root such as `src/main/java`
+  resolves to no file there; `refs`, `callers` and `callees` find packages in any source root.
+- Java: `refs` ties no occurrence to a field, an enum constant or a record accessor. They are
+  listed as unresolved (`field or key`), a `static final` field included, which `symbol` finds as
+  a constant.
+- An Objective-C `@property` is not a symbol, and neither is a C++ `static const` member declared
+  in a class body: in C and C++ only a `const` or `constexpr` with a value at file level, in a
+  namespace or in `extern "C"` is a constant.
+- `tsquery` prints a path relative to the directory it was given: `tsquery python Q src` prints
+  `a.py` for `src/a.py`, a path that the other commands do not read back.
 - Some calls record no call edge, so `callers` and `callees` miss them: a Verilog task call, a
   function in a VHDL package body (it is not a symbol either), Jsonnet, Make `$(call ...)` and
   assembly.
@@ -138,14 +152,9 @@ docs/RELEASING.md, public, tag `v0.1.0`.
   `SCRUTATE_SEMANTIC=none`) and 3.1 to 3.5 s (release build, macOS arm64). Each of the 8,000
   chunks keeps its own text of up to 32 KiB, so the index holds 40 MB of compressed chunk text
   for that file, and the postings of those chunks.
-- `--fuzzy-regex` is byte-oriented: a character outside ASCII counts as several positions and
-  edits, and `-i` folds ASCII letters only. `--fuzzy` counts characters and folds case as `-i`
-  does.
 - A glob with a slash in a `.scrutate.toml` above the current directory is read from the file's
   directory, except when a directory part on the way down holds `[...]`, `{...}` or a
   backslash: such a glob applies as written, from the current directory.
-- `rg --sort path` orders the results of each root in command-line order; `scrutate grep --sort`
-  orders all results by path. With two roots the lines can come in another order.
 - Traditional and simplified Han meet in ranked search through the Unihan simplified forms.
   The Japanese form 関 has its own entry there, the rare 𬮦, so it does not meet Chinese 关 or
   traditional 關.
@@ -155,11 +164,12 @@ docs/RELEASING.md, public, tag `v0.1.0`.
 - The Python reference cuts a `.txt` or Markdown file into windows only, where the engine gives
   a `.txt` file a module chunk and Markdown its sections. Parity holds for the languages the
   reference has a grammar for, and `bench/parity.py` runs on Python and Rust sources.
-- The Windows and Intel macOS builds are not verified on a recorded passing run. In CI run
-  42997088157 (commit `3ba45e5`), the Rust tests passed on macOS arm64, Intel macOS (`macos-15-intel`),
-  Linux x86_64 and Linux arm64. On Windows x64 and Windows arm64 one test failed
-  (`a_file_searched_in_ranges_equals_one_pass`), and the test files after it did not run. The
-  bug it found is fixed in `8511cfb`; the run on Windows has not been repeated.
+- Windows has no recorded passing run. In CI run 43005147220 (commit `bd9ec0b`), the Rust tests
+  passed on macOS arm64, Intel macOS (`macos-15-intel`), Linux x86_64 and Linux arm64, and failed
+  on Windows: 8 tests on x64, 9 on arm64. Five of them need what Windows does not allow (removing
+  a file that is open, a control character in a file name) and now run on Unix only; the others
+  are fixed in the tests, in `.gitattributes` (LF line ends) and in the Windows path form
+  (`5b247c7`, `ba1b122`, `9384c18`). Run 43013926055 (commit `9384c18`) has not finished.
 - No benchmark has run on x86_64 Linux or on dedicated, otherwise idle hardware: every number
   comes from the development Mac, shared with other work, and a 5-CPU Linux VM on it. A run of
   `bench/run_macos.sh` and `bench/competitors/linux_bench.sh` on dedicated machines closes it

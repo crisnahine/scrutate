@@ -155,12 +155,14 @@ A tag `v*` starts `.github/workflows/release.yml` (every platform, signing, atte
 checks the version first, then runs all of `ci.yml` on the tagged commit (`workflow_call`); the
 release job waits for that run and for the binaries and wheels. The package definitions in
 `packaging/` need the release checksums (packaging/README.md). The release workflow has not
-run. The repository is on GitHub, private, with `main` only. The first run of `ci.yml`
-(42997088157, on `3ba45e5`) ran 11 of its 13 jobs and passed 8: the Rust tests on macOS arm64,
-Intel macOS, Linux x86_64 and Linux arm64, the musl build, the fuzz regressions, the Python
-reference, bindings, parity and differential job, and the advisories. The Windows x64 and arm64
-jobs failed on one test and the extra-langs job on one timing test; both are fixed in `8511cfb`
-and not yet run again. The two jobs that wait for the others were skipped. The workflows pass
+run. The repository is on GitHub, private, with `main` only. The last finished run of `ci.yml`
+(43005147220, on `bd9ec0b`) ran 11 of its 13 jobs and passed 9: the Rust tests on macOS arm64,
+Intel macOS, Linux x86_64 and Linux arm64, the musl build, the extra-langs job on the oldest
+supported Rust, the fuzz regressions, the Python reference, bindings, parity and differential
+job, and the advisories. The Windows x64 job failed 8 tests and the arm64 job 9; all are fixed
+or limited to Unix since (docs/ROADMAP.md, known limits). The dependency review runs only on pull
+requests, and the editor job waits for every Rust job, so both were skipped. The next run
+(43013926055, on `9384c18`) has not finished. The workflows pass
 `actionlint` and `zizmor`, and the Linux jobs of `ci.yml` pass in a container
 (`tools/ci_rehearsal.sh`).
 
