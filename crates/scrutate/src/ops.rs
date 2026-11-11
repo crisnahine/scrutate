@@ -20,6 +20,9 @@ use crate::text::{name_key, query_words};
 pub const SCHEMA: u32 = 1;
 
 pub const SEARCH_K: usize = 8;
+/// Alternative phrasings one search fuses at most: each costs a full search, and fusion gains
+/// little past a handful.
+pub const ALT_QUERIES: usize = 10;
 pub const SYMBOL_LIMIT: usize = 20;
 pub const CALLERS_LIMIT: usize = 30;
 pub const CALLEES_LIMIT: usize = 40;
@@ -101,7 +104,10 @@ pub enum Op {
         query: String,
         limit: usize,
     },
-    Reindex,
+    /// `force`: read every file again, also one whose size and modification time are unchanged.
+    Reindex {
+        force: bool,
+    },
 }
 
 impl Op {
@@ -127,7 +133,10 @@ impl Op {
                     Some(v) => v
                         .as_array()
                         .and_then(|a| a.iter().map(|x| x.as_str().map(str::to_string)).collect::<Option<Vec<_>>>())
-                        .ok_or_else(|| wrong("alt_queries", "an array of strings"))?,
+                        .ok_or_else(|| wrong("alt_queries", "an array of strings"))?
+                        .into_iter()
+                        .take(ALT_QUERIES)
+                        .collect(),
                 },
                 k: count("k", SEARCH_K as u64, 100)? as usize,
             },
@@ -171,7 +180,9 @@ impl Op {
                 limit: count("limit", DUPES_LIMIT as u64, 500)? as usize,
             },
             "structural_search" => Op::Tsquery { lang: text("lang")?, query: text("query")?, limit: count("limit", TSQUERY_LIMIT as u64, 5000)? as usize },
-            "reindex" => Op::Reindex,
+            "reindex" => Op::Reindex {
+                force: arg("force").map(|v| v.as_bool().ok_or_else(|| wrong("force", "a boolean (true or false)"))).transpose()?.unwrap_or(false),
+            },
             _ => bail!("unknown tool {}", echo(name)),
         })
     }
@@ -385,7 +396,7 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
         Op::Similar { target, k } => Answer::Similar(crate::intel::similar(s, target, *k)?),
         Op::Dupes { min_tokens, threshold, limit } => Answer::Dupes(crate::intel::dupes(&s.ix, *min_tokens, *threshold, *limit)?),
         Op::Tsquery { lang, query, limit } => Answer::Captures(crate::intel::tsquery(lang, query, std::slice::from_ref(&s.ix.root), *limit, Some(&s.ix.root))?),
-        Op::Reindex => Answer::Reindexed(s.ix.refresh(0.0)?.unwrap_or_default()),
+        Op::Reindex { force } => Answer::Reindexed(s.ix.update(*force)?),
     })
 }
 
@@ -452,7 +463,7 @@ fn same_family(a: &str, b: &str) -> bool {
 /// definitions they resolve to, and whether one stayed unresolved (or none was found).
 fn resolve_in(rv: &mut Resolver, s: &Searcher, path: &str, (start, end): (i64, i64), name: &str) -> (HashSet<i64>, bool) {
     let mut got = HashSet::new();
-    let Ok(src) = std::fs::read_to_string(s.ix.root.join(path)) else { return (got, true) };
+    let Some(src) = crate::resolve::repo_text(&s.ix.root, path) else { return (got, true) };
     let ident = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
     let mut undecided = false;
     let mut seen = false;
@@ -475,7 +486,7 @@ fn resolve_in(rv: &mut Resolver, s: &Searcher, path: &str, (start, end): (i64, i
 
 /// The definitions whose code calls what `name` stands for, and how many of them were kept only
 /// because the resolver could not tell which same-named definition they call.
-fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit>, usize)> {
+pub(crate) fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit>, usize)> {
     let targets = targets(s, name, 500)?;
     let ids: HashSet<i64> = targets.iter().map(|t| t.id).collect();
     let names: std::collections::BTreeSet<&str> = targets.iter().map(|t| t.name.as_str()).collect();
@@ -514,7 +525,7 @@ fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit>, usize)> 
 
 /// What the code of the definitions `name` stands for calls: definitions of the repository in
 /// the same language family, and the names it calls that have none.
-fn callees(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit>, Vec<String>)> {
+pub(crate) fn callees(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit>, Vec<String>)> {
     let kinds = crate::search::CODE_KINDS.iter().map(|k| format!("'{k}'")).collect::<Vec<_>>().join(",");
     let mut named = s.ix.db.prepare(&format!("SELECT {} FROM chunks WHERE name_key=?1 AND kind IN ({kinds}) ORDER BY is_test", crate::index::CHUNK_COLS))?;
     let mut calls = s.ix.db.prepare("SELECT DISTINCT callee FROM refs WHERE chunk_id=?1 ORDER BY callee")?;
@@ -912,7 +923,7 @@ mod tests {
         assert!(matches!(op("similar_code", json!({"target": "t"})), Op::Similar { k: SIMILAR_K, .. }));
         assert!(matches!(op("duplicates", json!({})), Op::Dupes { min_tokens: DUPES_MIN_TOKENS, limit: DUPES_LIMIT, .. }));
         assert!(matches!(op("structural_search", json!({"lang": "rust", "query": "(x)"})), Op::Tsquery { limit: TSQUERY_LIMIT, .. }));
-        assert!(matches!(op("reindex", json!({})), Op::Reindex));
+        assert!(matches!(op("reindex", json!({})), Op::Reindex { force: false }));
     }
 
     #[test]

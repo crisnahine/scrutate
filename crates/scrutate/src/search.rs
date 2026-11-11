@@ -206,6 +206,8 @@ pub struct Searcher {
     pub ranker: Option<Arc<TreeEnsemble>>,
     ver: Option<String>,
     callers_cache: HashMap<String, i64>,
+    /// set when the call being answered was cancelled: `search_many` stops between queries
+    pub cancel: Arc<std::sync::atomic::AtomicBool>,
 }
 
 pub struct Candidates {
@@ -220,7 +222,7 @@ pub struct Candidates {
 impl Searcher {
     pub fn new(ix: Index, ranker: Option<Arc<TreeEnsemble>>) -> Searcher {
         let ranker = ranker.filter(|r| r.feature_names == FEATURES);
-        Searcher { ix, ranker, ver: None, callers_cache: HashMap::new() }
+        Searcher { ix, ranker, ver: None, callers_cache: HashMap::new(), cancel: Arc::default() }
     }
 
     fn sync(&mut self) -> Result<()> {
@@ -525,6 +527,9 @@ impl Searcher {
         let mut meta: HashMap<i64, Hit> = HashMap::new();
         let mut first_seen: Vec<i64> = Vec::new();
         for q in queries {
+            if self.cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                anyhow::bail!("cancelled");
+            }
             for (r, h) in self.search(q, 30, false)?.into_iter().enumerate() {
                 *fused.entry(h.id).or_insert(0.0) += 1.0 / (60.0 + (r + 1) as f64);
                 meta.entry(h.id).or_insert_with(|| {
@@ -553,54 +558,25 @@ impl Searcher {
     // ----------------------------------------------------------------- navigation
     pub fn find_symbol(&self, name: &str, limit: usize) -> Result<Vec<Hit>> {
         let key = name_key(name.rsplit('.').next().unwrap_or(name));
+        // An empty ?3 means no qualifier; the qualifier filter must run before LIMIT.
+        let qual = if name.contains('.') { name_key(name) } else { String::new() };
         let mut st = self.ix.db.prepare(&format!(
-            "SELECT {CHUNK_COLS} FROM chunks WHERE name_key=?1 AND kind!='window' ORDER BY is_test, (kind IN ('class','function','method')) DESC LIMIT ?2"
+            "SELECT {CHUNK_COLS} FROM chunks WHERE name_key=?1 AND kind!='window' \
+             AND (?3 = '' OR qual_key = ?3 OR substr(qual_key, -(length(?3) + 1)) = '.' || ?3) \
+             ORDER BY is_test, (kind IN ('class','function','method')) DESC LIMIT ?2"
         ))?;
-        let mut rows: Vec<ChunkRow> = st.query_map(rusqlite::params![key, (limit * 3) as i64], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
-        if name.contains('.') {
-            let suffix = name_key(name);
-            rows.retain(|r| r.qual_key == suffix || r.qual_key.ends_with(&format!(".{suffix}")));
-        }
-        Ok(rows.iter().take(limit).map(|r| Hit::from_row(r, true)).collect())
-    }
-
-    pub fn callers(&self, name: &str, limit: usize) -> Result<Vec<Hit>> {
-        let last = name.rsplit('.').next().unwrap_or(name);
-        let cols = CHUNK_COLS.split(',').map(|c| format!("c.{c}")).collect::<Vec<_>>().join(",");
-        let mut st = self
-            .ix
-            .db
-            .prepare(&format!("SELECT DISTINCT {cols} FROM refs r JOIN chunks c ON c.id=r.chunk_id WHERE r.callee=?1 ORDER BY c.is_test LIMIT ?2"))?;
-        let rows: Vec<ChunkRow> = st.query_map(rusqlite::params![last, limit as i64], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
+        let rows: Vec<ChunkRow> = st.query_map(rusqlite::params![key, limit as i64, qual], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
         Ok(rows.iter().map(|r| Hit::from_row(r, true)).collect())
     }
 
-    /// -> (resolved definitions, unresolved external names)
+    /// The definitions that call what `name` stands for, as the `callers` tool answers.
+    pub fn callers(&self, name: &str, limit: usize) -> Result<Vec<Hit>> {
+        Ok(crate::ops::callers(self, name, limit)?.0)
+    }
+
+    /// -> (resolved definitions, unresolved external names), as the `callees` tool answers.
     pub fn callees(&self, name: &str, limit: usize) -> Result<(Vec<Hit>, Vec<String>)> {
-        let mut names: HashSet<String> = HashSet::new();
-        for d in self.find_symbol(name, 5)? {
-            let mut st = self.ix.db.prepare_cached("SELECT callee FROM refs WHERE chunk_id=?1")?;
-            for r in st.query_map([d.id], |r| r.get::<_, String>(0))? {
-                names.insert(r?);
-            }
-        }
-        let mut sorted: Vec<String> = names.into_iter().collect();
-        sorted.sort();
-        let kinds = CODE_KINDS.iter().map(|k| format!("'{k}'")).collect::<Vec<_>>().join(",");
-        let mut resolved = Vec::new();
-        let mut external = Vec::new();
-        for n in sorted {
-            let mut st =
-                self.ix.db.prepare_cached(&format!("SELECT {CHUNK_COLS} FROM chunks WHERE name_key=?1 AND kind IN ({kinds}) ORDER BY is_test LIMIT 3"))?;
-            let rows: Vec<ChunkRow> = st.query_map([name_key(&n)], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
-            if rows.is_empty() {
-                external.push(n);
-            } else {
-                resolved.extend(rows.iter().map(|r| Hit::from_row(r, true)));
-            }
-        }
-        resolved.truncate(limit);
-        Ok((resolved, external))
+        crate::ops::callees(self, name, limit)
     }
 
     pub fn read(&self, path: &str, start: i64, end: Option<i64>, max_lines: i64) -> String {
@@ -617,6 +593,9 @@ impl Searcher {
         let canon = std::fs::canonicalize(self.ix.root.join(path)).map_err(|_| anyhow::anyhow!("cannot read {shown}"))?;
         if !canon.starts_with(&self.ix.root) {
             anyhow::bail!("path outside repo");
+        }
+        if !canon.is_file() {
+            anyhow::bail!("{shown} is not a regular file");
         }
         let bytes = std::fs::read(&canon).map_err(|_| anyhow::anyhow!("cannot read {shown}"))?;
         let text = String::from_utf8_lossy(&bytes);

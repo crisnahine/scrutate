@@ -85,14 +85,37 @@ pub struct Resolver<'a> {
     parsers: HashMap<&'static str, Parser>,
     crates: Option<HashMap<String, String>>,
     go_dirs: Option<HashMap<String, Vec<String>>>,
+    go_imports: Option<HashMap<String, String>>,
     /// by directory: the config found there, or that there is none
     ts: HashMap<String, Option<Rc<TsPaths>>>,
     /// current depth of `member` / `lookup_top` calls: import and base-class cycles stop here
     nest: usize,
+    /// (files, name) of the `lookup_top` calls made for the current `resolve_at`
+    looked_up: HashSet<(String, String)>,
 }
 
 fn text<'s>(n: Node, src: &'s str) -> &'s str {
     n.utf8_text(src.as_bytes()).unwrap_or("")
+}
+
+/// The text of `rel` under `root` when it is a regular file inside `root` of at most
+/// `MAX_FILE_BYTES`: a FIFO would block the read, and a symlink could lead out of the repository.
+pub fn repo_text(root: &std::path::Path, rel: &str) -> Option<String> {
+    let p = root.join(rel);
+    let meta = std::fs::symlink_metadata(&p).ok()?;
+    if !meta.is_file() || meta.len() > crate::index::MAX_FILE_BYTES || !std::fs::canonicalize(&p).ok()?.starts_with(root) {
+        return None;
+    }
+    crate::index::decode_source(&std::fs::read(&p).ok()?).map(|t| t.into_owned())
+}
+
+/// The segments of a module path below the repository's own package, when the checkout is that
+/// package (`networkx.utils` inside `networkx/` -> `utils`). Any other leading name is a package
+/// from outside, even when the rest matches a local file.
+pub fn below_own_package<'s>(root: &std::path::Path, segs: &'s [&'s str]) -> Option<&'s [&'s str]> {
+    let own = root.file_name()?.to_str()?;
+    let first = *segs.first()?;
+    (segs.len() > 1 && (first == own || first == own.replace('-', "_"))).then(|| &segs[1..])
 }
 
 fn dir_of(p: &str) -> &str {
@@ -526,7 +549,18 @@ impl<'a> Resolver<'a> {
     pub fn new(ix: &'a Index) -> Result<Resolver<'a>> {
         let mut st = ix.db.prepare_cached("SELECT path FROM files WHERE hash != 'SKIP'")?;
         let files = st.query_map([], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<_>>()?;
-        Ok(Resolver { ix, files, cache: HashMap::new(), parsers: HashMap::new(), crates: None, go_dirs: None, ts: HashMap::new(), nest: 0 })
+        Ok(Resolver {
+            ix,
+            files,
+            cache: HashMap::new(),
+            parsers: HashMap::new(),
+            crates: None,
+            go_dirs: None,
+            go_imports: None,
+            ts: HashMap::new(),
+            nest: 0,
+            looked_up: HashSet::new(),
+        })
     }
 
     fn file(&mut self, path: &str) -> Rc<FileInfo> {
@@ -539,7 +573,7 @@ impl<'a> Resolver<'a> {
     }
 
     fn load(&mut self, path: &str) -> FileInfo {
-        let src = std::fs::read_to_string(self.ix.root.join(path)).unwrap_or_default();
+        let src = repo_text(&self.ix.root, path).unwrap_or_default();
         let spec = crate::parse::spec_for(path, &src);
         let lang = spec.and_then(|s| lang_of(s.id));
         let tree = match (spec, lang) {
@@ -599,6 +633,7 @@ impl<'a> Resolver<'a> {
 
     /// Resolve the occurrence of `name` at 1-based `line`, 0-based byte `col` of `path`.
     pub fn resolve_at(&mut self, path: &str, line: u64, col: usize, name: &str) -> Resolution {
+        self.looked_up.clear();
         let fi = self.file(path);
         let (Some(lang), Some(tree)) = (fi.lang, fi.tree.as_ref()) else { return Err("no grammar") };
         let row = line.saturating_sub(1) as usize;
@@ -664,7 +699,7 @@ impl<'a> Resolver<'a> {
                 }
             }
         }
-        if shadowed(node, name, &fi.src) {
+        if shadowed(lang, node, name, &fi.src) {
             return Err("local variable");
         }
         if let Some(d) = top_level(fi, name) {
@@ -901,7 +936,8 @@ impl<'a> Resolver<'a> {
 
     /// Definition `name` at the top level of one of `files`, following re-exports and wildcard imports.
     fn lookup_top(&mut self, files: &[String], name: &str, depth: usize) -> Option<i64> {
-        if self.nest > 32 {
+        // a lookup that comes round again (wildcard import rings) found nothing the first time
+        if self.nest > 32 || !self.looked_up.insert((files.join("\n"), name.to_string())) {
             return None;
         }
         self.nest += 1;
@@ -1001,12 +1037,16 @@ impl<'a> Resolver<'a> {
                 self.rust_module(from, &segs)
             }
             Lang::Go => {
-                let best = self
-                    .go_dirs()
-                    .keys()
-                    .filter(|d| !d.is_empty() && (module == d.as_str() || module.ends_with(&format!("/{d}"))))
-                    .max_by_key(|d| d.len())?
-                    .clone();
+                let best = if self.go_imports().is_empty() {
+                    // no go.mod: a GOPATH tree, where the import path ends with the directory
+                    self.go_dirs()
+                        .keys()
+                        .filter(|d| !d.is_empty() && (module == d.as_str() || module.ends_with(&format!("/{d}"))))
+                        .max_by_key(|d| d.len())?
+                        .clone()
+                } else {
+                    self.go_imports().get(module)?.clone()
+                };
                 Some(self.go_dir(&best))
             }
         }
@@ -1032,9 +1072,8 @@ impl<'a> Resolver<'a> {
         if let Some(f) = try_base(&slashed).or_else(|| try_base(&format!("src/{slashed}"))) {
             return Some(f);
         }
-        // the repository root may be inside the package
         let segs: Vec<&str> = slashed.split('/').collect();
-        (1..segs.len()).find_map(|i| try_base(&segs[i..].join("/")))
+        below_own_package(&self.ix.root, &segs).and_then(|rest| try_base(&rest.join("/")))
     }
 
     fn js_module(&mut self, from: &str, module: &str) -> Option<String> {
@@ -1144,8 +1183,8 @@ impl<'a> Resolver<'a> {
             for f in roots {
                 let dir = dir_of(f);
                 let pkg = if dir == "src" { "" } else { dir.strip_suffix("/src").unwrap_or(dir) };
-                let toml = self.ix.root.join(if pkg.is_empty() { "Cargo.toml".to_string() } else { format!("{pkg}/Cargo.toml") });
-                let Ok(t) = std::fs::read_to_string(toml) else { continue };
+                let toml = if pkg.is_empty() { "Cargo.toml".to_string() } else { format!("{pkg}/Cargo.toml") };
+                let Some(t) = repo_text(&self.ix.root, &toml) else { continue };
                 if let Some(name) = cargo_package_name(&t) {
                     m.entry(name.replace('-', "_")).or_insert_with(|| dir.to_string());
                 }
@@ -1201,6 +1240,32 @@ impl<'a> Resolver<'a> {
         self.go_dirs.as_ref().unwrap()
     }
 
+    /// Import path -> directory, for the directories under a `go.mod` (the nearest one above).
+    fn go_imports(&mut self) -> &HashMap<String, String> {
+        if self.go_imports.is_none() {
+            let dirs: Vec<String> = self.go_dirs().keys().cloned().collect();
+            let mut declared: HashMap<String, Option<String>> = HashMap::new();
+            let mut m = HashMap::new();
+            for d in dirs {
+                let mut at = d.clone();
+                loop {
+                    let module = declared.entry(at.clone()).or_insert_with(|| repo_text(&self.ix.root, &join(&at, "go.mod")).and_then(|t| go_module_path(&t)));
+                    if let Some(module) = module {
+                        let rest = d[at.len()..].trim_start_matches('/');
+                        m.insert(if rest.is_empty() { module.clone() } else { format!("{module}/{rest}") }, d.clone());
+                        break;
+                    }
+                    if at.is_empty() {
+                        break;
+                    }
+                    at = dir_of(&at).to_string();
+                }
+            }
+            self.go_imports = Some(m);
+        }
+        self.go_imports.as_ref().unwrap()
+    }
+
     fn go_dir(&mut self, dir: &str) -> Vec<String> {
         self.go_dirs().get(dir).cloned().unwrap_or_default()
     }
@@ -1209,7 +1274,7 @@ impl<'a> Resolver<'a> {
 /// `baseUrl` and `paths` of the config at `path`; what it does not set comes from the config it
 /// extends by a relative path. None when neither is set anywhere.
 fn ts_config(root: &std::path::Path, path: &str, depth: usize) -> Option<TsPaths> {
-    let text = std::fs::read_to_string(root.join(path)).ok()?;
+    let text = repo_text(root, path)?;
     let v: serde_json::Value = serde_json::from_str(&plain_json(&text)).ok()?;
     let (dir, options) = (dir_of(path), &v["compilerOptions"]);
     let mut out = TsPaths { base: options["baseUrl"].as_str().map(|b| join(dir, b)), aliases: Vec::new() };
@@ -1288,8 +1353,9 @@ fn top_level<'f>(fi: &'f FileInfo, name: &str) -> Option<&'f Def> {
     it.clone().find(|d| d.kind != "impl").or_else(|| it.next())
 }
 
-/// A parameter or local variable named `name` in the function around `node` hides outer definitions.
-fn shadowed(node: Node, name: &str, src: &str) -> bool {
+/// A parameter or local variable named `name` in the function around `node` hides outer definitions;
+/// one bound in a nested function, block or comprehension that does not hold `node` does not.
+fn shadowed(lang: Lang, node: Node, name: &str, src: &str) -> bool {
     let mut f = node.parent();
     while let Some(n) = f {
         if FUNCTION_NODES.contains(&n.kind()) {
@@ -1298,15 +1364,30 @@ fn shadowed(node: Node, name: &str, src: &str) -> bool {
         f = n.parent();
     }
     let Some(func) = f else { return false };
+    // shortcut: a JS `var` in a nested block is function-scoped but is treated as block-scoped here
+    let block_scoped: &[&str] = match lang {
+        Lang::Python => &["list_comprehension", "set_comprehension", "dictionary_comprehension", "generator_expression"],
+        _ => &["statement_block", "block", "compound_statement"],
+    };
+    let at = node.start_byte();
+    let holds = |n: Node| n.start_byte() <= at && at < n.end_byte();
     let mut stack = vec![func];
     while let Some(n) = stack.pop() {
         if n.kind() == "identifier" && text(n, src) == name && is_local_binder(n) {
             return true;
         }
         let mut cur = n.walk();
-        stack.extend(n.named_children(&mut cur));
+        stack.extend(n.named_children(&mut cur).filter(|c| holds(*c) || !(FUNCTION_NODES.contains(&c.kind()) || block_scoped.contains(&c.kind()))));
     }
     false
+}
+
+fn go_module_path(go_mod: &str) -> Option<String> {
+    go_mod
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("module").filter(|r| r.starts_with(char::is_whitespace)))
+        .map(|m| m.split("//").next().unwrap_or("").trim().trim_matches('"').to_string())
+        .filter(|m| !m.is_empty())
 }
 
 fn cargo_package_name(toml: &str) -> Option<String> {

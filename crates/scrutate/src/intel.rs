@@ -29,7 +29,7 @@ pub fn deps(ix: &Index, path: &str) -> Result<Vec<Dependency>> {
     let mut names = crate::resolve::Resolver::new(ix)?;
     Ok(rows
         .into_iter()
-        .map(|(line, module)| Dependency { resolved: resolve(&module, path, &files).or_else(|| names.alias(path, &module)), line, module })
+        .map(|(line, module)| Dependency { resolved: resolve(&module, path, &files, &ix.root).or_else(|| names.alias(path, &module)), line, module })
         .collect())
 }
 
@@ -46,7 +46,7 @@ const SOURCE_EXTS: &[&str] = &[
 
 /// Best-effort mapping of an import string onto a file of the repository. Handles dotted/`::`-separated
 /// module paths, relative paths (`./x`, `../x`, `from . import`), `crate::` roots and index files.
-pub fn resolve(module: &str, from: &str, files: &HashSet<String>) -> Option<String> {
+pub fn resolve(module: &str, from: &str, files: &HashSet<String>, root: &Path) -> Option<String> {
     let dir = from.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
     let mut candidates: Vec<String> = Vec::new();
     let join = |base: &str, rel: &str| -> String {
@@ -90,6 +90,7 @@ pub fn resolve(module: &str, from: &str, files: &HashSet<String>) -> Option<Stri
         // same directory first (C includes, sibling modules)
         if !dir.is_empty() {
             candidates.insert(0, join(dir, &slashed));
+            candidates.insert(0, join(dir, &m));
         }
         candidates.push(m);
     }
@@ -117,18 +118,12 @@ pub fn resolve(module: &str, from: &str, files: &HashSet<String>) -> Option<Stri
             return Some(p);
         }
     }
-    // the repository root may be the package itself (`networkx.utils.x` inside a checkout of `networkx/`):
-    // drop leading segments while at least two remain
-    if !module.starts_with('.') {
-        let slashed = module.replace("::", "/").replace('.', "/");
-        let segs: Vec<&str> = slashed.split('/').filter(|s| !s.is_empty()).collect();
-        for i in 1..segs.len().saturating_sub(1) {
-            if let Some(p) = try_one(&segs[i..].join("/")) {
-                return Some(p);
-            }
-        }
+    if module.starts_with('.') {
+        return None;
     }
-    None
+    let slashed = module.replace("::", "/").replace('.', "/");
+    let segs: Vec<&str> = slashed.split('/').filter(|s| !s.is_empty()).collect();
+    crate::resolve::below_own_package(root, &segs).and_then(|rest| try_one(&rest.join("/")))
 }
 
 /// Files that import `target`: a module name as written, or a repository file (every file whose
@@ -148,12 +143,13 @@ pub fn rdeps(ix: &Index, target: &str) -> Result<Vec<(String, i64, String)>> {
             continue;
         }
         let hit = if is_file {
-            resolve(&module, &path, &files).as_deref() == Some(target)
-                || names.alias(&path, &module).as_deref() == Some(target)
+            let found = resolve(&module, &path, &files, &ix.root).or_else(|| names.alias(&path, &module));
+            found.as_deref() == Some(target)
                 || module == dotted
                 || module.replace("::", ".") == dotted
                 || dotted_pkg.as_deref().map(|p| module == p || module.replace("::", ".") == p).unwrap_or(false)
-                || module.rsplit('/').next() == Some(target.rsplit('/').next().unwrap_or(target))
+                // an include found through a search path the index does not know
+                || (found.is_none() && module.rsplit('/').next() == Some(target.rsplit('/').next().unwrap_or(target)))
         } else {
             module == target
                 || module.starts_with(&format!("{target}."))
@@ -272,14 +268,14 @@ fn minhash(sh: &HashSet<u64>) -> [u64; HASHES] {
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct DupGroup {
-    pub kind: &'static str, // "exact" (same token sequence) or "near"
+    pub kind: &'static str, // "exact" (same body text up to whitespace) or "near"
     pub similarity: f32,
     pub members: Vec<(String, String, i64, i64)>, // path, qualname, start, end
     pub tokens: usize,
 }
 
-/// Duplicate and near-duplicate functions: exact token sequences, then MinHash/LSH candidates
-/// verified by Jaccard similarity of token 3-gram sets (>= `threshold`).
+/// Duplicate and near-duplicate functions: the same body text up to whitespace, then MinHash/LSH
+/// candidates verified by Jaccard similarity of word 3-gram sets (>= `threshold`; 1 = exact only).
 pub fn dupes(ix: &Index, min_tokens: usize, threshold: f32, limit: usize) -> Result<Vec<DupGroup>> {
     let kinds = CODE_KINDS.iter().map(|k| format!("'{k}'")).collect::<Vec<_>>().join(",");
     let mut st = ix.db.prepare(&format!("SELECT id, path, qualname, start, end, text FROM chunks WHERE kind IN ({kinds}) AND nbody >= ?1 ORDER BY id"))?;
@@ -297,12 +293,13 @@ pub fn dupes(ix: &Index, min_tokens: usize, threshold: f32, limit: usize) -> Res
         let body = text.split_once('\n').map(|(_, b)| b).unwrap_or("");
         let toks = tokenize2(body, Some(BODY_CAP)).0;
         sizes.push(toks.len());
+        // exact: the same body text up to whitespace (the word tokens drop operators and numbers)
         let mut seq = 1469598103934665603u64;
-        for t in &toks {
-            for b in t.as_bytes() {
+        for w in body.split_whitespace() {
+            for b in w.as_bytes() {
                 seq = (seq ^ *b as u64).wrapping_mul(1099511628211);
             }
-            seq = (seq ^ 0x2e).wrapping_mul(1099511628211);
+            seq = (seq ^ 0x20).wrapping_mul(1099511628211);
         }
         if toks.len() >= min_tokens {
             exact.entry(seq).or_default().push(i);
@@ -322,15 +319,15 @@ pub fn dupes(ix: &Index, min_tokens: usize, threshold: f32, limit: usize) -> Res
         sets.push(sh);
     }
     let mut out: Vec<DupGroup> = Vec::new();
-    let mut in_exact: HashSet<usize> = HashSet::new();
-    for (_, members) in exact.iter().filter(|(_, m)| m.len() > 1) {
+    let mut in_exact: HashMap<usize, u64> = HashMap::new();
+    for (&key, members) in exact.iter().filter(|(_, m)| m.len() > 1) {
         let mut ms: Vec<usize> = members.clone();
         ms.sort();
         ms.dedup_by(|b, a| rows[*a].1 == rows[*b].1 && rows[*a].3 <= rows[*b].4 && rows[*b].3 <= rows[*a].4);
         if ms.len() < 2 {
             continue;
         }
-        in_exact.extend(ms.iter().copied());
+        in_exact.extend(ms.iter().map(|&i| (i, key)));
         out.push(DupGroup {
             kind: "exact",
             similarity: 1.0,
@@ -340,11 +337,12 @@ pub fn dupes(ix: &Index, min_tokens: usize, threshold: f32, limit: usize) -> Res
     }
     let mut seen_pairs: HashSet<(usize, usize)> = HashSet::new();
     let mut near: Vec<(f32, usize, usize)> = Vec::new();
-    for (_, members) in buckets.iter().filter(|(_, m)| m.len() > 1 && m.len() <= 64) {
+    // a threshold of 1 asks for exact duplicates only
+    for (_, members) in buckets.iter().filter(|(_, m)| threshold < 1.0 && m.len() > 1 && m.len() <= 64) {
         for a in 0..members.len() {
             for b in a + 1..members.len() {
                 let (i, j) = (members[a].min(members[b]), members[a].max(members[b]));
-                if i == j || (in_exact.contains(&i) && in_exact.contains(&j)) || !seen_pairs.insert((i, j)) {
+                if i == j || (in_exact.contains_key(&i) && in_exact.get(&i) == in_exact.get(&j)) || !seen_pairs.insert((i, j)) {
                     continue;
                 }
                 // a container and the symbol nested inside it share text: not a duplicate
@@ -354,7 +352,7 @@ pub fn dupes(ix: &Index, min_tokens: usize, threshold: f32, limit: usize) -> Res
                 let inter = sets[i].intersection(&sets[j]).count() as f32;
                 let union = sets[i].union(&sets[j]).count().max(1) as f32;
                 let jac = inter / union;
-                if jac >= threshold && jac < 1.0 {
+                if jac >= threshold {
                     near.push((jac, i, j));
                 }
             }
@@ -412,7 +410,7 @@ pub fn tsquery_each(lang: &str, query: &str, roots: &[PathBuf], limit: usize, ca
         let mut wb = ignore::WalkBuilder::new(root);
         wb.hidden(true).git_ignore(true).sort_by_file_path(|a, b| a.cmp(b));
         for entry in wb.build().flatten() {
-            if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+            if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) || entry.metadata().map_or(true, |m| m.len() > crate::index::MAX_FILE_BYTES) {
                 continue;
             }
             let path = entry.path();
@@ -458,7 +456,7 @@ pub fn tsquery_each(lang: &str, query: &str, roots: &[PathBuf], limit: usize, ca
                     let mut key = None;
                     let mut complete = true;
                     if *ok {
-                        if let Ok(src) = std::fs::read_to_string(path) {
+                        if let Some(src) = std::fs::read(path).ok().and_then(|raw| crate::index::decode_source(&raw).map(|t| t.into_owned())) {
                             if crate::parse::spec_for(rel, &src).map(|s| s.id) == Some(spec.id) {
                                 key = cached.map(|_| crate::tscache::hash(&[src.as_bytes()]));
                                 if let Some(hit) = key.and_then(|k| cached.and_then(|c| c.get(&k))) {

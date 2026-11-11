@@ -62,7 +62,7 @@ pub fn tools(structured: bool, max_bytes: usize) -> Value {
 fn tool_table() -> Value {
     json!([
         {"name": "search_code",
-         "description": "Search the codebase by meaning or by name. Returns the best matching functions/classes with file:line and a snippet. `query` may be natural language (\"where do we refresh expired tokens\") or identifiers (`ClientSession.call_tool`). To improve recall put synonyms and likely identifier names in `alt_queries` (e.g. [\"renew credentials\", \"refresh_token\"]); results of all phrasings are fused.",
+         "description": "Search the codebase by meaning or by name. Returns the best matching functions/classes with file:line and a snippet. `query` may be natural language (\"where do we refresh expired tokens\") or identifiers (`ClientSession.call_tool`). To improve recall put synonyms and likely identifier names in `alt_queries` (e.g. [\"renew credentials\", \"refresh_token\"], at most 10); results of all phrasings are fused.",
          "inputSchema": {"type": "object", "properties": {
              "query": {"type": "string"},
              "alt_queries": {"type": ["array", "null"], "items": {"type": "string"}, "default": null},
@@ -94,8 +94,8 @@ fn tool_table() -> Value {
          "inputSchema": {"type": "object", "properties": {"min_tokens": {"type": "integer", "default": ops::DUPES_MIN_TOKENS}, "threshold": {"type": "number", "default": ops::DUPES_THRESHOLD}, "limit": {"type": "integer", "default": ops::DUPES_LIMIT}}}},
         {"name": "structural_search", "description": "Run a tree-sitter query (S-expression pattern with @captures) over all files of one language, e.g. lang=python query=\"(class_definition name: (identifier) @cls)\".",
          "inputSchema": {"type": "object", "properties": {"lang": {"type": "string"}, "query": {"type": "string"}, "limit": {"type": "integer", "default": ops::TSQUERY_LIMIT}}, "required": ["lang", "query"]}},
-        {"name": "reindex", "description": "Force a re-scan for changed files (searches already do this automatically).",
-         "inputSchema": {"type": "object", "properties": {}}}
+        {"name": "reindex", "description": "Re-scan for changed files (searches already do this automatically). `force` reads every file again, also one whose size and modification time did not change.",
+         "inputSchema": {"type": "object", "properties": {"force": {"type": "boolean", "default": false}}}}
     ])
 }
 
@@ -235,9 +235,12 @@ fn run_call(send: &Wire, repo: &Mutex<Repo>, building: &AtomicBool, calls: &Call
         let mut repo = repo.lock().unwrap_or_else(|p| p.into_inner());
         // a panic inside one tool call must not take the server down: it becomes a tool error
         (!gone()).then(|| {
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| call_tool(&mut repo, &name, &args, settings))).unwrap_or_else(|_| {
+            repo.cancel = Arc::clone(&cancelled);
+            let c = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| call_tool(&mut repo, &name, &args, settings))).unwrap_or_else(|_| {
                 Called::note(format!("error: internal failure while running {name} (a bug: please report it); the server keeps running"), true)
-            })
+            });
+            repo.cancel = Arc::default();
+            c
         })
     };
     calls.map().remove(&id.to_string());
@@ -313,6 +316,10 @@ pub fn serve(repo: Arc<Mutex<Repo>>, settings: Settings, version: &str, structur
         }
         Ok(())
     })?;
+    // the first build may not hold the lock yet: let it finish before the exit takes the lock
+    while building.load(Ordering::Acquire) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
     // held until the process exits, so no index writer is inside a transaction the exit would cut
     std::mem::forget(repo.lock().unwrap_or_else(|p| p.into_inner()));
     Ok(())

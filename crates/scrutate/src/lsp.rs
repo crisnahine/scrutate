@@ -428,17 +428,11 @@ impl Server {
     fn definition(&self, s: &Searcher, p: &Value) -> Result<Value> {
         let Some((ident, before)) = self.ident_at(p) else { return Ok(Value::Null) };
         let here = p["textDocument"]["uri"].as_str().and_then(|u| self.rel(u));
-        let mut hits = s.find_symbol(&ident, 50)?;
-        if let Some(q) = qualifier(&before) {
-            let want = name_key(&format!("{q}.{ident}"));
-            let qualified = |h: &crate::search::Hit| {
-                let k = name_key(&h.qualname);
-                k == want || k.ends_with(&format!(".{want}"))
-            };
-            if hits.iter().any(qualified) {
-                hits.retain(qualified);
-            }
-        }
+        let qualified = match qualifier(&before) {
+            Some(q) => s.find_symbol(&format!("{q}.{ident}"), 50)?,
+            None => Vec::new(),
+        };
+        let mut hits = if qualified.is_empty() { s.find_symbol(&ident, 50)? } else { qualified };
         hits.sort_by_key(|h| Some(&h.path) != here.as_ref()); // stable: index order within each group
         let mut lines = self.lines();
         Ok(Value::Array(hits.iter().map(|h| lines.location(&h.path, h.start, h.end, &h.name)).collect()))
