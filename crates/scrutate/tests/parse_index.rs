@@ -118,6 +118,85 @@ fn has(got: &[(String, String)], kind: &str, qualname: &str) -> bool {
     got.iter().any(|(k, q)| k == kind && q == qualname)
 }
 
+/// (kind, name, qualname) of every definition, without the file chunk.
+fn defs(path: &str, src: &str) -> Vec<(String, String, String)> {
+    parse_source(path, src).into_iter().filter(|c| !matches!(c.kind, "module" | "window")).map(|c| (c.kind.to_string(), c.name, c.qualname)).collect()
+}
+
+fn triples(v: &[(&str, &str, &str)]) -> Vec<(String, String, String)> {
+    v.iter().map(|(k, n, q)| (k.to_string(), n.to_string(), q.to_string())).collect()
+}
+
+#[test]
+fn a_lua_function_assigned_to_a_name_or_a_table_field_is_a_definition() {
+    let src = "local helper = function(x)\n  return x\nend\nM.assigned = function(x)\n  return helper(x)\nend\nM[\"bracket\"] = function(x) return x end\nM.a.b = function() end\nlocal obj = {\n  inline = function(x) return x end,\n  n = 1,\n  sub = { deep = function() end },\n}\nlocal x, y = function() end, 1\nlocal t = {}\n";
+    let want = [
+        ("function", "helper", "helper"),
+        ("function", "assigned", "M.assigned"),
+        ("function", "bracket", "M.bracket"),
+        ("function", "b", "M.a.b"),
+        ("function", "inline", "obj.inline"),
+        ("function", "deep", "obj.sub.deep"),
+    ];
+    assert_eq!(defs("a.lua", src), triples(&want));
+    let chunks = parse_source("a.lua", src);
+    let assigned = chunks.iter().find(|c| c.qualname == "M.assigned").unwrap();
+    assert!(assigned.calls.contains("helper") && assigned.start == 4, "{:?} {}", assigned.calls, assigned.start);
+}
+
+#[test]
+fn a_js_function_assigned_to_a_member_is_a_definition() {
+    let src = "function Foo() {}\nFoo.prototype.bar = function () {\n  return helper();\n};\nFoo.staticFn = function (x) {\n  return x;\n};\nFoo.prototype.arrow = (x) => x;\n$.fn.plugin = function () {};\nexports.one = function () {};\nmodule.exports.two = () => 2;\nmodule.exports = function () {};\nexports.a.b = function () {};\nobj[\"k\"] = function () {};\nthis.x = function () {};\nFoo.count = 3;\n";
+    let want = [
+        ("function", "Foo", "Foo"),
+        ("method", "bar", "Foo.bar"),
+        ("function", "staticFn", "Foo.staticFn"),
+        ("method", "arrow", "Foo.arrow"),
+        ("function", "plugin", "$.fn.plugin"),
+        ("function", "one", "one"),
+        ("function", "two", "two"),
+    ];
+    for path in ["a.js", "a.ts"] {
+        assert_eq!(defs(path, src), triples(&want), "{path}");
+    }
+    let chunks = parse_source("a.js", src);
+    let bar = chunks.iter().find(|c| c.qualname == "Foo.bar").unwrap();
+    assert!(bar.calls.contains("helper"), "{:?}", bar.calls);
+}
+
+#[test]
+fn a_julia_method_of_another_modules_function_is_named_by_the_function() {
+    let src = "module Geo\nfunction Base.show(io::IO, p::Point)\n    print(io, p)\nend\nBase.length(p::Point) = 1\nfunction Base.:+(a::Point, b::Point)\n    a\nend\nfunction plain(x)\n    x\nend\nend\n";
+    let want = [
+        ("module", "Geo", "Geo"),
+        ("function", "show", "Geo.Base.show"),
+        ("function", "length", "Geo.Base.length"),
+        ("function", "+", "Geo.Base.+"),
+        ("function", "plain", "Geo.plain"),
+    ];
+    let got: Vec<_> = parse_source("geo.jl", src).into_iter().filter(|c| c.kind != "window").map(|c| (c.kind.to_string(), c.name, c.qualname)).collect();
+    assert_eq!(got, triples(&want));
+}
+
+#[test]
+fn cpp_call_operators_haskell_operators_and_r6_methods_are_named_definitions() {
+    let cpp = "struct F {\n  int operator()(int x) { return x; }\n  bool operator==(const F& o) const;\n  void operator()() const;\n};\nint F::operator()(int x) { return x; }\n";
+    let want = [
+        ("struct", "F", "F"),
+        ("method", "operator()", "F.operator()"),
+        ("method", "operator==", "F.operator=="),
+        ("method", "operator()", "F.operator()"),
+        ("function", "operator()", "F.operator()"),
+    ];
+    assert_eq!(defs("f.cpp", cpp), triples(&want));
+    let hs = "module M where\na <+> b = a + b\n(<+>) a b = a\n(|>) = flip ($)\nx `op` y = x\nplain x = x\n";
+    let want = [("function", "<+>", "<+>"), ("function", "<+>", "<+>"), ("function", "|>", "|>"), ("function", "op", "op"), ("function", "plain", "plain")];
+    assert_eq!(defs("m.hs", hs), triples(&want));
+    let r = "Counter <- R6Class(\"Counter\",\n  public = list(\n    n = 0,\n    add = function(n) {\n      self$n <- self$n + n\n    }\n  ),\n  private = list(h = function() 1)\n)\nx <- list(f = function() 1)\ng <- function() 1\n";
+    let want = [("method", "add", "Counter.add"), ("method", "h", "Counter.h"), ("function", "g", "g")];
+    assert_eq!(defs("c.r", r), triples(&want));
+}
+
 #[test]
 fn rust_macros_and_trait_methods_without_a_body_are_symbols() {
     let got = symbols("a.rs", "macro_rules! square {\n    ($x:expr) => { $x * $x };\n}\n\ntrait Runner {\n    fn run(&self) -> u32;\n    fn name(&self) -> String { String::new() }\n}\n");

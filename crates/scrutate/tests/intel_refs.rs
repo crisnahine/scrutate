@@ -1245,6 +1245,36 @@ fn a_call_through_an_interface_or_a_trait_is_an_undecided_caller_of_an_implement
 }
 
 #[test]
+fn functions_assigned_to_names_and_members_are_symbols_callers_and_callees_find() {
+    let lua = "local M = {}\n\nlocal helper = function(x)\n  return x\nend\n\nM.assigned = function(x)\n  return helper(x)\nend\n\nlocal obj = {\n  inline = function(x)\n    return x\n  end,\n}\n\nfunction M.use()\n  M.assigned(3)\n  return obj.inline(2)\nend\n\nreturn M\n";
+    let js = "function Foo() {}\n\nFoo.prototype.bar = function () {\n  return 1;\n};\n\nFoo.staticFn = function (x) {\n  return x;\n};\n\nFoo.prototype.arrow = (x) => x;\n\nfunction useFoo() {\n  const f = new Foo();\n  return f.bar() + Foo.staticFn(1) + f.arrow(2);\n}\n";
+    let r = Repo::new("assigned_fns", &[("a.lua", lua), ("a.js", js)]);
+    for (name, at) in [
+        ("helper", "a.lua:3"),
+        ("M.assigned", "a.lua:7"),
+        ("inline", "a.lua:12"),
+        ("bar", "a.js:3"),
+        ("Foo.bar", "a.js:3"),
+        ("Foo.staticFn", "a.js:7"),
+        ("arrow", "a.js:11"),
+    ] {
+        let (code, out) = r.run(&["symbol", name]);
+        assert!(code == 0 && out.lines().any(|l| l.starts_with(&format!("{at}-")) || l.starts_with(&format!("{at} "))), "symbol {name}: {out}");
+    }
+    let mut got = callee_names(&r, "M.use");
+    got.sort();
+    assert_eq!(got, ["M.assigned", "obj.inline"]);
+    assert_eq!(callee_names(&r, "M.assigned"), ["helper"]);
+    let mut got = callee_names(&r, "useFoo");
+    got.sort();
+    assert_eq!(got, ["Foo", "Foo.arrow", "Foo.bar", "Foo.staticFn"]);
+    for (def, caller) in [("a.lua:7", "M.use"), ("a.lua:3", "M.assigned"), ("a.js:3", "useFoo"), ("a.js:7", "useFoo")] {
+        let (code, out) = r.run(&["callers", def]);
+        assert!(code == 0 && out.lines().any(|l| l.ends_with(caller)), "callers {def}: {out}");
+    }
+}
+
+#[test]
 fn a_super_call_is_a_decided_call_of_the_base_method_and_no_call_of_the_override() {
     let ts = "export class Base {\n  size(): number {\n    return 0;\n  }\n}\nexport class Big extends Base {\n  size(): number {\n    return super.size() + 9;\n  }\n  other(): number {\n    return this.size();\n  }\n}\nexport class Bigger extends Big {\n  size(): number {\n    return super.size() + 1;\n  }\n}\nexport function viaBase(b: Base): number {\n  return b.size();\n}\n";
     let far = "import { Outer } from 'outside';\nexport class Far extends Outer {\n  size(): number {\n    return super.size() + 3;\n  }\n}\n";

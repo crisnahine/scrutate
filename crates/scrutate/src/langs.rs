@@ -252,6 +252,47 @@ fn r_assignment(node: Node, src: &[u8]) -> Option<String> {
     Some(text(src, lhs.start_byte(), lhs.end_byte()))
 }
 
+/// The text of `node`'s child `field` when that child is of `kind`.
+fn field_text(node: Node, field: &str, kind: &str, src: &[u8]) -> Option<String> {
+    node.child_by_field_name(field).filter(|n| n.kind() == kind).map(|n| text(src, n.start_byte(), n.end_byte()))
+}
+
+/// The class of an R6 method `add = function(n) ...` in `R6Class("Counter", public = list(...))`:
+/// the class name string, else the name the class is assigned to.
+pub(crate) fn r6_class(node: Node, src: &[u8]) -> Option<String> {
+    fn call_of<'t>(n: Node<'t>, f: &str, src: &[u8]) -> Option<Node<'t>> {
+        n.parent().filter(|a| a.kind() == "arguments")?.parent().filter(|c| field_text(*c, "function", "identifier", src).as_deref() == Some(f))
+    }
+    let list = call_of(node, "list", src)?;
+    let section = list
+        .parent()
+        .filter(|a| a.kind() == "argument" && matches!(field_text(*a, "name", "identifier", src).as_deref(), Some("public" | "private" | "active")))?;
+    let class = call_of(section, "R6Class", src)?;
+    let args = class.child_by_field_name("arguments")?;
+    let named = args.children_by_field_name("argument", &mut args.walk()).find(|a| a.child_by_field_name("name").is_none());
+    let string =
+        named.and_then(|a| a.child_by_field_name("value")).filter(|v| v.kind() == "string").and_then(|v| field_text(v, "content", "string_content", src));
+    string.or_else(|| class.parent().filter(|p| p.kind() == "binary_operator").and_then(|p| field_text(p, "lhs", "identifier", src)))
+}
+
+/// An R6 method: a function given as a named argument of a section list of `R6Class`.
+fn r6_method(node: Node, src: &[u8]) -> Option<String> {
+    node.child_by_field_name("value").filter(|v| v.kind() == "function_definition")?;
+    r6_class(node, src)?;
+    field_text(node, "name", "identifier", src)
+}
+
+/// A Haskell function or binding: `f x = ...`, the operator of `a <+> b = ...` and `(<+>) a b = ...`.
+fn haskell_name(node: Node, src: &[u8]) -> Option<String> {
+    if let Some(n) = node.child_by_field_name("name") {
+        let n = if n.kind() == "prefix_id" { n.named_child(0)? } else { n };
+        return Some(text(src, n.start_byte(), n.end_byte()));
+    }
+    let op = node.named_children(&mut node.walk()).find(|c| c.kind() == "infix")?.child_by_field_name("operator")?;
+    let op = if op.kind() == "infix_id" { op.named_child(0)? } else { op };
+    Some(text(src, op.start_byte(), op.end_byte()))
+}
+
 /// Markdown / RST sections: the heading text
 fn heading_text(node: Node, src: &[u8]) -> Option<String> {
     let t = text(src, node.start_byte(), node.end_byte());
@@ -307,16 +348,39 @@ pub(crate) const JS_FUNCS: &[&str] = &["arrow_function", "function_expression", 
 const fn dv(node: &'static str, name: &'static [NameRule]) -> Def {
     Def { node, kind: "function", name, value_kinds: JS_FUNCS, head_words: &[], needs_field: "", kind_by_head: false, parents: &[] }
 }
-/// CommonJS `module.exports.NAME = function ...` and `exports.NAME = () => ...`
-fn js_export_name(node: Node, src: &[u8]) -> Option<String> {
-    let right = node.child_by_field_name("right")?;
-    if !JS_FUNCS.contains(&right.kind()) {
+/// `a.b.c` of a member expression made of names only (no `this`, call or subscript).
+fn js_member_path(node: Node, src: &[u8]) -> Option<String> {
+    match node.kind() {
+        "identifier" => Some(text(src, node.start_byte(), node.end_byte())),
+        "member_expression" => {
+            let prop = node.child_by_field_name("property").filter(|p| p.kind() == "property_identifier")?;
+            Some(format!("{}.{}", js_member_path(node.child_by_field_name("object")?, src)?, text(src, prop.start_byte(), prop.end_byte())))
+        }
+        _ => None,
+    }
+}
+/// The member path a function is assigned to: `Foo.prototype.bar = function ...`, `$.fn.plugin = () => ...`
+fn js_assigned_path(node: Node, src: &[u8]) -> Option<String> {
+    if !JS_FUNCS.contains(&node.child_by_field_name("right")?.kind()) {
         return None;
     }
-    let left = node.child_by_field_name("left")?;
-    let t = text(src, left.start_byte(), left.end_byte());
-    let name = t.strip_prefix("module.exports.").or_else(|| t.strip_prefix("exports."))?;
-    Some(name.to_string()).filter(|n| !n.contains('.'))
+    js_member_path(node.child_by_field_name("left").filter(|l| l.kind() == "member_expression")?, src)
+}
+/// `Foo.prototype.bar = function ...` is the method `Foo.bar`.
+fn js_prototype_name(node: Node, src: &[u8]) -> Option<String> {
+    let path = js_assigned_path(node, src)?;
+    let (owner, name) = path.rsplit_once(".prototype.")?;
+    (!name.contains('.')).then(|| format!("{owner}.{name}"))
+}
+/// A function assigned to a member: `Foo.staticFn` keeps its owner; CommonJS
+/// `module.exports.NAME` and `exports.NAME` are the bare `NAME`.
+fn js_member_name(node: Node, src: &[u8]) -> Option<String> {
+    let path = js_assigned_path(node, src)?;
+    match path.strip_prefix("module.exports.").or_else(|| path.strip_prefix("exports.")) {
+        Some(name) => Some(name.to_string()).filter(|n| !n.contains('.')),
+        None if path == "module.exports" => None,
+        None => Some(path),
+    }
 }
 /// The values that make an object literal's property a method: `post: function () {}`, `put: () => 3`.
 const JS_PROPERTY_FUNCS: &[&str] = &["arrow_function", "function_expression", "function", "generator_function"];
@@ -329,8 +393,11 @@ const JS_DEFS: &[Def] = &[
     JS_PROPERTY_METHOD,
     dv("variable_declarator", N),
     dv("field_definition", &[NameRule::Field("property")]),
-    d("assignment_expression", "function", &[NameRule::Custom(js_export_name)]),
+    JS_PROTOTYPE_METHOD,
+    JS_MEMBER_FUNCTION,
 ];
+const JS_PROTOTYPE_METHOD: Def = d("assignment_expression", "method", &[NameRule::Custom(js_prototype_name)]);
+const JS_MEMBER_FUNCTION: Def = d("assignment_expression", "function", &[NameRule::Custom(js_member_name)]);
 const TS_DEFS: &[Def] = &[
     d("function_declaration", "function", N),
     d("generator_function_declaration", "function", N),
@@ -346,6 +413,8 @@ const TS_DEFS: &[Def] = &[
     d("internal_module", "module", N),
     dv("variable_declarator", N),
     dv("public_field_definition", N),
+    JS_PROTOTYPE_METHOD,
+    JS_MEMBER_FUNCTION,
 ];
 const JS_CALLS: &[Call] = &[c("call_expression", "function"), c("new_expression", "constructor")];
 const JS_WRAPPERS: &[&str] = &["export_statement", "lexical_declaration", "variable_declaration", "decorator"];
@@ -727,10 +796,14 @@ const CORE: &[LangSpec] = &[
         exts: &[".lua"],
         files: &[],
         language: || tree_sitter_lua::LANGUAGE.into(),
-        defs: &[d("function_declaration", "function", N)],
+        defs: &[
+            d("function_declaration", "function", N),
+            d("assignment_statement", "function", &[NameRule::Custom(lua_assigned_function)]),
+            Def { value_kinds: &["function_definition"], ..d("field", "function", N) },
+        ],
         calls: &[c("function_call", "name")],
         docstring: false,
-        wrappers: &[],
+        wrappers: &["variable_declaration"],
         outer: &[],
         body: "body",
         imports: &[imp_call("function_call", "name", &["require"], ImportHow::Arg(&["string"]))],
@@ -788,8 +861,8 @@ const CORE: &[LangSpec] = &[
         files: &[],
         language: || tree_sitter_haskell::LANGUAGE.into(),
         defs: &[
-            d("function", "function", N),
-            d("bind", "function", N),
+            d("function", "function", &[NameRule::Custom(haskell_name)]),
+            d("bind", "function", &[NameRule::Custom(haskell_name)]),
             d("data_type", "type", N),
             d("newtype", "type", N),
             d("type_synomym", "type", N),
@@ -889,7 +962,7 @@ const CORE: &[LangSpec] = &[
         exts: &[".r", ".R", ".rmd"],
         files: &[],
         language: || tree_sitter_r::LANGUAGE.into(),
-        defs: &[d("binary_operator", "function", &[NameRule::Custom(r_assignment)])],
+        defs: &[d("binary_operator", "function", &[NameRule::Custom(r_assignment)]), d("argument", "method", &[NameRule::Custom(r6_method)])],
         calls: &[c("call", "function")],
         docstring: false,
         wrappers: &[],
@@ -1648,6 +1721,33 @@ fn child_text(node: Node, src: &[u8], kinds: &[&str]) -> Option<String> {
     None
 }
 
+/// `M.a.b` of a Lua assignment target made of names, `M["b"]` read as `M.b`.
+pub(crate) fn lua_target(node: Node, src: &[u8]) -> Option<String> {
+    match node.kind() {
+        "identifier" => Some(text(src, node.start_byte(), node.end_byte())),
+        "dot_index_expression" | "bracket_index_expression" => {
+            let mut field = node.child_by_field_name("field")?;
+            if node.kind() == "bracket_index_expression" {
+                field = field.child_by_field_name("content").filter(|_| field.kind() == "string")?;
+            }
+            Some(format!("{}.{}", lua_target(node.child_by_field_name("table")?, src)?, text(src, field.start_byte(), field.end_byte())))
+        }
+        _ => None,
+    }
+}
+
+/// The one value and the one target of a Lua assignment (`local f = ...`, `M.f = ...`).
+pub(crate) fn lua_single_assignment<'t>(node: Node<'t>) -> Option<(Node<'t>, Node<'t>)> {
+    let one = |kind: &str| node.named_children(&mut node.walk()).find(|c| c.kind() == kind).filter(|l| l.named_child_count() == 1)?.named_child(0);
+    Some((one("variable_list")?, one("expression_list")?))
+}
+
+/// Lua `local f = function ...`, `M.f = function ...`, `M["f"] = function ...`
+fn lua_assigned_function(node: Node, src: &[u8]) -> Option<String> {
+    let (target, value) = lua_single_assignment(node)?;
+    (value.kind() == "function_definition").then(|| lua_target(target, src))?
+}
+
 /// Jsonnet `local f(x) = ...` and the object method `f(x): ...`: a binding with parameters.
 fn jsonnet_function(node: Node, src: &[u8]) -> Option<String> {
     node.children(&mut node.walk()).any(|c| c.kind() == "params").then(|| child_text(node, src, &["ident", "field_name"]))?
@@ -1728,11 +1828,11 @@ fn julia_name(node: Node, src: &[u8]) -> Option<String> {
         if ch.kind() == "signature" {
             // signature > call_expression > identifier (or a dotted / typed callee)
             let mut inner = ch.named_child(0)?;
-            while inner.kind() != "identifier" && inner.named_child_count() > 0 {
+            // `function Base.show(...)` keeps its qualifier: the owner comes from it
+            while !matches!(inner.kind(), "identifier" | "field_expression") && inner.named_child_count() > 0 {
                 inner = inner.named_child(0)?;
             }
-            let t = text(src, inner.start_byte(), inner.end_byte());
-            return Some(t.rsplit('.').next().unwrap_or(&t).to_string());
+            return Some(text(src, inner.start_byte(), inner.end_byte()));
         }
         if ch.kind() == "identifier" {
             return Some(text(src, ch.start_byte(), ch.end_byte()));
@@ -1759,8 +1859,7 @@ fn julia_assignment(node: Node, src: &[u8]) -> Option<String> {
         return None;
     }
     let f = lhs.named_child(0)?;
-    let t = text(src, f.start_byte(), f.end_byte());
-    Some(t.rsplit('.').next().unwrap_or(&t).to_string())
+    Some(text(src, f.start_byte(), f.end_byte()))
 }
 
 /// Dart: a function_signature directly inside a method_signature is the method itself (already a chunk)

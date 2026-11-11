@@ -380,6 +380,9 @@ fn split_owner(lang: &str, node: Node, name: String, src: &[u8]) -> (Option<Stri
         let bare = name.split('<').next().unwrap_or(&name).rsplit("::").next().unwrap_or("").trim();
         return (None, if bare.is_empty() { name.clone() } else { bare.to_string() });
     }
+    if lang == "lua" && node.kind() == "field" {
+        return (lua_table_owner(node, src), name);
+    }
     if lang == "lua" || lang == "elixir" {
         if let Some(i) = name.rfind(|c| c == '.' || lang == "lua" && c == ':') {
             if i > 0 && i + 1 < name.len() {
@@ -388,8 +391,26 @@ fn split_owner(lang: &str, node: Node, name: String, src: &[u8]) -> (Option<Stri
         }
         return (None, name);
     }
+    if lang == "julia" {
+        // `Base.show` is `show` owned by `Base`, `Base.:+` is `+`
+        return match name.rsplit_once('.') {
+            Some((owner, last)) if !owner.is_empty() && owner.chars().all(|c| c.is_alphanumeric() || matches!(c, '_' | '.' | '!')) => {
+                (Some(owner.to_string()), last.trim_start_matches(':').to_string())
+            }
+            Some((_, last)) => (None, last.to_string()),
+            None => (None, name),
+        };
+    }
+    if lang == "r" && node.kind() == "argument" {
+        return (crate::langs::r6_class(node, src), name);
+    }
     if matches!(lang, "javascript" | "typescript" | "tsx") && matches!(node.kind(), "method_definition" | "pair") {
         return (object_owner(node, src), name);
+    }
+    if matches!(lang, "javascript" | "typescript" | "tsx") && node.kind() == "assignment_expression" {
+        if let Some((owner, last)) = name.rsplit_once('.') {
+            return (Some(owner.to_string()), last.to_string());
+        }
     }
     if lang == "go" && node.kind() == "method_declaration" {
         let mut stack: Vec<Node> = node.child_by_field_name("receiver").into_iter().collect();
@@ -444,6 +465,33 @@ fn object_owner<'t>(node: Node<'t>, src: &[u8]) -> Option<String> {
             Some(p) => obj = p,
             None => break,
         }
+    }
+    parts.reverse();
+    (!parts.is_empty()).then(|| parts.join("."))
+}
+
+/// The names that hold the Lua table around a field: `local obj = { sub = { f = function ...` gives
+/// `obj.sub`. None for a table nothing names.
+fn lua_table_owner(node: Node, src: &[u8]) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    let mut table = node.parent().filter(|p| p.kind() == "table_constructor")?;
+    while let Some(holder) = table.parent() {
+        if holder.kind() == "field" {
+            let Some(n) = holder.child_by_field_name("name").filter(|n| n.kind() == "identifier") else { break };
+            parts.push(txt(src, n.start_byte(), n.end_byte()));
+            match holder.parent().filter(|p| p.kind() == "table_constructor") {
+                Some(p) => table = p,
+                None => break,
+            }
+            continue;
+        }
+        let assignment = holder.parent().filter(|a| holder.kind() == "expression_list" && a.kind() == "assignment_statement");
+        if let Some(name) =
+            assignment.and_then(crate::langs::lua_single_assignment).filter(|(_, v)| *v == table).and_then(|(t, _)| crate::langs::lua_target(t, src))
+        {
+            parts.push(name);
+        }
+        break;
     }
     parts.reverse();
     (!parts.is_empty()).then(|| parts.join("."))
@@ -844,10 +892,12 @@ fn def_name(node: Node, rules: &[NameRule], src: &[u8]) -> Option<String> {
             // a prime ends a Haskell name (`step'`); only a quoted name starts with one
             let n = if n.starts_with('\'') { n.trim_matches('\'') } else { n };
             let n = if n.starts_with('[') && n.ends_with(']') && n.len() > 2 { &n[1..n.len() - 1] } else { n };
-            let n = n.strip_suffix("()").unwrap_or(n);
+            // the C++ call operator is named with its parentheses
+            let call_op = n.ends_with("operator()");
+            let n = if call_op { n } else { n.strip_suffix("()").unwrap_or(n) };
             let n = match n.find('(') {
                 // a signature slipped in: keep the callee
-                Some(i) if i > 0 => &n[..i],
+                Some(i) if i > 0 && !call_op => &n[..i],
                 _ => n,
             };
             let n = n.trim().to_string();

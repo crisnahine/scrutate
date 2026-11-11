@@ -255,6 +255,35 @@ def test_methods_of_an_object_literal_are_owned_by_what_holds_the_literal():
         assert c["store.later"].calls == {"go"} and c["store.increment"].calls == {"total"}
 
 
+MEMBER_FUNCTIONS = """function Foo() {}
+Foo.prototype.bar = function () {
+  return helper();
+};
+Foo.staticFn = function (x) {
+  return x;
+};
+Foo.prototype.arrow = (x) => x;
+$.fn.plugin = function () {};
+exports.one = function () {};
+module.exports.two = () => 2;
+module.exports = function () {};
+exports.a.b = function () {};
+obj["k"] = function () {};
+this.x = function () {};
+Foo.count = 3;
+"""
+
+
+def test_a_function_assigned_to_a_member_is_a_definition_owned_by_the_member():
+    for path in ("m.js", "m.ts"):
+        chunks = [c for c in parse_source(path, MEMBER_FUNCTIONS) if c.kind != "module"]
+        assert [(c.kind, c.name, c.qualname) for c in chunks] == [
+            ("function", "Foo", "Foo"), ("method", "bar", "Foo.bar"), ("function", "staticFn", "Foo.staticFn"),
+            ("method", "arrow", "Foo.arrow"), ("function", "plugin", "$.fn.plugin"), ("function", "one", "one"),
+            ("function", "two", "two")], path
+        assert by_q(chunks)["Foo.bar"].calls == {"helper"}
+
+
 TS_WRAPPED_LITERALS = """export const api = { get() {} } as const;
 const store = { inc() {}, sub: ({ deep() {} }) as Sub } satisfies Store;
 const box = ({ open() {} });
