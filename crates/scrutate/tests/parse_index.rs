@@ -608,6 +608,27 @@ fn constants_are_found_by_name_but_never_ranked() {
     assert!(report.ok(), "{report:?}");
 }
 
+const BURST_RS: &str = "/// Keeps the files of one burst.\npub struct BurstFiles {\n    n: usize,\n}\n\nimpl BurstFiles {\n    /// Collects the files of a burst.\n    pub fn collect(&self) -> usize {\n        self.n\n    }\n}\n\n/// The files of one burst.\npub fn burst_files() -> usize {\n    0\n}\n";
+
+#[test]
+fn a_name_as_typed_is_a_feature_and_an_impl_is_its_own_hit() {
+    let root = tree("case_impl", &[("src/lib.rs", BURST_RS)]);
+    let mut repo = scrutate::Repo::open(&root).unwrap();
+    repo.update(false).unwrap();
+    let f = |n: &str| scrutate::search::FEATURES.iter().position(|x| *x == n).unwrap();
+    let get = |c: &scrutate::search::Candidates, kind: &str, name: &str, feat: &str| {
+        let i = c.rows.iter().position(|r| r.kind == kind && r.name == name).unwrap_or_else(|| panic!("{kind} {name}"));
+        c.x[i][f(feat)]
+    };
+    let c = repo.candidates("BurstFiles", true).unwrap();
+    assert_eq!(get(&c, "struct", "BurstFiles", "exact_case"), 1.0);
+    assert_eq!(get(&c, "function", "burst_files", "exact_case"), 0.0);
+    // the struct and its impl block share a qualified name and are still two hits
+    let hits = repo.search("BurstFiles", 10, false).unwrap();
+    let kinds: Vec<&str> = hits.iter().filter(|h| h.name == "BurstFiles").map(|h| h.kind.as_str()).collect();
+    assert!(kinds.contains(&"struct") && kinds.contains(&"impl"), "{kinds:?}");
+}
+
 #[test]
 fn swift_protocol_requirements_kotlin_type_aliases_and_elixir_guards_are_symbols() {
     let swift = symbols("c.swift", "protocol Payable {\n    func pay(amount: Int)\n}\n");

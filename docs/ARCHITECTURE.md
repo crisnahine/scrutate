@@ -250,11 +250,11 @@ folded, so two spellings of one accented name are one name.
 A query produces candidates from three sources: field-weighted BM25 (name 10, qualified name 3,
 signature 3, docs 5, body 1, path 2), exact name/qualified-name lookup, and semantic nearest
 neighbours (the query is encoded into the same 256-d space as the chunks by a contrastively
-trained code-word model, inference only, bundled in the binary). 47 features per candidate
+trained code-word model, inference only, bundled in the binary). 48 features per candidate
 (lexical scores and ranks per field, z-scored semantic similarities of both views, literal hits,
-name coverage, kind, lengths, test-path flags...) go through a LightGBM LambdaRank ensemble
-exported to plain arrays and evaluated in Rust. All arithmetic is specified to the bit: the Python
-reference implementation (`python/scrutate_ref`, which also trains the models) and the Rust engine
+name coverage, the name as typed (case included), kind, lengths, test-path flags...) go through a
+LightGBM LambdaRank ensemble exported to plain arrays and evaluated in Rust. All arithmetic is
+specified to the bit: the Python reference implementation (`python/scrutate_ref`, which also trains the models) and the Rust engine
 return identical features, scores and rankings (`bench/parity.py`: 300/300 queries; the IVF path
 200/200 on a 135k-chunk index). Vector dot products are summed in float64 and rounded once, so
 the two engines' different summation orders cannot reorder near-tied chunks.

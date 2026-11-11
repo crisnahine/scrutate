@@ -441,7 +441,7 @@ pub enum Cmd {
     /// run many ranked queries from a JSON-lines file ({"query": ..., "k": 10, "alt": [...]})
     Batch {
         file: PathBuf,
-        /// include the 47 features and scores of every candidate (parity testing)
+        /// include the 48 features and scores of every candidate (parity testing)
         #[arg(long)]
         features: bool,
         #[arg(long)]

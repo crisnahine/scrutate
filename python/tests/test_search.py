@@ -172,3 +172,27 @@ def test_find_symbol_puts_a_definition_before_its_prototype(tmp_path):
     s = _tree(str(tmp_path), {"a.rs": trait, "b.rs": body})
     # the trait `Run` matches only after case folding
     assert [(h.path, h.name) for h in s.find_symbol("run")] == [("b.rs", "run"), ("a.rs", "run"), ("a.rs", "Run")]
+
+
+BURST_RS = ("/// Keeps the files of one burst.\npub struct BurstFiles {\n    n: usize,\n}\n\nimpl BurstFiles {\n"
+            "    /// Collects the changed files of a burst into one list.\n    pub fn collect(&self) -> usize {\n"
+            "        self.n\n    }\n}\n\n/// The files of one burst.\npub fn burst_files() -> usize {\n    0\n}\n")
+
+
+def test_a_name_as_typed_is_a_feature_and_an_impl_is_its_own_hit(tmp_path):
+    from scrutate_ref.search import FI
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "lib.rs").write_text(BURST_RS)
+    s = make(str(tmp_path))
+
+    def get(q, kind, name, feat):
+        _, rows, X = s.candidates(q)
+        i = next(i for i, r in enumerate(rows) if r["kind"] == kind and r["name"] == name)
+        return float(X[i, FI[feat]])
+
+    assert get("BurstFiles", "struct", "BurstFiles", "exact_case") == 1.0
+    assert get("BurstFiles", "function", "burst_files", "exact_case") == 0.0
+    # the struct and its impl block share a qualified name and are still two hits
+    kinds = [h.kind for h in s.search("BurstFiles", k=10, with_text=False) if h.name == "BurstFiles"]
+    assert "struct" in kinds and "impl" in kinds, kinds

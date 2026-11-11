@@ -1,7 +1,7 @@
 //! Hybrid retrieval (port of python/scrutate_ref/search.py).
 //!
 //! Candidates come from three sources: field-weighted BM25 over the segment store, semantic vectors,
-//! and exact name / qualified-name lookup. Each candidate gets 47 features (per-field BM25, semantic
+//! and exact name / qualified-name lookup. Each candidate gets 48 features (per-field BM25, semantic
 //! similarities, exactness, literal occurrences, structure, query shape) and the learned ranker
 //! orders the best 200 by a linear blend. Without a ranker the linear blend itself is used.
 
@@ -22,7 +22,7 @@ pub const LEX_LIMIT: usize = 100;
 pub const SEM_LIMIT: usize = 100;
 pub const CODE_KINDS: &[&str] = &["function", "method", "class", "struct", "trait", "interface", "type", "enum", "impl"];
 
-pub const FEATURES: [&str; 47] = [
+pub const FEATURES: [&str; 48] = [
     "lex_log",
     "lex_ratio",
     "lex_rank",
@@ -70,6 +70,7 @@ pub const FEATURES: [&str; 47] = [
     "n_words",
     "has_ident",
     "file_frac",
+    "exact_case",
 ];
 pub const NFEAT: usize = FEATURES.len();
 
@@ -483,6 +484,11 @@ impl Searcher {
             f[fi("qual_depth")] = row.qualname.matches('.').count() as f32;
             f[fi("is_private")] = (name.starts_with('_') && !name.starts_with("__")) as i32 as f32;
         }
+        // a name the query has as typed, case included: `BurstFiles` is not `burst_files`
+        let typed: HashSet<&str> = Words::new(&q.text).collect();
+        for (r, nm) in names.iter().enumerate() {
+            x[r][fi("exact_case")] = (!nm.is_empty() && typed.contains(nm.as_str())) as i32 as f32;
+        }
         self.ncallers(&names)?;
         for (r, nm) in names.iter().enumerate() {
             let c = self.callers_cache.get(nm).copied().unwrap_or(0);
@@ -530,13 +536,13 @@ impl Searcher {
         let mut order: Vec<usize> = (0..c.rows.len()).collect();
         order.sort_by(|&a, &b| scores[b].partial_cmp(&scores[a]).unwrap_or(std::cmp::Ordering::Equal).then(c.rows[a].id.cmp(&c.rows[b].id)));
         let mut picked: Vec<Hit> = Vec::new();
-        let mut best_by_key: HashMap<(String, String), usize> = HashMap::new();
+        let mut best_by_key: HashMap<(String, String, bool), usize> = HashMap::new();
         for r in order {
             let row = &c.rows[r];
             let mut h = Hit::from_row(row, false);
             h.score = scores[r];
             h.why = why(&c.x[r]);
-            let key = (h.path.clone(), h.qualname.clone());
+            let key = (h.path.clone(), h.qualname.clone(), h.kind == "impl"); // a struct and its impl block are two hits
             let is_code = !h.qualname.is_empty() && CODE_KINDS.contains(&h.kind.as_str());
             if is_code {
                 if let Some(&pi) = best_by_key.get(&key) {

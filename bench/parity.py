@@ -6,7 +6,7 @@ usage: parity.py REPO_DIR RUST_BINARY [--queries N]
 1. Both engines index a copy of REPO_DIR's files in the reference's six languages; chunk tables,
    call edges, postings (per chunk, field and token: tf), document lengths and vectors are compared.
 2. Benchmark queries (all five types: the package's query file when one was generated, else made
-   from the corpus's own documented functions by the same rules) run through both engines on the *Python-built* index; candidate sets, the 47 features, the
+   from the corpus's own documented functions by the same rules) run through both engines on the *Python-built* index; candidate sets, the 48 features, the
    ranker scores and the final top-10 are compared.
 3. The Rust engine searches its own index; final top-10 compared with Python on the Python index.
 Exits non-zero on any difference, or when fewer queries than asked can be made.

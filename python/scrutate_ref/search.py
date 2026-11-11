@@ -2,7 +2,7 @@
 
 Candidates come from three sources -- field-weighted BM25 over the segment store (lex.py),
 semantic vectors, and exact name / qualified-name lookup -- and are scored by a learned ranker
-over 47 features (per-field BM25, semantic similarities, exactness, literal occurrences in the
+over 48 features (per-field BM25, semantic similarities, exactness, literal occurrences in the
 candidate text, structure). Without a trained ranker a hand-set linear blend is used.
 """
 from __future__ import annotations
@@ -38,6 +38,7 @@ FEATURES = [
     "k_function", "k_method", "k_class", "k_module", "k_other",
     "is_test", "log_nbody", "has_doc", "log_ndoc", "qual_depth", "is_private", "log_ncallers",
     "n_terms", "n_lits", "n_words", "has_ident", "file_frac",
+    "exact_case",
 ]
 FI = {n: i for i, n in enumerate(FEATURES)}
 
@@ -271,6 +272,9 @@ class Searcher:
             X[r, FI["log_ndoc"]] = math.log1p(row["ndoc"] or 0)
             X[r, FI["qual_depth"]] = (row["qualname"] or "").count(".")
             X[r, FI["is_private"]] = 1.0 if name.startswith("_") and not name.startswith("__") else 0.0
+        # a name the query has as typed, case included: `BurstFiles` is not `burst_files`
+        typed = set(text_words(q.text))
+        X[:, FI["exact_case"]] = [1.0 if nm and nm in typed else 0.0 for nm in names]
         nc = self._ncallers(names)
         X[:, FI["log_ncallers"]] = [math.log1p(nc.get(nm, 0)) for nm in names]
         # --- query level + file cohesion
@@ -307,7 +311,7 @@ class Searcher:
             row = rows[r]
             h = Hit(row["id"], row["path"], row["start"], row["end"], row["name"] or "",
                     row["qualname"] or "", row["kind"], "", float(scores[r]), _why(X[r]))
-            key = (h.path, h.qualname)
+            key = (h.path, h.qualname, h.kind == "impl")  # a struct and its impl block are two hits
             if h.qualname and h.kind in CODE_KINDS and key in best_by_key:
                 prev = picked[best_by_key[key]]  # overload / redefinition: keep the longer body
                 if (h.end - h.start) > (prev.end - prev.start):

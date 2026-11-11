@@ -171,7 +171,7 @@ samples), and a dictionary to version in the index, for a few percent.
   pytest, pydantic, python-pptx, python-docx, openpyxl, mcp, rich), MIT-CMU (pillow), the
   Matplotlib licence, Apache-2.0 (playwright, cryptography as one option) and MPL-2.0 (pikepdf).
   The model files keep word statistics, vocabulary tables and projections, not source text.
-- Ranker (`models/ranker.npz`, 86 KB, v8): LightGBM LambdaRank over 47 features, exported to
+- Ranker (`models/ranker.npz`, 86 KB, v8): LightGBM LambdaRank over 48 features, exported to
   arrays; numpy and LightGBM predictions agree to 5.3e-8; cross-validated on DEV packages (three
   folds, each language's repositories dealt across them), fitted once, evaluated once on TEST.
   Fitted on the 7 Python DEV packages and the 16 `CODE_DEV` repositories of `bench/groups.py`
