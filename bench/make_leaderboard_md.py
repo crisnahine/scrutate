@@ -47,6 +47,38 @@ def plan_for(r):
     return PLANS["default"]
 
 
+METRICS = {"cpu": "CPU time", "rss": "peak memory"}
+MODES = ["default", "-j1"]
+
+
+def count_line(statuses):
+    counts = {}
+    for s in statuses:
+        counts[s] = counts.get(s, 0) + 1
+    return ", ".join(f"**{k}** {v}" for k, v in sorted(counts.items())) + f" (of {len(statuses)})"
+
+
+def metric_value(key, v):
+    return "-" if v is None else f"{ms(v)} ms" if key == "cpu" else f"{v / 1e6:.1f} MB"
+
+
+def metric_cell(key, m):
+    """One mode's verdict on one metric: median, ratio and interval, rank, status (with the gap on FAIL)."""
+    if m["status"] == "n/a":
+        return "n/a"
+    parts = [metric_value(key, m.get("median"))] if m.get("median") is not None else []
+    if "ratio" in m:
+        parts.append(f"{m['ratio']:.3f} [{m['ci95'][0]:.3f}, {m['ci95'][1]:.3f}]")
+    if m.get("rank"):
+        parts.append(f"rank {m['rank']} of {m['of']}")
+    st = m["status"]
+    if st == "FAIL" and "ratio" in m:
+        st += f" ({(m['ratio'] - 1) * 100:.0f}% more)"
+    elif m.get("why"):
+        st += f" ({m['why']})"
+    return ", ".join(parts + [f"**{st}**" if m["status"] == "PASS" else st])
+
+
 def hardware(env):
     """The CPU as recorded; a Linux guest of the Apple Virtualization framework reports no name."""
     cpu = env.get("cpu", "?")
@@ -89,14 +121,15 @@ def engine_a(data, label):
     if any(r.get("resident") is not None for r in data["benchmarks"].values()):
         out.append("- A warm-cache benchmark records how much of its corpus was in the page cache when it ended (`bench/evict.c --resident`); "
                    "a row under 95% says so in its status column.")
-    out.append("- Tool versions: " + "; ".join(f"{t}: `{v}`" for t, v in env["tools"].items() if v and t not in ("scrutate --index", "scrutate base")) + ".")
+    out.append("- Tool versions: " + "; ".join(f"{t}: `{v}`" for t, v in env["tools"].items() if v and t not in ("scrutate --index", "scrutate base", "scrutate -j1")) + ".")
     if env.get("scrutate_sha256"):
         out.append(f"- scrutate binary measured: SHA-256 `{env['scrutate_sha256']}`.")
     out.append("")
-    counts = {}
-    for r in data["benchmarks"].values():
-        counts[r["status"]] = counts.get(r["status"], 0) + 1
-    out.append("Status counts: " + ", ".join(f"**{k}** {v}" for k, v in sorted(counts.items())) + f" (of {len(data['benchmarks'])}).\n")
+    out.append("Status counts, wall time: " + count_line([r["status"] for r in data["benchmarks"].values()]) + ".\n")
+    if any("metrics" in r for r in data["benchmarks"].values()):
+        for key, name in METRICS.items():
+            out.append(f"Status counts, {name}: " + "; ".join(
+                f"{mode} mode " + count_line([r["metrics"][key][mode]["status"] for r in data["benchmarks"].values() if "metrics" in r]) for mode in MODES) + ".\n")
     out.append("Medians in ms (runs in parentheses when fewer than the full count). `wrong` = answer differs from the reference (disqualified), "
                "`n/a` = the tool cannot express the query or filter, `timeout` = did not finish. The cross-category column (`scrutate --index`, "
                "Engine B's text index) is published but never ranked.\n")
@@ -147,11 +180,35 @@ def engine_a(data, label):
                 out.append(f"- **{bid}**: {r.get('why', '')}.")
         out.append("")
     out.append("### CPU time and peak memory\n")
-    out.append("Medians over the same runs (user + system CPU seconds, peak resident set in MB). Rank is scrutate's place among the tools "
-               "with a correct answer, lowest first; these columns are reported, not tested for significance.\n")
-    out.append("| Benchmark | scrutate CPU s | lowest competitor CPU s | CPU rank | scrutate MB | lowest competitor MB | memory rank |")
-    out.append("|---|---|---|---|---|---|---|")
-    for bid, r in data["benchmarks"].items():
+    tested = [(bid, r) for bid, r in data["benchmarks"].items() if "metrics" in r]
+    if tested:
+        out.append("From the same runs as the wall time: CPU time is user + system seconds, memory the peak resident set. Each metric is "
+                   "tested like wall time: the 95% interval of median(scrutate) / median(the competitor lowest on that metric), bootstrapped "
+                   "over the runs, gives PASS below 1, FAIL above 1 and PARTIAL when it contains 1 (no BLOCKED: these have no hardware "
+                   "ceiling). The competitors lowest on CPU time and on memory in the pilot get the full runs too, whatever their wall time. "
+                   "Rank is the place among the tools with a correct answer, lowest first, the 3-run pilots included.\n")
+        out.append("The default mode (`scrutate grep` with its default thread count) is the product's default because it leads "
+                   "wall time. `scrutate grep -j1` (one search thread) is the mode for the least CPU time and memory; it is checked against "
+                   "the reference like any tool, timed in the same blocks, and never ranked for wall time.\n")
+        out.append("| Benchmark | CPU, default | CPU, -j1 | memory, default | memory, -j1 | lowest CPU competitor | lowest memory competitor |")
+        out.append("|---|---|---|---|---|---|---|")
+        for bid, r in tested:
+            m = r["metrics"]
+            cells = [metric_cell(key, m[key][mode]) for key in METRICS for mode in MODES]
+            for key in METRICS:
+                lead = m[key]["default"].get("best_competitor") or m[key]["-j1"].get("best_competitor")
+                med = r["tools"].get(lead, {}).get({"cpu": "cpu_median", "rss": "rss_median"}[key]) if lead else None
+                cells.append(f"{lead} {metric_value(key, med)}" if lead else "-")
+            out.append(f"| {bid} | " + " | ".join(cells) + " |")
+        out.append("")
+    untested = [(bid, r) for bid, r in data["benchmarks"].items() if "metrics" not in r]
+    if untested:
+        # rows from the harness before the metrics had a status
+        out.append("Medians over the same runs (user + system CPU seconds, peak resident set in MB). Rank is scrutate's place among the tools "
+                   "with a correct answer, lowest first; these rows were measured before CPU time and memory were tested for significance.\n")
+        out.append("| Benchmark | scrutate CPU s | lowest competitor CPU s | CPU rank | scrutate MB | lowest competitor MB | memory rank |")
+        out.append("|---|---|---|---|---|---|---|")
+    for bid, r in untested:
         ok = {t: x for t, x in r["tools"].items() if x.get("status") == "ok" and x.get("cpu_median") is not None and t not in ("scrutate --index", "scrutate base")}
         us = ok.get("scrutate")
         if not us:
@@ -175,7 +232,7 @@ def engine_a(data, label):
     out.append("### Exact command lines\n")
     out.append("<details><summary>every tool, every benchmark (run from the corpus root)</summary>\n")
     for bid, r in data["benchmarks"].items():
-        out.append(f"**{bid}**\n")
+        out.append(f"**{bid}**" + (f" (each command line started {r['concurrent']} times at once by `/bin/sh -c '... & ... & wait'`)" if r.get("concurrent") else "") + "\n")
         out.append("```")
         for t, x in r["tools"].items():
             if x.get("argv"):

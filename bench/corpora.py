@@ -25,7 +25,7 @@ REAL = {
     "llvm": ("https://github.com/llvm/llvm-project.git", "llvmorg-23.1.5"),
     "ripgrep": ("https://github.com/BurntSushi/ripgrep.git", "15.2.0"),
 }
-GENERATED = ["bigfile", "smallfiles", "binheavy", "patho", "rgbuilt", "linux-nodot"]
+GENERATED = ["bigfile", "smallfiles", "binheavy", "patho", "rgbuilt", "linux-nodot", "startup"]
 
 
 def own_copy(src, dst):
@@ -202,6 +202,10 @@ def generate(root, name):
             os.makedirs(os.path.dirname(t), exist_ok=True)
             own_copy(s, t)
         info = "linux tracked files without hidden files and directories (copies; clones where the file system has them)"
+    elif name == "startup":
+        with open(os.path.join(tmp, "a.txt"), "wb") as f:
+            f.write(b"hello\n")
+        info = "one file of one line (start-up time)"
     else:
         raise SystemExit(f"unknown corpus {name}")
     os.rename(tmp, d)

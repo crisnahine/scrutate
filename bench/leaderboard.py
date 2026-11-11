@@ -10,17 +10,23 @@ Per benchmark:
     explicit file list (text files of the corpus under the mode's ignore rules). A tool whose
     answer differs is disqualified for that benchmark, scrutate included.
  2. Pilot. Three runs per valid tool; the fastest competitor, and any tool within 1.25x of the
-    fastest (`--contender`), are contenders.
+    fastest (`--contender`), are contenders. So are the competitors with the lowest pilot CPU time
+    and the lowest pilot peak memory (metric contenders).
  3. Measurement. hyperfine, output piped (no /dev/null shortcuts), >= 30 runs for scrutate and
     every contender, taken in interleaved blocks (A B, A B, A B; one warm-up run per block) so load
     drift on a shared machine does not bias the comparison (cold cache: the prepare command runs
-    before every run). With SCRUTATE_BASE_BIN set, `scrutate base` runs scrutate's command lines with
-    that binary in the same blocks, for bench/leaderboard_regression.py; it is never ranked.
+    before every run). `scrutate -j1` (one search thread, the documented mode for the least CPU
+    time and memory) runs scrutate's command lines with -j1 in the same blocks; it is ranked on CPU
+    time and memory only. With SCRUTATE_BASE_BIN set, `scrutate base` runs scrutate's command lines
+    with that binary in the same blocks, for bench/leaderboard_regression.py; it is never ranked.
+    A concurrent row times each tool's verified command started 4 times at once by one shell.
  4. Status. The 95% confidence interval of median(scrutate) / median(best competitor), by a
     bootstrap over the runs: PASS if it lies below 1, FAIL above 1, PARTIAL if it contains 1;
     BLOCKED (a tie at the hardware limit) when it contains 1 and both medians are within 15% of
     the time to merely read the same files (bench/rawread.c, the fastest of several thread
-    counts).
+    counts). The same rule, without BLOCKED, gives a status for CPU time (user + system) and for
+    peak resident memory, against the competitor lowest on that metric, for the default mode and
+    for -j1 (`metrics`).
  5. Stability. A contender whose block medians differ by more than 25% was measured while the
     machine did something else. `--redo-unstable` measures such benchmarks again, once, whatever
     their status; the first measurement's status, ratio, interval and load stay in the row
@@ -69,12 +75,16 @@ BIN = {
     "ack": which("/opt/homebrew/bin/ack", "ack"),
     "ast-grep": which("/opt/homebrew/bin/ast-grep", "ast-grep"),
     "scrutate --index": SCRUTATE,
+    "scrutate -j1": SCRUTATE,
     **({"scrutate base": SCRUTATE_BASE} if SCRUTATE_BASE else {}),
 }
 BASE = ["scrutate base"] if SCRUTATE_BASE else []
 ENGINE_A = ["scrutate", *BASE, "ripgrep", "ugrep", "GNU grep", "git grep", "ag", "ack"]
-# published, never ranked: an index answers from work done in advance, the base is the change's yardstick
-CROSS = ["scrutate --index", *BASE]
+# never ranked for wall time: an index answers from work done in advance, the base is the change's
+# yardstick, and -j1 is the documented mode for the least CPU time and memory (ranked on those only)
+CROSS = ["scrutate --index", *BASE, "scrutate -j1"]
+# the modes ranked on CPU time and peak memory; the default is the product's entry
+MODES = {"default": "scrutate", "-j1": "scrutate -j1"}
 
 
 def version(tool):
@@ -124,6 +134,8 @@ def suite():
         add(f"linux/{t}", "linux", t)
     add("linux/unrestricted", "linux", "literal (unrestricted)", Q("kmalloc", fixed=True), "unrestricted")
     add("linux/file-type filter", "linux", "literal (*.c, *.h)", Q("kmalloc", fixed=True), "types")
+    # the same command line as linux/literal, started 4 times at once: the same answer and verdict
+    B.append({"id": "linux/4 at once (literal)", "corpus": "linux", "qtype": "literal, 4 at once", "q": QT["literal"], "mode": "ignore", "concurrent": 4})
     for t in ["literal", "case-insensitive", "complex regex", "very many matches", "no match", "identifier"]:
         q = dict(QT[t])
         if t == "literal":
@@ -136,6 +148,8 @@ def suite():
     add("ripgrep/literal", "ripgrep", "literal", Q("Searcher", fixed=True))
     add("ripgrep/simple regex", "ripgrep", "simple regex", Q(r"[A-Z][a-z]+Builder"))
     add("ripgrep/case-insensitive", "ripgrep", "case-insensitive", Q("error", fixed=True, icase=True))
+    B.append({"id": "ripgrep/4 at once (literal)", "corpus": "ripgrep", "qtype": "literal, 4 at once", "q": Q("Searcher", fixed=True), "mode": "ignore",
+              "concurrent": 4})
     for t in ["literal", "case-insensitive", "complex regex", "very many matches", "no match", "unicode"]:
         add(f"bigfile/{t}", "bigfile", t)
     add("smallfiles/literal", "smallfiles", "literal", Q("spin_lock_irqsave", fixed=True))
@@ -146,6 +160,8 @@ def suite():
     # every run of one or more a's splits into a and aa pieces, so ^a+$ is the same language
     add("patho/backtracking trap", "patho", "simple regex", Q(r"^(a|aa)+$", ref=r"^a+$"))
     add("rgbuilt/git-aware", "rgbuilt", "literal (git-ignored build output present)", Q("Searcher", fixed=True), "git")
+    # start-up: one small file and no match, so the time is starting, walking and exiting
+    add("startup/no match", "startup", "no match")
     # any argument list: a two-argument pattern is not the same query in both tools (tree-sitter's
     # anchors count a comment between arguments as an argument, ast-grep's $A, $B does not)
     B.append({"id": "linux/structural", "corpus": "linux", "qtype": "structural", "mode": "ignore", "structural": {
@@ -185,10 +201,10 @@ def argv(tool, q, mode, corpus_dir):
         return None, {}
     env = {}
     git = is_git(corpus_dir)
-    if tool in ("scrutate", "scrutate --index", "scrutate base"):
+    if tool in ("scrutate", "scrutate --index", "scrutate base", "scrutate -j1"):
         if tool == "scrutate --index" and mode != "ignore":
             return None, env
-        a = [b, "grep"] + (["--index"] if tool == "scrutate --index" else [])
+        a = [b, "grep"] + {"scrutate --index": ["--index"], "scrutate -j1": ["-j1"]}.get(tool, [])
         if q["ident"]:
             a += ["--ident", q["ident"]]
         else:
@@ -289,6 +305,13 @@ def structural_argv(tool, spec):
         sel = ["--selector", spec["ast_grep_selector"]] if spec.get("ast_grep_selector") else []
         return [BIN["ast-grep"], "run", "-p", spec["ast_grep"], *sel, "-l", spec["lang"], "--json=stream", "."]
     return None
+
+
+def group_argv(cmd, k):
+    """`cmd` started k times at once by one shell, which exits when all of them have; every tool pays
+    the same shell start. The environment of `cmd` reaches the copies through the shell's."""
+    one = " ".join(shlex.quote(x) for x in cmd)
+    return ["/bin/sh", "-c", " & ".join([one] * k) + " & wait"]
 
 
 # ------------------------------------------------------------------------- output normalisation
@@ -512,7 +535,11 @@ def run_bench(b, corpora, a, cache_dir):
     cdir = os.path.join(corpora, b["corpus"])
     res = {"id": b["id"], "corpus": b["corpus"], "qtype": b["qtype"], "mode": b["mode"], "cache": a.cache, "tools": {}, "load": []}
     structural = b.get("structural")
-    tools = ["scrutate", *BASE, "ast-grep"] if structural else ENGINE_A + ["scrutate --index"]
+    conc = b.get("concurrent")
+    if conc:
+        res["concurrent"] = conc
+    # tsquery has no thread option, so the -j1 mode exists for text search only
+    tools = ["scrutate", *BASE, "ast-grep"] if structural else ENGINE_A + ["scrutate --index", "scrutate -j1"]
     # 1. reference
     files = file_list(cdir, b["mode"])
     digest = corpus_digest(corpora, b["corpus"])
@@ -561,6 +588,9 @@ def run_bench(b, corpora, a, cache_dir):
             rec.update({"status": "wrong", "missing": len(missing), "extra": len(extra), "missing_sample": sorted(missing)[:5], "extra_sample": sorted(extra)[:5]})
         else:
             rec["status"] = "ok"
+        if conc:
+            # the single command's answer is the verdict; the timed command starts it k times at once
+            rec["group_argv"] = group_argv(cmd, conc)
         res["tools"][t] = rec
     valid = [t for t in tools if res["tools"][t].get("status") == "ok"]
     lst = os.path.join(cache_dir, f"list-{hashlib.sha1((b['corpus'] + b['mode']).encode()).hexdigest()[:12]}.bin")
@@ -575,31 +605,43 @@ def run_bench(b, corpora, a, cache_dir):
         for t in valid:
             r = res["tools"][t]
             if r["verify_s"] > max(5.0, 20 * fastest_verify):
-                r.update({"n": 1, "times": [r["verify_s"]], "note": "not a contender (more than 20x slower in the correctness run)"})
+                # a concurrent row's correctness run is one copy, not the group: no time to show
+                r.update({"n": 1, "note": "not a contender (more than 20x slower in the correctness run)", **({} if conc else {"times": [r["verify_s"]]})})
                 continue
             res["load"].append(wait_idle(a.max_load, a.max_wait))
-            r.update(hyperfine(r["argv"], cdir, r["env"], 3, 1, prepare))
-        best_pilot = min(statistics.median(res["tools"][t]["times"]) for t in ranked)
+            r.update(hyperfine(r.get("group_argv") or r["argv"], cdir, r["env"], 3, 1, prepare))
+        best_pilot = min(statistics.median(res["tools"][t]["times"]) for t in ranked if res["tools"][t].get("n", 0) >= 3)
         piloted = [t for t in valid if res["tools"][t].get("n", 0) >= 3 and not t.startswith("scrutate")]
         fastest_comp = min(piloted, key=lambda t: statistics.median(res["tools"][t]["times"]), default=None)
         contenders = [t for t in valid if res["tools"][t].get("n", 0) >= 3
                       and (t.startswith("scrutate") or t == fastest_comp or statistics.median(res["tools"][t]["times"]) <= a.contender * best_pilot)]
+        # metric contenders: the pilot's lowest CPU time and lowest peak memory, often slower tools
+        target = {t: a.runs for t in contenders}
+        for key in ("cpu", "rss"):
+            lead = min(piloted, key=lambda t: statistics.median(res["tools"][t][key]), default=None)
+            if lead and lead not in target:
+                slow = a.short_metric_runs and statistics.median(res["tools"][lead]["times"]) > 2.0
+                target[lead] = a.runs // 2 if slow else a.runs
+                contenders.append(lead)
+            if lead:
+                res["tools"][lead].setdefault("metric_contender", []).append(key)
         # interleaved blocks (A B C, A B C, ...): on a shared machine the load drifts, and one long
         # block per tool would turn that drift into a difference between the tools
         acc = {t: {"n": 0, "times": [], "cpu": [], "rss": [], "exit": set()} for t in contenders}
-        per = -(-a.runs // a.blocks)
         for i in range(a.blocks):
             # alternate the order, so of two tools neither always runs first in a block
             for t in (contenders if i % 2 == 0 else contenders[::-1]):
                 r = res["tools"][t]
                 res["load"].append(wait_idle(a.max_load, a.max_wait))
-                h = hyperfine(r["argv"], cdir, r["env"], per, 1, prepare)
+                h = hyperfine(r.get("group_argv") or r["argv"], cdir, r["env"], -(-target[t] // a.blocks), 1, prepare)
                 for k in ("times", "cpu", "rss"):
                     acc[t][k] += h[k]
                 acc[t]["n"] += h["n"]
                 acc[t]["exit"] |= set(h["exit"])
         for t in contenders:
             res["tools"][t].update({**acc[t], "exit": sorted(acc[t]["exit"]), "blocks": a.blocks})
+            if target[t] != a.runs:
+                res["tools"][t]["runs_target"] = target[t]
         res["load"].append(loadavg())
         for t in valid:
             r = res["tools"][t]
@@ -609,8 +651,8 @@ def run_bench(b, corpora, a, cache_dir):
                 r["median"] = statistics.median(r["times"])
                 r["cpu_median"] = statistics.median(r["cpu"]) if r.get("cpu") else None
                 r["rss_median"] = statistics.median(r["rss"]) if r.get("rss") else None
-    # 4. hardware ceiling and status
-    if not structural:
+    # 4. hardware ceiling and status (none for a concurrent row: it reads the files k times)
+    if not structural and not conc:
         # the ceiling depends only on the file set and the cache state: measured once per run
         key = f"{b['corpus']}|{b['mode']}|{a.cache}|{len(files)}"
         if key not in RAWREAD:
@@ -624,9 +666,9 @@ def run_bench(b, corpora, a, cache_dir):
                 if key not in RAWREAD or cur["median"] < RAWREAD[key]["median"]:
                     RAWREAD[key] = cur
         res["rawread"] = {k: v for k, v in RAWREAD[key].items() if k != "times"}
-        if a.cache == "warm":
-            # a warm run is one whose files were in memory: on a machine short of it they are not
-            res["resident"] = resident(lst, cdir)
+    if not structural and a.cache == "warm":
+        # a warm run is one whose files were in memory: on a machine short of it they are not
+        res["resident"] = resident(lst, cdir)
     valid = [t for t in valid if res["tools"][t]["status"] == "ok"]
     decide(res, valid, a.runs)
     res["max_load"] = max(res["load"]) if res["load"] else loadavg()
@@ -650,17 +692,41 @@ def decide(res, valid, runs):
     else:
         best = min(comps, key=lambda t: res["tools"][t]["median"])
         ratio, lo, hi = boot_ratio(us["times"], res["tools"][best]["times"])
-        res.update({"best_competitor": best, "ratio": ratio, "ci95": [lo, hi]})
-        if hi < 1:
-            res["status"] = "PASS"
-        elif lo > 1:
-            res["status"] = "FAIL"
-        else:
-            res["status"] = "PARTIAL"
+        res.update({"best_competitor": best, "ratio": ratio, "ci95": [lo, hi], "status": ci_status(lo, hi)})
+        if res["status"] == "PARTIAL":
             raw = res.get("rawread", {}).get("median")
             if raw and us["median"] <= 1.15 * raw and res["tools"][best]["median"] <= 1.15 * raw:
                 res["status"] = "BLOCKED"
                 res["why"] = "tie at the hardware limit (both within 15% of reading the files)"
+    res["metrics"] = {key: {mode: metric_verdict(res["tools"], tool, valid, key, runs) for mode, tool in MODES.items()} for key in ("cpu", "rss")}
+
+
+def ci_status(lo, hi):
+    return "PASS" if hi < 1 else "FAIL" if lo > 1 else "PARTIAL"
+
+
+def metric_verdict(tools, us_tool, valid, key, runs):
+    """CPU time (`cpu`) or peak memory (`rss`) of one scrutate mode against the competitor lowest on
+    that metric, by the wall-time rule; there is no hardware ceiling, so no BLOCKED. The rank counts
+    every correct competitor with a median, the 3-run pilots included."""
+    us = tools.get(us_tool)
+    if not us:
+        return {"status": "n/a", "why": f"{us_tool} cannot run this benchmark"}
+    if us.get("status") != "ok" or us_tool not in valid:
+        return {"status": "FAIL", "why": f"{us_tool}'s answer is {us.get('status')}"}
+    med = statistics.median
+    comps = {t: tools[t][key] for t in valid if not t.startswith("scrutate") and tools[t].get(key)}
+    if not us.get(key):
+        return {"status": "PARTIAL", "why": f"{us_tool} was not timed"}
+    out = {"median": med(us[key]), "rank": 1 + sum(med(v) < med(us[key]) for v in comps.values()), "of": len(comps) + 1}
+    full = {t: v for t, v in comps.items() if len(v) >= tools[t].get("runs_target", runs)}
+    if not full or len(us[key]) < runs:
+        return {**out, "status": "PARTIAL", "why": "no correct competitor was measured in full on this metric" if not full else f"{us_tool} has fewer than {runs} runs"}
+    best = min(full, key=lambda t: med(full[t]))
+    if min(full[best]) <= 0:
+        return {**out, "status": "PARTIAL", "best_competitor": best, "why": f"{best} reads 0 in some runs"}
+    ratio, lo, hi = boot_ratio(us[key], full[best])
+    return {**out, "best_competitor": best, "best_median": med(full[best]), "ratio": ratio, "ci95": [lo, hi], "status": ci_status(lo, hi)}
 
 
 # a warm-cache measurement needs this much of the corpus in the page cache
@@ -750,7 +816,23 @@ def check_hyperfine():
         raise SystemExit(f"hyperfine 2 or newer is needed (its JSON lists each run); found: {out or 'no version'}")
 
 
+def _selfcheck() -> None:
+    g = group_argv(["/x/rg", "-e", "it's", "."], 2)
+    assert g[:2] == ["/bin/sh", "-c"] and shlex.split(g[2]) == ["/x/rg", "-e", "it's", ".", "&", "/x/rg", "-e", "it's", ".", "&", "wait"]
+    ok = lambda xs: {"status": "ok", "cpu": xs}
+    tools = {"scrutate": ok([1.0, 1.1, 0.9] * 10), "ugrep": ok([2.0, 2.1, 1.9] * 10), "ack": ok([0.5] * 3), "ag": {"status": "wrong"}}
+    m = metric_verdict(tools, "scrutate", ["scrutate", "ugrep", "ack"], "cpu", 30)
+    # ack is lower but has only its pilot runs: it counts for the rank, not for the status
+    assert (m["status"], m["best_competitor"], m["rank"], m["of"]) == ("PASS", "ugrep", 2, 3) and abs(m["ratio"] - 0.5) < 1e-9, m
+    tools["ugrep"] = ok([0.5, 0.6, 0.4] * 10)
+    assert metric_verdict(tools, "scrutate", ["scrutate", "ugrep"], "cpu", 30)["status"] == "FAIL"
+    assert metric_verdict(tools, "scrutate -j1", ["scrutate", "ugrep"], "cpu", 30)["status"] == "n/a"
+    assert metric_verdict({**tools, "scrutate -j1": {"status": "wrong"}}, "scrutate -j1", ["scrutate"], "cpu", 30)["status"] == "FAIL"
+    assert ci_status(0.9, 1.1) == "PARTIAL" and ci_status(1.01, 1.2) == "FAIL" and ci_status(0.8, 0.99) == "PASS"
+
+
 def main() -> int:
+    _selfcheck()
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpora", default=os.path.expanduser("~/.cache/scrutate-bench/corpora"))
     ap.add_argument("--out", required=True)
@@ -765,6 +847,8 @@ def main() -> int:
     ap.add_argument("--blocks", type=int, default=3, help="the full runs of the contenders are taken in this many interleaved blocks")
     ap.add_argument("--contender", type=float, default=1.25, help="besides scrutate and the fastest competitor, tools whose pilot median is within this "
                     "factor of the fastest also get the full run count")
+    ap.add_argument("--short-metric-runs", action="store_true", help="a metric contender that is not a wall-time contender and whose pilot "
+                    "median is over 2 s gets half the runs (shortens a full cycle; its CPU and memory statuses then rest on fewer runs)")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--redo-unstable", action="store_true", help="measure again, once, the benchmarks in --out where a tool's block medians "
                     "differ by more than 25%% (the machine was disturbed); each keeps its first status, ratio, interval and load as `first`")
@@ -791,7 +875,7 @@ def main() -> int:
         for r in data["benchmarks"].values():
             n = r["reference"]["files_listed"]
             raw = RAWREAD.get(f"{r['corpus']}|{r['mode']}|{r['cache']}|{n}")
-            if raw:
+            if raw and not r.get("concurrent"):
                 r["rawread"] = {k: v for k, v in raw.items() if k != "times"}
             decide(r, [t for t, x in r["tools"].items() if x.get("status") == "ok"], data["settings"]["runs"])
             print(f"{r['id']}: {r['status']}", file=sys.stderr)
@@ -806,7 +890,7 @@ def main() -> int:
         data["environment"] = environment()
         data["corpora"] = json.load(open(os.path.join(a.corpora, "manifest.json")))
         data["settings"] = {"runs": a.runs, "cache": a.cache, "cold_prepare": a.cold_prepare, "max_load": a.max_load, "warmup": 1,
-                            "contender": a.contender, "blocks": a.blocks}
+                            "contender": a.contender, "blocks": a.blocks, "short_metric_runs": a.short_metric_runs}
     for b in benches:
         old = data["benchmarks"].get(b["id"])
         if a.only and not any(b["id"].startswith(p) for p in a.only):
@@ -830,6 +914,8 @@ def main() -> int:
         print(f"  {r['status']}: scrutate {r['tools'].get('scrutate', {}).get('median', float('nan')) * 1000:.1f} ms; best competitor {best} "
               f"{(r['tools'][best]['median'] * 1000) if best else float('nan'):.1f} ms; ratio {r.get('ratio', float('nan')):.3f} {r.get('ci95', '')}",
               file=sys.stderr, flush=True)
+        print("  " + "; ".join(f"{key} {mode} {m['status']} {m.get('ratio', float('nan')):.3f} vs {m.get('best_competitor')}"
+                               for key, ms in r["metrics"].items() for mode, m in ms.items()), file=sys.stderr, flush=True)
     return 0
 
 
