@@ -166,6 +166,12 @@ def test_python_class_constants_and_tuple_targets_are_constants():
                   ("Config.X", "X, Y = 1, 2"), ("Config.Y", "X, Y = 1, 2")]
 
 
+def test_python_list_and_parenthesised_targets_are_constants():
+    py = _consts("k.py", "[A, B] = 1, 2\n(C, D) = 3, 4\nclass K:\n    [X, y] = 5, 6\n")
+    assert py == [("A", "[A, B] = 1, 2"), ("B", "[A, B] = 1, 2"), ("C", "(C, D) = 3, 4"), ("D", "(C, D) = 3, 4"),
+                  ("K.X", "[X, y] = 5, 6")]
+
+
 def test_static_readonly_class_members_are_constants():
     src = ("export default class K {\n  static readonly SIZE = 2;\n  static n = 1;\n  readonly r = 3;\n"
            "  private static readonly p: number = 4;\n  static readonly f = () => 1;\n}\n")

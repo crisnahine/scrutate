@@ -790,7 +790,7 @@ fn c_and_cpp_const_globals_are_constants() {
         "constexpr int kLimit = 8;\nnamespace cfg { inline constexpr double kPi = 3.14; }\nextern \"C\" { const int kC = 1; }\n\
          class K { public: static const int kSize = 2; };\nvoid g() { constexpr int in = 1; }\n",
     );
-    assert_eq!(named(&cpp), ["kLimit", "cfg.kPi", "kC"]);
+    assert_eq!(named(&cpp), ["kLimit", "cfg.kPi", "kC", "K.kSize"]);
 }
 
 #[test]
@@ -800,6 +800,51 @@ fn python_class_constants_and_tuple_targets_are_constants() {
     assert_eq!(named(&py), ["A", "B", "C", "Config.MAX", "Config.X", "Config.Y"]);
     let texts: Vec<&str> = py.iter().map(|(_, _, t)| t.as_str()).collect();
     assert_eq!(texts, ["A, B = 1, 2", "A, B = 1, 2", "(C, d) = 3, 4", "MAX = 3", "X, Y = 1, 2", "X, Y = 1, 2"]);
+}
+
+#[test]
+fn python_list_and_parenthesised_targets_are_constants() {
+    let py = constants("k.py", "[A, B] = 1, 2\n(C, D) = 3, 4\nclass K:\n    [X, y] = 5, 6\n");
+    assert_eq!(named(&py), ["A", "B", "C", "D", "K.X"]);
+    assert_eq!(py[0].2, "[A, B] = 1, 2");
+}
+
+#[test]
+fn cpp_class_body_constants_are_constants_of_their_class() {
+    let src = "struct Config {\n  static const int kSize = 2;\n  static constexpr double kPi = 3.14;\n  inline static const std::string kName = \"x\";\n\
+               static const int kLater;\n  const int notStatic = 1;\n  static int counter = 0;\n  static constexpr int kA = 1, kB = 2;\n\
+               static constexpr const char *kPath = \"/\";\n  void f();\n};\nconst int Config::kLater = 5;\n\
+               class K {\npublic:\n  static const int kMax = 9;\n};\n";
+    let cpp = constants("c.cpp", src);
+    assert_eq!(named(&cpp), ["Config.kSize", "Config.kPi", "Config.kName", "Config.kA", "Config.kB", "Config.kPath", "Config.kLater", "K.kMax"]);
+    assert_eq!(cpp[0], ("kSize".into(), "Config.kSize".into(), "static const int kSize = 2;".into()));
+    assert_eq!(cpp[6], ("kLater".into(), "Config.kLater".into(), "const int Config::kLater = 5;".into()));
+}
+
+#[test]
+fn glsl_and_objc_file_scope_const_globals_are_constants() {
+    assert_eq!(named(&constants("s.glsl", "const float PI = 3.14159;\nuniform float time;\nvoid main() {\n  const int local = 1;\n}\n")), ["PI"]);
+    let objc = "#import <Foundation/Foundation.h>\nstatic const int kMax = 3;\nNSString *const kName = @\"x\";\nNSString *mutableName = @\"y\";\n\
+                @implementation G\n- (void)f {\n  const int local = 1;\n}\n@end\n";
+    for path in ["g.m", "g.mm"] {
+        assert_eq!(named(&constants(path, objc)), ["kMax", "kName"], "{path}");
+    }
+}
+
+#[test]
+fn an_objc_property_is_a_method_of_its_class_or_protocol() {
+    let src = "@interface Greeter : NSObject\n@property (nonatomic) int count;\n@property int bare;\n@end\n\
+               @protocol Speaker\n@property (readonly) int volume;\n@end\n";
+    let got = symbols("g.h", src);
+    let want = [("class", "Greeter"), ("method", "Greeter.count"), ("method", "Greeter.bare"), ("interface", "Speaker"), ("method", "Speaker.volume")];
+    assert_eq!(got, want.map(|(k, q)| (k.to_string(), q.to_string())));
+    assert_eq!(find(&parse_source("g.h", src), "Greeter.count").text, "@property (nonatomic) int count;");
+    let root = tree("objc_prop", &[("g.h", src), ("g.m", "#import \"g.h\"\n@implementation Greeter\n- (int)count {\n  return _count;\n}\n@end\n")]);
+    let mut repo = scrutate::Repo::open(&root).unwrap();
+    repo.update(false).unwrap();
+    let hits = repo.find_symbol("Greeter.count", 5).unwrap();
+    assert_eq!(hits.iter().map(|h| h.loc()).collect::<Vec<_>>(), ["g.m:3-5", "g.h:2-2"]);
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]
@@ -821,7 +866,14 @@ const OBJC_HEADER: &str = "#import <Foundation/Foundation.h>\n@interface Greeter
 fn objc_method_declarations_are_methods_of_their_class_or_protocol() {
     for path in ["g.h", "g.m"] {
         let got = symbols(path, OBJC_HEADER);
-        let want = [("class", "Greeter"), ("method", "Greeter.greet"), ("method", "Greeter.make"), ("interface", "Speaker"), ("method", "Speaker.speak")];
+        let want = [
+            ("class", "Greeter"),
+            ("method", "Greeter.count"),
+            ("method", "Greeter.greet"),
+            ("method", "Greeter.make"),
+            ("interface", "Speaker"),
+            ("method", "Speaker.speak"),
+        ];
         assert_eq!(got, want.map(|(k, q)| (k.to_string(), q.to_string())), "{path}");
         assert_eq!(find(&parse_source(path, OBJC_HEADER), "Greeter.make").text, "+ (instancetype)make:(int)n with:(int)m;", "{path}");
     }

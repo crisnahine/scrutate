@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -19,6 +20,7 @@ BIN = os.environ.get("SCRUTATE_BIN", os.path.join(ROOT, "target", "release", "sc
 # optional: a build with `--features extra-langs`, so the optional grammars get rows of their own
 EXTRA_BIN = os.environ.get("SCRUTATE_EXTRA_BIN")
 SAMPLES = os.path.join(ROOT, "crates", "scrutate", "tests", "samples")
+LANGS_RS = os.path.join(ROOT, "crates", "scrutate", "src", "langs.rs")
 
 HEURISTIC_ONLY = {
     # languages covered by the keyword tier (no grammar in this build); sample -> note
@@ -27,6 +29,17 @@ HEURISTIC_ONLY = {
     "sample.scm": "Scheme", "sample.rkt": "Racket", "sample.lisp": "Common Lisp", "sample.pas": "Pascal", "sample.adb": "Ada",
     "sample.m": "MATLAB / Objective-C (sniffed)", "sample.mm": "Objective-C++", "sample.s": "Assembly (labels)", "sample.txt": "plain text (windows)",
 }
+
+
+def header_rule() -> tuple[list[str], str]:
+    """How `sniff` in langs.rs reads a `.h` file: the Objective-C markers and the C++ line pattern."""
+    src = open(LANGS_RS).read()
+    branch = re.search(r'ends_with\("\.h"\) \{\s*if \[([^\]]*)\]\.iter\(\)\.any\(\|k\| source\.contains\(k\)\) \{\s*"objc"\s*'
+                       r'\} else if CPP_HEADER\.is_match\(source\) \{\s*"cpp"', src)
+    pattern = re.search(r'static CPP_HEADER\b.*?r#"(.*?)"#', src, re.S)
+    if not branch or not pattern:
+        raise SystemExit(f"{LANGS_RS}: the .h rule of sniff no longer reads as expected; update header_rule")
+    return re.findall(r'"([^"]*)"', branch.group(1)), pattern.group(1)
 
 
 def main() -> int:
@@ -63,8 +76,10 @@ def main() -> int:
     out.append("| Language | Extensions / files | Definition kinds verified | Calls | Imports | Docstrings | Evidence |")
     out.append("|---|---|---|---|---|---|---|")
     n_verified = 0
+    h_markers, h_pattern = header_rule()
     for r in sorted(regs, key=lambda x: x["id"]):
         exts = " ".join(r["extensions"] + r["filenames"])
+        h_note = {"c": " (`.h`: see below)", "cpp": " and `.h` by its content", "objc": " and `.h` by its content"}.get(r["id"], "")
         optional = " (extra-langs)" if r["id"] not in default_ids else ""
         sample = None
         for e in r["extensions"]:
@@ -86,7 +101,9 @@ def main() -> int:
         else:
             kinds_s = "not verified by a sample"
             evidence = "registry only"
-        out.append(f"| {r['id']}{optional} | `{exts}` | {kinds_s} | {'yes' if r['call_edges'] else 'no'} | {'yes' if r['imports'] else 'no'} | {'yes' if r['docstrings'] else 'no'} | {evidence} |")
+        out.append(f"| {r['id']}{optional} | `{exts}`{h_note} | {kinds_s} | {'yes' if r['call_edges'] else 'no'} | {'yes' if r['imports'] else 'no'} | {'yes' if r['docstrings'] else 'no'} | {evidence} |")
+    out.append("\nA `.h` file is read as objc when it holds " + ", ".join(f"`{m}`" for m in h_markers)
+               + f", else as cpp when a line matches `{h_pattern}`, else as c (`sniff` in `crates/scrutate/src/langs.rs`).")
     n_opt = sum(r["id"] not in default_ids for r in regs)
     out.append(f"\n{len(regs) - n_opt} grammars in the default build" + (f", {n_opt} more with `--features extra-langs`" if n_opt else "")
                + f"; {n_verified} verified by snapshot samples. "

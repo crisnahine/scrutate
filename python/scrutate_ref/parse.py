@@ -291,7 +291,7 @@ def _constant_of(lang: str, node, src: bytes):
         left = a.child_by_field_name("left") if a.type == "assignment" else None
         if left is not None and left.type == "identifier":
             name_nodes = [left]
-        elif left is not None and left.type in ("pattern_list", "tuple_pattern"):
+        elif left is not None and left.type in ("pattern_list", "tuple_pattern", "list_pattern"):
             name_nodes = [n for n in left.named_children if n.type == "identifier"]
     elif lang in ("javascript", "typescript", "tsx") and t in ("field_definition", "public_field_definition") \
             and kind_up(1) == "class_body":

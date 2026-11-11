@@ -636,7 +636,8 @@ static CAPS_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^_*[A-Z][A-Z0-
 /// module or type level: Rust `const`/`static`, Go package `const`/`var`, a JS/TS top-level
 /// `const` that is not a function, a TS enum member, a Java `static final` field, a Python
 /// module- or class-level ALL_CAPS assignment, a TS `static readonly` and JS ALL_CAPS `static`
-/// class field, a C/C++ `#define NAME value`, enumerator and file or namespace `const` with a value.
+/// class field, a C/C++ `#define NAME value`, enumerator and file or namespace `const` with a value
+/// (GLSL and Objective-C too), and a C++ `static const` or `constexpr` class member with a value.
 fn constant_of<'t>(lang: &str, node: Node<'t>, ancestors: &[(Node<'t>, Vec<Node<'t>>)], src: &[u8]) -> Option<(Vec<String>, Node<'t>)> {
     let up = |i: usize| ancestors.len().checked_sub(i).map(|j| ancestors[j].0);
     let kind_up = |i: usize| up(i).map_or("", |n| n.kind());
@@ -685,7 +686,9 @@ fn constant_of<'t>(lang: &str, node: Node<'t>, ancestors: &[(Node<'t>, Vec<Node<
             let left = field(a, "left")?;
             let names = match left.kind() {
                 "identifier" => vec![text_of(left)],
-                "pattern_list" | "tuple_pattern" => left.named_children(&mut left.walk()).filter(|n| n.kind() == "identifier").map(text_of).collect(),
+                "pattern_list" | "tuple_pattern" | "list_pattern" => {
+                    left.named_children(&mut left.walk()).filter(|n| n.kind() == "identifier").map(text_of).collect()
+                }
                 _ => return None,
             };
             (names, node)
@@ -704,23 +707,43 @@ fn constant_of<'t>(lang: &str, node: Node<'t>, ancestors: &[(Node<'t>, Vec<Node<
             }
             (vec![name], node)
         }
-        ("c" | "cpp", "declaration") => {
+        ("c" | "cpp" | "glsl" | "objc", "declaration") => {
             // an include guard or `#if` block is no scope of its own
             let scope = ancestors.iter().rev().map(|(p, _)| p.kind()).find(|k| !k.starts_with("preproc_"));
             if !matches!(scope, Some("translation_unit" | "declaration_list" | "linkage_specification")) {
                 return None;
             }
-            if !node.children(&mut node.walk()).any(|c| c.kind() == "type_qualifier" && matches!(text_of(c).as_str(), "const" | "constexpr")) {
-                return None;
-            }
-            // only a declarator with a value: `extern const int X;` defines nothing
+            let is_const = |n: Node| n.children(&mut n.walk()).any(|c| c.kind() == "type_qualifier" && matches!(text_of(c).as_str(), "const" | "constexpr"));
+            let const_type = is_const(node);
+            // only a declarator with a value: `extern const int X;` defines nothing; `T *const p` is constant too
             let names: Vec<String> = node
                 .children_by_field_name("declarator", &mut node.walk())
                 .filter(|d| d.kind() == "init_declarator")
-                .filter_map(|d| dig(d, "declarator", &["identifier"]).filter(|n| n.kind() == "identifier"))
+                .filter(|d| const_type || field(*d, "declarator").is_some_and(|p| p.kind() == "pointer_declarator" && is_const(p)))
+                .filter_map(|d| dig(d, "declarator", &["identifier", "qualified_identifier"]))
+                .filter(|n| matches!(n.kind(), "identifier" | "qualified_identifier"))
                 .map(text_of)
                 .collect();
             (names, node)
+        }
+        ("cpp", "field_declaration") if kind_up(1) == "field_declaration_list" => {
+            let words: Vec<String> =
+                node.children(&mut node.walk()).filter(|c| matches!(c.kind(), "storage_class_specifier" | "type_qualifier")).map(text_of).collect();
+            if !words.iter().any(|w| w == "static") || !words.iter().any(|w| w == "const" || w == "constexpr") {
+                return None;
+            }
+            // a member declared without its value is defined, and is the constant, outside the class
+            let mut names = Vec::new();
+            let mut cur = node.walk();
+            let mut declarator = None;
+            for (i, c) in node.children(&mut cur).enumerate() {
+                match node.field_name_for_child(i as u32) {
+                    Some("declarator") => declarator = Some(c),
+                    Some("default_value") => names.extend(declarator.take().and_then(|d| dig(d, "declarator", &["field_identifier"]).or(Some(d)))),
+                    _ => {}
+                }
+            }
+            (names.into_iter().filter(|n| n.kind() == "field_identifier").map(text_of).collect(), node)
         }
         ("c" | "cpp", "preproc_def") if field(node, "value").is_some() => (vec![text_of(field(node, "name")?)], node),
         ("c" | "cpp", "enumerator") => (vec![text_of(field(node, "name")?)], node),
@@ -1282,8 +1305,11 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
             let doc = if spec.docstring { String::new() } else { leading_comment(node, &ancestors, &pos, src, spec.wrappers) };
             let text = head_bytes(src, shown.start_byte(), shown.end_byte(), MAX_CHUNK_LINES);
             for name in names {
+                // `const int Config::kSize = 2;` is owned by `Config`
+                let (owner, name) = split_owner(spec.id, node, name, src);
+                let parent_q = owner.map_or_else(|| parent_q.to_string(), |o| qualify(parent_q, &o));
                 consts.push(Chunk {
-                    qualname: qualify(parent_q, &name),
+                    qualname: qualify(&parent_q, &name),
                     name,
                     kind: "constant",
                     start: shown.start_position().row as i64 + 1,

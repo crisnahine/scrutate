@@ -524,6 +524,8 @@ const CORE: &[LangSpec] = &[
             d("protocol_declaration", "interface", &[NameRule::Field("name"), NameRule::ChildKind(&["identifier"])]),
             d("implementation_definition", "method", &[NameRule::Custom(objc_selector)]),
             d("method_declaration", "method", &[NameRule::Custom(objc_selector)]),
+            // a property is a method, as in C#: its accessor `- (int)count` shares the name
+            d("property_declaration", "method", &[NameRule::Custom(objc_property_name)]),
             db("struct_specifier", "struct", N),
             db("enum_specifier", "enum", N),
         ],
@@ -1933,6 +1935,18 @@ fn objc_selector(node: Node, src: &[u8]) -> Option<String> {
         }
     }
     None
+}
+
+/// The first name of `@property (nonatomic) NSString *name;`
+fn objc_property_name(node: Node, src: &[u8]) -> Option<String> {
+    let decl = node.named_children(&mut node.walk()).find(|c| c.kind() == "struct_declaration")?;
+    let mut n = decl.named_children(&mut decl.walk()).find(|c| c.kind() == "struct_declarator")?;
+    while n.kind() != "identifier" {
+        n = n
+            .child_by_field_name("declarator")
+            .or_else(|| n.named_children(&mut n.walk()).find(|c| c.kind().ends_with("declarator") || c.kind() == "identifier"))?;
+    }
+    Some(text(src, n.start_byte(), n.end_byte()))
 }
 
 /// Elisp `(defvar name ...)` / `(defcustom name ...)`: special_form whose first symbol is a def* word

@@ -15,14 +15,14 @@ Engine A (instant search) needs none of this: it searches every readable file of
 | Language | Extensions / files | Definition kinds verified | Calls | Imports | Docstrings | Evidence |
 |---|---|---|---|---|---|---|
 | ada | `.adb .ads .ada` | function, type | yes | no | no | `tests/samples/sample.adb` |
-| asm | `.s .S .asm` | function | no | no | no | `tests/samples/sample.s` |
+| asm | `.s .S .asm` | function | yes | no | no | `tests/samples/sample.s` |
 | autohotkey (extra-langs) | `.ahk` | function | yes | no | no | `tests/samples_extra/sample.ahk` |
 | bash | `.sh .bash .zsh .ksh .bashrc .zshrc .profile` | function | yes | yes | no | `tests/samples/sample.sh` |
 | bicep | `.bicep` | block, function, type | yes | no | no | `tests/samples/sample.bicep` |
-| c | `.c .h` | constant, enum, function, struct, type | yes | yes | no | `tests/samples/sample.c` |
+| c | `.c .h` (`.h`: see below) | constant, enum, function, struct, type | yes | yes | no | `tests/samples/sample.c` |
 | cmake | `.cmake CMakeLists.txt` | function, macro | yes | no | no | `tests/samples/CMakeLists.txt` |
 | commonlisp | `.lisp .cl .asd` | class, function, key, macro | yes | no | no | `tests/samples/sample.lisp` |
-| cpp | `.cc .cpp .cxx .c++ .hpp .hh .hxx .h++ .inl .ipp` | class, function, method, struct | yes | yes | no | `tests/samples/sample.cpp` |
+| cpp | `.cc .cpp .cxx .c++ .hpp .hh .hxx .h++ .inl .ipp` and `.h` by its content | class, function, method, struct | yes | yes | no | `tests/samples/sample.cpp` |
 | csharp | `.cs` | class, enum, interface, method, struct | yes | yes | no | `tests/samples/sample.cs` |
 | css | `.css .scss .less` | block | no | no | no | `tests/samples/sample.css` |
 | cuda (extra-langs) | `.cu .cuh` | function | yes | yes | no | `tests/samples_extra/sample.cu` |
@@ -47,16 +47,16 @@ Engine A (instant search) needs none of this: it searches every readable file of
 | java | `.java` | class, constant, enum, interface, method | yes | yes | no | `tests/samples/Sample.java` |
 | javascript | `.js .jsx .mjs .cjs` | class, constant, function, method | yes | yes | no | `tests/samples/sample.js` |
 | json | `.json .jsonc .json5 .webmanifest` | key | no | no | no | `tests/samples/sample.json` |
-| jsonnet | `.jsonnet .libsonnet` | key | no | no | no | `tests/samples/sample.jsonnet` |
+| jsonnet | `.jsonnet .libsonnet` | function, key | yes | no | no | `tests/samples/sample.jsonnet` |
 | julia | `.jl` | function, macro, struct, type | yes | yes | no | `tests/samples/sample.jl` |
 | kotlin | `.kt .kts` | class, function, interface, method | yes | yes | no | `tests/samples/sample.kt` |
 | llvm (extra-langs) | `.ll` | function | yes | no | no | `tests/samples_extra/sample.ll` |
 | lua | `.lua` | function | yes | yes | no | `tests/samples/sample.lua` |
-| make | `.mk .mak Makefile makefile GNUmakefile` | function, key, macro | no | no | no | `tests/samples/Makefile` |
+| make | `.mk .mak Makefile makefile GNUmakefile` | function, key, macro | yes | no | no | `tests/samples/Makefile` |
 | markdown | `.md .markdown .mdx README` | section | no | no | no | `tests/samples/sample.md` |
 | matlab | `` | function | yes | no | no | `tests/samples/matrix.m` |
 | nix | `.nix` | key | yes | yes | no | `tests/samples/sample.nix` |
-| objc | `.mm` | class, function, method | yes | yes | no | `tests/samples/sample.mm` |
+| objc | `.mm` and `.h` by its content | class, function, method | yes | yes | no | `tests/samples/sample.mm` |
 | ocaml (extra-langs) | `.ml` | function, type | yes | no | no | `tests/samples_extra/sample.ml` |
 | ocaml_interface (extra-langs) | `.mli` | function, interface, type | no | no | no | `tests/samples_extra/sample.mli` |
 | odin (extra-langs) | `.odin` | function, struct | yes | no | no | `tests/samples_extra/sample.odin` |
@@ -82,11 +82,13 @@ Engine A (instant search) needs none of this: it searches every readable file of
 | tsx | `.tsx` | class, function, interface, method | yes | yes | no | `tests/samples/sample.tsx` |
 | typescript | `.ts .mts .cts` | class, constant, enum, function, interface, method, type | yes | yes | no | `tests/samples/sample.ts` |
 | verilog (extra-langs) | `.v .sv .svh .vh` | (module only) | yes | no | no | `tests/samples_extra/sample.v` |
-| vhdl (extra-langs) | `.vhd .vhdl` | class, impl | no | no | no | `tests/samples_extra/sample.vhd` |
+| vhdl (extra-langs) | `.vhd .vhdl` | class, impl | yes | no | no | `tests/samples_extra/sample.vhd` |
 | vim | `.vim .vimrc` | function | yes | no | no | `tests/samples/sample.vim` |
 | xml | `.xml .xsd .xsl .xslt .svg .plist .csproj .pom pom.xml` | (module only) | no | no | no | `tests/samples/sample.xml` |
 | yaml | `.yaml .yml` | key | no | no | no | `tests/samples/sample.yaml` |
 | zig | `.zig .zon` | function, type | yes | yes | no | `tests/samples/sample.zig` |
+
+A `.h` file is read as objc when it holds `@interface`, `@protocol`, `@implementation`, `@class `, else as cpp when a line matches `(?m)^[ \t]*(?:namespace\b[^;]*\{|namespace\s+\w[\w:]*\s*$|class\s+\w+|template\s*<|using\s+namespace\b|(?:public|private|protected)\s*:|extern\s+"C\+\+"|#\s*include\s*<[a-z_]+>)`, else as c (`sniff` in `crates/scrutate/src/langs.rs`).
 
 60 grammars in the default build, 13 more with `--features extra-langs`; 73 verified by snapshot samples. Call-edge and import extraction are declared per language by the registry rules; the sample for a language exercises them when its `expected.json` entry lists methods/functions and the file contains imports.
 
