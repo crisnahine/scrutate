@@ -115,7 +115,8 @@ def command(tool: str, t: dict, q: dict, corpus: str) -> list[str] | None:
             return None
         return c + ["."]
     if tool == "grep":
-        c = [t["exe"], "-r", "-I", "--exclude-dir=.git", "--exclude-dir=.scrutate"]
+        # the files the others search: nothing hidden (GNU grep knows no ignore rules)
+        c = [t["exe"], "-r", "-I", "--exclude=.*", "--exclude-dir=.?*"]
         if mode == "literal":
             c += ["-n", "-F", pat]
         elif mode == "regex":
@@ -235,13 +236,25 @@ def count_lines(mode: str, out: bytes) -> int:
 
 
 # --------------------------------------------------------------------------- measurement
+def env_of(cmd: list[str]) -> dict | None:
+    """GNU grep gets the C locale for plain fixed-string searches, where it is fastest and the
+    locale cannot change a match (bench/leaderboard.py does the same); the rest keep the caller's."""
+    if os.path.basename(cmd[0]) in ("grep", "ggrep") and "-F" in cmd and "-i" not in cmd and "-w" not in cmd:
+        return {**os.environ, "LC_ALL": "C"}
+    return None
+
+
+def shown(cmd: list[str]) -> str:
+    return ("LC_ALL=C " if env_of(cmd) else "") + " ".join(shlex_quote(c) for c in cmd)
+
+
 def timed_rusage(cmd: list[str], cwd: str, executable: str | None = None, count_only: bool = False) -> dict:
     """Run once with per-process CPU time and peak RSS from wait4; stdout goes to a temp file.
     With `count_only` the output is not loaded into memory: only its line count is returned
     (structural searches over the massive corpus print hundreds of MB)."""
     with tempfile.TemporaryFile() as fo, tempfile.TemporaryFile() as fe:
         t0 = time.perf_counter()
-        p = subprocess.Popen(cmd, cwd=cwd, stdout=fo, stderr=fe, stdin=subprocess.DEVNULL, executable=executable)
+        p = subprocess.Popen(cmd, cwd=cwd, stdout=fo, stderr=fe, stdin=subprocess.DEVNULL, executable=executable, env=env_of(cmd))
         _, status, ru = os.wait4(p.pid, 0)
         wall = time.perf_counter() - t0
         fo.seek(0)
@@ -265,7 +278,7 @@ def peak_rss_mb(cmd: list[str], cwd: str, executable: str | None = None) -> floa
         # macOS: /usr/bin/time -l reports the child's own maximum resident set size, in bytes
         with tempfile.TemporaryFile() as fo:
             r = subprocess.run(["/usr/bin/time", "-l", executable or cmd[0], *cmd[1:]], cwd=cwd, stdout=fo,
-                               stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, text=True)
+                               stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, text=True, env=env_of(cmd))
         for line in r.stderr.splitlines():
             if "maximum resident set size" in line:
                 return int(line.split()[0]) / 2**20
@@ -282,7 +295,7 @@ def _peak_rss_proc(cmd: list[str], cwd: str, executable: str | None = None) -> f
     than the sampling interval at the very end of a run could be missed."""
     import threading
     fo = tempfile.TemporaryFile()
-    p = subprocess.Popen(cmd, cwd=cwd, stdout=fo, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, executable=executable)
+    p = subprocess.Popen(cmd, cwd=cwd, stdout=fo, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, executable=executable, env=env_of(cmd))
     peak = [0]
     stop = threading.Event()
 
@@ -420,7 +433,7 @@ def bench_text_search(tools: dict, corpora: dict, runs: int, cold: bool) -> list
                     "corpus": cname, "query": q["name"], "tool": tool, "status": "ok", "matches": n,
                     "wall_median_ms": 1000 * statistics.median(walls), "wall_min_ms": 1000 * min(walls), "wall_ms": [1000 * w for w in walls],
                     "cpu_median_s": statistics.median(cpus), "maxrss_mb": peak_rss_mb(cmd, cdir, exe),
-                    "cmd": " ".join(shlex_quote(c) for c in cmd),
+                    "cmd": shown(cmd),
                 }
                 if cold:
                     if drop_caches():
@@ -449,9 +462,18 @@ def bench_startup(tools: dict, runs: int) -> list[dict]:
             cmd = command(tool, t, q, d)
             exe = t["exe"] if t.get("argv0") else None
             walls = []
+            status = "ok"
             for _ in range(runs * 3):
-                walls.append(timed_rusage(cmd, d, executable=exe)["wall"])
-            rows.append({"tool": tool, "startup_median_ms": 1000 * statistics.median(walls), "startup_min_ms": 1000 * min(walls)})
+                r = timed_rusage(cmd, d, executable=exe)
+                # the file was searched and nothing matched: exit 1 and no output
+                if r["rc"] != 1 or r["out"]:
+                    status = f"exit {r['rc']}, {len(r['out'])} bytes printed"
+                    break
+                walls.append(r["wall"])
+            if status != "ok":
+                rows.append({"tool": tool, "status": status})
+                continue
+            rows.append({"tool": tool, "status": "ok", "startup_median_ms": 1000 * statistics.median(walls), "startup_min_ms": 1000 * min(walls)})
     return rows
 
 
@@ -486,7 +508,8 @@ def bench_concurrency(tools: dict, corpora: dict, runs: int, text_rows: list[dic
             for _ in range(runs):
                 outs = [tempfile.TemporaryFile() for _ in range(k)]
                 t0 = time.perf_counter()
-                procs = [subprocess.Popen(cmd, cwd=cdir, stdout=fo, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, executable=exe) for fo in outs]
+                procs = [subprocess.Popen(cmd, cwd=cdir, stdout=fo, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, executable=exe, env=env_of(cmd))
+                         for fo in outs]
                 for p in procs:
                     p.wait()
                 walls.append(time.perf_counter() - t0)
@@ -592,6 +615,9 @@ def bench_structural(tools: dict, corpora: dict, runs: int) -> list[dict]:
             rows.append({"corpus": cname, "tool": name, "matches": counts[name], "wall_median_ms": 1000 * statistics.median(walls),
                          "maxrss_mb": peak_rss_mb(cmd, cdir), "cmd": " ".join(shlex_quote(c) for c in cmd)})
             print(f"  structural {cname} {name}: {counts[name]} in {rows[-1]['wall_median_ms']:.0f} ms", file=sys.stderr)
+        for r in rows:
+            if r["corpus"] == cname:
+                r["agrees"] = len(set(counts.values())) == 1
     return rows
 
 

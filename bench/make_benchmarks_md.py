@@ -136,11 +136,15 @@ def main() -> int:
         w("")
         w("Cold-cache numbers are single runs and dominated by disk reads shared by all tools; they are reported for completeness, not ranking.\n")
     # startup
-    w("## Startup (empty directory, no match; median ms)\n")
+    w("## Startup (a directory with one file, no match; median ms)\n")
     w("| Tool | startup median | min |")
     w("|---|---|---|")
-    for s in sorted(d["startup"], key=lambda x: x["startup_median_ms"]):
+    timed = [x for x in d["startup"] if "startup_median_ms" in x]
+    for s in sorted(timed, key=lambda x: x["startup_median_ms"]):
         w(f"| {LABEL.get(s['tool'], s['tool'])} | {s['startup_median_ms']:.1f} | {s['startup_min_ms']:.1f} |")
+    for s in d["startup"]:
+        if "startup_median_ms" not in s:
+            w(f"| {LABEL.get(s['tool'], s['tool'])} | wrong ({s['status']}) | |")
     w("")
     # concurrency
     rounds = sorted({x["rounds"] for x in d["concurrency"] if "rounds" in x})
@@ -165,8 +169,9 @@ def main() -> int:
         for r in d["structural"]:
             w(f"| {r['corpus']} | {r['tool']} | {r['matches']:,} | {fmt_ms(r['wall_median_ms'])} | {r['maxrss_mb']:.0f} |")
         w("")
+        same = all(r.get("agrees", True) for r in d["structural"])
         w("Both tools parse every file with tree-sitter on each run (no index); scrutate's `tsquery` and ast-grep's `scan --inline-rules` "
-          "were given the same node kind and returned identical counts.\n")
+          "were given the same node kind and " + ("returned identical counts.\n" if same else "their counts DIFFER on at least one corpus.\n"))
     # index
     if d.get("index"):
         w("## Engine B: index build, size and query latency\n")
