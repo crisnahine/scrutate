@@ -42,8 +42,7 @@ First release.
 - macOS builds need macOS 13 or newer: the binary gets chained fixups, which the kernel applies as
   pages are first touched.
 - A `.gitignore` used on many paths compiles its globs into one set after a while (the Linux
-  tree's root file has over 100); files up to 1 MB are read whole, and a file's size is no longer
-  asked for before reading it. In a Linux VM the Linux-tree search went from 144 ms to 120 ms
+  tree's root file has over 100), and a file's size is no longer asked for before reading it. In a Linux VM the Linux-tree search went from 144 ms to 120 ms
   (ripgrep: 135 ms).
 - Smart case counts only letters that stand for themselves: `-S '\Sfoo'` is case-insensitive, as
   in ripgrep. `-c` with `--max-count` stops counting at the limit. `-w` with `--fuzzy` or
@@ -85,6 +84,10 @@ First release.
   every core, and when the files of a tree take as long to read as a disk read (the page cache
   does not hold them) the walk adds a thread for every 16 slow reads, up to twice the cores, at
   most 24: the Linux tree with a cold cache, 2.9 s on 5 threads, 1.4 s this way, ripgrep 1.8 s.
+- `scrutate grep` uses less memory on big trees: a search thread no longer keeps a 1 MB read
+  buffer once it has met a file over 64 KB (peak resident memory on the ripgrep tree 9.9 MB to
+  5.9 MB, py-big 12.6 MB to 8.2 MB, the Linux tree 14.3 MB to 9.6 MB; ripgrep: 7.1, 8.5 and
+  14.2 MB).
 - On macOS, searches of one user that run at the same time split the threads between them and
   take them back as the others end, because the kernel there serves about four file-reading
   threads at full speed across all processes: two at once on py-big went from 113 ms to 91 ms

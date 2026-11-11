@@ -118,11 +118,14 @@ capabilities those crates do not provide rather than re-implementing what they a
   takes 0.66 s, so about 0.1 s of it is ours.
 - **Reading a file**: the first read asks for 64 KB and one byte. A short read is the whole file,
   searched in the thread's buffer with no call for its size (a `statx` per file otherwise: 96,000
-  on the Linux tree). A file up to 1 MB is read whole into the same buffer too: the stream reader
-  takes a read per 64 KB, moves the rest of each buffer down and counts the lines of everything it
-  passes, and half the bytes of the Linux tree are in files of that size. A NUL byte or a
-  byte-order mark sends the file to the stream reader, whose binary and encoding handling is
-  unchanged. Files of the kernel's pseudo filesystems give their size as 0 and answer a first
+  on the Linux tree). A larger file goes to the stream reader, up to 1 MB with a searcher made
+  for that file, so the thread's own searcher keeps its buffer size (where a NUL byte after the
+  first fill stops the output depends on that size). Reading such files whole had every thread
+  keep a buffer as large as the largest one it met: 12.6 MB peak resident memory on py-big with
+  five threads against 8.2 MB streamed (ripgrep: 8.5 MB), for 0.2% to 1.5% fewer instructions on
+  macOS and 1% to 3% less CPU time on the Linux tree in a Linux VM. A NUL byte or a byte-order
+  mark in the first read sends the file to the stream reader too, whose binary and encoding
+  handling is unchanged. Files of the kernel's pseudo filesystems give their size as 0 and answer a first
   read short (4 KB of the 7.3 MB `/proc/kallsyms`), so on Linux one `statfs` per root, and per
   directory named `proc` or `sys` the walk meets, finds procfs, sysfs, debugfs, tracefs,
   securityfs, configfs and cgroup, and their files are read until the kernel has no more. On Linux, where opening a file is cheap, this and the matcher change above took the
