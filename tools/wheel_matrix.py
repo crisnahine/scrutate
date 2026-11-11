@@ -77,7 +77,7 @@ def main() -> int:
                 else:
                     row["checks"]["imports"] = rc == 0
                 rc, out = sh([exe, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_bindings.py"],
-                             cwd=os.path.join(ROOT, "python"), env={**os.environ, "SCRUTATE_BIN": a.cli})
+                             cwd=os.path.join(ROOT, "python"), env={**os.environ, "SCRUTATE_BIN": os.path.abspath(a.cli)})
                 row["checks"]["bindings tests"] = rc == 0
                 row["pytest"] = out.splitlines()[-1] if out else ""
             row["ok"] = bool(row["checks"]) and all(row["checks"].values())

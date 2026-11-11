@@ -37,8 +37,9 @@ def test_grep_streams_and_matches_cli(repo):
     assert len(got) == 20
     st = it.stats()
     assert st["matches"] == 20 and st["files_matched"] == 20 and not st["cancelled"]
-    if os.path.exists(CLI):
-        out = subprocess.run([CLI, "grep", "-F", "--json", "import os", "."], cwd=repo, capture_output=True, text=True).stdout
+    # a binary the caller named must be there: a missing one fails, it does not skip the comparison
+    if "SCRUTATE_BIN" in os.environ or os.path.exists(CLI):
+        out = subprocess.run([os.path.abspath(CLI), "grep", "-F", "--json", "import os"], cwd=repo, capture_output=True, text=True).stdout
         cli = sorted((r["path"], r["line"], r["text"]) for r in map(json.loads, out.splitlines()) if r.get("type") == "match")
         assert cli == got
 
