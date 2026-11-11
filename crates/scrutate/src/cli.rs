@@ -78,8 +78,8 @@ pub struct Cli {
     /// repository root for the indexed engine (default: current directory)
     #[arg(long, default_value = ".", global = true, env = "SCRUTATE_ROOT")]
     pub root: PathBuf,
-    /// never print color
-    #[arg(long, global = true, env = "NO_COLOR")]
+    /// never print color (also when NO_COLOR is set and not empty)
+    #[arg(long, global = true)]
     pub no_color: bool,
     /// size limit, in bytes, of an answer from the index; a cut answer says how many items are left
     #[arg(long, global = true, value_name = "BYTES", env = "SCRUTATE_MAX_BYTES")]
@@ -141,7 +141,7 @@ pub struct GrepArgs {
     #[arg(short = 'i', long)]
     pub ignore_case: bool,
     /// case-insensitive unless the pattern has an uppercase letter
-    #[arg(short = 'S', long, env = "SCRUTATE_GREP_SMART_CASE")]
+    #[arg(short = 'S', long, env = "SCRUTATE_GREP_SMART_CASE", value_parser = clap::builder::FalseyValueParser::new())]
     pub smart_case: bool,
     /// match whole words only
     #[arg(short = 'w', long)]
@@ -183,13 +183,13 @@ pub struct GrepArgs {
     #[arg(long)]
     pub type_list: bool,
     /// search hidden files and directories
-    #[arg(long, env = "SCRUTATE_GREP_HIDDEN")]
+    #[arg(long, env = "SCRUTATE_GREP_HIDDEN", value_parser = clap::builder::FalseyValueParser::new())]
     pub hidden: bool,
     /// ignore .gitignore / .ignore rules
-    #[arg(long, env = "SCRUTATE_GREP_NO_IGNORE")]
+    #[arg(long, env = "SCRUTATE_GREP_NO_IGNORE", value_parser = clap::builder::FalseyValueParser::new())]
     pub no_ignore: bool,
     /// follow symbolic links
-    #[arg(short = 'L', long, env = "SCRUTATE_GREP_FOLLOW")]
+    #[arg(short = 'L', long, env = "SCRUTATE_GREP_FOLLOW", value_parser = clap::builder::FalseyValueParser::new())]
     pub follow: bool,
     /// skip files larger than this (e.g. 10M)
     #[arg(long, value_name = "SIZE", env = "SCRUTATE_GREP_MAX_FILESIZE")]
@@ -222,8 +222,8 @@ struct GrepCli {
     /// repository root for the indexed engine (default: current directory)
     #[arg(long, default_value = ".", global = true, env = "SCRUTATE_ROOT")]
     root: PathBuf,
-    /// never print color
-    #[arg(long, global = true, env = "NO_COLOR")]
+    /// never print color (also when NO_COLOR is set and not empty)
+    #[arg(long, global = true)]
     no_color: bool,
     #[command(subcommand)]
     cmd: GrepCmd,
@@ -381,7 +381,7 @@ pub enum Cmd {
         /// also send each answer as JSON (`structuredContent`, with an `outputSchema` per tool), for
         /// clients whose scripts read tool results; a client that shows its model the JSON in
         /// place of the text loses the text's snippets
-        #[arg(long, env = "SCRUTATE_MCP_STRUCTURED")]
+        #[arg(long, env = "SCRUTATE_MCP_STRUCTURED", value_parser = clap::builder::FalseyValueParser::new())]
         structured: bool,
     },
     /// run a Language Server Protocol server on stdio (definitions, references, symbols from the index)
@@ -425,7 +425,7 @@ fn parse_size(s: &str) -> Result<u64> {
         Some('G') | Some('g') => (&s[..s.len() - 1], 1024 * 1024 * 1024),
         _ => (s, 1),
     };
-    Ok(num.parse::<u64>().with_context(|| format!("bad size {s:?}"))? * mult)
+    num.parse::<u64>().ok().and_then(|n| n.checked_mul(mult)).with_context(|| format!("bad size {s:?}"))
 }
 
 fn open_fresh(root: &Path) -> Result<crate::search::Searcher> {
@@ -437,7 +437,7 @@ fn open_fresh(root: &Path) -> Result<crate::search::Searcher> {
 }
 
 fn color_choice(no_color: bool) -> ColorChoice {
-    if no_color || !std::io::stdout().is_terminal() || std::env::var_os("NO_COLOR").is_some() {
+    if no_color || !std::io::stdout().is_terminal() || std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()) {
         ColorChoice::Never
     } else {
         ColorChoice::Auto
@@ -451,7 +451,7 @@ pub fn looks_like_regex(q: &str) -> bool {
 
 pub fn run() -> Result<i32> {
     // configuration file -> environment -> clap (command line still wins)
-    let args: Vec<String> = std::env::args().collect();
+    let args: Vec<String> = std::env::args_os().map(|a| a.to_string_lossy().into_owned()).collect();
     let cfg_root = crate::config::root_from_args(&args);
     let cfg_path = crate::config::locate(&cfg_root);
     if let Some(p) = &cfg_path {
@@ -564,6 +564,7 @@ pub fn run() -> Result<i32> {
                 want_bytes: stats || json,
                 want_spans: json || color_choice(no_color) != ColorChoice::Never,
                 search_zip,
+                paths_as_given: !paths.is_empty() && !symbols,
                 small_tree: std::env::var("SCRUTATE_SMALL_TREE").ok().and_then(|v| v.parse().ok()),
                 ..Options::default()
             };
@@ -687,7 +688,7 @@ pub fn run() -> Result<i32> {
                         .map_err(|e| std::io::Error::new(e.io_error_kind().unwrap_or(std::io::ErrorKind::Other), e))
                         .and_then(|_| w.write_all(b"\n"))
                 } else {
-                    writeln!(w, "{}:{}:{}  @{} ({})  {}", c.path, c.line, c.column, c.capture, c.kind, c.text)
+                    writeln!(w, "{}:{}:{}  @{} ({})  {}", crate::fmt::shown(&c.path), c.line, c.column, c.capture, c.kind, c.text)
                 };
                 if let Err(e) = r {
                     err = Some(e);
@@ -916,7 +917,7 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
     let cancel = Arc::new(AtomicBool::new(false));
     interrupt::install(Arc::clone(&cancel));
     let colour = color_choice(out.no_color) != ColorChoice::Never;
-    if !out.json && !colour && !out.sort && !out.symbols && !o.count_only && !o.files_only && o.max_count.is_none() {
+    if !out.json && !colour && !out.sort && !out.symbols && !o.count_only && !o.files_only {
         return grep_plain(roots, o, out, cancel);
     }
     // buffered: one write per 64 KB instead of several per matching line
@@ -1068,7 +1069,19 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
     if stats.cancelled && !o.max_results.map(|m| stats.matches >= m).unwrap_or(false) {
         return Ok(130);
     }
-    Ok(if found { 0 } else { 1 })
+    Ok(if missing_root(&roots, &stats) {
+        2
+    } else if found {
+        0
+    } else {
+        1
+    })
+}
+
+/// A path given to search does not exist or cannot be opened (grep's exit 2); files the walk
+/// cannot read do not count.
+fn missing_root(roots: &[PathBuf], stats: &instant::Stats) -> bool {
+    stats.errors > 0 && roots.iter().any(|r| std::fs::metadata(r).is_err())
 }
 
 /// The first files a search could not read, or not to the end (PCRE2's match limit, I/O errors).
@@ -1116,7 +1129,13 @@ fn grep_plain(roots: Vec<PathBuf>, o: Options, out: GrepOutput, cancel: Arc<Atom
     if stats.cancelled && !o.max_results.map(|m| stats.matches >= m).unwrap_or(false) {
         return Ok(130);
     }
-    Ok(if found { 0 } else { 1 })
+    Ok(if missing_root(&roots, &stats) {
+        2
+    } else if found {
+        0
+    } else {
+        1
+    })
 }
 
 /// Engine B enrichment of Engine A results: group matching lines by the enclosing symbol.
@@ -1149,9 +1168,11 @@ fn grouped_by_symbol(root: &Path, hits: &mut Vec<instant::Hit>, w: &mut termcolo
 fn find_command(root: &Path, query: &str, k: usize, json: bool, no_color: bool) -> Result<i32> {
     let has_index = crate::index::exists(root);
     let small_repo = || crate::files::list_files(root).len() <= 3000;
+    // a question mark ends a question, it does not make the words a regex
+    let query = if query.contains(' ') { query.trim_end().strip_suffix('?').unwrap_or(query) } else { query };
     if looks_like_regex(query) {
         let o = Options { pattern: query.to_string(), mode: Mode::Regex, case: Case::Smart, ..Options::default() };
-        return grep_command(
+        let r = grep_command(
             vec![root.to_path_buf()],
             o,
             GrepOutput {
@@ -1167,6 +1188,12 @@ fn find_command(root: &Path, query: &str, k: usize, json: bool, no_color: bool) 
                 update: false,
             },
         );
+        // nothing grepped, or not a valid regex: words with punctuation, for the ranked search
+        match r {
+            Ok(1) if has_index && !json => {}
+            Err(_) if has_index => {}
+            r => return r,
+        }
     }
     if has_index || small_repo() {
         let mut s = open_fresh(root)?;
@@ -1257,7 +1284,7 @@ fn batch_command(root: &Path, file: &Path, features: bool, timing: bool) -> Resu
 /// the command was given `--json` or `SCRUTATE_DIAGNOSTICS=json` is set, so callers that parse
 /// the output can parse the failure too.
 fn diagnostic(kind: &str, message: &str) {
-    let json = std::env::var("SCRUTATE_DIAGNOSTICS").map(|v| v == "json").unwrap_or(false) || std::env::args().any(|a| a == "--json");
+    let json = std::env::var("SCRUTATE_DIAGNOSTICS").map(|v| v == "json").unwrap_or(false) || std::env::args_os().any(|a| a == "--json");
     if json {
         eprintln!("{}", serde_json::json!({"type": kind, "schema": SCHEMA, "message": message}));
     } else {
@@ -1287,4 +1314,15 @@ pub fn main_exit() {
         Err(_) => 2,
     };
     std::process::exit(code);
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn sizes_that_overflow_are_refused() {
+        assert_eq!(super::parse_size("10M").unwrap(), 10 << 20);
+        assert_eq!(super::parse_size("17179869183G").unwrap(), 17179869183 << 30);
+        assert!(super::parse_size("17179869184G").is_err());
+        assert!(super::parse_size("x").is_err());
+    }
 }

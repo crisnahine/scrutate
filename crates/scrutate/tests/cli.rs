@@ -76,7 +76,7 @@ fn exit_codes_and_plain_output() {
     let (code, out, _) = r.run(&["grep", "-F", "import os", "."]);
     assert_eq!(code, 0);
     assert_eq!(out.lines().count(), 12);
-    assert!(out.lines().all(|l| l.starts_with("pkg/m") && l.contains(":3:import os")), "{out}");
+    assert!(out.lines().all(|l| l.starts_with("./pkg/m") && l.contains(":3:import os")), "{out}");
     let (code, out, _) = r.run(&["grep", "-F", "nothing-like-this", "."]);
     assert_eq!((code, out.as_str()), (1, ""));
     let (code, _, err) = r.run(&["grep", "(unclosed", "."]);
@@ -277,7 +277,7 @@ fn utf16_bom_is_searched_by_engine_a_and_indexed_by_engine_b() {
     r.write("ok.py", b"def plain():\n    pass\n");
     let (code, out, _) = r.run(&["grep", "-F", "utf16_marker", "."]);
     assert_eq!(code, 0, "Engine A transcodes UTF-16 with a BOM: {out}");
-    assert!(out.starts_with("w.py:1:"), "{out}");
+    assert!(out.starts_with("./w.py:1:"), "{out}");
     r.run(&["index"]);
     let (_, out, _) = r.run(&["stats"]);
     let st: serde_json::Value = serde_json::from_str(&out).unwrap();

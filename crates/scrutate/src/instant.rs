@@ -79,6 +79,9 @@ pub struct Options {
     pub want_spans: bool,
     /// search the members of zip/tar archives and the contents of compressed files (`-z`)
     pub search_zip: bool,
+    /// report each path as the walk reached it from the root it was given (`dir/a.rs`, `./a.rs`),
+    /// as grep does; otherwise relative to the root
+    pub paths_as_given: bool,
     /// regex size limits (resource exhaustion protection)
     pub regex_size_limit: usize,
     pub dfa_size_limit: usize,
@@ -116,6 +119,7 @@ impl Default for Options {
             want_bytes: false,
             want_spans: false,
             search_zip: false,
+            paths_as_given: false,
             regex_size_limit: 20 * (1 << 20),
             dfa_size_limit: 10 * (1 << 20),
             split_file_bytes: 64 << 20,
@@ -714,7 +718,7 @@ impl Options {
         let insensitive = match self.case {
             Case::Sensitive => false,
             Case::Insensitive => true,
-            Case::Smart => !uppercase_literal(&self.pattern, matches!(self.mode, Mode::Regex | Mode::Pcre2 | Mode::FuzzyRegex { .. })),
+            Case::Smart => smart_folds(&self.pattern, matches!(self.mode, Mode::Regex | Mode::Pcre2 | Mode::FuzzyRegex { .. })),
         };
         match self.mode {
             Mode::Literal => Translated { insensitive, pattern: regex::escape(&self.pattern).into() },
@@ -733,6 +737,60 @@ impl Options {
             bail!("--index searches the files of the default walk; drop --hidden/--no-ignore/-L/--max-depth/--max-filesize or search without --index");
         }
         Ok(())
+    }
+}
+
+/// The smart-case rule of ripgrep: fold when the pattern has a literal and none of its literals is
+/// uppercase. In a regex, classes (`\w`, `\p{Ll}`, `[[:lower:]]`) are not literals; `[a-z]` is.
+fn smart_folds(pattern: &str, regex: bool) -> bool {
+    use regex_syntax::ast::{Ast, ClassSet, ClassSetItem};
+    fn lit(c: char, seen: &mut (bool, bool)) {
+        seen.0 = true;
+        seen.1 |= c.is_uppercase();
+    }
+    fn item(i: &ClassSetItem, seen: &mut (bool, bool)) {
+        match i {
+            ClassSetItem::Literal(l) => lit(l.c, seen),
+            ClassSetItem::Range(r) => {
+                lit(r.start.c, seen);
+                lit(r.end.c, seen);
+            }
+            ClassSetItem::Bracketed(b) => set(&b.kind, seen),
+            ClassSetItem::Union(u) => u.items.iter().for_each(|x| item(x, seen)),
+            _ => {}
+        }
+    }
+    fn set(s: &ClassSet, seen: &mut (bool, bool)) {
+        match s {
+            ClassSet::Item(i) => item(i, seen),
+            ClassSet::BinaryOp(op) => {
+                set(&op.lhs, seen);
+                set(&op.rhs, seen);
+            }
+        }
+    }
+    fn walk(a: &Ast, seen: &mut (bool, bool)) {
+        match a {
+            Ast::Literal(l) => lit(l.c, seen),
+            Ast::ClassBracketed(c) => set(&c.kind, seen),
+            Ast::Repetition(r) => walk(&r.ast, seen),
+            Ast::Group(g) => walk(&g.ast, seen),
+            Ast::Alternation(x) => x.asts.iter().for_each(|x| walk(x, seen)),
+            Ast::Concat(x) => x.asts.iter().for_each(|x| walk(x, seen)),
+            _ => {}
+        }
+    }
+    if !regex {
+        return !uppercase_literal(pattern, false);
+    }
+    match regex_syntax::ast::parse::Parser::new().parse(pattern) {
+        Ok(ast) => {
+            let mut seen = (false, false);
+            walk(&ast, &mut seen);
+            seen.0 && !seen.1
+        }
+        // PCRE2-only syntax
+        Err(_) => !uppercase_literal(pattern, true),
     }
 }
 
@@ -1017,8 +1075,6 @@ struct Collector<'a> {
     want_spans: bool,
     stats_matches: &'a AtomicU64,
     max_results: Option<u64>,
-    /// `--max-count`, for the count of `-c`; printed lines are cut in `drain`
-    max_count: Option<u64>,
     matched: bool,
     cancel: &'a AtomicBool,
     matcher: &'a AnyMatcher,
@@ -1070,11 +1126,18 @@ impl<'a> Sink for Collector<'a> {
             return Ok(false);
         }
         if self.files_only || self.count_only {
+            let n = self.stats_matches.fetch_add(1, Ordering::Relaxed) + 1;
+            if self.over_limit(n) {
+                return Ok(false);
+            }
             self.matched = true;
             self.file_count += 1;
-            self.stats_matches.fetch_add(1, Ordering::Relaxed);
-            // one match is enough to list the file; a count stops at --max-count
-            return Ok(!self.files_only && self.max_count.is_none_or(|max| self.file_count < max));
+            if self.max_results.is_some_and(|max| n >= max) {
+                self.cancel.store(true, Ordering::Relaxed);
+                return Ok(false);
+            }
+            // one match is enough to list the file
+            return Ok(!self.files_only);
         }
         let bytes = mat.bytes();
         let line = bytes.strip_suffix(b"\n").map(|b| b.strip_suffix(b"\r").unwrap_or(b)).unwrap_or(bytes);
@@ -1127,7 +1190,7 @@ impl<'a> Sink for Collector<'a> {
 
     fn context(&mut self, _s: &Searcher, ctx: &SinkContext<'_>) -> Result<bool, std::io::Error> {
         let bytes = ctx.bytes();
-        let line = bytes.strip_suffix(b"\n").unwrap_or(bytes);
+        let line = bytes.strip_suffix(b"\n").map(|b| b.strip_suffix(b"\r").unwrap_or(b)).unwrap_or(bytes);
         if self.plain.is_some() {
             format_plain(&mut self.out, &self.path, ctx.line_number().unwrap_or(0) + self.line_base, lossy(line).as_bytes(), true);
             return Ok(true);
@@ -1341,8 +1404,10 @@ enum Small {
 /// neither for a parallel walk nor for walking before searching. Past `small_tree_files` files the
 /// walk stops; the caller's parallel walk then skips what was searched here. Walk errors count only
 /// when this walk finished (the parallel walk meets them again otherwise).
+#[allow(clippy::too_many_arguments)]
 fn small_first(
     roots: &[PathBuf],
+    labels: &[PathBuf],
     o: &Options,
     matcher: &AnyMatcher,
     c: &Counters,
@@ -1405,7 +1470,7 @@ fn small_first(
                     return (seen, errors, true);
                 }
                 let size = if o.want_bytes { entry.metadata().ok().map(|m| m.len()) } else { None };
-                let rel: Arc<str> = Arc::from(relative(entry.path(), roots));
+                let rel = label(entry.path(), labels, o);
                 let path = entry.into_path();
                 seen.insert(path.clone());
                 if work_tx.send((path, rel, size)).is_err() {
@@ -1418,7 +1483,7 @@ fn small_first(
             }
             (seen, errors, false)
         });
-        drain(rx, o, &mut *on_hit);
+        drain(rx, &mut *on_hit);
         walker.join()
     });
     match walked {
@@ -1473,6 +1538,7 @@ fn file_worker(o: &Options) -> FileWorker {
         .before_context(o.before)
         .after_context(o.after)
         .invert_match(o.invert)
+        .max_matches(o.max_count)
         .build();
     FileWorker { searcher, small: Vec::new() }
 }
@@ -1501,7 +1567,6 @@ impl<'a> Run<'a> {
             want_spans: o.want_spans,
             stats_matches: &self.c.matches,
             max_results: o.max_results,
-            max_count: o.max_count,
             matched: false,
             cancel: self.cancel,
             matcher: self.matcher,
@@ -1922,7 +1987,6 @@ mod split {
         let range_run = Run { matcher: &matcher, tx: &ptx, plain: if r.plain.is_some() { Some(&sink_plain) } else { None }, ..*r };
         let mut sink = Collector {
             max_results: None,
-            max_count: None,
             files_only: false,
             line_base: base,
             hold: true,
@@ -1940,22 +2004,10 @@ mod split {
     }
 }
 
-/// Hand the hits to the caller in arrival order, applying the per-file `max_count`.
-fn drain(rx: mpsc::Receiver<Vec<Hit>>, o: &Options, mut on_hit: impl FnMut(Hit)) {
-    let mut per_file_count: std::collections::HashMap<Arc<str>, u64> = std::collections::HashMap::new();
+/// Hand the hits to the caller in arrival order.
+fn drain(rx: mpsc::Receiver<Vec<Hit>>, mut on_hit: impl FnMut(Hit)) {
     for batch in rx {
-        for hit in batch {
-            if let Some(max) = o.max_count {
-                if !hit.context {
-                    let c = per_file_count.entry(Arc::clone(&hit.path)).or_insert(0);
-                    *c += 1;
-                    if *c > max {
-                        continue;
-                    }
-                }
-            }
-            on_hit(hit);
-        }
+        batch.into_iter().for_each(&mut on_hit);
     }
 }
 
@@ -1984,21 +2036,45 @@ pub fn search_plain(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, out
     run_walk(roots, o, cancel, Some(out), |_| {})
 }
 
-fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Option<Arc<PlainSink>>, on_hit: impl FnMut(Hit)) -> Result<Stats> {
+fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Option<Arc<PlainSink>>, mut on_hit: impl FnMut(Hit)) -> Result<Stats> {
     let t0 = Instant::now();
     if roots.is_empty() {
         bail!("no paths to search");
     }
     let matcher = Arc::new(build_matcher(o)?);
     let counters = Arc::new(Counters::default());
-    let mut on_hit = on_hit;
-    let searched = match small_first(roots, o, &matcher, &counters, &cancel, plain.as_deref(), &mut on_hit) {
-        Small::Done => return Ok(stats(&counters, t0, &cancel)),
+    // the overrides are anchored at one root: a glob naming a directory needs a walk per root
+    if roots.len() > 1 && o.globs.iter().any(|g| g.contains('/')) {
+        for root in roots.chunks(1) {
+            if !cancel.load(Ordering::Relaxed) {
+                walk(root, roots, o, &matcher, &counters, &cancel, plain.clone(), &mut on_hit)?;
+            }
+        }
+    } else {
+        walk(roots, roots, o, &matcher, &counters, &cancel, plain, &mut on_hit)?;
+    }
+    Ok(stats(&counters, t0, &cancel))
+}
+
+/// Search the files under `roots`, reported as found under `labels`.
+#[allow(clippy::too_many_arguments)]
+fn walk(
+    roots: &[PathBuf],
+    labels: &[PathBuf],
+    o: &Options,
+    matcher: &Arc<AnyMatcher>,
+    counters: &Arc<Counters>,
+    cancel: &Arc<AtomicBool>,
+    plain: Option<Arc<PlainSink>>,
+    on_hit: &mut impl FnMut(Hit),
+) -> Result<()> {
+    let searched = match small_first(roots, labels, o, matcher, counters, cancel, plain.as_deref(), on_hit) {
+        Small::Done => return Ok(()),
         Small::Big(seen) => Arc::new(seen),
     };
     let threads = default_threads(o);
     // raised as reads turn out to come from the disk: the walk grows by that many threads
-    let cold = Arc::new(AtomicUsize::new(cold_extra(o, &counters)));
+    let cold = Arc::new(AtomicUsize::new(cold_extra(o, counters)));
     let mut wb = walk_builder(roots, o)?;
     wb.threads(threads);
     if o.threads == 0 {
@@ -2006,9 +2082,10 @@ fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Opti
     }
     let walker = wb.build_parallel();
     let (tx, rx) = mpsc::channel::<Vec<Hit>>();
-    let roots_owned: Arc<[PathBuf]> = roots.into();
+    let labels_owned: Arc<[PathBuf]> = labels.into();
+    let matcher = Arc::clone(matcher);
     let opts = Arc::new(o.clone());
-    let (c2, cancel2) = (Arc::clone(&counters), Arc::clone(&cancel));
+    let (c2, cancel2) = (Arc::clone(counters), Arc::clone(cancel));
     let worker = std::thread::spawn(move || {
         walker.run(|| {
             let tx = tx.clone();
@@ -2017,7 +2094,7 @@ fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Opti
             let cancel = Arc::clone(&cancel2);
             let c = Arc::clone(&c2);
             let opts = Arc::clone(&opts);
-            let roots = Arc::clone(&roots_owned);
+            let labels = Arc::clone(&labels_owned);
             let plain = plain.clone();
             let searched = Arc::clone(&searched);
             let cold = Arc::clone(&cold);
@@ -2038,7 +2115,7 @@ fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Opti
                     return WalkState::Continue;
                 }
                 let size = if opts.want_bytes { entry.metadata().ok().map(|m| m.len()) } else { None };
-                let rel: Arc<str> = Arc::from(relative(entry.path(), &roots));
+                let rel = label(entry.path(), &labels, &opts);
                 let fw = fw.get_or_insert_with(|| file_worker(&opts));
                 search_one(fw, &Run { matcher: &matcher, o: &opts, c: &c, cancel: &cancel, tx: &tx, plain: plain.as_deref() }, entry.path(), rel, size);
                 let extra = cold_extra(&opts, &c);
@@ -2053,9 +2130,9 @@ fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Opti
             })
         });
     });
-    drain(rx, o, &mut on_hit);
+    drain(rx, &mut *on_hit);
     worker.join().map_err(|_| anyhow!("search worker panicked"))?;
-    Ok(stats(&counters, t0, &cancel))
+    Ok(())
 }
 
 /// Search the given files (paths relative to `root`, as an index lists them) with exactly the
@@ -2115,7 +2192,7 @@ fn search_list(
             });
         }
         drop(tx);
-        drain(rx, o, on_hit);
+        drain(rx, on_hit);
     });
     stats(&counters, t0, cancel)
 }
@@ -2134,6 +2211,17 @@ fn filtered_out(ov: &ignore::overrides::Override, rel: &str) -> bool {
         at += i + 1;
     }
     ov.matched(rel, false).is_ignore()
+}
+
+/// How a file found under `roots` is reported (see `Options::paths_as_given`).
+fn label(path: &Path, roots: &[PathBuf], o: &Options) -> Arc<str> {
+    if !o.paths_as_given {
+        return Arc::from(relative(path, roots));
+    }
+    match path.to_string_lossy() {
+        std::borrow::Cow::Borrowed(s) if !cfg!(windows) => Arc::from(s),
+        s => Arc::from(s.replace('\\', "/")),
+    }
 }
 
 pub fn relative(path: &Path, roots: &[PathBuf]) -> String {

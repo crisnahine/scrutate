@@ -136,7 +136,7 @@ def indexed_agrees(rng: random.Random, root: str, pat: str, sf: list[str], mode:
                 f.write(" ".join(rng.choice(WORDS) for _ in range(6)) + "\n")
         if subprocess.run([SCRUTATE, "index", "--text"], cwd=root, capture_output=True).returncode != 0:
             return f"index --text failed (corpus {root})"
-        rc1, o1 = run_json([SCRUTATE, "grep", "--sort", "--json", *sf, pat, "."], root)
+        rc1, o1 = run_json([SCRUTATE, "grep", "--sort", "--json", *sf, pat], root)
         rc2, o2 = run_json([SCRUTATE, "grep", "--index", "--sort", "--json", *sf, pat], root)
         if rc1 != rc2 or scrutate_matches(o1) != scrutate_matches(o2):
             only_walk = sorted(scrutate_matches(o1) - scrutate_matches(o2))[:3]
@@ -152,14 +152,14 @@ def one_case(rng: random.Random, keep: bool) -> str | None:
         pat, sf, rf, mode = random_pattern(rng)
         if mode == "multiline":
             # rg's -U with --json reports multi-line matches as one record spanning lines; compare counts of files instead
-            rc1, o1 = run_json([SCRUTATE, "grep", "-l", *sf, pat, "."], root)
+            rc1, o1 = run_json([SCRUTATE, "grep", "-l", *sf, pat], root)
             rc2, o2 = run_json([RG, "--no-messages", "-l", *rf, pat, "."], root)
             a = sorted(l.decode() for l in o1.splitlines())
             b = sorted(l.decode()[2:] if l.startswith(b"./") else l.decode() for l in o2.splitlines())
             if a != b:
                 return f"multiline -l mismatch for {pat!r}: scrutate={a} rg={b} (corpus {root})"
             return indexed_agrees(rng, root, pat, sf, mode)
-        rc1, o1 = run_json([SCRUTATE, "grep", "--json", *sf, pat, "."], root)
+        rc1, o1 = run_json([SCRUTATE, "grep", "--json", *sf, pat], root)
         rc2, o2 = run_json([RG, "--json", "--no-messages", *rf, pat, "."], root)
         if rc1 not in (0, 1) or rc2 not in (0, 1):
             if rc1 == 2 and rc2 == 2:
@@ -171,7 +171,7 @@ def one_case(rng: random.Random, keep: bool) -> str | None:
             only_b = sorted(b - a)[:3]
             return f"match sets differ for {pat!r} ({mode}, flags {sf}): only scrutate {only_a}; only rg {only_b} (corpus {root})"
         # count mode
-        rc1, o1 = run_json([SCRUTATE, "grep", "-c", *sf, pat, "."], root)
+        rc1, o1 = run_json([SCRUTATE, "grep", "-c", *sf, pat], root)
         rc2, o2 = run_json([RG, "--no-messages", "-c", *rf, pat, "."], root)
         ca = {l.rsplit(b":", 1)[0].decode(): int(l.rsplit(b":", 1)[1]) for l in o1.splitlines() if b":" in l}
         cb = {}
