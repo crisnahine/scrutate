@@ -5,8 +5,8 @@ usage: check_version.py VERSION   (release.yml passes the tag without its leadin
 """
 import json
 import os
+import re
 import sys
-import tomllib
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 
@@ -14,8 +14,9 @@ ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 def declared() -> dict[str, str]:
     out = {}
     for f in ("crates/scrutate/Cargo.toml", "crates/scrutate-py/Cargo.toml"):
-        with open(os.path.join(ROOT, f), "rb") as fh:
-            out[f] = tomllib.load(fh)["package"]["version"]
+        with open(os.path.join(ROOT, f)) as fh:
+            # the first `version = "..."` of a manifest is the package's own
+            out[f] = re.search(r'^version = "([^"]+)"', fh.read(), re.M).group(1)
     with open(os.path.join(ROOT, "integrations/vscode/package.json")) as fh:
         out["integrations/vscode/package.json"] = json.load(fh)["version"]
     return out
