@@ -142,14 +142,14 @@ def test_the_comment_right_above_a_python_definition_is_its_documentation():
 
 
 def test_documentation_is_taken_across_attributes_and_onto_go_constants():
-    cases = [  # (file, source, qualname, first line of the chunk, documentation)
-        ("a.rs", "/// A target.\n#[derive(Debug, Clone)]\npub struct Target {\n    x: i32,\n}\n", "Target", 3, "A target."),
-        ("a.rs", "/// Two.\n#[derive(Debug)]\n#[repr(u8)]\npub enum E {\n    A,\n}\n", "E", 4, "Two."),
-        ("a.rs", "pub struct T;\nimpl T {\n    /// Fast.\n    #[inline]\n    pub fn go(&self) {}\n}\n", "T.go", 5, "Fast."),
+    cases = [  # (file, source, qualname, first line of the chunk: its attribute lines, documentation)
+        ("a.rs", "/// A target.\n#[derive(Debug, Clone)]\npub struct Target {\n    x: i32,\n}\n", "Target", 2, "A target."),
+        ("a.rs", "/// Two.\n#[derive(Debug)]\n#[repr(u8)]\npub enum E {\n    A,\n}\n", "E", 2, "Two."),
+        ("a.rs", "pub struct T;\nimpl T {\n    /// Fast.\n    #[inline]\n    pub fn go(&self) {}\n}\n", "T.go", 4, "Fast."),
         ("a.rs", "/// The cap.\n#[allow(dead_code)]\nconst CAP: usize = 3;\n", "CAP", 3, "The cap."),
-        ("a.rs", "/// stray\n\n#[derive(Debug)]\nstruct S;\n", "S", 4, ""),
+        ("a.rs", "/// stray\n\n#[derive(Debug)]\nstruct S;\n", "S", 3, ""),
         ("a.rs", "/// stray\n#[derive(Debug)]\n\nstruct S;\n", "S", 4, ""),
-        ("a.ts", "class A {\n  /** Gets x. */\n  @Get('/x')\n  target() {\n    return 1;\n  }\n}\n", "A.target", 4, "Gets x."),
+        ("a.ts", "class A {\n  /** Gets x. */\n  @Get('/x')\n  target() {\n    return 1;\n  }\n}\n", "A.target", 3, "Gets x."),
         ("a.go", "package p\n\n// LockSeconds is the lock time.\nconst LockSeconds = 30\n", "LockSeconds", 4, "LockSeconds is the lock time."),
         ("a.go", "package p\n\n// Server holds the listeners.\ntype Server struct {\n\tn int\n}\n", "Server", 4, "Server holds the listeners."),
         ("a.go", "package p\n\n// Mode says how it runs.\ntype Mode int\n", "Mode", 4, "Mode says how it runs."),
@@ -307,7 +307,7 @@ Foo.count = 3;
 def test_a_function_assigned_to_a_member_is_a_definition_owned_by_the_member():
     for path in ("m.js", "m.ts"):
         chunks = [c for c in parse_source(path, MEMBER_FUNCTIONS) if c.kind != "module"]
-        assert [(c.kind, c.name, c.qualname) for c in chunks] == [
+        assert [(c.kind, c.name, c.qualname) for c in chunks if c.kind != "window"] == [
             ("function", "Foo", "Foo"), ("method", "bar", "Foo.bar"), ("function", "staticFn", "Foo.staticFn"),
             ("method", "arrow", "Foo.arrow"), ("function", "plugin", "$.fn.plugin"), ("function", "one", "one"),
             ("function", "two", "two"), ("function", "m", "m"), ("function", "b", "a.b"), ("function", "k", "obj.k")], path
@@ -340,7 +340,7 @@ for (let i = 0; i < 3; i++) {
 def test_a_function_set_on_this_belongs_to_the_enclosing_function_or_class():
     for path in ("w.js", "w.ts"):
         chunks = [c for c in parse_source(path, THIS_MEMBERS) if c.kind != "module"]
-        assert [(c.kind, c.name, c.qualname) for c in chunks] == [
+        assert [(c.kind, c.name, c.qualname) for c in chunks if c.kind != "window"] == [
             ("function", "Widget", "Widget"), ("method", "render", "Widget.render"), ("method", "size", "Widget.size"),
             ("class", "Panel", "Panel"), ("method", "constructor", "Panel.constructor"), ("method", "open", "Panel.open"),
             ("method", "init", "Panel.init"), ("method", "close", "Panel.close"), ("function", "Box", "Box"),
@@ -386,3 +386,31 @@ def test_a_computed_or_quoted_method_name_is_named_without_its_brackets_or_quote
     assert got == [("kRun", "Limiter.kRun"), ("quoted", "Limiter.quoted"), ("Symbol.iterator", "Limiter.Symbol.iterator")]
     rs = [c.qualname for c in parse_source("m.rs", "impl Hi for [u32] {\n    fn hi(&self) {}\n}\n") if c.kind != "module"]
     assert rs == ["u32", "u32.hi"]
+
+
+def _windows(path, src):
+    return [(c.qualname, c.start, c.end) for c in parse_source(path, src) if c.kind == "window"]
+
+
+def test_lines_no_chunk_keeps_are_windows_named_after_the_definition_that_holds_them():
+    # past the 200 lines a function keeps, and past the 40 a class keeps
+    py = "def long(x):\n" + "    x = x + 1\n" * 260 + "\n\nclass K:\n" + "    a = 1\n" * 45
+    py += "    def m(self):\n        return 1\n    b = 2\n"
+    assert _windows("a.py", py) == [("long", 201, 250), ("long", 241, 261), ("K", 304, 309), ("K", 312, 312)]
+    # top-level code after a definition is the module's; a lone closer makes no window
+    js = "function helper() {\n  return 1;\n}\n\napp.get('/x', (req, res) => {\n  res.send(helper());\n});\n"
+    assert _windows("server.js", js) == [("server", 5, 7)]
+    assert _windows("a.rs", "fn a() {\n    if x {\n        y();\n    }\n}\n\nfn b() {}\n") == []
+    # a line only in a constant has no postings, so it is in a window too
+    assert _windows("a.go", "package p\n\nfunc f() {}\n\nconst Max = 3\n") == [("a", 5, 5)]
+
+
+def test_a_definition_starts_at_the_attribute_lines_right_above_it():
+    rs = "/// Shows one.\n#[get(\"/users/show\")]\n#[inline]\npub fn show() {}\n\n#[cfg(test)]\n\nmod tests {}\n"
+    chunks = {c.qualname: c for c in parse_source("a.rs", rs)}
+    assert (chunks["show"].start, chunks["show"].doc) == (2, "Shows one.")
+    assert chunks["show"].text.startswith("#[get(\"/users/show\")]\n#[inline]\npub fn show")
+    assert chunks["tests"].start == 8  # a blank line keeps an attribute apart
+    ts = "class A {\n  @HostListener('window:resize')\n  onResize() {\n    return 1;\n  }\n}\n"
+    m = next(c for c in parse_source("a.ts", ts) if c.qualname == "A.onResize")
+    assert m.start == 2 and m.text.startswith("@HostListener")

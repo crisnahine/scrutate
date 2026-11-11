@@ -47,6 +47,13 @@ impl Chunk {
     /// thousands of nested definitions never holds all their copies at once.
     pub fn fill(&mut self, src: &[u8]) {
         if let Some(l) = self.lazy.take() {
+            if self.kind == "window" {
+                // its lines as `split_lines` gives them (no "\r"); past twice the cap is cut anyway
+                let s = txt(src, l.text, l.end.min(l.text + 2 * MAX_CHUNK_BYTES + 8));
+                self.text = capped(split_lines(&s).join("\n"));
+                self.body = self.text.clone();
+                return;
+            }
             self.text = head_bytes(src, l.text, l.end, l.lines);
             self.body = head_bytes(src, l.body, l.end, l.lines);
         }
@@ -285,29 +292,146 @@ pub fn window_chunks(source: &str) -> Vec<Chunk> {
 
 /// Overlapping 50-line windows (10 lines overlap) from 0-based line `first_line` on.
 pub fn window_chunks_from(source: &str, first_line: usize) -> Vec<Chunk> {
+    let lines = split_lines(source);
+    let mut out = windows_of(source, &lines, first_line.min(lines.len()), lines.len(), "");
+    out.iter_mut().for_each(|c| c.fill(source.as_bytes()));
+    out
+}
+
+/// Overlapping 50-line windows (10 lines overlap) of the 0-based lines `a..b`, their text cut when stored.
+fn windows_of(source: &str, lines: &[&str], a: usize, b: usize, qualname: &str) -> Vec<Chunk> {
     let (size, overlap) = (50usize, 10usize);
-    let all = split_lines(source);
-    let lines = &all[first_line.min(all.len())..];
+    let at = |l: &str| l.as_ptr() as usize - source.as_ptr() as usize;
     let mut out = Vec::new();
-    let step = (size - overlap).max(1);
-    let mut i = 0;
-    while i < lines.len() {
-        let seg = &lines[i..(i + size).min(lines.len())];
-        if !seg.concat().trim().is_empty() {
-            let t = capped(seg.join("\n"));
+    let mut i = a;
+    while i < b {
+        let seg = &lines[i..(i + size).min(b)];
+        if seg.iter().any(|l| !l.trim().is_empty()) {
+            let last = seg[seg.len() - 1];
+            // through the last line's newline, so the lines read back are these lines
+            let end = source[at(last) + last.len()..].find('\n').map_or(source.len(), |p| at(last) + last.len() + p + 1);
             out.push(Chunk {
+                qualname: qualname.to_string(),
                 kind: "window",
-                start: (first_line + i) as i64 + 1,
-                end: (first_line + i + seg.len()) as i64,
-                text: t.clone(),
-                body: t,
+                start: i as i64 + 1,
+                end: (i + seg.len()) as i64,
+                lazy: Some(Lazy { text: at(seg[0]), body: at(seg[0]), end, lines: size }),
                 ..Default::default()
             });
         }
-        if i + size >= lines.len() {
+        if i + size >= b {
             break;
         }
-        i += step;
+        i += size - overlap;
+    }
+    out
+}
+
+/// Whole lines that `head_bytes` keeps of `s` cut at `n` lines (`usize::MAX` when it keeps them all).
+fn kept_lines(s: &[u8], n: usize) -> usize {
+    let scan = &s[..s.len().min(MAX_CHUNK_BYTES + 1)];
+    let (mut all, mut whole) = (0, 0);
+    for i in memchr::memchr_iter(b'\n', scan) {
+        all += 1;
+        if all >= n {
+            return n;
+        }
+        whole += (i < MAX_CHUNK_BYTES) as usize;
+    }
+    if s.len() <= MAX_CHUNK_BYTES {
+        usize::MAX
+    } else {
+        whole.max(1)
+    }
+}
+
+/// Brackets alone or a block's closing word: nothing to search for.
+fn is_closer(line: &str) -> bool {
+    let t = line.trim();
+    matches!(t.trim_end_matches([';', ',']), "end" | "fi" | "done" | "esac") || t.chars().all(|c| "{}[]();,".contains(c))
+}
+
+/// Where a definition's text starts when the attribute lines right above `at` (`#[...]`, `@...`)
+/// are its own, and how many lines that adds.
+fn attr_start(src: &[u8], mut at: usize) -> (usize, usize) {
+    let mut above = 0;
+    loop {
+        // only blanks may stand before `at` on its line (scanning no further keeps it linear)
+        let Some(nl) = src[..at].iter().rposition(|b| !b.is_ascii_whitespace() || *b == b'\n').filter(|&i| src[i] == b'\n') else {
+            return (at, above);
+        };
+        let line = nl + 1;
+        let prev = src[..line - 1].iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
+        let indent = src[prev..line].iter().take_while(|&&b| b == b' ' || b == b'\t').count();
+        let t = &src[prev + indent..line];
+        if !(t.starts_with(b"#[") || t.starts_with(b"@")) {
+            return (at, above);
+        }
+        at = prev + indent;
+        above += 1;
+    }
+}
+
+/// A comment line right above a definition that its documentation holds.
+fn is_doc_line(line: &str, doc: &str) -> bool {
+    !doc.is_empty() && is_comment_line(line) && doc.contains(&clean_comment(line))
+}
+
+/// Windows over every stretch of lines that no span keeps, named after the innermost definition
+/// holding the stretch (the module outside them). A stretch of brackets and closing words alone makes none.
+fn uncovered_windows(source: &str, lines: &[&str], spans: &[(i64, i64)], defs: &[(i64, i64, &str)], stem: &str) -> Vec<Chunk> {
+    let n = lines.len();
+    let mut depth = vec![0i64; n + 1];
+    for &(a, b) in spans {
+        if a <= b && a >= 1 && a as usize <= n {
+            depth[a as usize - 1] += 1;
+            depth[(b as usize).min(n)] -= 1;
+        }
+    }
+    let mut level = 0;
+    let covered: Vec<bool> = depth[..n]
+        .iter()
+        .map(|d| {
+            level += d;
+            level > 0
+        })
+        .collect();
+    let mut order: Vec<usize> = (0..defs.len()).collect();
+    order.sort_by_key(|&k| (defs[k].0, -defs[k].1));
+    let (mut owner, mut stack, mut next) = (vec![usize::MAX; n], Vec::new(), 0);
+    for (i, o) in owner.iter_mut().enumerate() {
+        let line = i as i64 + 1;
+        while next < order.len() && defs[order[next]].0 <= line {
+            stack.push(order[next]);
+            next += 1;
+        }
+        while stack.last().is_some_and(|&k| defs[k].1 < line) {
+            stack.pop();
+        }
+        *o = stack.last().copied().unwrap_or(usize::MAX);
+    }
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < n {
+        if covered[i] {
+            i += 1;
+            continue;
+        }
+        let mut j = i;
+        while j < n && !covered[j] && owner[j] == owner[i] {
+            j += 1;
+        }
+        let (mut a, mut b) = (i, j);
+        while a < b && lines[a].trim().is_empty() {
+            a += 1;
+        }
+        while b > a && lines[b - 1].trim().is_empty() {
+            b -= 1;
+        }
+        if lines[a..b].iter().any(|l| !l.trim().is_empty() && !is_closer(l)) {
+            out.extend(windows_of(source, lines, a, b, defs.get(owner[i]).map_or(stem, |d| d.2)));
+        }
+        i = j;
     }
     out
 }
@@ -1296,7 +1420,25 @@ fn finish(path: &str, source: &str, mut chunks: Vec<Chunk>, module_doc: String) 
         None => lines.len(),
     }
     .min(60);
-    let head_txt = capped(lines[..head_end.min(lines.len())].join("\n"));
+    let head_all = lines[..head_end.min(lines.len())].join("\n");
+    // the lines each chunk's text keeps whole; constants have no postings, so they keep none
+    let mut spans = vec![(1, kept_lines(head_all.as_bytes(), usize::MAX).min(head_end) as i64)];
+    for c in chunks.iter().filter(|c| c.kind != "constant") {
+        let kept = match c.lazy {
+            Some(l) => kept_lines(&source.as_bytes()[l.text.min(l.end)..l.end.min(source.len())], l.lines),
+            None => kept_lines(c.text.as_bytes(), if CONTAINERS.contains(&c.kind) { MAX_CONTAINER_LINES } else { MAX_CHUNK_LINES }),
+        };
+        spans.push((c.start, c.end.min(c.start.saturating_add(kept.min(i64::MAX as usize) as i64 - 1))));
+        // its documentation is searchable in its doc field
+        let mut k = (c.start.max(1) as usize - 1).min(lines.len());
+        while k > 0 && is_doc_line(lines[k - 1], &c.doc) {
+            k -= 1;
+        }
+        spans.push((k as i64 + 1, c.start - 1));
+    }
+    let defs: Vec<(i64, i64, &str)> = chunks.iter().filter(|c| c.kind != "constant").map(|c| (c.start, c.end, c.qualname.as_str())).collect();
+    let windows = uncovered_windows(source, &lines, &spans, &defs, stem_name);
+    let head_txt = capped(head_all);
     if !head_txt.trim().is_empty() {
         chunks.insert(
             0,
@@ -1315,10 +1457,8 @@ fn finish(path: &str, source: &str, mut chunks: Vec<Chunk>, module_doc: String) 
             },
         );
     }
-    if first_def.is_none() && head_end < lines.len() {
-        // no definitions: the rest of the file stays searchable as windows
-        chunks.extend(window_chunks_from(source, head_end));
-    }
+    // every line no chunk keeps is searchable as windows
+    chunks.extend(windows);
     // constants last: the index gives the chunks before them their lexical rows (constants get none)
     chunks.sort_by_key(|c| c.kind == "constant");
     if chunks.is_empty() {
@@ -1517,7 +1657,9 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
                 Some(b) => b.start_byte(),
                 None => node.end_byte().min(node.start_byte() + 200),
             };
-            let sig = txt(src, outer.start_byte(), sig_end).trim().to_string();
+            // an Objective-C line that starts with @ is a directive (@interface, @property), not an attribute
+            let (text_start, above) = if spec.id == "objc" { (outer.start_byte(), 0) } else { attr_start(src, outer.start_byte()) };
+            let sig = txt(src, text_start, sig_end).trim().to_string();
             let mut body_start = sig_end;
             let mut doc = match node.child_by_field_name("docstring").or_else(|| lisp_docstring(node)) {
                 Some(ds) if !spec.docstring => py_string_content(&txt(src, ds.start_byte(), ds.end_byte())),
@@ -1538,11 +1680,11 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
                 name,
                 qualname: q,
                 kind,
-                start: outer.start_position().row as i64 + 1,
+                start: (outer.start_position().row - above) as i64 + 1,
                 end: last_row(node) + 1,
                 sig,
                 doc,
-                lazy: Some(Lazy { text: outer.start_byte(), body: body_start, end: node.end_byte(), lines: cap }),
+                lazy: Some(Lazy { text: text_start, body: body_start, end: node.end_byte(), lines: cap }),
                 ..Default::default()
             });
             if let (true, Some((_, siblings))) = (spec.id == "asm" && t == "label", ancestors.last()) {

@@ -159,18 +159,109 @@ def _head(text: str, n: int) -> str:
     return _capped(text) if len(lines) <= n else _capped("\n".join(lines[:n]), True)
 
 
-def window_chunks(source: str, size: int = 50, overlap: int = 10, first_line: int = 0) -> list[Chunk]:
-    """Overlapping line windows of ``source`` from 0-based line ``first_line`` on."""
-    lines = split_lines(source)[first_line:]
+def _kept(text: str, n: int) -> int:
+    """Whole lines that `_head(text, n)` keeps (a huge number when it keeps them all)."""
+    b = text.encode("utf8")
+    if b[: MAX_CHUNK_BYTES + 1].count(b"\n") >= n:
+        return n
+    if len(b) <= MAX_CHUNK_BYTES:
+        return 1 << 62
+    return max(1, b[:MAX_CHUNK_BYTES].count(b"\n"))
+
+
+def _windows(lines: list[str], a: int, b: int, qualname: str, size: int = 50, overlap: int = 10) -> list[Chunk]:
+    """Overlapping line windows of the 0-based lines a..b."""
     out: list[Chunk] = []
     step = max(1, size - overlap)
-    for i in range(0, len(lines), step):
-        seg = lines[i : i + size]
+    for i in range(a, b, step):
+        seg = lines[i : min(i + size, b)]
         if "".join(seg).strip():
             t = _capped("\n".join(seg))
-            out.append(Chunk("", "", "window", first_line + i + 1, first_line + i + len(seg), t, body=t))
-        if i + size >= len(lines):
+            out.append(Chunk("", qualname, "window", i + 1, i + len(seg), t, body=t))
+        if i + size >= b:
             break
+    return out
+
+
+def window_chunks(source: str, size: int = 50, overlap: int = 10, first_line: int = 0) -> list[Chunk]:
+    """Overlapping line windows of ``source`` from 0-based line ``first_line`` on."""
+    lines = split_lines(source)
+    return _windows(lines, min(first_line, len(lines)), len(lines), "", size, overlap)
+
+
+def _is_closer(line: str) -> bool:
+    """Brackets alone or a block's closing word: nothing to search for."""
+    t = line.strip()
+    return t.rstrip(";,") in ("end", "fi", "done", "esac") or all(c in "{}[]();," for c in t)
+
+
+_COMMENT_STARTS = ("//", "#", "--", ";", "/*", "*", "%")
+
+
+def _attr_start(src: bytes, at: int) -> tuple[int, int]:
+    """Where a definition's text starts when the attribute lines right above ``at`` (``#[...]``,
+    ``@...``) are its own, and how many lines that adds."""
+    above = 0
+    while True:
+        i = at
+        while i > 0 and src[i - 1] in b" \t\r\x0c":  # only blanks may stand before `at` on its line
+            i -= 1
+        if i == 0 or src[i - 1] != 0x0A:
+            return at, above
+        prev = src.rfind(b"\n", 0, i - 1) + 1
+        t = src[prev:i].lstrip(b" \t")
+        if not t.startswith((b"#[", b"@")):
+            return at, above
+        at = i - len(t)
+        above += 1
+
+
+def _is_doc_line(line: str, doc: str) -> bool:
+    """A comment line right above a definition that its documentation holds."""
+    return bool(doc) and line.lstrip().startswith(_COMMENT_STARTS) and _clean_comment(line) in doc
+
+
+def _uncovered_windows(lines: list[str], spans: list[tuple[int, int]], defs: list[Chunk], stem: str) -> list[Chunk]:
+    """Windows over every stretch of lines that no span keeps, named after the innermost definition
+    holding the stretch (the module outside them). A stretch of brackets and closing words alone makes none."""
+    n = len(lines)
+    depth = [0] * (n + 1)
+    for a, b in spans:  # 1-based, inclusive
+        if a <= b and a <= n:
+            depth[a - 1] += 1
+            depth[min(b, n)] -= 1
+    owner = [-1] * n
+    stack: list[int] = []
+    order = sorted(range(len(defs)), key=lambda k: (defs[k].start, -defs[k].end))
+    nxt = 0
+    for i in range(n):
+        while nxt < len(order) and defs[order[nxt]].start <= i + 1:
+            stack.append(order[nxt])
+            nxt += 1
+        while stack and defs[stack[-1]].end < i + 1:
+            stack.pop()
+        owner[i] = stack[-1] if stack else -1
+    out: list[Chunk] = []
+    level, i = 0, 0
+    covered = [False] * n
+    for k in range(n):
+        level += depth[k]
+        covered[k] = level > 0
+    while i < n:
+        if covered[i]:
+            i += 1
+            continue
+        j = i
+        while j < n and not covered[j] and owner[j] == owner[i]:
+            j += 1
+        a, b = i, j
+        while a < b and not lines[a].strip():
+            a += 1
+        while b > a and not lines[b - 1].strip():
+            b -= 1
+        if any(lines[k].strip() and not _is_closer(lines[k]) for k in range(a, b)):
+            out += _windows(lines, a, b, defs[owner[i]].qualname if owner[i] >= 0 else stem)
+        i = j
     return out
 
 
@@ -541,6 +632,7 @@ def parse_source(path: str, source: str) -> list[Chunk]:
     chunks: list[Chunk] = []
     consts: list[Chunk] = []
     stack: list[tuple[Chunk, str]] = []  # (current definition, qualname)
+    spans: list[tuple[int, int]] = []  # the lines each definition's text keeps whole
     is_py = lang == "python"
 
     def visit(node):
@@ -595,7 +687,8 @@ def parse_source(path: str, source: str) -> list[Chunk]:
             body_node = node.child_by_field_name("body")
             sig_end = body_node.start_byte if body_node is not None else min(
                 node.end_byte, node.start_byte + 200)
-            sig = txt(outer.start_byte, sig_end).strip()
+            text_start, above = _attr_start(src, outer.start_byte)
+            sig = txt(text_start, sig_end).strip()
             doc = _leading_comment(node, src)
             body_start = sig_end
             if is_py and body_node is not None:
@@ -605,14 +698,13 @@ def parse_source(path: str, source: str) -> list[Chunk]:
                     ds = _py_string_content(txt(s.start_byte, s.end_byte))
                     doc = f"{doc}\n{ds}" if doc else ds
                     body_start = stmt.end_byte
-            full = txt(outer.start_byte, node.end_byte)
+            full = txt(text_start, node.end_byte)
             body = txt(body_start, node.end_byte)
-            if kind in _CONTAINERS:
-                full, body = _head(full, MAX_CONTAINER_LINES), _head(body, MAX_CONTAINER_LINES)
-            else:
-                full, body = _head(full, MAX_CHUNK_LINES), _head(body, MAX_CHUNK_LINES)
-            new = Chunk(name, q, kind, outer.start_point[0] + 1, _last_row(node) + 1,
-                        full, sig, doc, body)
+            cap = MAX_CONTAINER_LINES if kind in _CONTAINERS else MAX_CHUNK_LINES
+            start, end = outer.start_point[0] - above + 1, _last_row(node) + 1
+            spans.append((start, min(end, start + _kept(full, cap) - 1)))
+            full, body = _head(full, cap), _head(body, cap)
+            new = Chunk(name, q, kind, start, end, full, sig, doc, body)
             chunks.append(new)
             stack.append((new, q))
         elif (const := _constant_of(lang, node, src)) is not None:
@@ -641,7 +733,16 @@ def parse_source(path: str, source: str) -> list[Chunk]:
     first_def = min((c.start for c in chunks), default=None)
     lines = split_lines(source)
     head_end = min((first_def - 1) if first_def else len(lines), 60)
-    head = _capped("\n".join(lines[:head_end]))
+    head = "\n".join(lines[:head_end])
+    defs = list(chunks)
+    for c in defs:
+        # its documentation is searchable in its doc field
+        k = min(c.start - 1, len(lines))
+        while k > 0 and _is_doc_line(lines[k - 1], c.doc):
+            k -= 1
+        spans.append((k + 1, c.start - 1))
+    spans.append((1, min(head_end, _kept(head, 1 << 62))))
+    head = _capped(head)
     if head.strip():
         mdoc = ""
         if is_py:
@@ -649,9 +750,8 @@ def parse_source(path: str, source: str) -> list[Chunk]:
             if s is not None:
                 mdoc = _py_string_content(txt(s.start_byte, s.end_byte))
         chunks.insert(0, Chunk(stem_name, stem_name, "module", 1, head_end, head, "", mdoc, head))
-    if first_def is None and head_end < len(lines):
-        # no definitions: the rest of the file stays searchable as windows
-        chunks.extend(window_chunks(source, first_line=head_end))
+    # every line no chunk keeps (constants have no postings) is searchable as windows
+    chunks.extend(_uncovered_windows(lines, spans, defs, stem_name))
     chunks += consts  # last: the index gives the chunks before them their lexical rows (constants get none)
     if not chunks:
         return window_chunks(source)

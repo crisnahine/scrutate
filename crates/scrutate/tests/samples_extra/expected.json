@@ -11,6 +11,10 @@
     [
       "function",
       "Sum"
+    ],
+    [
+      "window",
+      "sample"
     ]
   ],
   "sample.cu": [

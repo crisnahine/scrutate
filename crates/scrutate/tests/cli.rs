@@ -225,6 +225,34 @@ fn search_finds_a_rust_struct_by_the_doc_comment_above_its_derive() {
 }
 
 #[test]
+fn search_finds_a_line_past_what_a_long_function_keeps_as_one_hit_naming_it() {
+    let r = Repo::new("long_fn");
+    let mut src = String::from("def very_long(x):\n");
+    for i in 1..=600 {
+        src += &if i == 450 { "    x = x + 1  # the zorblax step\n".to_string() } else { format!("    x = x + {i}  # the plain step\n") };
+    }
+    src += "    return x\n";
+    r.write("long.py", src.as_bytes());
+    let (code, out, err) = r.run(&["search", "zorblax step", "-k", "5", "--json"]);
+    assert_eq!(code, 0, "{err}");
+    let hits: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
+    assert!(hits.first().is_some_and(|h| h["kind"] == "window" && h["name"] == "very_long"), "{out}");
+    let (start, end) = (hits[0]["start"].as_i64().unwrap(), hits[0]["end"].as_i64().unwrap());
+    assert!(start <= 451 && 451 <= end && end - start < 50, "the lines of the part that matched: {out}");
+    assert_eq!(hits.iter().filter(|h| h["name"] == "very_long").count(), 1, "one hit per definition: {out}");
+}
+
+#[test]
+fn search_finds_the_attribute_above_a_rust_handler() {
+    let r = Repo::new("attr");
+    r.write("src/lib.rs", b"pub fn open() {}\n\n#[get(\"/users/zqshow\")]\npub fn show() -> u32 {\n    1\n}\n");
+    let (code, out, err) = r.run(&["search", "zqshow", "-k", "3", "--json"]);
+    assert_eq!(code, 0, "{err}");
+    let hits: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
+    assert!(hits.first().is_some_and(|h| h["name"] == "show" && h["start"] == 3), "{out}");
+}
+
+#[test]
 fn search_also_merges_repositories() {
     let a = python_repo("also_a");
     let b = Repo::new("also_b");

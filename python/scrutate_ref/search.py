@@ -312,15 +312,17 @@ class Searcher:
             h = Hit(row["id"], row["path"], row["start"], row["end"], row["name"] or "",
                     row["qualname"] or "", row["kind"], "", float(scores[r]), _why(X[r]))
             key = (h.path, h.qualname, h.kind == "impl")  # a struct and its impl block are two hits
-            if h.qualname and h.kind in CODE_KINDS and key in best_by_key:
+            # a window is a part of the definition it names: one hit per definition, its best part
+            grouped = bool(h.qualname) and (h.kind in CODE_KINDS or h.kind == "window")
+            if grouped and key in best_by_key:
                 prev = picked[best_by_key[key]]  # overload / redefinition: keep the longer body
-                if (h.end - h.start) > (prev.end - prev.start):
+                if h.kind != "window" and prev.kind != "window" and (h.end - h.start) > (prev.end - prev.start):
                     picked[best_by_key[key]] = h
                 continue
             if h.kind in ("module", "window") and any(
                     p.path == h.path and not (h.end < p.start or h.start > p.end) for p in picked):
                 continue
-            if h.qualname and h.kind in CODE_KINDS:
+            if grouped:
                 best_by_key[key] = len(picked)
             picked.append(h)
             if len(picked) >= k:

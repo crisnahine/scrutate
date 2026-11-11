@@ -263,10 +263,12 @@ pub fn location(target: &str) -> Option<(&str, i64)> {
 /// The chunk a target refers to: a location, a qualified name, or a plain name (first definition).
 pub fn locate(s: &Searcher, target: &str) -> Result<Option<ChunkRow>> {
     if let Some((path, line)) = location(target) {
-        return match s.ix.chunk_at(path, line)? {
-            Some(c) => Ok(Some(c)),
-            None => s.ix.chunk_at(&crate::fmt::unshown(path), line),
+        // a window is a stretch of lines, not a definition
+        let at = match s.ix.chunk_at(path, line)? {
+            Some(c) => Some(c),
+            None => s.ix.chunk_at(&crate::fmt::unshown(path), line)?,
         };
+        return Ok(at.filter(|c| c.kind != "window"));
     }
     let hits = s.find_symbol(target, 1)?;
     match hits.first() {
@@ -730,7 +732,7 @@ pub fn occurrences(root: &std::path::Path, o: &crate::instant::Options) -> Resul
 pub fn group_by_symbol(ix: &Index, hits: Vec<crate::instant::Hit>) -> Result<Vec<RefGroup>> {
     let mut groups: Vec<RefGroup> = Vec::new();
     for h in hits {
-        let row = ix.chunk_at(&h.path, h.line as i64)?;
+        let row = ix.chunk_at(&h.path, h.line as i64)?.filter(|r| r.kind != "window");
         match groups.last_mut() {
             Some(g) if g.symbol.as_ref().map(|x| x.id) == row.as_ref().map(|x| x.id) && *g.path == *h.path => g.lines.push(h),
             _ => groups.push(RefGroup { symbol: row, path: h.path.to_string(), lines: vec![h] }),

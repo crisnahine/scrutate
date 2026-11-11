@@ -447,23 +447,24 @@ fn the_comment_right_above_a_definition_is_its_documentation() {
         ("lib/app.js", "const x = 1;\n/** Builds the app. */\nmodule.exports = function createApp() {\n  return x;\n};\n", "createApp", 3, "Builds the app."),
         ("a.ts", "class Foo {}\n/** Makes one. */\nFoo.make = (): Foo => new Foo();\n", "Foo.make", 3, "Makes one."),
         ("m.lua", "local M = {}\n--- Opens the door.\nM.open = function(x)\n  return x\nend\n", "M.open", 3, "Opens the door."),
-        // attributes, decorators and annotations between the comment and the definition
-        ("a.rs", "/// A target.\n#[derive(Debug, Clone)]\npub struct Target {\n    x: i32,\n}\n", "Target", 3, "A target."),
-        ("a.rs", "/// Two.\n#[derive(Debug)]\n#[repr(u8)]\npub enum E {\n    A,\n}\n", "E", 4, "Two."),
-        ("a.rs", "pub struct T;\nimpl T {\n    /// Fast.\n    #[inline]\n    pub fn go(&self) {}\n}\n", "T.go", 5, "Fast."),
+        // attributes, decorators and annotations between the comment and the definition: the
+        // definition starts at the attribute lines right above it
+        ("a.rs", "/// A target.\n#[derive(Debug, Clone)]\npub struct Target {\n    x: i32,\n}\n", "Target", 2, "A target."),
+        ("a.rs", "/// Two.\n#[derive(Debug)]\n#[repr(u8)]\npub enum E {\n    A,\n}\n", "E", 2, "Two."),
+        ("a.rs", "pub struct T;\nimpl T {\n    /// Fast.\n    #[inline]\n    pub fn go(&self) {}\n}\n", "T.go", 4, "Fast."),
         ("a.rs", "/// The cap.\n#[allow(dead_code)]\nconst CAP: usize = 3;\n", "CAP", 3, "The cap."),
-        ("a.rs", "/// stray\n\n#[derive(Debug)]\nstruct S;\n", "S", 4, ""),
+        ("a.rs", "/// stray\n\n#[derive(Debug)]\nstruct S;\n", "S", 3, ""),
         ("a.rs", "/// stray\n#[derive(Debug)]\n\nstruct S;\n", "S", 4, ""),
-        ("a.ts", "class A {\n  /** Gets x. */\n  @Get('/x')\n  target() {\n    return 1;\n  }\n}\n", "A.target", 4, "Gets x."),
+        ("a.ts", "class A {\n  /** Gets x. */\n  @Get('/x')\n  target() {\n    return 1;\n  }\n}\n", "A.target", 3, "Gets x."),
         ("a.dart", "class A {\n  /// Plain.\n  int f() => 1;\n  /// Overrides.\n  @override\n  int g() => 1;\n}\n", "A.f", 3, "Plain."),
         ("a.dart", "class A {\n  /// Plain.\n  int f() => 1;\n  /// Overrides.\n  @override\n  int g() => 1;\n}\n", "A.g", 5, "Overrides."),
-        ("a.ex", "defmodule M do\n  # Adds one.\n  @spec f(integer()) :: integer()\n  def f(x), do: x + 1\nend\n", "M.f", 4, "Adds one."),
-        ("a.ex", "defmodule M do\n  # The timeout.\n  @timeout 5000\n  def f, do: @timeout\nend\n", "M.f", 4, ""),
+        ("a.ex", "defmodule M do\n  # Adds one.\n  @spec f(integer()) :: integer()\n  def f(x), do: x + 1\nend\n", "M.f", 3, "Adds one."),
+        ("a.ex", "defmodule M do\n  # The timeout.\n  @timeout 5000\n  def f, do: @timeout\nend\n", "M.f", 3, ""),
         ("a.erl", "-module(a).\n\n%% Adds one.\n-spec f(integer()) -> integer().\nf(X) -> X + 1.\n", "f", 5, "Adds one."),
         // the language's own documentation form
-        ("a.ex", "defmodule M do\n  @moduledoc \"\"\"\n  The module.\n  \"\"\"\n  @doc \"\"\"\n  Adds one.\n  \"\"\"\n  @spec f(integer()) :: integer()\n  def f(x), do: x + 1\nend\n", "M.f", 9, "Adds one."),
+        ("a.ex", "defmodule M do\n  @moduledoc \"\"\"\n  The module.\n  \"\"\"\n  @doc \"\"\"\n  Adds one.\n  \"\"\"\n  @spec f(integer()) :: integer()\n  def f(x), do: x + 1\nend\n", "M.f", 8, "Adds one."),
         ("a.ex", "defmodule M do\n  @moduledoc \"\"\"\n  The module.\n  \"\"\"\n  @doc ~S\"\"\"\n  Adds one.\n  \"\"\"\n  def f(x), do: x + 1\nend\n", "M", 1, "The module."),
-        ("a.ex", "defmodule M do\n  @doc ~S\"Adds one.\"\n  def f(x), do: x + 1\nend\n", "M.f", 3, "Adds one."),
+        ("a.ex", "defmodule M do\n  @doc ~S\"Adds one.\"\n  def f(x), do: x + 1\nend\n", "M.f", 2, "Adds one."),
         ("a.hs", "module A where\n\n-- | Adds one.\nadd :: Int -> Int\nadd x = x + 1\n", "add", 4, "Adds one."),
         ("a.hs", "module A where\n\n{-| Adds one.\n-}\nadd :: Int -> Int\nadd x = x + 1\n", "add", 5, "Adds one."),
         ("a.jl", "x = 1\n\"\"\"Adds one.\"\"\"\nfunction add(x)\n    x + 1\nend\n", "add", 3, "Adds one."),
@@ -505,6 +506,44 @@ fn an_escaped_comma_is_part_of_an_excluded_directory_name() {
 
 fn find<'a>(chunks: &'a [scrutate::parse::Chunk], qualname: &str) -> &'a scrutate::parse::Chunk {
     chunks.iter().find(|c| c.qualname == qualname).unwrap_or_else(|| panic!("no {qualname} in {:?}", chunks.iter().map(|c| &c.qualname).collect::<Vec<_>>()))
+}
+
+fn windows(path: &str, src: &str) -> Vec<(String, i64, i64)> {
+    parse_source(path, src).into_iter().filter(|c| c.kind == "window").map(|c| (c.qualname, c.start, c.end)).collect()
+}
+
+#[test]
+fn lines_no_chunk_keeps_are_windows_named_after_the_definition_that_holds_them() {
+    // past the 200 lines a function keeps, and past the 40 a class keeps
+    let mut py = String::from("def long(x):\n");
+    py += &"    x = x + 1\n".repeat(260);
+    py += "\n\nclass K:\n";
+    py += &"    a = 1\n".repeat(45);
+    py += "    def m(self):\n        return 1\n    b = 2\n";
+    let w = windows("a.py", &py);
+    assert_eq!(w, [("long".into(), 201, 250), ("long".into(), 241, 261), ("K".into(), 304, 309), ("K".into(), 312, 312)]);
+    // top-level code after a definition is the module's; a lone closer makes no window
+    let js = "function helper() {\n  return 1;\n}\n\napp.get('/x', (req, res) => {\n  res.send(helper());\n});\n";
+    assert_eq!(windows("server.js", js), [("server".into(), 5, 7)]);
+    let rs = "fn a() {\n    if x {\n        y();\n    }\n}\n\nfn b() {}\n";
+    assert!(windows("a.rs", rs).is_empty());
+    // a line only in a constant has no postings, so it is in a window too
+    assert_eq!(windows("a.go", "package p\n\nfunc f() {}\n\nconst Max = 3\n"), [("a".into(), 5, 5)]);
+}
+
+#[test]
+fn a_definition_starts_at_the_attribute_lines_right_above_it() {
+    let rs = "/// Shows one.\n#[get(\"/users/show\")]\n#[inline]\npub fn show() {}\n\n#[cfg(test)]\n\nmod tests {}\n";
+    let chunks = parse_source("a.rs", rs);
+    let show = find(&chunks, "show");
+    assert_eq!((show.start, show.doc.as_str()), (2, "Shows one."));
+    assert!(show.text.starts_with("#[get(\"/users/show\")]\n#[inline]\npub fn show"), "{:?}", show.text);
+    assert_eq!(find(&chunks, "tests").start, 8, "a blank line keeps an attribute apart");
+    let ts = "class A {\n  @HostListener('window:resize')\n  onResize() {\n    return 1;\n  }\n}\n";
+    let chunks = parse_source("a.ts", ts);
+    let m = find(&chunks, "A.onResize");
+    assert_eq!(m.start, 2);
+    assert!(m.text.starts_with("@HostListener"), "{:?}", m.text);
 }
 
 #[test]
@@ -1032,7 +1071,7 @@ fn c_and_cpp_function_prototypes_are_function_symbols() {
         "p.hpp",
         "namespace ns {\n  Shape make();\n  int x;\n}\nextern \"C\" {\n  int cfun(int);\n}\nextern \"C\" int cone(int);\nWidget w();\nusing F = int(int);\nclass K { void m(); };\nint& rf();\nint (*fp)(int);\ntemplate <typename T> T tmax(T a, T b);\nvoid g() { foo(1); int h(int); }\n",
     );
-    let got: Vec<(&str, &str)> = cpp.iter().map(|c| (c.kind, c.qualname.as_str())).collect();
+    let got: Vec<(&str, &str)> = cpp.iter().filter(|c| c.kind != "window").map(|c| (c.kind, c.qualname.as_str())).collect();
     assert_eq!(
         got,
         [

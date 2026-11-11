@@ -7,6 +7,10 @@
     [
       "function",
       "_impl"
+    ],
+    [
+      "window",
+      "BUILD"
     ]
   ],
   "CMakeLists.txt": [
@@ -21,6 +25,10 @@
     [
       "macro",
       "setup_flags"
+    ],
+    [
+      "window",
+      "CMakeLists"
     ]
   ],
   "Makefile": [
@@ -203,6 +211,10 @@
     [
       "function",
       "make_ptr"
+    ],
+    [
+      "window",
+      "sample"
     ],
     [
       "constant",
@@ -427,6 +439,10 @@
     [
       "macro",
       "demo-twice"
+    ],
+    [
+      "window",
+      "sample"
     ]
   ],
   "sample.elm": [
@@ -445,6 +461,10 @@
     [
       "function",
       "greet"
+    ],
+    [
+      "window",
+      "sample"
     ]
   ],
   "sample.erb": [
@@ -577,6 +597,10 @@
       "abs"
     ],
     [
+      "window",
+      "sample"
+    ],
+    [
       "constant",
       "MinLen"
     ],
@@ -635,6 +659,10 @@
     [
       "function",
       "helper"
+    ],
+    [
+      "window",
+      "sample"
     ]
   ],
   "sample.hs": [
@@ -669,6 +697,10 @@
     [
       "function",
       "main"
+    ],
+    [
+      "window",
+      "sample"
     ]
   ],
   "sample.html": [
@@ -751,6 +783,10 @@
       "store.total"
     ],
     [
+      "window",
+      "sample"
+    ],
+    [
       "constant",
       "store"
     ]
@@ -801,6 +837,10 @@
     [
       "key",
       "version"
+    ],
+    [
+      "window",
+      "sample"
     ]
   ],
   "sample.kt": [
@@ -857,6 +897,10 @@
     [
       "key",
       "*version*"
+    ],
+    [
+      "window",
+      "sample"
     ]
   ],
   "sample.lua": [
@@ -875,6 +919,10 @@
     [
       "function",
       "Account.deposit"
+    ],
+    [
+      "window",
+      "sample"
     ]
   ],
   "sample.m": [
@@ -989,6 +1037,10 @@
     [
       "key",
       "msg"
+    ],
+    [
+      "window",
+      "sample"
     ]
   ],
   "sample.pas": [
@@ -1019,6 +1071,14 @@
     [
       "function",
       "TGreeter.Greet"
+    ],
+    [
+      "window",
+      "sample"
+    ],
+    [
+      "window",
+      "sample"
     ]
   ],
   "sample.php": [
@@ -1061,6 +1121,10 @@
     [
       "enum",
       "Status"
+    ],
+    [
+      "window",
+      "sample"
     ]
   ],
   "sample.pl": [
@@ -1115,6 +1179,10 @@
     [
       "method",
       "Greeter.Greet"
+    ],
+    [
+      "window",
+      "sample"
     ]
   ],
   "sample.py": [
@@ -1155,6 +1223,10 @@
     [
       "function",
       "square"
+    ],
+    [
+      "window",
+      "sample"
     ]
   ],
   "sample.rb": [
@@ -1199,6 +1271,10 @@
     [
       "function",
       "version"
+    ],
+    [
+      "window",
+      "sample"
     ]
   ],
   "sample.rs": [
@@ -1263,6 +1339,18 @@
     [
       "section",
       "Usage"
+    ],
+    [
+      "window",
+      "sample"
+    ],
+    [
+      "window",
+      "sample"
+    ],
+    [
+      "window",
+      "sample"
     ]
   ],
   "sample.s": [
@@ -1333,6 +1421,10 @@
     [
       "macro",
       "twice"
+    ],
+    [
+      "window",
+      "sample"
     ]
   ],
   "sample.sh": [
@@ -1347,6 +1439,10 @@
     [
       "function",
       "build_all"
+    ],
+    [
+      "window",
+      "sample"
     ]
   ],
   "sample.sol": [
@@ -1577,6 +1673,10 @@
     [
       "function",
       "s:helper"
+    ],
+    [
+      "window",
+      "sample"
     ]
   ],
   "sample.xml": [

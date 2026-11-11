@@ -615,7 +615,7 @@ fn repo_path(s: &Searcher, path: &str) -> String {
 /// answer printed), else every one `find_symbol` finds.
 fn targets(s: &Searcher, name: &str, limit: usize) -> Result<Vec<Hit>> {
     match crate::intel::location(name) {
-        Some((path, line)) => match s.ix.chunk_at(&repo_path(s, path), line)? {
+        Some((path, line)) => match s.ix.chunk_at(&repo_path(s, path), line)?.filter(|c| c.kind != "window") {
             Some(c) => Ok(vec![Hit::from_row(&c, true)]),
             None => bail!("no symbol at {}", echo(name)),
         },

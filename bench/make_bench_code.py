@@ -110,10 +110,12 @@ def process_file(src: str, rel: str, lang: str, with_targets: bool):
         editsA.append((a, b, "\n" * nl))
         editsB.append((a, b, rebuild(rest, tags, prefix) if (rest or tags) else "\n" * nl))
         line = src.count("\n", 0, b) + 2  # 1-based line after the comment
-        while lang == "rust" and line <= len(lines) and lines[line - 1].lstrip().startswith("#["):
-            line += 1
-        # a function on the line wins, as when functions were the only answers
+        # a function on the line wins, as when functions were the only answers; a definition starts
+        # at its attribute lines, and the ones a blank line keeps apart are skipped
         c = starts.get(line) or type_starts.get(line)
+        while c is None and lang == "rust" and line <= len(lines) and lines[line - 1].lstrip().startswith("#["):
+            line += 1
+            c = starts.get(line) or type_starts.get(line)
         if not (with_targets and c is not None and first):
             continue
         name = c.name

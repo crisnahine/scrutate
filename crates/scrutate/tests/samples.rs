@@ -83,3 +83,46 @@ fn every_text_file_is_searchable_even_without_symbols() {
     let windows = parse_source("data.unknown", &"x\n".repeat(200));
     assert!(windows.iter().all(|c| c.kind == "window" || c.kind == "module"));
 }
+
+/// Every line of a sample that holds more than brackets or a closing word is in the kept text of
+/// a chunk `search` reads (constants have no postings), or in the documentation right above one.
+#[test]
+fn every_line_of_a_sample_is_in_a_searchable_chunk() {
+    let closer = |t: &str| matches!(t.trim_end_matches([';', ',']), "end" | "fi" | "done" | "esac") || t.chars().all(|c| "{}[]();,".contains(c));
+    let comment = ["#", "//", "--", ";", "%", "*", "/*", "\"\"\"", "'''", "<!--", "{-", "\""];
+    let mut dirs = vec!["tests/samples"];
+    if cfg!(feature = "extra-langs") {
+        dirs.push("tests/samples_extra");
+    }
+    let mut left = Vec::new();
+    for sub in dirs {
+        for entry in fs::read_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join(sub)).unwrap() {
+            let p = entry.unwrap().path();
+            let name = p.file_name().unwrap().to_string_lossy().into_owned();
+            let Ok(src) = fs::read_to_string(&p) else { continue };
+            if name == "expected.json" {
+                continue;
+            }
+            let lines = scrutate::text::split_lines(&src);
+            let mut covered = vec![false; lines.len() + 2];
+            for c in parse_source(&name, &src).iter().filter(|c| c.kind != "constant") {
+                let kept = c.text.lines().count() - c.text.ends_with("\n...") as usize;
+                for l in c.start..=c.end.min(c.start + kept as i64 - 1) {
+                    covered[l as usize] = true;
+                }
+                let mut l = c.start as usize - 1;
+                while !c.doc.is_empty() && l >= 1 && comment.iter().any(|m| lines[l - 1].trim().starts_with(m)) {
+                    covered[l] = true;
+                    l -= 1;
+                }
+            }
+            for (i, line) in lines.iter().enumerate() {
+                let t = line.trim();
+                if !t.is_empty() && !closer(t) && !covered[i + 1] {
+                    left.push(format!("{sub}/{name}:{}: {t}", i + 1));
+                }
+            }
+        }
+    }
+    assert!(left.is_empty(), "lines in no searchable chunk:\n{}", left.join("\n"));
+}

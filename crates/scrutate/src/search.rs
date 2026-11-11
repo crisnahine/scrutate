@@ -543,11 +543,12 @@ impl Searcher {
             h.score = scores[r];
             h.why = why(&c.x[r]);
             let key = (h.path.clone(), h.qualname.clone(), h.kind == "impl"); // a struct and its impl block are two hits
-            let is_code = !h.qualname.is_empty() && CODE_KINDS.contains(&h.kind.as_str());
-            if is_code {
+                                                                              // a window is a part of the definition it names: one hit per definition, its best part
+            let grouped = !h.qualname.is_empty() && (CODE_KINDS.contains(&h.kind.as_str()) || h.kind == "window");
+            if grouped {
                 if let Some(&pi) = best_by_key.get(&key) {
                     // overload / redefinition: keep the longer body
-                    if (h.end - h.start) > (picked[pi].end - picked[pi].start) {
+                    if h.kind != "window" && picked[pi].kind != "window" && (h.end - h.start) > (picked[pi].end - picked[pi].start) {
                         picked[pi] = h;
                     }
                     continue;
@@ -556,7 +557,7 @@ impl Searcher {
             if matches!(h.kind.as_str(), "module" | "window") && picked.iter().any(|p| p.path == h.path && !(h.end < p.start || h.start > p.end)) {
                 continue;
             }
-            if is_code {
+            if grouped {
                 best_by_key.insert(key, picked.len());
             }
             picked.push(h);
