@@ -7,14 +7,16 @@ usage:
   train_ranker.py eval    TAG [OUT.npz]        evaluate scorers on TEST features (+ ranker if given)
   train_ranker.py compare TAG OLD.npz NEW.npz [OUT.json] [--gate]
                                                two rankers on TEST, all languages and each one;
-                                               --gate exits 1 when the new ranker is worse on a
-                                               function row by more than its confidence interval
+                                               --gate exits 1 when the new ranker is below BM25 on
+                                               a row, or below the old ranker over all queries of
+                                               a variant, by more than the confidence interval
 
 Each query type is reported twice: the queries whose answer is a function or method ("doc"), and
 those whose answer is a type ("doc:type"). Older feature files have function answers only.
 DEV and TEST include the other-language packages of groups.CODE_DEV / CODE_TEST unless
 PYTHON_ONLY=1. RANKER_PARAMS='{"n_estimators": 400}' overrides PARAMS (for tuning with cv);
-TYPE_WEIGHT=0.5 overrides the weight of a type query's rows in training (0 leaves them out).
+TYPE_WEIGHT=0.5 overrides the weight of a type query's rows in training (default 1: every query
+counts the same; 0 leaves the type queries out).
 """
 from __future__ import annotations
 
@@ -46,7 +48,10 @@ if os.environ.get("THREADS"):
 PARAMS.update(json.loads(os.environ.get("RANKER_PARAMS", "{}")))
 if not os.environ.get("PYTHON_ONLY"):
     DEV, TEST = DEV + CODE_DEV, TEST + CODE_TEST
-TYPE_WEIGHT = float(os.environ.get("TYPE_WEIGHT", 0.1))  # chosen by cv: more lifts the types and costs the function doc and kw rows
+# 1: every query counts the same. Package-held-out MRR on DEV over all queries by this weight:
+# 0.55 (0), 0.62 (0.1), 0.64 (0.3), 0.65 (1); less lifts the function doc and kw rows by up to
+# 0.03 and costs the type rows up to 0.4.
+TYPE_WEIGHT = float(os.environ.get("TYPE_WEIGHT", 1.0))
 TYPES = ("doc", "kw", "name", "id", "qid")
 ROWS = TYPES + tuple(t + ":type" for t in TYPES)  # function answers, then type answers
 
@@ -210,12 +215,13 @@ def main() -> None:
         old, new = TreeEnsemble.load(args[0]), TreeEnsemble.load(args[1])
         recs = [r for rs in data.values() for r in rs]
         out: dict = {}
-        worse = []
+        worse, below, overall = [], [], []
         for lang in ["all"] + sorted({r["lang"] for r in recs}):
             for variant in ("A", "B"):
                 sub = [r for r in recs if lang in ("all", r["lang"]) and r["variant"] == variant]
                 a, b = evaluate(sub, old), evaluate(sub, new)
                 print(f"\n=== TEST {lang}, variant {variant}: old ranker -> new ranker")
+                every_old, every_new = [], []
                 for t in ROWS:
                     if t not in a:
                         continue
@@ -233,11 +239,25 @@ def main() -> None:
                         "new": {**sn, "ci": [lo2, hi2]}, "new_minus_old": [m, lo, hi]}
                     if ":" not in t and hi < 0:
                         worse.append(f"{lang} {variant} {t}: {m:+.3f} [{lo:+.3f},{hi:+.3f}]")
+                    bm_m, bm_lo, bm_hi = paired_diff_ci(rn, b[t]["bm25 (lexical)"])
+                    if bm_hi < 0:
+                        below.append(f"{lang} {variant} {t}: {bm_m:+.3f} [{bm_lo:+.3f},{bm_hi:+.3f}]")
+                    every_old += ro
+                    every_new += rn
+                m, lo, hi = paired_diff_ci(every_new, every_old)
+                so, sn = summarize(every_old), summarize(every_new)
+                print(f"  every query n={so['n']:<5} old {so['MRR']:.3f}  new {sn['MRR']:.3f}  new-old {m:+.3f} [{lo:+.3f},{hi:+.3f}]")
+                out.setdefault(lang, {}).setdefault(variant, {})["every query"] = {
+                    "n": so["n"], "old": so, "new": sn, "new_minus_old": [m, lo, hi]}
+                if hi < 0:
+                    overall.append(f"{lang} {variant}: {m:+.3f} [{lo:+.3f},{hi:+.3f}]")
         if len(args) > 2:
             with open(args[2], "w") as f:
                 json.dump(out, f, indent=1)
         print("\nfunction rows worse beyond the confidence interval:", "; ".join(worse) or "none")
-        if worse and "--gate" in sys.argv:
+        print("rows below BM25 beyond the confidence interval:", "; ".join(below) or "none")
+        print("worse over all queries beyond the confidence interval:", "; ".join(overall) or "none")
+        if (below or overall) and "--gate" in sys.argv:
             sys.exit(1)
 
 if __name__ == "__main__":

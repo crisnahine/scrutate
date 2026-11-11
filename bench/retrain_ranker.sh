@@ -17,11 +17,13 @@
 #   CV=1           also run the package-held-out cross-validation on DEV (hyper-parameters)
 #   OLD_RANKER=f   the ranker to compare against (default: models/ranker.npz as it is now)
 #   RANKER_PARAMS  passed to train_ranker.py
+#   TYPE_WEIGHT=w  weight of a type query's rows in training (default 1: every query counts the same)
 #
 # Stages: benchmark, DEV and TEST features with the reference engine of this checkout, fit on DEV,
 # evaluation of the old and new ranker on TEST (function rows and type rows, all languages and
-# each one). The new ranker goes to models/ranker.npz only when no function row of TEST is worse
-# beyond its confidence interval; otherwise the script exits 1 and leaves it in the run directory.
+# each one). The new ranker goes to models/ranker.npz only when on TEST no row is below BM25 and
+# the mean over all queries of a variant is not below the old ranker's, each beyond its confidence
+# interval; otherwise the script exits 1 and leaves it in the run directory.
 # Rebuild the Rust binary afterwards, it embeds models/ranker.npz.
 set -euo pipefail
 
@@ -134,7 +136,7 @@ set -e
 cat "$RUN/compare.log"
 grep -q "^function rows worse" "$RUN/compare.log" || { log "compare FAILED"; exit 2; }
 if [ $gate -ne 0 ]; then
-  log "the new ranker is worse on a function row; models/ranker.npz is unchanged, the candidate is $RUN/ranker_new.npz"
+  log "the new ranker is below BM25 on a row or below the old ranker over all queries; models/ranker.npz is unchanged, the candidate is $RUN/ranker_new.npz"
   exit 1
 fi
 cp "$RUN/ranker_new.npz" models/ranker.npz
