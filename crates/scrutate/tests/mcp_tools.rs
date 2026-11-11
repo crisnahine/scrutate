@@ -524,3 +524,17 @@ fn similar_code_says_a_short_body_is_too_short_to_compare() {
     let (_, text) = r.call("similar_code", json!({"target": "one"}));
     assert!(text.contains("too short to compare") && !text.contains("empty body"), "{text}");
 }
+
+#[cfg(unix)]
+#[test]
+fn a_backslash_in_a_unix_file_name_stays_in_the_paths_answers_print() {
+    let mut r = Repo::new("backslash", &[("dir\\x.py", "def slash_fn():\n    return 1\n")]);
+    r.ok("reindex", json!({}));
+    let text = r.ok("structural_search", json!({"lang": "python", "query": "((identifier) @x (#eq? @x \"slash_fn\"))"}));
+    assert!(text.contains(r"dir\\x.py:1") && !text.contains("dir/x.py"), "{text}");
+    // another case of the name reaches the file only where the file system ignores case
+    if r.root.join("DIR\\x.py").exists() {
+        let text = r.ok("outline", json!({"path": "DIR\\x.py"}));
+        assert!(text.contains("slash_fn"), "{text}");
+    }
+}

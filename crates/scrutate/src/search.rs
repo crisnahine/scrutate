@@ -240,6 +240,25 @@ pub(crate) fn dotted(name: &str) -> String {
     out
 }
 
+/// A dotted name with a PHP namespace's `\` as a dot and generic arguments (`<T>`, `<'a, T>`)
+/// dropped, so `Stack<T>.push` and `App\Models\User.find` compare with `Stack.push`, `User.find`.
+fn plain(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut depth = 0usize;
+    for (i, c) in name.char_indices() {
+        match c {
+            '<' if depth > 0 || (!out.ends_with("operator") && out.ends_with(|p: char| p.is_alphanumeric() || p == '_') && name[i..].contains('>')) => {
+                depth += 1
+            }
+            '>' if depth > 0 => depth -= 1,
+            _ if depth > 0 => {}
+            '\\' => out.push('.'),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 impl Searcher {
     pub fn new(ix: Index, ranker: Option<Arc<TreeEnsemble>>) -> Searcher {
         let ranker = ranker.filter(|r| r.feature_names == FEATURES);
@@ -577,19 +596,60 @@ impl Searcher {
     }
 
     // ----------------------------------------------------------------- navigation
+    /// The definitions `name` names. Tried in order, the first that finds any wins: the name as
+    /// typed (whole stored name, qualified name, or a tail of one); its dotted form (`::`, `->`
+    /// and `#` as dots); the same compared with stored qualified names whose owner loses its
+    /// generics and path (`Stack<T>.push`, `crate::Thing.run`), either side a tail of the other;
+    /// last, for a name written as a path, a top-level definition of its last part
+    /// (`crate::util::helper` finds `helper`).
     pub fn find_symbol(&self, name: &str, limit: usize) -> Result<Vec<Hit>> {
-        // `Type::method`, `Type#method` and `p->method` are spelled `Type.method` in the index
-        let name = &dotted(name);
-        let name = name.trim_start_matches('.');
-        let key = name_key(name.rsplit('.').next().unwrap_or(name));
-        // An empty ?3 means no qualifier; the qualifier filter must run before LIMIT.
-        let qual = if name.contains('.') { name_key(name) } else { String::new() };
-        let mut st = self.ix.db.prepare(&format!(
-            "SELECT {CHUNK_COLS} FROM chunks WHERE name_key=?1 AND kind!='window' \
-             AND (?3 = '' OR qual_key = ?3 OR substr(qual_key, -(length(?3) + 1)) = '.' || ?3) \
+        let typed = name.trim();
+        let d = dotted(typed);
+        let d = d.trim_start_matches('.');
+        let mut out = self.symbol_rows(typed, limit)?;
+        if out.is_empty() && d != typed {
+            out = self.symbol_rows(d, limit)?;
+        }
+        let q = name_key(&plain(d));
+        let Some((_, last)) = q.rsplit_once('.') else { return Ok(out) };
+        let mut st = self.ix.db.prepare_cached(
+            "SELECT id, qualname FROM chunks WHERE name_key=?1 AND kind!='window' \
+             ORDER BY is_test, (kind IN ('class','function','method')) DESC LIMIT 10000",
+        )?;
+        let cands: Vec<(i64, String)> = st.query_map([last], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+        let stored: Vec<(i64, String)> = cands.into_iter().map(|(id, qn)| (id, name_key(&plain(&dotted(&qn))))).collect();
+        let tail = |a: &str, b: &str| a == b || a.ends_with(&format!(".{b}"));
+        let ids: Vec<i64> = if !out.is_empty() {
+            // an out-of-line `Box<T>::put` beside the `Box.put` declaration the lookup found
+            stored.iter().filter(|(id, s)| *s == q && !out.iter().any(|h| h.id == *id)).map(|c| c.0).collect()
+        } else {
+            let owned: Vec<i64> = stored.iter().filter(|(_, s)| s.contains('.') && (tail(s, &q) || tail(&q, s))).map(|c| c.0).collect();
+            // only a path (`::`, `\`) can name a module; `obj.helper` says nothing of a free `helper`
+            if owned.is_empty() && (typed.contains("::") || typed.contains('\\')) {
+                stored.iter().filter(|(_, s)| !s.contains('.')).map(|c| c.0).collect()
+            } else {
+                owned
+            }
+        };
+        for id in ids.into_iter().take(limit.saturating_sub(out.len())) {
+            if let Some(r) = self.ix.chunk(id)? {
+                out.push(Hit::from_row(&r, true));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Chunks whose stored name or qualified name is `name`, or whose qualified name ends in it.
+    pub(crate) fn symbol_rows(&self, name: &str, limit: usize) -> Result<Vec<Hit>> {
+        let key = name_key(name);
+        let last = name_key(name.rsplit('.').next().unwrap_or(name));
+        // the tail filter must run before LIMIT
+        let mut st = self.ix.db.prepare_cached(&format!(
+            "SELECT {CHUNK_COLS} FROM chunks WHERE kind!='window' \
+             AND (name_key = ?1 OR qual_key = ?1 OR (name_key = ?3 AND substr(qual_key, -(length(?1) + 1)) = '.' || ?1)) \
              ORDER BY is_test, (kind IN ('class','function','method')) DESC LIMIT ?2"
         ))?;
-        let rows: Vec<ChunkRow> = st.query_map(rusqlite::params![key, limit as i64, qual], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
+        let rows: Vec<ChunkRow> = st.query_map(rusqlite::params![key, limit as i64, last], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
         Ok(rows.iter().map(|r| Hit::from_row(r, true)).collect())
     }
 

@@ -114,6 +114,15 @@ pub fn word_at(line: &str, at: usize) -> Option<(usize, usize)> {
     (a < b).then_some((a, b))
 }
 
+/// Start and end byte of the run of characters around `a..b` up to a space, bracket, quote or
+/// comma: `get-user`, `list->vec`, `Foo::Bar.new`.
+fn run_around(line: &str, a: usize, b: usize) -> (usize, usize) {
+    let stop = |c: char| c.is_whitespace() || "()[]{}\"'`,".contains(c);
+    let start = line[..a].rfind(stop).map_or(0, |i| i + line[i..].chars().next().map_or(1, char::len_utf8));
+    let end = line[b..].find(stop).map_or(line.len(), |i| b + i);
+    (start, end)
+}
+
 /// Byte offsets of `word` in `line` where it is not part of a longer identifier.
 fn find_word(line: &str, word: &str) -> Vec<usize> {
     line.match_indices(word)
@@ -130,7 +139,7 @@ fn qualifier(before: &str) -> Option<&str> {
 }
 
 pub fn path_to_uri(p: &Path) -> String {
-    let s = p.to_string_lossy().replace('\\', "/");
+    let s = crate::instant::slashed(p.to_string_lossy());
     let mut out = String::from(if s.starts_with('/') { "file://" } else { "file:///" });
     for b in s.bytes() {
         if b.is_ascii_alphanumeric() || b"-._~/:".contains(&b) {
@@ -257,7 +266,7 @@ impl Server {
         let p = uri_to_path(uri)?;
         let p = std::fs::canonicalize(&p).unwrap_or(p);
         let r = p.strip_prefix(&self.root).ok()?;
-        Some(r.to_string_lossy().replace('\\', "/"))
+        Some(crate::instant::slashed(r.to_string_lossy()))
     }
 
     fn lines(&self) -> Lines<'_> {
@@ -420,24 +429,41 @@ impl Server {
         }
     }
 
-    /// The identifier under the cursor and the text just before it.
-    fn ident_at(&self, p: &Value) -> Option<(String, String)> {
+    /// The identifier under the cursor, the text just before it, and the line with its byte range.
+    fn word_in_line(&self, p: &Value) -> Option<(String, usize, usize)> {
         let rel = self.key(p["textDocument"]["uri"].as_str()?);
         let line = p["position"]["line"].as_u64()? as usize;
         let mut lines = self.lines();
         let text = lines.get(&rel).get(line)?.clone();
         let (a, b) = word_at(&text, utf16_to_byte(&text, p["position"]["character"].as_u64()?))?;
+        Some((text, a, b))
+    }
+
+    /// The identifier under the cursor and the text just before it.
+    fn ident_at(&self, p: &Value) -> Option<(String, String)> {
+        let (text, a, b) = self.word_in_line(p)?;
         Some((text[a..b].to_string(), text[..a].to_string()))
     }
 
     fn definition(&self, s: &Searcher, p: &Value) -> Result<Value> {
-        let Some((ident, before)) = self.ident_at(p) else { return Ok(Value::Null) };
+        let Some((text, a, b)) = self.word_in_line(p) else { return Ok(Value::Null) };
+        let (ident, before) = (&text[a..b], &text[..a]);
         let here = p["textDocument"]["uri"].as_str().and_then(|u| self.rel(u));
-        let qualified = match qualifier(&before) {
-            Some(q) => s.find_symbol(&format!("{q}.{ident}"), 50)?,
-            None => Vec::new(),
-        };
-        let mut hits = if qualified.is_empty() { s.find_symbol(&ident, 50)? } else { qualified };
+        // the run up to the word (`my-trim`, `Foo::Bar` in `Foo::Bar.new`), then the whole run as
+        // one name (`get-user` from `get`) unless the word is the owner of what follows
+        let (start, end) = run_around(&text, a, b);
+        let mut hits = if &text[start..b] != ident { s.find_symbol(&text[start..b], 50)? } else { Vec::new() };
+        let owner = [".", "::", "#"].iter().any(|sep| text[b..].starts_with(sep));
+        if hits.is_empty() && end > b && !owner {
+            hits = s.symbol_rows(&text[start..end], 50)?;
+        }
+        if hits.is_empty() {
+            let qualified = match qualifier(before) {
+                Some(q) => s.find_symbol(&format!("{q}.{ident}"), 50)?,
+                None => Vec::new(),
+            };
+            hits = if qualified.is_empty() { s.find_symbol(ident, 50)? } else { qualified };
+        }
         hits.sort_by_key(|h| Some(&h.path) != here.as_ref()); // stable: index order within each group
         let mut lines = self.lines();
         Ok(Value::Array(hits.iter().map(|h| lines.location(&h.path, h.start, h.end, &h.name)).collect()))

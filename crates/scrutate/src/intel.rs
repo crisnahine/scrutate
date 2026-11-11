@@ -503,9 +503,9 @@ pub fn tsquery_each(lang: &str, query: &str, roots: &[PathBuf], limit: usize, ca
                 continue;
             }
             let path = entry.path();
-            let rel = path.strip_prefix(root).unwrap_or(path).to_string_lossy().replace('\\', "/");
+            let rel = crate::instant::slashed(path.strip_prefix(root).unwrap_or(path).to_string_lossy());
             // a root that is the file itself: report it as given (the extension check needs a name)
-            let rel = if rel.is_empty() { root.to_string_lossy().replace('\\', "/") } else { rel };
+            let rel = if rel.is_empty() { crate::instant::slashed(root.to_string_lossy()) } else { rel };
             if !crate::parse::is_indexable(&rel) {
                 continue;
             }

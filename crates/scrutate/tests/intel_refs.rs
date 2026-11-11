@@ -503,6 +503,48 @@ fn deps_and_rdeps_resolve_rust_paths_in_a_crate_below_the_root() {
     }
 }
 
+/// `path:start` of every definition `find_symbol` returns for `name`.
+fn symbol_at(lib: &scrutate::Repo, name: &str) -> Vec<String> {
+    let mut v: Vec<String> = lib.find_symbol(name, 50).unwrap().into_iter().map(|h| format!("{}:{}", h.path, h.start)).collect();
+    v.sort();
+    v
+}
+
+#[test]
+fn a_name_is_looked_up_as_typed_before_its_dotted_form() {
+    let r = Repo::new(
+        "sym_typed",
+        &[
+            ("conv.scm", "(define (list->vec l)\n  (list->vector l))\n"),
+            ("core.clj", "(ns app.core)\n\n(defn map->query [m]\n  m)\n"),
+            ("util.el", "(defun my-string->list (s)\n  (split-string s))\n"),
+            ("mod.rb", "class Foo::Bar\n  def call\n    1\n  end\nend\n\nmodule Outer::Inner\n  def self.go\n    2\n  end\nend\n"),
+            ("Pkg.pm", "package Foo::Util;\n\nsub trim {\n    return 1;\n}\n\nsub Foo::Util::extra {\n    return 1;\n}\n\n1;\n"),
+            ("style.css", "#main {\n  color: red;\n}\n"),
+            ("cart.js", "class Cart {\n  #secret() {\n    return 1;\n  }\n}\n"),
+            ("vault.rb", "class Vault\n  def secret\n    2\n  end\nend\n"),
+        ],
+    );
+    let lib = r.lib();
+    for (name, want) in [
+        ("list->vec", "conv.scm:1"),
+        ("map->query", "core.clj:3"),
+        ("my-string->list", "util.el:1"),
+        ("Foo::Bar", "mod.rb:1"),
+        ("Foo::Bar.call", "mod.rb:2"),
+        ("Foo::Bar#call", "mod.rb:2"),
+        ("Outer::Inner.go", "mod.rb:8"),
+        ("Foo::Util", "Pkg.pm:1"),
+        ("Foo::Util::extra", "Pkg.pm:7"),
+        ("#main", "style.css:1"),
+        ("#secret", "cart.js:2"),
+        ("Cart.#secret", "cart.js:2"),
+        ("Vault#secret", "vault.rb:2"),
+    ] {
+        assert_eq!(symbol_at(&lib, name), [want], "{name}");
+    }
+}
+
 #[test]
 fn deps_and_rdeps_resolve_go_imports_through_go_mod() {
     let r = Repo::new(
@@ -649,4 +691,95 @@ fn check_counts_files_and_batch_reports_a_bad_line_and_goes_on() {
     assert_eq!(recs.len(), 3, "{out}");
     assert!(recs[1]["error"].as_str().unwrap().starts_with("line 3, column 2: not JSON"), "{out}");
     assert_eq!(recs[2]["result"][0]["name"], "beta", "{out}");
+}
+
+#[test]
+fn a_definition_whose_own_name_has_a_dot_is_found_by_that_name() {
+    let r = Repo::new(
+        "sym_own_dot",
+        &[
+            ("stats.R", "read.table2 <- function(f) {\n  f\n}\n\nprint.myclass <- function(x) {\n  x\n}\n"),
+            ("conf.toml", "[server.http]\nport = 1\n"),
+            ("mod.lua", "local M = {}\n\nfunction M.helper(x)\n  return x\nend\n\nreturn M\n"),
+            ("mix.ex", "defmodule MyApp.Accounts.User do\n  def changeset(user), do: user\nend\n"),
+        ],
+    );
+    let lib = r.lib();
+    for (name, want) in [
+        ("read.table2", "stats.R:1"),
+        ("print.myclass", "stats.R:5"),
+        ("server.http", "conf.toml:1"),
+        ("M.helper", "mod.lua:3"),
+        ("MyApp.Accounts.User", "mix.ex:1"),
+        ("MyApp.Accounts.User.changeset", "mix.ex:2"),
+        ("User.changeset", "mix.ex:2"),
+    ] {
+        assert_eq!(symbol_at(&lib, name), [want], "{name}");
+    }
+}
+
+#[test]
+fn an_owner_is_matched_without_its_generics_or_its_path() {
+    let r = Repo::new(
+        "sym_owner",
+        &[
+            (
+                "src/lib.rs",
+                "pub struct Stack<T> {\n    v: Vec<T>,\n}\n\nimpl<T> Stack<T> {\n    pub fn push(&mut self, x: T) {\n        self.v.push(x);\n    }\n}\n\npub struct Thing;\n\nimpl crate::Thing {\n    pub fn run(&self) {}\n}\n\npub fn helper() {}\n",
+            ),
+            (
+                "src/config.rs",
+                "pub mod config {\n    pub struct Config;\n    impl Config {\n        pub fn new() -> Config {\n            Config\n        }\n    }\n}\n",
+            ),
+            ("box.cpp", "template <typename T> class Box {\n  void put(T x);\n};\n\ntemplate <typename T> void Box<T>::put(T x) {\n  (void)x;\n}\n"),
+            ("User.php", "<?php\nnamespace App\\Models;\n\nclass User {\n    public static function find($id) {\n        return $id;\n    }\n}\n"),
+        ],
+    );
+    let lib = r.lib();
+    for (name, want) in [
+        ("Stack.push", &["src/lib.rs:6"][..]),
+        ("Stack::push", &["src/lib.rs:6"]),
+        ("Thing.run", &["src/lib.rs:14"]),
+        ("Box.put", &["box.cpp:2", "box.cpp:5"]),
+        ("crate::config::Config::new", &["src/config.rs:4"]),
+        ("App\\Models\\User::find", &["User.php:5"]),
+        ("crate::util::helper", &["src/lib.rs:17"]),
+        ("Other.push", &[]),
+        ("Thing.helper", &[]),
+        ("Other::new", &[]),
+    ] {
+        assert_eq!(symbol_at(&lib, name), want, "{name}");
+    }
+}
+
+/// Every name `outline` prints for a sample is found by `find_symbol`, by its qualified name and
+/// by its bare name, at the same place (each sample in an index of its own, as a user has it).
+#[test]
+fn every_outlined_sample_name_is_found_by_symbol() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/samples");
+    let mut names: Vec<String> = fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    names.retain(|n| n != "expected.json" && !n.starts_with('.'));
+    names.sort();
+    let (mut misses, mut total) = (Vec::new(), 0);
+    for name in names {
+        let root = scratch("outline_sample");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::copy(dir.join(&name), root.join(&name)).unwrap();
+        let ix = scrutate::index::Index::open(&fs::canonicalize(&root).unwrap(), None).unwrap();
+        let mut s = scrutate::search::Searcher::new(ix, None);
+        s.ix.update(false).unwrap();
+        for row in scrutate::intel::outline(&s.ix, &name).unwrap() {
+            total += 1;
+            for q in [&row.qualname, &row.name] {
+                if !s.find_symbol(q, 50).unwrap().iter().any(|h| h.id == row.id) {
+                    misses.push(format!("{name}: [{}] {q}", row.kind));
+                }
+            }
+        }
+        drop(s);
+        let _ = fs::remove_dir_all(&root);
+    }
+    assert!(total > 300, "{total} outline entries");
+    assert!(misses.is_empty(), "{} of {total} not found:\n{}", misses.len(), misses.join("\n"));
 }

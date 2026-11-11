@@ -598,7 +598,7 @@ fn repo_path(s: &Searcher, path: &str) -> String {
     std::fs::canonicalize(s.ix.root.join(path))
         .ok()
         .filter(|p| p.is_file())
-        .and_then(|p| p.strip_prefix(&s.ix.root).ok().map(|r| r.to_string_lossy().replace('\\', "/")))
+        .and_then(|p| p.strip_prefix(&s.ix.root).ok().map(|r| crate::instant::slashed(r.to_string_lossy())))
         .filter(|p| indexed(p))
         .unwrap_or(plain)
 }

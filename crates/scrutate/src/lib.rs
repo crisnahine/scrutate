@@ -75,8 +75,9 @@ pub fn open_updated(root: &Path, force: bool) -> Result<(search::Searcher, index
 /// An open repository: the searcher on its index, and the one place that knows how to bring the
 /// index up to date and what to do when its database is damaged. It derefs to the searcher.
 pub struct Repo {
-    /// `None` only while a damaged index is being replaced
+    /// `None` while a damaged index is being replaced, and after a rebuild that could not reopen it
     searcher: Option<search::Searcher>,
+    root: std::path::PathBuf,
     /// the last refresh failed and stderr said why
     stale: bool,
 }
@@ -84,16 +85,33 @@ pub struct Repo {
 impl Repo {
     /// Open (or create) the index of `root`, without updating it.
     pub fn open(root: &Path) -> Result<Repo> {
-        Ok(Repo { searcher: Some(open(root)?), stale: false })
+        let searcher = open(root)?;
+        Ok(Repo { root: searcher.ix.root.clone(), searcher: Some(searcher), stale: false })
     }
 
     pub fn into_searcher(self) -> search::Searcher {
         self.searcher.expect("the index was not reopened after a rebuild")
     }
 
+    /// The cancel flag of the next operation; nothing to set while the index is closed.
+    pub fn set_cancel(&mut self, cancel: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+        if let Some(s) = &mut self.searcher {
+            s.cancel = cancel;
+        }
+    }
+
+    /// An index a failed rebuild left closed is opened and built again before anything reads it.
+    fn reopened(&mut self) -> Result<()> {
+        if self.searcher.is_none() {
+            self.reopen(false)?;
+        }
+        Ok(())
+    }
+
     /// Bring the index up to date. A corrupt database is deleted and built again: the index is a
     /// cache, the sources are the truth.
     pub fn update(&mut self, force: bool) -> Result<index::UpdateStats> {
+        self.reopened()?;
         match self.ix.update(force) {
             Err(e) if index::error_is_corruption(&e) => self.rebuild(&e),
             other => other,
@@ -105,6 +123,7 @@ impl Repo {
     /// read-only) the read answers from the last committed index, and stderr says why once. A
     /// lock held while the committed index has no file is a first build: `index::BeingBuilt`.
     pub fn refresh(&mut self, min_interval: f64) -> Result<Option<index::UpdateStats>> {
+        self.reopened()?;
         match self.ix.refresh_or_fail(min_interval) {
             Err(e) if index::error_is_corruption(&e) => self.rebuild(&e).map(Some),
             Err(e) if e.is::<index::Busy>() && !self.ix.has_files()? => Err(index::BeingBuilt.into()),
@@ -141,6 +160,9 @@ impl Repo {
     /// the operation run again.
     pub fn run_as_is(&mut self, op: &ops::Op) -> Result<ops::Answer> {
         let first = self.run_once(op);
+        if self.searcher.is_none() {
+            return first;
+        }
         let mut paths = op.named_paths();
         if let Ok(a) = &first {
             paths.extend(a.cited().into_iter().map(str::to_string));
@@ -162,6 +184,7 @@ impl Repo {
     }
 
     fn run_once(&mut self, op: &ops::Op) -> Result<ops::Answer> {
+        self.reopened()?;
         match ops::run(self, op) {
             Err(e) if index::error_is_corruption(&e) => {
                 self.rebuild(&e)?;
@@ -173,11 +196,14 @@ impl Repo {
 
     fn rebuild(&mut self, why: &anyhow::Error) -> Result<index::UpdateStats> {
         eprintln!("[scrutate] index database corrupt ({why:#}); rebuilding");
-        let root = self.ix.root.clone();
-        let progress = self.ix.progress;
+        let progress = self.searcher.as_ref().is_some_and(|s| s.ix.progress);
         self.searcher = None; // the database is closed before its files are deleted
-        index::wipe_index(&root);
-        let mut s = open(&root)?;
+        index::wipe_index(&self.root);
+        self.reopen(progress)
+    }
+
+    fn reopen(&mut self, progress: bool) -> Result<index::UpdateStats> {
+        let mut s = open(&self.root)?;
         s.ix.progress = progress;
         let st = s.ix.update(true);
         self.searcher = Some(s);
@@ -195,5 +221,28 @@ impl std::ops::Deref for Repo {
 impl std::ops::DerefMut for Repo {
     fn deref_mut(&mut self) -> &mut search::Searcher {
         self.searcher.as_mut().expect("the index was not reopened after a rebuild")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_rebuild_that_could_not_reopen_the_index_is_an_error_until_it_can() {
+        let root = std::env::temp_dir().join(format!("scrutate_reopen_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let mut repo = Repo { searcher: None, root: root.clone(), stale: false };
+        let op = ops::Op::Symbol { name: "f".into(), limit: 5 };
+        repo.set_cancel(std::sync::Arc::default());
+        assert!(repo.update(false).is_err());
+        assert!(repo.refresh(0.0).is_err());
+        assert!(repo.run(&op, 0.0).is_err());
+        assert!(repo.run_as_is(&op).is_err());
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "def f():\n    return 1\n").unwrap();
+        assert!(matches!(repo.run_as_is(&op), Ok(ops::Answer::Hits { ref hits, .. }) if hits.len() == 1));
+        drop(repo);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

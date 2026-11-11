@@ -209,3 +209,53 @@ fn lsp_round_trip() {
     drop(c);
     assert_eq!(child.wait().unwrap().code(), Some(0), "exit after shutdown is a clean exit");
 }
+
+#[test]
+fn definition_takes_the_name_with_dashes_arrows_and_colons_around_the_cursor() {
+    let r = Repo::new("names");
+    r.write("core.clj", "(ns app.core)\n\n(defn get-user [id]\n  {:id id})\n\n(defn run []\n  (get-user 1))\n");
+    r.write("util.el", "(defun my-trim (s)\n  (string-trim s))\n\n(defun use-it (s)\n  (my-trim s))\n");
+    r.write("conv.scm", "(define (list->vec l)\n  (list->vector l))\n\n(define (use l)\n  (list->vec l))\n");
+    r.write("mod.rb", "class Foo::Bar\n  def call\n    1\n  end\nend\n\ndef use\n  Foo::Bar.new.call\nend\n");
+    r.write("app.py", "def user():\n    return 1\n\ndef get():\n    return 2\n");
+
+    let mut child = Command::new(BIN).arg("lsp").current_dir(&r.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
+    c.request("initialize", json!({"processId": null, "rootUri": uri(&r.root), "capabilities": {}}));
+    c.notify("initialized", json!({}));
+    for (file, line, ch, want) in [
+        ("core.clj", 6, 4, ("core.clj", 2)),
+        ("core.clj", 6, 8, ("core.clj", 2)),
+        ("util.el", 4, 7, ("util.el", 0)),
+        ("conv.scm", 4, 5, ("conv.scm", 0)),
+        ("mod.rb", 7, 8, ("mod.rb", 0)),
+        ("mod.rb", 7, 16, ("mod.rb", 1)),
+    ] {
+        let def = c.request("textDocument/definition", json!({"textDocument": {"uri": uri(&r.root.join(file))}, "position": {"line": line, "character": ch}}));
+        let got: Vec<(String, u64)> = places(&def["result"]).into_iter().map(|(f, l, _)| (f, l)).collect();
+        assert_eq!(got, [(want.0.to_string(), want.1)], "{file}:{line}:{ch}: {def}");
+    }
+    c.request("shutdown", Value::Null);
+    c.notify("exit", Value::Null);
+    drop(c);
+    child.wait().unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_backslash_in_a_unix_file_name_stays_in_the_uri() {
+    let r = Repo::new("backslash");
+    r.write("a\\b.py", "def slash_fn():\n    return 1\n\n\ndef use():\n    return slash_fn()\n");
+    let mut child = Command::new(BIN).arg("lsp").current_dir(&r.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
+    c.request("initialize", json!({"processId": null, "rootUri": uri(&r.root), "capabilities": {}}));
+    c.notify("initialized", json!({}));
+    let file = format!("{}/a%5Cb.py", uri(&fs::canonicalize(&r.root).unwrap()));
+    let def = c.request("textDocument/definition", json!({"textDocument": {"uri": file}, "position": {"line": 5, "character": 12}}));
+    let uris: Vec<&str> = def["result"].as_array().unwrap_or_else(|| panic!("{def}")).iter().map(|l| l["uri"].as_str().unwrap()).collect();
+    assert_eq!(uris, [file.as_str()], "{def}");
+    c.request("shutdown", Value::Null);
+    c.notify("exit", Value::Null);
+    drop(c);
+    child.wait().unwrap();
+}

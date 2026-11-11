@@ -239,11 +239,11 @@ fn run_call(send: &Wire, repo: &Mutex<Repo>, building: &AtomicBool, calls: &Call
         let mut repo = repo.lock().unwrap_or_else(|p| p.into_inner());
         // a panic inside one tool call must not take the server down: it becomes a tool error
         (!gone()).then(|| {
-            repo.cancel = Arc::clone(&cancelled);
+            repo.set_cancel(Arc::clone(&cancelled));
             let c = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| call_tool(&mut repo, &name, &args, settings))).unwrap_or_else(|_| {
                 Called::note(format!("error: internal failure while running {name} (a bug: please report it); the server keeps running"), true)
             });
-            repo.cancel = Arc::default();
+            repo.set_cancel(Arc::default());
             c
         })
     };
