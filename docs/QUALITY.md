@@ -65,6 +65,12 @@ Across both variants, six languages (Python included) and the query types each h
 v7 in 56 of 58 cells. The other two are in JavaScript, variant B: name queries −0.001 [−0.016,
 +0.013] and qualified names unchanged at 1.000. No cell's interval lies below zero. Per-cell numbers, hit@k and intervals: `compare_v8.log`.
 
+One caveat for three of these rows. When the Python code ran this section it did not yet cut
+chunks for Rust `mod` and `type` items, Java records or TypeScript abstract classes, which the
+Rust engine does. It does now, and the two engines agree bit for bit on Rust sources as well
+(`bench/parity.py crates/scrutate/src`, a CI step), but the rows above were not measured again:
+for Rust, Java and TypeScript they describe an index without those chunks.
+
 ## What these numbers say and do not say
 
 - The learned pipeline beats its own lexical layer on every query type with non-overlapping

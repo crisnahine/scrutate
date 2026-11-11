@@ -45,8 +45,8 @@ def _load(modname: str, func: str = "language"):
 
 _JS_DEFS = {"function_declaration": "function", "generator_function_declaration": "function",
             "class_declaration": "class", "method_definition": "method"}
-_TS_DEFS = {**_JS_DEFS, "interface_declaration": "interface", "type_alias_declaration": "type",
-            "enum_declaration": "enum"}
+_TS_DEFS = {**_JS_DEFS, "abstract_class_declaration": "class", "interface_declaration": "interface",
+            "type_alias_declaration": "type", "enum_declaration": "enum"}
 _JS_CALLS = {"call_expression": "function", "new_expression": "constructor"}
 
 LANGS: dict[str, dict] = {
@@ -63,12 +63,12 @@ LANGS: dict[str, dict] = {
                calls={"call_expression": "function"}),
     "rust": dict(load=_load("tree_sitter_rust"),
                  defs={"function_item": "function", "struct_item": "struct", "enum_item": "enum",
-                       "trait_item": "trait", "impl_item": "impl"},
+                       "trait_item": "trait", "impl_item": "impl", "mod_item": "module", "type_item": "type"},
                  calls={"call_expression": "function", "macro_invocation": "macro"}),
     "java": dict(load=_load("tree_sitter_java"),
                  defs={"class_declaration": "class", "interface_declaration": "interface",
                        "method_declaration": "method", "constructor_declaration": "method",
-                       "enum_declaration": "enum"},
+                       "enum_declaration": "enum", "record_declaration": "class"},
                  calls={"method_invocation": "name", "object_creation_expression": "type"}),
 }
 
@@ -84,7 +84,7 @@ TEXT_EXTS = {
 }
 
 _parsers: dict[str, Parser] = {}
-_CONTAINERS = {"class", "impl", "interface", "trait", "enum", "struct", "type"}
+_CONTAINERS = {"class", "impl", "interface", "trait", "enum", "struct", "type", "module"}
 _COMMENT_TYPES = {"comment", "line_comment", "block_comment", "doc_comment"}
 MAX_CONTAINER_LINES = 40
 MAX_CHUNK_LINES = 200
