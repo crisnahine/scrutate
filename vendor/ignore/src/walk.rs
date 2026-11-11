@@ -778,15 +778,16 @@ impl WalkBuilder {
         self
     }
 
-    /// Up to `extra` more threads during a parallel walk: as many as `want`
-    /// holds, which a visitor may raise while the walk runs. Their visitors
-    /// are built when the walk starts.
+    /// Lets a parallel walk run as many threads as `want` holds, which may
+    /// change while the walk runs: up to `extra` more than `threads` start
+    /// when it rises (their visitors are built when the walk starts), and a
+    /// thread pauses between directories while more than that run.
     pub fn grow_threads(
         &mut self,
         extra: usize,
         want: Arc<AtomicUsize>,
     ) -> &mut WalkBuilder {
-        self.grow = (extra > 0).then_some((extra, want));
+        self.grow = Some((extra, want));
         self
     }
 
@@ -1545,7 +1546,9 @@ impl WalkParallel {
             .collect();
         let spare = Spare {
             want,
-            started: AtomicUsize::new(0),
+            started: AtomicUsize::new(threads),
+            parked: AtomicUsize::new(0),
+            used_up: AtomicBool::new(false),
             workers: std::sync::Mutex::new(workers.split_off(threads)),
         };
         let spare = &spare;
@@ -1745,10 +1748,15 @@ impl Stack {
     }
 }
 
-/// Workers built when the walk starts; `want` says how many of them run.
+/// Workers built when the walk starts; `want` says how many threads run.
 struct Spare<'s> {
     want: Option<Arc<AtomicUsize>>,
+    /// threads started, the first ones included
     started: AtomicUsize,
+    /// of those, the threads paused because more than `want` ran
+    parked: AtomicUsize,
+    /// every spare worker has started
+    used_up: AtomicBool,
     workers: std::sync::Mutex<Vec<Worker<'s>>>,
 }
 
@@ -1761,9 +1769,11 @@ impl<'s> Spare<'s> {
         's: 'scope,
     {
         let Some(want) = &self.want else { return };
+        // a paused thread takes up a rise before a new one starts
         let behind = || {
-            self.started.load(AtomicOrdering::Relaxed)
-                < want.load(AtomicOrdering::Relaxed)
+            !self.used_up.load(AtomicOrdering::Relaxed)
+                && self.started.load(AtomicOrdering::Relaxed)
+                    < want.load(AtomicOrdering::Relaxed)
         };
         if !behind() {
             return;
@@ -1771,7 +1781,7 @@ impl<'s> Spare<'s> {
         let mut workers = self.workers.lock().unwrap();
         while behind() {
             let Some(worker) = workers.pop() else {
-                self.started.store(usize::MAX, AtomicOrdering::Relaxed);
+                self.used_up.store(true, AtomicOrdering::Relaxed);
                 break;
             };
             // the caller is an active worker, so the walk cannot finish
@@ -1779,6 +1789,54 @@ impl<'s> Spare<'s> {
             active_workers.fetch_add(1, AtomicOrdering::Release);
             self.started.fetch_add(1, AtomicOrdering::Relaxed);
             s.spawn(move || worker.run(s, self));
+        }
+    }
+
+    /// Waits while more threads run than `want` holds. A paused thread
+    /// stays active, so the walk cannot end without it; others steal its
+    /// queued directories, and it goes on once every active thread is
+    /// paused, the walk quits, or fewer run than wanted.
+    fn pause(&self, active_workers: &AtomicUsize, quit_now: &AtomicBool) {
+        let Some(want) = &self.want else { return };
+        let running = |parked: usize| {
+            self.started.load(AtomicOrdering::Relaxed).saturating_sub(parked)
+        };
+        let mut parked = self.parked.load(AtomicOrdering::Relaxed);
+        loop {
+            if running(parked) <= want.load(AtomicOrdering::Relaxed) {
+                return;
+            }
+            match self.parked.compare_exchange_weak(
+                parked,
+                parked + 1,
+                AtomicOrdering::AcqRel,
+                AtomicOrdering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(now) => parked = now,
+            }
+        }
+        let mut wait = std::time::Duration::from_micros(50);
+        loop {
+            std::thread::sleep(wait);
+            wait = (wait * 2).min(std::time::Duration::from_millis(1));
+            let parked = self.parked.load(AtomicOrdering::Acquire);
+            let go = quit_now.load(AtomicOrdering::SeqCst)
+                || active_workers.load(AtomicOrdering::Acquire) <= parked
+                || running(parked) < want.load(AtomicOrdering::Relaxed);
+            if go
+                && self
+                    .parked
+                    .compare_exchange(
+                        parked,
+                        parked - 1,
+                        AtomicOrdering::AcqRel,
+                        AtomicOrdering::Relaxed,
+                    )
+                    .is_ok()
+            {
+                return;
+            }
         }
     }
 }
@@ -1839,6 +1897,7 @@ impl<'s> Worker<'s> {
                 self.quit_now();
             }
             spare.start(s, &self.active_workers);
+            spare.pause(&self.active_workers, &self.quit_now);
         }
     }
 
@@ -2384,7 +2443,7 @@ mod tests {
         }
         want.sort();
         for after in [0, 1, 50, 10_000] {
-            let when = Arc::new(AtomicUsize::new(0));
+            let when = Arc::new(AtomicUsize::new(1));
             let seen = Arc::new(Mutex::new(vec![]));
             let threads = Arc::new(Mutex::new(std::collections::HashSet::new()));
             WalkBuilder::new(td.path())
@@ -2399,7 +2458,7 @@ mod tests {
                         let mut seen = seen.lock().unwrap();
                         seen.push(dent.path().to_path_buf());
                         if seen.len() > after {
-                            when.store(3, Ordering::Relaxed);
+                            when.store(4, Ordering::Relaxed);
                         }
                         // slow visits, so the started threads get some work
                         std::thread::sleep(std::time::Duration::from_micros(200));
@@ -2440,7 +2499,7 @@ mod tests {
         let root = td.path().to_path_buf();
         std::thread::spawn(move || {
             let (when, seen) =
-                (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+                (Arc::new(AtomicUsize::new(1)), Arc::new(AtomicUsize::new(0)));
             let mut b = WalkBuilder::new(root);
             b.threads(1).grow_threads(3, when.clone());
             b.build_parallel().run(|| {
@@ -2448,7 +2507,7 @@ mod tests {
                 Box::new(move |_| {
                     let n = seen.fetch_add(1, Ordering::Relaxed);
                     // ask for the extra threads, then quit while they start
-                    when.store(3, Ordering::Relaxed);
+                    when.store(4, Ordering::Relaxed);
                     std::thread::sleep(std::time::Duration::from_micros(200));
                     if n >= 3 { WalkState::Quit } else { WalkState::Continue }
                 })
@@ -2459,6 +2518,54 @@ mod tests {
             .recv_timeout(std::time::Duration::from_secs(20))
             .expect("the walk did not end after Quit");
         assert!(seen < 100, "{seen} of 1,051 entries visited after Quit");
+    }
+
+    #[test]
+    fn threads_pause_above_want_and_go_on_when_it_rises() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let td = tmpdir();
+        for d in 0..20 {
+            mkdirp(td.path().join(format!("d{d}")));
+            for f in 0..15 {
+                wfile(td.path().join(format!("d{d}/f{f}")), "");
+            }
+        }
+        let want = Arc::new(AtomicUsize::new(1));
+        let (seen, inside) =
+            (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        // most visits at once while 1 is wanted (after the start), and after 4
+        let (low, high) =
+            (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        WalkBuilder::new(td.path())
+            .threads(4)
+            .grow_threads(0, want.clone())
+            .build_parallel()
+            .run(|| {
+                let (want, seen, inside, low, high) = (
+                    want.clone(),
+                    seen.clone(),
+                    inside.clone(),
+                    low.clone(),
+                    high.clone(),
+                );
+                Box::new(move |_| {
+                    let at = inside.fetch_add(1, Ordering::SeqCst) + 1;
+                    let n = seen.fetch_add(1, Ordering::SeqCst);
+                    if (40..150).contains(&n) {
+                        low.fetch_max(at, Ordering::SeqCst);
+                    } else if n == 150 {
+                        want.store(4, Ordering::SeqCst);
+                    } else if n > 170 {
+                        high.fetch_max(at, Ordering::SeqCst);
+                    }
+                    std::thread::sleep(std::time::Duration::from_micros(300));
+                    inside.fetch_sub(1, Ordering::SeqCst);
+                    WalkState::Continue
+                })
+            });
+        assert_eq!(seen.load(Ordering::SeqCst), 321);
+        assert_eq!(low.load(Ordering::SeqCst), 1);
+        assert!(high.load(Ordering::SeqCst) > 1);
     }
 
     #[test]

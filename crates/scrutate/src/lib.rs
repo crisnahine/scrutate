@@ -23,6 +23,7 @@ pub mod ops;
 pub mod parse;
 pub mod rank;
 pub mod resolve;
+pub mod running;
 pub mod search;
 pub mod semantic;
 pub mod text;

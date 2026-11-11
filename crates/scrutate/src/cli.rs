@@ -1524,7 +1524,7 @@ fn warn_failures(stats: &instant::Stats) {
 
 /// Plain unsorted output, written by the search threads (see `instant::PlainSink`).
 fn grep_plain(roots: Vec<PathBuf>, o: Options, out: GrepOutput, cancel: Arc<AtomicBool>) -> Result<i32> {
-    let sink = Arc::new(instant::PlainSink::new(Box::new(std::io::stdout())));
+    let sink = Arc::new(instant::PlainSink::new(Box::new(crate::running::GivesWay(std::io::stdout()))));
     let stats = if out.indexed {
         let (root, files) = indexed_candidates(&out.root, &o, out.update, out.under.as_deref())?;
         instant::search_files_plain(&root, files, &o, Arc::clone(&cancel), Arc::clone(&sink))?

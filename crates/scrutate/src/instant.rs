@@ -2531,6 +2531,27 @@ fn search_stdin(o: &Options, matcher: &AnyMatcher, c: &Counters, cancel: &Atomic
     });
 }
 
+/// A walk joins the count of big searches running (`crate::running`) once it has searched this
+/// many files, so a repository smaller than that never makes the system calls. A walk starts
+/// with all its threads and the ones over its share pause.
+const COUNTED_AFTER: u64 = 1000;
+
+/// `SCRUTATE_GREP_DEBUG`: a line on stderr when a walk joins the count of big searches running
+/// and when that count changes, with the threads it takes (`None`: no count on this system).
+fn show_share(shown: &AtomicUsize, running: Option<usize>, threads: usize) {
+    static DEBUG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*DEBUG.get_or_init(|| std::env::var_os("SCRUTATE_GREP_DEBUG").is_some_and(|v| !v.is_empty())) {
+        return;
+    }
+    let key = running.map_or(usize::MAX, |k| k << 16 | threads);
+    if shown.swap(key, Ordering::Relaxed) != key {
+        match running {
+            Some(k) => eprintln!("[scrutate] searches running: {k}, threads: {threads}"),
+            None => eprintln!("[scrutate] searches running: not counted, threads: {threads}"),
+        }
+    }
+}
+
 /// Search the files under `roots`, reported as found under `labels`.
 #[allow(clippy::too_many_arguments)]
 fn walk(
@@ -2548,12 +2569,18 @@ fn walk(
         Small::Big(seen) => Arc::new(seen),
     };
     let threads = default_threads(o);
+    // counted once the walk has proved big, and only without -j: a number asked for is kept
+    let counted = (o.threads == 0).then(|| Arc::new(std::sync::OnceLock::<Option<crate::running::Counted>>::new()));
+    let share = Arc::new(AtomicUsize::new(threads));
+    let shown = Arc::new(AtomicUsize::new(0));
     // raised as reads turn out to come from the disk: the walk grows by that many threads
     let cold = Arc::new(AtomicUsize::new(cold_extra(o, counters)));
+    // the threads the walk runs: the share plus the cold ones
+    let want = Arc::new(AtomicUsize::new(threads + cold.load(Ordering::Relaxed)));
     let mut wb = walk_builder(roots, o)?;
     wb.threads(threads);
     if o.threads == 0 {
-        wb.grow_threads(cold_threads().saturating_sub(threads), Arc::clone(&cold));
+        wb.grow_threads(cold_threads().saturating_sub(threads), Arc::clone(&want));
     }
     let walker = wb.build_parallel();
     let (tx, rx) = mpsc::channel::<Vec<Hit>>();
@@ -2572,7 +2599,9 @@ fn walk(
             let labels = Arc::clone(&labels_owned);
             let plain = plain.clone();
             let searched = Arc::clone(&searched);
-            let cold = Arc::clone(&cold);
+            let (cold, want, share, shown) = (Arc::clone(&cold), Arc::clone(&want), Arc::clone(&share), Arc::clone(&shown));
+            let counted = counted.clone();
+            let mut files = 0u32;
             // made on the first file: the threads kept for a cold walk mostly never run
             let mut fw = None;
             Box::new(move |entry| {
@@ -2605,8 +2634,21 @@ fn walk(
                 let named = opts.paths_as_given && entry.depth() == 0;
                 search_one(fw, &Run { matcher: &matcher, o: &opts, c: &c, cancel: &cancel, tx: &tx, plain: plain.as_deref() }, entry.path(), rel, size, named);
                 let extra = cold_extra(&opts, &c);
-                if extra > cold.load(Ordering::Relaxed) {
+                let mut changed = extra > cold.load(Ordering::Relaxed);
+                if changed {
                     cold.fetch_max(extra, Ordering::Relaxed);
+                }
+                // looked at again as searches start and end; a small tree never gets here
+                files = files.wrapping_add(1);
+                if let Some(counted) = counted.as_ref().filter(|_| files % 64 == 16 && c.files_searched.load(Ordering::Relaxed) >= COUNTED_AFTER) {
+                    let n = counted.get_or_init(crate::running::Counted::start);
+                    let k = n.as_ref().and_then(|n| n.running());
+                    let now = k.map_or(threads, |k| crate::running::threads(threads, k));
+                    changed |= share.swap(now, Ordering::Relaxed) != now;
+                    show_share(&shown, k, now);
+                }
+                if changed {
+                    want.store(share.load(Ordering::Relaxed) + cold.load(Ordering::Relaxed), Ordering::Relaxed);
                 }
                 if cancel.load(Ordering::Relaxed) {
                     WalkState::Quit
