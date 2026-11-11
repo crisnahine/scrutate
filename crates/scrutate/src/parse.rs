@@ -371,6 +371,11 @@ fn strip_generics(s: &str) -> String {
 /// a Lua function (`M.sub.deep`), the namespace of an Elixir module (`MyApp.Accounts.User`).
 /// A Rust impl is named by its bare type: `impl<T> crate::Stack<T>` gives `Stack`.
 fn split_owner(lang: &str, node: Node, name: String, src: &[u8]) -> (Option<String>, String) {
+    // `r#type` is the name `type`, as a call of it is
+    let name = match name.strip_prefix("r#") {
+        Some(raw) if lang == "rust" => raw.to_string(),
+        _ => name,
+    };
     if lang == "rust" && node.kind() == "impl_item" {
         let bare = name.split('<').next().unwrap_or(&name).rsplit("::").next().unwrap_or("").trim();
         return (None, if bare.is_empty() { name.clone() } else { bare.to_string() });
@@ -502,18 +507,43 @@ fn callee_name(lang: &str, node: Node, field: &str, src: &[u8]) -> Option<String
     if let Some(rest) = t.strip_prefix("new").filter(|r| r.starts_with(char::is_whitespace)) {
         t = rest.trim_start().to_string();
     }
-    for sep in ["::", ".", "->"] {
+    // a dot is part of an R name and `::` part of a Bash one
+    let seps: &[&str] = match lang {
+        "r" => &["::", "->"],
+        "bash" => &["->"],
+        "php" => &["::", ".", "->", "\\"],
+        _ => &["::", ".", "->"],
+    };
+    for sep in seps {
         if let Some(i) = t.rfind(sep) {
             t = t[i + sep.len()..].to_string();
         }
     }
-    let t = t.trim().trim_end_matches('!').trim_start_matches('@');
+    let t = t.trim().trim_start_matches('@');
+    // a `!` is cut for a Rust macro; in Ruby, Elixir and Julia it ends the name
+    let t = if matches!(lang, "ruby" | "elixir" | "julia") { t } else { t.trim_end_matches('!') };
     // a JavaScript private method is named with its `#`
     if let Some(private) = t.strip_prefix('#').filter(|_| matches!(lang, "javascript" | "typescript" | "tsx")) {
         return IDENT_START.find(private).map(|m| format!("#{}", m.as_str()));
     }
-    IDENT_START.find(t).map(|m| m.as_str().to_string())
+    let t = if lang == "rust" { t.strip_prefix("r#").unwrap_or(t) } else { t };
+    let name = match lang {
+        "ruby" | "elixir" => &*PREDICATE_NAME,
+        "julia" => &*BANG_NAME,
+        "r" => &*R_NAME,
+        "bash" => &*BASH_NAME,
+        "haskell" | "ocaml" | "fsharp" | "nix" => &*PRIMED_NAME,
+        _ => &*IDENT_START,
+    };
+    name.find(t).map(|m| m.as_str().to_string())
 }
+
+// the name characters some languages allow past a plain identifier, as their definitions keep them
+static PREDICATE_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z_]\w*[?!]?").unwrap());
+static BANG_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z_]\w*!?").unwrap());
+static R_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z.][\w.]*").unwrap());
+static BASH_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z_][\w$]*(?:(?:-|::|\.)[A-Za-z_]\w*)*").unwrap());
+static PRIMED_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z_][\w']*(?:-[A-Za-z_][\w']*)*").unwrap());
 
 const ASM_CALLS: &[&str] = &["call", "callq", "calll", "bl", "jal"];
 const ASM_SECTIONS: &[&str] = &[".text", ".data", ".bss", ".rodata", ".section"];
@@ -810,7 +840,9 @@ fn def_name(node: Node, rules: &[NameRule], src: &[u8]) -> Option<String> {
             NameRule::Custom(f) => f(node, src),
         };
         if let Some(n) = got {
-            let n = n.trim().trim_matches(|c| c == '"' || c == '\'' || c == '`');
+            let n = n.trim().trim_matches(|c| c == '"' || c == '`');
+            // a prime ends a Haskell name (`step'`); only a quoted name starts with one
+            let n = if n.starts_with('\'') { n.trim_matches('\'') } else { n };
             let n = if n.starts_with('[') && n.ends_with(']') && n.len() > 2 { &n[1..n.len() - 1] } else { n };
             let n = n.strip_suffix("()").unwrap_or(n);
             let n = match n.find('(') {

@@ -195,6 +195,12 @@ def test_a_call_of_a_private_method_keeps_its_mark():
         assert run.calls == {"#secret"}, path
 
 
+def test_a_rust_raw_identifier_is_named_without_its_r_hash():
+    src = "const r#A: i32 = 1;\nfn r#type() -> i32 { 1 }\nfn go() -> i32 { r#type() + S::r#match() }\n"
+    c = {ch.name: ch for ch in parse_source("t.rs", src)}
+    assert {"A", "type", "go"} <= set(c) and sorted(c["go"].calls) == ["match", "type"]
+
+
 def test_a_turbofish_call_is_a_call():
     f = next(c for c in parse_source("t.rs", "fn f() {\n    g::<u8>(1);\n    x.collect::<Vec<_>>();\n}\n") if c.name == "f")
     assert sorted(f.calls) == ["collect", "g"]

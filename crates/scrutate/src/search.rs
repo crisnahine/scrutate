@@ -630,7 +630,10 @@ impl Searcher {
     /// last, for a name written as a path, a top-level definition of its last part
     /// (`crate::util::helper` finds `helper`).
     pub fn find_symbol(&self, name: &str, limit: usize) -> Result<Vec<Hit>> {
-        let typed = name.trim();
+        // a Rust raw identifier `r#type` is indexed as `type`
+        let name = name.trim();
+        let unraw = name.strip_prefix("r#").unwrap_or(name).replace("::r#", "::").replace(".r#", ".");
+        let typed = unraw.as_str();
         let d = dotted(typed);
         let d = d.trim_start_matches('.');
         let mut out = self.symbol_rows(typed, limit)?;

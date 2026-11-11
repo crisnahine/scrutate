@@ -570,6 +570,9 @@ fn calls_are_recorded_in_the_optional_grammars() {
     let cases: &[(&str, &str, &str, &[&str])] = &[
         ("m.cu", "void f() { g(1); obj.meth(1); k<<<1, 2>>>(3); }\n", "f", &["g", "k", "meth"]),
         ("m.ml", "let f x =\n  g x;\n  Mod.meth x\n", "f", &["g", "meth"]),
+        ("m.ml", "let step' x = x\nlet f x = step' x\n", "step'", &[]),
+        ("m.ml", "let step' x = x\nlet f x = step' x\n", "f", &["step'"]),
+        ("m.fs", "let step' x = x\nlet f x =\n  step' x\n", "f", &["step'"]),
         ("m.fs", "let f x =\n  g x\n  obj.meth(1)\n  Point(1, 2)\n", "f", &["Point", "g", "meth"]),
         ("m.f90", "subroutine f()\n  call g(1)\n  x = h(2)\nend subroutine f\n", "f", &["g", "h"]),
         ("m.d", "void f() { g(1); obj.meth(1); new Point(1, 2); }\n", "f", &["Point", "g", "meth"]),
@@ -655,6 +658,65 @@ fn a_call_records_a_lisp_name_whole_and_a_private_method_with_its_mark() {
     assert_eq!(find(&js, "Cart.run").calls.iter().collect::<Vec<_>>(), ["#secret"]);
     // a C arrow is still a member access
     assert_eq!(calls_of("m.c", "void use(struct s *p) {\n  p->run(1);\n}\n", "use"), ["run"]);
+}
+
+#[test]
+fn a_call_records_the_name_its_definition_has() {
+    // file, source, definitions as named in the index, caller, its calls
+    type Case = (&'static str, &'static str, &'static [&'static str], &'static str, &'static [&'static str]);
+    let cases: &[Case] = &[
+        (
+            "m.rb",
+            "class Rec\n  def valid?\n    true\n  end\n  def save!\n  end\n  def run\n    valid?\n    self.valid?\n    save!\n    o.valid?()\n  end\nend\n",
+            &["valid?", "save!"],
+            "Rec.run",
+            &["save!", "valid?"],
+        ),
+        (
+            "m.ex",
+            "defmodule M do\n  def ok?(x), do: x\n  def run!(x), do: x\n  def go(x) do\n    ok?(x)\n    M.run!(x)\n  end\nend\n",
+            &["ok?", "run!"],
+            "M.go",
+            &["ok?", "run!"],
+        ),
+        (
+            "m.jl",
+            "function update!(x)\n  x\nend\nmodule Tools\nfunction helper!(x)\n  x\nend\nend\nfunction go(x)\n  update!(x)\n  Tools.helper!(x)\nend\n",
+            &["update!", "helper!"],
+            "go",
+            &["helper!", "update!"],
+        ),
+        ("m.r", "is.ready <- function(x) {\n  x\n}\ngo <- function(x) {\n  is.ready(x)\n  base::is.ready(x)\n}\n", &["is.ready"], "go", &["is.ready"]),
+        (
+            "m.sh",
+            "ns::helper() {\n  echo hi\n}\nlib.load() {\n  :\n}\ngo() {\n  ns::helper\n  lib.load\n}\n",
+            &["ns::helper", "lib.load"],
+            "go",
+            &["lib.load", "ns::helper"],
+        ),
+        ("m.rs", "const r#A: i32 = 1;\nfn r#type() -> i32 { 1 }\nfn go() -> i32 { r#type() + S::r#match() }\n", &["A", "type"], "go", &["match", "type"]),
+        (
+            "m.php",
+            "<?php\nfunction helper() { return 1; }\nfunction go() {\n  Util\\helper();\n  \\App\\Util\\helper();\n  new \\App\\Box();\n}\n",
+            &["helper"],
+            "go",
+            &["Box", "helper"],
+        ),
+        ("m.hs", "step x = x\nstep' x = x\ngo x = step' (M.step'' x)\n", &["step", "step'"], "go", &["step'", "step''"]),
+    ];
+    let mut wrong = Vec::new();
+    for &(path, src, defs, caller, want) in cases {
+        let chunks = parse_source(path, src);
+        let names: Vec<&str> = chunks.iter().map(|c| c.name.as_str()).collect();
+        if let Some(d) = defs.iter().find(|d| !names.contains(d)) {
+            wrong.push(format!("{path}: no definition named {d} in {names:?}"));
+        }
+        let got = calls_of(path, src, caller);
+        if got != want {
+            wrong.push(format!("{path}: got {got:?}, want {want:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
 #[test]

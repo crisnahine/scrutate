@@ -788,7 +788,9 @@ impl<'a> Resolver<'a> {
             }
             a = n.parent();
         }
-        if text(node, &fi.src) != name {
+        // a Rust raw identifier `r#type` is the name `type`
+        let raw = lang == Lang::Rust && text(node, &fi.src).strip_prefix("r#") == Some(name);
+        if text(node, &fi.src) != name && !raw {
             return Err("not an identifier");
         }
         let line = line as i64;

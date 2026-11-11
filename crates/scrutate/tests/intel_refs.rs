@@ -341,6 +341,21 @@ fn refs_names_a_language_the_resolver_does_not_read_apart_from_one_without_a_gra
 }
 
 #[test]
+fn a_ruby_predicate_and_a_rust_raw_identifier_have_their_callers() {
+    let rb = "class Rec\n  def valid?\n    true\n  end\n\n  def save!\n    1\n  end\n\n  def run\n    save! if valid?\n  end\nend\n";
+    let rs = "pub fn r#type() -> i32 {\n    1\n}\n\npub fn kind() -> i32 {\n    r#type()\n}\n";
+    let r = Repo::new("name_marks", &[("rec.rb", rb), ("src/lib.rs", rs)]);
+    assert_eq!(split_callers(&r, "valid?"), (strs(&["Rec.run"]), strs(&[])));
+    assert_eq!(split_callers(&r, "save!"), (strs(&["Rec.run"]), strs(&[])));
+    for name in ["type", "r#type"] {
+        assert_eq!(split_callers(&r, name), (strs(&["kind"]), strs(&[])), "{name}");
+    }
+    let (code, out) = r.run(&["callees", "Rec.run"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("Rec.valid?") && out.contains("Rec.save!") && !out.contains("external"), "{out}");
+}
+
+#[test]
 fn a_macro_of_the_repository_is_a_callee() {
     let c = "#define SQUARE(x) ((x) * (x))\n\nint twice(int v) {\n    return v * 2;\n}\n\nint use(int v) {\n    return SQUARE(v) + twice(v);\n}\n";
     let rs = "macro_rules! square {\n    ($x:expr) => {\n        $x * $x\n    };\n}\n\npub fn area(v: i32) -> i32 {\n    square!(v)\n}\n";

@@ -189,6 +189,8 @@ def _callee_name(lang: str, node, how: str, src: bytes) -> str | None:
         if sep in txt:
             txt = txt.rsplit(sep, 1)[-1]
     txt = txt.strip().rstrip("!")
+    if lang == "rust" and txt.startswith("r#"):  # `r#type` is the name `type`
+        txt = txt[2:]
     # a JavaScript private method is named with its `#`
     private = txt.startswith("#") and lang in ("javascript", "typescript", "tsx")
     m = re.match(r"[A-Za-z_$][\w$]*", txt[1:] if private else txt)
@@ -446,6 +448,8 @@ def parse_source(path: str, source: str) -> list[Chunk]:
                         break
         if kind is not None:
             name = name or _def_name(node, src)
+            if lang == "rust" and name and name.startswith("r#"):
+                name = name[2:]
         if kind is not None and name:
             if kind == "function" and stack and stack[-1][0].kind == "class":
                 kind = "method"
@@ -487,6 +491,8 @@ def parse_source(path: str, source: str) -> list[Chunk]:
             # not on the stack: calls in the initializer stay with the enclosing definition
             cnames, shown = const
             for cname in cnames:
+                if lang == "rust" and cname.startswith("r#"):
+                    cname = cname[2:]
                 consts.append(Chunk(cname, _qualify(stack[-1][1] if stack else "", cname), "constant", shown.start_point[0] + 1,
                                     _last_row(shown) + 1, _head(txt(shown.start_byte, shown.end_byte), MAX_CHUNK_LINES),
                                     doc="" if is_py else _leading_comment(node, src)))
