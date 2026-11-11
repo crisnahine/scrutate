@@ -156,7 +156,24 @@ def test_constants_are_symbols():
     assert [q for q, _ in java] == ["C.MAX"]
     py = _consts("c.py", "LIMIT = 3\n_PRIVATE_CAP: int = 4\nlower = 5\nA, B = 1, 2\nclass K:\n    INNER = 1\n"
                          "def f():\n    LOCAL = 2\n")
-    assert [q for q, _ in py] == ["LIMIT", "_PRIVATE_CAP"]
+    assert [q for q, _ in py] == ["LIMIT", "_PRIVATE_CAP", "A", "B", "K.INNER"]
+
+
+def test_python_class_constants_and_tuple_targets_are_constants():
+    py = _consts("k.py", "A, B = 1, 2\n(C, d) = 3, 4\nclass Config:\n    MAX = 3\n    name = 'x'\n    X, Y = 1, 2\n"
+                         "    def f(self):\n        INNER = 1\n")
+    assert py == [("A", "A, B = 1, 2"), ("B", "A, B = 1, 2"), ("C", "(C, d) = 3, 4"), ("Config.MAX", "MAX = 3"),
+                  ("Config.X", "X, Y = 1, 2"), ("Config.Y", "X, Y = 1, 2")]
+
+
+def test_static_readonly_class_members_are_constants():
+    src = ("export default class K {\n  static readonly SIZE = 2;\n  static n = 1;\n  readonly r = 3;\n"
+           "  private static readonly p: number = 4;\n  static readonly f = () => 1;\n}\n")
+    for path in ("k.ts", "k.tsx"):
+        ts = _consts(path, src)
+        assert [q for q, _ in ts] == ["K.SIZE", "K.p"] and ts[0][1] == "static readonly SIZE = 2", path
+    js = _consts("k.js", "class K {\n  static MAX = 3;\n  static n = 1;\n  static #P = 2;\n  LIMIT = 4;\n}\n")
+    assert [q for q, _ in js] == ["K.MAX"]
 
 
 def test_constants_come_last_and_do_not_move_the_file_header():

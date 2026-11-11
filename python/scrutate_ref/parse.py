@@ -285,10 +285,24 @@ def _constant_of(lang: str, node, src: bytes):
         if "static" not in words or "final" not in words:
             return None
         name_nodes = [d.child_by_field_name("name") for d in node.children_by_field_name("declarator")]
-    elif lang == "python" and t == "expression_statement" and kind_up(1) == "module" and node.named_child_count == 1:
+    elif (lang == "python" and t == "expression_statement" and node.named_child_count == 1
+          and (kind_up(1) == "module" or (kind_up(1) == "block" and kind_up(2) == "class_definition"))):
         a = node.named_children[0]
         left = a.child_by_field_name("left") if a.type == "assignment" else None
-        name_nodes = [left] if left is not None and left.type == "identifier" else []
+        if left is not None and left.type == "identifier":
+            name_nodes = [left]
+        elif left is not None and left.type in ("pattern_list", "tuple_pattern"):
+            name_nodes = [n for n in left.named_children if n.type == "identifier"]
+    elif lang in ("javascript", "typescript", "tsx") and t in ("field_definition", "public_field_definition") \
+            and kind_up(1) == "class_body":
+        words = [c.type for c in node.children]
+        # JavaScript has no `readonly`: an ALL_CAPS static field is its constant
+        ts = lang != "javascript"
+        if "static" not in words or (ts and "readonly" not in words):
+            return None
+        n = node.child_by_field_name("name") or node.child_by_field_name("property")
+        if n is not None and n.type == "property_identifier" and (ts or _CAPS_NAME.match(text(n))):
+            name_nodes = [n]
     names = [text(n) for n in name_nodes if n is not None]
     names = [n for n in names if n != "_" and (lang != "python" or _CAPS_NAME.match(n))]
     return (names, shown) if names else None

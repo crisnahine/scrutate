@@ -919,6 +919,10 @@
       "Greeter"
     ],
     [
+      "method",
+      "Greeter.greet"
+    ],
+    [
       "class",
       "Greeter"
     ],

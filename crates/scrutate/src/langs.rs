@@ -523,6 +523,7 @@ const CORE: &[LangSpec] = &[
             d("class_implementation", "class", &[NameRule::Field("name"), NameRule::ChildKind(&["identifier"])]),
             d("protocol_declaration", "interface", &[NameRule::Field("name"), NameRule::ChildKind(&["identifier"])]),
             d("implementation_definition", "method", &[NameRule::Custom(objc_selector)]),
+            d("method_declaration", "method", &[NameRule::Custom(objc_selector)]),
             db("struct_specifier", "struct", N),
             db("enum_specifier", "enum", N),
         ],
@@ -1895,7 +1896,7 @@ fn cpp_member_decl(node: Node, src: &[u8]) -> Option<String> {
     (f.kind() == "function_declarator").then(|| text(src, n.start_byte(), n.end_byte()))
 }
 
-/// Objective-C method implementation: the selector (first keyword part or unary selector)
+/// Objective-C method implementation or declaration: the selector (first keyword part or unary selector)
 fn objc_selector(node: Node, src: &[u8]) -> Option<String> {
     let mut stack = vec![node];
     while let Some(n) = stack.pop() {
@@ -1904,7 +1905,8 @@ fn objc_selector(node: Node, src: &[u8]) -> Option<String> {
             let first = t.split(':').next().unwrap_or(&t).split_whitespace().last().unwrap_or("").to_string();
             return if first.is_empty() { None } else { Some(first) };
         }
-        if n.kind() == "identifier" && n.parent().map(|p| p.kind() == "implementation_definition" || p.kind() == "method_definition").unwrap_or(false) {
+        if n.kind() == "identifier" && n.parent().is_some_and(|p| matches!(p.kind(), "implementation_definition" | "method_definition" | "method_declaration"))
+        {
             return Some(text(src, n.start_byte(), n.end_byte()));
         }
         let mut cur = n.walk();

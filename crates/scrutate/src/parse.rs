@@ -556,7 +556,8 @@ static CAPS_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^_*[A-Z][A-Z0-
 /// The constants declared at `node`: their names and the node whose text each chunk shows. Constants are
 /// module or type level: Rust `const`/`static`, Go package `const`/`var`, a JS/TS top-level
 /// `const` that is not a function, a TS enum member, a Java `static final` field, a Python
-/// module-level ALL_CAPS assignment, a C/C++ `#define NAME value` and enumerator.
+/// module- or class-level ALL_CAPS assignment, a TS `static readonly` and JS ALL_CAPS `static`
+/// class field, a C/C++ `#define NAME value`, enumerator and file or namespace `const` with a value.
 fn constant_of<'t>(lang: &str, node: Node<'t>, ancestors: &[(Node<'t>, Vec<Node<'t>>)], src: &[u8]) -> Option<(Vec<String>, Node<'t>)> {
     let up = |i: usize| ancestors.len().checked_sub(i).map(|j| ancestors[j].0);
     let kind_up = |i: usize| up(i).map_or("", |n| n.kind());
@@ -598,10 +599,49 @@ fn constant_of<'t>(lang: &str, node: Node<'t>, ancestors: &[(Node<'t>, Vec<Node<
             let names: Vec<String> = node.children_by_field_name("declarator", &mut node.walk()).filter_map(|d| field(d, "name")).map(text_of).collect();
             (names, node)
         }
-        ("python", "expression_statement") if kind_up(1) == "module" && node.named_child_count() == 1 => {
+        ("python", "expression_statement")
+            if (kind_up(1) == "module" || kind_up(1) == "block" && kind_up(2) == "class_definition") && node.named_child_count() == 1 =>
+        {
             let a = node.named_child(0).filter(|a| a.kind() == "assignment")?;
-            let left = field(a, "left").filter(|l| l.kind() == "identifier")?;
-            (vec![text_of(left)], node)
+            let left = field(a, "left")?;
+            let names = match left.kind() {
+                "identifier" => vec![text_of(left)],
+                "pattern_list" | "tuple_pattern" => left.named_children(&mut left.walk()).filter(|n| n.kind() == "identifier").map(text_of).collect(),
+                _ => return None,
+            };
+            (names, node)
+        }
+        ("javascript" | "typescript" | "tsx", "field_definition" | "public_field_definition") if kind_up(1) == "class_body" => {
+            let words: Vec<&str> = node.children(&mut node.walk()).map(|c| c.kind()).collect();
+            // JavaScript has no `readonly`: an ALL_CAPS static field is its constant
+            let ts = lang != "javascript";
+            if !words.contains(&"static") || ts && !words.contains(&"readonly") {
+                return None;
+            }
+            let name = field(node, "name").or_else(|| field(node, "property")).filter(|n| n.kind() == "property_identifier")?;
+            let name = text_of(name);
+            if !ts && !CAPS_NAME.is_match(&name) {
+                return None;
+            }
+            (vec![name], node)
+        }
+        ("c" | "cpp", "declaration") => {
+            // an include guard or `#if` block is no scope of its own
+            let scope = ancestors.iter().rev().map(|(p, _)| p.kind()).find(|k| !k.starts_with("preproc_"));
+            if !matches!(scope, Some("translation_unit" | "declaration_list" | "linkage_specification")) {
+                return None;
+            }
+            if !node.children(&mut node.walk()).any(|c| c.kind() == "type_qualifier" && matches!(text_of(c).as_str(), "const" | "constexpr")) {
+                return None;
+            }
+            // only a declarator with a value: `extern const int X;` defines nothing
+            let names: Vec<String> = node
+                .children_by_field_name("declarator", &mut node.walk())
+                .filter(|d| d.kind() == "init_declarator")
+                .filter_map(|d| dig(d, "declarator", &["identifier"]).filter(|n| n.kind() == "identifier"))
+                .map(text_of)
+                .collect();
+            (names, node)
         }
         ("c" | "cpp", "preproc_def") if field(node, "value").is_some() => (vec![text_of(field(node, "name")?)], node),
         ("c" | "cpp", "enumerator") => (vec![text_of(field(node, "name")?)], node),
@@ -623,9 +663,17 @@ fn kind_from_head(node: Node, src: &[u8]) -> Option<&'static str> {
     None
 }
 
+/// The block of an Objective-C method definition, which the grammar gives no `body` field.
+fn objc_method_body(node: Node) -> Option<Node> {
+    let def = node.named_child(0).filter(|_| node.kind() == "implementation_definition")?;
+    def.children(&mut def.walk()).find(|c| c.kind() == "compound_statement")
+}
+
 fn dig<'t>(mut node: Node<'t>, field: &str, kinds: &[&str]) -> Option<Node<'t>> {
     let mut last = None;
-    while let Some(ch) = node.child_by_field_name(field) {
+    // the `(*cb)` of `typedef int (*cb)(int);` holds its declarator as a plain child
+    let inner = |n: Node<'t>| n.named_children(&mut n.walk()).find(|c| c.kind().ends_with("_declarator") || kinds.contains(&c.kind()));
+    while let Some(ch) = node.child_by_field_name(field).or_else(|| if node.kind() == "parenthesized_declarator" { inner(node) } else { None }) {
         if kinds.contains(&ch.kind()) {
             return Some(ch);
         }
@@ -1104,7 +1152,7 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
                     break;
                 }
             }
-            let body_node = if spec.body.is_empty() { None } else { node.child_by_field_name(spec.body) };
+            let body_node = if spec.body.is_empty() { None } else { node.child_by_field_name(spec.body).or_else(|| objc_method_body(node)) };
             let sig_end = match body_node {
                 Some(b) => b.start_byte(),
                 None => node.end_byte().min(node.start_byte() + 200),

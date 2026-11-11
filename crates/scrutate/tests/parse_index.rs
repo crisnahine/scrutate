@@ -360,7 +360,7 @@ fn constants_are_symbols_in_every_language_the_reference_has() {
     let java = constants("C.java", "class C {\n  public static final int MAX = 3;\n  static int n;\n  final int m = 1;\n}\n");
     assert_eq!(named(&java), ["C.MAX"]);
     let py = constants("c.py", "LIMIT = 3\n_PRIVATE_CAP: int = 4\nlower = 5\nA, B = 1, 2\nclass K:\n    INNER = 1\ndef f():\n    LOCAL = 2\n");
-    assert_eq!(named(&py), ["LIMIT", "_PRIVATE_CAP"]);
+    assert_eq!(named(&py), ["LIMIT", "_PRIVATE_CAP", "A", "B", "K.INNER"]);
     let c = constants("c.h", "#define LIMIT 5\n#define GUARD_H\n#define MAX(a, b) ((a) > (b) ? (a) : (b))\nenum Color { RED, GREEN = 2 };\n");
     assert_eq!(named(&c), ["LIMIT", "Color.RED", "Color.GREEN"]);
     assert_eq!(named(&constants("c.cpp", "#define LIMIT 5\nenum class Mode { On, Off };\n")), ["LIMIT", "Mode.On", "Mode.Off"]);
@@ -681,7 +681,7 @@ fn methods_of_an_object_literal_are_owned_by_what_holds_the_literal() {
 fn c_and_cpp_function_prototypes_are_function_symbols() {
     let c = symbols("p.h", "int add(int a, int b);\nextern int x;\nint y;\nint (*fp)(int);\ntypedef int (*cb)(int);\nstatic char *name(void);\nvoid g(void) { foo(1); int h(int); }\n");
     let want = |v: &[(&str, &str)]| v.iter().map(|&(k, q)| (k.to_string(), q.to_string())).collect::<Vec<_>>();
-    assert_eq!(c, want(&[("function", "add"), ("type", "(*cb)"), ("function", "name"), ("function", "g")]));
+    assert_eq!(c, want(&[("function", "add"), ("type", "cb"), ("function", "name"), ("function", "g")]));
     let cpp = parse_source(
         "p.hpp",
         "namespace ns {\n  Shape make();\n  int x;\n}\nextern \"C\" {\n  int cfun(int);\n}\nextern \"C\" int cone(int);\nWidget w();\nusing F = int(int);\nclass K { void m(); };\nint& rf();\nint (*fp)(int);\ntemplate <typename T> T tmax(T a, T b);\nvoid g() { foo(1); int h(int); }\n",
@@ -722,4 +722,70 @@ fn a_typescript_literal_wrapped_in_as_satisfies_or_parentheses_keeps_its_owner()
         let methods: Vec<&str> = chunks.iter().filter(|c| c.kind == "method").map(|c| c.qualname.as_str()).collect();
         assert_eq!(methods, ["api.get", "store.inc", "store.sub.deep", "box.open", "tool.run"], "{path}");
     }
+}
+
+#[test]
+fn c_and_cpp_const_globals_are_constants() {
+    let c = constants(
+        "k.c",
+        "const int MAX_LEN = 80;\nstatic const char *NAME = \"x\";\nextern const int EXT;\nconst int A = 1, B = 2;\nint counter = 0;\n\
+         int f(const int p) { const int local = 1; return local; }\nstruct s { const int m; };\n",
+    );
+    assert_eq!(named(&c), ["MAX_LEN", "NAME", "A", "B"]);
+    assert_eq!((c[0].2.as_str(), c[1].2.as_str(), c[3].2.as_str()), ("const int MAX_LEN = 80;", "static const char *NAME = \"x\";", "const int A = 1, B = 2;"));
+    let cpp = constants(
+        "k.cpp",
+        "constexpr int kLimit = 8;\nnamespace cfg { inline constexpr double kPi = 3.14; }\nextern \"C\" { const int kC = 1; }\n\
+         class K { public: static const int kSize = 2; };\nvoid g() { constexpr int in = 1; }\n",
+    );
+    assert_eq!(named(&cpp), ["kLimit", "cfg.kPi", "kC"]);
+}
+
+#[test]
+fn python_class_constants_and_tuple_targets_are_constants() {
+    let py =
+        constants("k.py", "A, B = 1, 2\n(C, d) = 3, 4\nclass Config:\n    MAX = 3\n    name = 'x'\n    X, Y = 1, 2\n    def f(self):\n        INNER = 1\n");
+    assert_eq!(named(&py), ["A", "B", "C", "Config.MAX", "Config.X", "Config.Y"]);
+    let texts: Vec<&str> = py.iter().map(|(_, _, t)| t.as_str()).collect();
+    assert_eq!(texts, ["A, B = 1, 2", "A, B = 1, 2", "(C, d) = 3, 4", "MAX = 3", "X, Y = 1, 2", "X, Y = 1, 2"]);
+}
+
+#[test]
+fn static_readonly_class_members_are_constants() {
+    let src = "export default class K {\n  static readonly SIZE = 2;\n  static n = 1;\n  readonly r = 3;\n  private static readonly p: number = 4;\n  static readonly f = () => 1;\n}\n";
+    for path in ["k.ts", "k.tsx"] {
+        let ts = constants(path, src);
+        assert_eq!(named(&ts), ["K.SIZE", "K.p"], "{path}");
+        assert_eq!(ts[0].2, "static readonly SIZE = 2", "{path}");
+    }
+    let js = constants("k.js", "class K {\n  static MAX = 3;\n  static n = 1;\n  static #P = 2;\n  LIMIT = 4;\n}\n");
+    assert_eq!(named(&js), ["K.MAX"]);
+}
+
+const OBJC_HEADER: &str = "#import <Foundation/Foundation.h>\n@interface Greeter : NSObject\n@property (nonatomic) int count;\n- (void)greet;\n\
+                           + (instancetype)make:(int)n with:(int)m;\n@end\n@protocol Speaker\n- (void)speak:(int)x;\n@end\n";
+
+#[test]
+fn objc_method_declarations_are_methods_of_their_class_or_protocol() {
+    for path in ["g.h", "g.m"] {
+        let got = symbols(path, OBJC_HEADER);
+        let want = [("class", "Greeter"), ("method", "Greeter.greet"), ("method", "Greeter.make"), ("interface", "Speaker"), ("method", "Speaker.speak")];
+        assert_eq!(got, want.map(|(k, q)| (k.to_string(), q.to_string())), "{path}");
+        assert_eq!(find(&parse_source(path, OBJC_HEADER), "Greeter.make").text, "+ (instancetype)make:(int)n with:(int)m;", "{path}");
+    }
+    let root =
+        tree("objc_decl", &[("g.h", OBJC_HEADER), ("g.m", "#import \"g.h\"\n@implementation Greeter\n- (void)greet {\n  NSLog(@\"hello there\");\n}\n@end\n")]);
+    let mut repo = scrutate::Repo::open(&root).unwrap();
+    repo.update(false).unwrap();
+    let hits = repo.find_symbol("Greeter.greet", 5).unwrap();
+    assert_eq!(hits.iter().map(|h| h.loc()).collect::<Vec<_>>(), ["g.m:3-5", "g.h:4-4"]);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_function_pointer_typedef_is_named_by_its_name() {
+    let c = symbols("t.c", "typedef int (*cb)(int);\ntypedef void (*handler_t)(int, void *);\nstruct ops { int (*fp)(int); };\n");
+    assert_eq!(c, [("type", "cb"), ("type", "handler_t"), ("struct", "ops")].map(|(k, q)| (k.to_string(), q.to_string())));
+    let cpp = symbols("t.cpp", "using cb = int (*)(int);\ntypedef int (*cb2)(int);\nstruct S { int (*fp)(int); };\n");
+    assert_eq!(cpp, [("type", "cb"), ("type", "cb2"), ("struct", "S")].map(|(k, q)| (k.to_string(), q.to_string())));
 }
