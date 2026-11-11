@@ -591,6 +591,70 @@ fn deps_and_rdeps_resolve_rust_paths_in_a_crate_below_the_root() {
     }
 }
 
+/// The answer of the language server to one request on `rel` at (0-based) `line` and `character`.
+fn lsp_answer(r: &Repo, method: &str, rel: &str, line: u32, character: u32) -> String {
+    let uri = format!("file://{}", r.root.join(rel).display());
+    let msgs = [
+        json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"rootUri": format!("file://{}", r.root.display()), "capabilities": {}}}),
+        json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        json!({"jsonrpc": "2.0", "id": 2, "method": method, "params": {"textDocument": {"uri": uri}, "position": {"line": line, "character": character}, "context": {"includeDeclaration": false}}}),
+        json!({"jsonrpc": "2.0", "id": 3, "method": "shutdown"}),
+        json!({"jsonrpc": "2.0", "method": "exit"}),
+    ];
+    let mut input = Vec::new();
+    for m in msgs {
+        let body = m.to_string();
+        input.extend(format!("Content-Length: {}\r\n\r\n{body}", body.len()).into_bytes());
+    }
+    let mut child = Command::new(BIN).arg("lsp").current_dir(&r.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    use std::io::Write;
+    child.stdin.take().unwrap().write_all(&input).unwrap();
+    let out = String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).into_owned();
+    out.split("Content-Length").find(|m| m.contains("\"id\":2")).unwrap_or_else(|| panic!("{out}")).to_string()
+}
+
+#[test]
+fn workspace_packages_resolve_by_their_package_json_name() {
+    let r = Repo::new(
+        "workspace",
+        &[
+            ("package.json", r#"{ "name": "acme", "private": true, "workspaces": ["packages/*"] }"#),
+            ("packages/utils/package.json", r#"{ "name": "@acme/utils", "exports": { ".": "./src/index.ts", "./math": "./src/math.ts" } }"#),
+            ("packages/utils/src/index.ts", "export function slugify(s: string): string {\n  return s.toLowerCase();\n}\n"),
+            ("packages/utils/src/math.ts", "export function half(n: number): number {\n  return n / 2;\n}\n"),
+            ("packages/legacy/package.json", r#"{ "name": "legacy", "main": "dist/index.js" }"#),
+            ("packages/legacy/src/index.ts", "export function old(n: number): number {\n  return n;\n}\n"),
+            ("packages/app/package.json", r#"{ "name": "@acme/app", "dependencies": { "@acme/utils": "workspace:*", "legacy": "workspace:*" } }"#),
+            (
+                "packages/app/src/main.ts",
+                "import { slugify } from \"@acme/utils\";\nimport { half } from \"@acme/utils/math\";\nimport { old } from \"legacy\";\nimport React from \"react\";\n\nexport function render(title) {\n  return slugify(title) + old(half(4)) + React.version;\n}\n",
+            ),
+        ],
+    );
+    let app = "packages/app/src/main.ts";
+    let (utils, math, legacy) = ("packages/utils/src/index.ts", "packages/utils/src/math.ts", "packages/legacy/src/index.ts");
+    for name in ["slugify", "half", "old"] {
+        let (code, out) = r.run(&["callers", name]);
+        assert_eq!(code, 0, "{out}");
+        assert!(out.contains(app) && out.contains("render"), "callers {name}: {out}");
+    }
+    let (code, out) = r.run(&["callees", "render"]);
+    assert_eq!(code, 0, "{out}");
+    for file in [utils, math, legacy] {
+        assert!(out.contains(file), "callees render: {out}");
+    }
+    assert_eq!(r.resolved("slugify"), pairs(&[(&format!("{app}:1"), utils), (&format!("{app}:7"), utils), (&format!("{utils}:1"), utils)]));
+    assert_eq!(
+        deps_of(&r, app),
+        [("@acme/utils", utils), ("@acme/utils/math", math), ("legacy", legacy), ("react", "-")].map(|(m, f)| (m.to_string(), f.to_string()))
+    );
+    for file in [utils, math, legacy] {
+        assert_eq!(importers(&r, file), [app], "rdeps {file}");
+    }
+    let answer = lsp_answer(&r, "textDocument/references", utils, 0, 17);
+    assert!(answer.contains(&format!("{app}\"")) && answer.contains("\"line\":6"), "{answer}");
+}
+
 /// `path:start` of every definition `find_symbol` returns for `name`.
 fn symbol_at(lib: &scrutate::Repo, name: &str) -> Vec<String> {
     let mut v: Vec<String> = lib.find_symbol(name, 50).unwrap().into_iter().map(|h| format!("{}:{}", h.path, h.start)).collect();

@@ -80,6 +80,14 @@ struct TsPaths {
     aliases: Vec<(String, Vec<String>)>,
 }
 
+/// What a `package.json` of the repository says about the file an import of its name opens.
+struct JsPackage {
+    dir: String,
+    exports: serde_json::Value,
+    module: Option<String>,
+    main: Option<String>,
+}
+
 pub struct Resolver<'a> {
     ix: &'a Index,
     files: HashSet<String>,
@@ -90,6 +98,7 @@ pub struct Resolver<'a> {
     go_imports: Option<HashMap<String, String>>,
     /// by directory: the config found there, or that there is none
     ts: HashMap<String, Option<Rc<TsPaths>>>,
+    js_packages: Option<HashMap<String, Vec<Rc<JsPackage>>>>,
     /// current depth of `member` / `lookup_top` calls: import and base-class cycles stop here
     nest: usize,
     /// (files, name) of the `lookup_top` calls made for the current `resolve_at`, and the answer
@@ -672,6 +681,7 @@ impl<'a> Resolver<'a> {
             go_dirs: None,
             go_imports: None,
             ts: HashMap::new(),
+            js_packages: None,
             nest: 0,
             looked_up: HashMap::new(),
             def_tys: HashMap::new(),
@@ -1845,25 +1855,85 @@ impl<'a> Resolver<'a> {
         if module.starts_with("./") || module.starts_with("../") || module == "." || module == ".." {
             return self.js_file(&join(dir_of(from), module));
         }
-        // a name for the project's own files (`paths`, `baseUrl`); packages live outside the repository
-        let ts = self.ts_paths(from)?;
-        // the pattern with the longest text before its `*` wins, as in the TypeScript compiler
-        let mut aliases: Vec<&(String, Vec<String>)> = ts.aliases.iter().collect();
-        aliases.sort_by_key(|(pattern, _)| std::cmp::Reverse(pattern.split('*').next().map_or(0, str::len)));
-        for (pattern, targets) in aliases {
-            let star = match pattern.split_once('*') {
-                Some((before, after)) => match module.strip_prefix(before).and_then(|m| m.strip_suffix(after)) {
-                    Some(star) => star,
+        // a name for the project's own files (`paths`, `baseUrl`), then a workspace package by its
+        // `package.json` name; any other package lives outside the repository
+        if let Some(ts) = self.ts_paths(from) {
+            // the pattern with the longest text before its `*` wins, as in the TypeScript compiler
+            let mut aliases: Vec<&(String, Vec<String>)> = ts.aliases.iter().collect();
+            aliases.sort_by_key(|(pattern, _)| std::cmp::Reverse(pattern.split('*').next().map_or(0, str::len)));
+            for (pattern, targets) in aliases {
+                let star = match pattern.split_once('*') {
+                    Some((before, after)) => match module.strip_prefix(before).and_then(|m| m.strip_suffix(after)) {
+                        Some(star) => star,
+                        None => continue,
+                    },
+                    None if pattern == module => "",
                     None => continue,
-                },
-                None if pattern == module => "",
-                None => continue,
-            };
-            if let Some(f) = targets.iter().find_map(|t| self.js_file(&t.replace('*', star))) {
+                };
+                if let Some(f) = targets.iter().find_map(|t| self.js_file(&t.replace('*', star))) {
+                    return Some(f);
+                }
+            }
+            if let Some(f) = ts.base.as_ref().and_then(|base| self.js_file(&join(base, module))) {
                 return Some(f);
             }
         }
-        ts.base.as_ref().and_then(|base| self.js_file(&join(base, module)))
+        self.js_package(from, module)
+    }
+
+    /// The file a workspace package of the repository opens for `module` (`@acme/utils`,
+    /// `@acme/utils/math`): its `exports`, `module` or `main`, else its `index` file or a path inside it.
+    fn js_package(&mut self, from: &str, module: &str) -> Option<String> {
+        let mut parts = module.splitn(if module.starts_with('@') { 3 } else { 2 }, '/');
+        let name = match (parts.next()?, module.starts_with('@')) {
+            (scope, true) => format!("{scope}/{}", parts.next()?),
+            (name, false) => name.to_string(),
+        };
+        let sub = parts.next().unwrap_or("");
+        let pkgs = self.js_packages().get(&name)?;
+        // two packages with one name: the one that shares the most leading directories with `from`
+        let shared = |dir: &str| dir.split('/').zip(from.split('/')).take_while(|(a, b)| a == b).count();
+        let pkg = Rc::clone(pkgs.iter().max_by_key(|p| (shared(&p.dir), std::cmp::Reverse(p.dir.len())))?);
+        let key = if sub.is_empty() { ".".to_string() } else { format!("./{sub}") };
+        let mut targets = export_targets(&pkg.exports, &key);
+        if sub.is_empty() {
+            targets.extend(pkg.module.iter().chain(&pkg.main).cloned());
+        }
+        if let Some(f) = targets.iter().find_map(|t| self.package_file(&pkg.dir, t)) {
+            return Some(f);
+        }
+        let rel = if sub.is_empty() { "index" } else { sub };
+        self.js_file(&join(&pkg.dir, rel)).or_else(|| self.js_file(&join(&pkg.dir, &format!("src/{rel}"))))
+    }
+
+    /// `target` of the package at `dir`, or when it names a build output the repository does not
+    /// hold (`./dist/index.js`), the source at the same path under `src/` (`src/index.ts`).
+    fn package_file(&self, dir: &str, target: &str) -> Option<String> {
+        let rel = target.trim_start_matches("./");
+        if let Some(f) = self.js_file(&join(dir, rel)) {
+            return Some(f);
+        }
+        let (_, below) = rel.split_once('/')?;
+        let stem = [".d.ts", ".d.mts", ".d.cts", ".js", ".mjs", ".cjs"].iter().find_map(|e| below.strip_suffix(e)).unwrap_or(below);
+        self.js_file(&join(dir, &format!("src/{stem}")))
+    }
+
+    /// Workspace packages by their `package.json` name -> every package of that name.
+    fn js_packages(&mut self) -> &HashMap<String, Vec<Rc<JsPackage>>> {
+        if self.js_packages.is_none() {
+            let mut m: HashMap<String, Vec<Rc<JsPackage>>> = HashMap::new();
+            let mut found: Vec<&String> = self.files.iter().filter(|f| *f == "package.json" || f.ends_with("/package.json")).collect();
+            found.sort();
+            for f in found {
+                let Some(v) = repo_text(&self.ix.root, f).and_then(|t| serde_json::from_str::<serde_json::Value>(&plain_json(&t)).ok()) else { continue };
+                let Some(name) = v["name"].as_str().filter(|n| !n.is_empty()) else { continue };
+                let field = |k: &str| v[k].as_str().map(str::to_string);
+                let pkg = JsPackage { dir: dir_of(f).to_string(), exports: v["exports"].clone(), module: field("module"), main: field("main") };
+                m.entry(name.to_string()).or_default().push(Rc::new(pkg));
+            }
+            self.js_packages = Some(m);
+        }
+        self.js_packages.as_ref().unwrap()
     }
 
     /// The repository files the import statement of `from` at `line`, recorded as `module`, names:
@@ -2146,6 +2216,42 @@ fn ts_config(root: &std::path::Path, path: &str, depth: usize) -> Option<TsPaths
         }
     }
     (out.base.is_some() || !out.aliases.is_empty()).then_some(out)
+}
+
+/// The targets `exports` of a `package.json` gives `key` (`.`, `./math`), best first: an exact
+/// key, else the pattern (`./*`) with the longest text before its `*`.
+fn export_targets(exports: &serde_json::Value, key: &str) -> Vec<String> {
+    let map = exports.as_object().filter(|o| o.keys().any(|k| k.starts_with('.')));
+    let value = match map {
+        // no subpath keys: the whole value is what `.` exports
+        None => return if key == "." { conditions(exports, 0) } else { Vec::new() },
+        Some(map) => map,
+    };
+    if let Some(v) = value.get(key) {
+        return conditions(v, 0);
+    }
+    let best = value
+        .iter()
+        .filter_map(|(pattern, v)| {
+            let (before, after) = pattern.split_once('*')?;
+            let star = key.strip_prefix(before)?.strip_suffix(after)?;
+            Some((before.len(), star, v))
+        })
+        .max_by_key(|(len, _, _)| *len);
+    best.map(|(_, star, v)| conditions(v, 0).into_iter().map(|t| t.replace('*', star)).collect()).unwrap_or_default()
+}
+
+/// The paths an `exports` target stands for, best first. `types` leads because it names the
+/// TypeScript source or its declarations, where `import` and `require` often name built JavaScript.
+fn conditions(v: &serde_json::Value, depth: usize) -> Vec<String> {
+    match v {
+        serde_json::Value::String(s) => vec![s.clone()],
+        serde_json::Value::Array(a) => a.iter().flat_map(|x| conditions(x, depth)).collect(),
+        serde_json::Value::Object(o) if depth < 2 => {
+            ["types", "import", "default", "require"].iter().filter_map(|c| o.get(*c)).flat_map(|x| conditions(x, depth + 1)).collect()
+        }
+        _ => Vec::new(),
+    }
 }
 
 /// JSON with the comments and trailing commas a tsconfig may have taken out.
@@ -3610,6 +3716,90 @@ mod tests {
         drop(s);
         let _ = std::fs::remove_dir_all(&root);
         assert_eq!(plain_json("{\"a\": \"x // y\", /* c */ \"b\": [1, 2,], // d\n}"), "{\"a\": \"x // y\",  \"b\": [1, 2]}");
+    }
+
+    #[test]
+    fn workspace_packages_by_their_package_json_name() {
+        let files: &[(&str, &str)] = &[
+            ("package.json", "{\"name\": \"acme\", \"private\": true, \"workspaces\": [\"packages/*\"]}\n"),
+            ("packages/utils/package.json", "{\"name\": \"@acme/utils\", \"exports\": {\".\": \"./src/index.ts\", \"./math\": \"./src/math.ts\", \"./feat/*\": \"./src/feat/*.ts\"}}\n"),
+            ("packages/utils/src/index.ts", "export function slugify(s: string) { return s; }\n"),
+            ("packages/utils/src/math.ts", "export function half(n: number) { return n / 2; }\n"),
+            ("packages/utils/src/feat/a.ts", "export function a() { return 1; }\n"),
+            ("packages/legacy/package.json", "{\"name\": \"legacy\", \"main\": \"./dist/index.js\"}\n"),
+            ("packages/legacy/src/index.ts", "export function old() { return 1; }\n"),
+            ("packages/cond/package.json", "{\"name\": \"cond\", \"exports\": {\".\": {\"require\": \"./src/req.js\", \"import\": \"./src/imp.js\", \"types\": \"./dist/index.d.ts\"}, \"./x\": {\"require\": \"./src/req.js\", \"import\": \"./src/imp.js\"}}}\n"),
+            ("packages/cond/src/index.ts", "export function c() { return 1; }\n"),
+            ("packages/cond/src/req.js", "exports.r = 1;\n"),
+            ("packages/cond/src/imp.js", "export const i = 1;\n"),
+            ("packages/nested/package.json", "{\"name\": \"nested\", \"exports\": {\"import\": {\"types\": \"./lib/n.d.ts\", \"default\": \"./lib/n.js\"}}}\n"),
+            ("packages/nested/lib/n.js", "export const n = 1;\n"),
+            ("packages/mod/package.json", "{\"name\": \"modpkg\", \"module\": \"esm/m.js\", \"main\": \"cjs/m.js\"}\n"),
+            ("packages/mod/esm/m.js", "export const m = 1;\n"),
+            ("packages/mod/cjs/m.js", "exports.m = 1;\n"),
+            ("packages/bare/package.json", "{\"name\": \"bare\"}\n"),
+            ("packages/bare/index.js", "export const b = 1;\n"),
+            ("packages/bare/tools.ts", "export const t = 1;\n"),
+            ("packages/bare/dir/index.ts", "export const d = 1;\n"),
+            ("packages/srconly/package.json", "{\"name\": \"srconly\", \"main\": \"dist/index.js\"}\n"),
+            ("packages/srconly/src/index.ts", "export const s = 1;\n"),
+            ("packages/srconly/src/tools.ts", "export const t = 1;\n"),
+            ("packages/dup/package.json", "{\"name\": \"dup\"}\n"),
+            ("packages/dup/index.ts", "export const d = 1;\n"),
+            ("apps/web/package.json", "{\"name\": \"dup\"}\n"),
+            ("apps/web/index.ts", "export const d = 2;\n"),
+            ("apps/web/tsconfig.json", "{\"compilerOptions\": {\"paths\": {\"legacy\": [\"shim.ts\"]}}}\n"),
+            ("apps/web/shim.ts", "export function old() { return 2; }\n"),
+            ("apps/web/src/x.ts", "import { d } from \"dup\";\n"),
+            (
+                "packages/app/src/main.ts",
+                "import { slugify } from \"@acme/utils\";\nimport { half } from \"@acme/utils/math\";\nimport { old } from \"legacy\";\nimport React from \"react\";\n\nexport function run() {\n  return old(slugify(\"x\")) + half(2) + React.f();\n}\n",
+            ),
+        ];
+        let (root, s) = indexed("workspace", files);
+        let mut rv = Resolver::new(&s.ix).unwrap();
+        let app = "packages/app/src/main.ts";
+        for (from, spec, want) in [
+            (app, "@acme/utils", Some("packages/utils/src/index.ts")),
+            (app, "@acme/utils/math", Some("packages/utils/src/math.ts")),
+            (app, "@acme/utils/feat/a", Some("packages/utils/src/feat/a.ts")),
+            (app, "@acme/utils/feat/zzz", None),
+            // `main` names a build output the repository does not hold: its source under `src/`
+            (app, "legacy", Some("packages/legacy/src/index.ts")),
+            // conditions: `types` first, its `dist` declarations fall back to the source
+            (app, "cond", Some("packages/cond/src/index.ts")),
+            (app, "cond/x", Some("packages/cond/src/imp.js")),
+            (app, "nested", Some("packages/nested/lib/n.js")),
+            (app, "modpkg", Some("packages/mod/esm/m.js")),
+            (app, "bare", Some("packages/bare/index.js")),
+            (app, "bare/tools", Some("packages/bare/tools.ts")),
+            (app, "bare/dir", Some("packages/bare/dir/index.ts")),
+            (app, "srconly", Some("packages/srconly/src/index.ts")),
+            (app, "srconly/tools", Some("packages/srconly/src/tools.ts")),
+            // two packages named `dup`: the one nearest the importing file
+            (app, "dup", Some("packages/dup/index.ts")),
+            ("apps/web/src/x.ts", "dup", Some("apps/web/index.ts")),
+            // `paths` of a tsconfig.json come before a package of that name
+            ("apps/web/src/x.ts", "legacy", Some("apps/web/shim.ts")),
+            (app, "react", None),
+            (app, "@acme/nothing", None),
+            (app, "@acme", None),
+        ] {
+            assert_eq!(rv.js_module(from, spec).as_deref(), want, "{from}: {spec}");
+        }
+        drop(rv);
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+        resolver_case(
+            "workspace_refs",
+            files,
+            &[
+                (app, "slugify(\"x\")", "slugify", "packages/utils/src/index.ts slugify"),
+                (app, "half(2)", "half", "packages/utils/src/math.ts half"),
+                (app, "old(slugify", "old", "packages/legacy/src/index.ts old"),
+                (app, "React.f()", "f", "external"),
+            ],
+        );
     }
 
     #[test]
