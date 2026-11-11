@@ -192,6 +192,20 @@ First release.
   MATLAB is no longer in the C family.
 - A search that meets a damaged segment array (a posting row, a pointer or a cluster table that
   points outside the segment) rebuilds the index and answers; it ended with a panic message.
+- `callers` of a constructor lists the calls of its class (`Point(1)` for `Point.__init__`,
+  `new Widget()` for `constructor`, `Invoice.new` for Ruby's `initialize`, and the Java, C#, C++,
+  PHP and Swift forms); it printed "(no results)". Past the 400 call sites the resolver is asked
+  about, `callers` says "the last N were not checked", where it said the resolver could not
+  identify them. `refs` gives the reason `not resolved in this language` for a language that has
+  a grammar and no resolver rules, and keeps `no grammar` for files without one.
+- `search` looks a query of one word, or of stop words alone, up as a name: `search find` and
+  `search get` find the functions of that name; they printed "(no results)".
+- A Java file counts as a test by `Test.java` or `Tests.java` with the capital (`Contest.java`
+  and `Latest.java` were ranked as tests), and a Django `tests.py` is a test file.
+- `languages --json` lists every kind of definition the index gives a language (`method` was
+  missing for Python, Ruby, Scala, Solidity and Kotlin, `constant` for eleven languages, the
+  kinds read off the head keyword for Kotlin, Swift and the Lisps). A Racket
+  `define-syntax-rule` is a macro.
 - `refs` finds a name in its composed and decomposed Unicode spelling.
 - `tsquery` keeps each file's captures in `.scrutate/tsquery/` by content hash: a repeated query
   re-parses only changed files (the Linux tree: about 25 s, then 1.6 s), output identical to
