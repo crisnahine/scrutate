@@ -742,12 +742,34 @@ fn uppercase_literal(pattern: &str, regex: bool) -> bool {
     let mut chars = pattern.chars().peekable();
     while let Some(c) = chars.next() {
         if regex && c == '\\' {
-            // shortcut: `\x41` (the letter A by its code) is not seen as uppercase; parse the regex if that matters
-            let class = matches!(chars.next(), Some('p' | 'P'));
-            if class && chars.peek() == Some(&'{') {
-                chars.by_ref().find(|&d| d == '}');
-            } else if class {
-                chars.next();
+            match chars.next() {
+                Some('p' | 'P') if chars.peek() == Some(&'{') => {
+                    chars.by_ref().find(|&d| d == '}');
+                }
+                Some('p' | 'P') => {
+                    chars.next();
+                }
+                // a letter by its code point stands for itself: `\x41`, `\x{41}`, `\u0041`, `\U00000041`
+                Some(kind @ ('x' | 'u' | 'U')) => {
+                    let digits: String = if chars.peek() == Some(&'{') {
+                        chars.by_ref().skip(1).take_while(|&d| d != '}').collect()
+                    } else {
+                        chars
+                            .by_ref()
+                            .take(if kind == 'x' {
+                                2
+                            } else if kind == 'u' {
+                                4
+                            } else {
+                                8
+                            })
+                            .collect()
+                    };
+                    if u32::from_str_radix(&digits, 16).ok().and_then(char::from_u32).is_some_and(char::is_uppercase) {
+                        return true;
+                    }
+                }
+                _ => {}
             }
         } else if c.is_uppercase() {
             return true;
@@ -2412,6 +2434,14 @@ mod tests {
             (r"\SFoo", true, true),
             (r"foo\\Bar", true, true),
             (r"\Sfoo", false, true),
+            (r"\x41bc", true, true),
+            (r"\x61bc", true, false),
+            (r"\x{41}bc", true, true),
+            (r"\x{1F600}bc", true, false),
+            (r"\u0041bc", true, true),
+            (r"\u00e9bc", true, false),
+            (r"\U00000041bc", true, true),
+            (r"\xzz", true, false),
         ] {
             assert_eq!(uppercase_literal(pattern, regex), upper, "{pattern:?} regex={regex}");
         }
