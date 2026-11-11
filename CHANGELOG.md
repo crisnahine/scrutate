@@ -207,6 +207,11 @@ First release.
   Lisp, assembly, Jsonnet and MATLAB too, beside the docstring where there is one, and a Haskell
   or Elm function starts at its type signature; `search` did not find a Python function by a
   word of the comment above it.
+- More forms are definitions: a Lua function assigned to a name or given as a table field
+  (`M.f = function`, `f = function` in a table), a JavaScript or TypeScript function assigned
+  to a member (`Foo.prototype.bar = function` is the method `Foo.bar`), a Julia method added to
+  another module's function (`function Base.show(...)` is `show`, owned by `Base`), the C++
+  call operator as `operator()`, a Haskell operator definition, and an R6 method.
 - `search` looks a query of one word, or of stop words alone, up as a name: `search find` and
   `search get` find the functions of that name; they printed "(no results)".
 - A Java file counts as a test by `Test.java` or `Tests.java` with the capital (`Contest.java`

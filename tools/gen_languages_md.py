@@ -138,6 +138,18 @@ def main() -> int:
         syms = ", ".join(f"{k} `{q}`" for k, q in extra[fn] if k not in ("module", "window")) or "(module only)"
         out.append(f"| `{fn}` | {syms} |")
     out.append("")
+    out.append("## Definitions written as assignments or under another owner\n")
+    out.append("- Lua: a function assigned to a name (`local f = function`, `M.f = function`, `M[\"f\"] = function`) or given as "
+               "a table field (`f = function` inside `local obj = {...}`) is a definition, owned by what holds it (`M.f`, `obj.f`).\n"
+               "- JavaScript and TypeScript: a function assigned to a member is a definition: `Foo.prototype.bar = function` is the "
+               "method `Foo.bar`, `Foo.make = () => ...` is `Foo.make`, and `exports.f` and `module.exports.f` are `f`.\n"
+               "- Julia: `function Base.show(...)` and `Base.show(...) = ...` are named `show` and owned by `Base`, so "
+               "`symbol show` and `symbol Base.show` both find them.\n"
+               "- C++: the call operator is named `operator()`. Haskell: an operator definition (`a <+> b = ...`, `(<+>) a b = ...`) "
+               "is named by its operator. R: an R6 method in `R6Class(\"Counter\", public = list(add = function(n) ...))` is the "
+               "method `Counter.add`.\n"
+               "- Ruby and Elixir names keep a trailing `?` or `!`, Julia names a `!`, R names their dots, Bash names their `::`, "
+               "Haskell, OCaml, F# and Nix names their primes; a Rust raw identifier `r#type` is named `type`.\n")
     out.append("## Known limits\n")
     out.append("- Heuristic-tier languages get no call graph, no imports and approximate block extents.\n"
                "- Nesting depth of data keys (JSON/YAML/TOML) is capped at two levels.\n"
