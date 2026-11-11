@@ -277,7 +277,7 @@ pub enum Cmd {
         /// alternative phrasing (repeatable); results of all phrasings are fused
         #[arg(short = 'a', long = "alt")]
         alt: Vec<String>,
-        /// also search these repositories (repeatable): cross-repository results, paths prefixed with the repository name
+        /// also search this repository (repeatable); its results start with the path given here
         #[arg(long = "also", value_name = "ROOT")]
         also: Vec<PathBuf>,
         #[arg(short, default_value_t = crate::ops::SEARCH_K)]
@@ -299,18 +299,27 @@ pub enum Cmd {
     /// where is this function/class/method defined?
     Symbol {
         name: String,
+        /// list at most this many definitions
+        #[arg(long, default_value_t = crate::ops::SYMBOL_LIMIT)]
+        limit: usize,
         #[arg(long)]
         json: bool,
     },
     /// which functions call this one?
     Callers {
         name: String,
+        /// list at most this many callers
+        #[arg(long, default_value_t = crate::ops::CALLERS_LIMIT)]
+        limit: usize,
         #[arg(long)]
         json: bool,
     },
     /// which functions does this one call?
     Callees {
         name: String,
+        /// list at most this many callees
+        #[arg(long, default_value_t = crate::ops::CALLEES_LIMIT)]
+        limit: usize,
         #[arg(long)]
         json: bool,
     },
@@ -487,14 +496,164 @@ fn split_globs(list: &str) -> Vec<String> {
     out
 }
 
+const CONFIG_FILE: &str = ".scrutate.toml";
+
+/// The directory whose configuration file applies, with the path of the current directory below
+/// it: the nearest one holding the file, from `cwd` up to the repository top (a directory holding
+/// `.git` or an index); `cwd` when there is none.
+fn nearest_config(cwd: &Path) -> (PathBuf, Vec<String>) {
+    for dir in cwd.ancestors() {
+        if dir.join(CONFIG_FILE).is_file() {
+            return (dir.to_path_buf(), names_below(cwd, dir));
+        }
+        if dir.join(".git").exists() || dir.join(crate::files::INDEX_DIR).is_dir() {
+            break;
+        }
+    }
+    (cwd.to_path_buf(), Vec::new())
+}
+
+/// The names of the directories from `top` down to `dir`; empty when `dir` is not below `top`.
+fn names_below(dir: &Path, top: &Path) -> Vec<String> {
+    dir.strip_prefix(top).map(|r| r.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect()).unwrap_or_default()
+}
+
+/// The directory above `cwd` that holds an index, when `cwd` holds none.
+fn index_above(cwd: &Path) -> Option<PathBuf> {
+    if cwd.join(crate::files::INDEX_DIR).is_dir() {
+        return None;
+    }
+    cwd.ancestors().skip(1).find(|d| d.join(crate::files::INDEX_DIR).is_dir()).map(Path::to_path_buf)
+}
+
+/// A glob of the configuration file of a directory above, for a walk from `below` (the names of
+/// the directories down to the current one): a glob with a slash names paths from the file's
+/// directory, the walk matches globs from the current one. None for an exclusion that can match
+/// nothing down here.
+fn rebase_glob(glob: &str, below: &[String]) -> Option<String> {
+    let (neg, body) = match glob.strip_prefix('!') {
+        Some(b) => ("!", b),
+        None => ("", glob),
+    };
+    if !body.trim_end_matches('/').contains('/') {
+        return Some(glob.to_string());
+    }
+    let parts: Vec<&str> = body.trim_start_matches('/').split('/').collect();
+    for (i, dir) in below.iter().enumerate() {
+        match parts.get(i).copied() {
+            // the glob names a directory holding this one: all of it
+            None | Some("") => return Some(format!("{neg}**")),
+            Some("**") => return Some(format!("{neg}{}", parts[i..].join("/"))),
+            Some(p) if p == dir => {}
+            // shortcut: a class or alternatives on the way down are not matched against the name; such a glob applies as written
+            Some(p) if p.contains(['[', '{', '\\']) => return Some(glob.to_string()),
+            Some(p) if wildcard_matches(&p.chars().collect::<Vec<_>>(), &dir.chars().collect::<Vec<_>>()) => {}
+            Some(_) => return neg.is_empty().then(|| glob.to_string()),
+        }
+    }
+    let rest = parts[below.len()..].join("/");
+    Some(match rest.as_str() {
+        "" => format!("{neg}**"),
+        r if r.trim_end_matches('/').contains('/') => format!("{neg}{r}"),
+        r => format!("{neg}/{r}"),
+    })
+}
+
+/// Whether a glob of one path component, with `*` and `?` only, matches `name`.
+fn wildcard_matches(glob: &[char], name: &[char]) -> bool {
+    match glob.split_first() {
+        None => name.is_empty(),
+        Some(('*', rest)) => (0..=name.len()).any(|i| wildcard_matches(rest, &name[i..])),
+        Some(('?', rest)) => !name.is_empty() && wildcard_matches(rest, &name[1..]),
+        Some((c, rest)) => name.first() == Some(c) && wildcard_matches(rest, &name[1..]),
+    }
+}
+
+/// Where a command runs in the repository: its path arguments are the shell's, relative to the
+/// current directory, and the index names files from its root.
+struct Here {
+    cwd: PathBuf,
+    /// the names of the directories from the root down to the current one; empty at the root or outside it
+    below: Vec<String>,
+}
+
+impl Here {
+    fn new(cwd: Option<PathBuf>, root: &Path) -> Here {
+        let cwd = cwd.unwrap_or_default();
+        let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+        let below = names_below(&cwd, &root);
+        Here { cwd, below }
+    }
+
+    /// The current directory from the root, when it is below it.
+    fn below(&self) -> Option<String> {
+        (!self.below.is_empty()).then(|| self.below.join("/"))
+    }
+
+    /// `arg` from the root when it names a file or directory from here; otherwise as given (a
+    /// path from the root, as answers print it, or a module name).
+    fn path(&self, arg: &str) -> String {
+        let p = Path::new(arg);
+        if self.below.is_empty() || arg.is_empty() || p.is_absolute() || !self.cwd.join(p).exists() {
+            return arg.to_string();
+        }
+        let mut parts = self.below.clone();
+        for c in p.components() {
+            match c {
+                std::path::Component::Normal(n) => parts.push(n.to_string_lossy().into_owned()),
+                std::path::Component::ParentDir if parts.pop().is_none() => return arg.to_string(),
+                _ => {}
+            }
+        }
+        parts.join("/")
+    }
+
+    /// A location (`path:line`) with its path read as `path` reads one; a name as given.
+    fn location(&self, arg: &str) -> String {
+        match arg.rsplit_once(':') {
+            Some((path, line)) if crate::intel::location(arg).is_some() => format!("{}:{line}", self.path(path)),
+            _ => arg.to_string(),
+        }
+    }
+
+    /// A path to walk: as given when it exists from here, else the same path from the root when
+    /// that exists (as answers print it).
+    fn shell(&self, p: &Path) -> PathBuf {
+        if self.below.is_empty() || p.is_absolute() || self.cwd.join(p).exists() {
+            return p.to_path_buf();
+        }
+        let up: PathBuf = self.below.iter().map(|_| "..").collect();
+        if self.cwd.join(&up).join(p).exists() {
+            up.join(p)
+        } else {
+            p.to_path_buf()
+        }
+    }
+}
+
 pub fn run() -> Result<i32> {
     // configuration file -> environment -> clap (command line still wins)
     let args: Vec<String> = std::env::args_os().map(|a| a.to_string_lossy().into_owned()).collect();
-    let cfg_root = crate::config::root_from_args(&args);
+    let cwd = std::env::current_dir().ok();
+    let root_given = std::env::var_os("SCRUTATE_ROOT").is_some() || args.iter().any(|a| a == "--root" || a.starts_with("--root="));
+    let (cfg_root, cfg_below) = match &cwd {
+        Some(cwd) if !root_given => nearest_config(cwd),
+        _ => (crate::config::root_from_args(&args), Vec::new()),
+    };
     let cfg_path = crate::config::locate(&cfg_root);
+    let local = cfg_path.as_deref() == Some(cfg_root.join(CONFIG_FILE).as_path());
     // a bad file stops the commands that read it, after clap has had --help and --version
-    let cfg_error = cfg_path.as_deref().and_then(|p| crate::config::load(p).map(|cfg| crate::config::apply_as_env(&cfg)).err());
-    let cli = if matches!(args.get(1).map(String::as_str), Some("grep" | "g")) {
+    let cfg_error = cfg_path.as_deref().and_then(|p| {
+        crate::config::load(p)
+            .map(|mut cfg| {
+                if local && !cfg_below.is_empty() {
+                    cfg.grep.globs = cfg.grep.globs.iter().filter_map(|g| rebase_glob(g, &cfg_below)).collect();
+                }
+                crate::config::apply_as_env(&cfg)
+            })
+            .err()
+    });
+    let mut cli = if matches!(args.get(1).map(String::as_str), Some("grep" | "g")) {
         let GrepCli { root, no_color, cmd: GrepCmd::Grep(grep) } = GrepCli::parse();
         Cli { root, no_color, max_bytes: None, offset: 0, cmd: Cmd::Grep(grep) }
     } else {
@@ -506,6 +665,18 @@ pub fn run() -> Result<i32> {
         }
         diagnostic("warning", &format!("{e:#}"));
     }
+    let uses_index = match &cli.cmd {
+        Cmd::Grep(g) => g.index || g.symbols,
+        Cmd::Config | Cmd::Completions { .. } | Cmd::Languages { .. } | Cmd::Sexp { .. } | Cmd::Watch { path: Some(_) } => false,
+        _ => true,
+    };
+    if uses_index && !root_given {
+        if let Some(top) = cwd.as_deref().and_then(index_above) {
+            eprintln!("[scrutate] using the index in {}", top.display());
+            cli.root = top;
+        }
+    }
+    let here = Here::new(cwd, &cli.root);
     let no_color = cli.no_color;
     let page = (cli.max_bytes.unwrap_or(usize::MAX), cli.offset);
     match cli.cmd {
@@ -638,7 +809,12 @@ pub fn run() -> Result<i32> {
                 }
             }
             let roots: Vec<PathBuf> = if paths.is_empty() { vec![PathBuf::from(".")] } else { paths };
-            grep_command(roots, o, GrepOutput { files_with_matches, count, sort, json, stats, symbols, root: cli.root, no_color, indexed: index, update })
+            let under = here.below();
+            grep_command(
+                roots,
+                o,
+                GrepOutput { files_with_matches, count, sort, json, stats, symbols, root: cli.root, no_color, indexed: index, update, under },
+            )
         }
         Cmd::Index { force, text, no_text } => {
             let progress = std::io::stderr().is_terminal();
@@ -676,35 +852,53 @@ pub fn run() -> Result<i32> {
         Cmd::Search { query, alt, also, k, why, json } => {
             let mut qs = vec![query.clone()];
             qs.extend(alt.iter().cloned());
-            let mut roots: Vec<PathBuf> = vec![cli.root.clone()];
-            roots.extend(also.iter().cloned());
-            let mut hits = Vec::new();
-            for root in &roots {
-                let mut s = open_fresh(root)?;
-                let mut part = if alt.is_empty() { s.search(&query, k, true)? } else { s.search_many(&qs, k, true)? };
-                if roots.len() > 1 {
-                    // cross-repository: the repository name becomes the first path component
-                    let label = root
-                        .canonicalize()
-                        .ok()
-                        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-                        .unwrap_or_else(|| root.display().to_string());
-                    for h in &mut part {
-                        h.path = format!("{label}/{}", h.path);
-                    }
+            // each repository once, whatever the spelling; the first is the current one
+            let mut roots: Vec<(PathBuf, PathBuf)> = Vec::new();
+            for root in std::iter::once(&cli.root).chain(&also) {
+                let canonical = std::fs::canonicalize(root).unwrap_or_else(|_| root.clone());
+                if !roots.iter().any(|(_, c)| *c == canonical) {
+                    roots.push((root.clone(), canonical));
                 }
-                hits.extend(part);
             }
+            // (hit, its repository) with the path a reader opens from here: another repository's
+            // results carry its path as given
+            let mut hits: Vec<(crate::search::Hit, usize)> = Vec::new();
+            for (i, (root, _)) in roots.iter().enumerate() {
+                let mut s = open_fresh(root)?;
+                let part = if alt.is_empty() { s.search(&query, k, true)? } else { s.search_many(&qs, k, true)? };
+                hits.extend(part.into_iter().map(|h| (h, i)));
+            }
+            let shown = |(h, i): &(crate::search::Hit, usize)| {
+                if *i == 0 {
+                    h.path.clone()
+                } else {
+                    format!("{}/{}", roots[*i].0.to_string_lossy().trim_end_matches('/'), h.path)
+                }
+            };
             if roots.len() > 1 {
                 // the ranker's scores are comparable across repositories (same model, same features)
-                hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal).then(a.path.cmp(&b.path)));
+                hits.sort_by(|a, b| b.0.score.partial_cmp(&a.0.score).unwrap_or(std::cmp::Ordering::Equal).then_with(|| shown(a).cmp(&shown(b))));
                 hits.truncate(k);
             }
-            if json || hits.is_empty() {
-                print_hits(&hits, &qs, why, json)?;
+            let other = hits.iter().find(|(_, i)| *i > 0).map(|(_, i)| roots[*i].0.display().to_string());
+            if json && roots.len() > 1 {
+                let plain: Vec<crate::search::Hit> = hits.iter().map(|(h, _)| h.clone()).collect();
+                let mut v = hits_json(&plain);
+                for (rec, (_, i)) in v.as_array_mut().into_iter().flatten().zip(&hits) {
+                    rec["root"] = serde_json::json!(roots[*i].1.to_string_lossy());
+                }
+                println!("{}", serde_json::to_string_pretty(&v)?);
             } else {
-                let words: Vec<String> = qs.iter().flat_map(|q| query_words(q)).collect();
-                println!("{}", crate::ops::paged(crate::fmt::hit_blocks(&hits, &words, true, why), "results", page.0, page.1));
+                let hits: Vec<crate::search::Hit> = hits.iter().map(|x| crate::search::Hit { path: shown(x), ..x.0.clone() }).collect();
+                if json || hits.is_empty() {
+                    print_hits(&hits, &qs, why, json)?;
+                } else {
+                    let words: Vec<String> = qs.iter().flat_map(|q| query_words(q)).collect();
+                    println!("{}", crate::ops::paged(crate::fmt::hit_blocks(&hits, &words, true, why), "results", page.0, page.1));
+                }
+            }
+            if let (Some(other), false) = (other, json) {
+                eprintln!("[scrutate] to ask about a result of another repository, give its path as --root (scrutate --root {other} symbol NAME)");
             }
             Ok(if hits.is_empty() { 1 } else { 0 })
         }
@@ -715,9 +909,12 @@ pub fn run() -> Result<i32> {
                     println!("configuration file: {}", p.display());
                     println!("{}", std::fs::read_to_string(p)?.trim_end());
                 }
-                None => println!(
-                    "no configuration file (looked for $SCRUTATE_CONFIG, {}/.scrutate.toml, $XDG_CONFIG_HOME/scrutate/config.toml)",
+                None if root_given => println!(
+                    "no configuration file (looked for $SCRUTATE_CONFIG, {}/{CONFIG_FILE}, $XDG_CONFIG_HOME/scrutate/config.toml)",
                     cfg_root.display()
+                ),
+                None => println!(
+                    "no configuration file (looked for $SCRUTATE_CONFIG, {CONFIG_FILE} here and in each directory above up to the repository top, $XDG_CONFIG_HOME/scrutate/config.toml)"
                 ),
             }
             println!("\nenvironment in effect:");
@@ -729,14 +926,17 @@ pub fn run() -> Result<i32> {
             Ok(0)
         }
         Cmd::Find { query, k, json } => find_command(&cli.root, &query, k, json, no_color),
-        Cmd::Symbol { name, json } => run_op(&cli.root, Op::Symbol { name, limit: crate::ops::SYMBOL_LIMIT }, json, page),
-        Cmd::Callers { name, json } => run_op(&cli.root, Op::Callers { name, limit: crate::ops::CALLERS_LIMIT }, json, page),
-        Cmd::Callees { name, json } => run_op(&cli.root, Op::Callees { name, limit: crate::ops::CALLEES_LIMIT }, json, page),
-        Cmd::Deps { file, json } => run_op(&cli.root, Op::Deps { path: file }, json, page),
-        Cmd::Rdeps { target, json } => run_op(&cli.root, Op::Rdeps { target }, json, page),
-        Cmd::Outline { file, json } => run_op(&cli.root, Op::Outline { path: file }, json, page),
-        Cmd::Refs { name, json, max_results, def, textual } => run_op(&cli.root, Op::Refs { name, max_results, textual, def }, json, page),
-        Cmd::Similar { target, k, json } => run_op(&cli.root, Op::Similar { target, k }, json, page),
+        Cmd::Symbol { name, limit, json } => run_op(&cli.root, Op::Symbol { name: here.location(&name), limit }, json, page),
+        Cmd::Callers { name, limit, json } => run_op(&cli.root, Op::Callers { name: here.location(&name), limit }, json, page),
+        Cmd::Callees { name, limit, json } => run_op(&cli.root, Op::Callees { name: here.location(&name), limit }, json, page),
+        Cmd::Deps { file, json } => run_op(&cli.root, Op::Deps { path: here.path(&file) }, json, page),
+        Cmd::Rdeps { target, json } => run_op(&cli.root, Op::Rdeps { target: here.path(&target) }, json, page),
+        Cmd::Outline { file, json } => run_op(&cli.root, Op::Outline { path: here.path(&file) }, json, page),
+        Cmd::Refs { name, json, max_results, def, textual } => {
+            let def = def.map(|d| if crate::intel::location(&d).is_some() { here.location(&d) } else { here.path(&d) });
+            run_op(&cli.root, Op::Refs { name, max_results, textual, def }, json, page)
+        }
+        Cmd::Similar { target, k, json } => run_op(&cli.root, Op::Similar { target: here.location(&target), k }, json, page),
         Cmd::Dupes { min_tokens, threshold, limit, json } => run_op(&cli.root, Op::Dupes { min_tokens, threshold, limit }, json, page),
         Cmd::Tsquery { lang, query, paths, limit, json, no_cache } => {
             // streamed: one JSON object or one text line per capture, in path order
@@ -744,6 +944,7 @@ pub fn run() -> Result<i32> {
             let mut w = std::io::BufWriter::new(stdout.lock());
             let mut err: Option<std::io::Error> = None;
             let cache_root = (!no_cache).then_some(cli.root.as_path());
+            let paths: Vec<PathBuf> = paths.iter().map(|p| here.shell(p)).collect();
             // with a size limit or an offset the lines are collected and paged as other answers are
             let paging = !json && page != (usize::MAX, 0);
             let mut lines: Vec<String> = Vec::new();
@@ -973,18 +1174,25 @@ struct GrepOutput {
     indexed: bool,
     /// refresh that index first
     update: bool,
+    /// with `indexed`: only the files under this directory of the root (the current directory),
+    /// named from it, as the walk names them
+    under: Option<String>,
 }
 
 /// The canonical root and the indexed files that can match `o` (after an incremental refresh of
-/// the text index when `update`).
-fn indexed_candidates(root: &Path, o: &Options, update: bool) -> Result<(PathBuf, Vec<String>)> {
+/// the text index when `update`); with `under`, that directory of the root and the files in it.
+fn indexed_candidates(root: &Path, o: &Options, update: bool, under: Option<&str>) -> Result<(PathBuf, Vec<String>)> {
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     if update {
         crate::textindex::update(&root, false, false)?;
     }
     let ti = crate::textindex::TextIndex::open(&root)?
         .ok_or_else(|| anyhow::anyhow!("no text index in {}; build it with `scrutate index --text` (or add --update)", root.display()))?;
-    let files = ti.candidates(&crate::textindex::query_for(o)?, o.multiline)?;
+    let mut files = ti.candidates(&crate::textindex::query_for(o)?, o.multiline)?;
+    if let Some(dir) = under {
+        files = files.into_iter().filter_map(|f| f.strip_prefix(dir).and_then(|f| f.strip_prefix('/')).map(String::from)).collect();
+        return Ok((root.join(dir), files));
+    }
     Ok((root, files))
 }
 
@@ -1100,7 +1308,7 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
             }
         };
         if out.indexed {
-            let (root, files) = indexed_candidates(&out.root, &o, out.update)?;
+            let (root, files) = indexed_candidates(&out.root, &o, out.update, out.under.as_deref())?;
             instant::search_files(&root, files, &o, Arc::clone(&cancel), &mut sink)?
         } else {
             instant::search(&roots, &o, Arc::clone(&cancel), &mut sink)?
@@ -1194,7 +1402,7 @@ fn warn_failures(stats: &instant::Stats) {
 fn grep_plain(roots: Vec<PathBuf>, o: Options, out: GrepOutput, cancel: Arc<AtomicBool>) -> Result<i32> {
     let sink = Arc::new(instant::PlainSink::new(Box::new(std::io::stdout())));
     let stats = if out.indexed {
-        let (root, files) = indexed_candidates(&out.root, &o, out.update)?;
+        let (root, files) = indexed_candidates(&out.root, &o, out.update, out.under.as_deref())?;
         instant::search_files_plain(&root, files, &o, Arc::clone(&cancel), Arc::clone(&sink))?
     } else {
         instant::search_plain(&roots, &o, Arc::clone(&cancel), Arc::clone(&sink))?
@@ -1287,6 +1495,7 @@ fn find_command(root: &Path, query: &str, k: usize, json: bool, no_color: bool) 
                 no_color,
                 indexed: false,
                 update: false,
+                under: None,
             },
         );
         // nothing grepped, or not a valid regex: words with punctuation, for the ranked search
@@ -1318,6 +1527,7 @@ fn find_command(root: &Path, query: &str, k: usize, json: bool, no_color: bool) 
             no_color,
             indexed: false,
             update: false,
+            under: None,
         },
     )
 }

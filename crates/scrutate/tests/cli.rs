@@ -212,12 +212,58 @@ fn search_also_merges_repositories() {
     let (code, out, _) = run_in(&a.root, &["search", "renew an expired access token", "-k", "3", "--also", b.root.to_str().unwrap(), "--json"], &[]);
     assert_eq!(code, 0, "{out}");
     let hits: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
-    let label = b.root.file_name().unwrap().to_string_lossy().into_owned();
-    assert!(
-        hits.iter().any(|h| h["path"].as_str().unwrap().starts_with(&format!("{label}/lib/tokens.py"))),
-        "cross-repository hit with repository prefix: {out}"
+    let canon = |p: &Path| fs::canonicalize(p).unwrap().to_string_lossy().into_owned();
+    assert!(hits.iter().any(|h| h["path"] == "lib/tokens.py" && h["root"] == canon(&b.root)), "the other repository's root in a field: {out}");
+    assert!(hits.iter().any(|h| h["path"].as_str().unwrap().starts_with("pkg/") && h["root"] == canon(&a.root)), "{out}");
+}
+
+#[test]
+fn symbol_callers_and_callees_take_a_limit() {
+    let r = python_repo("limits");
+    assert_eq!(r.run(&["index"]).0, 0);
+    let (code, out, _) = r.run(&["symbol", "--limit", "1", "make_widget_4"]);
+    assert_eq!(code, 0);
+    assert_eq!(out.lines().filter(|l| l.contains("[function]")).count(), 1, "{out}");
+    for cmd in ["symbol", "callers", "callees"] {
+        let (code, out, _) = r.run(&[cmd, "--json", "--limit", "1", "make_widget_4"]);
+        assert_eq!(code, 0, "{cmd}");
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let items = v.as_array().or_else(|| v["resolved"].as_array()).map_or(0, |a| a.len());
+        assert!(items <= 1, "{cmd}: {out}");
+    }
+    let (code, out, _) = r.run(&["callers", "--limit", "1", "make_widget_4"]);
+    assert_eq!(code, 0);
+    assert!(out.contains("use_4"), "{out}");
+}
+
+#[test]
+fn search_also_prints_other_repositories_by_the_path_given() {
+    let outer = Repo::new("also_paths");
+    let body = |doc: &str| format!("def renew_token(session):\n    \"\"\"{doc}\"\"\"\n    return session\n");
+    outer.write("one/src/auth.py", body("Renew an expired session token.").as_bytes());
+    outer.write("x/one/src/auth.py", body("Renew a token, in another repository named one.").as_bytes());
+    outer.write(
+        "two/src/db.py",
+        b"def renew_token(conn):\n    \"\"\"Renew the token of a connection.\"\"\"\n    return conn\n\n\ndef only_in_two():\n    return 2\n",
     );
-    assert!(hits.iter().any(|h| h["path"].as_str().unwrap().starts_with(&format!("{}/pkg/", a.root.file_name().unwrap().to_string_lossy()))), "{out}");
+    for d in ["one", "x/one", "two"] {
+        assert_eq!(run_in(&outer.root.join(d), &["index"], &[]).0, 0);
+    }
+    let one = outer.root.join("one");
+    let (code, out, err) =
+        run_in(&one, &["search", "renew token", "-k", "10", "--also", "../x/one", "--also", "../two", "--also", ".", "--also", "../one/"], &[]);
+    assert_eq!(code, 0, "{err}");
+    let heads: Vec<&str> = out.lines().filter(|l| !l.starts_with(' ') && !l.is_empty()).map(|l| l.split("  ").next().unwrap()).collect();
+    let mut sorted = heads.clone();
+    sorted.sort();
+    assert_eq!(sorted, ["../two/src/db.py:1-3", "../two/src/db.py:6-7", "../x/one/src/auth.py:1-3", "src/auth.py:1-3"], "each repository once: {out}");
+    assert_eq!(err.lines().filter(|l| l.contains("--root")).count(), 1, "{err}");
+    // a location of another repository is asked about with --root
+    let (code, out, _) = run_in(&one, &["--root", "../two", "symbol", "src/db.py:6"], &[]);
+    assert!(code == 0 && out.contains("only_in_two"), "{out}");
+    // without --also, no hint
+    let (_, _, err) = run_in(&one, &["search", "renew token"], &[]);
+    assert!(!err.contains("--root"), "{err}");
 }
 
 #[test]
@@ -647,6 +693,162 @@ fn indexed_grep_equals_walk() {
     // flags that change the file set are refused rather than silently ignored
     let (code, _, err) = r.run(&["grep", "--index", "--hidden", "x"]);
     assert_eq!(code, 2, "{err}");
+}
+
+/// A repository with `.git` and its index at the top, for commands run from `src/deep`.
+fn nested_repo(name: &str) -> Repo {
+    let r = Repo::new(name);
+    fs::create_dir_all(r.root.join(".git")).unwrap();
+    r.write("top.py", b"def top_fn():\n    return 1\n");
+    r.write("src/s.py", b"from top import top_fn\n\n\ndef src_fn():\n    return top_fn()\n");
+    r.write("src/deep/d.py", b"from src.s import src_fn\n\n\ndef deep_fn():\n    return src_fn()\n");
+    assert_eq!(r.run(&["index"]).0, 0);
+    r
+}
+
+#[test]
+fn index_commands_in_a_subdirectory_answer_from_the_index_above() {
+    let r = nested_repo("subdir");
+    let deep = r.root.join("src/deep");
+    let run = |args: &[&str]| run_in(&deep, args, &[]);
+    let top = fs::canonicalize(&r.root).unwrap().to_string_lossy().into_owned();
+    let (code, out, err) = run(&["symbol", "top_fn"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.starts_with("top.py:1"), "paths stay relative to the root: {out}");
+    assert_eq!(err.lines().filter(|l| l.contains(&top)).count(), 1, "one line names the root: {err}");
+    assert!(!err.contains("indexed"), "{err}");
+    // a path is read from here, or as an answer printed it (from the root)
+    for (args, want) in [
+        (&["outline", "d.py"][..], "deep_fn"),
+        (&["outline", "./d.py"], "deep_fn"),
+        (&["outline", "src/deep/d.py"], "deep_fn"),
+        (&["outline", "../s.py"], "src_fn"),
+        (&["outline", "../../top.py"], "top_fn"),
+        (&["outline", "top.py"], "top_fn"),
+        (&["deps", "d.py"], "src.s"),
+        (&["rdeps", "../s.py"], "src/deep/d.py"),
+        (&["refs", "src_fn", "--def", "../s.py"], "src/deep/d.py:5"),
+        (&["refs", "src_fn", "--def", "../s.py:4"], "src/deep/d.py:5"),
+        (&["callers", "../s.py:4"], "deep_fn"),
+        (&["callees", "d.py:4"], "src_fn"),
+        (&["symbol", "d.py:4"], "deep_fn"),
+        (&["similar", "d.py:4"], "src/s.py"),
+        (&["search", "deep"], "src/deep/d.py"),
+        (&["find", "deep"], "src/deep/d.py"),
+        (&["stats"], "\"files\":3"),
+        (&["check"], "OK"),
+    ] {
+        let (code, out, err) = run(args);
+        assert!(code == 0 && out.contains(want), "{args:?}: {code} {out}{err}");
+        assert_eq!(err.lines().filter(|l| l.contains(&top)).count(), 1, "{args:?}: {err}");
+    }
+    // tsquery reads paths from here and keeps its cache in the index above
+    let q = "(function_definition name: (identifier) @n)";
+    let (_, out, _) = run(&["tsquery", "python", q]);
+    assert!(out.contains("deep_fn") && !out.contains("top_fn"), "{out}");
+    let (_, out, _) = run(&["tsquery", "python", q, "../../top.py"]);
+    assert!(out.contains("top_fn"), "{out}");
+    let (_, out, _) = run(&["tsquery", "python", q, "top.py"]);
+    assert!(out.contains("top_fn"), "{out}");
+    // grep --index answers as the walk does from here
+    let walk = run(&["grep", "--sort", "-F", "_fn"]);
+    let (code, out, err) = run(&["grep", "--sort", "--index", "-F", "_fn"]);
+    assert_eq!((code, &out), (walk.0, &walk.1), "{err}");
+    assert!(out.starts_with("d.py:"), "{out}");
+    assert_eq!(walk.2, "", "a plain grep does not use the index");
+    // index updates the index above
+    r.write("src/deep/e.py", b"def extra_fn():\n    pass\n");
+    let (code, out, _) = run(&["index"]);
+    assert!(code == 0 && out.starts_with("4 files"), "{out}");
+    assert_eq!(r.run(&["symbol", "extra_fn"]).0, 0);
+    assert!(!deep.join(".scrutate").exists(), "no index in the subdirectory");
+    // --root is taken as given
+    let (code, _, _) = run(&["--root", ".", "symbol", "deep_fn"]);
+    assert_eq!(code, 0);
+    assert!(deep.join(".scrutate").exists());
+    // with no index here or above, the current directory is indexed, as before
+    let bare = Repo::new("subdir_bare");
+    bare.write("a/b.py", b"def bare_fn():\n    pass\n");
+    let (code, _, err) = run_in(&bare.root.join("a"), &["symbol", "bare_fn"], &[]);
+    assert_eq!(code, 0, "{err}");
+    assert!(bare.root.join("a/.scrutate").exists() && !bare.root.join(".scrutate").exists());
+}
+
+fn sorted_lines(out: &str) -> Vec<String> {
+    let mut v: Vec<String> = out.lines().map(String::from).collect();
+    v.sort();
+    v
+}
+
+#[test]
+fn the_configuration_file_is_the_nearest_one_up_to_the_repository_top() {
+    let outer = Repo::new("subcfg");
+    outer.write(".scrutate.toml", b"[grep]\nglobs = [\"!*.md\"]\n");
+    outer.write("repo/.git/HEAD", b"ref: refs/heads/main\n");
+    outer.write("repo/.scrutate.toml", b"[grep]\nglobs = [\"!*.py\", \"!src/deep/gen/**\", \"!src/*/skip.txt\"]\n");
+    for f in [
+        "repo/top.py",
+        "repo/src/deep/d.py",
+        "repo/src/deep/note.txt",
+        "repo/src/deep/gen/g.txt",
+        "repo/src/deep/skip.txt",
+        "repo/src/other.txt",
+        "repo/src/deep/doc.md",
+    ] {
+        outer.write(f, b"x_fn\n");
+    }
+    let repo = outer.root.join("repo");
+    let deep = repo.join("src/deep");
+    let files = |cwd: &Path, args: &[&str], env: &[(&str, &str)]| {
+        let (_, out, err) = run_in(cwd, &[&["grep", "-l"][..], args, &["x_fn"]].concat(), env);
+        assert_eq!(err, "", "a plain grep names no root");
+        sorted_lines(&out)
+    };
+    // globs apply relative to the file's directory, from the top and from below
+    assert_eq!(files(&repo, &[], &[]), ["src/deep/doc.md", "src/deep/note.txt", "src/other.txt"]);
+    assert_eq!(files(&deep, &[], &[]), ["doc.md", "note.txt"]);
+    let (_, out, _) = run_in(&deep, &["config"], &[]);
+    assert!(out.contains(&format!("{}", repo.join(".scrutate.toml").display())), "{out}");
+    // a nearer file wins
+    outer.write("repo/src/.scrutate.toml", b"[grep]\nglobs = [\"!*.txt\"]\n");
+    assert_eq!(files(&deep, &[], &[]), ["d.py", "doc.md"]);
+    fs::remove_file(repo.join("src/.scrutate.toml")).unwrap();
+    // the file above the repository top is not read
+    fs::remove_file(repo.join(".scrutate.toml")).unwrap();
+    assert!(files(&deep, &[], &[]).contains(&"doc.md".to_string()));
+    // SCRUTATE_CONFIG and --root choose the file as before
+    let cfg = outer.root.join("other.toml");
+    fs::write(&cfg, b"[grep]\nglobs = [\"!*.txt\"]\n").unwrap();
+    assert_eq!(files(&deep, &[], &[("SCRUTATE_CONFIG", cfg.to_str().unwrap())]), ["d.py", "doc.md"]);
+    outer.write("repo/src/deep/.scrutate.toml", b"[grep]\nglobs = [\"!d.py\"]\n");
+    let (_, out, _) = run_in(&repo.join("src"), &["grep", "--root", "deep", "-l", "x_fn", "deep"], &[]);
+    assert_eq!(sorted_lines(&out), ["deep/doc.md", "deep/gen/g.txt", "deep/note.txt", "deep/skip.txt"]);
+}
+
+#[test]
+fn serve_and_watch_in_a_subdirectory_use_the_index_above() {
+    use std::io::BufRead;
+    let r = nested_repo("subserve");
+    let deep = r.root.join("src/deep");
+    let mut child = Command::new(BIN).arg("serve").current_dir(&deep).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    for m in [
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"find_symbol","arguments":{"name":"top_fn"}}}"#,
+    ] {
+        writeln!(stdin, "{m}").unwrap();
+    }
+    drop(stdin);
+    let out = child.wait_with_output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("top.py:1"), "{text}");
+    let mut child = Command::new(BIN).arg("watch").current_dir(&deep).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().unwrap();
+    let stderr = child.stderr.take().unwrap();
+    let _guard = KillOnDrop(child);
+    let top = fs::canonicalize(&r.root).unwrap();
+    let line = std::io::BufReader::new(stderr).lines().map_while(Result::ok).find(|l| l.contains("watching")).unwrap();
+    assert!(line.ends_with(&format!("watching {}", top.display())), "{line}");
+    assert!(!deep.join(".scrutate").exists());
 }
 
 #[test]

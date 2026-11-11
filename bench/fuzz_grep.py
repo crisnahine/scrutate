@@ -172,6 +172,10 @@ while time.time() - t0 < SECONDS:
         if r == s and (rc == sc or rc == 2):
             continue
         changed = only(r, s) + only(s, r)
+        if ("-v" in a or "^$" in a) and changed and any(x in a for x in ("-I", "--no-filename")):
+            # lines without their file's path: ask both again with it, to see which files differ
+            named = ["-H" if x in ("-I", "--no-filename") else x for x in a]
+            changed = only(run("rg", named)[0], run("sc", named)[0]) + only(run("sc", named)[0], run("rg", named)[0])
         if ("-v" in a or "^$" in a) and changed and all(in_nul_file(l) for l in changed):
             known += 1
             continue
