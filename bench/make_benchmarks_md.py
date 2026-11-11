@@ -143,14 +143,18 @@ def main() -> int:
         w(f"| {LABEL.get(s['tool'], s['tool'])} | {s['startup_median_ms']:.1f} | {s['startup_min_ms']:.1f} |")
     w("")
     # concurrency
+    rounds = sorted({x["rounds"] for x in d["concurrency"] if "rounds" in x})
     w("## Concurrency (4 identical searches at once, aggregate wall ms, common literal)\n")
+    if rounds:
+        w(f"Median over {' or '.join(map(str, rounds))} rounds. Each process writes to a file of its own, and every round checks each output's "
+          "line count against the reference; `wrong` = a tool whose output differed (not timed further).\n")
     w("| Corpus | " + " | ".join(LABEL[t] for t in tools) + " |")
     w("|---|" + "---|" * len(tools))
     for c in corpora:
         vals = []
         for t in tools:
             r = next((x for x in d["concurrency"] if x["corpus"] == c and x["tool"] == t), None)
-            vals.append(fmt_ms(r["wall_ms"]) if r else "n/a")
+            vals.append("n/a" if r is None else "wrong" if r.get("status") == "wrong" else fmt_ms(r["wall_ms"]))
         w(f"| {c} | " + " | ".join(vals) + " |")
     w("")
     # structural

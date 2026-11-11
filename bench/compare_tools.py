@@ -9,7 +9,8 @@ For every (corpus, query, tool) the harness
   2. runs it N more times, warm cache, taking the median and minimum wall time, CPU time
      (user+sys) and peak RSS from the child's rusage (os.wait4);
   3. optionally drops the page cache (root only) and measures one cold run.
-Startup cost is measured on an empty directory; concurrency as K simultaneous processes.
+Startup cost is measured on an empty directory; concurrency as K simultaneous processes, each with
+its own output file checked against the reference count, N rounds per cell.
 
 Only tools found on this machine are measured; the others are reported as "not available" so the
 table never implies a comparison that did not happen. Tool paths are absolute: shell functions and
@@ -258,10 +259,13 @@ def timed_rusage(cmd: list[str], cwd: str, executable: str | None = None, count_
 
 
 def peak_rss_mb(cmd: list[str], cwd: str, executable: str | None = None) -> float:
+    """Output goes to a file in both branches: on /dev/null GNU grep stops reading a file at its
+    first match and ugrep stops at the first match of all, which is less work than the search."""
     if not os.path.isdir("/proc"):
         # macOS: /usr/bin/time -l reports the child's own maximum resident set size, in bytes
-        r = subprocess.run(["/usr/bin/time", "-l", executable or cmd[0], *cmd[1:]], cwd=cwd, stdout=subprocess.DEVNULL,
-                           stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, text=True)
+        with tempfile.TemporaryFile() as fo:
+            r = subprocess.run(["/usr/bin/time", "-l", executable or cmd[0], *cmd[1:]], cwd=cwd, stdout=fo,
+                               stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, text=True)
         for line in r.stderr.splitlines():
             if "maximum resident set size" in line:
                 return int(line.split()[0]) / 2**20
@@ -277,7 +281,8 @@ def _peak_rss_proc(cmd: list[str], cwd: str, executable: str | None = None) -> f
     least the harness's own RSS. Sampling the child's own VmHWM avoids that floor; a peak shorter
     than the sampling interval at the very end of a run could be missed."""
     import threading
-    p = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, executable=executable)
+    fo = tempfile.TemporaryFile()
+    p = subprocess.Popen(cmd, cwd=cwd, stdout=fo, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, executable=executable)
     peak = [0]
     stop = threading.Event()
 
@@ -299,6 +304,7 @@ def _peak_rss_proc(cmd: list[str], cwd: str, executable: str | None = None) -> f
     p.wait()
     stop.set()
     t.join()
+    fo.close()
     return peak[0] / 1024
 
 
@@ -449,23 +455,54 @@ def bench_startup(tools: dict, runs: int) -> list[dict]:
     return rows
 
 
-def bench_concurrency(tools: dict, corpora: dict, k: int = 4) -> list[dict]:
+def reference_count(tools: dict, text_rows: list[dict], cname: str, cdir: str, q: dict) -> int | None:
+    """Matching lines of `q` by the text phase's rule (ripgrep's count, else scrutate's), from its
+    rows when it ran, else from one run of that tool."""
+    counts = {r["tool"]: r["matches"] for r in text_rows if r["corpus"] == cname and r["query"] == q["name"] and r.get("status") == "ok"}
+    if "rg" in counts or "scrutate" in counts:
+        return counts.get("rg", counts.get("scrutate"))
+    for tool in ("rg", "scrutate"):
+        if tools.get(tool, {}).get("exe"):
+            r = timed_rusage(command(tool, tools[tool], q, cdir), cdir)
+            return count_lines(q["mode"], r["out"]) if r["rc"] in (0, 1) else None
+    return None
+
+
+def bench_concurrency(tools: dict, corpora: dict, runs: int, text_rows: list[dict], k: int = 4) -> list[dict]:
     """K identical searches at once: aggregate wall time (how a shared CI box or an editor firing
-    several searches behaves)."""
+    several searches behaves). Each process writes to a file of its own, and every round checks each
+    output's line count against the reference; a tool that disagrees is `wrong` and not timed further."""
     rows = []
-    q = {"pattern": "import", "mode": "literal"}
+    q = next(x for x in QUERIES if x["name"] == "common literal")
     for cname, cdir in corpora.items():
+        expected = reference_count(tools, text_rows, cname, cdir, q)
         for tool, t in tools.items():
             if not t.get("exe") or tool in ("ast-grep", "git"):
                 continue
             cmd = command(tool, t, q, cdir)
             exe = t["exe"] if t.get("argv0") else None
-            t0 = time.perf_counter()
-            procs = [subprocess.Popen(cmd, cwd=cdir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, executable=exe) for _ in range(k)]
-            for p in procs:
-                p.wait()
-            wall = time.perf_counter() - t0
-            rows.append({"corpus": cname, "tool": tool, "k": k, "wall_ms": 1000 * wall})
+            row = {"corpus": cname, "tool": tool, "k": k, "expected": expected, "status": "ok"}
+            walls = []
+            for _ in range(runs):
+                outs = [tempfile.TemporaryFile() for _ in range(k)]
+                t0 = time.perf_counter()
+                procs = [subprocess.Popen(cmd, cwd=cdir, stdout=fo, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, executable=exe) for fo in outs]
+                for p in procs:
+                    p.wait()
+                walls.append(time.perf_counter() - t0)
+                got = []
+                for fo in outs:
+                    fo.seek(0)
+                    # output lines are never empty (path:line:text), so newlines count them as count_lines does
+                    got.append(sum(chunk.count(b"\n") for chunk in iter(lambda: fo.read(1 << 20), b"")))
+                    fo.close()
+                if expected is not None and any(n != expected for n in got):
+                    row.update({"status": "wrong", "matches": got})
+                    break
+            if row["status"] == "ok":
+                row.update({"rounds": len(walls), "wall_ms": 1000 * statistics.median(walls), "wall_min_ms": 1000 * min(walls), "walls_ms": [1000 * w for w in walls]})
+            rows.append(row)
+            print(f"  concurrency {cname:8} {tool:8} {row['status']} {row.get('wall_ms', float('nan')):9.1f} ms", file=sys.stderr)
     return rows
 
 
@@ -608,7 +645,7 @@ def main() -> int:
         res["startup"] = bench_startup(tools, a.runs)
         save()
     if "concurrency" in phases:
-        res["concurrency"] = bench_concurrency(tools, corpora)
+        res["concurrency"] = bench_concurrency(tools, corpora, a.runs, res.get("text_search", []))
         save()
     if "structural" in phases:
         res["structural"] = bench_structural(tools, corpora, max(1, a.runs // 2))
