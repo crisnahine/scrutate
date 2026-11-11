@@ -783,3 +783,42 @@ fn every_outlined_sample_name_is_found_by_symbol() {
     assert!(total > 300, "{total} outline entries");
     assert!(misses.is_empty(), "{} of {total} not found:\n{}", misses.len(), misses.join("\n"));
 }
+
+#[test]
+fn refs_callers_and_callees_take_the_names_symbol_takes() {
+    let r = Repo::new(
+        "refs_typed",
+        &[
+            ("conv.scm", "(define (list->vec l)\n  (list->vector l))\n\n(define (use-it)\n  (list->vec (list 1 2)))\n"),
+            ("mod.rb", "class Foo::Bar\n  def self.call(x)\n    x\n  end\nend\n\ndef run\n  Foo::Bar.call(1)\nend\n"),
+            ("cart.js", "class Cart {\n  #secret() {\n    return 1;\n  }\n  open() {\n    return this.#secret();\n  }\n}\n"),
+        ],
+    );
+    let secret = pairs(&[("cart.js:2", "cart.js"), ("cart.js:6", "cart.js")]);
+    assert_eq!(r.resolved("#secret"), secret);
+    assert_eq!(r.resolved("Cart.#secret"), secret);
+    for (name, def, cols) in [("list->vec", "conv.scm", [10, 4]), ("Foo::Bar.call", "mod.rb", [12, 12])] {
+        let v = r.json(&["refs", name, "--json"]);
+        let defs: Vec<&str> = v["definitions"].as_array().unwrap().iter().map(|d| d["path"].as_str().unwrap()).collect();
+        assert_eq!(defs, [def], "{name}: {v}");
+        let at: Vec<u64> = v["unresolved"].as_array().unwrap().iter().map(|u| u["column"].as_u64().unwrap()).collect();
+        assert_eq!(at, cols, "{name}: {v}");
+        let t = r.json(&["refs", name, "--textual", "--json"]);
+        assert_eq!(t["definitions"].as_array().unwrap().len(), 1, "{name}: {t}");
+    }
+    let (_, out) = r.run(&["callers", "Foo::Bar.call"]);
+    assert!(out.contains("mod.rb:7-9  [function] run"), "{out}");
+    let (_, out) = r.run(&["callees", "run"]);
+    assert!(out.contains("mod.rb:2-4  [method] Foo::Bar.call"), "{out}");
+}
+
+#[test]
+fn similar_on_a_constant_says_constants_are_not_compared() {
+    let r = Repo::new("similar_const", &[("k.py", "MAX_SIZE = 10\n\n\ndef grow(x):\n    return x + MAX_SIZE * 2 + len(str(x))\n")]);
+    let (code, out) = r.run(&["similar", "MAX_SIZE"]);
+    let (missing, _) = r.run(&["similar", "no_such_name"]);
+    assert_eq!(code, missing, "{out}");
+    assert_ne!(code, 0, "{out}");
+    assert!(out.contains("MAX_SIZE is a constant") && out.contains("not compared") && !out.contains("no vectors"), "{out}");
+    assert_eq!(out.trim().lines().count(), 1, "{out}");
+}

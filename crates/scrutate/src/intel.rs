@@ -258,6 +258,9 @@ pub fn locate(s: &Searcher, target: &str) -> Result<Option<ChunkRow>> {
 /// Chunks whose implementation vector is closest to the target's, with token-set Jaccard as a second opinion.
 pub fn similar(s: &mut Searcher, target: &str, k: usize) -> Result<Vec<(Hit, f32, f32)>> {
     let Some(row) = locate(s, target)? else { bail!("no symbol or location matches {}", echo(target)) };
+    if row.kind == "constant" {
+        bail!("{} is a constant: constants have no implementation vector and are not compared", shown(&row.qualname));
+    }
     let (_, b) = s.ix.lex()?.vec_of(row.id).ok_or_else(|| anyhow!("the index has no vectors (semantic model disabled)"))?;
     if b.iter().all(|x| *x == 0.0) {
         bail!("{} has no implementation vector (its body is too short to compare)", shown(&row.qualname));
@@ -730,10 +733,11 @@ pub fn group_text(g: &RefGroup) -> String {
 /// Definitions (index), callers (index) and every whole-word occurrence of `name` (Engine A),
 /// grouped by the enclosing symbol. Works without an index too (then only occurrences, ungrouped).
 pub fn references(s: &Searcher, name: &str, max_results: u64) -> Result<References> {
-    let definitions = definitions(&s.ix, name)?;
+    let bare = bare_name(s, name)?;
+    let definitions = definitions(&s.ix, &bare)?;
     let callers = s.callers(name, 200)?;
     let o = crate::instant::Options {
-        pattern: name.rsplit('.').next().unwrap_or(name).to_string(),
+        pattern: bare,
         mode: crate::instant::Mode::Literal,
         word: true,
         max_results: Some(max_results),
@@ -763,9 +767,21 @@ pub fn references_render(r: &References) -> String {
     out
 }
 
-/// All symbols named `name` anywhere (for `refs`): definitions by key.
-pub fn definitions(ix: &Index, name: &str) -> Result<Vec<ChunkRow>> {
-    let bare = name.rsplit('.').next().unwrap_or(name);
+/// The name the occurrences of `name` are written with: the stored name of a definition
+/// `find_symbol` finds for it that ends the typed text (`list->vec`, `#secret`, the `call` of
+/// `Foo::Bar.call`), else the last part of its dotted form.
+pub fn bare_name(s: &Searcher, name: &str) -> Result<String> {
+    let typed = name.trim();
+    let hits = s.find_symbol(typed, 50)?;
+    let found = hits.iter().map(|h| h.name.as_str()).filter(|n| !n.is_empty() && typed.ends_with(n)).max_by_key(|n| n.len());
+    Ok(match found {
+        Some(n) => n.to_string(),
+        None => crate::search::dotted(typed).rsplit('.').next().unwrap_or(typed).to_string(),
+    })
+}
+
+/// All symbols named `bare` anywhere (for `refs`): definitions by key.
+pub fn definitions(ix: &Index, bare: &str) -> Result<Vec<ChunkRow>> {
     let mut st =
         ix.db.prepare(&format!("SELECT {CHUNK_COLS} FROM chunks WHERE name_key=?1 AND kind != 'window' ORDER BY (name != ?2), is_test, path, start"))?;
     let rows = st.query_map(params![name_key(bare), bare], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;

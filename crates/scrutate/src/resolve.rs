@@ -201,17 +201,94 @@ const LOCAL_BINDERS: &[(&str, &str)] = &[
     ("variadic_parameter_declaration", "name"),
     ("var_spec", "name"),
     ("const_spec", "name"),
+    ("pair_pattern", "value"),
+    ("rest_pattern", ""),
+    ("catch_clause", "parameter"),
+    ("named_expression", "name"),
+    ("splat_pattern", ""),
 ];
 
-fn is_local_binder(n: Node) -> bool {
-    let Some(p) = n.parent() else { return false };
-    if p.kind() == "expression_list" {
-        // Go `a, b := ...` and `for k, v := range`
-        return p
-            .parent()
-            .is_some_and(|g| matches!(g.kind(), "short_var_declaration" | "range_clause") && g.child_by_field_name("left").map(|l| l.id()) == Some(p.id()));
+/// Rust patterns whose plain names bind; a capitalized one names a constant or a variant.
+const RUST_PATTERNS: &[&str] = &[
+    "tuple_struct_pattern",
+    "field_pattern",
+    "mut_pattern",
+    "ref_pattern",
+    "reference_pattern",
+    "captured_pattern",
+    "slice_pattern",
+    "or_pattern",
+    "match_pattern",
+    "let_condition",
+];
+
+fn is_local_binder(n: Node, src: &str) -> bool {
+    if matches!(n.kind(), "shorthand_property_identifier_pattern" | "shorthand_field_identifier") {
+        return true;
     }
-    LOCAL_BINDERS.iter().any(|(k, f)| *k == p.kind() && (f.is_empty() || p.child_by_field_name(f).map(|c| c.id()) == Some(n.id())))
+    let Some(p) = n.parent() else { return false };
+    let is = |f: &str, c: Node| p.child_by_field_name(f).map(|x| x.id()) == Some(c.id());
+    match p.kind() {
+        // Go `a, b := ...`, `for k, v := range`, `case v := <-ch` and `switch v := x.(type)`
+        "expression_list" => {
+            return p.parent().is_some_and(|g| {
+                let field = if g.kind() == "type_switch_statement" { "alias" } else { "left" };
+                matches!(g.kind(), "short_var_declaration" | "range_clause" | "receive_statement" | "type_switch_statement")
+                    && g.child_by_field_name(field).map(|l| l.id()) == Some(p.id())
+            })
+        }
+        // a Python `case` capture is one plain name; `case Color.RED` compares with a value
+        "dotted_name" => return p.named_child_count() == 1 && p.parent().is_some_and(|g| matches!(g.kind(), "case_pattern" | "keyword_pattern")),
+        "as_pattern" => return p.parent().is_some_and(|g| g.kind() == "case_pattern") && n.next_named_sibling().is_none(),
+        "tuple" => return p.parent().is_some_and(|g| g.kind() == "as_pattern_target"),
+        k if RUST_PATTERNS.contains(&k) => {
+            let field = if k == "field_pattern" || k == "let_condition" { "pattern" } else { "" };
+            return !text(n, src).starts_with(|c: char| c.is_uppercase()) && !is("type", n) && (field.is_empty() || is(field, n));
+        }
+        _ => {}
+    }
+    LOCAL_BINDERS.iter().any(|(k, f)| *k == p.kind() && (f.is_empty() || is(f, n)))
+}
+
+/// Whether the binder `b` reaches byte `at`: an `if let`, `while let` or `match` arm binds only
+/// in its own branch, a `catch` or Go statement initializer only in that statement, a Python
+/// parameter only in the function body, and a `let` or `for` not in its own value.
+fn visible(b: Node, at: usize) -> bool {
+    if b.start_byte() == at {
+        return true;
+    }
+    let within = |n: Option<Node>| n.is_some_and(|n| n.start_byte() <= at && at < n.end_byte());
+    let mut n = b;
+    while let Some(p) = n.parent() {
+        let k = p.kind();
+        if k.ends_with("pattern") || matches!(k, "expression_list" | "let_chain" | "default_parameter" | "typed_default_parameter" | "typed_parameter") {
+            n = p;
+            continue;
+        }
+        return match k {
+            "let_condition" => {
+                let mut c = p;
+                while let Some(g) = c.parent().filter(|g| g.kind() == "let_chain") {
+                    c = g;
+                }
+                let branch = c.parent();
+                !within(p.child_by_field_name("value")) && within(branch) && !within(branch.and_then(|g| g.child_by_field_name("alternative")))
+            }
+            "let_declaration" => !within(p.child_by_field_name("value")) && !within(p.child_by_field_name("alternative")),
+            "for_expression" => !within(p.child_by_field_name("value")),
+            "match_arm" | "catch_clause" | "type_switch_statement" => within(Some(p)),
+            // Python evaluates defaults and annotations in the scope around the function
+            "parameters" | "lambda_parameters" => within(p.parent().and_then(|f| f.child_by_field_name("body"))),
+            "receive_statement" | "range_clause" => within(p.parent()),
+            "short_var_declaration" => match p.parent() {
+                Some(g) if g.kind() == "for_clause" => within(g.parent()),
+                Some(g) if g.child_by_field_name("initializer").map(|i| i.id()) == Some(p.id()) => within(Some(g)),
+                _ => true,
+            },
+            _ => true,
+        };
+    }
+    true
 }
 
 /// The receiver or path in front of a member name (`obj` of `obj.N`, `a::b` of `a::b::N`).
@@ -238,6 +315,10 @@ fn declared(b: Node) -> (Option<Node>, Option<Node>) {
         let place = p.named_children(&mut cur).position(|c| c.id() == b.id());
         let value = place.and_then(|i| p.parent()?.child_by_field_name("right")?.named_child(i as u32));
         return (None, value);
+    }
+    if p.kind().ends_with("pattern") {
+        // the `type` of `Some(x)` or `P { x }` is the pattern's, not the binder's
+        return (None, None);
     }
     let value = match p.kind() {
         "assignment" => p.child_by_field_name("right"),
@@ -711,13 +792,17 @@ impl<'a> Resolver<'a> {
                 }
             }
         }
-        if shadowed(lang, node, name, &fi.src) {
+        // an import in the function around the use (Python `import os as name`, a `use` in a Rust body)
+        let func = enclosing_function(node).map(|f| f.byte_range());
+        let local_import = |b: &&Binding| b.local == name && func.as_ref().is_some_and(|r| b.sites.iter().any(|s| r.contains(s)));
+        let local_import = fi.bindings.iter().find(local_import).cloned();
+        if local_import.is_none() && shadowed(lang, node, name, &fi.src) {
             return Err("local variable");
         }
-        if let Some(d) = top_level(fi, name) {
+        if let Some(d) = top_level(fi, name).filter(|_| local_import.is_none()) {
             return Ok((d.id, "module"));
         }
-        if let Some(b) = fi.bindings.iter().find(|b| b.local == name).cloned() {
+        if let Some(b) = local_import.or_else(|| fi.bindings.iter().find(|b| b.local == name).cloned()) {
             return match self.resolve_binding(path, lang, &b, 0) {
                 Some(id) => Ok((id, "import")),
                 None => Err(self.binding_failure(path, lang, &b)),
@@ -983,7 +1068,7 @@ impl<'a> Resolver<'a> {
         let binds = |n: Node| {
             n.kind() == "identifier"
                 && text(n, src) == name
-                && (is_local_binder(n) || n.parent().is_some_and(|p| matches!(p.kind(), "static_item" | "const_item")))
+                && (is_local_binder(n, src) || n.parent().is_some_and(|p| matches!(p.kind(), "static_item" | "const_item")))
         };
         let (mut binder, mut stack) = (None::<Node>, vec![scope]);
         while let Some(n) = stack.pop() {
@@ -1784,27 +1869,30 @@ fn top_level<'f>(fi: &'f FileInfo, name: &str) -> Option<&'f Def> {
     it.clone().find(|d| d.kind != "impl").or_else(|| it.next())
 }
 
-/// A parameter or local variable named `name` in the function around `node` hides outer definitions;
-/// one bound in a nested function, block or comprehension that does not hold `node` does not.
+/// A parameter or local variable named `name` in the functions around `node` (a closure sees the
+/// locals of the function it is written in) hides outer definitions; one bound in a nested
+/// function, block or comprehension that does not hold `node` does not.
 fn shadowed(lang: Lang, node: Node, name: &str, src: &str) -> bool {
-    let mut f = node.parent();
-    while let Some(n) = f {
-        if FUNCTION_NODES.contains(&n.kind()) {
-            break;
-        }
-        f = n.parent();
+    let at = node.start_byte();
+    let holds = |n: Node| n.start_byte() <= at && at < n.end_byte();
+    let Some(mut func) = enclosing_function(node) else { return false };
+    // a Rust `fn` item does not see the locals of the function around it
+    while let Some(outer) = enclosing_function(func).filter(|_| func.kind() != "function_item") {
+        func = outer;
     }
-    let Some(func) = f else { return false };
     let block_scoped: &[&str] = match lang {
         Lang::Python => &["list_comprehension", "set_comprehension", "dictionary_comprehension", "generator_expression"],
         _ => &["statement_block", "block", "compound_statement", "for_statement", "for_in_statement", "for_expression"],
     };
-    let at = node.start_byte();
-    let holds = |n: Node| n.start_byte() <= at && at < n.end_byte();
     // (node, inside a block that does not hold the use): there only a JS `var` reaches the use
     let mut stack = vec![(func, false)];
     while let Some((n, aside)) = stack.pop() {
-        if n.kind() == "identifier" && text(n, src) == name && is_local_binder(n) && (!aside || is_js_var(n)) {
+        if matches!(n.kind(), "identifier" | "shorthand_property_identifier_pattern" | "shorthand_field_identifier")
+            && text(n, src) == name
+            && is_local_binder(n, src)
+            && (!aside || is_js_var(n))
+            && visible(n, at)
+        {
             return true;
         }
         let mut cur = n.walk();
@@ -1821,6 +1909,18 @@ fn shadowed(lang: Lang, node: Node, name: &str, src: &str) -> bool {
         }
     }
     false
+}
+
+/// The innermost function around `node`.
+fn enclosing_function(node: Node) -> Option<Node> {
+    let mut f = node.parent();
+    while let Some(n) = f {
+        if FUNCTION_NODES.contains(&n.kind()) {
+            return Some(n);
+        }
+        f = n.parent();
+    }
+    None
 }
 
 /// A binder declared with JavaScript `var`, which belongs to the whole function around it.
@@ -1888,7 +1988,7 @@ impl Resolved {
 
 /// Every whole-word occurrence of `name` (Engine A), each resolved to the definition it refers to.
 pub fn resolved_references(s: &Searcher, name: &str, max_results: u64) -> Result<Resolved> {
-    let bare = name.rsplit('.').next().unwrap_or(name);
+    let bare = &crate::intel::bare_name(s, name)?;
     let o = crate::instant::Options {
         pattern: bare.to_string(),
         mode: crate::instant::Mode::Literal,
@@ -1907,7 +2007,7 @@ pub fn resolved_references(s: &Searcher, name: &str, max_results: u64) -> Result
             occurrences.push(Occurrence { path: h.path.to_string(), line: h.line, column: a as u64 + 1, text: line_text.clone(), resolution });
         }
     }
-    let mut definitions: Vec<ChunkRow> = crate::intel::definitions(&s.ix, name)?.into_iter().filter(|d| d.name == bare).collect();
+    let mut definitions: Vec<ChunkRow> = crate::intel::definitions(&s.ix, bare)?.into_iter().filter(|d| d.name == *bare).collect();
     let mut known: HashSet<i64> = definitions.iter().map(|d| d.id).collect();
     for o in &occurrences {
         if let Ok((id, _)) = o.resolution {
@@ -2338,6 +2438,91 @@ mod tests {
                 ("main.go", "p.Make()", "Make", "p/a.go Make"),
                 ("main.go", "qq.Make()", "Make", "q/a.go Make"),
                 ("main.go", "fmt.Println()", "Println", "external"),
+            ],
+        );
+    }
+
+    #[test]
+    fn a_local_bound_by_a_pattern_import_or_initializer_hides_the_function_only_in_its_scope() {
+        let ts = "export function target(): number {\n  return 1;\n}\nexport const a1 = ({ target }: { target: () => number }) => target() + 1;\nexport function a3({ x: target }: { x: () => number }) {\n  return target() + 3;\n}\nexport function a4({ target = () => 2 }) {\n  return target() + 4;\n}\nexport function a5(...target: Array<() => number>) {\n  return target[0]() + 5;\n}\nexport function a6(obj: { target: () => number }) {\n  const { target } = obj;\n  return target() + 6;\n}\nexport function a7(obj: any) {\n  const { a: { b: target }, ...rest } = obj;\n  return target() + 7;\n}\nexport function a9() {\n  try {\n    return 0;\n  } catch (target) {\n    return target + 9;\n  }\n  return target() + 90;\n}\nexport class K {\n  constructor(private target: () => number) {\n    target() + 10;\n  }\n}\nexport function a12(target: () => number) {\n  return [1].map(() => target() + 12);\n}\nexport function real() {\n  return target() + 99;\n}\n";
+        let py = "def target():\n    return 1\n\n\ndef b5():\n    import os as target\n    return target.getcwd()\n\n\ndef b6():\n    from os import getcwd as target\n    return target() + 6\n\n\ndef b7(items):\n    if (target := len(items)) > 1:\n        return target + 7\n    return 0\n\n\ndef b8(target=target, *, k=lambda target=target: target):\n    return target() + 8\n\n\ndef b9(v):\n    match v:\n        case [target, *rest]:\n            return target() + 9\n        case P(k=target) | {\"k\": target}:\n            return target() + 90\n    return 0\n\n\ndef b10(a):\n    with a as (target, b):\n        return target() + 10\n\n\ndef b11(x: target) -> target:\n    return x\n\n\ndef b12(items):\n    out = [target for target in items]\n    return target() + 12\n\n\ndef b13():\n    from c import helper as target\n    return target() + 13\n\n\ndef b14(v):\n    match v:\n        case _ as target:\n            return target() + 14\n\n\ndef b15(target):\n    def inner(x=target, y=1):\n        return target() + 15\n    return inner\n\n\ndef b17():\n    def inner(target=target):\n        return target() + 17\n    return inner\n\n\ndef real():\n    return target() + 99\n";
+        let rs = "pub fn target() -> u8 {\n    1\n}\n\npub struct P {\n    pub target: fn() -> u8,\n}\n\npub fn r2(o: Option<fn() -> u8>) -> u8 {\n    if let Some(target) = o {\n        return target() + 2;\n    } else {\n        return target() + 20;\n    }\n}\n\npub fn r3(o: Option<fn() -> u8>) -> u8 {\n    let x = match o {\n        Some(target) => target() + 3,\n        None => 0,\n    };\n    x + target() + 30\n}\n\npub fn r6(p: P) -> u8 {\n    let P { target } = p;\n    target() + 6\n}\n\npub fn r9(o: Option<fn() -> u8>) -> u8 {\n    let Some(target) = o else { return target() + 90 };\n    target() + 9\n}\n\npub fn r10(o: Option<fn() -> u8>) -> u8 {\n    while let Some(target) = o {\n        return target() + 10;\n    }\n    target() + 100\n}\n\npub fn r11(o: Option<(u8, fn() -> u8)>) -> u8 {\n    match o {\n        _w @ Some((_, mut target)) => target() + 11,\n        _ => 0,\n    }\n}\n\npub fn r12(p: &P) -> u8 {\n    let &P { ref target } = p;\n    target() + 12\n}\n\npub fn r13() -> u8 {\n    let target = target() + 13;\n    target\n}\n\npub fn r14(v: &[fn() -> u8]) -> u8 {\n    if let [target, ..] = v {\n        return target() + 14;\n    }\n    0\n}\n\npub fn r15(target: fn() -> u8) -> u8 {\n    let f = || target() + 15;\n    f()\n}\n\npub fn r16(target: u8) -> u8 {\n    fn inner() -> u8 {\n        target() + 16\n    }\n    inner() + target\n}\n\npub fn real() -> u8 {\n    target() + 99\n}\n";
+        let go = "package gp\n\nfunc target() int { return 1 }\n\nfunc g4(x interface{}) int {\n\tswitch target := x.(type) {\n\tcase func() int:\n\t\treturn target() + 4\n\t}\n\treturn target() + 40\n}\n\nfunc g6(m map[string]func() int) int {\n\tif target, ok := m[\"a\"]; ok {\n\t\treturn target() + 6\n\t}\n\treturn target() + 60\n}\n\nfunc g7(ch chan func() int) int {\n\tselect {\n\tcase target := <-ch:\n\t\treturn target() + 7\n\t}\n\treturn target() + 70\n}\n\nfunc g8(target func() int) func() int {\n\treturn func() int { return target() + 8 }\n}\n\nfunc real() int { return target() + 99 }\n";
+        let (local, ts_fn, py_fn, rs_fn, go_fn) = ("local variable", "b.ts target", "a.py target", "src/lib.rs target", "gp/a.go target");
+        resolver_case(
+            "locals",
+            &[
+                ("b.ts", ts),
+                ("a.py", py),
+                ("c.py", "def helper():\n    pass\n"),
+                ("Cargo.toml", "[package]\nname = \"demo\"\n"),
+                ("src/lib.rs", rs),
+                ("go.mod", "module example.com/m\n"),
+                ("gp/a.go", go),
+            ],
+            &[
+                ("b.ts", "({ target }", "target", local),
+                ("b.ts", "target() + 1;", "target", local),
+                ("b.ts", "target() + 3", "target", local),
+                ("b.ts", "target() + 4", "target", local),
+                ("b.ts", "target[0]() + 5", "target", local),
+                ("b.ts", "target() + 6", "target", local),
+                ("b.ts", "target() + 7", "target", local),
+                ("b.ts", "catch (target)", "target", local),
+                ("b.ts", "target + 9", "target", local),
+                ("b.ts", "target() + 90", "target", ts_fn),
+                ("b.ts", "target() + 10", "target", local),
+                ("b.ts", "target() + 12", "target", local),
+                ("b.ts", "target() + 99", "target", ts_fn),
+                ("a.py", "target.getcwd()", "target", "external"),
+                ("a.py", "target() + 6", "target", "external"),
+                ("a.py", "(target :=", "target", local),
+                ("a.py", "target + 7", "target", local),
+                ("a.py", "=target,", "target", py_fn),
+                ("a.py", "=target:", "target", py_fn),
+                ("a.py", ": target)", "target", local),
+                ("a.py", "target() + 8", "target", local),
+                ("a.py", "target() + 9", "target", local),
+                ("a.py", "target() + 90", "target", local),
+                ("a.py", "target() + 10", "target", local),
+                ("a.py", "x: target", "target", py_fn),
+                ("a.py", "-> target", "target", py_fn),
+                ("a.py", "target() + 12", "target", py_fn),
+                ("a.py", "target() + 13", "target", "c.py helper"),
+                ("a.py", "target() + 14", "target", local),
+                ("a.py", "x=target", "target", local),
+                ("a.py", "target() + 15", "target", local),
+                ("a.py", "inner(target=", "target", local),
+                ("a.py", "=target):", "target", py_fn),
+                ("a.py", "target() + 17", "target", local),
+                ("a.py", "target() + 99", "target", py_fn),
+                ("src/lib.rs", "Some(target) = o {", "target", local),
+                ("src/lib.rs", "target() + 2;", "target", local),
+                ("src/lib.rs", "target() + 20", "target", rs_fn),
+                ("src/lib.rs", "target() + 3,", "target", local),
+                ("src/lib.rs", "target() + 30", "target", rs_fn),
+                ("src/lib.rs", "P { target }", "target", local),
+                ("src/lib.rs", "target() + 6", "target", local),
+                ("src/lib.rs", "target() + 90", "target", rs_fn),
+                ("src/lib.rs", "    target() + 9", "target", local),
+                ("src/lib.rs", "target() + 10", "target", local),
+                ("src/lib.rs", "target() + 100", "target", rs_fn),
+                ("src/lib.rs", "target() + 11", "target", local),
+                ("src/lib.rs", "target() + 12", "target", local),
+                ("src/lib.rs", "target() + 13", "target", rs_fn),
+                ("src/lib.rs", "target() + 14", "target", local),
+                ("src/lib.rs", "target() + 15", "target", local),
+                ("src/lib.rs", "target() + 16", "target", rs_fn),
+                ("src/lib.rs", "target() + 99", "target", rs_fn),
+                ("gp/a.go", "switch target", "target", local),
+                ("gp/a.go", "target() + 4", "target", local),
+                ("gp/a.go", "target() + 40", "target", go_fn),
+                ("gp/a.go", "target() + 6", "target", local),
+                ("gp/a.go", "target() + 60", "target", go_fn),
+                ("gp/a.go", "target() + 7", "target", local),
+                ("gp/a.go", "target() + 70", "target", go_fn),
+                ("gp/a.go", "target() + 8", "target", local),
+                ("gp/a.go", "target() + 99", "target", go_fn),
             ],
         );
     }
