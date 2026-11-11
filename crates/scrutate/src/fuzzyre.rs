@@ -1,9 +1,10 @@
 //! Approximate regular expressions (`grep --fuzzy-regex=N`): a line matches when some part of it is
 //! within N insertions, deletions or substitutions of a string the pattern matches. The pattern
-//! becomes a Glushkov automaton over bytes (one state per character position, at most 64), and the
-//! search runs it bit-parallel with one state set per number of errors (Navarro and Raffinot,
-//! "Flexible Pattern Matching in Strings", section 6.5). Byte-oriented: classes are ASCII, and
-//! anchors and word boundaries are not supported.
+//! becomes a Glushkov automaton over characters (one state per character position, at most 64),
+//! and the search runs it bit-parallel with one state set per number of errors (Navarro and
+//! Raffinot, "Flexible Pattern Matching in Strings", section 6.5). An edit is one character: an
+//! ASCII byte, a UTF-8 encoded character, or a byte of invalid UTF-8 (which no position matches).
+//! Case folds as the regex engine folds it. Anchors and word boundaries are not supported.
 
 use anyhow::{bail, Context, Result};
 use grep_matcher::{LineTerminator, Match, Matcher, NoCaptures, NoError};
@@ -11,10 +12,16 @@ use regex_syntax::hir::{Class, Hir, HirKind};
 
 pub const MAX_POSITIONS: usize = 64;
 
+/// The characters of a position: inclusive code point ranges.
+type Ranges = Vec<(u32, u32)>;
+
 #[derive(Clone, Debug)]
 pub struct FuzzyRegex {
-    /// positions whose class holds the byte
-    bytes: Box<[u64; 256]>,
+    /// positions whose class holds the ASCII character
+    ascii: [u64; 128],
+    /// non-ASCII characters in ranges: `wide[i]` holds the positions of `cuts[i]..cuts[i + 1]`
+    cuts: Vec<u32>,
+    wide: Vec<u64>,
     /// follow sets by 8-bit chunk of a state set: chunk c, value v -> union of follow(i), i in v
     follow: Box<[[u64; 256]; 8]>,
     first: u64,
@@ -22,18 +29,19 @@ pub struct FuzzyRegex {
     k: usize,
     /// state sets before any text byte, per number of errors (deletions from the start)
     init: Vec<u64>,
-    /// longest string the pattern matches, plus k (bounds where a match can start)
+    /// bytes of the longest string the pattern matches, plus k inserted characters (bounds where a
+    /// match can start)
     span: Option<usize>,
 }
 
 struct Build {
-    classes: Vec<[bool; 256]>,
+    classes: Vec<Ranges>,
     follow: Vec<u64>,
 }
 
 /// (nullable, first, last) of a sub-expression, positions added to `b`.
 fn glushkov(h: &Hir, b: &mut Build) -> Result<(bool, u64, u64)> {
-    let new_pos = |b: &mut Build, class: [bool; 256]| -> Result<u64> {
+    let new_pos = |b: &mut Build, class: Ranges| -> Result<u64> {
         if b.classes.len() == MAX_POSITIONS {
             bail!("fuzzy regex patterns are limited to {MAX_POSITIONS} character positions");
         }
@@ -53,36 +61,18 @@ fn glushkov(h: &Hir, b: &mut Build) -> Result<(bool, u64, u64)> {
         HirKind::Empty => (true, 0, 0),
         HirKind::Literal(lit) => {
             let mut acc = (true, 0, 0);
-            for &byte in lit.0.iter() {
-                let mut class = [false; 256];
-                class[byte as usize] = true;
-                let p = new_pos(b, class)?;
+            for c in std::str::from_utf8(&lit.0).context("a fuzzy regex matches text, not bytes of invalid UTF-8")?.chars() {
+                let p = new_pos(b, vec![(c as u32, c as u32)])?;
                 acc = concat(b, acc, (false, p, p));
             }
             acc
         }
         HirKind::Class(c) => {
-            let mut class = [false; 256];
-            match c {
-                Class::Bytes(bc) => {
-                    for r in bc.iter() {
-                        for x in r.start()..=r.end() {
-                            class[x as usize] = true;
-                        }
-                    }
-                }
-                Class::Unicode(uc) => {
-                    for r in uc.iter() {
-                        if r.end() as u32 > 0x7F {
-                            bail!("fuzzy regex classes must be ASCII");
-                        }
-                        for x in r.start() as u32..=r.end() as u32 {
-                            class[x as usize] = true;
-                        }
-                    }
-                }
-            }
-            class[b'\n' as usize] = false;
+            let class = match c {
+                // the parser allows a byte class only where it stays within ASCII
+                Class::Bytes(bc) => bc.iter().filter(|r| r.start() < 0x80).map(|r| (r.start() as u32, r.end().min(0x7F) as u32)).collect(),
+                Class::Unicode(uc) => uc.iter().map(|r| (r.start() as u32, r.end() as u32)).collect(),
+            };
             let p = new_pos(b, class)?;
             (false, p, p)
         }
@@ -137,8 +127,6 @@ fn glushkov(h: &Hir, b: &mut Build) -> Result<(bool, u64, u64)> {
 impl FuzzyRegex {
     pub fn new(pattern: &str, max_edits: u8, case_insensitive: bool) -> Result<FuzzyRegex> {
         let hir = regex_syntax::ParserBuilder::new()
-            .unicode(false)
-            .utf8(false)
             .case_insensitive(case_insensitive)
             .build()
             .parse(pattern)
@@ -148,11 +136,23 @@ impl FuzzyRegex {
         if nullable {
             bail!("a fuzzy regex must not match the empty string (every line would match)");
         }
-        let mut bytes = Box::new([0u64; 256]);
+        let mut ascii = [0u64; 128];
+        let mut cuts = vec![0x80u32, 0x110000];
+        for &(lo, hi) in b.classes.iter().flatten().filter(|r| r.1 >= 0x80) {
+            cuts.extend([lo.max(0x80), hi + 1]);
+        }
+        cuts.sort_unstable();
+        cuts.dedup();
+        cuts.pop();
+        let mut wide = vec![0u64; cuts.len()];
         for (p, class) in b.classes.iter().enumerate() {
-            for (x, &on) in class.iter().enumerate() {
-                if on {
-                    bytes[x] |= 1 << p;
+            for &(lo, hi) in class {
+                for x in lo..=hi.min(0x7F) {
+                    ascii[x as usize] |= 1 << p;
+                }
+                if hi >= 0x80 {
+                    let (a, z) = (cuts.partition_point(|&s| s < lo.max(0x80)), cuts.partition_point(|&s| s <= hi));
+                    wide[a..z].iter_mut().for_each(|w| *w |= 1 << p);
                 }
             }
         }
@@ -168,12 +168,17 @@ impl FuzzyRegex {
             }
         }
         let k = max_edits as usize;
-        let mut m = FuzzyRegex { bytes, follow, first, last, k, init: Vec::new(), span: hir.properties().maximum_len().map(|n| n + k) };
+        let span = hir.properties().maximum_len().map(|n| n + 4 * k);
+        let mut m = FuzzyRegex { ascii, cuts, wide, follow, first, last, k, init: Vec::new(), span };
         // deleting j pattern characters before any text is read
         let mut d = 0u64;
         for _ in 0..=k {
             m.init.push(d);
             d = m.step(d);
+        }
+        // as with --fuzzy: k edits of a string of k characters or fewer match every line
+        if m.init[k] & m.last != 0 {
+            bail!("the number of edits ({k}) must be smaller than the length of the shortest string the pattern matches");
         }
         Ok(m)
     }
@@ -192,12 +197,22 @@ impl FuzzyRegex {
         let k = self.k;
         let mut r = self.init.clone();
         let mut next = vec![0u64; k + 1];
-        for (i, &c) in hay[at..].iter().enumerate() {
-            if c == b'\n' {
-                r.copy_from_slice(&self.init);
-                continue;
-            }
-            let bc = self.bytes[c as usize];
+        let mut i = at;
+        while i < hay.len() {
+            let c = hay[i];
+            let bc = if c < 0x80 {
+                if c == b'\n' {
+                    r.copy_from_slice(&self.init);
+                    i += 1;
+                    continue;
+                }
+                i += 1;
+                self.ascii[c as usize]
+            } else {
+                let (c, n) = crate::instant::wide_char(hay, i);
+                i += n;
+                c.map_or(0, |c| self.wide[self.cuts.partition_point(|&s| s <= c as u32) - 1])
+            };
             next[0] = self.step(r[0]) & bc;
             for j in 1..=k {
                 // match, insertion (text byte skipped), substitution, deletion (pattern position skipped)
@@ -205,7 +220,7 @@ impl FuzzyRegex {
             }
             std::mem::swap(&mut r, &mut next);
             if let Some(j) = r.iter().position(|&s| s & self.last != 0) {
-                return Some((at + i + 1, j));
+                return Some((i, j));
             }
         }
         None
@@ -219,10 +234,16 @@ impl Matcher for FuzzyRegex {
     fn find_at(&self, haystack: &[u8], at: usize) -> Result<Option<Match>, NoError> {
         let Some((end, _)) = self.first_end(haystack, at) else { return Ok(None) };
         let line_start = haystack[at..end].iter().rposition(|&b| b == b'\n').map(|i| at + i + 1).unwrap_or(at);
-        let start = match self.span {
+        let mut start = match self.span {
             Some(n) => end.saturating_sub(n).max(line_start),
             None => line_start,
         };
+        // back to the first byte of a character
+        for _ in 0..3 {
+            if start > line_start && haystack[start] & 0xC0 == 0x80 {
+                start -= 1;
+            }
+        }
         Ok(Some(Match::new(start, end)))
     }
 
@@ -257,6 +278,8 @@ mod tests {
         assert!(FuzzyRegex::new("a*", 1, false).is_err());
         assert!(FuzzyRegex::new(&"a".repeat(65), 1, false).is_err());
         assert!(FuzzyRegex::new("é", 0, false).is_ok());
+        assert!(FuzzyRegex::new("é?b", 1, false).is_err());
+        assert!(FuzzyRegex::new("(éé|c)d", 1, false).is_ok());
     }
 
     #[test]

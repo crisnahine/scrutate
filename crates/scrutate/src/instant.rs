@@ -206,7 +206,7 @@ pub const FUZZY_MAX: usize = 4096;
 
 /// The non-ASCII character at `hay[i]` and its length, or `None` and 1 for a byte of invalid UTF-8.
 #[inline]
-fn wide_char(hay: &[u8], i: usize) -> (Option<char>, usize) {
+pub(crate) fn wide_char(hay: &[u8], i: usize) -> (Option<char>, usize) {
     let n = match hay[i] {
         0xC2..=0xDF => 2,
         0xE0..=0xEF => 3,

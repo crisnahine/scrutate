@@ -798,3 +798,35 @@ fn line_number_flags_are_accepted() {
     assert_eq!(d.run(&["grep", "-N", "-n", "foo", "a.txt"]).1, "2:foo\n");
     assert_eq!(d.run(&["grep", "-n", "-N", "foo", "a.txt"]).1, "foo\n");
 }
+
+#[test]
+fn a_fuzzy_regex_counts_an_edit_as_one_character_and_folds_case_as_without_it() {
+    let d = Dir::new("fuzzyreuni");
+    d.write("a.txt", "ÉTÉ\nnaïve\nKelvin \u{212A}\nnaive\n".as_bytes());
+    d.write("bad.txt", b"na\xffve\n\xff\xfe\xc3\n");
+    let lines = |args: &[&str]| d.run(&[&["grep", "-N", "--no-filename"][..], args, &["a.txt"]].concat()).1;
+    assert_eq!(lines(&["--fuzzy-regex=0", "-i", "été"]), "ÉTÉ\n");
+    assert_eq!(lines(&["--fuzzy-regex=0", "-S", "été"]), "ÉTÉ\n");
+    assert_eq!(lines(&["--fuzzy-regex=0", "-S", "ÉTé"]), "");
+    assert_eq!(lines(&["--fuzzy-regex=0", "-i", "x?k"]), "Kelvin \u{212A}\n");
+    assert_eq!(lines(&["--fuzzy-regex=0", "na.ve"]), "naïve\nnaive\n");
+    assert_eq!(lines(&["--fuzzy-regex=0", "na[ïx]ve"]), "naïve\n");
+    // one substitution of a character, not of the bytes of its encoding
+    assert_eq!(lines(&["--fuzzy-regex=1", "-c", "(naive|zzzzz)"]), "2\n");
+    assert_eq!(lines(&["--fuzzy-regex=1", "-c", "nave"]), "2\n");
+    assert_eq!(lines(&["--fuzzy-regex=1", "-c", "ét(é|x)"]), "");
+    assert_eq!(lines(&["--fuzzy-regex=1", "-c", "-i", "étx"]), "1\n");
+    // a byte of invalid UTF-8 is one unit that no position matches
+    let bad = |args: &[&str]| d.run(&[&["grep", "-c"][..], args, &["bad.txt"]].concat());
+    assert_eq!(bad(&["--fuzzy-regex=1", "naive"]).1, "1\n");
+    assert_eq!(bad(&["--fuzzy-regex=0", "na.ve"]).0, 1);
+    assert_eq!(bad(&["--fuzzy-regex=2", "a[^a]."]).0, 0);
+    // the text index has no condition for a fuzzy regex: it answers as the walk does
+    assert_eq!(d.run(&["index", "--text"]).0, 0);
+    for args in [&["--fuzzy-regex=1", "-i", "étx"][..], &["--fuzzy-regex=1", "naive"], &["--fuzzy-regex=0", "-S", "x?k"]] {
+        let walk = d.run(&[&["grep", "--sort"][..], args].concat());
+        let indexed = d.run(&[&["grep", "--sort", "--index"][..], args].concat());
+        assert_eq!(walk.1, indexed.1, "{args:?}");
+        assert!(!walk.1.is_empty(), "{args:?}");
+    }
+}
