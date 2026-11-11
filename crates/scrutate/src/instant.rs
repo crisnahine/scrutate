@@ -1969,7 +1969,12 @@ fn search_one(w: &mut FileWorker, r: &Run, path: &Path, rel: Arc<str>, size: Opt
         // only the stream reader turns NUL bytes into line breaks
         Some(b) if named && memchr::memchr(0, b).is_some() => r.matcher.search_reader(searcher, b, &mut sink),
         Some(b) => r.matcher.search_slice(searcher, b, &mut sink),
-        None => r.matcher.search_file(searcher, &file, &mut sink),
+        None => {
+            // a positioned read on Windows moves the file's cursor, and this search reads from it
+            #[cfg(windows)]
+            let _ = std::io::Seek::seek(&mut &file, std::io::SeekFrom::Start(0));
+            r.matcher.search_file(searcher, &file, &mut sink)
+        }
     };
     if let Err(e) = res {
         c.failed(format!("{rel}: {e}"));

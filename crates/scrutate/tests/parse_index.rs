@@ -18,13 +18,14 @@ fn candidate_cut_keeps_the_lowest_indices_on_tied_scores() {
 
 /// Parses `make(n)` and `make(4 * n)` (best of 3 runs each, so a loaded machine does not decide)
 /// and fails if the larger input costs 10x or more, where linear work gives 4x and quadratic 16x.
+/// The parse is the one the index runs: a chunk's text is cut later, one chunk at a time.
 fn assert_parse_scales_linearly(path: &str, n: usize, make: impl Fn(usize) -> String, check: impl Fn(usize, &[scrutate::parse::Chunk])) {
     let best = |k: usize| {
         let src = make(k);
         (0..3)
             .map(|_| {
                 let t = Instant::now();
-                let chunks = parse_source(path, &src);
+                let chunks = scrutate::parse::parse_file_with(path, &src, None).0.chunks;
                 let took = t.elapsed();
                 check(k, &chunks);
                 took
