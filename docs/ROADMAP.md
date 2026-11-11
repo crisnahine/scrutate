@@ -41,7 +41,7 @@ docs/TRACEABILITY.md.
 | Measurements a busy machine spoiled (R-14.9) | a benchmark where some tool's block medians differ by more than 25% is measured again, once, whatever its status, and keeps its first result beside the second; a warm row records how much of its corpus was in the page cache (on this 18 GB laptop the LLVM tree, 4.9 GB in 16 KB pages, no longer fits once a browser and an editor are open) |
 | What agents ask of an MCP server now (R-6.15) | revision 2026-07-28 beside the handshake revisions (`server/discover`, a version in each request, `resultType`, cache hints on lists); with `serve --structured`, an `outputSchema` on every tool and the `--json` form of each answer in `structuredContent` (off by default: Claude Code shows its model that JSON in place of the text); `notifications/cancelled` honoured, each call on a thread of its own; progress reports while the first index is built; `read_code` of a whole definition by name; the location at the start of every result accepted wherever a tool takes a symbol |
 | Method calls on variables (R-2B.4) | `x.m()` resolves through the type the declaration of `x` states, as an annotation or as the thing it is built from, in Python, JavaScript/TypeScript, Rust and Go; Go methods are found by their receiver type across the files of a package |
-| TypeScript path aliases (R-2B.4) | an import through `paths` or `baseUrl` of the nearest `tsconfig.json` or `jsconfig.json` (comments, trailing commas and a relative `extends` included) resolves to its file, in `refs`, `deps` and `rdeps` |
+| TypeScript path aliases (R-2B.4) | an import through `paths` or `baseUrl` of the nearest `tsconfig.json` or `jsconfig.json` (comments, trailing commas and a relative `extends` included) resolves to its file, in `refs`, `deps` and `rdeps`; so does an import of a workspace package by its `package.json` name (`exports`, `module`, `main`, a build output standing for its source under `src/`) |
 | Limits left in 0.1.0's first draft (R-2A, R-12.4) | smart case sees a letter written by its code point (`\x41`); the LSP server replaces a damaged index, from a save or from a request; the watcher's test of one path decides in the walk's order (a `.ignore` at any level before every `.gitignore`) |
 | Limits left in 0.1.0's second draft (R-2A, R-2B.1, R-2B.4) | calls inside Rust macro arguments are call edges; an MCP answer checks the files it cites and re-reads a changed one; files on `/proc`, `/sys` and the other kernel pseudo filesystems are read to the end; on Unix a `chmod` alone is seen (the index keeps the status-change time); an emptied `chunks` table is damage and is rebuilt; a JavaScript `var` belongs to its function; one file argument prints without its name, as in ripgrep, with `-H` and `-I`; C++ constructors, destructors, member templates and conversion operators declared in a class body are methods; the Python reference indexes the engine's file set; `\,` keeps a comma in `SCRUTATE_INDEX_EXCLUDE_DIRS` |
 | Benchmark corpora without hard links (R-14) | `bench/corpora.py` copies (APFS clones) where it linked: a hard-linked file costs every tool twice as long to open on macOS |
@@ -99,9 +99,6 @@ docs/RELEASING.md, public, tag `v0.1.0`.
   already running when its call is cancelled (its answer is dropped today); the count of files
   indexed so far in progress reports; a `response_format` switch for shorter answers. Sources
   and client support are in docs/research/agent-facing-search-2026-11.md.
-- The watcher's test of one path (`files::Membership`) still reads the ignore files by hand,
-  because the walker's own per-directory matcher is private to the `ignore` crate; a test holds
-  it to the walk's answers.
 - Linux on dedicated hardware: every Linux number here comes from a 5-CPU VM on the development
   Mac, whose disk is a virtual one on the Mac's SSD. Two values were fitted there and need a
   check on an NVMe disk and on a network disk: the read time that counts as a disk read (30 µs)
@@ -137,8 +134,14 @@ docs/RELEASING.md, public, tag `v0.1.0`.
   listed as unresolved (`field or key`), a `static final` field included, which `symbol` finds as
   a constant.
 - On Windows a burst of changes too large for the watch buffer is dropped by the `notify` crate
-  (8.2.2, read in its source: an empty read is not reported), so `watch` indexes those changes
-  with the next change it sees; a command run meanwhile scans the tree and finds them.
+  (8.2.2, read in its source: an empty read is not reported). `watch` indexes those changes with
+  the first change to an indexed file once 30 s have passed since its last walk of the tree; a
+  command run meanwhile scans the tree and finds them.
+- On Linux each directory gets one inotify watch, the root first, then shallow directories
+  before deep ones. Past the system limit (`fs.inotify.max_user_watches`) the deepest directories
+  get none, and stderr says how many. While any directory has no watch, every burst that changes
+  an indexed file walks the tree, so a change in an unwatched directory is indexed with the next
+  change to an indexed file anywhere.
 - On macOS `watch` checks the tree on a timer, every second or ten times as long as the last
   check took (at most 30 s), so on a tree of 20,000 directories a saved file is indexed after
   11 to 14 s (debug build); the FSEvents backend would add about 1 ms to the start of every

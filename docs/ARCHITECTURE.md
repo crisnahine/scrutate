@@ -262,8 +262,10 @@ candidate files from the source tree.
 ReadDirectoryChangesW) into index updates; macOS runs the index's own incremental check on a
 timer instead, since the FSEvents backend would link CoreServices into every command. The watch
 is in place before the first update runs. On Linux each directory the indexes can hold gets a
-non-recursive inotify watch, so ignored trees cost none, and the set is walked again after every
-burst. Events are filtered with the indexes' own ignore rules, read again after every burst, a
+non-recursive inotify watch, so ignored trees cost none; the set is walked again after a burst
+that changes a directory or a rule file, while a directory has no watch, and when the last walk
+is 30 s old. A burst of files is decided by listing their directories with the indexes' own
+walks (`files::CodeWalk`, `textindex::walk_entries`), so no ignore rule is written by hand. A
 burst ends after 200 ms of quiet, and each burst runs the existing incremental updates
 (`Index::update`, `textindex::update` when a text index exists). The watch ends with an error
 when its root is gone. No new write path: the
@@ -294,8 +296,8 @@ of the repository declares a method of that name. Java finds a file's package fr
 declaration, so any source root works; its overloads share one qualified name in the index, and
 the number of arguments picks one or the call stands for all of them. Import paths
 are mapped onto repository files
-(Python packages and relative imports, JavaScript paths, `index` files and `tsconfig.json`
-aliases, Rust `crate`/`self`/
+(Python packages and relative imports, JavaScript paths, `index` files, `tsconfig.json`
+aliases and workspace packages by their `package.json` name, Rust `crate`/`self`/
 `super` paths, module files and workspace crates from `Cargo.toml`, Go import paths through the
 module path in `go.mod`, by directory without one), following re-exports with a depth limit. It is a query-time step: no schema change,
 nothing for the Python reference to mirror, and `refs --textual` keeps the unresolved answer.
@@ -348,7 +350,9 @@ engines with the GIL released and streaming results.
 `lsp.rs` is a language server for editors (`scrutate lsp`), hand-written like the MCP server: a
 `Content-Length` framed JSON-RPC loop on stdio that turns definition, references, workspace symbol
 and document symbol requests into the same index lookups as `symbol`, `refs` and `outline`, and
-converts between the index's lines and the protocol's UTF-16 columns. The first index build holds
+converts between the index's lines and the protocol's UTF-16 columns. `initialize` finds the root
+with the CLI's own rule (`cli::index_above`) from the editor's first folder, so the editor and a
+shell share the index at the repository top. The first index build holds
 the searcher's lock, so early requests wait for a complete index. A save updates the index on a
 second connection owned by a background thread; SQLite WAL lets requests keep reading while it
 writes.

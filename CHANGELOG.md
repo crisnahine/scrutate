@@ -172,6 +172,26 @@ First release.
   sits in. A bare Python import finds the module beside the importing file when no module from
   the root has the name and the file's directory is not a package (`from helpers import x` in
   `tests/`; `import logging` in a package with its own `logging.py` stays outside).
+- A JavaScript or TypeScript import of a workspace package by its `package.json` name resolves
+  to the package's file: `exports` (conditions `types`, `import`, `default`, `require`, `node`,
+  then the others by name), `module`, `main` or an `index` file, a build output the repository
+  does not hold standing for its source under `src/`, a subpath through `exports` or a path in
+  the package. A declaration file (`.d.ts`) beside its implementation no longer takes the
+  import: `./m` with `m.js` and `m.d.ts` is `m.js`.
+- Imports are recorded as their statements write them: a JavaScript or TypeScript exported
+  declaration is no import (only `export ... from`), a `require` or `import()` call counts with
+  a literal argument, and PHP double quotes and grouped `use`, R, Julia lists and `include`,
+  Lua long brackets, Objective-C `@import` and QML imports are recorded; Kotlin and C# record
+  the name, not the alias, Ruby only calls without a receiver, and a Java star import is one
+  `a.b.*` record that `deps` resolves to the files of the package.
+- In a language the resolver does not read, a call without a receiver is a call of the
+  definition in its own file: `callees` lists that one alone (it listed the first three
+  namesakes of the index), and `callers` of a namesake in another file leaves the call out.
+  Other undecided callees are listed nearest first. A Nix function and a macro of the
+  repository are listed as callees (they were named after `external:`), and a `.m` file of
+  MATLAB is no longer in the C family.
+- A search that meets a damaged segment array (a posting row, a pointer or a cluster table that
+  points outside the segment) rebuilds the index and answers; it ended with a panic message.
 - `refs` finds a name in its composed and decomposed Unicode spelling.
 - `tsquery` keeps each file's captures in `.scrutate/tsquery/` by content hash: a repeated query
   re-parses only changed files (the Linux tree: about 25 s, then 1.6 s), output identical to
@@ -290,8 +310,8 @@ First release.
 - Imports: Go binds a directory through the module path in `go.mod`; a Python module drops its
   first segment only when that is the checkout's own name; an `#include "util.h"` resolves
   beside the including file; `rdeps` matches by base name only an import that resolves to no
-  file. `tsconfig.json`, `jsconfig.json`, `Cargo.toml` and `go.mod` are read only when they are
-  regular files inside the repository of at most 1 MB.
+  file. `tsconfig.json`, `jsconfig.json`, `package.json`, `Cargo.toml` and `go.mod` are read
+  only when they are regular files inside the repository of at most 1 MB.
 - A lambda, nested function, block or comprehension hides a name only inside itself. A name bound
   by a pattern, a `catch` or a Go statement initializer hides a function only in its own branch
   or statement, and a closure sees the locals around it.
@@ -355,6 +375,17 @@ First release.
   subdirectory the first command runs in, and the top's index wins over one left below it. The globs of a `.scrutate.toml` match each path from the file's
   directory, whatever path is searched and wherever the command runs; a path outside that
   directory and a path named on the command line are not filtered by them.
+- Editors opened on a folder below the repository top use the index at the top: the language
+  server applies the same rule to the editor's first workspace folder (it built a second,
+  partial index in that folder), and the VS Code and Neovim plugins ask `scrutate config --json`
+  for the root, so the paths they open exist. `config --json` prints the root an index command
+  run there uses and the configuration file, and builds nothing.
+- In the home directory or at a filesystem root that has no index, a command that would build
+  a first index stops with exit code 2 and names `--root` and `scrutate index`; `serve` does
+  not start there, and the language server builds no index when the editor names no folder.
+- `languages` lists the extensions a language shares with another and takes by the file's text
+  (`.m` for matlab and objc, `.pp` for puppet and pascal, `.h` for cpp and objc); the JSON form
+  has them in `extensions_by_content`.
 - `symbol`, `callers` and `callees` take `--limit`. `check --json` counts the indexed files
   without `--files`. `check` counts the constants, which have no segment rows (`constants` in
   its JSON). `batch` reports a line that is not JSON by its number and runs the rest.
@@ -407,7 +438,11 @@ First release.
   events updates those files alone, in both indexes, with no walk of the tree; a burst with a
   new, removed or moved directory, a changed ignore file or `.scrutate.toml`, or lost events
   walks the tree, sets the watches again and reads the ignore rules again. `.git/info/exclude`
-  is watched.
+  is watched, the main repository's too from a linked worktree. The walks of the indexes decide
+  what a burst holds, so an ignore file above the repository top and a nested repository's own
+  rules apply to a saved file as they do to a scan. Watches are set root first, then shallow
+  directories by path; when some directory gets no watch stderr says how many, and a burst
+  walks the tree while one is unwatched or once the last walk is 30 s old.
 - `find` takes a question with a space and a trailing `?` as words, and goes to ranked search
   when a regex-looking query finds nothing and an index exists.
 - Text files check out with LF line ends on every platform (`.gitattributes`), so a Windows

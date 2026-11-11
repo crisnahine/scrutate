@@ -54,17 +54,17 @@ Engine A (instant search) needs none of this: it searches every readable file of
 | lua | `.lua` | function | yes | yes | no | `tests/samples/sample.lua` |
 | make | `.mk .mak Makefile makefile GNUmakefile` | function, key, macro | yes | no | no | `tests/samples/Makefile` |
 | markdown | `.md .markdown .mdx README` | section | no | no | no | `tests/samples/sample.md` |
-| matlab | `` | function | yes | no | no | `tests/samples/matrix.m` |
+| matlab | `.m` by its content | function | yes | no | no | `tests/samples/matrix.m` |
 | nix | `.nix` | key | yes | yes | no | `tests/samples/sample.nix` |
-| objc | `.mm` and `.h` by its content | class, function, method | yes | yes | no | `tests/samples/sample.mm` |
+| objc | `.mm` and `.m` `.h` by its content | class, function, method | yes | yes | no | `tests/samples/sample.mm` |
 | ocaml (extra-langs) | `.ml` | function, type | yes | no | no | `tests/samples_extra/sample.ml` |
 | ocaml_interface (extra-langs) | `.mli` | function, interface, type | no | no | no | `tests/samples_extra/sample.mli` |
 | odin (extra-langs) | `.odin` | function, struct | yes | no | no | `tests/samples_extra/sample.odin` |
-| pascal | `.pas .dpr .lpr` | function, type | yes | no | no | `tests/samples/sample.pas` |
+| pascal | `.pas .dpr .lpr` and `.pp` by its content | function, type | yes | no | no | `tests/samples/sample.pas` |
 | php | `.php .phtml` | class, enum, function, interface, method, trait | yes | yes | no | `tests/samples/sample.php` |
 | powershell | `.ps1 .psm1 .psd1` | class, function, method | yes | no | no | `tests/samples/sample.ps1` |
 | prisma | `.prisma` | block, class, enum | no | no | no | `tests/samples/schema.prisma` |
-| puppet | `` | class, function | yes | no | no | `tests/samples/manifest.pp` |
+| puppet | `.pp` by its content | class, function | yes | no | no | `tests/samples/manifest.pp` |
 | python | `.py .pyi` | class, function, method | yes | yes | yes | `tests/samples/sample.py` |
 | qml (extra-langs) | `.qml` | class, method | yes | yes | no | `tests/samples_extra/sample.qml` |
 | r | `.r .R .rmd` | function | yes | yes | no | `tests/samples/sample.r` |
@@ -89,6 +89,7 @@ Engine A (instant search) needs none of this: it searches every readable file of
 | zig | `.zig .zon` | function, type | yes | yes | no | `tests/samples/sample.zig` |
 
 A `.h` file is read as objc when it holds `@interface`, `@protocol`, `@implementation`, `@class `, else as cpp when a line matches `(?m)^[ \t]*(?:namespace\b[^;]*\{|namespace\s+\w[\w:]*\s*$|class\s+\w+|template\s*<|using\s+namespace\b|(?:public|private|protected)\s*:|extern\s+"C\+\+"|#\s*include\s*<[a-z_]+>)`, else as c (`sniff` in `crates/scrutate/src/langs.rs`).
+A `.m` file is read as objc when its first 4000 bytes hold `@interface`, `@implementation`, `#import`, `@end`, `@protocol`, else as matlab. A `.pp` file is read as pascal when it holds `procedure `, `function `, `begin`, `end;`, `unit `, `program ` and its first 4000 bytes hold no `$`, else as puppet.
 
 60 grammars in the default build, 13 more with `--features extra-langs`; 73 verified by snapshot samples. Call-edge and import extraction are declared per language by the registry rules; the sample for a language exercises them when its `expected.json` entry lists methods/functions and the file contains imports.
 

@@ -39,7 +39,10 @@ What a client gets (details in docs/CLI.md, `serve`):
 ## Client configuration
 
 Each client has its own file and its own key for the list of servers. Replace `/path/to/repo`;
-Cursor and VS Code fill in `${workspaceFolder}` themselves.
+Cursor and VS Code fill in `${workspaceFolder}` themselves. Start `scrutate serve` with
+`--root DIR` (or `SCRUTATE_ROOT`), or from inside a repository: started with no root in the home
+directory or at a filesystem root that has no index, it stops with exit code 2 and indexes
+nothing.
 
 Claude Code (the command, or the same as `.mcp.json` in the repository):
 ```sh
