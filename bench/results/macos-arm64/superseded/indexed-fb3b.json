@@ -23,10 +23,10 @@
   "scrutate_sha256": "fb3bd578c6d9b348868bc7c57cb52d8a8ac0fcff2e95907ebeca659c62ae280b",
   "hyperfine": "hyperfine 2.0.0"
  },
- "corpus": "/Users/crisn/.cache/scrutate-bench/corpora/linux-nodot",
+ "corpus": "~/.cache/scrutate-bench/corpora/linux-nodot",
  "settings": {
-  "corpus": "/Users/crisn/.cache/scrutate-bench/corpora/linux-nodot",
-  "work": "/Users/crisn/.cache/scrutate-bench/indexed-work",
+  "corpus": "~/.cache/scrutate-bench/corpora/linux-nodot",
+  "work": "~/.cache/scrutate-bench/indexed-work",
   "out": "bench/results/macos-arm64/indexed.json",
   "tools": "scrutate,zoekt",
   "runs": 20,
@@ -34,7 +34,7 @@
   "concurrency": 11,
   "seconds": 15,
   "max_load": 40.0,
-  "livegrep_bin": "/Users/crisn/.cache/scrutate-bench/livegrep",
+  "livegrep_bin": "~/.cache/scrutate-bench/livegrep",
   "queries": 20
  },
  "tools": {
@@ -151,7 +151,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -211,9 +211,9 @@
     },
     "zoekt": {
      "argv": [
-      "/Users/crisn/.cache/scrutate-bench/go/bin/zoekt",
+      "~/.cache/scrutate-bench/go/bin/zoekt",
       "-index_dir",
-      "/Users/crisn/.cache/scrutate-bench/indexed-work/zoekt-index",
+      "~/.cache/scrutate-bench/indexed-work/zoekt-index",
       "case:yes content:\"PM_RESUME\""
      ],
      "valid": true,
@@ -286,7 +286,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -346,9 +346,9 @@
     },
     "zoekt": {
      "argv": [
-      "/Users/crisn/.cache/scrutate-bench/go/bin/zoekt",
+      "~/.cache/scrutate-bench/go/bin/zoekt",
       "-index_dir",
-      "/Users/crisn/.cache/scrutate-bench/indexed-work/zoekt-index",
+      "~/.cache/scrutate-bench/indexed-work/zoekt-index",
       "case:yes content:\"kernel_thread\""
      ],
      "valid": true,
@@ -421,7 +421,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -481,9 +481,9 @@
     },
     "zoekt": {
      "argv": [
-      "/Users/crisn/.cache/scrutate-bench/go/bin/zoekt",
+      "~/.cache/scrutate-bench/go/bin/zoekt",
       "-index_dir",
-      "/Users/crisn/.cache/scrutate-bench/indexed-work/zoekt-index",
+      "~/.cache/scrutate-bench/indexed-work/zoekt-index",
       "case:yes content:\"syzbot\""
      ],
      "valid": true,
@@ -556,7 +556,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -616,9 +616,9 @@
     },
     "zoekt": {
      "argv": [
-      "/Users/crisn/.cache/scrutate-bench/go/bin/zoekt",
+      "~/.cache/scrutate-bench/go/bin/zoekt",
       "-index_dir",
-      "/Users/crisn/.cache/scrutate-bench/indexed-work/zoekt-index",
+      "~/.cache/scrutate-bench/indexed-work/zoekt-index",
       "case:yes content:\"EXPORT_SYMBOL_NS_GPL\""
      ],
      "valid": true,
@@ -691,7 +691,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -751,9 +751,9 @@
     },
     "zoekt": {
      "argv": [
-      "/Users/crisn/.cache/scrutate-bench/go/bin/zoekt",
+      "~/.cache/scrutate-bench/go/bin/zoekt",
       "-index_dir",
-      "/Users/crisn/.cache/scrutate-bench/indexed-work/zoekt-index",
+      "~/.cache/scrutate-bench/indexed-work/zoekt-index",
       "case:yes content:\"rcu_read_lock_bh\""
      ],
      "valid": true,
@@ -826,7 +826,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -886,9 +886,9 @@
     },
     "zoekt": {
      "argv": [
-      "/Users/crisn/.cache/scrutate-bench/go/bin/zoekt",
+      "~/.cache/scrutate-bench/go/bin/zoekt",
       "-index_dir",
-      "/Users/crisn/.cache/scrutate-bench/indexed-work/zoekt-index",
+      "~/.cache/scrutate-bench/indexed-work/zoekt-index",
       "case:yes content:\"__GFP_NOWARN\""
      ],
      "valid": true,
@@ -961,7 +961,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -1021,9 +1021,9 @@
     },
     "zoekt": {
      "argv": [
-      "/Users/crisn/.cache/scrutate-bench/go/bin/zoekt",
+      "~/.cache/scrutate-bench/go/bin/zoekt",
       "-index_dir",
-      "/Users/crisn/.cache/scrutate-bench/indexed-work/zoekt-index",
+      "~/.cache/scrutate-bench/indexed-work/zoekt-index",
       "case:yes content:\"devm_kzalloc\""
      ],
      "valid": true,
@@ -1096,7 +1096,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -1156,9 +1156,9 @@
     },
     "zoekt": {
      "argv": [
-      "/Users/crisn/.cache/scrutate-bench/go/bin/zoekt",
+      "~/.cache/scrutate-bench/go/bin/zoekt",
       "-index_dir",
-      "/Users/crisn/.cache/scrutate-bench/indexed-work/zoekt-index",
+      "~/.cache/scrutate-bench/indexed-work/zoekt-index",
       "case:yes content:\"sk_buff_head\""
      ],
      "valid": true,
@@ -1231,7 +1231,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -1291,9 +1291,9 @@
     },
     "zoekt": {
      "argv": [
-      "/Users/crisn/.cache/scrutate-bench/go/bin/zoekt",
+      "~/.cache/scrutate-bench/go/bin/zoekt",
       "-index_dir",
-      "/Users/crisn/.cache/scrutate-bench/indexed-work/zoekt-index",
+      "~/.cache/scrutate-bench/indexed-work/zoekt-index",
       "case:yes content:\"printk\""
      ],
      "valid": true,
@@ -1366,7 +1366,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -1426,9 +1426,9 @@
     },
     "zoekt": {
      "argv": [
-      "/Users/crisn/.cache/scrutate-bench/go/bin/zoekt",
+      "~/.cache/scrutate-bench/go/bin/zoekt",
       "-index_dir",
-      "/Users/crisn/.cache/scrutate-bench/indexed-work/zoekt-index",
+      "~/.cache/scrutate-bench/indexed-work/zoekt-index",
       "case:yes content:\"mutex_lock\""
      ],
      "valid": true,
@@ -1501,7 +1501,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -1561,9 +1561,9 @@
     },
     "zoekt": {
      "argv": [
-      "/Users/crisn/.cache/scrutate-bench/go/bin/zoekt",
+      "~/.cache/scrutate-bench/go/bin/zoekt",
       "-index_dir",
-      "/Users/crisn/.cache/scrutate-bench/indexed-work/zoekt-index",
+      "~/.cache/scrutate-bench/indexed-work/zoekt-index",
       "case:yes content:\"spin_lock_irqsave\""
      ],
      "valid": true,
@@ -1636,7 +1636,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -1696,9 +1696,9 @@
     },
     "zoekt": {
      "argv": [
-      "/Users/crisn/.cache/scrutate-bench/go/bin/zoekt",
+      "~/.cache/scrutate-bench/go/bin/zoekt",
       "-index_dir",
-      "/Users/crisn/.cache/scrutate-bench/indexed-work/zoekt-index",
+      "~/.cache/scrutate-bench/indexed-work/zoekt-index",
       "case:yes content:\"return -EINVAL;\""
      ],
      "valid": true,
@@ -1771,7 +1771,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -1832,9 +1832,9 @@
     },
     "zoekt": {
      "argv": [
-      "/Users/crisn/.cache/scrutate-bench/go/bin/zoekt",
+      "~/.cache/scrutate-bench/go/bin/zoekt",
       "-index_dir",
-      "/Users/crisn/.cache/scrutate-bench/indexed-work/zoekt-index",
+      "~/.cache/scrutate-bench/indexed-work/zoekt-index",
       "case:no content:\"pm_resume\""
      ],
      "valid": true,
@@ -1907,7 +1907,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -1968,9 +1968,9 @@
     },
     "zoekt": {
      "argv": [
-      "/Users/crisn/.cache/scrutate-bench/go/bin/zoekt",
+      "~/.cache/scrutate-bench/go/bin/zoekt",
       "-index_dir",
-      "/Users/crisn/.cache/scrutate-bench/indexed-work/zoekt-index",
+      "~/.cache/scrutate-bench/indexed-work/zoekt-index",
       "case:no content:\"spinlock_t\""
      ],
      "valid": true,
@@ -2043,7 +2043,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-e",
@@ -2102,9 +2102,9 @@
     },
     "zoekt": {
      "argv": [
-      "/Users/crisn/.cache/scrutate-bench/go/bin/zoekt",
+      "~/.cache/scrutate-bench/go/bin/zoekt",
       "-index_dir",
-      "/Users/crisn/.cache/scrutate-bench/indexed-work/zoekt-index",
+      "~/.cache/scrutate-bench/indexed-work/zoekt-index",
       "case:yes content:\"[A-Z]+_RESUME\""
      ],
      "valid": true,
@@ -2177,7 +2177,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-e",
@@ -2236,9 +2236,9 @@
     },
     "zoekt": {
      "argv": [
-      "/Users/crisn/.cache/scrutate-bench/go/bin/zoekt",
+      "~/.cache/scrutate-bench/go/bin/zoekt",
       "-index_dir",
-      "/Users/crisn/.cache/scrutate-bench/indexed-work/zoekt-index",
+      "~/.cache/scrutate-bench/indexed-work/zoekt-index",
       "case:yes content:\"devm_[a-z]+_alloc\""
      ],
      "valid": true,
@@ -2311,7 +2311,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-e",
@@ -2370,9 +2370,9 @@
     },
     "zoekt": {
      "argv": [
-      "/Users/crisn/.cache/scrutate-bench/go/bin/zoekt",
+      "~/.cache/scrutate-bench/go/bin/zoekt",
       "-index_dir",
-      "/Users/crisn/.cache/scrutate-bench/indexed-work/zoekt-index",
+      "~/.cache/scrutate-bench/indexed-work/zoekt-index",
       "case:yes content:\"(suspend|resume)_noirq\""
      ],
      "valid": true,
@@ -2446,7 +2446,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -2508,9 +2508,9 @@
     },
     "zoekt": {
      "argv": [
-      "/Users/crisn/.cache/scrutate-bench/go/bin/zoekt",
+      "~/.cache/scrutate-bench/go/bin/zoekt",
       "-index_dir",
-      "/Users/crisn/.cache/scrutate-bench/indexed-work/zoekt-index",
+      "~/.cache/scrutate-bench/indexed-work/zoekt-index",
       "case:yes content:\"(ERR_PTR|IS_ERR_OR_NULL)\""
      ],
      "valid": true,
@@ -2583,7 +2583,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -2643,9 +2643,9 @@
     },
     "zoekt": {
      "argv": [
-      "/Users/crisn/.cache/scrutate-bench/go/bin/zoekt",
+      "~/.cache/scrutate-bench/go/bin/zoekt",
       "-index_dir",
-      "/Users/crisn/.cache/scrutate-bench/indexed-work/zoekt-index",
+      "~/.cache/scrutate-bench/indexed-work/zoekt-index",
       "case:yes content:\"zqxjkvbw_never_present_symbol\""
      ],
      "valid": true,
@@ -2718,7 +2718,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -2778,9 +2778,9 @@
     },
     "zoekt": {
      "argv": [
-      "/Users/crisn/.cache/scrutate-bench/go/bin/zoekt",
+      "~/.cache/scrutate-bench/go/bin/zoekt",
       "-index_dir",
-      "/Users/crisn/.cache/scrutate-bench/indexed-work/zoekt-index",
+      "~/.cache/scrutate-bench/indexed-work/zoekt-index",
       "case:yes content:\"qqq_absent_identifier_zzz\""
      ],
      "valid": true,

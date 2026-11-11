@@ -2,16 +2,16 @@
     Blocking waiting for file lock on package cache
     Blocking waiting for file lock on package cache
     Blocking waiting for file lock on build directory
-   Compiling scrutate-fuzz v0.0.0 (/Users/crisn/Documents/Projects/scrutate/fuzz)
+   Compiling scrutate-fuzz v0.0.0 (~/Documents/Projects/scrutate/fuzz)
     Finished `release` profile [optimized + debuginfo] target(s) in 48.03s
     Blocking waiting for file lock on build directory
     Finished `release` profile [optimized + debuginfo] target(s) in 1.45s
-     Running `fuzz/target/aarch64-apple-darwin/release/fuzzy_matcher -artifact_prefix=/Users/crisn/Documents/Projects/scrutate/fuzz/artifacts/fuzzy_matcher/ -max_total_time=600 -rss_limit_mb=4096 -timeout=20 /Users/crisn/Documents/Projects/scrutate/fuzz/corpus/fuzzy_matcher`
+     Running `fuzz/target/aarch64-apple-darwin/release/fuzzy_matcher -artifact_prefix=~/Documents/Projects/scrutate/fuzz/artifacts/fuzzy_matcher/ -max_total_time=600 -rss_limit_mb=4096 -timeout=20 ~/Documents/Projects/scrutate/fuzz/corpus/fuzzy_matcher`
 INFO: Running with entropic power schedule (0xFF, 100).
 INFO: Seed: 1711747046
 INFO: Loaded 1 modules   (385337 inline 8-bit counters): 385337 [0x108484a70, 0x1084e2ba9), 
 INFO: Loaded 1 PC tables (385337 PCs): 385337 [0x1084e2bb0,0x108ac3f40), 
-INFO:        0 files found in /Users/crisn/Documents/Projects/scrutate/fuzz/corpus/fuzzy_matcher
+INFO:        0 files found in ~/Documents/Projects/scrutate/fuzz/corpus/fuzzy_matcher
 INFO: -max_len is not provided; libFuzzer will not generate inputs larger than 4096 bytes
 INFO: A corpus is not provided, starting from an empty corpus
 #2	INITED cov: 19 ft: 19 corp: 1/1b exec/s: 0 rss: 49Mb

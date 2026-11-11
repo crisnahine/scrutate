@@ -72,6 +72,7 @@ python3 bench/make_benchmarks_md.py $M/compare.json
 python3 bench/make_dashboard.py
 python3 tools/gen_dependencies_md.py     # when Cargo.lock changed
 python3 tools/gen_languages_md.py        # when a language changed
+python3 tools/scrub_home.py              # last: logs and results write ~ for the home directory
 ```
 
 ## 4. Documents that carry the numbers by hand

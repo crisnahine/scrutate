@@ -9,7 +9,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-F",
       "-e",
@@ -451,7 +451,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -616,7 +616,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-F",
       "-e",
@@ -1068,7 +1068,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -1236,7 +1236,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-F",
       "-i",
@@ -1686,7 +1686,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -1852,7 +1852,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-F",
       "-w",
@@ -2310,7 +2310,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -2474,7 +2474,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-e",
       "[A-Z]+_RESUME"
@@ -2911,7 +2911,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-e",
@@ -3075,7 +3075,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-e",
       "\\w+_(suspend|resume)\\("
@@ -3505,7 +3505,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-e",
@@ -3667,7 +3667,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-i",
       "-e",
@@ -4132,7 +4132,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-i",
@@ -4292,7 +4292,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-F",
       "-e",
@@ -4734,7 +4734,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -4899,7 +4899,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-F",
       "-e",
@@ -5361,7 +5361,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -5521,7 +5521,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-U",
       "-e",
@@ -5845,7 +5845,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-U",
@@ -6007,7 +6007,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--ident",
       "kernelThread"
@@ -6451,7 +6451,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "--ident",
@@ -6615,7 +6615,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-F",
       "-e",
@@ -7122,7 +7122,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-F",
       "-e",
@@ -7630,7 +7630,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-F",
       "-e",
@@ -8072,7 +8072,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -8237,7 +8237,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-F",
       "-i",
@@ -8687,7 +8687,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -8853,7 +8853,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-e",
       "\\w+_(suspend|resume)\\("
@@ -9292,7 +9292,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-e",
@@ -9456,7 +9456,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-F",
       "-e",
@@ -9908,7 +9908,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -10070,7 +10070,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-F",
       "-e",
@@ -10512,7 +10512,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -10677,7 +10677,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--ident",
       "getTypeSize"
@@ -11121,7 +11121,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "--ident",
@@ -11285,7 +11285,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-F",
       "-e",
@@ -11727,7 +11727,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -11892,7 +11892,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-e",
       "[A-Z][a-z]+Builder"
@@ -12329,7 +12329,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-e",
@@ -12493,7 +12493,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-F",
       "-i",
@@ -12943,7 +12943,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -13109,7 +13109,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-F",
       "-e",
@@ -13539,7 +13539,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -13703,7 +13703,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-F",
       "-i",
@@ -14141,7 +14141,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -14306,7 +14306,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-e",
       "\\w+_(suspend|resume)\\("
@@ -14733,7 +14733,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-e",
@@ -14896,7 +14896,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-F",
       "-e",
@@ -15326,7 +15326,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -15490,7 +15490,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-F",
       "-e",
@@ -15920,7 +15920,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -16084,7 +16084,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-i",
       "-e",
@@ -16538,7 +16538,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-i",
@@ -16701,7 +16701,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-F",
       "-e",
@@ -17144,7 +17144,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -17309,7 +17309,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-e",
       "[A-Z]+_MAX\\b"
@@ -17749,7 +17749,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-e",
@@ -17913,7 +17913,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-F",
       "-e",
@@ -18356,7 +18356,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -18521,7 +18521,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-F",
       "-e",
@@ -18964,7 +18964,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -19129,7 +19129,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-F",
       "-e",
@@ -19559,7 +19559,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -19723,7 +19723,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-e",
       "^(a|aa)+$"
@@ -20161,7 +20161,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-e",
@@ -20325,7 +20325,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-F",
       "-e",
@@ -20735,7 +20735,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "tsquery",
       "--json",
       "c",
@@ -21011,7 +21011,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "tsquery",
       "--json",
       "rust",

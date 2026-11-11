@@ -37,7 +37,7 @@ Rust tests passed, by binary: [63, 0, 32, 1, 4, 1, 7, 4, 8, 2, 0, 0] (total 122)
 `cargo clippy --release -p scrutate --all-targets -- -D warnings` — exit 0 (PASS, 2.4 s)
 
 ```
-Checking scrutate v0.1.0 (/Users/crisn/Documents/Projects/scrutate/crates/scrutate)
+Checking scrutate v0.1.0 (~/Documents/Projects/scrutate/crates/scrutate)
     Finished `release` profile [optimized] target(s) in 2.32s
 ```
 
@@ -46,8 +46,8 @@ Checking scrutate v0.1.0 (/Users/crisn/Documents/Projects/scrutate/crates/scruta
 `cargo clippy --release -p scrutate-py -- -D warnings` — exit 0 (PASS, 1.6 s)
 
 ```
-Checking scrutate v0.1.0 (/Users/crisn/Documents/Projects/scrutate/crates/scrutate)
-    Checking scrutate-py v0.1.0 (/Users/crisn/Documents/Projects/scrutate/crates/scrutate-py)
+Checking scrutate v0.1.0 (~/Documents/Projects/scrutate/crates/scrutate)
+    Checking scrutate-py v0.1.0 (~/Documents/Projects/scrutate/crates/scrutate-py)
     Finished `release` profile [optimized] target(s) in 1.58s
 ```
 
@@ -102,7 +102,7 @@ running 0 tests
 
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-   Compiling scrutate v0.1.0 (/Users/crisn/Documents/Projects/scrutate/crates/scrutate)
+   Compiling scrutate v0.1.0 (~/Documents/Projects/scrutate/crates/scrutate)
     Finished `release` profile [optimized] target(s) in 35.77s
      Running unittests src/lib.rs (target/release/deps/scrutate-e055e363c2ade790)
      Running unittests src/main.rs (target/release/deps/scrutate-2756ac235778ef3f)
@@ -126,7 +126,7 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
 
-   Compiling scrutate v0.1.0 (/Users/crisn/Documents/Projects/scrutate/crates/scrutate)
+   Compiling scrutate v0.1.0 (~/Documents/Projects/scrutate/crates/scrutate)
     Finished `release` profile [optimized] target(s) in 17.12s
      Running tests/samples_extra.rs (target/release/deps/samples_extra-1c0dda27002baa89)
 ```
@@ -156,7 +156,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 ```
 Fetching advisory database from `https://github.com/RustSec/advisory-db.git`
-      Loaded 1446 security advisories (from /Users/crisn/.cargo/advisory-db)
+      Loaded 1446 security advisories (from ~/.cargo/advisory-db)
     Updating crates.io index
     Scanning Cargo.lock for vulnerabilities (252 crate dependencies)
 ```

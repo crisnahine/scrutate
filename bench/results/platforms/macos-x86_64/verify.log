@@ -1,11 +1,11 @@
 info: component rust-std for target x86_64-apple-darwin is up to date
 === build
-   Compiling ignore v0.4.34 (/Users/crisn/Documents/Projects/scrutate/vendor/ignore)
-   Compiling scrutate v0.1.0 (/Users/crisn/Documents/Projects/scrutate/crates/scrutate)
+   Compiling ignore v0.4.34 (~/Documents/Projects/scrutate/vendor/ignore)
+   Compiling scrutate v0.1.0 (~/Documents/Projects/scrutate/crates/scrutate)
     Finished `release` profile [optimized] target(s) in 16.83s
 target/x86/x86_64-apple-darwin/release/scrutate: Mach-O 64-bit executable x86_64
 === Rosetta 2 is not installed: x86_64 code cannot run here; compiling the tests only
-   Compiling scrutate v0.1.0 (/Users/crisn/Documents/Projects/scrutate/crates/scrutate)
+   Compiling scrutate v0.1.0 (~/Documents/Projects/scrutate/crates/scrutate)
     Finished `release` profile [optimized] target(s) in 34.00s
   Executable unittests src/lib.rs (target/x86/x86_64-apple-darwin/release/deps/scrutate-e1efd5d42c69d1a1)
   Executable unittests src/main.rs (target/x86/x86_64-apple-darwin/release/deps/scrutate-9f74d032039833aa)

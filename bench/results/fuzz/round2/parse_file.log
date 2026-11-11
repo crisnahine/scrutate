@@ -5,12 +5,12 @@
     Finished `release` profile [optimized + debuginfo] target(s) in 0.19s
     Blocking waiting for file lock on build directory
     Finished `release` profile [optimized + debuginfo] target(s) in 0.09s
-     Running `fuzz/target/aarch64-apple-darwin/release/parse_file -artifact_prefix=/Users/crisn/Documents/Projects/scrutate/fuzz/artifacts/parse_file/ -max_total_time=600 -rss_limit_mb=4096 -timeout=20 /Users/crisn/Documents/Projects/scrutate/fuzz/corpus/parse_file`
+     Running `fuzz/target/aarch64-apple-darwin/release/parse_file -artifact_prefix=~/Documents/Projects/scrutate/fuzz/artifacts/parse_file/ -max_total_time=600 -rss_limit_mb=4096 -timeout=20 ~/Documents/Projects/scrutate/fuzz/corpus/parse_file`
 INFO: Running with entropic power schedule (0xFF, 100).
 INFO: Seed: 2388429422
 INFO: Loaded 1 modules   (385474 inline 8-bit counters): 385474 [0x108f29ab0, 0x108f87c72), 
 INFO: Loaded 1 PC tables (385474 PCs): 385474 [0x108f87c78,0x109569898), 
-INFO:      157 files found in /Users/crisn/Documents/Projects/scrutate/fuzz/corpus/parse_file
+INFO:      157 files found in ~/Documents/Projects/scrutate/fuzz/corpus/parse_file
 INFO: -max_len is not provided; libFuzzer will not generate inputs larger than 4096 bytes
 INFO: seed corpus: files: 157 min: 1b max: 4b total: 470b rss: 50Mb
 #263	INITED cov: 4431 ft: 5616 corp: 126/361b exec/s: 0 rss: 78Mb

@@ -88,7 +88,7 @@ Test without touching `~/.config/nvim` (Neovim is not installed here; the releas
 T=$(mktemp -d); cd "$T"
 curl -sSfLO https://github.com/neovim/neovim/releases/download/v0.12.6/nvim-macos-arm64.tar.gz
 tar xzf nvim-macos-arm64.tar.gz; NV="$T/nvim-macos-arm64/bin/nvim"
-cd /Users/crisn/Documents/Projects/scrutate
+cd ~/Documents/Projects/scrutate
 "$NV" --headless --clean --cmd "set rtp^=$PWD/integrations/neovim" \
   -c 'lua require("scrutate").setup()' -c 'ScrutateSymbol hits_json' \
   -c 'lua print(vim.inspect(vim.fn.getqflist()[1]))' -c 'qa!'
@@ -152,7 +152,7 @@ cd "$T" && git init -q demo && cd demo && echo 'def a(): return 1' > a.py && git
 # paste the YAML block from integrations/pre-commit/README.md into .pre-commit-config.yaml, then:
 git add .pre-commit-config.yaml && "$T/v/bin/pre-commit" run --all-files
 # with a root .pre-commit-hooks.yaml committed in the scrutate repo:
-"$T/v/bin/pre-commit" try-repo /Users/crisn/Documents/Projects/scrutate scrutate-dupes --all-files
+"$T/v/bin/pre-commit" try-repo ~/Documents/Projects/scrutate scrutate-dupes --all-files
 ```
 
 `try-repo` takes "a local path on disk" and uses `HEAD` unless `--ref` is given ([pre-commit.com](https://pre-commit.com/)), so it needs the manifest committed, not only in the working tree.
@@ -281,8 +281,8 @@ Test without touching a user profile:
 T=$(mktemp -d); cd "$T"
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}' \
   '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
-  '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | scrutate --root /Users/crisn/Documents/Projects/scrutate serve
-claude mcp add --scope project scrutate -- scrutate --root /Users/crisn/Documents/Projects/scrutate serve   # writes $T/.mcp.json only
+  '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | scrutate --root ~/Documents/Projects/scrutate serve
+claude mcp add --scope project scrutate -- scrutate --root ~/Documents/Projects/scrutate serve   # writes $T/.mcp.json only
 claude mcp get scrutate
 code --user-data-dir "$T/data" --extensions-dir "$T/exts" --add-mcp '{"name":"scrutate","type":"stdio","command":"scrutate","args":["serve"]}'
 python3 -I -c 'import json,sys; json.load(open(sys.argv[1]))' "$T/.mcp.json"

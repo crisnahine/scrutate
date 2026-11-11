@@ -8,7 +8,7 @@
   "tools": {
    "scrutate": {
     "version": "scrutate 0.1.0",
-    "path": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate",
+    "path": "~/Documents/Projects/scrutate/bench/../target/release/scrutate",
     "note": null
    },
    "rg": {
@@ -77,7 +77,7 @@
    "wall_min_ms": 9.402916999533772,
    "cpu_median_s": 0.020606,
    "maxrss_mb": 7.84375,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F import .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F import .",
    "agrees": true
   },
   {
@@ -168,7 +168,7 @@
    "wall_min_ms": 8.00049997633323,
    "cpu_median_s": 0.0176425,
    "maxrss_mb": 7.59375,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F refresh_token .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F refresh_token .",
    "agrees": true
   },
   {
@@ -259,7 +259,7 @@
    "wall_min_ms": 11.045375023968518,
    "cpu_median_s": 0.021788,
    "maxrss_mb": 8.328125,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep 'def\\s+\\w+_test\\w*\\(' .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep 'def\\s+\\w+_test\\w*\\(' .",
    "agrees": true
   },
   {
@@ -350,7 +350,7 @@
    "wall_min_ms": 8.697291021235287,
    "cpu_median_s": 0.0194335,
    "maxrss_mb": 7.546875,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F -i warning .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F -i warning .",
    "agrees": true
   },
   {
@@ -441,7 +441,7 @@
    "wall_min_ms": 9.204624977428466,
    "cpu_median_s": 0.020839,
    "maxrss_mb": 7.984375,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F -w self .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F -w self .",
    "agrees": true
   },
   {
@@ -532,7 +532,7 @@
    "wall_min_ms": 8.381708001252264,
    "cpu_median_s": 0.0193655,
    "maxrss_mb": 7.578125,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F -c return .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F -c return .",
    "agrees": true
   },
   {
@@ -623,7 +623,7 @@
    "wall_min_ms": 8.616624982096255,
    "cpu_median_s": 0.0190085,
    "maxrss_mb": 7.09375,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F -l numpy .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F -l numpy .",
    "agrees": true
   },
   {
@@ -714,7 +714,7 @@
    "wall_min_ms": 8.367750036995858,
    "cpu_median_s": 0.018638,
    "maxrss_mb": 7.859375,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep -U 'try:\\n\\s+import' .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep -U 'try:\\n\\s+import' .",
    "agrees": true
   },
   {
@@ -770,7 +770,7 @@
    "wall_min_ms": 9.080709016416222,
    "cpu_median_s": 0.0199045,
    "maxrss_mb": 8.0625,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep --ident addNode .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep --ident addNode .",
    "agrees": true
   },
   {
@@ -861,7 +861,7 @@
    "wall_min_ms": 9.292334027122706,
    "cpu_median_s": 0.021611,
    "maxrss_mb": 7.71875,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep --fuzzy=1 shortest_pth .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep --fuzzy=1 shortest_pth .",
    "agrees": true
   },
   {
@@ -917,7 +917,7 @@
    "wall_min_ms": 56.441708002239466,
    "cpu_median_s": 0.2396135,
    "maxrss_mb": 9.484375,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F import .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F import .",
    "agrees": true
   },
   {
@@ -1008,7 +1008,7 @@
    "wall_min_ms": 39.24962499877438,
    "cpu_median_s": 0.1725425,
    "maxrss_mb": 8.703125,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F refresh_token .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F refresh_token .",
    "agrees": true
   },
   {
@@ -1099,7 +1099,7 @@
    "wall_min_ms": 43.95787505200133,
    "cpu_median_s": 0.18423099999999998,
    "maxrss_mb": 9.671875,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep 'def\\s+\\w+_test\\w*\\(' .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep 'def\\s+\\w+_test\\w*\\(' .",
    "agrees": true
   },
   {
@@ -1190,7 +1190,7 @@
    "wall_min_ms": 54.39612496411428,
    "cpu_median_s": 0.241441,
    "maxrss_mb": 9.59375,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F -i warning .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F -i warning .",
    "agrees": true
   },
   {
@@ -1281,7 +1281,7 @@
    "wall_min_ms": 55.320250045042485,
    "cpu_median_s": 0.23879049999999996,
    "maxrss_mb": 9.765625,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F -w self .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F -w self .",
    "agrees": true
   },
   {
@@ -1372,7 +1372,7 @@
    "wall_min_ms": 42.58083296008408,
    "cpu_median_s": 0.19881349999999998,
    "maxrss_mb": 9.46875,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F -c return .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F -c return .",
    "agrees": true
   },
   {
@@ -1463,7 +1463,7 @@
    "wall_min_ms": 41.505000030156225,
    "cpu_median_s": 0.19148949999999998,
    "maxrss_mb": 8.6875,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F -l numpy .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F -l numpy .",
    "agrees": true
   },
   {
@@ -1554,7 +1554,7 @@
    "wall_min_ms": 41.91683302633464,
    "cpu_median_s": 0.1856965,
    "maxrss_mb": 16.34375,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep -U 'try:\\n\\s+import' .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep -U 'try:\\n\\s+import' .",
    "agrees": true
   },
   {
@@ -1610,7 +1610,7 @@
    "wall_min_ms": 42.44362498866394,
    "cpu_median_s": 0.1840715,
    "maxrss_mb": 9.21875,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep --ident addNode .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep --ident addNode .",
    "agrees": true
   },
   {
@@ -1701,7 +1701,7 @@
    "wall_min_ms": 48.913792008534074,
    "cpu_median_s": 0.2197065,
    "maxrss_mb": 9.28125,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep --fuzzy=1 shortest_pth .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep --fuzzy=1 shortest_pth .",
    "agrees": true
   },
   {
@@ -1757,7 +1757,7 @@
    "wall_min_ms": 466.8074999935925,
    "cpu_median_s": 2.067837,
    "maxrss_mb": 11.59375,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F import .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F import .",
    "agrees": true
   },
   {
@@ -1848,7 +1848,7 @@
    "wall_min_ms": 353.01262501161546,
    "cpu_median_s": 1.751094,
    "maxrss_mb": 11.3125,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F refresh_token .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F refresh_token .",
    "agrees": true
   },
   {
@@ -1939,7 +1939,7 @@
    "wall_min_ms": 376.176374964416,
    "cpu_median_s": 1.8370900000000001,
    "maxrss_mb": 12.5,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep 'def\\s+\\w+_test\\w*\\(' .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep 'def\\s+\\w+_test\\w*\\(' .",
    "agrees": true
   },
   {
@@ -2030,7 +2030,7 @@
    "wall_min_ms": 380.8568340027705,
    "cpu_median_s": 1.89233,
    "maxrss_mb": 11.921875,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F -i warning .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F -i warning .",
    "agrees": true
   },
   {
@@ -2121,7 +2121,7 @@
    "wall_min_ms": 489.49533299310133,
    "cpu_median_s": 2.23373,
    "maxrss_mb": 12.25,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F -w self .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F -w self .",
    "agrees": true
   },
   {
@@ -2212,7 +2212,7 @@
    "wall_min_ms": 355.65691598458216,
    "cpu_median_s": 1.842683,
    "maxrss_mb": 15.78125,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F -c return .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F -c return .",
    "agrees": true
   },
   {
@@ -2303,7 +2303,7 @@
    "wall_min_ms": 343.7409580219537,
    "cpu_median_s": 1.7742040000000001,
    "maxrss_mb": 13.953125,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F -l numpy .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep -F -l numpy .",
    "agrees": true
   },
   {
@@ -2394,7 +2394,7 @@
    "wall_min_ms": 350.40654201293364,
    "cpu_median_s": 1.717886,
    "maxrss_mb": 23.359375,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep -U 'try:\\n\\s+import' .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep -U 'try:\\n\\s+import' .",
    "agrees": true
   },
   {
@@ -2450,7 +2450,7 @@
    "wall_min_ms": 346.2592919822782,
    "cpu_median_s": 1.704572,
    "maxrss_mb": 12.0,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep --ident addNode .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep --ident addNode .",
    "agrees": true
   },
   {
@@ -2541,7 +2541,7 @@
    "wall_min_ms": 409.12654099520296,
    "cpu_median_s": 2.022144,
    "maxrss_mb": 11.625,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate grep --fuzzy=1 shortest_pth .",
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate grep --fuzzy=1 shortest_pth .",
    "agrees": true
   },
   {
@@ -2737,7 +2737,7 @@
    "matches": 7505,
    "wall_median_ms": 15.936708019580692,
    "maxrss_mb": 14.0,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate tsquery python '(function_definition) @f' --limit 100000000 ."
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate tsquery python '(function_definition) @f' --limit 100000000 ."
   },
   {
    "corpus": "small",
@@ -2753,7 +2753,7 @@
    "matches": 131838,
    "wall_median_ms": 125.67962502362207,
    "maxrss_mb": 92.0625,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate tsquery python '(function_definition) @f' --limit 100000000 ."
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate tsquery python '(function_definition) @f' --limit 100000000 ."
   },
   {
    "corpus": "big",
@@ -2769,7 +2769,7 @@
    "matches": 1054704,
    "wall_median_ms": 801.9775839638896,
    "maxrss_mb": 226.953125,
-   "cmd": "/Users/crisn/Documents/Projects/scrutate/bench/../target/release/scrutate tsquery python '(function_definition) @f' --limit 100000000 ."
+   "cmd": "~/Documents/Projects/scrutate/bench/../target/release/scrutate tsquery python '(function_definition) @f' --limit 100000000 ."
   },
   {
    "corpus": "massive",

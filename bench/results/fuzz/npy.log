@@ -1,17 +1,17 @@
     Blocking waiting for file lock on package cache
     Blocking waiting for file lock on package cache
     Blocking waiting for file lock on package cache
-   Compiling scrutate v0.1.0 (/Users/crisn/Documents/Projects/scrutate/crates/scrutate)
-   Compiling scrutate-fuzz v0.0.0 (/Users/crisn/Documents/Projects/scrutate/fuzz)
+   Compiling scrutate v0.1.0 (~/Documents/Projects/scrutate/crates/scrutate)
+   Compiling scrutate-fuzz v0.0.0 (~/Documents/Projects/scrutate/fuzz)
     Finished `release` profile [optimized + debuginfo] target(s) in 47.11s
     Blocking waiting for file lock on build directory
     Finished `release` profile [optimized + debuginfo] target(s) in 2.30s
-     Running `fuzz/target/aarch64-apple-darwin/release/npy -artifact_prefix=/Users/crisn/Documents/Projects/scrutate/fuzz/artifacts/npy/ -max_total_time=600 -rss_limit_mb=4096 -timeout=20 /Users/crisn/Documents/Projects/scrutate/fuzz/corpus/npy`
+     Running `fuzz/target/aarch64-apple-darwin/release/npy -artifact_prefix=~/Documents/Projects/scrutate/fuzz/artifacts/npy/ -max_total_time=600 -rss_limit_mb=4096 -timeout=20 ~/Documents/Projects/scrutate/fuzz/corpus/npy`
 INFO: Running with entropic power schedule (0xFF, 100).
 INFO: Seed: 1711745595
 INFO: Loaded 1 modules   (385683 inline 8-bit counters): 385683 [0x10a858fc0, 0x10a8b7253), 
 INFO: Loaded 1 PC tables (385683 PCs): 385683 [0x10a8b7258,0x10ae99b88), 
-INFO:        0 files found in /Users/crisn/Documents/Projects/scrutate/fuzz/corpus/npy
+INFO:        0 files found in ~/Documents/Projects/scrutate/fuzz/corpus/npy
 INFO: -max_len is not provided; libFuzzer will not generate inputs larger than 4096 bytes
 INFO: A corpus is not provided, starting from an empty corpus
 #2	INITED cov: 43 ft: 43 corp: 1/1b exec/s: 0 rss: 50Mb
@@ -27,7 +27,7 @@ INFO: A corpus is not provided, starting from an empty corpus
 	NEW_FUNC[2/18]: 0x000105e447ec in _RINvMNtCsdkthdqkzPtA_6anyhow5errorNtB5_5Error9constructINtNtB5_7wrapper12MessageErrorNtNtCs4qTDAHBj79k_5alloc6string6StringEECs35Mfnm8L6jr_3npy error.rs:278
 #3694952	RELOAD cov: 269 ft: 299 corp: 4/2719b lim: 4096 exec/s: 8612 rss: 304Mb
 
-thread '<unnamed>' (8611894) panicked at /Users/crisn/Documents/Projects/scrutate/crates/scrutate/src/npy.rs:220:46:
+thread '<unnamed>' (8611894) panicked at ~/Documents/Projects/scrutate/crates/scrutate/src/npy.rs:220:46:
 index out of bounds: the len is 1706 but the index is 1716
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ==49993== ERROR: libFuzzer: deadly signal
@@ -64,7 +64,7 @@ NOTE: libFuzzer has rudimentary signal handlers.
       Combine libFuzzer with AddressSanitizer or similar for better crash reports.
 SUMMARY: libFuzzer: deadly signal
 MS: 1 EraseBytes-; base unit: ca0b6e804d58404dc144416872de29454528edf0
-artifact_prefix='/Users/crisn/Documents/Projects/scrutate/fuzz/artifacts/npy/'; Test unit written to /Users/crisn/Documents/Projects/scrutate/fuzz/artifacts/npy/crash-f97699233028b876b22b0c17b47e7f08cfb0006f
+artifact_prefix='~/Documents/Projects/scrutate/fuzz/artifacts/npy/'; Test unit written to ~/Documents/Projects/scrutate/fuzz/artifacts/npy/crash-f97699233028b876b22b0c17b47e7f08cfb0006f
 
 ────────────────────────────────────────────────────────────────────────────────
 

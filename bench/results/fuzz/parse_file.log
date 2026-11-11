@@ -3,16 +3,16 @@
     Blocking waiting for file lock on package cache
     Blocking waiting for file lock on package cache
     Blocking waiting for file lock on build directory
-   Compiling scrutate-fuzz v0.0.0 (/Users/crisn/Documents/Projects/scrutate/fuzz)
+   Compiling scrutate-fuzz v0.0.0 (~/Documents/Projects/scrutate/fuzz)
     Finished `release` profile [optimized + debuginfo] target(s) in 48.65s
     Blocking waiting for file lock on build directory
     Finished `release` profile [optimized + debuginfo] target(s) in 0.87s
-     Running `fuzz/target/aarch64-apple-darwin/release/parse_file -artifact_prefix=/Users/crisn/Documents/Projects/scrutate/fuzz/artifacts/parse_file/ -max_total_time=600 -rss_limit_mb=4096 -timeout=20 /Users/crisn/Documents/Projects/scrutate/fuzz/corpus/parse_file`
+     Running `fuzz/target/aarch64-apple-darwin/release/parse_file -artifact_prefix=~/Documents/Projects/scrutate/fuzz/artifacts/parse_file/ -max_total_time=600 -rss_limit_mb=4096 -timeout=20 ~/Documents/Projects/scrutate/fuzz/corpus/parse_file`
 INFO: Running with entropic power schedule (0xFF, 100).
 INFO: Seed: 1711746559
 INFO: Loaded 1 modules   (385405 inline 8-bit counters): 385405 [0x10ae71ba0, 0x10aecfd1d), 
 INFO: Loaded 1 PC tables (385405 PCs): 385405 [0x10aecfd20,0x10b4b14f0), 
-INFO:        0 files found in /Users/crisn/Documents/Projects/scrutate/fuzz/corpus/parse_file
+INFO:        0 files found in ~/Documents/Projects/scrutate/fuzz/corpus/parse_file
 INFO: -max_len is not provided; libFuzzer will not generate inputs larger than 4096 bytes
 INFO: A corpus is not provided, starting from an empty corpus
 #2	INITED cov: 228 ft: 228 corp: 1/1b exec/s: 0 rss: 51Mb
@@ -296,7 +296,7 @@ SUMMARY: libFuzzer: deadly signal
 MS: 2 CrossOver-CopyPart-; base unit: 79196a8649f7a1fbfc6ed5871e4a11d62580ba13
 0x4,0xc,0xc,0x4,
 \004\014\014\004
-artifact_prefix='/Users/crisn/Documents/Projects/scrutate/fuzz/artifacts/parse_file/'; Test unit written to /Users/crisn/Documents/Projects/scrutate/fuzz/artifacts/parse_file/crash-2b385913981ecbc7bab23978ca96c1223eab3b11
+artifact_prefix='~/Documents/Projects/scrutate/fuzz/artifacts/parse_file/'; Test unit written to ~/Documents/Projects/scrutate/fuzz/artifacts/parse_file/crash-2b385913981ecbc7bab23978ca96c1223eab3b11
 Base64: BAwMBA==
 
 ────────────────────────────────────────────────────────────────────────────────

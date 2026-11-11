@@ -3,16 +3,16 @@
     Blocking waiting for file lock on package cache
     Blocking waiting for file lock on package cache
     Blocking waiting for file lock on build directory
-   Compiling scrutate-fuzz v0.0.0 (/Users/crisn/Documents/Projects/scrutate/fuzz)
+   Compiling scrutate-fuzz v0.0.0 (~/Documents/Projects/scrutate/fuzz)
     Finished `release` profile [optimized + debuginfo] target(s) in 49.43s
     Blocking waiting for file lock on build directory
     Finished `release` profile [optimized + debuginfo] target(s) in 0.14s
-     Running `fuzz/target/aarch64-apple-darwin/release/trigram_query -artifact_prefix=/Users/crisn/Documents/Projects/scrutate/fuzz/artifacts/trigram_query/ -max_total_time=600 -rss_limit_mb=4096 -timeout=20 /Users/crisn/Documents/Projects/scrutate/fuzz/corpus/trigram_query`
+     Running `fuzz/target/aarch64-apple-darwin/release/trigram_query -artifact_prefix=~/Documents/Projects/scrutate/fuzz/artifacts/trigram_query/ -max_total_time=600 -rss_limit_mb=4096 -timeout=20 ~/Documents/Projects/scrutate/fuzz/corpus/trigram_query`
 INFO: Running with entropic power schedule (0xFF, 100).
 INFO: Seed: 1711745609
 INFO: Loaded 1 modules   (386470 inline 8-bit counters): 386470 [0x106d90d40, 0x106def2e6), 
 INFO: Loaded 1 PC tables (386470 PCs): 386470 [0x106def2e8,0x1073d4d48), 
-INFO:        0 files found in /Users/crisn/Documents/Projects/scrutate/fuzz/corpus/trigram_query
+INFO:        0 files found in ~/Documents/Projects/scrutate/fuzz/corpus/trigram_query
 INFO: -max_len is not provided; libFuzzer will not generate inputs larger than 4096 bytes
 INFO: A corpus is not provided, starting from an empty corpus
 #2	INITED cov: 20 ft: 20 corp: 1/1b exec/s: 0 rss: 49Mb

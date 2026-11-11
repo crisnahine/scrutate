@@ -1,11 +1,11 @@
     Finished `release` profile [optimized + debuginfo] target(s) in 0.14s
     Finished `release` profile [optimized + debuginfo] target(s) in 0.10s
-     Running `fuzz/target/aarch64-apple-darwin/release/npy -artifact_prefix=/Users/crisn/Documents/Projects/scrutate/fuzz/artifacts/npy/ -max_total_time=600 -rss_limit_mb=4096 -malloc_limit_mb=2048 -timeout=20 /Users/crisn/Documents/Projects/scrutate/fuzz/corpus/npy`
+     Running `fuzz/target/aarch64-apple-darwin/release/npy -artifact_prefix=~/Documents/Projects/scrutate/fuzz/artifacts/npy/ -max_total_time=600 -rss_limit_mb=4096 -malloc_limit_mb=2048 -timeout=20 ~/Documents/Projects/scrutate/fuzz/corpus/npy`
 INFO: Running with entropic power schedule (0xFF, 100).
 INFO: Seed: 3630590877
 INFO: Loaded 1 modules   (385139 inline 8-bit counters): 385139 [0x1069c4de0, 0x106a22e53), 
 INFO: Loaded 1 PC tables (385139 PCs): 385139 [0x106a22e58,0x107003588), 
-INFO:      489 files found in /Users/crisn/Documents/Projects/scrutate/fuzz/corpus/npy
+INFO:      489 files found in ~/Documents/Projects/scrutate/fuzz/corpus/npy
 INFO: -max_len is not provided; libFuzzer will not generate inputs larger than 4096 bytes
 INFO: seed corpus: files: 489 min: 1b max: 2572b total: 193249b rss: 50Mb
 #490	INITED cov: 531 ft: 1506 corp: 309/90Kb exec/s: 0 rss: 60Mb

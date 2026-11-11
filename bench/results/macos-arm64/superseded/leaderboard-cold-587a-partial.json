@@ -9,7 +9,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-F",
       "-e",
@@ -451,7 +451,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -616,7 +616,7 @@
    "tools": {
     "scrutate": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "-F",
       "-i",
@@ -1066,7 +1066,7 @@
     },
     "scrutate --index": {
      "argv": [
-      "/Users/crisn/Documents/Projects/scrutate/target/release/scrutate",
+      "~/Documents/Projects/scrutate/target/release/scrutate",
       "grep",
       "--index",
       "-F",
@@ -1331,7 +1331,7 @@
  "settings": {
   "runs": 30,
   "cache": "cold",
-  "cold_prepare": "/Users/crisn/Documents/Projects/scrutate/target/evict {list}",
+  "cold_prepare": "~/Documents/Projects/scrutate/target/evict {list}",
   "max_load": 40.0,
   "warmup": 1,
   "contender": 1.15,
