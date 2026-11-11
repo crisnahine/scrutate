@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+"""Random differential test: `scrutate grep` against ripgrep on small random trees.
+
+usage: fuzz_grep.py [--bin SCRUTATE] [--seconds 60] [--seed 1]
+
+Each tree has a `.git` directory, CRLF and BOM files, NUL bytes, invalid UTF-8, hidden files,
+`.gitignore` and `.ignore` files and a symlink. Six random flag sets run on it with both tools;
+sorted output and exit codes must agree. A tree that differs is kept, with its arguments in
+ARGS.txt, under the temporary directory printed at the end. One difference is ripgrep's and is
+counted apart: with `-v` or `^$` it prints one line before a NUL byte and stops. Exit status 1
+when anything else differs.
+"""
+import argparse, os, random, shutil, subprocess, sys, tempfile, time
+
+ap = argparse.ArgumentParser()
+ap.add_argument("--bin", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "target", "release", "scrutate"))
+ap.add_argument("--seconds", type=float, default=60)
+ap.add_argument("--seed", type=int, default=1)
+a_ = ap.parse_args()
+BIN, SECONDS, SEED = os.path.abspath(a_.bin), a_.seconds, a_.seed
+HERE = tempfile.mkdtemp(prefix="scrutate-fuzz-")
+WORK = os.path.join(HERE, f"work{SEED}")
+KEEP = os.path.join(HERE, f"diffs{SEED}")
+rnd = random.Random(SEED)
+WORDS = ["foo", "Foo", "FOO", "bar", "baz", "foobar", "foo_bar", "x", "été", "ÉTÉ", "token", "Token", "a.b", "(x)", "end", ""]
+NAMES = ["a.txt", "b.txt", "c.log", "d.rs", "e.tmp", "keep.log", ".h.txt", "A.TXT", "long name.txt"]
+DIRS = ["", "sub", "sub/deep", "dir1", "dir2", ".hid", "tmp"]
+IGN = ["*.log", "sub/", "/a.txt", "!keep.log", "**/tmp", "*.tmp", "dir*/", "b?.txt", "[ab].txt", "deep", "/sub/deep/", "*.TXT"]
+
+def line():
+    return " ".join(rnd.choice(WORDS) for _ in range(rnd.randint(0, 5)))
+
+STATE = {"nul": False}
+
+
+def make():
+    STATE["nul"] = False
+    shutil.rmtree(WORK, ignore_errors=True)
+    os.makedirs(os.path.join(WORK, ".git"))
+    for d in rnd.sample(DIRS, rnd.randint(1, 5)):
+        os.makedirs(os.path.join(WORK, d), exist_ok=True)
+        for n in rnd.sample(NAMES, rnd.randint(1, 4)):
+            nl = rnd.choice(["\n", "\n", "\n", "\r\n"])
+            body = nl.join(line() for _ in range(rnd.randint(0, 12)))
+            if rnd.random() < 0.7:
+                body += nl
+            data = body.encode()
+            r = rnd.random()
+            if r < 0.04:
+                data = data[: len(data) // 2] + b"\x00bin" + data[len(data) // 2 :]
+                STATE["nul"] = True
+            elif r < 0.08:
+                data = b"\xff\xfe bad " + data
+            elif r < 0.11:
+                data = b"\xef\xbb\xbf" + data
+            with open(os.path.join(WORK, d, n), "wb") as f:
+                f.write(data)
+        if rnd.random() < 0.3:
+            with open(os.path.join(WORK, d, rnd.choice([".gitignore", ".ignore"])), "w") as f:
+                f.write("\n".join(rnd.sample(IGN, rnd.randint(1, 3))) + "\n")
+    if rnd.random() < 0.2:
+        try:
+            os.symlink("a.txt", os.path.join(WORK, "link.txt"))
+        except OSError:
+            pass
+
+def pattern():
+    w = [x for x in WORDS if x and x.isalnum()]
+    a, b = rnd.choice(w), rnd.choice(w)
+    return rnd.choice([a, a, f"{a}|{b}", f"{a}\\w+", f"^{a}", f"{b}$", "[a-f]+", f"\\b{a}\\b", f"{a}.*{b}", f"(?i){a}", f"{a} {b}", "^$", f"\\s{a}", f"{a}?{b}"])
+
+def args():
+    out = []
+    lit = rnd.random() < 0.2
+    if lit:
+        out.append("-F")
+    out += rnd.choice([["-i"], ["-S"], ["-i", "-S"], ["-S", "-i"], [], [], [], []])
+    for flag, p in [ ("-w", 0.2), ("-v", 0.12), ("--hidden", 0.25), ("--no-ignore", 0.2), ("-L", 0.15)]:
+        if rnd.random() < p:
+            out.append(flag)
+    shape = rnd.random()
+    if shape < 0.15:
+        out.append("-c")
+    elif shape < 0.3:
+        out.append("-l")
+    elif shape < 0.5:
+        out += [rnd.choice(["-A", "-B", "-C"]) + str(rnd.randint(1, 3))]
+    elif shape < 0.6:
+        out += ["-m", str(rnd.randint(1, 3))]
+    if rnd.random() < 0.15:
+        out += ["--max-depth", str(rnd.randint(1, 3))]
+    if rnd.random() < 0.15:
+        out += ["-g", rnd.choice(["*.txt", "!*.log", "sub/**", "!sub/**", "*.rs", "!dir1/", "*.{txt,log}"])]
+    if rnd.random() < 0.08:
+        out += ["--max-filesize", str(rnd.choice([10, 50, 200]))]
+    if rnd.random() < 0.1 and not lit:
+        w = [x for x in WORDS if x and x.isalnum()]
+        out += ["-U", f"{rnd.choice(w)}\\n{rnd.choice(w)}"]
+    elif rnd.random() < 0.12:
+        w = [x for x in WORDS if x and x.isalnum()]
+        out += ["-e", rnd.choice(w), "-e", rnd.choice(w)]
+    else:
+        p = pattern()
+        out.append(rnd.choice([x for x in WORDS if x]) if lit else p)
+    return out
+
+def run(tool, a):
+    cmd = (["rg", "-n", "--no-heading", "--with-filename", "--no-messages"] if tool == "rg" else [BIN, "grep"]) + a + ["."]
+    try:
+        p = subprocess.run(cmd, cwd=WORK, capture_output=True, timeout=20)
+    except subprocess.TimeoutExpired:
+        return ["<timeout>"], -9
+    out = p.stdout.replace(b"\r", b"").decode("utf-8", "replace").splitlines()
+    return sorted(l[2:] if l.startswith("./") else l for l in out if "WARNING: stopped searching binary file" not in l), p.returncode
+
+t0, n, diffs, known, kinds = time.time(), 0, 0, 0, {}
+shutil.rmtree(KEEP, ignore_errors=True)
+os.makedirs(KEEP, exist_ok=True)
+while time.time() - t0 < SECONDS:
+    make()
+    for _ in range(6):
+        a = args()
+        n += 1
+        r, rc = run("rg", a)
+        if rc == 2:
+            continue  # rg rejects the arguments
+        s, sc = run("sc", a)
+        if r == s and rc == sc:
+            continue
+        if STATE["nul"] and ("-v" in a or "^$" in a):
+            known += 1
+            continue
+        diffs += 1
+        key = " ".join(x for x in a if x.startswith("-") and not x[1:].isdigit())
+        kinds[key] = kinds.get(key, 0) + 1
+        if kinds[key] <= 2 and diffs <= 400:
+            dst = os.path.join(KEEP, f"case{diffs}")
+            shutil.copytree(WORK, dst, symlinks=True)
+            with open(os.path.join(dst, "ARGS.txt"), "w") as f:
+                f.write(repr(a) + f"\nrg exit {rc}, scrutate exit {sc}\n")
+            print(f"DIFF case{diffs} {a!r}: rg {len(r)} lines exit {rc}; scrutate {len(s)} lines exit {sc}")
+            for l in [x for x in r if x not in s][:2]:
+                print("    only rg:      ", l[:100])
+            for l in [x for x in s if x not in r][:2]:
+                print("    only scrutate:", l[:100])
+            sys.stdout.flush()
+shutil.rmtree(WORK, ignore_errors=True)
+print(f"{n} runs in {time.time() - t0:.0f} s (seed {SEED}): {diffs} differ, {known} are ripgrep's stop at a NUL byte" + (f"; by flags: {sorted(kinds.items(), key=lambda kv: -kv[1])[:12]}; kept under {KEEP}" if diffs else ""))
+if not diffs:
+    shutil.rmtree(HERE, ignore_errors=True)
+sys.exit(1 if diffs else 0)

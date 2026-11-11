@@ -370,6 +370,9 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
         }
         Op::Read { path, start, end, .. } => {
             let path = path.as_deref().unwrap_or("");
+            // a path copied from an answer has its control characters written as escapes
+            let read_back = crate::fmt::unshown(path);
+            let path = if read_back != path && !s.ix.root.join(path).exists() { read_back.as_ref() } else { path };
             let start = (*start).max(1);
             let (lines, total) = s.read_lines(path, start, end.unwrap_or(start.saturating_add(READ_LINES - 1)))?;
             Answer::Read { path: path.trim_start_matches("./").to_string(), lines, start, total }
@@ -423,6 +426,11 @@ fn repo_path(s: &Searcher, path: &str) -> String {
     let indexed = |p: &str| s.ix.db.query_row("SELECT 1 FROM files WHERE path=?1", [p], |_| Ok(())).is_ok();
     if path.is_empty() || indexed(&plain) {
         return plain;
+    }
+    // a path copied from an answer has its control characters written as escapes
+    let read_back = crate::fmt::unshown(&plain);
+    if read_back != plain && indexed(&read_back) {
+        return read_back.into_owned();
     }
     std::fs::canonicalize(s.ix.root.join(path))
         .ok()
@@ -483,7 +491,8 @@ fn resolve_in(rv: &mut Resolver, s: &Searcher, path: &str, (start, end): (i64, i
                 Ok((id, _)) => {
                     got.insert(id);
                 }
-                Err(_) => undecided = true,
+                // an import from outside, a local, a field or a string is decided: not this definition
+                Err(why) => undecided |= matches!(why, "receiver" | "not found" | "no grammar"),
             }
         }
     }
@@ -521,7 +530,7 @@ pub(crate) fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit
     let mut asked = 0;
     for n in names {
         let rows: Vec<(i64, String)> = namesakes.query_map([n], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
-        // the resolver is asked only when another definition of the name could be the one called
+        // with another definition of the name about, the likeliest call sites are asked first
         let rivals = rows.iter().any(|(id, path)| !ids.contains(id) && fits(path));
         let mut sites: Vec<ChunkRow> = calls.query_map([n], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
         sites.retain(|r| fits(&r.path) && seen.insert(r.id));
@@ -529,18 +538,20 @@ pub(crate) fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit
             sites.sort_by_cached_key(&likely);
         }
         for row in sites {
-            if rivals {
-                // a common name has thousands of call sites: the likeliest are resolved, the rest stay undecided
-                if asked >= CALLERS_RESOLVED {
+            // a common name has thousands of call sites: the likeliest are resolved, the rest stay undecided
+            if asked >= CALLERS_RESOLVED {
+                unsure_rows.push(row);
+                continue;
+            }
+            asked += 1;
+            let (got, unsure) = resolve_in(&mut rv, s, &row.path, (row.start, row.end), n);
+            if got.is_disjoint(&ids) {
+                // with no other definition of the name, a call the resolver cannot place is this one's
+                if unsure && rivals {
                     unsure_rows.push(row);
                     continue;
                 }
-                asked += 1;
-                let (got, unsure) = resolve_in(&mut rv, s, &row.path, (row.start, row.end), n);
-                if got.is_disjoint(&ids) {
-                    if unsure {
-                        unsure_rows.push(row);
-                    }
+                if !unsure {
                     continue;
                 }
             }
@@ -592,6 +603,9 @@ pub(crate) fn callees(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit
             } else {
                 Vec::new()
             };
+            if picked.is_empty() && !external.contains(&n) {
+                external.push(n.clone());
+            }
             resolved.extend(picked.into_iter().filter(|r| seen.insert(r.id)).map(|r| Hit::from_row(r, true)));
         }
     }

@@ -102,6 +102,8 @@ def main() -> int:
          env={"SCRUTATE_BIN": os.path.join(ROOT, "target", "release", "scrutate")}, tail=6)
     gate("rust/python parity (bit-identical features, scores, rankings)", [sys.executable, "bench/parity.py", a.repo, "target/release/scrutate", "--queries", "300"], tail=8)
     gate("differential test against ripgrep, and grep --index against the walk", [sys.executable, "bench/differential.py", "--cases", str(a.differential_cases), "--seed", "11"], tail=4)
+    gate("random grep runs against ripgrep (60 s)", [sys.executable, "bench/fuzz_grep.py", "--seconds", "60", "--seed", "11"], tail=2)
+    gate("random edit sequences: the incremental index equals a fresh one (60 s)", [sys.executable, "bench/fuzz_incremental.py", "--seconds", "60", "--seed", "11"], tail=2)
     if a.wheels:
         gate("wheels installed and tested on several interpreters", [sys.executable, "tools/wheel_matrix.py", "--wheels", a.wheels, "--cli", os.path.join(ROOT, "target", "release", "scrutate")] + a.pythons, tail=10)
     fuzz_gates(gate, ci_nightly())

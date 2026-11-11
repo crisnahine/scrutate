@@ -184,7 +184,10 @@ pub fn location(target: &str) -> Option<(&str, i64)> {
 /// The chunk a target refers to: a location, a qualified name, or a plain name (first definition).
 pub fn locate(s: &Searcher, target: &str) -> Result<Option<ChunkRow>> {
     if let Some((path, line)) = location(target) {
-        return s.ix.chunk_at(path, line);
+        return match s.ix.chunk_at(path, line)? {
+            Some(c) => Ok(Some(c)),
+            None => s.ix.chunk_at(&crate::fmt::unshown(path), line),
+        };
     }
     let hits = s.find_symbol(target, 1)?;
     match hits.first() {

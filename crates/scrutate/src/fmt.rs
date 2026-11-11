@@ -7,6 +7,43 @@ use crate::search::Hit;
 
 /// Text as one line a terminal shows as it is: control characters written as escapes (`\n`,
 /// `\x1b`), so a file name cannot start a line of its own or move the cursor.
+/// What `shown` wrote, read back: `\\n`, `\\r`, `\\t`, `\\xHH` and `\\u{H}` become the characters.
+pub fn unshown(s: &str) -> Cow<'_, str> {
+    if !s.contains('\\') {
+        return Cow::Borrowed(s);
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find('\\') {
+        out.push_str(&rest[..i]);
+        let tail = &rest[i + 1..];
+        let hex = |digits: Option<&str>| digits.and_then(|d| u32::from_str_radix(d, 16).ok()).and_then(char::from_u32);
+        let (c, used) = match tail.as_bytes().first() {
+            Some(b'n') => (Some('\n'), 1),
+            Some(b'r') => (Some('\r'), 1),
+            Some(b't') => (Some('\t'), 1),
+            Some(b'x') => (hex(tail.get(1..3)), 3),
+            Some(b'u') => match tail.find('}') {
+                Some(end) if tail.starts_with("u{") => (hex(tail.get(2..end)), end + 1),
+                _ => (None, 0),
+            },
+            _ => (None, 0),
+        };
+        match c {
+            Some(c) => {
+                out.push(c);
+                rest = &tail[used..];
+            }
+            None => {
+                out.push('\\');
+                rest = tail;
+            }
+        }
+    }
+    out.push_str(rest);
+    Cow::Owned(out)
+}
+
 pub fn shown(s: &str) -> Cow<'_, str> {
     if !s.chars().any(char::is_control) {
         return Cow::Borrowed(s);

@@ -314,3 +314,41 @@ fn type_colon_colon_method_names_one_definition_like_type_dot_method() {
     assert!(r.ok("read_code", json!({"symbol": "a::b.py:1-2"})).contains("in_odd_file"));
     assert!(r.ok("find_symbol", json!({"name": "a::b.py:1"})).contains("a::b.py:1-2"));
 }
+
+#[test]
+fn a_call_through_an_imported_module_is_not_a_call_of_a_local_namesake() {
+    let mut r = Repo::new(
+        "module_calls",
+        &[
+            ("cls.py", "class Alpha:\n    def run(self):\n        return 1\n\n\ndef drive(a: Alpha):\n    return a.run()\n"),
+            ("other.py", "import subprocess\nimport os.path\n\n\ndef shell_out():\n    return subprocess.run(['ls'])\n\n\ndef join_it():\n    return os.path.join('a', 'b')\n"),
+            ("paths.py", "def join(a, b):\n    return a + b\n\n\ndef glue():\n    return join('a', 'b')\n"),
+        ],
+    );
+    let callers = r.ok("callers", json!({"name": "Alpha.run"}));
+    assert!(!callers.contains("shell_out"), "{callers}");
+    assert!(!r.ok("callees", json!({"name": "shell_out"})).contains("Alpha.run"));
+    let join = r.ok("callers", json!({"name": "join"}));
+    assert!(join.contains("glue") && !join.contains("join_it"), "{join}");
+    let callees = r.ok("callees", json!({"name": "join_it"}));
+    assert!(!callees.contains("paths.py") && callees.contains("join"), "{callees}");
+}
+
+#[test]
+fn a_location_printed_with_escapes_can_be_passed_back() {
+    let mut r = Repo::new(
+        "escaped_names",
+        &[("evil\nname.py", "def newline_name_fn():\n    return helper_one()\n"), ("dir/tab\tname.py", "def tab_name_fn():\n    return 2\n")],
+    );
+    for (name, shown) in [("newline_name_fn", "evil\\nname.py"), ("tab_name_fn", "dir/tab\\tname.py")] {
+        let found = r.ok("find_symbol", json!({"name": name}));
+        let location = found.split_whitespace().next().unwrap().to_string();
+        assert!(location.starts_with(shown), "{found}");
+        assert!(r.ok("read_code", json!({"symbol": location})).contains(name), "{location}");
+        assert!(!r.ok("callees", json!({"name": location})).contains("no symbol"), "{location}");
+        assert!(r.ok("outline", json!({"path": shown})).contains(name), "{shown}");
+        assert!(r.ok("read_code", json!({"path": shown})).contains(name), "{shown}");
+        // a two-line function has no vector to compare, which is a different answer from "not found"
+        assert!(!r.call("similar_code", json!({"target": location})).1.contains("no symbol or location"), "{location}");
+    }
+}
