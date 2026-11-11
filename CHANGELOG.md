@@ -171,9 +171,10 @@ First release.
 - The ranker is trained with documented types as answers too (classes, structs, enums, traits,
   interfaces, type aliases), so a type ranks for its own documentation and name as a function
   does; one more feature tells a name typed with its case (`BurstFiles`) from the same words in
-  another case (`burst_files`), and a struct and its `impl` block are separate results.
-  `bench/retrain_ranker.sh` runs the whole fit and refuses a ranker that is worse on a function
-  row of the held-out set.
+  another case (`burst_files`), in either Unicode form, and a struct and its `impl` block are
+  separate results. Every query weighs the same in the fit. `bench/retrain_ranker.sh` runs the
+  whole fit and refuses a ranker that falls below BM25 on a row of the held-out set or below
+  the ranker before it over all queries.
 - Ranked search reads every line of an indexed file. A chunk keeps at most 200 lines (40 for a
   class or another container), and code outside the definitions of a file had no chunk once the
   file held one definition; those lines are now in 50-line windows named after the definition or
