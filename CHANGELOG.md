@@ -10,7 +10,7 @@ version rebuilds incompatible indexes automatically and this is never considered
 
 First release.
 
-### Engine A — universal instant search
+### Engine A: universal instant search
 - Literal, regex (linear time, size-limited), identifier (all casings, digit/acronym aware),
   fuzzy/approximate (Myers bit-parallel, pigeonhole prefilter), multiline, inverted, whole-word,
   smart-case matching; context lines; `-c`, `-l`, `--max-count`, `--max-results`.
@@ -82,7 +82,22 @@ First release.
   with a cold cache in a 5-CPU VM, 1.22 s on 5 threads, 0.37 s this way (git grep 1.23 s, ugrep
   0.64 s). A small tree stops before many threads start (231 files cold: 5.8 ms, ripgrep 7.5 ms).
 - Paths print as given, as in grep and ripgrep: `./a.txt` for `.`, `dir/a.txt` for `dir/`, an
-  absolute path for an absolute root; a single file is printed with its name.
+  absolute path for an absolute root. When the only path given is one file, lines and counts
+  leave its name out, as in ripgrep; `-H` (`--with-filename`) and `-I` (`--no-filename`) choose,
+  the later of the two wins, and `-l` and `--json` always carry the path.
+- On Unix a backslash in a file name stays in the printed path; only Windows turns `\` into `/`.
+- On Linux, files on `/proc`, `/sys` and the other kernel pseudo filesystems are read to the end
+  (the first read of `/proc/kallsyms` returns about 4 KB of 7.3 MB, and its size reads as 0).
+- A `-g` glob is taken whole, commas included (`-g '*.{txt,log}'`); `SCRUTATE_GREP_GLOBS` and
+  the configuration file's `globs` split at commas outside braces. A `-g` glob with a slash
+  applies under every searched path.
+- With `-A`, `-B` or `-C`, a line `--` separates groups that are not adjacent and different
+  files, as in ripgrep (not in `--json`).
+- Of `-i` and `-S` the later one wins; `SCRUTATE_GREP_SMART_CASE` applies only when neither is
+  given. Smart case folds only a pattern that has a literal and no uppercase letter.
+- `-c` with `-U` counts a match that spans lines as ripgrep counts it. Context lines of CRLF
+  files drop the `\r`.
+- An argument that is not UTF-8 is an error, and `--max-filesize` refuses a size past 64 bits.
 - `ignore` 0.4.34 is vendored (`vendor/ignore`) with two changes: the global git excludes path is
   read from `~/.gitconfig` without compiling a regex (about 0.4 ms of every search in a git
   repository), and an idle walker thread waits 10 µs at first instead of 1 ms before it looks for
@@ -91,7 +106,7 @@ First release.
   once and with `-c` and `-l`; `-m N` is a per-file limit of the search, with trailing context.
 - A search path that does not exist is a warning and exit code 2; the other paths are searched.
 
-### Engine B — code intelligence
+### Engine B: code intelligence
 - Incremental index (SQLite + memory-mapped segments), content hashing, atomic updates,
   compaction, GC, corruption detection and self-healing rebuild, schema/model versioning,
   multi-process safety, `check` command.
@@ -133,6 +148,81 @@ First release.
 - Ranker v8, fitted on Python and on 16 repositories in Rust, Go, Java, JavaScript and TypeScript:
   better than v7 on held-out code in 56 of 58 language, variant and query-type cells, never worse
   beyond noise (docs/QUALITY.md).
+- Ranked search finds words of every script: Han, kana and Thai become overlapping character
+  pairs, other scripts one lowercased token per word; an all-ASCII text gives the tokens it gave
+  before. Names compare in NFC (new dependency `unicode-normalization`), and a definition name
+  over 200 bytes is a symbol when it has no whitespace.
+- Constants are symbols of kind `constant` (Rust `const` and `static`, Go package `const` and
+  `var`, JavaScript and TypeScript top-level `const`, TypeScript enum members, Java
+  `static final`, Python module-level capitals, C and C++ `#define` values and enumerators):
+  `symbol`, `outline`, `read_code` and `refs` find them, ranked search never returns them.
+- A method is named by its owner's bare type (`Stack.push` for `impl<T> Stack<T>`, `Box.put`
+  for `Box<T>::put`); a dotted Lua or Elixir name is split off its owner (`M.helper` is
+  `helper`, `MyApp.Accounts.User` is `User`); `Account:deposit` in Lua is `Account.deposit`.
+- New definitions: Rust `mod` and `type` items, `macro_rules!` and trait methods without a body;
+  Go methods qualified by their receiver type; C++ methods declared in a class or struct body
+  (constructors, destructors, member templates, conversion operators) and out-of-line methods
+  split at `::`; C and C++ function-like macros; JavaScript class field functions and
+  `module.exports.X`; TypeScript abstract classes and methods, `declare function` and
+  namespaces; Java records; Swift protocol requirements; Kotlin type aliases; Elixir guards.
+- Calls inside the arguments of a Rust macro (`println!("{}", f(x))`) and turbofish calls
+  (`f::<T>(x)`) are call edges.
+- Chunk text and body are cut at 32 KiB, and a chunk ends on the last line that holds its text.
+  A file of many sibling definitions or of deep nesting indexes in linear time (20,000 one-line
+  JavaScript functions: 58 s to 0.8 s).
+- Inside a git repository the ignore files decide for `build`, `dist`, `target` and `venv`;
+  outside one they are skipped by name. `\,` keeps a comma in `SCRUTATE_INDEX_EXCLUDE_DIRS`.
+- The heuristic tier skips leading modifiers and reads OCaml `let f x =` as a function; Kconfig
+  and `.txt` files get no keyword symbols.
+- The model signature is a hash of the model file, so a retrained model of the same shape
+  rebuilds the vectors.
+- A read never waits for another process's writer: it answers from the last committed index and
+  says so once on stderr. A read during another process's first build exits 2, and `serve`
+  answers that the index is still being built.
+- Rebuilt as damage: a chunk text that does not inflate, a segment list that is not JSON, a
+  segment without vectors, an `index.db` deleted under an open index or that is a directory, a
+  `seg` that is a file, an emptied `chunks` table. A writer stopped before its commit no longer
+  blocks later writers. A read-only index directory, or a read-only repository with a complete
+  index, is answered as it is.
+- On Unix a change of status time alone (a `chmod`) is seen: it costs a read and a hash. A file
+  that cannot be read loses its chunks.
+- A `.scrutate` that is a symbolic link, or that holds one, is refused, and a `--root` that is
+  not an existing directory is an error; nothing is written or deleted outside the repository.
+- `refs`, `callers` and `callees` infer a receiver's type from declared return types, fields,
+  module-level and static variables, constructors, Rust `?` and holders such as `Box`, and
+  TypeScript `await`; a type from outside the repository makes the call external. `x.m()` is
+  never a call of a free function in Rust, JavaScript, TypeScript, Go and Java, a definition's
+  own name is not a call of it, and a JavaScript `var` belongs to its function.
+- A call matches a definition only in its own language family and by the name as written
+  (`Ok(1)` is not a call of `ok`); a call the resolver ties to an imported module, a local or a
+  field is not a call of a namesake in the repository.
+- `symbol`, `callers`, `callees`, `similar`, `refs` and `read_code` read `Type::method`,
+  `Type#method` and `p->method` as `Type.method`, and find one method among many namesakes;
+  `operator->` and `operator*` are found by those names.
+- A location (`path:start-end`) names exactly one definition in `symbol`, `callers` and
+  `callees`. `callers` lists the callers the resolver ties to the definition first, then the
+  undecided ones that name the owner type or share its package, and asks the resolver about at
+  most 400 call sites (`callers Builder.new` on 300 crates: 3.2 s to 0.4 to 0.6 s).
+- `callers`, `callees`, `symbol`, `read_code symbol` and `structural_search` end with a line
+  when they stopped at their limit, naming the argument that raises it.
+- Imports: Go binds a directory through the module path in `go.mod`; a Python module drops its
+  first segment only when that is the checkout's own name; an `#include "util.h"` resolves
+  beside the including file; `rdeps` matches by base name only an import that resolves to no
+  file. `tsconfig.json`, `jsconfig.json`, `Cargo.toml` and `go.mod` are read only when they are
+  regular files inside the repository of at most 1 MB.
+- A lambda, nested function, block or comprehension hides a name only inside itself.
+  `tsquery` decodes files that are not UTF-8 and skips files over 1 MB, and refuses an empty
+  query, a query without a capture and an unknown predicate.
+- `dupes`: `exact` means the same body text once whitespace is squeezed; functions with the same
+  words that differ in a literal or an operator are one `near` group with similarity 1.00;
+  `--threshold 1` prints the exact groups only.
+- `grep --symbols` with a path argument finds the file by its path under the root.
+- Names with control characters print as escapes and a backslash doubled in the index commands;
+  what they print is read back as an argument.
+- The Python reference indexes the engine's file set (excluded extensions,
+  `SCRUTATE_INDEX_EXCLUDE_DIRS`, ripgrep without its configuration), cuts the same chunks, keeps
+  the lower index at the 200-candidate cut and refuses `read()` paths outside the repository;
+  the parity check fails on any difference.
 
 ### Product
 - Unified `find`, MCP server (14 tools), configuration files with environment-variable precedence,
@@ -175,17 +265,53 @@ First release.
 - `watch` and `serve --watch` no longer stop on Linux and Windows when `.git/info/exclude` has
   patterns (the matcher was rooted at `.git/info` and panicked on the first changed path).
 - `-U` with `--fuzzy` or `--fuzzy-regex` is an error (it found nothing across lines).
+- An MCP answer checks the files it cites, and the files its arguments name, with one `stat`
+  each; a changed or deleted file is indexed again alone and the answer computed again, once.
+  Without `--refresh-interval` the server scans at most a second apart, sooner when a scan is
+  cheap; an explicit `--refresh-interval` is a floor. `serve` refuses `--offset`.
+- At the end of its input the server answers the calls in flight and lets the first index build
+  finish before it exits. An `initialize` with a missing or unknown `protocolVersion` is
+  answered with 2025-11-25; a request without `method` gets -32600 and a client's response is
+  ignored.
+- `read_code` honours an explicit `end`, closes with the lines shown, the file's length and the
+  `start` for the rest, and answers an empty file and a `start` past the end in words; an `end`
+  before `start` and a path that is not a regular file are errors.
+- A tool argument of the wrong type, or a negative number, is an error that names the argument;
+  an error quotes at most 200 characters of it. Every path argument may be written `./x` or
+  `pkg/../x`. `references` says when `max_results` cut it and answers `(no results)`; an empty
+  name is an error. `search_code` takes at most 10 `alt_queries`.
+- `watch` and `serve --watch` set the watch before the first update, so changes made during it
+  are seen. On Linux each directory the indexes can hold gets one inotify watch (2 instead of
+  7,012 on a tree with an ignored `node_modules` and `target`), walked again after every burst;
+  failed watches are named. The ignore rules are read again after every burst, and the watch
+  stops with an error when its root is removed.
+- `find` takes a question with a space and a trailing `?` as words, and goes to ranked search
+  when a regex-looking query finds nothing and an index exists.
 - Licensed under Apache-2.0. Toolchain pinned to Rust 1.99.1 (`rust-version` 1.91).
-- Python bindings (PyO3 0.30; abi3, abi3t and cp314t wheels; GIL released; streaming iterator;
-  free-threading declaration after review).
+- Python bindings (PyO3 0.30; abi3, abi3t and cp314t wheels; GIL released, in `stats()` and
+  `read()` too; streaming iterator; free-threading declaration after review). Three wheels per
+  platform: `cp39-abi3` for standard CPython up to 3.14, `cp314t`, and `cp315-abi3.abi3t` for
+  3.15 and newer, standard and free-threaded; the wheel's third-party notices are in
+  `dist-info/licenses`. The bindings' `callers`, `callees` and textual references match names
+  as the tools do.
+- Integrations: one MCP configuration per client (VS Code `servers`, Codex TOML, Zed
+  `context_servers`); the GitLab and Bitbucket templates pass on a repository with no
+  duplicates and unpack the tool outside the checkout; the pre-commit hook is valid YAML, fails
+  when the tool fails, and works through `repo:`; the GitHub Action runs on Windows runners;
+  Neovim ships `lsp/scrutate.lua`, so `vim.lsp.enable('scrutate')` is the whole setup; VS Code,
+  Neovim and JetBrains put `--` before a query, and VS Code stops without an open folder.
+- `release.yml` refuses a tag whose version differs from the packages' (`tools/check_version.py`)
+  and runs all of `ci.yml` on the tagged commit before anything is published. Every workflow
+  action is pinned to a commit.
 - The GitHub Action puts scrutate's exit code in its `exit-code` output and fails its step only on
   an error (2), so a job can gate on results.
 - Benchmark suite (`bench/leaderboard.py`, `bench/indexed.py`): grep, ripgrep, ack, ag, git grep,
   ugrep, ast-grep, Zoekt and livegrep on pinned corpora, every answer checked against an
   independent reference, 30+ runs per contender, bootstrap confidence intervals, hardware-ceiling
-  baseline, warm and cold cache; regression gate; CI/release workflows; SBOM; IDE and Git-platform
-  integrations.
-- Packaging: Homebrew formula, Scoop and winget manifests, `.deb` and `.rpm` packages (built and
+  baseline, warm and cold cache; a regression gate that times the change and its base in one
+  interleaved run (`SCRUTATE_BASE_BIN`, `leaderboard_regression.py --within`); CI/release
+  workflows; SBOM; IDE and Git-platform integrations.
+- Packaging: Homebrew formula, Scoop and winget manifests (schema 1.12.0), `.deb` and `.rpm` packages (built and
   install-tested in clean containers); release archives, wheels and the `.deb` and `.rpm` carry
   `THIRD_PARTY_NOTICES.txt`; `docs/dashboard.html` charts the benchmark runs.
 - Fuzz targets (`fuzz/`): the `.npy` reader (three defects fixed: a panic on truncated string
