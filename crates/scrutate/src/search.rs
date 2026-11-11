@@ -171,7 +171,7 @@ impl QueryInfo {
         let mut keys = Vec::new();
         let mut seen = HashSet::new();
         for w in &words {
-            if w.len() >= 3 && !QUERY_STOP.contains(w.as_str()) {
+            if w.chars().count() >= 3 && !QUERY_STOP.contains(w.as_str()) {
                 let k = name_key(w);
                 if seen.insert(k.clone()) {
                     keys.push(k);
@@ -192,13 +192,9 @@ impl QueryInfo {
     }
 }
 
-fn is_lex_token(t: &str) -> bool {
-    !t.is_empty() && t.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
-}
-
 pub fn lex_keys(q: &QueryInfo) -> Vec<i64> {
     let mut seen = HashSet::new();
-    q.terms.iter().chain(&q.wholes).filter(|t| seen.insert((*t).clone())).filter(|t| is_lex_token(t)).map(|t| tok_key(t)).collect()
+    q.terms.iter().chain(&q.wholes).filter(|t| seen.insert((*t).clone())).filter(|t| !t.is_empty()).map(|t| tok_key(t)).collect()
 }
 
 pub struct Searcher {

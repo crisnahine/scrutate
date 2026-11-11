@@ -25,13 +25,16 @@ proptest! {
         }
     }
 
-    /// Tokenization never panics and only yields non-empty ASCII-lowercase stems and words.
+    /// Tokenization never panics and only yields non-empty lowercase tokens without spaces; an
+    /// ASCII token is lowercase letters and digits.
     #[test]
     fn tokenize_total_and_normalised(s in "\\PC{0,200}", cap in proptest::option::of(1usize..300)) {
         let (stems, words) = tokenize2(&s, cap);
         for t in stems.iter().chain(words.iter()) {
-            prop_assert!(!t.is_empty());
-            prop_assert!(t.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()), "token {t:?}");
+            prop_assert!(!t.is_empty() && !t.contains(char::is_whitespace) && t.to_lowercase() == *t, "token {t:?}");
+            if t.is_ascii() {
+                prop_assert!(t.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()), "token {t:?}");
+            }
         }
         let _ = query_terms(&s);
         let k = name_key(&s);

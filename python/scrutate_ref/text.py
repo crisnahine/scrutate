@@ -6,13 +6,76 @@ Compound identifiers also emit one joined token (`sendrequest`) for exact-name m
 """
 from __future__ import annotations
 
+import functools
+import itertools
 import re
+import unicodedata
 
 import snowballstemmer
 
 _STEMMER = snowballstemmer.stemmer("english")
 
 _WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+@functools.cache
+def _run_re() -> re.Pattern:
+    """Maximal runs of letters, marks, decimal digits and `_` (Rust: `[\\p{L}\\p{M}\\p{Nd}_]+`)."""
+    ranges, start = [], None
+    for cp in range(0x110001):
+        cat = unicodedata.category(chr(cp)) if cp < 0x110000 else "Cn"
+        ok = cat[0] in "LM" or cat == "Nd" or cp == 0x5F
+        if ok and start is None:
+            start = cp
+        elif not ok and start is not None:
+            ranges.append(f"{re.escape(chr(start))}-{re.escape(chr(cp - 1))}")
+            start = None
+    return re.compile("[" + "".join(ranges) + "]+")
+
+
+def words(text: str) -> list[str]:
+    """Words of a text: `_WORD` for an all-ASCII text; otherwise runs of every script, an all-ASCII
+    run losing its leading digits so ASCII words come out as they always did."""
+    if text.isascii():
+        return _WORD.findall(text)
+    out = []
+    for w in _run_re().findall(text):
+        if w.isascii():
+            w = w.lstrip("0123456789")
+            if not w:
+                continue
+        out.append(w)
+    return out
+
+
+def _unspaced(c: str) -> bool:
+    """Scripts written without spaces between words: Han, Hiragana, Katakana, Thai."""
+    o = ord(c)
+    return (0x0E00 <= o <= 0x0E7F or 0x3005 <= o <= 0x3007 or 0x3040 <= o <= 0x30FF or 0x31F0 <= o <= 0x31FF
+            or 0x3400 <= o <= 0x4DBF or 0x4E00 <= o <= 0x9FFF or 0xF900 <= o <= 0xFAFF or 0xFF66 <= o <= 0xFF9F
+            or 0x20000 <= o <= 0x323AF)
+
+
+def _fold(s: str) -> str:
+    return s.lower().replace("ς", "σ")
+
+
+def unicode_tokens(word: str) -> list[str]:
+    """Tokens of a word that is not all ASCII: NFC first; runs of unspaced scripts give overlapping
+    character bigrams (a lone character itself), other `_`-separated parts are one folded token
+    each, and an ASCII part goes through the identifier rules (split, stemmed)."""
+    out: list[str] = []
+    for u, grp in itertools.groupby(unicodedata.normalize("NFC", word), _unspaced):
+        seg = "".join(grp)
+        if not u:
+            for part in seg.split("_"):
+                if part:
+                    out.extend(ident_tokens(part)[0] if part.isascii() else (_fold(part),))
+        elif len(seg) == 1:
+            out.append(seg)
+        else:
+            out.extend(seg[i:i + 2] for i in range(len(seg) - 1))
+    return out
 _CAMEL = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+")
 
 # --- stop lists -------------------------------------------------------------------------
@@ -92,8 +155,10 @@ def tokenize(text: str, cap: int | None = None, whole: bool = True) -> list[str]
 
 
 def name_key(name: str) -> str:
-    """Case- and underscore-insensitive key: `send_request`, `sendRequest` -> `sendrequest`."""
-    return name.lower().replace("_", "")
+    """Case- and underscore-insensitive key in NFC: `send_request`, `sendRequest` -> `sendrequest`."""
+    if name.isascii():
+        return name.lower().replace("_", "")
+    return _fold(unicodedata.normalize("NFC", name).replace("_", ""))
 
 
 BODY_CAP = 2000  # max identifiers of a body that are indexed / embedded
@@ -105,12 +170,14 @@ def tokenize2(text: str, cap: int | None = None) -> tuple[list[str], list[str]]:
     wholes: list[str] = []
     cache = _ident_cache
     n = 0
-    for m in _WORD.finditer(text):
-        w = m.group(0)
-        hit = cache.get(w) or ident_tokens(w)
-        subs.extend(hit[0])
-        if hit[1]:
-            wholes.append(hit[1])
+    for w in (_WORD.findall(text) if text.isascii() else words(text)):
+        if not w.isascii():
+            subs.extend(unicode_tokens(w))
+        else:
+            hit = cache.get(w) or ident_tokens(w)
+            subs.extend(hit[0])
+            if hit[1]:
+                wholes.append(hit[1])
         n += 1
         if cap is not None and n >= cap:
             break
@@ -137,8 +204,11 @@ def tokenize_words(text: str, cap: int | None = None) -> list[str]:
 def query_terms(query: str) -> list[str]:
     """Unique stemmed content terms of a query (question words and stopwords removed)."""
     seen: dict[str, None] = {}
-    for m in _WORD.finditer(query):
-        w = m.group(0)
+    for w in words(query):
+        if not w.isascii():
+            for t in unicode_tokens(w):
+                seen.setdefault(t, None)
+            continue
         subs = raw_subwords(w)
         for s in subs:
             if len(s) > 1 and s not in QUERY_STOP:
@@ -149,8 +219,9 @@ def query_terms(query: str) -> list[str]:
 def query_wholes(query: str) -> list[str]:
     """Joined tokens for identifier-like words in the query (`send_request` -> `sendrequest`)."""
     out: dict[str, None] = {}
-    for m in _WORD.finditer(query):
-        w = m.group(0)
+    for w in words(query):
+        if not w.isascii():
+            continue
         subs = raw_subwords(w)
         if len(subs) > 1 and (("_" in w) or any(c.isupper() for c in w[1:])):
             out.setdefault("".join(subs), None)

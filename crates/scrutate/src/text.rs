@@ -10,6 +10,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 use rust_stemmers::{Algorithm, Stemmer};
+use unicode_normalization::UnicodeNormalization;
 
 const ENGLISH: &str = "a an the of to in on at by for with from as and or nor but so if then than that this
 these those it its is are was were be been being am do does did done has have had having not no
@@ -67,15 +68,21 @@ pub fn stem(w: &str) -> String {
     s
 }
 
-/// Words of a text: `[A-Za-z_][A-Za-z0-9_]*` (ASCII, like the Python regex).
+/// Words of a text. An all-ASCII text gives `[A-Za-z_][A-Za-z0-9_]*` (like the Python regex). Any
+/// other text gives maximal runs of letters, marks, decimal digits and `_` of every script; a run
+/// that is all ASCII loses its leading digits, so ASCII words come out as they always did.
 pub struct Words<'a> {
     bytes: &'a [u8],
     pos: usize,
+    runs: Option<regex::Matches<'static, 'a>>,
 }
+
+static RUN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\p{L}\p{M}\p{Nd}_]+").unwrap());
 
 impl<'a> Words<'a> {
     pub fn new(text: &'a str) -> Self {
-        Words { bytes: text.as_bytes(), pos: 0 }
+        let runs = if text.is_ascii() { None } else { Some(RUN.find_iter(text)) };
+        Words { bytes: text.as_bytes(), pos: 0, runs }
     }
 }
 
@@ -91,6 +98,19 @@ impl<'a> Iterator for Words<'a> {
     type Item = &'a str;
 
     fn next(&mut self) -> Option<&'a str> {
+        if let Some(runs) = &mut self.runs {
+            for m in runs.by_ref() {
+                let w = m.as_str();
+                if !w.is_ascii() {
+                    return Some(w);
+                }
+                let w = w.trim_start_matches(|c: char| c.is_ascii_digit());
+                if !w.is_empty() {
+                    return Some(w);
+                }
+            }
+            return None;
+        }
         let b = self.bytes;
         while self.pos < b.len() && !is_word_start(b[self.pos]) {
             self.pos += 1;
@@ -104,6 +124,47 @@ impl<'a> Iterator for Words<'a> {
         }
         // ASCII boundaries are always char boundaries
         Some(unsafe { std::str::from_utf8_unchecked(&b[start..self.pos]) })
+    }
+}
+
+/// Scripts written without spaces between words: Han, Hiragana, Katakana, Thai.
+fn unspaced(c: char) -> bool {
+    matches!(c as u32, 0x0E00..=0x0E7F | 0x3005..=0x3007 | 0x3040..=0x30FF | 0x31F0..=0x31FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF | 0xFF66..=0xFF9F | 0x20000..=0x323AF)
+}
+
+/// Lowercase with the final sigma folded, so a word compares the same in any case.
+fn fold(s: &str) -> String {
+    s.to_lowercase().replace('ς', "σ")
+}
+
+/// Tokens of a word that is not all ASCII: NFC first; runs of unspaced scripts give overlapping
+/// character bigrams (a lone character itself), other `_`-separated parts are one folded token
+/// each, and an ASCII part goes through the identifier rules (split, stemmed).
+pub fn unicode_tokens(word: &str, out: &mut Vec<String>) {
+    let w: Vec<char> = word.nfc().collect();
+    let mut i = 0;
+    while i < w.len() {
+        let u = unspaced(w[i]);
+        let mut j = i + 1;
+        while j < w.len() && unspaced(w[j]) == u {
+            j += 1;
+        }
+        let seg = &w[i..j];
+        if !u {
+            let seg: String = seg.iter().collect();
+            for part in seg.split('_').filter(|p| !p.is_empty()) {
+                if part.is_ascii() {
+                    out.extend(ident_tokens(part).0);
+                } else {
+                    out.push(fold(part));
+                }
+            }
+        } else if seg.len() == 1 {
+            out.push(seg[0].to_string());
+        } else {
+            out.extend(seg.windows(2).map(|p| p.iter().collect::<String>()));
+        }
+        i = j;
     }
 }
 
@@ -193,10 +254,14 @@ pub fn tokenize2(text: &str, cap: Option<usize>) -> (Vec<String>, Vec<String>) {
     let mut wholes = Vec::new();
     let mut n = 0;
     for w in Words::new(text) {
-        let (t, whole) = ident_tokens(w);
-        subs.extend(t);
-        if !whole.is_empty() {
-            wholes.push(whole);
+        if w.is_ascii() {
+            let (t, whole) = ident_tokens(w);
+            subs.extend(t);
+            if !whole.is_empty() {
+                wholes.push(whole);
+            }
+        } else {
+            unicode_tokens(w, &mut subs);
         }
         n += 1;
         if let Some(c) = cap {
@@ -208,9 +273,12 @@ pub fn tokenize2(text: &str, cap: Option<usize>) -> (Vec<String>, Vec<String>) {
     (subs, wholes)
 }
 
-/// Case- and underscore-insensitive key: `send_request`, `sendRequest` -> `sendrequest`.
+/// Case- and underscore-insensitive key in NFC: `send_request`, `sendRequest` -> `sendrequest`.
 pub fn name_key(name: &str) -> String {
-    name.chars().filter(|c| *c != '_').flat_map(|c| c.to_lowercase()).collect()
+    if name.is_ascii() {
+        return name.chars().filter(|c| *c != '_').map(|c| c.to_ascii_lowercase()).collect();
+    }
+    fold(&name.nfc().filter(|c| *c != '_').collect::<String>())
 }
 
 const TEST_PARTS: &[&str] = &["test", "tests", "testing", "__tests__", "spec", "specs", "e2e", "fixtures", "mocks"];
@@ -232,6 +300,12 @@ pub fn query_terms(query: &str) -> Vec<String> {
     let mut seen = Vec::new();
     let mut set = HashSet::new();
     for w in Words::new(query) {
+        if !w.is_ascii() {
+            let mut toks = Vec::new();
+            unicode_tokens(w, &mut toks);
+            seen.extend(toks.into_iter().filter(|t| set.insert(t.clone())));
+            continue;
+        }
         for s in raw_subwords(w) {
             if s.len() > 1 && !QUERY_STOP.contains(s.as_str()) {
                 let st = stem(&s);
@@ -260,7 +334,7 @@ pub fn prefix_bytes(s: &str, n: usize) -> &str {
 pub fn query_wholes(query: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut set = HashSet::new();
-    for w in Words::new(query) {
+    for w in Words::new(query).filter(|w| w.is_ascii()) {
         let subs = raw_subwords(w);
         if subs.len() > 1 && (w.contains('_') || w.bytes().skip(1).any(|c| c.is_ascii_uppercase())) {
             let j = subs.concat();
@@ -325,7 +399,7 @@ pub fn split_lines(s: &str) -> Vec<&str> {
 
 /// Lowercase words of a query, for snippet highlighting (agent.query_words: len > 2).
 pub fn query_words(q: &str) -> Vec<String> {
-    Words::new(q).filter(|w| w.len() > 2).map(|w| w.to_lowercase()).collect()
+    Words::new(q).filter(|w| w.chars().count() > 2).map(|w| w.to_lowercase()).collect()
 }
 
 #[cfg(test)]

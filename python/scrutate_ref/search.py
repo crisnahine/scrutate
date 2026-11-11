@@ -21,6 +21,7 @@ from .index import Index, unpack_text
 from .lex import tok_key
 from .rank import TreeEnsemble, default_ranker_path
 from .text import QUERY_STOP, literal_candidates, name_key, query_terms, query_wholes, raw_subwords, split_lines
+from .text import words as text_words
 
 PRUNE = 200  # the learned ranker sees (at most) this many candidates, best by the linear blend
 LEX_LIMIT = 100
@@ -83,7 +84,7 @@ class QueryInfo:
 
     @classmethod
     def parse(cls, text: str) -> "QueryInfo":
-        words = [w.lower() for w in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", text)]
+        words = [w.lower() for w in text_words(text)]
         keys = list(dict.fromkeys(name_key(w) for w in words if len(w) >= 3 and w not in QUERY_STOP))
         dotted = [".".join(name_key(p) for p in d.split("."))
                   for d in re.findall(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+", text)]
@@ -93,7 +94,7 @@ class QueryInfo:
 
 def _lex_keys(q: QueryInfo) -> list[int]:
     toks = dict.fromkeys(q.terms + q.wholes)
-    return [tok_key(t) for t in toks if re.fullmatch(r"[a-z0-9]+", t)]
+    return [tok_key(t) for t in toks if t]
 
 
 class Searcher:

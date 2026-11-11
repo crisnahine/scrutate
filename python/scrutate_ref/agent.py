@@ -6,7 +6,7 @@ import os
 
 from .index import Index
 from .search import Searcher
-from .text import raw_subwords
+from .text import raw_subwords, words
 
 SYSTEM = """You are a code-intelligence agent answering questions about a codebase.
 Work like a senior engineer: search broadly, read the real code, follow call chains
@@ -49,7 +49,7 @@ def fmt_hits(hits, words=None, snippet=True, why=False) -> str:
 
 
 def query_words(q: str) -> list[str]:
-    return [w for w in (x.lower() for x in __import__("re").findall(r"[A-Za-z_]\w+", q)) if len(w) > 2]
+    return [w.lower() for w in words(q) if len(w) > 2]
 
 
 def run_search(s: Searcher, query: str, alt_queries=None, k: int = 8, why: bool = False) -> str:

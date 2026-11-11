@@ -468,7 +468,8 @@ fn def_name(node: Node, rules: &[NameRule], src: &[u8]) -> Option<String> {
                 _ => n,
             };
             let n = n.trim().to_string();
-            if !n.is_empty() && n.len() <= 200 {
+            // a long capture with spaces is an expression, never a name
+            if !n.is_empty() && (n.len() <= 200 || !n.contains(char::is_whitespace)) {
                 return Some(n);
             }
         }
