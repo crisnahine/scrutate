@@ -1168,7 +1168,7 @@ mod tests {
             state ^= state << 17;
             (state % n as u64) as usize
         };
-        let (mut simple, mut hits) = (0, 0);
+        let (mut simple, mut hits, mut compiled) = (0, 0, 0);
         for _ in 0..3_000 {
             let mut text = String::new();
             for _ in 0..1 + next(4) {
@@ -1203,13 +1203,27 @@ mod tests {
                 );
             }
             let set = sb.build().unwrap();
-            for _ in 0..30 {
-                let n = 1 + next(3);
-                let path = (0..n)
-                    .map(|_| path_parts[next(path_parts.len())])
-                    .collect::<Vec<_>>()
-                    .join("/");
-                let is_dir = next(2) == 0;
+            let paths: Vec<(String, bool)> = (0..30)
+                .map(|_| {
+                    let n = 1 + next(3);
+                    let path = (0..n)
+                        .map(|_| path_parts[next(path_parts.len())])
+                        .collect::<Vec<_>>()
+                        .join("/");
+                    (path, next(2) == 0)
+                })
+                .collect();
+            // the same paths again once the matcher has switched to its one set
+            let passes = if gi.simple.is_empty() { 1 } else { 2 };
+            for (pass, (path, is_dir)) in
+                (0..passes).flat_map(|p| paths.iter().map(move |x| (p, x)))
+            {
+                if pass == 1 && gi.full.set.get().is_none() {
+                    let _ = gi.full.set.set(gi.compile());
+                    assert!(gi.full_set().is_some(), "{text}");
+                    compiled += 1;
+                }
+                let (path, is_dir) = (path.as_str(), *is_dir);
                 let want = set
                     .matches_candidate(&Candidate::new(&path))
                     .into_iter()
@@ -1217,7 +1231,7 @@ mod tests {
                     .map(|i| &gi.globs[i])
                     .find(|g| !g.is_only_dir() || is_dir)
                     .map(|g| (g.is_whitelist(), g.original().to_string()));
-                let got = match gi.matched(&path, is_dir) {
+                let got = match gi.matched(path, is_dir) {
                     super::Match::None => None,
                     super::Match::Ignore(g) => Some((false, g.original().to_string())),
                     super::Match::Whitelist(g) => Some((true, g.original().to_string())),
@@ -1226,7 +1240,10 @@ mod tests {
                 assert_eq!(got, want, "path {path:?} dir {is_dir} in\n{text}");
             }
         }
-        assert!(simple > 1_000 && hits > 5_000, "{simple} simple globs, {hits} hits");
+        assert!(
+            simple > 1_000 && hits > 5_000 && compiled > 500,
+            "{simple} simple globs, {hits} hits, {compiled} compiled"
+        );
     }
 
     #[test]

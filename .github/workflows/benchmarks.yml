@@ -12,6 +12,10 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+# bash -eo pipefail everywhere, Git Bash on Windows: a failing command inside a pipe fails the step
+defaults:
+  run:
+    shell: bash
 concurrency:
   group: benchmarks-${{ github.ref }}
   cancel-in-progress: true

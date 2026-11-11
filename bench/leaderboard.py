@@ -479,6 +479,20 @@ def boot_ratio(a, b, B=10000, seed=1):
     return med(a) / med(b), rs[int(0.025 * B)], rs[int(0.975 * B) - 1]
 
 
+def bad_exit(codes):
+    """Exit codes other than 0 (results) and 1 (none): the tool failed, whatever it printed."""
+    return sorted(set(codes) - {0, 1})
+
+
+def corpus_digest(corpora, name):
+    """The corpus content hash bench/corpora.py records, or None for a corpus it did not make."""
+    try:
+        with open(os.path.join(corpora, "manifest.json")) as f:
+            return json.load(f).get(name, {}).get("tree_sha256")
+    except (OSError, ValueError):
+        return None
+
+
 RAWREAD: dict = {}
 
 
@@ -496,13 +510,14 @@ def run_bench(b, corpora, a, cache_dir):
     tools = ["scrutate", "ast-grep"] if structural else ENGINE_A + CROSS
     # 1. reference
     files = file_list(cdir, b["mode"])
+    digest = corpus_digest(corpora, b["corpus"])
     if structural:
-        ref, nref, unclear = structural_reference(cdir, files, structural, cache_dir)
+        ref, nref, unclear = structural_reference(cdir, files, structural, cache_dir, digest)
         # where the reference's own parse has errors, error recovery (runtime code that differs between
         # tree-sitter versions) decides what is a call: those files are searched but not compared
         ref = {h for h in ref if h[0] not in unclear}
     else:
-        key = hashlib.sha1(json.dumps([b["corpus"], b["mode"], b["q"], len(files), files[:50]], sort_keys=True).encode()).hexdigest()[:16]
+        key = hashlib.sha1(json.dumps([b["corpus"], b["mode"], b["q"], len(files), files[:50], digest], sort_keys=True).encode()).hexdigest()[:16]
         cpath = os.path.join(cache_dir, f"ref-{key}.json")
         if os.path.exists(cpath):
             d = json.load(open(cpath))
@@ -535,7 +550,9 @@ def run_bench(b, corpora, a, cache_dir):
             got = {h for h in got if h[0] not in unclear}
         missing, extra = ref - got, got - ref
         rec = {"argv": cmd, "env": env, "exit": p.returncode, "verify_s": took, "lines": len(got)}
-        if missing or extra:
+        if bad_exit([p.returncode]):
+            rec.update({"status": "error", "stderr": p.stderr.decode("utf-8", "replace")[-500:]})
+        elif missing or extra:
             rec.update({"status": "wrong", "missing": len(missing), "extra": len(extra), "missing_sample": sorted(missing)[:5], "extra_sample": sorted(extra)[:5]})
         else:
             rec["status"] = "ok"
@@ -580,6 +597,8 @@ def run_bench(b, corpora, a, cache_dir):
         res["load"].append(loadavg())
         for t in valid:
             r = res["tools"][t]
+            if bad_exit(r.get("exit", [])):
+                r.update({"status": "error", "note": f"exit {bad_exit(r['exit'])} in a timed run"})
             if "times" in r:
                 r["median"] = statistics.median(r["times"])
                 r["cpu_median"] = statistics.median(r["cpu"]) if r.get("cpu") else None
@@ -602,6 +621,7 @@ def run_bench(b, corpora, a, cache_dir):
         if a.cache == "warm":
             # a warm run is one whose files were in memory: on a machine short of it they are not
             res["resident"] = resident(lst, cdir)
+    valid = [t for t in valid if res["tools"][t]["status"] == "ok"]
     decide(res, valid, a.runs)
     res["max_load"] = max(res["load"]) if res["load"] else loadavg()
     return res
@@ -653,9 +673,9 @@ def unstable(res):
     return False
 
 
-def structural_reference(cdir, files, spec, cache_dir):
+def structural_reference(cdir, files, spec, cache_dir, digest=None):
     """Python tree-sitter over the same files: nodes matched by the query's outer capture."""
-    key = hashlib.sha1(json.dumps([cdir, spec, len(files)]).encode()).hexdigest()[:16]
+    key = hashlib.sha1(json.dumps([cdir, spec, len(files), digest]).encode()).hexdigest()[:16]
     cpath = os.path.join(cache_dir, f"sref-{key}.json")
     d = json.load(open(cpath)) if os.path.exists(cpath) else {}
     if "parse_errors" in d:

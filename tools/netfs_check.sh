@@ -14,7 +14,8 @@ echo "file system: $(mount | grep -F " on $(cd "$mnt" && pwd) " | sed 's/.* (//;
 for q in "-F Searcher" "-i -F error" "[A-Z][a-z]+Builder"; do
   # shellcheck disable=SC2086
   a=$("$S" grep --sort $q | shasum | cut -c1-16); b=$(cd "$src" && "$S" grep --sort $q | shasum | cut -c1-16)
-  echo "engine A [$q]: network $a local $b $([ "$a" = "$b" ] && echo same || { echo DIFFERENT; exit 1; })"
+  echo "engine A [$q]: network $a local $b"
+  [ "$a" = "$b" ] || { echo DIFFERENT; exit 1; }
 done
 "$S" index > /dev/null
 echo "engine B index: $("$S" stats | head -c 160)"
@@ -29,7 +30,8 @@ done
 "$S" index > /dev/null
 "$S" check --files | tail -1
 a=$("$S" grep --index --sort -F 'netfs edit 3' | wc -l | tr -d ' '); b=$("$S" grep --sort -F 'netfs edit 3' | wc -l | tr -d ' ')
-echo "indexed grep after concurrent updates: $a line(s), walk: $b line(s) $([ "$a" = "$b" ] && echo same || { echo DIFFERENT; exit 1; })"
+echo "indexed grep after concurrent updates: $a line(s), walk: $b line(s)"
+[ "$a" = "$b" ] || { echo DIFFERENT; exit 1; }
 rm -f /tmp/netfs-*.log
 cd / && { rm -rf "$work" 2>/dev/null || echo "(cleanup: the share still holds a lock file; removed on the next run)"; }
 echo "NETWORK FS OK"

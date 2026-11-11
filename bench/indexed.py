@@ -3,13 +3,17 @@
 and livegrep (mission section 14, "Engine B workloads").
 
 usage: indexed.py --corpus DIR --work DIR --out FILE.json [--tools scrutate,zoekt,livegrep]
-                  [--runs 20] [--index-runs 5] [--concurrency N] [--seconds 15] [--max-load X]
+                  [--runs 20] [--index-runs 5] [--throughput-runs 10] [--concurrency N] [--seconds 15]
+                  [--max-load X]
 
 Measured per tool: full indexing time and peak memory, incremental update time (100 files edited),
 index size, query latency (p50 / p95 / p99 over every run of every query, process start to exit),
 query memory, and concurrent throughput (N clients issuing the query list for a fixed time).
 Every query's answer is first checked against the Python reference of bench/leaderboard.py on the
-same files; a tool that answers differently is disqualified for that query.
+same files; a tool that answers differently, or exits with a code other than 0 or 1, is
+disqualified for that query. Every measurement takes the tools in turn (A B, A B, ...), so load
+drift on the machine does not turn into a difference between them; each comparison row says how
+many runs per tool it rests on.
 
 Like-for-like setup: the corpus is the Linux tree without hidden files (`linux-nodot`, no
 `.gitignore` rules), so every engine indexes the same files; Zoekt runs with its size and trigram
@@ -215,6 +219,7 @@ def main() -> int:
     ap.add_argument("--tools", default="scrutate,zoekt")
     ap.add_argument("--runs", type=int, default=20)
     ap.add_argument("--index-runs", type=int, default=5)
+    ap.add_argument("--throughput-runs", type=int, default=10)
     ap.add_argument("--concurrency", type=int, default=os.cpu_count() or 4)
     ap.add_argument("--seconds", type=float, default=15)
     ap.add_argument("--max-load", type=float, default=(os.cpu_count() or 4) * 0.3)
@@ -232,21 +237,22 @@ def main() -> int:
     res = {"environment": lb.environment(), "corpus": a.corpus, "settings": vars(a) | {"queries": len(QUERIES)}, "tools": {n: {"version": defs[n]["version"]} for n in names}}
     save = lambda: json.dump(res, open(a.out, "w"), indent=1)
     # ---- indexing: full builds, size, peak memory
-    for n in names:
-        d, r = defs[n], res["tools"][n]
-        times, rss = [], []
-        for _ in range(a.index_runs):
-            d["clean"]()
+    times, rss = {n: [] for n in names}, {n: [] for n in names}
+    for _ in range(a.index_runs):
+        for n in names:
+            defs[n]["clean"]()
             lb.wait_idle(a.max_load, 1800)
-            w, m, code, _ = timed(d["index"], a.corpus)
+            w, m, code, _ = timed(defs[n]["index"], a.corpus)
             if code != 0:
                 raise SystemExit(f"{n} index failed ({code})")
-            times.append(w)
-            rss.append(m)
-        where = d.get("size_dir") or d.get("size_file")
-        r["index"] = {"times": times, "median": statistics.median(times), "rss_max": max(rss), "bytes": du(where), "apparent_bytes": du(where, apparent=True)}
-        print(f"[indexed] {n}: index {r['index']['median']:.2f}s, {r['index']['bytes'] / 1e6:.0f} MB, peak {max(rss) / 1e6:.0f} MB", file=sys.stderr)
-        save()
+            times[n].append(w)
+            rss[n].append(m)
+    for n in names:
+        where = defs[n].get("size_dir") or defs[n].get("size_file")
+        r = res["tools"][n]
+        r["index"] = {"times": times[n], "median": statistics.median(times[n]), "rss_max": max(rss[n]), "bytes": du(where), "apparent_bytes": du(where, apparent=True)}
+        print(f"[indexed] {n}: index {r['index']['median']:.2f}s, {r['index']['bytes'] / 1e6:.0f} MB, peak {max(rss[n]) / 1e6:.0f} MB", file=sys.stderr)
+    save()
     # ---- incremental update: 100 files edited, then restored
     rng = random.Random(7)
     picked = rng.sample([f for f in files if f.endswith((".c", ".h"))], 100)
@@ -256,22 +262,26 @@ def main() -> int:
         p = os.path.join(a.corpus, f)
         os.remove(p)
         open(p, "wb").write(data)
-    for n in names:
-        d = defs[n]
-        cmd = d["update"] or d["index"]
-        ups = []
-        for i in range(a.index_runs):
+    ups = {n: [] for n in names}
+    for i in range(a.index_runs):
+        # each tool sees the same edit on a tree its index last saw restored
+        for n in names:
+            cmd = defs[n]["update"] or defs[n]["index"]
             for f in picked:
                 with open(os.path.join(a.corpus, f), "ab") as fh:
                     fh.write(f"\n/* benchmark edit {i} */\n".encode())
             w, _, code, _ = timed(cmd, a.corpus)
-            ups.append(w)
+            if code != 0:
+                raise SystemExit(f"{n} update failed ({code})")
+            ups[n].append(w)
             for f, data in backup.items():
                 open(os.path.join(a.corpus, f), "wb").write(data)
-            timed(cmd, a.corpus)
-        res["tools"][n]["update"] = {"times": ups, "median": statistics.median(ups), "files_changed": len(picked),
-                                     "mode": "incremental" if d["update"] else "full rebuild (no incremental mode for a directory)"}
-        save()
+            if timed(cmd, a.corpus)[2] != 0:
+                raise SystemExit(f"{n} update after the restore failed")
+    for n in names:
+        res["tools"][n]["update"] = {"times": ups[n], "median": statistics.median(ups[n]), "files_changed": len(picked),
+                                     "mode": "incremental" if defs[n]["update"] else "full rebuild (no incremental mode for a directory)"}
+    save()
     # ---- servers
     servers = []
     owner = {}
@@ -299,7 +309,8 @@ def main() -> int:
                 _, _, code, out = timed(cmd, a.corpus)
                 got = normalise(out)
                 miss, extra = ref - got, got - ref
-                entry["tools"][n] = {"argv": cmd, "valid": not miss and not extra, "lines": len(got), "missing": len(miss), "extra": len(extra),
+                entry["tools"][n] = {"argv": cmd, "valid": not miss and not extra and not lb.bad_exit([code]), "exit": code, "lines": len(got),
+                                     "missing": len(miss), "extra": len(extra),
                                      "missing_sample": sorted(miss)[:3], "extra_sample": sorted(extra)[:3], "times": [], "rss": []}
             res["queries"].append(entry)
         save()
@@ -311,7 +322,10 @@ def main() -> int:
                     t = entry["tools"][n]
                     if not t["valid"]:
                         continue
-                    w, m, _, _ = timed(t["argv"], a.corpus)
+                    w, m, code, _ = timed(t["argv"], a.corpus)
+                    if lb.bad_exit([code]):
+                        t.update({"valid": False, "exit": code})
+                        continue
                     t["times"].append(w)
                     t["rss"].append(m)
             if rep % 5 == 4:
@@ -336,19 +350,23 @@ def main() -> int:
                                           "wrong_queries": [e["q"]["pats"][0] for e in res["queries"] if not e["tools"][n]["valid"]]}
         save()
         # ---- concurrent throughput
-        for n in names:
-            common = [e["tools"][n]["argv"] for e in res["queries"] if all(e["tools"][x]["valid"] for x in names)]
-            qps = []
-            for _ in range(3):
+        common_q = [e for e in res["queries"] if all(e["tools"][x]["valid"] for x in names)]
+        qps, errors = {n: [] for n in names}, {n: 0 for n in names}
+        for _ in range(a.throughput_runs):
+            for n in names:
+                cmds = [e["tools"][n]["argv"] for e in common_q]
                 lb.wait_idle(a.max_load, 1800)
-                done = [0] * a.concurrency
+                done, failed = [0] * a.concurrency, [0] * a.concurrency
                 stop = time.time() + a.seconds
 
                 def worker(i):
                     k = i
                     while time.time() < stop:
-                        subprocess.run(common[k % len(common)], cwd=a.corpus, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                        done[i] += 1
+                        rc = subprocess.run(cmds[k % len(cmds)], cwd=a.corpus, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
+                        if lb.bad_exit([rc]):
+                            failed[i] += 1
+                        else:
+                            done[i] += 1
                         k += 1
 
                 th = [threading.Thread(target=worker, args=(i,)) for i in range(a.concurrency)]
@@ -357,9 +375,12 @@ def main() -> int:
                     t.start()
                 for t in th:
                     t.join()
-                qps.append(sum(done) / (time.time() - t0))
-            res["tools"][n]["throughput"] = {"clients": a.concurrency, "seconds": a.seconds, "qps": qps, "median": statistics.median(qps)}
+                qps[n].append(sum(done) / (time.time() - t0))
+                errors[n] += sum(failed)
             save()
+        for n in names:
+            res["tools"][n]["throughput"] = {"clients": a.concurrency, "seconds": a.seconds, "qps": qps[n], "median": statistics.median(qps[n]), "failed_queries": errors[n]}
+        save()
     finally:
         for p in servers:
             p.terminate()
@@ -374,7 +395,7 @@ def main() -> int:
             us = [x for e in common for x in e["tools"]["scrutate"]["times"]]
             them = [x for e in common for x in e["tools"][best]["times"]]
             r, lo, hi = boot(us, them, lambda v: pct(v, p))
-            out[f"latency {metric}"] = {"best": best, "ratio": r, "ci95": [lo, hi], "status": status(lo, hi)}
+            out[f"latency {metric}"] = {"best": best, "ratio": r, "ci95": [lo, hi], "status": status(lo, hi), "runs": a.runs, "samples": [len(us), len(them)]}
         best = min(comps, key=lambda n: res["tools"][n]["index"]["median"])
         r, lo, hi = boot(s["index"]["times"], res["tools"][best]["index"]["times"], statistics.median)
         out["full indexing time"] = {"best": best, "ratio": r, "ci95": [lo, hi], "status": status(lo, hi), "runs": a.index_runs}
@@ -385,8 +406,14 @@ def main() -> int:
         r = s["index"]["bytes"] / res["tools"][best]["index"]["bytes"]
         out["index size"] = {"best": best, "ratio": r, "status": "PASS" if r < 1 else "FAIL" if r > 1 else "PARTIAL"}
         best = max(comps, key=lambda n: res["tools"][n]["throughput"]["median"])
-        r, lo, hi = boot(s["throughput"]["qps"], res["tools"][best]["throughput"]["qps"], statistics.median)
-        out["concurrent throughput"] = {"best": best, "ratio": r, "ci95": [lo, hi], "status": status(lo, hi, lower_is_better=False)}
+        failed = sum(res["tools"][n]["throughput"]["failed_queries"] for n in names)
+        if failed:
+            out["concurrent throughput"] = {"best": best, "runs": a.throughput_runs, "status": "FAIL",
+                                            "why": f"{failed} queries exited with an error during the runs"}
+        else:
+            r, lo, hi = boot(s["throughput"]["qps"], res["tools"][best]["throughput"]["qps"], statistics.median)
+            out["concurrent throughput"] = {"best": best, "ratio": r, "ci95": [lo, hi], "runs": a.throughput_runs,
+                                            "status": status(lo, hi, lower_is_better=False)}
         best = min(comps, key=lambda n: res["tools"][n]["latency"]["rss_median"])
         r = s["latency"]["rss_median"] / res["tools"][best]["latency"]["rss_median"]
         out["query memory"] = {"best": best, "ratio": r, "status": "PASS" if r < 0.95 else "FAIL" if r > 1.05 else "PARTIAL"}

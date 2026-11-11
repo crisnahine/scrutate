@@ -11,12 +11,13 @@ A dedicated plugin (IntelliJ Platform SDK, Gradle build) is not part of 0.1.0. W
 
 | Tool | Program | Arguments | Working directory |
 |---|---|---|---|
-| Scrutate: search | `scrutate` | `search "$Prompt$" -k 15` | `$ProjectFileDir$` |
-| Scrutate: grep | `scrutate` | `grep --sort "$Prompt$" "$ProjectFileDir$"` | `$ProjectFileDir$` |
-| Scrutate: symbol | `scrutate` | `symbol "$SelectedText$"` | `$ProjectFileDir$` |
-| Scrutate: callers | `scrutate` | `callers "$SelectedText$"` | `$ProjectFileDir$` |
+| Scrutate: search | `scrutate` | `search -k 15 -- "$Prompt$"` | `$ProjectFileDir$` |
+| Scrutate: grep | `scrutate` | `grep --sort -- "$Prompt$" "$ProjectFileDir$"` | `$ProjectFileDir$` |
+| Scrutate: symbol | `scrutate` | `symbol -- "$SelectedText$"` | `$ProjectFileDir$` |
+| Scrutate: callers | `scrutate` | `callers -- "$SelectedText$"` | `$ProjectFileDir$` |
 
-Output appears in the Run tool window. The IDE turns `path:line` into a link only for an
+The `--` keeps a query that starts with `-` from being read as an option. Output appears in the
+Run tool window. The IDE turns `path:line` into a link only for an
 absolute path, so the grep tool is given the project directory and its results are links. The
 other three answer from the index with paths relative to the repository, which the IDE does not
 link; the language server below gives navigation for those.

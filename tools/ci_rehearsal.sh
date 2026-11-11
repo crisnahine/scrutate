@@ -37,7 +37,7 @@ rustup target add "$arch-unknown-linux-musl" 2>&1 | tail -1
 cargo build --release -p scrutate --locked --target "$arch-unknown-linux-musl" 2>&1 | tail -1
 m=target/$arch-unknown-linux-musl/release/scrutate
 file "$m" | grep -qE "statically linked|static-pie linked"
-if ldd "$m" 2>&1 | grep -q "=>"; then echo "the musl binary loads a shared library"; exit 1; fi
+if ldd "$m" 2>&1 | grep "=>" > /dev/null; then echo "the musl binary loads a shared library"; exit 1; fi
 untimed() { sed -E 's/"elapsed_ms":[0-9.eE+-]+,?//'; }
 ./target/release/scrutate grep --sort --json -F "fn " crates | untimed > /tmp/glibc.jsonl
 "$m" grep --sort --json -F "fn " crates | untimed > /tmp/musl.jsonl
@@ -49,6 +49,7 @@ python3 --version
 pip install -q --root-user-action=ignore -e "python[test]" maturin -c python/constraints.txt 2>&1 | tail -2
 maturin build --release --strip -m crates/scrutate-py/Cargo.toml -o target/wheels 2>&1 | tail -1
 pip install -q --root-user-action=ignore --force-reinstall --no-deps target/wheels/scrutate-*.whl
+python -c "import scrutate; print(scrutate.__version__)"
 (cd python && SCRUTATE_BIN=/work/target/release/scrutate python -m pytest -q tests 2>&1 | tail -1)
 python bench/differential.py --cases 200 --seed 3 2>&1 | tail -2
 python bench/parity.py crates/scrutate/src target/release/scrutate --queries 50 2>&1 | tail -1

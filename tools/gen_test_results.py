@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import os
 import platform
+import re
 import subprocess
 import sys
 import time
@@ -36,6 +37,22 @@ def run(cmd, cwd=ROOT, env=None, tail=25, timeout=3600):
     dt = time.time() - t0
     shown = out[-tail:] if len(out) > tail else out
     return rc, dt, "\n".join(shown), "\n".join(out)
+
+
+def ci_nightly() -> str:
+    """The nightly toolchain the fuzz job of ci.yml pins."""
+    with open(os.path.join(ROOT, ".github", "workflows", "ci.yml")) as f:
+        return re.search(r"NIGHTLY: (\S+)", f.read()).group(1)
+
+
+def fuzz_gates(gate, nightly: str) -> None:
+    fuzz = ["cargo", f"+{nightly}", "fuzz"]
+    if subprocess.run(fuzz + ["--version"], capture_output=True).returncode != 0:
+        gate(f"fuzz regressions (cargo-fuzz on {nightly})", fuzz + ["--version"], tail=4)
+        return
+    for d in sorted(os.listdir(os.path.join(ROOT, "fuzz", "regressions"))):
+        for f in sorted(os.listdir(os.path.join(ROOT, "fuzz", "regressions", d))):
+            gate(f"fuzz regression {d}/{f[:18]}", fuzz + ["run", "-O", d, os.path.join("fuzz", "regressions", d, f)], tail=2)
 
 
 def main() -> int:
@@ -87,14 +104,10 @@ def main() -> int:
     gate("differential test against ripgrep, and grep --index against the walk", [sys.executable, "bench/differential.py", "--cases", str(a.differential_cases), "--seed", "11"], tail=4)
     if a.wheels:
         gate("wheels installed and tested on several interpreters", [sys.executable, "tools/wheel_matrix.py", "--wheels", a.wheels, "--cli", os.path.join(ROOT, "target", "release", "scrutate")] + a.pythons, tail=10)
-    if subprocess.run(["cargo", "+nightly", "fuzz", "--version"], capture_output=True).returncode == 0:
-        for d in sorted(os.listdir(os.path.join(ROOT, "fuzz", "regressions"))):
-            for f in sorted(os.listdir(os.path.join(ROOT, "fuzz", "regressions", d))):
-                gate(f"fuzz regression {d}/{f[:18]}", ["cargo", "+nightly", "fuzz", "run", "-O", d, os.path.join("fuzz", "regressions", d, f)], tail=2)
+    fuzz_gates(gate, ci_nightly())
     if a.reproducible:
         gate("reproducible build (two clean builds, identical hash)", ["bash", "tools/reproducible_check.sh"], tail=4, timeout=7200)
     # summary counts from cargo test output
-    import re
     totals = [int(m) for m in re.findall(r"test result: ok\. (\d+) passed", test_out)]
     head = [
         "# Test and quality-gate results",

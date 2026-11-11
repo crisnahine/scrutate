@@ -14,13 +14,25 @@ jobs:
         with:
           version: v0.1.0
           args: index
+      - id: dupes
+        uses: crisnahine/scrutate/.github/actions/scrutate@v0.1.0
+        with:
+          version: v0.1.0
+          args: dupes --min-tokens 80 --threshold 1
       - name: no exact duplicate functions
-        run: scrutate dupes --min-tokens 80 --threshold 1 && exit 1 || [ $? -eq 1 ]
+        if: steps.dupes.outputs.exit-code == '0'
+        run: |
+          echo "exact duplicates are listed above"
+          exit 1
 ```
 
-`args` is split on spaces; quote an argument that has spaces (`search "parse a file" -k 5`).
-Later steps of the job can call `scrutate` themselves, as the second step does. Exit codes are
-0 for results, 1 for none and 2 for an error, so that step fails when duplicates are listed,
-passes when there are none, and fails on an error.
+Exit codes are 0 for results, 1 for none and 2 for an error. The action's step fails only on an
+error; it passes on 0 and 1 and puts the code in the `exit-code` output, so the job decides what
+a result means. Above, finding duplicates (`0`) fails the job and finding none (`1`) passes it.
+For `search` you would gate the other way round, on `exit-code == '1'`.
+
+`args` is split on spaces; quote an argument that has spaces or an apostrophe
+(`search "don't parse twice" -k 5`). Later steps of the job can also call `scrutate` themselves:
+the first step puts it on `PATH`.
 
 The action lives in a subdirectory, so it is not listed on the Marketplace.

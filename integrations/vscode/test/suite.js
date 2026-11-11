@@ -68,6 +68,10 @@ exports.run = async function () {
     await vscode.commands.executeCommand("scrutate.grep");
     assert.strictEqual(at(), "src/geo.py:11", "grep opens the match");
 
+    typed = "-?def main";
+    await vscode.commands.executeCommand("scrutate.grep");
+    assert.strictEqual(at(), "src/app.py:4", "a pattern that starts with - is not read as an option");
+
     await onTheCall();
     await vscode.commands.executeCommand("scrutate.symbol");
     assert.strictEqual(at(), "src/geo.py:6", "symbol takes the word under the cursor");

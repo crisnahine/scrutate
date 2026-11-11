@@ -10,7 +10,7 @@ release URLs below do not exist yet. Logs of every test are in `bench/results/pl
 | `winget/manifests/c/crisnahine/Scrutate/0.1.0/` | winget manifests (version, installer, default locale; schema 1.12.0). Portable install from the same zips. |
 | `linux/build-packages.sh` | Builds the `.deb` (cargo-deb) and `.rpm` (cargo-generate-rpm) in a `rust:1-slim-bookworm` container. The package metadata is in `crates/scrutate/Cargo.toml` under `[package.metadata.deb]` and `[package.metadata.generate-rpm]`. |
 | `linux/test-packages.sh` | Installs a package in a clean container, runs `scrutate --version` and a `scrutate grep`, removes it. |
-| `validate_manifests.py` | Parses the Scoop and winget files and checks them against the published schemas. |
+| `validate_manifests.py` | Parses the Scoop and winget files, checks them against the published schemas and fails on an all-zero sha256 in any manifest. Until a release exists the hashes are placeholders, so run it with `--draft`: `uvx --with jsonschema --with pyyaml python packaging/validate_manifests.py --draft`. |
 
 ## How each was tested
 
@@ -74,4 +74,4 @@ under its own name first. Nothing was published.
    and the `ignore` fork is published.
 
 The zero hashes in the Homebrew, Scoop and winget files are placeholders and will fail any install
-until they are replaced.
+until they are replaced. Once they are, `validate_manifests.py` without `--draft` must pass.

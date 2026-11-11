@@ -27,12 +27,12 @@ local function to_qf(hits)
 end
 
 function M.search(query)
-  local out = run({ "search", query, "-k", tostring(M.config.results), "--json" })
+  local out = run({ "search", "-k", tostring(M.config.results), "--json", "--", query })
   if out then to_qf(vim.json.decode(out ~= "" and out or "[]")) end
 end
 
 function M.grep(pattern)
-  local out = run({ "grep", "--json", "--sort", "--max-results", "1000", pattern, "." })
+  local out = run({ "grep", "--json", "--sort", "--max-results", "1000", "--", pattern, "." })
   if not out then return end
   local hits = {}
   for line in out:gmatch("[^\n]+") do
@@ -43,12 +43,12 @@ function M.grep(pattern)
 end
 
 function M.symbol(name)
-  local out = run({ "symbol", name, "--json" })
+  local out = run({ "symbol", "--json", "--", name })
   if out then to_qf(vim.json.decode(out ~= "" and out or "[]")) end
 end
 
 function M.callers(name)
-  local out = run({ "callers", name, "--json" })
+  local out = run({ "callers", "--json", "--", name })
   if out then to_qf(vim.json.decode(out ~= "" and out or "[]")) end
 end
 

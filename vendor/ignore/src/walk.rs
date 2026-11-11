@@ -2427,6 +2427,41 @@ mod tests {
     }
 
     #[test]
+    fn quit_while_threads_grow_ends_the_walk() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let td = tmpdir();
+        for d in 0..50 {
+            mkdirp(td.path().join(format!("d{d}")));
+            for f in 0..20 {
+                wfile(td.path().join(format!("d{d}/f{f}")), "");
+            }
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let root = td.path().to_path_buf();
+        std::thread::spawn(move || {
+            let (when, seen) =
+                (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+            let mut b = WalkBuilder::new(root);
+            b.threads(1).grow_threads(3, when.clone());
+            b.build_parallel().run(|| {
+                let (when, seen) = (when.clone(), seen.clone());
+                Box::new(move |_| {
+                    let n = seen.fetch_add(1, Ordering::Relaxed);
+                    // ask for the extra threads, then quit while they start
+                    when.store(3, Ordering::Relaxed);
+                    std::thread::sleep(std::time::Duration::from_micros(200));
+                    if n >= 3 { WalkState::Quit } else { WalkState::Continue }
+                })
+            });
+            tx.send(seen.load(Ordering::Relaxed)).unwrap();
+        });
+        let seen = rx
+            .recv_timeout(std::time::Duration::from_secs(20))
+            .expect("the walk did not end after Quit");
+        assert!(seen < 100, "{seen} of 1,051 entries visited after Quit");
+    }
+
+    #[test]
     fn no_ignores() {
         let td = tmpdir();
         mkdirp(td.path().join("a/b/c"));

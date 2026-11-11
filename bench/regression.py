@@ -32,7 +32,7 @@ def machine(d):
     """(corpus, query) -> median of the fastest competitor measured in this file."""
     out = {}
     for r in d.get("text_search", []):
-        if r.get("tool") != "scrutate" and r.get("status") == "ok":
+        if not r.get("tool", "").startswith("scrutate") and r.get("status") == "ok":
             k = (r["corpus"], r["query"])
             out[k] = min(out.get(k, r["wall_median_ms"]), r["wall_median_ms"])
     return out

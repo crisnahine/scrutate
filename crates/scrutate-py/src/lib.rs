@@ -517,14 +517,16 @@ impl Repo {
             .collect()
     }
 
-    /// Index statistics as a dict.
+    /// Index statistics as a dict. GIL released while it waits for the engine.
     fn stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let v = self
-            .inner
-            .lock()
-            .map_err(|_| err("engine lock poisoned"))?
-            .ix
-            .stats()
+        let v = py
+            .detach(|| {
+                self.inner
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("engine lock poisoned"))?
+                    .ix
+                    .stats()
+            })
             .map_err(err)?;
         let d = PyDict::new(py);
         if let Some(m) = v.as_object() {
@@ -541,12 +543,21 @@ impl Repo {
 
     /// Lines `start..=end` of a file inside the repository (never outside it).
     #[pyo3(signature = (path, start=1, end=None, max_lines=scrutate::ops::READ_LINES))]
-    fn read(&self, path: &str, start: i64, end: Option<i64>, max_lines: i64) -> PyResult<String> {
-        Ok(self
-            .inner
-            .lock()
-            .map_err(|_| err("engine lock poisoned"))?
-            .read(path, start, end, max_lines))
+    /// GIL released while it waits for the engine.
+    fn read(
+        &self,
+        py: Python<'_>,
+        path: &str,
+        start: i64,
+        end: Option<i64>,
+        max_lines: i64,
+    ) -> PyResult<String> {
+        py.detach(|| {
+            self.inner
+                .lock()
+                .map(|s| s.read(path, start, end, max_lines))
+                .map_err(|_| err("engine lock poisoned"))
+        })
     }
 }
 

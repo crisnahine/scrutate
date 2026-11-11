@@ -15,8 +15,11 @@ function root() {
 /** @returns {Promise<string>} */
 function run(args) {
   const bin = vscode.workspace.getConfiguration("scrutate").get("path", "scrutate");
+  const cwd = root();
+  // without a folder the command would run in the editor's own directory (index could index $HOME)
+  if (!cwd) return Promise.reject(new Error("open a folder first"));
   return new Promise((resolve, reject) => {
-    execFile(bin, args, { cwd: root(), maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
+    execFile(bin, args, { cwd, maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
       // exit 1 = no results, which is not an error
       if (err && err.code !== 1) return reject(new Error(stderr || err.message));
       resolve(stdout);
@@ -82,7 +85,7 @@ function activate(context) {
       withErrors(async () => {
         const q = await vscode.window.showInputBox({ prompt: "Scrutate search (meaning, name or identifier)" });
         if (!q) return;
-        const out = await run(["search", q, "-k", String(k()), "--json"]);
+        const out = await run(["search", "-k", String(k()), "--json", "--", q]);
         await pickHits(JSON.parse(out || "[]"), q);
       })
     ),
@@ -90,7 +93,7 @@ function activate(context) {
       withErrors(async () => {
         const q = await vscode.window.showInputBox({ prompt: "Scrutate grep (regex; instant, no index)" });
         if (!q) return;
-        const out = await run(["grep", "--json", "--max-results", "500", "--sort", q, "."]);
+        const out = await run(["grep", "--json", "--max-results", "500", "--sort", "--", q, "."]);
         const items = out
           .split("\n")
           .filter((l) => l.trim())
@@ -106,21 +109,21 @@ function activate(context) {
       withErrors(async () => {
         const name = wordUnderCursor() || (await vscode.window.showInputBox({ prompt: "Symbol (Class.method works)" }));
         if (!name) return;
-        await pickHits(JSON.parse((await run(["symbol", name, "--json"])) || "[]"), `definitions of ${name}`);
+        await pickHits(JSON.parse((await run(["symbol", "--json", "--", name])) || "[]"), `definitions of ${name}`);
       })
     ),
     vscode.commands.registerCommand("scrutate.callers", () =>
       withErrors(async () => {
         const name = wordUnderCursor() || (await vscode.window.showInputBox({ prompt: "Function name" }));
         if (!name) return;
-        await pickHits(JSON.parse((await run(["callers", name, "--json"])) || "[]"), `callers of ${name}`);
+        await pickHits(JSON.parse((await run(["callers", "--json", "--", name])) || "[]"), `callers of ${name}`);
       })
     ),
     vscode.commands.registerCommand("scrutate.refs", () =>
       withErrors(async () => {
         const name = wordUnderCursor();
         if (!name) return;
-        const r = JSON.parse((await run(["refs", name, "--json"])) || "{}");
+        const r = JSON.parse((await run(["refs", "--json", "--", name])) || "{}");
         const items = [];
         for (const d of r.definitions || []) {
           items.push({ label: `[def] ${d.qualname}`, description: `${d.path}:${d.start}`, path: d.path, line: d.start });

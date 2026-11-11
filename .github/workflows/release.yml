@@ -1,7 +1,9 @@
 # Release: binaries for every declared platform, abi3, cp314t and abi3t wheels, checksums, SBOM and
 # build provenance attestations (Sigstore, via GitHub artifact attestations). Triggered by a tag.
 # The build jobs can only read the repository. The one job that signs and publishes runs in the
-# `release` environment, and the release stays a draft until every file is attached.
+# `release` environment, and the release stays a draft until every file is attached. Nothing is
+# published unless the tag names the version the code declares and every ci.yml job passed on the
+# tagged commit.
 name: release
 on:
   push:
@@ -12,8 +14,23 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 jobs:
+  version:
+    name: the tag matches the code's version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: python3 tools/check_version.py "${GITHUB_REF_NAME#v}"
+  ci:
+    name: ci on the tagged commit
+    needs: version
+    # the documented form for a workflow of the same repository and commit; actionlint rejects $/
+    uses: ./.github/workflows/ci.yml # zizmor: ignore[self-repository]
   binaries:
     name: binary (${{ matrix.target }})
+    needs: version
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -70,6 +87,7 @@ jobs:
           retention-days: 7
   wheels:
     name: wheel (${{ matrix.os }}, ${{ matrix.kind }})
+    needs: version
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     env:
@@ -118,7 +136,7 @@ jobs:
           retention-days: 7
   release:
     name: sign and publish
-    needs: [binaries, wheels]
+    needs: [ci, binaries, wheels]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: release
@@ -132,8 +150,15 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup toolchain install --no-self-update
+      # by name: the ci jobs of this run upload binaries too, and those are not release files
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
+          pattern: dist-*
+          path: artifacts
+          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: wheel-*
           path: artifacts
           merge-multiple: true
       - name: SBOM (CycloneDX, from the locked dependency graph)

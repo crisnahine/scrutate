@@ -2,7 +2,7 @@
   <tool name="Scrutate: search" showInMainMenu="true" showInEditor="true" showInProject="true" showInSearchPopup="true" disabled="false" useConsole="true" showConsoleOnStdOut="true" showConsoleOnStdErr="true" synchronizeAfterRun="false">
     <exec>
       <option name="COMMAND" value="scrutate" />
-      <option name="PARAMETERS" value="search &quot;$Prompt$&quot; -k 15" />
+      <option name="PARAMETERS" value="search -k 15 -- &quot;$Prompt$&quot;" />
       <option name="WORKING_DIRECTORY" value="$ProjectFileDir$" />
     </exec>
     <filter>
@@ -14,7 +14,7 @@
   <tool name="Scrutate: grep" showInMainMenu="true" showInEditor="true" showInProject="true" showInSearchPopup="true" disabled="false" useConsole="true" showConsoleOnStdOut="true" showConsoleOnStdErr="true" synchronizeAfterRun="false">
     <exec>
       <option name="COMMAND" value="scrutate" />
-      <option name="PARAMETERS" value="grep --sort &quot;$Prompt$&quot; &quot;$ProjectFileDir$&quot;" />
+      <option name="PARAMETERS" value="grep --sort -- &quot;$Prompt$&quot; &quot;$ProjectFileDir$&quot;" />
       <option name="WORKING_DIRECTORY" value="$ProjectFileDir$" />
     </exec>
     <filter>
@@ -26,7 +26,7 @@
   <tool name="Scrutate: symbol" showInMainMenu="true" showInEditor="true" showInProject="true" showInSearchPopup="true" disabled="false" useConsole="true" showConsoleOnStdOut="true" showConsoleOnStdErr="true" synchronizeAfterRun="false">
     <exec>
       <option name="COMMAND" value="scrutate" />
-      <option name="PARAMETERS" value="symbol &quot;$SelectedText$&quot;" />
+      <option name="PARAMETERS" value="symbol -- &quot;$SelectedText$&quot;" />
       <option name="WORKING_DIRECTORY" value="$ProjectFileDir$" />
     </exec>
     <filter>
@@ -38,7 +38,7 @@
   <tool name="Scrutate: callers" showInMainMenu="true" showInEditor="true" showInProject="true" showInSearchPopup="true" disabled="false" useConsole="true" showConsoleOnStdOut="true" showConsoleOnStdErr="true" synchronizeAfterRun="false">
     <exec>
       <option name="COMMAND" value="scrutate" />
-      <option name="PARAMETERS" value="callers &quot;$SelectedText$&quot;" />
+      <option name="PARAMETERS" value="callers -- &quot;$SelectedText$&quot;" />
       <option name="WORKING_DIRECTORY" value="$ProjectFileDir$" />
     </exec>
     <filter>

@@ -1,10 +1,12 @@
-"""Parse the Scoop and winget manifests, then check them against the published schemas.
+"""Parse the Scoop and winget manifests, check them against the published schemas, and refuse the
+all-zero sha256 placeholders (in the Homebrew formula too) unless --draft is given.
 
-usage: uvx --with jsonschema --with pyyaml python packaging/validate_manifests.py
+usage: uvx --with jsonschema --with pyyaml python packaging/validate_manifests.py [--draft]
 """
 import glob
 import json
 import os
+import re
 import sys
 import urllib.request
 
@@ -22,7 +24,13 @@ def fetch(url):
         return json.load(r)
 
 
+draft = "--draft" in sys.argv[1:]
 bad = 0
+for p in [os.path.join(W, "homebrew/scrutate.rb"), os.path.join(W, "scoop/scrutate.json")] + sorted(glob.glob(os.path.join(W, "winget/**/*.yaml"), recursive=True)):
+    zeros = len(re.findall(r"\b0{64}\b", open(p).read()))
+    if zeros:
+        print(f"{'placeholder' if draft else 'PLACEHOLDER HASH'}: {os.path.relpath(p, W)} has {zeros} all-zero sha256 value(s)")
+        bad += 0 if draft else zeros
 docs = [("scoop", os.path.join(W, "scoop/scrutate.json"), json.load(open(os.path.join(W, "scoop/scrutate.json"))))]
 print("syntax ok: scoop/scrutate.json (JSON)")
 for p in sorted(glob.glob(os.path.join(W, "winget/**/*.yaml"), recursive=True)):

@@ -10,8 +10,13 @@ on:
   pull_request:
   schedule:
     - cron: "23 4 * * 1"
+  workflow_call: # release.yml runs every job on the tagged commit before it publishes
 permissions:
   contents: read
+# bash -eo pipefail everywhere, Git Bash on Windows: a failing command inside a pipe fails the step
+defaults:
+  run:
+    shell: bash
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -39,7 +44,6 @@ jobs:
       - run: cargo test --release -p scrutate --locked
       - run: cargo build --release -p scrutate --locked
       - name: smoke test the binary
-        shell: bash
         run: |
           ./target/release/scrutate --version
           ./target/release/scrutate grep -F "fn main" crates/scrutate/src
@@ -97,6 +101,8 @@ jobs:
         run: |
           maturin build --release --strip -m crates/scrutate-py/Cargo.toml -o target/wheels
           pip install --force-reinstall --no-deps target/wheels/scrutate-*.whl
+          # the bindings tests skip when the module does not load, so a broken wheel fails here
+          python -c "import scrutate; print(scrutate.__version__)"
           cd python && SCRUTATE_BIN=$GITHUB_WORKSPACE/target/release/scrutate python -m pytest -q tests
       - name: differential test against ripgrep
         run: |
@@ -122,7 +128,7 @@ jobs:
         run: |
           m=target/x86_64-unknown-linux-musl/release/scrutate
           file "$m" | grep -qE "statically linked|static-pie linked"
-          if ldd "$m" 2>&1 | grep -q "=>"; then echo "the musl binary loads a shared library"; exit 1; fi
+          if ldd "$m" 2>&1 | grep "=>" > /dev/null; then echo "the musl binary loads a shared library"; exit 1; fi
           untimed() { sed -E 's/"elapsed_ms":[0-9.eE+-]+,?//'; } # the summary's run time differs on every run
           ./target/release/scrutate grep --sort --json -F "fn " crates | untimed > /tmp/glibc.jsonl
           "$m" grep --sort --json -F "fn " crates | untimed > /tmp/musl.jsonl

@@ -50,6 +50,10 @@ vim.cmd("ScrutateCallers")
 q = quickfix()
 check(":ScrutateCallers takes the word under the cursor", #q == 2 and has(q, "src/app.py", 4) and has(q, "src/geo.py", 11), q)
 
+vim.cmd([[ScrutateGrep -?def main\(]])
+q = quickfix()
+check("a pattern that starts with - is not read as an option", #q == 1 and has(q, "src/app.py", 4), q)
+
 vim.cmd("ScrutateGrep zzzzqqqq_no_such_thing_anywhere")
 check("no match leaves an empty list", #quickfix() == 0, quickfix())
 
@@ -77,5 +81,5 @@ else
   io.stdout:write("skip the language server check: this Neovim has no vim.lsp.config\n")
 end
 
-vim.cmd("qa" .. (failed > 0 and "!" or ""))
-os.exit(failed > 0 and 1 or 0)
+-- qa! would end Neovim with status 0 whatever failed
+vim.cmd(failed > 0 and "cquit 1" or "qa!")

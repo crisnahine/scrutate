@@ -25,7 +25,8 @@ from leaderboard import boot_ratio  # noqa: E402
 
 def machine(tools):
     """Median of the fastest competitor with full runs in this file, or None."""
-    ms = [t["median"] for name, t in tools.items() if name != "scrutate" and t.get("status") == "ok" and len(t.get("times", [])) >= 10]
+    # "scrutate --index" moves with the change under test, so it cannot be the yardstick
+    ms = [t["median"] for name, t in tools.items() if not name.startswith("scrutate") and t.get("status") == "ok" and len(t.get("times", [])) >= 10]
     return min(ms) if ms else None
 
 

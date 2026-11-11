@@ -10,4 +10,5 @@ __pycache__/
 /crates/scrutate-py/target/
 /bench/results/*/cache/
 /crates/scrutate-py/THIRD_PARTY_NOTICES.txt
+/crates/scrutate/THIRD_PARTY_NOTICES.txt
 /.claude/

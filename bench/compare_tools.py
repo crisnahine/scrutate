@@ -385,7 +385,7 @@ QUERIES = [
 def bench_text_search(tools: dict, corpora: dict, runs: int, cold: bool) -> list[dict]:
     rows = []
     for cname, cdir in corpora.items():
-        runs = max(2, runs // 2) if corpus_stats(cdir)["bytes"] > 500e6 else runs  # the massive corpus: fewer repetitions
+        n_runs = max(2, runs // 2) if corpus_stats(cdir)["bytes"] > 500e6 else runs  # the massive corpus: fewer repetitions
         has_git = ensure_git(cdir) if tools["git"]["exe"] else False
         for q in QUERIES:
             counts: dict[str, int] = {}
@@ -406,7 +406,7 @@ def bench_text_search(tools: dict, corpora: dict, runs: int, cold: bool) -> list
                 n = count_lines(q["mode"], first["out"])
                 counts[tool] = n
                 walls, cpus = [], []
-                for _ in range(runs):
+                for _ in range(n_runs):
                     r = timed_rusage(cmd, cdir, executable=exe)
                     walls.append(r["wall"])
                     cpus.append(r["cpu"])

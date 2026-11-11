@@ -5,8 +5,12 @@ inputs:
     description: release tag to install (e.g. v0.1.0)
     required: true
   args:
-    description: arguments passed to scrutate (e.g. dupes --json --limit 20); quote an argument that has spaces
+    description: arguments passed to scrutate (e.g. dupes --json --limit 20); quote an argument that has spaces or an apostrophe
     required: true
+outputs:
+  exit-code:
+    description: the command's exit code (0 results, 1 none); the step fails on 2 (an error) and above
+    value: ${{ steps.run.outputs.exit-code }}
 runs:
   using: composite
   steps:
@@ -36,8 +40,16 @@ runs:
         if command -v sha256sum > /dev/null; then sha256sum -c "$name.sha256"; else shasum -a 256 -c "$name.sha256"; fi
         if [ "$ext" = zip ]; then unzip -q "$name.zip"; else tar xzf "$name.tar.gz"; fi
         echo "$(pwd -W 2> /dev/null || pwd)/$name" >> "$GITHUB_PATH"
-    - shell: bash
+    - id: run
+      shell: bash
       env:
         ARGS: ${{ inputs.args }}
-      # xargs splits the arguments and honours quotes without handing them to a shell
-      run: printf '%s\n' "$ARGS" | xargs scrutate
+      # xargs splits the arguments and honours quotes without handing them to a shell; the code goes
+      # through a file because xargs replaces any non-zero code of its command with its own
+      run: |
+        code_file=$RUNNER_TEMP/scrutate-exit-code
+        rm -f "$code_file"
+        printf '%s\n' "$ARGS" | xargs sh -c 'scrutate "$@"; echo $? > "$0"' "$code_file"
+        code=$(cat "$code_file")
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        [ "$code" -lt 2 ]
