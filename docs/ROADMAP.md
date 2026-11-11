@@ -12,8 +12,8 @@ docs/TRACEABILITY.md.
 | Look-around and backreferences with a step budget (R-2A.2) | `grep -P` (PCRE2, stopped by its match limit with a warning) |
 | Fuzzy patterns longer than 128 bytes (R-2A.2) | `--fuzzy`, up to 4096 bytes (64-bit blocks with carries) |
 | Fuzzy regex (R-2A.2) | `--fuzzy-regex[=N]`, `src/fuzzyre.rs` (bit-parallel Glushkov automaton, up to 64 positions) |
-| Small trees (R-4.6) | a sequential walk that hands files to three search threads as it finds them, then the parallel walk past 256 files |
-| One very long line (R-4.6) | read into one exactly sized buffer, and its UTF-8 checked a piece at a time as it is written: 60.5 ms to about 42 ms on a 100 MB line, level with ugrep in the same runs |
+| Small trees (R-4.6) | the parallel walk from the first directory of any root that holds directories (one thread used to read all 60 directories of a 211-file repository while the search threads waited), and a sequential walk feeding three search threads only for a flat root of up to 256 files; ignore files matched without a regex (each built a `GlobSet`: 100 to 400 µs, the global excludes file 0.3 ms of every run); 133 system functions bound on first use (0.4 ms); a grep-only argument parser (0.1 ms) |
+| One very long line (R-4.6) | read into one exactly sized buffer, each thread filling its own part (100 MB: 12.6 ms on one thread, 4.0 ms on five), and its UTF-8 checked a piece at a time as it is written: 60.5 ms to about 31 ms on a 100 MB line (ugrep 37.7 ms) |
 | Incremental re-search for editors (R-4.1) | `grep --index --update` (refresh the text index, then search only candidate files); `watch` and `serve --watch` keep the index fresh |
 | Structural search without re-parsing (R-2B.2) | `tsquery` keeps captures per file by content hash: the Linux tree took about 25 s, the repeated query 1.6 s |
 | Cross-file reference resolution with scope awareness (R-2B.4) | `refs` resolves occurrences through scopes, imports and qualified names for Python, JavaScript/TypeScript, Rust and Go (60 of 60 hand-checked resolutions right) |
@@ -34,7 +34,12 @@ docs/TRACEABILITY.md.
 | An MCP server that fits how agents work today (R-6.15) | read-only and local hints on every tool, server instructions, answers within a byte budget with an offset to continue, `grep_code` on Engine A, no tool call blocked for more than 20 s by a first index build; from docs/research/agent-facing-search-2026-11.md |
 | Index upkeep in one place (R-12.4) | `Repo`: update, and rebuild when the database is corrupt, for every front end that stays open |
 | The index never disagrees with the walk about a pattern (R-2B.1) | one translation of the pattern for Engine A's matcher and the text index's trigram condition, checked by an in-process test |
-| Linux-tree searches against ripgrep (R-4.6) | a busy `.gitignore` compiles its globs; files up to 1 MB read whole; no size lookup per file: in the test VM from 2 to 6% behind ripgrep to 6 to 12% ahead |
+| Linux-tree searches against ripgrep (R-4.6) | a busy `.gitignore` compiles its globs; files up to 1 MB read whole; no size lookup per file: in the test VM from 2 to 6% behind ripgrep to 7 to 16% ahead on 11 of the 13 text rows, 40% ahead with very many matches and 59% ahead on the complex regex |
+| Cold trees on Linux (R-4.6) | a read counts as a disk read at 30 µs there (the macOS value, 75 µs, never fired), and a walk that reads from the disk grows by a thread for every 16 slow reads, up to 64: the four cold Linux-tree rows went from level with git grep (two lost by under 1%) to 0.28 to 0.30 of the best competitor's time, 18 to 24% above the read-files ceiling |
+| Heavy output through a pipe (R-4.6) | output that follows other output within a millisecond waits in a 64 KB buffer and leaves in one write, where every matching file used to cost a write and a wake-up of the reader: `return` in the Linux tree (1.3 million lines) in the Linux VM, from 0.95 of ripgrep's time to 0.60 |
+| A read-files ceiling that is one (R-14.8) | `bench/rawread.c` gives each thread 64 neighbouring paths at a time, and the harness keeps the fastest of several thread counts; handing out one path at a time, its threads shared a directory and read a cold tree at a third of the speed the disk allows |
+| Measurements a busy machine spoiled (R-14.9) | a benchmark where some tool's block medians differ by more than 25% is measured again, once, whatever its status, and keeps its first result beside the second; a warm row records how much of its corpus was in the page cache (on this 18 GB laptop the LLVM tree, 4.9 GB in 16 KB pages, no longer fits once a browser and an editor are open) |
+| Benchmark corpora without hard links (R-14) | `bench/corpora.py` copies (APFS clones) where it linked: a hard-linked file costs every tool twice as long to open on macOS |
 
 ## Blocked: needs the repository published (declined for this release)
 
@@ -51,36 +56,19 @@ docs/TRACEABILITY.md.
 
 ## Next
 
-- Branch `perf/next` (local) holds changes made after these benchmark runs: one reusable
-  small-file buffer per search thread, a page-cache-or-disk test that counts slow reads, the macOS
-  13 target, gitignore lines matched without a regex, the parallel walk from the start for any root
-  that holds directories (growing its threads when the reads come from the disk), lazy binding of
-  133 system functions, and a grep-only argument parser. Checked with the leaderboard harness on
-  the same laptop, idle (30 runs each), against the release run's ratios: `ripgrep/literal` 1.051
-  to 0.806, `ripgrep/simple regex` 1.076 to 0.853, `ripgrep/case-insensitive` 1.076 to 0.882,
-  `rgbuilt/git-aware` 1.022 to 0.750, `patho/backtracking trap` 1.024 to 0.977 (all five now
-  PASS); `patho/long line` 0.983 to 0.979, `patho/one-byte lines` 0.885 to 0.888,
-  `binheavy/literal` 0.816 to 0.766; `linux/literal` 0.839 and `linux/no match` 0.814 on the
-  corpus without hard links (below). Merge the branch with the next full run.
-- Small trees (a few hundred files), what the measurements said: Scrutate started sooner than
-  ugrep all along (`--version` 2.4 ms against 3.0 ms), so the gap on the ripgrep repository was
-  the walk and search of its 211 files. Four causes, fixed on the branch: each ignore file built a
-  `GlobSet` regex (100 to 400 µs, the global excludes file 0.3 ms of every run); one thread read
-  all 60 directories while the search threads waited; dyld bound 133 imported functions a search
-  never calls (0.4 ms); clap built all 24 subcommands (0.1 ms). Ruled out by measurement:
-  code-signature page size, the binary's pointer fix-ups, its size (0.05 to 0.2 ms at 85 MB), code
-  layout (a linker order file putting the 979 functions a search runs first: 585 page faults
-  against 586), and waking idle walker threads through a condition variable instead of short
-  sleeps (slower: 3.9 ms against 3.7). Profile-guided optimisation measured 2 to 3.5% on the
-  220-file tree; not adopted, since it needs a 13 MB profile in the repository and in every release
-  build. What is left of a 3.8 ms search: 1.5 ms is the cost of starting any Rust program, and
-  opening 211 files costs 8 µs each.
+- Small trees (a few hundred files), what is left: of a 3.8 ms search of a 211-file repository,
+  1.5 ms is the cost of starting any Rust program, and opening the files costs 8 µs each. Ruled
+  out by measurement: code-signature page size, the binary's pointer fix-ups, its size (0.05 to
+  0.2 ms at 85 MB), code layout (a linker order file putting the 979 functions a search runs
+  first: 585 page faults against 586), and waking idle walker threads through a condition
+  variable instead of short sleeps (slower: 3.9 ms against 3.7). Profile-guided optimisation
+  measured 2 to 3.5% on the 220-file tree; not adopted, since it needs a 13 MB profile in the
+  repository and in every release build.
 - Large trees on macOS are bound by `open` (docs/ARCHITECTURE.md): the Linux tree takes 0.56 s to
   open and read on the five performance cores with no search at all, and a search takes 0.65 s.
   The benchmark corpora `linux` and `linux-nodot` shared files through hard links, which doubles
   the cost of every open on macOS for every tool; `bench/corpora.py` now makes copies (APFS
-  clones). The published `linux/*` rows were measured with the hard links and need the next full
-  run.
+  clones). What is left above the floor is the search itself.
 - Agents, next: `outputSchema` and `structuredContent` on the MCP tools (Codex turns an output
   schema into a typed return value for its scripts; clients still differ on which form reaches
   the model, so the text stays); the stateless protocol revision 2026-07-28 (`server/discover`,
@@ -93,18 +81,16 @@ docs/TRACEABILITY.md.
   of one path (`files::Membership`) walks the ignore files by hand, because the walker's own
   per-directory matcher is private to the `ignore` crate, and lets a nested `.gitignore` win over
   a parent `.ignore` (the walk does the opposite), which can only cause an extra wake-up.
-- Linux: in the 8-CPU Linux VM on the development Mac, Scrutate used about 10% more CPU than
-  ripgrep for the same Linux-tree search (993 ms against 910 ms for `PM_RESUME`). Two measured
-  steps, both on `perf/next`: read small files into one buffer per thread instead of a new zeroed
-  buffer per file (4% of the CPU of a `return` search), and skip the one-thread small-tree phase
-  (about 5 ms of a 130 ms search); the branch also drops the regex build for most of the tree's 407
-  `.gitignore` files. Then repeat on dedicated Linux hardware,
-  where the VM's noise (ripgrep's own medians moved by up to 50% between runs) does not hide them.
-- Thread counts on Linux and Windows: the macOS default (performance cores) came from measurement;
-  repeat it on dedicated Linux and Windows machines before changing their default. The disk-or-cache
-  test (75 µs per small read) also needs a check there: in the VM under load it may misfire.
+- Linux on dedicated hardware: every Linux number here comes from a 5-CPU VM on the development
+  Mac, whose disk is a virtual one on the Mac's SSD. Two values were fitted there and need a
+  check on an NVMe disk and on a network disk: the read time that counts as a disk read (30 µs)
+  and the most threads for a cold tree (64). A cold tree also costs memory there: about 90 MB
+  on 64 threads against 16 MB warm (`-j` bounds both).
+- Windows: nothing is measured. Its thread count (the cores, at most 12), its cold thread count (twice the
+  cores, at most 24) and its disk-read time (75 µs) are the macOS values.
 - References: type inference for method calls on variables; more languages (Java, C#, C/C++
   includes); TypeScript path aliases.
 - `cargo install`: int8 weights for the semantic model, with the quality check QUALITY.md uses.
 - Benchmark leadership on dedicated idle hardware (R-14.11): every number here comes from a
-  developer laptop shared with other work.
+  developer laptop shared with other work, and Linux x86_64 has no benchmark run at all. In the
+  last macOS run six of 37 warm rows had to be measured twice for that reason.

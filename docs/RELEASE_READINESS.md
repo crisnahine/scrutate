@@ -33,7 +33,8 @@ below). Every PASS refers to a test, benchmark or audit output in this repositor
 3. **Release pipeline unexercised**: signed releases, attestations and package-manager packages exist
    only as workflow definitions.
 4. **Benchmark leadership is not proven on dedicated hardware** (section 14 requires it for #1
-   claims), and some benchmarks are lost (docs/LEADERBOARD.md).
+   claims). On the development laptop and its Linux VM every benchmark of the suite is won with
+   significance (docs/LEADERBOARD.md); Linux x86_64 has no benchmark run.
 
 ## Remaining defects and incomplete requirements
 
@@ -41,9 +42,8 @@ Status words as in docs/TRACEABILITY.md. "Resolution" says what closes the item.
 
 | ID | What is missing | Status | What closes it |
 |---|---|---|---|
-| R-4.6, R-14.16 | #1 on every benchmark: on macOS 5 warm benchmarks under 18 ms are lost to ugrep by 2 to 8% and the indexed p95 is a tie; in the Linux VM 11 benchmarks tie with ripgrep and `-i KÖNIG` is lost (1.16x) | PARTIAL | the measured next steps in docs/ROADMAP.md (small-tree walk, Linux CPU), then a run on dedicated hardware |
+| R-4.6, R-14.16 | #1 on every benchmark, metric and declared platform: every row measured is won with significance (macOS arm64: 37 warm, 5 cold, 8 indexed; Linux aarch64 VM: 14 warm, 4 cold, 8 indexed), but Linux x86_64 has no benchmark run and nothing was measured on dedicated hardware | PARTIAL | a run of `bench/run_macos.sh` and `bench/competitors/linux_bench.sh` on a dedicated Mac and on dedicated aarch64 and x86_64 Linux machines |
 | R-14.11 | Results from dedicated, otherwise idle hardware | BLOCKED | a dedicated Mac and Linux machine; the harness and corpora are ready |
-| R-14.12 | A second index mode (file contents in the index) to trade size for latency | PARTIAL | implement and benchmark it; the p95 against Zoekt is the case it would decide |
 | R-6.1, R-9.10, R-12.2, R-13.9 | Windows and Intel macOS executed, not only cross-built | PARTIAL | a Windows machine or the CI matrix; Intel macOS with Rosetta 2 installed on the build Mac |
 | R-6.12, R-14.15, R-12.18 | CI runs, benchmark regression tracking in CI | PARTIAL | publishing the repository (declined for this release) |
 | R-12.17 | Signed releases and published packages | PARTIAL | the release workflow's Sigstore steps and the package pull requests, which need the published repository |

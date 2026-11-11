@@ -49,18 +49,22 @@ exactly what is and is not verified.
   reproducible-build check, all passing (docs/TEST_RESULTS.md). Engine A agrees with ripgrep on
   2,000 random corpora and patterns, run three ways: as shipped, with the parallel walk forced,
   and with every file searched in ranges.
-- **Benchmarks** (docs/LEADERBOARD.md, generated from the raw results in `bench/results/`; 30
-  runs per contender, 95% intervals): on the development Mac (Apple M3 Pro, shared with other work,
-  so these are measurements rather than publishable #1 claims), Engine A is significantly fastest in
-  32 of 37 warm-cache benchmarks and all 5 cold-cache ones: 13 to 38% ahead of the next tool on the
-  Linux kernel tree, 12 to 26% on LLVM, 42 to 57% on a 740 MB file. The five it loses are runs under
-  18 ms (a 220-file repository and the backtracking trap), 2 to 8% behind ugrep. Structural search
-  is 5 to 26 times faster than ast-grep. Against Zoekt the text index builds 26 times faster, is a
-  tenth of the size, answers in half the median time and serves 1.27 times the queries per second;
-  its p95 is a tie. In an 8-CPU Linux virtual machine on the same Mac, Engine A ties ripgrep on 11 of
-  14 Linux-tree benchmarks, wins 2 and loses one (`-i KÖNIG`, 1.16x); cold, it wins 3 of 4 and
-  ties the fourth at the hardware limit. There the text index leads Zoekt and livegrep on all 8
-  indexed metrics (3.2 times the throughput of the next).
+- **Benchmarks** (docs/LEADERBOARD.md, generated from the raw results in `bench/results/`; 30 runs
+  per contender, 95% intervals): on the development Mac (Apple M3 Pro, shared with other work, so
+  these are measurements rather than publishable #1 claims), Engine A is significantly fastest in
+  all 37 warm-cache benchmarks and all 5 cold-cache ones: 15 to 30% ahead of the next tool on 12 of
+  13 text searches of the Linux kernel tree and 45% ahead on the one with 1.3 million matching
+  lines, 15 to 30% on five of six LLVM rows, 24 to 26% on 200,000 small files, 17 to 24% on a
+  211-file repository, 43 to 58% on a 740 MB file, 23 to 28% with a cold cache. Six rows that other
+  work on the laptop disturbed were measured twice; the table gives both. Structural search is 6 and
+  14 times faster than ast-grep. Against Zoekt the text index builds 25 times faster, is a tenth of
+  the size, answers in 0.37 of the median time and serves 1.2 times the queries per second; all
+  eight indexed metrics lead. In a 5-CPU Linux virtual machine on the same Mac, Engine A is
+  significantly fastest on all 14 Linux-tree benchmarks (7 to 16% ahead of ripgrep on 11, 40% with
+  very many matches, 59% on the complex regex, 24 times faster than ast-grep on the structural
+  query) and on all 4 cold-cache ones, where it takes 0.28 to 0.30 of the next tool's time. There
+  the text index leads Zoekt and livegrep on all 8 indexed metrics (3.9 times the throughput of the
+  next).
 - **Engine B** gives bit-identical features, scores and rankings to the Python reference it was
   developed against (300 queries in the parity harness), and its learned ranker beats its own
   lexical layer on every held-out query type, in Python and five more languages (docs/QUALITY.md).
