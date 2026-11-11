@@ -2,8 +2,8 @@
 //!
 //! Query time only. Definitions come from the index (`chunks`); scopes, qualifiers and import
 //! bindings come from parsing the files that hold occurrences (and the modules they import) again
-//! with tree-sitter. Python, JavaScript/TypeScript, Rust and Go are understood; other languages
-//! leave their occurrences unresolved.
+//! with tree-sitter. Python, JavaScript/TypeScript, Rust, Go and Java are understood; other
+//! languages leave their occurrences unresolved.
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -23,6 +23,7 @@ pub enum Lang {
     Js,
     Rust,
     Go,
+    Java,
 }
 
 fn lang_of(spec_id: &str) -> Option<Lang> {
@@ -31,6 +32,7 @@ fn lang_of(spec_id: &str) -> Option<Lang> {
         "javascript" | "typescript" | "tsx" => Some(Lang::Js),
         "rust" => Some(Lang::Rust),
         "go" => Some(Lang::Go),
+        "java" => Some(Lang::Java),
         _ => None,
     }
 }
@@ -96,6 +98,14 @@ pub struct Resolver<'a> {
     def_tys: HashMap<i64, Option<Ty>>,
     /// names a trait or interface of the repository declares as methods
     trait_members: Option<HashSet<String>>,
+    /// Java: directory -> its `.java` files, and package -> the directories that declare it
+    java_dirs: Option<HashMap<String, Vec<String>>>,
+    java_pkgs: Option<HashMap<String, Vec<String>>>,
+    /// Java: a dotted name (`a.b.C.m`) -> the definition it names
+    java_paths: HashMap<String, std::result::Result<i64, &'static str>>,
+    /// Java: by class, the types it extends and implements, and the fields it declares
+    java_bases: HashMap<i64, Rc<Vec<std::result::Result<i64, &'static str>>>>,
+    java_fields: HashMap<i64, Rc<HashSet<String>>>,
 }
 
 fn text<'s>(n: Node, src: &'s str) -> &'s str {
@@ -174,6 +184,8 @@ const FUNCTION_NODES: &[&str] = &[
     "closure_expression",
     "method_declaration",
     "func_literal",
+    "constructor_declaration",
+    "lambda_expression",
 ];
 /// (parent kind, field holding the bound name; "" = any child) of local variable and parameter bindings
 const LOCAL_BINDERS: &[(&str, &str)] = &[
@@ -370,7 +382,10 @@ fn type_name(mut t: Node) -> Option<Node> {
             "identifier" | "type_identifier" => return Some(t),
             "attribute" => t.child_by_field_name("attribute")?,
             "member_expression" => t.child_by_field_name("property")?,
-            "scoped_identifier" | "scoped_type_identifier" | "qualified_type" | "nested_type_identifier" => t.child_by_field_name("name")?,
+            // a Java `a.b.C` names its parts by position only
+            "scoped_identifier" | "scoped_type_identifier" | "qualified_type" | "nested_type_identifier" => {
+                t.child_by_field_name("name").or_else(|| t.named_child(t.named_child_count().checked_sub(1)? as u32))?
+            }
             "generic_type" => t.child_by_field_name("type").or_else(|| t.child_by_field_name("name"))?,
             "reference_type" => t.child_by_field_name("type")?,
             "type" | "type_annotation" | "pointer_type" | "parenthesized_type" => t.named_child(0)?,
@@ -402,6 +417,7 @@ fn bindings_of(lang: Lang, root: Node, src: &str) -> Vec<Binding> {
                 }
             }
             Lang::Go => go_bindings(n, src, &mut out),
+            Lang::Java => java_bindings(n, src, &mut out),
         };
         if !handled {
             let mut cur = n.walk();
@@ -659,6 +675,11 @@ impl<'a> Resolver<'a> {
             looked_up: HashSet::new(),
             def_tys: HashMap::new(),
             trait_members: None,
+            java_dirs: None,
+            java_pkgs: None,
+            java_paths: HashMap::new(),
+            java_bases: HashMap::new(),
+            java_fields: HashMap::new(),
         })
     }
 
@@ -752,6 +773,10 @@ impl<'a> Resolver<'a> {
         }
         let line = line as i64;
         if let Some(b) = fi.bindings.iter().find(|b| b.sites.contains(&node.start_byte())) {
+            if lang == Lang::Java {
+                // a static import brings in every overload of the name
+                return self.java_binding(b).map(|id| self.java_overload(id, None, "import"));
+            }
             return match self.resolve_binding(path, lang, b, 0) {
                 Some(id) => Ok((id, "import")),
                 None => Err(self.binding_failure(path, lang, b)),
@@ -768,6 +793,9 @@ impl<'a> Resolver<'a> {
             if p.kind() == "keyword_argument" && p.child_by_field_name("name").map(|c| c.id()) == Some(node.id()) {
                 return Err("keyword argument");
             }
+        }
+        if lang == Lang::Java {
+            return self.java_resolve(path, &fi, node, name);
         }
         if lang == Lang::Rust && node.parent().is_some_and(|p| p.kind() == "token_tree") {
             if let Some(why) = macro_token(node, &fi.src) {
@@ -792,6 +820,9 @@ impl<'a> Resolver<'a> {
     }
 
     fn resolve_bare(&mut self, path: &str, fi: &FileInfo, lang: Lang, node: Node, name: &str, line: i64) -> Resolution {
+        if lang == Lang::Java {
+            return self.java_bare(fi, node, name);
+        }
         // enclosing scopes, innermost first; a class body is a scope only for code directly in it
         let mut chain: Vec<usize> = fi.defs.iter().enumerate().filter(|(_, d)| d.start <= line && line <= d.end).map(|(i, _)| i).collect();
         chain.sort_by_key(|&i| fi.defs[i].end - fi.defs[i].start);
@@ -841,12 +872,15 @@ impl<'a> Resolver<'a> {
 
     #[allow(clippy::too_many_arguments)]
     fn resolve_qualified(&mut self, path: &str, fi: &FileInfo, lang: Lang, q: Node, node: Node, name: &str, line: i64) -> Resolution {
+        if lang == Lang::Java {
+            return self.java_qualified(path, fi, q, node, name);
+        }
         let qt = text(q, &fi.src).trim();
         let receiver = match lang {
             Lang::Python => qt == "self" || qt == "cls",
             Lang::Js => qt == "this",
             Lang::Rust => qt == "Self" || (qt == "self" && node.parent().is_some_and(|p| p.kind() == "field_expression")),
-            Lang::Go => false,
+            Lang::Go | Lang::Java => false,
         };
         if receiver {
             if let Some(owner) = literal_owner(fi, q) {
@@ -980,6 +1014,18 @@ impl<'a> Resolver<'a> {
         match e.kind() {
             "self" | "this" => self.container_at(fi, line),
             "identifier" if matches!((lang, text(e, src)), (Lang::Python, "self" | "cls") | (Lang::Rust, "self")) => self.container_at(fi, line),
+            "identifier" if lang == Lang::Java => self.java_variable_ty(path, fi, e),
+            "method_invocation" => {
+                let leaf = e.child_by_field_name("name")?;
+                let found = match java_qualifier(leaf) {
+                    Some(q) => self.java_qualified(path, fi, q, leaf, text(leaf, src)),
+                    None => self.java_call(fi, leaf, text(leaf, src)),
+                };
+                self.def_ty(found.ok()?.0)
+            }
+            "object_creation_expression" => self.named_ty(path, fi, lang, e.child_by_field_name("type")?),
+            "cast_expression" => self.ty_of_type(path, fi, lang, e.child_by_field_name("type")?),
+            "string_literal" => Some(Ty::Foreign("String".to_string(), Vec::new())),
             "identifier" => self.variable_ty(path, fi, lang, e),
             "parenthesized_expression" | "reference_expression" | "non_null_expression" | "await" | "unary_expression" => {
                 self.type_of(path, fi, lang, e.child_by_field_name("operand").or_else(|| e.named_child(0))?)
@@ -1063,7 +1109,8 @@ impl<'a> Resolver<'a> {
         let fi = self.file(&path);
         let lang = fi.lang?;
         let node = def_node(&fi, id)?;
-        let ret = node.child_by_field_name("return_type").or_else(|| node.child_by_field_name("result"))?;
+        let java = lang == Lang::Java && node.kind() == "method_declaration";
+        let ret = node.child_by_field_name("return_type").or_else(|| node.child_by_field_name(if java { "type" } else { "result" }))?;
         self.ty_of_type(&path, &fi, lang, ret)
     }
 
@@ -1073,6 +1120,9 @@ impl<'a> Resolver<'a> {
         let (path, _) = self.def_row(owner)?;
         let fi = self.file(&path);
         let lang = fi.lang?;
+        if lang == Lang::Java {
+            return self.java_field_ty(owner, name, 0);
+        }
         let d = fi.defs.iter().find(|d| d.id == owner)?;
         // the fields of a Rust type are on its struct, not on an impl block
         let id = if d.kind == "impl" { top_level(&fi, &strip_generics(&d.name)).filter(|s| s.kind != "impl")?.id } else { owner };
@@ -1170,7 +1220,9 @@ impl<'a> Resolver<'a> {
         match t.kind() {
             "reference_type" => self.ty_of_type(path, fi, lang, t.child_by_field_name("type")?),
             "type" | "type_annotation" | "parenthesized_type" | "pointer_type" | "readonly_type" => self.ty_of_type(path, fi, lang, t.named_child(0)?),
-            "primitive_type" | "predefined_type" => Some(Ty::Foreign(text(t, src).to_string(), Vec::new())),
+            "primitive_type" | "predefined_type" | "integral_type" | "floating_point_type" | "boolean_type" => {
+                Some(Ty::Foreign(text(t, src).to_string(), Vec::new()))
+            }
             "array_type" | "slice_type" | "map_type" | "string_type" => Some(Ty::Foreign(t.kind().to_string(), Vec::new())),
             "generic_type" | "subscript" => {
                 let base = t
@@ -1212,6 +1264,14 @@ impl<'a> Resolver<'a> {
         let leaf = type_name(n)?;
         let src = fi.src.as_str();
         let name = text(leaf, src);
+        if lang == Lang::Java {
+            // an interface types a value as well as a class does: its methods are declared in it
+            return match self.java_type_node(fi, n) {
+                Ok(id) => Some(Ty::Local(id)),
+                Err("external") => Some(Ty::Foreign(name.to_string(), Vec::new())),
+                Err(_) => None,
+            };
+        }
         let line = leaf.start_position().row as i64 + 1;
         if lang == Lang::Rust && name == "Self" {
             return self.container_at(fi, line);
@@ -1303,6 +1363,22 @@ impl<'a> Resolver<'a> {
                             return Some(d.id);
                         }
                     }
+                }
+            }
+            return None;
+        }
+        if fi.lang == Some(Lang::Java) {
+            if depth >= 8 {
+                return None;
+            }
+            for b in self.java_bases(id).iter() {
+                match *b {
+                    Ok(bid) if bid != id => {
+                        if let Some(m) = self.member(bid, name, depth + 1) {
+                            return Some(m);
+                        }
+                    }
+                    _ => {}
                 }
             }
             return None;
@@ -1446,6 +1522,7 @@ impl<'a> Resolver<'a> {
                 full.extend(segs[1..].iter().map(|s| s.to_string()));
                 self.rust_module(path, &full.iter().map(|s| s.as_str()).collect::<Vec<_>>())
             }
+            Lang::Java => None,
         }
     }
 
@@ -1470,6 +1547,7 @@ impl<'a> Resolver<'a> {
                 };
                 Some(self.go_dir(&best))
             }
+            Lang::Java => self.java_package_files(module),
         }
     }
 
@@ -1527,12 +1605,12 @@ impl<'a> Resolver<'a> {
     /// language of `from`; an empty list when it reads it and finds no file.
     pub fn import_files(&mut self, from: &str, line: i64, module: &str) -> Option<Vec<String>> {
         let fi = self.file(from);
-        let lang = fi.lang?;
+        let lang = fi.lang.filter(|&l| l != Lang::Java)?;
         let mut out: Vec<String> = Vec::new();
         match lang {
             Lang::Js => out.extend(self.js_module(from, module)),
             Lang::Go => out.extend(self.module_files(from, lang, module).unwrap_or_default()),
-            Lang::Python | Lang::Rust => {
+            Lang::Python | Lang::Rust | Lang::Java => {
                 let kinds: &[&str] = if lang == Lang::Python { &["import_from_statement"] } else { &["use_declaration"] };
                 let range = statement_at(&fi, line, kinds);
                 let named = fi.bindings.iter().filter(|b| range.as_ref().is_some_and(|r| b.sites.first().is_some_and(|s| r.contains(s))));
@@ -1864,6 +1942,7 @@ fn member_parts(e: Node) -> Option<(Node, Node)> {
         "member_expression" => ("object", "property"),
         "field_expression" => ("value", "field"),
         "selector_expression" => ("operand", "field"),
+        "field_access" => ("object", "field"),
         _ => return None,
     };
     Some((e.child_by_field_name(obj)?, e.child_by_field_name(mem)?))
@@ -2048,6 +2127,785 @@ fn cargo_package_name(toml: &str) -> Option<String> {
     None
 }
 
+// ------------------------------------------------------------------------- Java
+
+/// A class around a Java occurrence: one the index holds, or the body of an anonymous class
+/// (whose methods the index holds under the method around it).
+#[derive(Clone, Copy)]
+enum JClass<'t> {
+    Named(i64),
+    Anon(Node<'t>),
+}
+
+const JAVA_CLASS_NODES: &[&str] = &["class_declaration", "interface_declaration", "enum_declaration", "record_declaration"];
+/// Methods a Java class has from `Object`, and an enum from `Enum`: none is a repository definition.
+const JAVA_OBJECT_METHODS: &[&str] = &["equals", "hashCode", "toString", "getClass", "notify", "notifyAll", "wait", "clone", "finalize"];
+const JAVA_ENUM_METHODS: &[&str] = &["values", "valueOf", "ordinal", "name", "compareTo", "getDeclaringClass", "describeConstable"];
+
+fn java_bindings(n: Node, src: &str, out: &mut Vec<Binding>) -> bool {
+    if n.kind() != "import_declaration" {
+        // imports come first in a file, outside any class
+        return n.kind() != "program";
+    }
+    let mut cur = n.walk();
+    let kids: Vec<Node> = n.named_children(&mut cur).collect();
+    let Some(&path) = kids.iter().find(|k| matches!(k.kind(), "scoped_identifier" | "identifier")) else { return true };
+    let full: String = text(path, src).chars().filter(|c| !c.is_whitespace()).collect();
+    let is_static = text(n, src).trim_start_matches("import").trim_start().starts_with("static");
+    if kids.iter().any(|k| k.kind() == "asterisk") {
+        // `import static a.C.*` brings in members of a class, `import a.*` the classes of a package
+        out.push(Binding { local: "*".into(), module: full, item: is_static.then(|| "*".to_string()), sites: vec![] });
+    } else {
+        let (module, item) = full.rsplit_once('.').unwrap_or(("", &full));
+        let site = path.child_by_field_name("name").unwrap_or(path);
+        out.push(Binding { local: item.into(), module: module.into(), item: Some(item.into()), sites: vec![site.start_byte()] });
+    }
+    true
+}
+
+/// The package a Java source declares (`a.b`), "" for the default package.
+fn java_package(src: &str) -> String {
+    let mut rest = src.trim_start_matches('\u{feff}');
+    loop {
+        rest = rest.trim_start();
+        if let Some(r) = rest.strip_prefix("//") {
+            rest = r.split_once('\n').map_or("", |(_, r)| r);
+        } else if let Some(r) = rest.strip_prefix("/*") {
+            rest = r.split_once("*/").map_or("", |(_, r)| r);
+        } else if let Some(r) = rest.strip_prefix('@') {
+            // an annotation of the package (package-info.java), with its arguments
+            rest = r.trim_start_matches(|c: char| c.is_alphanumeric() || c == '_' || c == '.' || c == '$').trim_start();
+            if rest.starts_with('(') {
+                let mut depth = 0;
+                let end = rest.char_indices().find(|&(_, c)| {
+                    depth += match c {
+                        '(' => 1,
+                        ')' => -1,
+                        _ => 0,
+                    };
+                    depth == 0
+                });
+                rest = end.map_or("", |(i, _)| &rest[i + 1..]);
+            }
+        } else {
+            break;
+        }
+    }
+    match rest.strip_prefix("package") {
+        Some(r) if r.starts_with(char::is_whitespace) => r.split(';').next().unwrap_or("").chars().filter(|c| !c.is_whitespace()).collect(),
+        _ => String::new(),
+    }
+}
+
+/// The first bytes of a repository file: enough for its package declaration.
+fn java_head(root: &std::path::Path, rel: &str) -> String {
+    use std::io::Read;
+    let p = root.join(rel);
+    if !std::fs::symlink_metadata(&p).is_ok_and(|m| m.is_file()) {
+        return String::new();
+    }
+    let mut buf = Vec::new();
+    if let Ok(f) = std::fs::File::open(&p) {
+        let _ = f.take(8192).read_to_end(&mut buf);
+    }
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
+/// The receiver or path in front of a Java member name: `obj` of `obj.m()`, `obj.f`, `T::m`, `a.b` of `a.b.C`.
+fn java_qualifier(n: Node) -> Option<Node> {
+    let p = n.parent()?;
+    let is = |f: &str| p.child_by_field_name(f).map(|c| c.id()) == Some(n.id());
+    match p.kind() {
+        "method_invocation" if is("name") => p.child_by_field_name("object"),
+        "field_access" if is("field") => p.child_by_field_name("object"),
+        "scoped_identifier" if is("name") => p.child_by_field_name("scope"),
+        "method_reference" => p.named_child(0).filter(|f| f.id() != n.id()),
+        "scoped_type_identifier" => n.prev_named_sibling().filter(|s| !s.kind().ends_with("annotation")),
+        _ => None,
+    }
+}
+
+/// The identifiers of a dotted Java name (`a.b.C`, `Outer.Inner<T>`); false when it is not one.
+fn java_segments<'t>(n: Node<'t>, out: &mut Vec<Node<'t>>) -> bool {
+    match n.kind() {
+        "identifier" | "type_identifier" => {
+            out.push(n);
+            true
+        }
+        "scoped_type_identifier" | "scoped_identifier" | "field_access" | "generic_type" => {
+            let mut cur = n.walk();
+            let kids: Vec<Node> = n.named_children(&mut cur).filter(|c| c.kind() != "type_arguments" && !c.kind().ends_with("annotation")).collect();
+            kids.into_iter().all(|c| java_segments(c, out))
+        }
+        _ => false,
+    }
+}
+
+/// The classes around `node`, innermost first.
+fn java_classes<'t>(fi: &FileInfo, node: Node<'t>) -> Vec<JClass<'t>> {
+    let mut out = Vec::new();
+    let mut a = node.parent();
+    while let Some(n) = a {
+        if JAVA_CLASS_NODES.contains(&n.kind()) {
+            if let Some(id) = java_def(fi, n) {
+                out.push(JClass::Named(id));
+            }
+        } else if n.kind() == "class_body" {
+            if let Some(p) = n.parent().filter(|p| p.kind() == "object_creation_expression") {
+                out.push(JClass::Anon(p));
+            }
+        }
+        a = n.parent();
+    }
+    out
+}
+
+/// The definition of the index a Java class declaration is.
+fn java_def(fi: &FileInfo, n: Node) -> Option<i64> {
+    let name = n.child_by_field_name("name")?;
+    let (name, line) = (text(name, &fi.src), name.start_position().row as i64 + 1);
+    let d = fi.defs.iter().filter(|d| d.name == name && d.start <= line && line <= d.end && CONTAINER_KINDS.contains(&d.kind.as_str()));
+    d.min_by_key(|d| d.end - d.start).map(|d| d.id)
+}
+
+/// Whether the identifier `n` declares a local variable or a parameter.
+fn java_binder(n: Node) -> bool {
+    let Some(p) = n.parent() else { return false };
+    let is = |f: &str| p.child_by_field_name(f).map(|c| c.id()) == Some(n.id());
+    match p.kind() {
+        // a record's components are its fields
+        "formal_parameter" => is("name") && p.parent().and_then(|l| l.parent()).is_some_and(|o| o.kind() != "record_declaration"),
+        "catch_formal_parameter" | "enhanced_for_statement" | "resource" | "instanceof_expression" => is("name"),
+        "variable_declarator" => is("name") && p.parent().is_some_and(|d| matches!(d.kind(), "local_variable_declaration" | "spread_parameter")),
+        "inferred_parameters" | "type_pattern" | "record_pattern_component" => true,
+        "lambda_expression" => is("parameters"),
+        _ => false,
+    }
+}
+
+/// The code a Java local binder `b` is visible in.
+fn java_scope(b: Node) -> Option<Node> {
+    let p = b.parent()?;
+    match p.kind() {
+        "formal_parameter" | "resource" => p.parent()?.parent(),
+        "variable_declarator" => {
+            let d = p.parent()?;
+            if d.kind() == "spread_parameter" {
+                d.parent()?.parent()
+            } else {
+                d.parent()
+            }
+        }
+        "catch_formal_parameter" | "inferred_parameters" => p.parent(),
+        "enhanced_for_statement" | "lambda_expression" => Some(p),
+        // a pattern variable: the block around it, also after an `if (!(x instanceof T t)) return;`
+        _ => std::iter::successors(Some(p), |x| x.parent())
+            .find(|x| matches!(x.kind(), "block" | "switch_rule" | "switch_block_statement_group" | "lambda_expression" | "method_declaration")),
+    }
+}
+
+/// The nearest local variable or parameter named `name` that `node` sees, in the method around
+/// it and the methods around that (an anonymous class or a lambda sees the locals around it).
+fn java_local<'t>(node: Node<'t>, name: &str, src: &str) -> Option<Node<'t>> {
+    const SCOPES: &[&str] = &["method_declaration", "constructor_declaration", "compact_constructor_declaration", "lambda_expression", "static_initializer"];
+    let at = node.start_byte();
+    let top = std::iter::successors(node.parent(), |n| n.parent()).filter(|n| SCOPES.contains(&n.kind())).last()?;
+    let (mut best, mut stack): (Option<Node>, Vec<Node>) = (None, vec![top]);
+    while let Some(n) = stack.pop() {
+        if n.start_byte() > at {
+            continue;
+        }
+        if n.kind() == "identifier"
+            && text(n, src) == name
+            && java_binder(n)
+            && java_scope(n).is_some_and(|s| s.start_byte() <= at && at < s.end_byte())
+            && best.is_none_or(|b| b.start_byte() < n.start_byte())
+        {
+            best = Some(n);
+        }
+        let mut cur = n.walk();
+        stack.extend(n.named_children(&mut cur));
+    }
+    best
+}
+
+/// What a Java local binder is declared with: (its type unless `var`, its value).
+fn java_declared<'t>(b: Node<'t>, src: &str) -> (Option<Node<'t>>, Option<Node<'t>>) {
+    let Some(p) = b.parent() else { return (None, None) };
+    let typed = |n: Option<Node<'t>>| n.and_then(|n| n.child_by_field_name("type")).filter(|t| text(*t, src) != "var");
+    match p.kind() {
+        "variable_declarator" => (typed(p.parent()), p.child_by_field_name("value")),
+        "formal_parameter" | "enhanced_for_statement" => (typed(Some(p)), None),
+        "resource" => (typed(Some(p)), p.child_by_field_name("value")),
+        "catch_formal_parameter" => {
+            let mut cur = p.walk();
+            let caught = p.named_children(&mut cur).find(|c| c.kind() == "catch_type").filter(|c| c.named_child_count() == 1);
+            (caught.and_then(|c| c.named_child(0)), None)
+        }
+        "instanceof_expression" => (p.child_by_field_name("right"), None),
+        "type_pattern" => (p.named_child(0), None),
+        _ => (None, None),
+    }
+}
+
+impl<'a> Resolver<'a> {
+    /// Directory -> its `.java` files; package -> the directories whose first file declares it.
+    /// A file's package and its path give its source root, so no list of roots is needed.
+    fn java_pkgs(&mut self) -> &HashMap<String, Vec<String>> {
+        if self.java_pkgs.is_none() {
+            let mut dirs: HashMap<String, Vec<String>> = HashMap::new();
+            for f in self.files.iter().filter(|f| f.ends_with(".java")) {
+                dirs.entry(dir_of(f).to_string()).or_default().push(f.clone());
+            }
+            let mut pkgs: HashMap<String, Vec<String>> = HashMap::new();
+            for (d, files) in dirs.iter_mut() {
+                files.sort();
+                pkgs.entry(java_package(&java_head(&self.ix.root, &files[0]))).or_default().push(d.clone());
+            }
+            for v in pkgs.values_mut() {
+                v.sort();
+            }
+            self.java_dirs = Some(dirs);
+            self.java_pkgs = Some(pkgs);
+        }
+        self.java_pkgs.as_ref().unwrap()
+    }
+
+    /// The files of the Java package `pkg`, when the repository holds it.
+    fn java_package_files(&mut self, pkg: &str) -> Option<Vec<String>> {
+        let dirs = self.java_pkgs().get(pkg)?.clone();
+        let by_dir = self.java_dirs.as_ref()?;
+        Some(dirs.iter().flat_map(|d| by_dir.get(d).cloned().unwrap_or_default()).collect())
+    }
+
+    /// A class, interface, enum or record at the top level of one of `files`.
+    fn java_top(&self, files: &[String], name: &str) -> Option<i64> {
+        let kinds = CONTAINER_KINDS.iter().map(|k| format!("'{k}'")).collect::<Vec<_>>().join(",");
+        let sql = format!("SELECT id, path FROM chunks WHERE name_key=?1 AND name=?2 AND qualname=?2 AND kind IN ({kinds}) ORDER BY path, start");
+        let mut st = self.ix.db.prepare_cached(&sql).ok()?;
+        let rows: Vec<(i64, String)> = st.query_map(params![name_key(name), name], |r| Ok((r.get(0)?, r.get(1)?))).ok()?.flatten().collect();
+        rows.into_iter().find(|(_, p)| files.contains(p)).map(|(id, _)| id)
+    }
+
+    /// The definition a dotted Java name stands for: a class of a package (`a.b.C`), a member of
+    /// one (`a.b.C.m`, `a.b.C.Inner`). "external" when no package of the repository starts it.
+    fn java_path(&mut self, full: &str) -> std::result::Result<i64, &'static str> {
+        if let Some(r) = self.java_paths.get(full) {
+            return *r;
+        }
+        let segs: Vec<&str> = full.split('.').collect();
+        let mut found = Err("external");
+        for k in (0..segs.len()).rev() {
+            let Some(files) = self.java_package_files(&segs[..k].join(".")) else { continue };
+            let Some(mut cur) = self.java_top(&files, segs[k]) else {
+                if k == 0 {
+                    break;
+                }
+                found = Err("not found");
+                break;
+            };
+            found = Ok(cur);
+            for s in &segs[k + 1..] {
+                match self.member(cur, s, 0) {
+                    Some(m) => cur = m,
+                    None => {
+                        found = Err("not found");
+                        break;
+                    }
+                }
+                found = Ok(cur);
+            }
+            break;
+        }
+        self.java_paths.insert(full.to_string(), found);
+        found
+    }
+
+    fn java_binding(&mut self, b: &Binding) -> std::result::Result<i64, &'static str> {
+        let item = b.item.as_deref().unwrap_or("");
+        let full = if b.module.is_empty() { item.to_string() } else { format!("{}.{item}", b.module) };
+        self.java_path(&full)
+    }
+
+    fn java_resolve(&mut self, path: &str, fi: &FileInfo, node: Node, name: &str) -> Resolution {
+        if !matches!(node.kind(), "identifier" | "type_identifier") {
+            return Err("keyword");
+        }
+        let decl = std::iter::successors(node.parent(), |n| n.parent()).find(|n| matches!(n.kind(), "package_declaration" | "import_declaration"));
+        if let Some(decl) = decl {
+            // a part of an imported name: the class it names so far, else a package
+            let part = node.parent().filter(|p| p.kind() == "scoped_identifier" && decl.kind() == "import_declaration");
+            let full: String = part.map(|p| text(p, &fi.src).chars().filter(|c| !c.is_whitespace()).collect()).unwrap_or_default();
+            return self.java_path(&full).map(|id| (id, "import")).map_err(|_| "package");
+        }
+        match java_qualifier(node) {
+            Some(q) => self.java_qualified(path, fi, q, node, name),
+            None => self.java_bare(fi, node, name),
+        }
+    }
+
+    /// A Java name with nothing in front: a method of a class around or a static import when
+    /// called, else a local, a field, a type.
+    fn java_bare(&mut self, fi: &FileInfo, node: Node, name: &str) -> Resolution {
+        let p = node.parent();
+        if p.is_some_and(|p| p.kind() == "method_invocation") {
+            return self.java_call(fi, node, name);
+        }
+        let src = fi.src.as_str();
+        let typed = node.kind() == "type_identifier" || p.is_some_and(|p| p.kind().ends_with("annotation"));
+        if !typed {
+            if java_local(node, name, src).is_some() {
+                return Err("local variable");
+            }
+            if self.java_is_field(fi, node, name) {
+                return Err("field or key");
+            }
+        }
+        match self.java_type(fi, node, name) {
+            Ok(id) => Ok((id, "type")),
+            // the head of `com.acme.X`: a package
+            Err(_) if !typed && p.is_some_and(|p| matches!(p.kind(), "field_access" | "scoped_identifier")) => Err("package"),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// `m(..)` with no receiver: a method of a class around (inherited ones included), else a
+    /// statically imported one.
+    fn java_call(&mut self, fi: &FileInfo, node: Node, name: &str) -> Resolution {
+        let arity = node.parent().and_then(|p| p.child_by_field_name("arguments")).map(|a| a.named_child_count());
+        let (mut outside, mut unknown) = (false, false);
+        for c in java_classes(fi, node) {
+            let found = match c {
+                JClass::Named(id) => {
+                    let found = self.member(id, name, 0);
+                    if found.is_none() {
+                        let (o, u) = self.java_base_state(id, 0);
+                        outside |= o;
+                        unknown |= u;
+                    }
+                    found.ok_or("not found")
+                }
+                JClass::Anon(a) => self.java_anon_member(fi, a, name),
+            };
+            match found {
+                Ok(m) => return Ok(self.java_overload(m, arity, "member")),
+                Err("external") => outside = true,
+                Err(_) => {}
+            }
+        }
+        for b in fi.bindings.iter().filter(|b| b.local == name && b.item.is_some()) {
+            match self.java_binding(b) {
+                Ok(m) => return Ok(self.java_overload(m, arity, "import")),
+                Err("external") => return Err("external"),
+                Err(_) => unknown = true,
+            }
+        }
+        for b in fi.bindings.iter().filter(|b| b.local == "*" && b.item.is_some()) {
+            match self.java_path(&b.module) {
+                Ok(c) => {
+                    if let Some(m) = self.member(c, name, 0) {
+                        return Ok(self.java_overload(m, arity, "import"));
+                    }
+                }
+                Err("external") => outside = true,
+                Err(_) => unknown = true,
+            }
+        }
+        Err(if !unknown && (outside || JAVA_OBJECT_METHODS.contains(&name)) { "external" } else { "not found" })
+    }
+
+    /// `q.name`, `q.name(..)`, `q::name`, and the `C` of a type `q.C`.
+    fn java_qualified(&mut self, path: &str, fi: &FileInfo, q: Node, node: Node, name: &str) -> Resolution {
+        let p = node.parent().map(|p| p.kind()).unwrap_or("");
+        let call = matches!(p, "method_invocation" | "method_reference");
+        let arity = node.parent().filter(|_| p == "method_invocation").and_then(|p| p.child_by_field_name("arguments")).map(|a| a.named_child_count());
+        let around = java_classes(fi, node).first().copied();
+        if q.kind() == "super" {
+            let Some(JClass::Named(c)) = around else { return Err("receiver") };
+            let mut outside = JAVA_OBJECT_METHODS.contains(&name);
+            for b in self.java_bases(c).iter() {
+                match *b {
+                    Ok(bid) => match self.java_member(bid, name) {
+                        Ok(m) => return Ok(self.java_overload(m, arity, "member")),
+                        Err("external") => outside = true,
+                        Err(_) => {}
+                    },
+                    Err("external") => outside = true,
+                    Err(_) => {}
+                }
+            }
+            return Err(if outside { "external" } else { "not found" });
+        }
+        if let (Some(JClass::Anon(a)), "this") = (around, q.kind()) {
+            return self.java_anon_member(fi, a, name).map(|m| self.java_overload(m, arity, "member"));
+        }
+        let owner = match self.java_owner(path, fi, q) {
+            Ok(t) => t,
+            // `a.b.C` with `a.b` a package
+            Err(e) if !call => {
+                let mut segs = Vec::new();
+                if !java_segments(q, &mut segs) {
+                    return Err(e);
+                }
+                let full = segs.iter().map(|s| text(*s, &fi.src)).chain(std::iter::once(name)).collect::<Vec<_>>().join(".");
+                return self.java_path(&full).map(|id| (id, "qualified"));
+            }
+            Err(e) => return Err(e),
+        };
+        match owner {
+            Ty::Local(c) if call => self.java_member(c, name).map(|m| self.java_overload(m, arity, "member")),
+            Ty::Local(c) => {
+                // a nested type; a field or an enum constant is no definition of the index
+                let nested = self.member(c, name, 0).filter(|&m| self.def_kind(m).is_some_and(|k| CONTAINER_KINDS.contains(&k.as_str())));
+                nested.map(|m| (m, "qualified")).ok_or("field or key")
+            }
+            Ty::Foreign(t, _) if call && (self.extended(&t, name) || self.trait_member(name)) => Err("receiver"),
+            Ty::Foreign(..) => Err("external"),
+        }
+    }
+
+    /// What the qualifier `q` of a Java member access stands for: the type of a value, or a
+    /// class (`Util.m()`, `Outer.Inner`, `a.b.C.m()`).
+    fn java_owner(&mut self, path: &str, fi: &FileInfo, q: Node) -> std::result::Result<Ty, &'static str> {
+        let src = fi.src.as_str();
+        if q.kind() == "this" {
+            return self.container_at(fi, q.start_position().row as i64 + 1).ok_or("receiver");
+        }
+        let mut segs = Vec::new();
+        if !java_segments(q, &mut segs) {
+            return self.type_of(path, fi, Lang::Java, q).ok_or("receiver");
+        }
+        let (head, hname) = (segs[0], text(segs[0], src));
+        // a variable hides a type, a type a package
+        if head.kind() == "identifier" && (java_local(head, hname, src).is_some() || self.java_is_field(fi, head, hname)) {
+            return self.type_of(path, fi, Lang::Java, q).ok_or("receiver");
+        }
+        let cur = match self.java_type(fi, head, hname) {
+            Ok(id) => id,
+            Err("type parameter") => return Err("receiver"),
+            Err(e) if segs.len() == 1 => return if e == "external" { Ok(Ty::Foreign(hname.to_string(), Vec::new())) } else { Err(e) },
+            Err(_) => {
+                let full = segs.iter().map(|s| text(*s, src)).collect::<Vec<_>>().join(".");
+                if self.java_package_files(&full).is_some() {
+                    return Err("package");
+                }
+                return match self.java_path(&full) {
+                    Ok(id) => Ok(Ty::Local(id)),
+                    Err("external") => Ok(Ty::Foreign(text(segs[segs.len() - 1], src).to_string(), Vec::new())),
+                    Err(e) => Err(e),
+                };
+            }
+        };
+        let mut ty = Ty::Local(cur);
+        for s in &segs[1..] {
+            let Ty::Local(c) = ty else { return Err("receiver") };
+            let s = text(*s, src);
+            let nested = self.member(c, s, 0).filter(|&m| self.def_kind(m).is_some_and(|k| CONTAINER_KINDS.contains(&k.as_str())));
+            ty = match nested {
+                Some(m) => Ty::Local(m),
+                None => self.java_field_ty(c, s, 0).ok_or("receiver")?,
+            };
+        }
+        Ok(ty)
+    }
+
+    /// A member `name` of class `id`, inherited ones included; why there is none otherwise.
+    fn java_member(&mut self, id: i64, name: &str) -> std::result::Result<i64, &'static str> {
+        if let Some(m) = self.member(id, name, 0) {
+            return Ok(m);
+        }
+        let decl = self.def_row(id).and_then(|(path, _)| {
+            let fi = self.file(&path);
+            def_node(&fi, id).map(|n| n.kind())
+        });
+        if JAVA_OBJECT_METHODS.contains(&name) || (decl == Some("enum_declaration") && JAVA_ENUM_METHODS.contains(&name)) {
+            return Err("external");
+        }
+        // the accessor of a record component is implicit
+        if decl == Some("record_declaration") && self.java_field_names(id).contains(name) {
+            return Err("field or key");
+        }
+        match self.java_base_state(id, 0) {
+            (_, true) => Err("not found"),
+            (true, false) => Err("external"),
+            _ => Err("not found"),
+        }
+    }
+
+    /// Whether class `id` extends or implements a type from outside the repository, and whether
+    /// one of the types it extends could not be found, at any depth.
+    fn java_base_state(&mut self, id: i64, depth: usize) -> (bool, bool) {
+        let (mut outside, mut unknown) = (false, false);
+        for b in self.java_bases(id).iter() {
+            match *b {
+                Ok(bid) if bid != id && depth < 8 => {
+                    let (o, u) = self.java_base_state(bid, depth + 1);
+                    outside |= o;
+                    unknown |= u;
+                }
+                Ok(_) => {}
+                Err("external") => outside = true,
+                Err(_) => unknown = true,
+            }
+        }
+        (outside, unknown)
+    }
+
+    /// The types class `id` extends and implements, each resolved.
+    fn java_bases(&mut self, id: i64) -> Rc<Vec<std::result::Result<i64, &'static str>>> {
+        if let Some(b) = self.java_bases.get(&id) {
+            return Rc::clone(b);
+        }
+        // a class that comes round again through its own bases has none the second time
+        self.java_bases.insert(id, Rc::new(Vec::new()));
+        let mut out = Vec::new();
+        if let Some((path, _)) = self.def_row(id) {
+            let fi = self.file(&path);
+            if let Some(node) = def_node(&fi, id) {
+                let mut types: Vec<Node> = node.child_by_field_name("superclass").and_then(|s| s.named_child(0)).into_iter().collect();
+                let mut cur = node.walk();
+                for c in node.children(&mut cur).filter(|c| matches!(c.kind(), "super_interfaces" | "extends_interfaces")) {
+                    let mut c2 = c.walk();
+                    for list in c.named_children(&mut c2) {
+                        let mut c3 = list.walk();
+                        types.extend(list.named_children(&mut c3));
+                    }
+                }
+                for t in types {
+                    out.push(self.java_type_node(&fi, t));
+                }
+            }
+        }
+        let out = Rc::new(out);
+        self.java_bases.insert(id, Rc::clone(&out));
+        out
+    }
+
+    /// A method of an anonymous class body, else a member of the type it extends.
+    fn java_anon_member(&mut self, fi: &FileInfo, anon: Node, name: &str) -> std::result::Result<i64, &'static str> {
+        let mut cur = anon.walk();
+        let Some(body) = anon.named_children(&mut cur).find(|c| c.kind() == "class_body") else { return Err("not found") };
+        let (s, e) = (body.start_position().row as i64 + 1, body.end_position().row as i64 + 1);
+        if let Some(d) = fi.defs.iter().find(|d| d.name == name && d.kind == "method" && s <= d.start && d.end <= e) {
+            return Ok(d.id);
+        }
+        let t = anon.child_by_field_name("type").ok_or("not found")?;
+        let base = self.java_type_node(fi, t)?;
+        self.java_member(base, name)
+    }
+
+    /// One of the methods that share the qualified name of method `id` (overloads): the one the
+    /// number of arguments picks, else the first, marked "overload" (it stands for them all).
+    fn java_overload(&mut self, id: i64, arity: Option<usize>, why: &'static str) -> (i64, &'static str) {
+        let all = self.overloads(id);
+        if all.len() < 2 {
+            return (id, why);
+        }
+        let Some((path, _)) = self.def_row(id) else { return (id, why) };
+        let fi = self.file(&path);
+        if let Some(n) = arity {
+            let fits: Vec<i64> = all.iter().copied().filter(|&o| java_params(&fi, o).is_some_and(|(k, varargs)| k == n || (varargs && n + 1 >= k))).collect();
+            if let [one] = fits[..] {
+                return (one, why);
+            }
+        }
+        (all[0], "overload")
+    }
+
+    /// The methods of the file of `id` with its qualified name, in source order: its overloads,
+    /// itself included. Only `id` for a definition that has none.
+    pub fn overloads(&mut self, id: i64) -> Vec<i64> {
+        let Some((path, qualname)) = self.def_row(id) else { return vec![id] };
+        let fi = self.file(&path);
+        let all: Vec<i64> = fi.defs.iter().filter(|d| d.qualname == qualname && d.kind == "method").map(|d| d.id).collect();
+        if all.contains(&id) {
+            all
+        } else {
+            vec![id]
+        }
+    }
+
+    /// A type named `name` where `at` is: a type parameter, a class around or nested in one
+    /// (inherited ones included), a class of the file, an imported one, one of the package, one
+    /// of a package imported with `*`.
+    fn java_type(&mut self, fi: &FileInfo, at: Node, name: &str) -> std::result::Result<i64, &'static str> {
+        if type_parameter(at, name, &fi.src) {
+            return Err("type parameter");
+        }
+        let container = |s: &Self, id: i64| s.def_kind(id).is_some_and(|k| CONTAINER_KINDS.contains(&k.as_str()));
+        for c in java_classes(fi, at) {
+            let JClass::Named(id) = c else { continue };
+            if fi.defs.iter().any(|d| d.id == id && d.name == name) {
+                return Ok(id);
+            }
+            if let Some(m) = self.member(id, name, 0).filter(|&m| container(self, m)) {
+                return Ok(m);
+            }
+        }
+        if let Some(d) = top_level(fi, name).filter(|d| CONTAINER_KINDS.contains(&d.kind.as_str())) {
+            return Ok(d.id);
+        }
+        if let Some(b) = fi.bindings.iter().find(|b| b.local == name && b.item.is_some()) {
+            return self.java_binding(b);
+        }
+        if let Some(files) = self.java_package_files(&java_package(&fi.src)) {
+            if let Some(id) = self.java_top(&files, name) {
+                return Ok(id);
+            }
+        }
+        for b in fi.bindings.iter().filter(|b| b.local == "*") {
+            let found = match self.java_package_files(&b.module) {
+                Some(files) => self.java_top(&files, name),
+                None => self.java_path(&b.module).ok().and_then(|c| self.member(c, name, 0)).filter(|&m| container(self, m)),
+            };
+            if let Some(id) = found {
+                return Ok(id);
+            }
+        }
+        // `java.lang` and the packages a `*` imports from outside
+        Err(if self.defined_anywhere(name) { "not found" } else { "external" })
+    }
+
+    /// The class a Java type expression names (`T`, `a.b.T`, `Outer.Inner<X>`).
+    fn java_type_node(&mut self, fi: &FileInfo, t: Node) -> std::result::Result<i64, &'static str> {
+        let mut segs = Vec::new();
+        if !java_segments(t, &mut segs) {
+            return Err("not found");
+        }
+        let (head, hname) = (segs[0], text(segs[0], &fi.src));
+        let mut cur = match self.java_type(fi, head, hname) {
+            Ok(id) => id,
+            Err(e) if segs.len() == 1 => return Err(e),
+            Err(_) => return self.java_path(&segs.iter().map(|s| text(*s, &fi.src)).collect::<Vec<_>>().join(".")),
+        };
+        for s in &segs[1..] {
+            cur = self.member(cur, text(*s, &fi.src), 0).ok_or("not found")?;
+        }
+        Ok(cur)
+    }
+
+    /// The type of a Java variable: a local's declaration, else a field of a class around.
+    fn java_variable_ty(&mut self, path: &str, fi: &FileInfo, e: Node) -> Option<Ty> {
+        let src = fi.src.as_str();
+        let name = text(e, src);
+        if let Some(b) = java_local(e, name, src) {
+            let (ty, value) = java_declared(b, src);
+            return match ty {
+                Some(t) => self.ty_of_type(path, fi, Lang::Java, t),
+                None => self.type_of(path, fi, Lang::Java, value?),
+            };
+        }
+        for c in java_classes(fi, e) {
+            if let JClass::Named(id) = c {
+                if self.java_has_field(id, name, 0) {
+                    return self.java_field_ty(id, name, 0);
+                }
+            }
+        }
+        None
+    }
+
+    /// Whether `name` is a field of a class around `node`, inherited ones included.
+    fn java_is_field(&mut self, fi: &FileInfo, node: Node, name: &str) -> bool {
+        java_classes(fi, node).into_iter().any(|c| matches!(c, JClass::Named(id) if self.java_has_field(id, name, 0)))
+    }
+
+    fn java_has_field(&mut self, id: i64, name: &str, depth: usize) -> bool {
+        if self.java_field_names(id).contains(name) {
+            return true;
+        }
+        depth < 8 && self.java_bases(id).iter().any(|b| matches!(*b, Ok(bid) if bid != id && self.java_has_field(bid, name, depth + 1)))
+    }
+
+    /// The fields class `id` declares: field declarations, interface constants, enum constants
+    /// and record components.
+    fn java_field_names(&mut self, id: i64) -> Rc<HashSet<String>> {
+        if let Some(f) = self.java_fields.get(&id) {
+            return Rc::clone(f);
+        }
+        let mut names = HashSet::new();
+        if let Some((path, _)) = self.def_row(id) {
+            let fi = self.file(&path);
+            if let Some(node) = def_node(&fi, id) {
+                for (n, _) in java_field_decls(node) {
+                    names.insert(text(n, &fi.src).to_string());
+                }
+            }
+        }
+        let names = Rc::new(names);
+        self.java_fields.insert(id, Rc::clone(&names));
+        names
+    }
+
+    /// The declared type of the field `name` of class `id`, inherited ones included; an enum
+    /// constant has the type of its enum.
+    fn java_field_ty(&mut self, id: i64, name: &str, depth: usize) -> Option<Ty> {
+        let (path, _) = self.def_row(id)?;
+        let fi = self.file(&path);
+        let node = def_node(&fi, id)?;
+        if let Some((_, ty)) = java_field_decls(node).into_iter().find(|(n, _)| text(*n, &fi.src) == name) {
+            return match ty {
+                Some(t) => self.ty_of_type(&path, &fi, Lang::Java, t),
+                None => Some(Ty::Local(id)),
+            };
+        }
+        if depth >= 8 {
+            return None;
+        }
+        for b in self.java_bases(id).iter() {
+            if let Ok(bid) = *b {
+                if let Some(t) = self.java_field_ty(bid, name, depth + 1).filter(|_| bid != id) {
+                    return Some(t);
+                }
+            }
+        }
+        None
+    }
+}
+
+/// The fields a Java class declaration holds directly: (name, declared type; None for an enum constant).
+fn java_field_decls(class: Node) -> Vec<(Node, Option<Node>)> {
+    let mut out = Vec::new();
+    if let Some(params) = class.child_by_field_name("parameters").filter(|_| class.kind() == "record_declaration") {
+        let mut cur = params.walk();
+        for p in params.named_children(&mut cur) {
+            out.extend(p.child_by_field_name("name").map(|n| (n, p.child_by_field_name("type"))));
+        }
+    }
+    let Some(body) = class.child_by_field_name("body") else { return out };
+    let mut members: Vec<Node> = Vec::new();
+    let mut cur = body.walk();
+    for m in body.named_children(&mut cur) {
+        if m.kind() == "enum_body_declarations" {
+            let mut c2 = m.walk();
+            members.extend(m.named_children(&mut c2));
+        } else {
+            members.push(m);
+        }
+    }
+    for m in members {
+        match m.kind() {
+            "field_declaration" | "constant_declaration" => {
+                let mut c2 = m.walk();
+                for d in m.children_by_field_name("declarator", &mut c2) {
+                    out.extend(d.child_by_field_name("name").map(|n| (n, m.child_by_field_name("type"))));
+                }
+            }
+            "enum_constant" => out.extend(m.child_by_field_name("name").map(|n| (n, None))),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The number of parameters of a Java method or constructor, and whether its last is `...`.
+fn java_params(fi: &FileInfo, id: i64) -> Option<(usize, bool)> {
+    let params = def_node(fi, id)?.child_by_field_name("parameters")?;
+    let mut cur = params.walk();
+    let kinds: Vec<&str> = params.named_children(&mut cur).map(|p| p.kind()).filter(|k| *k != "receiver_parameter" && !k.ends_with("comment")).collect();
+    Some((kinds.len(), kinds.last() == Some(&"spread_parameter")))
+}
+
 // ------------------------------------------------------------------------- refs
 pub struct Occurrence {
     pub path: String,
@@ -2063,11 +2921,15 @@ pub struct Resolved {
     pub definitions: Vec<ChunkRow>,
     pub occurrences: Vec<Occurrence>,
     pub truncated: bool,
+    /// by overloaded definition: the first of its overloads, which stands for them all where the
+    /// arguments of a call do not pick one
+    first_overload: HashMap<i64, i64>,
 }
 
 impl Resolved {
     pub fn of(&self, id: i64) -> impl Iterator<Item = &Occurrence> {
-        self.occurrences.iter().filter(move |o| matches!(o.resolution, Ok((d, _)) if d == id))
+        let first = self.first_overload.get(&id).copied();
+        self.occurrences.iter().filter(move |o| matches!(o.resolution, Ok((d, why)) if d == id || (why == "overload" && Some(d) == first)))
     }
     pub fn unresolved(&self) -> impl Iterator<Item = &Occurrence> {
         self.occurrences.iter().filter(|o| o.resolution.is_err())
@@ -2105,7 +2967,15 @@ pub fn resolved_references(s: &Searcher, name: &str, max_results: u64) -> Result
             }
         }
     }
-    Ok(Resolved { definitions, occurrences, truncated })
+    let mut first_overload = HashMap::new();
+    if occurrences.iter().any(|o| matches!(o.resolution, Ok((_, "overload")))) {
+        for d in &definitions {
+            if let [first, _, ..] = rv.overloads(d.id)[..] {
+                first_overload.insert(d.id, first);
+            }
+        }
+    }
+    Ok(Resolved { definitions, occurrences, truncated, first_overload })
 }
 
 /// Plain-text rendering of `resolved_references`, optionally for the one definition `only`.
@@ -2732,6 +3602,231 @@ mod tests {
                 ("gp/a.go", "target() + 99", "target", go_fn),
             ],
         );
+    }
+
+    const JAVA_SHAPE: &str = "package com.acme.shapes;
+
+public interface Shape {
+    double area();
+
+    default String label() {
+        return \"shape \" + area();
+    }
+}
+";
+    const JAVA_CIRCLE: &str = "package com.acme.shapes;
+
+import java.util.List;
+
+public class Circle implements Shape {
+    private final double r;
+    private Report last;
+
+    public Circle(double r) {
+        this.r = r;
+    }
+
+    public double area() {
+        return Math.PI * r * r;
+    }
+
+    public static Circle unit() {
+        return new Circle(1);
+    }
+
+    public Report summary() {
+        return new Report(area());
+    }
+
+    public boolean check(List<String> names) {
+        names.add(label());
+        return last.ok() && names.isEmpty();
+    }
+
+    public static class Inner {
+        public int depth() { return 1; }
+    }
+
+    public enum Kind {
+        SMALL, LARGE;
+
+        public boolean big() {
+            return this == LARGE;
+        }
+    }
+}
+";
+    const JAVA_MAIN: &str = "package com.acme.app;
+
+import com.acme.shapes.Circle;
+import com.acme.shapes.Shape;
+import com.acme.shapes.*;
+import static com.acme.app.Util.scale;
+import static com.acme.app.Util.*;
+import java.util.List;
+import java.util.function.Supplier;
+
+public class Main extends Base {
+    private Circle held = Circle.unit();
+
+    void note(String s) {}
+
+    void note(String s, int level) {}
+
+    <T> T pick(T x) {
+        return x;
+    }
+
+    void run(List<Shape> shapes, Shape given) {
+        Shape s = Circle.unit();
+        s.area();
+        given.label();
+        given.hashCode();
+        var c = new Circle(2);
+        c.area();
+        held.area();
+        this.held.summary();
+        Circle.unit().summary().ok();
+        new Square().area();
+        note(\"a\");
+        note(\"a\", 1);
+        this.note(\"b\");
+        Runnable all = this::note;
+        scale(2);
+        scale(2, 3);
+        log(\"x\");
+        shapes.forEach(x -> x.area());
+        shapes.size();
+        for (Shape each : shapes) {
+            each.area();
+        }
+        Supplier<Circle> make = Circle::unit;
+        Runnable r = new Runnable() {
+            public void run() {
+                note(\"x\");
+                helper();
+            }
+        };
+        try {
+            inherited();
+        } catch (IllegalStateException e) {
+            e.getMessage();
+        }
+        Object o = given;
+        if (o instanceof Circle k) {
+            k.area();
+        }
+        new Circle.Inner().depth();
+        Circle.Kind.SMALL.big();
+        int area = 3;
+        String t = \"x\";
+        t.length();
+        super.inherited();
+        com.acme.shapes.Circle.unit();
+    }
+
+    void helper() {}
+}
+";
+
+    #[test]
+    fn java_rules() {
+        let (shapes, app) = ("src/main/java/com/acme/shapes", "src/main/java/com/acme/app");
+        let files: Vec<(String, &str)> = vec![
+            (format!("{shapes}/Shape.java"), JAVA_SHAPE),
+            (format!("{shapes}/Circle.java"), JAVA_CIRCLE),
+            (format!("{shapes}/Square.java"), "package com.acme.shapes;\n\npublic class Square implements Shape {\n    public double area() {\n        return 4;\n    }\n\n    public String toString() {\n        return label();\n    }\n}\n"),
+            (format!("{shapes}/Report.java"), "package com.acme.shapes;\n\npublic record Report(double value) {\n    public boolean ok() {\n        return value > 0;\n    }\n}\n"),
+            (format!("{app}/Util.java"), "package com.acme.app;\n\npublic class Util {\n    public static int scale(int x) {\n        return x * 2;\n    }\n\n    public static int scale(int x, int y) {\n        return x * y;\n    }\n\n    public static void log(String s) {}\n}\n"),
+            (format!("{app}/Base.java"), "package com.acme.app;\n\npublic class Base {\n    void inherited() {}\n}\n"),
+            (format!("{app}/Main.java"), JAVA_MAIN),
+        ];
+        let files: Vec<(&str, &str)> = files.iter().map(|(p, b)| (p.as_str(), *b)).collect();
+        let (root, s) = indexed("java", &files);
+        let mut rv = Resolver::new(&s.ix).unwrap();
+        // (file, text the name is in, name, "file:line qualname (how)" or why there is none)
+        let checks: &[(&str, &str, &str, &str)] = &[
+            ("Main", "import com.acme.shapes.Circle;", "Circle", "Circle:5 Circle (import)"),
+            ("Main", "Util.scale;", "scale", "Util:4 Util.scale (overload)"),
+            ("Main", "import java.util.List;", "List", "external"),
+            ("Main", "import com.acme.shapes.Shape;", "acme", "package"),
+            ("Main", "extends Base", "Base", "Base:3 Base (type)"),
+            ("Main", "private Circle held", "Circle", "Circle:5 Circle (type)"),
+            ("Main", "s.area()", "area", "Shape:4 Shape.area (member)"),
+            ("Main", "given.label()", "label", "Shape:6 Shape.label (member)"),
+            ("Main", "given.hashCode()", "hashCode", "external"),
+            ("Main", "new Circle(2)", "Circle", "Circle:5 Circle (type)"),
+            ("Main", "c.area()", "area", "Circle:13 Circle.area (member)"),
+            ("Main", "held.area()", "area", "Circle:13 Circle.area (member)"),
+            ("Main", "this.held.summary()", "summary", "Circle:21 Circle.summary (member)"),
+            ("Main", "summary().ok()", "ok", "Report:4 Report.ok (member)"),
+            ("Main", "new Square().area()", "area", "Square:4 Square.area (member)"),
+            ("Main", "note(\"a\");", "note", "Main:14 Main.note (member)"),
+            ("Main", "note(\"a\", 1)", "note", "Main:16 Main.note (member)"),
+            ("Main", "this.note(\"b\")", "note", "Main:14 Main.note (member)"),
+            ("Main", "this::note", "note", "Main:14 Main.note (overload)"),
+            ("Main", "scale(2);", "scale", "Util:4 Util.scale (import)"),
+            ("Main", "scale(2, 3)", "scale", "Util:8 Util.scale (import)"),
+            ("Main", "log(\"x\")", "log", "Util:12 Util.log (import)"),
+            ("Main", "x.area()", "area", "receiver"),
+            ("Main", "shapes.size()", "size", "external"),
+            ("Main", "each.area()", "area", "Shape:4 Shape.area (member)"),
+            ("Main", "Circle::unit", "unit", "Circle:17 Circle.unit (member)"),
+            ("Main", "note(\"x\")", "note", "Main:14 Main.note (member)"),
+            ("Main", "helper();", "helper", "Main:70 Main.helper (member)"),
+            ("Main", "    inherited();", "inherited", "Base:4 Base.inherited (member)"),
+            ("Main", "e.getMessage()", "getMessage", "external"),
+            ("Main", "k.area()", "area", "Circle:13 Circle.area (member)"),
+            ("Main", "Circle.Inner()", "Inner", "Circle:30 Circle.Inner (qualified)"),
+            ("Main", "Inner().depth()", "depth", "Circle:31 Circle.Inner.depth (member)"),
+            ("Main", "SMALL.big()", "big", "Circle:37 Circle.Kind.big (member)"),
+            ("Main", "SMALL.big()", "SMALL", "field or key"),
+            ("Main", "int area = 3", "area", "local variable"),
+            ("Main", "t.length()", "length", "external"),
+            ("Main", "super.inherited()", "inherited", "Base:4 Base.inherited (member)"),
+            ("Main", "shapes.Circle.unit()", "unit", "Circle:17 Circle.unit (member)"),
+            ("Main", "shapes.Circle.unit()", "Circle", "Circle:5 Circle (qualified)"),
+            ("Main", "T pick(T x)", "T", "type parameter"),
+            ("Main", "return x;", "x", "local variable"),
+            ("Circle", "names.add(label())", "add", "external"),
+            ("Circle", "names.add(label())", "label", "Shape:6 Shape.label (member)"),
+            ("Circle", "last.ok()", "ok", "Report:4 Report.ok (member)"),
+            ("Circle", "Math.PI", "PI", "external"),
+            ("Circle", "new Report(area())", "area", "Circle:13 Circle.area (member)"),
+            ("Circle", "this == LARGE", "LARGE", "field or key"),
+            ("Circle", "this.r = r", "r", "field or key"),
+            ("Circle", "= r;", "r", "local variable"),
+            ("Square", "return label();", "label", "Shape:6 Shape.label (member)"),
+            ("Shape", "+ area()", "area", "Shape:4 Shape.area (member)"),
+            ("Report", "value > 0", "value", "field or key"),
+        ];
+        let mut wrong = Vec::new();
+        let file_of = |short: &str| files.iter().find(|(p, _)| p.ends_with(&format!("/{short}.java"))).unwrap();
+        for (short, needle, name, want) in checks {
+            let (path, src) = file_of(short);
+            let (row, l) = src.lines().enumerate().find(|(_, l)| l.contains(needle)).unwrap_or_else(|| panic!("{needle:?} not in {short}"));
+            let col = l.find(needle).unwrap() + needle.find(name).unwrap();
+            let got = match rv.resolve_at(path, row as u64 + 1, col, name) {
+                Ok((id, how)) => {
+                    let c = s.ix.chunk(id).unwrap().unwrap();
+                    let file = c.path.rsplit('/').next().unwrap().trim_end_matches(".java").to_string();
+                    format!("{file}:{} {} ({how})", c.start, c.qualname)
+                }
+                Err(e) => e.to_string(),
+            };
+            if got != *want {
+                wrong.push(format!("{short}: {needle} -> {got}, want {want}"));
+            }
+        }
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    }
+
+    #[test]
+    fn java_package_declarations() {
+        assert_eq!(java_package("// c\n/* d */\n@Generated(\"x(y)\")\npackage a.b ;\nimport c;"), "a.b");
+        assert_eq!(java_package("import c;\nclass K {}"), "");
     }
 
     #[test]
