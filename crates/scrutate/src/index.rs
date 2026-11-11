@@ -249,8 +249,9 @@ pub fn build_rows(rel: &str, source: &str, model: Option<&SemanticModel>, prev: 
     if prof {
         prof::add(&prof::PARSE, t);
     }
-    for c in parsed.chunks {
+    for mut c in parsed.chunks {
         let t = Instant::now();
+        c.fill(source.as_bytes());
         let qual = match c.qualname.rfind('.') {
             Some(i) => c.qualname[..i].to_string(),
             None => String::new(),

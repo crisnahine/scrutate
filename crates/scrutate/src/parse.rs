@@ -29,6 +29,28 @@ pub struct Chunk {
     pub doc: String,
     pub body: String,
     pub calls: BTreeSet<String>,
+    /// where `text` and `body` are cut from the source when they are first needed
+    pub(crate) lazy: Option<Lazy>,
+}
+
+/// Source ranges of a definition's text and body (start bytes, their shared end, the line cap).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Lazy {
+    text: usize,
+    body: usize,
+    end: usize,
+    lines: usize,
+}
+
+impl Chunk {
+    /// Cuts `text` and `body` from `src`. The index does it one chunk at a time, so a file of
+    /// thousands of nested definitions never holds all their copies at once.
+    pub fn fill(&mut self, src: &[u8]) {
+        if let Some(l) = self.lazy.take() {
+            self.text = head_bytes(src, l.text, l.end, l.lines);
+            self.body = head_bytes(src, l.body, l.end, l.lines);
+        }
+    }
 }
 
 /// Everything extracted from one file.
@@ -901,6 +923,7 @@ fn finish(path: &str, source: &str, mut chunks: Vec<Chunk>, module_doc: String) 
                 doc: module_doc,
                 body: head_txt,
                 calls: BTreeSet::new(),
+                lazy: None,
             },
         );
     }
@@ -1104,19 +1127,16 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
                 }
             }
             let cap = if CONTAINERS.contains(&kind) { MAX_CONTAINER_LINES } else { MAX_CHUNK_LINES };
-            let full = head_bytes(src, outer.start_byte(), node.end_byte(), cap);
-            let body = head_bytes(src, body_start, node.end_byte(), cap);
             chunks.push(Chunk {
                 name,
                 qualname: q,
                 kind,
                 start: outer.start_position().row as i64 + 1,
                 end: last_row(node) + 1,
-                text: full,
                 sig,
                 doc,
-                body,
-                calls: BTreeSet::new(),
+                lazy: Some(Lazy { text: outer.start_byte(), body: body_start, end: node.end_byte(), lines: cap }),
+                ..Default::default()
             });
             def_stack.push(chunks.len() - 1);
             pushed_now = true;
@@ -1413,6 +1433,7 @@ pub fn heuristic_chunks(source: &str) -> Vec<Chunk> {
             doc,
             body,
             calls: BTreeSet::new(),
+            lazy: None,
         });
     }
     out
@@ -1455,7 +1476,9 @@ pub fn sexp(spec: &'static LangSpec, source: &str) -> String {
 // ------------------------------------------------------------------------- main
 /// Chunks and imports of one file (grammar tier, then heuristics, then windows).
 pub fn parse_file(path: &str, source: &str) -> Parsed {
-    parse_file_with(path, source, None).0
+    let mut parsed = parse_file_with(path, source, None).0;
+    parsed.chunks.iter_mut().for_each(|c| c.fill(source.as_bytes()));
+    parsed
 }
 
 /// `parse_file`, reusing the tree of the file's previous version when there is one; also returns
