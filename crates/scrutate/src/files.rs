@@ -19,9 +19,23 @@ pub fn index_dir(root: &Path) -> anyhow::Result<PathBuf> {
         anyhow::bail!("{}: {}", root.display(), if root.exists() { "not a directory" } else { "no such directory" });
     }
     let dir = root.join(INDEX_DIR);
-    for p in [dir.clone(), dir.join("seg"), dir.join("text"), dir.join("tsquery"), dir.join("index.db")] {
-        if std::fs::symlink_metadata(&p).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
-            anyhow::bail!("{} is a symbolic link; the index is only written inside the repository (remove it)", p.display());
+    let refuse = |p: &Path| anyhow::bail!("{} is a symbolic link; the index is only written inside the repository (remove it)", p.display());
+    if std::fs::symlink_metadata(&dir).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+        return refuse(&dir);
+    }
+    // every name the index writes is three levels deep at most (seg/s000001/ids.npy); entry types
+    // come from the directory listing, so this costs no stat per file
+    let mut todo = vec![(dir.clone(), 0)];
+    while let Some((d, depth)) = todo.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        for e in rd.flatten() {
+            let Ok(ft) = e.file_type() else { continue };
+            if ft.is_symlink() {
+                return refuse(&e.path());
+            }
+            if ft.is_dir() && depth < 2 {
+                todo.push((e.path(), depth + 1));
+            }
         }
     }
     Ok(dir)

@@ -116,3 +116,291 @@ fn forced_update_sees_an_edit_that_keeps_size_and_mtime() {
     let n: i64 = ix.db.query_row("SELECT COUNT(*) FROM chunks WHERE name='omega'", [], |r| r.get(0)).unwrap();
     assert_eq!(n, 1);
 }
+
+/// Index `root` with one file, damage it, then require two later starts to index a new file,
+/// answer from it and pass `check`.
+fn survives(name: &str, damage: impl FnOnce(&Path, &Index)) {
+    let t = Tmp::new(name);
+    fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+    let mut ix = Index::open(&t.0, scrutate::default_model().unwrap()).unwrap();
+    ix.update(false).unwrap();
+    damage(&t.0, &ix);
+    drop(ix);
+    for (i, f) in ["b.py", "c.py"].iter().enumerate() {
+        fs::write(t.0.join(f), format!("def fresh_{i}():\n    return {i}\n")).unwrap();
+        let mut repo = scrutate::Repo::open(&t.0).unwrap_or_else(|e| panic!("{name}: start {i}: {e:#}"));
+        repo.update(false).unwrap_or_else(|e| panic!("{name}: start {i}: {e:#}"));
+        assert_eq!(repo.find_symbol(&format!("fresh_{i}"), 5).unwrap().len(), 1, "{name}: start {i}");
+        assert_eq!(repo.find_symbol("alpha", 5).unwrap().len(), 1, "{name}: start {i}");
+        let report = repo.ix.check(false).unwrap();
+        assert!(report.ok(), "{name}: {report:?}");
+    }
+}
+
+fn seg_dir(root: &Path) -> PathBuf {
+    root.join(".scrutate/seg")
+}
+
+fn remove_db(root: &Path) {
+    for n in ["index.db", "index.db-wal", "index.db-shm"] {
+        let _ = fs::remove_file(root.join(".scrutate").join(n));
+    }
+}
+
+#[test]
+fn empty_database_file_beside_segments() {
+    survives("empty_db", |r, _| {
+        remove_db(r);
+        fs::write(r.join(".scrutate/index.db"), b"").unwrap();
+    });
+}
+
+#[test]
+fn deleted_database_beside_young_segments() {
+    survives("deleted_db", |r, _| remove_db(r));
+}
+
+#[test]
+fn segment_counter_below_a_live_segment() {
+    survives("counter", |_, ix| {
+        ix.db.execute("UPDATE meta SET value='0' WHERE key='seg_counter'", []).unwrap();
+    });
+}
+
+#[test]
+fn dropped_meta_table() {
+    survives("no_meta", |_, ix| ix.db.execute_batch("DROP TABLE meta").unwrap());
+}
+
+#[test]
+fn fresh_unlisted_segment_with_the_next_name() {
+    survives("unlisted", |r, ix| {
+        let from = seg_dir(r).join(&ix.segments()[0]);
+        let to = seg_dir(r).join("s000002");
+        fs::create_dir_all(&to).unwrap();
+        for e in fs::read_dir(from).unwrap() {
+            let e = e.unwrap();
+            fs::copy(e.path(), to.join(e.file_name())).unwrap();
+        }
+    });
+}
+
+#[test]
+fn segments_entry_that_is_not_json() {
+    survives("bad_json", |_, ix| {
+        ix.db.execute("UPDATE meta SET value='{{{' WHERE key='segments'", []).unwrap();
+    });
+}
+
+#[test]
+fn database_replaced_by_a_directory() {
+    survives("db_dir", |r, _| {
+        remove_db(r);
+        fs::create_dir_all(r.join(".scrutate/index.db")).unwrap();
+    });
+}
+
+#[test]
+fn segment_directory_replaced_by_a_file() {
+    survives("seg_file", |r, _| {
+        fs::remove_dir_all(seg_dir(r)).unwrap();
+        fs::write(seg_dir(r), b"x").unwrap();
+    });
+}
+
+#[test]
+fn damaged_chunk_text_is_rebuilt_on_the_next_call() {
+    let t = Tmp::new("blob");
+    fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+    let mut repo = scrutate::Repo::open(&t.0).unwrap();
+    repo.update(false).unwrap();
+    repo.ix.db.execute("UPDATE chunks SET text=x'00112233'", []).unwrap();
+    let answer = repo.run(&op("search_code", serde_json::json!({"query": "alpha"})), 0.0).unwrap();
+    assert!(answer.text_within(100_000, 0).contains("alpha"));
+}
+
+fn op(tool: &str, args: serde_json::Value) -> scrutate::ops::Op {
+    scrutate::ops::Op::from_tool(tool, &args).unwrap()
+}
+
+fn text(repo: &mut scrutate::Repo, tool: &str, args: serde_json::Value) -> String {
+    repo.run(&op(tool, args), 0.0).unwrap_or_else(|e| panic!("{tool}: {e:#}")).text_within(100_000, 0)
+}
+
+#[test]
+fn segment_without_vectors_is_rebuilt() {
+    survives("no_vec", |r, ix| fs::remove_file(seg_dir(r).join(&ix.segments()[0]).join("vec.npy")).unwrap());
+}
+
+#[test]
+fn index_dir_deleted_under_an_open_repo_is_rebuilt_whole() {
+    let t = Tmp::new("dir_gone");
+    fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+    let mut repo = scrutate::Repo::open(&t.0).unwrap();
+    repo.update(false).unwrap();
+    fs::remove_dir_all(t.0.join(".scrutate")).unwrap();
+    fs::write(t.0.join("b.py"), "def beta():\n    return 2\n").unwrap();
+    assert!(text(&mut repo, "find_symbol", serde_json::json!({"name": "beta"})).contains("b.py"));
+    for f in ["index.db", ".gitignore", "seg"] {
+        assert!(t.0.join(".scrutate").join(f).exists(), "{f}");
+    }
+}
+
+#[test]
+fn a_held_write_lock_does_not_block_readers() {
+    let t = Tmp::new("locked");
+    fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+    scrutate::Repo::open(&t.0).unwrap().update(false).unwrap();
+    let other = rusqlite::Connection::open(t.0.join(".scrutate/index.db")).unwrap();
+    other.execute_batch("BEGIN IMMEDIATE").unwrap();
+    fs::write(t.0.join("b.py"), "def beta():\n    return 2\n").unwrap();
+    let t0 = std::time::Instant::now();
+    let mut repo = scrutate::Repo::open(&t.0).unwrap();
+    assert!(text(&mut repo, "find_symbol", serde_json::json!({"name": "alpha"})).contains("a.py"));
+    let (s, _) = scrutate::open_updated(&t.0, false).unwrap();
+    assert_eq!(s.find_symbol("alpha", 5).unwrap().len(), 1);
+    assert!(t0.elapsed().as_secs() < 5, "{:?}", t0.elapsed());
+
+    // a writer waits for the lock, then indexes
+    let root = t.0.clone();
+    let writer = std::thread::spawn(move || scrutate::Repo::open(&root).unwrap().update(false).unwrap());
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    assert!(!writer.is_finished());
+    other.execute_batch("ROLLBACK").unwrap();
+    assert_eq!(writer.join().unwrap().files_changed, 1);
+    assert_eq!(repo.find_symbol("beta", 5).unwrap().len(), 1);
+}
+
+#[cfg(unix)]
+fn chmod(p: &Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(p, fs::Permissions::from_mode(mode)).unwrap();
+}
+
+/// Root ignores permissions: tests that need a read-only directory skip under it.
+#[cfg(unix)]
+fn permissions_hold(dir: &Path) -> bool {
+    let probe = dir.join(".probe");
+    let held = fs::write(&probe, b"").is_err();
+    let _ = fs::remove_file(&probe);
+    held
+}
+
+#[cfg(unix)]
+#[test]
+fn read_only_index_dir_under_an_open_repo_answers_from_the_index() {
+    let t = Tmp::new("ro_dir");
+    fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+    let mut repo = scrutate::Repo::open(&t.0).unwrap();
+    repo.update(false).unwrap();
+    let dirs = [t.0.join(".scrutate"), seg_dir(&t.0)];
+    for d in &dirs {
+        chmod(d, 0o555);
+    }
+    let held = permissions_hold(&seg_dir(&t.0));
+    fs::write(t.0.join("b.py"), "def beta():\n    return 2\n").unwrap();
+    let r = repo.run(&op("grep_code", serde_json::json!({"pattern": "def alpha"})), 0.0);
+    let r2 = repo.run(&op("find_symbol", serde_json::json!({"name": "alpha"})), 0.0);
+    for d in &dirs {
+        chmod(d, 0o755);
+    }
+    if !held {
+        return;
+    }
+    assert!(r.unwrap().text_within(100_000, 0).contains("a.py"));
+    assert!(r2.unwrap().text_within(100_000, 0).contains("a.py"));
+}
+
+#[cfg(unix)]
+#[test]
+fn read_only_root_with_a_complete_index_answers() {
+    let t = Tmp::new("ro_root");
+    let repo = t.0.join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    fs::write(repo.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+    assert_eq!(run(&repo, &["index", "--no-text"]).0, 0);
+    let dirs = [seg_dir(&repo), repo.join(".scrutate"), repo.clone()];
+    for d in &dirs {
+        chmod(d, 0o555);
+    }
+    let db = repo.join(".scrutate/index.db");
+    chmod(&db, 0o444);
+    let held = permissions_hold(&repo);
+    let out = Command::new(BIN).arg("--root").arg(&repo).args(["symbol", "alpha"]).stdin(Stdio::null()).output().unwrap();
+    chmod(&db, 0o644);
+    for d in dirs.iter().rev() {
+        chmod(d, 0o755);
+    }
+    if !held {
+        return;
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success() && stdout.contains("a.py"), "{stdout} {}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[cfg(unix)]
+#[test]
+fn unreadable_file_loses_its_chunks() {
+    let t = Tmp::new("unreadable");
+    let f = t.0.join("auth.py");
+    fs::write(&f, "def refresh_token():\n    return 1\n").unwrap();
+    let mut repo = scrutate::Repo::open(&t.0).unwrap();
+    repo.update(false).unwrap();
+    // a chmod alone keeps size and mtime, so only a forced update reads the file again
+    fs::write(&f, "def refresh_token():\n    return 22\n").unwrap();
+    chmod(&f, 0o000);
+    let held = fs::read(&f).is_err();
+    let r = repo.update(false);
+    let n = repo.find_symbol("refresh_token", 5).map(|h| h.len());
+    chmod(&f, 0o644);
+    if !held {
+        return;
+    }
+    r.unwrap();
+    assert_eq!(n.unwrap(), 0);
+    repo.update(false).unwrap();
+    assert_eq!(repo.find_symbol("refresh_token", 5).unwrap().len(), 1);
+    chmod(&f, 0o000);
+    let r = repo.update(true);
+    let n = repo.find_symbol("refresh_token", 5).map(|h| h.len());
+    chmod(&f, 0o644);
+    r.unwrap();
+    assert_eq!(n.unwrap(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinks_inside_the_index_dir_are_refused() {
+    let t = Tmp::new("planted");
+    let repo = t.0.join("repo");
+    let outside = t.0.join("outside");
+    fs::create_dir_all(repo.join(".scrutate/text")).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(repo.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+    fs::write(outside.join("victim.txt"), b"mine").unwrap();
+    std::os::unix::fs::symlink(outside.join("victim.txt"), repo.join(".scrutate/text/manifest.json.tmp")).unwrap();
+    for args in [&["index", "--no-text"][..], &["index", "--text"], &["index"]] {
+        let (code, err) = run(&repo, args);
+        assert_eq!(code, 2, "{args:?}: {err}");
+        assert!(err.contains("manifest.json.tmp"), "{err}");
+    }
+    assert_eq!(fs::read(outside.join("victim.txt")).unwrap(), b"mine");
+
+    fs::remove_dir_all(repo.join(".scrutate")).unwrap();
+    fs::create_dir_all(repo.join(".scrutate")).unwrap();
+    std::os::unix::fs::symlink(outside.join("created_by_scrutate"), repo.join(".scrutate/.gitignore")).unwrap();
+    let (code, err) = run(&repo, &["index"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(!outside.join("created_by_scrutate").exists());
+}
+
+#[test]
+fn write_new_replaces_a_planted_link_instead_of_following_it() {
+    let t = Tmp::new("write_new");
+    fs::write(t.0.join("victim"), b"mine").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(t.0.join("victim"), t.0.join("link")).unwrap();
+    scrutate::index::write_new(&t.0.join("link"), b"new").unwrap();
+    assert_eq!(fs::read(t.0.join("victim")).unwrap(), b"mine");
+    assert_eq!(fs::read(t.0.join("link")).unwrap(), b"new");
+}

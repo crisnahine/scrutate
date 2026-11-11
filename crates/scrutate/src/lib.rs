@@ -64,10 +64,11 @@ pub fn open(root: &Path) -> Result<search::Searcher> {
     Ok(search::Searcher::new(ix, default_ranker()?))
 }
 
-/// Open and bring the index up to date (`Repo::update`).
+/// Open and bring the index up to date: `Repo::update` with `force`, else `Repo::refresh`, which
+/// answers from the index as it is when it cannot be updated.
 pub fn open_updated(root: &Path, force: bool) -> Result<(search::Searcher, index::UpdateStats)> {
     let mut repo = Repo::open(root)?;
-    let st = repo.update(force)?;
+    let st = if force { repo.update(true)? } else { repo.refresh(0.0)?.unwrap_or_default() };
     Ok((repo.into_searcher(), st))
 }
 
@@ -76,12 +77,14 @@ pub fn open_updated(root: &Path, force: bool) -> Result<(search::Searcher, index
 pub struct Repo {
     /// `None` only while a damaged index is being replaced
     searcher: Option<search::Searcher>,
+    /// the last refresh failed and stderr said why
+    stale: bool,
 }
 
 impl Repo {
     /// Open (or create) the index of `root`, without updating it.
     pub fn open(root: &Path) -> Result<Repo> {
-        Ok(Repo { searcher: Some(open(root)?) })
+        Ok(Repo { searcher: Some(open(root)?), stale: false })
     }
 
     pub fn into_searcher(self) -> search::Searcher {
@@ -97,11 +100,23 @@ impl Repo {
         }
     }
 
-    /// `update`, unless the index was checked less than `min_interval` seconds ago.
+    /// `update` before a read, unless the index was checked less than `min_interval` seconds
+    /// ago. When it cannot run (another process holds the write lock, the index directory is
+    /// read-only) the read answers from the last committed index, and stderr says why once.
     pub fn refresh(&mut self, min_interval: f64) -> Result<Option<index::UpdateStats>> {
-        match self.ix.refresh(min_interval) {
+        match self.ix.refresh_or_fail(min_interval) {
             Err(e) if index::error_is_corruption(&e) => self.rebuild(&e).map(Some),
-            other => other,
+            Err(e) => {
+                if !self.stale {
+                    eprintln!("[scrutate] index not updated ({e:#}); answering from it as it is");
+                    self.stale = true;
+                }
+                Ok(None)
+            }
+            Ok(st) => {
+                self.stale &= st.is_none();
+                Ok(st)
+            }
         }
     }
 
@@ -111,7 +126,13 @@ impl Repo {
         if !matches!(op, ops::Op::Read { symbol: None, .. } | ops::Op::Reindex) {
             self.refresh(min_interval)?;
         }
-        ops::run(self, op)
+        match ops::run(self, op) {
+            Err(e) if index::error_is_corruption(&e) => {
+                self.rebuild(&e)?;
+                ops::run(self, op)
+            }
+            other => other,
+        }
     }
 
     fn rebuild(&mut self, why: &anyhow::Error) -> Result<index::UpdateStats> {

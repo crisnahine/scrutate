@@ -8,7 +8,6 @@
 //! rename, so a reader or a crash never sees half of one; anything unreadable counts as empty.
 
 use std::collections::HashMap;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -89,15 +88,10 @@ impl Cache {
         let scrutate = self.dir.parent().unwrap_or(&self.dir);
         crate::files::index_dir(scrutate.parent().unwrap_or(scrutate))?;
         std::fs::create_dir_all(&self.dir)?;
-        let gi = scrutate.join(".gitignore");
-        if !gi.exists() {
-            std::fs::write(&gi, "*\n")?; // a cache; never commit it
-        }
+        crate::index::write_gitignore(scrutate)?;
         let nanos = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
         let tmp = self.dir.join(format!(".tmp-{}-{nanos}", std::process::id()));
-        let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(&out)?;
-        drop(f);
+        crate::index::write_new(&tmp, &out)?;
         if let Err(e) = std::fs::rename(&tmp, &self.path) {
             let _ = std::fs::remove_file(&tmp);
             return Err(e.into());

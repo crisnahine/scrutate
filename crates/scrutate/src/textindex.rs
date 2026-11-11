@@ -981,10 +981,7 @@ pub fn update(root: &Path, force: bool, progress: bool) -> Result<TextStats> {
     crate::files::index_dir(root)?;
     let dir = dir_of(root);
     std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
-    let gi = root.join(".scrutate").join(".gitignore");
-    if !gi.exists() {
-        std::fs::write(&gi, "*\n")?; // the index is a cache; never commit it
-    }
+    crate::index::write_gitignore(&root.join(".scrutate"))?;
     let lock = File::options().create(true).truncate(false).write(true).open(dir.join("lock"))?;
     lock_exclusive(&lock)?;
     let old = if force { None } else { read_manifest(&dir)? };
@@ -1075,13 +1072,13 @@ pub fn update(root: &Path, force: bool, progress: bool) -> Result<TextStats> {
         let p = dir.join(&s.name).join(&live_name);
         if !p.exists() {
             let tmp = p.with_extension("tmp");
-            std::fs::write(&tmp, &s.live)?;
+            crate::index::write_new(&tmp, &s.live)?;
             std::fs::rename(&tmp, &p)?;
         }
     }
     let m = Manifest { format: FORMAT, generation, segments: segs.iter().map(|s| SegRef { name: s.name.clone(), live: live_name.clone() }).collect() };
     let tmp = dir.join("manifest.json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec(&m)?)?;
+    crate::index::write_new(&tmp, &serde_json::to_vec(&m)?)?;
     std::fs::rename(&tmp, dir.join("manifest.json"))?;
     let names: Vec<String> = segs.iter().map(|s| s.name.clone()).collect();
     let nsegs = segs.len();

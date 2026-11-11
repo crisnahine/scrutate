@@ -42,6 +42,17 @@ thread_local! {
     static IDENT_CACHE: RefCell<HashMap<String, (Vec<String>, String)>> = RefCell::new(HashMap::new());
 }
 
+/// Free this thread's word caches (an index build fills them with millions of entries).
+pub fn clear_caches() {
+    STEM_CACHE.with(|c| drop(c.take()));
+    IDENT_CACHE.with(|c| drop(c.take()));
+}
+
+/// Entries in this thread's word caches.
+pub fn cache_len() -> usize {
+    STEM_CACHE.with(|c| c.borrow().len()) + IDENT_CACHE.with(|c| c.borrow().len())
+}
+
 pub fn stem(w: &str) -> String {
     if let Some(s) = STEM_CACHE.with(|c| c.borrow().get(w).cloned()) {
         return s;

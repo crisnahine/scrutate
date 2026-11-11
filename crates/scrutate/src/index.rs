@@ -338,7 +338,7 @@ fn process(root: &Path, rel: &str, known_hash: Option<&str>, model: Option<&Sema
         return Processed::Skip(size, mtime);
     }
     let Ok(raw) = std::fs::read(&full) else {
-        return Processed::Gone;
+        return Processed::Gone; // unreadable now: its old chunks must not answer
     };
     let Some(source) = decode_source(&raw) else {
         return Processed::Skip(size, mtime);
@@ -386,14 +386,59 @@ fn is_corruption(e: &rusqlite::Error) -> bool {
     matches!(e, rusqlite::Error::SqliteFailure(f, _) if matches!(f.code, DatabaseCorrupt | NotADatabase))
 }
 
+/// Write a file under the index directory as a new file: whatever was at `path` (a planted link
+/// included) is removed first, so the write never lands outside.
+pub fn write_new(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    match std::fs::remove_file(path) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+        _ => {}
+    }
+    std::fs::File::options().write(true).create_new(true).open(path)?.write_all(bytes)
+}
+
+/// `.gitignore` of the index directory, unless something is there already.
+pub(crate) fn write_gitignore(dir: &Path) -> std::io::Result<()> {
+    let gi = dir.join(".gitignore");
+    if std::fs::symlink_metadata(&gi).is_ok() {
+        return Ok(());
+    }
+    // the index is a cache; never commit it
+    match std::fs::File::options().write(true).create_new(true).open(&gi) {
+        Ok(mut f) => std::io::Write::write_all(&mut f, b"*\n"),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
 /// Whether `root` has an index database (built or being built).
 pub fn exists(root: &Path) -> bool {
     root.join(".scrutate").join("index.db").exists()
 }
 
-/// True when an error anywhere in `e`'s chain is SQLite corruption.
+/// Index files that are not what this program wrote; handled like SQLite corruption.
+#[derive(Debug)]
+pub struct Damaged(pub &'static str);
+
+impl std::fmt::Display for Damaged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+impl std::error::Error for Damaged {}
+
+/// True when an error anywhere in `e`'s chain is SQLite corruption or other damage to the index
+/// files (a chunk text that does not inflate, `Damaged`).
 pub fn error_is_corruption(e: &anyhow::Error) -> bool {
-    e.chain().any(|c| c.downcast_ref::<rusqlite::Error>().map(is_corruption).unwrap_or(false))
+    e.chain().any(|c| {
+        c.is::<Damaged>()
+            || match c.downcast_ref::<rusqlite::Error>() {
+                Some(rusqlite::Error::FromSqlConversionFailure(_, rusqlite::types::Type::Blob, _)) => true,
+                Some(e) => is_corruption(e),
+                None => false,
+            }
+    })
 }
 
 /// Delete the index files of `root` (used after an operation reported database corruption on a
@@ -454,13 +499,11 @@ impl Index {
         let dir = crate::files::index_dir(&root)?;
         let seg_dir = dir.join("seg");
         std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
-        let gi = dir.join(".gitignore");
-        if !gi.exists() {
-            std::fs::write(&gi, "*\n")?; // the index is a cache; never commit it
-        }
+        write_gitignore(&dir)?;
         let db_path = dir.join("index.db");
         let sem_sig = model.as_ref().map(|m| m.signature()).unwrap_or_else(|| "none".into());
-        let triage = Self::triage(&db_path, &sem_sig);
+        let wrong_type = db_path.is_dir() || std::fs::symlink_metadata(&seg_dir).is_ok_and(|m| !m.is_dir());
+        let triage = if wrong_type { Triage::Garbage("index files of the wrong type") } else { Self::triage(&db_path, &sem_sig) };
         if let Triage::Garbage(why) = triage {
             // nobody can be using a database that does not open: deleting the files is safe
             eprintln!("[scrutate] index database unusable ({why}); rebuilding");
@@ -475,13 +518,19 @@ impl Index {
             retry_busy(|| db.execute_batch("PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-32000;"))
         };
         let db = Connection::open(&db_path).with_context(|| format!("open {}", db_path.display()))?;
-        setup(&db)?;
-        let db = match retry_busy(|| db.execute_batch(SCHEMA)) {
-            Ok(()) => db,
+        let db = match setup(&db) {
+            Ok(()) => retry_busy(|| db.execute_batch(SCHEMA)).map(|()| db),
+            Err(rusqlite::Error::SqliteFailure(f, _)) if f.code == rusqlite::ffi::ErrorCode::ReadOnly && matches!(triage, Triage::Reuse) => {
+                drop(db);
+                Ok(Self::open_immutable(&db_path, &sem_sig)?)
+            }
+            Err(e) => return Err(e.into()),
+        };
+        let db = match db {
+            Ok(db) => db,
             Err(e) => {
                 // opened but cannot hold the schema: garbage after all
                 eprintln!("[scrutate] index database unusable ({e}); rebuilding");
-                drop(db);
                 Self::wipe(&dir, &seg_dir);
                 std::fs::create_dir_all(&seg_dir)?;
                 let db = Connection::open(&db_path).with_context(|| format!("open {}", db_path.display()))?;
@@ -512,11 +561,32 @@ impl Index {
             ix.set_meta("schema_version", &SCHEMA_VERSION.to_string())?;
             ix.set_meta("model_sig", &sem_sig)?;
         } else {
-            ix.set_meta("schema_version", &SCHEMA_VERSION.to_string())?;
-            ix.set_meta("model_sig", &sem_sig)?;
+            // a reader must not need the write lock: another process may hold it for minutes
+            for (k, v) in [("schema_version", SCHEMA_VERSION.to_string()), ("model_sig", sem_sig)] {
+                if ix.meta(k).as_deref() != Some(v.as_str()) {
+                    ix.set_meta(k, &v)?;
+                }
+            }
         }
-        ix.gc_segments();
         Ok(ix)
+    }
+
+    /// A WAL database in a read-only directory cannot be read the usual way (its `-shm` cannot be
+    /// created). Nobody without root can write it there either, so it is read as a fixed file,
+    /// unless a `-wal` holds transactions not yet copied into it.
+    fn open_immutable(db_path: &Path, sem_sig: &str) -> Result<Connection> {
+        let wal = db_path.with_extension("db-wal");
+        if std::fs::metadata(&wal).is_ok_and(|m| m.len() > 0) {
+            anyhow::bail!("{}: read-only, and its write-ahead log is not empty", db_path.display());
+        }
+        let path = db_path.to_string_lossy().replace('%', "%25").replace('?', "%3f").replace('#', "%23");
+        let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI;
+        let db = Connection::open_with_flags(format!("file:{path}?immutable=1"), flags)?;
+        let get = |k: &str| db.query_row("SELECT value FROM meta WHERE key=?1", [k], |r| r.get::<_, String>(0)).optional();
+        if get("schema_version")?.as_deref() != Some(SCHEMA_VERSION.to_string().as_str()) || get("model_sig")?.as_deref() != Some(sem_sig) {
+            anyhow::bail!("{}: read-only, and built by another version or model", db_path.display());
+        }
+        Ok(db)
     }
 
     /// Forget every indexed file and segment (inside one write transaction).
@@ -570,14 +640,18 @@ impl Index {
         if get("model_sig").as_deref() != Some(sem_sig) {
             return Triage::Rebuild("semantic model changed");
         }
+        if get("segments").is_some_and(|v| serde_json::from_str::<Vec<String>>(&v).is_err()) {
+            return Triage::Rebuild("segment list unreadable");
+        }
         Triage::Reuse
     }
 
     pub(crate) fn wipe(dir: &Path, seg_dir: &Path) {
         for name in ["index.db", "index.db-wal", "index.db-shm", "vectors.npz"] {
-            let _ = std::fs::remove_file(dir.join(name));
+            let p = dir.join(name);
+            let _ = std::fs::remove_file(&p).or_else(|_| std::fs::remove_dir_all(&p));
         }
-        let _ = std::fs::remove_dir_all(seg_dir);
+        let _ = std::fs::remove_dir_all(seg_dir).or_else(|_| std::fs::remove_file(seg_dir));
     }
 
     // ---- meta helpers
@@ -612,7 +686,8 @@ impl Index {
         Ok(name)
     }
 
-    /// Delete segment directories no manifest refers to (left by a crash), unless brand new.
+    /// Delete segment directories no manifest refers to (left by a crash), unless brand new. Call
+    /// inside a write transaction, so no writer of this machine has one in flight uncommitted.
     fn gc_segments(&self) {
         let keep: HashSet<String> = self.segments().into_iter().collect();
         let Ok(rd) = std::fs::read_dir(&self.seg_dir) else {
@@ -638,7 +713,11 @@ impl Index {
             let mut names = names;
             let mut attempt = 0;
             let store = loop {
-                match LexStore::open(&self.seg_dir, &names) {
+                let opened = LexStore::open(&self.seg_dir, &names).and_then(|s| match &self.model {
+                    Some(_) if s.segs.iter().any(|g| g.n > 0 && g.vec.is_none()) => Err(Damaged("a segment has no vectors").into()),
+                    _ => Ok(s),
+                });
+                match opened {
                     Ok(s) => break s,
                     Err(e) => {
                         // another process may have just compacted: the manifest we read named
@@ -681,13 +760,35 @@ impl Index {
 
     // ---- update
     pub fn update(&mut self, force: bool) -> Result<UpdateStats> {
+        self.update_with(force, true)
+    }
+
+    /// `update`; with `wait` false a write lock held by another process is an error at once.
+    fn update_with(&mut self, force: bool, wait: bool) -> Result<UpdateStats> {
+        if !self.dir.join("index.db").is_file() {
+            return Err(Damaged("index database deleted").into());
+        }
         let t0 = Instant::now();
         let mut st = UpdateStats { semantic: self.model.is_some(), ..Default::default() };
         // if the statistics held in memory describe exactly the state we start from, they can be
         // patched afterwards instead of recomputed
         let mut removed: Vec<i64> = Vec::new();
         let mut seg_names: Vec<String> = Vec::new();
-        retry_busy(|| self.db.execute_batch("BEGIN IMMEDIATE"))?; // one writer at a time; readers keep working (WAL)
+        // one writer at a time; readers keep working (WAL)
+        if wait {
+            retry_busy(|| self.db.execute_batch("BEGIN IMMEDIATE"))?;
+        } else {
+            self.db.busy_timeout(Duration::ZERO)?;
+            let r = self.db.execute_batch("BEGIN IMMEDIATE");
+            self.db.busy_timeout(Duration::from_secs(30))?;
+            match r {
+                Err(rusqlite::Error::SqliteFailure(f, _)) if f.code == rusqlite::ffi::ErrorCode::DatabaseBusy => {
+                    anyhow::bail!("another process is updating the index")
+                }
+                r => r?,
+            }
+        }
+        self.gc_segments();
         let cur_ver = self.meta("data_version").unwrap_or_else(|| "0".into());
         let in_sync =
             self.lex.is_some() && self.lex_ver.as_deref() == Some(cur_ver.as_str()) && self.lex.as_ref().map(|l| l.names == self.segments()).unwrap_or(false);
@@ -717,9 +818,13 @@ impl Index {
             }
             self.compact()?;
             let _ = self.db.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)");
+            // a long-running process would otherwise keep a build's word caches for its whole life
+            rayon::broadcast(|_| crate::text::clear_caches());
+            crate::text::clear_caches();
         }
         st.chunks = self.db.query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))?;
         st.seconds = t0.elapsed().as_secs_f64();
+        self.last_refresh = Some(Instant::now());
         if prof::enabled() {
             prof::report(st.seconds);
         }
@@ -785,7 +890,7 @@ impl Index {
             }
             for (rel, res) in results {
                 match res {
-                    Processed::Gone => {}
+                    Processed::Gone => removed.extend(self.delete_file(&rel)?),
                     Processed::Skip(size, mtime) => {
                         // binary / too large / unparsable: remember so we never re-read it
                         removed.extend(self.delete_file(&rel)?);
@@ -872,14 +977,25 @@ impl Index {
     /// The directory is scanned at most once per `min_interval` seconds, and a scan that is cheap is
     /// not held back that long: the wait is capped at ten times what looking for changes cost.
     pub fn refresh(&mut self, min_interval: f64) -> Result<Option<UpdateStats>> {
+        self.refresh_with(min_interval, true)
+    }
+
+    /// `refresh` before a read: when another process holds the write lock it fails at once
+    /// instead of waiting, so the read can answer from the last committed index.
+    pub fn refresh_or_fail(&mut self, min_interval: f64) -> Result<Option<UpdateStats>> {
+        self.refresh_with(min_interval, false)
+    }
+
+    fn refresh_with(&mut self, min_interval: f64, wait: bool) -> Result<Option<UpdateStats>> {
         if let Some(last) = self.last_refresh {
             if last.elapsed().as_secs_f64() < min_interval.min(10.0 * self.scan_cost) {
                 return Ok(None);
             }
         }
-        let st = self.update(false)?;
+        let st = self.update_with(false, wait);
+        // a failing update is not retried on every call either
         self.last_refresh = Some(Instant::now());
-        Ok(Some(st))
+        st.map(Some)
     }
 
     /// Forget every indexed file and segment, then index the repository again from scratch.
@@ -1105,5 +1221,39 @@ impl Index {
 
     pub fn nf() -> usize {
         NF
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn update_counts_as_a_refresh() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_refresh_{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+        let mut ix = super::Index::open(&root, None).unwrap();
+        assert!(ix.last_refresh.is_none());
+        ix.update(false).unwrap();
+        assert!(ix.last_refresh.is_some());
+        drop(ix);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn update_frees_the_word_caches_of_every_thread() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_caches_{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        for i in 0..40 {
+            std::fs::write(root.join(format!("m{i}.py")), format!("def handler_{i}(request):\n    return parse_body(request)\n")).unwrap();
+        }
+        // a pool of its own: other tests fill the global pool's caches at the same time
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(3).build().unwrap();
+        let left = pool.install(|| {
+            let mut ix = super::Index::open(&root, None).unwrap();
+            ix.update(false).unwrap();
+            rayon::broadcast(|_| crate::text::cache_len()).into_iter().sum::<usize>() + crate::text::cache_len()
+        });
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(left, 0);
     }
 }
