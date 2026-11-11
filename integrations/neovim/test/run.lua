@@ -53,9 +53,10 @@ check(":ScrutateCallers takes the word under the cursor", #q == 2 and has(q, "sr
 vim.cmd("ScrutateGrep zzzzqqqq_no_such_thing_anywhere")
 check("no match leaves an empty list", #quickfix() == 0, quickfix())
 
--- the language server, the way the README sets it up
+-- the language server, from the lsp/scrutate.lua the plugin ships, with this run's binary
 if vim.lsp.config then
-  vim.lsp.config("scrutate", { cmd = { bin, "lsp" }, root_markers = { ".git", ".scrutate" } })
+  vim.lsp.config("scrutate", { cmd = { bin, "lsp" } })
+  check("the shipped config supplies the root markers", vim.deep_equal(vim.lsp.config["scrutate"].root_markers, { ".scrutate", ".git" }), vim.lsp.config["scrutate"])
   vim.lsp.enable("scrutate")
   vim.cmd("edit src/app.py")
   local attached = vim.wait(20000, function() return #vim.lsp.get_clients({ bufnr = 0, name = "scrutate" }) > 0 end, 50)

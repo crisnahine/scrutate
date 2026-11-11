@@ -35,7 +35,7 @@ scrutate completions bash > ~/.local/share/bash-completion/completions/scrutate 
 
 Windows: unzip, put `scrutate.exe` on `PATH`, `scrutate completions powershell | Out-String | Invoke-Expression`.
 
-## From source (any platform with stable Rust 1.89 or newer)
+## From source (any platform with stable Rust 1.91 or newer)
 
 From a copy of the source tree (the clone URL works once the repository is published):
 
@@ -56,8 +56,10 @@ maturin build --release --strip -m crates/scrutate-py/Cargo.toml -o dist
 pip install dist/scrutate-*.whl
 python -c "import scrutate; print(scrutate.__version__)"
 ```
-One `cp39-abi3` wheel per OS/architecture covers CPython 3.9+ (standard builds). Free-threaded
-Python needs the separate `cp314t` wheel built by the release workflow.
+Three wheels per OS/architecture cover every supported interpreter, and `pip` picks the right
+one: `cp39-abi3` for standard CPython 3.9 to 3.14, `cp314t` for free-threaded 3.14 (which has no
+stable ABI), and `cp315-abi3.abi3t` for 3.15 and newer, standard and free-threaded alike. The
+build above makes the one for the interpreter that runs it; `-i python3.14t` names another.
 
 ## Updating
 
@@ -82,4 +84,6 @@ None is published for 0.1.0. The package definitions are in `packaging/`: a Home
 Scoop manifest, winget manifests, and `.deb`/`.rpm` builds from `crates/scrutate/Cargo.toml`.
 `packaging/README.md` says how each was tested and what is left to do at release time. A
 `cargo install scrutate` from crates.io is not possible yet: the bundled models are too large for a
-crates.io upload.
+crates.io upload, and the build needs the patched `ignore` crate in `vendor/`, which a crate
+fetched from crates.io would not get. From a checkout, `cargo install --path crates/scrutate
+--locked` works.

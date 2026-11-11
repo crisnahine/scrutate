@@ -1,0 +1,8 @@
+# Hooks for https://pre-commit.com: integrations/pre-commit/README.md
+- id: scrutate-dupes
+  name: scrutate duplicate functions
+  description: Fails when the repository holds exact duplicate functions. Needs scrutate on PATH.
+  entry: bash -c 'scrutate index > /dev/null || exit 2; scrutate dupes --min-tokens 80 --threshold 1; [ $? -eq 1 ]'
+  language: unsupported
+  pass_filenames: false
+  minimum_pre_commit_version: "4.4.0"

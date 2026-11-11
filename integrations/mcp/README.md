@@ -24,15 +24,50 @@ What a client gets (details in docs/CLI.md, `serve`):
 - cancellation (`notifications/cancelled`) and, for a call that sends a `progressToken`,
   progress reports while the first index is built.
 
-Claude Code:
+## Client configuration
+
+Each client has its own file and its own key for the list of servers. Replace `/path/to/repo`;
+Cursor and VS Code fill in `${workspaceFolder}` themselves.
+
+Claude Code (the command, or the same as `.mcp.json` in the repository):
 ```sh
 claude mcp add scrutate -- scrutate --root /path/to/repo serve
 ```
-
-Generic MCP client configuration (Cursor, Windsurf, JetBrains AI Assistant, ...):
 ```json
 { "mcpServers": { "scrutate": { "command": "scrutate", "args": ["--root", "/path/to/repo", "serve"] } } }
 ```
+
+Codex CLI (`codex mcp add scrutate -- scrutate --root /path/to/repo serve`, or `~/.codex/config.toml`):
+```toml
+[mcp_servers.scrutate]
+command = "scrutate"
+args = ["--root", "/path/to/repo", "serve"]
+```
+
+Cursor (`.cursor/mcp.json`):
+```json
+{ "mcpServers": { "scrutate": { "type": "stdio", "command": "scrutate", "args": ["--root", "${workspaceFolder}", "serve"] } } }
+```
+
+VS Code (`.vscode/mcp.json`; the key is `servers`):
+```json
+{ "servers": { "scrutate": { "type": "stdio", "command": "scrutate", "args": ["--root", "${workspaceFolder}", "serve"] } } }
+```
+
+Gemini CLI (`.gemini/settings.json`):
+```json
+{ "mcpServers": { "scrutate": { "command": "scrutate", "args": ["--root", "/path/to/repo", "serve"] } } }
+```
+
+Zed (`settings.json`; the key is `context_servers`):
+```json
+{ "context_servers": { "scrutate": { "command": "scrutate", "args": ["--root", "/path/to/repo", "serve"], "env": {} } } }
+```
+
+Tested in a running session: Claude Code. Checked through the client's own command: Codex CLI
+(`codex mcp add` writes the table above, `codex mcp list` shows it enabled) and VS Code
+(`code --add-mcp` writes the `servers` entry above). Cursor, Gemini CLI and Zed follow their
+documentation as of November 2026 and were not started here.
 
 The server never leaves the machine: it reads the repository, writes only `.scrutate/` inside it,
 opens no network connections and executes no repository code.

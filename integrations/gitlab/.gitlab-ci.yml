@@ -1,21 +1,27 @@
-# GitLab CI template: run Scrutate checks on every merge request (duplicate code report and a
-# query the team cares about). Copy into your repository's .gitlab-ci.yml or `include:` it.
+# GitLab CI template: run Scrutate checks in every merge request pipeline (duplicate code report
+# and a query the team cares about). Copy into your repository's .gitlab-ci.yml or `include:` it.
+# The reports are job artifacts; nothing is posted to the merge request.
 variables:
   SCRUTATE_VERSION: "0.1.0"
 scrutate:
   image: debian:bookworm-slim
   stage: test
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
   before_script:
     - apt-get update -qq && apt-get install -y -qq curl ca-certificates > /dev/null
     - name="scrutate-${SCRUTATE_VERSION}-x86_64-unknown-linux-musl"
-    - curl -sSfL -o "$name.tar.gz" "https://github.com/crisnahine/scrutate/releases/download/v${SCRUTATE_VERSION}/$name.tar.gz"
-    - curl -sSfL -o "$name.sha256" "https://github.com/crisnahine/scrutate/releases/download/v${SCRUTATE_VERSION}/$name.sha256"
-    - grep "$name.tar.gz" "$name.sha256" | sha256sum -c -
-    - tar xzf "$name.tar.gz" && export PATH="$PWD/$name:$PATH"
+    - url="https://github.com/crisnahine/scrutate/releases/download/v${SCRUTATE_VERSION}"
+    # in /tmp, so the tool does not index its own files
+    - curl -sSfL -o "/tmp/$name.tar.gz" "$url/$name.tar.gz"
+    - curl -sSfL -o "/tmp/$name.sha256" "$url/$name.sha256"
+    - (cd /tmp && sha256sum -c "$name.sha256")
+    - tar xzf "/tmp/$name.tar.gz" -C /tmp && export PATH="/tmp/$name:$PATH"
   script:
     - scrutate index
-    - scrutate dupes --json --min-tokens 60 > scrutate-dupes.json
-    - scrutate grep -F --json "TODO(security)" . > scrutate-todos.jsonl || true
+    # exit status 1 means nothing was found, which is not a failed job; 2 is an error
+    - scrutate dupes --json --min-tokens 60 > scrutate-dupes.json || [ $? -eq 1 ]
+    - scrutate grep -F --json "TODO(security)" . > scrutate-todos.jsonl || [ $? -eq 1 ]
   artifacts:
     paths: [scrutate-dupes.json, scrutate-todos.jsonl]
     expire_in: 1 week

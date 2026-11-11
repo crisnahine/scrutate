@@ -1,15 +1,32 @@
 # pre-commit hook
 
-Fail a commit when it introduces exact duplicate functions (tune `--min-tokens`):
+Fail a commit when the repository holds exact duplicate functions, and list them. `--min-tokens`
+is the smallest function that counts, in distinct tokens of its body; `--threshold` below 1 also
+catches near duplicates. The hook runs the `scrutate` on `PATH`; pre-commit does not install it.
+
+From this repository (pre-commit 4.4 or newer):
 
 ```yaml
 # .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/crisnahine/scrutate
+    rev: v0.1.0
+    hooks:
+      - id: scrutate-dupes
+```
+
+Or written out, to change the arguments:
+
+```yaml
 repos:
   - repo: local
     hooks:
       - id: scrutate-dupes
         name: scrutate duplicate functions
-        entry: bash -c 'scrutate index >/dev/null && ! scrutate dupes --json --min-tokens 80 | grep -q "\"kind\": \"exact\""'
-        language: system
+        entry: bash -c 'scrutate index > /dev/null || exit 2; scrutate dupes --min-tokens 80 --threshold 1; [ $? -eq 1 ]'
+        language: unsupported
         pass_filenames: false
 ```
+
+`language: unsupported` is the name pre-commit 4.4 gave to `language: system`; with an older
+pre-commit, write `system`.

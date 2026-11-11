@@ -8,10 +8,17 @@
 Commands: `:Scrutate <query>` (ranked search), `:ScrutateGrep <regex>`, `:ScrutateSymbol [name]`,
 `:ScrutateCallers [name]` (default: word under cursor). Results go to the quickfix list.
 
-The language server (definitions, references, symbols), on Neovim 0.11 or newer:
+The language server (definitions, references, symbols), on Neovim 0.11 or newer. The plugin
+ships `lsp/scrutate.lua`, so with the plugin loaded one line turns it on:
 
 ```lua
-vim.lsp.config("scrutate", { cmd = { "scrutate", "lsp" }, root_markers = { ".git", ".scrutate" } })
+vim.lsp.enable("scrutate")
+```
+
+Without the plugin, or to name another binary:
+
+```lua
+vim.lsp.config("scrutate", { cmd = { "/path/to/scrutate", "lsp" }, root_markers = { ".scrutate", ".git" } })
 vim.lsp.enable("scrutate")
 ```
 

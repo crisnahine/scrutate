@@ -14,7 +14,7 @@
   <tool name="Scrutate: grep" showInMainMenu="true" showInEditor="true" showInProject="true" showInSearchPopup="true" disabled="false" useConsole="true" showConsoleOnStdOut="true" showConsoleOnStdErr="true" synchronizeAfterRun="false">
     <exec>
       <option name="COMMAND" value="scrutate" />
-      <option name="PARAMETERS" value="grep --sort &quot;$Prompt$&quot; ." />
+      <option name="PARAMETERS" value="grep --sort &quot;$Prompt$&quot; &quot;$ProjectFileDir$&quot;" />
       <option name="WORKING_DIRECTORY" value="$ProjectFileDir$" />
     </exec>
     <filter>

@@ -12,7 +12,7 @@ import jsonschema
 import yaml
 
 W = os.path.dirname(os.path.abspath(__file__))
-WG = "https://raw.githubusercontent.com/microsoft/winget-cli/master/schemas/JSON/manifests/v1.9.0/manifest.{}.1.9.0.json"
+WG = "https://raw.githubusercontent.com/microsoft/winget-cli/master/schemas/JSON/manifests/v1.12.0/manifest.{}.1.12.0.json"
 SCHEMAS = {"scoop": "https://raw.githubusercontent.com/ScoopInstaller/Scoop/master/schema.json",
            "version": WG.format("version"), "installer": WG.format("installer"), "defaultLocale": WG.format("defaultLocale")}
 
