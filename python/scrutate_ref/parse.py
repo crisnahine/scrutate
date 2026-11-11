@@ -54,6 +54,8 @@ _TS_HOLDERS = {"variable_declarator": "name", "public_field_definition": "name"}
 _JS_FUNC_HOLDERS = {"javascript": {"variable_declarator": "name", "field_definition": "property"},
                     "typescript": _TS_HOLDERS, "tsx": _TS_HOLDERS}
 _JS_CALLS = {"call_expression": "function", "new_expression": "constructor"}
+# the values that make an object literal's property a method: `post: function () {}`, `put: () => 3`
+_JS_PROPERTY_FUNCS = (*_JS_FUNCS, "generator_function")
 
 LANGS: dict[str, dict] = {
     "python": dict(load=_load("tree_sitter_python"),
@@ -231,7 +233,7 @@ _CAPS_NAME = re.compile(r"_*[A-Z][A-Z0-9_]*\Z")
 
 
 def _constant_of(lang: str, node, src: bytes):
-    """-> (name, node whose text the chunk shows) of a module or type level constant, or None."""
+    """-> (names, node whose text each chunk shows) of the module or type level constants at `node`, or None."""
     def text(n):
         return src[n.start_byte : n.end_byte].decode("utf8", "replace")
 
@@ -241,16 +243,17 @@ def _constant_of(lang: str, node, src: bytes):
             n = n.parent if n is not None else None
         return n.type if n is not None else ""
 
-    t, shown, name_node = node.type, node, None
+    t, shown, name_nodes = node.type, node, []
     if lang == "rust" and t in ("const_item", "static_item") and kind_up(1) in ("source_file", "declaration_list"):
-        name_node = node.child_by_field_name("name")
+        name_nodes = [node.child_by_field_name("name")]
     elif lang == "go" and t in ("const_spec", "var_spec"):
         at = 2 if kind_up(1) == "var_spec_list" else 1
         if kind_up(at) not in ("const_declaration", "var_declaration") or kind_up(at + 1) != "source_file":
             return None
         if at == 1 and node.parent.named_child_count == 1:
             shown = node.parent
-        name_node = node.child_by_field_name("name")
+        # `const A, B = 1, 2` declares both names; the field also holds the commas
+        name_nodes = [n for n in node.children_by_field_name("name") if n.type == "identifier"]
     elif lang in ("javascript", "typescript", "tsx") and t == "variable_declarator":
         decl = node.parent
         if decl.type != "lexical_declaration" or decl.child_count == 0 or decl.children[0].type != "const":
@@ -264,30 +267,57 @@ def _constant_of(lang: str, node, src: bytes):
         name_node = node.child_by_field_name("name")
         if name_node is None or name_node.type != "identifier":
             return None
+        name_nodes = [name_node]
         val = node.child_by_field_name("value")
         if val is not None and val.type in _JS_FUNCS:
             return None
     elif lang in ("typescript", "tsx") and t == "property_identifier" and kind_up(1) == "enum_body":
-        name_node = node
+        name_nodes = [node]
     elif lang in ("typescript", "tsx") and t == "enum_assignment" and kind_up(1) == "enum_body":
-        name_node = node.child_by_field_name("name")
+        name_nodes = [node.child_by_field_name("name")]
     elif lang == "java" and t == "field_declaration":
         mods = next((c for c in node.children if c.type == "modifiers"), None)
         words = [c.type for c in mods.children] if mods is not None else []
         if "static" not in words or "final" not in words:
             return None
-        decl = node.child_by_field_name("declarator")
-        name_node = decl.child_by_field_name("name") if decl is not None else None
+        name_nodes = [d.child_by_field_name("name") for d in node.children_by_field_name("declarator")]
     elif lang == "python" and t == "expression_statement" and kind_up(1) == "module" and node.named_child_count == 1:
         a = node.named_children[0]
         left = a.child_by_field_name("left") if a.type == "assignment" else None
-        name_node = left if left is not None and left.type == "identifier" else None
-    if name_node is None:
+        name_nodes = [left] if left is not None and left.type == "identifier" else []
+    names = [text(n) for n in name_nodes if n is not None]
+    names = [n for n in names if n != "_" and (lang != "python" or _CAPS_NAME.match(n))]
+    return (names, shown) if names else None
+
+
+def _object_owner(node, src: bytes) -> str | None:
+    """The names that hold the object literal around a JS/TS method: `const store = { sub: { m() {} } }`
+    gives `store.sub`, `module.exports.tool = {...}` gives `tool`. None for a literal nothing names."""
+    obj = node.parent
+    if obj is None or obj.type != "object":
         return None
-    name = text(name_node)
-    if name == "_" or lang == "python" and not _CAPS_NAME.match(name):
-        return None
-    return name, shown
+    parts = []
+    while obj.parent is not None:
+        holder, named = obj.parent, None
+        if holder.type == "pair":
+            named = holder.child_by_field_name("key")
+            named = named if named is not None and named.type == "property_identifier" else None
+        elif holder.type == "variable_declarator":
+            named = holder.child_by_field_name("name")
+            named = named if named is not None and named.type == "identifier" else None
+        elif holder.type == "assignment_expression":
+            left = holder.child_by_field_name("left")
+            if left is not None and left.type == "identifier":
+                named = left
+            elif left is not None and left.type == "member_expression":
+                named = left.child_by_field_name("property")
+        if named is None:
+            break
+        parts.append(src[named.start_byte : named.end_byte].decode("utf8", "replace"))
+        if holder.type != "pair" or holder.parent is None or holder.parent.type != "object":
+            break
+        obj = holder.parent
+    return ".".join(reversed(parts)) or None
 
 
 def _last_row(node) -> int:
@@ -380,6 +410,11 @@ def parse_source(path: str, source: str) -> list[Chunk]:
                 kind = "function"
                 nn = node.child_by_field_name(field)
                 name = txt(nn.start_byte, nn.end_byte) if nn is not None else None
+        is_js = lang in ("javascript", "typescript", "tsx")
+        if kind is None and t == "pair" and is_js:
+            key, val = node.child_by_field_name("key"), node.child_by_field_name("value")
+            if key is not None and key.type == "property_identifier" and val is not None and val.type in _JS_PROPERTY_FUNCS:
+                kind, name = "method", txt(key.start_byte, key.end_byte)
         if kind is None and t == "assignment_expression" and lang == "javascript":
             left, right = node.child_by_field_name("left"), node.child_by_field_name("right")
             if left is not None and right is not None and right.type in _JS_FUNCS:
@@ -398,6 +433,8 @@ def parse_source(path: str, source: str) -> list[Chunk]:
                 owner = _first_of_type(node.child_by_field_name("receiver"), "type_identifier")
                 if owner is not None:
                     q = _qualify(_qualify(stack[-1][1] if stack else "", txt(owner.start_byte, owner.end_byte)), name)
+            if is_js and t in ("method_definition", "pair") and (owner := _object_owner(node, src)) is not None:
+                q = _qualify(_qualify(stack[-1][1] if stack else "", owner), name)
 
             outer = node
             if is_py and node.parent is not None and node.parent.type == "decorated_definition":
@@ -427,10 +464,11 @@ def parse_source(path: str, source: str) -> list[Chunk]:
             stack.append((new, q))
         elif (const := _constant_of(lang, node, src)) is not None:
             # not on the stack: calls in the initializer stay with the enclosing definition
-            cname, shown = const
-            consts.append(Chunk(cname, _qualify(stack[-1][1] if stack else "", cname), "constant", shown.start_point[0] + 1,
-                                _last_row(shown) + 1, _head(txt(shown.start_byte, shown.end_byte), MAX_CHUNK_LINES),
-                                doc="" if is_py else _leading_comment(node, src)))
+            cnames, shown = const
+            for cname in cnames:
+                consts.append(Chunk(cname, _qualify(stack[-1][1] if stack else "", cname), "constant", shown.start_point[0] + 1,
+                                    _last_row(shown) + 1, _head(txt(shown.start_byte, shown.end_byte), MAX_CHUNK_LINES),
+                                    doc="" if is_py else _leading_comment(node, src)))
         elif t in calls and stack:
             callee = _callee_name(node, calls[t], src)
             if callee:

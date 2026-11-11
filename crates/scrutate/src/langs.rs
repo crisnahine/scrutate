@@ -276,11 +276,15 @@ fn js_export_name(node: Node, src: &[u8]) -> Option<String> {
     let name = t.strip_prefix("module.exports.").or_else(|| t.strip_prefix("exports."))?;
     Some(name.to_string()).filter(|n| !n.contains('.'))
 }
+/// The values that make an object literal's property a method: `post: function () {}`, `put: () => 3`.
+const JS_PROPERTY_FUNCS: &[&str] = &["arrow_function", "function_expression", "function", "generator_function"];
+const JS_PROPERTY_METHOD: Def = Def { value_kinds: JS_PROPERTY_FUNCS, ..d("pair", "method", &[NameRule::ChildKind(&["property_identifier"])]) };
 const JS_DEFS: &[Def] = &[
     d("function_declaration", "function", N),
     d("generator_function_declaration", "function", N),
     d("class_declaration", "class", N),
     d("method_definition", "method", N),
+    JS_PROPERTY_METHOD,
     dv("variable_declarator", N),
     dv("field_definition", &[NameRule::Field("property")]),
     d("assignment_expression", "function", &[NameRule::Custom(js_export_name)]),
@@ -294,6 +298,7 @@ const TS_DEFS: &[Def] = &[
     d("interface_declaration", "interface", N),
     d("type_alias_declaration", "type", N),
     d("enum_declaration", "enum", N),
+    JS_PROPERTY_METHOD,
     d("abstract_method_signature", "method", N),
     d("function_signature", "function", N),
     d("internal_module", "module", N),
@@ -485,7 +490,7 @@ const CORE: &[LangSpec] = &[
             db("struct_specifier", "struct", N),
             db("enum_specifier", "enum", N),
         ],
-        calls: &[c("call_expression", "function"), c("message_expression", "")],
+        calls: &[c("call_expression", "function"), c("message_expression", "method")],
         docstring: false,
         wrappers: &[],
         outer: &[],

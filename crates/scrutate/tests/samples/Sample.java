@@ -3,6 +3,7 @@ package demo;
 /** A greeter. */
 public class Greeter {
     private final String name;
+    static final int MIN = 0, MAX = 9;
     public Greeter(String name) { this.name = name; }
     /** Greets. */
     public String greet() { return helper(name); }

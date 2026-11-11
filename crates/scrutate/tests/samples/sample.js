@@ -21,3 +21,5 @@ function helper(message) {
 const arrow = (x) => x * 2;
 
 export { Greeter, helper, arrow };
+
+const store = { count: 0, increment() { return this.total(); }, total: () => 1 };

@@ -85,6 +85,14 @@
     [
       "class",
       "Pt"
+    ],
+    [
+      "constant",
+      "Greeter.MIN"
+    ],
+    [
+      "constant",
+      "Greeter.MAX"
     ]
   ],
   "manifest.pp": [
@@ -559,6 +567,14 @@
     [
       "function",
       "abs"
+    ],
+    [
+      "constant",
+      "MinLen"
+    ],
+    [
+      "constant",
+      "MaxLen"
     ]
   ],
   "sample.graphql": [
@@ -717,6 +733,18 @@
     [
       "function",
       "arrow"
+    ],
+    [
+      "method",
+      "store.increment"
+    ],
+    [
+      "method",
+      "store.total"
+    ],
+    [
+      "constant",
+      "store"
     ]
   ],
   "sample.json": [

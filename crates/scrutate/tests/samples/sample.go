@@ -13,3 +13,5 @@ func Greet(name string) string { return fmt.Sprintf("hi %s", name) }
 func (p Point) Len() int { return abs(p.X) }
 
 func abs(x int) int { return x }
+
+const MinLen, MaxLen = 1, 9

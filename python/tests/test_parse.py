@@ -147,7 +147,7 @@ def test_constants_are_symbols():
     assert [q for q, _ in rs] == ["LIMIT", "NAME", "S.N"] and rs[0][1] == "pub const LIMIT: usize = 3;"
     go = _consts("c.go", "package p\n\nconst A = 1\nconst (\n\tB = 2\n\tC\n)\nvar X, Y int\nvar (\n\tZ = 3\n)\nvar _ = 4\n"
                          "func f() { const L = 1 }\n")
-    assert [q for q, _ in go] == ["A", "B", "C", "X", "Z"] and (go[0][1], go[1][1]) == ("const A = 1", "B = 2")
+    assert [q for q, _ in go] == ["A", "B", "C", "X", "Y", "Z"] and (go[0][1], go[1][1]) == ("const A = 1", "B = 2")
     ts = _consts("c.ts", "export const MAX = 3;\nconst f = () => 1, k = 2;\nlet notc = 1;\nconst { a, b } = o;\n"
                          "enum Color { Red, Green = 2 }\nfunction g() { const inner = 1; }\n")
     assert [q for q, _ in ts] == ["MAX", "k", "Color.Red", "Color.Green"] and ts[0][1] == "export const MAX = 3;"
@@ -168,3 +168,35 @@ def test_constants_come_last_and_do_not_move_the_file_header():
 def test_a_turbofish_call_is_a_call():
     f = next(c for c in parse_source("t.rs", "fn f() {\n    g::<u8>(1);\n    x.collect::<Vec<_>>();\n}\n") if c.name == "f")
     assert sorted(f.calls) == ["collect", "g"]
+
+
+def test_every_name_of_a_declaration_is_a_constant_with_the_declaration_as_its_text():
+    go = _consts("m.go", "package p\n\nvar X, Y int\nconst A, B = 1, 2\nconst (\n\tC, D = 3, 4\n\tH = 7\n)\nvar (\n\tE, F string\n)\n"
+                         "var _, G = 5, 6\n")
+    assert go == [("X", "var X, Y int"), ("Y", "var X, Y int"), ("A", "const A, B = 1, 2"), ("B", "const A, B = 1, 2"),
+                  ("C", "C, D = 3, 4"), ("D", "C, D = 3, 4"), ("H", "H = 7"), ("E", "E, F string"), ("F", "E, F string"),
+                  ("G", "var _, G = 5, 6")]
+    java = _consts("M.java", "class M {\n  static final int A = 1, B = 2;\n  static int n, m;\n}\n")
+    assert java == [("M.A", "static final int A = 1, B = 2;"), ("M.B", "static final int A = 1, B = 2;")]
+    js = _consts("m.js", "const a = 1, b = 2;\nexport const c = 3, d = () => 4;\n")
+    assert [q for q, _ in js] == ["a", "b", "c"] and js[1][1] == "const a = 1, b = 2;"
+
+
+OBJECT_LITERALS = """const api = { get() { return 1; }, post: function () { return 2; }, put: () => 3, gen: function* () {}, "q": () => 5 };
+export const store = { count: 0, increment() { return this.total(); }, total() { return this.count; }, sub: { m() {} }, later: async () => go() };
+export default { methods: { save() { return 1; }, run() { return this.save(); } } };
+module.exports.tool = { build() { return 4; } };
+exports.kit = { fix() {} };
+f({ cb() {} });
+"""
+
+
+def test_methods_of_an_object_literal_are_owned_by_what_holds_the_literal():
+    for path in ("o.js", "o.ts"):
+        chunks = parse_source(path, OBJECT_LITERALS)
+        assert [(c.name, c.qualname) for c in chunks if c.kind == "method"] == [
+            ("get", "api.get"), ("post", "api.post"), ("put", "api.put"), ("gen", "api.gen"),
+            ("increment", "store.increment"), ("total", "store.total"), ("m", "store.sub.m"), ("later", "store.later"),
+            ("save", "methods.save"), ("run", "methods.run"), ("build", "tool.build"), ("fix", "kit.fix"), ("cb", "cb")], path
+        c = by_q(chunks)
+        assert c["store.later"].calls == {"go"} and c["store.increment"].calls == {"total"}

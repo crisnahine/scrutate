@@ -16,47 +16,65 @@ fn candidate_cut_keeps_the_lowest_indices_on_tied_scores() {
     assert_eq!(keep, vec![0, 1, 7]);
 }
 
+/// Parses `make(n)` and `make(4 * n)` (best of 3 runs each, so a loaded machine does not decide)
+/// and fails if the larger input costs 10x or more, where linear work gives 4x and quadratic 16x.
+fn assert_parse_scales_linearly(path: &str, n: usize, make: impl Fn(usize) -> String, check: impl Fn(usize, &[scrutate::parse::Chunk])) {
+    let best = |k: usize| {
+        let src = make(k);
+        (0..3)
+            .map(|_| {
+                let t = Instant::now();
+                let chunks = parse_source(path, &src);
+                let took = t.elapsed();
+                check(k, &chunks);
+                took
+            })
+            .min()
+            .unwrap()
+    };
+    let (small, large) = (best(n), best(4 * n));
+    // a floor, so that a run too short to measure does not make the ratio
+    let ratio = large.as_secs_f64() / small.as_secs_f64().max(0.005);
+    assert!(ratio < 10.0, "{path}: {n} items took {small:?}, {} took {large:?}", 4 * n);
+}
+
 #[test]
 fn deeply_nested_functions_index_in_bounded_time_and_size() {
-    let n = 2000;
-    for sep in ["\n", ""] {
-        let src = format!("{}{}", format!("function a(){{{sep}").repeat(n), "}".repeat(n));
-        let t = Instant::now();
-        let chunks = parse_source("a.js", &src);
-        let secs = t.elapsed().as_secs_f64();
-        assert_eq!(chunks.len(), n);
-        let deepest = chunks.iter().map(|c| c.qualname.split('.').count()).max().unwrap();
-        assert_eq!(deepest, 32);
-        let qual_bytes: usize = chunks.iter().map(|c| c.qualname.len()).sum();
-        assert!(qual_bytes < 64 * n, "{qual_bytes} bytes of qualified names");
-        assert!(secs < 3.0, "parse took {secs:.1}s");
+    for (sep, n) in [("\n", 500), ("", 2500)] {
+        let make = |n: usize| format!("{}{}", format!("function a(){{{sep}").repeat(n), "}".repeat(n));
+        assert_parse_scales_linearly("a.js", n, make, |n, chunks| {
+            assert_eq!(chunks.len(), n);
+            let deepest = chunks.iter().map(|c| c.qualname.split('.').count()).max().unwrap();
+            assert_eq!(deepest, 32);
+            let qual_bytes: usize = chunks.iter().map(|c| c.qualname.len()).sum();
+            assert!(qual_bytes < 64 * n, "{qual_bytes} bytes of qualified names");
+        });
     }
 }
 
 #[test]
 fn a_node_with_many_children_parses_in_linear_time() {
-    let src = "(f ".repeat(20000);
-    let t = Instant::now();
-    parse_source("a.scm", &src);
-    let secs = t.elapsed().as_secs_f64();
-    assert!(secs < 3.0, "parse took {secs:.1}s");
+    assert_parse_scales_linearly("a.scm", 5000, |n| "(f ".repeat(n), |_, _| {});
 }
 
 #[test]
 fn a_file_of_many_sibling_definitions_parses_in_linear_time() {
-    let n = 4000;
     for (path, line) in [
         ("w.js", "function f{i}(x) {{ return x + {i}; }}"),
         ("w.c", "int f{i}(int x) {{ return x + {i}; }}"),
         ("w.go", "func f{i}(x int) int {{ return x + {i} }}"),
     ] {
-        let body: String = (0..n).map(|i| line.replace("{i}", &i.to_string()).replace("{{", "{").replace("}}", "}") + "\n").collect();
-        let src = if path.ends_with(".go") { format!("package p\n{body}") } else { body };
-        let t = Instant::now();
-        let chunks = parse_source(path, &src);
-        let secs = t.elapsed().as_secs_f64();
-        assert_eq!(chunks.iter().filter(|c| c.kind == "function").count(), n, "{path}");
-        assert!(secs < 3.0, "{path}: parse took {secs:.1}s");
+        let make = |n: usize| {
+            let body: String = (0..n).map(|i| line.replace("{i}", &i.to_string()).replace("{{", "{").replace("}}", "}") + "\n").collect();
+            if path.ends_with(".go") {
+                format!("package p\n{body}")
+            } else {
+                body
+            }
+        };
+        assert_parse_scales_linearly(path, 1000, make, |n, chunks| {
+            assert_eq!(chunks.iter().filter(|c| c.kind == "function").count(), n, "{path}");
+        });
     }
 }
 
@@ -322,7 +340,7 @@ fn constants_are_symbols_in_every_language_the_reference_has() {
     assert_eq!(named(&rs), ["LIMIT", "NAME", "S.N"]);
     assert_eq!(rs[0].2, "pub const LIMIT: usize = 3;");
     let go = constants("c.go", "package p\n\nconst A = 1\nconst (\n\tB = 2\n\tC\n)\nvar X, Y int\nvar (\n\tZ = 3\n)\nvar _ = 4\nfunc f() { const L = 1 }\n");
-    assert_eq!(named(&go), ["A", "B", "C", "X", "Z"]);
+    assert_eq!(named(&go), ["A", "B", "C", "X", "Y", "Z"]);
     assert_eq!((go[0].2.as_str(), go[1].2.as_str()), ("const A = 1", "B = 2"));
     let ts_src = "export const MAX = 3;\nconst f = () => 1, k = 2;\nlet notc = 1;\nconst { a, b } = o;\nenum Color { Red, Green = 2 }\nfunction g() { const inner = 1; }\n";
     let ts = constants("c.ts", ts_src);
@@ -393,4 +411,104 @@ fn a_turbofish_call_is_a_call_and_a_struct_body_holds_methods() {
     assert_eq!(calls, ["collect", "g"]);
     let got = symbols("p.hpp", "struct P {\n  ~P() = default;\n  P() {}\n};\n");
     assert_eq!(got, vec![("struct".into(), "P".into()), ("method".into(), "P.~P".into()), ("method".into(), "P.P".into())]);
+}
+
+#[test]
+fn every_name_of_a_declaration_is_a_constant_with_the_declaration_as_its_text() {
+    let go = constants("m.go", "package p\n\nvar X, Y int\nconst A, B = 1, 2\nconst (\n\tC, D = 3, 4\n\tH = 7\n)\nvar (\n\tE, F string\n)\nvar _, G = 5, 6\n");
+    assert_eq!(named(&go), ["X", "Y", "A", "B", "C", "D", "H", "E", "F", "G"]);
+    let texts: Vec<&str> = go.iter().map(|(_, _, t)| t.as_str()).collect();
+    assert_eq!(
+        texts,
+        [
+            "var X, Y int",
+            "var X, Y int",
+            "const A, B = 1, 2",
+            "const A, B = 1, 2",
+            "C, D = 3, 4",
+            "C, D = 3, 4",
+            "H = 7",
+            "E, F string",
+            "E, F string",
+            "var _, G = 5, 6"
+        ]
+    );
+    let java = constants("M.java", "class M {\n  static final int A = 1, B = 2;\n  static int n, m;\n}\n");
+    assert_eq!(named(&java), ["M.A", "M.B"]);
+    assert!(java.iter().all(|(_, _, t)| t == "static final int A = 1, B = 2;"), "{java:?}");
+    let js = constants("m.js", "const a = 1, b = 2;\nexport const c = 3, d = () => 4;\n");
+    assert_eq!(named(&js), ["a", "b", "c"]);
+    assert_eq!(js[1].2, "const a = 1, b = 2;");
+}
+
+fn calls_of(path: &str, src: &str, qualname: &str) -> Vec<String> {
+    find(&parse_source(path, src), qualname).calls.iter().cloned().collect()
+}
+
+#[test]
+fn a_method_call_records_the_method_not_the_receiver() {
+    let cases = [
+        ("m.lua", "function f()\n  obj:meth(1)\nend\n", "f"),
+        ("m.lua", "function f()\n  obj.meth(1)\nend\n", "f"),
+        ("m.php", "<?php\nfunction f() { $obj->meth(); }\n", "f"),
+        ("m.php", "<?php\nfunction f() { Obj::meth(); }\n", "f"),
+        ("m.kt", "fun f() { obj.meth(1) }\n", "f"),
+        ("m.swift", "func f() { obj.meth(1) }\n", "f"),
+        ("m.cs", "class C { void F() { obj.meth(1); } }\n", "C.F"),
+        ("m.rb", "def f\n  obj.meth(1)\nend\n", "f"),
+        ("m.java", "class C { void f() { obj.meth(1); } }\n", "C.f"),
+        ("m.go", "package p\nfunc f() { obj.meth(1) }\n", "f"),
+        ("m.py", "def f():\n    obj.meth(1)\n", "f"),
+        ("m.js", "function f() { obj.meth(1); }\n", "f"),
+        ("m.rs", "fn f() { obj.meth(1); }\n", "f"),
+        ("m.cpp", "void f() { obj->meth(1); }\n", "f"),
+        ("m.scala", "object O { def f() = obj.meth(1) }\n", "O.f"),
+        ("m.mm", "void f(void) { [obj meth]; [obj meth:1 with:2]; }\n", "f"),
+        ("m.zig", "fn f() void { obj.meth(1); }\n", "f"),
+        ("m.jl", "function f()\n  obj.meth(1)\nend\n", "f"),
+    ];
+    let wrong: Vec<String> = cases
+        .iter()
+        .map(|&(path, src, q)| (path, calls_of(path, src, q)))
+        .filter(|(_, got)| got != &["meth"])
+        .map(|(p, got)| format!("{p}: {got:?}"))
+        .collect();
+    assert!(wrong.is_empty(), "{wrong:?}");
+}
+
+const OBJECT_LITERALS: &str = "const api = { get() { return 1; }, post: function () { return 2; }, put: () => 3, gen: function* () {}, \"q\": () => 5 };
+export const store = { count: 0, increment() { return this.total(); }, total() { return this.count; }, sub: { m() {} }, later: async () => go() };
+export default { methods: { save() { return 1; }, run() { return this.save(); } } };
+module.exports.tool = { build() { return 4; } };
+exports.kit = { fix() {} };
+f({ cb() {} });
+";
+
+#[test]
+fn methods_of_an_object_literal_are_owned_by_what_holds_the_literal() {
+    for path in ["o.js", "o.ts"] {
+        let chunks = parse_source(path, OBJECT_LITERALS);
+        let methods: Vec<(&str, &str)> = chunks.iter().filter(|c| c.kind == "method").map(|c| (c.name.as_str(), c.qualname.as_str())).collect();
+        assert_eq!(
+            methods,
+            [
+                ("get", "api.get"),
+                ("post", "api.post"),
+                ("put", "api.put"),
+                ("gen", "api.gen"),
+                ("increment", "store.increment"),
+                ("total", "store.total"),
+                ("m", "store.sub.m"),
+                ("later", "store.later"),
+                ("save", "methods.save"),
+                ("run", "methods.run"),
+                ("build", "tool.build"),
+                ("fix", "kit.fix"),
+                ("cb", "cb"),
+            ],
+            "{path}"
+        );
+        assert_eq!(find(&chunks, "store.later").calls.iter().collect::<Vec<_>>(), ["go"], "{path}");
+        assert_eq!(find(&chunks, "store.increment").calls.iter().collect::<Vec<_>>(), ["total"], "{path}");
+    }
 }
