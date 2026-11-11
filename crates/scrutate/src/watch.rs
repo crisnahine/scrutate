@@ -96,6 +96,29 @@ fn git_exclude(root: &Path) -> Option<PathBuf> {
     Some(std::fs::canonicalize(dir).ok()?.join("info").join("exclude"))
 }
 
+/// The rule files the walks read that are not ignore files inside the tree: those of each
+/// directory above the root (`.gitignore` only up to the repository top), git's exclude file of
+/// the repository and of each one in `dirs`, and git's global excludes file.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn outer_rules<'a>(root: &Path, dirs: impl Iterator<Item = &'a PathBuf>) -> HashSet<PathBuf> {
+    let top = root.ancestors().find(|a| a.join(".git").exists());
+    let mut rules = HashSet::new();
+    for a in root.ancestors().skip(1) {
+        rules.extend([a.join(".ignore"), a.join(crate::instant::RGIGNORE)]);
+        if top.is_some_and(|t| a.starts_with(t)) {
+            rules.insert(a.join(".gitignore"));
+        }
+    }
+    rules.extend(git_exclude(root));
+    rules.extend(dirs.filter(|d| *d != root && d.join(".git").exists()).filter_map(|d| git_exclude(d)));
+    // the walks apply the global file inside a repository only
+    if top.is_some() {
+        let global = ignore::gitignore::gitconfig_excludes_path();
+        rules.extend(global.and_then(|p| Some(std::fs::canonicalize(p.parent()?).ok()?.join(p.file_name()?))));
+    }
+    rules
+}
+
 /// What the last walk of the tree found.
 #[cfg_attr(target_os = "macos", allow(dead_code))]
 struct Walked {
@@ -103,34 +126,40 @@ struct Walked {
     code: HashSet<PathBuf>,
     text: HashSet<PathBuf>,
     text_index: bool,
-    exclude: Option<PathBuf>,
+    /// `outer_rules`
+    rules: HashSet<PathBuf>,
     at: Instant,
-    /// directories that got no watch
+    /// directories the walks enter that got no watch
     unwatched: usize,
+    /// directories that hold only rule files and got no watch
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    unwatched_rules: usize,
 }
 
 #[cfg_attr(target_os = "macos", allow(dead_code))]
 impl Walked {
     fn new(root: &Path, code: &CodeWalk) -> Walked {
         let text_index = has_text_index(root);
-        Walked {
-            code: code.builder(root).build().flatten().filter(|e| e.file_type().is_some_and(|t| t.is_dir())).map(|e| e.into_path()).collect(),
-            text: if text_index { crate::textindex::walk_entries(root, None).0.into_iter().collect() } else { HashSet::new() },
-            text_index,
-            exclude: git_exclude(root),
-            at: Instant::now(),
-            unwatched: 0,
-        }
+        let code: HashSet<PathBuf> =
+            code.builder(root).build().flatten().filter(|e| e.file_type().is_some_and(|t| t.is_dir())).map(|e| e.into_path()).collect();
+        let text: HashSet<PathBuf> = if text_index { crate::textindex::walk_entries(root, None).0.into_iter().collect() } else { HashSet::new() };
+        let rules = outer_rules(root, code.union(&text));
+        Walked { code, text, text_index, rules, at: Instant::now(), unwatched: 0, unwatched_rules: 0 }
     }
 
     fn holds(&self, dir: &Path) -> bool {
         self.code.contains(dir) || self.text.contains(dir)
     }
 
-    /// Every directory either walk enters, and the one holding git's exclude file.
+    /// The directories of `rules` that no walk enters.
+    fn rule_dirs(&self) -> HashSet<PathBuf> {
+        self.rules.iter().filter_map(|r| r.parent()).filter(|d| !self.holds(d) && d.is_dir()).map(Path::to_path_buf).collect()
+    }
+
+    /// Every directory either walk enters, and those of `rule_dirs`.
     fn watched(&self) -> HashSet<PathBuf> {
         let mut all: HashSet<PathBuf> = self.code.union(&self.text).cloned().collect();
-        all.extend(self.exclude.as_deref().and_then(Path::parent).filter(|p| p.is_dir()).map(Path::to_path_buf));
+        all.extend(self.rule_dirs());
         all
     }
 
@@ -140,10 +169,10 @@ impl Walked {
         self.unwatched > 0 || self.at.elapsed() >= WALK_EVERY || self.text_index != has_text_index(root)
     }
 
-    /// Whether `path` holds rules for what is indexed: an ignore file, git's exclude file, or a
-    /// `.scrutate.toml`.
+    /// Whether `path` holds rules for what is indexed: an ignore file in the tree, one of `rules`,
+    /// or a `.scrutate.toml`.
     fn sets_rules(&self, root: &Path, path: &Path) -> bool {
-        self.exclude.as_deref() == Some(path)
+        self.rules.contains(path)
             || inside(root, path)
                 && path.file_name().is_some_and(|n| [".gitignore", ".ignore", crate::instant::RGIGNORE, ".scrutate.toml"].iter().any(|r| n == *r))
     }
@@ -302,27 +331,47 @@ fn sync_watches(watcher: &mut impl Watcher, root: &Path, code: &CodeWalk, old: O
     }
     // notify drops the watches of moved and deleted directories itself, and a lost queue or the
     // limit may have dropped others, so every directory is watched again (inotify merges repeats)
-    let order = watch_order(root, &dirs);
+    // directories that only hold rule files come last, so at the watch limit they lose first
+    let rule_dirs = now.rule_dirs();
+    let tree: HashSet<PathBuf> = dirs.difference(&rule_dirs).cloned().collect();
+    let mut order = watch_order(root, &tree);
+    let mut rules_order: Vec<PathBuf> = rule_dirs.into_iter().collect();
+    rules_order.sort();
+    let tree_dirs = order.len();
+    order.extend(rules_order);
     watcher.watch(root, RecursiveMode::NonRecursive).with_context(|| format!("watch {}", root.display()))?;
-    let mut first = None;
-    for d in &order[1..] {
+    let (mut first, mut first_rules) = (None, None);
+    for (i, d) in order.iter().enumerate().skip(1) {
         if let Err(e) = watcher.watch(d, RecursiveMode::NonRecursive) {
-            now.unwatched += 1;
-            first.get_or_insert(e);
+            if i < tree_dirs {
+                now.unwatched += 1;
+                first.get_or_insert(e);
+            } else {
+                // not counted in `unwatched`: such a directory would make every burst walk
+                now.unwatched_rules += 1;
+                first_rules.get_or_insert(e);
+            }
         }
     }
     if let Some(e) = first.filter(|_| old.is_none_or(|o| o.unwatched != now.unwatched)) {
         eprintln!(
             "[scrutate] could not watch {} of {} directories ({e}); while any is unwatched, every change to an indexed file walks the tree, so a change in one of them is indexed with the next change elsewhere",
-            now.unwatched,
-            order.len()
+            now.unwatched, tree_dirs
+        );
+    }
+    if let Some(e) = first_rules.filter(|_| old.is_none_or(|o| o.unwatched_rules != now.unwatched_rules)) {
+        eprintln!(
+            "[scrutate] could not watch {} of {} directories that only hold ignore rules ({e}); a change to those rules applies with the next walk of the tree",
+            now.unwatched_rules,
+            order.len() - tree_dirs
         );
     }
     Ok(now)
 }
 
-/// Windows: one recursive watch on the root (`ReadDirectoryChangesW`), plus the directory of git's
-/// exclude file when it is outside the root. The walk only records the directories.
+/// Windows: one recursive watch on the root (`ReadDirectoryChangesW`), plus one non-recursive watch
+/// per directory outside the root that holds rule files the walks read. The walk only records the
+/// directories.
 #[cfg(all(not(target_os = "linux"), not(target_os = "macos")))]
 fn sync_watches(watcher: &mut impl Watcher, root: &Path, code: &CodeWalk, old: Option<&Walked>) -> Result<Walked> {
     let now = Walked::new(root, code);

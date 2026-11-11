@@ -63,6 +63,9 @@ fn start_watch(root: &Path) -> (KillOnDrop, Receiver<String>) {
         .args(["watch", "."])
         .current_dir(root)
         .env("SCRUTATE_WATCH_DEBUG", "1")
+        // no global git excludes file from the user's own configuration
+        .env("GIT_CONFIG_GLOBAL", "/nonexistent")
+        .env("XDG_CONFIG_HOME", "/nonexistent")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -206,13 +209,15 @@ fn only_directories_the_index_holds_are_watched() {
     assert_eq!(r.run(&["index"]), 0);
     let (child, rx) = start_watch(&r.root);
     wait_watching(&rx);
-    assert_eq!(inotify_watches(child.0.id()), 2, "the root and src/");
+    // each directory above the root, for its ignore files
+    let above = r.root.ancestors().count() - 1;
+    assert_eq!(inotify_watches(child.0.id()), above + 2, "the root and src/");
     r.write("src/new/b.py", b"def beta():\n    return 2\n");
     wait_for(20, "the new file", || r.indexed("beta"));
-    assert_eq!(inotify_watches(child.0.id()), 3, "the root, src/ and src/new/");
+    assert_eq!(inotify_watches(child.0.id()), above + 3, "the root, src/ and src/new/");
     fs::remove_dir_all(r.root.join("src/new")).unwrap();
     wait_for(20, "the removal", || !r.indexed("beta"));
-    assert_eq!(inotify_watches(child.0.id()), 2, "a removed directory's watch is gone");
+    assert_eq!(inotify_watches(child.0.id()), above + 2, "a removed directory's watch is gone");
 }
 
 /// Stderr lines up to and including the first update line that reports `changed` and `removed`
@@ -328,6 +333,54 @@ fn a_save_of_an_ignored_file_starts_no_update() {
     let (r, _child, rx) = watched("ignored", &[(".ignore", "skip.py\n"), ("src/a.py", "def alpha():\n    return 1\n")]);
     r.write("src/skip.py", b"def ignored_one():\n    return 2\n");
     // longer than a burst's quiet time, and than macOS's first pause between checks
+    std::thread::sleep(Duration::from_millis(2500));
+    let lines: Vec<String> = rx.try_iter().collect();
+    assert!(lines.iter().all(|l| !l.contains("changed")), "{lines:?}");
+    #[cfg(not(target_os = "macos"))]
+    assert!(lines.iter().all(|l| !l.contains("burst:")), "{lines:?}");
+    r.write("src/a.py", b"def alpha_two():\n    return 1\n");
+    burst_was(&wait_update(&rx, 1, 0), Some(1), false);
+}
+
+/// Like `watched`, for a repository at `<name>/repo`; -> (`<name>`, the repository, ...).
+fn watched_below(name: &str, files: &[(&str, &str)]) -> (Repo, Repo, KillOnDrop, Receiver<String>) {
+    let above = Repo::new(name);
+    let r = Repo { root: above.root.join("repo") };
+    for (rel, text) in files {
+        r.write(rel, text.as_bytes());
+    }
+    assert_eq!(r.run(&["index"]), 0);
+    let (child, rx) = start_watch(&r.root);
+    wait_watching(&rx);
+    (above, r, child, rx)
+}
+
+#[test]
+fn a_file_an_ignore_file_above_the_root_starts_to_list_leaves_the_index() {
+    let (above, r, _child, rx) =
+        watched_below("aboveadd", &[("src/a.py", "def alpha():\n    return 1\n"), ("src/b.py", "def listed_above():\n    return 2\n")]);
+    above.write(".ignore", b"b.py\n");
+    burst_was(&wait_update(&rx, 0, 1), Some(0), true);
+    assert!(!r.indexed("listed_above"));
+}
+
+#[test]
+fn a_file_the_exclude_file_of_a_nested_repository_starts_to_list_leaves_the_index() {
+    let (r, _child, rx) = watched(
+        "nestedexclude",
+        &[("src/a.py", "def alpha():\n    return 1\n"), ("vendor/lib/.git/info/exclude", ""), ("vendor/lib/x.py", "def excluded_later():\n    return 2\n")],
+    );
+    r.write("vendor/lib/.git/info/exclude", b"x.py\n");
+    burst_was(&wait_update(&rx, 0, 1), Some(0), true);
+    assert!(!r.indexed("excluded_later"));
+}
+
+#[test]
+fn a_file_written_above_the_root_starts_no_update() {
+    let (above, r, _child, rx) = watched_below("aboveother", &[("src/a.py", "def alpha():\n    return 1\n")]);
+    above.write("notes.txt", b"x\n");
+    // outside a git repository the walks read no .gitignore
+    above.write(".gitignore", b"a.py\n");
     std::thread::sleep(Duration::from_millis(2500));
     let lines: Vec<String> = rx.try_iter().collect();
     assert!(lines.iter().all(|l| !l.contains("changed")), "{lines:?}");
@@ -455,6 +508,39 @@ fn a_directory_that_could_not_be_watched_is_walked_with_the_next_change() {
     r.write("a.py", b"def alpha_two():\n    return 1\n");
     burst_was(&wait_update_any(&rx), None, true);
     wait_for(20, "locked/c.py", || r.indexed("locked_new") && r.indexed("alpha_two"));
+}
+
+/// A directory above the root that cannot be watched costs its rules' changes the wait for the next
+/// walk, not a walk on every save. Root can read it whatever the mode says: nothing to test there.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_directory_above_the_root_that_could_not_be_watched_does_not_walk_every_burst() {
+    use std::os::unix::fs::PermissionsExt;
+    struct Restore(PathBuf);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o755));
+        }
+    }
+    let above = Repo::new("aboveunwatched");
+    let r = Repo { root: above.root.join("repo") };
+    r.write("src/a.py", b"def alpha():\n    return 1\n");
+    assert_eq!(r.run(&["index"]), 0);
+    // search permission only: the walks still open its .ignore by name, inotify cannot watch it
+    fs::set_permissions(&above.root, fs::Permissions::from_mode(0o311)).unwrap();
+    let _restore = Restore(above.root.clone());
+    if fs::read_dir(&above.root).is_ok() {
+        return;
+    }
+    let (_child, rx) = start_watch(&r.root);
+    let mut lines = Vec::new();
+    while !lines.last().is_some_and(|l: &String| l.contains("watching")) {
+        lines.push(rx.recv_timeout(Duration::from_secs(60)).expect("watch starts"));
+    }
+    assert!(lines.iter().any(|l| l.contains("that only hold ignore rules")), "{lines:?}");
+    assert!(lines.iter().all(|l| !l.contains("directories (")), "every directory in the tree has a watch: {lines:?}");
+    r.write("src/a.py", b"def alpha_two():\n    return 1\n");
+    burst_was(&wait_update(&rx, 1, 0), Some(1), false);
 }
 
 /// Stderr lines up to the first update line after a burst line.
