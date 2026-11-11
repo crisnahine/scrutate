@@ -68,6 +68,15 @@ struct FileInfo {
     bindings: Vec<Binding>,
 }
 
+/// What a `tsconfig.json` or `jsconfig.json` says about import names, as repository paths.
+#[derive(Default)]
+struct TsPaths {
+    /// `baseUrl`: the directory a name that is not relative is looked up in
+    base: Option<String>,
+    /// `paths`: a pattern (`@lib/*`) and the places it stands for (`src/lib/*`)
+    aliases: Vec<(String, Vec<String>)>,
+}
+
 pub struct Resolver<'a> {
     ix: &'a Index,
     files: HashSet<String>,
@@ -75,6 +84,8 @@ pub struct Resolver<'a> {
     parsers: HashMap<&'static str, Parser>,
     crates: Option<HashMap<String, String>>,
     go_dirs: Option<HashMap<String, Vec<String>>>,
+    /// by directory: the config found there, or that there is none
+    ts: HashMap<String, Option<Rc<TsPaths>>>,
     /// current depth of `member` / `lookup_top` calls: import and base-class cycles stop here
     nest: usize,
 }
@@ -461,7 +472,7 @@ impl<'a> Resolver<'a> {
     pub fn new(ix: &'a Index) -> Result<Resolver<'a>> {
         let mut st = ix.db.prepare_cached("SELECT path FROM files WHERE hash != 'SKIP'")?;
         let files = st.query_map([], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<_>>()?;
-        Ok(Resolver { ix, files, cache: HashMap::new(), parsers: HashMap::new(), crates: None, go_dirs: None, nest: 0 })
+        Ok(Resolver { ix, files, cache: HashMap::new(), parsers: HashMap::new(), crates: None, go_dirs: None, ts: HashMap::new(), nest: 0 })
     }
 
     fn file(&mut self, path: &str) -> Rc<FileInfo> {
@@ -909,20 +920,71 @@ impl<'a> Resolver<'a> {
         (1..segs.len()).find_map(|i| try_base(&segs[i..].join("/")))
     }
 
-    fn js_module(&self, from: &str, module: &str) -> Option<String> {
-        if !module.starts_with("./") && !module.starts_with("../") && module != "." && module != ".." {
-            return None; // packages live outside the repository
+    fn js_module(&mut self, from: &str, module: &str) -> Option<String> {
+        if module.starts_with("./") || module.starts_with("../") || module == "." || module == ".." {
+            return self.js_file(&join(dir_of(from), module));
         }
-        let base = join(dir_of(from), module);
-        if self.files.contains(&base) && !base.ends_with(".js") {
-            return Some(base);
+        // a name for the project's own files (`paths`, `baseUrl`); packages live outside the repository
+        let ts = self.ts_paths(from)?;
+        // the pattern with the longest text before its `*` wins, as in the TypeScript compiler
+        let mut aliases: Vec<&(String, Vec<String>)> = ts.aliases.iter().collect();
+        aliases.sort_by_key(|(pattern, _)| std::cmp::Reverse(pattern.split('*').next().map_or(0, str::len)));
+        for (pattern, targets) in aliases {
+            let star = match pattern.split_once('*') {
+                Some((before, after)) => match module.strip_prefix(before).and_then(|m| m.strip_suffix(after)) {
+                    Some(star) => star,
+                    None => continue,
+                },
+                None if pattern == module => "",
+                None => continue,
+            };
+            if let Some(f) = targets.iter().find_map(|t| self.js_file(&t.replace('*', star))) {
+                return Some(f);
+            }
+        }
+        ts.base.as_ref().and_then(|base| self.js_file(&join(base, module)))
+    }
+
+    /// The repository file a TypeScript or JavaScript import names through its project's `paths`
+    /// or `baseUrl`, for the callers that map imports to files without resolving symbols.
+    pub fn alias(&mut self, from: &str, module: &str) -> Option<String> {
+        let js = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"].iter().any(|e| from.ends_with(e));
+        if js && !module.starts_with('.') {
+            self.js_module(from, module)
+        } else {
+            None
+        }
+    }
+
+    /// The file an import path without its extension stands for.
+    fn js_file(&self, base: &str) -> Option<String> {
+        if self.files.contains(base) && !base.ends_with(".js") {
+            return Some(base.to_string());
         }
         // TypeScript sources are imported with the `.js` name they compile to
-        let stem = base.strip_suffix(".js").or_else(|| base.strip_suffix(".mjs")).unwrap_or(&base);
+        let stem = base.strip_suffix(".js").or_else(|| base.strip_suffix(".mjs")).unwrap_or(base);
         let mut cands: Vec<String> = [".ts", ".tsx", ".d.ts", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"].iter().map(|e| format!("{stem}{e}")).collect();
-        cands.push(base.clone());
-        cands.extend(["index.ts", "index.tsx", "index.js", "index.jsx", "index.mjs"].iter().map(|i| join(&base, i)));
+        cands.push(base.to_string());
+        cands.extend(["index.ts", "index.tsx", "index.js", "index.jsx", "index.mjs"].iter().map(|i| join(base, i)));
         self.first_file(&cands)
+    }
+
+    /// The import names of the nearest `tsconfig.json` or `jsconfig.json` above `from` that sets any.
+    fn ts_paths(&mut self, from: &str) -> Option<Rc<TsPaths>> {
+        let mut dir = dir_of(from).to_string();
+        loop {
+            if !self.ts.contains_key(&dir) {
+                let found = ["tsconfig.json", "jsconfig.json"].iter().find_map(|name| ts_config(&self.ix.root, &join(&dir, name), 0)).map(Rc::new);
+                self.ts.insert(dir.clone(), found);
+            }
+            if let Some(found) = &self.ts[&dir] {
+                return Some(Rc::clone(found));
+            }
+            if dir.is_empty() {
+                return None;
+            }
+            dir = dir_of(&dir).to_string();
+        }
     }
 
     fn rust_mod_file(&self, dir: &str) -> Option<String> {
@@ -1025,6 +1087,76 @@ impl<'a> Resolver<'a> {
     fn go_dir(&mut self, dir: &str) -> Vec<String> {
         self.go_dirs().get(dir).cloned().unwrap_or_default()
     }
+}
+
+/// `baseUrl` and `paths` of the config at `path`; what it does not set comes from the config it
+/// extends by a relative path. None when neither is set anywhere.
+fn ts_config(root: &std::path::Path, path: &str, depth: usize) -> Option<TsPaths> {
+    let text = std::fs::read_to_string(root.join(path)).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&plain_json(&text)).ok()?;
+    let (dir, options) = (dir_of(path), &v["compilerOptions"]);
+    let mut out = TsPaths { base: options["baseUrl"].as_str().map(|b| join(dir, b)), aliases: Vec::new() };
+    // the places are relative to `baseUrl`, or to the config when it sets none
+    let at = out.base.clone().unwrap_or_else(|| dir.to_string());
+    for (pattern, places) in options["paths"].as_object().into_iter().flatten() {
+        let places = places.as_array().into_iter().flatten().filter_map(|p| p.as_str()).map(|p| join(&at, p)).collect();
+        out.aliases.push((pattern.clone(), places));
+    }
+    if let Some(parent) = v["extends"].as_str().filter(|e| e.starts_with('.') && depth < 4) {
+        let parent = join(dir, parent);
+        let parent = if parent.ends_with(".json") { parent } else { format!("{parent}.json") };
+        if let Some(inherited) = ts_config(root, &parent, depth + 1) {
+            out.base = out.base.or(inherited.base);
+            if out.aliases.is_empty() {
+                out.aliases = inherited.aliases;
+            }
+        }
+    }
+    (out.base.is_some() || !out.aliases.is_empty()).then_some(out)
+}
+
+/// JSON with the comments and trailing commas a tsconfig may have taken out.
+fn plain_json(text: &str) -> String {
+    let (mut out, mut chars) = (String::with_capacity(text.len()), text.chars().peekable());
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => {
+                out.push(c);
+                while let Some(d) = chars.next() {
+                    out.push(d);
+                    match d {
+                        '\\' => out.extend(chars.next()),
+                        '"' => break,
+                        _ => {}
+                    }
+                }
+            }
+            '/' if chars.peek() == Some(&'/') => {
+                chars.by_ref().find(|&d| d == '\n');
+                out.push('\n');
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                let mut last = ' ';
+                for d in chars.by_ref() {
+                    if last == '*' && d == '/' {
+                        break;
+                    }
+                    last = d;
+                }
+            }
+            '}' | ']' => {
+                // a comma before a closing bracket is the trailing one
+                let kept = out.trim_end().len();
+                if out[..kept].ends_with(',') {
+                    out.truncate(kept - 1);
+                }
+                out.push(c);
+            }
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 fn first_leaf(mut n: Node) -> Node {
@@ -1233,7 +1365,7 @@ mod tests {
 
     /// Index `files` in a fresh directory and resolve `name` where it appears inside `needle` on the
     /// line of `path` containing it; answers "path qualname" of the definition or the failure reason.
-    fn resolver_case(tag: &str, files: &[(&str, &str)], checks: &[(&str, &str, &str, &str)]) {
+    fn indexed(tag: &str, files: &[(&str, &str)]) -> (std::path::PathBuf, Searcher) {
         let root = std::env::temp_dir().join(format!("scrutate_resolve_{tag}_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         for (p, body) in files {
@@ -1242,6 +1374,11 @@ mod tests {
             std::fs::write(f, body).unwrap();
         }
         let (s, _) = crate::open_updated(&root, false).unwrap();
+        (root, s)
+    }
+
+    fn resolver_case(tag: &str, files: &[(&str, &str)], checks: &[(&str, &str, &str, &str)]) {
+        let (root, s) = indexed(tag, files);
         let mut rv = Resolver::new(&s.ix).unwrap();
         for (path, needle, name, want) in checks {
             let src = files.iter().find(|f| f.0 == *path).unwrap().1;
@@ -1305,6 +1442,57 @@ mod tests {
                 ("n.ts", "React.f()", "f", "external"),
             ],
         );
+    }
+
+    #[test]
+    fn ts_path_aliases_and_base_url() {
+        let config = "{\n  // names for our own folders\n  \"compilerOptions\": {\n    \"baseUrl\": \".\",\n    /* longest prefix wins */\n    \"paths\": { \"@lib/*\": [\"src/lib/*\"], \"@lib/deep/*\": [\"src/deep/*\"], \"@cfg\": [\"src/config.ts\"], },\n  },\n}\n";
+        resolver_case(
+            "tspaths",
+            &[
+                ("tsconfig.json", config),
+                ("src/lib/math.ts", "export function add(a: number, b: number) { return a + b; }\n"),
+                ("src/deep/math.ts", "export function mul(a: number, b: number) { return a * b; }\n"),
+                ("src/config.ts", "export function load() { return 1; }\n"),
+                ("src/app/util.ts", "export function helper() { return 2; }\n"),
+                (
+                    "src/app/main.ts",
+                    "import { add } from \"@lib/math\";\nimport { mul } from \"@lib/deep/math\";\nimport { load } from \"@cfg\";\nimport { helper } from \"src/app/util\";\nimport { x } from \"left-pad\";\n\nexport function run() {\n  return add(load(), mul(helper(), x()));\n}\n",
+                ),
+                ("tsconfig.base.json", "{\"compilerOptions\": {\"paths\": {\"@shared/*\": [\"packages/shared/src/*\"]}}}\n"),
+                ("packages/web/tsconfig.json", "{\"extends\": \"../../tsconfig.base\"}\n"),
+                ("packages/shared/src/id.ts", "export function id() { return 3; }\n"),
+                ("packages/web/src/page.ts", "import { id } from \"@shared/id\";\n\nexport function page() {\n  return id();\n}\n"),
+            ],
+            &[
+                ("src/app/main.ts", "add(load()", "add", "src/lib/math.ts add"),
+                ("src/app/main.ts", "mul(helper()", "mul", "src/deep/math.ts mul"),
+                ("src/app/main.ts", "load()", "load", "src/config.ts load"),
+                ("src/app/main.ts", "helper()", "helper", "src/app/util.ts helper"),
+                ("src/app/main.ts", "x()", "x", "external"),
+                ("packages/web/src/page.ts", "return id()", "id", "packages/shared/src/id.ts id"),
+            ],
+        );
+        // the file-level view of the same imports: dependencies and dependents
+        let (root, s) = indexed(
+            "tsdeps",
+            &[
+                ("tsconfig.json", config),
+                ("src/lib/math.ts", "export function add(a: number, b: number) { return a + b; }\n"),
+                (
+                    "src/app/main.ts",
+                    "import { add } from \"@lib/math\";\nimport { x } from \"left-pad\";\n\nexport function run() {\n  return add(1, x());\n}\n",
+                ),
+            ],
+        );
+        let deps = crate::intel::deps(&s.ix, "src/app/main.ts").unwrap();
+        let resolved: Vec<(&str, Option<&str>)> = deps.iter().map(|d| (d.module.as_str(), d.resolved.as_deref())).collect();
+        assert_eq!(resolved, [("@lib/math", Some("src/lib/math.ts")), ("left-pad", None)]);
+        let importers = crate::intel::rdeps(&s.ix, "src/lib/math.ts").unwrap();
+        assert_eq!(importers, [("src/app/main.ts".to_string(), 1, "@lib/math".to_string())]);
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(plain_json("{\"a\": \"x // y\", /* c */ \"b\": [1, 2,], // d\n}"), "{\"a\": \"x // y\",  \"b\": [1, 2]}");
     }
 
     #[test]

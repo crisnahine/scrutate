@@ -25,7 +25,11 @@ pub fn deps(ix: &Index, path: &str) -> Result<Vec<Dependency>> {
     let mut st = ix.db.prepare_cached("SELECT line, module FROM imports WHERE path=?1 ORDER BY line")?;
     let rows: Vec<(i64, String)> = st.query_map([path], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
     let files: HashSet<String> = all_files(ix)?;
-    Ok(rows.into_iter().map(|(line, module)| Dependency { resolved: resolve(&module, path, &files), line, module }).collect())
+    let mut names = crate::resolve::Resolver::new(ix)?;
+    Ok(rows
+        .into_iter()
+        .map(|(line, module)| Dependency { resolved: resolve(&module, path, &files).or_else(|| names.alias(path, &module)), line, module })
+        .collect())
 }
 
 fn all_files(ix: &Index) -> Result<HashSet<String>> {
@@ -136,6 +140,7 @@ pub fn rdeps(ix: &Index, target: &str) -> Result<Vec<(String, i64, String)>> {
     let stem = target.rsplit_once('.').map(|(s, _)| s).unwrap_or(target);
     let dotted: String = stem.replace('/', ".");
     let dotted_pkg = dotted.strip_suffix(".__init__").or_else(|| dotted.strip_suffix(".index")).or_else(|| dotted.strip_suffix(".mod")).map(|s| s.to_string());
+    let mut names = crate::resolve::Resolver::new(ix)?;
     let mut out = Vec::new();
     for (path, line, module) in rows {
         if path == target {
@@ -143,6 +148,7 @@ pub fn rdeps(ix: &Index, target: &str) -> Result<Vec<(String, i64, String)>> {
         }
         let hit = if is_file {
             resolve(&module, &path, &files).as_deref() == Some(target)
+                || names.alias(&path, &module).as_deref() == Some(target)
                 || module == dotted
                 || module.replace("::", ".") == dotted
                 || dotted_pkg.as_deref().map(|p| module == p || module.replace("::", ".") == p).unwrap_or(false)

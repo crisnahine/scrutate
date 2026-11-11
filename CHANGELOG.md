@@ -156,6 +156,8 @@ First release.
   symbol, so one of several same-named definitions can be followed up; JSON hits carry it as `id`.
 - The index recovers from a corrupt database in every front end that stays open (the MCP server,
   the LSP server, the Python bindings, `watch`), not only in the CLI.
+- TypeScript and JavaScript imports through `paths` or `baseUrl` of a `tsconfig.json` or
+  `jsconfig.json` resolve to their files: `refs` follows them, and `deps` and `rdeps` list them.
 - Smart case sees a letter written by its code point (`\x41`). The watcher's test of one changed
   path decides in the walk's order (a `.ignore` at any level before every `.gitignore`).
 - `watch` and `serve --watch` no longer stop on Linux and Windows when `.git/info/exclude` has
