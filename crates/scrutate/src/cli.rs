@@ -753,9 +753,6 @@ pub fn run() -> Result<i32> {
                 let s = Arc::clone(&s);
                 std::thread::Builder::new().name("scrutate-watch".into()).spawn(move || {
                     static NEVER: AtomicBool = AtomicBool::new(false);
-                    if let Err(e) = crate::watch::update_text(&root) {
-                        eprintln!("[scrutate] text index update failed: {e:#}");
-                    }
                     // the searcher's lock makes this the only writer in the process; the index's own
                     // locks order it with other processes
                     let r = crate::watch::run(
@@ -866,13 +863,14 @@ fn run_op(root: &Path, op: Op, json: bool, (max_bytes, offset): (usize, usize)) 
     Ok(if answer.is_empty() { 1 } else { 0 })
 }
 
-/// `watch`: update the indexes now, then after every burst of file changes until Ctrl-C.
+/// `watch`: update the indexes once the watch is in place, then after every burst of file changes
+/// until Ctrl-C.
 fn watch_command(root: &Path) -> Result<i32> {
     let root = std::fs::canonicalize(root).with_context(|| format!("watch {}", root.display()))?;
     let stop = Arc::new(AtomicBool::new(false));
     interrupt::install(Arc::clone(&stop));
     let mut repo = crate::Repo::open(&root)?;
-    let mut update = || -> Result<()> {
+    let update = || -> Result<()> {
         let st = repo.update(false)?;
         let text = crate::watch::update_text(&root)?;
         let text_changed = text.as_ref().map(|t| t.files_changed + t.files_removed).unwrap_or(0);
@@ -887,7 +885,6 @@ fn watch_command(root: &Path) -> Result<i32> {
         }
         Ok(())
     };
-    update()?;
     crate::watch::run(&root, &stop, || eprintln!("[scrutate] watching {}", root.display()), update)?;
     Ok(if stop.load(Ordering::Relaxed) { 130 } else { 0 })
 }
