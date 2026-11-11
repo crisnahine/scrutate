@@ -62,8 +62,10 @@ First release.
 - `-P` / `--pcre2`: PCRE2 syntax (look-around, backreferences), stopped by PCRE2's match limit
   on exponential patterns, with a warning naming the file.
 - `-z` / `--search-zip`: zip and tar members (`archive.zip{member}`) and compressed files.
-- `--fuzzy` patterns up to 4096 bytes (64-bit blocks beyond 128); `--fuzzy-regex[=N]`: a regex
-  within N edits (bit-parallel Glushkov automaton, up to 64 character positions).
+- `--fuzzy` patterns up to 4096 characters (64-bit blocks beyond 128); an edit is one character
+  (`naïve` is one edit from `naive`), and `-i` and `-S` fold case as for a regex. `grep --index
+  --fuzzy` agrees with the walk. `--fuzzy-regex[=N]`: a regex within N edits (bit-parallel
+  Glushkov automaton, up to 64 character positions, byte-oriented).
 - `grep --index --update`: refresh the text index (changed files only), then search it.
 - Files that could not be searched, or not to the end, are named in warnings.
 - Regexes are built with `^` and `$` as line anchors in every mode, as ripgrep builds them. Before,
@@ -105,6 +107,22 @@ First release.
 - `--max-results N` stops at exactly N matching lines, also when several threads find matches at
   once and with `-c` and `-l`; `-m N` is a per-file limit of the search, with trailing context.
 - A search path that does not exist is a warning and exit code 2; the other paths are searched.
+- With no path, a pipe or a file on standard input is searched (`-` names it; label `<stdin>`).
+- A file named on the command line that holds a NUL byte is searched as ripgrep does: counts and
+  lists include it, and line output prints `binary file matches (found "\0" byte around offset
+  N)` (a `binary` record with `--json`). A file the walk finds with a NUL byte is left out of `-c`
+  and `-l`, so `-v -l`, `-v` and `-v -c` agree.
+- `-c` and `-l` give one record per path given, as ripgrep does, also for a file two paths reach.
+- `--sort` with `--max-results N` prints the first N matches in path order, the same on every run.
+- `-n` is accepted and `-N` drops line numbers. `-j`, `SCRUTATE_THREADS` and the configuration
+  file's `threads` stop at 256, and a failed thread start says to lower `-j`.
+- `.rgignore` files are read by `grep`, the code index, `watch` and `tsquery`, as ripgrep reads them.
+- `--type-list` and `--version` need no pattern. A bad `.scrutate.toml` no longer stops `--help`,
+  `--version`, `config` and `completions`.
+- On Linux a `proc` or `sys` directory on a pseudo filesystem below any search root is read to
+  the end.
+- On Windows a file that falls back to the stream reader (a NUL byte, a byte order mark, a read
+  error) is searched from its first line; it started where the range search had stopped.
 
 ### Engine B: code intelligence
 - Incremental index (SQLite + memory-mapped segments), content hashing, atomic updates,
@@ -158,18 +176,32 @@ First release.
 - Constants are symbols of kind `constant` (Rust `const` and `static`, Go package `const` and
   `var`, JavaScript and TypeScript top-level `const`, TypeScript enum members, Java
   `static final`, Python module-level capitals, C and C++ `#define` values and enumerators):
-  `symbol`, `outline`, `read_code` and `refs` find them, ranked search never returns them.
+  `symbol`, `outline`, `read_code` and `refs` find them, ranked search never returns them. Every
+  name of a Go or Java declaration with several (`var X, Y int`) is a constant.
 - A method is named by its owner's bare type (`Stack.push` for `impl<T> Stack<T>`, `Box.put`
   for `Box<T>::put`); a dotted Lua or Elixir name is split off its owner (`M.helper` is
   `helper`, `MyApp.Accounts.User` is `User`); `Account:deposit` in Lua is `Account.deposit`.
+  A JavaScript or TypeScript object literal's methods, and its properties whose value is a
+  function, are methods named under what holds the literal (`api.get`, `store.sub.m`,
+  `tool.build` for `module.exports.tool`), also through `as`, `satisfies` and parentheses; they
+  keep their callers and callees.
 - New definitions: Rust `mod` and `type` items, `macro_rules!` and trait methods without a body;
   Go methods qualified by their receiver type; C++ methods declared in a class or struct body
   (constructors, destructors, member templates, conversion operators) and out-of-line methods
   split at `::`; C and C++ function-like macros; JavaScript class field functions and
   `module.exports.X`; TypeScript abstract classes and methods, `declare function` and
-  namespaces; Java records; Swift protocol requirements; Kotlin type aliases; Elixir guards.
+  namespaces; Java records; Swift protocol requirements; Kotlin type aliases; Elixir guards; a C
+  or C++ function declared without a body, also inside an include guard (`symbol` lists the
+  definition before the prototype). A `.h` file written in C++ or Objective-C is parsed with that
+  grammar, where it lost its classes and methods as C.
 - Calls inside the arguments of a Rust macro (`println!("{}", f(x))`) and turbofish calls
   (`f::<T>(x)`) are call edges.
+- Calls in Dart, Groovy, Elixir, LLVM IR, TLA+ and Verilog are recorded. A method call records
+  the method in Lua (`obj:meth()`), Objective-C (`[obj meth]`), R (`obj$meth()`), PowerShell and
+  PHP (`?->`); `new Point()` records `Point`; a Lisp name is recorded whole (`list->vec`,
+  `set-car!`) and a JavaScript private method with its `#`. A Scheme `(define (f x) ...)` head, a
+  Lisp parameter list and Elixir's `def`, `use` and `alias` are not calls. Dart and Pascal
+  functions hold their bodies.
 - Chunk text and body are cut at 32 KiB, and a chunk ends on the last line that holds its text.
   A file of many sibling definitions or of deep nesting indexes in linear time (20,000 one-line
   JavaScript functions: 58 s to 0.8 s).
@@ -199,9 +231,13 @@ First release.
 - A call matches a definition only in its own language family and by the name as written
   (`Ok(1)` is not a call of `ok`); a call the resolver ties to an imported module, a local or a
   field is not a call of a namesake in the repository.
-- `symbol`, `callers`, `callees`, `similar`, `refs` and `read_code` read `Type::method`,
-  `Type#method` and `p->method` as `Type.method`, and find one method among many namesakes;
-  `operator->` and `operator*` are found by those names.
+- `symbol`, `callers`, `callees`, `similar`, `refs` and `read_code` look a name up as typed first
+  (`list->vec`, `Foo::Bar`, `#main`), then read `Type::method`, `Type#method` and `p->method` as
+  `Type.method`, then compare owners without generic arguments and path (`Stack<T>.push`,
+  `crate::config::Config::new`), and last, for a path, a top-level definition of its last part;
+  they find one method among many namesakes; `operator->` and `operator*` are found by those
+  names. The language server's definition request takes the whole name under the cursor
+  (`get-user`, `Foo::Bar`).
 - A location (`path:start-end`) names exactly one definition in `symbol`, `callers` and
   `callees`. `callers` lists the callers the resolver ties to the definition first, then the
   undecided ones that name the owner type or share its package, and asks the resolver about at
@@ -213,13 +249,29 @@ First release.
   beside the including file; `rdeps` matches by base name only an import that resolves to no
   file. `tsconfig.json`, `jsconfig.json`, `Cargo.toml` and `go.mod` are read only when they are
   regular files inside the repository of at most 1 MB.
-- A lambda, nested function, block or comprehension hides a name only inside itself.
+- A lambda, nested function, block or comprehension hides a name only inside itself. A name bound
+  by a pattern, a `catch` or a Go statement initializer hides a function only in its own branch
+  or statement, and a closure sees the locals around it.
   `tsquery` decodes files that are not UTF-8 and skips files over 1 MB, and refuses an empty
   query, a query without a capture and an unknown predicate.
 - `dupes`: `exact` means the same body text once whitespace is squeezed; functions with the same
   words that differ in a literal or an operator are one `near` group with similarity 1.00;
   `--threshold 1` prints the exact groups only.
 - `grep --symbols` with a path argument finds the file by its path under the root.
+- `deps` and `rdeps` resolve imports as `refs` does (Rust `crate::`, `self::`, `super::` and `mod`,
+  Go through `go.mod`, Python `from . import`, TypeScript `.js` names and `.d.ts` files), and
+  `rdeps` says how many unresolved imports may name the file.
+- An index built with older parsing rules reads every file again once (`content_rev` in `meta`).
+- An update can be cancelled and rolls back; an update that panics rolls back at once, and the
+  next update clears a transaction left open.
+- The index cuts each chunk's text from the source one chunk at a time: a one-line file with
+  8,000 nested functions now peaks at 542 MB to index (462 MB with `SCRUTATE_SEMANTIC=none`),
+  where it took about 1.1 GB (0.75 GB).
+- `similar` on a constant says constants are not compared, and `similar -k 0` returns nothing
+  instead of panicking.
+- A backslash in a Unix file name stays in `tsquery` output, `read_code` path matching and the
+  language server, and `tsquery` prints control characters in a capture escaped. A rebuild that
+  cannot reopen the index returns its error, and the next call opens it again.
 - Names with control characters print as escapes and a backslash doubled in the index commands;
   what they print is read back as an argument.
 - The Python reference indexes the engine's file set (excluded extensions,
@@ -240,8 +292,19 @@ First release.
   instructions; `grep_code` is an Engine A search with matches grouped by enclosing symbol;
   `references` resolves each use to its definition; an answer is at most 24,000 bytes by default
   (`max_bytes`), cut at whole items, with the `offset` that continues it; the CLI has the same as
-  `--max-bytes` (`SCRUTATE_MAX_BYTES`) and `--offset`; a first index build blocks a tool call for
-  at most 20 seconds. `serve --max-bytes` sets the server's default.
+  `--max-bytes` (`SCRUTATE_MAX_BYTES`) and `--offset`, also for `search` and `tsquery`; a first
+  index build blocks a tool call for at most 20 seconds. `serve --max-bytes` sets the server's
+  default.
+- A capped `grep_code` or `references` answer holds the first matches in path order, so a second
+  page neither repeats nor skips one.
+- `read_code` by path reads only as far as the lines it shows, keeps at most 1 MB of line text,
+  refuses a file with a NUL byte in its first 8 KB, and says `more lines follow` when a large
+  file was not read to its end.
+- Commands run in a subdirectory use the index and the `.scrutate.toml` above it and read path
+  arguments from the current directory. `search --also` prints another repository's results by
+  the path given, searches a root given twice once, and adds `root` to its JSON.
+- `symbol`, `callers` and `callees` take `--limit`. `check --json` counts the indexed files
+  without `--files`. `batch` reports a line that is not JSON by its number and runs the rest.
 - `reindex` takes `force`, which reads every file again. `grep_code` searches the files the
   index holds: hidden ones such as `.github/`, not `.git/` or `node_modules/`.
 - JSON-RPC answers as the specification gives them: batches answered as one array, -32700 for a
@@ -296,12 +359,16 @@ First release.
   platform: `cp39-abi3` for standard CPython up to 3.14, `cp314t`, and `cp315-abi3.abi3t` for
   3.15 and newer, standard and free-threaded; the wheel's third-party notices are in
   `dist-info/licenses`. The bindings' `callers`, `callees` and textual references match names
-  as the tools do.
+  as the tools do. Ctrl-C stops `grep` and `Repo.index()` within about 100 ms (an interrupted
+  update rolls back); `Repo.read()` raises `FileNotFoundError`, `ValueError` or `OSError`;
+  `grep` raises its argument errors at call time and takes `sort=True`; a panic no longer leaves
+  the `Repo` unusable.
 - Integrations: one MCP configuration per client (VS Code `servers`, Codex TOML, Zed
   `context_servers`); the GitLab and Bitbucket templates pass on a repository with no
   duplicates and unpack the tool outside the checkout; the pre-commit hook is valid YAML, fails
   when the tool fails, and works through `repo:`; the GitHub Action runs on Windows runners;
-  Neovim ships `lsp/scrutate.lua`, so `vim.lsp.enable('scrutate')` is the whole setup; VS Code,
+  Neovim ships `lsp/scrutate.lua`, so `vim.lsp.enable('scrutate')` is the whole setup, and the
+  plugin needs Neovim 0.10 or newer, and its commands work on first use and after an edit; VS Code,
   Neovim and JetBrains put `--` before a query, and VS Code stops without an open folder.
 - `release.yml` refuses a tag whose version differs from the packages' (`tools/check_version.py`)
   and runs all of `ci.yml` on the tagged commit before anything is published. Every workflow
@@ -312,8 +379,11 @@ First release.
   ugrep, ast-grep, Zoekt and livegrep on pinned corpora, every answer checked against an
   independent reference, 30+ runs per contender, bootstrap confidence intervals, hardware-ceiling
   baseline, warm and cold cache; a regression gate that times the change and its base in one
-  interleaved run (`SCRUTATE_BASE_BIN`, `leaderboard_regression.py --within`); CI/release
+  interleaved run and takes their ratio inside each block (`SCRUTATE_BASE_BIN`,
+  `leaderboard_regression.py --within`; `--redo-unstable` checks both binaries); CI/release
   workflows; SBOM; IDE and Git-platform integrations.
+- Random checks in CI: `bench/fuzz_grep.py` (against ripgrep) and `bench/fuzz_incremental.py`
+  (an updated index against a fresh one), 20 seconds each; a check that compared nothing fails.
 - Packaging: Homebrew formula, Scoop and winget manifests (schema 1.12.0), `.deb` and `.rpm` packages (built and
   install-tested in clean containers); release archives, wheels and the `.deb` and `.rpm` carry
   `THIRD_PARTY_NOTICES.txt`; `docs/dashboard.html` charts the benchmark runs.
