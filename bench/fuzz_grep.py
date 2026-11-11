@@ -76,6 +76,13 @@ def make():
             os.symlink("a.txt", os.path.join(WORK, "link.txt"))
         except OSError:
             pass
+    # by what is on disk: where case does not tell names apart, A.TXT and a.txt are one file
+    STATE["nul"] = set()
+    for d, _, names in os.walk(WORK):
+        for n in names:
+            p = os.path.join(d, n)
+            if os.path.isfile(p) and b"\0" in open(p, "rb").read():
+                STATE["nul"].add(os.path.relpath(p, WORK))
 
 def pattern():
     w = [x for x in WORDS if x and x.isalnum()]

@@ -2767,9 +2767,19 @@ fn label(path: &Path, roots: &[PathBuf], o: &Options) -> Arc<str> {
 /// a character of the name.
 pub fn slashed(s: std::borrow::Cow<'_, str>) -> String {
     if cfg!(windows) {
-        s.replace('\\', "/")
+        windows_form(&s)
     } else {
         s.into_owned()
+    }
+}
+
+/// A Windows path as it is printed: `/` between its parts. A verbatim drive path (`\\?\C:\x`,
+/// what `canonicalize` gives) takes no forward slashes, so it is printed in its plain form.
+fn windows_form(s: &str) -> String {
+    let s = s.replace('\\', "/");
+    match s.strip_prefix("//?/") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => rest.to_string(),
+        _ => s,
     }
 }
 
@@ -2793,6 +2803,15 @@ pub fn relative(path: &Path, roots: &[PathBuf]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_windows_path_is_printed_with_slashes_and_a_verbatim_drive_path_in_its_plain_form() {
+        assert_eq!(windows_form(r"C:\Users\x\a.txt"), "C:/Users/x/a.txt");
+        assert_eq!(windows_form(r"\\?\C:\Users\x\a.txt"), "C:/Users/x/a.txt");
+        assert_eq!(windows_form(r"dir\a.txt"), "dir/a.txt");
+        assert_eq!(windows_form(r"\\server\share\a.txt"), "//server/share/a.txt");
+        assert_eq!(windows_form(r"\\?\UNC\server\share\a.txt"), "//?/UNC/server/share/a.txt");
+    }
 
     #[test]
     fn write_lossy_equals_from_utf8_lossy() {

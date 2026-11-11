@@ -1229,7 +1229,7 @@ fn search_zip_reads_archive_members_and_compressed_files() {
     assert_eq!(code, 0);
     assert_eq!(
         out,
-        "a.tar.gz{src/a.txt}:1:alpha needle\na.tar.gz{src/b.txt}:2:needle two\na.tar{src/a.txt}:1:alpha needle\na.tar{src/b.txt}:2:needle two\n\
+        "a.tar{src/a.txt}:1:alpha needle\na.tar{src/b.txt}:2:needle two\na.tar.gz{src/a.txt}:1:alpha needle\na.tar.gz{src/b.txt}:2:needle two\n\
          a.zip{src/a.txt}:1:alpha needle\na.zip{src/b.txt}:2:needle two\nc.txt.gz:1:needle in gz\n"
     );
     let (code, _, _) = r.run(&["grep", "needle"]);

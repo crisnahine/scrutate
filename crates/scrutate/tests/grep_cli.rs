@@ -194,7 +194,9 @@ fn paths_are_printed_as_given() {
         assert_eq!(sorted(&d.run(&a).1), want, "{args:?}");
     }
     let (_, out, _) = d.run(&["grep", "-l", "needle", &abs]);
-    assert_eq!(out, format!("{abs}/a.txt\n"));
+    // Windows: `/` between the parts, and the plain form of the verbatim path `canonicalize` gave
+    let shown = if cfg!(windows) { abs.trim_start_matches(r"\\?\").replace('\\', "/") } else { abs.clone() };
+    assert_eq!(out, format!("{shown}/a.txt\n"));
     let (_, out, _) = d.run(&["grep", "needle", "dir"]);
     assert_eq!(out, "dir/a.txt:1:needle\n");
     let (_, out, _) = d.run(&["grep", "--json", "needle", "dir"]);
@@ -569,7 +571,7 @@ fn named_files_are_searched_as_ripgrep_does() {
         (&["-c", "foo", "ign.txt", "nul.txt"], 0, "ign.txt:1\nnul.txt:2\n".into()),
         (&["foo", "nul.txt"], 0, format!("{}\n", note(7))),
         (&["-H", "foo", "nul.txt"], 0, format!("nul.txt: {}\n", note(7))),
-        (&["--sort", "foo", "nul.txt", "a.txt"], 0, format!("a.txt:1:foo\nnul.txt: {}\n", note(7))),
+        (&["--sort", "foo", "nul.txt", "a.txt"], 0, format!("nul.txt: {}\na.txt:1:foo\n", note(7))),
         (&["-c", "foo", "nul.txt"], 0, "2\n".into()),
         (&["-l", "foo", "nul.txt"], 0, "nul.txt\n".into()),
         (&["-v", "foo", "nul.txt"], 0, format!("{}\n", note(7))),
@@ -800,7 +802,6 @@ fn line_number_flags_are_accepted() {
 }
 
 #[test]
-#[ignore = "needs grep --sort in cli.rs to print in the order the search hands over"]
 fn a_sorted_search_orders_each_root_by_path_with_the_roots_in_command_line_order_as_ripgrep_does() {
     let d = Dir::new("rootorder");
     let body = |f: &str| -> &[(u64, &str)] {

@@ -129,7 +129,8 @@ pub struct GrepArgs {
     /// approximate search: literal within N edits (a character inserted, deleted or substituted)
     #[arg(long, value_name = "N", num_args = 0..=1, require_equals = true, default_missing_value = "1")]
     pub fuzzy: Option<u8>,
-    /// approximate regex: PATTERN within N edits (byte-oriented, ASCII classes, no anchors)
+    /// approximate regex: PATTERN within N edits (a character inserted, deleted or substituted; no
+    /// anchors or word boundaries)
     #[arg(long, value_name = "N", num_args = 0..=1, require_equals = true, default_missing_value = "1")]
     pub fuzzy_regex: Option<u8>,
     /// PCRE2 syntax: look-around and backreferences (backtracking, stopped by PCRE2's match limit)
@@ -217,8 +218,8 @@ pub struct GrepArgs {
     /// number of search threads, at most 256 (default: the cores, at most 12; on macOS the performance cores; more when the files come from the disk)
     #[arg(short = 'j', long, default_value_t = 0, env = "SCRUTATE_THREADS")]
     pub threads: usize,
-    /// sort results by path (deterministic, waits for the search to finish); with --max-results,
-    /// the first N matches in path order
+    /// sort as `rg --sort path`: each path's results in path order, the paths in command-line
+    /// order (waits for the search to finish); with --max-results, the first N in that order
     #[arg(long)]
     pub sort: bool,
     /// one JSON object per line
@@ -1329,7 +1330,7 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
     let mut found = false;
     let mut linebuf: Vec<u8> = Vec::with_capacity(512);
     let groups = o.before > 0 || o.after > 0;
-    let mut last: Option<(Arc<str>, u64)> = None;
+    let mut last: Option<(Arc<str>, u64, u64)> = None;
     let mut emit = |h: &instant::Hit, w: &mut termcolor::BufferedStandardStream| -> Result<()> {
         if h.line == instant::NOTE_LINE {
             if out.json {
@@ -1348,11 +1349,12 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
             return Ok(());
         }
         if groups {
-            // `--` between lines that are not adjacent in one file, as the plain path's searcher does
-            if last.as_ref().is_some_and(|(p, l)| **p != *h.path || h.line > l + 1) {
+            // `--` between lines that are not adjacent in one file, as the plain path's searcher does;
+            // a line at or before the previous one starts another search of the same file
+            if last.as_ref().is_some_and(|(p, s, l)| **p != *h.path || h.line > l + 1 || h.line <= *s) {
                 w.write_all(b"--\n")?;
             }
-            last = Some((Arc::clone(&h.path), h.line + h.text.matches('\n').count() as u64));
+            last = Some((Arc::clone(&h.path), h.line, h.line + h.text.matches('\n').count() as u64));
         }
         if !colour {
             // plain output: one assembled line, one write (the common piped case)
@@ -1430,7 +1432,10 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
         return Ok(if found { 0 } else { 1 });
     }
     // a record per file searched: a file two paths reach is counted and listed twice, as ripgrep does
-    counts.sort_by(|a, b| a.0.cmp(&b.0));
+    // with --sort the search hands them over in ripgrep's order
+    if !out.sort {
+        counts.sort_by(|a, b| a.0.cmp(&b.0));
+    }
     if out.count {
         for (p, c) in &counts {
             if out.json {
@@ -1452,7 +1457,6 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
     } else if out.symbols {
         grouped_by_symbol(&out.root, &mut collected, &mut w, out.json)?;
     } else if defer {
-        collected.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
         for h in &collected {
             emit(h, &mut w)?;
         }
