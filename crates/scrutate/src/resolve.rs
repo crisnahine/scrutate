@@ -1995,6 +1995,7 @@ pub fn resolved_references(s: &Searcher, name: &str, max_results: u64) -> Result
         word: true,
         want_spans: true,
         max_results: Some(max_results),
+        first_in_path_order: true,
         ..crate::instant::Options::default()
     };
     let (hits, truncated) = crate::intel::occurrences(&s.ix.root, &o)?;

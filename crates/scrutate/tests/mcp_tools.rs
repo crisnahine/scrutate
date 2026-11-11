@@ -283,6 +283,29 @@ fn structural_search_says_what_is_wrong_with_a_query() {
 }
 
 #[test]
+fn a_capped_grep_or_references_answer_is_the_first_matches_in_path_order() {
+    let names: Vec<String> = (0..300).map(|i| format!("src/f{i:03}.py")).collect();
+    let files: Vec<(&str, &str)> = names.iter().map(|n| (n.as_str(), "def needle_fn():\n    return needle_fn\n")).collect();
+    let mut r = Repo::new("ordered_cap", &files);
+    let grep = r.ok("grep_code", json!({"pattern": "return needle", "max_results": 7}));
+    for i in 0..7 {
+        assert!(grep.contains(&format!("src/f{i:03}.py")), "{grep}");
+    }
+    assert!(!grep.contains("src/f007.py") && !grep.contains("src/f299.py"), "{grep}");
+    // the same lines on every call, so a second page neither repeats nor skips one
+    for (tool, args) in [
+        ("grep_code", json!({"pattern": "return needle", "max_results": 7})),
+        ("references", json!({"name": "needle_fn", "max_results": 7, "textual": true})),
+        ("references", json!({"name": "needle_fn", "max_results": 7, "def": "src/f000.py"})),
+    ] {
+        let first = r.ok(tool, args.clone());
+        for _ in 0..4 {
+            assert_eq!(r.ok(tool, args.clone()), first, "{tool} {args}");
+        }
+    }
+}
+
+#[test]
 fn grep_code_searches_the_hidden_files_the_index_holds_but_not_git_internals() {
     let mut r = Repo::new(
         "hidden",

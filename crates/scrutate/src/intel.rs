@@ -741,6 +741,7 @@ pub fn references(s: &Searcher, name: &str, max_results: u64) -> Result<Referenc
         mode: crate::instant::Mode::Literal,
         word: true,
         max_results: Some(max_results),
+        first_in_path_order: true,
         ..crate::instant::Options::default()
     };
     let (groups, truncated) = grouped_grep(s, &o)?;
