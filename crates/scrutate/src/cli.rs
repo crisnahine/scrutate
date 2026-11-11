@@ -126,7 +126,7 @@ pub struct GrepArgs {
     /// identifier search: `refreshToken` also finds refresh_token, RefreshToken, REFRESH_TOKEN
     #[arg(long)]
     pub ident: bool,
-    /// approximate search: literal within N edits (insertions, deletions, substitutions)
+    /// approximate search: literal within N edits (a character inserted, deleted or substituted)
     #[arg(long, value_name = "N", num_args = 0..=1, require_equals = true, default_missing_value = "1")]
     pub fuzzy: Option<u8>,
     /// approximate regex: PATTERN within N edits (byte-oriented, ASCII classes, no anchors)

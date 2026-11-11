@@ -301,14 +301,12 @@ pub fn query_for(o: &Options) -> Result<Q> {
     match o.mode {
         // k edits leave one of k+1 pieces verbatim (the fuzzy matcher's own prefilter)
         Mode::Fuzzy { max_edits } => {
-            let p = t.pattern.as_bytes();
-            let pieces = max_edits as usize + 1;
-            let len = p.len() / pieces;
-            if len < 3 {
+            // the pieces the matcher itself looks for, so the index never rejects a file it matches
+            let pieces = instant::fuzzy_pieces(&t.pattern, max_edits, t.insensitive).unwrap_or_default();
+            if pieces.is_empty() || pieces.iter().any(|p| p.len() < 3) {
                 return Ok(Q::All);
             }
-            let qs = (0..pieces).map(|i| string_query(&p[i * len..if i == pieces - 1 { p.len() } else { (i + 1) * len }])).collect();
-            return Ok(or(qs));
+            return Ok(or(pieces.iter().map(|p| string_query(p)).collect()));
         }
         Mode::Literal | Mode::Identifier | Mode::Regex => {}
         // PCRE2 syntax differs from this parser's in places: no condition, so no file is missed

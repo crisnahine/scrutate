@@ -500,7 +500,7 @@ pub fn tsquery_each(lang: &str, query: &str, roots: &[PathBuf], limit: usize, ca
     let mut files: Vec<(PathBuf, String)> = Vec::new();
     for root in roots {
         let mut wb = ignore::WalkBuilder::new(root);
-        wb.hidden(true).git_ignore(true).sort_by_file_path(|a, b| a.cmp(b));
+        wb.hidden(true).git_ignore(true).add_custom_ignore_filename(crate::instant::RGIGNORE).sort_by_file_path(|a, b| a.cmp(b));
         for entry in wb.build().flatten() {
             if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) || entry.metadata().map_or(true, |m| m.len() > crate::index::MAX_FILE_BYTES) {
                 continue;
