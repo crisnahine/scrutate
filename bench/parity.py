@@ -104,6 +104,48 @@ def compare_indexes(a: Index, b: Index) -> list[str]:
         worst = max((float(np.abs(va[k] - vb[k]).max()), k) for k in va if k in vb)
         if worst[0] > TOL_VEC:
             problems.append(f"vectors differ: max abs diff {worst[0]:.4g} at {worst[1]}")
+    return problems + compare_clusters(a, b, ida, idb)
+
+
+def first_diff(x: np.ndarray, y: np.ndarray) -> str | None:
+    """Where two arrays first differ (bit for bit), or None when they are identical."""
+    x, y = np.asarray(x), np.asarray(y)
+    if x.shape != y.shape:
+        return f"shapes {x.shape} / {y.shape}"
+    if not x.size:
+        return None
+    xb, yb = (np.ascontiguousarray(v).reshape(len(v), -1).view(np.uint8) for v in (x, y))
+    bad = np.flatnonzero((xb != yb).any(axis=1))
+    if not len(bad):
+        return None
+    r = bad[0]
+    return f"{len(bad)} of {len(x)} rows, first at row {r}: {np.ravel(x[r]).tolist()[:4]} / {np.ravel(y[r]).tolist()[:4]}"
+
+
+def compare_clusters(a: Index, b: Index, ida: dict, idb: dict) -> list[str]:
+    """The clustered layout of every segment that has one: centroids, cluster pointers, cluster order and
+    the stored vectors (which are in cluster order) must be identical between the engines."""
+    problems = []
+    if len(a.lex.segs) != len(b.lex.segs):
+        return [f"segment counts differ: {len(a.lex.segs)} in python, {len(b.lex.segs)} in rust"]
+    for i, (sa, sb) in enumerate(zip(a.lex.segs, b.lex.segs)):
+        if sa.ivf != sb.ivf:
+            problems.append(f"segment {i}: clustered in {'python' if sa.ivf else 'rust'} only")
+            continue
+        if not sa.ivf:
+            continue
+        rows_a = [ida.get(int(c), c) for c in np.asarray(sa.ids)]
+        rows_b = [idb.get(int(c), c) for c in np.asarray(sb.ids)]
+        if rows_a != rows_b:
+            problems.append(f"segment {i}: rows hold different chunks, clusters not compared")
+            continue
+        for name, x, y in (("ivf_cent", sa.ivf_cent, sb.ivf_cent), ("ivf_ptr", sa.ivf_ptr, sb.ivf_ptr),
+                           ("ivf_order", sa.ivf_order, sb.ivf_order), ("vec", sa.vec, sb.vec),
+                           ("vscale", sa.vscale, sb.vscale)):
+            d = first_diff(x, y)
+            if d:
+                problems.append(f"segment {i}: {name} differs: {d}")
+                break  # the later arrays follow from the first difference
     return problems
 
 

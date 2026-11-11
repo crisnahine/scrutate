@@ -374,3 +374,26 @@ def test_quantize_round_trip():
     d = dequantize(q, s)
     assert np.all(np.abs(d - v) <= s[..., None] / 2 * 1.0001)
     assert np.array_equal(quantize(d)[0], q)  # quantizing a decoded vector gives the same codes
+
+
+def test_kmeans_matches_the_rust_engine_bit_for_bit():
+    """The same vectors give the same clusters in both engines: the digest below is also asserted in
+    lex.rs `kmeans_matches_python_reference_bit_for_bit`."""
+    from scrutate_ref.lex import Rng, dequantize, kmeans
+
+    rng = Rng(12345)
+    n, k = 3000, 16
+    q = np.zeros((n, 2, k), np.int8)
+    sc = np.zeros((n, 2), np.float32)
+    for r in range(n):
+        for j in range(2 * k):
+            q[r, j // k, j % k] = rng.below(255) - 127
+        for h in range(2):
+            sc[r, h] = np.float32(1 + rng.below(64)) * np.float32(2 ** -10)
+        if r % 3 == 2:  # duplicate rows make tied centroids: the lower cluster number must win
+            q[r], sc[r] = q[r - 2], sc[r - 2]
+    cent, order, ptr = kmeans(dequantize(q, sc), 1000)
+    sizes = np.diff(ptr)
+    got = (order[:5].tolist(), len(sizes), int((sizes * np.arange(1, len(sizes) + 1)).sum()),
+           int(cent.view(np.uint32).astype(np.uint64).sum()))
+    assert got == ([21, 23, 256, 375, 377], 110, 164513, 3739691621945)

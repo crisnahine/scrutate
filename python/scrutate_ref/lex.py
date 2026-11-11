@@ -198,44 +198,122 @@ def write_segment(dest: str, ids: np.ndarray, dl: np.ndarray, fields: list, vec:
     os.replace(tmp, dest)
 
 
+class Rng:
+    """xorshift64*, the Rust engine's `Rng`: both engines draw the same sample and seeds."""
+
+    def __init__(self, state: int = 0x9E3779B97F4A7C15):
+        self.s = state
+
+    def next(self) -> int:
+        s = self.s
+        s ^= s >> 12
+        s ^= (s << 25) & 0xFFFFFFFFFFFFFFFF
+        s ^= s >> 27
+        self.s = s
+        return (s * 0x2545F4914F6CDD1D) & 0xFFFFFFFFFFFFFFFF
+
+    def below(self, n: int) -> int:
+        return self.next() % n
+
+    def sample(self, n: int, m: int) -> np.ndarray:
+        """`m` distinct indices below `n`, sorted (a partial Fisher-Yates shuffle)."""
+        if m >= n:
+            return np.arange(n)
+        pool = list(range(n))
+        for i in range(m):
+            j = i + self.below(n - i)
+            pool[i], pool[j] = pool[j], pool[i]
+        return np.sort(np.array(pool[:m], np.int64))
+
+
+# The k-means below runs every sum in the order the Rust engine does (no BLAS or pairwise sum where the
+# order could change a bit of the result; see _nearest for the one product), so both engines build
+# the same clusters bit for bit.
+def _unit(m: np.ndarray) -> np.ndarray:
+    """Rows divided by their norm; the squares summed over j = 0..k in order."""
+    s = np.zeros(len(m), np.float32)
+    for j in range(m.shape[1]):
+        s += m[:, j] * m[:, j]
+    return m / np.maximum(np.sqrt(s), np.float32(1e-6))[:, None]
+
+
+def _dot_seq64(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Row-wise a . b from exact float64 products in the fixed order of `dot_seq64` in the Rust
+    engine: lane l sums j = l, l + 4, ... in turn, the lanes add as (0 + 1) + (2 + 3), then the
+    last k % 4 terms in turn."""
+    a, b = a.astype(np.float64), b.astype(np.float64)
+    m = a.shape[1] // 4 * 4
+    acc = np.zeros((len(a), 4), np.float64)
+    for j in range(0, m, 4):
+        acc += a[:, j:j + 4] * b[:, j:j + 4]
+    s = (acc[:, 0] + acc[:, 1]) + (acc[:, 2] + acc[:, 3])
+    for j in range(m, a.shape[1]):
+        s += a[:, j] * b[:, j]
+    return s
+
+
 def _nearest(x: np.ndarray, cent: np.ndarray, block: int = 16384) -> np.ndarray:
+    """Nearest centroid of each row (unit rows, unit centroids): the largest `_dot_seq64`, the lowest
+    number on a tie. numpy's float32 product, in whatever order BLAS sums it, is within k * 2^-24 of
+    the true dot product, so only rows with several centroids within `margin` of the maximum need
+    `_dot_seq64`; the Rust engine does the same and both pick the same cluster."""
+    margin = np.float32(4 * x.shape[1] * np.finfo(np.float32).eps)
     out = np.empty(len(x), np.int32)
     for i in range(0, len(x), block):
-        out[i:i + block] = np.argmax(x[i:i + block] @ cent.T, axis=1)
+        xb = x[i:i + block]
+        s = xb @ cent.T
+        cand = s >= (s.max(axis=1) - margin)[:, None]
+        a = np.argmax(cand, axis=1)  # the only candidate, where there is one
+        multi = np.flatnonzero(cand.sum(axis=1) > 1)
+        if len(multi):
+            rr, cc = np.nonzero(cand[multi])
+            exact = _dot_seq64(xb[multi[rr]], cent[cc])
+            pick = np.lexsort((cc, -exact, rr))
+            first = pick[np.r_[True, rr[pick][1:] != rr[pick][:-1]]]
+            a[multi[rr[first]]] = cc[first]
+        out[i:i + block] = a
     return out
 
 
-def build_ivf(tmp: str, vec: np.ndarray, seed: int = 0) -> np.ndarray:
-    """Cluster the A+B vectors of a segment (spherical k-means on a sample, then one assignment pass
-    over every row). Returns the cluster order (segment row at each sorted position); the caller
-    stores the vectors in that order so a query can scan a few clusters contiguously. Exact top-k
-    over all rows is still available by probing every cluster."""
-    n = len(vec)
-    mix = vec[:, 0] + vec[:, 1]
-    unit = mix / np.maximum(np.linalg.norm(mix, axis=1), 1e-6)[:, None]
+def kmeans(vec: np.ndarray, nsample: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Spherical k-means on `nsample` rows of the A+B vectors, then one assignment pass over every row:
+    (centroids float32 [K, k], cluster order int32 [n], cluster pointers int64 [K + 1])."""
+    n, k = len(vec), vec.shape[2]
+    unit = _unit(vec[:, 0] + vec[:, 1])
     K = int(np.clip(round(2 * math.sqrt(n)), 32, 1024))
-    rng = np.random.default_rng(seed)
-    sample = unit[np.sort(rng.choice(n, min(n, IVF_SAMPLE), replace=False))]
-    cent = sample[rng.choice(len(sample), K, replace=False)].copy()
+    rng = Rng()
+    sample = unit[rng.sample(n, min(n, nsample))]
+    ns = len(sample)
+    cent = np.zeros((K, k), np.float32)
+    first = rng.sample(ns, K)
+    cent[:len(first)] = sample[first]
     for _ in range(IVF_ITERS):
         a = _nearest(sample, cent)
         order = np.argsort(a, kind="stable")
         counts = np.bincount(a, minlength=K)
         starts = np.concatenate(([0], np.cumsum(counts)[:-1]))
+        sums = np.zeros((K, k), np.float32)
+        for t in range(int(counts.max())):  # each cluster's rows added one at a time, in row order
+            c = np.flatnonzero(counts > t)
+            sums[c] += sample[order[starts[c] + t]]
         nonempty = counts > 0
-        sums = np.add.reduceat(sample[order], starts[nonempty], axis=0)
-        new = cent.copy()
-        new[nonempty] = sums / np.maximum(np.linalg.norm(sums, axis=1), 1e-6)[:, None]
-        if not nonempty.all():  # re-seed empty clusters from random rows
-            new[~nonempty] = sample[rng.choice(len(sample), int((~nonempty).sum()), replace=False)]
-        cent = new
+        cent[nonempty] = _unit(sums[nonempty])
+        for c in np.flatnonzero(~nonempty):  # re-seed an empty cluster from a random row
+            cent[c] = sample[rng.below(ns)]
     a = _nearest(unit, cent)
-    order = np.argsort(a, kind="stable").astype(np.int32)
-    inv = np.empty(n, np.int32)
-    inv[order] = np.arange(n, dtype=np.int32)
     ptr = np.zeros(K + 1, np.int64)
     np.cumsum(np.bincount(a, minlength=K), out=ptr[1:])
-    np.save(os.path.join(tmp, "ivf_cent.npy"), cent.astype(np.float32))
+    return cent, np.argsort(a, kind="stable").astype(np.int32), ptr
+
+
+def build_ivf(tmp: str, vec: np.ndarray) -> np.ndarray:
+    """Cluster the A+B vectors of a segment (see `kmeans`). Returns the cluster order (segment row at
+    each sorted position); the caller stores the vectors in that order so a query can scan a few
+    clusters contiguously. Exact top-k over all rows is still available by probing every cluster."""
+    cent, order, ptr = kmeans(vec, IVF_SAMPLE)
+    inv = np.empty(len(order), np.int32)
+    inv[order] = np.arange(len(order), dtype=np.int32)
+    np.save(os.path.join(tmp, "ivf_cent.npy"), cent)
     np.save(os.path.join(tmp, "ivf_ptr.npy"), ptr)
     np.save(os.path.join(tmp, "ivf_order.npy"), order)
     np.save(os.path.join(tmp, "ivf_inv.npy"), inv)

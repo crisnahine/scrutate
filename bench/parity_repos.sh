@@ -21,7 +21,7 @@ nq=${PARITY_QUERIES:-40}
 
 repos="$code/js_ws/lib $code/js_lodash $code/js_axios/lib $code/js_commander/lib
 $code/ts_rxjs/src $code/ts_pixijs/src $code/ts_immutable/src
-$code/go_prometheus $code/go_cobra $code/go_zap
+$code/go_prometheus $code/go_cobra $code/go_zap $code/go_protobuf $code/go_grpc
 $code/java_jsoup/src/main/java $code/java_commons_io/src/main/java $code/java_gson/gson/src/main/java
 $code/rs_ripgrep/crates $code/rs_serde_json/src $code/rs_chrono/src
 networkx=${nx:-missing} rich=${rich:-missing} mcp=${mcp:-missing}"

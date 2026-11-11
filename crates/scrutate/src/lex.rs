@@ -574,8 +574,13 @@ impl Rng {
     }
 }
 
-/// C[rows, K] = X[rows, k] . cent[K, k]^T, then argmax per row (parallel over row blocks).
+/// Nearest centroid of each row of `x` (unit rows, unit centroids): the centroid with the largest
+/// `dot_seq64`, the lowest cluster number on a tie. A float32 product in any summation order is
+/// within k * 2^-24 of the true dot product, so the winner always scores within `margin` of the
+/// float32 maximum; only rows with more than one centroid that close are decided by `dot_seq64`.
+/// The reference does the same with numpy's product, so both engines pick the same cluster.
 fn nearest(x: &[f32], k: usize, cent: &[f32], nk: usize) -> Vec<i32> {
+    let margin = 4.0 * k as f32 * f32::EPSILON;
     let n = x.len() / k;
     let block = 2048;
     let mut out = vec![0i32; n];
@@ -588,12 +593,19 @@ fn nearest(x: &[f32], k: usize, cent: &[f32], nk: usize) -> Vec<i32> {
         }
         for r in 0..rows {
             let row = &c[r * nk..(r + 1) * nk];
-            let mut best = 0usize;
-            let mut bv = f32::NEG_INFINITY;
-            for (j, &v) in row.iter().enumerate() {
-                if v > bv {
-                    bv = v;
-                    best = j;
+            let floor = row.iter().copied().fold(f32::NEG_INFINITY, f32::max) - margin;
+            let mut cand = (0..nk).filter(|&j| row[j] >= floor);
+            let first = cand.next().unwrap_or(0);
+            let mut best = first;
+            if let Some(second) = cand.next() {
+                let xr = &x[(r0 + r) * k..(r0 + r + 1) * k];
+                let mut bv = f64::NEG_INFINITY;
+                for j in [first, second].into_iter().chain(cand) {
+                    let s = dot_seq64(xr, &cent[j * k..(j + 1) * k]);
+                    if s > bv {
+                        bv = s;
+                        best = j;
+                    }
                 }
             }
             chunk[r] = best as i32;
@@ -602,31 +614,52 @@ fn nearest(x: &[f32], k: usize, cent: &[f32], nk: usize) -> Vec<i32> {
     out
 }
 
+/// a . b from exact float64 products in a fixed order, the same value in both engines: lane l sums
+/// j = l, l + 4, ... in turn, the lanes add as (0 + 1) + (2 + 3), then the last k % 4 terms in turn.
+fn dot_seq64(a: &[f32], b: &[f32]) -> f64 {
+    let ((ca, ta), (cb, tb)) = (a.as_chunks::<4>(), b.as_chunks::<4>());
+    let mut acc = [0f64; 4];
+    for (x, y) in ca.iter().zip(cb) {
+        for l in 0..4 {
+            acc[l] += x[l] as f64 * y[l] as f64;
+        }
+    }
+    let mut s = (acc[0] + acc[1]) + (acc[2] + acc[3]);
+    for (x, y) in ta.iter().zip(tb) {
+        s += *x as f64 * *y as f64;
+    }
+    s
+}
+
+/// Divide each row by its norm; the squares are summed in float32 in index order, like `_unit` in
+/// the reference.
 fn normalize_rows(m: &mut [f32], k: usize) {
     for row in m.chunks_mut(k) {
-        let n = row.iter().map(|v| v * v).sum::<f32>().sqrt().max(1e-6);
+        let mut s = 0f32;
+        for v in row.iter() {
+            s += v * v;
+        }
+        let n = s.sqrt().max(1e-6);
         for v in row.iter_mut() {
             *v /= n;
         }
     }
 }
 
-/// Cluster the A+B vectors of a segment (spherical k-means on a sample, then one assignment pass
-/// over every row). Returns the cluster order (segment row at each sorted position); the caller
-/// stores the vectors in that order so a query can scan a few clusters contiguously.
-pub fn build_ivf(tmp: &Path, vec: &QVecs, n: usize, k: usize) -> Result<Vec<usize>> {
-    let mut mix = vec![0f32; n * k];
+/// Spherical k-means on `nsample` rows of the A+B vectors, then one assignment pass over every row:
+/// (centroids [nk, k], cluster order, cluster pointers [nk + 1]).
+fn kmeans(vec: &QVecs, n: usize, k: usize, nsample: usize) -> (Vec<f32>, Vec<usize>, Vec<i64>) {
+    let mut unit = vec![0f32; n * k];
     for r in 0..n {
         let (q, s) = (&vec.q[r * 2 * k..(r + 1) * 2 * k], &vec.scale[r * 2..r * 2 + 2]);
         for j in 0..k {
-            mix[r * k + j] = q[j] as f32 * s[0] + q[k + j] as f32 * s[1];
+            unit[r * k + j] = q[j] as f32 * s[0] + q[k + j] as f32 * s[1];
         }
     }
-    let mut unit = mix.clone();
     normalize_rows(&mut unit, k);
     let nk = ((2.0 * (n as f64).sqrt()).round() as usize).clamp(32, 1024);
     let mut rng = Rng(0x9E3779B97F4A7C15);
-    let sample_idx = rng.sample(n, n.min(IVF_SAMPLE));
+    let sample_idx = rng.sample(n, n.min(nsample));
     let ns = sample_idx.len();
     let mut sample = vec![0f32; ns * k];
     for (i, &r) in sample_idx.iter().enumerate() {
@@ -650,11 +683,8 @@ pub fn build_ivf(tmp: &Path, vec: &QVecs, n: usize, k: usize) -> Result<Vec<usiz
         }
         for c in 0..nk {
             if counts[c] > 0 {
-                let s = &mut sums[c * k..(c + 1) * k];
-                let nrm = s.iter().map(|v| v * v).sum::<f32>().sqrt().max(1e-6);
-                for (dst, v) in cent[c * k..(c + 1) * k].iter_mut().zip(s.iter()) {
-                    *dst = v / nrm;
-                }
+                cent[c * k..(c + 1) * k].copy_from_slice(&sums[c * k..(c + 1) * k]);
+                normalize_rows(&mut cent[c * k..(c + 1) * k], k);
             } else {
                 let i = rng.below(ns); // re-seed an empty cluster from a random row
                 cent[c * k..(c + 1) * k].copy_from_slice(&sample[i * k..(i + 1) * k]);
@@ -664,16 +694,25 @@ pub fn build_ivf(tmp: &Path, vec: &QVecs, n: usize, k: usize) -> Result<Vec<usiz
     let a = nearest(&unit, k, &cent, nk);
     let mut order: Vec<usize> = (0..n).collect();
     order.sort_by_key(|&i| a[i]); // stable
-    let mut inv = vec![0i32; n];
-    for (pos, &r) in order.iter().enumerate() {
-        inv[r] = pos as i32;
-    }
     let mut ptr = vec![0i64; nk + 1];
     for &c in &a {
         ptr[c as usize + 1] += 1;
     }
     for c in 0..nk {
         ptr[c + 1] += ptr[c];
+    }
+    (cent, order, ptr)
+}
+
+/// Cluster the A+B vectors of a segment (see `kmeans`). Returns the cluster order (segment row at
+/// each sorted position); the caller stores the vectors in that order so a query can scan a few
+/// clusters contiguously.
+pub fn build_ivf(tmp: &Path, vec: &QVecs, n: usize, k: usize) -> Result<Vec<usize>> {
+    let (cent, order, ptr) = kmeans(vec, n, k, IVF_SAMPLE);
+    let nk = ptr.len() - 1;
+    let mut inv = vec![0i32; n];
+    for (pos, &r) in order.iter().enumerate() {
+        inv[r] = pos as i32;
     }
     npy::save(&tmp.join("ivf_cent.npy"), &cent, &[nk, k])?;
     npy::save(&tmp.join("ivf_ptr.npy"), &ptr, &[nk + 1])?;
@@ -1215,6 +1254,32 @@ mod tests {
         let mut d = [0f32; 8];
         dequantize(&q, s, &mut d);
         assert!(d.iter().zip(&v).all(|(a, b)| (a - b).abs() <= s / 2.0));
+    }
+
+    #[test]
+    fn kmeans_matches_python_reference_bit_for_bit() {
+        // the same digest is asserted in python/tests/test_lex.py test_kmeans_matches_the_rust_engine_bit_for_bit
+        let mut rng = Rng(12345);
+        let (n, k) = (3000, 16);
+        let mut v = QVecs::default();
+        for r in 0..n {
+            for _ in 0..2 * k {
+                v.q.push((rng.below(255) as i64 - 127) as i8);
+            }
+            for _ in 0..2 {
+                v.scale.push((1 + rng.below(64)) as f32 * (2f32).powi(-10));
+            }
+            if r % 3 == 2 {
+                // duplicate rows make tied centroids: the lower cluster number must win
+                v.q.copy_within((r - 2) * 2 * k..(r - 1) * 2 * k, r * 2 * k);
+                v.scale.copy_within((r - 2) * 2..(r - 1) * 2, r * 2);
+            }
+        }
+        let (cent, order, ptr) = kmeans(&v, n, k, 1000);
+        let sizes: Vec<i64> = ptr.windows(2).map(|w| w[1] - w[0]).collect();
+        let weighted: i64 = sizes.iter().enumerate().map(|(c, &s)| (c as i64 + 1) * s).sum();
+        let bits: u64 = cent.iter().map(|x| x.to_bits() as u64).sum();
+        assert_eq!((&order[..5], sizes.len(), weighted, bits), (&[21usize, 23, 256, 375, 377][..], 110, 164513, 3739691621945));
     }
 
     #[test]
