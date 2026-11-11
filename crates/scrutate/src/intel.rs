@@ -479,7 +479,8 @@ pub fn dupes(ix: &Index, min_tokens: usize, threshold: f32, limit: usize) -> Res
             members: vec![(rows[i].1.clone(), rows[i].2.clone(), rows[i].3, rows[i].4), (rows[j].1.clone(), rows[j].2.clone(), rows[j].3, rows[j].4)],
         });
     }
-    out.sort_by(|a, b| b.tokens.cmp(&a.tokens).then(b.similarity.partial_cmp(&a.similarity).unwrap()));
+    // members last: the exact groups come from a hash map, and a cut must not depend on its order
+    out.sort_by(|a, b| b.tokens.cmp(&a.tokens).then(b.similarity.partial_cmp(&a.similarity).unwrap()).then_with(|| a.members.cmp(&b.members)));
     out.truncate(limit);
     Ok(out)
 }
@@ -500,8 +501,18 @@ pub struct Capture {
 /// parsed in parallel in bounded chunks, so memory stays flat however many matches there are.
 /// With `cache_root`, each file's captures are kept under `cache_root/.scrutate/tsquery/` by
 /// content hash and files seen before are not parsed again (see `tscache`); the output is the same.
+/// With `as_given`, paths are printed as `grep PATH...` prints them (the root as given, then the
+/// path below it), except under `.`; without, from the root that holds them.
 /// Returns the number of captures delivered (stops at `limit`).
-pub fn tsquery_each(lang: &str, query: &str, roots: &[PathBuf], limit: usize, cache_root: Option<&Path>, on_capture: &mut dyn FnMut(Capture)) -> Result<usize> {
+pub fn tsquery_each(
+    lang: &str,
+    query: &str,
+    roots: &[PathBuf],
+    as_given: bool,
+    limit: usize,
+    cache_root: Option<&Path>,
+    on_capture: &mut dyn FnMut(Capture),
+) -> Result<usize> {
     use rayon::prelude::*;
     let spec = crate::langs::by_id(lang).ok_or_else(|| anyhow!("unknown language {} (see `scrutate languages`)", echo(lang)))?;
     if query.trim().is_empty() {
@@ -517,7 +528,7 @@ pub fn tsquery_each(lang: &str, query: &str, roots: &[PathBuf], limit: usize, ca
         bail!("unknown predicate #{} (supported: #eq?, #match?, #any-of? and their not- and any- forms)", p.operator);
     }
     let names: Vec<String> = q.capture_names().iter().map(|n| n.to_string()).collect();
-    let mut files: Vec<(PathBuf, String)> = Vec::new();
+    let mut files: Vec<(PathBuf, String, String)> = Vec::new();
     for root in roots {
         let mut wb = ignore::WalkBuilder::new(root);
         wb.hidden(true).git_ignore(true).add_custom_ignore_filename(crate::instant::RGIGNORE).sort_by_file_path(|a, b| a.cmp(b));
@@ -534,7 +545,12 @@ pub fn tsquery_each(lang: &str, query: &str, roots: &[PathBuf], limit: usize, ca
             }
             let ext_ok = spec.exts.iter().any(|e| rel.ends_with(e)) || spec.files.iter().any(|f| rel.rsplit('/').next() == Some(f));
             if ext_ok || spec.exts.is_empty() {
-                files.push((path.to_path_buf(), rel));
+                let shown = if as_given && root.components().any(|c| c != std::path::Component::CurDir) {
+                    crate::instant::slashed(path.to_string_lossy())
+                } else {
+                    rel.clone()
+                };
+                files.push((path.to_path_buf(), rel, shown));
             }
         }
     }
@@ -560,7 +576,7 @@ pub fn tsquery_each(lang: &str, query: &str, roots: &[PathBuf], limit: usize, ca
                     let ok = parser.set_language(language_ref).is_ok();
                     (parser, ok, tx.clone())
                 },
-                |(parser, ok, tx), (i, (path, rel))| {
+                |(parser, ok, tx), (i, (path, rel, shown))| {
                     if stop_ref.load(std::sync::atomic::Ordering::Relaxed) {
                         return;
                     }
@@ -572,7 +588,7 @@ pub fn tsquery_each(lang: &str, query: &str, roots: &[PathBuf], limit: usize, ca
                             if crate::parse::spec_for(rel, &src).map(|s| s.id) == Some(spec.id) {
                                 key = cached.map(|_| crate::tscache::hash(&[src.as_bytes()]));
                                 if let Some(hit) = key.and_then(|k| cached.and_then(|c| c.get(&k))) {
-                                    let caps = hit.iter().map(|c| Capture { path: rel.clone(), ..c.clone() }).collect();
+                                    let caps = hit.iter().map(|c| Capture { path: shown.clone(), ..c.clone() }).collect();
                                     let _ = tx.send((i, key, caps, true));
                                     return;
                                 }
@@ -586,7 +602,7 @@ pub fn tsquery_each(lang: &str, query: &str, roots: &[PathBuf], limit: usize, ca
                                             let node = c.node;
                                             let text = node.utf8_text(src.as_bytes()).unwrap_or("").lines().next().unwrap_or("").to_string();
                                             out.push(Capture {
-                                                path: rel.clone(),
+                                                path: shown.clone(),
                                                 line: node.start_position().row as i64 + 1,
                                                 column: node.start_position().column as i64 + 1,
                                                 capture: names_ref[c.index as usize].clone(),
@@ -665,7 +681,7 @@ pub fn tsquery_each(lang: &str, query: &str, roots: &[PathBuf], limit: usize, ca
 /// `tsquery_each` collected into a vector (MCP and bindings; the CLI streams).
 pub fn tsquery(lang: &str, query: &str, roots: &[PathBuf], limit: usize, cache_root: Option<&Path>) -> Result<Vec<Capture>> {
     let mut out = Vec::new();
-    tsquery_each(lang, query, roots, limit, cache_root, &mut |c| out.push(c))?;
+    tsquery_each(lang, query, roots, false, limit, cache_root, &mut |c| out.push(c))?;
     Ok(out)
 }
 

@@ -922,7 +922,7 @@ pub fn run() -> Result<i32> {
                 hits.sort_by(|a, b| b.0.score.partial_cmp(&a.0.score).unwrap_or(std::cmp::Ordering::Equal).then_with(|| shown(a).cmp(&shown(b))));
                 hits.truncate(k);
             }
-            let other = hits.iter().find(|(_, i)| *i > 0).map(|(_, i)| roots[*i].0.display().to_string());
+            let other = hits.iter().find(|(_, i)| *i > 0).map(|x| format!("{}:{}-{}", shown(x), x.0.start, x.0.end));
             if json && roots.len() > 1 {
                 let plain: Vec<crate::search::Hit> = hits.iter().map(|(h, _)| h.clone()).collect();
                 let mut v = hits_json(&plain);
@@ -940,7 +940,7 @@ pub fn run() -> Result<i32> {
                 }
             }
             if let (Some(other), false) = (other, json) {
-                eprintln!("[scrutate] to ask about a result of another repository, give its path as --root (scrutate --root {other} symbol NAME)");
+                eprintln!("[scrutate] a location of another repository is answered from its own index as printed (scrutate symbol {other})");
             }
             Ok(if hits.is_empty() { 1 } else { 0 })
         }
@@ -1003,7 +1003,7 @@ pub fn run() -> Result<i32> {
             let mut lines: Vec<String> = Vec::new();
             // one more than the limit, to tell whether it cut the answer
             let mut seen = 0usize;
-            let n = crate::intel::tsquery_each(&lang, &query, &paths, limit.saturating_add(1), cache_root, &mut |c| {
+            let n = crate::intel::tsquery_each(&lang, &query, &paths, true, limit.saturating_add(1), cache_root, &mut |c| {
                 seen += 1;
                 if err.is_some() || seen > limit {
                     return;

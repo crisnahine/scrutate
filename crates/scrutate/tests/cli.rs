@@ -257,8 +257,15 @@ fn search_also_prints_other_repositories_by_the_path_given() {
     let mut sorted = heads.clone();
     sorted.sort();
     assert_eq!(sorted, ["../two/src/db.py:1-3", "../two/src/db.py:6-7", "../x/one/src/auth.py:1-3", "src/auth.py:1-3"], "each repository once: {out}");
-    assert_eq!(err.lines().filter(|l| l.contains("--root")).count(), 1, "{err}");
-    // a location of another repository is asked about with --root
+    // one hint, naming a printed location of another repository that can be passed back as it is
+    let hints: Vec<&str> = err.lines().filter(|l| l.starts_with("[scrutate] ")).collect();
+    assert_eq!(hints.len(), 1, "{err}");
+    assert!(!hints[0].contains("--root"), "{err}");
+    let example = hints[0].rsplit_once("scrutate symbol ").map(|(_, l)| l.trim_end_matches(')')).unwrap_or_default();
+    assert!(example.starts_with("../") && heads.contains(&example), "{err}");
+    let (code, out, err) = run_in(&one, &["symbol", example], &[]);
+    assert!(code == 0 && out.contains("renew_token"), "{example}: {out}{err}");
+    // a location of another repository is also asked about with --root
     let (code, out, _) = run_in(&one, &["--root", "../two", "symbol", "src/db.py:6"], &[]);
     assert!(code == 0 && out.contains("only_in_two"), "{out}");
     // or as printed: the index above the file answers, with paths as it stores them
@@ -280,7 +287,7 @@ fn search_also_prints_other_repositories_by_the_path_given() {
     assert!(code == 1 && err.contains("no symbols in ../loose/a.py") && err.contains("is outside the repository"), "{err}");
     // without --also, no hint
     let (_, _, err) = run_in(&one, &["search", "renew token"], &[]);
-    assert!(!err.contains("--root"), "{err}");
+    assert!(!err.contains("[scrutate]"), "{err}");
 }
 
 #[test]
@@ -1465,6 +1472,45 @@ fn tsquery_names_a_missing_path_reads_paths_under_root_and_says_where_limit_stop
     assert_eq!(out.lines().last(), Some("(stopped at 3 matches: raise limit to see more)"));
     let (_, out, _) = r.run(&["tsquery", "python", q, "pkg", "--limit", "24", "--no-cache"]);
     assert!(!out.contains("stopped at"), "{out}");
+}
+
+#[test]
+fn tsquery_prints_paths_as_grep_does_so_they_can_be_passed_back() {
+    let r = Repo::new("tsqgiven");
+    r.write("src/a.py", b"def f():\n    pass\n");
+    assert_eq!(r.run(&["index"]).0, 0);
+    let q = "(function_definition name: (identifier) @n)";
+    let first = |cwd: &Path, args: &[&str]| {
+        let (code, out, err) = run_in(cwd, &[&["tsquery", "python", q][..], args].concat(), &[]);
+        assert_eq!(code, 0, "{args:?}: {err}");
+        out.lines().next().unwrap_or("").to_string()
+    };
+    // the cache is filled by the first spelling and answers the others
+    for (arg, want) in
+        [(&["src"][..], "src/a.py"), (&["./src"], "./src/a.py"), (&["src/"], "src/a.py"), (&["src/a.py"], "src/a.py"), (&[], "src/a.py"), (&["."], "src/a.py")]
+    {
+        for extra in [&[][..], &["--no-cache"]] {
+            let line = first(&r.root, &[arg, extra].concat());
+            assert!(line.starts_with(&format!("{want}:1:5  @n")), "{arg:?} {extra:?}: {line}");
+            let json = first(&r.root, &[arg, extra, &["--json"]].concat());
+            let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+            assert_eq!(v["path"], want, "{arg:?} {extra:?}: {json}");
+        }
+    }
+    // from a subdirectory and with --root, a printed path is one outline reads as it is
+    let src = r.root.join("src");
+    let root = r.root.to_str().unwrap();
+    for (cwd, args) in [(&src, &["a.py"][..]), (&src, &[]), (&src, &["../src"]), (&src, &["src/a.py"])] {
+        let line = first(cwd, args);
+        let path = line.split(':').next().unwrap();
+        assert!(path.ends_with("a.py"), "{args:?}: {line}");
+        let (code, out, err) = run_in(cwd, &["outline", path], &[]);
+        assert!(code == 0 && out.contains("f"), "{args:?} {path}: {out}{err}");
+        let (code, out, err) = run_in(cwd, &["--root", root, "outline", path], &[]);
+        assert!(code == 0 && out.contains("f"), "--root, {args:?} {path}: {out}{err}");
+    }
+    assert!(first(&src, &["a.py"]).starts_with("a.py:1:5"));
+    assert!(first(&src, &[]).starts_with("a.py:1:5"));
 }
 
 #[test]

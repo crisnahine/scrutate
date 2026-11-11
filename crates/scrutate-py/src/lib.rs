@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use pyo3::exceptions::{PyFileNotFoundError, PyOSError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyList, PyType};
 
 use scrutate::instant::{self, Case, Mode, Options};
 
@@ -364,6 +364,23 @@ fn hits_py(hits: Vec<scrutate::search::Hit>) -> Vec<Hit> {
     hits.into_iter().map(Into::into).collect()
 }
 
+/// `items` cut to `limit` as a `Results` list whose `stopped_at` is the limit when there were
+/// more (ask the engine for `limit + 1`), as the CLI and the MCP tools report it.
+fn results<'py, T: IntoPyObject<'py>>(
+    py: Python<'py>,
+    mut items: Vec<T>,
+    limit: usize,
+) -> PyResult<Bound<'py, PyAny>> {
+    let stopped_at = (items.len() > limit).then_some(limit);
+    items.truncate(limit);
+    let out = py
+        .import("scrutate._native")?
+        .getattr("Results")?
+        .call1((items,))?;
+    out.setattr("stopped_at", stopped_at)?;
+    Ok(out)
+}
+
 impl Repo {
     /// The engine with its index brought up to date (checked at most once a second), as the CLI
     /// and the MCP server see it before every operation.
@@ -450,39 +467,51 @@ impl Repo {
         Ok(hits_py(hits))
     }
 
-    /// Where is this function/class/method defined? (`Class.method` works.)
+    /// Where is this function/class/method defined? (`Class.method` works.) A `Results` list:
+    /// `stopped_at` is `limit` when there were more.
     #[pyo3(signature = (name, limit=scrutate::ops::SYMBOL_LIMIT))]
-    fn symbol(&self, py: Python<'_>, name: &str, limit: usize) -> PyResult<Vec<Hit>> {
-        let n = name.to_string();
-        let hits = py
-            .detach(move || self.fresh()?.find_symbol(&n, limit))
-            .map_err(err)?;
-        Ok(hits_py(hits))
-    }
-
-    /// Functions that call `name`.
-    #[pyo3(signature = (name, limit=scrutate::ops::CALLERS_LIMIT))]
-    fn callers(&self, py: Python<'_>, name: &str, limit: usize) -> PyResult<Vec<Hit>> {
-        let n = name.to_string();
-        let hits = py
-            .detach(move || self.fresh()?.callers(&n, limit))
-            .map_err(err)?;
-        Ok(hits_py(hits))
-    }
-
-    /// Functions `name` calls: (resolved hits, unresolved external names).
-    #[pyo3(signature = (name, limit=scrutate::ops::CALLEES_LIMIT))]
-    fn callees(
+    fn symbol<'py>(
         &self,
-        py: Python<'_>,
+        py: Python<'py>,
         name: &str,
         limit: usize,
-    ) -> PyResult<(Vec<Hit>, Vec<String>)> {
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let n = name.to_string();
+        let hits = py
+            .detach(move || self.fresh()?.find_symbol(&n, limit.saturating_add(1)))
+            .map_err(err)?;
+        results(py, hits_py(hits), limit)
+    }
+
+    /// Functions that call `name`. A `Results` list: `stopped_at` is `limit` when there were more.
+    #[pyo3(signature = (name, limit=scrutate::ops::CALLERS_LIMIT))]
+    fn callers<'py>(
+        &self,
+        py: Python<'py>,
+        name: &str,
+        limit: usize,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let n = name.to_string();
+        let hits = py
+            .detach(move || self.fresh()?.callers(&n, limit.saturating_add(1)))
+            .map_err(err)?;
+        results(py, hits_py(hits), limit)
+    }
+
+    /// Functions `name` calls: (resolved hits, unresolved external names). The hits are a
+    /// `Results` list: `stopped_at` is `limit` when there were more.
+    #[pyo3(signature = (name, limit=scrutate::ops::CALLEES_LIMIT))]
+    fn callees<'py>(
+        &self,
+        py: Python<'py>,
+        name: &str,
+        limit: usize,
+    ) -> PyResult<(Bound<'py, PyAny>, Vec<String>)> {
         let n = name.to_string();
         let (hits, ext) = py
-            .detach(move || self.fresh()?.callees(&n, limit))
+            .detach(move || self.fresh()?.callees(&n, limit.saturating_add(1)))
             .map_err(err)?;
-        Ok((hits_py(hits), ext))
+        Ok((results(py, hits_py(hits), limit)?, ext))
     }
 
     /// Symbols of a file in source order, as dicts (kind, name, qualname, start, end).
@@ -540,7 +569,8 @@ impl Repo {
         Ok(out.into_iter().map(|(h, c, j)| (h.into(), c, j)).collect())
     }
 
-    /// Duplicate and near-duplicate functions, as JSON-compatible dicts.
+    /// Duplicate and near-duplicate functions, as a `Results` list of JSON-compatible dicts:
+    /// `stopped_at` is `limit` when there were more.
     #[pyo3(signature = (min_tokens=scrutate::ops::DUPES_MIN_TOKENS, threshold=scrutate::ops::DUPES_THRESHOLD, limit=scrutate::ops::DUPES_LIMIT))]
     fn duplicates<'py>(
         &self,
@@ -548,11 +578,18 @@ impl Repo {
         min_tokens: usize,
         threshold: f32,
         limit: usize,
-    ) -> PyResult<Vec<Bound<'py, PyDict>>> {
+    ) -> PyResult<Bound<'py, PyAny>> {
         let groups = py
-            .detach(move || scrutate::intel::dupes(&self.fresh()?.ix, min_tokens, threshold, limit))
+            .detach(move || {
+                scrutate::intel::dupes(
+                    &self.fresh()?.ix,
+                    min_tokens,
+                    threshold,
+                    limit.saturating_add(1),
+                )
+            })
             .map_err(err)?;
-        groups
+        let dicts = groups
             .iter()
             .map(|g| {
                 let d = PyDict::new(py);
@@ -562,7 +599,8 @@ impl Repo {
                 d.set_item("members", g.members.clone())?;
                 Ok(d)
             })
-            .collect()
+            .collect::<PyResult<Vec<_>>>()?;
+        results(py, dicts, limit)
     }
 
     /// Index statistics as a dict. GIL released while it waits for the engine.
@@ -633,5 +671,16 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(grep, m)?)?;
     m.add_function(wrap_pyfunction!(version, m)?)?;
     m.add("__version__", scrutate::VERSION)?;
+    // a plain list subclass, so a result works wherever a list did
+    let py = m.py();
+    let ns = PyDict::new(py);
+    ns.set_item("__module__", "scrutate._native")?;
+    ns.set_item("__doc__", "A list of results; `stopped_at` is the limit the answer stopped at when there were more, else None.")?;
+    ns.set_item("stopped_at", py.None())?;
+    m.add(
+        "Results",
+        py.get_type::<PyType>()
+            .call1(("Results", (py.get_type::<PyList>(),), ns))?,
+    )?;
     Ok(())
 }

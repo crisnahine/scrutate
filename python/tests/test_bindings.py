@@ -98,6 +98,41 @@ def test_repo_index_and_intelligence(repo):
         r.read("/etc/passwd")
 
 
+def test_a_cut_answer_says_where_it_stopped(repo):
+    (repo / "cut.py").write_text(
+        "def target():\n    return 1\n\n\n"
+        + "".join(f"def caller_{i}():\n    return target()\n\n\n" for i in range(3))
+        + "def fan():\n    return caller_0() + caller_1() + caller_2()\n"
+    )
+    shapes = [
+        "    total = compute_alpha(x)\n    shifted = adjust_beta(total)\n    return finalize_gamma(shifted)\n",
+        "    items = load_records(x)\n    kept = filter_entries(items)\n    return store_results(kept)\n",
+        "    conn = open_socket(x)\n    reply = send_request(conn)\n    return parse_payload(reply)\n",
+    ]
+    for i, body in enumerate(shapes):
+        for copy in "ab":
+            (repo / f"dup_{i}{copy}.py").write_text(f"def dup(x):\n{body}")
+    r = scrutate.Repo(str(repo))
+    r.index()
+    calls = {
+        "symbol": lambda n: r.symbol("dup", limit=n),
+        "callers": lambda n: r.callers("target", limit=n),
+        "callees": lambda n: r.callees("fan", limit=n)[0],
+        "duplicates": lambda n: r.duplicates(min_tokens=3, threshold=0.95, limit=n),
+    }
+    def key(items):
+        return [x if isinstance(x, dict) else (x.path, x.start) for x in items]
+
+    for name, call in calls.items():
+        whole = call(1000)
+        assert isinstance(whole, list) and len(whole) >= 3 and whole.stopped_at is None, name
+        cut = call(2)
+        assert len(cut) == 2 and cut.stopped_at == 2, name
+        assert key(cut) == key(whole[:2]), name
+        exact = call(len(whole))
+        assert key(exact) == key(whole) and exact.stopped_at is None, name
+
+
 def test_similar_with_k_zero_leaves_the_repo_usable(repo):
     r = scrutate.Repo(str(repo))
     r.index()
