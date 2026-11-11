@@ -14,7 +14,8 @@ Per benchmark:
  3. Measurement. hyperfine, output piped (no /dev/null shortcuts), >= 30 runs for scrutate and
     every contender, taken in interleaved blocks (A B, A B, A B; one warm-up run per block) so load
     drift on a shared machine does not bias the comparison (cold cache: the prepare command runs
-    before every run).
+    before every run). With SCRUTATE_BASE_BIN set, `scrutate base` runs scrutate's command lines with
+    that binary in the same blocks, for bench/leaderboard_regression.py; it is never ranked.
  4. Status. The 95% confidence interval of median(scrutate) / median(best competitor), by a
     bootstrap over the runs: PASS if it lies below 1, FAIL above 1, PARTIAL if it contains 1;
     BLOCKED (a tie at the hardware limit) when it contains 1 and both medians are within 15% of
@@ -47,6 +48,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, ".."))
 SCRUTATE = os.environ.get("SCRUTATE_BIN", os.path.join(ROOT, "target", "release", "scrutate"))
+SCRUTATE_BASE = os.environ.get("SCRUTATE_BASE_BIN") or None
 
 
 def which(*names):
@@ -67,9 +69,12 @@ BIN = {
     "ack": which("/opt/homebrew/bin/ack", "ack"),
     "ast-grep": which("/opt/homebrew/bin/ast-grep", "ast-grep"),
     "scrutate --index": SCRUTATE,
+    **({"scrutate base": SCRUTATE_BASE} if SCRUTATE_BASE else {}),
 }
-ENGINE_A = ["scrutate", "ripgrep", "ugrep", "GNU grep", "git grep", "ag", "ack"]
-CROSS = ["scrutate --index"]  # published, never ranked (an index answers from work done in advance)
+BASE = ["scrutate base"] if SCRUTATE_BASE else []
+ENGINE_A = ["scrutate", *BASE, "ripgrep", "ugrep", "GNU grep", "git grep", "ag", "ack"]
+# published, never ranked: an index answers from work done in advance, the base is the change's yardstick
+CROSS = ["scrutate --index", *BASE]
 
 
 def version(tool):
@@ -180,7 +185,7 @@ def argv(tool, q, mode, corpus_dir):
         return None, {}
     env = {}
     git = is_git(corpus_dir)
-    if tool in ("scrutate", "scrutate --index"):
+    if tool in ("scrutate", "scrutate --index", "scrutate base"):
         if tool == "scrutate --index" and mode != "ignore":
             return None, env
         a = [b, "grep"] + (["--index"] if tool == "scrutate --index" else [])
@@ -278,8 +283,8 @@ def argv(tool, q, mode, corpus_dir):
 
 
 def structural_argv(tool, spec):
-    if tool == "scrutate":
-        return [SCRUTATE, "tsquery", "--json", spec["lang"], spec["tsquery"], ".", "--limit", "100000000"]
+    if tool in ("scrutate", "scrutate base") and BIN.get(tool):
+        return [BIN[tool], "tsquery", "--json", spec["lang"], spec["tsquery"], ".", "--limit", "100000000"]
     if tool == "ast-grep" and BIN["ast-grep"]:
         sel = ["--selector", spec["ast_grep_selector"]] if spec.get("ast_grep_selector") else []
         return [BIN["ast-grep"], "run", "-p", spec["ast_grep"], *sel, "-l", spec["lang"], "--json=stream", "."]
@@ -507,7 +512,7 @@ def run_bench(b, corpora, a, cache_dir):
     cdir = os.path.join(corpora, b["corpus"])
     res = {"id": b["id"], "corpus": b["corpus"], "qtype": b["qtype"], "mode": b["mode"], "cache": a.cache, "tools": {}, "load": []}
     structural = b.get("structural")
-    tools = ["scrutate", "ast-grep"] if structural else ENGINE_A + CROSS
+    tools = ["scrutate", *BASE, "ast-grep"] if structural else ENGINE_A + ["scrutate --index"]
     # 1. reference
     files = file_list(cdir, b["mode"])
     digest = corpus_digest(corpora, b["corpus"])
@@ -545,7 +550,7 @@ def run_bench(b, corpora, a, cache_dir):
         except subprocess.TimeoutExpired:
             res["tools"][t] = {"status": "timeout", "argv": cmd, "env": env, "timeout_s": a.timeout}
             continue
-        got = normalise(p.stdout, t if structural else None)
+        got = normalise(p.stdout, ("scrutate" if t == "scrutate base" else t) if structural else None)
         if structural:
             got = {h for h in got if h[0] not in unclear}
         missing, extra = ref - got, got - ref
@@ -583,8 +588,9 @@ def run_bench(b, corpora, a, cache_dir):
         # block per tool would turn that drift into a difference between the tools
         acc = {t: {"n": 0, "times": [], "cpu": [], "rss": [], "exit": set()} for t in contenders}
         per = -(-a.runs // a.blocks)
-        for _ in range(a.blocks):
-            for t in contenders:
+        for i in range(a.blocks):
+            # alternate the order, so of two tools neither always runs first in a block
+            for t in (contenders if i % 2 == 0 else contenders[::-1]):
                 r = res["tools"][t]
                 res["load"].append(wait_idle(a.max_load, a.max_wait))
                 h = hyperfine(r["argv"], cdir, r["env"], per, 1, prepare)
@@ -727,8 +733,21 @@ def environment():
         env["memory_bytes"] = int(open("/proc/meminfo").read().split()[1]) * 1024
     env["tools"] = {t: version(t) for t in BIN}
     env["scrutate_sha256"] = hashlib.sha256(open(SCRUTATE, "rb").read()).hexdigest()
+    if SCRUTATE_BASE:
+        env["scrutate_base_sha256"] = hashlib.sha256(open(SCRUTATE_BASE, "rb").read()).hexdigest()
     env["hyperfine"] = subprocess.run(["hyperfine", "--version"], capture_output=True, text=True).stdout.strip()
     return env
+
+
+def check_hyperfine():
+    """The harness reads each run from hyperfine 2's JSON (`measurements`); 1.x writes none."""
+    try:
+        out = subprocess.run(["hyperfine", "--version"], capture_output=True, text=True).stdout.strip()
+    except OSError:
+        raise SystemExit("hyperfine is not installed (version 2 or newer is needed)")
+    m = re.search(r"(\d+)\.\d+", out)
+    if not m or int(m.group(1)) < 2:
+        raise SystemExit(f"hyperfine 2 or newer is needed (its JSON lists each run); found: {out or 'no version'}")
 
 
 def main() -> int:
@@ -760,6 +779,10 @@ def main() -> int:
         for b in benches:
             print(b["id"])
         return 0
+    if SCRUTATE_BASE and not os.access(SCRUTATE_BASE, os.X_OK):
+        raise SystemExit(f"SCRUTATE_BASE_BIN is not an executable: {SCRUTATE_BASE}")
+    if not a.restatus:
+        check_hyperfine()
     cache_dir = os.path.join(os.path.dirname(os.path.abspath(a.out)), "cache")
     os.makedirs(cache_dir, exist_ok=True)
     data = json.load(open(a.out)) if os.path.exists(a.out) else {"benchmarks": {}}

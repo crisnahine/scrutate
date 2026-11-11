@@ -1,8 +1,8 @@
 # Benchmark regression gate. A shared runner is not the machine a committed baseline came from, so
 # the job builds two binaries on the runner it has, the change and the commit it is measured
-# against, and compares them there: the base of a pull request, or the last release tag on the
-# weekly run. Each binary is judged relative to the other tools timed beside it, so an hour when
-# the runner is slow does not read as a regression. Numbers from here never reach docs/LEADERBOARD.md.
+# against (the base of a pull request, or the last release tag on the weekly run), and times both
+# in ONE leaderboard run, in the same interleaved blocks: a slow minute slows both, and two runs
+# minutes apart are never compared. Numbers from here never reach docs/LEADERBOARD.md.
 name: benchmarks
 on:
   pull_request:
@@ -65,26 +65,21 @@ jobs:
         run: |
           git clone --depth 1 --branch networkx-3.4.2 https://github.com/networkx/networkx "$RUNNER_TEMP/networkx"
           python3 bench/corpora.py --root "$RUNNER_TEMP/corpora" --only ripgrep
-      - name: tool comparison on networkx
+      # recorded for reading, not gated: it times one binary per run, and the gate needs both in one
+      - name: tool comparison on networkx (no gate)
         run: |
-          for b in old new; do
-            [ -x "$RUNNER_TEMP/$b" ] || continue
-            SCRUTATE_BIN="$RUNNER_TEMP/$b" python3 bench/compare_tools.py --corpus "networkx=$RUNNER_TEMP/networkx" --only text,index --runs 21 --out "compare-$b.json"
-          done
-          [ ! -f compare-old.json ] || python3 bench/regression.py --relative compare-old.json compare-new.json
-      - name: leaderboard suite on the ripgrep corpus
+          SCRUTATE_BIN="$RUNNER_TEMP/new" python3 bench/compare_tools.py --corpus "networkx=$RUNNER_TEMP/networkx" --only text,index --runs 21 --out compare-new.json
+      - name: leaderboard suite on the ripgrep corpus, the change and its base in the same blocks
         if: ${{ !cancelled() }}
         run: |
-          for b in old new; do
-            [ -x "$RUNNER_TEMP/$b" ] || continue
-            SCRUTATE_BIN="$RUNNER_TEMP/$b" python3 bench/leaderboard.py --corpora "$RUNNER_TEMP/corpora" --out "leaderboard-$b.json" --only ripgrep/ --max-load 2 --max-wait 300
-          done
-          [ ! -f leaderboard-old.json ] || python3 bench/leaderboard_regression.py --relative leaderboard-old.json leaderboard-new.json
+          if [ -x "$RUNNER_TEMP/old" ]; then export SCRUTATE_BASE_BIN="$RUNNER_TEMP/old"; fi
+          SCRUTATE_BIN="$RUNNER_TEMP/new" python3 bench/leaderboard.py --corpora "$RUNNER_TEMP/corpora" --out leaderboard.json --only ripgrep/ --blocks 6 --max-load 2 --max-wait 300
+          [ -z "${SCRUTATE_BASE_BIN:-}" ] || python3 bench/leaderboard_regression.py --within leaderboard.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: benchmark-results
           path: |
-            compare-*.json
-            leaderboard-*.json
+            compare-new.json
+            leaderboard.json
           retention-days: 30
