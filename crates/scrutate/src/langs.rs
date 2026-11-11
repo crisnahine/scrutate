@@ -63,12 +63,17 @@ pub enum ImportHow {
     ChildKind(&'static [&'static str]),
     /// the node's own text (keywords are stripped afterwards)
     Text,
+    /// the first argument of the call when it is a literal of one of these kinds with no interpolation
+    Arg(&'static [&'static str]),
+    /// each name of a PHP `use`, a grouped `use A\{B, C}` prefixed by its namespace
+    UseClauses,
 }
 
 pub struct ImportRule {
     pub node: &'static str,
     pub how: ImportHow,
-    /// only when the text of this field (the callee / command name) is one of `when_head`
+    /// only when the text of this field (the callee / command name) is one of `when_head`;
+    /// an empty field means the first named child
     pub head_field: &'static str,
     pub when_head: &'static [&'static str],
 }
@@ -344,12 +349,15 @@ const TS_DEFS: &[Def] = &[
 const JS_CALLS: &[Call] = &[c("call_expression", "function"), c("new_expression", "constructor")];
 const JS_WRAPPERS: &[&str] = &["export_statement", "lexical_declaration", "variable_declaration", "decorator"];
 const JS_IMPORTS: &[ImportRule] = &[
-    imp("import_statement", ImportHow::FirstString),
-    imp("export_statement", ImportHow::FirstString),
-    imp_call("call_expression", "function", &["require", "import"], ImportHow::FirstString),
+    imp("import_statement", ImportHow::Fields("source")),
+    imp("import_require_clause", ImportHow::Fields("source")),
+    // an exported declaration is an export_statement too, and only `export ... from` has a source
+    imp("export_statement", ImportHow::Fields("source")),
+    imp_call("call_expression", "function", &["require", "import"], ImportHow::Arg(&["string", "template_string"])),
 ];
-const C_IMPORTS: &[ImportRule] = &[imp("preproc_include", ImportHow::FirstString)];
+const C_IMPORTS: &[ImportRule] = &[imp("preproc_include", ImportHow::FirstString), imp("module_import", ImportHow::Text)];
 const NO_IMPORTS: &[ImportRule] = &[];
+const JULIA_MODULES: &[&str] = &["identifier", "scoped_identifier", "import_path", "selected_import", "import_alias"];
 
 const CORE: &[LangSpec] = &[
     LangSpec {
@@ -471,7 +479,7 @@ const CORE: &[LangSpec] = &[
         wrappers: &[],
         outer: &[],
         body: "body",
-        imports: &[imp("import_declaration", ImportHow::ChildKind(&["scoped_identifier", "identifier", "asterisk"]))],
+        imports: &[imp("import_declaration", ImportHow::Text)],
     },
     LangSpec {
         id: "c",
@@ -547,7 +555,7 @@ const CORE: &[LangSpec] = &[
         wrappers: &[],
         outer: &[],
         body: "body",
-        imports: &[imp("using_directive", ImportHow::ChildKind(&["identifier", "qualified_name", "name_equals"]))],
+        imports: &[imp("using_directive", ImportHow::ChildKind(&["identifier", "qualified_name"]))],
     },
     LangSpec {
         id: "ruby",
@@ -560,7 +568,7 @@ const CORE: &[LangSpec] = &[
         wrappers: &[],
         outer: &[],
         body: "body",
-        imports: &[imp_call("call", "method", &["require", "require_relative", "load"], ImportHow::FirstString)],
+        imports: &[imp_call("call", "method", &["require", "require_relative", "load"], ImportHow::Arg(&["string"]))],
     },
     LangSpec {
         id: "php",
@@ -587,7 +595,7 @@ const CORE: &[LangSpec] = &[
         outer: &[],
         body: "body",
         imports: &[
-            imp("namespace_use_declaration", ImportHow::ChildKind(&["namespace_use_clause", "namespace_use_group"])),
+            imp("namespace_use_declaration", ImportHow::UseClauses),
             imp("require_expression", ImportHow::FirstString),
             imp("require_once_expression", ImportHow::FirstString),
             imp("include_expression", ImportHow::FirstString),
@@ -653,7 +661,7 @@ const CORE: &[LangSpec] = &[
         wrappers: &[],
         outer: &[],
         body: "body",
-        imports: &[imp("import", ImportHow::ChildKind(&["qualified_identifier", "identifier"]))],
+        imports: &[imp("import", ImportHow::Text)],
     },
     LangSpec {
         id: "swift",
@@ -724,7 +732,7 @@ const CORE: &[LangSpec] = &[
         wrappers: &[],
         outer: &[],
         body: "body",
-        imports: &[imp_call("function_call", "name", &["require"], ImportHow::FirstString)],
+        imports: &[imp_call("function_call", "name", &["require"], ImportHow::Arg(&["string"]))],
     },
     LangSpec {
         id: "elixir",
@@ -847,7 +855,11 @@ const CORE: &[LangSpec] = &[
         wrappers: &[],
         outer: &[],
         body: "",
-        imports: &[imp("using_statement", ImportHow::Text), imp("import_statement", ImportHow::Text)],
+        imports: &[
+            imp("using_statement", ImportHow::ChildKind(JULIA_MODULES)),
+            imp("import_statement", ImportHow::ChildKind(JULIA_MODULES)),
+            imp_call("call_expression", "", &["include"], ImportHow::Arg(&["string_literal"])),
+        ],
     },
     LangSpec {
         id: "dart",
@@ -882,7 +894,7 @@ const CORE: &[LangSpec] = &[
         wrappers: &[],
         outer: &[],
         body: "",
-        imports: &[imp_call("call", "function", &["library", "require", "requireNamespace"], ImportHow::ChildKind(&["arguments"]))],
+        imports: &[imp_call("call", "function", &["library", "require", "requireNamespace", "source"], ImportHow::Arg(&["identifier", "string"]))],
     },
     LangSpec {
         id: "nix",
@@ -1387,6 +1399,14 @@ fn llvm_fn_name(n: Node, src: &[u8]) -> Option<String> {
 }
 
 #[cfg(feature = "extra-langs")]
+const QML_IMPORTS: &[ImportRule] = &[
+    imp("ui_import", ImportHow::Fields("source")),
+    imp("import_statement", ImportHow::Fields("source")),
+    imp("export_statement", ImportHow::Fields("source")),
+    imp_call("call_expression", "function", &["require", "import"], ImportHow::Arg(&["string", "template_string"])),
+];
+
+#[cfg(feature = "extra-langs")]
 const EXTRA: &[LangSpec] = &[
     LangSpec {
         id: "cuda",
@@ -1576,7 +1596,7 @@ const EXTRA: &[LangSpec] = &[
         wrappers: &[],
         outer: &[],
         body: "",
-        imports: JS_IMPORTS,
+        imports: QML_IMPORTS,
     },
     LangSpec {
         id: "tlaplus",

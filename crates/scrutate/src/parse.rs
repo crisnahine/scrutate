@@ -834,6 +834,7 @@ fn first_string<'t>(node: Node<'t>) -> Option<Node<'t>> {
         if matches!(
             n.kind(),
             "string"
+                | "encapsed_string"
                 | "string_literal"
                 | "system_lib_string"
                 | "interpreted_string_literal"
@@ -886,7 +887,43 @@ pub fn normalize_module(raw: &str) -> String {
     let t = t.trim().trim_end_matches("::").trim_end_matches(')').trim();
     let t = if t.chars().all(|c| c == '.') { t } else { t.trim_end_matches('.') }; // `from . import x` keeps its dot
     let t = t.trim_matches(|c| c == '"' || c == '\'' || c == '`' || c == '<' || c == '>');
-    t.split_whitespace().next().unwrap_or("").to_string()
+    // Julia `import Base: show` names the module before the colon
+    t.split_whitespace().next().unwrap_or("").trim_end_matches(':').to_string()
+}
+
+/// The first argument of a call, when it is a literal of one of `kinds` with no interpolation.
+fn literal_arg<'t>(call: Node<'t>, kinds: &[&str]) -> Option<Node<'t>> {
+    let args = call.child_by_field_name("arguments").or_else(|| call.named_children(&mut call.walk()).find(|c| c.kind() == "argument_list"))?;
+    let mut a = args.named_children(&mut args.walk()).find(|c| !c.kind().contains("comment"))?;
+    if a.kind() == "argument" {
+        a = a.child_by_field_name("value")?; // R
+    }
+    let holes = ["template_substitution", "interpolation", "string_interpolation"];
+    if !kinds.contains(&a.kind()) || a.named_children(&mut a.walk()).any(|c| holes.contains(&c.kind())) {
+        return None;
+    }
+    // Lua long brackets and R quotes: the content is the module
+    Some(a.child_by_field_name("content").unwrap_or(a))
+}
+
+/// Each name of a PHP `use`: `use A\B, C;`, `use function A\f;` and `use A\{B, C as D};`.
+fn php_use_names(node: Node, src: &[u8], out: &mut Vec<String>) {
+    let clause = |cl: Node, prefix: &str| {
+        cl.named_children(&mut cl.walk())
+            .find(|c| matches!(c.kind(), "qualified_name" | "name"))
+            .map(|n| format!("{prefix}{}", txt(src, n.start_byte(), n.end_byte())))
+    };
+    let mut prefix = String::new();
+    for ch in node.named_children(&mut node.walk()) {
+        match ch.kind() {
+            "namespace_name" => prefix = format!("{}\\", txt(src, ch.start_byte(), ch.end_byte())),
+            "namespace_use_clause" => out.extend(clause(ch, "")),
+            "namespace_use_group" => {
+                out.extend(ch.named_children(&mut ch.walk()).filter(|c| c.kind() == "namespace_use_clause").filter_map(|c| clause(c, &prefix)))
+            }
+            _ => {}
+        }
+    }
 }
 
 fn imports_of(node: Node, spec: &LangSpec, src: &[u8], out: &mut Vec<(i64, String)>) {
@@ -898,8 +935,11 @@ fn imports_of(node: Node, spec: &LangSpec, src: &[u8], out: &mut Vec<(i64, Strin
             continue;
         }
         if !rule.when_head.is_empty() {
-            let head = if rule.head_field.is_empty() { None } else { node.child_by_field_name(rule.head_field) };
+            let head = if rule.head_field.is_empty() { node.named_child(0) } else { node.child_by_field_name(rule.head_field) };
             let Some(h) = head else { continue };
+            if node.child_by_field_name("receiver").is_some() {
+                continue; // Ruby `YAML.load(...)` is a method call, not `load`
+            }
             let ht = txt(src, h.start_byte(), h.end_byte());
             if !rule.when_head.contains(&ht.as_str()) {
                 continue;
@@ -923,13 +963,16 @@ fn imports_of(node: Node, spec: &LangSpec, src: &[u8], out: &mut Vec<(i64, Strin
             }
             ImportHow::ChildKind(kinds) => {
                 let mut cur = node.walk();
-                for ch in node.children(&mut cur) {
-                    if kinds.contains(&ch.kind()) {
+                for (i, ch) in node.children(&mut cur).enumerate() {
+                    // a child named `name` is an alias (C# `using IO = System.IO;`)
+                    if kinds.contains(&ch.kind()) && node.field_name_for_child(i as u32) != Some("name") {
                         texts.push(txt(src, ch.start_byte(), ch.end_byte()));
                     }
                 }
             }
             ImportHow::Text => texts.push(txt(src, node.start_byte(), node.end_byte())),
+            ImportHow::Arg(kinds) => texts.extend(literal_arg(node, kinds).map(|n| txt(src, n.start_byte(), n.end_byte()))),
+            ImportHow::UseClauses => php_use_names(node, src, &mut texts),
         }
         for t in texts {
             let m = normalize_module(&t);

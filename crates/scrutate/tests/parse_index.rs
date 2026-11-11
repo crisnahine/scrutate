@@ -893,3 +893,97 @@ fn a_function_pointer_typedef_is_named_by_its_name() {
     let cpp = symbols("t.cpp", "using cb = int (*)(int);\ntypedef int (*cb2)(int);\nstruct S { int (*fp)(int); };\n");
     assert_eq!(cpp, [("type", "cb"), ("type", "cb2"), ("struct", "S")].map(|(k, q)| (k.to_string(), q.to_string())));
 }
+
+fn wrong_imports(cases: &[(&str, &str, &[&str])]) -> Vec<String> {
+    cases
+        .iter()
+        .map(|&(path, src, want)| (path, scrutate::parse::parse_file(path, src).imports.into_iter().map(|(_, m)| m).collect::<Vec<_>>(), want))
+        .filter(|(_, got, want)| got != want)
+        .map(|(p, got, want)| format!("{p}: got {got:?}, want {want:?}"))
+        .collect()
+}
+
+#[test]
+fn every_language_records_its_imports_as_written() {
+    let cases: &[(&str, &str, &[&str])] = &[
+        ("m.py", "import os.path\nfrom a.b import c as d\nfrom . import z\n", &["os.path", "a.b", "."]),
+        (
+            "m.js",
+            "import x from \"./a\";\nimport \"./side\";\nimport { y as z } from \"./b\";\nconst c = require(\"./c\");\nconst d = await import(\"./d\");\nconst e = require(name);\nconst f = require(`./f${n}`);\nconst g = require(`./g`);\n",
+            &["./a", "./side", "./b", "./c", "./d", "./g"],
+        ),
+        (
+            "m.js",
+            "export const url = \"https://example.com/x\";\nexport function greet() {\n  return \"hello world\";\n}\nexport default { mode: \"fast\" };\nexport function f() { const s = \"./h.js\"; }\nexport { a } from \"./x\";\nexport * from \"./y\";\nexport * as ns from \"./z\";\n",
+            &["./x", "./y", "./z"],
+        ),
+        (
+            "m.ts",
+            "import type { T } from \"./t\";\nimport x = require(\"./r\");\nexport type { U } from \"./u\";\nexport function render(title: string): string {\n  return title;\n}\nexport const label: string = \"ok\";\nexport type Id = string;\n",
+            &["./t", "./r", "./u"],
+        ),
+        ("m.tsx", "import React from \"react\";\nexport { B } from \"./b\";\nexport const C = () => <div className=\"c\" />;\n", &["react", "./b"]),
+        ("m.go", "package main\nimport (\n  \"fmt\"\n  m \"github.com/x/y\"\n)\n", &["fmt", "github.com/x/y"]),
+        ("m.rs", "use std::fmt;\nuse crate::lex::{a, b};\nextern crate serde;\n", &["std::fmt", "crate::lex"]),
+        ("A.java", "import x.y.Z;\nimport static x.y.W.m;\nimport x.q.*;\nclass A { }\n", &["x.y.Z", "x.y.W.m", "x.q.*"]),
+        ("m.c", "#include <stdio.h>\n#include \"x.h\"\nint a;\n", &["stdio.h", "x.h"]),
+        ("m.cpp", "#include <vector>\n#include \"y.hpp\"\nint a;\n", &["vector", "y.hpp"]),
+        ("m.glsl", "#include \"common.glsl\"\nvoid main() {}\n", &["common.glsl"]),
+        ("m.m", "#import <Foundation/Foundation.h>\n#include \"x.h\"\n@import UIKit;\n@import Foo.Bar;\n", &["Foundation/Foundation.h", "x.h", "UIKit", "Foo.Bar"]),
+        ("m.cs", "using System;\nusing System.Collections.Generic;\nusing IO = System.IO;\nusing static System.Math;\n", &["System", "System.Collections.Generic", "System.IO", "System.Math"]),
+        (
+            "m.rb",
+            "require \"json\"\nrequire_relative \"lib/util\"\nload \"lib/util.rb\"\nYAML.load(\"--- a: 1\")\nRails.cache.load(\"user_key\")\nSettings.load(\"lib/util\")\nrequire \"x#{y}\"\n",
+            &["json", "lib/util", "lib/util.rb"],
+        ),
+        (
+            "m.php",
+            "<?php\nrequire \"lib.php\";\nrequire_once 'inc/db.php';\ninclude \"inc/view.php\";\ninclude_once 'inc/x.php';\nuse Foo\\Bar;\nuse function Foo\\bar;\nuse Foo\\{A, B};\nuse Foo\\Baz as Q;\n",
+            &["lib.php", "inc/db.php", "inc/view.php", "inc/x.php", "Foo\\Bar", "Foo\\bar", "Foo\\A", "Foo\\B", "Foo\\Baz"],
+        ),
+        ("m.sh", "source ./lib.sh\n. \"./env.sh\"\necho hi\n", &["./lib.sh", "./env.sh"]),
+        ("m.kt", "package p\nimport kotlin.math.max\nimport com.acme.Util as U\nimport com.acme.io.*\n", &["kotlin.math.max", "com.acme.Util", "com.acme.io.*"]),
+        ("m.swift", "import Foundation\nimport UIKit\n", &["Foundation", "UIKit"]),
+        ("m.scala", "import scala.collection.mutable\nimport a.b.{C, D}\n", &["scala.collection.mutable", "a.b"]),
+        ("m.groovy", "import groovy.json.JsonSlurper\nimport static java.lang.Math.max\n", &["groovy.json.JsonSlurper", "java.lang.Math.max"]),
+        (
+            "m.lua",
+            "local a = require \"mod.a\"\nlocal b = require(\"mod.b\")\nlocal c = require[[mod.c]]\nlocal d = require [=[mod.d]=]\nlocal e = require(name)\n",
+            &["mod.a", "mod.b", "mod.c", "mod.d"],
+        ),
+        ("m.ex", "defmodule M do\n  alias Foo.Bar\n  import Baz\n  use GenServer\nend\n", &["Foo.Bar", "Baz", "GenServer"]),
+        ("m.hs", "import qualified Data.Map as M\nimport Data.List (sort)\n", &["Data.Map", "Data.List"]),
+        ("m.elm", "module M exposing (..)\nimport Html exposing (div)\nimport Json.Decode as D\n", &["Html", "Json.Decode"]),
+        ("m.zig", "const std = @import(\"std\");\nconst u = @import(\"util.zig\");\n", &["std", "util.zig"]),
+        (
+            "m.jl",
+            "using LinearAlgebra, Statistics\nimport Base: show, print\nimport JSON\ninclude(\"util.jl\")\nusing A.B\nimport C.D as E\nusing ..Parent: f\nBase.include(\"no.jl\")\ninclude(\"$x.jl\")\n",
+            &["LinearAlgebra", "Statistics", "Base", "JSON", "util.jl", "A.B", "C.D", "..Parent"],
+        ),
+        (
+            "m.dart",
+            "import 'package:flutter/material.dart';\nimport 'util.dart' as u;\nexport 'src/a.dart';\n",
+            &["package:flutter/material.dart", "util.dart", "src/a.dart"],
+        ),
+        (
+            "m.R",
+            "library(dplyr)\nlibrary(\"ggplot2\")\nrequire(stats)\nrequireNamespace(\"jsonlite\")\nsource(\"util.R\")\n",
+            &["dplyr", "ggplot2", "stats", "jsonlite", "util.R"],
+        ),
+        ("m.nix", "let a = import ./a.nix; b = import <nixpkgs> {}; in a\n", &["./a.nix", "nixpkgs"]),
+        ("m.gleam", "import gleam/io\nimport gleam/list.{map}\n", &["gleam/io", "gleam/list"]),
+    ];
+    let wrong = wrong_imports(cases);
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+#[cfg(feature = "extra-langs")]
+#[test]
+fn imports_are_recorded_in_the_optional_grammars() {
+    let cases: &[(&str, &str, &[&str])] = &[
+        ("m.cu", "#include <cuda_runtime.h>\n#include \"k.cuh\"\n__global__ void k() {}\n", &["cuda_runtime.h", "k.cuh"]),
+        ("m.qml", "import QtQuick 2.15\nimport \"./js/util.js\" as U\nItem {}\n", &["QtQuick", "./js/util.js"]),
+    ];
+    let wrong = wrong_imports(cases);
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
