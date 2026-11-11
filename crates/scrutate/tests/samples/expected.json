@@ -208,6 +208,22 @@
     ],
     [
       "method",
+      "geo.Shape.Shape"
+    ],
+    [
+      "method",
+      "geo.Shape.~Shape"
+    ],
+    [
+      "method",
+      "geo.Shape.scale"
+    ],
+    [
+      "method",
+      "geo.Shape.operator bool"
+    ],
+    [
+      "method",
       "geo.Shape.area"
     ],
     [

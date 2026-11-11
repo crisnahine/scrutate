@@ -193,3 +193,73 @@ fn inside_git_the_ignore_rules_decide_for_build_dist_target_and_venv() {
     let mut m = scrutate::files::Membership::new(&plain);
     assert!(!m.may_contain(&plain.join("build/new.py")));
 }
+
+#[test]
+fn calls_inside_rust_macro_arguments_are_calls() {
+    let src = r#"fn f() {
+    println!("{}", a::b(x), y.m(z));
+    assert_eq!(vec![g(1)], if k(2) { 1 } else { 0 });
+    let _ = json!({"tools": tools(structured)});
+    assert!(matches!(first(s), Some(Pat(_)) | Whole(_)));
+    quote! { fn declared(x: u8) {} #[derive(Debug)] struct S(u8); };
+}
+"#;
+    let chunks = parse_source("m.rs", src);
+    let f = chunks.iter().find(|c| c.name == "f").unwrap();
+    let calls: Vec<&str> = f.calls.iter().map(|s| s.as_str()).collect();
+    assert_eq!(calls, ["assert", "assert_eq", "b", "first", "g", "json", "k", "m", "matches", "println", "quote", "tools", "vec"]);
+}
+
+#[test]
+fn chunk_text_has_a_byte_cap_on_a_one_line_file_of_nested_functions() {
+    use scrutate::parse::MAX_CHUNK_BYTES;
+    let n = 8000;
+    let src = format!("{}{}", "function a(){".repeat(n), "}".repeat(n));
+    let chunks = parse_source("a.js", &src);
+    assert_eq!(chunks.len(), n);
+    for c in &chunks {
+        assert!(c.text.len() <= MAX_CHUNK_BYTES + 4 && c.body.len() <= MAX_CHUNK_BYTES + 4, "{} bytes", c.text.len());
+    }
+    let total: usize = chunks.iter().map(|c| c.text.len() + c.body.len()).sum();
+    assert!(total < 600_000_000, "{total} bytes of chunk text");
+    // cut at a character, never inside one
+    let wide = format!("function w() {{ \"{}\" }}", "\u{e9}".repeat(MAX_CHUNK_BYTES));
+    let w = parse_source("w.js", &wide).into_iter().find(|c| c.name == "w").unwrap();
+    assert!(w.text.ends_with("\u{e9}\n...") && w.text.len() <= MAX_CHUNK_BYTES + 4);
+}
+
+#[test]
+fn cpp_constructors_destructors_member_templates_and_conversions_are_methods() {
+    let src = "class Shape {\npublic:\n  Shape();\n  explicit Shape(int w);\n  virtual ~Shape();\n  template <class U> void g(U);\n  operator bool() const;\n  Shape& operator=(const Shape&);\n  Shape* next();\n  int x;\n  void (*fp)(int);\n};\nShape make();\n";
+    let got: Vec<(String, String)> = parse_source("s.hpp", src).iter().map(|c| (c.kind.to_string(), c.qualname.clone())).collect();
+    let want: Vec<(String, String)> = [
+        ("class", "Shape"),
+        ("method", "Shape.Shape"),
+        ("method", "Shape.Shape"),
+        ("method", "Shape.~Shape"),
+        ("method", "Shape.g"),
+        ("method", "Shape.operator bool"),
+        ("method", "Shape.operator="),
+        ("method", "Shape.next"),
+    ]
+    .iter()
+    .map(|(k, q)| (k.to_string(), q.to_string()))
+    .collect();
+    assert_eq!(got, want);
+}
+
+#[test]
+fn a_chunk_ends_on_the_last_line_that_holds_its_text() {
+    let src = "#include <x.h>\n#define MAX(a, b) ((a) > (b) ? (a) : (b))\ntypedef int T;\n#define LONG(a) \\\n  ((a) + 1)\nint f(void) { return 0; }\n";
+    let got: Vec<(String, i64, i64)> = parse_source("m.c", src).iter().map(|c| (c.name.clone(), c.start, c.end)).collect();
+    assert_eq!(got[1..], [("MAX".into(), 2, 2), ("T".into(), 3, 3), ("LONG".into(), 4, 5), ("f".into(), 6, 6)]);
+    // a Rust line comment ends with its line break: one a blank line away is not documentation
+    let rs = parse_source("d.rs", "/// stray note\n\nfn f() {}\n/// Doc.\nfn g() {}\n");
+    let doc = |n: &str| rs.iter().find(|c| c.name == n).unwrap().doc.clone();
+    assert_eq!((doc("f"), doc("g")), (String::new(), "Doc.".to_string()));
+}
+
+#[test]
+fn an_escaped_comma_is_part_of_an_excluded_directory_name() {
+    assert_eq!(scrutate::files::split_names(r"gen\,dir, vendor ,,a\b"), vec!["gen,dir", "vendor", r"a\b"]);
+}

@@ -72,9 +72,23 @@ fn in_git(root: &Path) -> bool {
 fn skip_dirs(git: bool) -> Vec<String> {
     let mut skip: Vec<String> = SKIP_DIRS.iter().filter(|d| !(git && SKIP_UNLESS_GIT.contains(d))).map(|s| s.to_string()).collect();
     if let Ok(v) = std::env::var("SCRUTATE_INDEX_EXCLUDE_DIRS") {
-        skip.extend(v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()));
+        skip.extend(split_names(&v));
     }
     skip
+}
+
+/// A comma-separated list of names; `\,` is a comma inside a name.
+pub fn split_names(v: &str) -> Vec<String> {
+    let mut out = vec![String::new()];
+    let mut chars = v.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' if chars.peek() == Some(&',') => out.last_mut().unwrap().push(chars.next().unwrap()),
+            ',' => out.push(String::new()),
+            _ => out.last_mut().unwrap().push(c),
+        }
+    }
+    out.into_iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
 }
 
 /// The directory names the code index of `root` never enters.

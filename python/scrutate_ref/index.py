@@ -73,24 +73,42 @@ class UpdateStats:
     semantic: bool = False
 
 
+def split_names(v: str) -> list[str]:
+    """A comma-separated list of names; `\\,` is a comma inside a name."""
+    out, cur, i = [], "", 0
+    while i < len(v):
+        if v[i] == "\\" and v[i + 1 : i + 2] == ",":
+            cur, i = cur + ",", i + 2
+            continue
+        if v[i] == ",":
+            out.append(cur)
+            cur = ""
+        else:
+            cur += v[i]
+        i += 1
+    out.append(cur)
+    return [s.strip() for s in out if s.strip()]
+
+
 def list_files(root: str) -> list[str]:
     """Relative paths of candidate files, honoring .gitignore when ripgrep exists."""
     files: list[str] = []
     if shutil.which("rg"):
         try:
-            # hidden files are code too (.github/workflows, .eslintrc.js); SKIP_DIRS prunes caches and VCS
-            out = subprocess.run(["rg", "--files", "--hidden", "--no-messages", "--glob", "!.scrutate", "--glob", "!.git"], cwd=root,
-                                 capture_output=True, text=True, check=False).stdout
+            # hidden files are code too (.github/workflows, .eslintrc.js); SKIP_DIRS prunes caches and VCS;
+            # --no-config: a ripgrep configuration file must not change the indexed set
+            out = subprocess.run(["rg", "--files", "--hidden", "--no-config", "--no-messages", "--glob", "!.scrutate", "--glob", "!.git"],
+                                 cwd=root, capture_output=True, text=True, check=False).stdout
             files = [l for l in out.splitlines() if l]
         except OSError:
             files = []
-    skip = SKIP_DIRS
+    skip = (SKIP_DIRS - SKIP_UNLESS_GIT) if _in_git(root) else set(SKIP_DIRS)
+    skip |= set(split_names(os.environ.get("SCRUTATE_INDEX_EXCLUDE_DIRS", "")))
     if not files:
         for dp, dns, fns in os.walk(root):
-            dns[:] = [d for d in dns if d not in SKIP_DIRS]
-            files.extend(os.path.relpath(os.path.join(dp, fn), root) for fn in fns)
-    elif _in_git(root):
-        skip = SKIP_DIRS - SKIP_UNLESS_GIT  # the ignore files ripgrep read decide for these
+            dns[:] = [d for d in dns if d not in skip]
+            files.extend(os.path.relpath(os.path.join(dp, fn), root) for fn in fns
+                         if fn != ".git" and not os.path.islink(os.path.join(dp, fn)))
     return sorted(f for f in files if is_indexable(f)
                   and not any(p in skip for p in f.split(os.sep)))
 

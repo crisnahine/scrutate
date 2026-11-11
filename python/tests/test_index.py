@@ -199,5 +199,64 @@ def test_inside_git_the_ignore_rules_decide_for_build_dist_target_and_venv(tmp_p
         root.mkdir()
         write_repo(str(root), files)
     (repo / ".git").mkdir()
-    assert list_files(str(repo)) == ["build/maker.py", "src/a.py", "target/gen.rs"]
-    assert list_files(str(plain)) == ["src/a.py"]
+    assert list_files(str(repo)) == [".gitignore", "build/maker.py", "src/a.py", "target/gen.rs"]
+    assert list_files(str(plain)) == [".gitignore", "src/a.py"]
+
+
+def test_an_escaped_comma_is_part_of_an_excluded_directory_name(tmp_path, monkeypatch):
+    from scrutate_ref.index import list_files, split_names
+
+    assert split_names(r"gen\,dir, vendor ,,a\b") == ["gen,dir", "vendor", r"a\b"]
+    write_repo(str(tmp_path), {"gen,dir/g.py": "x = 1\n", "gen/h.py": "x = 1\n", "dir/i.py": "x = 1\n", "a.py": "x = 1\n"})
+    monkeypatch.setenv("SCRUTATE_INDEX_EXCLUDE_DIRS", r"gen\,dir")
+    assert list_files(str(tmp_path)) == ["a.py", "dir/i.py", "gen/h.py"]
+
+
+ENGINE = os.environ.get("SCRUTATE_BIN", os.path.join(os.path.dirname(__file__), "..", "..", "target", "release", "scrutate"))
+
+
+def _mixed_tree(root):
+    for rel in ["a.py", ".hidden.py", ".env.example", "Makefile", "LICENSE", "README", "x.unknownext", "x.PY",
+                "notes.txt", "data.csv", "a.min.js", "img.png", "y.Lock", "Dockerfile", ".github/workflows/ci.yml",
+                ".config/x.toml", "node_modules/m.js", "build/b.py", "dist/d.py", "target/t.rs", "venv/v.py",
+                ".venv/v.py", "gen,dir/g.py", "skipme/s.py", "sub/by_dot_ignore.py", "sub/by_gitignore.py",
+                "sub/kept.py", "deep/.git", "src/lib.rs"]:
+        p = os.path.join(root, rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w") as f:
+            f.write("x = 1\n")
+    for rel, data in [(".gitignore", b"sub/by_gitignore.py\n"), (".ignore", b"sub/by_dot_ignore.py\n"),
+                      ("big.py", b"x = 1\n" * 200000), ("bin.xyz", b"ab\x00cd")]:
+        with open(os.path.join(root, rel), "wb") as f:
+            f.write(data)
+    os.symlink("a.py", os.path.join(root, "link.py"))
+
+
+def test_the_reference_indexes_the_files_the_engine_indexes(tmp_path, monkeypatch):
+    import shutil
+    import sqlite3
+    import subprocess
+
+    import pytest
+
+    if not os.path.exists(ENGINE):
+        pytest.skip("no engine binary (cargo build --release -p scrutate, or SCRUTATE_BIN)")
+    if not shutil.which("rg"):
+        pytest.skip("the ignore files are read through ripgrep")
+    monkeypatch.setenv("SCRUTATE_INDEX_EXCLUDE_DIRS", r"skipme,gen\,dir")
+    monkeypatch.setenv("SCRUTATE_SEMANTIC", "none")
+    for git in (False, True):
+        root = tmp_path / ("git" if git else "plain")
+        root.mkdir()
+        _mixed_tree(str(root))
+        if git:
+            (root / ".git").mkdir()
+        subprocess.run([ENGINE, "--root", str(root), "index"], check=True, capture_output=True)
+        con = sqlite3.connect(str(root / ".scrutate" / "index.db"))
+        engine = sorted(r[0] for r in con.execute("SELECT path FROM files"))
+        con.close()
+        ix = Index(str(root), model=None)
+        ix.update()
+        ref = sorted(r[0] for r in ix.db.execute("SELECT path FROM files"))
+        assert ref == engine, (git, sorted(set(ref) ^ set(engine)))
+        assert "bin.xyz" in ref and "big.py" in ref and "gen,dir/g.py" not in ref

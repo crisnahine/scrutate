@@ -116,7 +116,7 @@ pub fn apply_as_env(cfg: &Config) {
         set("SCRUTATE_GREP_TYPES", cfg.grep.types.join(","));
     }
     if !cfg.index.exclude_dirs.is_empty() {
-        set("SCRUTATE_INDEX_EXCLUDE_DIRS", cfg.index.exclude_dirs.join(","));
+        set("SCRUTATE_INDEX_EXCLUDE_DIRS", cfg.index.exclude_dirs.iter().map(|d| d.replace(',', "\\,")).collect::<Vec<_>>().join(","));
     }
     if let Some(v) = cfg.index.refresh_interval {
         set("SCRUTATE_REFRESH_INTERVAL", v.to_string());

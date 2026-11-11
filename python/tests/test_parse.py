@@ -95,3 +95,30 @@ def test_definitions_the_rust_engine_also_finds():
                        "  export function clamp(x: number): number { return x; }\n}\n")
     assert {("method", "Repo.find"), ("method", "Repo.handle"), ("function", "external"), ("module", "Util"),
             ("function", "Util.clamp")} <= ts
+
+
+def test_calls_inside_rust_macro_arguments_are_calls():
+    src = ('fn f() {\n    println!("{}", a::b(x), y.m(z));\n    assert_eq!(vec![g(1)], if k(2) { 1 } else { 0 });\n'
+           '    let _ = json!({"tools": tools(structured)});\n    assert!(matches!(first(s), Some(Pat(_)) | Whole(_)));\n'
+           '    quote! { fn declared(x: u8) {} #[derive(Debug)] struct S(u8); };\n}\n')
+    f = next(c for c in parse_source("m.rs", src) if c.name == "f")
+    assert sorted(f.calls) == ["assert", "assert_eq", "b", "first", "g", "json", "k", "m", "matches", "println",
+                               "quote", "tools", "vec"]
+
+
+def test_chunk_text_has_a_byte_cap_on_a_one_line_file_of_nested_functions():
+    from scrutate_ref.parse import MAX_CHUNK_BYTES
+
+    n = 3000
+    chunks = parse_source("a.js", "function a(){" * n + "}" * n)
+    assert len(chunks) == n
+    assert max(len(c.text.encode()) for c in chunks) == MAX_CHUNK_BYTES + 4
+    assert all(len(c.body.encode()) <= MAX_CHUNK_BYTES + 4 for c in chunks)
+    wide = 'function w() { "%s" }' % ("é" * MAX_CHUNK_BYTES)
+    w = next(c for c in parse_source("w.js", wide) if c.name == "w")
+    assert w.text.endswith("é\n...") and len(w.text.encode()) <= MAX_CHUNK_BYTES + 4
+
+
+def test_a_rust_comment_a_blank_line_away_is_not_documentation():
+    chunks = {c.name: c for c in parse_source("d.rs", "/// stray note\n\nfn f() {}\n/// Doc.\nfn g() {}\n")}
+    assert (chunks["f"].doc, chunks["g"].doc) == ("", "Doc.")

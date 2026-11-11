@@ -83,28 +83,33 @@ EXT_LANG = {".py": "python", ".js": "javascript", ".jsx": "javascript", ".mjs": 
             ".cjs": "javascript", ".ts": "typescript", ".tsx": "tsx", ".go": "go", ".rs": "rust",
             ".java": "java"}
 
-TEXT_EXTS = {
-    ".md", ".rst", ".txt", ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".sh", ".bash",
-    ".c", ".h", ".cc", ".cpp", ".hpp", ".cs", ".rb", ".php", ".swift", ".kt", ".scala", ".sql",
-    ".html", ".css", ".scss", ".vue", ".svelte", ".lua", ".r", ".dart", ".ex", ".exs", ".tf",
-    ".proto", ".graphql", ".gradle", ".xml",
-}
-
 _parsers: dict[str, Parser] = {}
 _CONTAINERS = {"class", "impl", "interface", "trait", "enum", "struct", "type", "module"}
 _COMMENT_TYPES = {"comment", "line_comment", "block_comment", "doc_comment"}
 MAX_CONTAINER_LINES = 40
 MAX_QUAL_DEPTH = 32  # qualified names keep at most this many segments, so deep nesting stays linear
 MAX_CHUNK_LINES = 200
+MAX_CHUNK_BYTES = 32 * 1024  # chunk text and body; a one-line file of nested functions holds its line per chunk otherwise
 
 
 def language_for(path: str) -> str | None:
     return EXT_LANG.get(os.path.splitext(path)[1].lower())
 
 
+# data, generated, archive, compiled and media files are never indexed; binary files are found by content
+EXCLUDED_EXTS = (
+    ".csv", ".tsv", ".log", ".min.js", ".min.css", ".map", ".lock", ".sum", ".snap", ".pem", ".crt", ".key",
+    ".der", ".asc", ".sig", ".bin", ".dat", ".parquet", ".ipynb_checkpoints",
+    ".gz", ".tgz", ".zip", ".tar", ".xz", ".bz2", ".zst", ".7z", ".rar", ".jar", ".war", ".whl", ".egg", ".pyc",
+    ".pyo", ".so", ".dylib", ".dll", ".exe", ".o", ".a", ".lib", ".class", ".wasm", ".rlib", ".pdb",
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".icns", ".webp", ".tif", ".tiff", ".psd", ".mp3", ".mp4",
+    ".wav", ".ogg", ".flac", ".mov", ".avi", ".mkv", ".webm", ".pdf", ".woff", ".woff2", ".ttf", ".otf", ".eot",
+    ".sqlite", ".db",
+)
+
+
 def is_indexable(path: str) -> bool:
-    ext = os.path.splitext(path)[1].lower()
-    return ext in EXT_LANG or ext in TEXT_EXTS or os.path.basename(path).lower() in {"dockerfile", "makefile"}
+    return not os.path.basename(path).lower().endswith(EXCLUDED_EXTS)
 
 
 def _parser(lang: str) -> Parser:
@@ -135,9 +140,20 @@ def _clean_comment(raw: str) -> str:
     return "\n".join(ln for ln in lines if ln.strip()).strip()
 
 
+def _capped(text: str, cut: bool = False) -> str:
+    """`text` cut to MAX_CHUNK_BYTES at a character boundary, "\\n..." when cut."""
+    b = text.encode("utf8")
+    if len(b) > MAX_CHUNK_BYTES:
+        e = MAX_CHUNK_BYTES
+        while e > 0 and b[e] & 0xC0 == 0x80:
+            e -= 1
+        text, cut = b[:e].decode("utf8"), True
+    return text + "\n..." if cut else text
+
+
 def _head(text: str, n: int) -> str:
     lines = text.split("\n")
-    return text if len(lines) <= n else "\n".join(lines[:n]) + "\n..."
+    return _capped(text) if len(lines) <= n else _capped("\n".join(lines[:n]), True)
 
 
 def window_chunks(source: str, size: int = 50, overlap: int = 10, first_line: int = 0) -> list[Chunk]:
@@ -148,7 +164,7 @@ def window_chunks(source: str, size: int = 50, overlap: int = 10, first_line: in
     for i in range(0, len(lines), step):
         seg = lines[i : i + size]
         if "".join(seg).strip():
-            t = "\n".join(seg)
+            t = _capped("\n".join(seg))
             out.append(Chunk("", "", "window", first_line + i + 1, first_line + i + len(seg), t, body=t))
         if i + size >= len(lines):
             break
@@ -171,11 +187,46 @@ def _callee_name(node, how: str, src: bytes) -> str | None:
     return m.group(0) if m else None
 
 
+def _macro_arg_calls(node, src: bytes, out: set[str]) -> None:
+    """Calls inside a Rust macro's token trees, which tree-sitter does not parse as expressions: a
+    name directly followed by `(...)` (`a::b(x)`, `x.m(y)`), and the name of a nested macro."""
+    def is_matches(n) -> bool:  # after the first comma of `matches!(x, Some(_))` comes a pattern
+        return src[n.start_byte : n.end_byte].decode("utf8", "replace").endswith("matches")
+
+    head = node.child_by_field_name("macro")
+    after_comma = head is not None and is_matches(head)
+    stack = [(c, after_comma) for c in node.children if c.type == "token_tree"]
+    while stack:
+        tt, stop_at_comma = stack.pop()
+        kids = tt.children
+        kind = [k.type for k in kids] + ["", ""]
+        for i, k in enumerate(kids):
+            if k.type == "," and stop_at_comma:
+                break
+            if k.type == "token_tree":
+                # `#[derive(Debug)]` and `#![...]` are attributes, not calls
+                if not (i >= 1 and kind[i - 1] == "#" or i >= 2 and kind[i - 1] == "!" and kind[i - 2] == "#"):
+                    stack.append((k, i >= 2 and kind[i - 1] == "!" and kind[i - 2] == "identifier" and is_matches(kids[i - 2])))
+            elif k.type == "identifier":
+                parens = kind[i + 1] == "token_tree" and kids[i + 1].child_count > 0 and kids[i + 1].children[0].type == "("
+                declared = i >= 1 and kind[i - 1] in ("fn", "struct", "enum", "union")
+                nested_macro = kind[i + 1] == "!" and kind[i + 2] == "token_tree"
+                if parens and not declared or nested_macro:
+                    out.add(src[k.start_byte : k.end_byte].decode("utf8", "replace"))
+
+
 def _def_name(node, src: bytes) -> str | None:
     n = node.child_by_field_name("name")
     if n is None and node.type == "impl_item":
         n = node.child_by_field_name("type")
     return src[n.start_byte : n.end_byte].decode("utf8", "replace") if n is not None else None
+
+
+def _last_row(node) -> int:
+    """0-based last line holding the node's text: a node that ends with its line break ends at
+    column 0 of the next line."""
+    row, col = node.end_point
+    return row - 1 if col == 0 and row > node.start_point[0] else row
 
 
 def _leading_comment(node, src: bytes) -> str:
@@ -188,7 +239,7 @@ def _leading_comment(node, src: bytes) -> str:
     parts: list[str] = []
     want = anchor.start_point[0]
     prev = anchor.prev_sibling
-    while prev is not None and prev.type in _COMMENT_TYPES and prev.end_point[0] >= want - 1:
+    while prev is not None and prev.type in _COMMENT_TYPES and _last_row(prev) >= want - 1:
         parts.append(src[prev.start_byte : prev.end_byte].decode("utf8", "replace"))
         want = prev.start_point[0]
         prev = prev.prev_sibling
@@ -301,7 +352,7 @@ def parse_source(path: str, source: str) -> list[Chunk]:
                 full, body = _head(full, MAX_CONTAINER_LINES), _head(body, MAX_CONTAINER_LINES)
             else:
                 full, body = _head(full, MAX_CHUNK_LINES), _head(body, MAX_CHUNK_LINES)
-            new = Chunk(name, q, kind, outer.start_point[0] + 1, node.end_point[0] + 1,
+            new = Chunk(name, q, kind, outer.start_point[0] + 1, _last_row(node) + 1,
                         full, sig, doc, body)
             chunks.append(new)
             stack.append((new, q))
@@ -309,6 +360,8 @@ def parse_source(path: str, source: str) -> list[Chunk]:
             callee = _callee_name(node, calls[t], src)
             if callee:
                 stack[-1][0].calls.add(callee)
+            if t == "macro_invocation":
+                _macro_arg_calls(node, src, stack[-1][0].calls)
         for ch in node.children:
             visit(ch)
         if new is not None:
@@ -320,7 +373,7 @@ def parse_source(path: str, source: str) -> list[Chunk]:
     first_def = min((c.start for c in chunks), default=None)
     lines = split_lines(source)
     head_end = min((first_def - 1) if first_def else len(lines), 60)
-    head = "\n".join(lines[:head_end])
+    head = _capped("\n".join(lines[:head_end]))
     if head.strip():
         mdoc = ""
         if is_py:

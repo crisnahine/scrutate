@@ -44,6 +44,18 @@ const COMMENT_TYPES: &[&str] =
     &["comment", "line_comment", "block_comment", "doc_comment", "documentation_comment", "comment_block", "statement_comment", "module_comment"];
 pub const MAX_CONTAINER_LINES: usize = 40;
 pub const MAX_CHUNK_LINES: usize = 200;
+/// Chunk text and body keep at most this many bytes (cut at a character, then "\n..."): a file
+/// on one line with thousands of nested functions would otherwise hold its whole line per chunk.
+/// The longest chunk of this crate's sources is 9 KB, of networkx 15 KB.
+pub const MAX_CHUNK_BYTES: usize = 32 * 1024;
+
+/// `s[..]` cut to `MAX_CHUNK_BYTES` at a character boundary, and whether it was cut.
+fn cap_bytes(s: &str) -> (&str, bool) {
+    if s.len() <= MAX_CHUNK_BYTES {
+        return (s, false);
+    }
+    (&s[..s.floor_char_boundary(MAX_CHUNK_BYTES)], true)
+}
 
 /// Files that are text but not worth indexing (data, generated, lock files).
 /// Never indexed by Engine B: generated/data text that is noise for symbol search, and binary formats
@@ -223,14 +235,22 @@ pub fn clean_comment(raw: &str) -> String {
     out.join("\n").trim().to_string()
 }
 
+/// The first `n` lines of `text`, at most `MAX_CHUNK_BYTES` of them, "\n..." when cut.
 fn head(text: &str, n: usize) -> String {
-    let lines: Vec<&str> = text.split('\n').collect();
-    if lines.len() <= n {
-        text.to_string()
+    let end = text.match_indices('\n').nth(n - 1).map_or(text.len(), |(i, _)| i);
+    let (s, cut) = cap_bytes(&text[..end]);
+    if cut || end < text.len() {
+        format!("{s}\n...")
     } else {
-        let mut s = lines[..n].join("\n");
-        s.push_str("\n...");
-        s
+        s.to_string()
+    }
+}
+
+/// `text` cut to `MAX_CHUNK_BYTES` ("\n..." when cut).
+fn capped(text: String) -> String {
+    match cap_bytes(&text) {
+        (s, true) => format!("{s}\n..."),
+        _ => text,
     }
 }
 
@@ -249,7 +269,7 @@ pub fn window_chunks_from(source: &str, first_line: usize) -> Vec<Chunk> {
     while i < lines.len() {
         let seg = &lines[i..(i + size).min(lines.len())];
         if !seg.concat().trim().is_empty() {
-            let t = seg.join("\n");
+            let t = capped(seg.join("\n"));
             out.push(Chunk {
                 kind: "window",
                 start: (first_line + i) as i64 + 1,
@@ -278,12 +298,24 @@ fn qualify(parent: &str, name: &str) -> String {
     format!("{parent}.{name}")
 }
 
-/// `head` of src[a..b], copying only the first `n` lines.
+/// `head` of src[a..b], copying only what it keeps.
 fn head_bytes(src: &[u8], a: usize, b: usize, n: usize) -> String {
     let (a, b) = (a.min(src.len()), b.min(src.len()));
-    match src[a..b.max(a)].iter().enumerate().filter(|&(_, &c)| c == b'\n').nth(n - 1) {
-        Some((i, _)) => txt(src, a, a + i) + "\n...",
-        None => txt(src, a, b),
+    let b = b.max(a);
+    let end = src[a..b].iter().enumerate().filter(|&(_, &c)| c == b'\n').nth(n - 1).map_or(b, |(i, _)| a + i);
+    let mut cut = end < b;
+    let mut e = end;
+    if e - a > MAX_CHUNK_BYTES {
+        e = a + MAX_CHUNK_BYTES;
+        while e > a && src[e] & 0xC0 == 0x80 {
+            e -= 1; // not inside a character
+        }
+        cut = true;
+    }
+    if cut {
+        txt(src, a, e) + "\n..."
+    } else {
+        txt(src, a, e)
     }
 }
 
@@ -338,6 +370,44 @@ fn callee_name(node: Node, field: &str, src: &[u8]) -> Option<String> {
     }
     let t = t.trim().trim_end_matches('!');
     IDENT_START.find(t).map(|m| m.as_str().to_string())
+}
+
+/// 0-based last line holding the node's text: a node that ends with its line break (a C
+/// `#define`) ends at column 0 of the next line.
+fn last_row(node: Node) -> i64 {
+    let end = node.end_position();
+    (end.row - usize::from(end.column == 0 && end.row > node.start_position().row)) as i64
+}
+
+/// Calls inside a Rust macro's token trees, which tree-sitter does not parse as expressions: a
+/// name directly followed by `(...)` (`a::b(x)`, `x.m(y)`), and the name of a nested macro.
+fn macro_arg_calls(node: Node, src: &[u8], out: &mut BTreeSet<String>) {
+    // after the first comma of `matches!(x, Some(_))` comes a pattern, not calls
+    let is_matches = |n: Node| txt(src, n.start_byte(), n.end_byte()).ends_with("matches");
+    let pattern_after_comma = node.child_by_field_name("macro").is_some_and(is_matches);
+    let mut stack: Vec<(Node, bool)> = node.children(&mut node.walk()).filter(|c| c.kind() == "token_tree").map(|c| (c, pattern_after_comma)).collect();
+    while let Some((tt, stop_at_comma)) = stack.pop() {
+        let kids: Vec<Node> = tt.children(&mut tt.walk()).collect();
+        let kind = |i: usize| kids.get(i).map_or("", |k| k.kind());
+        for (i, k) in kids.iter().enumerate() {
+            match k.kind() {
+                "," if stop_at_comma => break,
+                // `#[derive(Debug)]` and `#![...]` are attributes, not calls
+                "token_tree" if !(i >= 1 && kind(i - 1) == "#" || i >= 2 && kind(i - 1) == "!" && kind(i - 2) == "#") => {
+                    stack.push((*k, i >= 2 && kind(i - 1) == "!" && kind(i - 2) == "identifier" && is_matches(kids[i - 2])));
+                }
+                "identifier" => {
+                    let parens = kind(i + 1) == "token_tree" && kids[i + 1].child(0).is_some_and(|p| p.kind() == "(");
+                    let declared = i >= 1 && matches!(kind(i - 1), "fn" | "struct" | "enum" | "union");
+                    let nested_macro = kind(i + 1) == "!" && kind(i + 2) == "token_tree";
+                    if parens && !declared || nested_macro {
+                        out.insert(txt(src, k.start_byte(), k.end_byte()));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
 }
 
 /// The chunk kind named by the first declaration keyword on the node's first line.
@@ -540,7 +610,7 @@ fn leading_comment(node: Node, ancestors: &[(Node, Vec<Node>)], pos: &[usize], s
     let mut want = anchor.start_position().row as i64;
     let mut prev = prev_sibling();
     while let Some(p) = prev {
-        if COMMENT_TYPES.contains(&p.kind()) && p.end_position().row as i64 >= want - 1 {
+        if COMMENT_TYPES.contains(&p.kind()) && last_row(p) >= want - 1 {
             let t = txt(src, p.start_byte(), p.end_byte());
             if t.starts_with("#!") {
                 break; // a shebang is not documentation
@@ -636,7 +706,7 @@ fn finish(path: &str, source: &str, mut chunks: Vec<Chunk>, module_doc: String) 
         None => lines.len(),
     }
     .min(60);
-    let head_txt = lines[..head_end.min(lines.len())].join("\n");
+    let head_txt = capped(lines[..head_end.min(lines.len())].join("\n"));
     if !head_txt.trim().is_empty() {
         chunks.insert(
             0,
@@ -787,6 +857,12 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
             if !def.needs_field.is_empty() && node.child_by_field_name(def.needs_field).is_none() {
                 continue;
             }
+            if !def.parents.is_empty() {
+                let parent = ancestors.iter().rev().map(|(p, _)| p.kind()).find(|k| !spec.outer.contains(k));
+                if !parent.is_some_and(|k| def.parents.contains(&k)) {
+                    continue;
+                }
+            }
             if let Some(name) = def_name(node, def.name, src) {
                 let kind = if def.kind_by_head { kind_from_head(node, src).unwrap_or(def.kind) } else { def.kind };
                 matched = Some((kind, name));
@@ -849,7 +925,7 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
                 qualname: q,
                 kind,
                 start: outer.start_position().row as i64 + 1,
-                end: node.end_position().row as i64 + 1,
+                end: last_row(node) + 1,
                 text: full,
                 sig,
                 doc,
@@ -863,6 +939,9 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
             if let (Some(&top), false) = (def_stack.last(), in_signature) {
                 if let Some(c) = callee_name(node, call.field, src) {
                     chunks[top].calls.insert(c);
+                }
+                if t == "macro_invocation" && spec.id == "rust" {
+                    macro_arg_calls(node, src, &mut chunks[top].calls);
                 }
             }
         }

@@ -4,6 +4,10 @@ namespace geo {
 template <typename T>
 class Shape {
 public:
+    Shape();
+    virtual ~Shape();
+    template <class U> void scale(U by);
+    explicit operator bool() const;
     // Area of the shape.
     virtual T area() const = 0;
 };

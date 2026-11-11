@@ -39,6 +39,9 @@ pub struct Def {
     /// the chunk kind comes from the declaration keyword (`struct`/`enum`/`interface`...) found in
     /// the node's first line, falling back to `kind` (grammars that use one node for several kinds)
     pub kind_by_head: bool,
+    /// only when the nearest enclosing node that is not an `outer` wrapper has one of these kinds
+    /// (C++ `Shape();` declares a constructor in a class body; at file level it is a call)
+    pub parents: &'static [&'static str],
 }
 
 pub struct Call {
@@ -95,15 +98,15 @@ pub struct LangSpec {
 }
 
 const fn d(node: &'static str, kind: &'static str, name: &'static [NameRule]) -> Def {
-    Def { node, kind, name, value_kinds: &[], head_words: &[], needs_field: "", kind_by_head: false }
+    Def { node, kind, name, value_kinds: &[], head_words: &[], needs_field: "", kind_by_head: false, parents: &[] }
 }
 /// a definition that needs a body to count (declarations/forward references do not)
 const fn db(node: &'static str, kind: &'static str, name: &'static [NameRule]) -> Def {
-    Def { node, kind, name, value_kinds: &[], head_words: &[], needs_field: "body", kind_by_head: false }
+    Def { node, kind, name, value_kinds: &[], head_words: &[], needs_field: "body", kind_by_head: false, parents: &[] }
 }
 /// a definition whose kind is read from its keyword
 const fn dk(node: &'static str, kind: &'static str, name: &'static [NameRule]) -> Def {
-    Def { node, kind, name, value_kinds: &[], head_words: &[], needs_field: "", kind_by_head: true }
+    Def { node, kind, name, value_kinds: &[], head_words: &[], needs_field: "", kind_by_head: true, parents: &[] }
 }
 
 /// Declaration keywords and the chunk kind they denote (for `kind_by_head`).
@@ -240,6 +243,8 @@ const CPP_DEFS: &[Def] = &[
     d("type_definition", "type", &[NameRule::Dig("declarator", ID_KINDS)]),
     d("alias_declaration", "type", N),
     d("field_declaration", "function", &[NameRule::Custom(cpp_member_decl)]),
+    // constructors, destructors, conversion operators and member templates declared in a class body
+    Def { parents: &["field_declaration_list"], ..d("declaration", "method", &[NameRule::Custom(cpp_member_decl)]) },
 ];
 const C_CALLS: &[Call] = &[c("call_expression", "function")];
 const CSHARP_DEFS: &[Def] = &[
@@ -256,7 +261,7 @@ const CSHARP_DEFS: &[Def] = &[
 ];
 const JS_FUNCS: &[&str] = &["arrow_function", "function_expression", "function"];
 const fn dv(node: &'static str, name: &'static [NameRule]) -> Def {
-    Def { node, kind: "function", name, value_kinds: JS_FUNCS, head_words: &[], needs_field: "", kind_by_head: false }
+    Def { node, kind: "function", name, value_kinds: JS_FUNCS, head_words: &[], needs_field: "", kind_by_head: false, parents: &[] }
 }
 /// CommonJS `module.exports.NAME = function ...` and `exports.NAME = () => ...`
 fn js_export_name(node: Node, src: &[u8]) -> Option<String> {
@@ -686,6 +691,7 @@ const CORE: &[LangSpec] = &[
                 head_words: &["def", "defp", "defmacro", "defmacrop", "defguard", "defguardp", "defdelegate"],
                 needs_field: "",
                 kind_by_head: false,
+                parents: &[],
             },
             Def {
                 node: "call",
@@ -695,6 +701,7 @@ const CORE: &[LangSpec] = &[
                 head_words: &["defmodule", "defprotocol", "defimpl"],
                 needs_field: "",
                 kind_by_head: false,
+                parents: &[],
             },
         ],
         calls: &[],
@@ -950,6 +957,7 @@ const CORE: &[LangSpec] = &[
             head_words: &["define", "define-syntax", "define-record-type"],
             needs_field: "",
             kind_by_head: true,
+            parents: &[],
         }],
         calls: &[c("list", "")],
         docstring: false,
@@ -971,6 +979,7 @@ const CORE: &[LangSpec] = &[
             head_words: &["define", "define-syntax", "struct", "define-struct"],
             needs_field: "",
             kind_by_head: true,
+            parents: &[],
         }],
         calls: &[c("list", "")],
         docstring: false,
@@ -994,6 +1003,7 @@ const CORE: &[LangSpec] = &[
                 head_words: &["defgeneric", "defmethod", "defclass", "defstruct", "defvar", "defparameter", "defconstant", "deftype"],
                 needs_field: "",
                 kind_by_head: true,
+                parents: &[],
             },
         ],
         calls: &[c("list_lit", "")],
@@ -1812,9 +1822,18 @@ fn lisp_define_name(node: Node, src: &[u8]) -> Option<String> {
 /// C++ member function declared in a class body (`void resize(int w);`), not a data member or a
 /// function pointer
 fn cpp_member_decl(node: Node, src: &[u8]) -> Option<String> {
-    let f = node.child_by_field_name("declarator").filter(|f| f.kind() == "function_declarator")?;
+    let mut f = node.child_by_field_name("declarator")?;
+    // `T& operator[](int)`, `Node* next()`: the return type's mark wraps the function declarator
+    while matches!(f.kind(), "pointer_declarator" | "reference_declarator") {
+        f = f.child_by_field_name("declarator").or_else(|| f.named_child(f.named_child_count().checked_sub(1)? as u32))?;
+    }
+    if f.kind() == "operator_cast" {
+        // `operator bool() const`: the name is the text before the parameter list
+        let params = f.child_by_field_name("declarator")?;
+        return Some(text(src, f.start_byte(), params.start_byte()).split_whitespace().collect::<Vec<_>>().join(" "));
+    }
     let n = f.child_by_field_name("declarator").filter(|n| matches!(n.kind(), "field_identifier" | "identifier" | "destructor_name" | "operator_name"))?;
-    Some(text(src, n.start_byte(), n.end_byte()))
+    (f.kind() == "function_declarator").then(|| text(src, n.start_byte(), n.end_byte()))
 }
 
 /// Objective-C method implementation: the selector (first keyword part or unary selector)
