@@ -182,7 +182,7 @@ pub fn spec_for(path: &str, source: &str) -> Option<&'static LangSpec> {
 
 // ------------------------------------------------------------------------- helpers
 static PYSTR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"^[rRuUbBfF]{0,2}("""|'''|"|')"#).unwrap());
-static COMMENT_MARK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"^\s*(/\*+|\*+/|\*|//+!?|<#|#>|#+|--\s?[|^]|--|;+|%+|'|!|"|\{-\|?|-\})\s?"#).unwrap());
+static COMMENT_MARK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"^\s*(/\*+|\*+/|\*|//+!?|<#|#>|#+|--\s?[|^]|--+|;+|%+|'|!|"|\{-\|?|-\})\s?"#).unwrap());
 static IDENT_START: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z_$][\w$]*(?:-[A-Za-z_]\w*)*").unwrap());
 
 fn expandtabs(s: &str) -> String {

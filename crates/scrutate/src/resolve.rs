@@ -1756,11 +1756,19 @@ impl<'a> Resolver<'a> {
         None
     }
 
+    /// Whether `b` binds `require(...)` in `from`; an `import * as ns` binds the namespace, which
+    /// is no definition.
+    fn required(&mut self, from: &str, b: &Binding) -> bool {
+        let fi = self.file(from);
+        let (Some(tree), Some(&at)) = (fi.tree.as_ref(), b.sites.first()) else { return false };
+        tree.root_node().descendant_for_byte_range(at, at).and_then(|n| n.parent()).is_some_and(|p| p.kind() == "variable_declarator")
+    }
+
     fn resolve_binding(&mut self, from: &str, lang: Lang, b: &Binding, depth: usize) -> Option<i64> {
         let item = match b.item.as_deref() {
             Some(item) => item,
-            // the module itself, called or named bare: what it exports as `module.exports`
-            None if lang == Lang::Js && !b.module.is_empty() => "default",
+            // a required module, called or named bare: what it exports as `module.exports`
+            None if lang == Lang::Js && !b.module.is_empty() && self.required(from, b) => "default",
             None => return None,
         };
         if b.module.is_empty() && b.local == item {

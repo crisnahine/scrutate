@@ -153,6 +153,11 @@ def test_documentation_is_taken_across_attributes_and_onto_go_constants():
         ("a.go", "package p\n\n// LockSeconds is the lock time.\nconst LockSeconds = 30\n", "LockSeconds", 4, "LockSeconds is the lock time."),
         ("a.go", "package p\n\nconst (\n\t// A doc.\n\tA = 1\n\tB = 2\n)\n", "A", 5, "A doc."),
         ("a.go", "package p\n\nconst (\n\t// A doc.\n\tA = 1\n\tB = 2\n)\n", "B", 6, ""),
+        # a function assigned to a member, to `this` or to `module.exports` takes the comment above its statement
+        ("a.js", "function Foo() {}\n/** Spins the rotor. */\nFoo.prototype.spin = function () {\n  return 2;\n};\n", "Foo.spin", 3, "Spins the rotor."),
+        ("a.js", "function Foo() {\n  // Paints it.\n  this.paint = function () {\n    return 1;\n  };\n}\n", "Foo.paint", 3, "Paints it."),
+        ("lib/app.js", "const x = 1;\n/** Builds the app. */\nmodule.exports = function createApp() {\n  return x;\n};\n", "createApp", 3, "Builds the app."),
+        ("a.ts", "class Foo {}\n/** Makes one. */\nFoo.make = (): Foo => new Foo();\n", "Foo.make", 3, "Makes one."),
     ]
     for path, src, qualname, start, doc in cases:
         c = next(c for c in parse_source(path, src) if c.qualname == qualname)

@@ -441,6 +441,12 @@ fn the_comment_right_above_a_definition_is_its_documentation() {
         ("a.s", ".text\n# Returns.\nf:\n    ret\n", "f", 3, "Returns."),
         ("a.jsonnet", "local x = 1;\n// Adds one.\nlocal add(a) = a + 1;\nadd(x)\n", "add", 3, "Adds one."),
         ("a.jsonnet", "// About x.\nlocal x = 1;\nlocal add(a) = a + 1;\nadd(x)\n", "add", 3, ""),
+        // a function assigned to a member, to `this` or to `module.exports` takes the comment above its statement
+        ("a.js", "function Foo() {}\n/** Spins the rotor. */\nFoo.prototype.spin = function () {\n  return 2;\n};\n", "Foo.spin", 3, "Spins the rotor."),
+        ("a.js", "function Foo() {\n  // Paints it.\n  this.paint = function () {\n    return 1;\n  };\n}\n", "Foo.paint", 3, "Paints it."),
+        ("lib/app.js", "const x = 1;\n/** Builds the app. */\nmodule.exports = function createApp() {\n  return x;\n};\n", "createApp", 3, "Builds the app."),
+        ("a.ts", "class Foo {}\n/** Makes one. */\nFoo.make = (): Foo => new Foo();\n", "Foo.make", 3, "Makes one."),
+        ("m.lua", "local M = {}\n--- Opens the door.\nM.open = function(x)\n  return x\nend\n", "M.open", 3, "Opens the door."),
         // attributes, decorators and annotations between the comment and the definition
         ("a.rs", "/// A target.\n#[derive(Debug, Clone)]\npub struct Target {\n    x: i32,\n}\n", "Target", 3, "A target."),
         ("a.rs", "/// Two.\n#[derive(Debug)]\n#[repr(u8)]\npub enum E {\n    A,\n}\n", "E", 4, "Two."),

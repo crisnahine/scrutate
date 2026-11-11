@@ -461,7 +461,8 @@ const TS_DEFS: &[Def] = &[
     JS_THIS_MEMBER,
 ];
 const JS_CALLS: &[Call] = &[c("call_expression", "function"), c("new_expression", "constructor")];
-const JS_WRAPPERS: &[&str] = &["export_statement", "lexical_declaration", "variable_declaration", "decorator"];
+// an assignment and its statement: the comment above `Foo.prototype.f = function` is about `f`
+const JS_WRAPPERS: &[&str] = &["export_statement", "lexical_declaration", "variable_declaration", "decorator", "assignment_expression", "expression_statement"];
 const JS_IMPORTS: &[ImportRule] = &[
     imp("import_statement", ImportHow::Fields("source")),
     imp("import_require_clause", ImportHow::Fields("source")),

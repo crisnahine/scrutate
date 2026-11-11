@@ -1275,6 +1275,17 @@ fn functions_assigned_to_names_and_members_are_symbols_callers_and_callees_find(
 }
 
 #[test]
+fn a_namespace_import_is_not_the_default_export_of_its_module() {
+    let app = "export default function () {\n  return 1;\n}\n\nexport function side() {\n  return 2;\n}\n";
+    let main = "import * as ns from \"./app\";\n\nexport function start(run) {\n  return run(ns) + ns.side();\n}\n";
+    let r = Repo::new("ns_default", &[("lib/app.js", app), ("lib/main.js", main)]);
+    // `ns` is the module's namespace object, not its default export
+    assert_eq!(callee_names(&r, "start"), ["side"]);
+    let (_, out) = r.run(&["refs", "ns"]);
+    assert!(!out.contains("lib/app.js:1"), "{out}");
+}
+
+#[test]
 fn a_function_set_on_this_and_a_default_export_are_symbols_callers_and_callees_find() {
     let widget = "function Widget() {\n  this.render = function () {\n    return paint();\n  };\n}\n\nfunction paint() {\n  return 1;\n}\n\nfunction useWidget() {\n  const w = new Widget();\n  return w.render();\n}\n";
     let app = "module.exports = function () {\n  return helper();\n};\n\nfunction helper() {\n  return 2;\n}\n";

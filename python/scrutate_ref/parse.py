@@ -124,7 +124,7 @@ def _parser(lang: str) -> Parser:
 
 # ---------------------------------------------------------------------- helpers
 _PYSTR = re.compile(r'^[rRuUbBfF]{0,2}("""|\'\'\'|"|\')')
-_COMMENT_MARK = re.compile(r"^\s*(/\*+|\*+/|\*|//+!?|#+|--)\s?")
+_COMMENT_MARK = re.compile(r"^\s*(/\*+|\*+/|\*|//+!?|#+|--+)\s?")
 
 
 def _py_string_content(raw: str) -> str:
@@ -450,7 +450,7 @@ def _leading_comment(node, src: bytes) -> str:
                 "class_definition", "function_definition"):
             header_row = p.parent.start_point[0]
         elif p.type not in ("export_statement", "decorated_definition", "lexical_declaration",
-                            "variable_declaration", "decorator"):
+                            "variable_declaration", "decorator", "assignment_expression", "expression_statement"):
             break
         anchor = p
     parts: list[str] = []
