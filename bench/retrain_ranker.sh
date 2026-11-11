@@ -21,9 +21,10 @@
 #
 # Stages: benchmark, DEV and TEST features with the reference engine of this checkout, fit on DEV,
 # evaluation of the old and new ranker on TEST (function rows and type rows, all languages and
-# each one). The new ranker goes to models/ranker.npz only when on TEST no row is below BM25 and
-# the mean over all queries of a variant is not below the old ranker's, each beyond its confidence
-# interval; otherwise the script exits 1 and leaves it in the run directory.
+# each one). The new ranker goes to models/ranker.npz only when on TEST no row of 50 queries or
+# more is below BM25 and the mean over all queries of a variant is not below the old ranker's,
+# each beyond its confidence interval; otherwise the script exits 1 and leaves it in the run
+# directory.
 # Rebuild the Rust binary afterwards, it embeds models/ranker.npz.
 set -euo pipefail
 

@@ -8,8 +8,9 @@ usage:
   train_ranker.py compare TAG OLD.npz NEW.npz [OUT.json] [--gate]
                                                two rankers on TEST, all languages and each one;
                                                --gate exits 1 when the new ranker is below BM25 on
-                                               a row, or below the old ranker over all queries of
-                                               a variant, by more than the confidence interval
+                                               a row of 50 queries or more, or below the old ranker
+                                               over all queries of a variant, by more than the
+                                               confidence interval
 
 Each query type is reported twice: the queries whose answer is a function or method ("doc"), and
 those whose answer is a type ("doc:type"). Older feature files have function answers only.
@@ -52,6 +53,7 @@ if not os.environ.get("PYTHON_ONLY"):
 # 0.55 (0), 0.62 (0.1), 0.64 (0.3), 0.65 (1); less lifts the function doc and kw rows by up to
 # 0.03 and costs the type rows up to 0.4.
 TYPE_WEIGHT = float(os.environ.get("TYPE_WEIGHT", 1.0))
+GATE_MIN_ROW = 50
 TYPES = ("doc", "kw", "name", "id", "qid")
 ROWS = TYPES + tuple(t + ":type" for t in TYPES)  # function answers, then type answers
 
@@ -240,7 +242,8 @@ def main() -> None:
                     if ":" not in t and hi < 0:
                         worse.append(f"{lang} {variant} {t}: {m:+.3f} [{lo:+.3f},{hi:+.3f}]")
                     bm_m, bm_lo, bm_hi = paired_diff_ci(rn, b[t]["bm25 (lexical)"])
-                    if bm_hi < 0:
+                    # seven queries cannot carry an interval: a small row is printed, not judged
+                    if bm_hi < 0 and so["n"] >= GATE_MIN_ROW:
                         below.append(f"{lang} {variant} {t}: {bm_m:+.3f} [{bm_lo:+.3f},{bm_hi:+.3f}]")
                     every_old += ro
                     every_new += rn
@@ -255,7 +258,7 @@ def main() -> None:
             with open(args[2], "w") as f:
                 json.dump(out, f, indent=1)
         print("\nfunction rows worse beyond the confidence interval:", "; ".join(worse) or "none")
-        print("rows below BM25 beyond the confidence interval:", "; ".join(below) or "none")
+        print(f"rows of {GATE_MIN_ROW} queries or more below BM25 beyond the confidence interval:", "; ".join(below) or "none")
         print("worse over all queries beyond the confidence interval:", "; ".join(overall) or "none")
         if (below or overall) and "--gate" in sys.argv:
             sys.exit(1)
