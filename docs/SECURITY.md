@@ -1,7 +1,7 @@
 # Security assessment (0.1.0)
 
 Scope: the `scrutate` binary (Engine A, Engine B, CLI, MCP server) and the Python bindings, as
-built from this repository on 2026-11-10. This is a self-assessment by the authors with the tests
+built from this repository on 2026-11-11. This is a self-assessment by the authors with the tests
 named below; it is **not** an independent audit or penetration test.
 
 ## Threat model

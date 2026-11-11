@@ -16,7 +16,7 @@ below). Every PASS refers to a test, benchmark or audit output in this repositor
 | Literal and regex search | **met**: linear-time regex with size limits |
 | Machine-readable output | **met**: JSON Lines (schema 1) and JSON on every command, JSON error records |
 | Functioning, tested code-intelligence foundation | **met**: 60 + 12 verified grammars, call graph, imports, ranked search with measured quality, text index equal to Engine A |
-| Automated tests | **met**: 104 Rust tests, 82 Python reference tests, bindings tests on four or five interpreters per platform, Rust/Python parity, 2,000 differential cases against ripgrep, fuzz regressions and a reproducible build, all passing (docs/TEST_RESULTS.md) |
+| Automated tests | **met**: 122 Rust tests, 82 Python reference tests, bindings tests on four or five interpreters per platform, Rust/Python parity, 2,000 differential cases against ripgrep, fuzz regressions and a reproducible build, all passing (docs/TEST_RESULTS.md) |
 | Reproducible competitive benchmarks | **met**: `bench/leaderboard.py`, `bench/indexed.py`, pinned corpora, raw results in `bench/results/` |
 | Verified builds for declared supported platforms | **met for the declared platforms**; others are not declared |
 | Security assessment | **met as a self-assessment** with fuzzing; no independent audit |
@@ -74,6 +74,18 @@ git's case-insensitive ignore matching hide 1,343 files (every tool agreed again
 it was caught); a reference that used Python's backtracking regex engine on the backtracking-trap
 benchmark and never finished; and a musl/glibc comparison that compared the run time recorded in
 the JSON summary, and unordered output.
+
+Found after the first full benchmark run, while closing the rows it lost: smart case took the
+class `\S` for an uppercase letter; `-c` with `--max-count` printed the full count; `-w` and `-U`
+were silently ignored with the fuzzy modes (now an error); the file watcher panicked on a
+repository with patterns in `.git/info/exclude`; the MCP server reported a refused path in
+`read_code` as a success and said nothing about an invalid regex in `grep_code`; the test for a
+disk read never fired on Linux, so a cold tree was read there on one thread per core; and the fuzz
+workspace stopped building once `ignore` was vendored, because a workspace of its own does not
+inherit the patch (caught by the fuzz-regression gate on the release code). In the harness: a
+read-files ceiling whose threads shared a directory and read a cold tree at a third of the disk's
+speed, and warm runs that were not warm once other applications had taken the memory the page
+cache needs.
 
 ## Recommendation
 

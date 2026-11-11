@@ -6,7 +6,7 @@ API are versioned interfaces; incompatible changes bump the major version once p
 listed here under "Breaking". The on-disk index is a cache with its own `schema_version`; a new
 version rebuilds incompatible indexes automatically and this is never considered breaking.
 
-## [0.1.0] - 2026-11-10
+## [0.1.0] - 2026-11-11
 
 First release.
 

@@ -1,4 +1,4 @@
-# Delivery index: Scrutate 0.1.0 (2026-11-10)
+# Delivery index: Scrutate 0.1.0 (2026-11-11)
 
 The fifteen items the mission asks for (section 11), each with where it lives in this repository.
 
@@ -29,8 +29,8 @@ THIRD_PARTY_NOTICES.txt, docs/ and integrations/.
 
 | Artifact | Platform | Binary SHA-256 |
 |---|---|---|
-| `scrutate-0.1.0-aarch64-apple-darwin.tar.gz` | macOS arm64 | `fb3bd578c6d9b348...`, the binary docs/LEADERBOARD.md measured on macOS |
-| `scrutate-0.1.0-cp39-abi3-macosx_11_0_arm64.whl` | macOS arm64, CPython 3.9 or newer | |
+| `scrutate-0.1.0-aarch64-apple-darwin.tar.gz` | macOS arm64 | `9aa0a14ec4b0e10b...`, the binary docs/LEADERBOARD.md measured on macOS |
+| `scrutate-0.1.0-cp39-abi3-macosx_13_0_arm64.whl` | macOS arm64 (macOS 13 or newer), CPython 3.9 or newer | |
 | `scrutate-0.1.0-aarch64-unknown-linux-gnu.tar.gz` | Linux aarch64 (glibc) | `6602bbe5890005db...`, identical from two build images (`bench/results/platforms/repro/`) and the binary measured in the Linux VM |
 | `scrutate-0.1.0-cp39-abi3-manylinux_2_34_aarch64.whl` | Linux aarch64, CPython 3.9 or newer | |
 | `scrutate-0.1.0.cdx.json` | | CycloneDX SBOM of the binary's dependencies |

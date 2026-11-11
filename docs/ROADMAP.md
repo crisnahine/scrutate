@@ -50,7 +50,9 @@ docs/TRACEABILITY.md.
 - Publish the packages: tap, bucket and winget pull requests with the release checksums
   (packaging/README.md lists the steps).
 - `cargo install scrutate`: crates.io refuses crates over 10 MB, and the semantic model is 14.6 MB.
-  It needs a smaller model (int8 weights would halve it) or a download on first use.
+  It needs a smaller model (int8 weights would halve it) or a download on first use. A published
+  crate also cannot carry the `[patch]` that points at `vendor/ignore`: the four changes there
+  have to go upstream or out as a fork first.
 - The GitHub App / GitLab integration that comments reports on merge requests (R-12.12), and
   weekly benchmark runs for the dashboard (R-4.5).
 
