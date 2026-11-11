@@ -161,6 +161,12 @@ First release.
   the D, LLVM IR, AutoHotkey, VHDL and OCaml rules.
 - Ranked search: field-weighted BM25 + exact lookup + semantic vectors (IVF) + LightGBM
   LambdaRank ranker; bit-identical with the Python reference implementation.
+- The ranker is trained with documented types as answers too (classes, structs, enums, traits,
+  interfaces, type aliases), so a type ranks for its own documentation and name as a function
+  does; one more feature tells a name typed with its case (`BurstFiles`) from the same words in
+  another case (`burst_files`), and a struct and its `impl` block are separate results.
+  `bench/retrain_ranker.sh` runs the whole fit and refuses a ranker that is worse on a function
+  row of the held-out set.
 - `symbol`, `callers`, `callees`, `refs`, `outline`, `deps`, `rdeps`, `similar`, `dupes`
   (exact + MinHash/LSH near-duplicates), `tsquery` (tree-sitter structural search),
   cross-repository `search --also`.
