@@ -644,6 +644,44 @@ fn a_method_of_an_object_literal_keeps_its_callers_and_callees() {
 }
 
 #[test]
+fn callers_follow_the_type_a_call_returns() {
+    let report = "pub struct Report;\n\nimpl Report {\n    pub fn load() -> Report {\n        Report\n    }\n    pub fn ok(&self) -> bool {\n        true\n    }\n}\n\npub struct Builder;\n\nimpl Builder {\n    pub fn summary(&self) -> Report {\n        Report\n    }\n}\n\npub fn make() -> Builder {\n    Builder\n}\n\npub fn mystery(y: i32) -> Option<i32> {\n    Some(y)\n}\n\npub struct Other;\n\nimpl Other {\n    pub fn ok(&self) -> bool {\n        false\n    }\n}\n";
+    let user = "use crate::report::{make, mystery, Report};\n\npub fn a(y: i32) -> bool {\n    mystery(y).ok().is_some()\n}\n\npub fn b() -> bool {\n    Report::load().ok()\n}\n\npub fn c() -> bool {\n    make().summary().ok()\n}\n\npub fn d(file: &std::fs::File) -> bool {\n    file.metadata().ok().is_some()\n}\n";
+    let r = Repo::new("returns", &[("src/lib.rs", "mod report;\nmod user;\n"), ("src/report.rs", report), ("src/user.rs", user)]);
+    let (code, out) = r.run(&["callers", "Report.ok"]);
+    assert_eq!(code, 0, "{out}");
+    let names: Vec<&str> = out.lines().filter_map(|l| l.split("] ").nth(1)).collect();
+    assert_eq!(names, ["b", "c", "d"], "{out}");
+    assert!(out.contains("(1 of these call a definition of that name"), "{out}");
+    let (_, other) = r.run(&["callers", "Other.ok"]);
+    let names: Vec<&str> = other.lines().filter_map(|l| l.split("] ").nth(1)).collect();
+    assert_eq!(names, ["d"], "{other}");
+}
+
+#[test]
+fn this_in_an_object_literal_method_calls_the_literal_s_method() {
+    let js = "export const store = {\n  increment() {\n    return this.total();\n  },\n  total() {\n    return 1;\n  },\n};\n\nexport class Cart {\n  total() {\n    return 2;\n  }\n}\n";
+    let r = Repo::new("literal_this", &[("store.js", js)]);
+    let lib = r.lib();
+    let callers = |n: &str| lib.callers(n, 50).unwrap().into_iter().map(|h| h.qualname).collect::<Vec<_>>();
+    assert_eq!(callers("store.total"), ["store.increment"]);
+    assert!(callers("Cart.total").is_empty());
+    assert_eq!(lib.callees("store.increment", 50).unwrap().0.into_iter().map(|h| h.qualname).collect::<Vec<_>>(), ["store.total"]);
+}
+
+#[test]
+fn refs_reads_fields_and_methods_inside_rust_macros() {
+    let src = "pub fn text() -> u8 {\n    1\n}\n\npub struct Hit {\n    pub text: u8,\n}\n\npub fn run(h: &Hit) -> Vec<Hit> {\n    let s = format!(\"{}\", h.text);\n    assert_eq!(s.len(), 1);\n    println!(\"{}\", text());\n    vec![Hit { text: 1 }]\n}\n";
+    let r = Repo::new("macro_refs", &[("src/lib.rs", src)]);
+    assert_eq!(
+        r.resolved("text"),
+        pairs(&[("src/lib.rs:1", "src/lib.rs"), ("src/lib.rs:10", "-"), ("src/lib.rs:12", "src/lib.rs"), ("src/lib.rs:13", "-"), ("src/lib.rs:6", "-")])
+    );
+    let lib = r.lib();
+    assert_eq!(lib.callers("text", 50).unwrap().into_iter().map(|h| h.qualname).collect::<Vec<_>>(), ["run"]);
+}
+
+#[test]
 fn a_definition_is_listed_before_its_prototype() {
     let h = "#pragma once\nnamespace geo {\nstruct Shape { int w; };\nShape make();\n}\n";
     let cpp = "#include \"a_shape.h\"\nnamespace geo {\nShape make() {\n  Shape s;\n  s.w = 1;\n  return s;\n}\n}\n";

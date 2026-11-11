@@ -92,6 +92,10 @@ pub struct Resolver<'a> {
     nest: usize,
     /// (files, name) of the `lookup_top` calls made for the current `resolve_at`
     looked_up: HashSet<(String, String)>,
+    /// by definition: the type its values have (`def_ty`)
+    def_tys: HashMap<i64, Option<Ty>>,
+    /// names a trait or interface of the repository declares as methods
+    trait_members: Option<HashSet<String>>,
 }
 
 fn text<'s>(n: Node, src: &'s str) -> &'s str {
@@ -653,6 +657,8 @@ impl<'a> Resolver<'a> {
             ts: HashMap::new(),
             nest: 0,
             looked_up: HashSet::new(),
+            def_tys: HashMap::new(),
+            trait_members: None,
         })
     }
 
@@ -763,6 +769,11 @@ impl<'a> Resolver<'a> {
                 return Err("keyword argument");
             }
         }
+        if lang == Lang::Rust && node.parent().is_some_and(|p| p.kind() == "token_tree") {
+            if let Some(why) = macro_token(node, &fi.src) {
+                return Err(why);
+            }
+        }
         if let Some(q) = qualifier(node) {
             return self.resolve_qualified(path, &fi, lang, q, node, name, line);
         }
@@ -838,6 +849,13 @@ impl<'a> Resolver<'a> {
             Lang::Go => false,
         };
         if receiver {
+            if let Some(owner) = literal_owner(fi, q) {
+                if owner.is_empty() {
+                    return Err("receiver");
+                }
+                let want = format!("{owner}.{name}");
+                return fi.defs.iter().find(|d| d.qualname == want).map(|d| (d.id, "member")).ok_or("not found");
+            }
             let Some(c) =
                 fi.defs.iter().filter(|d| CONTAINER_KINDS.contains(&d.kind.as_str()) && d.start <= line && line <= d.end).min_by_key(|d| d.end - d.start)
             else {
@@ -898,7 +916,7 @@ impl<'a> Resolver<'a> {
     fn through_type(&mut self, path: &str, fi: &FileInfo, lang: Lang, q: Node, name: &str) -> Resolution {
         match self.type_of(path, fi, lang, q) {
             Some(Ty::Local(owner)) => self.member(owner, name, 0).map(|id| (id, "variable")).ok_or("not found"),
-            Some(Ty::Foreign(t, _)) if !self.extended(&t, name) => Err("external"),
+            Some(Ty::Foreign(t, _)) if !self.extended(&t, name) && !self.trait_member(name) => Err("external"),
             _ => Err("receiver"),
         }
     }
@@ -913,6 +931,30 @@ impl<'a> Resolver<'a> {
             .flatten()
             .any(|q| q.rsplit_once('.').is_some_and(|(owner, _)| owner.split(|c: char| !(c.is_alphanumeric() || c == '_')).any(|w| w == ty)));
         found
+    }
+
+    /// Whether a trait or interface of the repository declares a method `name`: a blanket `impl`
+    /// or an interface merged into a type from outside may give that type the method.
+    fn trait_member(&mut self, name: &str) -> bool {
+        if self.trait_members.is_none() {
+            let mut words = HashSet::new();
+            if let Ok(mut st) = self.ix.db.prepare("SELECT text FROM chunks WHERE kind IN ('trait', 'interface')") {
+                let texts = st.query_map([], |r| crate::index::unpack_text(r.get_ref(0)?)).map(|rows| rows.flatten().collect::<Vec<_>>()).unwrap_or_default();
+                for t in texts {
+                    let mut rest = t.as_str();
+                    while let Some(i) = rest.find(|c: char| c.is_alphanumeric() || c == '_') {
+                        let word_len = rest[i..].find(|c: char| !(c.is_alphanumeric() || c == '_')).unwrap_or(rest.len() - i);
+                        let (word, after) = (&rest[i..i + word_len], rest[i + word_len..].trim_start_matches(['?', ' ']));
+                        if after.starts_with(['(', '<']) {
+                            words.insert(word.to_string());
+                        }
+                        rest = &rest[i + word_len..];
+                    }
+                }
+            }
+            self.trait_members = Some(words);
+        }
+        self.trait_members.as_ref().is_some_and(|w| w.contains(name))
     }
 
     fn def_kind(&self, id: i64) -> Option<String> {
@@ -952,6 +994,15 @@ impl<'a> Resolver<'a> {
                 _ => None,
             },
             "new_expression" => self.named_ty(path, fi, lang, e.child_by_field_name("constructor")?),
+            "string" | "template_string" | "number" | "array" | "regex" if lang == Lang::Js => {
+                let class = match e.kind() {
+                    "number" => "Number",
+                    "array" => "Array",
+                    "regex" => "RegExp",
+                    _ => "String",
+                };
+                Some(Ty::Foreign(class.to_string(), Vec::new()))
+            }
             "struct_expression" => self.named_ty(path, fi, lang, e.child_by_field_name("name")?),
             "composite_literal" => self.ty_of_type(path, fi, lang, e.child_by_field_name("type")?),
             "call" | "call_expression" => {
@@ -995,6 +1046,15 @@ impl<'a> Resolver<'a> {
     /// What a value of definition `id` is: an instance of a container, or the declared return
     /// value of a function.
     fn def_ty(&mut self, id: i64) -> Option<Ty> {
+        if let Some(t) = self.def_tys.get(&id) {
+            return t.clone();
+        }
+        let t = self.def_ty_uncached(id);
+        self.def_tys.insert(id, t.clone());
+        t
+    }
+
+    fn def_ty_uncached(&mut self, id: i64) -> Option<Ty> {
         let kind = self.def_kind(id)?;
         if CONTAINER_KINDS.contains(&kind.as_str()) || kind == "type" {
             return concrete(&kind).then_some(Ty::Local(id));
@@ -1837,6 +1897,34 @@ fn def_node(fi: &FileInfo, id: i64) -> Option<Node<'_>> {
     None
 }
 
+/// What the tokens around a name in a Rust macro argument, which the grammar leaves without
+/// syntax, say it is: a field or a method after `.`, a field name in `{ name: value }`.
+fn macro_token(n: Node, src: &str) -> Option<&'static str> {
+    let next = n.next_sibling();
+    if n.prev_sibling().is_some_and(|p| p.kind() == ".") {
+        let call = next.is_some_and(|x| x.kind() == "::" || (x.kind() == "token_tree" && text(x, src).starts_with('(')));
+        return Some(if call { "receiver" } else { "field or key" });
+    }
+    let braced = n.parent().is_some_and(|p| text(p, src).starts_with('{'));
+    (braced && next.is_some_and(|x| x.kind() == ":")).then_some("field or key")
+}
+
+/// When `this` at `n` is bound by a method of an object literal: the literal's qualified name,
+/// the method's own before its last dot ("" when the literal has none). An arrow function takes
+/// `this` from the code around it.
+fn literal_owner(fi: &FileInfo, n: Node) -> Option<String> {
+    let f = std::iter::successors(n.parent(), |p| p.parent()).find(|p| FUNCTION_NODES.contains(&p.kind()) && p.kind() != "arrow_function")?;
+    let p = f.parent()?;
+    let key = match f.kind() {
+        "method_definition" if p.kind() == "object" => f.child_by_field_name("name")?,
+        "function_expression" | "function" if p.kind() == "pair" && p.parent()?.kind() == "object" => p.child_by_field_name("key")?,
+        _ => return None,
+    };
+    let (name, line) = (text(key, &fi.src), key.start_position().row as i64 + 1);
+    let d = fi.defs.iter().filter(|d| d.name == name && d.start <= line && line <= d.end).min_by_key(|d| d.end - d.start);
+    Some(d.and_then(|d| d.qualname.rsplit_once('.')).map(|(o, _)| o.to_string()).unwrap_or_default())
+}
+
 /// Whether a function lies between `n` and its ancestor `top`.
 fn has_function_between(n: Node, top: Node) -> bool {
     let mut a = n.parent();
@@ -2394,6 +2482,124 @@ mod tests {
                 ("shapes/shapes.go", "v.Norm()", "Norm", "shapes/shapes.go Point.Norm"),
                 ("shapes/shapes.go", "Make().Norm()", "Norm", "shapes/shapes.go Point.Norm"),
                 ("shapes/shapes.go", "Origin.Norm()", "Norm", "shapes/shapes.go Point.Norm"),
+            ],
+        );
+    }
+
+    #[test]
+    fn a_call_is_typed_by_the_return_type_its_callee_declares() {
+        let report = "pub struct Report;\n\nimpl Report {\n    pub fn load() -> Report {\n        Report\n    }\n    pub fn new() -> Self {\n        Report\n    }\n    pub fn ok(&self) -> bool {\n        true\n    }\n}\n\npub struct Builder;\n\nimpl Builder {\n    pub fn summary(&self) -> Report {\n        Report\n    }\n}\n\npub fn make() -> Builder {\n    Builder\n}\n\npub fn mystery(y: i32) -> Option<i32> {\n    Some(y)\n}\n\npub fn pick<T>(x: T) -> T {\n    x\n}\n\npub fn find() -> Option<Report> {\n    None\n}\n";
+        let user = "use crate::report::{find, make, mystery, pick, Report};\n\npub fn a(y: i32) -> bool {\n    mystery(y).ok().is_some()\n}\n\npub fn b() -> bool {\n    Report::load().ok() && Report::new().ok() && make().summary().ok()\n}\n\npub fn c(file: &std::fs::File, v: Vec<Report>) -> bool {\n    file.metadata().ok().is_some() && v.first().unwrap().ok() && pick(Report).ok() && find().unwrap().ok()\n}\n";
+        let rs = [("lib.rs", "mod report;\nmod user;\n"), ("report.rs", report), ("user.rs", user)];
+        let ok = "report.rs Report.ok";
+        resolver_case(
+            "ret_rs",
+            &rs,
+            &[
+                ("user.rs", "mystery(y).ok()", "ok", "external"),
+                ("user.rs", "Report::load().ok()", "ok", ok),
+                ("user.rs", "Report::new().ok()", "ok", ok),
+                ("user.rs", "make().summary().ok()", "ok", ok),
+                // a method of an outside type may return a repository type: `first` of a `Vec<Report>`
+                ("user.rs", "file.metadata().ok()", "ok", "receiver"),
+                ("user.rs", "v.first().unwrap().ok()", "ok", "receiver"),
+                ("user.rs", "pick(Report).ok()", "ok", "receiver"),
+                ("user.rs", "find().unwrap().ok()", "ok", "receiver"),
+            ],
+        );
+        // a trait of the repository may give an outside type the method
+        let okish = "pub trait Okish {\n    fn ok(&self) -> bool;\n}\n\nimpl<T: Copy> Okish for T {\n    fn ok(&self) -> bool {\n        true\n    }\n}\n";
+        resolver_case(
+            "ret_rs_trait",
+            &[rs[0], rs[1], rs[2], ("okish.rs", okish)],
+            &[("user.rs", "mystery(y).ok()", "ok", "receiver"), ("user.rs", "Report::load().ok()", "ok", ok)],
+        );
+        resolver_case(
+            "ret_ts",
+            &[
+                ("report.ts", "export class Report {\n  static load(): Report { return new Report(); }\n  ok(): boolean { return true; }\n}\nexport class Builder {\n  summary(): Report { return new Report(); }\n}\nexport function make(): Builder { return new Builder(); }\nexport function mystery(y: number): number { return y; }\nexport function pick<T>(x: T): T { return x; }\n"),
+                ("user.ts", "import { Report, make, mystery, pick } from './report';\n\nexport function a(y: number) {\n  return mystery(y).ok() || Report.load().ok() || make().summary().ok() || new Report().ok() || pick(new Report()).ok();\n}\n"),
+                ("aug.ts", "export interface Flagged {\n  flag(): boolean;\n}\nexport function b() {\n  return \"s\".ok() || [1].ok() || \"t\".flag();\n}\n"),
+            ],
+            &[
+                ("user.ts", "mystery(y).ok()", "ok", "external"),
+                ("user.ts", "Report.load().ok()", "ok", "report.ts Report.ok"),
+                ("user.ts", "make().summary().ok()", "ok", "report.ts Report.ok"),
+                ("user.ts", "new Report().ok()", "ok", "report.ts Report.ok"),
+                ("user.ts", "pick(new Report()).ok()", "ok", "receiver"),
+                ("aug.ts", "\"s\".ok()", "ok", "external"),
+                ("aug.ts", "[1].ok()", "ok", "external"),
+                ("aug.ts", "\"t\".flag()", "flag", "receiver"),
+            ],
+        );
+        resolver_case(
+            "ret_js",
+            &[
+                ("r.js", "export class Report {\n  ok() { return true; }\n}\n"),
+                ("use.js", "import { Report } from './r.js';\n\nfunction mystery() { return 1; }\n\nexport function a() {\n  return new Report().ok() + mystery().ok() + `t`.ok();\n}\n"),
+            ],
+            &[("use.js", "new Report().ok()", "ok", "r.js Report.ok"), ("use.js", "mystery().ok()", "ok", "receiver"), ("use.js", "`t`.ok()", "ok", "external")],
+        );
+        resolver_case(
+            "ret_go",
+            &[
+                ("go.mod", "module example.com/m\n"),
+                ("report/report.go", "package report\n\ntype Report struct{}\n\nfunc (r *Report) Ok() bool { return true }\n\nfunc NewReport() *Report { return &Report{} }\n\ntype Builder struct{}\n\nfunc (b Builder) Summary() Report { return Report{} }\n\nfunc Build() Builder { return Builder{} }\n\nfunc Mystery(y int) int { return y }\n"),
+                ("main.go", "package main\n\nimport \"example.com/m/report\"\n\nfunc main() {\n\t_ = report.NewReport().Ok()\n\t_ = report.Build().Summary().Ok()\n\t_ = report.Mystery(1).Ok()\n}\n"),
+            ],
+            &[
+                ("main.go", "NewReport().Ok()", "Ok", "report/report.go Report.Ok"),
+                ("main.go", "Summary().Ok()", "Ok", "report/report.go Report.Ok"),
+                ("main.go", "Mystery(1).Ok()", "Ok", "external"),
+            ],
+        );
+        resolver_case(
+            "ret_py",
+            &[
+                ("report.py", "class Report:\n    def ok(self):\n        return True\n\n\nclass Builder:\n    def summary(self) -> Report:\n        return Report()\n\n\ndef make() -> Builder:\n    return Builder()\n\n\ndef mystery(y) -> int:\n    return y\n\n\ndef unknown(y):\n    return y\n"),
+                ("use.py", "from report import Report, make, mystery, unknown\n\n\ndef a(y):\n    return Report().ok() or make().summary().ok() or mystery(y).ok() or unknown(y).ok()\n"),
+            ],
+            &[
+                ("use.py", "Report().ok()", "ok", "report.py Report.ok"),
+                ("use.py", "summary().ok()", "ok", "report.py Report.ok"),
+                ("use.py", "mystery(y).ok()", "ok", "external"),
+                ("use.py", "unknown(y).ok()", "ok", "receiver"),
+            ],
+        );
+    }
+
+    #[test]
+    fn this_in_a_method_of_an_object_literal_is_the_literal() {
+        let js = "export const store = {\n  increment() {\n    return this.total();\n  },\n  total() {\n    return 1;\n  },\n  later: function () {\n    return this.total() + 1;\n  },\n  watch() {\n    return [1].map(() => this.total() + 2);\n  },\n  arrow: () => this.total() + 3,\n  sub: {\n    m() {\n      return this.n();\n    },\n    n() {},\n  },\n};\n\nexport default {\n  methods: {\n    save() {},\n    run() {\n      this.save();\n    },\n  },\n};\n";
+        let ts = "export class K {\n  run() {\n    const o = { a() { return this.b(); }, b() {} };\n    return this.stop();\n  }\n  stop() {}\n}\n";
+        resolver_case(
+            "literal_this",
+            &[("store.js", js), ("k.ts", ts)],
+            &[
+                ("store.js", "return this.total();", "total", "store.js store.total"),
+                ("store.js", "this.total() + 1", "total", "store.js store.total"),
+                ("store.js", "this.total() + 2", "total", "store.js store.total"),
+                ("store.js", "this.total() + 3", "total", "receiver"),
+                ("store.js", "this.n()", "n", "store.js store.sub.n"),
+                ("store.js", "this.save()", "save", "store.js methods.save"),
+                ("k.ts", "this.b()", "b", "k.ts K.run.o.b"),
+                ("k.ts", "this.stop()", "stop", "k.ts K.stop"),
+            ],
+        );
+    }
+
+    #[test]
+    fn names_in_a_rust_macro_follow_the_tokens_around_them() {
+        let rs = "pub fn text() -> u8 {\n    1\n}\n\npub struct Hit {\n    pub text: u8,\n}\n\npub fn run(h: &Hit) -> Vec<Hit> {\n    let s = format!(\"{}\", h.text);\n    assert_eq!(h.text(), 1);\n    println!(\"{} {}\", text(), crate::text());\n    vec![Hit { text: 1 }]\n}\n";
+        resolver_case(
+            "macro_tokens",
+            &[("src/lib.rs", rs), ("Cargo.toml", "[package]\nname = \"demo\"\n")],
+            &[
+                ("src/lib.rs", "h.text);", "text", "field or key"),
+                ("src/lib.rs", "h.text()", "text", "receiver"),
+                ("src/lib.rs", "{ text: 1 }", "text", "field or key"),
+                ("src/lib.rs", "\"{} {}\", text()", "text", "src/lib.rs text"),
+                ("src/lib.rs", "crate::text()", "text", "src/lib.rs text"),
             ],
         );
     }
