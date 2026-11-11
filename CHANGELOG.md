@@ -198,6 +198,15 @@ First release.
   about, `callers` says "the last N were not checked", where it said the resolver could not
   identify them. `refs` gives the reason `not resolved in this language` for a language that has
   a grammar and no resolver rules, and keeps `no grammar` for files without one.
+- A call is recorded under the name its definition has: a trailing `?` or `!` in Ruby and
+  Elixir, `!` in Julia, the dots of an R name, `::` in a Bash name, a prime in Haskell, OCaml,
+  F# and Nix, the last part of a PHP namespaced call, and a Rust raw identifier without `r#`.
+  `callers valid?` and `callers save!` printed "(no results)", and a Haskell `step'` was indexed
+  as `step`.
+- The comment right above a definition is its documentation in Python, Starlark, fish, Common
+  Lisp, assembly, Jsonnet and MATLAB too, beside the docstring where there is one, and a Haskell
+  or Elm function starts at its type signature; `search` did not find a Python function by a
+  word of the comment above it.
 - `search` looks a query of one word, or of stop words alone, up as a name: `search find` and
   `search get` find the functions of that name; they printed "(no results)".
 - A Java file counts as a test by `Test.java` or `Tests.java` with the capital (`Contest.java`
