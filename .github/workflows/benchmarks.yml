@@ -35,7 +35,7 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: false
-      - run: sudo apt-get install -y ripgrep ugrep silversearcher-ag ack
+      - run: sudo apt-get -o Acquire::Retries=5 install -y ripgrep ugrep silversearcher-ag ack
       - name: hyperfine 2.0.0 (the harness reads its JSON; the distribution ships 1.x)
         run: |
           arch=$(uname -m)
