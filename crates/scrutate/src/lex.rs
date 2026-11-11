@@ -101,6 +101,11 @@ pub fn pack_bags(bags: &[Vec<HashMap<String, u32>>], vec: Option<QVecs>) -> File
     FileLex { dl, keys, tf, cnt, vec }
 }
 
+/// A stored value points outside its segment: the caller rebuilds the index, as for a corrupt database.
+fn damaged() -> anyhow::Error {
+    crate::index::Damaged("a segment array names a row outside the segment").into()
+}
+
 // --------------------------------------------------------------------------- segments
 pub struct Segment {
     pub path: PathBuf,
@@ -203,7 +208,7 @@ impl Segment {
             if order.len() != n || inv.len() != n || ivf.ptr.len() != ivf.nclusters + 1 || ivf.cent.len() != ivf.nclusters * self.k {
                 bail!("ivf table lengths");
             }
-            if ivf.ptr.last().copied().unwrap_or(-1) != n as i64 {
+            if ivf.ptr.last().copied().unwrap_or(-1) != n as i64 || ivf.ptr[0] < 0 || ivf.ptr.windows(2).any(|w| w[0] > w[1]) {
                 bail!("ivf cluster pointers");
             }
         }
@@ -276,14 +281,25 @@ impl Segment {
         Some((q, s))
     }
 
-    /// The stored (A view, B view) vector of segment row `r`: `2 * k` codes and 2 scales.
+    /// The postings of term `j` in field `c`: segment rows and their term counts.
+    fn postings(&self, c: usize, j: usize) -> Result<(&[i32], &[u8])> {
+        let ptr = self.ptr(c);
+        let (a, b) = (ptr[j] as usize, ptr[j + 1] as usize);
+        self.doc(c).get(a..b).zip(self.tf(c).get(a..b)).ok_or_else(damaged)
+    }
+
+    /// The stored (A view, B view) vector of segment row `r`: `2 * k` codes and 2 scales. None
+    /// when the segment has no vectors, or its row table names a place outside them.
     pub fn vec_row(&self, r: usize) -> Option<(&[i8], &[f32])> {
         let (q, s) = self.vec()?;
         let k = self.k;
         let pos = match &self.ivf {
-            Some(ivf) => ivf.inv.view::<i32>().expect("inv dtype")[r] as usize,
+            Some(ivf) => *ivf.inv.view::<i32>().expect("inv dtype").get(r)? as usize,
             None => r,
         };
+        if pos >= self.n {
+            return None;
+        }
         Some((&q[pos * 2 * k..(pos + 1) * 2 * k], &s[pos * 2..pos * 2 + 2]))
     }
 
@@ -476,7 +492,7 @@ pub fn merge_segments(dest: &Path, segs: &[&Segment], alive: &[&[bool]]) -> Resu
             if s.vec.is_some() {
                 for (r, &al) in a.iter().enumerate() {
                     if al {
-                        let (q, sc) = s.vec_row(r).expect("vector row");
+                        let (q, sc) = s.vec_row(r).ok_or_else(damaged)?;
                         cat.q.extend_from_slice(q);
                         cat.scale.extend_from_slice(sc);
                     }
@@ -755,7 +771,7 @@ impl LexStore {
 
     /// Statistics from scratch. `live_ids`: sorted ids of the chunks currently in the index, or None
     /// when every row of every segment is known to be alive.
-    pub fn prepare(&mut self, live_ids: Option<&[i64]>) {
+    pub fn prepare(&mut self, live_ids: Option<&[i64]>) -> Result<()> {
         self.alive.clear();
         self.dlsum.clear();
         for s in &self.segs {
@@ -769,14 +785,13 @@ impl LexStore {
         self.n_alive = self.alive.iter().map(|a| a.iter().filter(|&&x| x).count()).sum();
         self.has_dead = self.alive.iter().map(|a| a.iter().any(|&x| !x)).collect();
         self.mix = self.segs.iter().zip(&self.alive).map(|(s, a)| Self::mix_of(s, a)).collect();
-        self.alive_sorted = self
-            .segs
-            .iter()
-            .zip(&self.alive)
-            .map(|(s, a)| s.ivf.as_ref().map(|ivf| ivf.order.view::<i32>().unwrap().iter().map(|&r| a[r as usize]).collect()))
-            .collect();
+        let in_cluster_order =
+            |ivf: &Ivf, a: &[bool]| ivf.order.view::<i32>().unwrap().iter().map(|&r| a.get(r as usize).copied().ok_or_else(damaged)).collect();
+        self.alive_sorted =
+            self.segs.iter().zip(&self.alive).map(|(s, a)| s.ivf.as_ref().map(|ivf| in_cluster_order(ivf, a)).transpose()).collect::<Result<_>>()?;
         self.adf.clear();
         self.set_norm();
+        Ok(())
     }
 
     fn mix_of(s: &Segment, alive: &[bool]) -> Option<Vec<f32>> {
@@ -831,7 +846,7 @@ impl LexStore {
                         }
                     }
                     if let (Some(a), Some(ivf)) = (self.alive_sorted[si].as_mut(), s.ivf.as_ref()) {
-                        a[ivf.inv.view::<i32>().unwrap()[r] as usize] = false;
+                        *a.get_mut(ivf.inv.view::<i32>().unwrap()[r] as usize).ok_or_else(damaged)? = false;
                     }
                 }
                 self.n_alive -= rows.len();
@@ -859,26 +874,24 @@ impl LexStore {
     }
 
     // ---- lexical
-    fn alive_df(&mut self, si: usize, j: usize) -> i64 {
+    fn alive_df(&mut self, si: usize, j: usize) -> Result<i64> {
         if let Some(&v) = self.adf.get(&(si, j)) {
-            return v;
+            return Ok(v);
         }
         let s = &self.segs[si];
         let mut seen = vec![false; s.n];
         for c in 0..NF {
-            let ptr = s.ptr(c);
-            let doc = s.doc(c);
-            for &d in &doc[ptr[j] as usize..ptr[j + 1] as usize] {
-                seen[d as usize] = true;
+            for &d in s.postings(c, j)?.0 {
+                *seen.get_mut(d as usize).ok_or_else(damaged)? = true;
             }
         }
         let got = seen.iter().zip(&self.alive[si]).filter(|(&s, &a)| s && a).count() as i64;
         self.adf.insert((si, j), got);
-        got
+        Ok(got)
     }
 
     /// idf over the live chunks: ln((N - df + 0.5) / (df + 0.5)), floored.
-    fn idf(&mut self, locs: &[Vec<i64>]) -> Vec<f32> {
+    fn idf(&mut self, locs: &[Vec<i64>]) -> Result<Vec<f32>> {
         let nt = locs.first().map(|l| l.len()).unwrap_or(0);
         let mut df = vec![0i64; nt];
         for si in 0..self.segs.len() {
@@ -888,32 +901,31 @@ impl LexStore {
                     continue;
                 }
                 if self.has_dead[si] {
-                    df[t] += self.alive_df(si, j as usize);
+                    df[t] += self.alive_df(si, j as usize)?;
                 } else {
                     df[t] += self.segs[si].df()[j as usize] as i64;
                 }
             }
         }
         let n = self.n_alive as f64;
-        df.iter()
-            .map(|&d| {
-                let v = ((n - d as f64 + 0.5) / (d as f64 + 0.5)).ln();
-                if v.is_finite() && v > 0.0 {
-                    v as f32
-                } else {
-                    IDF_FLOOR
-                }
-            })
-            .collect()
+        let idf = |&d: &i64| {
+            let v = ((n - d as f64 + 0.5) / (d as f64 + 0.5)).ln();
+            if v.is_finite() && v > 0.0 {
+                v as f32
+            } else {
+                IDF_FLOOR
+            }
+        };
+        Ok(df.iter().map(idf).collect())
     }
 
     /// Top `limit` chunks by field-weighted BM25 -> (ids, scores), best first.
-    pub fn search(&mut self, keys: &[i64], limit: usize) -> (Vec<i64>, Vec<f32>) {
+    pub fn search(&mut self, keys: &[i64], limit: usize) -> Result<(Vec<i64>, Vec<f32>)> {
         if keys.is_empty() || self.n_alive == 0 {
-            return (Vec::new(), Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         }
         let locs: Vec<Vec<i64>> = self.segs.iter().map(|s| s.locate(keys)).collect();
-        let idf = self.idf(&locs);
+        let idf = self.idf(&locs)?;
         let mut out_ids: Vec<i64> = Vec::new();
         let mut out_sc: Vec<f32> = Vec::new();
         for si in 0..self.segs.len() {
@@ -931,19 +943,14 @@ impl LexStore {
                 let jt = locs[si][t] as usize;
                 touched.clear();
                 for c in 0..NF {
-                    let ptr = s.ptr(c);
-                    let (a, b) = (ptr[jt] as usize, ptr[jt + 1] as usize);
-                    if a == b {
-                        continue;
-                    }
-                    let doc = s.doc(c);
-                    let tf = s.tf(c);
-                    for e in a..b {
-                        let d = doc[e] as usize;
-                        if f[d] == 0.0 {
+                    let (rows, tfs) = s.postings(c, jt)?;
+                    for (&d, &tf) in rows.iter().zip(tfs) {
+                        let d = d as usize;
+                        let fd = f.get_mut(d).ok_or_else(damaged)?;
+                        if *fd == 0.0 {
                             touched.push(d);
                         }
-                        f[d] += self.w[c] * tf[e] as f32;
+                        *fd += self.w[c] * tf as f32;
                     }
                 }
                 let w = idf[t] * (K1 + 1.0);
@@ -967,17 +974,17 @@ impl LexStore {
         let mut order: Vec<usize> = (0..out_ids.len()).collect();
         order.sort_by(|&a, &b| out_sc[b].partial_cmp(&out_sc[a]).unwrap().then(out_ids[a].cmp(&out_ids[b])));
         order.truncate(limit);
-        (order.iter().map(|&i| out_ids[i]).collect(), order.iter().map(|&i| out_sc[i]).collect())
+        Ok((order.iter().map(|&i| out_ids[i]).collect(), order.iter().map(|&i| out_sc[i]).collect()))
     }
 
     /// -> [len(ids)][1 + NF]: weighted score, then the score of each single field.
-    pub fn field_scores(&mut self, keys: &[i64], ids: &[i64]) -> Vec<[f32; 1 + NF]> {
+    pub fn field_scores(&mut self, keys: &[i64], ids: &[i64]) -> Result<Vec<[f32; 1 + NF]>> {
         let mut out = vec![[0f32; 1 + NF]; ids.len()];
         if keys.is_empty() || ids.is_empty() || self.n_alive == 0 {
-            return out;
+            return Ok(out);
         }
         let locs: Vec<Vec<i64>> = self.segs.iter().map(|s| s.locate(keys)).collect();
-        let idf = self.idf(&locs);
+        let idf = self.idf(&locs)?;
         for si in 0..self.segs.len() {
             let s = &self.segs[si];
             if s.n == 0 {
@@ -998,14 +1005,9 @@ impl LexStore {
                 for &(i, r) in &sel {
                     let mut tfm = [0f32; NF];
                     for c in 0..NF {
-                        let ptr = s.ptr(c);
-                        let (a, b) = (ptr[jt] as usize, ptr[jt + 1] as usize);
-                        if a == b {
-                            continue;
-                        }
-                        let d = &s.doc(c)[a..b];
-                        if let Ok(p) = d.binary_search(&(r as i32)) {
-                            tfm[c] = s.tf(c)[a + p] as f32;
+                        let (rows, tfs) = s.postings(c, jt)?;
+                        if let Ok(p) = rows.binary_search(&(r as i32)) {
+                            tfm[c] = tfs[p] as f32;
                         }
                     }
                     let nm = norm[r];
@@ -1020,14 +1022,14 @@ impl LexStore {
                 }
             }
         }
-        out
+        Ok(out)
     }
 
     // ---- semantic
     /// Ids of the `limit` chunks closest to the query vector (A-view + B-view similarity). Segments
     /// with an inverted-file index scan their `nprobe` closest clusters (all of them when nprobe is
     /// at least the number of clusters, which makes the result exact).
-    pub fn semantic_top(&self, qz: &[f32], limit: usize, nprobe: Option<usize>) -> Vec<i64> {
+    pub fn semantic_top(&self, qz: &[f32], limit: usize, nprobe: Option<usize>) -> Result<Vec<i64>> {
         let nprobe = nprobe.unwrap_or(self.nprobe);
         let mut out_ids: Vec<i64> = Vec::new();
         let mut out_sc: Vec<f32> = Vec::new();
@@ -1048,14 +1050,14 @@ impl LexStore {
             };
             let ids = s.ids();
             for (p, v) in part.into_iter().zip(sc) {
-                out_ids.push(ids[p]);
+                out_ids.push(*ids.get(p).ok_or_else(damaged)?);
                 out_sc.push(v);
             }
         }
         let mut order: Vec<usize> = (0..out_ids.len()).collect();
         order.sort_by(|&a, &b| out_sc[b].partial_cmp(&out_sc[a]).unwrap().then(out_ids[a].cmp(&out_ids[b])));
         order.truncate(limit);
-        order.iter().map(|&i| out_ids[i]).collect()
+        Ok(order.iter().map(|&i| out_ids[i]).collect())
     }
 
     /// -> (segment rows, scores) of the best `limit` live rows in the `nprobe` closest clusters.
@@ -1097,27 +1099,30 @@ impl LexStore {
     }
 
     /// The stored (A view, B view) vectors of a chunk, as float32.
-    pub fn vec_of(&self, id: i64) -> Option<(Vec<f32>, Vec<f32>)> {
+    pub fn vec_of(&self, id: i64) -> Result<Option<(Vec<f32>, Vec<f32>)>> {
         for s in &self.segs {
             if let Some(r) = s.row_of(id) {
+                if s.vec().is_none() {
+                    return Ok(None);
+                }
                 let k = s.k;
                 let mut v = vec![0f32; 2 * k];
                 if !s.vec_row_f32(r, &mut v) {
-                    return None;
+                    return Err(damaged());
                 }
                 let b = v.split_off(k);
-                return Some((v, b));
+                return Ok(Some((v, b)));
             }
         }
-        None
+        Ok(None)
     }
 
     /// Ids of the `limit` live chunks whose B (implementation) vector is closest to `q` (exhaustive;
     /// used by similar-code queries, which are rare and tolerate ~100 ms on 100k chunks).
-    pub fn scan_b(&self, q: &[f32], limit: usize, exclude: i64) -> Vec<(i64, f32)> {
+    pub fn scan_b(&self, q: &[f32], limit: usize, exclude: i64) -> Result<Vec<(i64, f32)>> {
         let mut out: Vec<(i64, f32)> = Vec::new();
         if limit == 0 {
-            return out;
+            return Ok(out);
         }
         let mut row = vec![0f32; q.len()];
         for (si, s) in self.segs.iter().enumerate() {
@@ -1130,12 +1135,15 @@ impl LexStore {
                 if !self.alive[si][r] || ids[r] == exclude {
                     continue;
                 }
-                let Some((vq, vs)) = s.vec_row(r) else { continue };
+                let (vq, vs) = s.vec_row(r).ok_or_else(damaged)?;
                 if vs[1] == 0.0 {
                     continue; // no implementation view
                 }
                 dequantize(&vq[k..], vs[1], &mut row);
                 let sc = dot(&row, q);
+                if sc.is_nan() {
+                    return Err(damaged()); // a scale that is not a number
+                }
                 if out.len() < limit {
                     out.push((ids[r], sc));
                     if out.len() == limit {
@@ -1148,12 +1156,12 @@ impl LexStore {
             }
         }
         out.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap().then(a.0.cmp(&b.0)));
-        out
+        Ok(out)
     }
 
     /// -> (sim of the A view, sim of the B view) for each id; 0 where a chunk has no vector.
     /// Accumulated in float64 and rounded to float32, like the Python reference.
-    pub fn sem_pair(&self, ids: &[i64], qz: &[f32]) -> (Vec<f32>, Vec<f32>) {
+    pub fn sem_pair(&self, ids: &[i64], qz: &[f32]) -> Result<(Vec<f32>, Vec<f32>)> {
         let mut sa = vec![0f32; ids.len()];
         let mut sb = vec![0f32; ids.len()];
         for s in &self.segs {
@@ -1165,7 +1173,7 @@ impl LexStore {
             for (i, id) in ids.iter().enumerate() {
                 if let Some(r) = s.row_of(*id) {
                     if !s.vec_row_f32(r, &mut v) {
-                        continue;
+                        return Err(damaged());
                     }
                     let (mut a, mut b) = (0f64, 0f64);
                     for j in 0..k {
@@ -1177,7 +1185,7 @@ impl LexStore {
                 }
             }
         }
-        (sa, sb)
+        Ok((sa, sb))
     }
 }
 

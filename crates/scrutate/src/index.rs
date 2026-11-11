@@ -850,11 +850,11 @@ impl Index {
                 return Err(Damaged("the chunks table lost rows").into());
             }
             if n_rows as i64 == n_live {
-                store.prepare(None); // nothing was ever deleted: no need to read every id
+                store.prepare(None)?; // nothing was ever deleted: no need to read every id
             } else {
                 let mut st = self.db.prepare("SELECT id FROM chunks ORDER BY id")?;
                 let live: Vec<i64> = st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
-                store.prepare(Some(&live));
+                store.prepare(Some(&live))?;
             }
             self.lex_ver = Some(ver);
         }
@@ -1374,7 +1374,7 @@ impl Index {
                 for id in st.query_map([], |row| row.get::<_, i64>(0))? {
                     live.push(id?);
                 }
-                store.prepare(Some(&live));
+                store.prepare(Some(&live))?;
                 r.chunks_alive = store.n_alive as i64;
                 // every chunk in the database must have a row in exactly one segment
                 let in_segments: usize = store.segs.iter().map(|s| s.ids().iter().filter(|id| live.binary_search(id).is_ok()).count()).sum();

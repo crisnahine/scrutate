@@ -361,13 +361,25 @@ impl Searcher {
 
     // ------------------------------------------------------------ candidates + features
     pub fn candidates(&mut self, query: &str, use_literal: bool) -> Result<Candidates> {
+        match self.candidates_once(query, use_literal) {
+            // damage a query finds in a segment: the sources are intact, index them again
+            Err(e) if crate::index::error_is_corruption(&e) => {
+                eprintln!("[scrutate] index unreadable ({e:#}); rebuilding");
+                self.ix.rebuild()?;
+                self.candidates_once(query, use_literal)
+            }
+            other => other,
+        }
+    }
+
+    fn candidates_once(&mut self, query: &str, use_literal: bool) -> Result<Candidates> {
         let q = QueryInfo::parse(query);
         self.sync()?;
         let keys = lex_keys(&q);
-        let lex_ids = self.ix.lex()?.search(&keys, LEX_LIMIT).0;
+        let lex_ids = self.ix.lex()?.search(&keys, LEX_LIMIT)?.0;
         let (sem_ids, qz): (Vec<i64>, Option<Vec<f32>>) = match (&self.ix.model, q.terms.is_empty()) {
             (Some(m), false) => match m.encode_query(&q.terms) {
-                Some(z) => (self.ix.lex()?.semantic_top(&z, SEM_LIMIT, None), Some(z)),
+                Some(z) => (self.ix.lex()?.semantic_top(&z, SEM_LIMIT, None)?, Some(z)),
                 None => (Vec::new(), None),
             },
             _ => (Vec::new(), None),
@@ -396,7 +408,7 @@ impl Searcher {
 
         let mut x: Vec<Features> = vec![[0f32; NFEAT]; n];
         // --- lexical
-        let s = self.ix.lex()?.field_scores(&keys, &ids);
+        let s = self.ix.lex()?.field_scores(&keys, &ids)?;
         let pairs = [
             ("lex_log", "lex_ratio"),
             ("name_log", "name_ratio"),
@@ -422,7 +434,7 @@ impl Searcher {
         }
         // --- semantic
         if let Some(z) = &qz {
-            let (sa, sb) = self.ix.lex()?.sem_pair(&ids, z);
+            let (sa, sb) = self.ix.lex()?.sem_pair(&ids, z)?;
             let mix: Vec<f32> = sa.iter().zip(&sb).map(|(a, b)| 0.5 * (a + b)).collect();
             for (src, dst, zdst) in [(&sa, "sem_a", "sem_a_z"), (&sb, "sem_b", "sem_b_z"), (&mix, "sem_mix", "sem_mix_z")] {
                 let (m, sd) = mean_std(src);

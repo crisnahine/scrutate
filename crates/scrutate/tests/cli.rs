@@ -643,6 +643,26 @@ fn corruption_found_during_use_triggers_a_rebuild() {
     assert_eq!(code, 0, "{out}");
 }
 
+#[test]
+fn a_posting_row_outside_its_segment_triggers_a_rebuild() {
+    let r = python_repo("badposting");
+    r.run(&["index"]);
+    let seg = fs::read_dir(r.root.join(".scrutate/seg")).unwrap().next().unwrap().unwrap().path();
+    for c in 0..6 {
+        let p = seg.join(format!("doc{c}.npy"));
+        let mut bytes = fs::read(&p).unwrap();
+        // every row number becomes -1; the header and so the length stay as they were
+        let data = 10 + u16::from_le_bytes([bytes[8], bytes[9]]) as usize;
+        bytes[data..].fill(0xFF);
+        fs::write(&p, &bytes).unwrap();
+    }
+    let (code, out, err) = r.run(&["search", "build a widget", "-k", "2"]);
+    assert_eq!(code, 0, "stdout: {out}\nstderr: {err}");
+    assert!(out.contains("make_widget_") && err.contains("rebuilding"), "stdout: {out}\nstderr: {err}");
+    let (code, out, _) = r.run(&["check", "--json"]);
+    assert_eq!(code, 0, "{out}");
+}
+
 /// `grep --index` must print exactly what the walk prints, for every kind of query, before and
 /// after incremental updates (edits, additions, deletions, renames) and after segment merges.
 #[test]

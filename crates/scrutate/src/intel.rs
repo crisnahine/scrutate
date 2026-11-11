@@ -281,11 +281,11 @@ pub fn similar(s: &mut Searcher, target: &str, k: usize) -> Result<Vec<(Hit, f32
     if row.kind == "constant" {
         bail!("{} is a constant: constants have no implementation vector and are not compared", shown(&row.qualname));
     }
-    let (_, b) = s.ix.lex()?.vec_of(row.id).ok_or_else(|| anyhow!("the index has no vectors (semantic model disabled)"))?;
+    let (_, b) = s.ix.lex()?.vec_of(row.id)?.ok_or_else(|| anyhow!("the index has no vectors (semantic model disabled)"))?;
     if b.iter().all(|x| *x == 0.0) {
         bail!("{} has no implementation vector (its body is too short to compare)", shown(&row.qualname));
     }
-    let near = s.ix.lex()?.scan_b(&b, k * 3, row.id);
+    let near = s.ix.lex()?.scan_b(&b, k * 3, row.id)?;
     let my_tokens: HashSet<String> = tokenize2(&row.text, Some(BODY_CAP)).0.into_iter().collect();
     let mut out = Vec::new();
     for (id, cos) in near {
