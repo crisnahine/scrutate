@@ -944,6 +944,31 @@ fn walk(root: &Path) -> Result<Vec<(String, u64, i64)>> {
     Ok(v)
 }
 
+/// What the walk of `walk` yields under `start` (a directory that walk of the root enters, whose
+/// ignore files above it apply), `depth` levels down: the directories, and the files.
+pub(crate) fn walk_entries(start: &Path, depth: Option<usize>) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let o = Options { max_depth: depth, threads: if depth.is_some() { 1 } else { 0 }, ..Options::default() };
+    let Ok(walker) = instant::build_walker(&[start.to_path_buf()], &o) else { return Default::default() };
+    let out = Mutex::new((Vec::new(), Vec::new()));
+    walker.run(|| {
+        let out = &out;
+        Box::new(move |entry| {
+            if let Ok(e) = entry {
+                let (dir, file) = e.file_type().map_or((false, false), |t| (t.is_dir(), t.is_file()));
+                if let (true, Ok(mut v)) = (dir || file, out.lock()) {
+                    if dir {
+                        v.0.push(e.into_path())
+                    } else {
+                        v.1.push(e.into_path())
+                    }
+                }
+            }
+            ignore::WalkState::Continue
+        })
+    });
+    out.into_inner().unwrap_or_default()
+}
+
 fn next_segment_number(dir: &Path) -> Result<u64> {
     Ok(std::fs::read_dir(dir)?
         .flatten()

@@ -1,11 +1,9 @@
 //! Which files belong to the repository, for each index. Engine A's default walk (which the text
-//! index reuses) is `instant::build_walker`; the code index's set is `list_files`; `Membership`
-//! answers for one changed path whether it can belong to either.
+//! index reuses) is `instant::build_walker`; the code index's set is `list_files`, walked by
+//! `CodeWalk`; `Membership` asks that walk about one path.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-
-use ignore::gitignore::Gitignore;
+use std::sync::Arc;
 
 use crate::parse::is_indexable;
 
@@ -99,273 +97,240 @@ pub fn skipped_dirs(root: &Path) -> Vec<String> {
 /// Relative paths ('/' separated, sorted) of the files worth indexing: the same rules as ripgrep's
 /// file listing (.gitignore, hidden files) plus the usual build/vendor directories.
 pub fn list_files(root: &Path) -> Vec<String> {
-    let mut out = Vec::new();
-    // hidden files are indexed (.github/workflows/*.yml, .eslintrc.js, .env.example are code or
-    // config people search for); SKIP_DIRS prunes VCS internals and caches
-    let skip_list = skip_dirs(in_git(root));
-    let skip = move |name: &str| skip_list.iter().any(|s| s == name);
-    let skip2 = skip.clone();
-    let walker = ignore::WalkBuilder::new(root)
-        .hidden(false)
-        .git_ignore(true)
-        .git_global(true)
-        .git_exclude(true)
-        .ignore(true)
-        .parents(true)
-        .add_custom_ignore_filename(crate::instant::RGIGNORE)
-        .follow_links(false)
-        .filter_entry(move |e| !(e.file_type().map(|t| t.is_dir()).unwrap_or(false) && skip(&e.file_name().to_string_lossy())))
-        .build();
-    for entry in walker.flatten() {
-        if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
-            continue;
-        }
-        if entry.file_name() == ".git" {
-            continue; // a `.git` *file* (worktree or submodule pointer) is VCS metadata, not source
-        }
-        let Ok(rel) = entry.path().strip_prefix(root) else {
-            continue;
-        };
-        let rel = rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect::<Vec<_>>().join("/");
-        if is_indexable(&rel) && !rel.split('/').any(&skip2) {
-            out.push(rel);
-        }
-    }
+    let walk = CodeWalk::new(root);
+    let mut out: Vec<String> = walk.builder(root).build().flatten().filter_map(|e| walk.keeps(&e)).collect();
     out.sort();
     out
 }
 
-/// Decides whether a changed path can change what one of the indexes holds: Engine B indexes the
-/// `list_files` set (hidden files included, `SKIP_DIRS` pruned), the text index the files of
-/// Engine A's default walk (hidden files skipped). Both honour the same ignore files.
-#[cfg_attr(target_os = "macos", allow(dead_code))] // the macOS watcher polls the index instead
-pub struct Membership {
+/// The code index's walk of a root. Started at a directory the root's walk enters, it lists that
+/// directory as the root's walk does: the ignore files of every directory above it apply.
+pub struct CodeWalk {
     root: PathBuf,
-    skip: Vec<String>,
-    /// top of the git repository holding `root`; `.gitignore` rules only apply inside one
-    git_top: Option<PathBuf>,
-    exclude: Gitignore,
-    global: Gitignore,
-    /// per directory: its `.rgignore`, its `.ignore`, then its `.gitignore` (inside a git repository)
-    dirs: HashMap<PathBuf, [Option<Gitignore>; 3]>,
+    skip: Arc<Vec<String>>,
 }
 
-#[cfg_attr(target_os = "macos", allow(dead_code))]
+impl CodeWalk {
+    pub fn new(root: &Path) -> CodeWalk {
+        CodeWalk { root: root.to_path_buf(), skip: Arc::new(skip_dirs(in_git(root))) }
+    }
+
+    pub fn builder(&self, start: &Path) -> ignore::WalkBuilder {
+        // hidden files are indexed (.github/workflows/*.yml, .eslintrc.js, .env.example are code or
+        // config people search for); SKIP_DIRS prunes VCS internals and caches
+        let skip = self.skip.clone();
+        let mut wb = ignore::WalkBuilder::new(start);
+        wb.hidden(false)
+            .git_ignore(true)
+            .git_global(true)
+            .git_exclude(true)
+            .ignore(true)
+            .parents(true)
+            .add_custom_ignore_filename(crate::instant::RGIGNORE)
+            .follow_links(false)
+            .filter_entry(move |e| !(e.file_type().is_some_and(|t| t.is_dir()) && skip.iter().any(|s| *s == *e.file_name().to_string_lossy())));
+        wb
+    }
+
+    /// The path from the root of a file the walk yielded, when the code index holds that file.
+    pub fn keeps(&self, e: &ignore::DirEntry) -> Option<String> {
+        // a `.git` *file* (worktree or submodule pointer) is VCS metadata, not source
+        if !e.file_type().is_some_and(|t| t.is_file()) || e.file_name() == ".git" {
+            return None;
+        }
+        let rel = slashed(e.path().strip_prefix(&self.root).ok()?);
+        self.indexable(&rel).then_some(rel)
+    }
+
+    fn indexable(&self, rel: &str) -> bool {
+        is_indexable(rel) && !rel.split('/').any(|n| self.skip.iter().any(|s| s == n))
+    }
+}
+
+fn slashed(rel: &Path) -> String {
+    rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect::<Vec<_>>().join("/")
+}
+
+/// Whether the code index's walk lists one path: each directory from the root down to it is listed
+/// with the walk's own rules. A path that does not exist is judged by its directory.
+pub struct Membership {
+    walk: CodeWalk,
+}
+
 impl Membership {
     pub fn new(root: &Path) -> Membership {
-        let git_top = root.ancestors().find(|a| a.join(".git").exists()).map(Path::to_path_buf);
-        // both matchers judge paths relative to the repository top, as git does; a matcher rooted
-        // anywhere else panics on a path outside its root
-        let (exclude, global) = match &git_top {
-            Some(top) => {
-                let mut exclude = ignore::gitignore::GitignoreBuilder::new(top);
-                exclude.add(top.join(".git/info/exclude"));
-                (exclude.build().unwrap_or_else(|_| Gitignore::empty()), ignore::gitignore::GitignoreBuilder::new(top).build_global().0)
-            }
-            None => (Gitignore::empty(), Gitignore::empty()),
-        };
-        Membership { root: root.to_path_buf(), skip: skip_dirs(git_top.is_some()), git_top, exclude, global, dirs: HashMap::new() }
+        Membership { walk: CodeWalk::new(root) }
     }
 
-    fn matchers(&mut self, dir: &Path) -> &[Option<Gitignore>; 3] {
-        let git = self.git_top.is_some();
-        self.dirs.entry(dir.to_path_buf()).or_insert_with(|| {
-            let read = |name: &str| Some(dir.join(name)).filter(|p| p.is_file()).map(|p| Gitignore::new(&p).0);
-            [read(crate::instant::RGIGNORE), read(".ignore"), if git { read(".gitignore") } else { None }]
-        })
-    }
-
-    fn ignored(&mut self, path: &Path) -> bool {
-        let is_dir = path.is_dir();
-        let top = self.git_top.clone().unwrap_or_else(|| self.root.clone());
-        // as the walk decides: a `.rgignore` at any level speaks before every `.ignore`, which speaks
-        // before every `.gitignore`, and within one kind the nearest directory speaks first
-        for kind in 0..3 {
-            let mut dir = path.parent();
-            while let Some(d) = dir {
-                if let Some(m) = &self.matchers(d)[kind] {
-                    let r = m.matched_path_or_any_parents(path, is_dir);
-                    if !r.is_none() {
-                        return r.is_ignore();
-                    }
-                }
-                if d == top {
-                    break;
-                }
-                dir = d.parent();
+    pub fn may_contain(&mut self, path: &Path) -> bool {
+        let Ok(rel) = path.strip_prefix(&self.walk.root) else { return false };
+        let names: Vec<_> = rel.components().map(|c| c.as_os_str().to_os_string()).collect();
+        let mut dir = self.walk.root.clone();
+        for (i, name) in names.iter().enumerate() {
+            let next = dir.join(name);
+            let last = i + 1 == names.len();
+            if last && std::fs::symlink_metadata(&next).is_err() {
+                return self.walk.indexable(&slashed(rel));
             }
-        }
-        for m in [&self.exclude, &self.global] {
-            if path.starts_with(&top) {
-                let r = m.matched_path_or_any_parents(path, is_dir);
-                if !r.is_none() {
-                    return r.is_ignore();
-                }
+            let Some(e) = self.walk.builder(&dir).max_depth(Some(1)).build().flatten().find(|e| e.depth() == 1 && e.path() == next) else {
+                return false;
+            };
+            if last {
+                return e.file_type().is_some_and(|t| t.is_dir()) || self.walk.keeps(&e).is_some();
             }
+            dir = next;
         }
         false
     }
-
-    /// The names of `path` from the root, unless it is outside the root, the root itself, or under
-    /// the index directory or `.git`.
-    fn names(&self, path: &Path) -> Option<Vec<String>> {
-        let rel = path.strip_prefix(&self.root).ok()?;
-        let names: Vec<String> = rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
-        (!names.is_empty() && names[0] != INDEX_DIR && names[0] != ".git").then_some(names)
-    }
-
-    /// `.git/info` of the repository holding the root, when it is a directory.
-    pub fn git_info(&self) -> Option<PathBuf> {
-        self.git_top.as_ref().map(|t| t.join(".git").join("info")).filter(|p| p.is_dir())
-    }
-
-    /// Whether `path` holds rules for what is indexed: an ignore file, `.git/info/exclude`, or a
-    /// `.scrutate.toml`.
-    pub fn sets_rules(&self, path: &Path) -> bool {
-        if self.git_top.as_ref().is_some_and(|t| path == t.join(".git").join("info").join("exclude")) {
-            return true;
-        }
-        self.names(path)
-            .and_then(|n| n.last().cloned())
-            .is_some_and(|n| [".gitignore", ".ignore", crate::instant::RGIGNORE, ".scrutate.toml"].contains(&n.as_str()))
-    }
-
-    /// Whether the code index's walk (`list_files`) lists `path`.
-    pub fn code_lists(&mut self, path: &Path) -> bool {
-        let Some(names) = self.names(path) else { return false };
-        !names.iter().any(|n| self.skip.contains(n)) && is_indexable(&names.join("/")) && regular_file(path) && !self.ignored(path)
-    }
-
-    /// Whether the text index's walk (Engine A's default) lists `path`.
-    pub fn text_lists(&mut self, path: &Path) -> bool {
-        let Some(names) = self.names(path) else { return false };
-        !names.iter().any(|n| n.starts_with('.')) && regular_file(path) && !self.ignored(path)
-    }
-
-    /// Whether a change of `path` can matter to the code index or (when there is one) the text index.
-    pub fn may_contain(&mut self, path: &Path) -> bool {
-        let Ok(rel) = path.strip_prefix(&self.root) else { return false };
-        let names: Vec<String> = rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
-        if names.first().map(|n| n == INDEX_DIR || n == ".git").unwrap_or(false) {
-            return false;
-        }
-        if names.last().map(|n| n == ".gitignore" || n == ".ignore" || n == crate::instant::RGIGNORE).unwrap_or(false) {
-            self.dirs.clear(); // the rules changed: what is indexed may change too
-            return true;
-        }
-        let code = !names.iter().any(|n| self.skip.contains(n));
-        let text = !names.iter().any(|n| n.starts_with('.')) && crate::textindex::dir_of(&self.root).join("manifest.json").exists();
-        (code || text) && !self.ignored(path)
-    }
-}
-
-/// The walks do not follow symbolic links.
-#[cfg_attr(target_os = "macos", allow(dead_code))]
-fn regular_file(path: &Path) -> bool {
-    std::fs::symlink_metadata(path).is_ok_and(|m| m.is_file())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn membership_follows_the_index_rules() {
-        let root = std::env::temp_dir().join(format!("scrutate_watch_filter_{}", std::process::id()));
+    /// A tree under the temporary directory; a name ending in `/` is a directory.
+    fn tree(name: &str, entries: &[(&str, &str)]) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("scrutate_files_{name}_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("src")).unwrap();
-        std::fs::write(root.join(".ignore"), "gen/\n*.log\n").unwrap();
-        let root = std::fs::canonicalize(&root).unwrap();
-        let mut f = Membership::new(&root);
-        assert!(f.may_contain(&root.join("src/a.rs")));
-        assert!(f.may_contain(&root.join(".github/ci.yml")), "hidden files are indexed by Engine B");
-        assert!(!f.may_contain(&root.join(".scrutate/index.db")));
-        assert!(!f.may_contain(&root.join("node_modules/x/index.js")), "SKIP_DIRS without a text index");
-        assert!(!f.may_contain(&root.join("gen/out.rs")));
-        assert!(!f.may_contain(&root.join("src/run.log")));
-        assert!(!f.may_contain(Path::new("/elsewhere/a.rs")));
-        std::fs::write(root.join(".ignore"), "").unwrap();
-        assert!(f.may_contain(&root.join(".ignore")));
-        assert!(f.may_contain(&root.join("gen/out.rs")), "a changed ignore file is read again");
-        std::fs::remove_dir_all(&root).unwrap();
+        for (rel, text) in entries {
+            let p = root.join(rel);
+            if rel.ends_with('/') {
+                std::fs::create_dir_all(&p).unwrap();
+            } else {
+                std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+                std::fs::write(&p, text).unwrap();
+            }
+        }
+        std::fs::canonicalize(&root).unwrap()
+    }
+
+    fn every_file(dir: &Path, out: &mut Vec<PathBuf>) {
+        for e in std::fs::read_dir(dir).unwrap().flatten() {
+            if e.file_type().unwrap().is_dir() {
+                every_file(&e.path(), out);
+            } else {
+                out.push(e.path());
+            }
+        }
+    }
+
+    /// For the index rooted at `root`: `Membership` answers every file of the tree as `list_files`
+    /// lists it, and a walk started at each directory the root's walk enters lists that directory's
+    /// files as the root's walk does. -> what `list_files` holds.
+    fn agrees(root: &Path) -> Vec<String> {
+        let walked = list_files(root);
+        let mut m = Membership::new(root);
+        let mut files = Vec::new();
+        every_file(root, &mut files);
+        for f in &files {
+            let rel = slashed(f.strip_prefix(root).unwrap());
+            assert_eq!(m.may_contain(f), walked.contains(&rel), "membership of {rel} ({walked:?})");
+        }
+        let walk = CodeWalk::new(root);
+        for d in walk.builder(root).build().flatten().filter(|e| e.file_type().is_some_and(|t| t.is_dir())) {
+            let mut here: Vec<String> = walk.builder(d.path()).max_depth(Some(1)).build().flatten().filter_map(|e| walk.keeps(&e)).collect();
+            here.sort();
+            let from_root: Vec<String> = walked.iter().filter(|p| root.join(p).parent() == Some(d.path())).cloned().collect();
+            assert_eq!(here, from_root, "the walk started at {}", d.path().display());
+        }
+        walked
     }
 
     #[test]
     fn an_ignore_file_speaks_before_a_nearer_gitignore_as_in_the_walk() {
-        let root = std::env::temp_dir().join(format!("scrutate_membership_order_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join(".git")).unwrap();
-        std::fs::create_dir_all(root.join("sub")).unwrap();
-        std::fs::write(root.join(".ignore"), "*.log\nrg.rs\n").unwrap();
-        std::fs::write(root.join(".gitignore"), "*.tmp\n").unwrap();
-        std::fs::write(root.join("sub/.gitignore"), "!keep.log\n!keep.tmp\n").unwrap();
-        std::fs::write(root.join(".rgignore"), "!rg.rs\n!rg.tmp\n").unwrap();
-        for name in ["sub/keep.log", "sub/keep.tmp", "sub/a.rs", "sub/other.tmp", "sub/rg.rs", "sub/rg.tmp"] {
-            std::fs::write(root.join(name), "x\n").unwrap();
-        }
-        let root = std::fs::canonicalize(&root).unwrap();
-        let walked = list_files(&root);
-        let mut f = Membership::new(&root);
+        let root = tree(
+            "order",
+            &[
+                (".git/", ""),
+                (".ignore", "*.log\nrg.rs\n"),
+                (".gitignore", "*.tmp\n"),
+                ("sub/.gitignore", "!keep.log\n!keep.tmp\n"),
+                (".rgignore", "!rg.rs\n!rg.tmp\n"),
+                ("sub/keep.log", "x\n"),
+                ("sub/keep.tmp", "x\n"),
+                ("sub/a.rs", "x\n"),
+                ("sub/other.tmp", "x\n"),
+                ("sub/rg.rs", "x\n"),
+                ("sub/rg.tmp", "x\n"),
+            ],
+        );
+        let walked = agrees(&root);
         for (name, kept) in
             [("sub/keep.log", false), ("sub/keep.tmp", true), ("sub/a.rs", true), ("sub/other.tmp", false), ("sub/rg.rs", true), ("sub/rg.tmp", true)]
         {
             assert_eq!(walked.iter().any(|p| p == name), kept, "the walk on {name}: {walked:?}");
-            assert_eq!(f.may_contain(&root.join(name)), kept, "membership of {name}");
         }
         std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
-    fn one_path_is_listed_as_the_walks_list_it() {
-        let root = std::env::temp_dir().join(format!("scrutate_membership_lists_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join(".git/info")).unwrap();
-        std::fs::write(root.join(".gitignore"), "gen/\n*.tmp\n").unwrap();
-        let names = ["src/a.py", "src/a.tmp", "gen/b.py", ".github/ci.yml", "node_modules/x/i.js", "src/img.png", "src/.hidden.py", ".scrutate/x.py"];
-        for name in names {
-            std::fs::create_dir_all(root.join(name).parent().unwrap()).unwrap();
-            std::fs::write(root.join(name), "x\n").unwrap();
-        }
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(root.join("src/a.py"), root.join("src/link.py")).unwrap();
-        let root = std::fs::canonicalize(&root).unwrap();
-        let walked = list_files(&root);
-        let mut f = Membership::new(&root);
-        for name in names.iter().chain(&["src/link.py", "src/gone.py"]) {
-            assert_eq!(f.code_lists(&root.join(name)), walked.iter().any(|p| p == name), "code index: {name} ({walked:?})");
-        }
-        for (name, listed) in [
-            ("src/a.py", true),
-            ("src/a.tmp", false),
-            ("src/.hidden.py", false),
-            (".github/ci.yml", false),
-            ("node_modules/x/i.js", true),
-            ("src/link.py", false),
-        ] {
-            assert_eq!(f.text_lists(&root.join(name)), listed, "text index: {name}");
-        }
-        for (name, rules) in
-            [(".gitignore", true), ("src/.ignore", true), (".git/info/exclude", true), (".scrutate.toml", true), (".git/config", false), ("src/a.py", false)]
-        {
-            assert_eq!(f.sets_rules(&root.join(name)), rules, "{name}");
-        }
-        assert_eq!(f.git_info(), Some(root.join(".git/info")));
+    fn the_rules_of_directories_above_the_repository_and_of_nested_repositories_apply_as_in_the_walk() {
+        let outer = tree(
+            "layouts",
+            &[
+                // an .ignore above the repository top
+                (".ignore", "secret.py\n"),
+                ("proj/.git/", ""),
+                ("proj/secret.py", "x\n"),
+                ("proj/a.py", "x\n"),
+                // a root outside git holding a repository
+                ("ws/repo1/.git/", ""),
+                ("ws/repo1/.gitignore", "gen.py\ncov/\n"),
+                ("ws/repo1/gen.py", "x\n"),
+                ("ws/repo1/cov/x.py", "x\n"),
+                ("ws/repo1/a.py", "x\n"),
+                // a repository inside one whose ignore patterns would match its files
+                ("outer/.git/", ""),
+                ("outer/.gitignore", "*.gen.py\nout/\n"),
+                ("outer/x.gen.py", "x\n"),
+                ("outer/vendor/lib/.git/", ""),
+                ("outer/vendor/lib/x.gen.py", "x\n"),
+                ("outer/vendor/lib/out/o.py", "x\n"),
+                // git's exclude file
+                ("ex/.git/info/exclude", "*.tmp\n/gen/\n"),
+                ("ex/src/a.tmp", "x\n"),
+                ("ex/src/a.rs", "x\n"),
+                ("ex/gen/out.rs", "x\n"),
+                ("ex/src/gen/out.rs", "x\n"),
+            ],
+        );
+        assert_eq!(agrees(&outer.join("proj")), ["a.py"]);
+        assert_eq!(agrees(&outer.join("ws")), ["repo1/.gitignore", "repo1/a.py"]);
+        assert_eq!(agrees(&outer.join("outer")), [".gitignore", "vendor/lib/out/o.py", "vendor/lib/x.gen.py"]);
+        assert_eq!(agrees(&outer.join("ex")), ["src/a.rs", "src/gen/out.rs"]);
+        std::fs::remove_dir_all(&outer).unwrap();
+    }
+
+    #[test]
+    fn a_linked_worktree_reads_the_exclude_file_of_its_main_repository() {
+        let root = tree(
+            "worktree",
+            &[
+                ("main/.git/info/exclude", "private.py\n"),
+                ("main/.git/HEAD", "ref: refs/heads/main\n"),
+                ("main/.git/worktrees/wt/commondir", "../..\n"),
+                ("main/.git/worktrees/wt/HEAD", "ref: refs/heads/wt\n"),
+                ("wt/private.py", "x\n"),
+                ("wt/a.py", "x\n"),
+            ],
+        );
+        std::fs::write(root.join("wt/.git"), format!("gitdir: {}\n", root.join("main/.git/worktrees/wt").display())).unwrap();
+        assert_eq!(agrees(&root.join("wt")), ["a.py"]);
         std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
-    fn rules_in_git_info_exclude_apply_from_the_repository_top() {
-        let root = std::env::temp_dir().join(format!("scrutate_membership_exclude_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join(".git/info")).unwrap();
-        std::fs::create_dir_all(root.join("src")).unwrap();
-        std::fs::write(root.join(".git/info/exclude"), "*.tmp\n/gen/\n").unwrap();
-        let root = std::fs::canonicalize(&root).unwrap();
-        let mut f = Membership::new(&root);
-        assert!(f.may_contain(&root.join("src/a.rs")));
-        assert!(!f.may_contain(&root.join("src/a.tmp")));
-        assert!(!f.may_contain(&root.join("gen/out.rs")));
-        assert!(f.may_contain(&root.join("src/gen/out.rs")), "/gen/ is anchored at the top");
+    fn membership_of_paths_that_are_not_files_of_the_tree() {
+        let root = tree("paths", &[(".ignore", "gen/\n"), ("src/a.rs", "x\n"), ("gen/b.rs", "x\n"), (".scrutate/x.py", "x\n"), ("node_modules/x/i.js", "x\n")]);
+        let mut m = Membership::new(&root);
+        assert!(m.may_contain(&root.join("src/new.rs")), "a missing file is judged by its directory");
+        assert!(m.may_contain(&root.join("src")));
+        assert!(!m.may_contain(&root.join("gen/new.rs")));
+        assert!(!m.may_contain(&root.join("src/new.png")));
+        assert!(!m.may_contain(&root.join(".scrutate/x.py")));
+        assert!(!m.may_contain(&root.join("node_modules/x/i.js")));
+        assert!(!m.may_contain(Path::new("/elsewhere/a.rs")));
+        assert!(!m.may_contain(&root));
         std::fs::remove_dir_all(&root).unwrap();
     }
 }

@@ -27,11 +27,19 @@ impl Repo {
         fs::write(&p, bytes).unwrap();
     }
     fn run(&self, args: &[&str]) -> i32 {
-        Command::new(BIN).args(args).current_dir(&self.root).stdin(Stdio::null()).output().unwrap().status.code().unwrap_or(-1)
+        run_in(&self.root, args)
     }
     fn indexed(&self, word: &str) -> bool {
-        self.run(&["grep", "--index", "-F", word]) == 0
+        indexed_in(&self.root, word)
     }
+}
+
+fn run_in(dir: &Path, args: &[&str]) -> i32 {
+    Command::new(BIN).args(args).current_dir(dir).stdin(Stdio::null()).output().unwrap().status.code().unwrap_or(-1)
+}
+
+fn indexed_in(dir: &Path, word: &str) -> bool {
+    run_in(dir, &["grep", "--index", "-F", word]) == 0
 }
 
 impl Drop for Repo {
@@ -327,4 +335,138 @@ fn a_save_of_an_ignored_file_starts_no_update() {
     assert!(lines.iter().all(|l| !l.contains("burst:")), "{lines:?}");
     r.write("src/a.py", b"def alpha_two():\n    return 1\n");
     burst_was(&wait_update(&rx, 1, 0), Some(1), false);
+}
+
+/// Watch `dir` (indexed first), save each of `ignored` (path, function name) and then `marker`:
+/// once the marker is indexed, no ignored function may be.
+fn saves_stay_out(dir: &Path, ignored: &[(&str, &str)], marker: (&str, &str)) {
+    assert_eq!(run_in(dir, &["index"]), 0);
+    for (rel, _) in ignored {
+        assert!(dir.join(rel).is_file(), "{rel} is in the tree before the watch starts");
+    }
+    let (_child, rx) = start_watch(dir);
+    wait_watching(&rx);
+    for (rel, name) in ignored.iter().chain([&marker]) {
+        fs::write(dir.join(rel), format!("def {name}():\n    return 2\n")).unwrap();
+    }
+    wait_for(20, "the marker", || indexed_in(dir, marker.1));
+    for (rel, name) in ignored {
+        assert!(!indexed_in(dir, name), "{rel} is ignored by the walk, and saving it put it in the index");
+    }
+}
+
+#[test]
+fn a_save_of_a_file_an_ignore_file_above_the_repository_lists_stays_out() {
+    let r = Repo::new("above");
+    fs::create_dir_all(r.root.join("proj/.git")).unwrap();
+    r.write(".ignore", b"secret.py\n");
+    r.write("proj/secret.py", b"def secret_one():\n    return 1\n");
+    r.write("proj/a.py", b"def alpha():\n    return 1\n");
+    saves_stay_out(&r.root.join("proj"), &[("secret.py", "secret_two")], ("a.py", "alpha_two"));
+}
+
+#[test]
+fn a_root_outside_git_keeps_the_rules_of_a_repository_inside_it() {
+    let r = Repo::new("several");
+    fs::create_dir_all(r.root.join("repo1/.git")).unwrap();
+    r.write("repo1/.gitignore", b"gen.py\ncov/\n");
+    r.write("repo1/gen.py", b"def gen_one():\n    return 1\n");
+    r.write("repo1/cov/x.py", b"def cov_one():\n    return 1\n");
+    r.write("repo1/a.py", b"def alpha():\n    return 1\n");
+    saves_stay_out(&r.root, &[("repo1/gen.py", "gen_two"), ("repo1/cov/x.py", "cov_two")], ("repo1/a.py", "alpha_two"));
+}
+
+#[test]
+fn a_linked_worktree_keeps_the_exclude_file_of_its_main_repository() {
+    let r = Repo::new("worktree");
+    let common = r.root.join("main/.git");
+    r.write("main/.git/info/exclude", b"private.py\n");
+    r.write("main/.git/HEAD", b"ref: refs/heads/main\n");
+    r.write("main/.git/worktrees/wt/commondir", b"../..\n");
+    r.write("main/.git/worktrees/wt/HEAD", b"ref: refs/heads/wt\n");
+    r.write("main/.git/worktrees/wt/gitdir", format!("{}\n", r.root.join("wt/.git").display()).as_bytes());
+    r.write("wt/.git", format!("gitdir: {}\n", common.join("worktrees/wt").display()).as_bytes());
+    r.write("wt/private.py", b"def private_one():\n    return 1\n");
+    r.write("wt/a.py", b"def alpha():\n    return 1\n");
+    let wt = r.root.join("wt");
+    saves_stay_out(&wt, &[("private.py", "private_two")], ("a.py", "alpha_two"));
+    assert!(indexed_in(&wt, "alpha_two"));
+    let (_child, rx) = start_watch(&wt);
+    wait_watching(&rx);
+    // a rule added to that exclude file applies to the next save
+    fs::write(common.join("info/exclude"), "private.py\nmore.py\n").unwrap();
+    fs::write(wt.join("more.py"), "def more_one():\n    return 1\n").unwrap();
+    fs::write(wt.join("b.py"), "def beta():\n    return 1\n").unwrap();
+    wait_for(20, "b.py", || indexed_in(&wt, "beta"));
+    assert!(!indexed_in(&wt, "more_one"), "more.py is excluded by the main repository's info/exclude");
+}
+
+#[test]
+fn a_nested_repository_does_not_take_the_ignore_rules_of_the_outer_one() {
+    let r = Repo::new("nestedrepo");
+    fs::create_dir_all(r.root.join(".git")).unwrap();
+    fs::create_dir_all(r.root.join("vendor/lib/.git")).unwrap();
+    r.write(".gitignore", b"*.gen.py\nout/\n");
+    r.write("src/a.py", b"def alpha():\n    return 1\n");
+    r.write("vendor/lib/x.gen.py", b"def nested_gen():\n    return 1\n");
+    r.write("vendor/lib/out/o.py", b"def nested_out():\n    return 1\n");
+    assert_eq!(r.run(&["index"]), 0);
+    assert!(r.indexed("nested_gen") && r.indexed("nested_out"), "the walk lists both");
+    let (_child, rx) = start_watch(&r.root);
+    wait_watching(&rx);
+    r.write("vendor/lib/x.gen.py", b"def nested_gen_two():\n    return 1\n");
+    wait_for(20, "the edit of vendor/lib/x.gen.py", || r.indexed("nested_gen_two"));
+    r.write("vendor/lib/out/o2.py", b"def nested_out_two():\n    return 1\n");
+    wait_for(20, "a new file in vendor/lib/out", || r.indexed("nested_out_two"));
+}
+
+/// A directory without read permission cannot be watched (inotify needs read access); root has it
+/// whatever the mode says, so the test does nothing there.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_directory_that_could_not_be_watched_is_walked_with_the_next_change() {
+    use std::os::unix::fs::PermissionsExt;
+    struct Restore(PathBuf);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o755));
+        }
+    }
+    let r = Repo::new("unwatched");
+    r.write("a.py", b"def alpha():\n    return 1\n");
+    r.write("locked/b.py", b"def locked_one():\n    return 1\n");
+    assert_eq!(r.run(&["index"]), 0);
+    let locked = r.root.join("locked");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    let restore = Restore(locked.clone());
+    if fs::read_dir(&locked).is_ok() {
+        return;
+    }
+    let (_child, rx) = start_watch(&r.root);
+    let mut lines = Vec::new();
+    while !lines.last().is_some_and(|l: &String| l.contains("watching")) {
+        lines.push(rx.recv_timeout(Duration::from_secs(60)).expect("watch starts"));
+    }
+    assert!(lines.iter().any(|l| l.contains("could not watch 1 of")), "{lines:?}");
+    drop(restore);
+    // no event comes from locked/, so only the walk of the next burst finds this file
+    r.write("locked/c.py", b"def locked_new():\n    return 1\n");
+    std::thread::sleep(Duration::from_millis(500));
+    r.write("a.py", b"def alpha_two():\n    return 1\n");
+    burst_was(&wait_update_any(&rx), None, true);
+    wait_for(20, "locked/c.py", || r.indexed("locked_new") && r.indexed("alpha_two"));
+}
+
+/// Stderr lines up to the first update line after a burst line.
+#[cfg(target_os = "linux")]
+fn wait_update_any(rx: &Receiver<String>) -> Vec<String> {
+    let mut seen: Vec<String> = Vec::new();
+    loop {
+        let line = rx.recv_timeout(Duration::from_secs(30)).unwrap_or_else(|_| panic!("no update in {seen:?}"));
+        let done = line.contains(" changed, ") && seen.iter().any(|l| l.contains("burst:"));
+        seen.push(line);
+        if done {
+            return seen;
+        }
+    }
 }
