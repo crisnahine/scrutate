@@ -254,6 +254,73 @@ fn python_imports_through_the_checkout_name_still_bind() {
 }
 
 #[test]
+fn a_bare_python_import_of_the_module_next_door_binds_it() {
+    let r = Repo::new(
+        "pysib",
+        &[
+            ("pyproject.toml", "[project]\nname = \"shop\"\n"),
+            ("src/shop/__init__.py", ""),
+            ("src/shop/cart.py", "def total(items):\n    return sum(items)\n"),
+            ("tests/test_cart.py", "from shop.cart import total\nfrom helpers import make_items\n\n\ndef test_total():\n    assert total(make_items()) == 6\n"),
+            ("tests/helpers.py", "def make_items():\n    return [1, 2, 3]\n"),
+            ("scripts/run.py", "import common\nfrom common import log_line\n\n\ndef main():\n    log_line(\"x\")\n    return common.fmt(1)\n"),
+            ("scripts/common.py", "def log_line(s):\n    print(s)\n\n\ndef fmt(n):\n    return str(n)\n"),
+        ],
+    );
+    assert_eq!(split_callers(&r, "make_items"), (strs(&["test_total"]), strs(&[])));
+    assert_eq!(split_callers(&r, "log_line"), (strs(&["main"]), strs(&[])));
+    assert_eq!(split_callers(&r, "fmt"), (strs(&["main"]), strs(&[])));
+    assert_eq!(split_callers(&r, "total"), (strs(&["test_total"]), strs(&[])));
+    assert_eq!(callee_names(&r, "main"), ["fmt", "log_line"]);
+    assert_eq!(ref_lines(&r, "make_items", "tests/helpers.py:1"), ["tests/helpers.py:1", "tests/test_cart.py:2", "tests/test_cart.py:6"]);
+    assert_eq!(ref_lines(&r, "fmt", "scripts/common.py:5"), ["scripts/common.py:5", "scripts/run.py:7"]);
+    assert_eq!(deps_of(&r, "scripts/run.py"), pairs(&[("common", "scripts/common.py"), ("common", "scripts/common.py")]));
+    assert_eq!(deps_of(&r, "tests/test_cart.py"), pairs(&[("helpers", "tests/helpers.py"), ("shop.cart", "src/shop/cart.py")]));
+    assert_eq!(importers(&r, "scripts/common.py"), ["scripts/run.py"]);
+    assert_eq!(importers(&r, "tests/helpers.py"), ["tests/test_cart.py"]);
+
+    // the language server's references of `log_line` at its definition
+    let uri = format!("file://{}", r.root.join("scripts/common.py").display());
+    let msgs = [
+        json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"rootUri": format!("file://{}", r.root.display()), "capabilities": {}}}),
+        json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/references", "params": {"textDocument": {"uri": uri}, "position": {"line": 0, "character": 5}, "context": {"includeDeclaration": false}}}),
+        json!({"jsonrpc": "2.0", "id": 3, "method": "shutdown"}),
+        json!({"jsonrpc": "2.0", "method": "exit"}),
+    ];
+    let mut input = Vec::new();
+    for m in msgs {
+        let body = m.to_string();
+        input.extend(format!("Content-Length: {}\r\n\r\n{body}", body.len()).into_bytes());
+    }
+    let mut child = Command::new(BIN).arg("lsp").current_dir(&r.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    use std::io::Write;
+    child.stdin.take().unwrap().write_all(&input).unwrap();
+    let out = String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).into_owned();
+    let answer = out.split("Content-Length").find(|m| m.contains("\"id\":2")).unwrap_or_else(|| panic!("{out}"));
+    let body: Value = serde_json::from_str(&answer[answer.find('{').unwrap()..]).unwrap();
+    let mut got: Vec<String> = body["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{answer}"))
+        .iter()
+        .map(|l| format!("{}:{}", l["uri"].as_str().unwrap().rsplit('/').next().unwrap(), l["range"]["start"]["line"]))
+        .collect();
+    got.sort();
+    assert_eq!(got, ["run.py:1", "run.py:5"]);
+}
+
+#[test]
+fn super_with_a_named_class_follows_the_order_of_the_class_it_sits_in() {
+    let base = "class Root:\n    def save(self):\n        return 0\n\n\nclass Left(Root):\n    def save(self):\n        return super().save() + 1\n\n\nclass Right(Root):\n    def save(self):\n        return super().save() + 2\n";
+    let leaf = "from base import Left, Right\n\n\nclass Leaf(Left, Right):\n    def save(self):\n        return super().save() + 4\n\n    def load(self):\n        return super(Left, self).save()\n";
+    let r = Repo::new("super_named", &[("base.py", base), ("leaf.py", leaf)]);
+    assert_eq!(callee_names(&r, "Leaf.load"), ["Right.save"]);
+    assert_eq!(callee_names(&r, "Leaf.save"), ["Left.save"]);
+    assert_eq!(split_callers(&r, "base.py:12"), (strs(&["Leaf.load"]), strs(&[])));
+    assert_eq!(ref_lines(&r, "save", "base.py:2"), ["base.py:13", "base.py:2", "base.py:8"]);
+}
+
+#[test]
 fn a_lambda_parameter_or_block_name_hides_only_its_own_scope() {
     let r = Repo::new(
         "scope",

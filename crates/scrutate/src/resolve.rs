@@ -92,8 +92,9 @@ pub struct Resolver<'a> {
     ts: HashMap<String, Option<Rc<TsPaths>>>,
     /// current depth of `member` / `lookup_top` calls: import and base-class cycles stop here
     nest: usize,
-    /// (files, name) of the `lookup_top` calls made for the current `resolve_at`
-    looked_up: HashSet<(String, String)>,
+    /// (files, name) of the `lookup_top` calls made for the current `resolve_at`, and the answer
+    /// (None while the lookup runs)
+    looked_up: HashMap<(String, String), Option<i64>>,
     /// by definition: the type its values have (`def_ty`)
     def_tys: HashMap<i64, Option<Ty>>,
     /// names a trait or interface of the repository declares as methods
@@ -672,7 +673,7 @@ impl<'a> Resolver<'a> {
             go_imports: None,
             ts: HashMap::new(),
             nest: 0,
-            looked_up: HashSet::new(),
+            looked_up: HashMap::new(),
             def_tys: HashMap::new(),
             trait_members: None,
             java_dirs: None,
@@ -1605,28 +1606,38 @@ impl<'a> Resolver<'a> {
         if literal_owner(fi, q).is_some() {
             return Err("receiver");
         }
-        let start = match q.child_by_field_name("arguments").and_then(|a| a.named_child(0)) {
+        let around = match self.container_at(fi, line) {
+            Some(Ty::Local(c)) => Some(c),
+            _ => None,
+        };
+        let named = match q.child_by_field_name("arguments").and_then(|a| a.named_child(0)) {
             Some(c) => {
                 let leaf = type_name(c).ok_or("receiver")?;
                 let found = match qualifier(leaf) {
                     Some(q) => self.resolve_qualified(path, fi, lang, q, leaf, text(leaf, &fi.src), line),
                     None => self.resolve_bare(path, fi, lang, leaf, text(leaf, &fi.src), line),
                 };
-                found.map_err(|_| "receiver")?.0
+                Some(found.map_err(|_| "receiver")?.0)
             }
-            None => match self.container_at(fi, line) {
-                Some(Ty::Local(c)) => c,
-                _ => return Err("receiver"),
-            },
+            None => None,
+        };
+        // `super(C, self)` searches the order of the class the call sits in, after `C`; outside a
+        // class only the order of `C` itself is known
+        let (start, after) = match (around, named) {
+            (Some(a), Some(c)) => (a, c),
+            (None, Some(c)) => (c, c),
+            (Some(a), None) => (a, a),
+            (None, None) => return Err("receiver"),
         };
         let (order, outside, unknown) = self.linearized(start, 0, &mut HashMap::new());
-        for &c in &order[1..] {
+        let at = order.iter().position(|&c| c == after).ok_or("receiver")?;
+        for &c in &order[at + 1..] {
             if let Some(m) = self.declared_member(c, name) {
                 return Ok((m, "super"));
             }
         }
         // a class with no base in the repository inherits from outside (`object`, `Error`)
-        Err(if !unknown && (outside || order.len() == 1) { "external" } else { "not found" })
+        Err(if !unknown && (outside || order.len() == at + 1) { "external" } else { "not found" })
     }
 
     /// The methods method `id` overrides or implements: the ones of its name declared in the
@@ -1662,13 +1673,20 @@ impl<'a> Resolver<'a> {
 
     /// Definition `name` at the top level of one of `files`, following re-exports and wildcard imports.
     fn lookup_top(&mut self, files: &[String], name: &str, depth: usize) -> Option<i64> {
-        // a lookup that comes round again (wildcard import rings) found nothing the first time
-        if self.nest > 32 || !self.looked_up.insert((files.join("\n"), name.to_string())) {
+        // a lookup that comes round again (wildcard import rings) finds nothing; a repeat one
+        // (the base of a class named again) gets the first answer
+        let key = (files.join("\n"), name.to_string());
+        if let Some(r) = self.looked_up.get(&key) {
+            return *r;
+        }
+        if self.nest > 32 {
             return None;
         }
+        self.looked_up.insert(key.clone(), None);
         self.nest += 1;
         let r = self.lookup_top_inner(files, name, depth);
         self.nest -= 1;
+        self.looked_up.insert(key, r);
         r
     }
 
@@ -1785,8 +1803,25 @@ impl<'a> Resolver<'a> {
     }
 
     fn py_module(&self, from: &str, module: &str) -> Option<String> {
-        let try_base =
-            |base: &str| self.first_file(&[format!("{base}.py"), format!("{base}/__init__.py"), format!("{base}.pyi"), format!("{base}/__init__.pyi")]);
+        self.py_rooted(from, module).or_else(|| self.py_beside(from, module))
+    }
+
+    fn py_try_base(&self, base: &str) -> Option<String> {
+        self.first_file(&[format!("{base}.py"), format!("{base}/__init__.py"), format!("{base}.pyi"), format!("{base}/__init__.pyi")])
+    }
+
+    /// An absolute import in the directory of `from`: Python puts a script's own directory first
+    /// on `sys.path`, and pytest a test's, so a sibling wins even over a standard library module.
+    fn py_beside(&self, from: &str, module: &str) -> Option<String> {
+        let dir = dir_of(from);
+        if dir.is_empty() || module.starts_with('.') {
+            return None;
+        }
+        self.py_try_base(&format!("{dir}/{}", module.replace('.', "/")))
+    }
+
+    fn py_rooted(&self, from: &str, module: &str) -> Option<String> {
+        let try_base = |base: &str| self.py_try_base(base);
         if module.starts_with('.') {
             let ups = module.chars().take_while(|c| *c == '.').count();
             let mut base = dir_of(from).to_string();
@@ -1858,7 +1893,10 @@ impl<'a> Resolver<'a> {
                         // `from m import x` names the submodule `m.x` when there is one, else `m`
                         (Lang::Python, Some(item)) => {
                             let sub = if b.module.ends_with('.') { format!("{}{item}", b.module) } else { format!("{}.{item}", b.module) };
-                            self.py_module(from, &sub).or_else(|| self.py_module(from, &b.module))
+                            self.py_rooted(from, &sub)
+                                .or_else(|| self.py_rooted(from, &b.module))
+                                .or_else(|| self.py_beside(from, &sub))
+                                .or_else(|| self.py_beside(from, &b.module))
                         }
                         (Lang::Python, None) => None,
                         _ => {
@@ -3459,6 +3497,42 @@ mod tests {
     }
 
     #[test]
+    fn a_bare_python_import_names_the_module_beside_the_file_when_no_root_module_has_the_name() {
+        let t = "from helpers import make_items\nimport common\nimport sub.deep\nfrom pkg import w\nimport os\n\n\ndef test_it():\n    make_items()\n    common.fmt()\n    sub.deep.go()\n    w()\n    os.f()\n";
+        let run = "import logging\nfrom nowhere import x\n\n\ndef main():\n    logging.info()\n    x()\n";
+        let js = "import { u } from 'util';\n\nexport function f() {\n  return u();\n}\n";
+        resolver_case(
+            "pysib",
+            &[
+                ("tests/test_it.py", t),
+                ("tests/helpers.py", "def make_items():\n    return [1]\n"),
+                ("tests/common/__init__.py", "def fmt():\n    pass\n"),
+                ("tests/sub/deep.py", "def go():\n    pass\n"),
+                ("tests/pkg.py", "def w():\n    pass\n"),
+                ("pkg/__init__.py", "def w():\n    pass\n"),
+                ("scripts/run.py", run),
+                ("scripts/logging.py", "def info():\n    pass\n"),
+                ("web/app.js", js),
+                ("web/util.js", "export function u() {\n  return 1;\n}\n"),
+            ],
+            &[
+                ("tests/test_it.py", "import make_items", "make_items", "tests/helpers.py make_items"),
+                ("tests/test_it.py", "    make_items()", "make_items", "tests/helpers.py make_items"),
+                ("tests/test_it.py", "common.fmt()", "fmt", "tests/common/__init__.py fmt"),
+                ("tests/test_it.py", "sub.deep.go()", "go", "tests/sub/deep.py go"),
+                // a package path from the root wins over a sibling of the same name
+                ("tests/test_it.py", "    w()", "w", "pkg/__init__.py w"),
+                ("tests/test_it.py", "os.f()", "f", "external"),
+                // Python puts the script's own directory first, ahead of the standard library
+                ("scripts/run.py", "logging.info()", "info", "scripts/logging.py info"),
+                ("scripts/run.py", "    x()", "x", "external"),
+                // a bare JavaScript specifier is a package
+                ("web/app.js", " u()", "u", "external"),
+            ],
+        );
+    }
+
+    #[test]
     fn js_ts_rules() {
         resolver_case(
             "js",
@@ -3850,7 +3924,7 @@ mod tests {
     fn a_super_call_is_the_method_of_the_nearest_base_that_defines_it() {
         let ts = "import { Outer } from 'outside';\nexport class Base {\n  constructor(n: number) {}\n  size(): number { return 0; }\n}\nexport class Big extends Base {\n  constructor() { super(1); }\n  size(): number { return super.size() + 9; }\n  other(): number { return this.size(); }\n}\nexport class Bigger extends Big {\n  size(): number { return super.size() + 1; }\n}\nexport class Plain extends Big {\n  other(): number { return super.size() + 2; }\n}\nexport class Far extends Outer {\n  size(): number { return super.size() + 3; }\n}\nexport class Err extends Error {\n  size(): number { return super.size() + 4; }\n}\n";
         let js = "export class A {\n  m() { return 0; }\n}\nexport class B extends A {\n  m() { return super.m() + 1; }\n}\n";
-        let py = "from outside import Thing\n\n\nclass Base:\n    def size(self):\n        return 0\n\n\nclass Big(Base):\n    def size(self):\n        return super().size() + 9\n\n    def other(self):\n        return self.size()\n\n\nclass Bigger(Big):\n    def size(self):\n        return super(Bigger, self).size() + 1\n\n    def skip(self):\n        return super(Big, self).size() + 2\n\n\nclass Left(Base):\n    pass\n\n\nclass Right(Base):\n    def size(self):\n        return 5\n\n\nclass Both(Left, Right):\n    def size(self):\n        return super().size() + 3\n\n\nclass Far(Thing):\n    def size(self):\n        return super().size() + 4\n\n\nclass Alone:\n    def __init__(self):\n        super().__init__()\n";
+        let py = "from outside import Thing\n\n\nclass Base:\n    def size(self):\n        return 0\n\n\nclass Big(Base):\n    def size(self):\n        return super().size() + 9\n\n    def other(self):\n        return self.size()\n\n\nclass Bigger(Big):\n    def size(self):\n        return super(Bigger, self).size() + 1\n\n    def skip(self):\n        return super(Big, self).size() + 2\n\n\nclass Left(Base):\n    pass\n\n\nclass Right(Base):\n    def size(self):\n        return 5\n\n\nclass Both(Left, Right):\n    def size(self):\n        return super().size() + 3\n\n    def load(self):\n        return super(Left, self).size() + 6\n\n    def odd(self):\n        return super(Bigger, self).size() + 7\n\n\nclass Far(Thing):\n    def size(self):\n        return super().size() + 4\n\n\nclass Alone:\n    def __init__(self):\n        super().__init__()\n";
         let go = "package g\n\ntype Base struct{}\n\nfunc (b *Base) Size() int { return 0 }\n\ntype Big struct {\n\tBase\n}\n\nfunc (b *Big) Size() int { return b.Base.Size() + 9 }\n";
         resolver_case(
             "super",
@@ -3869,6 +3943,10 @@ mod tests {
                 ("p.py", "super(Bigger, self).size()", "size", "p.py Big.size"),
                 ("p.py", "super(Big, self).size()", "size", "p.py Base.size"),
                 ("p.py", "super().size() + 3", "size", "p.py Right.size"),
+                // the class after `Left` in the order of `Both`, the class the call sits in
+                ("p.py", "super(Left, self).size() + 6", "size", "p.py Right.size"),
+                // a class that is not in the order of `Both`: Python raises, nothing is decided
+                ("p.py", "super(Bigger, self).size() + 7", "size", "receiver"),
                 ("p.py", "super().size() + 4", "size", "external"),
                 ("p.py", "super().__init__()", "__init__", "external"),
                 ("g/g.go", "b.Base.Size()", "Size", "g/g.go Base.Size"),
