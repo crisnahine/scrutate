@@ -579,9 +579,61 @@ fn calls_are_recorded_in_the_optional_grammars() {
         ("m.qml", "Item {\n  function f() { g(1); obj.meth(1); }\n}\n", "Item.f", &["g", "meth"]),
         ("m.tla", "---- MODULE m ----\nF(x) == G(x) + 1\n====\n", "m.F", &["G"]),
         ("m.ahk", "f() {\n  g(1)\n  obj.meth(1)\n}\n", "f", &["g", "meth"]),
+        ("m.sv", "module m;\n  task t;\n    int y;\n    h(1);\n    h2(1, 2);\n    y = 1;\n  endtask\nendmodule\n", "m.t", &["h", "h2"]),
+        ("m.v", "module m;\n  always @(posedge clk) begin\n    h(2);\n  end\n  adder u1 (.a(a), .b(b));\nendmodule\n", "m", &["adder", "h"]),
+        ("m.vhd", VHDL, "pkg.f", &["g"]),
+        ("m.vhd", VHDL, "pkg.p", &["q"]),
+        ("m.vhd", VHDL, "rtl.h", &["f"]),
+        ("m.vhd", VHDL, "rtl", &["h", "p"]),
     ];
     let wrong = wrong_calls(cases);
     assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+#[cfg(feature = "extra-langs")]
+const VHDL: &str = "package pkg is\n  function f(x : integer) return integer;\nend package;\n\npackage body pkg is\n\
+  function f(x : integer) return integer is\n  begin\n    return g(x) + 1;\n  end function;\n\
+  procedure p(x : integer) is\n  begin\n    q(x);\n  end procedure;\nend package body;\n\n\
+architecture rtl of top is\n  signal s : std_logic_vector(7 downto 0);\n\
+  function h(x : integer) return integer is\n  begin\n    return f(x);\n  end function;\n\
+begin\n  process\n  begin\n    p(1);\n    s <= h(2);\n  end process;\nend architecture;\n";
+
+#[cfg(feature = "extra-langs")]
+#[test]
+fn vhdl_subprograms_with_a_body_are_functions_of_their_package_or_architecture() {
+    let got = symbols("m.vhd", VHDL);
+    let want = [("module", "pkg"), ("module", "pkg"), ("function", "pkg.f"), ("function", "pkg.p"), ("impl", "rtl"), ("function", "rtl.h")];
+    assert_eq!(got, want.map(|(k, q)| (k.to_string(), q.to_string())));
+}
+
+#[test]
+fn calls_are_recorded_in_make_jsonnet_and_assembly() {
+    let cases: &[(&str, &str, &str, &[&str])] = &[
+        ("Makefile", "define g\n\techo $(1)\nendef\n\nall:\n\t$(call g,1)\n\t@echo $(shell date) $(subst a,b,c)\n", "all", &["g"]),
+        ("Makefile", "define outer\n\t$(call g,2) ${call  h-x ,3}\nendef\n", "outer", &["g", "h-x"]),
+        ("m.jsonnet", "local f(x) = g(x) + obj.method(x);\nf(1)\n", "f", &["g", "method"]),
+        ("m.jsonnet", "{\n  run(y): std.length(h(y)),\n  n: 1,\n}\n", "run", &["h", "length"]),
+        (
+            "m.s",
+            "_start:\n    call helper\n    jmp done\n    bl other\n    jal third\n    b fourth\n    j fifth\nhelper:\n    ret\n",
+            "_start",
+            &["helper", "other", "third"],
+        ),
+        ("m.s", "f:\n    callq printf@PLT\n.L2:\n    call g\n    # doc of h\nh:\n    ret\n", "f", &["g", "printf"]),
+        ("m.s", "f:\n    callq printf@PLT\n.L2:\n    call g\n    # doc of h\nh:\n    ret\n", ".L2", &["g"]),
+    ];
+    let wrong = wrong_calls(cases);
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    let js = symbols("m.jsonnet", "local f(x) = x;\nlocal v = 1;\nlocal o = { m(y): y, n: 2 };\no\n");
+    assert_eq!(js, [("function", "f"), ("key", "v"), ("key", "o"), ("method", "o.m")].map(|(k, q)| (k.to_string(), q.to_string())));
+}
+
+#[test]
+fn an_assembly_label_holds_its_instructions_up_to_the_next_label_or_section() {
+    let asm = parse_source("m.s", ".text\nf:\n    mov $1, %eax\n.L2:\n    call g\n    # doc of h\nh:\n    ret\n    .section .rodata\nmsg: .ascii \"x\"\n");
+    let span = |q: &str| (find(&asm, q).start, find(&asm, q).end);
+    assert_eq!([span("f"), span(".L2"), span("h")], [(2, 5), (4, 5), (7, 8)]);
+    assert!(find(&asm, "f").text.contains("call g"), "{}", find(&asm, "f").text);
 }
 
 #[test]

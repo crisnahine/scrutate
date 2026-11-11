@@ -458,6 +458,27 @@ fn callee_name(lang: &str, node: Node, field: &str, src: &[u8]) -> Option<String
         target = node.named_child(0);
     }
     let mut target = target?;
+    match (lang, node.kind()) {
+        // `$(call g,1)` calls `g`; `$(subst ...)` and the other built-ins are no calls
+        ("make", "function_call") => {
+            let f = node.child_by_field_name("function")?;
+            if txt(src, f.start_byte(), f.end_byte()) != "call" {
+                return None;
+            }
+            let args = txt(src, target.start_byte(), target.end_byte());
+            return IDENT_START.find(args.split(',').next()?.trim()).map(|m| m.as_str().to_string());
+        }
+        ("make", "raw_text") => return None,
+        ("verilog", "data_declaration") => {
+            // only the typeless declaration that an ERROR holding the arguments follows is a call
+            let next = target.next_named_sibling();
+            let args = next.filter(|n| n.kind() == "ERROR" && src.get(n.start_byte()) == Some(&b'('));
+            if node.child(0) != Some(target) || target.kind() != "list_of_variable_decl_assignments" || target.named_child_count() != 1 || args.is_none() {
+                return None;
+            }
+        }
+        _ => {}
+    }
     if target.kind() == "method_index_expression" {
         // Lua `obj:meth(x)` calls `meth`
         target = target.child_by_field_name("method")?;
@@ -492,6 +513,64 @@ fn callee_name(lang: &str, node: Node, field: &str, src: &[u8]) -> Option<String
         return IDENT_START.find(private).map(|m| format!("#{}", m.as_str()));
     }
     IDENT_START.find(t).map(|m| m.as_str().to_string())
+}
+
+const ASM_CALLS: &[&str] = &["call", "callq", "calll", "bl", "jal"];
+const ASM_SECTIONS: &[&str] = &[".text", ".data", ".bss", ".rodata", ".section"];
+
+/// The last node of an assembly label's block, the instructions after it up to the next label
+/// or section directive, and the calls among them. A local label (`.L2:`) does not end a global one.
+fn asm_block<'t>(label: Node<'t>, siblings: &[Node<'t>], at: usize, src: &[u8], calls: &mut BTreeSet<String>) -> Node<'t> {
+    let text_of = |n: Node| txt(src, n.start_byte(), n.end_byte());
+    let local = |n: Node| text_of(n).starts_with(|c: char| c == '.' || c.is_ascii_digit());
+    let in_local = local(label);
+    let mut last = label;
+    for &s in siblings.iter().skip(at + 1) {
+        let word = || s.child_by_field_name("kind").map(|k| text_of(k).to_lowercase()).unwrap_or_default();
+        match s.kind() {
+            "label" if in_local || !local(s) => break,
+            "meta" if ASM_SECTIONS.contains(&word().as_str()) => break,
+            "line_comment" | "block_comment" => continue,
+            _ if !s.is_named() => continue,
+            "instruction" if ASM_CALLS.contains(&word().as_str()) => {
+                let target = s.named_children(&mut s.walk()).find(|c| c.kind() == "ident");
+                calls.extend(target.and_then(|t| IDENT_START.find(&text_of(t)).map(|m| m.as_str().to_string())));
+            }
+            _ => {}
+        }
+        last = s;
+    }
+    last
+}
+
+/// `$(call g,1)` or `${call g}` in text the Make grammar leaves unparsed.
+static MAKE_CALL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\$[({]call\s+([A-Za-z_][\w-]*)").unwrap());
+
+/// The callee of a Jsonnet `suffix_apply`, which follows its callee as a sibling: `g` of `g(x)`,
+/// `method` of `obj.method(x)`.
+fn sibling_callee(siblings: &[Node], at: usize, src: &[u8]) -> Option<String> {
+    let prev = siblings.get(at.checked_sub(1)?)?;
+    let name = match prev.kind() {
+        "ident_ref" => *prev,
+        "suffix_index" => prev.named_child(0).filter(|n| n.kind() == "ident")?,
+        _ => return None,
+    };
+    Some(txt(src, name.start_byte(), name.end_byte()))
+}
+
+/// A VHDL name with arguments, `f(x)` or `work.pkg.f(x)`, outside a type (`std_logic_vector(7 downto 0)`).
+fn vhdl_callee(node: Node, parent: Node, src: &[u8]) -> Option<String> {
+    if parent.kind() == "subtype_indication" {
+        return None;
+    }
+    let kids: Vec<Node> = node.named_children(&mut node.walk()).collect();
+    let args = kids.iter().position(|k| k.kind() == "parenthesis_group").filter(|&i| i > 0)?;
+    let name = match kids[args - 1].kind() {
+        "identifier" => kids[args - 1],
+        "selection" => kids[args - 1].named_child(0).filter(|n| n.kind() == "identifier")?,
+        _ => return None,
+    };
+    Some(txt(src, name.start_byte(), name.end_byte()))
 }
 
 /// The part of a definition that names it or lists its parameters and that the grammar parses as
@@ -1186,6 +1265,14 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
                 lazy: Some(Lazy { text: outer.start_byte(), body: body_start, end: node.end_byte(), lines: cap }),
                 ..Default::default()
             });
+            if let (true, Some((_, siblings))) = (spec.id == "asm" && t == "label", ancestors.last()) {
+                let c = chunks.last_mut().unwrap();
+                let last = asm_block(node, siblings, at, src, &mut c.calls);
+                c.end = last_row(last) + 1;
+                if let Some(l) = c.lazy.as_mut() {
+                    l.end = last.end_byte();
+                }
+            }
             def_stack.push(chunks.len() - 1);
             pushed_now = true;
             heads.extend(def_head(spec.id, node).map(|h| h.id()));
@@ -1210,11 +1297,20 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
             let in_signature = ancestors.last().map(|p| matches!(p.0.kind(), "signature" | "function_signature" | "method_signature")).unwrap_or(false);
             let in_head = !heads.is_empty() && (heads.contains(&node.id()) || ancestors.iter().any(|(a, _)| heads.contains(&a.id())));
             if let (Some(&top), false) = (def_stack.last(), in_signature || in_head) {
-                if let Some(c) = callee_name(spec.id, node, call.field, src).filter(|c| !call.skip.contains(&c.as_str())) {
+                let callee = match (spec.id, t, ancestors.last()) {
+                    ("jsonnet", _, Some((_, siblings))) => sibling_callee(siblings, at, src),
+                    ("vhdl", _, Some((p, _))) => vhdl_callee(node, *p, src),
+                    _ => callee_name(spec.id, node, call.field, src),
+                };
+                if let Some(c) = callee.filter(|c| !call.skip.contains(&c.as_str())) {
                     chunks[top].calls.insert(c);
                 }
                 if t == "macro_invocation" && spec.id == "rust" {
                     macro_arg_calls(node, src, &mut chunks[top].calls);
+                }
+                if t == "raw_text" && spec.id == "make" {
+                    let raw = txt(src, node.start_byte(), node.end_byte());
+                    chunks[top].calls.extend(MAKE_CALL.captures_iter(&raw).map(|m| m[1].to_string()));
                 }
             }
         }

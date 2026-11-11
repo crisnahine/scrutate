@@ -1125,7 +1125,8 @@ const CORE: &[LangSpec] = &[
         files: &["Makefile", "makefile", "GNUmakefile"],
         language: || tree_sitter_make::LANGUAGE.into(),
         defs: &[d("rule", "function", &[NameRule::ChildKind(&["targets"])]), d("variable_assignment", "key", N), d("define_directive", "macro", N)],
-        calls: &[],
+        // a `define` body is raw text the grammar does not parse: its calls are read from the text
+        calls: &[c("function_call", "arguments"), c("raw_text", "")],
         docstring: false,
         wrappers: &[],
         outer: &[],
@@ -1216,7 +1217,8 @@ const CORE: &[LangSpec] = &[
         files: &[],
         language: || tree_sitter_asm::LANGUAGE.into(),
         defs: &[d("label", "function", &[NameRule::ChildKind(&["ident", "word", "identifier"])])],
-        calls: &[],
+        // the instructions after a label are its siblings: parse::asm_block gives them to the label
+        calls: &[c("instruction", "kind")],
         docstring: false,
         wrappers: &[],
         outer: &[],
@@ -1228,8 +1230,13 @@ const CORE: &[LangSpec] = &[
         exts: &[".jsonnet", ".libsonnet"],
         files: &[],
         language: || tree_sitter_jsonnet::LANGUAGE.into(),
-        defs: &[d("bind", "key", &[NameRule::ChildKind(&["ident", "id"])])],
-        calls: &[],
+        defs: &[
+            d("bind", "function", &[NameRule::Custom(jsonnet_function)]),
+            d("bind", "key", &[NameRule::ChildKind(&["ident", "id"])]),
+            d("field", "method", &[NameRule::Custom(jsonnet_function)]),
+        ],
+        // the callee is the sibling before the arguments: see parse::sibling_callee
+        calls: &[c("suffix_apply", "")],
         docstring: false,
         wrappers: &[],
         outer: &[],
@@ -1496,7 +1503,9 @@ const EXTRA: &[LangSpec] = &[
             d("task_declaration", "function", &[NameRule::Custom(verilog_fn_name)]),
             d("class_declaration", "class", &[NameRule::ChildKind(&["class_identifier", "simple_identifier"])]),
         ],
-        calls: &[c("tf_call", "")],
+        // a bare task call `h(1);` parses as a typeless declaration of `h` followed by an ERROR, and
+        // `h(1, 2);` as a checker instance without a name
+        calls: &[c("tf_call", ""), c("module_instantiation", "simple_identifier"), c("checker_instantiation", "checker_identifier"), c("data_declaration", "")],
         docstring: false,
         wrappers: &[],
         outer: &[],
@@ -1511,11 +1520,12 @@ const EXTRA: &[LangSpec] = &[
         defs: &[
             d("entity_declaration", "class", &[NameRule::ChildKind(&["identifier"])]),
             d("architecture_definition", "impl", &[NameRule::Field("architecture")]),
-            d("function_body", "function", &[NameRule::Custom(vhdl_name)]),
-            d("procedure_body", "function", &[NameRule::Custom(vhdl_name)]),
+            d("subprogram_definition", "function", &[NameRule::Custom(vhdl_name)]),
             d("package_declaration", "module", &[NameRule::ChildKind(&["identifier"])]),
+            d("package_definition", "module", &[NameRule::Field("package")]),
         ],
-        calls: &[],
+        // `f(x)` and `a(i)` are one shape in VHDL: an indexed signal is recorded as a call too
+        calls: &[c("name", "")],
         docstring: false,
         wrappers: &[],
         outer: &[],
@@ -1613,6 +1623,11 @@ fn child_text(node: Node, src: &[u8], kinds: &[&str]) -> Option<String> {
         }
     }
     None
+}
+
+/// Jsonnet `local f(x) = ...` and the object method `f(x): ...`: a binding with parameters.
+fn jsonnet_function(node: Node, src: &[u8]) -> Option<String> {
+    node.children(&mut node.walk()).any(|c| c.kind() == "params").then(|| child_text(node, src, &["ident", "field_name"]))?
 }
 
 fn erlang_fun_name(node: Node, src: &[u8]) -> Option<String> {
