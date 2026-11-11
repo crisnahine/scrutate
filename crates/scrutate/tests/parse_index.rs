@@ -43,6 +43,24 @@ fn a_node_with_many_children_parses_in_linear_time() {
 }
 
 #[test]
+fn a_file_of_many_sibling_definitions_parses_in_linear_time() {
+    let n = 4000;
+    for (path, line) in [
+        ("w.js", "function f{i}(x) {{ return x + {i}; }}"),
+        ("w.c", "int f{i}(int x) {{ return x + {i}; }}"),
+        ("w.go", "func f{i}(x int) int {{ return x + {i} }}"),
+    ] {
+        let body: String = (0..n).map(|i| line.replace("{i}", &i.to_string()).replace("{{", "{").replace("}}", "}") + "\n").collect();
+        let src = if path.ends_with(".go") { format!("package p\n{body}") } else { body };
+        let t = Instant::now();
+        let chunks = parse_source(path, &src);
+        let secs = t.elapsed().as_secs_f64();
+        assert_eq!(chunks.iter().filter(|c| c.kind == "function").count(), n, "{path}");
+        assert!(secs < 3.0, "{path}: parse took {secs:.1}s");
+    }
+}
+
+#[test]
 fn the_model_signature_is_a_hash_of_the_model_file() {
     use blake2::digest::{Update, VariableOutput};
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../models/semantic.npz");
@@ -101,6 +119,13 @@ fn cpp_methods_defined_outside_the_class_are_named_by_the_method() {
     let draw = chunks.iter().find(|c| c.name == "draw").expect("draw");
     assert_eq!(draw.qualname, "Widget.draw");
     assert!(chunks.iter().any(|c| c.name == "paint" && c.qualname == "ns.Widget.paint"));
+}
+
+#[test]
+fn cpp_methods_declared_in_a_class_body_are_symbols() {
+    let src = "class Shape {\npublic:\n  virtual double area() const = 0;\n  void resize(int w);\n  int x;\n  int (*fp)(int);\n  friend void swap(Shape&, Shape&);\n};\nvoid free_decl(int);\n";
+    let got = symbols("s.hpp", src);
+    assert_eq!(got, vec![("class".into(), "Shape".into()), ("method".into(), "Shape.area".into()), ("method".into(), "Shape.resize".into())]);
 }
 
 #[test]

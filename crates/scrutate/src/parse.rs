@@ -517,17 +517,18 @@ fn imports_of(node: Node, spec: &LangSpec, src: &[u8], out: &mut Vec<(i64, Strin
 }
 
 /// Contiguous comment block directly above a definition.
-/// `ancestors` are the node's ancestors, root first (Node::parent and prev_sibling walk down from
-/// the root, which makes deep nesting quadratic).
-fn leading_comment(node: Node, ancestors: &[Node], src: &[u8], wrappers: &[&str]) -> String {
+/// `ancestors` are the node's ancestors, root first, each with its children; `pos[i]` is the
+/// position of `ancestors[i]` in its parent and `pos[len]` the node's (Node::parent and
+/// prev_sibling walk down from the root, which makes deep nesting quadratic).
+fn leading_comment(node: Node, ancestors: &[(Node, Vec<Node>)], pos: &[usize], src: &[u8], wrappers: &[&str]) -> String {
     let mut anchor = node;
     let mut up = ancestors.len();
-    while up > 0 && (wrappers.contains(&ancestors[up - 1].kind()) || ancestors[up - 1].kind() == "decorated_definition") {
+    while up > 0 && (wrappers.contains(&ancestors[up - 1].0.kind()) || ancestors[up - 1].0.kind() == "decorated_definition") {
         up -= 1;
-        anchor = ancestors[up];
+        anchor = ancestors[up].0;
     }
-    let siblings: Vec<Node> = if up > 0 { ancestors[up - 1].children(&mut ancestors[up - 1].walk()).collect() } else { Vec::new() };
-    let mut at = siblings.iter().position(|&n| n == anchor).unwrap_or(0);
+    let siblings: &[Node] = if up > 0 { &ancestors[up - 1].1 } else { &[] };
+    let mut at = if up > 0 { pos[up] } else { 0 };
     let mut prev_sibling = || -> Option<Node> {
         at = at.checked_sub(1)?;
         Some(siblings[at])
@@ -749,16 +750,19 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
     let mut chunks: Vec<Chunk> = Vec::new();
     let mut imports: Vec<(i64, String)> = Vec::new();
     let mut def_stack: Vec<usize> = Vec::new();
-    let mut stack: Vec<(Node, bool, bool)> = vec![(tree.root_node(), false, false)];
-    let mut ancestors: Vec<Node> = Vec::new();
-    while let Some((node, exiting, pushed)) = stack.pop() {
+    let mut stack: Vec<(Node, bool, bool, usize)> = vec![(tree.root_node(), false, false, 0)];
+    let mut ancestors: Vec<(Node, Vec<Node>)> = Vec::new();
+    let mut pos: Vec<usize> = Vec::new();
+    while let Some((node, exiting, pushed, at)) = stack.pop() {
         if exiting {
             ancestors.pop();
+            pos.pop();
             if pushed {
                 def_stack.pop();
             }
             continue;
         }
+        pos.push(at);
         let t = node.kind();
         if !spec.imports.is_empty() {
             imports_of(node, spec, src, &mut imports);
@@ -805,9 +809,9 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
                 None => qualify(parent_q, &name),
             };
             let mut outer = node;
-            for &p in ancestors.iter().rev() {
+            for (p, _) in ancestors.iter().rev() {
                 if spec.outer.contains(&p.kind()) {
-                    outer = p;
+                    outer = *p;
                 } else {
                     break;
                 }
@@ -831,7 +835,7 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
                 if let Some(ds) = node.child_by_field_name("docstring").or_else(|| lisp_docstring(node)) {
                     doc = py_string_content(&txt(src, ds.start_byte(), ds.end_byte()));
                 } else {
-                    doc = leading_comment(node, &ancestors, src, spec.wrappers);
+                    doc = leading_comment(node, &ancestors, &pos, src, spec.wrappers);
                 }
             }
             let cap = if CONTAINERS.contains(&kind) { MAX_CONTAINER_LINES } else { MAX_CHUNK_LINES };
@@ -852,18 +856,17 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
             def_stack.push(chunks.len() - 1);
             pushed_now = true;
         } else if let Some(call) = spec.calls.iter().find(|c| c.node == t) {
-            let in_signature = ancestors.last().map(|p| matches!(p.kind(), "signature" | "function_signature" | "method_signature")).unwrap_or(false);
+            let in_signature = ancestors.last().map(|p| matches!(p.0.kind(), "signature" | "function_signature" | "method_signature")).unwrap_or(false);
             if let (Some(&top), false) = (def_stack.last(), in_signature) {
                 if let Some(c) = callee_name(node, call.field, src) {
                     chunks[top].calls.insert(c);
                 }
             }
         }
-        stack.push((node, true, pushed_now));
-        ancestors.push(node);
-        let first_child = stack.len();
-        stack.extend(node.children(&mut node.walk()).map(|ch| (ch, false, false)));
-        stack[first_child..].reverse();
+        stack.push((node, true, pushed_now, at));
+        let kids: Vec<Node> = node.children(&mut node.walk()).collect();
+        stack.extend(kids.iter().enumerate().rev().map(|(i, &ch)| (ch, false, false, i)));
+        ancestors.push((node, kids));
     }
     let mut mdoc = String::new();
     if spec.docstring {

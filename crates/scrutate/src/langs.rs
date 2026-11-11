@@ -239,6 +239,7 @@ const CPP_DEFS: &[Def] = &[
     d("namespace_definition", "module", N),
     d("type_definition", "type", &[NameRule::Dig("declarator", ID_KINDS)]),
     d("alias_declaration", "type", N),
+    d("field_declaration", "function", &[NameRule::Custom(cpp_member_decl)]),
 ];
 const C_CALLS: &[Call] = &[c("call_expression", "function")];
 const CSHARP_DEFS: &[Def] = &[
@@ -1806,6 +1807,14 @@ fn lisp_define_name(node: Node, src: &[u8]) -> Option<String> {
         }
     }
     None
+}
+
+/// C++ member function declared in a class body (`void resize(int w);`), not a data member or a
+/// function pointer
+fn cpp_member_decl(node: Node, src: &[u8]) -> Option<String> {
+    let f = node.child_by_field_name("declarator").filter(|f| f.kind() == "function_declarator")?;
+    let n = f.child_by_field_name("declarator").filter(|n| matches!(n.kind(), "field_identifier" | "identifier" | "destructor_name" | "operator_name"))?;
+    Some(text(src, n.start_byte(), n.end_byte()))
 }
 
 /// Objective-C method implementation: the selector (first keyword part or unary selector)

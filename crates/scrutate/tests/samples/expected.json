@@ -207,6 +207,10 @@
       "geo.Shape"
     ],
     [
+      "method",
+      "geo.Shape.area"
+    ],
+    [
       "struct",
       "geo.Point"
     ],
