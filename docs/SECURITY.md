@@ -46,7 +46,9 @@ a **hostile MCP client** (malformed JSON-RPC, path escapes).
   the invariants; a byte view of a `Pod` slice when saving); `lex.rs` — one `matrixmultiply::sgemm`
   call with lengths derived from the slices it is given; `text.rs` — `from_utf8_unchecked` on a run
   of ASCII word bytes (ASCII boundaries are UTF-8 boundaries); `config.rs` — `std::env::set_var`
-  during startup before any thread exists; `cli.rs` — `signal(SIGINT, ...)` (Unix) and
+  during startup before any thread exists; `index.rs`: `malloc_zone_pressure_relief` (macOS) and
+  `malloc_trim` (glibc), called with no pointer of ours after an update of 1,000 files or more, to
+  hand freed pages back to the system; `cli.rs` — `signal(SIGINT, ...)` (Unix) and
   `SetConsoleCtrlHandler` (Windows) declarations, whose handler only stores to an atomic flag;
   `instant.rs` — one `sysctlbyname("hw.perflevel0.physicalcpu")` call on macOS, writing an `i32`
   whose size it passes;

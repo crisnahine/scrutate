@@ -13,7 +13,7 @@ use std::collections::HashSet;
 
 use crate::fmt::{echo, shown};
 use crate::resolve::{Resolved, Resolver};
-use crate::search::{Hit, Searcher};
+use crate::search::{dotted, Hit, Searcher};
 use crate::text::query_words;
 
 /// Version of every JSON record scrutate emits.
@@ -387,9 +387,11 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
             Answer::Rdeps { rows: crate::intel::rdeps(&s.ix, &target)?, target }
         }
         Op::Refs { name, max_results, textual: true, .. } => {
+            let name = &dotted(name);
             Answer::Refs { name: name.clone(), refs: crate::intel::references(s, name, *max_results)?, max_results: *max_results }
         }
         Op::Refs { name, max_results, def, .. } => {
+            let name = &dotted(name);
             let refs = crate::resolve::resolved_references(s, name, *max_results)?;
             let only = match def {
                 Some(spec) => Some(definition_at(s, &refs, name, spec)?),

@@ -450,3 +450,15 @@ fn callers_of_a_common_name_list_the_resolved_ones_first() {
     let (_, out) = r.run(&["callers", "Id.new"]);
     assert!(out.contains("(3 of these call a definition of that name"), "{out}");
 }
+
+#[test]
+fn refs_reads_type_colon_colon_method_like_type_dot_method() {
+    let src = "pub struct Config;\nimpl Config {\n    pub fn make() -> Config {\n        Config\n    }\n}\npub fn start() -> Config {\n    Config::make()\n}\n";
+    let r = Repo::new("refs_colons", &[("src/lib.rs", src)]);
+    let (_, dotted) = r.run(&["refs", "Config.make"]);
+    let (code, colons) = r.run(&["refs", "Config::make"]);
+    assert_eq!(code, 0, "{colons}");
+    for out in [&dotted, &colons] {
+        assert!(out.contains("Config.make  (2 references)") && out.contains("src/lib.rs:8:13"), "{out}");
+    }
+}

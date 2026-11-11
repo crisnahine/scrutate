@@ -71,9 +71,13 @@ Where the details differ between tools, scrutate does what ripgrep does. `-m N` 
 of a file at its Nth matching line: the trailing context after it is printed, and a match inside
 that context is shown as a match. `--max-results N` stops after N matching lines in total, with
 `-c` and `-l` too. Smart case folds only a pattern that has a literal and no uppercase letter in
-it, so `-S '\p{Ll}'` stays case-sensitive and matches lowercase letters only. One difference: a
-`-g` glob with a slash (`-g 'sub/*.rs'`) applies under every searched path, where ripgrep matches
-it from the current directory.
+it, so `-S '\p{Ll}'` stays case-sensitive and matches lowercase letters only. Of `-i` and `-S`
+the later one wins, and `SCRUTATE_GREP_SMART_CASE` applies only when neither is given. With
+`-A`, `-B` or `-C`, groups that are not adjacent, and different files, are separated by a line
+`--` (not in `--json`). A `-g` value is one glob, commas included (`-g '*.{txt,log}'`); the
+variable `SCRUTATE_GREP_GLOBS` and the configuration file's `globs` are split at commas outside
+braces. One difference: a `-g` glob with a slash (`-g 'sub/*.rs'`) applies under every searched
+path, where ripgrep matches it from the current directory.
 
 `--index` answers from Engine B's text index (`scrutate index`): the index names the files that
 can contain a match (trigram postings), and Engine A's matcher searches only those, so the output
@@ -92,8 +96,8 @@ often while files change.
 | `index [--force] [--text \| --no-text]` | Build or incrementally update `.scrutate/`: the code-intelligence index and the text index for `grep --index` (`--text`: only the text index; `--no-text`: skip it). Progress on a terminal. |
 | `search QUERY [-k N] [-a ALT]... [--also ROOT]... [--why] [--json]` (alias `s`) | Ranked search by meaning, name or identifier; `--alt` fuses alternative phrasings; `--also` searches other repositories too (paths prefixed with the repository name). |
 | `find QUERY` | Unified: regex-looking → `grep`; otherwise ranked search (indexing a small repository on the spot); otherwise identifier grep. A regex-looking query that finds nothing, or is not a valid regex, goes to ranked search when an index exists. A question with a space and a trailing `?` (`how is the token refreshed?`) is taken as words. |
-| `symbol NAME` | Where is it defined (`Class.method` works). |
-| `callers NAME` / `callees NAME` | Call graph edges resolved to definitions (callee names outside the repository listed after `external:`). A call matches a definition by the name as the call writes it (`Ok(1)` is not a call of `ok`) and in its own language family only: JavaScript and TypeScript; C, C++, CUDA and Objective-C; Java, Kotlin, Scala and Groovy; Erlang, Elixir and Gleam; C# and F#; every other language alone (a file of no known language matches any); an unknown qualifier (`Nope.refresh`) gives no results, and so does a name with a leading dot. |
+| `symbol NAME` | Where is it defined (`Class.method` works; `Type::method`, `Type#method` and `p->method` are read the same way, here and in `callers`, `callees`, `similar` and `read_code symbol`). |
+| `callers NAME` / `callees NAME` | Call graph edges resolved to definitions (callee names outside the repository listed after `external:`). A call matches a definition by the name as the call writes it (`Ok(1)` is not a call of `ok`) and in its own language family only: JavaScript and TypeScript; C, C++, CUDA and Objective-C; Java, Kotlin, Scala and Groovy; Erlang, Elixir and Gleam; C# and F#; every other language alone (a file of no known language matches any); an unknown qualifier (`Nope.refresh`) gives no results, and so does a name with a leading dot. `callers` lists first the callers the resolver ties to that definition, then those it could not decide (the ones that name the owner type or sit in the same package first), and says how many are undecided; for a name with thousands of call sites it asks the resolver about the 400 likeliest. |
 | `refs NAME [--def PATH[:LINE]] [--textual] [--max-results N]` | Every whole-word occurrence, each resolved to the definition it refers to, or listed as unresolved with a reason (see below). |
 | `outline FILE` | Symbols of a file in source order. |
 | `deps FILE` / `rdeps TARGET` | Imports of a file (resolved to repository files when possible) / files importing a module or file. An `#include "util.h"` resolves to the file next to the including one; `rdeps` matches an import by its base name only when it resolves to no file. |
@@ -334,7 +338,9 @@ value). On/off variables follow the rule under Conventions.
 so it is never committed. It is a cache: deleting it is always safe; `scrutate index
 --force` rebuilds it; a damaged index rebuilds itself. A command that reads the index never waits
 for another process that is writing it: it answers from the last committed index and says so in
-one line on stderr. `scrutate index` (and `--force`) waits for the writer. A read-only index
+one line on stderr. The one exception is a first build by another process, when there is nothing
+committed to answer from: the command fails with "the index is being built by another process"
+(exit 2), and a `serve` tool call answers that the index is still being built. `scrutate index` (and `--force`) waits for the writer. A read-only index
 directory, or a read-only repository with a complete index, is answered from the index as it is.
 A `.scrutate` that is a symbolic link, or that holds one, is refused: nothing is written or
 deleted outside the repository.

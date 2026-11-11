@@ -219,6 +219,11 @@ pub struct Candidates {
     pub exact_ids: Vec<i64>,
 }
 
+/// A symbol name with every separator a language writes (`::`, `->`, `#`) as a dot.
+pub(crate) fn dotted(name: &str) -> String {
+    name.replace("::", ".").replace("->", ".").replace('#', ".")
+}
+
 impl Searcher {
     pub fn new(ix: Index, ranker: Option<Arc<TreeEnsemble>>) -> Searcher {
         let ranker = ranker.filter(|r| r.feature_names == FEATURES);
@@ -558,7 +563,7 @@ impl Searcher {
     // ----------------------------------------------------------------- navigation
     pub fn find_symbol(&self, name: &str, limit: usize) -> Result<Vec<Hit>> {
         // `Type::method`, `Type#method` and `p->method` are spelled `Type.method` in the index
-        let name = &name.replace("::", ".").replace("->", ".").replace('#', ".");
+        let name = &dotted(name);
         let name = name.trim_start_matches('.');
         let key = name_key(name.rsplit('.').next().unwrap_or(name));
         // An empty ?3 means no qualifier; the qualifier filter must run before LIMIT.
