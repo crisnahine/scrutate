@@ -206,7 +206,13 @@ First release.
 - The comment right above a definition is its documentation in Python, Starlark, fish, Common
   Lisp, assembly, Jsonnet and MATLAB too, beside the docstring where there is one, and a Haskell
   or Elm function starts at its type signature; `search` did not find a Python function by a
-  word of the comment above it.
+  word of the comment above it. The documentation is kept across what stands between comment
+  and definition: Rust attributes (`/// doc`, `#[derive(...)]`, `struct`: 172 items of this
+  repository had lost theirs), TypeScript decorators, Dart `@override`, Elixir `@spec`, Erlang
+  `-spec`; Elixir `@doc` and `@moduledoc`, a Julia docstring, Haskell haddock comments and
+  PowerShell's help block are read; Ada nested functions, Nix, HCL and YAML keys and the first
+  method of a Ruby class take their comment; Go constants take theirs, and a Ruby constant at
+  file, class or module level is a constant.
 - More forms are definitions: a Lua function assigned to a name or given as a table field
   (`M.f = function`, `f = function` in a table), a JavaScript or TypeScript function assigned
   to a member (`Foo.prototype.bar = function` is the method `Foo.bar`), a Julia method added to

@@ -148,8 +148,11 @@ driven by a **data-driven rule registry** (per language: which node kinds are de
 name is found, what a call is, how imports look); a keyword heuristic tier; and overlapping line
 windows. Each definition becomes a *chunk* with fields name / qualified name / signature /
 documentation / body / path, plus call edges and imports. A definition's documentation is the
-comment block right above it, with no blank line between, and, in Python and Starlark, its
-docstring after that comment. A Haskell or Elm function starts at its type signature, and the
+comment block right above it, with no blank line between; attributes, decorators, annotations
+and type specs (Rust `#[...]`, `@Get(...)`, `@override`, Elixir `@spec`, Erlang `-spec`) may
+stand between them. Elixir's `@doc` and `@moduledoc`, a Julia docstring and Haskell haddock
+comments count as documentation, and in Python and Starlark the docstring after that comment
+does too. A Haskell or Elm function starts at its type signature, and the
 comment above the signature is its documentation. Adding a language is a registry entry
 and a sample file, not new code. A chunk's text and body keep at most 200 lines (40 for a
 container such as a class) and 32 KiB, cut at a character boundary, and a chunk ends on the last
