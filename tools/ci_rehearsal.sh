@@ -12,7 +12,7 @@ export DEBIAN_FRONTEND=noninteractive CARGO_TERM_COLOR=never
 apt-get update -qq && apt-get install -y -qq curl build-essential git ripgrep musl-tools file xz-utils > /dev/null
 curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal > /dev/null 2>&1
 export PATH=$HOME/.cargo/bin:$PATH
-mkdir -p /work && tar -C /src --exclude=./target --exclude=./dist --exclude=./dist-linux --exclude=node_modules --exclude=./bench/results --exclude=.vscode-test -cf - . | tar -C /work -xf -
+mkdir -p /work && tar -C /src --exclude=./.claude --exclude=./target --exclude=./dist --exclude=./dist-linux --exclude=node_modules --exclude=./bench/results --exclude=.vscode-test -cf - . | tar -C /work -xf -
 cd /work
 arch=$(uname -m)
 export RUSTFLAGS="-D warnings"

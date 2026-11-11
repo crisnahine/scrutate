@@ -71,7 +71,7 @@ fi
 
 step "scrutate (release build)"
 rm -rf $B/scrutate && mkdir -p $B/scrutate
-tar -C /src --exclude=./target --exclude=./dist --exclude=.scrutate --exclude=./fuzz -cf - . | tar -C $B/scrutate -xf -
+tar -C /src --exclude=./.claude --exclude=./target --exclude=./dist --exclude=.scrutate --exclude=./fuzz -cf - . | tar -C $B/scrutate -xf -
 if [ -n "${SCRUTATE_PREBUILT:-}" ]; then
   # x86_64 on an arm64 host: gcc crashes on the grammar sources under emulation, so the binary is
   # cross-built first (tools/linux_x86_cross_verify.sh) and handed in

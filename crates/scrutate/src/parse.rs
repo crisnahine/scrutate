@@ -307,12 +307,15 @@ fn split_owner(lang: &str, node: Node, name: String, src: &[u8]) -> (Option<Stri
         }
     }
     if matches!(lang, "c" | "cpp") {
+        // `int& operator*()`: the declarator's reference or pointer mark is not part of the name
+        let name = name.trim_start_matches(['&', '*', ' ']).to_string();
         if let Some(i) = name.rfind("::") {
             let owner = name[..i].replace("::", ".");
             if !owner.is_empty() {
                 return (Some(owner), name[i + 2..].to_string());
             }
         }
+        return (None, name);
     }
     (None, name)
 }

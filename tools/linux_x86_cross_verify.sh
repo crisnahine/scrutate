@@ -16,7 +16,7 @@ build='
   set -e
   apt-get update -qq && apt-get install -y -qq gcc-x86-64-linux-gnu g++-x86-64-linux-gnu libc6-dev-amd64-cross file > /dev/null
   rm -rf /work/src && mkdir -p /work/src
-  tar -C /src --exclude=./target --exclude=./dist --exclude=.scrutate --exclude=./fuzz -cf - . | tar -C /work/src -xf -
+  tar -C /src --exclude=./.claude --exclude=./target --exclude=./dist --exclude=.scrutate --exclude=./fuzz -cf - . | tar -C /work/src -xf -
   cd /work/src
   rustup target add x86_64-unknown-linux-gnu > /dev/null 2>&1
   export CC_x86_64_unknown_linux_gnu=x86_64-linux-gnu-gcc CXX_x86_64_unknown_linux_gnu=x86_64-linux-gnu-g++ \

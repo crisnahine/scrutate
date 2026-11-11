@@ -352,3 +352,12 @@ fn a_location_printed_with_escapes_can_be_passed_back() {
         assert!(!r.call("similar_code", json!({"target": location})).1.contains("no symbol or location"), "{location}");
     }
 }
+
+#[test]
+fn an_operator_name_keeps_its_arrow() {
+    let src = "struct Handle {\n    int* p;\n    int* operator->() {\n        return p;\n    }\n    int& operator*() {\n        return *p;\n    }\n};\n";
+    let mut r = Repo::new("operators", &[("h.cpp", src)]);
+    assert!(r.ok("find_symbol", json!({"name": "operator->"})).contains("h.cpp:3-5"));
+    assert!(r.ok("find_symbol", json!({"name": "Handle::operator->"})).contains("h.cpp:3-5"));
+    assert!(r.ok("find_symbol", json!({"name": "Handle->operator*"})).contains("h.cpp:6-8"));
+}

@@ -12,7 +12,7 @@ scrutate --version
 mkdir -p /tmp/t && printf 'def greet():\n    return "hello"\n' > /tmp/t/hello.py
 out=$(scrutate grep --no-color greet /tmp/t)
 echo "$out"
-[ "$out" = "hello.py:1:def greet():" ]
+[ "$out" = "/tmp/t/hello.py:1:def greet():" ]
 case "$1" in
     deb) dpkg -s scrutate | head -12; apt-get remove -y scrutate ;;
     rpm) rpm -qi scrutate; rpm -e scrutate ;;

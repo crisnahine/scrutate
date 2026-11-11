@@ -22,7 +22,7 @@ nproc
 
 step "copy source (the mount is read-only; host build output excluded)"
 rm -rf /work && mkdir /work
-tar -C /src --exclude=./target --exclude=./dist --exclude='.scrutate' --exclude='__pycache__' -cf - . | tar -C /work -xf -
+tar -C /src --exclude=./.claude --exclude=./target --exclude=./dist --exclude='.scrutate' --exclude='__pycache__' -cf - . | tar -C /work -xf -
 cd /work
 
 step "cargo build + test on an image without Python"

@@ -219,9 +219,29 @@ pub struct Candidates {
     pub exact_ids: Vec<i64>,
 }
 
-/// A symbol name with every separator a language writes (`::`, `->`, `#`) as a dot.
+/// A symbol name with every separator a language writes (`::`, `->`, `#`) as a dot. A separator
+/// stands between two names, so the arrow of `operator->` stays.
 pub(crate) fn dotted(name: &str) -> String {
-    name.replace("::", ".").replace("->", ".").replace('#', ".")
+    let mut out = String::with_capacity(name.len());
+    let mut rest = name;
+    while let Some(c) = rest.chars().next() {
+        let sep = ["::", "->", "#"].into_iter().find(|s| rest.starts_with(s));
+        let follows = |s: &str| rest[s.len()..].chars().next().is_some_and(|n| n.is_alphanumeric() || n == '_' || n == '~');
+        match sep {
+            Some(s) if !out.ends_with("operator") && follows(s) => {
+                // a leading separator (`::make`) names the top level: nothing before the name
+                if !out.is_empty() {
+                    out.push('.');
+                }
+                rest = &rest[s.len()..];
+            }
+            _ => {
+                out.push(c);
+                rest = &rest[c.len_utf8()..];
+            }
+        }
+    }
+    out
 }
 
 impl Searcher {

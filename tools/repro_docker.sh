@@ -15,7 +15,7 @@ build='
   if ! command -v rustup > /dev/null; then
     curl -sSf https://sh.rustup.rs | sh -s -- -y -q --profile minimal --default-toolchain none > /dev/null
   fi
-  mkdir -p /build && tar -C /src --exclude=./target --exclude=./dist --exclude=.scrutate --exclude=./fuzz -cf - . | tar -C /build -xf -
+  mkdir -p /build && tar -C /src --exclude=./.claude --exclude=./target --exclude=./dist --exclude=.scrutate --exclude=./fuzz -cf - . | tar -C /build -xf -
   cd /build && cargo build --release -p scrutate --locked -q
   sha256sum target/release/scrutate | cut -d" " -f1
   rustc --version

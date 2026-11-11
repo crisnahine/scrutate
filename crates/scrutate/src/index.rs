@@ -473,28 +473,6 @@ pub fn wipe_index(root: &Path) {
     }
 }
 
-/// An update that changed at least this many files hands the memory it freed back to the system.
-const RELEASE_AFTER_FILES: usize = 1000;
-
-/// Give the pages the allocator keeps after a large update back to the system (macOS, glibc).
-fn release_free_memory() {
-    #[cfg(target_os = "macos")]
-    {
-        extern "C" {
-            fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
-        }
-        // a null zone means every zone; a goal of 0 means as much as possible
-        unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
-    }
-    #[cfg(all(target_os = "linux", target_env = "gnu"))]
-    {
-        extern "C" {
-            fn malloc_trim(pad: usize) -> std::ffi::c_int;
-        }
-        unsafe { malloc_trim(0) };
-    }
-}
-
 /// Run `f` again while it fails with SQLITE_BUSY/LOCKED (statements the busy handler does not cover,
 /// such as the journal-mode switch of a brand-new database opened by several processes at once).
 fn retry_busy<T>(mut f: impl FnMut() -> rusqlite::Result<T>) -> rusqlite::Result<T> {
@@ -865,9 +843,6 @@ impl Index {
             // a long-running process would otherwise keep a build's word caches for its whole life
             rayon::broadcast(|_| crate::text::clear_caches());
             crate::text::clear_caches();
-            if st.files_changed + st.files_removed >= RELEASE_AFTER_FILES {
-                release_free_memory();
-            }
         }
         st.chunks = self.db.query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))?;
         st.seconds = t0.elapsed().as_secs_f64();
