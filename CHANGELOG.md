@@ -193,8 +193,9 @@ First release.
 - Constants are symbols of kind `constant` (Rust `const` and `static`, Go package `const` and
   `var`, JavaScript and TypeScript top-level `const`, TypeScript enum members and `static
   readonly` fields, JavaScript `static` fields in capitals, Java `static final`, Python
-  module-level and class-level capitals and tuple targets, C and C++ `#define` values,
-  enumerators and file or namespace `const` and `constexpr` with a value):
+  module-level and class-level capitals and tuple or list targets, C, C++, Objective-C and
+  GLSL `#define` values, enumerators and file or namespace `const` and `constexpr` with a value,
+  C++ `static const` and `static constexpr` members of a class):
   `symbol`, `outline`, `read_code` and `refs` find them, ranked search never returns them. Every
   name of a Go or Java declaration with several (`var X, Y int`) is a constant.
 - A method is named by its owner's bare type (`Stack.push` for `impl<T> Stack<T>`, `Box.put`
@@ -210,14 +211,17 @@ First release.
   split at `::`; C and C++ function-like macros; JavaScript class field functions and
   `module.exports.X`; TypeScript abstract classes and methods, `declare function` and
   namespaces; Java records; Swift protocol requirements; Kotlin type aliases; Elixir guards;
-  Objective-C methods declared in an `@interface`; a function pointer typedef by its own name
+  Objective-C methods and properties declared in an `@interface` or `@protocol`; a VHDL
+  subprogram with a body; a Jsonnet function; a function pointer typedef by its own name
   (`cb` in `typedef int (*cb)(int)`); a C
   or C++ function declared without a body, also inside an include guard (`symbol` lists the
   definition before the prototype). A `.h` file written in C++ or Objective-C is parsed with that
   grammar, where it lost its classes and methods as C.
 - Calls inside the arguments of a Rust macro (`println!("{}", f(x))`) and turbofish calls
   (`f::<T>(x)`) are call edges.
-- Calls in Dart, Groovy, Elixir, LLVM IR, TLA+ and Verilog are recorded. A method call records
+- Calls in Dart, Groovy, Elixir, LLVM IR, TLA+, Verilog (task calls and module instances too),
+  VHDL, Jsonnet, Make (`$(call g,...)`) and assembly (`call`, `bl`, `jal`; a label holds its
+  instructions up to the next label or section) are recorded. A method call records
   the method in Lua (`obj:meth()`), Objective-C (`[obj meth]`), R (`obj$meth()`), PowerShell and
   PHP (`?->`); `new Point()` records `Point`; a Lisp name is recorded whole (`list->vec`,
   `set-car!`) and a JavaScript private method with its `#`. A Scheme `(define (f x) ...)` head, a

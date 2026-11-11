@@ -136,12 +136,10 @@ docs/RELEASING.md, public, tag `v0.1.0`.
 - Java: `refs` ties no occurrence to a field, an enum constant or a record accessor. They are
   listed as unresolved (`field or key`), a `static final` field included, which `symbol` finds as
   a constant.
-- An Objective-C `@property` is not a symbol, and neither is a C++ `static const` member declared
-  in a class body: in C and C++ only a `const` or `constexpr` with a value at file level, in a
-  namespace or in `extern "C"` is a constant.
-- Some calls record no call edge, so `callers` and `callees` miss them: a Verilog task call, a
-  function in a VHDL package body (it is not a symbol either), Jsonnet, Make `$(call ...)` and
-  assembly.
+- A few call forms the grammars do not tell apart: a Verilog task call without parentheses
+  (`h;`) or on a member (`obj.m(1);`) records no call edge, a VHDL indexed signal `a(i)` is
+  recorded as a call, and an assembly call under a local label counts for that label and for
+  the global label above it.
 - A one-line file with 8,000 nested functions takes 542 MB of memory to index (462 MB with
   `SCRUTATE_SEMANTIC=none`) and 3.1 to 3.5 s (release build, macOS arm64). Each of the 8,000
   chunks keeps its own text of up to 32 KiB, so the index holds 40 MB of compressed chunk text
