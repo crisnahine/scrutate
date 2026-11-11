@@ -163,25 +163,36 @@ fn a_search_stopped_from_its_terminal_leaves_the_count_and_joins_again() {
     for _ in 0..5 {
         let (alone, _) = probe();
         let a = Search::start(&["-F", "nothing-matches-this"], Stdio::null());
-        a.next();
+        let first = a.next();
         // what Ctrl-Z sends
         a.signal("-TSTP");
         assert!(stopped(a.child.id()), "SIGTSTP stops the search");
         let (while_stopped, _) = probe();
+        // a second search held while it is counted (SIGSTOP cannot be caught): the first one then
+        // sees one search more than at its start, but only if it joins the count again
+        let b = Search::start(&["-F", "nothing-matches-this"], Stdio::null());
+        b.next();
+        b.signal("-STOP");
         a.signal("-CONT");
-        // SIGSTOP cannot be caught: the search stays counted, so this shows that it joined again
-        a.signal("-STOP");
-        assert!(stopped(a.child.id()));
-        let (again, _) = probe();
-        a.signal("-KILL");
+        let mut joined = false;
+        while let Ok((n, _)) = a.lines.recv_timeout(Duration::from_secs(60)) {
+            if n == first.0 + 1 {
+                joined = true;
+                break;
+            }
+        }
+        // killed after a stop and a continue: nothing of it may stay in the count
+        a.try_signal("-KILL");
         a.finish();
+        b.signal("-KILL");
+        b.finish();
         let (after, _) = probe();
-        seen.push((alone, while_stopped, again, after));
-        if while_stopped == alone && again == alone + 1 && after == alone {
+        seen.push((alone, while_stopped, joined, after));
+        if while_stopped == alone && joined && after == alone {
             return;
         }
     }
-    panic!("(alone, stopped with Ctrl-Z, continued, killed): {seen:?}");
+    panic!("(alone, stopped with Ctrl-Z, joined again, after both were killed): {seen:?}");
 }
 
 #[test]
