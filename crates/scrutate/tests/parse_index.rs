@@ -143,7 +143,15 @@ fn cpp_methods_defined_outside_the_class_are_named_by_the_method() {
 fn cpp_methods_declared_in_a_class_body_are_symbols() {
     let src = "class Shape {\npublic:\n  virtual double area() const = 0;\n  void resize(int w);\n  int x;\n  int (*fp)(int);\n  friend void swap(Shape&, Shape&);\n};\nvoid free_decl(int);\n";
     let got = symbols("s.hpp", src);
-    assert_eq!(got, vec![("class".into(), "Shape".into()), ("method".into(), "Shape.area".into()), ("method".into(), "Shape.resize".into())]);
+    assert_eq!(
+        got,
+        vec![
+            ("class".into(), "Shape".into()),
+            ("method".into(), "Shape.area".into()),
+            ("method".into(), "Shape.resize".into()),
+            ("function".into(), "free_decl".into())
+        ]
+    );
 }
 
 #[test]
@@ -259,6 +267,7 @@ fn cpp_constructors_destructors_member_templates_and_conversions_are_methods() {
         ("method", "Shape.operator bool"),
         ("method", "Shape.operator="),
         ("method", "Shape.next"),
+        ("function", "make"),
     ]
     .iter()
     .map(|(k, q)| (k.to_string(), q.to_string()))
@@ -466,6 +475,20 @@ fn a_method_call_records_the_method_not_the_receiver() {
         ("m.mm", "void f(void) { [obj meth]; [obj meth:1 with:2]; }\n", "f"),
         ("m.zig", "fn f() void { obj.meth(1); }\n", "f"),
         ("m.jl", "function f()\n  obj.meth(1)\nend\n", "f"),
+        ("m.dart", "void f() {\n  obj.meth(1);\n}\n", "f"),
+        ("m.dart", "void f() {\n  obj..meth(1);\n}\n", "f"),
+        ("m.dart", "void f() {\n  obj?.meth(1);\n}\n", "f"),
+        ("m.groovy", "def f() {\n  obj.meth(1)\n}\n", "f"),
+        ("m.groovy", "def f() {\n  obj.meth 1\n}\n", "f"),
+        ("m.ex", "defmodule M do\n  def f(x), do: Mod.meth(x)\nend\n", "M.f"),
+        ("m.ex", "defmodule M do\n  def f(x), do: Mod.Sub.meth(x)\nend\n", "M.f"),
+        ("m.ex", "defmodule M do\n  def f(x), do: x |> Mod.meth()\nend\n", "M.f"),
+        ("m.php", "<?php\nfunction f() { $obj?->meth(); }\n", "f"),
+        ("m.r", "f <- function() {\n  obj$meth(1)\n}\n", "f"),
+        ("m.ps1", "function f {\n  $obj.meth(1)\n}\n", "f"),
+        ("m.scala", "object O { def f() = obj meth 1 }\n", "O.f"),
+        ("m.adb", "procedure F is\nbegin\n  Obj.meth(1);\nend F;\n", "F"),
+        ("m.pas", "program P;\nprocedure F;\nbegin\n  Obj.meth(1);\nend;\nbegin end.\n", "F"),
     ];
     let wrong: Vec<String> = cases
         .iter()
@@ -474,6 +497,116 @@ fn a_method_call_records_the_method_not_the_receiver() {
         .map(|(p, got)| format!("{p}: {got:?}"))
         .collect();
     assert!(wrong.is_empty(), "{wrong:?}");
+}
+
+fn wrong_calls(cases: &[(&str, &str, &str, &[&str])]) -> Vec<String> {
+    cases
+        .iter()
+        .map(|&(path, src, q, want)| (path, calls_of(path, src, q), want))
+        .filter(|(_, got, want)| got != want)
+        .map(|(p, got, want)| format!("{p}: got {got:?}, want {want:?}"))
+        .collect()
+}
+
+#[test]
+fn a_plain_call_and_a_constructor_call_record_the_called_name() {
+    let cases: &[(&str, &str, &str, &[&str])] = &[
+        ("m.py", "def f():\n    g(1)\n    Point(1, 2)\n", "f", &["Point", "g"]),
+        ("m.js", "function f() { g(1); new Point(1, 2); }\n", "f", &["Point", "g"]),
+        ("m.ts", "function f() { g(1); new Point(1, 2); }\n", "f", &["Point", "g"]),
+        ("m.tsx", "function f() { g(1); new Point(1, 2); }\n", "f", &["Point", "g"]),
+        ("m.go", "package p\nfunc f() { g(1) }\n", "f", &["g"]),
+        ("m.rs", "fn f() { g(1); Point::new(1, 2); m!(x); }\n", "f", &["g", "m", "new"]),
+        ("m.java", "class C { void f() { g(1); new Point(1, 2); } }\n", "C.f", &["Point", "g"]),
+        ("m.c", "void f(void) { g(1); }\n", "f", &["g"]),
+        ("m.cpp", "void f() { g(1); new Point(1, 2); Size(3, 4); }\n", "f", &["Point", "Size", "g"]),
+        ("m.glsl", "void f() { g(1); vec3 v = vec3(1.0); }\n", "f", &["g", "vec3"]),
+        ("m.mm", "void f(void) { g(1); [[Point alloc] init]; }\n", "f", &["alloc", "g", "init"]),
+        ("m.cs", "class C { void F() { g(1); new Point(1, 2); } }\n", "C.F", &["Point", "g"]),
+        ("m.rb", "def f\n  g(1)\n  Point.new(1, 2)\n  bare 1\nend\n", "f", &["bare", "g", "new"]),
+        ("m.php", "<?php\nfunction f() { g(1); new Point(1, 2); }\n", "f", &["Point", "g"]),
+        ("m.sh", "f() {\n  g 1\n}\n", "f", &["g"]),
+        ("m.fish", "function f\n  g 1\nend\n", "f", &["g"]),
+        ("m.ps1", "function f {\n  g 1\n  [Point]::new(1, 2)\n}\n", "f", &["g", "new"]),
+        ("m.kt", "fun f() { g(1); Point(1, 2) }\n", "f", &["Point", "g"]),
+        ("m.swift", "func f() { g(1); Point(x: 1) }\n", "f", &["Point", "g"]),
+        ("m.scala", "object O { def f() = { g(1); new Point(1, 2) } }\n", "O.f", &["Point", "g"]),
+        ("m.groovy", "def f() {\n  g(1)\n  new Point(1, 2)\n  println 'x'\n}\n", "f", &["Point", "g", "println"]),
+        ("m.lua", "function f()\n  g(1)\nend\n", "f", &["g"]),
+        ("m.ex", "defmodule M do\n  def f(x) do\n    g(x)\n    x |> h()\n    bare x\n  end\nend\n", "M.f", &["bare", "g", "h"]),
+        ("m.erl", "-module(m).\nf() -> g(1).\n", "f", &["g"]),
+        ("m.hs", "f x = g x\n", "f", &["g"]),
+        ("m.elm", "f x =\n  g x\n", "f", &["g"]),
+        ("m.zig", "fn f() void { g(1); }\n", "f", &["g"]),
+        ("m.jl", "function f()\n  g(1)\n  Point(1, 2)\nend\n", "f", &["Point", "g"]),
+        ("m.dart", "void f() {\n  g(1);\n  Point(1, 2);\n  new Size(1, 2);\n  const Box(1);\n  Cls.make();\n}\n", "f", &["Box", "Point", "Size", "g", "make"]),
+        ("m.dart", "class C {\n  void m() {\n    g(1);\n  }\n}\n", "C.m", &["g"]),
+        ("m.r", "f <- function() {\n  g(1)\n}\n", "f", &["g"]),
+        ("m.nix", "{ f = x: g x; }\n", "f", &["g"]),
+        ("m.tf", "locals {\n  v = g(1)\n}\n", "locals", &["g"]),
+        ("m.sol", "contract C { function f() public { g(1); new Point(1, 2); } }\n", "C.f", &["Point", "g"]),
+        ("m.pas", "program P;\nprocedure F;\nbegin\n  G(1);\nend;\nbegin end.\n", "F", &["G"]),
+        ("m.adb", "procedure F is\n  X : Integer;\nbegin\n  G(1);\n  X := H(2);\nend F;\n", "F", &["G", "H"]),
+        ("m.m", "function f()\n  g(1);\nend\n", "f", &["g"]),
+        ("m.el", "(defun f (x)\n  (g x))\n", "f", &["g"]),
+        ("m.scm", "(define (f x)\n  (g x))\n", "f", &["g"]),
+        ("m.rkt", "#lang racket\n(define (f x)\n  (g x))\n", "f", &["g"]),
+        ("m.lisp", "(defun f (x)\n  (g x))\n", "f", &["g"]),
+        ("m.vim", "function! F()\n  call G(1)\nendfunction\n", "F", &["G"]),
+        ("m.gleam", "pub fn f() {\n  g(1)\n  Point(1, 2)\n}\n", "f", &["Point", "g"]),
+        ("m.bzl", "def f():\n    g(1)\n", "f", &["g"]),
+        ("CMakeLists.txt", "function(f)\n  g(1)\nendfunction()\n", "f", &["g"]),
+        ("m.bicep", "func f(x int) int => g(x)\n", "f", &["g"]),
+        ("m.pp", "class foo {\n  $x = g(1)\n}\n", "foo", &["g"]),
+    ];
+    let wrong = wrong_calls(cases);
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+#[cfg(feature = "extra-langs")]
+#[test]
+fn calls_are_recorded_in_the_optional_grammars() {
+    let cases: &[(&str, &str, &str, &[&str])] = &[
+        ("m.cu", "void f() { g(1); obj.meth(1); k<<<1, 2>>>(3); }\n", "f", &["g", "k", "meth"]),
+        ("m.ml", "let f x =\n  g x;\n  Mod.meth x\n", "f", &["g", "meth"]),
+        ("m.fs", "let f x =\n  g x\n  obj.meth(1)\n  Point(1, 2)\n", "f", &["Point", "g", "meth"]),
+        ("m.f90", "subroutine f()\n  call g(1)\n  x = h(2)\nend subroutine f\n", "f", &["g", "h"]),
+        ("m.d", "void f() { g(1); obj.meth(1); new Point(1, 2); }\n", "f", &["Point", "g", "meth"]),
+        ("m.v", "module m;\n  function int f(int x);\n    return g(x);\n  endfunction\nendmodule\n", "m.f", &["g"]),
+        ("m.odin", "package p\nf :: proc() {\n  g(1); obj.meth(1)\n}\n", "f", &["g", "meth"]),
+        ("m.ll", "define i32 @f() {\n  %1 = call i32 @g(i32 1)\n  ret i32 %1\n}\n", "f", &["g"]),
+        ("m.qml", "Item {\n  function f() { g(1); obj.meth(1); }\n}\n", "Item.f", &["g", "meth"]),
+        ("m.tla", "---- MODULE m ----\nF(x) == G(x) + 1\n====\n", "m.F", &["G"]),
+        ("m.ahk", "f() {\n  g(1)\n  obj.meth(1)\n}\n", "f", &["g", "meth"]),
+    ];
+    let wrong = wrong_calls(cases);
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+#[test]
+fn a_definition_head_and_the_definition_macros_are_not_calls() {
+    let ex = parse_source("m.ex", "defmodule M do\n  use GenServer\n  import Enum\n  alias Foo.Bar\n  require Logger\n  def f(x), do: g(x)\n  defp p(x) when x > 0, do: f(x)\n  defguard is_big(x) when x > 100\nend\n");
+    assert!(find(&ex, "M").calls.is_empty(), "{:?}", find(&ex, "M").calls);
+    assert_eq!(find(&ex, "M.f").calls.iter().collect::<Vec<_>>(), ["g"]);
+    assert_eq!(find(&ex, "M.p").calls.iter().collect::<Vec<_>>(), ["f"]);
+    assert!(find(&ex, "M.is_big").calls.is_empty());
+    assert_eq!(calls_of("m.scm", "(define (f n)\n  (f (- n 1)))\n", "f"), ["f"]);
+    assert_eq!(calls_of("m.lisp", "(defmethod m ((x point) y)\n  (h x))\n", "m"), ["h"]);
+}
+
+#[test]
+fn an_objc_multi_part_selector_call_is_a_call_of_its_definition() {
+    let chunks = parse_source("m.mm", "@implementation Foo\n- (void)a:(int)x b:(int)y {\n}\n- (void)run {\n  [obj a:1 b:2];\n}\n@end\n");
+    assert_eq!(find(&chunks, "Foo.a").name, "a");
+    assert_eq!(find(&chunks, "Foo.run").calls.iter().collect::<Vec<_>>(), ["a"]);
+}
+
+#[test]
+fn dart_and_pascal_definitions_hold_their_bodies() {
+    let dart = parse_source("m.dart", "void f() {\n  g(1);\n}\n");
+    assert_eq!((find(&dart, "f").start, find(&dart, "f").end), (1, 3));
+    let pas = parse_source("m.pas", "program P;\nprocedure F;\nbegin\n  G(1);\nend;\nbegin end.\n");
+    assert_eq!((find(&pas, "F").start, find(&pas, "F").end), (2, 5));
 }
 
 const OBJECT_LITERALS: &str = "const api = { get() { return 1; }, post: function () { return 2; }, put: () => 3, gen: function* () {}, \"q\": () => 5 };
@@ -510,5 +643,52 @@ fn methods_of_an_object_literal_are_owned_by_what_holds_the_literal() {
         );
         assert_eq!(find(&chunks, "store.later").calls.iter().collect::<Vec<_>>(), ["go"], "{path}");
         assert_eq!(find(&chunks, "store.increment").calls.iter().collect::<Vec<_>>(), ["total"], "{path}");
+    }
+}
+
+#[test]
+fn c_and_cpp_function_prototypes_are_function_symbols() {
+    let c = symbols("p.h", "int add(int a, int b);\nextern int x;\nint y;\nint (*fp)(int);\ntypedef int (*cb)(int);\nstatic char *name(void);\nvoid g(void) { foo(1); int h(int); }\n");
+    let want = |v: &[(&str, &str)]| v.iter().map(|&(k, q)| (k.to_string(), q.to_string())).collect::<Vec<_>>();
+    assert_eq!(c, want(&[("function", "add"), ("type", "(*cb)"), ("function", "name"), ("function", "g")]));
+    let cpp = parse_source(
+        "p.hpp",
+        "namespace ns {\n  Shape make();\n  int x;\n}\nextern \"C\" {\n  int cfun(int);\n}\nextern \"C\" int cone(int);\nWidget w();\nusing F = int(int);\nclass K { void m(); };\nint& rf();\nint (*fp)(int);\ntemplate <typename T> T tmax(T a, T b);\nvoid g() { foo(1); int h(int); }\n",
+    );
+    let got: Vec<(&str, &str)> = cpp.iter().map(|c| (c.kind, c.qualname.as_str())).collect();
+    assert_eq!(
+        got,
+        [
+            ("module", "ns"),
+            ("function", "ns.make"),
+            ("function", "cfun"),
+            ("function", "cone"),
+            ("function", "w"),
+            ("type", "F"),
+            ("class", "K"),
+            ("method", "K.m"),
+            ("function", "rf"),
+            ("function", "tmax"),
+            ("function", "g"),
+        ]
+    );
+    assert_eq!(find(&cpp, "ns.make").text, "Shape make();");
+    assert_eq!(find(&cpp, "tmax").text, "template <typename T> T tmax(T a, T b);");
+    assert!(find(&cpp, "ns.make").calls.is_empty());
+    assert_eq!(find(&cpp, "g").calls.iter().collect::<Vec<_>>(), ["foo"]);
+}
+
+const TS_WRAPPED_LITERALS: &str = "export const api = { get() {} } as const;
+const store = { inc() {}, sub: ({ deep() {} }) as Sub } satisfies Store;
+const box = ({ open() {} });
+let tool = ({ run() {} } as const) satisfies Tool;
+";
+
+#[test]
+fn a_typescript_literal_wrapped_in_as_satisfies_or_parentheses_keeps_its_owner() {
+    for path in ["w.ts", "w.tsx"] {
+        let chunks = parse_source(path, TS_WRAPPED_LITERALS);
+        let methods: Vec<&str> = chunks.iter().filter(|c| c.kind == "method").map(|c| c.qualname.as_str()).collect();
+        assert_eq!(methods, ["api.get", "store.inc", "store.sub.deep", "box.open", "tool.run"], "{path}");
     }
 }

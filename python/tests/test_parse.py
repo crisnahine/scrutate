@@ -200,3 +200,17 @@ def test_methods_of_an_object_literal_are_owned_by_what_holds_the_literal():
             ("save", "methods.save"), ("run", "methods.run"), ("build", "tool.build"), ("fix", "kit.fix"), ("cb", "cb")], path
         c = by_q(chunks)
         assert c["store.later"].calls == {"go"} and c["store.increment"].calls == {"total"}
+
+
+TS_WRAPPED_LITERALS = """export const api = { get() {} } as const;
+const store = { inc() {}, sub: ({ deep() {} }) as Sub } satisfies Store;
+const box = ({ open() {} });
+let tool = ({ run() {} } as const) satisfies Tool;
+"""
+
+
+def test_a_typescript_literal_wrapped_in_as_satisfies_or_parentheses_keeps_its_owner():
+    for path in ("w.ts", "w.tsx"):
+        chunks = parse_source(path, TS_WRAPPED_LITERALS)
+        assert [c.qualname for c in chunks if c.kind == "method"] == [
+            "api.get", "store.inc", "store.sub.deep", "box.open", "tool.run"], path

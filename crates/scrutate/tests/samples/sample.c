@@ -1,6 +1,9 @@
 /* A C file. */
 #include <stdio.h>
 
+int add(int a, int b);
+extern int verbose;
+
 /* Adds two ints. */
 int add(int a, int b) { return a + b; }
 

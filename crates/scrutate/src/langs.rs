@@ -46,8 +46,10 @@ pub struct Def {
 
 pub struct Call {
     pub node: &'static str,
-    /// field holding the callee expression ("" = first named child)
+    /// field holding the callee expression, else the first child of that kind ("" = first named child)
     pub field: &'static str,
+    /// callee names that are syntax, not calls (Elixir `def`, `alias`, `if`)
+    pub skip: &'static [&'static str],
 }
 
 /// Where an import statement keeps the imported module.
@@ -145,10 +147,39 @@ pub const KIND_WORDS: &[(&str, &str)] = &[
     ("defmethod", "function"),
 ];
 const fn c(node: &'static str, field: &'static str) -> Call {
-    Call { node, field }
+    Call { node, field, skip: &[] }
 }
 
 const N: &[NameRule] = &[NameRule::Field("name")];
+const ELIXIR_SYNTAX: &[&str] = &[
+    "def",
+    "defp",
+    "defmacro",
+    "defmacrop",
+    "defguard",
+    "defguardp",
+    "defdelegate",
+    "defmodule",
+    "defprotocol",
+    "defimpl",
+    "defstruct",
+    "defexception",
+    "defoverridable",
+    "use",
+    "import",
+    "alias",
+    "require",
+    "if",
+    "unless",
+    "case",
+    "cond",
+    "with",
+    "for",
+    "receive",
+    "try",
+    "quote",
+    "unquote",
+];
 const ID_KINDS: &[&str] = &[
     "identifier",
     "field_identifier",
@@ -226,8 +257,12 @@ fn heading_text(node: Node, src: &[u8]) -> Option<String> {
     }
 }
 
+/// A function declared without a body at file or namespace scope (`int add(int, int);`).
+const PROTOTYPE: Def =
+    Def { parents: &["translation_unit", "declaration_list", "linkage_specification"], ..d("declaration", "function", &[NameRule::Custom(cpp_member_decl)]) };
 const C_DEFS: &[Def] = &[
     d("function_definition", "function", &[NameRule::Dig("declarator", ID_KINDS)]),
+    PROTOTYPE,
     d("preproc_function_def", "macro", N),
     db("struct_specifier", "struct", N),
     db("union_specifier", "struct", N),
@@ -247,8 +282,9 @@ const CPP_DEFS: &[Def] = &[
     d("field_declaration", "function", &[NameRule::Custom(cpp_member_decl)]),
     // constructors, destructors, conversion operators and member templates declared in a class body
     Def { parents: &["field_declaration_list"], ..d("declaration", "method", &[NameRule::Custom(cpp_member_decl)]) },
+    PROTOTYPE,
 ];
-const C_CALLS: &[Call] = &[c("call_expression", "function")];
+const C_CALLS: &[Call] = &[c("call_expression", "function"), c("new_expression", "type")];
 const CSHARP_DEFS: &[Def] = &[
     d("class_declaration", "class", N),
     d("struct_declaration", "struct", N),
@@ -539,6 +575,7 @@ const CORE: &[LangSpec] = &[
         calls: &[
             c("function_call_expression", "function"),
             c("member_call_expression", "name"),
+            c("nullsafe_member_call_expression", "name"),
             c("scoped_call_expression", "name"),
             c("object_creation_expression", ""),
         ],
@@ -590,7 +627,7 @@ const CORE: &[LangSpec] = &[
             d("class_statement", "class", &[NameRule::ChildKind(&["simple_name"])]),
             d("class_method_definition", "method", &[NameRule::ChildKind(&["simple_name"])]),
         ],
-        calls: &[c("command", "")],
+        calls: &[c("command", ""), c("invokation_expression", "member_name")],
         docstring: false,
         wrappers: &[],
         outer: &[],
@@ -647,7 +684,7 @@ const CORE: &[LangSpec] = &[
             d("trait_definition", "trait", N),
             d("enum_definition", "enum", N),
         ],
-        calls: &[c("call_expression", "function")],
+        calls: &[c("call_expression", "function"), c("instance_expression", ""), c("infix_expression", "operator")],
         docstring: false,
         wrappers: &[],
         outer: &[],
@@ -666,7 +703,7 @@ const CORE: &[LangSpec] = &[
             d("interface_declaration", "interface", N),
             d("enum_declaration", "enum", N),
         ],
-        calls: &[c("function_call", "function"), c("juxt_function_call", "name"), c("method_call", "name")],
+        calls: &[c("method_invocation", "name"), c("juxt_function_call", "name"), c("object_creation_expression", "type")],
         docstring: false,
         wrappers: &[],
         outer: &[],
@@ -713,7 +750,7 @@ const CORE: &[LangSpec] = &[
                 parents: &[],
             },
         ],
-        calls: &[],
+        calls: &[Call { skip: ELIXIR_SYNTAX, ..c("call", "target") }],
         docstring: false,
         wrappers: &[],
         outer: &[],
@@ -816,17 +853,19 @@ const CORE: &[LangSpec] = &[
         language: || tree_sitter_dart::LANGUAGE.into(),
         defs: &[
             d("class_declaration", "class", N),
+            d("function_declaration", "function", &[NameRule::Custom(dart_function_name)]),
             d("function_signature", "function", &[NameRule::Custom(dart_function_name)]),
+            d("method_declaration", "method", &[NameRule::Custom(dart_method_name)]),
             d("method_signature", "method", &[NameRule::Custom(dart_method_name)]),
             d("enum_declaration", "enum", N),
             d("mixin_declaration", "trait", N),
             d("extension_declaration", "impl", N),
         ],
-        calls: &[],
+        calls: &[c("call_expression", "function"), c("new_expression", "type"), c("const_object_expression", "type"), c("cascade_call_expression", "property")],
         docstring: false,
         wrappers: &[],
         outer: &[],
-        body: "",
+        body: "body",
         imports: &[imp("import_or_export", ImportHow::FirstString)],
     },
     LangSpec {
@@ -896,7 +935,7 @@ const CORE: &[LangSpec] = &[
         files: &[],
         language: || tree_sitter_pascal::LANGUAGE.into(),
         defs: &[
-            d("declProc", "function", N),
+            d("declProc", "function", &[NameRule::Custom(pascal_proc_name)]),
             d("defProc", "function", &[NameRule::Custom(pascal_proc_name)]),
             d("declType", "type", N),
             d("declClass", "class", N),
@@ -905,7 +944,7 @@ const CORE: &[LangSpec] = &[
         docstring: false,
         wrappers: &[],
         outer: &[],
-        body: "",
+        body: "body",
         imports: NO_IMPORTS,
     },
     LangSpec {
@@ -920,7 +959,7 @@ const CORE: &[LangSpec] = &[
             d("package_body", "module", &[NameRule::Custom(ada_name)]),
             d("full_type_declaration", "type", &[NameRule::ChildKind(&["identifier"])]),
         ],
-        calls: &[c("function_call", "")],
+        calls: &[c("function_call", ""), c("procedure_call_statement", "name")],
         docstring: false,
         wrappers: &[],
         outer: &[],
@@ -1046,7 +1085,7 @@ const CORE: &[LangSpec] = &[
             d("type_alias", "type", &[NameRule::ChildKind(&["type_name"])]),
             d("external_function", "function", N),
         ],
-        calls: &[c("function_call", "function")],
+        calls: &[c("function_call", "function"), c("record", "name")],
         docstring: false,
         wrappers: &[],
         outer: &[],
@@ -1456,7 +1495,7 @@ const EXTRA: &[LangSpec] = &[
             d("task_declaration", "function", &[NameRule::Custom(verilog_fn_name)]),
             d("class_declaration", "class", &[NameRule::ChildKind(&["class_identifier", "simple_identifier"])]),
         ],
-        calls: &[],
+        calls: &[c("tf_call", "")],
         docstring: false,
         wrappers: &[],
         outer: &[],
@@ -1506,7 +1545,7 @@ const EXTRA: &[LangSpec] = &[
         files: &[],
         language: || tree_sitter_llvm::LANGUAGE.into(),
         defs: &[d("fn_define", "function", &[NameRule::Custom(llvm_fn_name)]), d("type_def", "type", &[NameRule::ChildKind(&["local_var"])])],
-        calls: &[],
+        calls: &[c("instruction_call", "callee")],
         docstring: false,
         wrappers: &[],
         outer: &[],
@@ -1532,7 +1571,7 @@ const EXTRA: &[LangSpec] = &[
         files: &[],
         language: || tree_sitter_tlaplus::LANGUAGE.into(),
         defs: &[d("operator_definition", "function", N), d("module", "module", N), d("function_definition", "function", N)],
-        calls: &[],
+        calls: &[c("bound_op", "name")],
         docstring: false,
         wrappers: &[],
         outer: &[],
@@ -1686,14 +1725,20 @@ fn julia_assignment(node: Node, src: &[u8]) -> Option<String> {
 }
 
 /// Dart: a function_signature directly inside a method_signature is the method itself (already a chunk)
+/// A Dart function is named by its signature; a signature inside a declaration is not a second symbol.
 fn dart_function_name(node: Node, src: &[u8]) -> Option<String> {
-    if node.parent().map(|p| p.kind() == "method_signature").unwrap_or(false) {
+    if node.parent().is_some_and(|p| matches!(p.kind(), "method_signature" | "function_declaration")) {
         return None;
     }
+    let node = if node.kind() == "function_declaration" { node.child_by_field_name("signature")? } else { node };
     node.child_by_field_name("name").map(|n| text(src, n.start_byte(), n.end_byte()))
 }
 
 fn dart_method_name(node: Node, src: &[u8]) -> Option<String> {
+    if node.parent().is_some_and(|p| p.kind() == "method_declaration") {
+        return None;
+    }
+    let node = if node.kind() == "method_declaration" { node.child_by_field_name("signature")? } else { node };
     let mut cur = node.walk();
     for ch in node.children(&mut cur) {
         if matches!(ch.kind(), "function_signature" | "getter_signature" | "setter_signature" | "constructor_signature" | "factory_constructor_signature") {
@@ -1736,7 +1781,12 @@ fn hcl_block_name(node: Node, src: &[u8]) -> Option<String> {
     }
 }
 
+/// A Pascal procedure with a body is named by its header; the header is not a second symbol.
 fn pascal_proc_name(node: Node, src: &[u8]) -> Option<String> {
+    if node.parent().is_some_and(|p| p.kind() == "defProc") {
+        return None;
+    }
+    let node = node.child_by_field_name("header").unwrap_or(node);
     node.child_by_field_name("name")
         .map(|n| text(src, n.start_byte(), n.end_byte()))
         .or_else(|| child_text(node, src, &["identifier", "genericDot", "procName"]))

@@ -183,6 +183,8 @@ def _callee_name(node, how: str, src: bytes) -> str | None:
     if target is None:
         return None
     txt = src[target.start_byte : target.end_byte].decode("utf8", "replace")
+    if txt.startswith("new") and txt[3:4].isspace():  # a callee `new Point` calls `Point`
+        txt = txt[3:].lstrip()
     for sep in ("::", ".", "->"):
         if sep in txt:
             txt = txt.rsplit(sep, 1)[-1]
@@ -299,6 +301,9 @@ def _object_owner(node, src: bytes) -> str | None:
     parts = []
     while obj.parent is not None:
         holder, named = obj.parent, None
+        # `{...} as const`, `{...} satisfies T` and `({...})` are held by the name around them
+        while holder.type in ("as_expression", "satisfies_expression", "parenthesized_expression") and holder.parent is not None:
+            holder = holder.parent
         if holder.type == "pair":
             named = holder.child_by_field_name("key")
             named = named if named is not None and named.type == "property_identifier" else None

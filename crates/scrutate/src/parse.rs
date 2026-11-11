@@ -390,10 +390,17 @@ fn split_owner(lang: &str, node: Node, name: String, src: &[u8]) -> (Option<Stri
 
 /// The names that hold the object literal around a JS/TS method: `const store = { sub: { m() {} } }`
 /// gives `store.sub`, `module.exports.tool = {...}` gives `tool`. None for a literal nothing names.
-fn object_owner(node: Node, src: &[u8]) -> Option<String> {
+fn object_owner<'t>(node: Node<'t>, src: &[u8]) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
     let mut obj = node.parent().filter(|p| p.kind() == "object")?;
-    while let Some(holder) = obj.parent() {
+    // `{...} as const`, `{...} satisfies T` and `({...})` are held by the name around them
+    let unwrap = |mut n: Node<'t>| {
+        while let (true, Some(p)) = (matches!(n.kind(), "as_expression" | "satisfies_expression" | "parenthesized_expression"), n.parent()) {
+            n = p;
+        }
+        n
+    };
+    while let Some(holder) = obj.parent().map(unwrap) {
         let named = match holder.kind() {
             "pair" => holder.child_by_field_name("key").filter(|k| k.kind() == "property_identifier"),
             "variable_declarator" => holder.child_by_field_name("name").filter(|n| n.kind() == "identifier"),
@@ -420,7 +427,8 @@ fn txt(src: &[u8], a: usize, b: usize) -> String {
 }
 
 fn callee_name(node: Node, field: &str, src: &[u8]) -> Option<String> {
-    let mut target = if field.is_empty() { None } else { node.child_by_field_name(field) };
+    let mut target =
+        if field.is_empty() { None } else { node.child_by_field_name(field).or_else(|| node.children(&mut node.walk()).find(|c| c.kind() == field)) };
     if target.is_none() && node.named_child_count() > 0 {
         target = node.named_child(0);
     }
@@ -433,14 +441,41 @@ fn callee_name(node: Node, field: &str, src: &[u8]) -> Option<String> {
         // `f::<T>(x)`: the name is before the turbofish
         target = target.child_by_field_name("function")?;
     }
+    if target.kind() == "extract_operator" {
+        // R `obj$meth(x)` calls `meth`
+        target = target.child_by_field_name("rhs")?;
+    }
     let mut t = txt(src, target.start_byte(), target.end_byte());
+    // D and Solidity `new Point(1, 2)` is a call whose callee is `new Point`
+    if let Some(rest) = t.strip_prefix("new").filter(|r| r.starts_with(char::is_whitespace)) {
+        t = rest.trim_start().to_string();
+    }
     for sep in ["::", ".", "->"] {
         if let Some(i) = t.rfind(sep) {
             t = t[i + sep.len()..].to_string();
         }
     }
-    let t = t.trim().trim_end_matches('!');
+    let t = t.trim().trim_end_matches('!').trim_start_matches('@');
     IDENT_START.find(t).map(|m| m.as_str().to_string())
+}
+
+/// The part of a definition that names it or lists its parameters and that the grammar parses as
+/// a call: Elixir `def f(x)`, Scheme `(define (f x) ...)`, a Lisp parameter list `(x y)`.
+fn def_head<'t>(lang: &str, node: Node<'t>) -> Option<Node<'t>> {
+    match lang {
+        "elixir" => {
+            let head = node.children(&mut node.walk()).find(|c| c.kind() == "arguments")?.named_child(0)?;
+            if head.kind() == "binary_operator" {
+                head.child_by_field_name("left")
+            } else {
+                Some(head)
+            }
+        }
+        "scheme" | "racket" => node.named_child(1).filter(|n| n.kind() == "list"),
+        "elisp" => node.child_by_field_name("parameters"),
+        "commonlisp" => node.named_child(0)?.child_by_field_name("lambda_list"),
+        _ => None,
+    }
 }
 
 /// 0-based last line holding the node's text: a node that ends with its line break (a C
@@ -958,6 +993,7 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
     let mut consts: Vec<Chunk> = Vec::new();
     let mut imports: Vec<(i64, String)> = Vec::new();
     let mut def_stack: Vec<usize> = Vec::new();
+    let mut heads: std::collections::HashSet<usize> = std::collections::HashSet::new();
     let mut stack: Vec<(Node, bool, bool, usize)> = vec![(tree.root_node(), false, false, 0)];
     let mut ancestors: Vec<(Node, Vec<Node>)> = Vec::new();
     let mut pos: Vec<usize> = Vec::new();
@@ -1070,6 +1106,7 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
             });
             def_stack.push(chunks.len() - 1);
             pushed_now = true;
+            heads.extend(def_head(spec.id, node).map(|h| h.id()));
         } else if let Some((names, shown)) = constant_of(spec.id, node, &ancestors, src) {
             // not on def_stack: calls in the initializer stay with the enclosing definition
             let parent_q = def_stack.last().map(|&i| chunks[i].qualname.as_str()).unwrap_or_default();
@@ -1089,8 +1126,9 @@ fn grammar_chunks(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>
             }
         } else if let Some(call) = spec.calls.iter().find(|c| c.node == t) {
             let in_signature = ancestors.last().map(|p| matches!(p.0.kind(), "signature" | "function_signature" | "method_signature")).unwrap_or(false);
-            if let (Some(&top), false) = (def_stack.last(), in_signature) {
-                if let Some(c) = callee_name(node, call.field, src) {
+            let in_head = !heads.is_empty() && (heads.contains(&node.id()) || ancestors.iter().any(|(a, _)| heads.contains(&a.id())));
+            if let (Some(&top), false) = (def_stack.last(), in_signature || in_head) {
+                if let Some(c) = callee_name(node, call.field, src).filter(|c| !call.skip.contains(&c.as_str())) {
                     chunks[top].calls.insert(c);
                 }
                 if t == "macro_invocation" && spec.id == "rust" {

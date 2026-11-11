@@ -12,6 +12,7 @@ public:
     virtual T area() const = 0;
 };
 struct Point { double x, y; };
+Point origin();
 double dist(const Point& a, const Point& b) { return std::sqrt(a.x * b.x); }
 }
 int main() { geo::Point p{1, 2}; return geo::dist(p, p) > 0; }
