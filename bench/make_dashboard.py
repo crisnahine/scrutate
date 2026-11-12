@@ -17,6 +17,9 @@ import math
 import os
 import sys
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools"))
+import gen_assets as G  # noqa: E402  (the design tokens)
+
 # the runs carry no timestamp; this is the order they were measured in (superseded/README.md)
 HISTORY = ["leaderboard-warm-prelim", "leaderboard-warm-blocks", "leaderboard-warm-prevbin", "leaderboard-warm-eeab",
            "leaderboard-warm-a82a", "leaderboard-warm-9da7-partial", "indexed-eeab", "leaderboard-warm-fb5c", "leaderboard-cold-fb5c",
@@ -151,17 +154,17 @@ def section(platform, kind, runs):
     return "\n".join(o)
 
 
-CSS = """
-:root{--bg:#fcfcfb;--ink:#0b0b0b;--muted:#5f5e58;--grid:#e1e0d9;--axis:#c3c2b7;--pass:#0ca30c;--partial:#fab219;
---blocked:#8a8980;--fail:#d03b3b;--card:#f3f2ee}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1a1a19;--ink:#ecebe6;--muted:#a3a29a;
---grid:#2c2c2a;--axis:#55544f;--blocked:#8f8e86;--card:#232321}}
-:root[data-theme="dark"]{--bg:#1a1a19;--ink:#ecebe6;--muted:#a3a29a;--grid:#2c2c2a;--axis:#55544f;--blocked:#8f8e86;--card:#232321}
+# The page is one ink panel in both themes, as the README's panels are; the tokens are those of tools/gen_assets.py.
+_ON = G.ON["ink"]
+CSS = (f":root{{--bg:{G.INK};--ink:{G.PAPER};--muted:{_ON['dim']};--grid:{_ON['rule']};--axis:{_ON['dim']};"
+       f"--pass:{G.MARK};--partial:{G.PAPER};--blocked:{_ON['dim']};--fail:{G.ALERT};--card:{_ON['rule']};--mono:{G.MONO}}}") + """
 *{box-sizing:border-box}
 body{margin:0;padding:16px;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
 main{max-width:980px;margin:0 auto}
-h1{font-size:1.5rem;margin:.2em 0}h2{font-size:1.15rem;margin:2em 0 .4em;border-bottom:1px solid var(--grid);padding-bottom:.3em}
-h3{font-size:1rem;margin:1.4em 0 .4em}
+h1,h2,h3{font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em}
+h1{font-size:1.5rem;margin:.2em 0}h2{font-size:1.05rem;margin:2.4em 0 .4em;border-bottom:1px solid var(--grid);padding-bottom:.4em}
+h2::before{content:"// ";color:var(--muted)}
+h3{font-size:.8rem;margin:1.6em 0 .4em;color:var(--muted)}
 .note,.runs,.legend{color:var(--muted);font-size:.88rem}
 code{font-size:.85em;overflow-wrap:anywhere}
 .legend span{margin-right:1em;white-space:nowrap}
@@ -173,8 +176,7 @@ border-bottom:1px solid var(--grid)}
 .seg{border-radius:3px}
 .seg.pass,.tag.pass{background:var(--pass)}.seg.partial,.tag.partial{background:var(--partial)}
 .seg.blocked,.tag.blocked{background:var(--blocked)}.seg.fail,.tag.fail{background:var(--fail)}
-.tag{display:inline-block;min-width:1.4em;text-align:center;border-radius:4px;color:#fff;font-weight:600;font-size:.75rem}
-.tag.partial{color:#0b0b0b}
+.tag{display:inline-block;min-width:1.4em;text-align:center;border-radius:4px;color:var(--bg);font-weight:600;font-size:.75rem}
 .strip{height:64px;width:auto;max-width:100%;display:block}
 .strip .one{stroke:var(--axis);stroke-width:1;stroke-dasharray:3 3}
 .strip .hit{fill:transparent}
