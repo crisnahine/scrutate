@@ -98,6 +98,20 @@ struct TsPaths {
     base: Option<String>,
     /// `paths`: a pattern (`@lib/*`) and the places it stands for (`src/lib/*`)
     aliases: Vec<(String, Vec<String>)>,
+    /// the folder of the config that sets `paths`, which its places are relative to without a `baseUrl`
+    paths_dir: String,
+}
+
+impl TsPaths {
+    /// The places of `paths` as repository paths: relative to the `baseUrl` the merged configs end
+    /// with, inherited or not, else to the folder of the config that sets them.
+    fn joined(mut self) -> TsPaths {
+        let at = self.base.clone().unwrap_or_else(|| self.paths_dir.clone());
+        for (_, places) in &mut self.aliases {
+            *places = places.iter().map(|p| join(&at, p)).collect();
+        }
+        self
+    }
 }
 
 /// What a `package.json` of the repository says about the file an import of its name opens.
@@ -2298,8 +2312,10 @@ impl<'a> Resolver<'a> {
         let mut dir = dir_of(from).to_string();
         loop {
             if !self.ts.contains_key(&dir) {
-                let found =
-                    ["tsconfig.json", "jsconfig.json"].iter().find_map(|name| ts_config(&self.ix.root, &join(&dir, name), 0, &mut HashMap::new())).map(Rc::new);
+                let found = ["tsconfig.json", "jsconfig.json"]
+                    .iter()
+                    .find_map(|name| ts_config(&self.ix.root, &join(&dir, name), 0, &mut HashMap::new()))
+                    .map(|c| Rc::new(c.joined()));
                 self.ts.insert(dir.clone(), found);
             }
             if let Some(found) = &self.ts[&dir] {
@@ -2493,7 +2509,8 @@ impl<'a> Resolver<'a> {
 const DECLARATIONS: [&str; 3] = [".d.ts", ".d.mts", ".d.cts"];
 
 /// `baseUrl` and `paths` of the config at `path`; what it does not set comes from the configs it
-/// extends by a relative path, a later one of an `extends` list winning. None when neither is set anywhere.
+/// extends by a relative path, a later one of an `extends` list winning. The places of `paths` are
+/// as written (`TsPaths::joined`). None when neither is set anywhere.
 fn ts_config(root: &std::path::Path, path: &str, depth: usize, memo: &mut HashMap<(String, usize), Option<TsPaths>>) -> Option<TsPaths> {
     let key = (path.to_string(), depth);
     if let Some(r) = memo.get(&key) {
@@ -2508,11 +2525,9 @@ fn ts_config_read(root: &std::path::Path, path: &str, depth: usize, memo: &mut H
     let text = repo_text(root, path)?;
     let v: serde_json::Value = serde_json::from_str(&plain_json(&text)).ok()?;
     let (dir, options) = (dir_of(path), &v["compilerOptions"]);
-    let mut out = TsPaths { base: options["baseUrl"].as_str().map(|b| join(dir, b)), aliases: Vec::new() };
-    // the places are relative to `baseUrl`, or to the config when it sets none
-    let at = out.base.clone().unwrap_or_else(|| dir.to_string());
+    let mut out = TsPaths { base: options["baseUrl"].as_str().map(|b| join(dir, b)), aliases: Vec::new(), paths_dir: dir.to_string() };
     for (pattern, places) in options["paths"].as_object().into_iter().flatten() {
-        let places = places.as_array().into_iter().flatten().filter_map(|p| p.as_str()).map(|p| join(&at, p)).collect();
+        let places = places.as_array().into_iter().flatten().filter_map(|p| p.as_str()).map(String::from).collect();
         out.aliases.push((pattern.clone(), places));
     }
     let parents: Vec<&str> = match &v["extends"] {
@@ -2526,13 +2541,13 @@ fn ts_config_read(root: &std::path::Path, path: &str, depth: usize, memo: &mut H
         if let Some(p) = ts_config(root, &parent, depth + 1, memo) {
             inherited.base = p.base.or(inherited.base);
             if !p.aliases.is_empty() {
-                inherited.aliases = p.aliases;
+                (inherited.aliases, inherited.paths_dir) = (p.aliases, p.paths_dir);
             }
         }
     }
     out.base = out.base.or(inherited.base);
     if out.aliases.is_empty() {
-        out.aliases = inherited.aliases;
+        (out.aliases, out.paths_dir) = (inherited.aliases, inherited.paths_dir);
     }
     (out.base.is_some() || !out.aliases.is_empty()).then_some(out)
 }

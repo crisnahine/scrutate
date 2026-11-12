@@ -1105,6 +1105,45 @@ fn a_tsconfig_extends_list_is_read_in_order_with_the_later_one_winning() {
     }
 }
 
+#[test]
+fn tsconfig_paths_are_relative_to_the_final_base_url_after_extends() {
+    let main = "import { helper } from \"@lib/util\";\n\nexport function run(): number {\n  return helper();\n}\n";
+    let lib = "export function helper(): number {\n  return 2;\n}\n";
+    let paths = "\"paths\": { \"@lib/*\": [\"libs/lib/src/*\"] }";
+    let (base_url, base_paths) = (r#"{ "compilerOptions": { "baseUrl": "." } }"#.to_string(), format!("{{ \"compilerOptions\": {{ {paths} }} }}"));
+    let both = format!("{{ \"compilerOptions\": {{ \"baseUrl\": \".\", {paths} }} }}");
+    let child = |extends: &str, options: &str| format!("{{ \"extends\": {extends}, \"compilerOptions\": {{ {options} }} }}");
+    let cases = [
+        // the base sets `baseUrl`, the child `paths`: the places are relative to the base's folder
+        (base_url.clone(), child("\"../../tsconfig.base.json\"", paths), "libs/lib/src/util.ts"),
+        // the base sets `paths`, the child `baseUrl`: relative to the child's `baseUrl`
+        (base_paths.clone(), child("\"../../tsconfig.base.json\"", "\"baseUrl\": \".\""), "apps/web/libs/lib/src/util.ts"),
+        // the child overrides the base's `baseUrl`
+        (both, child("\"../../tsconfig.base.json\"", "\"baseUrl\": \"src\""), "apps/web/src/libs/lib/src/util.ts"),
+        // one base of a list sets `baseUrl`, the other `paths`
+        (base_url, child("[\"../../tsconfig.base.json\", \"../../configs/paths.json\"]", ""), "libs/lib/src/util.ts"),
+        // no `baseUrl` anywhere: relative to the config that sets `paths`
+        (base_paths, child("\"../../configs/paths.json\"", ""), "configs/libs/lib/src/util.ts"),
+    ];
+    for (base, web, want) in cases {
+        let r = Repo::new(
+            "tsbaseurl",
+            &[
+                ("tsconfig.base.json", &base),
+                ("configs/paths.json", &format!("{{ \"compilerOptions\": {{ {paths} }} }}")),
+                ("apps/web/tsconfig.json", &web),
+                ("apps/web/main.ts", main),
+                ("libs/lib/src/util.ts", lib),
+                ("apps/web/libs/lib/src/util.ts", lib),
+                ("apps/web/src/libs/lib/src/util.ts", lib),
+                ("configs/libs/lib/src/util.ts", lib),
+            ],
+        );
+        let uses: Vec<(String, String)> = r.resolved("helper").into_iter().filter(|(at, _)| at.starts_with("apps/web/main")).collect();
+        assert_eq!(uses, pairs(&[("apps/web/main.ts:1", want), ("apps/web/main.ts:4", want)]), "{base} {web}");
+    }
+}
+
 /// The answer of the language server to one request on `rel` at (0-based) `line` and `character`.
 fn lsp_answer(r: &Repo, method: &str, rel: &str, line: u32, character: u32) -> String {
     let uri = format!("file://{}", r.root.join(rel).display());
