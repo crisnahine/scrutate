@@ -30,7 +30,8 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct DirEntry {
     dent: DirEntryInner,
-    err: Option<Error>,
+    // boxed: every entry waiting in a walk's queue carries this field
+    err: Option<Box<Error>>,
 }
 
 impl DirEntry {
@@ -96,7 +97,7 @@ impl DirEntry {
     /// file. Errors related to traversing a directory tree itself are reported
     /// as part of yielding the directory entry, and not with this method.
     pub fn error(&self) -> Option<&Error> {
-        self.err.as_ref()
+        self.err.as_deref()
     }
 
     /// Returns true if and only if this entry points to a directory.
@@ -109,11 +110,11 @@ impl DirEntry {
     }
 
     fn new_walkdir(dent: walkdir::DirEntry, err: Option<Error>) -> DirEntry {
-        DirEntry { dent: DirEntryInner::Walkdir(dent), err }
+        DirEntry { dent: DirEntryInner::Walkdir(dent), err: err.map(Box::new) }
     }
 
     fn new_raw(dent: DirEntryRaw, err: Option<Error>) -> DirEntry {
-        DirEntry { dent: DirEntryInner::Raw(dent), err }
+        DirEntry { dent: DirEntryInner::Raw(dent), err: err.map(Box::new) }
     }
 }
 
@@ -1276,7 +1277,7 @@ impl Iterator for Walk {
                         self.ig.add_child(ent.path())
                     };
                     self.ig = igtmp;
-                    ent.err = err;
+                    ent.err = err.map(Box::new);
                     return Some(Ok(ent));
                 }
                 Ok(WalkEvent::File(ent)) => {
@@ -1650,7 +1651,7 @@ impl Work {
     fn add_ignore(&mut self) {
         let (ig, err) = self.ignore.add_child(self.dent.path());
         self.ignore = ig;
-        self.dent.err = err;
+        self.dent.err = err.map(Box::new);
     }
 
     /// Reads the directory contents of this work item and adds ignore
@@ -1686,13 +1687,12 @@ impl Work {
             .ignore
             .add_child_with_entries(self.dent.path(), &result.entries);
         self.ignore = ig;
-        self.dent.err = err;
+        self.dent.err = err.map(Box::new);
         Ok(result)
     }
 }
 
 /// A work-stealing stack.
-#[derive(Debug)]
 struct Stack {
     /// This thread's index.
     index: usize,
@@ -1700,6 +1700,9 @@ struct Stack {
     deque: Deque<Message>,
     /// The work stealers.
     stealers: Arc<[Stealer<Message>]>,
+    /// The one stack of a walk on one thread, used instead of `deque`: a
+    /// deque keeps the buffers it outgrew until its epoch moves on.
+    alone: Option<std::cell::RefCell<Vec<Message>>>,
 }
 
 impl Stack {
@@ -1728,6 +1731,8 @@ impl Stack {
                 index,
                 deque,
                 stealers: stealers.clone(),
+                alone: (threads + spare == 1)
+                    .then(|| std::cell::RefCell::new(Vec::new())),
             })
             .collect();
         // Distribute the initial messages, reverse the order to cancel out
@@ -1742,11 +1747,23 @@ impl Stack {
 
     /// Push a message.
     fn push(&self, msg: Message) {
-        self.deque.push(msg);
+        match &self.alone {
+            Some(v) => v.borrow_mut().push(msg),
+            None => self.deque.push(msg),
+        }
     }
 
     /// Pop a message.
     fn pop(&self) -> Option<Message> {
+        if let Some(v) = &self.alone {
+            let mut v = v.borrow_mut();
+            let m = v.pop();
+            if v.capacity() > 64 && v.len() < v.capacity() / 4 {
+                let half = v.capacity() / 2;
+                v.shrink_to(half);
+            }
+            return m;
+        }
         self.deque.pop().or_else(|| self.steal())
     }
 
