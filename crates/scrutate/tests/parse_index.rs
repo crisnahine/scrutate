@@ -753,6 +753,30 @@ fn many_top_level_calls_parse_in_linear_time() {
 }
 
 #[test]
+fn chains_of_calls_parse_in_linear_time() {
+    let shapes: [(&str, &str, &str, &str, &str); 9] = [
+        ("a.js", "", "a", "()", ";\n"),
+        ("a.js", "", "x", ".a()", ";\n"),
+        ("a.py", "", "a", "()", "\n"),
+        ("a.py", "", "x", ".a()", "\n"),
+        ("a.rs", "fn f() { ", "a", "()", "; }\n"),
+        ("a.rs", "fn f() { ", "x", ".a()", "; }\n"),
+        ("a.cpp", "void f() { ", "a", "()", "; }\n"),
+        ("a.cpp", "void f() { ", "x", ".a()", "; }\n"),
+        ("a.php", "<?php\n", "\\A\\b", "()", ";\n"),
+    ];
+    for (path, open, head, link, close) in shapes {
+        let make = move |n: usize| format!("{open}{head}{}{close}", link.repeat(n));
+        assert_parse_scales_linearly(path, 4000, make, move |_, chunks| {
+            let name = if link == "()" { head.rsplit('\\').next().unwrap() } else { "a" };
+            assert!(chunks.iter().any(|c| c.calls.contains(name)), "{path} {head}{link}");
+        });
+    }
+    let make = |n: usize| format!("x := {}{}\n", "$(call f,".repeat(n), ")".repeat(n));
+    assert_parse_scales_linearly("Makefile", 16000, make, |_, chunks| assert!(chunks.iter().any(|c| c.calls.contains("f"))));
+}
+
+#[test]
 fn nested_php_includes_and_c_includes_parse_in_linear_time() {
     for word in ["include", "require_once"] {
         let make = move |n: usize| format!("<?php\n{}'x.php';\n", format!("{word} ").repeat(n));

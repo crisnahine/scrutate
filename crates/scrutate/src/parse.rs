@@ -677,7 +677,36 @@ fn txt(src: &[u8], a: usize, b: usize) -> String {
 /// A Lisp symbol in call position: one name whatever it holds (`list->vec`, `set-car!`, `empty?`).
 static LISP_SYMBOL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"^[^\s()\[\]{}"'`,;#\d][^\s()\[\]{}"'`,;]*"#).unwrap());
 
-fn callee_name(lang: &str, node: Node, field: &str, src: &[u8]) -> Option<String> {
+/// One file's source and, per separator a call target is cut at, the start of each of its
+/// occurrences in the file, overlapping ones too: a call target holds every call before it in a
+/// chain, so looking for the last separator in its whole text would make a chain quadratic.
+struct Seps<'s> {
+    src: &'s str,
+    found: Vec<(&'static str, Vec<usize>)>,
+}
+
+impl<'s> Seps<'s> {
+    fn new(src: &'s str) -> Self {
+        Seps { src, found: Vec::new() }
+    }
+
+    /// Where `src[s..e].rfind(sep)` finds `sep`, as an offset in `src`.
+    fn last_in(&mut self, sep: &'static str, s: usize, e: usize) -> Option<usize> {
+        let at = match self.found.iter().position(|(k, _)| *k == sep) {
+            Some(at) => at,
+            None => {
+                let b = sep.as_bytes();
+                self.found.push((sep, self.src.as_bytes().windows(b.len()).enumerate().filter(|(_, w)| *w == b).map(|(i, _)| i).collect()));
+                self.found.len() - 1
+            }
+        };
+        let list = &self.found[at].1;
+        list[..list.partition_point(|&p| p + sep.len() <= e)].last().copied().filter(|&p| p >= s)
+    }
+}
+
+fn callee_name(lang: &str, node: Node, field: &str, seps: &mut Seps) -> Option<String> {
+    let src = seps.src.as_bytes();
     let mut target =
         if field.is_empty() { None } else { node.child_by_field_name(field).or_else(|| node.children(&mut node.walk()).find(|c| c.kind() == field)) };
     if target.is_none() && node.named_child_count() > 0 {
@@ -688,11 +717,12 @@ fn callee_name(lang: &str, node: Node, field: &str, src: &[u8]) -> Option<String
         // `$(call g,1)` calls `g`; `$(subst ...)` and the other built-ins are no calls
         ("make", "function_call") => {
             let f = node.child_by_field_name("function")?;
-            if txt(src, f.start_byte(), f.end_byte()) != "call" {
+            if src.get(f.start_byte()..f.end_byte()) != Some(&b"call"[..]) {
                 return None;
             }
-            let args = txt(src, target.start_byte(), target.end_byte());
-            return IDENT_START.find(args.split(',').next()?.trim()).map(|m| m.as_str().to_string());
+            // the name ends before a comma or a space, so the arguments after the first need no split
+            let args = seps.src.get(target.start_byte()..target.end_byte())?;
+            return IDENT_START.find(args.trim_start()).map(|m| m.as_str().to_string());
         }
         ("make", "raw_text") => return None,
         ("verilog", "data_declaration") => {
@@ -728,31 +758,34 @@ fn callee_name(lang: &str, node: Node, field: &str, src: &[u8]) -> Option<String
         let name = if lang == "commonlisp" { name.rsplit(':').next().unwrap_or(name) } else { name };
         return name.chars().any(char::is_alphabetic).then(|| name.to_string());
     }
-    let mut t = txt(src, target.start_byte(), target.end_byte());
+    // the target's text is cut by moving its start; only its two ends are read
+    let (mut s, e) = (target.start_byte(), target.end_byte());
+    let t = seps.src.get(s..e)?;
     if lang == "cpp" {
         // `a.operator+(b)` parses as a call of `a` with `.operator+` in an error node
-        let lost = node.children(&mut node.walk()).find(|c| c.is_error()).map(|c| txt(src, c.start_byte(), c.end_byte()));
-        if let Some(name) = cpp_operator_or_destructor(lost.as_deref().filter(|l| l.contains("operator")).unwrap_or(&t)) {
+        let lost = node.children(&mut node.walk()).find(|c| c.is_error()).map(|c| (c.start_byte(), c.end_byte()));
+        let (a, b) = lost.filter(|&(a, b)| seps.last_in("operator", a, b).is_some()).unwrap_or((s, e));
+        if let Some(name) = cpp_operator_or_destructor(seps, a, b) {
             return Some(name);
         }
     }
     // D and Solidity `new Point(1, 2)` is a call whose callee is `new Point`
     if let Some(rest) = t.strip_prefix("new").filter(|r| r.starts_with(char::is_whitespace)) {
-        t = rest.trim_start().to_string();
+        s = e - rest.trim_start().len();
     }
     // a dot is part of an R name and `::` part of a Bash one
-    let seps: &[&str] = match lang {
+    let cuts: &[&'static str] = match lang {
         "r" => &["::", "->"],
         "bash" => &["->"],
         "php" => &["::", ".", "->", "\\"],
         _ => &["::", ".", "->"],
     };
-    for sep in seps {
-        if let Some(i) = t.rfind(sep) {
-            t = t[i + sep.len()..].to_string();
+    for sep in cuts {
+        if let Some(i) = seps.last_in(sep, s, e) {
+            s = i + sep.len();
         }
     }
-    let t = t.trim().trim_start_matches('@');
+    let t = seps.src[s..e].trim().trim_start_matches('@');
     // a `!` is cut for a Rust macro; in Ruby, Elixir and Julia it ends the name
     let t = if matches!(lang, "ruby" | "elixir" | "julia") { t } else { t.trim_end_matches('!') };
     // a JavaScript private method is named with its `#`
@@ -768,16 +801,18 @@ fn callee_name(lang: &str, node: Node, field: &str, src: &[u8]) -> Option<String
     name_rule(lang).find(t).map(|m| m.as_str().to_string())
 }
 
-/// `operator==` or `~Shape` at the end of a C++ call target, as their definitions are named.
-fn cpp_operator_or_destructor(t: &str) -> Option<String> {
+/// `operator==` or `~Shape` at the end of the C++ call target `s..e`, as their definitions are named.
+fn cpp_operator_or_destructor(seps: &mut Seps, s: usize, e: usize) -> Option<String> {
+    let src = seps.src;
     let word = |c: char| c.is_alphanumeric() || c == '_';
-    if let Some(i) = t.rfind("operator").filter(|&i| !t[..i].ends_with(word)) {
-        let op: String = t[i + "operator".len()..].split_whitespace().collect();
+    if let Some(i) = seps.last_in("operator", s, e).filter(|&i| !src[s..i].ends_with(word)) {
+        let op: String = src[i + "operator".len()..e].split_whitespace().collect();
         if !op.is_empty() && op.chars().all(|c| c.is_ascii_punctuation()) {
             return Some(format!("operator{op}"));
         }
     }
-    let tail = t.rsplit(['.', ':', '>']).next()?.trim();
+    let after = [".", ":", ">"].into_iter().filter_map(|c| seps.last_in(c, s, e)).max().map_or(s, |p| p + 1);
+    let tail = src[after..e].trim();
     IDENT_START.find(tail.strip_prefix('~')?).map(|m| format!("~{}", m.as_str()))
 }
 
@@ -1234,8 +1269,8 @@ fn imports_of(node: Node, spec: &LangSpec, src: &[u8], out: &mut Vec<(i64, Strin
             if node.child_by_field_name("receiver").is_some() {
                 continue; // Ruby `YAML.load(...)` is a method call, not `load`
             }
-            let ht = txt(src, h.start_byte(), h.end_byte());
-            if !rule.when_head.contains(&ht.as_str()) {
+            let ht = &src[h.start_byte().min(src.len())..h.end_byte().min(src.len())];
+            if !rule.when_head.iter().any(|w| w.as_bytes() == ht) {
                 continue;
             }
         }
@@ -1679,6 +1714,7 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
     let mut pos: Vec<usize> = Vec::new();
     // indexes in `ancestors` of those that are no `#if` or include guard: no scope of their own
     let mut scopes: Vec<usize> = Vec::new();
+    let mut seps = Seps::new(source);
     while let Some((node, exiting, pushed, at)) = stack.pop() {
         if exiting {
             ancestors.pop();
@@ -1860,7 +1896,7 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
                 let callee = match (spec.id, t, ancestors.last()) {
                     ("jsonnet", _, Some((_, siblings))) => sibling_callee(siblings, at, src),
                     ("vhdl", _, Some((p, _))) => vhdl_callee(node, *p, src),
-                    _ => callee_name(spec.id, node, call.field, src),
+                    _ => callee_name(spec.id, node, call.field, &mut seps),
                 };
                 if let Some(c) = callee.filter(|c| !call.skip.contains(&c.as_str())) {
                     calls.insert(c);
@@ -2288,6 +2324,110 @@ pub fn parse_source(path: &str, source: &str) -> Vec<Chunk> {
 mod tests {
     use super::*;
 
+    /// The callee rule as it was before it worked on offsets: it copies the target's whole text.
+    fn callee_name_by_whole_text(lang: &str, node: Node, field: &str, src: &[u8]) -> Option<String> {
+        let mut target =
+            if field.is_empty() { None } else { node.child_by_field_name(field).or_else(|| node.children(&mut node.walk()).find(|c| c.kind() == field)) };
+        if target.is_none() && node.named_child_count() > 0 {
+            target = node.named_child(0);
+        }
+        let mut target = target?;
+        match (lang, node.kind()) {
+            // `$(call g,1)` calls `g`; `$(subst ...)` and the other built-ins are no calls
+            ("make", "function_call") => {
+                let f = node.child_by_field_name("function")?;
+                if txt(src, f.start_byte(), f.end_byte()) != "call" {
+                    return None;
+                }
+                let args = txt(src, target.start_byte(), target.end_byte());
+                return IDENT_START.find(args.split(',').next()?.trim()).map(|m| m.as_str().to_string());
+            }
+            ("make", "raw_text") => return None,
+            ("verilog", "data_declaration") => {
+                // only the typeless declaration that an ERROR holding the arguments follows is a call
+                let next = target.next_named_sibling();
+                let args = next.filter(|n| n.kind() == "ERROR" && src.get(n.start_byte()) == Some(&b'('));
+                if node.child(0) != Some(target) || target.kind() != "list_of_variable_decl_assignments" || target.named_child_count() != 1 || args.is_none() {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+        if target.kind() == "method_index_expression" {
+            // Lua `obj:meth(x)` calls `meth`
+            target = target.child_by_field_name("method")?;
+        }
+        if target.kind() == "generic_function" {
+            // `f::<T>(x)`: the name is before the turbofish
+            target = target.child_by_field_name("function")?;
+        }
+        if target.kind() == "extract_operator" {
+            // R `obj$meth(x)` calls `meth`
+            target = target.child_by_field_name("rhs")?;
+        }
+        if matches!(lang, "scheme" | "racket" | "elisp" | "commonlisp") {
+            // the symbol ends at a space or a bracket: a deep nested form's whole text is not copied
+            let s = &src[target.start_byte().min(src.len())..target.end_byte().min(src.len())];
+            let lead = s.iter().take_while(|b| b.is_ascii_whitespace()).count();
+            let end = s[lead..].iter().position(|b| b.is_ascii_whitespace() || b"()[]{}\"'`,;".contains(b)).map_or(s.len(), |i| lead + i);
+            let t = String::from_utf8_lossy(&s[..end]);
+            // an operator such as `-` or `<=` is not a name; a Common Lisp package prefix is not part of it
+            let name = LISP_SYMBOL.find(t.trim())?.as_str();
+            let name = if lang == "commonlisp" { name.rsplit(':').next().unwrap_or(name) } else { name };
+            return name.chars().any(char::is_alphabetic).then(|| name.to_string());
+        }
+        let mut t = txt(src, target.start_byte(), target.end_byte());
+        if lang == "cpp" {
+            // `a.operator+(b)` parses as a call of `a` with `.operator+` in an error node
+            let lost = node.children(&mut node.walk()).find(|c| c.is_error()).map(|c| txt(src, c.start_byte(), c.end_byte()));
+            if let Some(name) = cpp_operator_or_destructor_by_whole_text(lost.as_deref().filter(|l| l.contains("operator")).unwrap_or(&t)) {
+                return Some(name);
+            }
+        }
+        // D and Solidity `new Point(1, 2)` is a call whose callee is `new Point`
+        if let Some(rest) = t.strip_prefix("new").filter(|r| r.starts_with(char::is_whitespace)) {
+            t = rest.trim_start().to_string();
+        }
+        // a dot is part of an R name and `::` part of a Bash one
+        let seps: &[&str] = match lang {
+            "r" => &["::", "->"],
+            "bash" => &["->"],
+            "php" => &["::", ".", "->", "\\"],
+            _ => &["::", ".", "->"],
+        };
+        for sep in seps {
+            if let Some(i) = t.rfind(sep) {
+                t = t[i + sep.len()..].to_string();
+            }
+        }
+        let t = t.trim().trim_start_matches('@');
+        // a `!` is cut for a Rust macro; in Ruby, Elixir and Julia it ends the name
+        let t = if matches!(lang, "ruby" | "elixir" | "julia") { t } else { t.trim_end_matches('!') };
+        // a JavaScript private method is named with its `#`
+        if let Some(private) = t.strip_prefix('#').filter(|_| matches!(lang, "javascript" | "typescript" | "tsx")) {
+            return IDENT_START.find(private).map(|m| format!("#{}", m.as_str()));
+        }
+        let t = if lang == "rust" { t.strip_prefix("r#").unwrap_or(t) } else { t };
+        // Julia `==(a, b)` and `Base.:(==)(a, b)` call the operator a method definition names
+        let op = t.trim_start_matches(':').trim_start_matches('(').trim_end_matches(')');
+        if lang == "julia" && !op.is_empty() && op.chars().all(|c| c.is_ascii_punctuation()) {
+            return Some(op.to_string());
+        }
+        name_rule(lang).find(t).map(|m| m.as_str().to_string())
+    }
+
+    fn cpp_operator_or_destructor_by_whole_text(t: &str) -> Option<String> {
+        let word = |c: char| c.is_alphanumeric() || c == '_';
+        if let Some(i) = t.rfind("operator").filter(|&i| !t[..i].ends_with(word)) {
+            let op: String = t[i + "operator".len()..].split_whitespace().collect();
+            if !op.is_empty() && op.chars().all(|c| c.is_ascii_punctuation()) {
+                return Some(format!("operator{op}"));
+            }
+        }
+        let tail = t.rsplit(['.', ':', '>']).next()?.trim();
+        IDENT_START.find(tail.strip_prefix('~')?).map(|m| format!("~{}", m.as_str()))
+    }
+
     #[test]
     fn python_chunks() {
         let src = "\"\"\"Mod doc.\"\"\"\nimport os\n\n\nclass A:\n    \"\"\"Doc A.\"\"\"\n\n    def m(self, x):\n        '''Do m.\n\n        more'''\n        return os.path.join(x)\n\n\ndef f():\n    return A().m(1)\n";
@@ -2381,5 +2521,83 @@ mod tests {
         for c in parse_source("g.py", src) {
             assert!(c.end <= total, "{} {}..{} of {total}", c.name, c.start, c.end);
         }
+    }
+
+    type Difference = (String, Option<String>, Option<String>);
+
+    /// Names the offset rule gives that differ from the whole-text rule, for every node of `source`
+    /// handed to it with each call field of the language and with none, and how many names they share.
+    fn callee_differences(path: &str, source: &str) -> (usize, Vec<Difference>) {
+        let Some(spec) = spec_for(path, source) else { return (0, Vec::new()) };
+        let tree = parse_tree(spec, source, None).unwrap();
+        let mut fields: Vec<&str> = spec.calls.iter().map(|c| c.field).collect();
+        fields.push("");
+        let (mut seps, mut same, mut diffs) = (Seps::new(source), 0, Vec::new());
+        let mut stack = vec![tree.root_node()];
+        while let Some(node) = stack.pop() {
+            stack.extend(node.children(&mut node.walk()));
+            for &field in &fields {
+                let (new, old) = (callee_name(spec.id, node, field, &mut seps), callee_name_by_whole_text(spec.id, node, field, source.as_bytes()));
+                if new != old {
+                    diffs.push((format!("{path} {}", txt(source.as_bytes(), node.start_byte(), node.end_byte())), old, new));
+                } else {
+                    same += usize::from(new.is_some());
+                }
+            }
+        }
+        (same, diffs)
+    }
+
+    #[test]
+    fn callee_names_by_offsets_are_the_names_of_the_whole_text() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+        let mut dirs = vec![dir.join("samples")];
+        if cfg!(feature = "extra-langs") {
+            dirs.push(dir.join("samples_extra"));
+        }
+        let mut files: Vec<(String, String)> = Vec::new();
+        for d in dirs {
+            for e in std::fs::read_dir(d).unwrap() {
+                let p = e.unwrap().path();
+                files.push((p.file_name().unwrap().to_string_lossy().into_owned(), std::fs::read_to_string(&p).unwrap()));
+            }
+        }
+        let chain = |head: &str, link: &str| format!("{head}{}", link.repeat(40));
+        let shapes: Vec<(&str, String)> = vec![
+            ("a.js", format!("{};\n{};\n{};\nnew X(1);\nnew  \n Y.Z(2);\na(b.c)();\na.b(c.d)(e.f);\nthis.#p();\nthis.#q.r();\nobj?.m();\nnaïve.mé();\n$a.$b();\nx.();\nnew ();\n(a.b)();\n", chain("a", "()"), chain("x", ".a()"), chain("x", "?.a()"))),
+            ("a.ts", format!("{};\nf<T>(x);\na.b<T>().c();\n", chain("x", ".a()"))),
+            ("a.py", format!("{}\n{}\nf(b.c)()\nnaïve()\nx.y.z(1)\n", chain("a", "()"), chain("x", ".a()"))),
+            ("a.rs", format!("fn f() {{ {}; {}; a::b::c(); r#match(); println!(\"x\"); f::<T>(x); a:::b(); self.f()(); a::<T>::b(); x.r#try(); }}\n", chain("a", "()"), chain("x", ".a()"))),
+            ("a.go", format!("package a\nfunc f() {{ {}; {}; fmt.Println(1); a.b.c() }}\n", chain("a", "()"), chain("x", ".a()"))),
+            ("A.java", format!("class A {{ void f() {{ {}; new B(); a.b.c(); this.<T>m(); }} }}\n", chain("x", ".a()"))),
+            ("a.cpp", format!("void f() {{ {}; {}; a.operator+(b); p->~Shape(); x.operator()(1); operator<<(o, x); a::b::c(); p->q->r(); A::~A(); x.operator==(y); std::operator<<(o, x); a::operator new(1); x.template f<T>(); }}\n", chain("a", "()"), chain("x", ".a()"))),
+            ("a.c", format!("void f() {{ {}; p->q(); s.f(); }}\n", chain("a", "()"))),
+            ("a.d", "void f() { auto p = new Point(1, 2); a.b(); }\n".to_string()),
+            ("a.sol", "contract C { function f() public { new D(1); a.b(); } }\n".to_string()),
+            ("Makefile", "x := $(call f,$(call g,1),2)\ny := $(call  h ,x)\nz := $(call\tk)\n$(info $(call m))\nw := $(subst a,b,$(call n,1))\nv := $(call , x)\n".to_string()),
+            ("a.php", format!("<?php\n\\A\\b();\nA::b();\n$a->b();\n{};\na\\b\\c();\nA::b()::c();\n$a::b();\n", chain("$a", "->b()"))),
+            ("a.r", format!("a$b()\na.b()\npkg::f()\n{}\nx@y()\n", chain("x", "$a()"))),
+            ("a.sh", "a::b\nfoo-bar x\na.b c\n$x y\n".to_string()),
+            ("a.lua", format!("o:m()\na.b.c()\n{}\n", chain("o", ":m()"))),
+            ("a.lisp", "(foo (bar 1))\n(pkg:baz)\n(- 1 2)\n(list->vec x)\n(cl-user::f)\n".to_string()),
+            ("a.scm", "(foo (bar 1))\n(- 1 2)\n(list->vec x)\n(set-car! a b)\n(empty? x)\n".to_string()),
+            ("a.el", "(foo (bar 1))\n(my-f x)\n".to_string()),
+            ("a.jl", format!("==(a, b)\nBase.:(==)(a, b)\nf!(x)\nx.f()\n{}\n+(1, 2)\n", chain("a", "()"))),
+            ("a.rb", format!("a.b?\nx.y!\nfoo(1)\n@a.b\n{}\nA::B.c\n", chain("x", ".a"))),
+            ("a.ex", "a.b?()\nFoo.bar!(1)\nfoo(1)\n".to_string()),
+            ("a.kt", format!("fun f() {{ {}; a?.b() }}\n", chain("x", ".a()"))),
+            ("a.swift", format!("{}\n", chain("x", ".a()"))),
+            ("a.cs", format!("class A {{ void F() {{ {}; new B(); }} }}\n", chain("x", ".A()"))),
+            ("a.hs", "f = g x\nh = A.b c\n".to_string()),
+            ("a.ml", "let f = g x\nlet h = A.b c\n".to_string()),
+        ];
+        let (mut same, mut diffs) = (0, Vec::new());
+        for (path, source) in files.iter().map(|(p, s)| (p.as_str(), s.clone())).chain(shapes) {
+            let (n, d) = callee_differences(path, &source);
+            same += n;
+            diffs.extend(d);
+        }
+        assert!(same > 9_000, "{same} names compared");
+        assert!(diffs.is_empty(), "{diffs:#?}");
     }
 }
