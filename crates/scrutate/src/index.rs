@@ -1242,25 +1242,9 @@ impl Index {
         let progress = self.progress && std::io::IsTerminal::is_terminal(&std::io::stderr());
         let mut done = 0usize;
         let mut last_tick = Instant::now();
-        // only the last files parsed stay in the tree cache, so the others drop their tree at once
-        let mut keep_from = todo.len();
-        let mut kept = 0u64;
-        for (i, (rel, _)) in todo.iter().enumerate().rev() {
-            // a language that keeps no tree takes none of the cache
-            if !crate::parse::keeps_tree(rel) {
-                continue;
-            }
-            let n = std::fs::metadata(root.join(rel)).map(|m| m.len()).unwrap_or(0);
-            if n > TREE_CACHE_BYTES as u64 {
-                continue; // never cached
-            }
-            if kept + n > TREE_CACHE_BYTES as u64 {
-                break;
-            }
-            kept += n;
-            keep_from = i;
-        }
-        for (b, batch) in todo.chunks(256).enumerate() {
+        // the trees parsed first fill the cache, and the others are dropped at once, so the peak stays bounded
+        let room = std::sync::atomic::AtomicIsize::new(TREE_CACHE_BYTES as isize);
+        for batch in todo.chunks(256) {
             if self.cancel.load(std::sync::atomic::Ordering::Relaxed) {
                 anyhow::bail!("cancelled");
             }
@@ -1268,11 +1252,11 @@ impl Index {
             let results: Vec<(String, Processed)> = batch
                 .par_iter()
                 .zip(prevs)
-                .enumerate()
-                .map(|(i, ((rel, kh), prev))| {
+                .map(|((rel, kh), prev)| {
                     let mut res = process(&root, rel, kh.as_deref(), model.as_deref(), prev);
                     if let Processed::New(.., tree) = &mut res {
-                        if b * 256 + i < keep_from {
+                        let n = tree.as_ref().map_or(0, |t| t.source_len() as isize);
+                        if room.fetch_sub(n, std::sync::atomic::Ordering::Relaxed) < n {
                             *tree = None;
                         }
                     }
@@ -1787,6 +1771,44 @@ mod tests {
         drop(ix);
         let _ = std::fs::remove_dir_all(&root);
         assert_eq!(held, 20);
+    }
+
+    #[test]
+    fn the_tree_cache_counts_the_language_a_file_parses_as_and_only_files_that_are_parsed() {
+        let tree = |name: &str, extra: &dyn Fn(&std::path::Path)| {
+            let root = std::env::temp_dir().join(format!("scrutate_ix_trees_{name}_{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).unwrap();
+            for i in 0..20 {
+                std::fs::write(root.join(format!("a{i}.c")), format!("int f{i}(int x) {{ return x + {i}; }}\n")).unwrap();
+            }
+            extra(&root);
+            let mut ix = super::Index::open(&root, None).unwrap();
+            ix.update(false).unwrap();
+            let c_trees = ix.trees.keys().filter(|p| p.ends_with(".c")).count();
+            let peak = ix.trees_peak;
+            drop(ix);
+            let _ = std::fs::remove_dir_all(&root);
+            (c_trees, peak)
+        };
+        // C++ headers keep no tree, and a file over the size limit is not parsed at all
+        let cpp: String = (0..300).map(|i| format!("class C{i} {{ public: int f(); }};\n")).collect();
+        let (c_trees, _) = tree("cpp", &|root| {
+            for i in 0..300 {
+                std::fs::write(root.join(format!("z{i}.h")), &cpp).unwrap();
+            }
+            std::fs::write(root.join("zz.c"), "int g(void);\n".repeat(110_000)).unwrap();
+        });
+        assert_eq!(c_trees, 20);
+        // Objective-C `.m` files keep trees, within the bound
+        let objc: String = (0..300).map(|i| format!("- (int)f{i} {{ return {i}; }}\n")).collect();
+        let (c_trees, peak) = tree("objc", &|root| {
+            for i in 0..300 {
+                std::fs::write(root.join(format!("m{i}.m")), format!("@implementation M{i}\n{objc}@end\n")).unwrap();
+            }
+        });
+        assert!(peak <= super::TREE_CACHE_BYTES, "peak {peak}");
+        assert_eq!(c_trees, 20);
     }
 
     #[test]
