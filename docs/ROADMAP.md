@@ -79,14 +79,36 @@ docs/RELEASING.md, public, tag `v0.1.0`.
 
 ## Next
 
-- Small trees (a few hundred files), what is left: of a 3.6 ms search of a 211-file repository,
-  1.5 ms is the cost of starting any Rust program, and opening the files costs 8 µs each. Ruled
-  out by measurement: code-signature page size, the binary's pointer fix-ups, its size (0.05 to
-  0.2 ms at 85 MB), code layout (a linker order file putting the 979 functions a search runs
-  first: 585 page faults against 586), and waking idle walker threads through a condition
-  variable instead of short sleeps (slower: 3.9 ms against 3.7). Profile-guided optimisation
-  measured 2 to 3.5% on the 220-file tree; not adopted, since it needs a 13 MB profile in the
-  repository and in every release build.
+- Small trees and start-up, what is left. A search of a one-file directory runs fewer
+  instructions than GNU grep (17 M against 19 M) in the same CPU time and still touches 20 more
+  pages: 328 page reclaims and 2.6 MB of peak memory against 308 and 2.05 MB (a Rust
+  hello-world: 291 and 1.9 MB). Those pages are constants the linker cannot order by name
+  (anonymous tables, 12 pages), relocated data (6 pages) and the 64 KB line buffer the searcher
+  zeroes. Its wall time against GNU grep depends on the machine's load (1.87 ms against 1.97 ms
+  in steady runs; behind in interleaved blocks while other work runs), so the benchmark on an
+  idle machine settles it. Ruled out by measurement: code-signature page size, the binary's
+  pointer fix-ups, its size (0.07 ms at 85 MB in interleaved blocks; a file written minutes ago
+  costs 0.2 ms more), and waking idle walker threads through a condition variable instead of
+  short sleeps (slower: 3.9 ms against 3.7). A linker order file did nothing under ThinLTO (585
+  page faults against 586), because ld64 cannot place the functions ThinLTO promotes; with one
+  object it took 131 page reclaims out. Profile-guided optimisation measured 2 to 3.5% on the
+  220-file tree; not adopted, since it needs a 13 MB profile in the repository and in every
+  release build.
+- Peak memory against GNU grep. `-j1` holds less than ugrep and ripgrep on every tree and more
+  than GNU grep, a C program of 235 KB: 2.5 MB against 1.95 MB in a one-file directory, 3.3
+  against 2.3 on the ripgrep sources, 4.6 against 2.8 on py-big, 6.5 against 3.4 on the Linux
+  tree, 8.3 against 6.4 on LLVM (macOS). On a large tree what is left is mostly memory the
+  system allocator has freed and keeps (its per-CPU magazines: `MallocMaxMagazines=1` in the
+  environment takes 1.1 MB off the Linux tree, and a process cannot set it for itself), the
+  ignore matchers (1.2 MB on the Linux tree) and whole directories read at once. On a file of
+  one long line the line itself is held (103 MB for 100 MB), where ugrep streams it. The
+  default mode holds ordered output on one large file with many matches (23 MB); ranges of
+  2 MB in place of 8 MB halve that for 2.4 to 3.5% more instructions, which was not taken.
+- Linux has no function order. Of 5.8 MB resident at the start of a small search there, 3.5 MB
+  is the executable's text, spread over 85 MB with the kernel mapping 64 KB around every fault,
+  and 0.5 MB is data relocated at load. GNU ld in the build image has no option to order
+  functions; lld has one, and a linker script can list sections. Either needs the release
+  workflow to build with it, and that workflow has not run.
 - Large trees on macOS are bound by `open` (docs/ARCHITECTURE.md): the Linux tree takes 0.52 s to
   open and read on the five performance cores with no search at all, and a search takes 0.58 s.
   The benchmark corpora `linux` and `linux-nodot` shared files through hard links, which doubles
