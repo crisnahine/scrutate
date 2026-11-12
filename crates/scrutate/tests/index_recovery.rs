@@ -265,6 +265,23 @@ fn index_dir_deleted_under_an_open_repo_is_rebuilt_whole() {
     }
 }
 
+#[test]
+fn a_failed_compaction_after_an_update_keeps_the_update_and_its_statistics() {
+    let t = indexed_tree("compact_fails");
+    let counter: u32 = meta_of(&t.0, "seg_counter").unwrap().parse().unwrap();
+    // the update writes the next segment; the merge after it would write the one after that
+    fs::write(seg_dir(&t.0).join(format!("s{:06}", counter + 2)), "not a directory").unwrap();
+    fs::write(t.0.join("b.py"), "def beta():\n    return 2\n").unwrap();
+    let out = Command::new(BIN).arg("--root").arg(&t.0).args(["index", "--no-text"]).stdin(Stdio::null()).output().unwrap();
+    let (stdout, stderr) = (String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert_eq!(out.status.code(), Some(0), "{stdout}{stderr}");
+    assert!(stdout.contains("1 changed"), "{stdout}{stderr}");
+    assert!(stderr.contains("compaction failed"), "{stderr}");
+    assert_eq!(files_of(&t.0), ["a.py", "b.py"]);
+    let (code, err) = run(&t.0, &["symbol", "beta"]);
+    assert_eq!(code, 0, "{err}");
+}
+
 fn files_of(root: &Path) -> Vec<String> {
     let db = rusqlite::Connection::open(root.join(".scrutate/index.db")).unwrap();
     let mut q = db.prepare("SELECT path FROM files ORDER BY path").unwrap();

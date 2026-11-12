@@ -1124,7 +1124,19 @@ impl Index {
                 self.lex = None;
                 self.lex_ver = None;
             }
-            self.compact()?;
+            // the update is committed: a merge that fails leaves more segments, not a wrong index
+            match self.compact() {
+                Err(e) if error_is_corruption(&e) => return Err(e),
+                Err(e) => {
+                    eprintln!("[scrutate] compaction failed ({e:#}); the update is saved, the next one merges again");
+                    if !self.db.is_autocommit() {
+                        let _ = self.db.execute_batch("ROLLBACK");
+                    }
+                    self.lex = None;
+                    self.lex_ver = None;
+                }
+                Ok(()) => {}
+            }
             let _ = self.db.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)");
             // a long-running process would otherwise keep a build's word caches for its whole life
             rayon::broadcast(|_| crate::text::clear_caches());
