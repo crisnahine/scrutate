@@ -175,9 +175,7 @@ def walltime(warm: dict, compare: dict, W=G.W) -> str:
     # start-up comes from another harness with another run count: its own block and its own source line
     st = {TOOL_LABEL.get(s["tool"], s["tool"]): s["startup_median_ms"] for s in compare["startup"] if "startup_median_ms" in s}
     other = min((t for t in st if t != "scrutate"), key=st.get)
-    # older results measured an empty directory and say nothing; newer ones record the one file
-    one = any(s.get("files") for s in compare["startup"])
-    row("Start-up, a directory with one file" if one else "Start-up, empty directory", "",
+    row("Start-up, a directory with one file", "",
         [("scrutate", st["scrutate"], f"{st['scrutate']:.1f} ms"), (other, st[other], f"{st[other]:.1f} ms")])
     cenv = compare["environment"]
     b.append(f'<path d="M{pad} {y} H{W - pad}" stroke="{c["rule"]}"/>')
@@ -190,7 +188,7 @@ def walltime(warm: dict, compare: dict, W=G.W) -> str:
         parts.append(f"{t}: scrutate {ms(r['tools']['scrutate']['median'])} ms, {bc} {ms(r['tools'][bc]['median'])} ms")
     desc = (f"Horizontal bars of median wall time, scrutate against the fastest other tool; the faster bar of each pair is "
             f"marked with a highlighter. {'; '.join(parts)}. "
-            f"Start-up in {'a directory with one file' if one else 'an empty directory'}: scrutate {st['scrutate']:.1f} ms, "
+            f"Start-up in a directory with one file: scrutate {st['scrutate']:.1f} ms, "
             f"{other} {st[other]:.1f} ms.")
     return G.svg(W, H, "Wall time against the fastest other tool", desc, G.panel(H, on, w=W) + "\n".join(b),
                  show.css(), animated=True)
