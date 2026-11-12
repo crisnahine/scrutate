@@ -159,6 +159,20 @@ First release.
   the end.
 - On Windows a file that falls back to the stream reader (a NUL byte, a byte order mark, a read
   error) is searched from its first line; it started where the range search had stopped.
+- Hits wait in a bounded queue for the thread that formats them, so colour or `--json` output
+  of a file with millions of matches holds megabytes where it held hundreds (one 20 MB file
+  with 2 million matches: 341 MB, now 12 MB); plain piped output never used the queue.
+- In `--json`, `spans` and `column` count bytes of the printed `text`, also in a line with
+  invalid UTF-8 and at a CRLF line end; colour highlights the same places. The Python
+  bindings' `Match.spans` and `Match.column` count the same way.
+- Colour output gives each line of a multi-line match its path and its own line number, as
+  plain output does.
+- On Unix a file name that is not UTF-8 is printed as its own bytes in piped output, `-l` and
+  `-c` (it was printed with U+FFFD, a name no file has), and `--json` adds `path_bytes` for
+  it. In colour on a terminal and in the text of `--symbols` a control character in a file
+  name is shown as an escape, so a name cannot forge an output line.
+- With `-l`, `--stats` says `N of M files match` and the JSON summary gives `"matches": null`:
+  each file is searched only to its first match, so the count was of files.
 
 ### Engine B: code intelligence
 - Incremental index (SQLite + memory-mapped segments), content hashing, atomic updates,

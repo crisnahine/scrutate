@@ -132,7 +132,10 @@ capabilities those crates do not provide rather than re-implementing what they a
   one thread queues its entries in a plain vector (LLVM with `-j1`: 9.4 to 8.3 MB of peak
   memory). What `-j1` still holds over GNU grep on a large tree, 1 to 3 MB, is mostly memory the
   system allocator has freed and not given back (its per-CPU magazines, as the walk thread moves
-  between cores), the ignore matchers, and whole directories read at once.
+  between cores), the ignore matchers, and whole directories read at once. Output that is not
+  plain (colour, `--json`, a caller's iterator) goes through a queue of at most 64 batches: a
+  search thread that fills it waits for the thread that formats, so the hits held do not grow
+  with the matches. A file searched in ranges keeps a window of ranges at a time, as before.
 - **Roots without directories**: when no root holds a directory the walk would enter, a sequential
   walk with the same rules runs first on the calling thread, and three threads search the files
   as it finds them; when those files turn out to come from the disk, it adds threads. The first

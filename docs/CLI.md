@@ -45,6 +45,9 @@
 - **Machine-readable output**: `--json` on every command. Engine A emits JSON Lines with
   `"schema": 1` and `"type"` ∈ {`match`, `context`, `count`, `file`, `summary`, `symbol_group`};
   Engine B commands emit one JSON document. The schema number changes only on incompatible changes.
+  In `match` and `context` records `spans` and `column` count bytes of `text` (an invalid byte
+  is printed as U+FFFD, three bytes), and a span never runs past `text` into the line end; the
+  Python bindings' `Match.spans` and `Match.column` count the same way.
 - **Paths**: `scrutate grep` prints a path as the walk reached it from the path given, as grep and
   ripgrep do: `dir/a.txt` for `dir/`, `./dir/a.txt` for `.`, an absolute path for an absolute one,
   and relative to `.` when no path is given (text, `--json`, `-c` and `-l` alike; with `--symbols`
@@ -53,9 +56,16 @@
   (`--with-filename`) and `-I` (`--no-filename`) choose, and of the two the later wins. `-l` and
   `--json` always carry the path. `find`, the index commands, the MCP tools and the LSP server
   print paths relative to the repository root. On Windows `\` is printed as `/`, and a verbatim
-  drive path (`\\?\C:\x`) as `C:/x`; on Unix a backslash is part of a file name and stays. The index commands and the MCP tools show a control
+  drive path (`\\?\C:\x`) as `C:/x`; on Unix a backslash is part of a file name and stays.
+  On Unix a file name that is not UTF-8 is printed as its own bytes in piped output, `-l` and
+  `-c`, so `scrutate grep -l x | xargs cat` opens it; in `--json` its `path` shows U+FFFD in
+  place of the bad bytes and the record gains `path_bytes`, the name's bytes as an array of
+  numbers. Windows names that are not valid UTF-16 print with U+FFFD. The index commands and
+  the MCP tools show a control
   character in a name as an escape (`\n`, `\x1b`) and a backslash doubled (`\\`); a path or a
-  location written that way is read back by every command that takes one.
+  location written that way is read back by every command that takes one. `scrutate grep` does
+  the same in colour on a terminal and in the text of `--symbols`; its piped output prints the
+  name as it is, as grep and ripgrep do.
 - **Configuration**: the nearest `.scrutate.toml` from the current directory up to the top of
   the repository (the directory that holds `.git` or `.scrutate`), else
   `$XDG_CONFIG_HOME/scrutate/config.toml`; `$SCRUTATE_CONFIG` names a file, and with `--root` the
@@ -151,8 +161,9 @@ or none; the later wins, and `--json` keeps them), `-j THREADS` (at most 256, as
 `SCRUTATE_THREADS` and the configuration file's `threads`; default: the cores, at most 12; on
 macOS the performance cores; more when the files come from the disk, a cold cache: up to 64 on
 Linux, elsewhere twice the cores, at most 24), `--sort`,
-`--json`, `--stats`, `--symbols` (group lines by the enclosing function using the index, when one
-exists). On macOS, searches of one user that run at the same time split the default threads
+`--json`, `--stats` (with `-l` each file is searched only to its first match, so it prints
+`N of M files match` and the JSON summary gives `"matches": null`), `--symbols` (group lines by
+the enclosing function using the index, when one exists). On macOS, searches of one user that run at the same time split the default threads
 between them and take them back as the others end: each gets the default divided by the number
 running, at least 1 (py-big, four at once: 244 ms each before, 185 ms now; one alone is
 unchanged). A search that walks directories joins that count when it starts, so four searches
