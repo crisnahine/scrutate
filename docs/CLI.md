@@ -336,8 +336,9 @@ path in `go.mod` (by the directory they end with when there is no `go.mod`). `ts
 `jsconfig.json`, `package.json`, `Cargo.toml` and `go.mod` are read only when they are regular
 files inside the repository, of at most 1 MB. Re-exports (`from .x import N` in `__init__.py`, `export {N} from`,
 `pub use`) are followed. Occurrences in comments and strings are unresolved; so are those in a
-language the resolver does not read (`not resolved in this language`) and in a file without a
-grammar (`no grammar`), and so is anything the rules do not reach (method calls on a value
+language the resolver does not read (`not resolved in this language`), in a file without a
+grammar (`no grammar`) and in a file whose syntax tree is more than 2,000 levels deep (`nested
+too deeply to read`), and so is anything the rules do not reach (method calls on a value
 whose type they cannot infer, enum variants, local variables). In JavaScript a `var` belongs to
 its function, `let` and `const` to their block. Imports of modules outside the repository give
 `external`; a package name that no `package.json` of the repository declares is outside.

@@ -687,6 +687,15 @@ fn a_file_nested_too_deeply_is_reported_unread_and_one_nested_500_deep_resolves(
 }
 
 #[test]
+fn a_call_in_a_file_nested_too_deeply_is_kept_as_a_caller() {
+    let deep = format!("from b import go\n\ndef f():\n    x = {}1{}\n    go()\n", "(".repeat(2100), ")".repeat(2100));
+    let r = Repo::new("deep_caller", &[("b.py", "def go():\n    pass\n"), ("a.py", &deep)]);
+    // the resolver does not read the file, so the call is not decided to be another `go`
+    let (decided, undecided) = split_callers(&r, "go");
+    assert_eq!([decided, undecided].concat(), strs(&["f"]));
+}
+
+#[test]
 fn an_indexed_file_now_holding_a_bom_and_a_nul_byte_does_not_panic_the_resolver() {
     let r = Repo::new("bom_nul", &[("a.py", "from b import foo\nfoo()\n"), ("b.py", "def foo():\n    pass\n")]);
     fs::write(r.root.join("b.py"), b"\xef\xbb\xbfdef foo():\n    pass\n\x00\n").unwrap();

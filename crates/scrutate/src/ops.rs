@@ -755,7 +755,7 @@ fn resolve_in(rv: &mut Resolver, s: &Searcher, path: &str, (start, end): (i64, i
                 // an import from outside, a local, a field or a string is decided: not this definition
                 Err(why) => {
                     seen = true;
-                    let unread = matches!(why, "no grammar" | crate::resolve::UNREAD);
+                    let unread = matches!(why, "no grammar" | crate::resolve::UNREAD | crate::resolve::TOO_DEEP);
                     if unread || matches!(why, "receiver" | "not found") {
                         unsure = true;
                         unsure_free |= !(methods && line[..col].trim_end().ends_with('.'));

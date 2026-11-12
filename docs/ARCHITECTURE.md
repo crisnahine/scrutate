@@ -395,7 +395,11 @@ language over all files of a language, parallel, no index needed).
 `refs` resolves names (`resolve.rs`). Engine A finds the whole-word occurrences; for each file
 that holds one (Python, JavaScript/TypeScript, Rust, Go, Java), the file is parsed again with
 tree-sitter to find the identifier node, its qualifier, the enclosing scopes and the names its
-imports bind, while definitions and their nesting come from the index's `chunks` rows. An
+imports bind, while definitions and their nesting come from the index's `chunks` rows. A file
+whose tree is more than 2,000 levels deep is not read (its occurrences are listed as nested too
+deeply to read) and the type walks stop at 32 nested steps, so hostile nesting cannot overflow
+the stack or make a request take minutes; the binders and assignments of a name are found once
+per scope, so a function of thousands of uses resolves in linear time. An
 occurrence goes to the innermost scope that defines the name, then the file's top level, then
 an import binding, the Go package directory or a wildcard import. A local bound by a pattern,
 a `catch` or a Go statement initializer counts only inside its own branch or statement, and a

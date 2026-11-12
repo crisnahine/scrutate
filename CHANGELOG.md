@@ -214,6 +214,13 @@ First release.
     `from ...x` in `src/b.py`) resolves to no file.
   - `refs` resolves uses on line 1 of a file with a byte-order mark and uses after an invalid
     UTF-8 byte on the same line, and the language server places them right.
+  - `refs` no longer overflows the stack or runs for minutes on a file nested hundreds of
+    thousands of levels deep: a file past 2,000 levels is listed as nested too deeply to read,
+    and `callers` keeps a call in it as a caller.
+  - The resolver no longer panics on an indexed file that now starts with a byte-order mark
+    and holds a NUL byte.
+  - `refs` through a typed variable takes linear time: 5,000 uses went from 23 to 32 s to
+    under 0.25 s.
   - `refs` counts every use on a line, where it stopped at 64 without saying so;
     `--max-results N` (MCP `max_results`) counts uses, not lines. `grep` with color or `--json`
     lists every match on a line.
