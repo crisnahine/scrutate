@@ -158,7 +158,8 @@ impl Default for Options {
 
 /// One result record. `line` is 1-based; `column` is the 1-based byte offset of the first match in
 /// the line (0 when not applicable, e.g. inverted matches). A `line` of `NOTE_LINE` is a note on
-/// the file, its text in `text`: a named file with a NUL byte matched (`Options::paths_as_given`).
+/// the file, its text in `text`: a named file with a NUL byte matched (`Options::paths_as_given`),
+/// or the search of a walked file that matched stopped at a NUL byte.
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct Hit {
     /// shared by every hit of one file (a refcount per line instead of a string copy)
@@ -1465,8 +1466,13 @@ impl<'a> Sink for Collector<'a> {
 
     fn finish(&mut self, _s: &Searcher, f: &grep_searcher::SinkFinish) -> Result<(), std::io::Error> {
         self.binary = f.binary_byte_offset().is_some();
-        if let (true, true, false, Some(at)) = (self.convert, self.matched, self.files_only || self.count_only, self.binary_at) {
-            let note = format!("binary file matches (found \"\\0\" byte around offset {at})");
+        if let (true, false, Some(at)) = (self.matched, self.files_only || self.count_only, self.binary_at) {
+            // as ripgrep: a named file's line output ends here; a walked file stopped being searched
+            let note = if self.convert {
+                format!("binary file matches (found \"\\0\" byte around offset {at})")
+            } else {
+                format!("WARNING: stopped searching binary file after match (found \"\\0\" byte around offset {at})")
+            };
             if self.plain.is_some() {
                 if self.named {
                     self.out.extend_from_slice(self.path.as_bytes());

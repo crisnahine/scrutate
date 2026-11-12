@@ -681,6 +681,40 @@ fn a_file_with_a_nul_byte_found_by_the_walk_is_left_out_of_counts_and_lists() {
     assert_eq!(run(&["-l", "foo"]), ["d/big.bin"]);
 }
 
+#[test]
+fn a_walked_file_whose_search_stops_at_a_nul_byte_says_so_after_its_matches() {
+    let d = Dir::new("walkstop");
+    for f in ["d/a.bin", "d/b.bin", "d/c.bin", "d/e.bin"] {
+        d.write(f, &late_nul_file());
+    }
+    d.write("d/ok.txt", b"foo\n");
+    let warn = "WARNING: stopped searching binary file after match (found \"\\0\" byte around offset 300094)";
+    // ripgrep 15 (`rg -n --sort path`)
+    let mut want = String::new();
+    for f in ["a", "b", "c", "e"] {
+        want += &format!("d/{f}.bin:1:foo first\nd/{f}.bin: {warn}\n");
+    }
+    want += "d/ok.txt:1:foo\n";
+    for extra in [&["--sort"][..], &["-j", "1"], &["-j", "4"]] {
+        let (code, out, err) = d.run(&[&["grep"][..], extra, &["foo", "d"]].concat());
+        let mut got: Vec<&str> = out.lines().collect();
+        if !extra.contains(&"--sort") {
+            // one file's lines stay together, the warning last
+            got.sort_by_key(|l| l.split(':').next().unwrap().to_string());
+        }
+        assert_eq!((code, got.join("\n") + "\n"), (0, want.clone()), "{extra:?}: {err}");
+        assert!(err.is_empty(), "{err}");
+    }
+    assert_eq!(d.run(&["grep", "-I", "foo", "d/a.bin", "d/ok.txt"]).1.lines().filter(|l| *l == warn).count(), 0, "a named file says binary file matches");
+    assert_eq!(d.run(&["grep", "-I", "--sort", "foo", "d"]).1.lines().filter(|l| *l == warn).count(), 4);
+    let (_, out, _) = d.run(&["grep", "--json", "--sort", "foo", "d"]);
+    let rec = format!("{{\"path\":\"d/a.bin\",\"schema\":1,\"text\":{},\"type\":\"binary\"}}", serde_json::to_string(warn).unwrap());
+    assert!(out.lines().any(|l| l == rec), "{out}");
+    for quiet in [&["-q"][..], &["-c"], &["-l"]] {
+        assert!(!d.run(&[&["grep"][..], quiet, &["foo", "d"]].concat()).1.contains("WARNING"));
+    }
+}
+
 /// `scrutate ARGS` in `cwd` with `input` as its standard input: a pipe, or with `None` a regular
 /// file (`file`).
 fn run_stdin(cwd: &Path, args: &[&str], input: Option<&[u8]>, file: Option<&Path>) -> (i32, String, String) {

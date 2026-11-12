@@ -156,7 +156,7 @@ def run(tool, a):
     except subprocess.TimeoutExpired:
         return ["<timeout>"], -9, b""
     out = p.stdout.replace(b"\r", b"").decode("utf-8", "replace").splitlines()
-    lines = [l[2:] if l.startswith("./") else l for l in out if "WARNING: stopped searching binary file" not in l]
+    lines = [l[2:] if l.startswith("./") else l for l in out]
     return (lines if "--sort" in a else sorted(lines)), p.returncode, p.stderr
 
 def in_nul_file(l):
