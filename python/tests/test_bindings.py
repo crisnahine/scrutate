@@ -256,9 +256,10 @@ def test_gil_is_released_during_rust_work(repo):
     big = repo / "big.txt"
     big.write_text("".join(f"line {i} with some words to scan\n" for i in range(1_500_000)))
 
+    counts = []
+
     def work():
-        hits = list(scrutate.grep("line 1499999 with", [str(repo)], mode="literal"))
-        assert len(hits) == 1
+        counts.append(len(list(scrutate.grep("line 1499999 with", [str(repo)], mode="literal"))))
 
     work()  # warm the cache
     t0 = time.perf_counter()
@@ -272,6 +273,8 @@ def test_gil_is_released_during_rust_work(repo):
     for t in threads:
         t.join()
     par = time.perf_counter() - t0
+    # an assert inside a thread only warns, so the counts are checked here
+    assert counts == [1] * 9, counts
     cpus = os.cpu_count() or 1
     load = os.getloadavg()[0] if hasattr(os, "getloadavg") else 0.0
     if cpus < 2 or load > cpus * 0.5:
