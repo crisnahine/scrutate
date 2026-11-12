@@ -71,6 +71,13 @@ struct Binding {
 /// Why an occurrence stays unresolved in a language that has a grammar but no resolver rules.
 pub const UNREAD: &str = "not resolved in this language";
 
+/// Why an occurrence in a file whose tree is deeper than `MAX_DEPTH` stays unresolved.
+pub const TOO_DEEP: &str = "nested too deeply to read";
+
+/// Deeper trees are not read: a climb with `Node::parent` costs the depth squared, and the type
+/// walks recurse.
+const MAX_DEPTH: usize = 2000;
+
 struct FileInfo {
     lang: Option<Lang>,
     src: String,
@@ -78,6 +85,8 @@ struct FileInfo {
     /// Engine A's columns count those bytes
     raw: Option<(Vec<u8>, Vec<usize>)>,
     tree: Option<Tree>,
+    /// the tree was dropped for passing `MAX_DEPTH`
+    deep: bool,
     defs: Vec<Def>,
     bindings: Vec<Binding>,
 }
@@ -130,6 +139,28 @@ pub struct Resolver<'a> {
     /// by function around a use (its node id) and name: the byte ranges of the identifiers in it
     /// that may bind the name, found once so a use checks only these
     binders: HashMap<(usize, String), Vec<(usize, usize)>>,
+}
+
+/// Whether the tree has a node more than `MAX_DEPTH` levels below its root.
+fn too_deep(t: &Tree) -> bool {
+    let (mut c, mut depth) = (t.walk(), 0);
+    loop {
+        // a subtree of k nodes is at most k - 1 levels deep: most are not entered
+        let shallow = depth + c.node().descendant_count() <= MAX_DEPTH + 1;
+        if !shallow && c.goto_first_child() {
+            depth += 1;
+            if depth > MAX_DEPTH {
+                return true;
+            }
+            continue;
+        }
+        while !c.goto_next_sibling() {
+            if !c.goto_parent() {
+                return false;
+            }
+            depth -= 1;
+        }
+    }
 }
 
 fn text<'s>(n: Node, src: &'s str) -> &'s str {
@@ -822,12 +853,14 @@ impl<'a> Resolver<'a> {
             }
             _ => None,
         };
+        let deep = tree.as_ref().is_some_and(too_deep);
+        let tree = tree.filter(|_| !deep);
         let bindings = match (lang, &tree) {
             (Some(l), Some(t)) => bindings_of(l, path, t.root_node(), &src),
             _ => Vec::new(),
         };
         let defs = self.defs_of(path).unwrap_or_default();
-        FileInfo { lang, src, raw, tree, defs, bindings }
+        FileInfo { lang, src, raw, tree, deep, defs, bindings }
     }
 
     fn defs_of(&self, path: &str) -> Result<Vec<Def>> {
@@ -879,6 +912,9 @@ impl<'a> Resolver<'a> {
         }
         let fi = self.file(path);
         let (Some(lang), Some(tree)) = (fi.lang, fi.tree.as_ref()) else {
+            if fi.deep {
+                return Err(TOO_DEEP);
+            }
             return Err(if crate::parse::spec_for(path, &fi.src).is_some() { UNREAD } else { "no grammar" });
         };
         let row = line.saturating_sub(1) as usize;
@@ -1149,11 +1185,17 @@ impl<'a> Resolver<'a> {
     /// annotation or value, a call's declared return type, a field's declared type, a
     /// constructor. None when they do not.
     fn type_of(&mut self, path: &str, fi: &FileInfo, lang: Lang, e: Node) -> Option<Ty> {
+        self.nested(|s| s.type_of_inner(path, fi, lang, e))
+    }
+
+    /// `f` one level deeper in the type walks, or None past 32 levels: the walks recurse on the
+    /// shape of the tree.
+    fn nested(&mut self, f: impl FnOnce(&mut Self) -> Option<Ty>) -> Option<Ty> {
         if self.nest > 32 {
             return None;
         }
         self.nest += 1;
-        let t = self.type_of_inner(path, fi, lang, e);
+        let t = f(self);
         self.nest -= 1;
         t
     }
@@ -1389,6 +1431,10 @@ impl<'a> Resolver<'a> {
     /// The repository type a constructor form builds: `new T()`, `T{}`, `&T{}`, a Python call of a
     /// class, a Rust unit struct and `Box::new(..)` of one of these.
     fn constructed(&mut self, path: &str, fi: &FileInfo, lang: Lang, v: Node) -> Option<Ty> {
+        self.nested(|s| s.constructed_inner(path, fi, lang, v))
+    }
+
+    fn constructed_inner(&mut self, path: &str, fi: &FileInfo, lang: Lang, v: Node) -> Option<Ty> {
         let src = fi.src.as_str();
         let line = v.start_position().row as i64 + 1;
         let built = match v.kind() {
@@ -1431,6 +1477,10 @@ impl<'a> Resolver<'a> {
     /// The type a type expression names, past references, pointers, `Box`-like holders and
     /// `Optional[..]`; None for a trait object, a union, a type parameter or anything unclear.
     fn ty_of_type(&mut self, path: &str, fi: &FileInfo, lang: Lang, t: Node) -> Option<Ty> {
+        self.nested(|s| s.ty_of_type_inner(path, fi, lang, t))
+    }
+
+    fn ty_of_type_inner(&mut self, path: &str, fi: &FileInfo, lang: Lang, t: Node) -> Option<Ty> {
         let src = fi.src.as_str();
         match t.kind() {
             "reference_type" => self.ty_of_type(path, fi, lang, t.child_by_field_name("type")?),

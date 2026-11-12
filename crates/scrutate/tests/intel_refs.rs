@@ -623,6 +623,23 @@ fn refs_in_one_big_function_takes_linear_time() {
 }
 
 #[test]
+fn a_file_nested_too_deeply_is_reported_unread_and_one_nested_500_deep_resolves() {
+    let class = ("b.py", "class A:\n    def m(self):\n        pass\n");
+    let deep = |head: &str, n: usize| format!("from b import A\n\ndef f():\n    {head}{}A(){}\n    x.m()\n", "(".repeat(n), ")".repeat(n));
+    // a typed binder with a deep constructor, and a use of `A` deep inside; each run is killed after 20 s
+    for (head, name) in [("x: A = ", "m"), ("x = ", "A")] {
+        let r = Repo::new("too_deep", &[class, ("a.py", &deep(head, 200_000))]);
+        let (code, out) = r.run(&["refs", name, "--max-results", "50"]);
+        assert_eq!(code, 0, "{}", &out[..out.len().min(2000)]);
+        let line = out.lines().find(|l| l.contains("a.py:") && l.contains("nested too deeply to read")).map(str::to_string);
+        assert!(line.is_some(), "{}", &out[out.len().saturating_sub(2000)..]);
+    }
+    let r = Repo::new("deep_500", &[class, ("a.py", &deep("x: A = ", 500))]);
+    assert_eq!(r.resolved("m"), pairs(&[("a.py:5", "b.py"), ("b.py:2", "b.py")]));
+    assert_eq!(r.resolved("A"), pairs(&[("a.py:1", "b.py"), ("a.py:4", "b.py"), ("a.py:4", "b.py"), ("b.py:1", "b.py")]));
+}
+
+#[test]
 fn a_relative_import_that_climbs_above_the_root_names_no_file() {
     let r = Repo::new(
         "above_root",
