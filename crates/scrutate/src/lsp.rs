@@ -236,15 +236,23 @@ impl Lines<'_> {
     /// (0-based line, UTF-16 start, UTF-16 end) of `name` in the first lines of a definition.
     fn name_pos(&mut self, rel: &str, start: i64, end: i64, name: &str) -> (u64, u64, u64) {
         let first = (start.max(1) - 1) as usize;
+        // a Haskell or Elm definition starts at its type signature (`step :: Int -> Int`): the
+        // name to go to is the one in the equation below it
+        let signed = [".hs", ".lhs", ".elm", ".purs"].iter().any(|e| rel.ends_with(e));
         let lines = self.get(rel);
+        let mut at = None;
         if !name.is_empty() {
             for i in first..lines.len().min(end.max(start).min(start + 5) as usize) {
                 if let Some(&b) = find_word(&lines[i], name).first() {
-                    return (i as u64, byte_to_utf16(&lines[i], b), byte_to_utf16(&lines[i], b + name.len()));
+                    let found = (i as u64, byte_to_utf16(&lines[i], b), byte_to_utf16(&lines[i], b + name.len()));
+                    if !(signed && lines[i][b + name.len()..].trim_start().starts_with(':')) {
+                        return found;
+                    }
+                    at = at.or(Some(found));
                 }
             }
         }
-        (first as u64, 0, 0)
+        at.unwrap_or((first as u64, 0, 0))
     }
 
     fn location(&mut self, rel: &str, start: i64, end: i64, name: &str) -> Value {

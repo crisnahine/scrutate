@@ -181,6 +181,11 @@ First release.
   file they are part of, and a definition with its windows is one result. A definition starts
   at the attribute lines right above it (Rust `#[...]`, decorators and annotations), so
   `#[get("/users")]` above a handler is found with it.
+- The language server no longer goes to the plain namesake when a call has a receiver:
+  `o.valid?()` goes to `valid?`, `self.save!` to `save!`, `M.ok?(x)` to `ok?`,
+  `Main.update!(x)` to `update!`, `step' y` to `step'` (at its equation, below the type
+  signature), and the cursor on `is` in R `is.ready(x)` finds `is.ready`. References of `valid`
+  no longer list `valid?`.
 - `follow = true` in a repository's own `.scrutate.toml` is ignored with a warning, so a cloned
   repository cannot make `scrutate grep` leave it through a symbolic link; `-L`, the environment
   and your own configuration file still follow.

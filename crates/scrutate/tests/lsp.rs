@@ -388,9 +388,9 @@ fn a_name_ending_in_a_question_mark_bang_or_prime_is_one_word_after_a_receiver()
         ("a.ex", 4, "ok?", 2, &[2, 3, 4]),
         ("a.jl", 10, "update!", 4, &[4, 9, 10]),
         ("a.rb", 1, "valid", 1, &[1, 2]),
-        // a Haskell function starts at its type signature
-        ("a.hs", 9, "step'", 5, &[5, 6, 9]),
-        ("a.hs", 9, "step y", 2, &[2, 3, 9]),
+        // a Haskell function starts at its type signature; its definition is the equation below
+        ("a.hs", 9, "step'", 6, &[5, 6, 9]),
+        ("a.hs", 9, "step y", 3, &[2, 3, 9]),
         ("a.R", 9, "is.ready", 4, &[4, 9]),
         ("a.R", 9, "ready", 4, &[4, 9]),
         ("b.py", 5, "x-v", 0, &[0, 5]),
