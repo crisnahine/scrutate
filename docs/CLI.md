@@ -84,7 +84,9 @@
 scrutate grep [OPTIONS] PATTERN [PATHS...]
 ```
 With no path, `grep` searches standard input when it is a pipe or a file, and the current
-directory otherwise; `-` names standard input among other paths. Its lines carry the label
+directory otherwise; `-` names standard input among other paths. A path named on the command
+line that is not a directory, such as a named pipe, `<(...)` or `/dev/stdin`, is searched as
+ripgrep does; a named pipe found while walking a directory is skipped. Its lines carry the label
 `<stdin>` where a path would stand (`-H`, `--json`); `--index` ignores standard input.
 `PATTERN` is a regex unless `-F` (literal), `--ident` (identifier in any casing) or `--fuzzy[=N]`
 (within N edits, default 1, literal, at most 4096 characters; an edit is one character inserted,
@@ -102,7 +104,9 @@ empty string is refused. `-z` also searches inside zip and tar archives (members
 `archive.zip{dir/file}`) and compressed files: gzip in process; bzip2, xz, zstd, lz4, brotli and
 `.Z` through the system's tools, as ripgrep does. An archive or compressed file stops at 8 GiB
 expanded or a million members, and a member or compressed file stops with a warning at a line
-longer than 64 MiB (not with `-U`, which holds the whole member). An archive named alone is
+longer than 64 MiB (not with `-U`, which holds the whole member). A tar member whose GNU long
+name or PAX path is longer than 64 KiB is skipped with a warning; other PAX records are read
+past without being kept. An archive named alone is
 searched as a directory of its members, so each line names its member, also when it is the only
 one; a compressed file named alone prints no name. Control characters in a member name are shown
 as escapes (`\n`, `\x1b`, a backslash as two), so a name cannot forge an output line; `--json`
@@ -157,7 +161,8 @@ file that two paths reach is counted or listed twice. Smart case folds only a pa
 it, so `-S '\p{Ll}'` stays case-sensitive and matches lowercase letters only. Of `-i` and `-S`
 the later one wins, and `SCRUTATE_GREP_SMART_CASE` applies only when neither is given. With
 `-A`, `-B` or `-C`, groups that are not adjacent, and different files, are separated by a line
-`--` (not in `--json`). A `-g` value is one glob, commas included (`-g '*.{txt,log}'`); the
+`--` (not in `--json`). With context on several threads a file's lines leave a group at a time,
+so another file's lines never stand between them; a file searched alone still streams. A `-g` value is one glob, commas included (`-g '*.{txt,log}'`); the
 variable `SCRUTATE_GREP_GLOBS` is split at commas outside braces. One difference: a `-g` glob
 with a slash (`-g 'sub/*.rs'`) applies under every searched path, where ripgrep matches it from
 the current directory. The globs of a `.scrutate.toml` match from that file's directory (see

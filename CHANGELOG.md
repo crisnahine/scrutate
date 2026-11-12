@@ -195,6 +195,15 @@ First release.
 - Lock files with an ordinary extension (`package-lock.json`, `npm-shrinkwrap.json`,
   `pnpm-lock.yaml`, `packages.lock.json`, `Package.resolved`, `.terraform.lock.hcl`, Gradle
   `*.lockfile`, `bun.lockb`) are left out of the index like `*.lock`; `grep` still searches them.
+- `grep -z` reads at most 64 KiB of a tar member's long name or PAX path; a 306 KB archive with
+  a 300 MiB name took 1.27 GB and takes 5.6 MB.
+- Context output (`-A`, `-B`, `-C`) on several threads no longer runs one file's lines into
+  another's without a `--`: a file's lines leave a group at a time.
+- A named pipe, `<(...)` or `/dev/stdin` given as a path is searched, as ripgrep does.
+- A home directory kept in git is no longer indexed from a folder below it when `HOME` is a
+  symbolic link.
+- `--stats` and the JSON summary of a search stopped by `--max-results` count only the matches
+  that were printed.
 - MCP tool calls no longer read a file outside the repository through a linked folder: a path a
   call names, an answer cites or a watch event names is indexed only when it resolves inside
   the root.
