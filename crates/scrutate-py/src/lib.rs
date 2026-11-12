@@ -545,7 +545,7 @@ impl Repo {
         let rows = py
             .detach(move || {
                 let s = self.fresh()?;
-                scrutate::intel::outline(&s.ix, &scrutate::ops::repo_path(&s, &p))
+                s.ix.outline(&scrutate::ops::repo_path(&s, &p))
             })
             .map_err(err)?;
         rows.iter()

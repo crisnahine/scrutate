@@ -115,8 +115,7 @@ fn an_edit_that_keeps_size_and_mtime_is_seen() {
     let expect = if cfg!(unix) { 1 } else { 0 };
     assert_eq!(ix.update(false).unwrap().files_changed, expect);
     assert_eq!(ix.update(true).unwrap().files_changed, 1);
-    let n: i64 = ix.db.query_row("SELECT COUNT(*) FROM chunks WHERE name='omega'", [], |r| r.get(0)).unwrap();
-    assert_eq!(n, 1);
+    assert_eq!(ix.named("omega").unwrap().len(), 1);
 }
 
 /// Index `root` with one file, damage it, then require two later starts to index a new file,
@@ -165,13 +164,13 @@ fn deleted_database_beside_young_segments() {
 #[test]
 fn segment_counter_below_a_live_segment() {
     survives("counter", |_, ix| {
-        ix.db.execute("UPDATE meta SET value='0' WHERE key='seg_counter'", []).unwrap();
+        ix.damage_for_tests("UPDATE meta SET value='0' WHERE key='seg_counter'").unwrap();
     });
 }
 
 #[test]
 fn dropped_meta_table() {
-    survives("no_meta", |_, ix| ix.db.execute_batch("DROP TABLE meta").unwrap());
+    survives("no_meta", |_, ix| ix.damage_for_tests("DROP TABLE meta").unwrap());
 }
 
 #[test]
@@ -190,7 +189,7 @@ fn fresh_unlisted_segment_with_the_next_name() {
 #[test]
 fn segments_entry_that_is_not_json() {
     survives("bad_json", |_, ix| {
-        ix.db.execute("UPDATE meta SET value='{{{' WHERE key='segments'", []).unwrap();
+        ix.damage_for_tests("UPDATE meta SET value='{{{' WHERE key='segments'").unwrap();
     });
 }
 
@@ -218,7 +217,7 @@ fn damaged_chunk_text_is_rebuilt_on_the_next_call() {
     fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();
     let mut repo = scrutate::Repo::open(&t.0).unwrap();
     repo.update(false).unwrap();
-    repo.ix.db.execute("UPDATE chunks SET text=x'00112233'", []).unwrap();
+    repo.ix.damage_for_tests("UPDATE chunks SET text=x'00112233'").unwrap();
     let answer = repo.run(&op("search_code", serde_json::json!({"query": "alpha"})), 0.0).unwrap();
     assert!(answer.text_within(100_000, 0).contains("alpha"));
 }
@@ -231,7 +230,7 @@ fn damaged_chunk_text_is_rebuilt_inside_an_explicit_refresh_interval() {
     let settings = scrutate::mcp::Settings::new(None, Some(3600.0));
     let args = serde_json::json!({"query": "alpha"});
     assert!(scrutate::mcp::call_tool(&mut repo, "search_code", &args, &settings).text.contains("alpha"));
-    repo.ix.db.execute("UPDATE chunks SET text=x'00112233'", []).unwrap();
+    repo.ix.damage_for_tests("UPDATE chunks SET text=x'00112233'").unwrap();
     let c = scrutate::mcp::call_tool(&mut repo, "search_code", &args, &settings);
     assert!(!c.is_error && c.text.contains("alpha"), "{}", c.text);
 }
@@ -480,7 +479,7 @@ fn a_chmod_alone_drops_a_file_and_brings_it_back_without_a_forced_update() {
     fs::write(t.0.join("b.py"), "def beta():\n    return 2\n").unwrap();
     let mut ix = Index::open(&t.0, scrutate::models::ModelSet::none()).unwrap();
     ix.update(false).unwrap();
-    let alphas = |ix: &Index| ix.db.query_row("SELECT COUNT(*) FROM chunks WHERE name='alpha'", [], |r| r.get::<_, i64>(0)).unwrap();
+    let alphas = |ix: &Index| ix.named("alpha").unwrap().len();
     chmod(&f, 0o000);
     let held = fs::read(&f).is_err();
     let r = ix.update(false);
@@ -540,9 +539,11 @@ fn an_index_whose_files_table_has_no_ctime_column_is_read_and_upgraded() {
     assert!(text(&mut repo, "find_symbol", serde_json::json!({"name": "alpha"})).contains("a.py"));
     // the first update reads the file again (no ctime on record), parses nothing, and records one
     assert_eq!(repo.update(false).unwrap().files_changed, 0);
-    let ctime: Option<i64> = repo.ix.db.query_row("SELECT ctime_ns FROM files WHERE path='a.py'", [], |r| r.get(0)).unwrap();
+    // the stored format, as the reference engine reads and writes it
+    let con = rusqlite::Connection::open(t.0.join(".scrutate/index.db")).unwrap();
+    let ctime: Option<i64> = con.query_row("SELECT ctime_ns FROM files WHERE path='a.py'", [], |r| r.get(0)).unwrap();
     assert!(ctime.is_some());
-    repo.ix.db.execute("INSERT OR REPLACE INTO files(path,size,mtime_ns,hash) VALUES('b.py',1,1,'x')", []).unwrap();
+    con.execute("INSERT OR REPLACE INTO files(path,size,mtime_ns,hash) VALUES('b.py',1,1,'x')", []).unwrap();
 }
 
 #[test]
@@ -603,11 +604,10 @@ fn a_transaction_left_open_by_a_failed_update_is_rolled_back_by_the_next() {
     let mut ix = Index::open(&t.0, scrutate::models::ModelSet::none()).unwrap();
     ix.update(false).unwrap();
     // what a panic in the middle of an update leaves on the connection
-    ix.db.execute_batch("BEGIN IMMEDIATE; DELETE FROM chunks;").unwrap();
+    ix.damage_for_tests("BEGIN IMMEDIATE; DELETE FROM chunks;").unwrap();
     fs::write(t.0.join("b.py"), "def beta():\n    return 2\n").unwrap();
     assert_eq!(ix.update(false).unwrap().files_changed, 1);
-    let names: i64 = ix.db.query_row("SELECT COUNT(*) FROM chunks WHERE name IN ('alpha', 'beta')", [], |r| r.get(0)).unwrap();
-    assert_eq!(names, 2);
+    assert_eq!(ix.named("alpha").unwrap().len() + ix.named("beta").unwrap().len(), 2);
     assert!(ix.check(false).unwrap().ok());
 }
 
@@ -621,8 +621,7 @@ fn a_cancelled_update_leaves_the_index_as_it_was() {
     ix.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
     let e = ix.update(false).unwrap_err();
     assert_eq!(e.to_string(), "cancelled");
-    let files: i64 = ix.db.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0)).unwrap();
-    assert_eq!(files, 1, "the update was rolled back");
+    assert_eq!(ix.files().unwrap(), ["a.py"], "the update was rolled back");
     assert!(ix.check(false).unwrap().ok());
     ix.cancel.store(false, std::sync::atomic::Ordering::Relaxed);
     assert_eq!(ix.update(false).unwrap().files_changed, 1);
@@ -637,13 +636,12 @@ fn an_index_built_with_older_parsing_rules_is_read_again_once() {
     ix.update(false).unwrap();
     assert_eq!(ix.meta("content_rev").as_deref(), Some(scrutate::index::CONTENT_REVISION.to_string().as_str()));
     // what an older build left: its own symbol names and an older revision
-    ix.db.execute_batch("UPDATE chunks SET name='old_alpha' WHERE name='alpha'; UPDATE meta SET value='0' WHERE key='content_rev';").unwrap();
+    ix.damage_for_tests("UPDATE chunks SET name='old_alpha' WHERE name='alpha'; UPDATE meta SET value='0' WHERE key='content_rev';").unwrap();
     drop(ix);
     let mut ix = Index::open(&t.0, scrutate::models::ModelSet::none()).unwrap();
     let st = ix.update(false).unwrap();
     assert_eq!(st.files_changed, 2);
-    let names: i64 = ix.db.query_row("SELECT COUNT(*) FROM chunks WHERE name='alpha'", [], |r| r.get(0)).unwrap();
-    assert_eq!(names, 1);
+    assert_eq!(ix.named("alpha").unwrap().len(), 1);
     assert_eq!(ix.meta("content_rev").as_deref(), Some(scrutate::index::CONTENT_REVISION.to_string().as_str()));
     assert_eq!(ix.update(false).unwrap().files_changed, 0);
     drop(ix);

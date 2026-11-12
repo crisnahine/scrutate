@@ -7,9 +7,8 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
 use anyhow::Result;
-use rusqlite::params_from_iter;
 
-use crate::index::{ChunkRow, Index};
+use crate::index::{ChunkRow, Symbol};
 use crate::resolve::{join, Occurrence, Resolution, Resolved, Resolver};
 use crate::search::{Hit, Searcher};
 
@@ -71,7 +70,7 @@ impl<'a> Names<'a> {
                 occurrences.push(Occurrence { path: h.path.to_string(), line: h.line, column: a as u64 + 1, text: line_text.clone(), at: da, resolution });
             }
         }
-        let mut definitions: Vec<ChunkRow> = crate::intel::definitions(&s.ix, bare)?.into_iter().filter(|d| crate::resolve::same_name(&d.name, bare)).collect();
+        let mut definitions: Vec<ChunkRow> = s.ix.definitions(bare)?.into_iter().filter(|d| crate::resolve::same_name(&d.name, bare)).collect();
         let mut known: HashSet<i64> = definitions.iter().map(|d| d.id).collect();
         for o in &occurrences {
             if let Ok((id, _)) = o.resolution {
@@ -163,10 +162,6 @@ impl<'a> Names<'a> {
             targets.iter().filter_map(|t| t.qualname.rsplit_once('.').map(|(o, _)| o.rsplit('.').next().unwrap_or(o))).filter(|o| !o.is_empty()).collect();
         let packages: HashSet<&str> = targets.iter().map(|t| package(&t.path)).collect();
         let fits = |path: &str| targets.iter().any(|t| langs.same_family(&t.path, path));
-        let cols = crate::index::CHUNK_COLS.split(',').map(|c| format!("c.{c}")).collect::<Vec<_>>().join(",");
-        let mut calls =
-            s.ix.db.prepare(&format!("SELECT DISTINCT {cols} FROM refs r JOIN chunks c ON c.id=r.chunk_id WHERE r.callee=?1 ORDER BY c.is_test"))?;
-        let mut namesakes = s.ix.db.prepare("SELECT id, path, kind, qualname FROM chunks WHERE name=?1 AND kind != 'window'")?;
         let (mut out, mut unsure_rows, mut unchecked_rows, mut seen) = (Vec::new(), Vec::new(), Vec::new(), HashSet::new());
         // a call of a method a target overrides or implements may run the target
         let overridden: HashSet<i64> = targets.iter().flat_map(|t| self.rv.overridden(t.id)).filter(|id| !ids.contains(id)).collect();
@@ -175,11 +170,10 @@ impl<'a> Names<'a> {
         let all_free = |n: &str| targets.iter().filter(|t| t.name == n).all(|t| free(&t.kind, &t.qualname));
         let mut asked = 0;
         for n in names {
-            let rows: Vec<(i64, String, String, String)> =
-                namesakes.query_map([n], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?.collect::<rusqlite::Result<_>>()?;
+            let rows: Vec<Symbol> = s.ix.named(n)?.into_iter().filter(|r| r.kind != "window").collect();
             // with another definition of the name about, the likeliest call sites are asked first
-            let rivals = rows.iter().any(|(id, path, ..)| !ids.contains(id) && fits(path));
-            let mut sites: Vec<ChunkRow> = calls.query_map([n], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
+            let rivals = rows.iter().any(|r| !ids.contains(&r.id) && fits(&r.path));
+            let mut sites = s.ix.callers_of(n)?;
             sites.retain(|r| fits(&r.path) && seen.insert(r.id));
             if n == "new" && !targets.iter().any(|t| t.name == "new") {
                 sites.retain(|r| made_by_new.iter().any(|class| has_word(&r.text, &format!("{class}.new"))));
@@ -199,8 +193,8 @@ impl<'a> Names<'a> {
                 if uses.got.is_disjoint(&ids) {
                     // with no other definition of the name, a call the resolver cannot place is this one's
                     if unsure && rivals {
-                        let mine = |(_, p, k, q): &&(i64, String, String, String)| own((&row.path, &row.qualname), p, k, q);
-                        let mine: Vec<i64> = rows.iter().filter(|r| uses.own_file && mine(r)).map(|r| r.0).collect();
+                        let mine = |r: &&Symbol| own((&row.path, &row.qualname), &r.path, &r.kind, &r.qualname);
+                        let mine: Vec<i64> = rows.iter().filter(|r| uses.own_file && mine(r)).map(|r| r.id).collect();
                         if mine.is_empty() {
                             unsure_rows.push(row);
                             continue;
@@ -231,23 +225,17 @@ impl<'a> Names<'a> {
     /// -> (resolved definitions, external names, the files of the definitions whose calls these are)
     pub fn callees(&mut self, name: &str, limit: usize) -> Result<(Vec<Hit>, Vec<String>, Vec<String>)> {
         let s = self.s;
-        let kinds = crate::search::CODE_KINDS.iter().map(|k| format!("'{k}'")).collect::<Vec<_>>().join(",");
-        let mut named =
-            s.ix.db.prepare(&format!("SELECT {} FROM chunks WHERE name=?1 AND kind IN ({kinds},'key','macro') ORDER BY is_test", crate::index::CHUNK_COLS))?;
+        let kinds: Vec<&str> = crate::search::CODE_KINDS.iter().copied().chain(["key", "macro"]).collect();
         let langs = Langs { root: &s.ix.root, seen: Default::default() };
         // a key is what a call runs only in the caller's own language (Nix, whose functions are keys)
         let callable = |from: &str, r: &ChunkRow| langs.same_family(from, &r.path) && (r.kind != "key" || langs.id(from) == langs.id(&r.path));
-        let mut calls = s.ix.db.prepare("SELECT DISTINCT callee FROM refs WHERE chunk_id=?1 ORDER BY callee")?;
         let (mut resolved, mut external, mut seen) = (Vec::new(), Vec::new(), HashSet::new());
         let defs = crate::ops::targets(s, name, 5, true)?;
         let from = defs.iter().map(|d| d.path.clone()).collect();
         for d in defs {
-            let names: Vec<String> = calls.query_map([d.id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+            let names = s.ix.callees_of(d.id)?;
             for n in names {
-                let rows: Vec<ChunkRow> = named
-                    .query_map([&n], ChunkRow::from_row)?
-                    .filter(|r| r.as_ref().map_or(true, |r| callable(&d.path, r)))
-                    .collect::<rusqlite::Result<_>>()?;
+                let rows: Vec<ChunkRow> = s.ix.named_of_kinds(&n, &kinds)?.into_iter().filter(|r| callable(&d.path, r)).collect();
                 if rows.is_empty() {
                     if !external.contains(&n) {
                         external.push(n);
@@ -286,8 +274,7 @@ impl<'a> Names<'a> {
     /// Modules a file imports, resolved to repository files where the module path maps onto one.
     /// A statement naming several files (`from . import a, b`) is listed once per file.
     pub fn imports(&mut self, path: &str) -> Result<Vec<Dependency>> {
-        let mut st = self.s.ix.db.prepare_cached("SELECT line, module FROM imports WHERE path=?1 ORDER BY line")?;
-        let rows: Vec<(i64, String)> = st.query_map([path], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+        let rows = self.s.ix.imports_of(path)?;
         let mut out = Vec::new();
         for (line, module) in rows {
             let mut found = self.import_files(&module, path, line);
@@ -324,8 +311,7 @@ impl<'a> Names<'a> {
     /// resolved to no file although they may import `target`: a relative one whose path is the
     /// target's, or a bare one that names the target's module.
     pub fn importers(&mut self, target: &str) -> Result<(Vec<Importer>, usize)> {
-        let mut st = self.s.ix.db.prepare("SELECT path, line, module FROM imports ORDER BY path, line")?;
-        let rows: Vec<(String, i64, String)> = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<rusqlite::Result<_>>()?;
+        let rows = self.s.ix.imports()?;
         let is_file = self.rv.files().contains(target);
         let stem = target.rsplit_once('.').map(|(s, _)| s).unwrap_or(target);
         let stem = stem.strip_suffix(".d").unwrap_or(stem);
@@ -401,21 +387,6 @@ impl<'a> Names<'a> {
         }
         Ok((out, unsure))
     }
-}
-
-/// How many call edges each name has, namesakes included: the count ranking reads. The Python
-/// reference computes the same number, so a truer count waits until ranking stops mirroring it.
-pub fn call_counts(ix: &Index, names: &[&String]) -> Result<HashMap<String, i64>> {
-    let mut got = HashMap::new();
-    for part in names.chunks(400) {
-        let ph = vec!["?"; part.len()].join(",");
-        let mut st = ix.db.prepare(&format!("SELECT callee, COUNT(*) FROM refs WHERE callee IN ({ph}) GROUP BY callee"))?;
-        for r in st.query_map(params_from_iter(part.iter()), |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))? {
-            let (n, c) = r?;
-            got.insert(n, c);
-        }
-    }
-    Ok(got)
 }
 
 /// Call sites the resolver is asked about in one `callers` answer, likeliest first. Every site of
@@ -516,8 +487,6 @@ fn has_word(text: &str, word: &str) -> bool {
 /// The classes whose constructor is among `targets`, and the names of the Ruby ones, which a
 /// call of `new` on the class makes.
 fn constructed(s: &Searcher, langs: &Langs, targets: &[Hit]) -> Result<(Vec<Hit>, Vec<String>)> {
-    let mut class_at =
-        s.ix.db.prepare(&format!("SELECT {} FROM chunks WHERE path=?1 AND qualname=?2 AND kind IN ('class','struct') LIMIT 1", crate::index::CHUNK_COLS))?;
     let (mut classes, mut made_by_new) = (Vec::<Hit>::new(), Vec::new());
     for t in targets {
         let Some((owner, name)) = t.qualname.rsplit_once('.') else { continue };
@@ -534,7 +503,7 @@ fn constructed(s: &Searcher, langs: &Langs, targets: &[Hit]) -> Result<(Vec<Hit>
         if !constructor {
             continue;
         }
-        let class: Option<ChunkRow> = rusqlite::OptionalExtension::optional(class_at.query_row((&t.path, owner), ChunkRow::from_row))?;
+        let class = s.ix.class_at(&t.path, owner)?;
         let Some(class) = class.filter(|c| !targets.iter().chain(&classes).any(|x| x.id == c.id)) else { continue };
         if lang == "ruby" {
             made_by_new.push(class.name.clone());

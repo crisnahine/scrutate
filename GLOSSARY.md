@@ -35,7 +35,12 @@ a file, or a note on a file (its search stopped at a NUL byte).
 which files can match, so `grep --index` opens only those.
 
 **Chunk**: a piece of a file the index stores as one unit, usually a function, class or method.
-**Symbol** is the name for a chunk when the question is "what encloses this line".
+**Symbol** is the name for a chunk when the question is "what encloses this line"; in code,
+`index::Symbol` is a chunk without its text, what name resolution reads.
+
+**Index**: Engine B's store of chunks, call edges and imports (`index::Index`). Other modules ask
+it questions (the chunks of a file, of a name, at a line; the callers of a name) and never see
+its tables.
 
 **Hit**: one result. An Engine A hit is a matching line (`instant::Record::Match`); an Engine B hit
 is a chunk (`search::Hit`).

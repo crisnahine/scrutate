@@ -446,7 +446,7 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
         }
         Op::Outline { path } => {
             let path = repo_path(s, path);
-            Answer::Outline { rows: crate::intel::outline(&s.ix, &path)?, path }
+            Answer::Outline { rows: s.ix.outline(&path)?, path }
         }
         Op::Deps { path } => {
             let path = repo_path(s, path);
@@ -639,7 +639,7 @@ pub fn repo_path(s: &Searcher, path: &str) -> String {
         }
     }
     let plain = parts.join("/");
-    let indexed = |p: &str| s.ix.db.query_row("SELECT 1 FROM files WHERE path=?1", [p], |_| Ok(())).is_ok();
+    let indexed = |p: &str| s.ix.has_file(p);
     // a path copied from an answer has its control characters and backslashes written as
     // escapes; the text an answer prints for a file names that file, whatever else exists
     let read_back = crate::fmt::unshown(&plain);
@@ -670,8 +670,7 @@ pub fn targets(s: &Searcher, name: &str, limit: usize, windows: bool) -> Result<
     let path = repo_path(s, path);
     let mut at = s.ix.chunk_at(&path, line)?;
     if windows && at.as_ref().is_some_and(|c| c.kind == "window") {
-        let sql = format!("SELECT {} FROM chunks WHERE path=?1 AND kind='window' AND start<=?2 AND end>=?2 ORDER BY start LIMIT 1", crate::index::CHUNK_COLS);
-        at = rusqlite::OptionalExtension::optional(s.ix.db.query_row(&sql, rusqlite::params![path, line], ChunkRow::from_row))?;
+        at = s.ix.window_at(&path, line)?;
     }
     match at {
         Some(c) if windows || c.kind != "window" => Ok(vec![Hit::from_row(&c, true)]),

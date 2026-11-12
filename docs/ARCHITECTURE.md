@@ -313,6 +313,14 @@ folded, so two spellings of one accented name are one name.
   `ctime_ns`, SHA-1 content hash), `chunks` (metadata + zlib-compressed text), `refs` (call
   edges), `imports`, `meta` (schema version, model signature, segment manifest, data version,
   and `chunks_at`, the chunk count of the commit that wrote that data version).
+  These tables are private to `index.rs`: the database handle is not public, and every other
+  module asks `Index` a question instead (whether a path has a row, the indexed files, the chunks
+  of ids, a file's outline, the chunk or window at a line, the chunks of a name, a name's
+  definitions in lookup order, the callers of a name and the callees of a chunk, call counts,
+  a file's imports and every import, the counts `check` and `stats` print). Each question keeps
+  the order its callers read, and its statement is cached on the connection, so a question
+  asked in a loop is prepared once. A test that damages the index on purpose does it through
+  `Index::damage_for_tests`.
 - **Segments** (`.scrutate/seg/sNNNNNN/`): immutable, memory-mapped `.npy` arrays, Lucene-style.
   Per field (name, qualified name, signature, docs, body, path): BM25 postings (`ptr`, `doc`, `tf`)
   over a shared 63-bit token-hash vocabulary; `ids`, `dl`; int8 semantic vectors (`vec`, two

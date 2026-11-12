@@ -188,6 +188,11 @@ First release.
   line 18446744073709551615.
 
 ### Engine B: code intelligence
+- The index keeps its tables to itself: the database handle is no longer public, and the other
+  modules ask `Index` what they need (the chunks of a file, of a name or at a line, the callers
+  of a name, a file's imports, whether a path has a row) instead of running SQL on its tables.
+  Answers, their order and the stored format are the same; a test that damages the index on
+  purpose does it through `Index::damage_for_tests`.
 - Go to definition in the language server names the definition the resolver ties the name under
   the cursor to, as find references does: on `item.total()` after `item = Order()` with a class
   `Item` in the same file it answered `Item.total`, and now `Order.total`. A name the resolver

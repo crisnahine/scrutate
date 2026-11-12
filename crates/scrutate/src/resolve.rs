@@ -9,12 +9,10 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use anyhow::Result;
-use rusqlite::params;
 use tree_sitter::{Node, Parser, Point, Tree};
 
 use crate::fmt::shown;
-use crate::index::{ChunkRow, Index};
-use crate::text::name_key;
+use crate::index::{ChunkRow, Index, Symbol};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Lang {
@@ -760,8 +758,7 @@ fn go_bindings(n: Node, src: &str, out: &mut Vec<Binding>) -> bool {
 impl<'a> Resolver<'a> {
     /// `names::Names` builds the one resolver of a request.
     pub(crate) fn new(ix: &'a Index) -> Result<Resolver<'a>> {
-        let mut st = ix.db.prepare_cached("SELECT path FROM files WHERE hash != 'SKIP'")?;
-        let files = st.query_map([], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<_>>()?;
+        let files = ix.files()?.into_iter().collect();
         Ok(Resolver {
             ix,
             files,
@@ -924,25 +921,10 @@ impl<'a> Resolver<'a> {
             Some(i) if i > 0 => &base[..i],
             _ => base,
         };
-        let mut st = self
-            .ix
-            .db
-            .prepare_cached("SELECT id, name, qualname, kind, start, end FROM chunks WHERE path=?1 AND kind != 'window' ORDER BY start, end DESC, id")?;
-        let rows: Vec<(i64, String, String, String, i64, i64)> = st
-            .query_map([path], |r| {
-                Ok((
-                    r.get(0)?,
-                    r.get::<_, Option<String>>(1)?.unwrap_or_default(),
-                    r.get::<_, Option<String>>(2)?.unwrap_or_default(),
-                    r.get::<_, Option<String>>(3)?.unwrap_or_default(),
-                    r.get(4)?,
-                    r.get(5)?,
-                ))
-            })?
-            .collect::<rusqlite::Result<_>>()?;
+        let rows = self.ix.symbols_in(path)?;
         let mut defs: Vec<Def> = Vec::new();
         let mut stack: Vec<usize> = Vec::new();
-        for (id, name, qualname, kind, start, end) in rows {
+        for Symbol { id, name, qualname, kind, start, end, .. } in rows {
             // the header chunk (docstring and imports) is named after the file, not defined in it;
             // a definition that starts on line 1 too sorts before it
             if kind == "module" && start == 1 && name == stem && qualname == stem {
@@ -1199,13 +1181,8 @@ impl<'a> Resolver<'a> {
     /// Whether the repository defines `name` as a member of something named `ty` (a trait
     /// implemented for a type from outside, a prototype extension).
     fn extended(&self, ty: &str, name: &str) -> bool {
-        let Ok(mut st) = self.ix.db.prepare_cached("SELECT qualname FROM chunks WHERE name_key=?1 AND name=?2") else { return true };
-        let Ok(rows) = st.query_map(params![name_key(name), name], |r| r.get::<_, Option<String>>(0)) else { return true };
-        let found = rows
-            .flatten()
-            .flatten()
-            .any(|q| q.rsplit_once('.').is_some_and(|(owner, _)| owner.split(|c: char| !(c.is_alphanumeric() || c == '_')).any(|w| w == ty)));
-        found
+        let Ok(rows) = self.ix.named(name) else { return true };
+        rows.iter().any(|r| r.qualname.rsplit_once('.').is_some_and(|(owner, _)| owner.split(|c: char| !(c.is_alphanumeric() || c == '_')).any(|w| w == ty)))
     }
 
     /// Whether a trait or interface of the repository declares a method `name`: a blanket `impl`
@@ -1213,18 +1190,15 @@ impl<'a> Resolver<'a> {
     fn trait_member(&mut self, name: &str) -> bool {
         if self.trait_members.is_none() {
             let mut words = HashSet::new();
-            if let Ok(mut st) = self.ix.db.prepare("SELECT text FROM chunks WHERE kind IN ('trait', 'interface')") {
-                let texts = st.query_map([], |r| crate::index::unpack_text(r.get_ref(0)?)).map(|rows| rows.flatten().collect::<Vec<_>>()).unwrap_or_default();
-                for t in texts {
-                    let mut rest = t.as_str();
-                    while let Some(i) = rest.find(|c: char| c.is_alphanumeric() || c == '_') {
-                        let word_len = rest[i..].find(|c: char| !(c.is_alphanumeric() || c == '_')).unwrap_or(rest.len() - i);
-                        let (word, after) = (&rest[i..i + word_len], rest[i + word_len..].trim_start_matches(['?', ' ']));
-                        if after.starts_with(['(', '<']) {
-                            words.insert(word.to_string());
-                        }
-                        rest = &rest[i + word_len..];
+            for t in self.ix.texts_of_kinds(&["trait", "interface"]).unwrap_or_default() {
+                let mut rest = t.as_str();
+                while let Some(i) = rest.find(|c: char| c.is_alphanumeric() || c == '_') {
+                    let word_len = rest[i..].find(|c: char| !(c.is_alphanumeric() || c == '_')).unwrap_or(rest.len() - i);
+                    let (word, after) = (&rest[i..i + word_len], rest[i + word_len..].trim_start_matches(['?', ' ']));
+                    if after.starts_with(['(', '<']) {
+                        words.insert(word.to_string());
                     }
+                    rest = &rest[i + word_len..];
                 }
             }
             self.trait_members = Some(words);
@@ -1233,7 +1207,7 @@ impl<'a> Resolver<'a> {
     }
 
     fn def_kind(&self, id: i64) -> Option<String> {
-        self.ix.db.query_row("SELECT kind FROM chunks WHERE id=?1", [id], |r| r.get(0)).ok()
+        self.ix.symbol(id).ok().flatten().map(|d| d.kind)
     }
 
     /// The type of the value expression `e` of `path`, when declarations say it: a variable's
@@ -1657,22 +1631,11 @@ impl<'a> Resolver<'a> {
     }
 
     fn defined_anywhere(&self, name: &str) -> bool {
-        let kinds = CONTAINER_KINDS.iter().map(|k| format!("'{k}'")).collect::<Vec<_>>().join(",");
-        self.ix
-            .db
-            .query_row(
-                &format!("SELECT EXISTS(SELECT 1 FROM chunks WHERE name_key=?1 AND name=?2 AND kind IN ({kinds}, 'type'))"),
-                params![name_key(name), name],
-                |r| r.get(0),
-            )
-            .unwrap_or(true)
+        self.ix.defines(name, &[CONTAINER_KINDS, &["type"]].concat()).unwrap_or(true)
     }
 
     fn def_row(&self, id: i64) -> Option<(String, String)> {
-        self.ix
-            .db
-            .query_row("SELECT path, qualname FROM chunks WHERE id=?1", [id], |r| Ok((r.get(0)?, r.get::<_, Option<String>>(1)?.unwrap_or_default())))
-            .ok()
+        self.ix.symbol(id).ok().flatten().map(|d| (d.path, d.qualname))
     }
 
     /// `name` as a member of the container definition `id` (methods, nested classes), base classes included.
@@ -1702,14 +1665,9 @@ impl<'a> Resolver<'a> {
         let fi = self.file(&path);
         // Rust impl blocks may live in another file of the crate
         if fi.lang == Some(Lang::Rust) {
-            let mut st = self.ix.db.prepare_cached("SELECT id, path, qualname FROM chunks WHERE name_key=?1 AND name=?2").ok()?;
-            let rows: Vec<(i64, String, String)> = st
-                .query_map(params![name_key(name), name], |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, Option<String>>(2)?.unwrap_or_default())))
-                .ok()?
-                .flatten()
-                .collect();
+            let rows = self.ix.named(name).ok()?;
             let common = |p: &str| p.split('/').zip(path.split('/')).take_while(|(a, b)| a == b).count();
-            return rows.into_iter().filter(|(_, _, q)| strip_generics(q) == want).max_by_key(|(_, p, _)| common(p)).map(|(id, _, _)| id);
+            return rows.into_iter().filter(|r| strip_generics(&r.qualname) == want).max_by_key(|r| common(&r.path)).map(|r| r.id);
         }
         // a Go method is declared outside its type, in any file of the package: its receiver names the type
         if fi.lang == Some(Lang::Go) {
@@ -1939,8 +1897,7 @@ impl<'a> Resolver<'a> {
         // an owner whose header names no base needs no parse
         let defs = self.defs_of(&path).unwrap_or_default();
         let Some(owner) = defs.iter().find(|d| d.id == id).and_then(|d| d.parent) else { return Vec::new() };
-        let head: String =
-            self.ix.db.query_row("SELECT text FROM chunks WHERE id=?1", [defs[owner].id], |r| crate::index::unpack_text(r.get_ref(0)?)).unwrap_or_default();
+        let head: String = self.ix.texts(&[defs[owner].id]).ok().and_then(|mut t| t.remove(&defs[owner].id)).unwrap_or_default();
         let head = &head[..head.find('{').into_iter().chain(head.find(":\n")).min().unwrap_or(head.len())];
         if !head.contains('(') && !head.split(|c: char| !c.is_alphanumeric()).any(|w| matches!(w, "for" | "extends" | "implements")) {
             return Vec::new();
@@ -3270,11 +3227,10 @@ impl<'a> Resolver<'a> {
 
     /// A class, interface, enum or record at the top level of one of `files`.
     fn java_top(&self, files: &[String], name: &str) -> Option<i64> {
-        let kinds = CONTAINER_KINDS.iter().map(|k| format!("'{k}'")).collect::<Vec<_>>().join(",");
-        let sql = format!("SELECT id, path FROM chunks WHERE name_key=?1 AND name=?2 AND qualname=?2 AND kind IN ({kinds}) ORDER BY path, start");
-        let mut st = self.ix.db.prepare_cached(&sql).ok()?;
-        let rows: Vec<(i64, String)> = st.query_map(params![name_key(name), name], |r| Ok((r.get(0)?, r.get(1)?))).ok()?.flatten().collect();
-        rows.into_iter().find(|(_, p)| files.contains(p)).map(|(id, _)| id)
+        let mut rows: Vec<Symbol> =
+            self.ix.named(name).ok()?.into_iter().filter(|r| r.qualname == name && CONTAINER_KINDS.contains(&r.kind.as_str())).collect();
+        rows.sort_by(|a, b| (&a.path, a.start).cmp(&(&b.path, b.start)));
+        rows.into_iter().find(|r| files.contains(&r.path)).map(|r| r.id)
     }
 
     /// The definition a dotted Java name stands for: a class of a package (`a.b.C`), a member of

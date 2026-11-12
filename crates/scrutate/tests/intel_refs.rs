@@ -1525,7 +1525,7 @@ fn every_outlined_sample_name_is_found_by_symbol() {
         let ix = scrutate::index::Index::open(&fs::canonicalize(&root).unwrap(), scrutate::models::ModelSet::none()).unwrap();
         let mut s = scrutate::search::Searcher::new(ix);
         s.ix.update(false).unwrap();
-        for row in scrutate::intel::outline(&s.ix, &name).unwrap() {
+        for row in s.ix.outline(&name).unwrap() {
             total += 1;
             for q in [&row.qualname, &row.name] {
                 if !s.find_symbol(q, 50).unwrap().iter().any(|h| h.id == row.id) {

@@ -1520,7 +1520,7 @@ fn check_command(root: &Path, files: bool, json: bool) -> Result<i32> {
     let mut s = crate::open(root)?;
     let report = s.ix.check(files)?;
     // a constant has no postings, so no segment row: the counts below leave it out
-    let constants: i64 = s.ix.db.query_row("SELECT COUNT(*) FROM chunks WHERE kind = 'constant'", [], |r| r.get(0)).unwrap_or(0);
+    let constants = s.ix.constants();
     if json {
         let mut v = serde_json::to_value(&report)?;
         v["constants"] = serde_json::json!(constants);

@@ -119,14 +119,7 @@ fn hostile_text_shapes_never_panic() {
     assert!(s["files_skipped"].as_i64().unwrap() >= 3, "utf16, binary and oversize files are skipped: {s}");
 
     // every well-formed definition is found
-    let names: Vec<String> = ix
-        .db
-        .prepare("SELECT name FROM chunks WHERE kind != 'window'")
-        .unwrap()
-        .query_map([], |row| row.get::<_, String>(0))
-        .unwrap()
-        .map(|x| x.unwrap())
-        .collect();
+    let names = symbol_names(&ix);
     for want in ["ok", "bom_func", "crlf_func", "nonl_func", "upper_case_ext", "hidden_dot_file", "long_name_file", "spaced", "late_nul", "Ωmega"] {
         assert!(names.iter().any(|n| n == want), "missing symbol {want}; have {names:?}");
     }
@@ -238,14 +231,7 @@ fn symlinks_ignores_and_nested_repos() {
 
     let mut ix = r.index();
     ix.update(true).unwrap();
-    let names: Vec<String> = ix
-        .db
-        .prepare("SELECT name FROM chunks WHERE kind != 'window'")
-        .unwrap()
-        .query_map([], |row| row.get::<_, String>(0))
-        .unwrap()
-        .map(|x| x.unwrap())
-        .collect();
+    let names = symbol_names(&ix);
     assert!(names.iter().any(|n| n == "real_a"));
     assert!(names.iter().any(|n| n == "nested_kept"));
     assert!(names.iter().any(|n| n == "submodule_symbol"));
@@ -325,15 +311,13 @@ fn incremental_updates_track_edits_renames_and_deletes() {
     let st = ix.update(false).unwrap();
     assert_eq!(st.files_removed, 1);
     assert_eq!(st.files_changed, 1);
-    let paths: Vec<String> =
-        ix.db.prepare("SELECT DISTINCT path FROM chunks").unwrap().query_map([], |row| row.get::<_, String>(0)).unwrap().map(|x| x.unwrap()).collect();
+    let paths = ix.files().unwrap();
     assert!(paths.contains(&"c.py".to_string()) && !paths.contains(&"b.py".to_string()), "{paths:?}");
     // delete: chunks removed
     fs::remove_file(r.root.join("c.py")).unwrap();
     let st = ix.update(false).unwrap();
     assert_eq!(st.files_removed, 1);
-    let paths: Vec<String> =
-        ix.db.prepare("SELECT DISTINCT path FROM chunks").unwrap().query_map([], |row| row.get::<_, String>(0)).unwrap().map(|x| x.unwrap()).collect();
+    let paths = ix.files().unwrap();
     assert_eq!(paths, vec!["a.py".to_string()]);
     assert!(count_chunks(&ix) <= n0);
     // the live segment statistics agree with the database after all that
@@ -342,7 +326,7 @@ fn incremental_updates_track_edits_renames_and_deletes() {
 }
 
 fn symbol_names(ix: &Index) -> Vec<String> {
-    ix.db.prepare("SELECT name FROM chunks WHERE kind != 'window'").unwrap().query_map([], |row| row.get::<_, String>(0)).unwrap().map(|x| x.unwrap()).collect()
+    ix.files().unwrap().iter().flat_map(|p| ix.outline(p).unwrap()).map(|r| r.name).collect()
 }
 
 fn filetime_now_plus(secs: u64) -> std::time::SystemTime {
@@ -479,8 +463,7 @@ fn concurrent_indexers_and_readers_do_not_corrupt() {
         assert!(!names.contains(&format!("writer_{w}_0")), "stale chunk survived: {names:?}");
     }
     assert_eq!(ix.lex().unwrap().n_alive as i64, count_chunks(&ix));
-    let ok: String = ix.db.query_row("PRAGMA integrity_check", [], |row| row.get(0)).unwrap();
-    assert_eq!(ok, "ok");
+    assert!(ix.check(false).unwrap().database_ok);
 }
 
 // ------------------------------------------------------------------------- Engine A resource limits

@@ -11,7 +11,7 @@ use std::sync::{mpsc, Arc, Mutex, MutexGuard};
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 
-use crate::index::{ChunkRow, Index, CHUNK_COLS};
+use crate::index::{ChunkRow, Index};
 use crate::names::Names;
 use crate::search::Searcher;
 use crate::text::name_key;
@@ -657,7 +657,7 @@ impl Server {
 
     fn document_symbols(&self, s: &Searcher, p: &Value) -> Result<Value> {
         let Some(rel) = p["textDocument"]["uri"].as_str().and_then(|u| self.rel(u)) else { return Ok(Value::Null) };
-        let rows = crate::intel::outline(&s.ix, &rel)?;
+        let rows = s.ix.outline(&rel)?;
         let mut lines = self.lines();
         // rows come by start line, enclosing symbols first: a stack of open symbols nests them
         let mut roots: Vec<Value> = Vec::new();
@@ -686,11 +686,7 @@ impl Server {
 
     fn workspace_symbols(&self, s: &Searcher, p: &Value) -> Result<Value> {
         let q = name_key(p["query"].as_str().unwrap_or(""));
-        let mut st = s.ix.db.prepare(&format!(
-            "SELECT {CHUNK_COLS} FROM chunks WHERE kind != 'window' AND name != '' AND instr(name_key, ?1) > 0 \
-             ORDER BY name_key != ?1, substr(name_key, 1, length(?1)) != ?1, is_test, length(name), path, start LIMIT 200"
-        ))?;
-        let rows: Vec<ChunkRow> = st.query_map([&q], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
+        let rows = s.ix.symbols_containing(&q)?;
         let mut lines = self.lines();
         Ok(Value::Array(
             rows.iter()

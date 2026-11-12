@@ -961,20 +961,20 @@ fn constants_are_found_by_name_but_never_ranked() {
     repo.update(false).unwrap();
     let hits = repo.find_symbol("RETRY_LIMIT", 5).unwrap();
     assert_eq!(hits.iter().map(|h| (h.kind.as_str(), h.qualname.as_str())).collect::<Vec<_>>(), [("constant", "RETRY_LIMIT")]);
-    let outline = scrutate::intel::outline(&repo.ix, "src/lib.rs").unwrap();
+    let outline = repo.ix.outline("src/lib.rs").unwrap();
     assert!(outline.iter().any(|r| r.kind == "constant" && r.name == "RETRY_LIMIT"));
     for q in ["RETRY_LIMIT", "retry limit", "how many retries"] {
         let cands = repo.candidates(q, true).unwrap();
         assert!(cands.rows.iter().all(|r| r.kind != "constant"), "{q}: {:?}", cands.rows.iter().map(|r| &r.qualname).collect::<Vec<_>>());
     }
-    let lexed = |repo: &scrutate::Repo| -> i64 { repo.ix.db.query_row("SELECT COUNT(*) FROM chunks WHERE kind != 'constant'", [], |r| r.get(0)).unwrap() };
-    let n = lexed(&repo);
+    let lexed = |repo: &mut scrutate::Repo| -> i64 { repo.ix.check(false).unwrap().chunks_db };
+    let n = lexed(&mut repo);
     assert_eq!(repo.ix.lex().unwrap().n_alive as i64, n);
     let report = repo.ix.check(false).unwrap();
     assert!(report.ok(), "{report:?}");
     std::fs::write(root.join("src/lib.rs"), "pub const RETRY_LIMIT: usize = 4;\npub fn retry_request() {}\n").unwrap();
     repo.update(false).unwrap();
-    let n = lexed(&repo);
+    let n = lexed(&mut repo);
     assert_eq!(repo.ix.lex().unwrap().n_alive as i64, n);
     let report = repo.ix.check(false).unwrap();
     assert!(report.ok(), "{report:?}");

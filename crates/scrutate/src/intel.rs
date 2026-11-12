@@ -5,20 +5,12 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Result};
-use rusqlite::params;
 
 use crate::fmt::{echo, shown};
-use crate::index::{ChunkRow, Index, CHUNK_COLS};
+use crate::index::{ChunkRow, Index};
 use crate::search::{Hit, Searcher, CODE_KINDS};
-use crate::text::{name_key, tokenize2, BODY_CAP};
+use crate::text::{tokenize2, BODY_CAP};
 use crate::tscache::Key;
-
-/// Symbols of a file in source order.
-pub fn outline(ix: &Index, path: &str) -> Result<Vec<ChunkRow>> {
-    let mut st = ix.db.prepare(&format!("SELECT {CHUNK_COLS} FROM chunks WHERE path=?1 AND kind != 'window' ORDER BY start, end DESC"))?;
-    let rows = st.query_map([path], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
-    Ok(rows)
-}
 
 /// The path and line a location names: `path:line`, or `path:start-end` as every answer prints
 /// it, so a location copied from one answer can be handed to the next call.
@@ -128,13 +120,7 @@ pub struct DupGroup {
 /// Duplicate and near-duplicate functions: the same body text up to whitespace, then MinHash/LSH
 /// candidates verified by Jaccard similarity of word 3-gram sets (>= `threshold`; 1 = exact only).
 pub fn dupes(ix: &Index, min_tokens: usize, threshold: f32, limit: usize) -> Result<Vec<DupGroup>> {
-    let kinds = CODE_KINDS.iter().map(|k| format!("'{k}'")).collect::<Vec<_>>().join(",");
-    let mut st = ix.db.prepare(&format!("SELECT id, path, qualname, start, end, text FROM chunks WHERE kind IN ({kinds}) AND nbody >= ?1 ORDER BY id"))?;
-    let rows: Vec<(i64, String, String, i64, i64, String)> = st
-        .query_map([i64::try_from(min_tokens).unwrap_or(i64::MAX)], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get::<_, Option<String>>(2)?.unwrap_or_default(), r.get(3)?, r.get(4)?, crate::index::unpack_text(r.get_ref(5)?)?))
-        })?
-        .collect::<rusqlite::Result<_>>()?;
+    let rows = ix.bodies(CODE_KINDS, min_tokens)?;
     let mut exact: HashMap<u64, Vec<usize>> = HashMap::new();
     // the same words in the same order: bodies that differ in operators, numbers or spacing
     let mut same_words: HashMap<u64, Vec<usize>> = HashMap::new();
@@ -558,7 +544,7 @@ pub fn group_text(g: &RefGroup) -> String {
 /// grouped by the enclosing symbol. Works without an index too (then only occurrences, ungrouped).
 pub fn references(s: &Searcher, name: &str, max_results: u64) -> Result<References> {
     let bare = bare_name(s, name)?;
-    let definitions = definitions(&s.ix, &bare)?;
+    let definitions = s.ix.definitions(&bare)?;
     let callers = s.callers(name, 200)?;
     let (groups, truncated) = grouped_grep(s, &crate::resolve::name_search(&bare, max_results))?;
     Ok(References { definitions, callers, groups, truncated })
@@ -597,12 +583,4 @@ pub fn bare_name(s: &Searcher, name: &str) -> Result<String> {
         Some(n) => n.to_string(),
         None => crate::search::dotted(typed).rsplit('.').next().unwrap_or(typed).to_string(),
     })
-}
-
-/// All symbols named `bare` anywhere (for `refs`): definitions by key.
-pub fn definitions(ix: &Index, bare: &str) -> Result<Vec<ChunkRow>> {
-    let mut st =
-        ix.db.prepare(&format!("SELECT {CHUNK_COLS} FROM chunks WHERE name_key=?1 AND kind != 'window' ORDER BY (name != ?2), is_test, path, start"))?;
-    let rows = st.query_map(params![name_key(bare), bare], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
-    Ok(rows)
 }

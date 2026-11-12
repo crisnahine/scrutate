@@ -10,10 +10,9 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use regex::Regex;
-use rusqlite::params_from_iter;
 use unicode_normalization::UnicodeNormalization;
 
-use crate::index::{ChunkRow, Index, CHUNK_COLS};
+use crate::index::{ChunkRow, Index};
 use crate::lex::tok_key;
 use crate::text::{literal_candidates, name_key, query_terms, query_wholes, Words, QUERY_STOP};
 
@@ -223,17 +222,6 @@ pub(crate) fn dotted(name: &str) -> String {
     out
 }
 
-/// The order of a name lookup, `typed` being the parameter that holds the last part of the name as
-/// typed: that exact name before its case-folded namesakes, then non-test files, types, functions,
-/// the rest, and a definition before its prototype.
-fn symbol_order(typed: &str) -> String {
-    format!(
-        "ORDER BY (name IS NOT {typed}), is_test, \
-         CASE WHEN kind IN ('class','struct','enum','trait','interface','type','impl') THEN 0 WHEN kind IN ('function','method') THEN 1 ELSE 2 END, \
-         (nbody = 0)"
-    )
-}
-
 /// A dotted name with a PHP namespace's `\` as a dot and generic arguments (`<T>`, `<'a, T>`)
 /// dropped, so `Stack<T>.push` and `App\Models\User.find` compare with `Stack.push`, `User.find`.
 fn plain(name: &str) -> String {
@@ -272,19 +260,11 @@ impl Searcher {
     fn exact(&self, q: &QueryInfo, limit: usize) -> Result<Vec<i64>> {
         let mut out: Vec<i64> = Vec::new();
         if !q.keys.is_empty() {
-            let ph = vec!["?"; q.keys.len()].join(",");
-            let mut st = self.ix.db.prepare(&format!("SELECT id FROM chunks WHERE name_key IN ({ph}) AND kind NOT IN ('window','constant') LIMIT {limit}"))?;
-            let rows = st.query_map(params_from_iter(q.keys.iter()), |r| r.get::<_, i64>(0))?;
-            for r in rows {
-                out.push(r?);
-            }
+            out = self.ix.ids_named(&q.keys, limit)?;
         }
         for d in &q.dotted {
             let last = d.rsplit('.').next().unwrap_or(d);
-            let mut st = self.ix.db.prepare_cached("SELECT id, qual_key FROM chunks WHERE name_key=?1 AND kind NOT IN ('window','constant') LIMIT 200")?;
-            let rows = st.query_map([last], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?.unwrap_or_default())))?;
-            for r in rows {
-                let (id, qk) = r?;
+            for (id, qk) in self.ix.qual_keys_named(last)? {
                 if qk == *d || qk.ends_with(&format!(".{d}")) {
                     out.push(id);
                 }
@@ -314,24 +294,11 @@ impl Searcher {
         let mut need: Vec<&String> = names.iter().filter(|n| !n.is_empty() && !self.callers_cache.contains_key(*n)).collect();
         need.sort();
         need.dedup();
-        let got = crate::names::call_counts(&self.ix, &need)?;
+        let got = self.ix.call_counts(&need)?;
         for n in need {
             self.callers_cache.insert(n.clone(), got.get(n).copied().unwrap_or(0));
         }
         Ok(())
-    }
-
-    fn fetch_rows(&self, ids: &[i64]) -> Result<HashMap<i64, ChunkRow>> {
-        let mut by_id = HashMap::with_capacity(ids.len());
-        for part in ids.chunks(500) {
-            let ph = vec!["?"; part.len()].join(",");
-            let mut st = self.ix.db.prepare(&format!("SELECT {CHUNK_COLS} FROM chunks WHERE id IN ({ph})"))?;
-            for r in st.query_map(params_from_iter(part.iter()), ChunkRow::from_row)? {
-                let r = r?;
-                by_id.insert(r.id, r);
-            }
-        }
-        Ok(by_id)
     }
 
     // ------------------------------------------------------------ candidates + features
@@ -375,7 +342,7 @@ impl Searcher {
         if ids.is_empty() {
             return Ok(Candidates { q, rows: Vec::new(), x: Vec::new(), lex_ids, sem_ids, exact_ids });
         }
-        let by_id = self.fetch_rows(&ids)?;
+        let by_id = self.ix.chunks(&ids)?;
         ids.retain(|i| by_id.contains_key(i));
         let rows: Vec<ChunkRow> = ids.iter().map(|i| by_id[i].clone()).collect();
         let n = ids.len();
@@ -571,13 +538,7 @@ impl Searcher {
             return Ok(());
         }
         let ids: Vec<i64> = hits.iter().map(|h| h.id).collect();
-        let ph = vec!["?"; ids.len()].join(",");
-        let mut st = self.ix.db.prepare(&format!("SELECT id, text FROM chunks WHERE id IN ({ph})"))?;
-        let mut texts: HashMap<i64, String> = HashMap::new();
-        for r in st.query_map(params_from_iter(ids.iter()), |r| Ok((r.get::<_, i64>(0)?, crate::index::unpack_text(r.get_ref(1)?)?)))? {
-            let (i, t) = r?;
-            texts.insert(i, t);
-        }
+        let mut texts = self.ix.texts(&ids)?;
         for h in hits {
             h.text = texts.remove(&h.id).unwrap_or_default();
         }
@@ -645,9 +606,7 @@ impl Searcher {
         let q = name_key(&plain(d));
         let Some((_, last)) = q.rsplit_once('.') else { return Ok(out) };
         let typed_last = plain(d).rsplit('.').next().unwrap_or_default().to_string();
-        let mut st =
-            self.ix.db.prepare_cached(&format!("SELECT id, qualname FROM chunks WHERE name_key=?1 AND kind!='window' {} LIMIT 10000", symbol_order("?2")))?;
-        let cands: Vec<(i64, String)> = st.query_map(rusqlite::params![last, typed_last], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+        let cands = self.ix.qualnames_named(last, &typed_last)?;
         let stored: Vec<(i64, String)> = cands.into_iter().map(|(id, qn)| (id, name_key(&plain(&dotted(&qn))))).collect();
         let tail = |a: &str, b: &str| a == b || a.ends_with(&format!(".{b}"));
         let ids: Vec<i64> = if !out.is_empty() {
@@ -672,18 +631,7 @@ impl Searcher {
 
     /// Chunks whose stored name or qualified name is `name`, or whose qualified name ends in it.
     pub(crate) fn symbol_rows(&self, name: &str, limit: usize) -> Result<Vec<Hit>> {
-        let key = name_key(name);
-        let last = name_key(name.rsplit('.').next().unwrap_or(name));
-        // the tail filter must run before LIMIT
-        let mut st = self.ix.db.prepare_cached(&format!(
-            "SELECT {CHUNK_COLS} FROM chunks WHERE kind!='window' \
-             AND (name_key = ?1 OR qual_key = ?1 OR (name_key = ?3 AND substr(qual_key, -(length(?1) + 1)) = '.' || ?1)) \
-             {} LIMIT ?2",
-            symbol_order("?4")
-        ))?;
-        let typed_last = name.rsplit('.').next().unwrap_or(name);
-        let rows: Vec<ChunkRow> = st.query_map(rusqlite::params![key, limit as i64, last, typed_last], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
-        Ok(rows.iter().map(|r| Hit::from_row(r, true)).collect())
+        Ok(self.ix.symbols_named(name, limit)?.iter().map(|r| Hit::from_row(r, true)).collect())
     }
 
     /// The definitions that call what `name` stands for, as the `callers` tool answers.

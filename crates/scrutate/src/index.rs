@@ -9,7 +9,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, Result};
 use rayon::prelude::*;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use sha1::{Digest, Sha1};
 
 use crate::lex::{merge_segments, pack_bags, quantize, FileLex, LexStore, QVecs, SegmentBuilder};
@@ -110,7 +110,7 @@ impl CheckReport {
 
 /// One row of the `chunks` table as the search layer reads it.
 /// Chunk text as stored: zlib-compressed UTF-8 (2.4x smaller on source code, ~6 us to inflate).
-pub fn pack_text(text: &str) -> Vec<u8> {
+fn pack_text(text: &str) -> Vec<u8> {
     thread_local! {
         // a deflate state is ~300 KB to initialise: reuse one per thread instead of paying that per chunk
         static COMP: std::cell::RefCell<flate2::Compress> = std::cell::RefCell::new(flate2::Compress::new(flate2::Compression::new(6), true));
@@ -134,7 +134,7 @@ pub fn pack_text(text: &str) -> Vec<u8> {
 }
 
 /// Inverse of `pack_text`; accepts legacy plain text and NULL.
-pub fn unpack_text(v: rusqlite::types::ValueRef<'_>) -> rusqlite::Result<String> {
+fn unpack_text(v: rusqlite::types::ValueRef<'_>) -> rusqlite::Result<String> {
     use std::io::Read;
     match v {
         rusqlite::types::ValueRef::Null => Ok(String::new()),
@@ -168,10 +168,10 @@ pub struct ChunkRow {
     pub name_tok: String,
 }
 
-pub const CHUNK_COLS: &str = "id,path,kind,name,qualname,name_key,qual_key,start,end,is_test,ndoc,nbody,text,name_tok";
+const CHUNK_COLS: &str = "id,path,kind,name,qualname,name_key,qual_key,start,end,is_test,ndoc,nbody,text,name_tok";
 
 impl ChunkRow {
-    pub fn from_row(r: &rusqlite::Row) -> rusqlite::Result<ChunkRow> {
+    fn from_row(r: &rusqlite::Row) -> rusqlite::Result<ChunkRow> {
         Ok(ChunkRow {
             id: r.get(0)?,
             path: r.get(1)?,
@@ -189,6 +189,51 @@ impl ChunkRow {
             name_tok: r.get::<_, Option<String>>(13)?.unwrap_or_default(),
         })
     }
+}
+
+/// Id, path, qualified name, start and end line, and text of a chunk.
+pub type Body = (i64, String, String, i64, i64, String);
+
+/// A chunk without its text and search fields: what name resolution reads.
+#[derive(Debug, Clone, Default)]
+pub struct Symbol {
+    pub id: i64,
+    pub path: String,
+    pub kind: String,
+    pub name: String,
+    pub qualname: String,
+    pub start: i64,
+    pub end: i64,
+}
+
+impl Symbol {
+    fn from_row(r: &rusqlite::Row) -> rusqlite::Result<Symbol> {
+        Ok(Symbol {
+            id: r.get(0)?,
+            path: r.get(1)?,
+            kind: r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+            name: r.get::<_, Option<String>>(3)?.unwrap_or_default(),
+            qualname: r.get::<_, Option<String>>(4)?.unwrap_or_default(),
+            start: r.get(5)?,
+            end: r.get(6)?,
+        })
+    }
+}
+
+/// `kinds` as an SQL list of string literals.
+fn quoted(kinds: &[&str]) -> String {
+    kinds.iter().map(|k| format!("'{k}'")).collect::<Vec<_>>().join(",")
+}
+
+/// The order of a name lookup, `typed` being the parameter that holds the last part of the name as
+/// typed: that exact name before its case-folded namesakes, then non-test files, types, functions,
+/// the rest, and a definition before its prototype.
+fn symbol_order(typed: &str) -> String {
+    format!(
+        "ORDER BY (name IS NOT {typed}), is_test, \
+         CASE WHEN kind IN ('class','struct','enum','trait','interface','type','impl') THEN 0 WHEN kind IN ('function','method') THEN 1 ELSE 2 END, \
+         (nbody = 0)"
+    )
 }
 
 fn bag(tokens: impl Iterator<Item = String>, cap: Option<u32>) -> HashMap<String, u32> {
@@ -640,7 +685,7 @@ pub struct Index {
     pub models: Arc<ModelSet>,
     /// the signature of `models`' vector model, as the index stores it
     sig: String,
-    pub db: Connection,
+    db: Connection,
     /// print indexing progress to stderr when it is a terminal (set by the CLI)
     pub progress: bool,
     /// set to stop an update between batches of files; the update is rolled back
@@ -723,6 +768,8 @@ impl Index {
                 db
             }
         };
+        // the questions below keep about 30 statements, more than the default cache of 16
+        db.set_prepared_statement_cache_capacity(64);
         let mut ix = Index {
             root,
             dir,
@@ -1685,6 +1732,272 @@ impl Index {
                 ChunkRow::from_row,
             )
             .optional()?)
+    }
+
+    /// The window that holds the line, the first one when windows overlap.
+    pub fn window_at(&self, path: &str, line: i64) -> Result<Option<ChunkRow>> {
+        let mut q = self
+            .db
+            .prepare_cached(&format!("SELECT {CHUNK_COLS} FROM chunks WHERE path=?1 AND kind='window' AND start<=?2 AND end>=?2 ORDER BY start LIMIT 1"))?;
+        Ok(q.query_row(params![path, line], ChunkRow::from_row).optional()?)
+    }
+
+    /// The chunks of these ids, by id.
+    pub fn chunks(&self, ids: &[i64]) -> Result<HashMap<i64, ChunkRow>> {
+        let mut by_id = HashMap::with_capacity(ids.len());
+        for part in ids.chunks(500) {
+            let ph = vec!["?"; part.len()].join(",");
+            let mut st = self.db.prepare(&format!("SELECT {CHUNK_COLS} FROM chunks WHERE id IN ({ph})"))?;
+            for r in st.query_map(params_from_iter(part.iter()), ChunkRow::from_row)? {
+                let r = r?;
+                by_id.insert(r.id, r);
+            }
+        }
+        Ok(by_id)
+    }
+
+    /// The text of the chunks of these ids, by id.
+    pub fn texts(&self, ids: &[i64]) -> Result<HashMap<i64, String>> {
+        let ph = vec!["?"; ids.len()].join(",");
+        let mut st = self.db.prepare(&format!("SELECT id, text FROM chunks WHERE id IN ({ph})"))?;
+        let mut texts = HashMap::with_capacity(ids.len());
+        for r in st.query_map(params_from_iter(ids.iter()), |r| Ok((r.get::<_, i64>(0)?, unpack_text(r.get_ref(1)?)?)))? {
+            let (i, t) = r?;
+            texts.insert(i, t);
+        }
+        Ok(texts)
+    }
+
+    /// The texts of every chunk of these kinds, in table order.
+    pub fn texts_of_kinds(&self, kinds: &[&str]) -> Result<Vec<String>> {
+        let mut st = self.db.prepare(&format!("SELECT text FROM chunks WHERE kind IN ({})", quoted(kinds)))?;
+        let rows = st.query_map([], |r| unpack_text(r.get_ref(0)?))?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// The definitions of a file in source order, outer before inner.
+    pub fn outline(&self, path: &str) -> Result<Vec<ChunkRow>> {
+        let mut st = self.db.prepare_cached(&format!("SELECT {CHUNK_COLS} FROM chunks WHERE path=?1 AND kind != 'window' ORDER BY start, end DESC"))?;
+        let rows = st.query_map([path], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// `outline` without the texts, ties in id order: what name resolution reads of a file.
+    pub fn symbols_in(&self, path: &str) -> Result<Vec<Symbol>> {
+        let mut st = self
+            .db
+            .prepare_cached("SELECT id, path, kind, name, qualname, start, end FROM chunks WHERE path=?1 AND kind != 'window' ORDER BY start, end DESC, id")?;
+        let rows = st.query_map([path], Symbol::from_row)?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// The chunk of this id without its text.
+    pub fn symbol(&self, id: i64) -> Result<Option<Symbol>> {
+        let mut st = self.db.prepare_cached("SELECT id, path, kind, name, qualname, start, end FROM chunks WHERE id=?1")?;
+        Ok(st.query_row([id], Symbol::from_row).optional()?)
+    }
+
+    /// The chunks whose name is exactly `name`, windows too, in the order of the name index.
+    pub fn named(&self, name: &str) -> Result<Vec<Symbol>> {
+        let mut st = self.db.prepare_cached("SELECT id, path, kind, name, qualname, start, end FROM chunks WHERE name_key=?1 AND name=?2")?;
+        let rows = st.query_map(params![name_key(name), name], Symbol::from_row)?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// Whether a chunk of one of these kinds is named exactly `name`.
+    pub fn defines(&self, name: &str, kinds: &[&str]) -> Result<bool> {
+        let mut st = self.db.prepare_cached(&format!("SELECT EXISTS(SELECT 1 FROM chunks WHERE name_key=?1 AND name=?2 AND kind IN ({}))", quoted(kinds)))?;
+        Ok(st.query_row(params![name_key(name), name], |r| r.get(0))?)
+    }
+
+    /// The definitions of these kinds named exactly `name`, those outside tests first.
+    pub fn named_of_kinds(&self, name: &str, kinds: &[&str]) -> Result<Vec<ChunkRow>> {
+        let mut st = self
+            .db
+            .prepare_cached(&format!("SELECT {CHUNK_COLS} FROM chunks WHERE name_key=?1 AND name=?2 AND kind IN ({}) ORDER BY is_test", quoted(kinds)))?;
+        let rows = st.query_map(params![name_key(name), name], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// Every definition whose name key is `bare`'s: the exact spelling first, then those outside
+    /// tests, then by place.
+    pub fn definitions(&self, bare: &str) -> Result<Vec<ChunkRow>> {
+        let mut st = self
+            .db
+            .prepare_cached(&format!("SELECT {CHUNK_COLS} FROM chunks WHERE name_key=?1 AND kind != 'window' ORDER BY (name != ?2), is_test, path, start"))?;
+        let rows = st.query_map(params![name_key(bare), bare], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// The class or struct of a file with this qualified name.
+    pub fn class_at(&self, path: &str, qualname: &str) -> Result<Option<ChunkRow>> {
+        let mut st =
+            self.db.prepare_cached(&format!("SELECT {CHUNK_COLS} FROM chunks WHERE path=?1 AND qualname=?2 AND kind IN ('class','struct') LIMIT 1"))?;
+        Ok(st.query_row(params![path, qualname], ChunkRow::from_row).optional()?)
+    }
+
+    /// Ids of the ranked chunks (no windows, no constants) whose name key is one of `keys`.
+    pub fn ids_named(&self, keys: &[String], limit: usize) -> Result<Vec<i64>> {
+        let ph = vec!["?"; keys.len()].join(",");
+        let mut st = self.db.prepare(&format!("SELECT id FROM chunks WHERE name_key IN ({ph}) AND kind NOT IN ('window','constant') LIMIT {limit}"))?;
+        let ids = st.query_map(params_from_iter(keys.iter()), |r| r.get::<_, i64>(0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(ids)
+    }
+
+    /// Id and qualified name key of the ranked chunks whose name key is `key`, at most 200.
+    pub fn qual_keys_named(&self, key: &str) -> Result<Vec<(i64, String)>> {
+        let mut st = self.db.prepare_cached("SELECT id, qual_key FROM chunks WHERE name_key=?1 AND kind NOT IN ('window','constant') LIMIT 200")?;
+        let rows = st.query_map([key], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?.unwrap_or_default())))?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// Id and qualified name of the definitions whose name key is `key`, in the order of
+    /// `symbols_named`, at most 10,000.
+    pub fn qualnames_named(&self, key: &str, typed: &str) -> Result<Vec<(i64, String)>> {
+        let mut st =
+            self.db.prepare_cached(&format!("SELECT id, qualname FROM chunks WHERE name_key=?1 AND kind!='window' {} LIMIT 10000", symbol_order("?2")))?;
+        let rows = st.query_map(params![key, typed], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// Definitions whose name or qualified name is `name`, or whose qualified name ends in it:
+    /// the spelling as typed first, then those outside tests, types before functions, and
+    /// declarations without a body last.
+    pub fn symbols_named(&self, name: &str, limit: usize) -> Result<Vec<ChunkRow>> {
+        let key = name_key(name);
+        let last = name_key(name.rsplit('.').next().unwrap_or(name));
+        // the tail filter must run before LIMIT
+        let mut st = self.db.prepare_cached(&format!(
+            "SELECT {CHUNK_COLS} FROM chunks WHERE kind!='window' \
+             AND (name_key = ?1 OR qual_key = ?1 OR (name_key = ?3 AND substr(qual_key, -(length(?1) + 1)) = '.' || ?1)) \
+             {} LIMIT ?2",
+            symbol_order("?4")
+        ))?;
+        let typed_last = name.rsplit('.').next().unwrap_or(name);
+        let rows = st.query_map(params![key, limit as i64, last, typed_last], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// Definitions whose name key contains `key`: whole keys first, then prefixes, then those
+    /// outside tests and shorter names; at most 200.
+    pub fn symbols_containing(&self, key: &str) -> Result<Vec<ChunkRow>> {
+        let mut st = self.db.prepare_cached(&format!(
+            "SELECT {CHUNK_COLS} FROM chunks WHERE kind != 'window' AND name != '' AND instr(name_key, ?1) > 0 \
+             ORDER BY name_key != ?1, substr(name_key, 1, length(?1)) != ?1, is_test, length(name), path, start LIMIT 200"
+        ))?;
+        let rows = st.query_map([key], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// Id, path, qualified name, lines and text of the chunks of these kinds with at least
+    /// `min_tokens` body tokens, by id.
+    pub fn bodies(&self, kinds: &[&str], min_tokens: usize) -> Result<Vec<Body>> {
+        let mut st = self
+            .db
+            .prepare(&format!("SELECT id, path, qualname, start, end, text FROM chunks WHERE kind IN ({}) AND nbody >= ?1 ORDER BY id", quoted(kinds)))?;
+        let rows = st
+            .query_map([i64::try_from(min_tokens).unwrap_or(i64::MAX)], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get::<_, Option<String>>(2)?.unwrap_or_default(), r.get(3)?, r.get(4)?, unpack_text(r.get_ref(5)?)?))
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    // ---- edges
+    /// The chunks with a call of `callee`, each once, those outside tests first.
+    pub fn callers_of(&self, callee: &str) -> Result<Vec<ChunkRow>> {
+        let cols = CHUNK_COLS.split(',').map(|c| format!("c.{c}")).collect::<Vec<_>>().join(",");
+        let mut st =
+            self.db.prepare_cached(&format!("SELECT DISTINCT {cols} FROM refs r JOIN chunks c ON c.id=r.chunk_id WHERE r.callee=?1 ORDER BY c.is_test"))?;
+        let rows = st.query_map([callee], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// The names chunk `id` calls, each once, sorted.
+    pub fn callees_of(&self, id: i64) -> Result<Vec<String>> {
+        let mut st = self.db.prepare_cached("SELECT DISTINCT callee FROM refs WHERE chunk_id=?1 ORDER BY callee")?;
+        let rows = st.query_map([id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// How many call edges each of `names` has, namesakes included; a name without any is absent.
+    pub fn call_counts(&self, names: &[&String]) -> Result<HashMap<String, i64>> {
+        let mut got = HashMap::new();
+        for part in names.chunks(400) {
+            let ph = vec!["?"; part.len()].join(",");
+            let mut st = self.db.prepare(&format!("SELECT callee, COUNT(*) FROM refs WHERE callee IN ({ph}) GROUP BY callee"))?;
+            for r in st.query_map(params_from_iter(part.iter()), |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))? {
+                let (n, c) = r?;
+                got.insert(n, c);
+            }
+        }
+        Ok(got)
+    }
+
+    /// The imports a file records, as (line, module), by line.
+    pub fn imports_of(&self, path: &str) -> Result<Vec<(i64, String)>> {
+        let mut st = self.db.prepare_cached("SELECT line, module FROM imports WHERE path=?1 ORDER BY line")?;
+        let rows = st.query_map([path], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// Every recorded import, as (path, line, module), by path and line.
+    pub fn imports(&self) -> Result<Vec<(String, i64, String)>> {
+        let mut st = self.db.prepare("SELECT path, line, module FROM imports ORDER BY path, line")?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    // ---- files
+    /// Whether the index has a row for `path`: a file it indexed or one it skipped.
+    pub fn has_file(&self, path: &str) -> bool {
+        self.db.prepare_cached("SELECT 1 FROM files WHERE path=?1").and_then(|mut q| q.exists([path])).unwrap_or(false)
+    }
+
+    /// The indexed files, the skipped ones aside, in table order.
+    pub fn files(&self) -> Result<Vec<String>> {
+        let mut st = self.db.prepare_cached("SELECT path FROM files WHERE hash != 'SKIP'")?;
+        let files = st.query_map([], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(files)
+    }
+
+    /// Of `paths` (from the root), the files the index has no row for that a scan would index,
+    /// each under the path a scan lists it by: one lookup and one `stat` each, and the ignore
+    /// rules read for those alone.
+    pub fn unindexed(&self, paths: &[String]) -> Vec<String> {
+        let mut membership: Option<crate::files::Membership> = None;
+        let skipped = crate::files::skipped_dirs(&self.root);
+        let mut out = Vec::new();
+        for p in paths {
+            let plain = !p.is_empty() && Path::new(p).components().all(|c| matches!(c, std::path::Component::Normal(_)));
+            if !plain {
+                continue;
+            }
+            // through a link that stays inside, or in another case, the file would get a second row
+            let real = std::fs::canonicalize(self.root.join(p)).ok();
+            let Some(p) = real.and_then(|r| r.strip_prefix(&self.root).ok().map(|r| crate::instant::slashed(r.to_string_lossy()))) else { continue };
+            if !crate::parse::is_indexable(&p) || p.split('/').any(|n| skipped.iter().any(|s| s == n)) || self.has_file(&p) || out.contains(&p) {
+                continue;
+            }
+            if !file_inside(&self.root, &p).is_some_and(|m| m.len() <= MAX_FILE_BYTES) {
+                continue;
+            }
+            if membership.get_or_insert_with(|| crate::files::Membership::new(&self.root)).may_contain(&self.root.join(&p)) {
+                out.push(p);
+            }
+        }
+        out
+    }
+
+    /// How many constants the index holds: they have no segment row.
+    pub fn constants(&self) -> i64 {
+        self.db.query_row("SELECT COUNT(*) FROM chunks WHERE kind = 'constant'", [], |r| r.get(0)).unwrap_or(0)
+    }
+
+    /// Runs `sql` on the index's own connection, to damage the index on purpose in a test.
+    #[doc(hidden)]
+    pub fn damage_for_tests(&self, sql: &str) -> Result<()> {
+        Ok(self.db.execute_batch(sql)?)
     }
 
     /// Verify the index. Never repairs anything: `update()` / `rebuild()` do that.
