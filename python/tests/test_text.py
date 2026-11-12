@@ -51,3 +51,12 @@ def test_is_test_path():
     assert not is_test_path("pkg/mod.py") and not is_test_path("src/latest.py")
     assert is_test_path("src/main/java/FooTest.java") and is_test_path("a/FooTests.java") and is_test_path("app/tests.py")
     assert not is_test_path("src/main/java/Contest.java") and not is_test_path("a/Latest.java")
+    # by the file's name in every language that names tests so, and a C# test project's directory
+    for p in ["src/button.test.jsx", "src/card.spec.jsx", "src/mod.test.mjs", "src/a.spec.cts", "src/config_test.cc",
+              "src/config_test.cpp", "src/parser_spec.rb", "src/parser_test.rb", "src/parser_test.rs",
+              "MyApp.Tests/Parser.cs", "My.Test/Parser.cs", "src/ParserTests.cs", "src/WidgetTest.kt", "src/WidgetTests.swift",
+              "src/UserTest.php", "src/widget_test.dart", "lib/a_test.exs"]:
+        assert is_test_path(p), p
+    for p in ["src/contest.cc", "src/latest.rs", "src/Contest.kt", "src/Latest.cs", "src/attest.jsx", "src/spec.rb",
+              "src/test.cfg/a.py", "src/a.test/b.py", "MyApp.Testing.Core/a.cs", "src/button.test.md", "src/_test"]:
+        assert not is_test_path(p), p

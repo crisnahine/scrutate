@@ -295,15 +295,29 @@ pub fn name_key(name: &str) -> String {
 const TEST_PARTS: &[&str] = &["test", "tests", "testing", "__tests__", "spec", "specs", "e2e", "fixtures", "mocks"];
 
 pub fn is_test_path(path: &str) -> bool {
-    let low = path.to_lowercase().replace('\\', "/");
+    let path = path.replace('\\', "/");
+    let low = path.to_lowercase();
     let parts: Vec<&str> = low.split('/').collect();
     let base = parts[parts.len() - 1];
-    // JUnit names a test class `FooTest` or `FooTests`: with the capital, `Contest.java` is none
-    let junit = ["Test.java", "Tests.java"].iter().any(|s| path.ends_with(s));
+    let (stem, ext) = base.rsplit_once('.').unwrap_or((base, ""));
+    // a C# test project is a directory `MyApp.Tests`; with the capital, `MyApp.Latest` is none
+    let dirs = path.rsplit_once('/').map_or("", |(d, _)| d);
+    let project = dirs.split('/').any(|d| d.ends_with(".Tests") || d.ends_with(".Test"));
+    // `button.test.jsx`, `card.spec.ts`: a JavaScript or TypeScript test beside its code
+    let script = matches!(ext, "js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx" | "mts" | "cts") && (stem.ends_with(".test") || stem.ends_with(".spec"));
+    // `parser_test.rs`, `parser_spec.rb`, `config_test.cc`
+    let suffixed = !ext.is_empty() && (stem.ends_with("_test") || stem.ends_with("_spec"));
+    // JUnit and its kin name a test class `FooTest` or `FooTests`: with the capital, `Contest.java` is none
+    let class = matches!(ext, "java" | "kt" | "cs" | "swift" | "php") && {
+        let name = &path[path.len() - base.len()..path.len() - ext.len() - 1];
+        name.ends_with("Test") || name.ends_with("Tests")
+    };
     parts[..parts.len() - 1].iter().any(|p| TEST_PARTS.contains(p))
+        || project
         || base.starts_with("test_")
-        || ["_test.py", "_test.go", ".test.js", ".test.ts", ".test.tsx", ".spec.js", ".spec.ts", ".spec.tsx"].iter().any(|s| base.ends_with(s))
-        || junit
+        || script
+        || suffixed
+        || class
         || matches!(base, "conftest.py" | "tests.py")
 }
 
@@ -426,6 +440,43 @@ mod tests {
             assert!(is_test_path(p), "{p}");
         }
         for p in ["pkg/mod.py", "src/latest.py", "src/main/java/Contest.java", "a/Latest.java", "a/attest.java"] {
+            assert!(!is_test_path(p), "{p}");
+        }
+        // by the file's name in every language that names tests so, and a C# test project's directory
+        for p in [
+            "src/button.test.jsx",
+            "src/card.spec.jsx",
+            "src/mod.test.mjs",
+            "src/a.spec.cts",
+            "src/config_test.cc",
+            "src/config_test.cpp",
+            "src/parser_spec.rb",
+            "src/parser_test.rb",
+            "src/parser_test.rs",
+            "MyApp.Tests/Parser.cs",
+            "My.Test/Parser.cs",
+            "src/ParserTests.cs",
+            "src/WidgetTest.kt",
+            "src/WidgetTests.swift",
+            "src/UserTest.php",
+            "src/widget_test.dart",
+            "lib/a_test.exs",
+        ] {
+            assert!(is_test_path(p), "{p}");
+        }
+        for p in [
+            "src/contest.cc",
+            "src/latest.rs",
+            "src/Contest.kt",
+            "src/Latest.cs",
+            "src/attest.jsx",
+            "src/spec.rb",
+            "src/test.cfg/a.py",
+            "src/a.test/b.py",
+            "MyApp.Testing.Core/a.cs",
+            "src/button.test.md",
+            "src/_test",
+        ] {
             assert!(!is_test_path(p), "{p}");
         }
     }

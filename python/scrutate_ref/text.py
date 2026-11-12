@@ -206,13 +206,23 @@ _TEST_PARTS = {"test", "tests", "testing", "__tests__", "spec", "specs", "e2e", 
 
 
 def is_test_path(path: str) -> bool:
-    parts = path.lower().replace("\\", "/").split("/")
+    path = path.replace("\\", "/")
+    parts = path.lower().split("/")
     base = parts[-1]
-    # JUnit names a test class `FooTest` or `FooTests`: with the capital, `Contest.java` is none
-    junit = path.endswith(("Test.java", "Tests.java"))
-    return (any(p in _TEST_PARTS for p in parts[:-1]) or base.startswith("test_")
-            or base.endswith(("_test.py", "_test.go", ".test.js", ".test.ts", ".test.tsx",
-                              ".spec.js", ".spec.ts", ".spec.tsx")) or junit or base in ("conftest.py", "tests.py"))
+    stem, dot, ext = base.rpartition(".")
+    if not dot:
+        stem, ext = base, ""
+    # a C# test project is a directory `MyApp.Tests`; with the capital, `MyApp.Latest` is none
+    project = any(d.endswith((".Tests", ".Test")) for d in path.split("/")[:-1])
+    # `button.test.jsx`, `card.spec.ts`: a JavaScript or TypeScript test beside its code
+    script = ext in ("js", "jsx", "mjs", "cjs", "ts", "tsx", "mts", "cts") and stem.endswith((".test", ".spec"))
+    # `parser_test.rs`, `parser_spec.rb`, `config_test.cc`
+    suffixed = bool(ext) and stem.endswith(("_test", "_spec"))
+    # JUnit and its kin name a test class `FooTest` or `FooTests`: with the capital, `Contest.java` is none
+    name = path[len(path) - len(base):len(path) - len(ext) - 1] if ext else ""
+    cls = ext in ("java", "kt", "cs", "swift", "php") and name.endswith(("Test", "Tests"))
+    return (any(p in _TEST_PARTS for p in parts[:-1]) or project or base.startswith("test_") or script or suffixed
+            or cls or base in ("conftest.py", "tests.py"))
 
 
 def tokenize_words(text: str, cap: int | None = None) -> list[str]:
