@@ -3,6 +3,7 @@ name = "scrutate-ref"
 dynamic = ["version"]
 description = "Reference implementation and trainer for the Scrutate code-intelligence engine (not the product: the product is the Rust crate)"
 readme = "README.md"
+license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 dependencies = [
   "numpy>=1.26",

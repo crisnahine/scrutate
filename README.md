@@ -289,6 +289,7 @@ vulnerabilities; an SBOM is generated.
 ## Licence
 
 Apache-2.0. See [LICENSE](LICENSE). Every crate compiled into the binary is under a licence
-compatible with it (MIT, BSD, Zlib, Unicode-3.0 or Apache-2.0); their licence and notice files are
+compatible with it (MIT, Apache-2.0, BSD, ISC, Zlib, Unlicense, 0BSD, Unicode-3.0 or CC0-1.0); their
+licence and notice files are
 collected in `THIRD_PARTY_NOTICES.txt`, which release archives, wheels and the `.deb` and `.rpm`
 packages include (`tools/third_party_notices.py`).
