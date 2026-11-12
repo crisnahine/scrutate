@@ -85,11 +85,14 @@ fn skip_dirs(root: &Path) -> Vec<String> {
 }
 
 /// `[index] exclude_dirs` of the root's own `.scrutate.toml`: the setting belongs to the index, so
-/// every process that updates it reads the same list, wherever it starts. The file is read as
-/// other repository files are: a regular file inside the root, of at most 1 MB.
+/// every process that updates it reads the same list, wherever it starts. The file, after links
+/// are resolved, is read as other repository files are: a regular file inside the root, of at
+/// most 1,000,000 bytes.
 pub(crate) fn config_excludes(root: &Path) -> Vec<String> {
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let Some(text) = crate::resolve::repo_text(&root, ".scrutate.toml") else { return Vec::new() };
+    let real = std::fs::canonicalize(root.join(".scrutate.toml")).ok();
+    let Some(rel) = real.as_deref().and_then(|r| r.strip_prefix(&root).ok()).and_then(Path::to_str) else { return Vec::new() };
+    let Some(text) = crate::resolve::repo_text(&root, rel) else { return Vec::new() };
     let Ok(table) = text.parse::<toml::Table>() else { return Vec::new() };
     let names = table.get("index").and_then(|i| i.get("exclude_dirs")).and_then(|v| v.as_array());
     names

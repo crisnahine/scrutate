@@ -266,6 +266,27 @@ def test_an_excluded_name_with_a_backslash_excludes_nothing(tmp_path, monkeypatc
     assert list_files(str(tmp_path)) == want
 
 
+def test_the_root_config_is_read_through_a_link_inside_the_root_up_to_the_file_size_cap(tmp_path, monkeypatch):
+    import pytest
+    from scrutate_ref.index import config_excludes
+
+    pytest.importorskip("tomllib")
+    root, outside = tmp_path / "root", tmp_path / "outside"
+    write_repo(str(root), {"conf/real.toml": '[index]\nexclude_dirs = ["gen"]\n'})
+    write_repo(str(outside), {"real.toml": '[index]\nexclude_dirs = ["src"]\n'})
+    toml = root / ".scrutate.toml"
+    if hasattr(os, "symlink") and os.sep == "/":
+        os.symlink("conf/real.toml", toml)
+        assert config_excludes(str(root)) == ["gen"]
+        toml.unlink()
+        os.symlink(outside / "real.toml", toml)
+        assert config_excludes(str(root)) == []
+        toml.unlink()
+    for size, want in ((1_000_000, ["gen"]), (1_000_001, [])):
+        toml.write_bytes(b'[index]\nexclude_dirs = ["gen"]\n'.ljust(size, b"\n"))
+        assert config_excludes(str(root)) == want, size
+
+
 ENGINE = os.environ.get("SCRUTATE_BIN", os.path.join(os.path.dirname(__file__), "..", "..", "target", "release", "scrutate"))
 
 

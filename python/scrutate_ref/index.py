@@ -96,13 +96,14 @@ def split_names(v: str) -> list[str]:
 
 def config_excludes(root: str) -> list[str]:
     """`[index] exclude_dirs` of the root's own `.scrutate.toml`, read as the Rust engine reads it:
-    a regular file inside the root, at most 1 MB, at most 1000 names. Needs Python 3.11 (tomllib);
+    after links are resolved, a regular file inside the root of at most 1,000,000 bytes; at most
+    1000 names. Needs Python 3.11 (tomllib);
     on 3.10 the file is not read."""
     path = os.path.join(root, ".scrutate.toml")
     try:
         import tomllib
         real = os.path.realpath(path)
-        if not os.path.isfile(real) or os.path.commonpath([real, os.path.realpath(root)]) != os.path.realpath(root) or os.path.getsize(real) > 1 << 20:
+        if not os.path.isfile(real) or os.path.commonpath([real, os.path.realpath(root)]) != os.path.realpath(root) or os.path.getsize(real) > MAX_FILE_BYTES:
             return []
         with open(real, "rb") as f:
             table = tomllib.load(f)

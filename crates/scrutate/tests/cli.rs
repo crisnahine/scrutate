@@ -1242,6 +1242,38 @@ fn an_exclude_dirs_name_with_a_backslash_excludes_nothing_in_batch() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn a_root_config_that_links_to_a_file_inside_the_root_is_read_up_to_its_size_cap() {
+    let r = Repo::new("excludelink");
+    r.write(".git/HEAD", b"ref: refs/heads/main\n");
+    r.write("gen/g.py", b"def g_fn():\n    return 1\n");
+    r.write("src/s.py", b"def s_fn():\n    return 2\n");
+    let outside = Repo::new("excludelink_outside");
+    outside.write("real.toml", b"[index]\nexclude_dirs = [\"src\"]\n");
+    let toml = r.root.join(".scrutate.toml");
+    let excluded = |name: &str| run_in(&r.root, &["symbol", name], &[]).0 != 0;
+    // a link inside the root is followed; one out of it is not
+    r.write("conf/real.toml", b"[index]\nexclude_dirs = [\"gen\"]\n");
+    std::os::unix::fs::symlink("conf/real.toml", &toml).unwrap();
+    assert!(excluded("g_fn") && !excluded("s_fn"));
+    let (_, out, _) = run_in(&r.root, &["config"], &[]);
+    assert!(out.contains("index exclude_dirs, from ") && out.contains(": gen"), "{out}");
+    fs::remove_file(&toml).unwrap();
+    std::os::unix::fs::symlink(outside.root.join("real.toml"), &toml).unwrap();
+    assert!(!excluded("g_fn") && !excluded("s_fn"));
+    let (_, out, _) = run_in(&r.root, &["config"], &[]);
+    assert!(!out.contains("index exclude_dirs"), "{out}");
+    // the cap is that of every file the index reads: 1,000,000 bytes
+    fs::remove_file(&toml).unwrap();
+    for (size, read) in [(1_000_000, true), (1_000_001, false)] {
+        let mut text = b"[index]\nexclude_dirs = [\"gen\"]\n".to_vec();
+        text.resize(size, b'\n');
+        r.write(".scrutate.toml", &text);
+        assert_eq!(excluded("g_fn"), read, "{size} bytes");
+    }
+}
+
 #[test]
 fn serve_and_watch_in_a_subdirectory_use_the_index_above() {
     use std::io::BufRead;
