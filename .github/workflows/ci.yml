@@ -1,8 +1,9 @@
 # Continuous integration: quality gates for every push and pull request, and once a week so a new
 # advisory, runner image or editor release shows up without a code change.
-# The core crate only needs Rust; the Python job covers the reference engine, the bindings and the
-# differential and parity harnesses. Every action is pinned to a commit; .github/dependabot.yml
-# moves the pins. The Rust version, rustfmt and clippy come from rust-toolchain.toml.
+# The core crate only needs Rust; the Python job covers the reference engine, the bindings, the
+# differential and parity harnesses and the ranking quality floor. Every action is pinned to a
+# commit; .github/dependabot.yml moves the pins. The Rust version, rustfmt and clippy come from
+# rust-toolchain.toml.
 name: ci
 on:
   push:
@@ -121,6 +122,9 @@ jobs:
           python bench/fuzz_incremental.py --bin target/release/scrutate --seconds 20 --seed 7
       - name: python/rust parity on the engine's own sources
         run: python bench/parity.py crates/scrutate/src target/release/scrutate --queries 50
+      # MRR@10 and hit@5 of 1,173 queries on this repository's own code, against bench/quality/floor.json
+      - name: ranking quality against its recorded floor
+        run: python bench/quality.py target/release/scrutate
   musl:
     name: fully static linux binary (musl)
     runs-on: ubuntu-latest

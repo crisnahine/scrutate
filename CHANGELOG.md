@@ -674,6 +674,10 @@ First release.
   file whose stat the index holds as current. Files an earlier build cached are parsed once more.
 
 ### Product
+- Ranking quality has a guard of its own: `bench/quality.py` indexes this repository's code with
+  its doc comments removed, runs 1,173 committed queries made from them, and fails when MRR@10 or
+  hit@5 is below the floor recorded in `bench/quality/floor.json` (measured 0.5903 and 0.6650,
+  floor 0.02 lower). A CI step and the release gates run it, in about 8 s.
 - `[index] exclude_dirs` is read from the `.scrutate.toml` at the root of the index (or
   `SCRUTATE_INDEX_EXCLUDE_DIRS`), so the command line, the servers and the bindings index the
   same files wherever they start; the reference engine reads it the same way. A name with a

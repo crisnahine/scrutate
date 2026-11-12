@@ -150,6 +150,10 @@ uv pip install --python $V/bin/python --reinstall $W/*cp39-abi3*.whl
 $V/bin/python tools/gen_test_results.py --repo $P --parity-code $C/code --differential-cases 2000 --reproducible --wheels $W
 ```
 
+Among them, `bench/quality.py` checks ranking quality against `bench/quality/floor.json` (docs/QUALITY.md).
+A new ranker or vector model that moves the measure records a new floor with
+`bench/quality.py target/release/scrutate --record` in the same commit.
+
 The wheel gate installs on 3.10 to 3.13, 3.14t, 3.15 and 3.15t. A final free-threaded 3.15 needs
 uv 0.13 or newer; with an older uv, install one elsewhere
 (`UV_PYTHON_INSTALL_DIR=/some/scratch uvx uv@latest python install 3.15t --no-bin`) and name every

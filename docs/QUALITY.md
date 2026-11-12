@@ -37,6 +37,19 @@ engine's own sources (`crates/scrutate/src`, a CI step). `bench/parity_repos.sh`
 queries on 21 real repositories of the six languages the reference has a grammar for; parity
 indexes only a repository's files in those six languages.
 
+Parity says the two engines agree, not that ranking is good. `bench/quality.py` measures that on
+its own, in CI and in the release gates: it indexes this repository's code (`crates/scrutate/src`,
+`vendor/ignore/src`, `bench/*.py`, `tools/*.py`) with every doc comment and docstring removed
+(variant A below), runs the 1,173 committed queries of `bench/quality/queries.json` (the five
+types below, at most 150 of each type and target kind, made by `bench/quality.py --make` from
+those doc comments) through the binary, and fails when MRR@10 or hit@5 is below the floor in
+`bench/quality/floor.json`. The floor is the measured value less 0.02; the file records the
+measured values (MRR@10 0.5903, hit@5 0.6650 on 2026-11-13), the commit, the vector model's
+signature and the ranker's hash. The same queries ranked by the linear blend alone (no ranker)
+score MRR@10 0.4978 and hit@5 0.6292, below both floors. A run takes about 8 s. A query whose
+answer left the corpus counts as a miss: a change that moves answers runs `--make` and
+`--record` and says why in its commit.
+
 ## Protocol
 
 - A query is generated from a real definition; the definition it came from is the one correct

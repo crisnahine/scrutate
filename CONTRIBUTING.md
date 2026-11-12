@@ -49,6 +49,7 @@ cargo audit
 cd python && python -m pytest -q                  # reference engine (+ bindings if installed)
 python bench/parity.py <repo> target/release/scrutate --queries 300   # Rust == Python, bit for bit
 bench/parity_repos.sh target/release/scrutate     # the same on real repositories of all six languages (fails when one is missing: bench/make_bench_code.py fetch)
+python bench/quality.py target/release/scrutate   # ranking quality (MRR@10, hit@5) not below bench/quality/floor.json
 python bench/differential.py --cases 200          # Engine A == ripgrep on random inputs
 python3 tools/gen_assets.py --check && python3 tools/gen_doc_assets.py --check && python3 bench/make_readme_charts.py --check   # images, charts, document heads and links are what the scripts write
 ```
