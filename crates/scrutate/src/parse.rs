@@ -190,7 +190,7 @@ pub fn is_indexable(path: &str) -> bool {
 
 /// The grammar that parses this file, if any (shared extensions are decided by the text).
 pub fn spec_for(path: &str, source: &str) -> Option<&'static LangSpec> {
-    langs::sniff(path, source).or_else(|| langs::spec_for(path))
+    langs::detect(path, Some(source))
 }
 
 // ------------------------------------------------------------------------- helpers

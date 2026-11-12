@@ -1,6 +1,6 @@
 //! What a name refers to. Every question about a use of a name asks `Names`: callers, callees,
 //! references, the language server's definition, imports and importers, and the caller count
-//! ranking reads. The rules that decide live in `resolve.rs`; this module owns who asks them,
+//! ranking reads. The rules that decide live in `resolve/`; this module owns who asks them,
 //! once per request, with each file read and parsed once.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -102,7 +102,7 @@ impl<'a> Names<'a> {
         let first = (start.max(1) - 1) as usize;
         let from = starts.get(first).copied().unwrap_or(src.len());
         let ident = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
-        let methods = methods_only(path);
+        let methods = crate::resolve::methods_only(path);
         let mut uses = Uses { got: HashSet::new(), dispatched: HashSet::new(), unsure: true, unsure_free: true, own_file: false };
         let (mut unsure, mut unsure_free, mut seen, mut elsewhere) = (false, false, false, false);
         for (i, line) in src[from..].lines().enumerate().map(|(i, l)| (i + first, l)).take((end - start + 1).max(0) as usize) {
@@ -420,7 +420,7 @@ impl Langs<'_> {
         let lower = path.to_lowercase();
         let shared = crate::langs::BY_CONTENT.iter().any(|(e, _)| lower.ends_with(e));
         let text = shared.then(|| crate::resolve::repo_text(self.root, path)).flatten();
-        let id = text.and_then(|t| crate::langs::sniff(path, &t)).or_else(|| crate::langs::spec_for(path)).map(|s| s.id);
+        let id = crate::langs::detect(path, text.as_deref()).map(|s| s.id);
         self.seen.borrow_mut().insert(path.to_string(), id);
         id
     }
@@ -456,12 +456,6 @@ struct Uses {
 fn own((from, caller): (&str, &str), path: &str, kind: &str, qualname: &str) -> bool {
     let owner = |q: &str| q.rsplit_once('.').map(|(o, _)| o.to_string());
     path == from && (free(kind, qualname) || owner(qualname) == owner(caller))
-}
-
-/// Languages where `x.f()` calls a method, never a free function `f` (in Python `x` may be a
-/// module, and the resolver decides those through the import).
-fn methods_only(path: &str) -> bool {
-    crate::langs::spec_for(path).is_some_and(|s| matches!(s.id, "rust" | "javascript" | "typescript" | "tsx" | "go" | "java"))
 }
 
 /// A definition outside any class or type: `x.f()` does not call it where `methods_only` holds.

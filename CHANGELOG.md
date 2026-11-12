@@ -207,6 +207,12 @@ First release.
   damaged index and answers instead of asking for a retry, and scans for changes before a request
   at most once a second. The repositories of one session write one at a time under one lock, so a
   rebuild after damage is made once.
+- The resolver is one walker and a rule set per language (`resolve/`): the steps every language
+  shares sit in `resolve/mod.rs`, and what Python, JavaScript and TypeScript, Rust, Go and Java
+  decide differently sits in one file each behind a `Rules` trait, moved without changing a rule.
+  The walker tests a file's language in one `match`, so a language without a rule set does not
+  compile. A file's language comes from one function, `langs::detect`, which the parser, the
+  resolver and `names.rs` share. No answer changed.
 - The models are trained on rows the engine writes. `bench/gen_features.py` indexes each
   benchmark package with the binary and reads `batch --features`; `bench/train_semantic.py` reads
   the chunks, the tokens of each view and the query terms from a hidden `views` command.

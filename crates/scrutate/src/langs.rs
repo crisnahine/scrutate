@@ -2286,6 +2286,12 @@ pub fn sniff(path: &str, source: &str) -> Option<&'static LangSpec> {
     by_id(id)
 }
 
+/// The grammar of `path`: by its name, and by `text` where the extension is shared by several
+/// languages. The one way the parser, the resolver and the answers about names tell a language.
+pub fn detect(path: &str, text: Option<&str>) -> Option<&'static LangSpec> {
+    text.and_then(|t| sniff(path, t)).or_else(|| spec_for(path))
+}
+
 pub fn spec_for(path: &str) -> Option<&'static LangSpec> {
     let base = path.rsplit('/').next().unwrap_or(path);
     let lower = base.to_lowercase();

@@ -29,7 +29,7 @@ text held in memory with a name for each, and the threads that read them.
 a file, or a note on a file (its search stopped at a NUL byte).
 
 **Engine B**: the index and everything answered from it (`index.rs`, `search.rs`, `intel.rs`,
-`resolve.rs`): ranked search, symbols, callers, callees, references, structural queries.
+`resolve/`): ranked search, symbols, callers, callees, references, structural queries.
 
 **Text index**: Engine B's trigram index over file contents (`textindex.rs`). It tells Engine A
 which files can match, so `grep --index` opens only those.
@@ -51,7 +51,16 @@ is a chunk (`search::Hit`).
 **Names**: the one owner of what a name refers to (`names::Names`). Callers, callees, references,
 dependencies, dependents and the language server's definition ask it what the occurrence at a
 place refers to, and it answers with the definition and how that was found, or why none was. One
-request opens one, so each file is read and parsed once. The rules it applies live in `resolve.rs`.
+request opens one, so each file is read and parsed once. The rules it applies live in `resolve/`.
+
+**Walker**: the part of the resolver every language shares (`resolve/mod.rs`): scopes from the
+definitions of the index, the lookup memo, the depth guards and the order of the steps that
+decide what a name refers to.
+
+**Rule set**: what one language decides differently when a name is resolved, one file each under
+`resolve/` behind the `Rules` trait: what binds a name, which blocks a local stays in, how a
+receiver and a base class list are read, how a module maps to files. The walker asks the rule set
+of a file's language at each step where languages differ.
 
 **Grouped grep**: an Engine A search whose matching lines are grouped by the symbol that encloses
 them (`intel::grouped_grep`). The MCP `grep_code` tool, `grep --symbols` and both kinds of
