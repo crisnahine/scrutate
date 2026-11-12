@@ -708,11 +708,7 @@ impl Index {
             // an index of another schema or model: drop its contents *inside* the database, so
             // other processes using the same index keep a consistent (if briefly empty) view
             eprintln!("[scrutate] {why}; rebuilding the index");
-            ix.clear()?;
-            ix.set_meta("schema_version", &SCHEMA_VERSION.to_string())?;
-            ix.set_meta("model_sig", &sem_sig)?;
-            ix.set_meta("model_rev", &MODEL_REVISION.to_string())?;
-            ix.set_meta("content_rev", &CONTENT_REVISION.to_string())?;
+            ix.clear_with(Some(sem_sig.as_str()))?;
         } else {
             // a reader must not need the write lock: another process may hold it for minutes
             if ix.meta("schema_version").as_deref() != Some(SCHEMA_VERSION.to_string().as_str()) {
@@ -757,14 +753,52 @@ impl Index {
 
     /// Forget every indexed file and segment (inside one write transaction).
     fn clear(&mut self) -> Result<()> {
+        self.clear_with(None)
+    }
+
+    /// `clear`; with `stamp_for` (a model signature), of an index triage found to need a rebuild,
+    /// stamped with this version in the same transaction. Another process that found the same
+    /// index may have done that first and be building it: then nothing is cleared, and its write
+    /// lock is not waited for.
+    fn clear_with(&mut self, stamp_for: Option<&str>) -> Result<()> {
+        let done = |db: &Connection| stamp_for.is_some_and(|sig| Self::rebuild_reason(db, sig).is_none());
         self.lex = None;
         self.lex_ver = None;
-        retry_busy(|| self.db.execute_batch("BEGIN IMMEDIATE"))?;
+        self.db.busy_timeout(Duration::ZERO)?;
+        let t0 = Instant::now();
+        let locked = loop {
+            if done(&self.db) {
+                break Ok(false);
+            }
+            match self.db.execute_batch("BEGIN IMMEDIATE") {
+                Err(rusqlite::Error::SqliteFailure(e, _))
+                    if matches!(e.code, rusqlite::ffi::ErrorCode::DatabaseBusy | rusqlite::ffi::ErrorCode::DatabaseLocked)
+                        && t0.elapsed() < Duration::from_secs(30) =>
+                {
+                    std::thread::sleep(Duration::from_millis(10))
+                }
+                r => break r.map(|()| true),
+            }
+        };
+        self.db.busy_timeout(Duration::from_secs(30))?;
+        if !locked? {
+            return Ok(());
+        }
+        if done(&self.db) {
+            self.db.execute_batch("ROLLBACK")?;
+            return Ok(());
+        }
         let old = self.segments();
         self.db.execute_batch("DELETE FROM refs; DELETE FROM imports; DELETE FROM chunks; DELETE FROM files;")?;
         self.set_meta("segments", "[]")?;
         let ver = self.bump_version()?;
         self.set_meta("chunks_at", &format!("{ver} 0"))?;
+        if let Some(sig) = stamp_for {
+            self.set_meta("schema_version", &SCHEMA_VERSION.to_string())?;
+            self.set_meta("model_sig", sig)?;
+            self.set_meta("model_rev", &MODEL_REVISION.to_string())?;
+            self.set_meta("content_rev", &CONTENT_REVISION.to_string())?;
+        }
         retry_busy(|| self.db.execute_batch("COMMIT"))?;
         for n in old {
             let _ = std::fs::remove_dir_all(self.seg_dir.join(n));
@@ -804,19 +838,22 @@ impl Index {
         if let Some(n) = Newer::of(get).filter(|n| !n.readable) {
             return Triage::Newer(n);
         }
+        Self::rebuild_reason(&con, sem_sig).map_or(Triage::Reuse, Triage::Rebuild)
+    }
+
+    /// Why a readable index of this or an older version must be emptied and built again.
+    fn rebuild_reason(db: &Connection, sem_sig: &str) -> Option<&'static str> {
+        let get = |k: &str| db.query_row("SELECT value FROM meta WHERE key=?1", [k], |r| r.get::<_, String>(0)).optional().ok().flatten();
         if get("schema_version").as_deref() != Some(SCHEMA_VERSION.to_string().as_str()) {
-            return Triage::Rebuild("index schema changed");
+            return Some("index schema changed");
         }
         if get("model_sig").as_deref() != Some(sem_sig) {
-            return Triage::Rebuild("semantic model changed");
+            return Some("semantic model changed");
         }
         if get("segments").is_some_and(|v| serde_json::from_str::<Vec<String>>(&v).is_err()) {
-            return Triage::Rebuild("segment list unreadable");
+            return Some("segment list unreadable");
         }
-        if let Ok(Some(why)) = Self::chunks_lost(&con) {
-            return Triage::Rebuild(why);
-        }
-        Triage::Reuse
+        Self::chunks_lost(db).ok().flatten()
     }
 
     /// The `chunks` table is empty although the commit that wrote the current data version
@@ -1563,6 +1600,33 @@ impl Index {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_index_another_process_already_cleared_for_this_version_is_left_alone() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_clear_race_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+        let mut ix = super::Index::open(&root, None).unwrap();
+        ix.update(false).unwrap();
+        let files = |ix: &super::Index| ix.db.query_row("SELECT COUNT(*) FROM files", [], |r| r.get::<_, i64>(0)).unwrap();
+        // what a process that found the old schema meets once another one cleared the index for
+        // this version and is building it: this version's stamps, and the write lock held
+        let other = rusqlite::Connection::open(ix.dir.join("index.db")).unwrap();
+        other.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let t0 = std::time::Instant::now();
+        ix.clear_with(Some("none")).unwrap();
+        assert!(t0.elapsed().as_secs() < 5, "{:?}", t0.elapsed());
+        other.execute_batch("ROLLBACK").unwrap();
+        ix.clear_with(Some("none")).unwrap();
+        assert_eq!(files(&ix), 1);
+        ix.set_meta("schema_version", &(super::SCHEMA_VERSION - 1).to_string()).unwrap();
+        ix.clear_with(Some("none")).unwrap();
+        assert_eq!(files(&ix), 0);
+        assert_eq!(ix.meta("schema_version"), Some(super::SCHEMA_VERSION.to_string()));
+        drop((ix, other));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn update_counts_as_a_refresh() {
         let root = std::env::temp_dir().join(format!("scrutate_ix_refresh_{}", std::process::id()));
