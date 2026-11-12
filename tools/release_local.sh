@@ -21,7 +21,7 @@ elif command -v ldd > /dev/null; then
 fi
 name="scrutate-$v-$target"
 rm -rf "dist/$name" && mkdir -p "dist/$name"
-cp target/release/scrutate LICENSE README.md CHANGELOG.md "dist/$name/"
+cp target/release/scrutate LICENSE-APACHE LICENSE-MIT README.md CHANGELOG.md "dist/$name/"
 python3 tools/third_party_notices.py --out "dist/$name/THIRD_PARTY_NOTICES.txt"
 # tracked files only: a note or a .DS_Store left in the working tree must not ship
 if git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
@@ -34,7 +34,9 @@ rm -rf "dist/$name"
 # the installers (the GitHub action, the GitLab and Bitbucket templates) check the archive against this
 (cd dist && sha256sum "$name.tar.gz" > "$name.sha256")
 if command -v maturin >/dev/null; then
-  cmp -s LICENSE crates/scrutate-py/LICENSE || { echo "crates/scrutate-py/LICENSE (the wheel's copy) differs from LICENSE"; exit 1; }
+  for f in LICENSE-APACHE LICENSE-MIT; do
+    cmp -s "$f" "crates/scrutate-py/$f" || { echo "crates/scrutate-py/$f (the wheel's copy) differs from $f"; exit 1; }
+  done
   python3 tools/third_party_notices.py --package scrutate-py --out crates/scrutate-py/THIRD_PARTY_NOTICES.txt
   # one wheel per kind: cp39-abi3 (standard CPython up to 3.14), cp314t, abi3t (3.15 and newer)
   if command -v uv > /dev/null; then

@@ -7,9 +7,9 @@ name = "scrutate"
 description = "Universal instant code search and persistent code intelligence (Rust engines, Python bindings)"
 readme = "README.md"
 requires-python = ">=3.9"
-license = "Apache-2.0"
+license = "MIT OR Apache-2.0"
 # the notices are written by tools/third_party_notices.py before a release build
-license-files = ["LICENSE", "THIRD_PARTY_NOTICES*"]
+license-files = ["LICENSE-APACHE", "LICENSE-MIT", "THIRD_PARTY_NOTICES*"]
 dynamic = ["version"]
 classifiers = [
   "Programming Language :: Rust",

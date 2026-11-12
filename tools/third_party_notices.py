@@ -2,9 +2,10 @@
 """The licence and notice files of every crate compiled into the binary, in one text file.
 
 MIT, BSD and Apache-2.0 all ask that their notices travel with the binary; release archives
-include this file next to LICENSE. The crate set is the one `tools/sbom.py` lists (normal and
-build dependencies of the package, from the locked `cargo metadata` graph). A crate that ships no
-licence file is listed with its declared licence expression, so the gap is visible. Data files
+include this file next to LICENSE-APACHE and LICENSE-MIT. The crate set is the one
+`tools/sbom.py` lists (normal and build dependencies of the package, from the locked
+`cargo metadata` graph). A crate that ships no licence file is listed with its declared licence
+expression, so the gap is visible. Data files
 from outside the project (`data_files`, the Unihan-derived Han fold) come first, with their licence.
 
 usage: third_party_notices.py [--out FILE] [--package scrutate]
@@ -135,7 +136,9 @@ def main() -> int:
     a = ap.parse_args()
     pkgs = shipped(a.package)
     data = data_files()
-    out = [f"Third-party software in {a.package}: {len(pkgs)} crates and {len(data)} data file(s), with their licence and notice files.", ""]
+    out = [f"Third-party software in {a.package}: {len(pkgs)} crates and {len(data)} data file(s), with their licence and notice files.",
+           "Scrutate's own code is under MIT OR Apache-2.0, at your option (LICENSE-MIT, LICENSE-APACHE); this file",
+           "covers only what it compiles in from others.", ""]
     for d in data:
         out.append("=" * 78)
         out.append(f"{d['name']} {d['version']}  ({d['license']}), data compiled in as {d['file']}")
@@ -176,9 +179,9 @@ def main() -> int:
     out.append("")
     out.append(MIT)
     out.append("-" * 78)
-    out.append("Apache License 2.0 (the full text, as in this project's LICENSE)")
+    out.append("Apache License 2.0 (the full text, as in this project's LICENSE-APACHE)")
     out.append("")
-    out.append(open(os.path.join(HERE, "..", "LICENSE"), encoding="utf-8").read().rstrip())
+    out.append(open(os.path.join(HERE, "..", "LICENSE-APACHE"), encoding="utf-8").read().rstrip())
     text = "\n".join(out) + "\n"
     if a.out:
         with open(a.out, "w") as f:

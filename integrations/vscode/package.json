@@ -4,7 +4,7 @@
   "description": "Code intelligence from Scrutate: go to definition, references and symbols through the scrutate language server, plus ranked search, grep and callers.",
   "version": "0.1.0",
   "publisher": "scrutate",
-  "license": "Apache-2.0",
+  "license": "(MIT OR Apache-2.0)",
   "repository": { "type": "git", "url": "https://github.com/crisnahine/scrutate" },
   "engines": {
     "vscode": "^1.85.0"

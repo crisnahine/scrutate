@@ -94,7 +94,7 @@ jobs:
           [ -f "$bin.exe" ] && bin="$bin.exe"
           name=scrutate-$v-$TARGET
           mkdir -p "$name"
-          cp "$bin" LICENSE README.md CHANGELOG.md "$name/"
+          cp "$bin" LICENSE-APACHE LICENSE-MIT README.md CHANGELOG.md "$name/"
           python tools/third_party_notices.py --out "$name/THIRD_PARTY_NOTICES.txt"
           cp -r docs integrations "$name/"
           if [[ "$TARGET" == *windows* ]]; then 7z a "dist/$name.zip" "$name" > /dev/null; else tar czf "dist/$name.tar.gz" "$name"; fi
@@ -134,7 +134,8 @@ jobs:
       - name: notices of the crates compiled into the wheel
         shell: bash
         run: |
-          cmp -s LICENSE crates/scrutate-py/LICENSE
+          cmp -s LICENSE-APACHE crates/scrutate-py/LICENSE-APACHE
+          cmp -s LICENSE-MIT crates/scrutate-py/LICENSE-MIT
           python tools/third_party_notices.py --package scrutate-py --out crates/scrutate-py/THIRD_PARTY_NOTICES.txt
       - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:

@@ -2,7 +2,7 @@
     "version": "0.1.0",
     "description": "Instant code search and a persistent code-intelligence index",
     "homepage": "https://github.com/crisnahine/scrutate",
-    "license": "Apache-2.0",
+    "license": "MIT|Apache-2.0",
     "architecture": {
         "64bit": {
             "url": "https://github.com/crisnahine/scrutate/releases/download/v0.1.0/scrutate-0.1.0-x86_64-pc-windows-msvc.zip",

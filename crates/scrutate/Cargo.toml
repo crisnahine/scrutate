@@ -17,7 +17,8 @@ section = "devel"
 extended-description = "Instant grep-class search of any repository without an index, plus a persistent index for ranked search, symbols, callers and imports. One CLI and an MCP server."
 assets = [
     ["target/release/scrutate", "usr/bin/", "755"],
-    ["../../LICENSE", "usr/share/doc/scrutate/", "644"],
+    ["../../LICENSE-APACHE", "usr/share/doc/scrutate/", "644"],
+    ["../../LICENSE-MIT", "usr/share/doc/scrutate/", "644"],
     ["../../README.md", "usr/share/doc/scrutate/", "644"],
     # written by packaging/linux/build-packages.sh
     ["THIRD_PARTY_NOTICES.txt", "usr/share/doc/scrutate/", "644"],
@@ -27,7 +28,8 @@ assets = [
 summary = "Instant code search and a persistent code-intelligence index"
 assets = [
     { source = "target/release/scrutate", dest = "/usr/bin/scrutate", mode = "755" },
-    { source = "../../LICENSE", dest = "/usr/share/licenses/scrutate/LICENSE", mode = "644", doc = true },
+    { source = "../../LICENSE-APACHE", dest = "/usr/share/licenses/scrutate/LICENSE-APACHE", mode = "644", doc = true },
+    { source = "../../LICENSE-MIT", dest = "/usr/share/licenses/scrutate/LICENSE-MIT", mode = "644", doc = true },
     { source = "../../README.md", dest = "/usr/share/doc/scrutate/README.md", mode = "644", doc = true },
     { source = "THIRD_PARTY_NOTICES.txt", dest = "/usr/share/licenses/scrutate/THIRD_PARTY_NOTICES.txt", mode = "644", doc = true },
 ]

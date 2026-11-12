@@ -4,7 +4,7 @@ class Scrutate < Formula
   url "https://github.com/crisnahine/scrutate/archive/refs/tags/v0.1.0.tar.gz"
   # Filled in at release time: shasum -a 256 of the tarball at the URL above.
   sha256 "0000000000000000000000000000000000000000000000000000000000000000"
-  license "Apache-2.0"
+  license any_of: ["MIT", "Apache-2.0"]
   head "https://github.com/crisnahine/scrutate.git", branch: "main"
 
   depends_on "rust" => :build

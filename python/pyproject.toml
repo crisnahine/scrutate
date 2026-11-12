@@ -3,7 +3,8 @@ name = "scrutate-ref"
 dynamic = ["version"]
 description = "Reference implementation and trainer for the Scrutate code-intelligence engine (not the product: the product is the Rust crate)"
 readme = "README.md"
-license = { text = "Apache-2.0" }
+license = "MIT OR Apache-2.0"
+license-files = ["LICENSE-APACHE", "LICENSE-MIT"]
 requires-python = ">=3.10"
 dependencies = [
   "numpy>=1.26",
@@ -28,7 +29,7 @@ all = ["mcp>=1.2", "anthropic>=0.40"]
 scrutate-ref = "scrutate_ref.cli:main"
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]  # 77 reads a licence expression and license-files
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
