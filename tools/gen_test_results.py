@@ -71,6 +71,7 @@ def fuzz_gates(gate, nightly: str) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo", default="/tmp/pmid", help="repository for the parity harness")
+    ap.add_argument("--parity-code", help="the clones `bench/make_bench_code.py fetch` makes, for bench/parity_repos.sh (default: PARITY_CODE, else $SCRUTATE_WORK/code)")
     ap.add_argument("--differential-cases", type=int, default=200)
     ap.add_argument("--reproducible", action="store_true", help="also run tools/reproducible_check.sh (two clean release builds)")
     ap.add_argument("--wheels", help="directory of built wheels to install and test (tools/wheel_matrix.py)")
@@ -114,6 +115,8 @@ def main() -> int:
     gate("python bindings tests (wheel must be installed)", [sys.executable, "-m", "pytest", "-q", "tests/test_bindings.py"], cwd=os.path.join(ROOT, "python"),
          env={"SCRUTATE_BIN": os.path.join(ROOT, "target", "release", "scrutate")}, tail=6)
     gate("rust/python parity (bit-identical features, scores, rankings)", [sys.executable, "bench/parity.py", a.repo, "target/release/scrutate", "--queries", "300"], tail=8)
+    gate("rust/python parity on real repositories of the six reference languages", ["bash", "bench/parity_repos.sh", "target/release/scrutate"],
+         env={"PARITY_PYTHON": sys.executable, **({"PARITY_CODE": a.parity_code} if a.parity_code else {})}, tail=24)
     gate("differential test against ripgrep, and grep --index against the walk", [sys.executable, "bench/differential.py", "--cases", str(a.differential_cases), "--seed", "11"], tail=4)
     gate("random grep runs against ripgrep (60 s)", [sys.executable, "bench/fuzz_grep.py", "--seconds", "60", "--seed", "11"], tail=2)
     gate("random edit sequences: the incremental index equals a fresh one (60 s)", [sys.executable, "bench/fuzz_incremental.py", "--seconds", "60", "--seed", "11"], tail=2)

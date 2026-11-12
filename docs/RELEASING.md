@@ -127,12 +127,15 @@ inventory and the crate count), `docs/DELIVERY.md` (binary hashes and wheel name
 ## 5. Quality gates
 
 In a virtual environment with the reference's dependencies (the versions in
-`python/constraints.txt`), a copy of networkx 3.4.2 as the parity repository, and the three
-wheels: `cp39-abi3`, `cp314t` and `cp315-abi3.abi3t`.
+`python/constraints.txt`), a copy of networkx 3.4.2 as the parity repository, the clones of the
+benchmark repositories for the parity run on real repositories (`rich` and `mcp` are two of its
+repositories, read from the environment), and the three wheels: `cp39-abi3`, `cp314t` and
+`cp315-abi3.abi3t`.
 
 ```sh
-V=/some/scratch/venv W=/some/scratch/wheels P=/some/scratch/pmid
-uv venv --python 3.13 $V && uv pip install --python $V/bin/python -e "python[test]" networkx==3.4.2 -c python/constraints.txt
+V=/some/scratch/venv W=/some/scratch/wheels P=/some/scratch/pmid C=/some/scratch/work
+uv venv --python 3.13 $V && uv pip install --python $V/bin/python -e "python[test]" networkx==3.4.2 rich mcp -c python/constraints.txt
+SCRUTATE_WORK=$C python3 bench/make_bench_code.py fetch
 cp -r $V/lib/python3.13/site-packages/networkx $P && find $P -name __pycache__ -prune -exec rm -rf {} +
 export MACOSX_DEPLOYMENT_TARGET=13.0
 python3 tools/third_party_notices.py --package scrutate-py --out crates/scrutate-py/THIRD_PARTY_NOTICES.txt
@@ -140,7 +143,7 @@ for py in 3.13 3.14t 3.15; do
   maturin build --release --strip -m crates/scrutate-py/Cargo.toml -o $W -i "$(uv python find $py)"
 done
 uv pip install --python $V/bin/python --reinstall $W/*cp39-abi3*.whl
-$V/bin/python tools/gen_test_results.py --repo $P --differential-cases 2000 --reproducible --wheels $W
+$V/bin/python tools/gen_test_results.py --repo $P --parity-code $C/code --differential-cases 2000 --reproducible --wheels $W
 ```
 
 The wheel gate installs on 3.10 to 3.13, 3.14t, 3.15 and 3.15t. A final free-threaded 3.15 needs
@@ -176,7 +179,9 @@ it is run without `--draft` only once the manifests carry the release checksums.
 (`/usr/share/doc/scrutate/` in the `.deb`, `/usr/share/licenses/scrutate/` in the `.rpm`).
 
 `dist-linux/` is `tools/release_local.sh` run in a clean `rust:1-slim-bookworm` container on a
-copy of the tree at `/build`, with `maturin[patchelf]` installed in a virtual environment.
+copy of the release commit at `/build` (`git archive HEAD | tar -x -C <dir>`, never a copy of the
+working tree: the container has no git, so the script packs `docs/` and `integrations/` as it
+finds them), with `maturin[patchelf]` installed in a virtual environment.
 
 Check that three hashes agree on each platform: the binary inside the archive, the one
 docs/LEADERBOARD.md says was measured, and the reproducible-build hash (`tools/repro_docker.sh`
