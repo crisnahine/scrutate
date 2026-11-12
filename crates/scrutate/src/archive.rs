@@ -9,6 +9,8 @@ use std::path::Path;
 /// Decompressed bytes allowed per archive or compressed file: a small zip bomb must not fill memory
 /// or keep a search busy for hours.
 pub const MAX_EXPANDED: u64 = 8 << 30;
+/// The longest line of an archive member or a compressed file that is searched.
+pub const MAX_LINE: usize = 64 << 20;
 /// Members searched per archive.
 pub const MAX_MEMBERS: usize = 1_000_000;
 

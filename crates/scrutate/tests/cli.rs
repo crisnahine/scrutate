@@ -1534,6 +1534,32 @@ fn search_zip_reads_archive_members_and_compressed_files() {
     assert_eq!(code, 2, "{err}");
 }
 
+#[test]
+fn search_zip_stops_a_member_whose_line_is_too_long_and_goes_on() {
+    use std::io::Write as _;
+    let r = Repo::new("ziplongline");
+    // a few MiB past the 64 MiB a line may take: it expands from about 70 KB
+    let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    let mut h = tar::Header::new_gnu();
+    let long = vec![b'a'; 68 << 20];
+    let mut t = tar::Builder::new(Vec::new());
+    h.set_size(long.len() as u64);
+    h.set_mode(0o644);
+    h.set_cksum();
+    t.append_data(&mut h, "long.txt", &long[..]).unwrap();
+    let mut h = tar::Header::new_gnu();
+    h.set_size(9);
+    h.set_mode(0o644);
+    h.set_cksum();
+    t.append_data(&mut h, "b.txt", &b"needle b\n"[..]).unwrap();
+    e.write_all(&t.into_inner().unwrap()).unwrap();
+    r.write("a.tar.gz", &e.finish().unwrap());
+    r.write("c.txt", b"needle c\n");
+    let (code, out, err) = r.run(&["grep", "--sort", "-z", "needle"]);
+    assert_eq!((code, out.as_str()), (0, "a.tar.gz{b.txt}:1:needle b\nc.txt:1:needle c\n"), "{err}");
+    assert!(err.contains("a.tar.gz{long.txt}: a line longer than 64 MiB"), "{err}");
+}
+
 /// Poll `ok` every 100 ms until it holds or `secs` pass.
 fn wait_for(secs: u64, what: &str, mut ok: impl FnMut() -> bool) {
     let t0 = std::time::Instant::now();

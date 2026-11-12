@@ -1962,8 +1962,14 @@ fn file_worker(o: &Options) -> FileWorker {
 }
 
 fn make_searcher(o: &Options, binary: BinaryDetection) -> Searcher {
+    make_searcher_limited(o, binary, None)
+}
+
+/// `heap`: the most bytes the searcher may hold, a line and its context (all of the input with -U).
+fn make_searcher_limited(o: &Options, binary: BinaryDetection, heap: Option<usize>) -> Searcher {
     SearcherBuilder::new()
         .binary_detection(binary)
+        .heap_limit(heap)
         .line_number(!(o.count_only || o.files_only)) // line numbers cost a pass over the buffer
         .multi_line(o.multiline)
         .before_context(o.before)
@@ -2031,7 +2037,7 @@ fn search_one(w: &mut FileWorker, r: &Run, path: &Path, rel: Arc<str>, size: Opt
     }
     if o.search_zip {
         if let Some(kind) = crate::archive::Kind::of(&rel) {
-            search_archive(&mut w.searcher, r, path, &rel, kind);
+            search_archive(r, path, &rel, kind);
             return;
         }
     }
@@ -2123,8 +2129,12 @@ fn report(r: &Run, mut sink: Collector, rel: Arc<str>, named: bool) {
 
 /// `-z`: every member of an archive, or the decompressed file, as a file of its own, reported as
 /// `archive.zip{member}` (the decompressed file keeps its own name).
-fn search_archive(searcher: &mut Searcher, run: &Run, path: &Path, rel: &Arc<str>, kind: crate::archive::Kind) {
+fn search_archive(run: &Run, path: &Path, rel: &Arc<str>, kind: crate::archive::Kind) {
     let (c, cancel) = (run.c, run.cancel);
+    // the searcher holds a whole line, and a small compressed file can expand to one line of
+    // gigabytes; -U holds the whole member, so a limit would refuse large members that are fine
+    let limit = (!run.o.multiline).then_some(crate::archive::MAX_LINE);
+    let searcher = &mut make_searcher_limited(run.o, BinaryDetection::quit(0), limit);
     let mut each = |member: Option<&str>, r: &mut dyn std::io::Read| -> bool {
         let label: Arc<str> = match member {
             Some(m) => Arc::from(format!("{rel}{{{m}}}")),
@@ -2132,8 +2142,13 @@ fn search_archive(searcher: &mut Searcher, run: &Run, path: &Path, rel: &Arc<str
         };
         let mut sink = run.collector(Arc::clone(&label));
         let res = run.matcher.search_reader(searcher, r, &mut sink);
-        if let Err(e) = res {
-            c.failed(format!("{label}: {e}"));
+        match res {
+            // grep-searcher's own words for the limit name no line
+            Err(e) if e.to_string().starts_with("configured allocation limit") => {
+                c.failed(format!("{label}: a line longer than {} MiB; stopped", crate::archive::MAX_LINE >> 20))
+            }
+            Err(e) => c.failed(format!("{label}: {e}")),
+            Ok(()) => {}
         }
         report(run, sink, label, false);
         !cancel.load(Ordering::Relaxed)
