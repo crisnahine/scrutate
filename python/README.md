@@ -9,7 +9,10 @@ two jobs:
 - **Parity.** `bench/parity.py` runs the same queries through both engines and fails on any
   difference in a feature, a score or a top 10 (docs/QUALITY.md, CONTRIBUTING.md).
 - **Training.** `bench/train_ranker.py` and `bench/train_semantic.py` fit the ranker and the
-  semantic vectors that the Rust engine ships (`models/`).
+  semantic vectors that the Rust engine ships (`models/`), on rows the Rust engine writes
+  (`bench/gen_features.py`, the hidden `views` command).
+
+It has no command line, server or agent of its own: search with the `scrutate` binary.
 
 Install it for development and run its tests:
 

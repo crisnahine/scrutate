@@ -79,6 +79,24 @@ def test_read_is_sandboxed(repo):
     assert s.read("../../etc/passwd").startswith("error")
 
 
+def test_read_refuses_paths_that_leave_the_repo(tmp_path):
+    import os
+
+    from conftest import write_repo
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    write_repo(str(root))
+    secrets = tmp_path / "repo-secrets"
+    secrets.mkdir()
+    (secrets / ".env").write_text("TOKEN=hunter2\n")
+    os.symlink(secrets / ".env", root / "link.env")
+    s = make(str(root))
+    assert s.read("../repo-secrets/.env").startswith("error")
+    assert s.read("link.env").startswith("error")
+    assert "TokenStore" in s.read("app/auth.py")
+
+
 def test_empty_and_garbage_queries_do_not_crash(repo):
     s = make(repo)
     assert s.search("", k=3) == []

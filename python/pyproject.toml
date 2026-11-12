@@ -19,14 +19,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-mcp = ["mcp>=1.2"]            # `scrutate-ref serve`
-agent = ["anthropic>=0.40"]   # `scrutate-ref ask`
 train = ["scipy", "scikit-learn", "lightgbm"]  # retrain the semantic model / ranker, run bench/
 test = ["pytest"]
-all = ["mcp>=1.2", "anthropic>=0.40"]
-
-[project.scripts]
-scrutate-ref = "scrutate_ref.cli:main"
 
 [build-system]
 requires = ["setuptools>=77"]  # 77 reads a licence expression and license-files

@@ -674,6 +674,10 @@ First release.
   file whose stat the index holds as current. Files an earlier build cached are parsed once more.
 
 ### Product
+- The reference package lost its command line, MCP server and agent (`scrutate_ref/cli.py`,
+  `mcp_server.py`, `agent.py`, `python -m scrutate_ref`, the `scrutate-ref` script and the `mcp`,
+  `agent` and `all` extras): nothing in `bench/`, `tools/` or CI used them. The binary is the
+  product.
 - Ranking quality has a guard of its own: `bench/quality.py` indexes this repository's code with
   its doc comments removed, runs 1,173 committed queries made from them, and fails when MRR@10 or
   hit@5 is below the floor recorded in `bench/quality/floor.json` (measured 0.5903 and 0.6650,
