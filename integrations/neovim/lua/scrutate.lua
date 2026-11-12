@@ -4,17 +4,54 @@
 local M = {}
 M.config = { bin = "scrutate", results = 15 }
 
+-- `bin` as the program to start, or nil when there is none. On Windows a bare name is looked up
+-- on PATH here: the system looks in the new process's directory first, and that is the opened
+-- repository, so a scrutate.exe placed in one would run.
+function M._resolve(bin, windows, path, pathext, exists)
+  if not windows or bin:find("[/\\]") then return bin end
+  local names = {}
+  if bin:match("%.[^.]+$") then
+    names = { bin }
+  else
+    for ext in pathext:gmatch("[^;]+") do table.insert(names, bin .. ext) end
+  end
+  for dir in path:gmatch("[^;]+") do
+    -- an entry that is not absolute would be the working directory again
+    if dir:match("^%a:[/\\]") or dir:match("^[/\\][/\\]") then
+      for _, name in ipairs(names) do
+        local full = dir:gsub("[/\\]+$", "") .. "\\" .. name
+        if exists(full) then return full end
+      end
+    end
+  end
+  return nil
+end
+
+function M.bin()
+  local found = M._resolve(M.config.bin, vim.fn.has("win32") == 1, vim.env.PATH or "", vim.env.PATHEXT or ".COM;.EXE;.BAT;.CMD",
+    function(p) return (vim.uv or vim.loop).fs_stat(p) ~= nil end)
+  if not found then
+    error(M.config.bin .. " was not found on PATH: install scrutate, or call setup({ bin = [[C:\\path\\to\\scrutate.exe]] })", 0)
+  end
+  return found
+end
+
 -- The directory the CLI answers from (the repository top), so every path in an answer opens from it.
 local function root()
   local cwd = vim.fn.getcwd()
-  local ok, r = pcall(function() return vim.system({ M.config.bin, "config", "--json" }, { text = true }):wait() end)
+  local ok, r = pcall(function() return vim.system({ M.bin(), "config", "--json" }, { text = true }):wait() end)
   if not ok or r.code ~= 0 then return cwd end
   local decoded, v = pcall(vim.json.decode, r.stdout)
   return decoded and type(v) == "table" and type(v.root) == "string" and v.root or cwd
 end
 
 local function run(args)
-  local cmd = { M.config.bin }
+  local found, bin = pcall(M.bin)
+  if not found then
+    vim.notify("scrutate: " .. tostring(bin), vim.log.levels.ERROR)
+    return nil
+  end
+  local cmd = { bin }
   vim.list_extend(cmd, args)
   local dir = root()
   -- stdout alone: scrutate reports index updates on stderr

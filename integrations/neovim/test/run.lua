@@ -32,6 +32,18 @@ local function has(list, file, line)
   return false
 end
 
+-- Windows: a bare name comes from an absolute PATH entry, never from the working directory
+local S = require("scrutate")
+local there = { ["D:\\bin\\scrutate.EXE"] = true, ["scrutate.EXE"] = true, [".\\scrutate.EXE"] = true, ["rel\\scrutate.EXE"] = true }
+local function exists(p) return there[p] == true end
+check("a bare name is found on an absolute PATH entry", S._resolve("scrutate", true, "C:\\tools;;.;rel;D:\\bin\\", ".COM;.EXE", exists) == "D:\\bin\\scrutate.EXE",
+  S._resolve("scrutate", true, "C:\\tools;;.;rel;D:\\bin\\", ".COM;.EXE", exists))
+check("a name with its extension is found the same way", S._resolve("scrutate.EXE", true, "D:\\bin", ".COM;.EXE", exists) == "D:\\bin\\scrutate.EXE", nil)
+check("a name that is only in the working directory is not run", S._resolve("scrutate", true, ".;rel", ".COM;.EXE", exists) == nil, S._resolve("scrutate", true, ".;rel", ".COM;.EXE", exists))
+check("a path is taken as given", S._resolve("C:\\x\\scrutate.exe", true, "D:\\bin", ".EXE", exists) == "C:\\x\\scrutate.exe", nil)
+check("elsewhere the system looks on PATH only", S._resolve("scrutate", false, "", "", exists) == "scrutate", nil)
+check("the plugin's program is the one given", S.bin() == bin, S.bin())
+
 -- the first command builds the index and says so on stderr, which must stay out of the JSON
 local ok, e = pcall(vim.cmd, "ScrutateSymbol make_point")
 local q = quickfix()

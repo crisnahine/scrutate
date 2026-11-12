@@ -649,7 +649,9 @@ First release.
   when the tool fails, and works through `repo:`; the GitHub Action runs on Windows runners;
   Neovim ships `lsp/scrutate.lua`, so `vim.lsp.enable('scrutate')` is the whole setup, and the
   plugin needs Neovim 0.10 or newer, and its commands work on first use and after an edit; VS Code,
-  Neovim and JetBrains put `--` before a query, and VS Code stops without an open folder.
+  Neovim and JetBrains put `--` before a query, and VS Code stops without an open folder. On
+  Windows the VS Code extension and the Neovim plugin look a bare `scrutate` up on PATH
+  themselves, in absolute entries only, so a `scrutate.exe` in the opened folder is never run.
 - `release.yml` refuses a tag whose version differs from the packages' (`tools/check_version.py`)
   and runs all of `ci.yml` on the tagged commit before anything is published. Every workflow
   action is pinned to a commit.

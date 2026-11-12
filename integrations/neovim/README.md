@@ -5,7 +5,9 @@
 { dir = "/path/to/scrutate/integrations/neovim", config = function() require("scrutate").setup() end }
 ```
 
-Needs Neovim 0.10 or newer (the plugin runs the CLI through `vim.system`).
+Needs Neovim 0.10 or newer (the plugin runs the CLI through `vim.system`). On Windows the plugin
+looks `scrutate` up on PATH itself, in absolute entries only, and never in the opened
+repository; `setup({ bin = [[C:\path\to\scrutate.exe]] })` names it outright.
 
 Commands: `:Scrutate <query>` (ranked search), `:ScrutateGrep <regex>`, `:ScrutateSymbol [name]`,
 `:ScrutateCallers [name]` (default: word under cursor). Results go to the quickfix list.
