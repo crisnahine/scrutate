@@ -1246,6 +1246,10 @@ impl Index {
         let mut keep_from = todo.len();
         let mut kept = 0u64;
         for (i, (rel, _)) in todo.iter().enumerate().rev() {
+            // a language that keeps no tree takes none of the cache
+            if !crate::parse::keeps_tree(rel) {
+                continue;
+            }
             let n = std::fs::metadata(root.join(rel)).map(|m| m.len()).unwrap_or(0);
             if n > TREE_CACHE_BYTES as u64 {
                 continue; // never cached
@@ -1762,6 +1766,27 @@ mod tests {
         assert_eq!(ix.update(false).unwrap().files_changed, 1);
         drop(ix);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn files_that_keep_no_tree_take_none_of_the_tree_cache() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_trees_mixed_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        for i in 0..20 {
+            std::fs::write(root.join(format!("a{i}.c")), format!("int f{i}(int x) {{ return x + {i}; }}\n")).unwrap();
+        }
+        // listed after the C files, and more of them than the cache holds
+        let body: String = (0..400).map(|i| format!("def f{i}(x):\n    return x + {i}\n")).collect();
+        for i in 0..300 {
+            std::fs::write(root.join(format!("z{i}.py")), &body).unwrap();
+        }
+        let mut ix = super::Index::open(&root, None).unwrap();
+        ix.update(false).unwrap();
+        let held = ix.trees.len();
+        drop(ix);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(held, 20);
     }
 
     #[test]

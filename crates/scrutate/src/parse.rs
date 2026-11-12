@@ -1593,6 +1593,11 @@ impl PrevParse {
     }
 }
 
+/// Whether a parse of the file at `path` leaves a tree to reparse from, going by its name.
+pub(crate) fn keeps_tree(path: &str) -> bool {
+    spec_for(path, "").is_some_and(|s| INCREMENTAL.contains(&s.id))
+}
+
 /// Grammars reparsed incrementally: those without an external scanner. With a scanner (Python,
 /// JavaScript, Rust, Elm, reStructuredText...) a reparse was seen to differ from a fresh parse.
 const INCREMENTAL: &[&str] = &[
