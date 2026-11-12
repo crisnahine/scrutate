@@ -22,7 +22,6 @@ import argparse
 import json
 import os
 import platform
-import resource
 import shutil
 import statistics
 import subprocess

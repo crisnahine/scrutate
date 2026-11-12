@@ -4,10 +4,8 @@ Skipped when the native module is not installed, so the pure-Python reference te
 """
 import json
 import os
-import shutil
 import signal
 import subprocess
-import tempfile
 import threading
 import time
 

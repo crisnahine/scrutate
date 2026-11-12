@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import json
 import os
-import random
-from collections import defaultdict
 
 import numpy as np
 

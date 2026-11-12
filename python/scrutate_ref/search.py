@@ -21,7 +21,7 @@ import numpy as np
 from .index import Index, unpack_text
 from .lex import tok_key
 from .rank import TreeEnsemble, default_ranker_path
-from .text import QUERY_STOP, literal_candidates, name_key, query_terms, query_wholes, raw_subwords, split_lines
+from .text import QUERY_STOP, literal_candidates, name_key, query_terms, query_wholes, split_lines
 from .text import words as text_words
 
 PRUNE = 200  # the learned ranker sees (at most) this many candidates, best by the linear blend

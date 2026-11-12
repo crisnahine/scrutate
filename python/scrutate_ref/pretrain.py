@@ -20,7 +20,7 @@ import scipy.sparse as sp
 
 from .parse import parse_source
 from .semantic import SemanticModel, pls_svd, view_counts
-from .text import raw_subwords, tokenize_words
+from .text import tokenize_words
 
 TEST_PARTS = {"test", "tests", "testing", "_tests", "conftest.py", "benchmarks", "asv_bench", "docs",
               "examples", "doc"}

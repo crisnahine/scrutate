@@ -26,7 +26,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 sys.path.insert(0, os.path.dirname(__file__))
 from scrutate_ref.index import Index, unpack_text  # noqa: E402
-from scrutate_ref.lex import FIELDS, LexStore, NF  # noqa: E402
+from scrutate_ref.lex import NF  # noqa: E402
 from scrutate_ref.search import FEATURES, Searcher  # noqa: E402
 
 TOL_FEAT = 0.0       # features, compared as the float32 both engines compute

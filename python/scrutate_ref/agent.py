@@ -6,7 +6,7 @@ import os
 
 from .index import Index
 from .search import Searcher
-from .text import raw_subwords, words
+from .text import words
 
 SYSTEM = """You are a code-intelligence agent answering questions about a codebase.
 Work like a senior engineer: search broadly, read the real code, follow call chains
