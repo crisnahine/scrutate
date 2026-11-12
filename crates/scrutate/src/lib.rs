@@ -245,12 +245,10 @@ impl Repo {
             if !plain || !parse::is_indexable(p) || p.split('/').any(|n| skipped.iter().any(|s| s == n)) || known() {
                 continue;
             }
-            // the walk does not follow symbolic links
-            let full = self.root.join(p);
-            if !std::fs::symlink_metadata(&full).is_ok_and(|m| m.is_file() && m.len() <= index::MAX_FILE_BYTES) {
+            if !index::file_inside(&self.root, p).is_some_and(|m| m.len() <= index::MAX_FILE_BYTES) {
                 continue;
             }
-            if membership.get_or_insert_with(|| files::Membership::new(&self.root)).may_contain(&full) {
+            if membership.get_or_insert_with(|| files::Membership::new(&self.root)).may_contain(&self.root.join(p)) {
                 out.push(p.clone());
             }
         }

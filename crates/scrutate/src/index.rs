@@ -567,6 +567,14 @@ pub fn wipe_index(root: &Path) {
     }
 }
 
+/// The metadata of the file at `rel` (from the canonical `root`), when it is a file and not a link,
+/// as the walk sees it, and resolves inside the root: a linked folder on the way may lead out.
+pub(crate) fn file_inside(root: &Path, rel: &str) -> Option<std::fs::Metadata> {
+    let full = root.join(rel);
+    let md = std::fs::symlink_metadata(&full).ok().filter(|m| m.is_file())?;
+    std::fs::canonicalize(&full).ok()?.starts_with(root).then_some(md)
+}
+
 /// Run `f` again while it fails with SQLITE_BUSY/LOCKED (statements the busy handler does not cover,
 /// such as the journal-mode switch of a brand-new database opened by several processes at once).
 fn retry_busy<T>(mut f: impl FnMut() -> rusqlite::Result<T>) -> rusqlite::Result<T> {
@@ -1098,8 +1106,7 @@ impl Index {
                         known.insert(p, k);
                     }
                 }
-                // the walk does not follow symbolic links
-                paths.iter().filter(|p| std::fs::symlink_metadata(self.root.join(p)).is_ok_and(|m| m.is_file())).cloned().collect()
+                paths.iter().filter(|p| file_inside(&self.root, p).is_some()).cloned().collect()
             }
         };
         let fileset: HashSet<&String> = files.iter().collect();

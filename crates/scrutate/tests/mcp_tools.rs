@@ -630,3 +630,66 @@ fn duplicates_say_where_limit_stopped_them() {
     let c = scrutate::mcp::call_tool(&mut r.repo, "duplicates", &json!({"min_tokens": 1, "limit": 1}), &scrutate::mcp::Settings::new(None, Some(0.0)));
     assert_eq!(c.structured["stopped_at"], 1, "{}", c.structured);
 }
+
+#[cfg(unix)]
+#[test]
+fn a_path_through_a_linked_folder_reads_nothing_outside_the_repository() {
+    use std::os::unix::fs::symlink;
+    let leak = "def leaked_fn():\n    TOKEN = 'outside_root_mark'\n    return TOKEN\n";
+    let mut r = Repo::new("linkdir", &[("src/a.py", "def inside_fn():\n    return 1\n"), ("sub/b.py", "def sub_fn():\n    return 2\n")]);
+    let outside = r.root.with_file_name(format!("{}_outside", r.root.file_name().unwrap().to_string_lossy()));
+    let _ = fs::remove_dir_all(&outside);
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(outside.join("secret.py"), leak).unwrap();
+    fs::write(outside.join("b.py"), leak).unwrap();
+    symlink(&outside, r.root.join("link")).unwrap();
+    symlink(r.root.join("src"), r.root.join("inlink")).unwrap();
+    // one scan at the first call, so later calls go through the files their arguments name
+    let settings = scrutate::mcp::Settings::new(None, Some(3600.0));
+    let mut call = |tool: &str, args: Value| scrutate::mcp::call_tool(&mut r.repo, tool, &args, &settings);
+    assert!(call("find_symbol", json!({"name": "sub_fn"})).text.starts_with("sub/b.py:1-2"));
+    let calls = [
+        ("find_symbol", json!({"name": "link/secret.py:1"})),
+        ("outline", json!({"path": "link/secret.py"})),
+        ("callees", json!({"name": "link/secret.py:2"})),
+        ("similar_code", json!({"target": "link/secret.py:1"})),
+        ("dependencies", json!({"path": "link/secret.py"})),
+        ("references", json!({"name": "TOKEN", "def": "link/secret.py:1"})),
+        ("read_code", json!({"path": "link/secret.py"})),
+        ("find_symbol", json!({"name": "leaked_fn"})),
+    ];
+    for (tool, args) in &calls {
+        let text = call(tool, args.clone()).text;
+        assert!(!text.contains("leaked_fn") && !text.contains("outside_root_mark"), "{tool} {args}: {text}");
+    }
+    // an indexed folder replaced by a link: its files are gone, not read through the link
+    fs::remove_dir_all(r.root.join("sub")).unwrap();
+    symlink(&outside, r.root.join("sub")).unwrap();
+    for (tool, args) in
+        [("find_symbol", json!({"name": "sub/b.py:1"})), ("outline", json!({"path": "sub/b.py"})), ("find_symbol", json!({"name": "leaked_fn"}))]
+    {
+        let text = call(tool, args.clone()).text;
+        assert!(!text.contains("leaked_fn"), "{tool} {args}: {text}");
+    }
+    // a link that stays inside the repository answers as before
+    let inner = call("outline", json!({"path": "inlink/a.py"}));
+    assert!(!inner.is_error && inner.text.contains("inside_fn"), "{}", inner.text);
+    let _ = fs::remove_dir_all(&outside);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_root_reached_through_a_link_indexes_a_new_file_an_argument_names() {
+    let r = Repo::new("linkroot", &[("a.py", "def first_fn():\n    return 1\n")]);
+    let via = r.root.with_file_name(format!("{}_via", r.root.file_name().unwrap().to_string_lossy()));
+    let _ = fs::remove_file(&via);
+    std::os::unix::fs::symlink(&r.root, &via).unwrap();
+    let mut repo = scrutate::Repo::open(&via).unwrap();
+    let settings = scrutate::mcp::Settings::new(None, Some(3600.0));
+    assert!(scrutate::mcp::call_tool(&mut repo, "find_symbol", &json!({"name": "first_fn"}), &settings).text.starts_with("a.py:1-2"));
+    fs::write(r.root.join("b.py"), "def second_fn():\n    return 2\n").unwrap();
+    let c = scrutate::mcp::call_tool(&mut repo, "outline", &json!({"path": "b.py"}), &settings);
+    assert!(!c.is_error && c.text.contains("second_fn"), "{}", c.text);
+    drop(repo);
+    let _ = fs::remove_file(&via);
+}
