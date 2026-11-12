@@ -1733,7 +1733,8 @@ impl<'a> Resolver<'a> {
                 o
             }
         };
-        order[1..].iter().find_map(|&b| self.declared_member(b, name))
+        // past a base from outside, which may define `name`, the answer is not known
+        order[1..].iter().take_while(|&&b| b >= 0).find_map(|&b| self.declared_member(b, name))
     }
 
     /// `name` as a member a Java type `id` inherits: its bases in header order, each with its own bases first.
@@ -1762,11 +1763,13 @@ impl<'a> Resolver<'a> {
     /// and JavaScript base classes, TypeScript `extends` and `implements`, the trait of a Rust
     /// `impl Trait for T`.
     fn bases(&mut self, id: i64) -> Vec<i64> {
-        self.base_results(id).into_iter().filter_map(|b| b.ok()).collect()
+        self.base_results(id).into_iter().filter_map(|b| b.ok()).filter(|&b| b >= 0).collect()
     }
 
     /// The bases of `bases`, in header order, with why one is not of the repository: "external"
     /// for an import from outside or a name the repository defines nowhere (`Error`, `object`).
+    /// A Python base from outside other than `object` is a negative id of its name, which keeps
+    /// its place in the method resolution order.
     fn base_results(&mut self, id: i64) -> Vec<std::result::Result<i64, &'static str>> {
         let Some((path, _)) = self.def_row(id) else { return Vec::new() };
         let fi = self.file(&path);
@@ -1813,10 +1816,18 @@ impl<'a> Resolver<'a> {
                 Some(q) => self.resolve_qualified(&path, &fi, lang, q, leaf, leaf_name, d.start),
                 None => self.resolve_bare(&path, &fi, lang, leaf, leaf_name, d.start),
             };
+            let found = match found {
+                Err("not found") if !self.defined_anywhere(leaf_name) => Err("external"),
+                f => f,
+            };
             match found {
                 Ok((x, _)) if x == id => {}
                 Ok((x, _)) => out.push(Ok(x)),
-                Err("not found") if !self.defined_anywhere(leaf_name) => out.push(Err("external")),
+                // every class ends with `object`: it keeps no place before an in-repo base
+                Err("external") if lang == Lang::Python && leaf_name != "object" => {
+                    use std::hash::BuildHasher;
+                    out.push(Ok(-1 - (std::hash::BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default().hash_one(leaf_name) >> 2) as i64));
+                }
                 Err(e) => out.push(Err(e)),
             }
         }
@@ -1835,6 +1846,11 @@ impl<'a> Resolver<'a> {
         let (mut seqs, mut direct, mut outside, mut unknown) = (Vec::new(), Vec::new(), false, false);
         for b in if depth < 8 { self.base_results(id) } else { Vec::new() } {
             match b {
+                Ok(b) if b < 0 => {
+                    outside = true;
+                    seqs.push(vec![b]);
+                    direct.push(b);
+                }
                 Ok(b) => {
                     let (l, o, u) = self.linearized(b, depth + 1, memo);
                     (outside, unknown) = (outside || o, unknown || u);
@@ -1897,7 +1913,7 @@ impl<'a> Resolver<'a> {
         };
         let (order, outside, unknown) = self.linearized(start, 0, &mut HashMap::new());
         let at = order.iter().position(|&c| c == after).ok_or("receiver")?;
-        for &c in &order[at + 1..] {
+        for &c in order[at + 1..].iter().take_while(|&&c| c >= 0) {
             if let Some(m) = self.declared_member(c, name) {
                 return Ok((m, "super"));
             }
@@ -4571,6 +4587,31 @@ mod tests {
                 ("main.go", "package main\n\nimport \"example.com/m/shapes\"\n\nfunc f(xs []int, x interface{}, ch chan int) int {\n\tp := &shapes.Point{}\n\tg := func() int {\n\t\th := func(p int) int { return p.Norm() + 1 }\n\t\tfor _, p := range xs {\n\t\t\tp.Norm() + 2\n\t\t}\n\t\tif p := x; p != nil {\n\t\t\tp.Norm() + 3\n\t\t}\n\t\tswitch p := x.(type) {\n\t\tdefault:\n\t\t\tp.Norm() + 4\n\t\t}\n\t\tk := func() (p int) { return p.Norm() + 5 }\n\t\tfor p := 0; p < 3; p++ {\n\t\t\tp.Norm() + 6\n\t\t}\n\t\tselect {\n\t\tcase p := <-ch:\n\t\t\tp.Norm() + 7\n\t\t}\n\t\tv := func(p ...int) int { return p.Norm() + 8 }\n\t\treturn h(0) + k() + v()\n\t}\n\treturn g()\n}\n"),
             ],
             calls("main.go", "p.Norm()", "Norm", 8, &[1, 5, 8]),
+        );
+    }
+
+    #[test]
+    fn a_python_base_from_outside_keeps_its_place_in_the_method_order() {
+        let (helper, mixin) = ("mro.py Helper.setUp", "mro.py Mixin.extra");
+        resolver_case(
+            "mro_outside",
+            &[(
+                "mro.py",
+                "import unittest\nfrom ext import Other\n\n\nclass Helper(object):\n    def setUp(self):\n        return 1\n\n\nclass Mixin(object):\n    def extra(self):\n        return 2\n\n\nclass Plain:\n    pass\n\n\nclass Deep(Other):\n    pass\n\n\nclass T(unittest.TestCase, Helper):\n    def test(self):\n        self.setUp() + 1\n        super().setUp() + 2\n\n\nclass U(Helper, unittest.TestCase):\n    def test(self):\n        self.setUp() + 3\n        super().setUp() + 4\n\n\nclass V(Other, unittest.TestCase, Helper):\n    def test(self):\n        self.setUp() + 5\n\n\nclass W(Helper, Mixin):\n    def test(self):\n        self.extra() + 6\n\n\nclass X(Deep, Mixin):\n    def test(self):\n        self.extra() + 7\n\n\nclass Y(Plain, Other, Helper):\n    def test(self):\n        super().setUp() + 8\n        super(Plain, self).setUp() + 9\n",
+            )],
+            &[
+                // `TestCase.setUp` comes first
+                ("mro.py", "self.setUp() + 1", "setUp", "not found"),
+                ("mro.py", "super().setUp() + 2", "setUp", "external"),
+                ("mro.py", "self.setUp() + 3", "setUp", helper),
+                ("mro.py", "super().setUp() + 4", "setUp", helper),
+                ("mro.py", "self.setUp() + 5", "setUp", "not found"),
+                // `object` ends every order, so it hides no base
+                ("mro.py", "self.extra() + 6", "extra", mixin),
+                ("mro.py", "self.extra() + 7", "extra", "not found"),
+                ("mro.py", "super().setUp() + 8", "setUp", "external"),
+                ("mro.py", "super(Plain, self).setUp() + 9", "setUp", "external"),
+            ],
         );
     }
 
