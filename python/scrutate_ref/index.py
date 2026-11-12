@@ -94,6 +94,27 @@ def split_names(v: str) -> list[str]:
     return [s.strip() for s in out if s.strip()]
 
 
+def config_excludes(root: str) -> list[str]:
+    """`[index] exclude_dirs` of the root's own `.scrutate.toml`, read as the Rust engine reads it:
+    a regular file inside the root, at most 1 MB, at most 1000 names. Needs Python 3.11 (tomllib);
+    on 3.10 the file is not read."""
+    path = os.path.join(root, ".scrutate.toml")
+    try:
+        import tomllib
+        real = os.path.realpath(path)
+        if not os.path.isfile(real) or os.path.commonpath([real, os.path.realpath(root)]) != os.path.realpath(root) or os.path.getsize(real) > 1 << 20:
+            return []
+        with open(real, "rb") as f:
+            table = tomllib.load(f)
+    except (OSError, ImportError, ValueError):
+        return []
+    index = table.get("index")
+    names = index.get("exclude_dirs") if isinstance(index, dict) else None
+    if not isinstance(names, list):
+        return []
+    return [n.strip() for n in names if isinstance(n, str) and n.strip()][:1000]
+
+
 def list_files(root: str) -> list[str]:
     """Relative paths of candidate files, honoring .gitignore when ripgrep exists."""
     files: list[str] = []
@@ -107,7 +128,9 @@ def list_files(root: str) -> list[str]:
         except OSError:
             files = []
     skip = (SKIP_DIRS - SKIP_UNLESS_GIT) if _in_git(root) else set(SKIP_DIRS)
-    skip |= set(split_names(os.environ.get("SCRUTATE_INDEX_EXCLUDE_DIRS", "")))
+    # the variable, when set (empty too), replaces the list of the root's own .scrutate.toml
+    named = split_names(os.environ["SCRUTATE_INDEX_EXCLUDE_DIRS"]) if "SCRUTATE_INDEX_EXCLUDE_DIRS" in os.environ else config_excludes(root)
+    skip |= {n for n in named if n not in (".", "..") and "/" not in n and os.sep not in n}
     if not files:
         for dp, dns, fns in os.walk(root):
             dns[:] = [d for d in dns if d not in skip]

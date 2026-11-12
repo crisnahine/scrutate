@@ -218,6 +218,30 @@ def test_inside_git_the_ignore_rules_decide_for_build_dist_target_and_venv(tmp_p
     assert list_files(str(plain)) == [".gitignore", "src/a.py"]
 
 
+def test_exclude_dirs_come_from_the_root_s_own_config_unless_the_variable_is_set(tmp_path, monkeypatch):
+    from scrutate_ref.index import list_files
+    for d in ("src", "gen", "tmp", "sub"):
+        (tmp_path / d).mkdir()
+        (tmp_path / d / "a.py").write_text("x = 1\n")
+    monkeypatch.delenv("SCRUTATE_INDEX_EXCLUDE_DIRS", raising=False)
+    assert list_files(str(tmp_path)) == ["gen/a.py", "src/a.py", "sub/a.py", "tmp/a.py"]
+    # names only: one with a separator, `.` and `..` exclude nothing
+    (tmp_path / ".scrutate.toml").write_text('[index]\nexclude_dirs = ["gen", " tmp ", "..", "sub/a.py", 7]\n')
+    assert list_files(str(tmp_path)) == [".scrutate.toml", "src/a.py", "sub/a.py"]
+    # a config below the root is not the index's
+    (tmp_path / "sub" / ".scrutate.toml").write_text('[index]\nexclude_dirs = ["src"]\n')
+    assert "src/a.py" in list_files(str(tmp_path))
+    # the variable replaces the file's list, also when it is empty
+    monkeypatch.setenv("SCRUTATE_INDEX_EXCLUDE_DIRS", "src")
+    assert "gen/a.py" in list_files(str(tmp_path)) and "src/a.py" not in list_files(str(tmp_path))
+    monkeypatch.setenv("SCRUTATE_INDEX_EXCLUDE_DIRS", "")
+    assert {"gen/a.py", "tmp/a.py", "src/a.py"} <= set(list_files(str(tmp_path)))
+    # a file that does not parse excludes nothing
+    monkeypatch.delenv("SCRUTATE_INDEX_EXCLUDE_DIRS")
+    (tmp_path / ".scrutate.toml").write_text("[index\n")
+    assert {"gen/a.py", "tmp/a.py"} <= set(list_files(str(tmp_path)))
+
+
 def test_an_escaped_comma_is_part_of_an_excluded_directory_name(tmp_path, monkeypatch):
     from scrutate_ref.index import list_files, split_names
 
