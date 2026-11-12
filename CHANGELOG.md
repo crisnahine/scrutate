@@ -232,6 +232,9 @@ First release.
   - A Java diamond of interfaces no longer takes exponential time (over 100 s to 0.04 s at 57
     interfaces).
   - A tsconfig `extends` written as a list is read.
+  - `refs` and `callers` stay fast in a function where many blocks bind the same name (2,000
+    blocks: 11 to 13 s before, 0.14 s) and through a wide diamond of Python or TypeScript base
+    classes.
   - `refs` counts every use on a line, where it stopped at 64 without saying so;
     `--max-results N` (MCP `max_results`) counts uses, not lines. `grep` with color or `--json`
     lists every match on a line.
