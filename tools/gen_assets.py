@@ -412,9 +412,9 @@ def logo() -> str:
 
 # ---------------------------------------------------------------- the hero: four real searches over one block of code
 
-HERO_LINE = ("INSTANT CODE SEARCH", "CODE INTELLIGENCE")
-HERO_SMALL = "ONE RUST BINARY"
-HERO_DESC = "the line 'Instant code search, code intelligence, one Rust binary'"
+HERO_LINE = ("INSTANT SEARCH, NO INDEX", "CODE INTELLIGENCE FROM AN INDEX")
+HERO_SMALL = ("TWO ENGINES", "ONE RUST BINARY")
+HERO_DESC = "the lines 'Instant search, no index. Code intelligence from an index. Two engines, one Rust binary.'"
 DEMO_JSON = os.path.join(ASSETS, "demo.json")
 HERO_JSON = os.path.join(ASSETS, "hero.json")
 
@@ -506,41 +506,102 @@ def reticle(cls, colour, r=11):
             "</g></g>")
 
 
-def hero():
+def hero(phone=False):
     """The poster: a block of real code, four real searches run over it one after another (typed, each match
     found by a reticle and struck by the highlighter, the count run up), and the wordmark below.
     Its beats: `python3 tools/gen_assets.py beats`."""
-    return _hero()[0]
+    return _hero(phone)[0]
 
 
-def _hero():
+def wrap_rows(lines, cols):
+    """Wraps lines at `cols` characters, after a space where there is one: (line index, first column, text) rows.
+    No character is dropped or changed, so a span of the line maps onto the rows."""
+    rows = []
+    for i, ln in enumerate(lines):
+        k = 0
+        while True:
+            e = len(ln) if len(ln) - k <= cols else (ln.rfind(" ", k + 1, k + cols) + 1 or k + cols)
+            rows.append((i, k, ln[k:e]))
+            if e >= len(ln):
+                break
+            k = e
+    return rows
+
+
+def segments(rows, i, s0, s1):
+    """The pieces of columns s0..s1 of line i on the rows it wraps onto: (row number, first column, start, end)."""
+    return [(r, k, max(s0, k), min(s1, k + len(t))) for r, (j, k, t) in enumerate(rows)
+            if j == i and max(s0, k) < min(s1, k + len(t))]
+
+
+# the hero's two layouts: the poster at 880, and a tall one for a phone (the wordmark first, the code wrapped)
+HERO_LAYOUT = {
+    "wide": {"w": W, "fs": 11.2, "cw": 6.72, "lh": 21, "ps": 15, "pw": 9.0, "cap": 104, "st": 23, "count": 18},
+    "phone": {"w": 400, "fs": 11.2, "cw": 6.72, "lh": 17, "ps": 13, "pw": 7.8, "cap": 50, "st": 12.5, "count": 15},
+}
+
+
+def _hero(phone=False):
     spec = hero_spec()
     c = ON["ink"]
-    H = 586
-    fs, cw, lh = 11.2, 6.72, 21         # the code: 117 columns fit between the gutter and the frame
-    cx0, cy0 = 54, 122
-    ps, pw = 15, 9.0                    # the prompt
-    px, py = PAD, 54
+    L = HERO_LAYOUT["phone" if phone else "wide"]
+    PW, fs, cw, lh, ps, pw, cap, count = L["w"], L["fs"], L["cw"], L["lh"], L["ps"], L["pw"], L["cap"], L["count"]
+    M = 24 if phone else PAD
+    first, last = spec["first"], spec["last"]
+    caption = (f"{spec['file']}:{first}-{last}" if phone else f"{spec['file']}, lines {first} to {last}").upper()
+    licence = f"MIT OR APACHE-2.0 // {spec['version'].upper()}"
+    st_lh = L["st"] * 1.55
+    if phone:
+        wy = 30 + cap                       # the wordmark leads, then the statement, then the search
+        sy = wy + 46
+        tag_y = sy + st_lh + 34
+        rule0 = tag_y + 34
+        px, py = M, rule0 + 34
+        lab_y = py + 28
+        cap_y = lab_y + 22
+        rule1 = cap_y + 14
+        lx, nx = PW - M, PW - M - 82        # the FILES and LINES counters, on the caption's row
+        cx0 = M + 22
+        cols = int((PW - M - cx0) // cw)
+    else:
+        px, py = PAD, 54
+        lab_y = cap_y = 82
+        rule1 = 96
+        lx, nx = PW - PAD, PW - PAD - 106
+        cx0 = 54
+        cols = 200
+    rows = wrap_rows(spec["lines"], cols)
+    cy0 = rule1 + 26
+    code_end = cy0 + (len(rows) - 1) * lh + (16 if phone else 22)
+    if phone:
+        H = int(code_end + 12)
+    else:
+        wy = code_end + 122
+        sy = wy + 62
+        H = 586
+
     clk = Clock()
     b = [panel(H, "ink")]
-    first, last = spec["first"], spec["last"]
     b.append(mono(px, py, "$", ps, MARK))
-    b.append(mono(W - PAD, 82, f"{spec['file']}, lines {first} to {last}".upper(), 10.5, c["dim"], 0.14, "end"))
-    b.append(f'<path d="M{PAD} 96 H{W - PAD}" stroke="{c["rule"]}"/>')
+    b.append(mono(M if phone else PW - PAD, cap_y, caption, 9 if phone else 10.5, c["dim"], 0.14, "start" if phone else "end"))
+    if phone:
+        b.append(f'<path d="M{M} {rule0} H{PW - M}" stroke="{c["rule"]}"/>')
+    b.append(f'<path d="M{M} {rule1} H{PW - M}" stroke="{c["rule"]}"/>')
     under = len(b)   # the searches' slabs go here, under the code, so a lifting slab uncovers the letters
-    for i, ln in enumerate(spec["lines"]):
-        y = cy0 + i * lh
-        b.append(mono(cx0 - 12, y, str(first + i), 10, c["rule"], anchor="end"))
-        b.append(code_text(cx0, y, ln, fs, c["dim"], cw))
-    code_end = cy0 + (len(spec["lines"]) - 1) * lh + 22
-    b.append(f'<path d="M{PAD} {code_end} H{W - PAD}" stroke="{c["rule"]}"/>')
+    for r, (i, k, t) in enumerate(rows):
+        y = cy0 + r * lh
+        if not k:
+            b.append(mono(cx0 - 12, y, str(first + i), 10, c["rule"], anchor="end"))
+        b.append(code_text(cx0, y, t, fs, c["dim"], cw))
+    if not phone:
+        b.append(f'<path d="M{PAD} {code_end} H{PW - PAD}" stroke="{c["rule"]}"/>')
+        b.append(side(licence, PW - 24, 112, c["dim"]))
     # the counters' labels: the numbers are each search's own
-    lx = W - PAD
-    b.append(mono(lx - 44, py, "FILES", 10.5, c["dim"], 0.14, "end"))
-    b.append(mono(lx - 150, py, "LINES", 10.5, c["dim"], 0.14, "end"))
+    small = 9.5 if phone else 10.5
+    b.append(mono(lx - (36 if phone else 44), cap_y if phone else py, "FILES", small, c["dim"], 0.14, "end"))
+    b.append(mono(nx - (40 if phone else 44), cap_y if phone else py, "LINES", small, c["dim"], 0.14, "end"))
 
     # the wordmark: the letters cut in, the A's highlighter bar is drawn last, the cursor lands, then it stands
-    wy, cap = code_end + 122, 104
     lift = cap * 0.22
     letters = []
     for i in range(len(WORD)):
@@ -557,7 +618,7 @@ def _hero():
                         (t_cur + 0.3, {"transform": "translateY(0px)", "opacity": 1})],
                        rest={"transform": f"translateY({-cap * 0.6:.0f}px)", "opacity": 0})
     slab_cls = "wipe " + clk.anim(wipe(1.3, 0.42), rest="scaleX(0)")
-    clk.beat("statement: CODE INTELLIGENCE is marked", 1.3, 0.42)
+    clk.beat(f"statement: {HERO_LINE[1]} is marked", 1.3, 0.42)
 
     # the searches: `scrutate grep ` stays at the prompt, the rest of each command is typed
     head = "scrutate grep "
@@ -568,6 +629,7 @@ def _hero():
     for qi, q in enumerate(spec["queries"]):
         assert q["argv"][:2] == ["scrutate", "grep"], q["argv"]
         cmd = shell_join(q["argv"][2:])
+        assert x0 + len(cmd) * pw < PW - M, f"the command {cmd!r} does not fit the {'phone' if phone else 'wide'} hero"
         pts, t_typed = typing(t, cmd, 24)
         clk.beat(f"search {qi + 1}: `{cmd}` is typed", t, t_typed - t)
         t_run = t_typed + 0.25
@@ -597,12 +659,17 @@ def _hero():
                        (t_exit + 0.45, {"transform": "translateY(0px)", "opacity": 0}),
                        (t_exit + 0.46, {"transform": f"translateY({-cap * 0.6:.0f}px)", "opacity": 0})])
     blink_cls = blink(clk, t_cur + 0.3, t_exit + 0.2)
-    wm, ww = wordmark(PAD, wy, cap, PAPER, INK, cls_letters=letters, cls_bar=bar_cls, cls_cursor=cur_cls, cls_blink=blink_cls)
+    wm, ww = wordmark(M, wy, cap, PAPER, INK, cls_letters=letters, cls_bar=bar_cls, cls_cursor=cur_cls, cls_blink=blink_cls)
+    assert M + ww <= PW - M + 1, "the wordmark does not fit"
     b.append(wm)
-    sy = wy + 62
-    b.append(statement(PAD, sy, HERO_LINE[0], HERO_LINE[1], 26, "ink", slab_cls=slab_cls))
-    b.append(mono(W - PAD, sy, HERO_SMALL, 10.5, c["dim"], 0.14, "end"))
-    b.append(mono(W - PAD, sy + 40, f"MIT OR APACHE-2.0 // {spec['version'].upper()}", 10.5, c["dim"], 0.14, "end"))
+    b.append(statement(M, sy, HERO_LINE[0], HERO_LINE[1], L["st"], "ink", slab_cls=slab_cls))
+    assert M + type_w(HERO_LINE[1], L["st"]) * 1.05 < (PW - M if phone else PW - PAD - 140), "the statement does not fit"
+    if phone:
+        b.append(mono(M, tag_y, " // ".join(HERO_SMALL), 10, PAPER, 0.14))
+        b.append(mono(M, tag_y + 17, licence, 10, c["dim"], 0.14))
+    else:
+        b.append(mono(PW - PAD, sy, HERO_SMALL[0], 11, PAPER, 0.16, "end"))
+        b.append(mono(PW - PAD, sy + st_lh, HERO_SMALL[1], 11, PAPER, 0.16, "end"))
 
     # each search is a group: its label, its command, its marks and its counts; the groups cross-fade
     cur_pts, ret_pts = [], []
@@ -621,14 +688,14 @@ def _hero():
         g_open = f'<g class="{g_cls}"' + (' opacity="0"' if qi else "") + ">"
         slabs = [g_open]
         b.append(g_open)
-        b.append(mono(PAD, 82, f"// {qi + 1:02d}  {q['label']}", 10.5, c["fg"], 0.14))
+        b.append(mono(M if phone else PAD, lab_y if phone else 82, f"SEARCH {qi + 1} OF {n} // {q['label']}", small, c["fg"], 0.14))
         b.append(code_text(x0, py, cmd, ps, PAPER, pw))
         # typing: a cover over the command shrinks toward its right end, a letter at a time; at the lift it
         # grows back from the right, as if the line were deleted
-        L = len(cmd) * pw + 2
-        cov = [(tt, f"scaleX({1 - k * pw / L:.4f})", *rest) for tt, k, *rest in pts]
+        Lc = len(cmd) * pw + 2
+        cov = [(tt, f"scaleX({1 - k * pw / Lc:.4f})", *rest) for tt, k, *rest in pts]
         cov_cls = clk.anim(cov + [(t_lift, "scaleX(0)", f"steps({len(cmd)}, end)"), (t_lift + 0.25, "scaleX(1)")], rest="scaleX(1)")
-        b.append(f'<rect class="{cov_cls} cover" x="{x0 - 1:.1f}" y="{py - ps:.1f}" width="{L:.1f}" height="{ps + 6}" fill="{INK}" '
+        b.append(f'<rect class="{cov_cls} cover" x="{x0 - 1:.1f}" y="{py - ps:.1f}" width="{Lc:.1f}" height="{ps + 6}" fill="{INK}" '
                  f'transform="scale(0 1)"/>')
         cur_pts += [(t0 - 0.31, {"transform": f"translateX({x0:.1f}px)", "opacity": 0}, "steps(1, end)"),
                     (t0 - 0.3, {"transform": f"translateX({x0:.1f}px)", "opacity": 1})]
@@ -637,18 +704,24 @@ def _hero():
                     (t_run + 0.01, {"transform": f"translateX({x0 + len(cmd) * pw:.1f}px)", "opacity": 0})]
         # the counts run up while the marks land
         t_c1 = max(t_landed, t_run + 0.9)
-        b.append(counter(clk, lx, py + 1, q["files_matched"], t_run + 0.2, t_c1, t_lift + 0.32, 18, PAPER))
-        b.append(counter(clk, lx - 106, py + 1, q["lines_matched"], t_run + 0.2, t_c1, t_lift + 0.32, 18, PAPER))
-        # the marks: a slab wipes in under each match, the matched letters turn ink on it, then they lift
+        cy_n = cap_y + 1 if phone else py + 1
+        b.append(counter(clk, lx, cy_n, q["files_matched"], t_run + 0.2, t_c1, t_lift + 0.32, count, PAPER))
+        b.append(counter(clk, nx, cy_n, q["lines_matched"], t_run + 0.2, t_c1, t_lift + 0.32, count, PAPER))
+        # the marks: a slab wipes in under each match (each piece of it, where a line wraps), the matched
+        # letters turn ink on it, then they lift
         for (ln, s0, s1, tm) in marks:
-            y = cy0 + (ln - first) * lh
-            mx, mw = cx0 + s0 * cw - 2, (s1 - s0) * cw + 3
-            slab = wipe(tm + 0.22, 0.28) + [(t_lift, "scaleX(1)", "ease-in"), (t_lift + 0.3, "scaleX(0)")]
-            slabs.append(marker(mx, y - fs * 0.98, mw, fs * 1.34, "wipe " + clk.anim(slab, rest="scaleX(0)")))
-            ink = [(tm + 0.41, 0, "steps(1, end)"), (tm + 0.42, 1), (t_lift, 1, "steps(1, end)"), (t_lift + 0.01, 0)]
-            word = spec["lines"][ln - first][s0:s1]
-            b.append(code_text(cx0 + s0 * cw, y, word, fs, INK, cw, clk.anim(ink, "opacity", rest=0)))
-            tx, ty = cx0 + (s0 + s1) / 2 * cw, y - fs * 0.36
+            segs = segments(rows, ln - first, s0, s1)
+            assert segs, (ln, s0, s1)
+            text = spec["lines"][ln - first]
+            for r, k, a, e in segs:
+                y = cy0 + r * lh
+                mx, mw = cx0 + (a - k) * cw - 2, (e - a) * cw + 3
+                slab = wipe(tm + 0.22, 0.28) + [(t_lift, "scaleX(1)", "ease-in"), (t_lift + 0.3, "scaleX(0)")]
+                slabs.append(marker(mx, y - fs * 0.98, mw, fs * 1.34, "wipe " + clk.anim(slab, rest="scaleX(0)")))
+                ink = [(tm + 0.41, 0, "steps(1, end)"), (tm + 0.42, 1), (t_lift, 1, "steps(1, end)"), (t_lift + 0.01, 0)]
+                b.append(code_text(cx0 + (a - k) * cw, y, text[a:e], fs, INK, cw, clk.anim(ink, "opacity", rest=0)))
+            r, k, a, e = segs[0]
+            tx, ty = cx0 + ((a + e) / 2 - k) * cw, cy0 + r * lh - fs * 0.36
             start = prev or (x0 + len(cmd) * pw, py - 5)
 
             def at(p, s, o=1):
@@ -669,21 +742,23 @@ def _hero():
     # the prompt's cursor and the reticle are hidden between searches; they rest where they were last seen
     b.append(f'<g class="{clk.anim(cur_pts, rest=cur_pts[-1][1])}" opacity="0"><rect y="{py - ps + 1:.1f}" width="{pw:.1f}" '
              f'height="{ps + 3}" fill="{MARK}"/></g>')
-    b.append(reticle(clk.anim(ret_pts, rest=ret_pts[-1][1]), PAPER))
+    b.append(reticle(clk.anim(ret_pts, rest=ret_pts[-1][1]), PAPER, 9 if phone else 11))
     style = [WIPE_CSS, ".cover{transform-box:fill-box;transform-origin:right center}", clk.css()]
     qs = "; ".join(f"`{cmd}` marks {len(q['spans'])} on these lines and reports {q['lines_matched']} matching lines in "
                    f"{q['files_matched']} of {q['files_searched']} files" for q, cmd, *_ in queries)
+    where = ("Above: the wordmark SCRUTATE, whose A has a highlighter stroke for its bar, and " if phone else
+             "Below: the wordmark SCRUTATE, whose A has a highlighter stroke for its bar, and ")
     desc = (f"Lines {first} to {last} of {spec['file']} (scrutate's own source, crates/scrutate at {spec['source']}), and four "
             f"searches run over them with {spec['version']}, one after another: {qs}. Each search is typed, a reticle finds each "
-            f"match the binary reported, a highlighter marks it and the counts run up to the real numbers. Below: the "
-            f"wordmark SCRUTATE, whose A has a highlighter stroke for its bar, and {HERO_DESC}. With reduced motion the "
-            "searches cross-fade with every match marked.")
-    return svg(W, H, "Scrutate: instant code search and code intelligence", desc, "\n".join(b), "\n".join(style), animated=True), clk
+            f"match the binary reported, a highlighter marks it and the counts run up to the real numbers. {where}"
+            f"{HERO_DESC}. With reduced motion the searches cross-fade with every match marked.")
+    return svg(PW, H, "Scrutate: instant search with no index, code intelligence from an index", desc, "\n".join(b),
+               "\n".join(style), animated=True), clk
 
 
 # ---------------------------------------------------------------- terminal demo
 
-LOC = re.compile(r"^(\S+?:\d+(?:-\d+)?)(:|\s\s)")
+LOC = re.compile(r"^(\s*\S+?:\d+(?:-\d+)?(?::\d+)?)(:|\s\s)")
 
 
 def trim(lines, keep=None, only=None):
@@ -785,31 +860,53 @@ def marked_line(x, y, s, rx, size, fg, pfx):
     return "".join(slabs) + f'<text x="{x}" y="{y}" class="m pre" font-size="{size}" fill="{fg}">{"".join(spans)}</text>', len(slabs)
 
 
-def demo() -> str:
+def slice_runs(runs, a, e):
+    """The part of (text, attributes) runs between columns a and e of the line they make up."""
+    out, k = [], 0
+    for t, attrs in runs:
+        lo, hi = max(a, k), min(e, k + len(t))
+        if lo < hi:
+            out.append((t[lo - k:hi - k], attrs))
+        k += len(t)
+    return out
+
+
+def demo(phone=False) -> str:
     """A terminal session that loops for ever: each command is typed, its output arrives in bursts, the matches
-    of a grep are marked, the next prompt waits, the screen clears and the next command is typed."""
+    of a grep are marked, the next prompt waits, the screen clears and the next command is typed. On a phone
+    the terminal is narrow and long lines wrap, as they would in a narrow terminal window."""
     spec = demo_spec()
     k = ON["ink"]
-    tx, ty, top = 24, 64, 40                 # the terminal window inside the paper panel
-    tw = W - 2 * tx
-    x0 = tx + 22
+    PW = 400 if phone else W
+    tx, ty, top = (14, 58, 34) if phone else (24, 64, 40)    # the terminal window inside the paper panel
+    tw = PW - 2 * tx
+    x0 = tx + (14 if phone else 22)
     screens = []
     for c in spec["commands"]:
         screens.append((c, shell_join(c["argv"]), trim(c["output"], c.get("keep"), c.get("only"))))
-    widest = max(len(ln) for _, cmd, out in screens for ln in out + ["$ " + cmd])
-    fs = min(14.0, round((tw - 44) / (widest * 0.6), 1))
+    if phone:
+        fs = 12.0
+        cols = int((tw - 28) // (fs * 0.6))
+    else:
+        widest = max(len(ln) for _, cmd, out in screens for ln in out + ["$ " + cmd])
+        fs = min(14.0, round((tw - 44) / (widest * 0.6), 1))
+        cols = 10_000
     cw, lh = fs * 0.6, round(fs * 1.4, 1)
-    rows = max(len(out) for _, _, out in screens) + 2       # the command, its output, the next prompt
+    wrapped = [wrap_rows(out, cols) for _, _, out in screens]
+    rows = max(len(wr) for wr in wrapped) + 2       # the command, its output, the next prompt
     th = int(top + 18 + lh * rows + 10)
-    H = ty + th + 28
+    H = ty + th + (16 if phone else 28)
     y0 = ty + top + 18 + fs * 0.8
     clk = Clock()
-    b = [panel(H, "paper"), label(PAD, 42, "", f"scrutate in a terminal // real output, {spec['version']}", "paper", W - PAD),
+    head = f"real output, {spec['version']}" if phone else f"Engine B in a terminal // real output, {spec['version']}"
+    b = [panel(H, "paper"), label(PAD if not phone else 24, 38 if phone else 42, "", head, "paper", PW - (24 if phone else PAD)),
          f'<defs><clipPath id="win"><rect x="{tx}" y="{ty}" width="{tw}" height="{th}" rx="8"/></clipPath></defs>',
          f'<rect x="{tx}" y="{ty}" width="{tw}" height="{th}" rx="8" fill="{INK}"/>']
+    if phone:
+        b[0] = panel(H, "paper", w=PW)
     for i in range(3):
-        b.append(f'<rect x="{tx + 18 + i * 16}" y="{ty + 15}" width="8" height="8" fill="{k["rule"]}"/>')
-    b.append(mono(tx + tw - 18, ty + 23, spec["title"].upper(), 11, k["dim"], 0.14, "end"))
+        b.append(f'<rect x="{tx + 14 + i * 14}" y="{ty + 13}" width="7" height="7" fill="{k["rule"]}"/>')
+    b.append(mono(tx + tw - 14, ty + 21, spec["title"].upper(), 9.5 if phone else 11, k["dim"], 0.14, "end"))
     b.append(f'<path d="M{tx} {ty + top} H{tx + tw}" stroke="{k["rule"]}"/>')
     b.append('<g clip-path="url(#win)">')
     b.append(mono(x0, y0, "$", fs, MARK))
@@ -837,6 +934,7 @@ def demo() -> str:
     T = clk.total = t
     cur = []
     for i, (c, cmd, out, hl, pts, t0, t_typed, t_enter, bursts, t_marks, t_done, t_clear) in enumerate(plan):
+        assert len(cmd) + 2 <= cols, f"the command {cmd!r} does not fit the terminal"
         prev_clear = plan[i - 1][11]
         cut = [(t_clear, 1, "steps(1, end)"), (t_clear + 0.01, 0)]
         calm = window(prev_clear + 0.2, t_clear - 0.6, T)
@@ -857,6 +955,7 @@ def demo() -> str:
         cur += [(t_enter, {"transform": f"translateX({xs + len(cmd) * cw:.1f}px)", "opacity": 1}, "steps(1, end)"),
                 (t_enter + 0.01, {"transform": f"translateX({xs + len(cmd) * cw:.1f}px)", "opacity": 0})]
         # the output: a first burst of two lines, then the rest, as a tool writes its buffer
+        wr = wrapped[i]
         split = min(2, len(out))
         marks = []
         for part, (lo, hi) in enumerate(((0, split), (split, len(out)))):
@@ -866,20 +965,24 @@ def demo() -> str:
                            (t_clear + 0.01, 0)], "opacity", rest=0)
             b.append(f'<g class="{ob}">')
             for j in range(lo, hi):
-                y = y0 + (j + 1) * lh
-                runs, cols = term_parts(out[j], hl, INK)
-                for a, e in cols:
+                runs, cols_hl = term_parts(out[j], hl, INK)
+                for a, e in cols_hl:
                     tm = t_marks + 0.13 * len(marks)
-                    slab = wipe(tm, 0.28) + [(t_clear, "scaleX(1)", "steps(1, end)"), (t_clear + 0.01, "scaleX(0)")]
-                    b.append(marker(x0 + a * cw - 2, y - fs * 0.95, (e - a) * cw + 3, fs * 1.3, "wipe " + clk.anim(slab, rest="scaleX(0)")))
-                    marks.append((out[j][a:e], a, y, tm))
-                b.append(runs_text(x0, y, runs, fs, PAPER, cw))
+                    for r, kk, sa, se in segments(wr, j, a, e):
+                        y = y0 + (r + 1) * lh
+                        slab = wipe(tm, 0.28) + [(t_clear, "scaleX(1)", "steps(1, end)"), (t_clear + 0.01, "scaleX(0)")]
+                        b.append(marker(x0 + (sa - kk) * cw - 2, y - fs * 0.95, (se - sa) * cw + 3, fs * 1.3,
+                                        "wipe " + clk.anim(slab, rest="scaleX(0)")))
+                        marks.append((out[j][sa:se], sa - kk, y, tm))
+                for r, (jj, kk, txt) in enumerate(wr):
+                    if jj == j:
+                        b.append(runs_text(x0, y0 + (r + 1) * lh, slice_runs(runs, kk, kk + len(txt)), fs, PAPER, cw))
             b.append("</g>")
         for word, a, y, tm in marks:
             ink = [(tm + 0.18, 0, "steps(1, end)"), (tm + 0.19, 1), (t_clear, 1, "steps(1, end)"), (t_clear + 0.01, 0)]
             b.append(code_text(x0 + a * cw, y, word, fs, INK, cw, clk.anim(ink, "opacity", rest=0)))
         # the next prompt, and its cursor blinking while the output is read
-        yp = y0 + (len(out) + 1) * lh
+        yp = y0 + (len(wr) + 1) * lh
         nxt = clk.anim([(t_done, 0, "steps(1, end)"), (t_done + 0.01, 1), (t_clear, 1, "steps(1, end)"), (t_clear + 0.01, 0)],
                        "opacity", rest=0)
         b.append(f'<g class="{nxt}">' + mono(x0, yp, "$", fs, MARK)
@@ -893,8 +996,9 @@ def demo() -> str:
     cmds = "; ".join(cmd for _, cmd, _ in screens)
     desc = (f"A terminal running {spec['version']} in {spec['repo']}, one command at a time: {cmds}. Each command is typed, "
             "its output (the binary's own, captured by tools/gen_assets.py capture) arrives, the matches of each grep are "
-            "marked with a highlighter, and the screen clears for the next; a line '...' marks output left out.")
-    return svg(W, H, "Scrutate in a terminal", desc, "\n".join(b), "\n".join(style), animated=True)
+            "marked with a highlighter, and the screen clears for the next; a line '...' marks output left out."
+            + (" Long lines wrap, as in a narrow terminal." if phone else ""))
+    return svg(PW, H, "Scrutate in a terminal", desc, "\n".join(b), "\n".join(style), animated=True)
 
 
 # ---------------------------------------------------------------- two engines
@@ -924,63 +1028,111 @@ def path_len(pts):
     return sum(abs(x1 - x0) + abs(y1 - y0) for (x0, y0), (x1, y1) in zip(pts, pts[1:]))
 
 
-def engines() -> str:
+def engines(phone=False) -> str:
     """What you ask goes to one engine or the other: a packet leaves one of the four front ends, runs along the
     wires into Engine A or Engine B, each stage is marked as it passes, and what comes back is marked. Four runs
-    in turn (the CLI to A, MCP to B, Python to A, LSP to B), then again."""
+    in turn (the CLI to A, MCP to B, Python to A, LSP to B), then again. On a phone the same parts stack: the four
+    front ends in a row, then each engine with what it returns under it."""
     c = ON["ink"]
-    H = 480
+    PW = 400 if phone else W
+    M = 24 if phone else PAD
     clk = Clock()
-    b = [panel(H, "ink", dots=True), label(PAD, 46, "01", "Two engines, one binary", "ink", W - PAD)]
-    b.append(mono(PAD, 92, "YOU ASK", 11, c["dim"], 0.16))
-    asks = {}
-    for i, (t, sub) in enumerate(ENGINES["asks"]):
-        y = 108 + i * 64
-        b.append(f'<rect x="{PAD + .5}" y="{y + .5}" width="139" height="49" fill="{INK}" stroke="{c["rule"]}"/>')
-        b.append(words(t, PAD + 12, y + 24, 13, PAPER))
-        b.append(mono(PAD + 12, y + 40, sub, 11, c["dim"]))
-        asks[t] = y
-    b.append(f'<path d="M{PAD + 140} {108 + 25} H{PAD + 160} M{PAD + 140} {172 + 25} H{PAD + 160} M{PAD + 140} {236 + 25} H{PAD + 160} '
-             f'M{PAD + 140} {300 + 25} H{PAD + 160} M{PAD + 160} 133 V325" stroke="{c["dim"]}" stroke-width="1.5" fill="none"/>')
-    ex, ew = 224, 360
-    gx = ex + ew + 22
-    b.append(mono(gx, 92, "YOU GET", 11, c["dim"], 0.16))
-    cards = {}
-    for key, ey, eh in (("a", 108, 136), ("b", 262, 190)):
+    b = []
+    asks, cards, packets_to = {}, {}, {}
+    if phone:
+        b.append(label(M, 38, "", "Which engine answers", "ink", PW - M))
+        b.append(mono(M, 70, "YOU ASK", 10.5, c["dim"], 0.16))
+        bw, bh, gap, by = (PW - 2 * M - 24) / 4, 38, 8, 82
+        bus = by + bh + 18
+        trunk = M + 6
+        for i, (t, _) in enumerate(ENGINES["asks"]):
+            x = M + i * (bw + gap)
+            b.append(f'<rect x="{x + .5:.1f}" y="{by + .5}" width="{bw - 1:.1f}" height="{bh - 1}" fill="{INK}" stroke="{c["rule"]}"/>')
+            b.append(words(t, x + bw / 2, by + 24, 11, PAPER, anchor="middle"))
+            asks[t] = (x, by, bw, bh)
+            packets_to[t] = [(x + bw / 2, by + bh), (x + bw / 2, bus), (trunk, bus)]
+        b.append(f'<path d="M{trunk} {bus} H{M + 3 * (bw + gap) + bw / 2:.1f}" stroke="{c["dim"]}" stroke-width="1.5" fill="none"/>')
+        b.append("".join(f'<path d="M{x + bw / 2:.1f} {y + bh} V{bus}" stroke="{c["dim"]}" stroke-width="1.5"/>'
+                         for x, y, _, _ in asks.values()))
+        ex, ew = M + 22, PW - 2 * M - 22
+        ey = bus + 26
+    else:
+        b.append(label(PAD, 46, "", "What you ask, and the engine that answers", "ink", W - PAD))
+        b.append(mono(PAD, 92, "YOU ASK", 11, c["dim"], 0.16))
+        for i, (t, sub) in enumerate(ENGINES["asks"]):
+            y = 108 + i * 64
+            b.append(f'<rect x="{PAD + .5}" y="{y + .5}" width="139" height="49" fill="{INK}" stroke="{c["rule"]}"/>')
+            b.append(words(t, PAD + 12, y + 24, 13, PAPER))
+            b.append(mono(PAD + 12, y + 40, sub, 11, c["dim"]))
+            asks[t] = (PAD, y, 140, 50)
+            packets_to[t] = [(PAD + 141, y + 25), (PAD + 160, y + 25)]
+        b.append(f'<path d="M{PAD + 140} {108 + 25} H{PAD + 160} M{PAD + 140} {172 + 25} H{PAD + 160} M{PAD + 140} {236 + 25} H{PAD + 160} '
+                 f'M{PAD + 140} {300 + 25} H{PAD + 160} M{PAD + 160} 133 V325" stroke="{c["dim"]}" stroke-width="1.5" fill="none"/>')
+        ex, ew = 224, 360
+        b.append(mono(ex + ew + 22, 92, "YOU GET", 11, c["dim"], 0.16))
+    for key in ("a", "b"):
         letter, big, line, steps, gets = ENGINES[key]
-        b.append(f'<path d="M{PAD + 160} {ey + 46} H{ex - 4}" stroke="{c["dim"]}" stroke-width="1.5"/>'
-                 f'<path d="M{ex - 9} {ey + 41} l5 5 -5 5" stroke="{c["dim"]}" stroke-width="1.5" fill="none"/>')
-        b.append(cut(ex, ey, ew, eh, PAPER, 16))
-        b.append(words(letter, ex + 18, ey + 66, 50, INK))
-        b.append(words(big, ex + 72, ey + 40, 26, INK))
-        b.append(f'<text x="{ex + 72}" y="{ey + 62}" class="s" font-size="13" fill="{ON["paper"]["dim"]}">{esc(line)}</text>')
-        x, y = ex + 18, ey + 92
+        if phone:
+            entry = (trunk, ey + 30)
+            b.append(f'<path d="M{trunk} {ey + 30} H{ex - 4}" stroke="{c["dim"]}" stroke-width="1.5"/>'
+                     f'<path d="M{ex - 9} {ey + 25} l5 5 -5 5" stroke="{c["dim"]}" stroke-width="1.5" fill="none"/>')
+            x, y = ex + 14, ey + 88
+        else:
+            ey = 108 if key == "a" else 262
+            entry = (PAD + 160, ey + 46)
+            b.append(f'<path d="M{PAD + 160} {ey + 46} H{ex - 4}" stroke="{c["dim"]}" stroke-width="1.5"/>'
+                     f'<path d="M{ex - 9} {ey + 41} l5 5 -5 5" stroke="{c["dim"]}" stroke-width="1.5" fill="none"/>')
+            x, y = ex + 18, ey + 92
         tw = [text_w(st.upper(), 10.5, True, 0.1) + 14 for st in steps]
-        boxes = []
+        boxes, seps = [], []
         for i, st in enumerate(steps):
             if x + tw[i] > ex + ew - 14:
-                x, y = ex + 18, y + 34
+                x, y = ex + (14 if phone else 18), y + 34
             elif i:
-                b.append(f'<path d="M{x - 15:.1f} {y + 13} H{x - 3:.1f}" stroke="{INK}" stroke-width="1.5"/>')
+                seps.append(f'<path d="M{x - 15:.1f} {y + 13} H{x - 3:.1f}" stroke="{INK}" stroke-width="1.5"/>')
             boxes.append((x, y, tw[i], st))
             x += tw[i] + 18
-        outs = []
+        eh = (y + 26 + 16 - ey) if phone else (136 if key == "a" else 190)
+        b.append(cut(ex, ey, ew, eh, PAPER, 16))
+        b += seps
+        if phone:
+            b.append(words(letter, ex + 14, ey + 48, 36, INK))
+            b.append(words(big, ex + 56, ey + 36, 18, INK))
+            b.append(f'<text x="{ex + 14}" y="{ey + 70}" class="s" font-size="12" fill="{ON["paper"]["dim"]}">{esc(line)}</text>')
+        else:
+            b.append(words(letter, ex + 18, ey + 66, 50, INK))
+            b.append(words(big, ex + 72, ey + 40, 26, INK))
+            b.append(f'<text x="{ex + 72}" y="{ey + 62}" class="s" font-size="13" fill="{ON["paper"]["dim"]}">{esc(line)}</text>')
+        outs, out_paths = [], []
         for j, (g, sub) in enumerate(gets):
-            gy = ey + 6 + j * 62
-            b.append(f'<path d="M{ex + ew + 2} {gy + 28} H{gx - 6}" stroke="{c["dim"]}" stroke-width="1.5"/>')
-            b.append(mono(gx + 2, gy + 52, sub, 12, c["dim"]))
-            outs.append((g, gy))
-        cards[key] = (ey, boxes, outs)
+            if phone:
+                wx, gx, gy = ex + 22, ex + 44, ey + eh + 14 + j * 52
+                b.append(f'<path d="M{wx} {ey + eh} V{gy + 15} H{gx - 6}" stroke="{c["dim"]}" stroke-width="1.5" fill="none"/>')
+                b.append(mono(gx + 2, gy + 46, sub, 11, c["dim"]))
+                out_paths.append([(wx, ey + eh), (wx, gy + 15), (gx, gy + 15)])
+            else:
+                gx, gy = ex + ew + 22, ey + 6 + j * 62
+                b.append(f'<path d="M{ex + ew + 2} {gy + 28} H{gx - 6}" stroke="{c["dim"]}" stroke-width="1.5"/>')
+                b.append(mono(gx + 2, gy + 52, sub, 12, c["dim"]))
+                out_paths.append([(ex + ew + 2, gy + 28), (gx, gy + 28)])
+            outs.append((g, gx, gy))
+        cards[key] = (ey, entry, boxes, outs, out_paths)
+        if phone:
+            ey = outs[-1][2] + 52 + 22
+    H = (cards["b"][3][-1][2] + 64) if phone else 480
+    if phone:
+        b.append(f'<path d="M{trunk} {bus} V{cards["b"][1][1]}" stroke="{c["dim"]}" stroke-width="1.5" fill="none"/>')
+    b.insert(0, panel(H, "ink", dots=True, w=PW))
 
     # the runs: (front end, engine, which outputs it asks for)
     runs = [("CLI", "a", [0]), ("MCP", "b", [0]), ("PYTHON", "a", [0]), ("LSP", "b", [1, 2])]
-    step_marks = {(k, i): [] for k in cards for i in range(len(cards[k][1]))}
-    out_marks = {(k, j): [] for k in cards for j in range(len(cards[k][2]))}
+    step_marks = {(k, i): [] for k in cards for i in range(len(cards[k][2]))}
+    out_marks = {(k, j): [] for k in cards for j in range(len(cards[k][3]))}
     ask_on = {t: [] for t in asks}
     packets = []
     t = 0.4
     for front, key, which in runs:
-        ey, boxes, outs = cards[key]
+        ey, entry, boxes, outs, out_paths = cards[key]
         t_in = t + 0.15
         t_at = t_in + 0.6
         t_out = t_at + 0.15 * len(boxes) + 0.1
@@ -994,11 +1146,9 @@ def engines() -> str:
         for n, j in enumerate(which):
             out_marks[(key, j)].append((t_out + 0.18 + 0.12 * n, t_lift))
         ask_on[front].append((t, t_lift))
-        yi = asks[front] + 25
-        packets.append(([(PAD + 141, yi), (PAD + 160, yi), (PAD + 160, ey + 46), (ex - 4, ey + 46)], t_in, t_at))
+        packets.append((packets_to[front] + [entry, (ex - 4, entry[1])], t_in, t_at))
         for j in which:
-            gy = outs[j][1] + 28
-            packets.append(([(ex + ew + 2, gy), (gx, gy)], t_out, t_out + 0.2))
+            packets.append((out_paths[j], t_out, t_out + 0.2))
         t = t_lift + 0.55
     clk.total = t
 
@@ -1009,12 +1159,12 @@ def engines() -> str:
             pts += wipe(tm, 0.22) + [(tl, "scaleX(1)", "ease-in"), (tl + 0.3, "scaleX(0)")]
         return pts
     for (key, i), times in step_marks.items():
-        x, y, w, st = cards[key][1][i]
+        x, y, w, st = cards[key][2][i]
         b.append(marker(x - 1, y - 1, w + 3, 27, "wipe " + clk.anim(lit(times), rest="scaleX(0)")).replace("<path ", '<path transform="scale(0 1)" ', 1))
         b.append(f'<rect x="{x + .5:.1f}" y="{y + .5}" width="{w:.0f}" height="25" fill="none" stroke="{INK}"/>')
         b.append(mono(x + 7, y + 17, st.upper(), 10.5, INK, 0.1))
     for (key, j), times in out_marks.items():
-        g, gy = cards[key][2][j]
+        g, gx, gy = cards[key][3][j]
         b.append(marker(gx, gy, type_w(g, 13) + 20, 30, "wipe " + clk.anim(lit(times), rest="scaleX(0)")))
         b.append(words(g, gx + 10, gy + 21, 13, PAPER))
         ink = []
@@ -1025,9 +1175,9 @@ def engines() -> str:
         pts = []
         for t0, t1 in spans:
             pts += [(t0, 0, "steps(1, end)"), (t0 + 0.01, 1), (t1, 1, "steps(1, end)"), (t1 + 0.01, 0)]
-        y = asks[front]
-        b.append(f'<rect class="{clk.anim(pts, "opacity", rest=0)}" opacity="0" x="{PAD + .5}" y="{y + .5}" width="139" '
-                 f'height="49" fill="none" stroke="{PAPER}" stroke-width="1.5"/>')
+        x, y, w, h = asks[front]
+        b.append(f'<rect class="{clk.anim(pts, "opacity", rest=0)}" opacity="0" x="{x + .5:.1f}" y="{y + .5}" width="{w - 1:.1f}" '
+                 f'height="{h - 1}" fill="none" stroke="{PAPER}" stroke-width="1.5"/>')
     for pts, t0, t1 in packets:
         cls, dash = dash_run(clk, t0, t1, dash=14 / path_len(pts) * 100)
         b.append(dash_path("M" + " L".join(f"{x:g} {y:g}" for x, y in pts), cls, dash))
@@ -1037,23 +1187,25 @@ def engines() -> str:
             "edges, text index, ranker; it returns ranked results (search), definitions and callers (symbol, callers) and "
             "references (refs). In a loop, a request runs from the CLI to Engine A, from MCP to Engine B, from Python to "
             "Engine A and from LSP to Engine B; each stage is marked as it passes, and what comes back is marked with a highlighter.")
-    return svg(W, H, "Two engines, one binary", desc, "\n".join(b), WIPE_CSS + "\n" + clk.css(), animated=True)
+    return svg(PW, H, "Two engines, one binary", desc, "\n".join(b), WIPE_CSS + "\n" + clk.css(), animated=True)
 
 
 # ---------------------------------------------------------------- section strips
 
-# (file, panel, number, words[, title]): a band before each README section; the words are outlined, so they read on a phone
+# (file, number, words[, title]): a slim ink kicker above each README section's heading; the words are
+# outlined, so they read on a phone. One colour and one height, so the headings below them lead.
 STRIPS = [
-    ("strip-quick-start", "paper", "02", "FOURTEEN COMMANDS"),
-    ("strip-what-it-does", "ink", "03", "FIFTEEN THINGS IT DOES"),
-    ("strip-benchmarks", "paper", "04", "EVERYTHING HERE IS MEASURED"),
-    ("strip-agents", "ink", "05", "MCP AND LSP ON STDIO"),
-    ("strip-install", "paper", "06", "BUILD IT FROM SOURCE"),
-    ("strip-python", "ink", "07", "IMPORT SCRUTATE"),
-    ("strip-status", "paper", "08", "NOT DECLARED PRODUCTION-READY"),
-    ("strip-documentation", "ink", "09", "EVERY DOCUMENT"),
-    ("strip-sponsor", "paper", "10", "PAID SUPPORT AND HIRE"),
-    ("strip-licence", "ink", "11", "MIT OR APACHE-2.0", "MIT OR Apache-2.0"),
+    ("strip-engines", "01", "NO INDEX, OR AN INDEX"),
+    ("strip-quick-start", "02", "FOURTEEN COMMANDS"),
+    ("strip-what-it-does", "03", "FIFTEEN THINGS IT DOES"),
+    ("strip-benchmarks", "04", "EVERYTHING HERE IS MEASURED"),
+    ("strip-agents", "05", "MCP AND LSP ON STDIO"),
+    ("strip-install", "06", "BUILD IT FROM SOURCE"),
+    ("strip-python", "07", "IMPORT SCRUTATE"),
+    ("strip-status", "08", "NOT DECLARED PRODUCTION-READY"),
+    ("strip-documentation", "09", "EVERY DOCUMENT"),
+    ("strip-sponsor", "10", "PAID SUPPORT AND HIRE"),
+    ("strip-licence", "11", "MIT OR APACHE-2.0", "MIT OR Apache-2.0"),
 ]
 
 
@@ -1076,18 +1228,20 @@ def seek(clk, x0, x1, y, cx, r, colour, t0=0.6, on="ink"):
             + f'<rect class="{dot} spot" x="{-r * 0.5:.1f}" y="{-r * 0.5:.1f}" width="{r:.1f}" height="{r:.1f}" fill="{MARK}"{edge}/></g>')
 
 
-def strip(on, n, s, i=0, title=None):
+def strip(n, s, i=0, title=None):
+    on = "ink"
     c = ON[on]
-    H = 92
-    b = [panel(H, on, frame=False)]
-    b.append(words("//", PAD, 62, 30, c["dim"]))
-    b.append(words(n, PAD + 66, 62, 30, c["fg"]))
-    x = PAD + 66 + type_w(n, 30) + 30
-    b.append(words(s, x, 58, 20, c["fg"]))
-    end = x + type_w(s, 20) + 22
-    b.append(f'<path d="M{end:.1f} 48 H{W - PAD - 34}" stroke="{c["rule"]}"/>')
+    H, cap, y = 56, 16, 36
+    b = [panel(H, on, frame=False, r=10)]
+    b.append(words("//", PAD - 8, y, cap, c["dim"]))
+    b.append(words(n, PAD + 26, y, cap, c["dim"]))
+    x = PAD + 26 + type_w(n, cap) + 22
+    b.append(words(s, x, y, cap, c["fg"]))
+    end = x + type_w(s, cap) + 20
+    mid = y - cap / 2
+    b.append(f'<path d="M{end:.1f} {mid} H{W - PAD - 34}" stroke="{c["rule"]}"/>')
     clk = Clock(4.8)
-    b.append(seek(clk, end, W - PAD - 24, 48, W - PAD - 12, 8, c["dim"], t0=0.3 + 0.3 * (i % 3), on=on))
+    b.append(seek(clk, end, W - PAD - 24, mid, W - PAD - 12, 7, c["dim"], t0=0.3 + 0.3 * (i % 3), on=on))
     return svg(W, H, f"{n}: {title or s.capitalize()}", f"Section {n} of the README: {title or s.lower()}.", "\n".join(b),
                SPOT_CSS + "\n" + clk.css(), animated=True)
 
@@ -1168,18 +1322,21 @@ def social() -> str:
     """The 1280 by 640 card a link to the repository shows."""
     SW, SH = 1280, 640
     spec = demo_spec()
-    cmd = next(c for c in spec["commands"] if c["argv"][1:3] == ["grep", "--ident"])
+    cmd = next(c for c in spec["commands"] if c.get("highlight"))
     rx = re.compile(cmd["highlight"])
     c = ON["ink"]
     b = [f'<rect width="{SW}" height="{SH}" fill="{INK}"/>']
+    none = re.compile(r"(?!)")
     for i, ln in enumerate(cmd["output"][:16]):
-        s, _ = marked_line(64, 70 + i * 36, ln, rx, 21, c["rule"], c["rule"])
+        y = 70 + i * 36
+        # no marks behind the wordmark: they would show through its counters
+        s, _ = marked_line(64, y, ln, none if 160 < y < 350 else rx, 21, c["rule"], c["rule"])
         b.append(s)
     wm, ww = wordmark(0, 0, 150, PAPER, INK, knock=(INK, 26))
     b.append(f'<g transform="translate({(SW - ww) / 2:.1f} 330)">{wm}</g>')
     b.append(cut(48, 400, 760, 176, INK, 22))
     b.append(statement(72, 460, HERO_LINE[0], HERO_LINE[1], 40, "ink"))
-    foot = HERO_SMALL + " // MIT OR APACHE-2.0"
+    foot = " // ".join(HERO_SMALL + ("MIT OR APACHE-2.0",))
     fw = round(text_w(foot, 18, True, 0.16)) + 64 + 32
     b.append(f'<rect x="{SW - fw}" y="{SH - 78}" width="{fw}" height="78" fill="{INK}"/>')
     b.append(mono(SW - 64, SH - 40, foot, 18, c["dim"], 0.16, "end"))
@@ -1411,13 +1568,16 @@ def outputs(only=None):
     out = {}
     if only in (None, "demo"):
         out["demo.svg"] = demo()
+        out["demo-phone.svg"] = demo(phone=True)
     if only is None:
         out["logo-mark.svg"] = logo_mark()
         out["logo.svg"] = logo()
         out["hero.svg"] = hero()
+        out["hero-phone.svg"] = hero(phone=True)
         out["engines.svg"] = engines()
-        for i, (name, on, n, s, *title) in enumerate(STRIPS):
-            out[f"{name}.svg"] = strip(on, n, s, i, *title)
+        out["engines-phone.svg"] = engines(phone=True)
+        for i, (name, n, s, *title) in enumerate(STRIPS):
+            out[f"{name}.svg"] = strip(n, s, i, *title)
         out["social-preview.svg"] = social()
         for n in ICONS:
             out[f"icon-{n}.svg"] = icon(n)

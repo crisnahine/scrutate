@@ -1,4 +1,9 @@
-<p align="center"><img src="docs/assets/hero.svg" width="100%" alt="Scrutate: instant code search and code intelligence in one Rust binary. The wordmark lies over the real output of scrutate grep --ident indexDir src, every match marked with a highlighter."></p>
+<p align="center">
+  <picture>
+    <source media="(max-width: 600px)" srcset="docs/assets/hero-phone.svg">
+    <img src="docs/assets/hero.svg" width="100%" alt="Scrutate: instant search with no index, and code intelligence from an index, in one Rust binary. Four real searches of scrutate's own source run one after another (a literal, any casing, within one edit, a regex), every match marked with a highlighter.">
+  </picture>
+</p>
 
 <p align="center"><b>Universal instant code search and persistent code intelligence, in one Rust binary.</b></p>
 
@@ -12,11 +17,23 @@
   <a href="#install"><b>Install</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#quick-start"><b>Quick start</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#benchmarks"><b>Benchmarks</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#documentation"><b>Documentation</b></a>
 </p>
 
-<p align="center"><img src="docs/assets/demo.svg" width="100%" alt="A terminal running four scrutate commands in a copy of its own source: grep -F max_filesize, grep --ident indexDir, search &quot;parse a size like 10M&quot; and callers text_within, each with the output the binary printed."></p>
+<p align="center">
+  <picture>
+    <source media="(max-width: 600px)" srcset="docs/assets/demo-phone.svg">
+    <img src="docs/assets/demo.svg" width="100%" alt="A terminal running four Engine B commands in an indexed copy of scrutate's own source: grep --index max_filesize, search &quot;parse a size like 10M&quot;, callers text_within and refs index_dir, each with the output the binary printed.">
+  </picture>
+</p>
+
+<p align="center"><img src="docs/assets/strip-engines.svg" width="100%" alt=""></p>
 
 ## Two engines, one binary
 
-<p align="center"><img src="docs/assets/engines.svg" width="100%" alt="What you ask (CLI, Python, MCP for agents, LSP for editors) goes to Engine A, search with no index (walk, ignore rules, match, stream), or Engine B, the index (parse, symbols, call edges, text index, ranker). Engine A returns matches; Engine B returns ranked results, definitions and callers, and references."></p>
+<p align="center">
+  <picture>
+    <source media="(max-width: 600px)" srcset="docs/assets/engines-phone.svg">
+    <img src="docs/assets/engines.svg" width="100%" alt="What you ask (CLI, Python, MCP for agents, LSP for editors) goes to Engine A, search with no index (walk, ignore rules, match, stream), or Engine B, the index (parse, symbols, call edges, text index, ranker). Engine A returns matches; Engine B returns ranked results, definitions and callers, and references.">
+  </picture>
+</p>
 
 Scrutate is two independent engines behind one CLI.
 
