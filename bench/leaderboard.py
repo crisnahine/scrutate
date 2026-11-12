@@ -585,7 +585,8 @@ def run_bench(b, corpora, a, cache_dir):
         if structural:
             got = {h for h in got if h[0] not in unclear}
         missing, extra = ref - got, got - ref
-        rec = {"argv": cmd, "env": env, "exit": p.returncode, "verify_s": took, "lines": len(got)}
+        # a list, as the timed runs give it: a tool that is too slow to be timed keeps this one
+        rec = {"argv": cmd, "env": env, "exit": [p.returncode], "verify_s": took, "lines": len(got)}
         if bad_exit([p.returncode]):
             rec.update({"status": "error", "stderr": p.stderr.decode("utf-8", "replace")[-500:]})
         elif missing or extra:
