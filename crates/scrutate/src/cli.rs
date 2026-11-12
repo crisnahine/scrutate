@@ -1894,7 +1894,7 @@ fn grep_plain(roots: Vec<PathBuf>, o: Options, out: GrepOutput, cancel: Arc<Atom
 /// Engine B enrichment of Engine A results: group matching lines by the enclosing symbol.
 fn grouped_by_symbol(root: &Path, hits: &mut Vec<instant::Hit>, w: &mut termcolor::BufferedStandardStream, json: bool) -> Result<()> {
     let s = open_fresh(root)?;
-    let mut lines: Vec<instant::Hit> = std::mem::take(hits).into_iter().filter(|h| !h.context && h.line != instant::NOTE_LINE).collect();
+    let mut lines: Vec<instant::Hit> = std::mem::take(hits).into_iter().filter(|h| !h.context).collect();
     // the index names a file by its path under the root, whatever path the search was given
     let mut named: std::collections::HashMap<std::sync::Arc<str>, std::sync::Arc<str>> = std::collections::HashMap::new();
     for h in &mut lines {
@@ -1910,16 +1910,19 @@ fn grouped_by_symbol(root: &Path, hits: &mut Vec<instant::Hit>, w: &mut termcolo
             .as_ref()
             .map(|r| format!("{}:{}-{}  [{}] {}", shown(&r.path), r.start, r.end, r.kind, shown(if r.qualname.is_empty() { &r.name } else { &r.qualname })));
         if json {
-            writeln!(
-                w,
-                "{}",
-                serde_json::json!({"type": "symbol_group", "schema": SCHEMA, "symbol": name, "path": g.path,
-                "matches": g.lines.iter().map(|h| serde_json::json!({"line": h.line, "text": h.text})).collect::<Vec<_>>()})
-            )?;
+            let mut rec = serde_json::json!({"type": "symbol_group", "schema": SCHEMA, "symbol": name, "path": g.path,
+            "matches": g.lines.iter().map(|h| serde_json::json!({"line": h.line, "text": h.text})).collect::<Vec<_>>()});
+            if let Some(note) = &g.note {
+                rec["note"] = note.as_str().into();
+            }
+            writeln!(w, "{rec}")?;
         } else {
             writeln!(w, "{}", name.unwrap_or_else(|| format!("{}  (no symbol)", shown(&g.path))))?;
             for h in &g.lines {
                 writeln!(w, "    {}: {}", h.line, h.text.trim_end())?;
+            }
+            if let Some(note) = &g.note {
+                writeln!(w, "    note: {note}")?;
             }
         }
     }

@@ -3890,7 +3890,7 @@ pub fn name_search(bare: &str, max_results: u64) -> crate::instant::Options {
 pub fn resolved_references(s: &Searcher, name: &str, max_results: u64) -> Result<Resolved> {
     let bare = &crate::intel::bare_name(s, name)?;
     let o = crate::instant::Options { want_spans: true, ..name_search(bare, max_results) };
-    let (hits, mut truncated) = crate::intel::occurrences(&s.ix.root, &o)?;
+    let (hits, mut truncated) = crate::intel::occurrences(&s.ix.root, &o, &s.cancel)?;
     let mut rv = Resolver::new(&s.ix)?;
     let mut occurrences = Vec::new();
     // Engine A stops at `max_results` lines; one long line can hold more uses than that

@@ -126,6 +126,23 @@ pub fn skipped_dirs(root: &Path) -> Vec<String> {
     skip_dirs(root)
 }
 
+/// Engine A's options narrowed to the files a search of the repository covers, walked by the
+/// code index's rules: the ignore files, hidden files included, none of the skipped directories.
+pub fn repository_search(root: &Path, o: &crate::instant::Options) -> crate::instant::Options {
+    // a name, never a pattern: `*` in a repository's exclude_dirs must not hide every file
+    let globs = skip_dirs(root).into_iter().map(|d| {
+        d.chars().fold("!".to_string(), |mut g, c| {
+            if "*?[]{}".contains(c) {
+                g.extend(['[', c, ']']);
+            } else {
+                g.push(c);
+            }
+            g
+        })
+    });
+    crate::instant::Options { hidden: true, globs: o.globs.iter().cloned().chain(globs).collect(), ..o.clone() }
+}
+
 /// Relative paths ('/' separated, sorted) of the files worth indexing: the same rules as ripgrep's
 /// file listing (.gitignore, hidden files) plus the usual build/vendor directories.
 pub fn list_files(root: &Path) -> Vec<String> {

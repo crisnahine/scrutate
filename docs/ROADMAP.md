@@ -131,8 +131,7 @@ docs/RELEASING.md, public, tag `v0.1.0`.
   directory's descriptor (`openat`) does not lower the floor: 13.3 µs a file against 12.4 µs by
   path.
 - Agents, next: results an agent can page in the structured form too (today a large answer
-  pages as text, and its `structuredContent` carries that text and a `null` result); stopping an Engine A search that is
-  already running when its call is cancelled (its answer is dropped today); the count of files
+  pages as text, and its `structuredContent` carries that text and a `null` result); the count of files
   indexed so far in progress reports; a `response_format` switch for shorter answers. Sources
   and client support are in docs/research/agent-facing-search-2026-11.md.
 - Linux on dedicated hardware: every Linux number here comes from a 5-CPU VM on the development

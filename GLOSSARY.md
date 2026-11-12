@@ -72,5 +72,6 @@ flag and output target that every file search of it shares.
 
 **Repository files**: which files belong to the repository for each index (`files.rs`): the code
 index's list (hidden files included, cache and dependency directories skipped), Engine A's walk
-(hidden files skipped, the same ignore files), and **membership**, the test of one changed path
+(hidden files skipped, the same ignore files), the files a search of the repository covers
+(`files::repository_search`: the code index's walk, for `grep_code` and references), and **membership**, the test of one changed path
 that the watcher asks.

@@ -416,6 +416,58 @@ fn grep_code_searches_the_hidden_files_the_index_holds_but_not_git_internals() {
 }
 
 #[test]
+fn grep_code_shows_a_binary_file_note_as_a_note() {
+    let filler: String = (0..3000).map(|i| format!("x = {i}  # filler line to push the NUL past the first read\n")).collect();
+    let body = format!("def needle_xyz():\n    return 1\n\n{filler}\0\nneedle_xyz()\n");
+    let mut r = Repo::new("nul", &[("nul_probe.py", body.as_str())]);
+    let text = r.ok("grep_code", json!({"pattern": "needle_xyz"}));
+    assert!(text.contains("def needle_xyz") && text.contains("stopped searching binary file"), "{text}");
+    assert!(!text.contains(&u64::MAX.to_string()), "{text}");
+    let op = scrutate::ops::Op::from_tool("grep_code", &json!({"pattern": "needle_xyz"})).unwrap();
+    let v = r.repo.run(&op, 0.0).unwrap().json();
+    assert!(v.to_string().contains("stopped searching binary file") && !v.to_string().contains(&u64::MAX.to_string()), "{v}");
+}
+
+#[test]
+fn grep_code_and_textual_references_search_the_same_files() {
+    let mut r = Repo::new(
+        "hidden_refs",
+        &[
+            (".hidden/h.py", "def needle_hidden():\n    return 1\n"),
+            ("use.py", "from x import needle_hidden\n\n\ndef go():\n    return needle_hidden()\n"),
+            ("node_modules/pkg/index.js", "needle_hidden()\n"),
+        ],
+    );
+    let paths = |v: Value, key: &str| -> Vec<String> {
+        let mut p: Vec<String> = v[key].as_array().unwrap().iter().map(|g| g["path"].as_str().unwrap().to_string()).collect();
+        p.sort();
+        p.dedup();
+        p
+    };
+    let grep = scrutate::ops::Op::from_tool("grep_code", &json!({"pattern": "needle_hidden"})).unwrap();
+    let refs = scrutate::ops::Op::from_tool("references", &json!({"name": "needle_hidden", "textual": true})).unwrap();
+    let g = paths(r.repo.run(&grep, 0.0).unwrap().json(), "groups");
+    let t = paths(r.repo.run(&refs, 0.0).unwrap().json(), "references");
+    assert_eq!(g, [".hidden/h.py", "use.py"]);
+    assert_eq!(t, g);
+}
+
+#[test]
+fn a_cancelled_call_searches_no_file() {
+    let mut r = Repo::new("cancelled", &[("a.py", "def needle_fn():\n    return needle_fn\n")]);
+    for (tool, args, key) in
+        [("grep_code", json!({"pattern": "needle"}), "groups"), ("references", json!({"name": "needle_fn", "textual": true}), "references")]
+    {
+        let op = scrutate::ops::Op::from_tool(tool, &args).unwrap();
+        assert_eq!(r.repo.run(&op, 0.0).unwrap().json()[key][0]["path"], "a.py", "{tool}");
+        r.repo.set_cancel(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)));
+        let v = r.repo.run_as_is(&op).map(|a| a.json()).unwrap_or_default();
+        r.repo.set_cancel(std::sync::Arc::default());
+        assert!(v[key].as_array().is_none_or(Vec::is_empty), "{tool}: {v}");
+    }
+}
+
+#[test]
 fn callees_match_the_name_as_the_call_writes_it() {
     let src = "pub struct Report;\nimpl Report {\n    pub fn ok(&self) -> bool {\n        true\n    }\n}\npub fn returns_ok() -> Result<i32, ()> {\n    Ok(1)\n}\npub fn some(x: i32) -> i32 {\n    x\n}\npub fn makes_some() -> Option<i32> {\n    Some(1)\n}\npub fn asks(r: &Report) -> bool {\n    r.ok()\n}\n";
     let mut r = Repo::new("callee_case", &[("src/lib.rs", src)]);

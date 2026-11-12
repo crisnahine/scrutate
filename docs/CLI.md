@@ -163,7 +163,8 @@ macOS the performance cores; more when the files come from the disk, a cold cach
 Linux, elsewhere twice the cores, at most 24), `--sort`,
 `--json`, `--stats` (with `-l` each file is searched only to its first match, so it prints
 `N of M files match` and the JSON summary gives `"matches": null`), `--symbols` (group lines by
-the enclosing function using the index, when one exists). On macOS, searches of one user that run at the same time split the default threads
+the enclosing function using the index, when one exists; a file whose search a NUL byte stopped
+after a match ends its last group with a `note:` line, `"note"` in the JSON `symbol_group`). On macOS, searches of one user that run at the same time split the default threads
 between them and take them back as the others end: each gets the default divided by the number
 running, at least 1 (py-big, four at once: 244 ms each before, 185 ms now; one alone is
 unchanged). A search that walks directories joins that count when it starts, so four searches
@@ -402,7 +403,8 @@ The output lists each definition with its references, then the unresolved occurr
 reason. `--def PATH[:LINE]` keeps one definition of `NAME`: the one in `PATH`, or the one
 containing `LINE` when the file has several; no such definition is an error. `--textual` gives the
 behaviour without resolution: definitions, callers and every occurrence grouped by enclosing
-symbol (it never misses anything, and works without an index). With `--json`, each definition has
+symbol (it never misses anything, and works without an index). Both search the files the MCP
+`grep_code` tool searches: hidden files included, the directories the index skips left out. With `--json`, each definition has
 a `references` list (`path`, `line`, `column` in bytes, `text`, `via`) and the document has an
 `unresolved` list with a `reason` (left out with `--def`). Resolution reads the index's
 definitions and parses the files that hold occurrences again, so it needs no index change. The
@@ -470,8 +472,10 @@ answers the calls in flight, lets a running index build finish, and exits.
   case); matching lines are grouped by enclosing symbol; `max_results` (default 100) stops it,
   and the answer says so. A capped answer holds the first matches in path order, so the same call
 gives the same lines every time and a second page neither repeats nor skips one; `references`
-does the same. An invalid pattern is an error.
-- `search_code` takes at most 10 `alt_queries`; a cancelled search stops between them.
+does the same, over the same files. A file whose search a NUL byte stopped after a match ends
+its last group with a `note:` line (`"note"` in JSON). An invalid pattern is an error.
+- `search_code` takes at most 10 `alt_queries`; a cancelled search stops between them. A
+  cancelled `grep_code` or `references` stops its search between files.
 - Every answer begins each result with its location (`path:start-end`). A location can be passed
   wherever a tool takes a symbol, to mean exactly that definition among several of the same name:
   `read_code symbol`, `find_symbol`, `callers`, `callees`, `similar_code target`, `references def`.

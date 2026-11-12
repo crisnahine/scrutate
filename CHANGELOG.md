@@ -173,6 +173,14 @@ First release.
   name is shown as an escape, so a name cannot forge an output line.
 - With `-l`, `--stats` says `N of M files match` and the JSON summary gives `"matches": null`:
   each file is searched only to its first match, so the count was of files.
+- The MCP `grep_code` tool shows a file whose search a NUL byte stopped after a match with a
+  `note:` line at the end of its last group; it printed the note as line 18446744073709551615.
+  `grep --symbols` shows that note the same way; it dropped it.
+- A cancelled `grep_code` or `references` call stops its Engine A search between files; the
+  search ran on to the end and its answer was dropped.
+- `references` and `refs` search the files `grep_code` searches: hidden files included, the
+  directories the index skips (`node_modules` and the like) left out. They searched Engine A's
+  default walk, so a name defined in `.github/` was missed and one in `node_modules/` was not.
 
 ### Engine B: code intelligence
 - The vector model, the ranker and the feature list are one model set (`models.rs`), loaded on

@@ -393,6 +393,19 @@ fn a_control_character_in_a_file_name_is_printed_raw_for_programs_and_escaped_by
 }
 
 #[test]
+fn symbols_show_a_binary_file_note_after_the_lines_of_its_file() {
+    let d = Dir::new("symbols_nul");
+    let filler: String = (0..3000).map(|i| format!("x = {i}  # filler line to push the NUL past the first read\n")).collect();
+    d.write("a.py", format!("def needle():\n    return 1\n\n{filler}\0\nneedle()\n").as_bytes());
+    assert_eq!(d.run(&["index"]).0, 0);
+    let (code, out, err) = d.run(&["grep", "--symbols", "needle"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.starts_with("a.py:1-2  [function] needle\n    1: def needle():\n    note: WARNING: stopped searching binary file after match"), "{out}");
+    let (_, out, _) = d.run(&["grep", "--symbols", "--json", "needle"]);
+    assert!(out.contains(r#""note":"WARNING: stopped searching binary file"#), "{out}");
+}
+
+#[test]
 fn symbols_are_found_for_matches_under_a_path_argument() {
     let d = Dir::new("symbols_sub");
     d.write("sub/c.py", b"def holder():\n    needle = 1\n    return needle\n");

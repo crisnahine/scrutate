@@ -229,7 +229,10 @@ pub fn output_schema(tool: &str) -> Value {
         "callees" => obj(json!({"resolved": list(span("name")), "external": list(ty("string"))}), &["resolved", "external"]),
         "grep_code" => {
             let line = obj(json!({"line": ty("integer"), "text": ty("string")}), &["line", "text"]);
-            let group = obj(json!({"symbol": {"anyOf": [span("name"), ty("null")]}, "path": ty("string"), "lines": list(line)}), &["symbol", "path", "lines"]);
+            let group = obj(
+                json!({"symbol": {"anyOf": [span("name"), ty("null")]}, "path": ty("string"), "lines": list(line), "note": ty("string")}),
+                &["symbol", "path", "lines"],
+            );
             obj(json!({"groups": list(group), "stopped_at": {"type": ["integer", "null"]}}), &["groups", "stopped_at"])
         }
         "read_code" => obj(
@@ -378,22 +381,6 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
                 max_results: Some(*max_results),
                 // a capped answer is the same on every call, so paging does not repeat or skip lines
                 first_in_path_order: true,
-                // the files the index holds: hidden ones too, none of the directories it skips
-                hidden: true,
-                // a name, never a pattern: `*` in a repository's exclude_dirs must not hide every file
-                globs: crate::files::skipped_dirs(&s.ix.root)
-                    .iter()
-                    .map(|d| {
-                        d.chars().fold("!".to_string(), |mut g, c| {
-                            if "*?[]{}".contains(c) {
-                                g.extend(['[', c, ']']);
-                            } else {
-                                g.push(c);
-                            }
-                            g
-                        })
-                    })
-                    .collect(),
                 ..crate::instant::Options::default()
             };
             let (groups, stopped) = crate::intel::grouped_grep(s, &o)?;
@@ -1034,6 +1021,14 @@ fn stopped_at(truncated: bool, max_results: u64) -> String {
     }
 }
 
+/// A group's JSON with its note on the file, when it has one.
+fn with_note(mut v: Value, g: &RefGroup) -> Value {
+    if let Some(note) = &g.note {
+        v["note"] = note.as_str().into();
+    }
+    v
+}
+
 fn symbol_name(c: &ChunkRow) -> &str {
     if c.qualname.is_empty() {
         &c.name
@@ -1385,11 +1380,11 @@ impl Answer {
             Answer::Callees { resolved, external, .. } => json!({"resolved": hits_json(resolved), "external": external}),
             Answer::Grep { groups, stopped_at } => json!({
                 "schema": SCHEMA,
-                "groups": groups.iter().map(|g| json!({
+                "groups": groups.iter().map(|g| with_note(json!({
                     "symbol": g.symbol.as_ref().map(|c| json!({"path": c.path, "start": c.start, "end": c.end, "kind": c.kind, "name": symbol_name(c)})),
                     "path": g.path,
                     "lines": g.lines.iter().map(|h| json!({"line": h.line, "text": h.text})).collect::<Vec<_>>(),
-                })).collect::<Vec<_>>(),
+                }), g)).collect::<Vec<_>>(),
                 "stopped_at": stopped_at,
             }),
             Answer::Read { lines, start, total, .. } => {
@@ -1412,11 +1407,11 @@ impl Answer {
                 "name": name,
                 "definitions": refs.definitions.iter().map(chunk_json).collect::<Vec<_>>(),
                 "callers": hits_json(&refs.callers),
-                "references": refs.groups.iter().map(|g| json!({
+                "references": refs.groups.iter().map(|g| with_note(json!({
                     "symbol": g.symbol.as_ref().map(chunk_json),
                     "path": g.path,
                     "lines": g.lines.iter().map(|h| json!({"line": h.line, "column": h.column, "text": h.text})).collect::<Vec<_>>(),
-                })).collect::<Vec<_>>(),
+                }), g)).collect::<Vec<_>>(),
                 "truncated": refs.truncated,
             }),
             Answer::Resolved { name, refs, only, .. } => {
