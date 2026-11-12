@@ -1454,10 +1454,16 @@ impl<'a> Resolver<'a> {
             .filter(|&i| root.named_descendant_for_byte_range(reach[i].0, reach[i].1).is_some_and(|n| block_scoped(lang).contains(&n.kind())))
             .min_by_key(|&i| reach[i].1 - reach[i].0)
             .map(|i| in_scope[i]);
+        // a Python method does not see the variables of its class body
+        let func = enclosing_function(at).map_or(0, |f| f.start_byte());
+        let class_body = |(s, e): (usize, usize)| {
+            lang == Lang::Python && s < func && func < e && root.named_descendant_for_byte_range(s, e).is_some_and(|n| n.kind() == "class_definition")
+        };
         // else the latest binder that reaches the use: not one of a block that has ended, a closure or a branch
         let mut binder = comprehension.or_else(|| {
             (0..in_scope.partition_point(|b| b.0 < at_byte)).rev().map(|i| (in_scope[i], reach[i])).find_map(|((a, b), (s, e))| {
-                let seen = s <= at_byte && at_byte < e && root.named_descendant_for_byte_range(a, b).is_some_and(|n| visible(n, at_byte));
+                let seen =
+                    s <= at_byte && at_byte < e && !class_body((s, e)) && root.named_descendant_for_byte_range(a, b).is_some_and(|n| visible(n, at_byte));
                 seen.then_some((a, b))
             })
         });
@@ -4565,6 +4571,53 @@ mod tests {
                 ("main.go", "package main\n\nimport \"example.com/m/shapes\"\n\nfunc f(xs []int, x interface{}, ch chan int) int {\n\tp := &shapes.Point{}\n\tg := func() int {\n\t\th := func(p int) int { return p.Norm() + 1 }\n\t\tfor _, p := range xs {\n\t\t\tp.Norm() + 2\n\t\t}\n\t\tif p := x; p != nil {\n\t\t\tp.Norm() + 3\n\t\t}\n\t\tswitch p := x.(type) {\n\t\tdefault:\n\t\t\tp.Norm() + 4\n\t\t}\n\t\tk := func() (p int) { return p.Norm() + 5 }\n\t\tfor p := 0; p < 3; p++ {\n\t\t\tp.Norm() + 6\n\t\t}\n\t\tselect {\n\t\tcase p := <-ch:\n\t\t\tp.Norm() + 7\n\t\t}\n\t\tv := func(p ...int) int { return p.Norm() + 8 }\n\t\treturn h(0) + k() + v()\n\t}\n\treturn g()\n}\n"),
             ],
             calls("main.go", "p.Norm()", "Norm", 8, &[1, 5, 8]),
+        );
+    }
+
+    #[test]
+    fn a_method_does_not_see_a_variable_of_its_class_body() {
+        let (point, line) = ("shapes.py Point.norm", "shapes.py Line.norm");
+        resolver_case(
+            "class_body_py",
+            &[
+                ("shapes.py", "class Point:\n    def norm(self):\n        return 1\n\n\nclass Line:\n    def norm(self):\n        return 2\n"),
+                (
+                    "use.py",
+                    "from shapes import Point, Line\n\np = Point()\n\n\nclass D:\n    p = Line()\n\n    def m(self):\n        return p.norm() + 1\n\n\ndef make():\n    p = Point()\n\n    class C:\n        p = Line()\n        q = p.norm() + 2\n\n        def m(self):\n            return p.norm() + 3\n\n        f = lambda self: p.norm() + 4\n\n        class E:\n            def m(self):\n                return p.norm() + 5\n    return C\n",
+                ),
+            ],
+            &[
+                ("use.py", "p.norm() + 1", "norm", point),
+                // code directly in the class body sees it
+                ("use.py", "p.norm() + 2", "norm", line),
+                ("use.py", "p.norm() + 3", "norm", point),
+                ("use.py", "p.norm() + 4", "norm", point),
+                ("use.py", "p.norm() + 5", "norm", point),
+            ],
+        );
+        let point = "shapes.js Point.norm";
+        resolver_case(
+            "class_body_js",
+            &[
+                ("shapes.js", "export class Point {\n  norm() { return 1; }\n}\nexport class Line {\n  norm() { return 2; }\n}\n"),
+                (
+                    "use.js",
+                    "import { Point, Line } from './shapes';\n\nexport function make() {\n  const p = new Point();\n  return class C {\n    p = new Line();\n    static p = new Line();\n    m() { return p.norm() + 1; }\n  };\n}\n",
+                ),
+            ],
+            &[("use.js", "p.norm() + 1", "norm", point)],
+        );
+        resolver_case(
+            "class_body_rs",
+            &[
+                ("lib.rs", "mod shapes;\nmod user;\n"),
+                ("shapes.rs", "pub struct Point;\n\nimpl Point {\n    pub fn new() -> Point {\n        Point\n    }\n    pub fn norm(&self) -> u32 {\n        1\n    }\n}\n\npub struct Line;\n\nimpl Line {\n    pub fn norm(&self) -> u32 {\n        2\n    }\n}\n"),
+                (
+                    "user.rs",
+                    "use crate::shapes::{Line, Point};\n\nstruct S;\n\nimpl S {\n    const p: Line = Line;\n}\n\npub fn f() -> u32 {\n    let p = Point::new();\n    struct T;\n    impl T {\n        const p: Line = Line;\n    }\n    let g = || p.norm() + 1;\n    g()\n}\n\npub fn h() -> u32 {\n    p.norm() + 2\n}\n",
+                ),
+            ],
+            &[("user.rs", "p.norm() + 1", "norm", "shapes.rs Point.norm"), ("user.rs", "p.norm() + 2", "norm", "receiver")],
         );
     }
 
