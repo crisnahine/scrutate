@@ -79,7 +79,7 @@
           112
         ]
       ],
-      "lines_matched": 124,
+      "lines_matched": 125,
       "files_matched": 15,
       "files_searched": 29
     },
@@ -113,7 +113,7 @@
           23
         ]
       ],
-      "lines_matched": 192,
+      "lines_matched": 207,
       "files_matched": 15,
       "files_searched": 29
     }
@@ -131,5 +131,5 @@
     "    let dir = root.join(INDEX_DIR);"
   ],
   "version": "scrutate 0.1.0",
-  "source": "eb7f1b8"
+  "source": "06553bc"
 }

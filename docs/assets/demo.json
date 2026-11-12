@@ -23,13 +23,13 @@
         "src/config.rs:47:    pub max_filesize: Option<String>,",
         "src/config.rs:119:    if let Some(v) = &cfg.grep.max_filesize {",
         "src/instant.rs:70:    pub max_filesize: Option<u64>,",
-        "src/instant.rs:139:            max_filesize: None,",
-        "src/instant.rs:970:        if self.hidden || self.no_ignore || self.follow_links || self.max_depth.is_some() || self.max_filesize.is_some() {",
-        "src/instant.rs:1855:        .max_filesize(o.max_filesize)",
+        "src/instant.rs:142:            max_filesize: None,",
+        "src/instant.rs:978:        if self.hidden || self.no_ignore || self.follow_links || self.max_depth.is_some() || self.max_filesize.is_some() {",
+        "src/instant.rs:1919:        .max_filesize(o.max_filesize)",
         "src/cli.rs:216:    pub max_filesize: Option<String>,",
         "src/cli.rs:341:        max_filesize: None,",
-        "src/cli.rs:1013:            max_filesize,",
-        "src/cli.rs:1084:                max_filesize: max_filesize.as_deref().map(parse_size).transpose()?,"
+        "src/cli.rs:1026:            max_filesize,",
+        "src/cli.rs:1097:                max_filesize: max_filesize.as_deref().map(parse_size).transpose()?,"
       ]
     },
     {
@@ -50,16 +50,16 @@
         "src/files.rs:15:pub fn index_dir(root: &Path) -> anyhow::Result<PathBuf> {",
         "src/files.rs:19:    let dir = root.join(INDEX_DIR);",
         "src/files.rs:44:    INDEX_DIR,",
+        "src/textindex.rs:1088:    crate::files::index_dir(root)?;",
         "src/watch.rs:26:use crate::files::{CodeWalk, INDEX_DIR};",
         "src/watch.rs:77:    p.strip_prefix(root).ok().and_then(|r| r.components().next()).is_some_and(|c| c.as_os_str() != INDEX_DIR && c.as_os_str() != \".git\")",
-        "src/textindex.rs:1088:    crate::files::index_dir(root)?;",
-        "src/instant.rs:1747:    ob.add(&format!(\"!{}/\", crate::files::INDEX_DIR))?;",
         "src/tscache.rs:89:        crate::files::index_dir(scrutate.parent().unwrap_or(scrutate))?;",
+        "src/instant.rs:1811:    ob.add(&format!(\"!{}/\", crate::files::INDEX_DIR))?;",
         "src/mcp.rs:534:        let other = rusqlite::Connection::open(root.join(crate::files::INDEX_DIR).join(\"index.db\")).unwrap();",
         "src/cli.rs:706:        if dir.join(\".git\").exists() || dir.join(crate::files::INDEX_DIR).is_dir() {",
         "src/cli.rs:723:    let has_index = |d: &Path| d.join(crate::files::INDEX_DIR).is_dir();",
         "src/cli.rs:751:    (wide && !dir.join(crate::files::INDEX_DIR).is_dir()).then(|| {",
-        "src/cli.rs:956:            match abs.ancestors().find(|d| d.join(crate::files::INDEX_DIR).is_dir()) {"
+        "src/cli.rs:958:            match abs.ancestors().find(|d| d.join(crate::files::INDEX_DIR).is_dir()) {"
       ]
     },
     {
@@ -80,7 +80,7 @@
         "            Some('G') | Some('g') => (&s[..s.len() - 1], 1024 * 1024 * 1024),",
         "            _ => (s, 1),",
         "        };",
-        "src/cli.rs:2155-2161  [function] tests.sizes_that_overflow_are_refused",
+        "src/cli.rs:2315-2321  [function] tests.sizes_that_overflow_are_refused",
         "    #[test]",
         "        fn sizes_that_overflow_are_refused() {",
         "            assert_eq!(super::parse_size(\"10M\").unwrap(), 10 << 20);",
@@ -95,23 +95,23 @@
         "        /// (1-based line, imported module as written, normalised)",
         "        pub imports: Vec<(i64, String)>,",
         "    }",
-        "src/parse.rs:2252-2256  [function] parse_file",
+        "src/parse.rs:2298-2302  [function] parse_file",
         "    pub fn parse_file(path: &str, source: &str) -> Parsed {",
         "        let mut parsed = parse_file_with(path, source, None).0;",
         "        parsed.chunks.iter_mut().for_each(|c| c.fill(source.as_bytes()));",
         "        parsed",
         "    }",
-        "src/parse.rs:2299-2303  [function] tests.cleandoc_like_python",
+        "src/parse.rs:2449-2453  [function] tests.cleandoc_like_python",
         "    #[test]",
         "        fn cleandoc_like_python() {",
         "            assert_eq!(cleandoc(\"\\n    Hello\\n      world\\n    \"), \"Hello\\n  world\");",
         "            assert_eq!(cleandoc(\"  First line\\n\\n    indented\"), \"First line\\n\\nindented\");",
         "        }",
-        "src/parse.rs:2275-2277  [function] parse_source",
+        "src/parse.rs:2321-2323  [function] parse_source",
         "    pub fn parse_source(path: &str, source: &str) -> Vec<Chunk> {",
         "        parse_file(path, source).chunks",
         "    }",
-        "src/parse.rs:2260-2273  [function] parse_file_with",
+        "src/parse.rs:2306-2319  [function] parse_file_with",
         "    pub fn parse_file_with(path: &str, source: &str, prev: Option<PrevParse>) -> (Parsed, Option<PrevParse>) {",
         "        if let Some(spec) = spec_for(path, source) {",
         "            if let Some(((chunks, mdoc, imports, loose), tree)) = grammar_chunks(spec, path, source, prev) {",
@@ -120,7 +120,7 @@
         "                return (Parsed { chunks: finish(path, source, chunks, mdoc, loose), imports }, tree);",
         "            }",
         "        }",
-        "src/parse.rs:1591-1593  [function] PrevParse.source_len",
+        "src/parse.rs:1628-1630  [function] PrevParse.source_len",
         "    pub fn source_len(&self) -> usize {",
         "            self.source.len()",
         "        }"
@@ -133,10 +133,10 @@
         "text_within"
       ],
       "output": [
-        "src/cli.rs:1425-1448  [function] run_op",
+        "src/cli.rs:1452-1480  [function] run_op",
         "src/mcp.rs:121-162  [function] call_tool",
-        "src/ops.rs:1166-1168  [function] Answer.text",
-        "src/ops.rs:1497-1519  [function] tests.a_long_answer_is_cut_at_whole_items_and_says_how_to_continue"
+        "src/ops.rs:1179-1181  [function] Answer.text",
+        "src/ops.rs:1519-1541  [function] tests.a_long_answer_is_cut_at_whole_items_and_says_how_to_continue"
       ]
     }
   ],
