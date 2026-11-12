@@ -70,8 +70,9 @@ exactly what is and is not verified.
 - **Engine B** gives bit-identical features, scores and rankings to the Python reference it was
   developed against: the parity check fails on any difference in a feature, a score or a top 10,
   over 300 queries built from the documented functions of networkx and 50 from the engine's own
-  sources. Its learned ranker beats its own lexical layer on every held-out query type, in Python
-  and five more languages (docs/QUALITY.md).
+  sources. On held-out code in Python and five more languages its learned ranker beats its own
+  lexical layer for function and type answers on every query type but one, which ties
+  (docs/QUALITY.md).
 - `cargo clippy -D warnings` and `cargo fmt` are clean; `cargo audit` reports no vulnerabilities;
   an SBOM is generated.
 

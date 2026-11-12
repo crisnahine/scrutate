@@ -182,7 +182,10 @@ First release.
   another case (`burst_files`), in either Unicode form, and a struct and its `impl` block are
   separate results. Every query weighs the same in the fit. `bench/retrain_ranker.sh` runs the
   whole fit and refuses a ranker that falls below BM25 on a row of the held-out set or below
-  the ranker before it over all queries.
+  the ranker before it over all queries. On held-out code a type is found from its
+  documentation with MRR 0.478 (0.017 before), and functions lose 0.031 (docs/QUALITY.md). A
+  second hold-out that no choice has touched is kept for one evaluation of the ranker that
+  ships (`bench/eval_sealed.sh`).
 - Ranked search reads every line of an indexed file. A chunk keeps at most 200 lines (40 for a
   class or another container), and code outside the definitions of a file had no chunk once the
   file held one definition; those lines are now in 50-line windows named after the definition or
