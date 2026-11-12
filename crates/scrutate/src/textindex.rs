@@ -385,18 +385,77 @@ impl MaskTable {
 /// Distinct folded trigrams of `bytes`, sorted, each with its masks: next-byte bits in the high
 /// byte (`1 << (next & 7)`, folded), position bits in the low byte (`1 << (start % 8)`).
 pub fn trigram_masks(bytes: &[u8]) -> Vec<(u32, u16)> {
-    if bytes.len() < 3 {
-        return Vec::new();
-    }
     TABLE.with(|t| {
         let t = &mut *t.borrow_mut();
+        t.feed(bytes, 0, true);
+        t.take()
+    })
+}
+
+impl MaskTable {
+    /// The trigrams that start in `bytes`, a piece of a text that begins `base` bytes into it.
+    /// Unless the piece is the `last`, the three bytes at its end start no trigram here: the
+    /// next piece begins with them.
+    fn feed(&mut self, bytes: &[u8], base: usize, last: bool) {
+        if bytes.len() < 3 {
+            return;
+        }
+        let starts = if last { bytes.len() - 2 } else { bytes.len() - 3 };
         let mut k = (bytes[0].to_ascii_lowercase() as u32) << 8 | bytes[1].to_ascii_lowercase() as u32;
-        for j in 0..bytes.len() - 2 {
+        for j in 0..starts {
             k = ((k << 8) | bytes[j + 2].to_ascii_lowercase() as u32) & 0xFF_FFFF;
             let next = bytes.get(j + 3).map_or(0, |&b| 1u16 << ((b.to_ascii_lowercase() & 7) + 8));
-            t.add(k, next | 1 << (j & 7));
+            self.add(k, next | 1 << ((base + j) & 7));
         }
-        t.take()
+    }
+}
+
+/// What a file's bytes say about it before its trigrams: `Some(flags)` for one that is searched
+/// directly (UTF-16 with a byte-order mark, which Engine A transcodes).
+fn direct(head: &[u8]) -> Option<i64> {
+    (head.starts_with(&[0xFF, 0xFE]) || head.starts_with(&[0xFE, 0xFF])).then_some(ALWAYS)
+}
+
+/// The flags and trigram masks of what `src` holds, read `piece` bytes at a time and up to its
+/// first NUL byte: the same as `trigram_masks` of the whole text, without holding it.
+fn stream_masks(mut src: impl std::io::Read, piece: usize) -> std::io::Result<(i64, Vec<(u32, u16)>)> {
+    let mut buf = vec![0u8; piece.max(1) + 3];
+    let (mut held, mut base, mut first) = (0usize, 0usize, true);
+    TABLE.with(|t| {
+        let t = &mut *t.borrow_mut();
+        let mut flags = 0;
+        let run = (|| loop {
+            let mut len = held;
+            while len < buf.len() {
+                match src.read(&mut buf[len..]) {
+                    Ok(0) => break,
+                    Ok(n) => len += n,
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(e) => return Err(e),
+                }
+            }
+            if std::mem::take(&mut first) {
+                if let Some(flags) = direct(&buf[..len]) {
+                    return Ok(Some(flags));
+                }
+            }
+            let nul = buf[..len].iter().position(|&b| b == 0);
+            let last = nul.is_some() || len < buf.len();
+            t.feed(&buf[..nul.unwrap_or(len)], base, last);
+            if last {
+                flags = if nul.is_some() { BINARY } else { 0 };
+                return Ok(None);
+            }
+            base += len - 3;
+            buf.copy_within(len - 3..len, 0);
+            held = 3;
+        })();
+        // the table is emptied whatever happened, so the next file starts clean
+        let tris = t.take();
+        Ok(match run? {
+            Some(direct) => (direct, Vec::new()),
+            None => (flags, tris),
+        })
     })
 }
 
@@ -408,26 +467,27 @@ struct DocIn {
     tris: Vec<(u32, u16)>,
 }
 
+/// A file larger than this is read in pieces: mapping it would end the process when another
+/// one shortens the file under the read.
+const WHOLE: u64 = 64 << 20;
+
 fn read_doc(root: &Path, rel: String, size: u64, mtime: i64) -> DocIn {
     let path = root.join(&rel);
-    let data: Option<Box<dyn AsRef<[u8]>>> = if size > 64 << 20 {
-        File::open(&path).ok().and_then(|f| unsafe { Mmap::map(&f) }.ok()).map(|m| Box::new(m) as Box<dyn AsRef<[u8]>>)
+    let read = if size > WHOLE {
+        File::open(&path).and_then(|f| stream_masks(f, 1 << 20))
     } else {
-        std::fs::read(&path).ok().map(|v| Box::new(v) as Box<dyn AsRef<[u8]>>)
+        std::fs::read(&path).map(|bytes| match direct(&bytes) {
+            Some(flags) => (flags, Vec::new()),
+            None => match bytes.iter().position(|&b| b == 0) {
+                Some(i) => (BINARY, trigram_masks(&bytes[..i])),
+                None => (0, trigram_masks(&bytes)),
+            },
+        })
     };
-    let Some(data) = data else {
-        return DocIn { rel, size, mtime, flags: ALWAYS | RETRY, tris: Vec::new() };
-    };
-    let bytes = (*data).as_ref();
-    // Engine A transcodes UTF-16 files that start with a byte-order mark: search those directly
-    if bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]) {
-        return DocIn { rel, size, mtime, flags: ALWAYS, tris: Vec::new() };
+    match read {
+        Ok((flags, tris)) => DocIn { rel, size, mtime, flags, tris },
+        Err(_) => DocIn { rel, size, mtime, flags: ALWAYS | RETRY, tris: Vec::new() },
     }
-    let (text, flags) = match bytes.iter().position(|&b| b == 0) {
-        Some(i) => (&bytes[..i], BINARY),
-        None => (bytes, 0),
-    };
-    DocIn { rel, size, mtime, flags, tris: trigram_masks(text) }
 }
 
 // ------------------------------------------------------------------------- segments
@@ -1196,6 +1256,49 @@ mod tests {
         assert!(!holds(&x, &trigrams(b"kerne nel")));
         assert!(!holds(&x, &trigrams(b"ker xern yrne znel")));
         assert!(holds(&x, &trigrams(b"ker xern yrne znel kernel")));
+    }
+
+    #[test]
+    fn a_text_read_in_pieces_has_the_masks_of_the_whole_text() {
+        // bytes from a small generator, with runs that repeat so trigrams recur at many offsets
+        let mut x = 0x2545_F491_4F6C_DD1Du64;
+        let mut text: Vec<u8> = (0..5000)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                b"abcdeABCDE_ \n"[(x % 13) as usize]
+            })
+            .collect();
+        for len in [0, 1, 2, 3, 4, 5, 7, 8, 9, 64, 1000, 5000] {
+            for piece in [1, 2, 3, 4, 5, 7, 8, 63, 64, 65, 4096, 10_000] {
+                let got = stream_masks(&text[..len], piece).unwrap();
+                assert_eq!(got, (0, trigram_masks(&text[..len])), "length {len}, pieces of {piece}");
+            }
+        }
+        // the text ends at the first NUL byte, wherever a piece ends
+        for at in [0, 1, 2, 3, 4, 62, 63, 64, 65, 66, 67, 2500, 4999] {
+            text[at] = 0;
+            for piece in [1, 3, 64, 4096] {
+                assert_eq!(stream_masks(&text[..], piece).unwrap(), (BINARY, trigram_masks(&text[..at])), "NUL at {at}, pieces of {piece}");
+            }
+            text[at] = b'a';
+        }
+        // a UTF-16 byte-order mark is seen in the first piece, and a failed read leaves nothing behind
+        assert_eq!(stream_masks(&b"\xFF\xFEa\0b\0"[..], 1).unwrap(), (ALWAYS, Vec::new()));
+        struct Fails(usize);
+        impl std::io::Read for Fails {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                if self.0 == 0 {
+                    return Err(std::io::Error::other("gone"));
+                }
+                self.0 -= 1;
+                buf[0] = b'q';
+                Ok(1)
+            }
+        }
+        assert!(stream_masks(Fails(40), 8).is_err());
+        assert_eq!(trigram_masks(b"abc").len(), 1);
     }
 
     #[test]
