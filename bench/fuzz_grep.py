@@ -3,7 +3,7 @@
 
 usage: fuzz_grep.py [--bin SCRUTATE] [--seconds 60] [--seed 1] [--ordered]
 
-Each tree has a `.git` directory, CRLF and BOM files, NUL bytes, invalid UTF-8, hidden files,
+Each tree has a `.git` directory, CRLF and BOM files, NUL bytes (some past the first 64 KB), invalid UTF-8, hidden files,
 `.gitignore`, `.ignore` and `.rgignore` files and a symlink. Six random flag sets run on it with
 both tools, each on `.`, one file, one directory, a file and a directory, or paths that repeat or
 overlap (a file twice, a directory twice, a directory and one inside it, `.` and a directory or
@@ -58,7 +58,9 @@ def make():
             data = body.encode()
             r = rnd.random()
             if r < 0.04:
-                data = data[: len(data) // 2] + b"\x00bin" + data[len(data) // 2 :]
+                # half of them past the first 64 KB read, where ripgrep prints the lines before it
+                pad = (("zz" * 40 + nl) * rnd.choice([0, 1000])).encode()
+                data = data[: len(data) // 2] + pad + b"\x00bin" + data[len(data) // 2 :]
                 STATE["nul"].add(os.path.join(d, n))
             elif r < 0.08:
                 data = b"\xff\xfe bad " + data
