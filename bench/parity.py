@@ -256,9 +256,11 @@ def compare_search(py, rs, ix: Index) -> list[str]:
         for k in set(rc) & set(p["cands"]):
             xa, sa = p["cands"][k]
             xb, sb = rc[k]
+            # a NaN is written as null on the Rust side; it must fail the gate, so it is kept
+            sa, sb = (float("nan") if v is None else v for v in (sa, sb))
             feat_worst = np.maximum(feat_worst, np.abs(np.array(xa, np.float32) - np.array(xb, np.float32)))
-            if sa > -1e8 or sb > -1e8:
-                score_worst = max(score_worst, abs(sa - sb))
+            if not (sa <= -1e8 and sb <= -1e8):
+                score_worst = float(np.maximum(score_worst, abs(sa - sb)))
         py_hits = [h[0:3:2] for h in p["hits"]]
         rs_hits = [(h["path"], h["start"]) for h in r["hits"]]
         if py_hits != rs_hits:
@@ -272,9 +274,10 @@ def compare_search(py, rs, ix: Index) -> list[str]:
     print(f"  max |feature diff| over all candidates: {feat_worst.max():.3g} (feature {FEATURES[int(feat_worst.argmax())]}); max |score diff|: {score_worst:.3g}")
     if cand_mismatch:
         problems.append(f"candidate sets differ for {cand_mismatch} queries")
-    if feat_worst.max() > TOL_FEAT:
+    # written so that a NaN on either side counts as a difference
+    if not (feat_worst <= TOL_FEAT).all():
         problems.append(f"feature difference {feat_worst.max():.3g} > {TOL_FEAT} ({FEATURES[int(feat_worst.argmax())]})")
-    if score_worst > TOL_SCORE:
+    if not score_worst <= TOL_SCORE:
         problems.append(f"score difference {score_worst:.3g} > {TOL_SCORE}")
     if top10_mismatch:
         problems.append(f"top-10 differs for {top10_mismatch} of {n} queries")

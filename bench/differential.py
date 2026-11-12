@@ -14,7 +14,9 @@ Each corpus is a git repository, so both tools apply its .gitignore. Most patter
 the corpus's own text, so most cases have matches; the share that matched nothing is printed.
 Every case runs scrutate twice: as is, and in one of the modes the engine picks on its own for
 some inputs (SCRUTATE_SMALL_TREE: the one-thread path for a small tree, the parallel walk, or a
-hand-over between them; SCRUTATE_SPLIT_FILE_BYTES: one file searched in parallel pieces).
+hand-over between them; SCRUTATE_SPLIT_FILE_BYTES: one file searched in parallel pieces). A file
+is split only when it is over 64 KiB, so about one file in five is 64 to 300 KiB, and now and
+then one is a single line of that size (the path that reads a file with no line break whole).
 """
 from __future__ import annotations
 
@@ -45,13 +47,23 @@ def random_corpus(rng: random.Random, root: str) -> list[str]:
         p = os.path.join(root, sub, name)
         os.makedirs(os.path.dirname(p), exist_ok=True)
         lines = []
-        for _ in range(rng.randint(0, 60)):
-            k = rng.randint(0, 8)
-            line = " ".join(rng.choice(WORDS) for _ in range(k))
-            if rng.random() < 0.05:
-                line = "x" * rng.randint(200, 5000)  # a long line
-            lines.append(line)
-        written += [x for x in lines if x.strip()]
+        shape = rng.random()
+        if shape < 0.04:
+            # one line past the size where a file is split
+            lines.append(" ".join(rng.choice(WORDS) for _ in range(rng.randint(14_000, 50_000))))
+        else:
+            # past that size for about one file in five
+            size, target = 0, rng.randint(64 << 10, 300 << 10) if shape < 0.24 else 0
+            count = rng.randint(0, 60)
+            while len(lines) < count or size < target:
+                k = rng.randint(0, 8)
+                line = " ".join(rng.choice(WORDS) for _ in range(k))
+                if rng.random() < 0.05:
+                    line = "x" * rng.randint(200, 5000)  # a long line
+                lines.append(line)
+                size += len(line) + 1
+        # a pattern is drawn from these: a sample of a large file is enough
+        written += [x for x in lines[:200] if x.strip()]
         sep = rng.choice(["\n", "\n", "\n", "\r\n"])
         text = sep.join(lines)
         if rng.random() < 0.7:
@@ -206,6 +218,10 @@ def one_case(rng: random.Random, keep: bool, stats: dict) -> str | None:
             stats["empty"] += not b
             for env in envs:
                 rc1, o1 = run_json([SCRUTATE, "grep", "-l", *sf, pat], root, env)
+                if rc1 not in (0, 1) or rc2 not in (0, 1):
+                    if rc1 == 2 and rc2 == 2:
+                        return None  # both reject the pattern
+                    return f"exit codes differ for {pat!r} ({mode}, {shown(env)}): scrutate={rc1} rg={rc2} (corpus {root})"
                 a = sorted(l.decode() for l in o1.splitlines())
                 if a != b:
                     return f"multiline -l mismatch for {pat!r} ({shown(env)}): scrutate={a} rg={b} (corpus {root})"
