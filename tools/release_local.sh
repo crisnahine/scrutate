@@ -23,8 +23,12 @@ name="scrutate-$v-$target"
 rm -rf "dist/$name" && mkdir -p "dist/$name"
 cp target/release/scrutate LICENSE README.md CHANGELOG.md "dist/$name/"
 python3 tools/third_party_notices.py --out "dist/$name/THIRD_PARTY_NOTICES.txt"
-cp -r docs "dist/$name/docs"
-cp -r integrations "dist/$name/integrations"
+# tracked files only: a note or a .DS_Store left in the working tree must not ship
+if git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
+  git archive HEAD docs integrations | tar -x -C "dist/$name"
+else
+  cp -r docs integrations "dist/$name/"
+fi
 tar -C dist -czf "dist/$name.tar.gz" "$name"
 rm -rf "dist/$name"
 # the installers (the GitHub action, the GitLab and Bitbucket templates) check the archive against this
