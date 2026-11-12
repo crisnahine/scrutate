@@ -102,7 +102,7 @@ def language_for(path: str) -> str | None:
 
 # data, generated, archive, compiled and media files are never indexed; binary files are found by content
 EXCLUDED_EXTS = (
-    ".csv", ".tsv", ".log", ".min.js", ".min.css", ".map", ".lock", ".sum", ".snap", ".pem", ".crt", ".key",
+    ".csv", ".tsv", ".log", ".min.js", ".min.css", ".map", ".lock", ".lockb", ".lockfile", ".sum", ".snap", ".pem", ".crt", ".key",
     ".der", ".asc", ".sig", ".bin", ".dat", ".parquet", ".ipynb_checkpoints",
     ".gz", ".tgz", ".zip", ".tar", ".xz", ".bz2", ".zst", ".7z", ".rar", ".jar", ".war", ".whl", ".egg", ".pyc",
     ".pyo", ".so", ".dylib", ".dll", ".exe", ".o", ".a", ".lib", ".class", ".wasm", ".rlib", ".pdb",
@@ -112,8 +112,14 @@ EXCLUDED_EXTS = (
 )
 
 
+# lock files whose extension is that of hand-written files
+EXCLUDED_NAMES = {"package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "packages.lock.json", "package.resolved",
+                  ".terraform.lock.hcl"}
+
+
 def is_indexable(path: str) -> bool:
-    return not os.path.basename(path).lower().endswith(EXCLUDED_EXTS)
+    name = os.path.basename(path).lower()
+    return not name.endswith(EXCLUDED_EXTS) and name not in EXCLUDED_NAMES
 
 
 def _parser(lang: str) -> Parser:

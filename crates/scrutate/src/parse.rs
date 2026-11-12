@@ -103,6 +103,8 @@ const EXCLUDED_EXTS: &[&str] = &[
     ".min.css",
     ".map",
     ".lock",
+    ".lockb",
+    ".lockfile",
     ".sum",
     ".snap",
     ".pem",
@@ -173,6 +175,10 @@ const EXCLUDED_EXTS: &[&str] = &[
     ".db",
 ];
 
+/// Lock files whose extension is that of hand-written files, by lowercase file name.
+const EXCLUDED_NAMES: &[&str] =
+    &["package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "packages.lock.json", "package.resolved", ".terraform.lock.hcl"];
+
 pub fn basename(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
@@ -181,7 +187,7 @@ pub fn basename(path: &str) -> &str {
 /// by content when read.
 pub fn is_indexable(path: &str) -> bool {
     let lower = basename(path).to_lowercase();
-    !EXCLUDED_EXTS.iter().any(|e| lower.ends_with(e))
+    !EXCLUDED_EXTS.iter().any(|e| lower.ends_with(e)) && !EXCLUDED_NAMES.contains(&lower.as_str())
 }
 
 /// The grammar that parses this file, if any (shared extensions are decided by the text).

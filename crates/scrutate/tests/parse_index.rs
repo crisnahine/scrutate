@@ -71,6 +71,29 @@ fn deeply_nested_lisp_and_html_parse_in_linear_time() {
 }
 
 #[test]
+fn lock_files_are_not_indexed_whatever_their_extension() {
+    use scrutate::parse::is_indexable;
+    for name in [
+        "package-lock.json",
+        "web/npm-shrinkwrap.json",
+        "pnpm-lock.yaml",
+        "packages.lock.json",
+        "Package.resolved",
+        "app/.terraform.lock.hcl",
+        "gradle.lockfile",
+        "buildscript-gradle.lockfile",
+        "bun.lockb",
+        "yarn.lock",
+        "go.work.sum",
+    ] {
+        assert!(!is_indexable(name), "{name}");
+    }
+    for name in ["package.json", "my-package-lock.json", "pnpm-workspace.yaml", "main.tf", "src/lock.rs"] {
+        assert!(is_indexable(name), "{name}");
+    }
+}
+
+#[test]
 fn a_file_of_many_sibling_definitions_parses_in_linear_time() {
     for (path, line) in [
         ("w.js", "function f{i}(x) {{ return x + {i}; }}"),
