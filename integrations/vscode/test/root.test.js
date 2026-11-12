@@ -30,6 +30,7 @@ const { findRoot, fileOf, resolveBinary } = require("../root");
     assert.strictEqual(resolveBinary("scrutate", win), "D:\\bin\\scrutate.EXE");
     assert.strictEqual(resolveBinary("scrutate.EXE", win), "D:\\bin\\scrutate.EXE");
     assert.strictEqual(resolveBinary("scrutate", { ...win, env: { PATH: ".;rel" } }), undefined, "not on PATH: nothing to run");
+    assert.strictEqual(resolveBinary("scrutate", { ...win, env: { PATH: 'C:\\tools;"D:\\bin"', PATHEXT: ".EXE" } }), "D:\\bin\\scrutate.EXE", "a quoted entry");
     assert.strictEqual(resolveBinary("C:\\x\\scrutate.exe", win), "C:\\x\\scrutate.exe", "a path is taken as given");
     assert.strictEqual(resolveBinary("scrutate", { platform: "linux" }), "scrutate", "elsewhere the system looks on PATH only");
     console.log("ok   root.test.js");

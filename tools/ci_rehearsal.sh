@@ -73,9 +73,10 @@ done
 
 step "editors job: Neovim"
 cd /tmp
-a=x86_64; [ "$arch" = aarch64 ] && a=arm64
+a=x86_64 sum=474430d53e6264f6d6dd18db42d6dc9df3a1b56ca9e88a325bbf860e1a811d87
+[ "$arch" = aarch64 ] && a=arm64 sum=8f1f64a0bdb97247034038c3823c6cbad5bdf9ecd5751b85494b71c3ee04c815
 curl -sSfL -o nvim.tar.gz "https://github.com/neovim/neovim/releases/download/v0.12.6/nvim-linux-$a.tar.gz"
-sha256sum nvim.tar.gz
+echo "$sum  nvim.tar.gz" | sha256sum -c -
 tar xzf nvim.tar.gz
 bash /work/integrations/fixture.sh repo
 cd repo

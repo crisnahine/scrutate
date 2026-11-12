@@ -16,6 +16,8 @@ function M._resolve(bin, windows, path, pathext, exists)
     for ext in pathext:gmatch("[^;]+") do table.insert(names, bin .. ext) end
   end
   for dir in path:gmatch("[^;]+") do
+    -- an entry may be quoted ("C:\\Program Files\\x")
+    dir = (dir:gsub('^"(.*)"$', "%1"))
     -- an entry that is not absolute would be the working directory again
     if dir:match("^%a:[/\\]") or dir:match("^[/\\][/\\]") then
       for _, name in ipairs(names) do

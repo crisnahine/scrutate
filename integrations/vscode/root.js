@@ -16,7 +16,9 @@ function resolveBinary(setting, on = {}) {
   if (platform !== "win32" || /[\\/]/.test(setting)) return setting;
   const exts = (env.PATHEXT || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
   const names = path.win32.extname(setting) ? [setting] : exts.map((e) => setting + e);
-  for (const dir of (env.PATH || env.Path || "").split(";")) {
+  for (const entry of (env.PATH || env.Path || "").split(";")) {
+    // an entry may be quoted ("C:\\Program Files\\x")
+    const dir = entry.replace(/^"(.*)"$/, "$1");
     // an empty or relative entry would be the working directory again
     if (!path.win32.isAbsolute(dir)) continue;
     for (const name of names) {

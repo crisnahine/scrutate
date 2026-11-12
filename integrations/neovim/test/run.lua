@@ -40,6 +40,8 @@ check("a bare name is found on an absolute PATH entry", S._resolve("scrutate", t
   S._resolve("scrutate", true, "C:\\tools;;.;rel;D:\\bin\\", ".COM;.EXE", exists))
 check("a name with its extension is found the same way", S._resolve("scrutate.EXE", true, "D:\\bin", ".COM;.EXE", exists) == "D:\\bin\\scrutate.EXE", nil)
 check("a name that is only in the working directory is not run", S._resolve("scrutate", true, ".;rel", ".COM;.EXE", exists) == nil, S._resolve("scrutate", true, ".;rel", ".COM;.EXE", exists))
+check("a quoted PATH entry is read without its quotes", S._resolve("scrutate", true, 'C:\\tools;"D:\\bin"', ".EXE", exists) == "D:\\bin\\scrutate.EXE",
+  S._resolve("scrutate", true, 'C:\\tools;"D:\\bin"', ".EXE", exists))
 check("a path is taken as given", S._resolve("C:\\x\\scrutate.exe", true, "D:\\bin", ".EXE", exists) == "C:\\x\\scrutate.exe", nil)
 check("elsewhere the system looks on PATH only", S._resolve("scrutate", false, "", "", exists) == "scrutate", nil)
 check("the plugin's program is the one given", S.bin() == bin, S.bin())
