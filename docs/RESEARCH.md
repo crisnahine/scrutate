@@ -102,9 +102,10 @@ class chunks from the TEST packages, two views each (2 000 texts), sorted by len
     0.5 to 0.7 MB. So +95 to +140 MB with candle, which more than doubles the binary.
 - The candle probe was 3.6 to 4 times slower than PyTorch on this machine and peaked at 2.2 GB
   RSS with batch 64; smaller batches would cut memory at some speed cost.
-- The Python reference and the Rust engine are specified to the bit today (`bench/parity.py`).
-  Transformer inference through two different backends would not give bit-identical vectors, so
-  that guarantee would have to be relaxed to a tolerance.
+- When this was measured, the Python reference and the Rust engine were specified to the bit
+  (`bench/parity.py`); that mirror has since ended. The engine's features are still pinned bit
+  for bit on every platform (`tests/ranking_pins.rs`). Transformer inference through another
+  backend would not give the same bits everywhere, so those pins would have to allow a tolerance.
 
 ## Recommendation
 
@@ -114,7 +115,7 @@ The quality gain is real and consistent: with bge-small, learned MRR rises by +0
 +0.055 for name and +0.019 for kw queries on undocumented code, with intervals clear of zero; id
 and qid queries do not move. The price is 46 to 107 times more indexing compute, about 1 GB of
 memory while indexing, 5 to 11 ms per query, a binary more than twice its size, and the loss of
-bit-level parity between the reference and the engine.
+bit-level agreement (then between the reference and the engine, now across platforms).
 
 What would change the answer:
 

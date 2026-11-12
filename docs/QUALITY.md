@@ -28,17 +28,27 @@ Two sets are held out, and they do not carry the same weight:
   tune, fit or test, and no ranker has been run on it. It is evaluated once, with the ranker that
   ships, after the last change to the engine (see "The sealed group").
 
-The Rust engine produces bit-identical candidates, features and scores to the Python code that ran
-this evaluation, so the numbers hold for the shipped binary. `bench/parity.py` checks it with no
-tolerance: any difference in the chunk tables, a feature, a score, a top 10 or the end-to-end
-result fails, and so does a run that cannot make as many queries as asked. Its queries are built
-from the corpus's documented functions by the benchmark's rules: 300 on networkx and 50 on the
-engine's own sources (`crates/scrutate/src`, a CI step). `bench/parity_repos.sh` runs it with 40
-queries on 21 real repositories of the six languages the reference has a grammar for; parity
-indexes only a repository's files in those six languages.
+The numbers below hold for the shipped binary. The rows they were measured on came from a Python
+reference engine that computed candidates, features and scores bit for bit like the binary, and
+`bench/parity.py` checked that on networkx, on the engine's own sources and on 21 repositories.
+That mirror ended: it covered 7 of the 73 grammars, and every change to tokens, chunks, BM25 or
+features was written twice. The rows come from the engine itself now: `bench/gen_features.py`
+indexes each package with the binary and keeps what `batch --features` prints, and the benchmark
+builders read files and words through the binary too. Before the mirror was removed, both ways
+gave the same benchmark files, rows and ranker, byte for byte. Two guards watch ranking now.
 
-Parity says the two engines agree, not that ranking is good. `bench/quality.py` measures that on
-its own, in CI and in the release gates: it indexes a frozen copy of this repository's code
+`crates/scrutate/tests/ranking_pins.rs`, in `cargo test` on every platform CI runs, pins every
+candidate, feature and score of six queries on a small tree with the bundled models, bit for bit
+(docs/ARCHITECTURE.md says why the bits are the same on every platform). It sees a feature that
+moves in its last digit; it does not say whether ranking got better or worse, and it covers five
+small files, not every language or every path of the scan (the clustered vector scan of large
+segments is not on it).
+
+`bench/quality.py` measures how good ranking is, in CI and in the release gates. It sees a loss
+of 0.02 or more on its own corpus, not a feature that drifts in its fourth digit. Neither guard
+sees a small loss on code unlike this repository's (another language, a large tree); the
+benchmark tables below, run again with `bench/retrain_ranker.sh`, are what does. It indexes a
+frozen copy of this repository's code
 (`crates/scrutate/src`, `vendor/ignore/src`, `bench/*.py`, `tools/*.py` with every doc comment
 and docstring removed, variant A below, kept in `bench/quality/corpus.tar.gz`), runs the 1,183
 committed queries of `bench/quality/queries.json` (the five types below, at most 150 of each
@@ -250,8 +260,9 @@ Learned ranker MRR@10, float16 → int8:
 
 BM25, semantic only and linear blend move by at most 0.001 as well.
 
-Vector recall on the reference engine's 121 760-chunk index of a copy of 10 site-packages (numpy,
-pandas, scipy and others; the same tree as the size table below), 398 doc and kw queries:
+Vector recall on a 121 760-chunk index, built by the reference engine of the time, of a copy of
+10 site-packages (numpy, pandas, scipy and others; the same tree as the size table below), 398
+doc and kw queries:
 
 - exact scan, int8 top-100 against float16 top-100: recall 0.9945 (top-10: 0.9915);
 - default scan (48 of 698 clusters) against the float16 exact top-100: 0.8910 with int8,
@@ -270,15 +281,14 @@ Index size, fresh index built by the Rust engine (`du`, MiB):
 Query latency (`scrutate search` on the large index, warm, 4 queries, 3 alternating rounds of
 20 runs, median): 62.4 ms with float16, 61.5 ms with int8.
 
-Parity (`bench/parity.py`, release build): bit-identical vectors, features and scores on the
-networkx package (300 queries) and on a 119 358-chunk index that uses the clustered scan (the
+When this change was made, parity with the reference engine of the time (`bench/parity.py`,
+release build) gave bit-identical vectors, features and scores on the networkx package (300 queries) and on a 119 358-chunk index that uses the clustered scan (the
 `.py` files of the same 10 packages, 200 queries). To get there on the clustered path, both
 engines sum the vector-scan dot products in float64 in one fixed order and round once to
 float32; with float32 sums, two near-tied rows could swap places between the engines. Parity
-holds end to end too, each engine on its own index, also on segments of 20 000 rows or more:
+held end to end too, each engine on its own index, also on segments of 20 000 rows or more:
 both engines build the same clusters bit for bit (go_protobuf, 41 377 chunks: 40/40), and parity
-compares the centroids, cluster pointers, cluster order and stored vectors directly.
-`bench/parity_repos.sh` covers the clustered path with go_protobuf.
+compared the centroids, cluster pointers, cluster order and stored vectors directly.
 
 Not shipped: compressing chunk text with a zstd dictionary trained on the repository's chunks.
 On a 20 000-chunk sample of the large index, per-chunk zstd with a 110 KB trained dictionary is
@@ -322,7 +332,7 @@ samples), and a dictionary to version in the index, for a few percent.
 ```sh
 # the features come from target/release/scrutate, which retrain_ranker.sh builds first
 # (SCRUTATE_BIN names another build);
-# a virtual environment with numpy, lightgbm, scikit-learn, the reference engine's dependencies
+# a virtual environment with numpy, lightgbm, scikit-learn
 # and the DEV, TEST and SEALED packages at the versions named in the scripts' headers
 export SCRUTATE_WORK=/some/scratch SCRUTATE_VENV=/path/to/venv THREADS=4
 bash bench/retrain_ranker.sh   # benchmark, features, fit on DEV, old and new ranker on TEST

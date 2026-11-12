@@ -148,8 +148,8 @@ where opening files sets the floor, by 7 to 16% against ripgrep in a Linux VM, a
 its own design decides the time (one large file, heavy output, a cold disk, a structural query).
 It adds identifier and fuzzy search, results grouped by function, and an index that answers the
 same greps in a fraction of the time and stays current as files change. Its code-intelligence
-layer has ranking quality measured on held-out code and is verified bit for bit against a
-reference implementation. Its outputs are machine-readable and versioned; hostile inputs, corrupted
+layer has ranking quality measured on held-out code, a quality floor in CI, and its features
+and scores pinned bit for bit by a test. Its outputs are machine-readable and versioned; hostile inputs, corrupted
 indexes and concurrent writers are tested; its dependencies are audited and listed in an SBOM.
 
 What the evidence does not support, and this page does not claim:

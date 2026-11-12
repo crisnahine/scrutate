@@ -235,8 +235,9 @@ passed: the Rust tests on macOS arm64, macOS x86_64, Linux x86_64, Linux arm64, 
 and Windows ARM64, and the editor integrations ([docs/INSTALL.md](docs/INSTALL.md)).
 
 **Tests.** 122 Rust tests (unit, 60-language snapshot, robustness, property, end-to-end CLI and
-MCP, incremental parsing), 82 Python reference tests, the bindings tests, Rust/Python parity, fuzz
-regressions and a reproducible-build check, all passing ([docs/TEST_RESULTS.md](docs/TEST_RESULTS.md)).
+MCP, incremental parsing, the pinned ranking features), the Python tests of the training code,
+the bindings tests, the ranking quality floor, fuzz regressions and a reproducible-build check,
+all passing ([docs/TEST_RESULTS.md](docs/TEST_RESULTS.md)).
 Engine A agrees with ripgrep on 2,000 random corpora and patterns, run three ways: as shipped,
 with the parallel walk forced, and with every file searched in ranges.
 
@@ -244,10 +245,10 @@ with the parallel walk forced, and with every file searched in ranges.
 `bench/results/`, 30 runs per contender, 95% intervals, on a shared laptop, so not a
 publishable #1 claim.
 
-**Engine B.** It gives bit-identical features, scores and rankings to the Python reference it was
-developed against: the parity check fails on any difference in a feature, a score or a top 10,
-over 300 queries built from the documented functions of networkx and 50 from the engine's own
-sources. On held-out code in Python and five more languages its learned ranker beats its own
+**Engine B.** Its models are trained on rows it writes itself; the Python reference that used to
+mirror it bit for bit is gone. A test pins its features and scores bit for bit on a small tree,
+and CI fails when its ranking quality on this repository's own code falls below a recorded
+floor. On held-out code in Python and five more languages its learned ranker beats its own
 lexical layer for function and type answers on every query type but one, which ties
 ([docs/QUALITY.md](docs/QUALITY.md)).
 

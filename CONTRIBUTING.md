@@ -29,11 +29,10 @@ crates/scrutate/        the product: Engine A (instant.rs), Engine B (index.rs, 
                         langs.rs, search.rs, semantic.rs, rank.rs, intel.rs), CLI (cli.rs,
                         config.rs), MCP server (mcp.rs); tests/ (samples, robustness, properties)
 crates/scrutate-py/     optional PyO3 bindings (not built by default)
-python/scrutate_ref/    the Python reference implementation of Engine B's index and ranking
-                        (trains the models; must stay bit-identical with the Rust engine)
-python/tests/           reference tests and bindings tests
+python/scrutate_ref/    the models' training code (ranker export, vector model tables)
+python/tests/           tests of the training code, the benchmark builders and the bindings
 models/                 semantic.npz, ranker.npz (embedded into the binary)
-bench/                  benchmark harness, parity and differential tests, training scripts
+bench/                  benchmark harness, differential tests, ranking quality, training scripts
 tools/                  name research, SBOM, docs generators, reproducibility check
 integrations/           VS Code, Neovim, JetBrains, GitLab, Bitbucket, MCP, pre-commit
 docs/                   architecture, security, benchmarks, traceability, …
@@ -44,11 +43,9 @@ docs/                   architecture, security, benchmarks, traceability, …
 ```sh
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --exclude scrutate-py -- -D warnings
-cargo test --release -p scrutate                  # unit + samples + robustness + properties
+cargo test --release -p scrutate                  # unit + samples + robustness + properties + the pinned ranking features
 cargo audit
-cd python && python -m pytest -q                  # reference engine (+ bindings if installed)
-python bench/parity.py <repo> target/release/scrutate --queries 300   # Rust == Python, bit for bit
-bench/parity_repos.sh target/release/scrutate     # the same on real repositories of all six languages (fails when one is missing: bench/make_bench_code.py fetch)
+cd python && SCRUTATE_BIN=../target/release/scrutate python -m pytest -q   # training code, benchmark builders (+ bindings if installed)
 python bench/quality.py target/release/scrutate   # ranking quality (MRR@10, hit@5) not below bench/quality/floor.json
 python bench/differential.py --cases 200          # Engine A == ripgrep on random inputs
 python3 tools/gen_assets.py --check && python3 tools/gen_doc_assets.py --check && python3 bench/make_readme_charts.py --check   # images, charts, document heads and links are what the scripts write
@@ -56,11 +53,12 @@ python3 tools/gen_assets.py --check && python3 tools/gen_doc_assets.py --check &
 
 ## Rules that keep the engines honest
 
-- **Parity first.** Any change to tokenization, BM25, vectors, features or the ranker must be made
-  in both `python/scrutate_ref` and `crates/scrutate` and must keep `bench/parity.py` at
-  "PARITY OK" with zero feature and score differences. Floating-point order matters: both sides
-  accumulate in f64 where the reference does.
-- **Index format changes bump `SCHEMA_VERSION`** in both engines; old indexes are then rebuilt
+- **Ranking moves on purpose.** `tests/ranking_pins.rs` pins every feature and score of a small
+  tree bit for bit. A change to tokenization, BM25, vectors, features or the ranker that moves
+  them records the pins again (`UPDATE_PINS=1 cargo test --test ranking_pins`) in the same
+  commit, and says why in its message; `bench/quality.py` must stay above its floor. Training
+  reads its rows from the engine, so there is no second copy to change.
+- **Index format changes bump `SCHEMA_VERSION`**; old indexes are then rebuilt
   automatically. Never read a field that the version check did not guarantee.
 - **Adding a language**: one `LangSpec` in `langs.rs` (node kinds, name rules, call rules, import
   rules) plus `tests/samples/sample.<ext>` and its entry in `expected.json`

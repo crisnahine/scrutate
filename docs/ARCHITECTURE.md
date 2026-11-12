@@ -354,8 +354,8 @@ folded, so two spellings of one accented name are one name.
   clusters, measured at ±0.000 MRR against the exhaustive scan).
   Constant chunks have no segment rows.
 - **Lifecycle**: content hashing (fast path when size, mtime and, on Unix, `ctime_ns` match, so
-  a `chmod` alone costs a read and a hash; a row without `ctime_ns`, from the reference engine or
-  an older index, is read once; SHA-1 verification), one `BEGIN IMMEDIATE`
+  a `chmod` alone costs a read and a hash; a row without `ctime_ns`, from an older index, is read
+  once; SHA-1 verification), one `BEGIN IMMEDIATE`
   transaction per update (readers never see a half state), new segments written to a temp
   directory and renamed (the name is taken inside that transaction, so a directory already under
   it was left by a writer stopped before its commit, and is removed), deletions as liveness
@@ -403,10 +403,17 @@ LightGBM LambdaRank ensemble exported to plain arrays and evaluated in Rust. In 
 sources are a list (`Source::ALL`, each with the rank feature it fills) and the features are
 tables filled by name (`LEX_FIELDS`, `ROW_FEATURES`, `QUERY_FEATURES`), so a new source or a
 feature of a row or of the query is one entry. All arithmetic is
-specified to the bit: the Python reference implementation (`python/scrutate_ref`, which also trains the models) and the Rust engine
-return identical features, scores and rankings, each on the index it built itself
-(`bench/parity.py`: networkx 300/300 queries; the clustered path on go_protobuf, 41,377 chunks,
-40/40, and `bench/parity_repos.sh` runs 21 repositories). Vector dot products are summed in
+specified to the bit, and `tests/ranking_pins.rs` pins every candidate, feature and score of a
+small tree with the bundled models in `cargo test`. The engine uses IEEE basic operations, no
+fused multiply-add and no reordered sums. The platform's `ln` is taken only of counts and of
+ratios of counts. Where its result is rounded to float32 at once (count features, idf), any `ln`
+within one unit in the last place gives the same float32: checked for every count up to 200,000
+and every idf of an index of up to 1,000 chunks. In the vector weights the result stays float64,
+and the fixture keeps those counts at 7 or less, whose logarithms every libm rounds alike. So the
+pins are exact on every platform CI runs. A Python reference
+engine used to mirror this arithmetic bit for bit, and `bench/parity.py` compared the two; that
+mirror ended, because it covered 7 of the 73 grammars and every change was written twice.
+Vector dot products are summed in
 float64 in one fixed order (four running sums, added left to right) and rounded once, so no
 summation order can reorder near-tied chunks. The clustering of a large segment is identical
 too: one xorshift64* generator draws the sample, the first centroids and the re-seeds of empty
@@ -561,7 +568,7 @@ are mapped onto repository files
 aliases and workspace packages by their `package.json` name, Rust `crate`/`self`/
 `super` paths, module files and workspace crates from `Cargo.toml`, Go import paths through the
 module path in `go.mod`, by directory without one), following re-exports with a depth limit. It is a query-time step: no schema change,
-nothing for the Python reference to mirror, and `refs --textual` keeps the unresolved answer.
+and `refs --textual` keeps the unresolved answer.
 
 One module asks those rules (`names.rs`, `Names`): `callers`, `callees`, resolved `refs`, `deps`,
 `rdeps` and the language server's definition and references requests each open one `Names` per
@@ -570,8 +577,7 @@ Within a request each file is read and parsed once, however many of its call sit
 about. `callers` still asks about the 400 likeliest call sites and lists the rest as not checked:
 asking about every one costs about a second of CPU per thousand sites of a Java name in Guava
 (`callers size`, 1,970 sites: 2.4 s instead of 1.0 s). The caller count that ranking reads (`log_ncallers`) is also taken from `Names`: it counts
-every call edge of the name, namesakes included, because the Python reference computes that same
-number.
+every call edge of the name, namesakes included, the number the ranker was fitted on.
 
 `tsquery` keeps each file's captures in `.scrutate/tsquery/` (`tscache.rs`): one file per
 (version, language, query text, searched paths) mapping a 128-bit BLAKE2b content hash to the
@@ -655,8 +661,7 @@ process, and the threads of a server share it: `symbol`, `outline` and the other
 unpack either file. A ranker whose feature names are not `FEATURES` is an error the moment a
 search ranks with it; commands that do not rank never read it.
 
-The index records the signature of the vector model: a blake2b hash of the model file, the text
-the reference engine writes too. The bundled model's is a constant in `models.rs`, which a test
+The index records the signature of the vector model: a blake2b hash of the model file. The bundled model's is a constant in `models.rs`, which a test
 checks against the file; a model named at run time is hashed on first need and the hash kept in `.scrutate/model.sig` beside the file's
 size, modification time and status change time (where the system has none, a file rewritten with
 its old size and modification time keeps its old signature). Another vector model makes the
@@ -669,8 +674,11 @@ leaves the index as it was, and until one commits a search does not compare its 
 vectors of another model. Training (numpy + LightGBM) lives in `bench/train_semantic.py` and
 `bench/train_ranker.py`, and reads its inputs from the engine: `bench/gen_features.py` indexes
 each benchmark package with the binary and keeps the rows `batch --features` prints, and
-`train_semantic.py` reads the chunks, view tokens and query terms of the hidden `views` command.
-Until the reference stops mirroring the engine, both give the rows the reference gave, bit for bit.
+`train_semantic.py` reads the chunks, view tokens and query terms of the hidden `views` command,
+which the benchmark builders also ask for a file's language, test flag and definitions, a name's
+subwords and the query stop list. `python/scrutate_ref` holds only what the trainers share: the
+ranker's export and the vector model's tables. Ranking is watched by the pinned features above and
+by the quality floor of `bench/quality.py` (docs/QUALITY.md).
 
 ## Design rules for the next decade
 - Formats are versioned (`schema_version`, `.npy` headers, JSONL `schema`) and migrations are a

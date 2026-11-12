@@ -53,7 +53,7 @@ Counts: PASS 124 · PARTIAL 11 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 | R-2B.4 | Find definitions and usages | `find_symbol`, `references()`; `resolve.rs` resolves each occurrence to its definition through scopes, imports and qualified names (Python, JavaScript/TypeScript, Rust, Go, Java) | bindings `test_repo_index_and_intelligence`; `cli.rs::index_search_symbol_refs_outline_deps`; `tests/resolve.rs` (two same-named definitions per language); `tests/resolve_java.rs`; 60 of 60 hand-checked resolutions right on networkx and ripgrep | PASS |
 | R-2B.5 | Function, method, class, type discovery | definition kinds per grammar | `tests/samples/expected.json`, `tests/samples_extra/expected.json` | PASS |
 | R-2B.6 | Import and dependency analysis | `imports` table; `intel::deps`, `rdeps` | unit test `imports_are_extracted_and_normalised`; bindings test | PASS |
-| R-2B.7 | Call-site discovery | `refs` table, `callers`, `callees`, `refs` | bindings test; Python reference tests | PASS |
+| R-2B.7 | Call-site discovery | `refs` table, `callers`, `callees`, `refs` | bindings test; `tests/intel_refs.rs` | PASS |
 | R-2B.8 | Cross-file and cross-repository intelligence | call graph and imports across files; `search --also ROOT` | `cli.rs::search_also_merges_repositories` | PASS |
 | R-2B.9 | Duplicate and similar-code discovery | `intel::dupes` (exact hash + MinHash/LSH), `intel::similar` | bindings tests | PASS |
 | R-2B.10 | Language-aware navigation | `outline`, `symbol`, `callers`, `callees`, `refs`, `deps` | bindings tests, `cli.rs` | PASS |
@@ -96,7 +96,7 @@ Counts: PASS 124 · PARTIAL 11 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 |---|---|---|---|---|
 | R-5.1 | Stable Rust, evaluated dependencies | pinned stable 1.99.1, `rust-version` 1.91; DEPENDENCIES.md with purpose per crate | `cargo build` on stable; `cargo audit` | PASS |
 | R-5.2 | Modular, cohesive, independently testable | 17 modules; tests per module | test layout | PASS |
-| R-5.3 | Correctness, memory safety, predictable resources, concurrency, maintainability | parity with the reference; unsafe inventory (SECURITY.md); fuzzing with AddressSanitizer; bounded buffers | parity, robustness, fuzzing | PASS |
+| R-5.3 | Correctness, memory safety, predictable resources, concurrency, maintainability | pinned ranking features (`tests/ranking_pins.rs`) and a ranking quality floor (`bench/quality.py`); unsafe inventory (SECURITY.md); fuzzing with AddressSanitizer; bounded buffers | ranking pins, quality floor, robustness, fuzzing | PASS |
 | R-5.4 | Minimal dependencies | 210 crates in the release binary (the `ctrlc` crate and its objc2 chain removed for 50 lines of signal handling) | DEPENDENCIES.md | PASS |
 | R-5.5 | No dead code, duplicated logic, unnecessary allocations, unjustified abstractions | `-D warnings`, clippy clean; Engine A's per-file search shared by the walk and the indexed path | `cargo clippy --all-targets -D warnings` | PASS |
 | R-5.6 | Async only where beneficial | none used | design note | PASS |
@@ -136,7 +136,7 @@ Counts: PASS 124 · PARTIAL 11 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 | ID | Requirement | Status | Evidence |
 |---|---|---|---|
 | R-8.1 to 8.10 | Inspect, research, foundation, Engine A, Engine B, unify, benchmark/optimise, security/reliability testing, documentation/installation, deliver 0.1.0 | PASS | this repository; `git log`; TEST_RESULTS.md; LEADERBOARD.md; docs/ |
-| R-8.11 | Preserve existing user work | PASS | earlier work untouched; the reference implementation lives on as `python/scrutate_ref` |
+| R-8.11 | Preserve existing user work | PASS | earlier work untouched; the prototype's training code lives on as `python/scrutate_ref` |
 | R-8.12 | Decide autonomously | PASS | decisions recorded in CHANGELOG/ARCHITECTURE; one question asked (publishing to GitHub: declined on 2026-11-08, asked for on 2026-11-11 once every install and usage path is verified; the repository is on GitHub now, private) |
 
 ## 9. Zero-gap quality assurance
@@ -146,7 +146,7 @@ Counts: PASS 124 · PARTIAL 11 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 | R-9.1 | Unit tests | `cargo test` lib tests | PASS |
 | R-9.2 | Integration tests | `tests/samples.rs`, `tests/samples_extra.rs`, `tests/robustness.rs`, `tests/cli.rs` | PASS |
 | R-9.3 | End-to-end tests | `tests/cli.rs` runs the real binary | PASS |
-| R-9.4 | Differential tests | `bench/differential.py` (vs ripgrep; `--index` vs the walk); `bench/fuzz_grep.py` (`scrutate grep` vs ripgrep on random trees) and `bench/fuzz_incremental.py` (an updated index vs a fresh one after random edits), 20 seconds each in CI, failing when nothing was compared; `bench/parity.py` (Rust vs Python); every leaderboard answer vs a Python reference | PASS |
+| R-9.4 | Differential tests | `bench/differential.py` (vs ripgrep; `--index` vs the walk); `bench/fuzz_grep.py` (`scrutate grep` vs ripgrep on random trees) and `bench/fuzz_incremental.py` (an updated index vs a fresh one after random edits), 20 seconds each in CI, failing when nothing was compared; every leaderboard answer vs a Python reference | PASS |
 | R-9.5 | Property-based tests | `tests/properties.rs`, `textindex::tests::property_condition_never_rejects_a_matching_text` | PASS |
 | R-9.6 | Fuzz tests | four cargo-fuzz targets (`fuzz/`), AddressSanitizer, ten-minute rounds; four defects found and fixed, crash inputs replayed by the test gate | PASS |
 | R-9.7 | Regression tests | snapshot `expected.json`; fuzz regressions; `bench/leaderboard_regression.py`; `bench/regression.py` | PASS |
@@ -193,7 +193,7 @@ Counts: PASS 124 · PARTIAL 11 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 | R-12.12 | Index lifecycle | `index.rs`, `lex.rs`, `textindex.rs` (manifest swaps, immutable segments, generations, GC, compaction, rebuild, `Triage`) | robustness, `cli.rs` | PASS |
 | R-12.13 | Professional CLI: completion, configuration, env vars, piping, deterministic output, structured diagnostics, progress, cancellation, exit codes | `completions`, `config.rs`, env on every option, BrokenPipe handling, `--sort`, JSON error records, progress on TTY, Ctrl-C, 0/1/2/130 | `cli.rs::config_file_sets_defaults_but_command_line_wins`, `errors_are_json_when_asked`, `interrupt_exits_130` | PASS |
 | R-12.14 | Protections: regex exhaustion, unauthorized access, unsafe temp files, vulnerabilities, untrusted repository execution | limits; confinement; temp files inside `.scrutate/` + rename; audit; never executes repository content | SECURITY.md | PASS |
-| R-12.15 | Verification: unit, integration, differential, property, fuzz, stress, security, regression, cross-platform | section 9 | TEST_RESULTS.md (unit, integration, property, robustness, differential, parity, fuzz regressions, audit, reproducible build); `bench/results/platforms/` (cross-platform) | PARTIAL (cross-platform part: see R-9.10) |
+| R-12.15 | Verification: unit, integration, differential, property, fuzz, stress, security, regression, cross-platform | section 9 | TEST_RESULTS.md (unit, integration, property, robustness, differential, ranking quality, fuzz regressions, audit, reproducible build); `bench/results/platforms/` (cross-platform) | PARTIAL (cross-platform part: see R-9.10) |
 | R-12.16 | Real integrations | `integrations/` + `.github/` | MCP and LSP automated; VS Code (packaged), Neovim, JetBrains, GitHub action, GitLab, Bitbucket: not run in their hosts | MCP and LSP PASS; rest PARTIAL |
 | R-12.17 | Installation, updates, uninstallation, packaging, signed releases, checksums, SBOMs, reproducible builds | INSTALL.md; release workflow; `tools/sbom.py`; `tools/third_party_notices.py`; `packaging/` (Homebrew, Scoop, winget, `.deb`, `.rpm`); checksums for delivered artifacts | SBOM, notices and checksums generated; reproducible across two build images; `.deb` and `.rpm` installed, run and removed in clean Debian and Fedora containers, the Homebrew formula in a Linux Homebrew (bench/results/platforms/packages/); signing and publishing need the published repository | PARTIAL (signing and publishing) |
 | R-12.18 | Reproducible benchmarks and regression tracking | `leaderboard.py`, `leaderboard_regression.py`, `regression.py`, `benchmarks.yml` | LEADERBOARD.md; `benchmarks.yml` has not completed a run | PARTIAL |
@@ -203,7 +203,7 @@ Counts: PASS 124 · PARTIAL 11 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 
 | ID | Requirement | Implementation | Verification | Status |
 |---|---|---|---|---|
-| R-13.1 | Python only in permitted roles | benchmarks, differential/parity scripts, optional PyO3 package, JSONL consumers, model training | repository layout | PASS |
+| R-13.1 | Python only in permitted roles | benchmarks, differential scripts, ranking quality, optional PyO3 package, JSONL consumers, model training | repository layout | PASS |
 | R-13.2 | Engines and CLI in Rust, no Python at runtime | no Python dependency; models embedded | `cli.rs::runs_without_python_on_path`; Linux images without Python (`linux-aarch64/verify.log`, `linux-x86_64/verify.log`) | PASS |
 | R-13.3 | Core builds and passes `cargo test` without Python; bindings optional | bindings are a separate workspace member outside `default-members` | `cargo test` on `rust:1-slim-bookworm`, which has no Python (`linux-*/verify.log`) | PASS (an optional crate rather than a feature flag, so the core cannot even optionally depend on Python) |
 | R-13.4 | Bindings release the GIL during long work | `Python::detach` around index/search/grep waits | `test_gil_is_released_during_rust_work` | PASS (four threads searching at once take 0.34 of the sequential time with the abi3 wheel on macOS arm64; on a busy machine the test skips instead of measuring) |

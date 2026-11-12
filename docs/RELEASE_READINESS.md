@@ -25,7 +25,7 @@ below). Every PASS refers to a test, benchmark or audit output in this repositor
 | Literal and regex search | **met**: linear-time regex with size limits |
 | Machine-readable output | **met**: JSON Lines (schema 1) and JSON on every command, JSON error records |
 | Functioning, tested code-intelligence foundation | **met**: 60 + 12 verified grammars, call graph, imports, ranked search with measured quality, text index equal to Engine A |
-| Automated tests | **met**: 122 Rust tests, 82 Python reference tests, bindings tests on four or five interpreters per platform, Rust/Python parity, 2,000 differential cases against ripgrep, fuzz regressions and a reproducible build, all passing (docs/TEST_RESULTS.md) |
+| Automated tests | **met**: 122 Rust tests, Python tests of the training code and benchmark builders, bindings tests on four or five interpreters per platform, pinned ranking features, a ranking quality floor, 2,000 differential cases against ripgrep, fuzz regressions and a reproducible build, all passing (docs/TEST_RESULTS.md) |
 | Reproducible competitive benchmarks | **met**: `bench/leaderboard.py`, `bench/indexed.py`, pinned corpora, raw results in `bench/results/` |
 | Verified builds for declared supported platforms | **met for the declared platforms**; others are not declared |
 | Security assessment | **met as a self-assessment** with fuzzing; no independent audit |

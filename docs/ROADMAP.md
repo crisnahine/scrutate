@@ -55,6 +55,7 @@ docs/TRACEABILITY.md.
 | TypeScript path aliases (R-2B.4) | an import through `paths` or `baseUrl` of the nearest `tsconfig.json` or `jsconfig.json` (comments, trailing commas and a relative `extends` included) resolves to its file, in `refs`, `deps` and `rdeps`; so does an import of a workspace package by its `package.json` name (`exports`, `module`, `main`, a build output standing for its source under `src/`) |
 | Limits left in 0.1.0's first draft (R-2A, R-12.4) | smart case sees a letter written by its code point (`\x41`); the LSP server replaces a damaged index, from a save or from a request; the watcher's test of one path decides in the walk's order (a `.ignore` at any level before every `.gitignore`) |
 | Limits left in 0.1.0's second draft (R-2A, R-2B.1, R-2B.4) | calls inside Rust macro arguments are call edges; an MCP answer checks the files it cites and re-reads a changed one; files on `/proc`, `/sys` and the other kernel pseudo filesystems are read to the end; on Unix a `chmod` alone is seen (the index keeps the status-change time); an emptied `chunks` table is damage and is rebuilt; a JavaScript `var` belongs to its function; one file argument prints without its name, as in ripgrep, with `-H` and `-I`; C++ constructors, destructors, member templates and conversion operators declared in a class body are methods; the Python reference indexes the engine's file set; `\,` keeps a comma in `SCRUTATE_INDEX_EXCLUDE_DIRS` |
+| Training reads the engine, and the mirror ended (R-5.3) | the ranker and the vector model are fitted on rows the engine writes (`batch --features`, the hidden `views` command), the benchmark builders read files and words through it, and the Python reference engine that mirrored it bit for bit on 7 of the 73 grammars is gone with `bench/parity.py`; `tests/ranking_pins.rs` and `bench/quality.py` watch ranking (docs/QUALITY.md) |
 | Benchmark corpora without hard links (R-14) | `bench/corpora.py` copies (APFS clones) where it linked: a hard-linked file costs every tool twice as long to open on macOS |
 
 ## Blocked: needs the repository published
@@ -193,12 +194,6 @@ docs/RELEASING.md, public, tag `v0.1.0`.
 - Traditional and simplified Han meet in ranked search through the Unihan simplified forms.
   The Japanese form 関 has its own entry there, the rare 𬮦, so it does not meet Chinese 关 or
   traditional 關.
-- The Python reference finds the Han table through its path in the source tree
-  (`crates/scrutate/data/han_fold.txt`), so it works from a checkout or an editable install,
-  not from a copy of the package alone.
-- The Python reference cuts a `.txt` or Markdown file into windows only, where the engine gives
-  a `.txt` file a module chunk and Markdown its sections. Parity holds for the languages the
-  reference has a grammar for, and `bench/parity.py` leaves the other files out.
 - Windows and Intel macOS are tested on GitHub's runners only (CI run 43013926055 passed on
   `windows-latest`, `windows-11-arm` and `macos-15-intel`): no release archive for them has been
   built by the release workflow or installed on a machine, and no benchmark has run there. Five

@@ -111,6 +111,10 @@ them: these are the **training rows** the ranker is fitted on.
 **Quality floor**: the lowest MRR@10 and hit@5 the ranking may reach on a frozen copy of this
 repository's code before CI fails (`bench/quality.py`, `bench/quality/floor.json`).
 
+**Ranking pins**: every candidate, feature and score of six queries on a small tree with the
+bundled models, recorded bit for bit and checked by `cargo test` (`tests/ranking_pins.rs`). With
+the quality floor they watch ranking; the Python reference that used to mirror the engine is gone.
+
 **Translation**: what a pattern asks every matcher of it to find (`Pattern::translate`): the
 pattern in the form its mode means, and whether case is folded. Engine A's matcher and the text
 index's trigram condition are both built from it.

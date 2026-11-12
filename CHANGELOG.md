@@ -204,6 +204,14 @@ First release.
   `bench/retrain_ranker.sh` and `bench/eval_sealed.sh` build the binary first. On six packages,
   one per language, both variants, the rows equal the reference's bit for bit (7,836 queries,
   1,171,940 candidates), and so do the vector model's inputs.
+- The benchmark builders (`bench/make_bench.py`, `bench/make_bench_code.py`, `bench/quality.py
+  --make`) and the ranker's trainer read the engine too: the hidden `views` command also takes a
+  file's text, prints its language and test flag, a name's subwords and the query stop list, and
+  `bench/gen_features.py` keeps each candidate's linear blend, which picks the ranker's
+  candidates. Before the reference engine was removed, the builders wrote the same files byte for
+  byte on 13 packages of the six languages (1,877 files, 12,039 queries) and on the quality
+  corpus, and the trainer handed LightGBM the same matrix (1,240,156 rows) and wrote the same
+  ranker. No answer of the engine changed.
 - `batch --features` names the features: each line has `feature_names` (the order of every
   candidate's `x`), and each candidate its `name` and `kind`, so a training script needs no second
   list. In `search.rs` the candidate sources are a list and the features tables filled by name;
@@ -720,6 +728,18 @@ First release.
   and fails when MRR@10 or hit@5 is below the floor recorded in `bench/quality/floor.json`
   (measured 0.5873 and 0.6636, floor 0.02 lower). A CI step and the release gates run it, in
   about 8 s.
+- The bit-for-bit mirror of the engine in Python ended. `python/scrutate_ref` no longer parses,
+  indexes or ranks (`text.py`, `parse.py`, `index.py`, `lex.py`, `search.py`, `pretrain.py` and
+  their tests are gone, and with them the tree-sitter grammars and `snowballstemmer` it needed),
+  and `bench/parity.py` and `bench/parity_repos.sh` are gone from the scripts, CI and the release
+  gates. The engine is the one producer of training rows; the mirror covered 7 of the 73
+  grammars, and every change to tokens, chunks, BM25 or features was written twice. What watches
+  ranking now: the quality floor of `bench/quality.py`, and `tests/ranking_pins.rs`, which pins
+  every candidate, feature and score of six queries on a small tree with the bundled models, bit
+  for bit, in `cargo test` on every platform. The package keeps the training code: the ranker's
+  export (`rank.py`) and the vector model's tables (`semantic.py`). The one-off scripts
+  `bench/eval_transformers.py` and `bench/ivf_recall.py` ran on the mirror and were removed; commit
+  `9e70ae7` is the last that has them.
 - `[index] exclude_dirs` is read from the `.scrutate.toml` at the root of the index (or
   `SCRUTATE_INDEX_EXCLUDE_DIRS`), so the command line, the servers and the bindings index the
   same files wherever they start; the reference engine reads it the same way. A name with a

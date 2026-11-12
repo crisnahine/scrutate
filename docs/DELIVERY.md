@@ -14,7 +14,7 @@ The fifteen items the mission asks for (section 11), each with where it lives in
 | # | Item | Location |
 |---|---|---|
 | 1 | Project name and naming research | docs/NAMING.md, docs/name_research.json, tools/name_research.py |
-| 2 | Complete source code and architecture | crates/scrutate (engines, CLI, MCP), crates/scrutate-py (bindings), python/scrutate_ref (reference implementation and trainer), models/; docs/ARCHITECTURE.md |
+| 2 | Complete source code and architecture | crates/scrutate (engines, CLI, MCP), crates/scrutate-py (bindings), python/scrutate_ref (training code of the models), models/; docs/ARCHITECTURE.md |
 | 3 | Implemented capabilities | README.md, docs/CLI.md, docs/TRACEABILITY.md (every requirement with its status) |
 | 4 | Rust toolchain and dependency summary | docs/DEPENDENCIES.md, Cargo.lock, rust-toolchain.toml, the CycloneDX SBOM in `dist/` (tools/sbom.py) |
 | 5 | Supported platforms and language capabilities | docs/INSTALL.md (macOS arm64, Linux aarch64 and x86_64 verified; macOS x86_64 and Windows x86_64 cross-built only), docs/LANGUAGES.md (60 verified grammars, 12 more optional, heuristic tier) |
@@ -56,5 +56,5 @@ tested by `tools/linux_verify.sh` but not packaged here. Signed archives, attest
 other platforms come from `.github/workflows/release.yml` once the repository is public.
 
 Previous work is preserved untouched in the sibling directory that held the Python prototype
-("Titan"); its engine lives on here as `python/scrutate_ref`, the reference implementation the Rust
-engine is verified against and the trainer for the bundled models.
+("Titan"); its training code lives on here as `python/scrutate_ref`, which fits the bundled models on rows
+the Rust engine writes. Its engine mirrored the Rust one bit for bit until that mirror ended.

@@ -38,10 +38,10 @@ The oldest compiler that builds is `rust-version` in the workspace `Cargo.toml`:
 locked `notify-types` needs. A `ci.yml` job runs `cargo check` with that version, so a
 dependency update that raises it fails there; README.md and docs/INSTALL.md name it too.
 
-`CONTENT_REVISION` in `crates/scrutate/src/index.rs` and `python/scrutate_ref/index.py` names
+`CONTENT_REVISION` in `crates/scrutate/src/index.rs` names
 the parsing rules an index was built with, and the index keeps it in `meta` as `content_rev`.
-After a release, a change to `langs.rs`, `parse.rs`, `text.rs`, `parse.py` or `text.py` raises
-it by one in both files, so an index of the older rules reads every file again on its next
+After a release, a change to `langs.rs`, `parse.rs` or `text.rs` raises
+it by one, so an index of the older rules reads every file again on its next
 update. 0.1.0 ships with 2: builds with the first rules were in use before the release, and
 their indexes must not keep chunks cut by those rules. Raise `SCHEMA_VERSION` when the database
 layout changes, `MODEL_REVISION` when the embedded semantic model changes, and the text index
@@ -130,27 +130,26 @@ inventory and the crate count), `docs/DELIVERY.md` (binary hashes and wheel name
 
 ## 5. Quality gates
 
-In a virtual environment with the reference's dependencies (the versions in
-`python/constraints.txt`), a copy of networkx 3.4.2 as the parity repository, the clones of the
-benchmark repositories for the parity run on real repositories (`rich` and `mcp` are two of its
-repositories, read from the environment), and the three wheels: `cp39-abi3`, `cp314t` and
+In a virtual environment with the training code's and the tests' dependencies (the versions in
+`python/constraints.txt`), and the three wheels: `cp39-abi3`, `cp314t` and
 `cp315-abi3.abi3t`.
 
 ```sh
-V=/some/scratch/venv W=/some/scratch/wheels P=/some/scratch/pmid C=/some/scratch/work
-uv venv --python 3.13 $V && uv pip install --python $V/bin/python -e "python[test]" networkx==3.4.2 rich mcp -c python/constraints.txt
-SCRUTATE_WORK=$C python3 bench/make_bench_code.py fetch
-cp -r $V/lib/python3.13/site-packages/networkx $P && find $P -name __pycache__ -prune -exec rm -rf {} +
+V=/some/scratch/venv W=/some/scratch/wheels
+uv venv --python 3.13 $V && uv pip install --python $V/bin/python -e "python[test]" -c python/constraints.txt
 export MACOSX_DEPLOYMENT_TARGET=13.0
 python3 tools/third_party_notices.py --package scrutate-py --out crates/scrutate-py/THIRD_PARTY_NOTICES.txt
 for py in 3.13 3.14t 3.15; do
   maturin build --release --strip -m crates/scrutate-py/Cargo.toml -o $W -i "$(uv python find $py)"
 done
 uv pip install --python $V/bin/python --reinstall $W/*cp39-abi3*.whl
-$V/bin/python tools/gen_test_results.py --repo $P --parity-code $C/code --differential-cases 2000 --reproducible --wheels $W
+$V/bin/python tools/gen_test_results.py --differential-cases 2000 --reproducible --wheels $W
 ```
 
-Among them, `bench/quality.py` checks ranking quality against `bench/quality/floor.json` (docs/QUALITY.md).
+Among them, `cargo test` runs `tests/ranking_pins.rs`, which pins the features and scores of a
+small tree bit for bit, and `bench/quality.py` checks ranking quality against `bench/quality/floor.json` (docs/QUALITY.md).
+The parity runs against the Python reference engine (networkx, 21 repositories) ended with that
+engine; no gate needs networkx, `rich`, `mcp` or the benchmark clones any more.
 A new ranker or vector model that moves the measure records a new floor with
 `bench/quality.py target/release/scrutate --record` in the same commit; `bench/quality.py --make`
 takes a newer copy of the code as the corpus and writes the queries for it, and is followed by
@@ -214,7 +213,8 @@ and Windows runners, which count ten and two times on a private repository. The 
 `9384c18`) is the first green one: all 12 jobs that run on a push passed, the Rust tests on
 macOS arm64, Intel macOS, Linux x86_64, Linux arm64, Windows x64 and Windows arm64, the musl
 build, the extra-langs job on the oldest supported Rust, the fuzz regressions, the Python
-reference, bindings, parity and differential job, the advisories and the editor integrations.
+reference, bindings, parity and differential job (now the training code, bindings, differential
+and ranking quality job), the advisories and the editor integrations.
 The dependency review runs only on pull requests. The workflows pass
 `actionlint` and `zizmor`, and the Linux jobs of `ci.yml` pass in a container
 (`tools/ci_rehearsal.sh`).
@@ -236,5 +236,6 @@ leads nowhere is worse than none.
 
 After the release is out: take `open-pull-requests-limit: 0` out of `.github/dependabot.yml`.
 Version updates are paused until then, because each Dependabot pull request runs `ci.yml` on six
-runners, and on a private repository macOS minutes count ten times. A bump of `snowballstemmer`
-changes stems: merge it only with a parity run (`bench/parity.py`) that still ends in `PARITY OK`.
+runners, and on a private repository macOS minutes count ten times. A bump of the
+`rust-stemmers` crate can change stems: merge it only when `tests/ranking_pins.rs` and
+`bench/quality.py` still pass, or with the pins recorded again on purpose.
