@@ -18,8 +18,8 @@ usage:
 The system: black ink, cream paper and one highlighter colour (MARK) that marks only what was found: a match,
 the winning bar, the one word that matters. Every panel carries its own background, so one file serves
 GitHub's light and dark pages. Rules each SVG keeps, checked by --check: flat colour only (no gradient, no
-filter), no script and nothing loaded from outside, a title and a desc, valid XML, under 150 KB, and complete
-with motion off (the still state is the finished state).
+filter), no script, event handler or SMIL element, nothing loaded from outside, a title and a desc, valid XML,
+under 150 KB, and complete with motion off (the still state is the finished state).
 
 Motion is CSS inside each SVG (GitHub shows them through <img>: no script). Each animated image runs on one
 master clock (Clock below): every element's keyframes are percentages of one loop, so it repeats for ever
@@ -71,18 +71,6 @@ REDUCED = ("@media (prefers-reduced-motion: reduce) {\n  .mv { animation: none !
            "  .fd { animation-name: var(--calm) !important; }\n}")
 BANNER = "<!-- written by tools/gen_assets.py; edit that, not this file -->"
 MAX_BYTES = 150 * 1024
-
-# The documents' images (tools/gen_doc_assets.py) still come in a light and a dark file; these are the
-# same tokens under the names that script reads.
-THEMES = {
-    "dark": {"ink": PAPER, "muted": ON["ink"]["dim"], "line": ON["ink"]["rule"], "card": INK, "card2": "#000000",
-             "beam": MARK, "beamsoft": "rgba(217,255,61,.16)", "violet": PAPER, "violetsoft": "rgba(242,238,227,.10)",
-             "amber": ALERT, "others": ON["ink"]["dim"], "ok": MARK, "bad": ALERT, "page": "#0d1117"},
-    "light": {"ink": INK, "muted": ON["paper"]["dim"], "line": ON["paper"]["rule"], "card": PAPER, "card2": "#ffffff",
-              "beam": INK, "beamsoft": "rgba(12,12,14,.16)", "violet": INK, "violetsoft": "rgba(12,12,14,.06)",
-              "amber": ALERT, "others": ON["paper"]["dim"], "ok": INK, "bad": ALERT, "page": "#ffffff"},
-}
-ICON_GREY = ON["paper"]["dim"]
 
 
 def esc(s: str) -> str:
@@ -1498,14 +1486,33 @@ def svg_problems(name: str, text: str):
         bad.append(f"{len(text.encode()) // 1024} KB, over {MAX_BYTES // 1024} KB")
     if "<title" not in text or "<desc" not in text:
         bad.append("no title or desc")
-    for word in ("Gradient", "<filter", "filter:", "<script", "@import", "@font-face", "<image", "<foreignObject"):
-        if word in text:
+    low = text.lower()
+    for word in ("gradient", "<filter", "<script", "<set", "<animate", "@import", "@font-face", "<image", "<foreignobject"):
+        if word in low:
             bad.append(f"contains {word!r}")
-    if re.search(r"""(?:href|src)\s*=\s*["'](?!#)""", text) or re.search(r"url\((?!#)", text) or \
-            "http" in text.replace('xmlns="http://www.w3.org/2000/svg"', ""):
+    if re.search(r"filter\s*[:=]", low):
+        bad.append("contains a filter")
+    if re.search(r"<[^<>]*\son[a-z]+\s*=", low):
+        bad.append("has an event handler attribute")
+    css = re.findall(r"<style[^>]*>(.*?)</style>", low, re.S) + re.findall(r"""\sstyle\s*=\s*(?:"[^"]*"|'[^']*')""", low)
+    if any("\\" in c for c in css):
+        bad.append("has a CSS escape, which can hide a reference")
+    if re.search(r"""(?:href|src)\s*=\s*["'](?!#)""", low) or re.search(r"url\((?!#)", low) or \
+            re.search(r"https?:", low.replace('xmlns="http://www.w3.org/2000/svg"', "")):
         bad.append("refers to something outside the file")
     bad += motion_problems(text)
     return [f"{name}: {p}" for p in bad]
+
+
+# shapes svg_problems must refuse; --check feeds them to it, so a loosened rule fails the check
+REFUSED = ['<rect onload="x()"/>', '<set attributeName="href" to="//e.com/x"/>', '<style>@IMPORT "x.css";</style>',
+           '<rect style="fill:URL(x.svg)"/>', '<rect style="fill:u\\72l(x)"/>', '<rect filter="blur(2px)"/>',
+           '<rect style="filter : blur(2px)"/>', '<a href="https://e.com">x</a>', "<use href='x.svg#a'/>"]
+
+
+def checker_problems():
+    head = '<svg xmlns="http://www.w3.org/2000/svg"><title>t</title><desc>d</desc>'
+    return [f"the checker passes {b}" for b in REFUSED if not svg_problems("probe", head + b + "</svg>")]
 
 
 def readme_problems():
@@ -1559,7 +1566,7 @@ def main() -> int:
         return 0
     bad = write_or_check(outputs(a.what), ASSETS, a.check)
     if a.check and a.what is None:
-        for p in readme_problems():
+        for p in checker_problems() + readme_problems():
             print(p, file=sys.stderr)
             bad = 1
     return bad

@@ -1112,7 +1112,7 @@ def check_links(path, text, problems):
     own = {a for _, _, a in headings(text)}
     for n, ln in strip_code(text):
         ln = re.sub(r"`[^`]*`", "", ln)
-        targets = re.findall(r"\]\(([^)\s]+)\)", ln) + re.findall(r'(?:href|src|srcset)="([^"]+)"', ln)
+        targets = re.findall(r"\]\(([^)\s]+)\)", ln) + re.findall(r"""(?:href|src|srcset)=["']([^"']+)["']""", ln)
         for t in targets:
             if re.match(r"^[a-z]+:", t):
                 continue
