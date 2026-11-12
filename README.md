@@ -293,3 +293,6 @@ compatible with it (MIT, Apache-2.0, BSD, ISC, Zlib, Unlicense, 0BSD, Unicode-3.
 licence and notice files are
 collected in `THIRD_PARTY_NOTICES.txt`, which release archives, wheels and the `.deb` and `.rpm`
 packages include (`tools/third_party_notices.py`).
+
+Contributions are accepted under the [contributor licence agreement](CLA.md). The name and the
+logo are covered by the [trademark policy](TRADEMARKS.md).

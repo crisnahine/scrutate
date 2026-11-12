@@ -186,4 +186,14 @@ Which package definitions exist, and how was each tested?
 What does each fuzz target check?
 </td>
 </tr>
+<tr>
+<td width="50%" valign="top">
+<img src="assets/banner-icon-cla.svg" width="20" height="20" alt=""> <a href="../CLA.md"><b>Contributor licence agreement</b></a><br>
+What rights do I give with a contribution, and what do I keep?
+</td>
+<td width="50%" valign="top">
+<img src="assets/banner-icon-trademarks.svg" width="20" height="20" alt=""> <a href="../TRADEMARKS.md"><b>Trademark policy</b></a><br>
+What may a fork, a package or a product do with the name and the logo?
+</td>
+</tr>
 </table>

@@ -572,6 +572,10 @@ First release.
   the parity check fails on any difference.
 
 ### Product
+- Contributions are accepted under a contributor licence agreement (`CLA.md`: the contributor
+  keeps the copyright, the maintainer may also offer other licence terms, and what is accepted
+  stays under the open source licence); the name and the logo have a trademark policy
+  (`TRADEMARKS.md`).
 - Unified `find`, MCP server (14 tools), configuration files with environment-variable precedence,
   shell completions, progress reporting; errors as JSON records with `--json` or
   `SCRUTATE_DIAGNOSTICS=json`.

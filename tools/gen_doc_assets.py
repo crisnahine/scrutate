@@ -111,6 +111,8 @@ DOCS = [
     ("+changelog", "CHANGELOG.md", "Changelog", "What changed in each version?", "history", "work", False),
     ("+packaging", "packaging/README.md", "Packaging", "Which package definitions exist, and how was each tested?", "archive", "work", False),
     ("+fuzz", "fuzz/README.md", "Fuzz targets", "What does each fuzz target check?", "dice", "work", False),
+    ("+cla", "CLA.md", "Contributor licence agreement", "What rights do I give with a contribution, and what do I keep?", "scales", "work", False),
+    ("+trademarks", "TRADEMARKS.md", "Trademark policy", "What may a fork, a package or a product do with the name and the logo?", "tag", "work", False),
 ]
 GROUPS = [
     ("use", "Use it", "Install it, run it, connect it to an editor, an agent or CI."),

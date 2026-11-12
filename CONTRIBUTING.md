@@ -12,6 +12,17 @@
 
 <!-- End of head. -->
 
+## Licence of contributions
+
+Scrutate is open source (LICENSE) and stays so. A contribution is accepted under the
+[contributor licence agreement](CLA.md): you keep the copyright in what you write, you give the
+project a licence to it that also lets the maintainer offer other terms (a commercial licence,
+for example), and the project promises that what it accepts stays available under the open
+source licence it had that day. You agree once, by ticking the line in the pull request form.
+
+The name and the logo are covered by the [trademark policy](TRADEMARKS.md): a fork with changes
+beyond packaging takes its own name.
+
 ## Layout
 
 ```
