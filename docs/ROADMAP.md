@@ -140,7 +140,8 @@ docs/RELEASING.md, public, tag `v0.1.0`.
   and the most threads for a cold tree (64). A cold tree also costs memory there: about 90 MB
   on 64 threads against 16 MB warm (`-j` bounds both).
 - Windows: nothing is measured. Its thread count (the cores, at most 12), its cold thread count
-  (twice the cores, at most 24) and its disk-read time (75 µs) are the macOS values.
+  (twice the cores, at most 24) and its disk-read time (75 µs) are the macOS values, in the
+  `OTHER` row of the table in `crates/scrutate/src/policy.rs`; a measured row goes there.
 - References: resolution for more languages (C#, C/C++ includes); today `refs` resolves
   Python, JavaScript/TypeScript, Rust, Go and Java.
 - `cargo install`: int8 weights for the semantic model, with the quality check QUALITY.md uses.

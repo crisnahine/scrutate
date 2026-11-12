@@ -77,8 +77,8 @@ capabilities those crates do not provide rather than re-implementing what they a
   performance cores: there, more threads opening and reading files at once wait on each other in
   the kernel (the Linux tree on an M3 Pro: 977 ms on 11 threads, about 845 ms on 5). The open and
   read time of small files tells the page cache from the disk (macOS: about 25 µs a file against
-  160 µs or more; Linux: under 15 µs against 30 µs or more). When it is the disk, the walk adds
-  a thread for every 16 slow reads, because the disk serves many reads in flight: up to 64
+  160 µs or more; Linux: under 15 µs against 30 µs or more). When it is the disk, a walk or a
+  list of files adds a thread for every 16 slow reads, because the disk serves many reads in flight: up to 64
   threads on Linux (the Linux tree cold on 5 CPUs: 1.22 s on 5 threads, 0.37 s this way),
   elsewhere up to twice the cores, at most 24 (macOS: 2.7 s on 5 threads, 1.3 s on 22; 48 gained
   5% there on one tree and lost 4% on another). Threads come one at a time because starting one
@@ -86,23 +86,35 @@ capabilities those crates do not provide rather than re-implementing what they a
   this way, 8.3 ms with a thread per slow read). `-j` overrides all of it.
 - **Searches at the same time (macOS)**: the kernel there serves about four file-reading threads
   at full speed across all processes, so four searches on five threads each are slower than four
-  on one (py-big: 244 ms against 189 ms). A walk of directories adds 1 to a System V semaphore
+  on one (py-big: 244 ms against 189 ms). A walk of directories, or a list of more than 256 files
+  (`--sort`, `grep --index`, `grep_code`, references), adds 1 to a System V semaphore
   kept per user when it starts (`running.rs`), with `SEM_UNDO` so the kernel takes it back
   however the process dies. Its share is the default thread count divided by the searches
   running: it starts that many threads, looks at the value again once after its first four
   files (searches started together each saw fewer of the others than there are) and, past
   1,000 files, every 64 files; the threads over the share pause between directories (`pause` in
-  the vendored walker) until the share rises again. A paused thread sleeps a thirty-second of
+  the vendored walker) until the share rises again; a list's threads over the share end, and
+  it starts more as the share rises. A paused thread sleeps a thirty-second of
   the time it has been paused, at most 1 ms: the walk cannot end before it wakes, and a sleep
   of 1 ms cost a 13 ms search more than a millisecond. Two at once on py-big: 113 ms to 91 ms;
   four: 244 ms to 185 ms; eight: 482 ms to 413 ms. Four at once on the ripgrep sources, 250
   files: 14.7 ms to 13.3 ms, where GNU grep takes 14.5 ms and `-j1` 13.1 ms. One alone makes
-  three system calls for it; a search of one directory without subdirectories makes none. A process leaves the count while a write to a pipe or a
+  three system calls for it; a search of one directory without subdirectories makes none, nor
+  does a list of 256 files or fewer. A process leaves the count while a write to a pipe or a
   terminal may block and while it is stopped from its terminal: the SIGTSTP handler, installed
   only while a search is counted and only when nothing else handles the signal, takes the process
   out, stops it with the default action, and puts it back when it continues. On Linux the cores
   are the limit and splitting them never won (py-big on 5 CPUs, four at once: 53 ms on 5 threads
   each, 60 ms on 1), so nothing is counted there.
+- **One scheduler, one set of thread rules** (`instant::schedule`, `policy.rs`): every walk,
+  every list of files and standard input go through one scheduler, which builds each thread's
+  `Run`, starts the threads, and asks the thread rules how many to start, when to add one and
+  what share of the machine the search gets. The rules are decisions over readings: the cores,
+  the performance cores, the count of searches running, how many small reads were slow, and a
+  table of the numbers measured on each system (macOS, Linux; Windows and other systems take the
+  macOS read time and cold threads, measured nowhere, and count nothing). The operating system
+  gives the readings once per search and once per look at the count, never per file; a test gives
+  its own, so the share and the cold-disk rule are tested without the hardware.
 - **One large file, every core**: a file of 64 MB or more is cut into ranges of whole lines (8 MB
   each). A first pass counts each range's newlines for the line numbers and stops at a NUL byte,
   which sends the file back to the single pass so binary handling is unchanged. The second pass

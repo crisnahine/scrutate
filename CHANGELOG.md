@@ -22,6 +22,12 @@ First release.
   search of them gives the records and output the same bytes in a file give. Every rule of how a
   source is read lives in one module (`source.rs`) over a file, standard input, an archive member
   or text in memory.
+- One scheduler runs every walk and every list of files, and asks one module of thread rules
+  over readings of the machine (cores, the count of searches running, slow reads), which a test
+  can supply. A list of more than 256 files (`--sort`, `grep --index`, `grep_code`, references)
+  now takes its share of the searches running on macOS, as a walk of directories does, and any
+  list adds threads when its reads come from the disk. Alone, every search starts the threads it
+  did.
 - `-e PATTERN` (repeatable) for several patterns; each line of a multi-line match is printed with its
   own line number. The argument after `-e` is the pattern whatever it starts with (`-e '->'`).
 - `grep -i` and `grep -F -i` with a literal pattern use 37 to 50% less CPU time on one thread

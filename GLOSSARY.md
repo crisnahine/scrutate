@@ -119,6 +119,13 @@ index's trigram condition are both built from it.
 stop flag and output target that every file search of it shares. The stop flag is set by the
 caller's cancel flag or by the search itself (enough matches, a closed pipe).
 
+**Thread rules**: how many threads an Engine A search runs (`instant::policy`): the default
+count, the share of each search when several run at once, and the threads a cold disk earns.
+They are decisions over readings of the machine (`Machine`: its cores, its performance cores, the
+count of searches running, the numbers measured for that system), which the operating system
+gives (`System`) or a test does. One scheduler (`instant::schedule`) asks them for every walk and
+file list.
+
 **Byte source**: what one Engine A file search reads (`source.rs`): a file on disk, standard
 input, an archive member or text held in memory. It gives its size when it knows it, positioned
 reads when it has them, and one sequential read; the read rules (first read, byte-order mark, NUL

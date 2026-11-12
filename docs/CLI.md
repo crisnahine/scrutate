@@ -174,7 +174,8 @@ the enclosing function using the index, when one exists; a file whose search a N
 after a match ends its last group with a `note:` line, `"note"` in the JSON `symbol_group`). On macOS, searches of one user that run at the same time split the default threads
 between them and take them back as the others end: each gets the default divided by the number
 running, at least 1 (py-big, four at once: 244 ms each before, 185 ms now; one alone is
-unchanged). A search that walks directories joins that count when it starts, so four searches
+unchanged). A search that walks directories, or searches a list of more than 256 files
+(`--sort`, `--index`), joins that count when it starts, so four searches
 of a small repository started together run on one thread each (13.3 ms each, GNU grep 14.5 ms;
 before, 20 threads on 5 cores and 14.7 ms); one given a thread count
 (`-j`, `SCRUTATE_THREADS`, `threads`) keeps it and is not counted, and neither is one waiting on a

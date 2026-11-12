@@ -1,7 +1,8 @@
-//! Big searches running at the same time share the threads: the count across processes, what a
-//! stopped, killed or blocked search does to it, and what is never counted. Searches of this user
-//! elsewhere on the machine change the count, so the checks compare counts rather than expect
-//! fixed ones.
+//! The count of big searches across processes, through the binary: what a stopped, killed or
+//! blocked search does to it, and one check that searches started together share the threads and
+//! take them back. Which searches are counted and what share each takes are tested with supplied
+//! readings beside the thread rules (`instant::policy`). Searches of this user elsewhere on the
+//! machine change the count, so the checks compare counts rather than expect fixed ones.
 #![cfg(target_os = "macos")]
 
 use std::io::{BufRead, BufReader};
@@ -267,63 +268,4 @@ fn a_search_blocked_on_its_output_gives_way() {
     assert_eq!(seen.last(), Some(&(alone, full)), "probes while the first search waited on its reader: {seen:?}");
     a.child.kill().unwrap();
     a.finish();
-}
-
-#[test]
-fn a_search_of_a_small_tree_takes_its_share_from_the_start() {
-    let _one = lock();
-    // twelve files in two directories: over long before a walk has searched a thousand files
-    let small = std::env::temp_dir().join(format!("scrutate_running_small_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&small);
-    for d in ["a", "b"] {
-        std::fs::create_dir_all(small.join(d)).unwrap();
-        for f in 0..6 {
-            std::fs::write(small.join(d).join(format!("f{f}.txt")), "needle\n").unwrap();
-        }
-    }
-    let lines = |dir: &Path| {
-        let out = Command::new(BIN)
-            .args(["grep", "-F", "needle", "."])
-            .current_dir(dir)
-            .env("SCRUTATE_GREP_DEBUG", "1")
-            .env_remove("SCRUTATE_THREADS")
-            .stdout(Stdio::null())
-            .output()
-            .unwrap();
-        let err = String::from_utf8_lossy(&out.stderr).into_owned();
-        let first = err.lines().find_map(|l| l.strip_prefix("[scrutate] searches running: ")).map(|rest| {
-            let (k, t) = rest.split_once(", threads: ").unwrap();
-            (k.parse::<usize>().unwrap_or(0), t.parse::<usize>().unwrap())
-        });
-        first.unwrap_or_else(|| panic!("a small search printed no count: {err}"))
-    };
-    let (alone, full) = lines(&small);
-    // a counted search held where it is: the small one sees it and starts with fewer threads
-    let a = Search::start(&["-F", "nothing-matches-this"], Stdio::null());
-    a.next();
-    a.signal("-STOP");
-    let (with, threads) = lines(&small);
-    a.signal("-KILL");
-    a.finish();
-    let _ = std::fs::remove_dir_all(&small);
-    assert!(with > alone, "{with} searches seen beside a held one, {alone} alone");
-    assert!(full == 1 || threads < full, "{threads} threads beside another search, {full} alone");
-}
-
-#[test]
-fn a_thread_count_given_or_a_small_search_is_not_counted() {
-    let _one = lock();
-    for args in [&["-j4", "-F", "nothing-matches-this", "."][..], &["-F", "needle", "d0/f0.txt"], &["-F", "needle", "d0"]] {
-        let out = Command::new(BIN)
-            .arg("grep")
-            .args(args)
-            .current_dir(tree())
-            .env("SCRUTATE_GREP_DEBUG", "1")
-            .env_remove("SCRUTATE_THREADS")
-            .stdout(Stdio::null())
-            .output()
-            .unwrap();
-        let err = String::from_utf8_lossy(&out.stderr);
-        assert!(!err.contains("searches running"), "{args:?}: {err}");
-    }
 }

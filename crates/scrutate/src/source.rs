@@ -232,7 +232,7 @@ pub(super) fn search<S: Source>(w: &mut FileWorker, r: &Run, src: &mut S, rel: A
         let first = if src.known_size().is_none_or(|n| n <= SMALL_FILE) { first(at, &mut w.small) } else { First::Larger };
         if let (First::Whole(_) | First::Other, Some(opened)) = (&first, src.opened()) {
             c.small_reads.fetch_add(1, Ordering::Relaxed);
-            if opened.elapsed().as_nanos() as u64 >= COLD_READ_NS {
+            if r.p.slow(opened.elapsed().as_nanos() as u64) {
                 c.slow_reads.fetch_add(1, Ordering::Relaxed);
             }
         }
@@ -248,7 +248,7 @@ pub(super) fn search<S: Source>(w: &mut FileWorker, r: &Run, src: &mut S, rel: A
                         Outcome::Stream => {}
                         Outcome::Buffer(b) => owned = Some(b),
                     }
-                } else if len <= MID_FILE && range_threads(f) > 1 {
+                } else if len <= MID_FILE && r.p.range_threads() > 1 {
                     // a searcher of its own, so the thread's keeps the buffer size it had: where a
                     // NUL byte after the first fill stops the output depends on that size. One
                     // thread meets the files in a fixed order and keeps its one searcher
@@ -415,7 +415,7 @@ fn one_line<A: ReadAt + Sync>(r: &Run, at: &A, size: u64, rel: &Arc<str>) -> Opt
     if tests::NO_ONE_LINE.with(|c| c.get()) {
         return None;
     }
-    let Some(found) = literal_in(at, size, &lit.0, default_threads(r.f)) else { return Some(Outcome::Stream) };
+    let Some(found) = literal_in(at, size, &lit.0, r.p.threads()) else { return Some(Outcome::Stream) };
     #[cfg(test)]
     tests::ONE_LINE.with(|n| n.set(n.get() + 1));
     if found {
@@ -490,7 +490,7 @@ struct Part {
 /// must be searched sequentially after all: it starts with a byte-order mark (transcoded as one
 /// stream), holds a NUL byte (binary detection), a read failed, or it has no line breaks to split at.
 pub(super) fn split<A: ReadAt + Sync>(r: &Run, at: &A, size: u64, chunk: u64, rel: &Arc<str>) -> Outcome {
-    let Run { q: o, f, c, stop, tx, plain, .. } = *r;
+    let Run { q: o, p, c, stop, tx, plain, .. } = *r;
     let mut head = [0u8; 3];
     match at.read_at(&mut head, 0) {
         Ok(n) if starts_with_bom(&head[..n]) => return Outcome::Stream,
@@ -499,7 +499,7 @@ pub(super) fn split<A: ReadAt + Sync>(r: &Run, at: &A, size: u64, chunk: u64, re
     }
     // one thread only asks whether the source has a line break to split at: the stream holds 3^k
     // times 64 KiB for a long line (141.6 MB peak resident for one 100 MB line, 103.9 whole)
-    let one = range_threads(f) == 1;
+    let one = p.range_threads() == 1;
     let mut bounds = vec![0u64];
     let mut probe = vec![0u8; 64 << 10];
     let mut x = chunk;
@@ -518,13 +518,13 @@ pub(super) fn split<A: ReadAt + Sync>(r: &Run, at: &A, size: u64, chunk: u64, re
         if let Some(done) = one_line(r, at, size, rel) {
             return done;
         }
-        return whole(at, size, default_threads(f)).map_or(Outcome::Stream, Outcome::Buffer);
+        return whole(at, size, p.threads()).map_or(Outcome::Stream, Outcome::Buffer);
     }
     if one {
         return Outcome::Stream;
     }
     let ranges: Vec<(u64, u64)> = bounds.windows(2).map(|w| (w[0], w[1])).collect();
-    let threads = range_threads(f).min(ranges.len());
+    let threads = p.range_threads().min(ranges.len());
 
     let next = AtomicUsize::new(0);
     let failed = AtomicBool::new(false);

@@ -26,8 +26,12 @@ use ignore::{overrides::OverrideBuilder, WalkBuilder, WalkState};
 
 #[path = "foldfind.rs"]
 mod foldfind;
+#[path = "policy.rs"]
+mod policy;
 #[path = "source.rs"]
 mod source;
+pub use policy::MAX_THREADS;
+use policy::{Machine, Policy, Shown, System};
 use source::{file_worker, FileWorker};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1826,100 +1830,6 @@ impl Collector<'_> {
     }
 }
 
-/// Default number of threads searching many files: the cores, at most 12 (more only add contention
-/// on the directory walk and the output channel); on macOS the performance cores, because threads
-/// opening and reading files at once mostly wait on each other in the kernel there (the Linux tree:
-/// 977 ms on 11 threads, 843 ms on 6, 850 ms on 4; LLVM: 1649 ms on 11, 1377 ms on 4).
-pub fn default_threads(f: &Files) -> usize {
-    static N: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    if f.threads != 0 {
-        return asked_threads(f);
-    }
-    *N.get_or_init(|| performance_cores().map_or_else(cores, |p| p.clamp(2, cores())))
-}
-
-/// Most threads a search starts for `Files::threads`: past a few hundred, starting them costs
-/// more than any search gains (`-j 4000` took 1.8 s on 11 files, `-j 100000` failed to start them).
-pub const MAX_THREADS: usize = 256;
-
-/// `Files::threads` as a number of threads (0, the default, is not one).
-fn asked_threads(f: &Files) -> usize {
-    f.threads.min(MAX_THREADS)
-}
-
-/// An open and read of a small file taking this long came from the disk, not the page cache:
-/// on macOS about 25 us warm and 160 us or more cold (M3 Pro); on Linux 99.9% of warm reads
-/// under 15 us and 97% of cold reads over 30 us (a VM on the same machine).
-const COLD_READ_NS: u64 = if cfg!(target_os = "linux") { 30_000 } else { 75_000 };
-
-fn reads_from_disk(c: &Counters) -> bool {
-    // three quarters slow: a few reads delayed by a busy machine do not make a warm tree look cold
-    let reads = c.small_reads.load(Ordering::Relaxed);
-    reads >= 16 && c.slow_reads.load(Ordering::Relaxed) * 4 >= reads * 3
-}
-
-/// Most threads for a tree read from the disk. Those reads wait on the device, so more of them
-/// than cores are worth having. On Linux 64: the Linux tree cold on 5 CPUs took 1.22 s on 5
-/// threads, 0.76 s on 10, 0.55 s on 20, 0.41 s on 40, 0.37 s on 80, 0.38 s on 160. Elsewhere twice
-/// the cores, at most 24: on macOS the same tree took 2.7 s on 5 threads, 1.6 s on 11, 1.31 s on
-/// 24, 1.24 s on 48, 1.36 s on 96, and 200,000 small files were slower on 48 than on 22.
-fn cold_threads() -> usize {
-    if cfg!(target_os = "linux") {
-        64
-    } else {
-        2 * cores()
-    }
-}
-
-/// A cold tree gets one more thread for every this many slow reads, not all `cold_threads` at
-/// once: starting a thread costs about as much as a slow read, which a small tree never earns
-/// back (231 files cold on Linux: 8.3 ms with a thread per slow read, 7.4 ms per 4, 6.0 ms per 8,
-/// 5.8 ms per 16; the Linux tree takes 0.37 s with any of them).
-const COLD_READS_PER_THREAD: u64 = 16;
-
-/// Threads the reads so far call for, on top of `default_threads`.
-fn cold_extra(f: &Files, c: &Counters) -> usize {
-    if f.threads == 0 && reads_from_disk(c) {
-        let most = cold_threads().saturating_sub(default_threads(f));
-        ((c.slow_reads.load(Ordering::Relaxed) / COLD_READS_PER_THREAD) as usize).min(most)
-    } else {
-        0
-    }
-}
-
-/// Threads for one large file searched as ranges: every core (at most 12), since that work is
-/// matching rather than opening files.
-fn range_threads(f: &Files) -> usize {
-    if f.threads != 0 {
-        asked_threads(f)
-    } else {
-        cores()
-    }
-}
-
-fn cores() -> usize {
-    static CORES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    // a system call on some platforms, and asked once per file
-    *CORES.get_or_init(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2).min(12))
-}
-
-#[cfg(target_os = "macos")]
-fn performance_cores() -> Option<usize> {
-    extern "C" {
-        fn sysctlbyname(name: *const std::ffi::c_char, oldp: *mut std::ffi::c_void, oldlenp: *mut usize, newp: *mut std::ffi::c_void, newlen: usize) -> i32;
-    }
-    let mut v: i32 = 0;
-    let mut len = std::mem::size_of::<i32>();
-    // SAFETY: a NUL-terminated name, an i32 to write and its size, no new value
-    let rc = unsafe { sysctlbyname(c"hw.perflevel0.physicalcpu".as_ptr(), (&mut v as *mut i32).cast(), &mut len, std::ptr::null_mut(), 0) };
-    (rc == 0 && len == std::mem::size_of::<i32>() && v > 0).then_some(v as usize)
-}
-
-#[cfg(not(target_os = "macos"))]
-fn performance_cores() -> Option<usize> {
-    None
-}
-
 /// ripgrep's own ignore file: read before `.ignore` and `.gitignore`, switched off with them.
 pub const RGIGNORE: &str = ".rgignore";
 
@@ -2018,10 +1928,10 @@ impl ScopedGlobs {
 }
 
 pub fn build_walker(roots: &[PathBuf], f: &Files) -> Result<ignore::WalkParallel> {
-    Ok(walk_builder(roots, f)?.build_parallel())
+    Ok(walk_builder(roots, f, Policy::read(&System::default(), f.threads).threads())?.build_parallel())
 }
 
-fn walk_builder(roots: &[PathBuf], f: &Files) -> Result<WalkBuilder> {
+fn walk_builder(roots: &[PathBuf], f: &Files, threads: usize) -> Result<WalkBuilder> {
     let mut wb = WalkBuilder::new(&roots[0]);
     for r in &roots[1..] {
         wb.add(r);
@@ -2035,7 +1945,7 @@ fn walk_builder(roots: &[PathBuf], f: &Files) -> Result<WalkBuilder> {
         .follow_links(f.follow_links)
         .max_depth(f.max_depth)
         .max_filesize(f.max_filesize)
-        .threads(default_threads(f));
+        .threads(threads);
     if !f.no_ignore {
         wb.add_custom_ignore_filename(RGIGNORE);
     }
@@ -2058,14 +1968,14 @@ fn walk_builder(roots: &[PathBuf], f: &Files) -> Result<WalkBuilder> {
     Ok(wb)
 }
 
-/// How many files the one-thread walk (`small_first`) takes before the parallel walk does the rest;
-/// 0 skips it. Roots holding only files get 256: starting the parallel walk costs more there than
+/// How many files the walking thread (`schedule`) takes before the parallel walk does the rest;
+/// 0 skips it. Roots holding only files get `SMALL_SEARCH`, 256: starting the parallel walk costs more there than
 /// the search itself (three large files: 40.6 ms against 41.9). Any directory to enter gets 0: one
 /// thread reading every directory then holds up the searches (the ripgrep repository, 60
 /// directories: 5.6 ms in parallel against 6.0). `Files::small_tree` sets the number for any tree
 /// (the tests use both walks).
 fn small_tree_files(roots: &[PathBuf], f: &Files) -> usize {
-    f.small_tree.unwrap_or_else(|| if has_dirs(roots, f) { 0 } else { 256 })
+    f.small_tree.unwrap_or_else(|| if has_dirs(roots, f) { 0 } else { policy::SMALL_SEARCH })
 }
 
 /// Whether a root holds a directory the walk would enter (a hidden one only with `--hidden`).
@@ -2087,146 +1997,6 @@ fn has_dirs(roots: &[PathBuf], f: &Files) -> bool {
 /// root can be a link to a directory, which the walk enters.
 fn searchable(e: &ignore::DirEntry) -> bool {
     e.file_type().is_some_and(|t| t.is_file() || (e.depth() == 0 && !t.is_dir() && !e.path().is_dir()))
-}
-
-enum Small {
-    Done,
-    /// more files than the budget: the paths already searched, each with the times it was (overlapping
-    /// roots reach a file more than once), for the parallel walk to skip that many times
-    Big(std::collections::HashMap<PathBuf, AtomicUsize>),
-}
-
-/// Walks on the calling thread while a few threads search the files it finds, so a small tree pays
-/// neither for a parallel walk nor for walking before searching. The first file waits for a second
-/// before any thread starts: a tree of one file is searched on the calling thread, with no thread
-/// (four threads cost about 1 M instructions, a third of a one-file search past start-up). Past
-/// `small_tree_files` files the walk stops; the caller's parallel walk then skips what was searched
-/// here. Walk errors count only when this walk finished (the parallel walk meets them again otherwise).
-#[allow(clippy::too_many_arguments)]
-fn small_first(
-    roots: &[PathBuf],
-    labels: &[PathBuf],
-    q: &Query,
-    f: &Files,
-    matcher: &AnyMatcher,
-    c: &Counters,
-    stop: &Stop,
-    plain: Option<&PlainSink>,
-    on_hit: &mut dyn FnMut(Record),
-) -> Small {
-    let limit = small_tree_files(roots, f);
-    if limit == 0 {
-        return Small::Big(Default::default());
-    }
-    let Ok(wb) = walk_builder(roots, f) else { return Small::Big(Default::default()) };
-    type Job = (PathBuf, Arc<str>, Option<u64>, bool);
-    let (work_tx, work_rx) = mpsc::channel::<Job>();
-    let work_rx = Mutex::new(work_rx);
-    let (tx, rx) = hit_channel();
-    let workers = default_threads(f).min(3);
-    let (seen, errors, big) = std::thread::scope(|s| {
-        let work_rx = &work_rx;
-        let worker = |tx: mpsc::SyncSender<Vec<Record>>| {
-            #[cfg(test)]
-            tests::SMALL_WORKERS.with(|n| n.set(n.get() + 1));
-            // a clone per thread: each gets its own regex cache pool instead of contending for one
-            let matcher = matcher.clone();
-            s.spawn(move || {
-                let mut fw = file_worker(q);
-                loop {
-                    let job = match work_rx.lock() {
-                        Ok(r) => r.recv(),
-                        Err(_) => break,
-                    };
-                    let Ok((path, rel, size, named)) = job else { break };
-                    if !stop.is_set() {
-                        search_one(&mut fw, &Run { matcher: &matcher, q, f, c, stop, tx: &tx, plain, labels, raw: None }, &path, rel, size, named);
-                    }
-                }
-            });
-        };
-        let (mut started, mut added) = (false, 0);
-        let mut held: Option<Job> = None;
-        let mut seen = std::collections::HashMap::<PathBuf, AtomicUsize>::new();
-        let mut taken = 0;
-        let mut errors = Vec::new();
-        let mut big = false;
-        for entry in wb.build() {
-            if stop.is_set() {
-                break;
-            }
-            let entry = match entry {
-                Ok(e) => e,
-                Err(e) => {
-                    errors.push(e.to_string());
-                    continue;
-                }
-            };
-            if !searchable(&entry) {
-                c.met_dir(&entry);
-                continue;
-            }
-            if taken == limit {
-                big = true;
-                break;
-            }
-            taken += 1;
-            let size = if q.want_bytes { entry.metadata().ok().map(|m| m.len()) } else { None };
-            let rel = label(entry.path(), labels, f);
-            let named = f.paths_as_given && entry.depth() == 0;
-            let path = entry.into_path();
-            *seen.entry(path.clone()).or_default().get_mut() += 1;
-            let job = (path, rel, size, named);
-            if !started {
-                let Some(first) = held.take() else {
-                    held = Some(job);
-                    continue;
-                };
-                for _ in 0..workers {
-                    worker(tx.clone());
-                }
-                started = true;
-                if work_tx.send(first).is_err() {
-                    break;
-                }
-            }
-            if work_tx.send(job).is_err() {
-                break;
-            }
-            while added < cold_extra(f, c) {
-                worker(tx.clone());
-                added += 1;
-            }
-            while let Ok(batch) = rx.try_recv() {
-                #[cfg(test)]
-                c.queued.fetch_sub(1, Ordering::Relaxed);
-                batch.into_iter().for_each(&mut *on_hit);
-            }
-        }
-        drop(work_tx);
-        if let Some((path, rel, size, named)) = held.filter(|_| !stop.is_set()) {
-            c.alone.store(true, Ordering::Relaxed);
-            let tx = tx.clone();
-            let one = move || search_one(&mut file_worker(q), &Run { matcher, q, f, c, stop, tx: &tx, plain, labels, raw: None }, &path, rel, size, named);
-            // plain output sends no hits; other output is drained here while the file is searched
-            if plain.is_some() {
-                one();
-            } else {
-                s.spawn(one);
-            }
-        }
-        drop(tx);
-        drain(rx, c, &mut *on_hit);
-        c.alone.store(false, Ordering::Relaxed);
-        (seen, errors, big)
-    });
-    if big && !stop.is_set() {
-        return Small::Big(seen);
-    }
-    for e in errors {
-        c.failed(e);
-    }
-    Small::Done
 }
 
 #[derive(Default)]
@@ -2253,6 +2023,9 @@ struct Counters {
     queued: AtomicUsize,
     #[cfg(test)]
     most_queued: AtomicUsize,
+    /// threads started for a list or a walking thread
+    #[cfg(test)]
+    started: AtomicUsize,
 }
 
 impl Counters {
@@ -2320,6 +2093,8 @@ struct Run<'a> {
     matcher: &'a AnyMatcher,
     q: &'a Query,
     f: &'a Files,
+    /// the thread rules
+    p: &'a Policy,
     c: &'a Counters,
     stop: &'a Stop,
     tx: &'a mpsc::SyncSender<Vec<Record>>,
@@ -2332,7 +2107,7 @@ struct Run<'a> {
 
 impl<'a> Run<'a> {
     fn collector(&self, path: Arc<str>) -> Collector<'a> {
-        let (o, f) = (self.q, self.f);
+        let o = self.q;
         Collector {
             path,
             raw: self.raw.cloned(),
@@ -2358,7 +2133,7 @@ impl<'a> Run<'a> {
             binary_at: None,
             multiline: o.pattern.multiline,
             first: o.before > 0 || o.after > 0,
-            whole_groups: (o.before > 0 || o.after > 0) && default_threads(f) > 1 && !self.c.alone.load(Ordering::Relaxed),
+            whole_groups: (o.before > 0 || o.after > 0) && self.p.threads() > 1 && !self.c.alone.load(Ordering::Relaxed),
             named: o.with_filename,
             numbered: o.line_numbers,
             count_each: o.pattern.multiline && o.report == Report::Counts && !o.invert && self.matcher.spans_lines(),
@@ -2493,26 +2268,35 @@ fn stats(c: &Counters, t0: Instant, stop: &Stop) -> Stats {
 /// found. The search stops early once `cancel` is set (from another thread), which it reads and
 /// never sets. Returns statistics.
 pub fn search(query: &Query, files: &Files, cancel: Arc<AtomicBool>, out: Output) -> Result<Stats> {
-    let stop = Arc::new(Stop::new(cancel));
+    search_on(&System::default(), query, files, cancel, out)
+}
+
+/// `search`, with the thread rules reading `m`.
+fn search_on<M: Machine>(m: &M, query: &Query, files: &Files, cancel: Arc<AtomicBool>, out: Output) -> Result<Stats> {
+    let stop = Stop::new(cancel);
+    // read without a call through a table: the vtable is touched only by a search that is counted
+    let p = Policy::read(m, files.threads);
     let mut none = |_: Record| {};
     let (plain, on_record): (Option<Arc<PlainSink>>, &mut dyn FnMut(Record)) = match out {
         Output::Records(f) => (None, f),
         Output::Plain(p) => (Some(p), &mut none),
     };
+    let plain = plain.as_deref();
     match &files.paths {
-        Paths::Walk(roots) => run_walk(roots, query, files, stop, plain, on_record),
-        Paths::List { root, files: list } => run_files(root, list, query, files, stop, plain, on_record),
-        Paths::Memory(texts) => run_memory(texts, query, files, stop, plain, on_record),
+        Paths::Walk(roots) => run_walk(roots, query, files, &p, m, &stop, plain, on_record),
+        Paths::List { root, files: list } => run_files(root, list, query, files, &p, m, &stop, plain, on_record),
+        Paths::Memory(texts) => run_memory(texts, query, files, &p, &stop, plain, on_record),
     }
 }
 
-/// Search text held in memory on one thread, as `search_list` searches a list of files.
+/// Search text held in memory on one thread, in the order given or by name.
 fn run_memory(
     texts: &[(String, Vec<u8>)],
     q: &Query,
     f: &Files,
-    stop: Arc<Stop>,
-    plain: Option<Arc<PlainSink>>,
+    p: &Policy,
+    stop: &Stop,
+    plain: Option<&PlainSink>,
     on_hit: &mut dyn FnMut(Record),
 ) -> Result<Stats> {
     let t0 = Instant::now();
@@ -2526,13 +2310,12 @@ fn run_memory(
         order.sort_by(|a, b| Path::new(&a.0).cmp(Path::new(&b.0)));
     }
     let (tx, rx) = hit_channel();
-    let (c, stop) = (&counters, &*stop);
+    let c = &counters;
     std::thread::scope(|s| {
         let matcher = &matcher;
-        let plain = plain.as_deref();
         s.spawn(move || {
             let mut fw = file_worker(q);
-            let r = Run { matcher, q, f, c, stop, tx: &tx, plain, labels: &[], raw: None };
+            let r = Run { matcher, q, f, p, c, stop, tx: &tx, plain, labels: &[], raw: None };
             for (name, bytes) in order {
                 if stop.is_set() {
                     break;
@@ -2546,13 +2329,23 @@ fn run_memory(
     Ok(stats(&counters, t0, stop))
 }
 
-fn run_walk(roots: &[PathBuf], q: &Query, f: &Files, stop: Arc<Stop>, plain: Option<Arc<PlainSink>>, on_hit: &mut dyn FnMut(Record)) -> Result<Stats> {
+#[allow(clippy::too_many_arguments)]
+fn run_walk(
+    roots: &[PathBuf],
+    q: &Query,
+    f: &Files,
+    p: &Policy,
+    m: &dyn Machine,
+    stop: &Stop,
+    plain: Option<&PlainSink>,
+    on_hit: &mut dyn FnMut(Record),
+) -> Result<Stats> {
     let t0 = Instant::now();
     if roots.is_empty() {
         bail!("no paths to search");
     }
-    let matcher = Arc::new(build_matcher(&q.pattern)?);
-    let counters = Arc::new(Counters::default());
+    let matcher = build_matcher(&q.pattern)?;
+    let counters = Counters::default();
     let rest: Vec<PathBuf>;
     let stdin_too = f.paths_as_given && roots.iter().any(|r| r.as_os_str() == "-");
     let given = roots;
@@ -2563,6 +2356,7 @@ fn run_walk(roots: &[PathBuf], q: &Query, f: &Files, stop: Arc<Stop>, plain: Opt
         roots
     };
     counters.pseudo_roots(pseudo_roots(roots));
+    let s = Common { matcher: &matcher, q, f, p, m, c: &counters, stop, plain, labels: roots };
     if q.first_in_path_order {
         if plain.is_some() {
             bail!("first_in_path_order needs records, not plain output");
@@ -2575,205 +2369,398 @@ fn run_walk(roots: &[PathBuf], q: &Query, f: &Files, stop: Arc<Stop>, plain: Opt
                 continue;
             }
             let at = files.len();
-            files.extend(list_files(std::slice::from_ref(root), roots, f, &counters)?);
+            files.extend(list_files(std::slice::from_ref(root), roots, f, p, &counters)?);
             files[at..].sort_by(|a, b| Path::new(&*a.1).cmp(Path::new(&*b.1)));
         }
-        return Ok(first_in_path_order(files, roots, &matcher, q, f, &counters, &stop, on_hit, t0));
+        return Ok(first_in_path_order(files, &s, on_hit, t0));
     }
     if stdin_too {
-        search_stdin(q, f, &matcher, &counters, &stop, plain.as_deref(), on_hit);
+        // standard input, alone, before the walk
+        let stdin = [(PathBuf::from("-"), Arc::from(STDIN_LABEL), true)];
+        counters.alone.store(true, Ordering::Relaxed);
+        schedule(Feed::List(&stdin, None), &Common { labels: &[], ..s }, on_hit)?;
+        counters.alone.store(false, Ordering::Relaxed);
     }
     if roots.is_empty() {
-        return Ok(stats(&counters, t0, &stop));
+        return Ok(stats(&counters, t0, stop));
     }
     // the overrides are anchored at one root: a glob naming a directory needs a walk per root
     if roots.len() > 1 && f.globs.iter().any(|g| g.contains('/')) {
         for root in roots.chunks(1) {
             if !stop.is_set() {
-                walk(root, roots, q, f, &matcher, &counters, &stop, plain.clone(), on_hit)?;
+                schedule(Feed::Walk(root), &s, on_hit)?;
             }
         }
     } else {
-        walk(roots, roots, q, f, &matcher, &counters, &stop, plain, on_hit)?;
+        schedule(Feed::Walk(roots), &s, on_hit)?;
     }
-    Ok(stats(&counters, t0, &stop))
+    Ok(stats(&counters, t0, stop))
 }
 
-/// Search standard input, reported as `STDIN_LABEL`.
-fn search_stdin(q: &Query, f: &Files, matcher: &AnyMatcher, c: &Counters, stop: &Stop, plain: Option<&PlainSink>, on_hit: &mut dyn FnMut(Record)) {
-    let (tx, rx) = hit_channel();
-    c.alone.store(true, Ordering::Relaxed);
-    std::thread::scope(|s| {
-        s.spawn(move || {
-            let mut fw = file_worker(q);
-            search_one(&mut fw, &Run { matcher, q, f, c, stop, tx: &tx, plain, labels: &[], raw: None }, Path::new("-"), Arc::from(STDIN_LABEL), None, true);
-        });
-        drain(rx, c, &mut *on_hit);
-    });
-    c.alone.store(false, Ordering::Relaxed);
+/// What every thread of one search shares: a `Run` but its channel, and the thread rules with the
+/// machine they read.
+#[derive(Clone, Copy)]
+struct Common<'a> {
+    matcher: &'a AnyMatcher,
+    q: &'a Query,
+    f: &'a Files,
+    p: &'a Policy,
+    m: &'a dyn Machine,
+    c: &'a Counters,
+    stop: &'a Stop,
+    plain: Option<&'a PlainSink>,
+    /// the paths the files are reported under (`label`)
+    labels: &'a [PathBuf],
 }
 
-/// A walk joins the count of searches running (`crate::running`) when it starts, and takes its
-/// share of the threads from then: four searches of a small repository started together ran 20
-/// threads on 5 cores (14.5 ms each, against 12.5 ms on one thread each). It looks at the count
-/// again only once it has searched this many files, so a small repository makes the system
-/// calls once, and once more after `COUNTED_EARLY` files.
-const COUNTED_AFTER: u64 = 1000;
-const COUNTED_EARLY: u64 = 4;
-
-/// `SCRUTATE_GREP_DEBUG`: a line on stderr when a walk joins the count of searches running and
-/// when that count changes, with the threads it takes (`None`: no count on this system).
-fn show_share(shown: &AtomicUsize, running: Option<usize>, threads: usize) {
-    static DEBUG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if !*DEBUG.get_or_init(|| std::env::var_os("SCRUTATE_GREP_DEBUG").is_some_and(|v| !v.is_empty())) {
-        return;
+impl Common<'_> {
+    /// One thread's `Run`, with its own matcher (its own regex cache pool instead of contending for
+    /// one) and its own end of the channel.
+    fn run<'r>(&'r self, matcher: &'r AnyMatcher, tx: &'r mpsc::SyncSender<Vec<Record>>) -> Run<'r> {
+        let s = self;
+        Run { matcher, q: s.q, f: s.f, p: s.p, c: s.c, stop: s.stop, tx, plain: s.plain, labels: s.labels, raw: None }
     }
-    let key = running.map_or(usize::MAX, |k| k << 16 | threads);
-    if shown.swap(key, Ordering::Relaxed) != key {
-        match running {
-            Some(k) => eprintln!("[scrutate] searches running: {k}, threads: {threads}"),
-            None => eprintln!("[scrutate] searches running: not counted, threads: {threads}"),
+}
+
+/// Where the files of one `schedule` come from.
+enum Feed<'a> {
+    /// the files under these roots: a walk on the calling thread first when no root holds a
+    /// directory, then the parallel walk
+    Walk(&'a [PathBuf]),
+    /// these files (path, path as reported, named), handed out in order; with a number, no file is
+    /// started once that many matches are in
+    List(&'a [(PathBuf, Arc<str>, bool)], Option<u64>),
+}
+
+/// A file the walking thread found: path, path as reported, size, named.
+type Found = (PathBuf, Arc<str>, Option<u64>, bool);
+
+/// A file a thread takes, as `Found`.
+type Item<'a> = (std::borrow::Cow<'a, Path>, Arc<str>, Option<u64>, bool);
+
+/// The files the threads of a list or of the walking thread take, one at a time.
+enum Items<'a> {
+    Found(Mutex<mpsc::Receiver<Found>>),
+    List { files: &'a [(PathBuf, Arc<str>, bool)], next: AtomicUsize, stop_at: Option<u64> },
+}
+
+impl Items<'_> {
+    fn next(&self, s: &Common) -> Option<Item<'_>> {
+        match self {
+            Items::Found(rx) => {
+                let (path, rel, size, named) = rx.lock().ok()?.recv().ok()?;
+                Some((path.into(), rel, size, named))
+            }
+            Items::List { files, next, stop_at } => {
+                // checked before a file is taken, so the files searched are always the first ones
+                if stop_at.is_some_and(|n| s.c.matches.load(Ordering::Relaxed) >= n) {
+                    return None;
+                }
+                let (path, rel, named) = files.get(next.fetch_add(1, Ordering::Relaxed))?;
+                // standard input has no size, whatever a file named `-` holds
+                let size = if s.q.want_bytes && !(*named && path.as_os_str() == "-") { std::fs::metadata(path).ok().map(|m| m.len()) } else { None };
+                Some((path.as_path().into(), Arc::clone(rel), size, *named))
+            }
         }
     }
 }
 
-/// Search the files under `roots`, reported as found under `labels`.
-#[allow(clippy::too_many_arguments)]
-fn walk(
-    roots: &[PathBuf],
-    labels: &[PathBuf],
-    q: &Query,
-    f: &Files,
-    matcher: &Arc<AnyMatcher>,
-    counters: &Arc<Counters>,
-    stop: &Arc<Stop>,
-    plain: Option<Arc<PlainSink>>,
-    on_hit: &mut dyn FnMut(Record),
-) -> Result<()> {
-    let searched = match small_first(roots, labels, q, f, matcher, counters, stop, plain.as_deref(), on_hit) {
-        Small::Done => return Ok(()),
-        Small::Big(seen) => Arc::new(seen),
-    };
-    let threads = default_threads(f);
-    // counted only without -j: a number asked for is kept
-    let counted = (f.threads == 0).then(|| Arc::new(std::sync::OnceLock::<Option<crate::running::Counted>>::new()));
-    let shown = Arc::new(AtomicUsize::new(0));
-    let first = match &counted {
-        Some(counted) => {
-            let k = counted.get_or_init(crate::running::Counted::start).as_ref().and_then(|n| n.running());
-            let first = k.map_or(threads, |k| crate::running::threads(threads, k));
-            show_share(&shown, k, first);
-            first
+/// How many threads one stage of a search runs, as the thread rules decide while it runs: its share
+/// of the searches running (when it is counted) and the threads its slow reads earn.
+struct Threads<'a> {
+    s: &'a Common<'a>,
+    counted: bool,
+    share: AtomicUsize,
+    cold: AtomicUsize,
+    /// the share plus the cold threads: the threads that should run
+    want: Arc<AtomicUsize>,
+    /// the threads of a list or of the walking thread that run now
+    running: AtomicUsize,
+    /// the look at the count after the first few files was taken
+    early: AtomicBool,
+    shown: Shown,
+}
+
+impl<'a> Threads<'a> {
+    /// `counted`: the stage joins the count of searches running and takes its share; otherwise it
+    /// takes `alone` threads.
+    fn new(s: &'a Common<'a>, counted: bool, alone: usize) -> Threads<'a> {
+        let shown = Shown::default();
+        let first = if counted {
+            let k = s.m.running();
+            let n = s.p.share(k);
+            shown.show(s.m, k, n);
+            n
+        } else {
+            alone
+        };
+        let cold = s.p.cold_extra(s.c.small_reads.load(Ordering::Relaxed), s.c.slow_reads.load(Ordering::Relaxed));
+        Threads {
+            s,
+            counted,
+            share: AtomicUsize::new(first),
+            cold: AtomicUsize::new(cold),
+            want: Arc::new(AtomicUsize::new(first + cold)),
+            running: AtomicUsize::new(0),
+            early: AtomicBool::new(false),
+            shown,
         }
-        None => threads,
-    };
-    let share = Arc::new(AtomicUsize::new(first));
-    let early = Arc::new(AtomicBool::new(false));
-    // raised as reads turn out to come from the disk: the walk grows by that many threads
-    let cold = Arc::new(AtomicUsize::new(cold_extra(f, counters)));
-    // the threads the walk runs: the share plus the cold ones
-    let want = Arc::new(AtomicUsize::new(first + cold.load(Ordering::Relaxed)));
-    let mut wb = walk_builder(roots, f)?;
-    // the share starts, and the rest when the count falls or the reads turn out cold
-    wb.threads(first);
-    if f.threads == 0 {
-        wb.grow_threads(cold_threads().max(threads).saturating_sub(first), Arc::clone(&want));
     }
-    let walker = wb.build_parallel();
-    let (tx, rx) = hit_channel();
-    let labels_owned: Arc<[PathBuf]> = labels.into();
-    let matcher = Arc::clone(matcher);
-    let (q, f) = (Arc::new(q.clone()), Arc::new(f.clone()));
-    let (c2, stop2) = (Arc::clone(counters), Arc::clone(stop));
-    let worker = std::thread::spawn(move || {
-        walker.run(|| {
-            let tx = tx.clone();
-            // a clone per thread: each gets its own regex cache pool instead of contending for one
-            let matcher = AnyMatcher::clone(&matcher);
-            let stop = Arc::clone(&stop2);
-            let c = Arc::clone(&c2);
-            let (q, f) = (Arc::clone(&q), Arc::clone(&f));
-            let labels = Arc::clone(&labels_owned);
-            let plain = plain.clone();
-            let searched = Arc::clone(&searched);
-            let (cold, want, share, shown) = (Arc::clone(&cold), Arc::clone(&want), Arc::clone(&share), Arc::clone(&shown));
-            let counted = counted.clone();
-            let early = Arc::clone(&early);
-            let mut files = 0u32;
-            // made on the first file: the threads kept for a cold walk mostly never run
-            let mut fw = None;
-            Box::new(move |entry| {
+
+    fn first(&self) -> usize {
+        self.share.load(Ordering::Relaxed)
+    }
+
+    /// After a file of a thread that has searched `files`: true when the threads wanted changed.
+    fn after_file(&self, files: &mut u32) -> bool {
+        let (p, c) = (self.s.p, self.s.c);
+        let extra = p.cold_extra(c.small_reads.load(Ordering::Relaxed), c.slow_reads.load(Ordering::Relaxed));
+        let mut changed = extra > self.cold.load(Ordering::Relaxed);
+        if changed {
+            self.cold.fetch_max(extra, Ordering::Relaxed);
+        }
+        if self.counted {
+            *files = files.wrapping_add(1);
+            let searched = c.files_searched.load(Ordering::Relaxed);
+            if p.look_again(*files, searched) || (p.look_early(searched) && !self.early.swap(true, Ordering::Relaxed)) {
+                let k = self.s.m.running();
+                let now = p.share(k);
+                changed |= self.share.swap(now, Ordering::Relaxed) != now;
+                self.shown.show(self.s.m, k, now);
+            }
+        }
+        if changed {
+            self.want.store(self.share.load(Ordering::Relaxed) + self.cold.load(Ordering::Relaxed), Ordering::Relaxed);
+        }
+        changed
+    }
+
+    /// Starts a thread taking `items` when fewer run than are wanted, or `force`.
+    // `try_update`, the new name of `fetch_update`, is newer than the oldest Rust this builds with
+    #[allow(deprecated)]
+    fn grow<'s>(&'s self, sc: &'s std::thread::Scope<'s, '_>, items: &'s Items<'s>, tx: &mpsc::SyncSender<Vec<Record>>, force: bool) -> bool {
+        let want = self.want.load(Ordering::Relaxed);
+        if self.running.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| (force || n < want).then_some(n + 1)).is_err() {
+            return false;
+        }
+        #[cfg(test)]
+        self.s.c.started.fetch_add(1, Ordering::Relaxed);
+        let tx = tx.clone();
+        sc.spawn(move || self.work(sc, items, tx));
+        true
+    }
+
+    /// One thread: it searches `items` until there are none, starts others when more are wanted and
+    /// ends when fewer are.
+    #[allow(deprecated)]
+    fn work<'s>(&'s self, sc: &'s std::thread::Scope<'s, '_>, items: &'s Items<'s>, tx: mpsc::SyncSender<Vec<Record>>) {
+        let s = self.s;
+        let matcher = s.matcher.clone();
+        let mut fw = file_worker(s.q);
+        let mut files = 0u32;
+        while !s.stop.is_set() {
+            let Some((path, rel, size, named)) = items.next(s) else { break };
+            search_one(&mut fw, &s.run(&matcher, &tx), &path, rel, size, named);
+            if self.after_file(&mut files) {
+                while self.grow(sc, items, &tx, false) {}
+            }
+            let want = self.want.load(Ordering::Relaxed);
+            if self.running.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| (n > want).then(|| n - 1)).is_ok() {
+                return;
+            }
+        }
+        self.running.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+/// Runs one search over `feed`: the threads it starts, how many, and when it adds or pauses some,
+/// all as the thread rules (`Policy`) decide. A list and a walk of directories take their share of
+/// the searches running from the start; every stage adds threads as its reads turn out to come
+/// from the disk.
+///
+/// A walk of roots without directories walks on the calling thread while a few threads search the
+/// files it finds, so a small tree pays neither for a parallel walk nor for walking before
+/// searching. The first file waits for a second before any thread starts: a tree of one file is
+/// searched on the calling thread, with no thread (four threads cost about 1 M instructions, a
+/// third of a one-file search past start-up). Past `small_tree_files` files that walk stops and
+/// the parallel walk skips what it searched; walk errors count only when that walk finished (the
+/// parallel walk meets them again otherwise).
+fn schedule(feed: Feed, s: &Common, on_hit: &mut dyn FnMut(Record)) -> Result<()> {
+    let (q, f, p, c, stop) = (s.q, s.f, s.p, s.c, s.stop);
+    let roots = match feed {
+        Feed::List(files, stop_at) => {
+            let threads = Threads::new(s, p.counted(files.len() <= policy::SMALL_SEARCH), p.threads());
+            let items = Items::List { files, next: AtomicUsize::new(0), stop_at };
+            let (tx, rx) = hit_channel();
+            std::thread::scope(|sc| {
+                for _ in 0..threads.first().min(files.len().max(1)) {
+                    threads.grow(sc, &items, &tx, true);
+                }
+                drop(tx);
+                drain(rx, c, &mut *on_hit);
+            });
+            return Ok(());
+        }
+        Feed::Walk(roots) => roots,
+    };
+    let mut seen = std::collections::HashMap::<PathBuf, AtomicUsize>::new();
+    let limit = small_tree_files(roots, f);
+    if let Some(wb) = (limit > 0).then(|| walk_builder(roots, f, p.threads()).ok()).flatten() {
+        let threads = Threads::new(s, false, p.walked_threads());
+        let (work_tx, work_rx) = mpsc::channel::<Found>();
+        let items = Items::Found(Mutex::new(work_rx));
+        let (tx, rx) = hit_channel();
+        let (errors, big) = std::thread::scope(|sc| {
+            let mut started = false;
+            let mut held: Option<Found> = None;
+            let mut taken = 0;
+            let mut errors = Vec::new();
+            let mut big = false;
+            for entry in wb.build() {
                 if stop.is_set() {
-                    return WalkState::Quit;
+                    break;
                 }
                 let entry = match entry {
                     Ok(e) => e,
                     Err(e) => {
-                        c.failed(e.to_string());
-                        return WalkState::Continue;
+                        errors.push(e.to_string());
+                        continue;
                     }
                 };
                 if !searchable(&entry) {
                     c.met_dir(&entry);
-                    return WalkState::Continue;
+                    continue;
                 }
-                if let Some(n) = if searched.is_empty() { None } else { searched.get(entry.path()) } {
-                    let mut left = n.load(Ordering::Relaxed);
-                    while left > 0 {
-                        match n.compare_exchange_weak(left, left - 1, Ordering::Relaxed, Ordering::Relaxed) {
-                            Ok(_) => return WalkState::Continue,
-                            Err(now) => left = now,
-                        }
+                if taken == limit {
+                    big = true;
+                    break;
+                }
+                taken += 1;
+                let size = if q.want_bytes { entry.metadata().ok().map(|m| m.len()) } else { None };
+                let rel = label(entry.path(), s.labels, f);
+                let named = f.paths_as_given && entry.depth() == 0;
+                let path = entry.into_path();
+                *seen.entry(path.clone()).or_default().get_mut() += 1;
+                let job = (path, rel, size, named);
+                if !started {
+                    let Some(first) = held.take() else {
+                        held = Some(job);
+                        continue;
+                    };
+                    for _ in 0..threads.first() {
+                        threads.grow(sc, &items, &tx, true);
+                    }
+                    started = true;
+                    if work_tx.send(first).is_err() {
+                        break;
                     }
                 }
-                let size = if q.want_bytes { entry.metadata().ok().map(|m| m.len()) } else { None };
-                let rel = label(entry.path(), &labels, &f);
-                let fw = fw.get_or_insert_with(|| file_worker(&q));
-                let named = f.paths_as_given && entry.depth() == 0;
-                let run = Run { matcher: &matcher, q: &q, f: &f, c: &c, stop: &stop, tx: &tx, plain: plain.as_deref(), labels: &labels, raw: None };
-                search_one(fw, &run, entry.path(), rel, size, named);
-                let extra = cold_extra(&f, &c);
-                let mut changed = extra > cold.load(Ordering::Relaxed);
-                if changed {
-                    cold.fetch_max(extra, Ordering::Relaxed);
+                if work_tx.send(job).is_err() {
+                    break;
                 }
-                // looked at again as searches start and end, and once after the first few files:
-                // searches started together each saw fewer of the others than there are
-                files = files.wrapping_add(1);
-                let searched = c.files_searched.load(Ordering::Relaxed);
-                let again = (files % 64 == 16 && searched >= COUNTED_AFTER) || (searched >= COUNTED_EARLY && !early.swap(true, Ordering::Relaxed));
-                if let Some(counted) = counted.as_ref().filter(|_| again) {
-                    let n = counted.get_or_init(crate::running::Counted::start);
-                    let k = n.as_ref().and_then(|n| n.running());
-                    let now = k.map_or(threads, |k| crate::running::threads(threads, k));
-                    changed |= share.swap(now, Ordering::Relaxed) != now;
-                    show_share(&shown, k, now);
+                while let Ok(batch) = rx.try_recv() {
+                    #[cfg(test)]
+                    c.queued.fetch_sub(1, Ordering::Relaxed);
+                    batch.into_iter().for_each(&mut *on_hit);
                 }
-                if changed {
-                    want.store(share.load(Ordering::Relaxed) + cold.load(Ordering::Relaxed), Ordering::Relaxed);
-                }
-                if stop.is_set() {
-                    WalkState::Quit
+            }
+            drop(work_tx);
+            if let Some((path, rel, size, named)) = held.filter(|_| !stop.is_set()) {
+                c.alone.store(true, Ordering::Relaxed);
+                let tx = tx.clone();
+                let one = move || search_one(&mut file_worker(q), &s.run(s.matcher, &tx), &path, rel, size, named);
+                // plain output sends no hits; other output is drained here while the file is searched
+                if s.plain.is_some() {
+                    one();
                 } else {
-                    WalkState::Continue
+                    sc.spawn(one);
                 }
+            }
+            drop(tx);
+            drain(rx, c, &mut *on_hit);
+            c.alone.store(false, Ordering::Relaxed);
+            (errors, big)
+        });
+        if !big || stop.is_set() {
+            for e in errors {
+                c.failed(e);
+            }
+            return Ok(());
+        }
+    }
+    let threads = Threads::new(s, p.counted(false), p.threads());
+    let first = threads.first();
+    let mut wb = walk_builder(roots, f, first)?;
+    // the share starts, and the rest when the count falls or the reads turn out cold
+    if p.grows() {
+        wb.grow_threads(p.most().saturating_sub(first), Arc::clone(&threads.want));
+    }
+    let walker = wb.build_parallel();
+    let (tx, rx) = hit_channel();
+    let (threads, seen) = (&threads, &seen);
+    std::thread::scope(|sc| {
+        let walk = sc.spawn(move || {
+            walker.run(|| {
+                let tx = tx.clone();
+                let matcher = s.matcher.clone();
+                let mut files = 0u32;
+                // made on the first file: the threads kept for a cold walk mostly never run
+                let mut fw = None;
+                Box::new(move |entry| {
+                    if stop.is_set() {
+                        return WalkState::Quit;
+                    }
+                    let entry = match entry {
+                        Ok(e) => e,
+                        Err(e) => {
+                            c.failed(e.to_string());
+                            return WalkState::Continue;
+                        }
+                    };
+                    if !searchable(&entry) {
+                        c.met_dir(&entry);
+                        return WalkState::Continue;
+                    }
+                    if let Some(n) = if seen.is_empty() { None } else { seen.get(entry.path()) } {
+                        let mut left = n.load(Ordering::Relaxed);
+                        while left > 0 {
+                            match n.compare_exchange_weak(left, left - 1, Ordering::Relaxed, Ordering::Relaxed) {
+                                Ok(_) => return WalkState::Continue,
+                                Err(now) => left = now,
+                            }
+                        }
+                    }
+                    let size = if q.want_bytes { entry.metadata().ok().map(|m| m.len()) } else { None };
+                    let rel = label(entry.path(), s.labels, f);
+                    let fw = fw.get_or_insert_with(|| file_worker(q));
+                    let named = f.paths_as_given && entry.depth() == 0;
+                    search_one(fw, &s.run(&matcher, &tx), entry.path(), rel, size, named);
+                    threads.after_file(&mut files);
+                    if stop.is_set() {
+                        WalkState::Quit
+                    } else {
+                        WalkState::Continue
+                    }
+                })
             })
         });
-    });
-    drain(rx, counters, &mut *on_hit);
-    worker.join().map_err(|_| anyhow!("search worker panicked"))?;
-    Ok(())
+        drain(rx, c, &mut *on_hit);
+        walk.join().map_err(|_| anyhow!("search worker panicked"))
+    })
 }
 
 /// Search the given files (paths relative to `root`, as an index lists them) with exactly the
 /// per-file logic of a walk; the glob and type filters of `f` apply to these paths.
+#[allow(clippy::too_many_arguments)]
 fn run_files(
     root: &Path,
     list: &[String],
     q: &Query,
     f: &Files,
-    stop: Arc<Stop>,
-    plain: Option<Arc<PlainSink>>,
+    p: &Policy,
+    m: &dyn Machine,
+    stop: &Stop,
+    plain: Option<&PlainSink>,
     on_hit: &mut dyn FnMut(Record),
 ) -> Result<Stats> {
     let t0 = Instant::now();
@@ -2786,23 +2773,24 @@ fn run_files(
         .map(|rel| (root.join(rel), Arc::from(rel.as_str()), false))
         .collect();
     let counters = Counters::default();
+    let labels = [root.to_path_buf()];
+    let s = Common { matcher: &matcher, q, f, p, m, c: &counters, stop, plain, labels: &labels };
     if q.first_in_path_order {
         if plain.is_some() {
             bail!("first_in_path_order needs records, not plain output");
         }
         files.sort_by(|a, b| Path::new(&*a.1).cmp(Path::new(&*b.1)));
-        return Ok(first_in_path_order(files, &[root.to_path_buf()], &matcher, q, f, &counters, &stop, on_hit, t0));
+        return Ok(first_in_path_order(files, &s, on_hit, t0));
     }
-    let threads = default_threads(f).min(files.len().max(1));
-    search_list(&files, &[root.to_path_buf()], threads, None, &matcher, q, f, &counters, &stop, plain.as_deref(), on_hit);
-    Ok(stats(&counters, t0, &stop))
+    schedule(Feed::List(&files, None), &s, on_hit)?;
+    Ok(stats(&counters, t0, stop))
 }
 
 /// The files under `roots` the search would reach (path, path as reported, named on the command
 /// line), for `first_in_path_order`.
-fn list_files(roots: &[PathBuf], labels: &[PathBuf], f: &Files, c: &Counters) -> Result<Vec<(PathBuf, Arc<str>, bool)>> {
+fn list_files(roots: &[PathBuf], labels: &[PathBuf], f: &Files, p: &Policy, c: &Counters) -> Result<Vec<(PathBuf, Arc<str>, bool)>> {
     let found = Mutex::new(Vec::new());
-    walk_builder(roots, f)?.build_parallel().run(|| {
+    walk_builder(roots, f, p.threads())?.build_parallel().run(|| {
         Box::new(|entry| {
             match entry {
                 Ok(e) if searchable(&e) => {
@@ -2821,24 +2809,15 @@ fn list_files(roots: &[PathBuf], labels: &[PathBuf], f: &Files, c: &Counters) ->
 /// `Query::first_in_path_order`: search `files` in their order until `max_results` matches are
 /// in, let the files started meanwhile finish, then hand over the first `max_results` matches
 /// (all without it) in file and line order.
-#[allow(clippy::too_many_arguments)]
-fn first_in_path_order(
-    files: Vec<(PathBuf, Arc<str>, bool)>,
-    labels: &[PathBuf],
-    matcher: &AnyMatcher,
-    q: &Query,
-    f: &Files,
-    c: &Counters,
-    stop: &Stop,
-    on_hit: &mut dyn FnMut(Record),
-    t0: Instant,
-) -> Stats {
-    let n = q.max_results;
+fn first_in_path_order(files: Vec<(PathBuf, Arc<str>, bool)>, s: &Common, on_hit: &mut dyn FnMut(Record), t0: Instant) -> Stats {
+    let (c, stop) = (s.c, s.stop);
+    let n = s.q.max_results;
     // no file holds more than `n` of the first `n`; the cut below stops the rest
-    let q = Query { max_results: None, max_count: n.map(|n| q.max_count.map_or(n, |m| m.min(n))).or(q.max_count), ..q.clone() };
+    let q = Query { max_results: None, max_count: n.map(|n| s.q.max_count.map_or(n, |m| m.min(n))).or(s.q.max_count), ..s.q.clone() };
     let mut records = Vec::new();
-    let threads = default_threads(f).min(files.len().max(1));
-    search_list(&files, labels, threads, n, matcher, &q, f, c, stop, None, |r| records.push(r));
+    if let Err(e) = schedule(Feed::List(&files, n), &Common { q: &q, ..*s }, &mut |r| records.push(r)) {
+        c.failed(e.to_string());
+    }
     // a file that several roots reach is listed once per root under one label: the k-th copy of a
     // record belongs to its k-th listing
     let mut listed: std::collections::HashMap<&str, Vec<usize>> = Default::default();
@@ -2897,50 +2876,6 @@ fn first_in_path_order(
         Some(n) => Stats { matches: n - left, files_matched, cancelled: stop.is_set() || total >= n, ..stats(c, t0, stop) },
         None => stats(c, t0, stop),
     }
-}
-
-/// Search a known list of files (path, path as reported, named) on `threads` threads, handed out
-/// in list order; with `stop_at`, no file is started once that many matches are in.
-#[allow(clippy::too_many_arguments)]
-fn search_list(
-    files: &[(PathBuf, Arc<str>, bool)],
-    labels: &[PathBuf],
-    threads: usize,
-    stop_at: Option<u64>,
-    matcher: &AnyMatcher,
-    q: &Query,
-    f: &Files,
-    counters: &Counters,
-    stop: &Stop,
-    plain: Option<&PlainSink>,
-    on_hit: impl FnMut(Record),
-) {
-    let (tx, rx) = hit_channel();
-    let next = std::sync::atomic::AtomicUsize::new(0);
-    std::thread::scope(|s| {
-        for _ in 0..threads {
-            let tx = tx.clone();
-            let next = &next;
-            // a clone per thread: each gets its own regex cache pool instead of contending for one
-            let matcher = matcher.clone();
-            s.spawn(move || {
-                let matcher = &matcher;
-                let mut fw = file_worker(q);
-                loop {
-                    // checked before a file is taken, so the files searched are always the first ones
-                    if stop.is_set() || stop_at.is_some_and(|n| counters.matches.load(Ordering::Relaxed) >= n) {
-                        break;
-                    }
-                    let i = next.fetch_add(1, Ordering::Relaxed);
-                    let Some((path, rel, named)) = files.get(i) else { break };
-                    let size = if q.want_bytes { std::fs::metadata(path).ok().map(|m| m.len()) } else { None };
-                    search_one(&mut fw, &Run { matcher, q, f, c: counters, stop, tx: &tx, plain, labels, raw: None }, path, Arc::clone(rel), size, *named);
-                }
-            });
-        }
-        drop(tx);
-        drain(rx, counters, on_hit);
-    });
 }
 
 /// True when the walk with these overrides would not reach `rel` (an ancestor directory or the
@@ -3079,8 +3014,6 @@ mod tests {
     use super::*;
 
     thread_local! {
-        /// the threads `small_first` started on this thread
-        pub(super) static SMALL_WORKERS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
         /// files of one line this thread searched in two passes through small buffers
         pub(super) static ONE_LINE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
         /// this thread searches such files as one buffer instead
@@ -3141,7 +3074,18 @@ mod tests {
             let o = Query { report: kind, ..query("x", Mode::Literal) };
             let matcher = build_matcher(&o.pattern).unwrap();
             let (c, stop) = (Counters::default(), no_stop());
-            let r = Run { matcher: &matcher, q: &o, f: &walked, c: &c, stop: &stop, tx: &tx, plain: to_plain.then_some(&plain), labels: &[], raw: Some(&raw) };
+            let r = Run {
+                matcher: &matcher,
+                q: &o,
+                f: &walked,
+                p: &rules(&walked),
+                c: &c,
+                stop: &stop,
+                tx: &tx,
+                plain: to_plain.then_some(&plain),
+                labels: &[],
+                raw: Some(&raw),
+            };
             let rel: Arc<str> = label(&file, &[os(b"/r")], &walked);
             let mut sink = r.collector(Arc::clone(&rel));
             matcher.search_slice(&mut source::make_searcher(&o, BinaryDetection::quit(0), None, true), b"a x\n", &mut sink).unwrap();
@@ -3228,7 +3172,7 @@ mod tests {
         for size in [None, Some(std::fs::metadata(&path).unwrap().len())] {
             search_one(
                 &mut fw,
-                &Run { matcher: &matcher, q: &o, f: &f, c: &c, stop: &stop, tx: &tx, plain: None, labels: &[], raw: None },
+                &Run { matcher: &matcher, q: &o, f: &f, p: &rules(&f), c: &c, stop: &stop, tx: &tx, plain: None, labels: &[], raw: None },
                 &path,
                 Arc::from("big.txt"),
                 size,
@@ -3255,7 +3199,7 @@ mod tests {
             let matcher = build_matcher(&o.pattern).unwrap();
             let (c, stop) = (Counters::default(), no_stop());
             let (tx, _rx) = mpsc::sync_channel(1024);
-            let run = Run { matcher: &matcher, q: &o, f: &f, c: &c, stop: &stop, tx: &tx, plain: None, labels: &[], raw: None };
+            let run = Run { matcher: &matcher, q: &o, f: &f, p: &rules(&f), c: &c, stop: &stop, tx: &tx, plain: None, labels: &[], raw: None };
             for (text, whole) in [(format!("{line}\n").repeat(4), false), (format!("{line}\n"), true), (line.clone(), true)] {
                 std::fs::write(&path, &text).unwrap();
                 let file = std::fs::File::open(&path).unwrap();
@@ -3350,8 +3294,18 @@ mod tests {
                             let out = Shared(Arc::new(Mutex::new(Vec::new())));
                             let sink = PlainSink::new(Box::new(out.clone()));
                             let (tx, rx) = mpsc::sync_channel(1024);
-                            let r =
-                                Run { matcher: &matcher, q: &o, f: &f, c: &c, stop: &stop, tx: &tx, plain: to_plain.then_some(&sink), labels: &[], raw: None };
+                            let r = Run {
+                                matcher: &matcher,
+                                q: &o,
+                                f: &f,
+                                p: &rules(&f),
+                                c: &c,
+                                stop: &stop,
+                                tx: &tx,
+                                plain: to_plain.then_some(&sink),
+                                labels: &[],
+                                raw: None,
+                            };
                             search_one(&mut file_worker(&o), &r, &path, Arc::from("a.txt"), Some(size), f.paths_as_given);
                             drop(tx);
                             sink.flush().unwrap();
@@ -3543,26 +3497,132 @@ mod tests {
         assert_eq!(names(&sorted), ["a.txt:1", "a.txt:2"]);
     }
 
+    /// The lines `schedule` finds in `feed` with the thread rules reading `m`, sorted, and the
+    /// threads it started for a list or a walking thread.
+    fn scheduled(m: &dyn Machine, q: &Query, f: &Files, feed: Feed) -> (Vec<String>, usize) {
+        let (matcher, c, stop, p) = (build_matcher(&q.pattern).unwrap(), Counters::default(), no_stop(), Policy::read(m, f.threads));
+        let labels = match &f.paths {
+            Paths::Walk(roots) => roots.clone(),
+            _ => Vec::new(),
+        };
+        let s = Common { matcher: &matcher, q, f, p: &p, m, c: &c, stop: &stop, plain: None, labels: &labels };
+        let mut lines = Vec::new();
+        schedule(feed, &s, &mut |r| {
+            let path = r.path().to_string();
+            lines.push(format!("{path}:{}", line(r).text))
+        })
+        .unwrap();
+        lines.sort();
+        (lines, c.started.load(Ordering::Relaxed))
+    }
+
+    fn rules(f: &Files) -> Policy {
+        Policy::read(&System::default(), f.threads)
+    }
+
     #[test]
     fn a_tree_of_one_file_is_searched_without_a_thread() {
         let root = std::env::temp_dir().join(format!("scrutate_small_threads_{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("a.txt"), "hello\n").unwrap();
         let o = query("hello", Mode::Literal);
+        let m = policy::tests::Given::new(11, Some(5), &WARM_MACOS, Some(1));
         let f = Files { threads: 2, ..Files::walk(vec![root.clone()]) };
-        let found = |f: &Files| {
-            SMALL_WORKERS.with(|n| n.set(0));
-            let mut lines = Vec::new();
-            search(&o, f, Arc::default(), Output::Records(&mut |r| lines.push(line(r).text))).unwrap();
-            lines.sort();
-            (lines, SMALL_WORKERS.with(|n| n.get()))
-        };
-        assert_eq!(found(&f), (vec!["hello".to_string()], 0));
+        let found = |f: &Files| scheduled(&m, &o, f, Feed::Walk(std::slice::from_ref(&root)));
+        assert_eq!(found(&f), (vec!["a.txt:hello".to_string()], 0));
         std::fs::write(root.join("b.txt"), "hello again\n").unwrap();
-        assert_eq!(found(&f), (vec!["hello".to_string(), "hello again".to_string()], 2));
+        assert_eq!(found(&f), (vec!["a.txt:hello".to_string(), "b.txt:hello again".to_string()], 2));
         // a walk cut after the first file still searches it, and the parallel walk the rest
         let cut = Files { small_tree: Some(1), ..f.clone() };
-        assert_eq!(found(&cut), (vec!["hello".to_string(), "hello again".to_string()], 0));
+        assert_eq!(found(&cut), (vec!["a.txt:hello".to_string(), "b.txt:hello again".to_string()], 0));
+        assert!(m.shown.lock().unwrap().is_empty(), "a number asked for is not counted");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// `n` files of one matching line each in `dir`, under `root`, listed as an index would.
+    fn some_files(root: &Path, dir: &str, n: usize) -> Vec<(PathBuf, Arc<str>, bool)> {
+        std::fs::create_dir_all(root.join(dir)).unwrap();
+        (0..n)
+            .map(|i| {
+                let rel = format!("{dir}/f{i:03}.txt");
+                std::fs::write(root.join(&rel), "needle\n").unwrap();
+                (root.join(&rel), Arc::from(rel.as_str()), false)
+            })
+            .collect()
+    }
+
+    /// macOS and Linux with no read slow enough to count as cold, so a busy machine adds no thread.
+    static WARM_MACOS: policy::Values = policy::Values { cold_read_ns: u64::MAX, ..policy::MACOS };
+    static WARM_LINUX: policy::Values = policy::Values { cold_read_ns: u64::MAX, ..policy::LINUX };
+
+    #[test]
+    fn a_file_list_and_a_walk_take_their_share_of_the_searches_running() {
+        let root = std::env::temp_dir().join(format!("scrutate_share_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let big = some_files(&root, "big", policy::SMALL_SEARCH + 1);
+        let small = some_files(&root, "small", 10);
+        let o = query("needle", Mode::Literal);
+        let f = Files::list(root.clone(), Vec::new());
+        // three searches running on an M3 Pro: five performance cores split three ways
+        let m = policy::tests::Given::new(11, Some(5), &WARM_MACOS, Some(3));
+        let (lines, started) = scheduled(&m, &o, &f, Feed::List(&big, None));
+        assert_eq!((lines.len(), started), (big.len(), 1));
+        assert_eq!(*m.shown.lock().unwrap(), [(Some(3), 1)]);
+        let m = policy::tests::Given::new(11, Some(5), &WARM_MACOS, Some(2));
+        assert_eq!(scheduled(&m, &o, &f, Feed::List(&small, None)).1, 5, "a small list is not counted");
+        assert!(m.shown.lock().unwrap().is_empty());
+        assert_eq!(scheduled(&m, &o, &f, Feed::List(&big, Some(3))).1, 2, "the share holds with a cap");
+        let walk = Files::walk(vec![root.clone()]);
+        assert_eq!(scheduled(&m, &o, &walk, Feed::Walk(std::slice::from_ref(&root))).0.len(), big.len() + small.len());
+        assert_eq!(m.shown.lock().unwrap().last(), Some(&(Some(2), 2)), "a walk of directories takes its share");
+        // Linux counts nothing: the walk says so, a list starts all its threads
+        let linux = policy::tests::Given::new(5, None, &WARM_LINUX, Some(3));
+        assert_eq!(scheduled(&linux, &o, &walk, Feed::Walk(std::slice::from_ref(&root))).0.len(), big.len() + small.len());
+        assert_eq!(scheduled(&linux, &o, &f, Feed::List(&big, None)).1, 5);
+        assert_eq!(*linux.shown.lock().unwrap(), [(None, 5), (None, 5)]);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_search_takes_threads_back_as_the_others_end() {
+        let root = std::env::temp_dir().join(format!("scrutate_share_back_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let files = some_files(&root, "d", 2000);
+        let (o, f) = (query("needle", Mode::Literal), Files::list(root.clone(), Vec::new()));
+        let m = policy::tests::Given::new(11, Some(5), &WARM_MACOS, Some(3));
+        let (matcher, c, stop, p) = (build_matcher(&o.pattern).unwrap(), Counters::default(), no_stop(), Policy::read(&m, 0));
+        let s = Common { matcher: &matcher, q: &o, f: &f, p: &p, m: &m, c: &c, stop: &stop, plain: None, labels: &[] };
+        let mut found = 0;
+        // the other two searches end once the first match is in
+        schedule(Feed::List(&files, None), &s, &mut |_| {
+            found += 1;
+            *m.running.lock().unwrap() = Some(1);
+        })
+        .unwrap();
+        assert_eq!(found, files.len());
+        let shown = m.shown.lock().unwrap();
+        assert_eq!((shown.first(), shown.last()), (Some(&(Some(3), 1)), Some(&(Some(1), 5))), "{shown:?}");
+        assert_eq!(c.started.load(Ordering::Relaxed), 5, "four more threads start");
+        drop(shown);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_file_list_read_from_the_disk_earns_threads_by_its_slow_reads() {
+        // every read counts as slow, as on a cold disk
+        static COLD: policy::Values = policy::Values { cold_read_ns: 0, cold_threads: 0, shared: false };
+        let root = std::env::temp_dir().join(format!("scrutate_cold_list_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let files = some_files(&root, "d", 200);
+        let o = query("needle", Mode::Literal);
+        let m = policy::tests::Given::new(2, None, &COLD, None);
+        let f = Files::list(root.clone(), Vec::new());
+        // two threads, and one more for each 16 slow reads up to twice the cores
+        assert_eq!(scheduled(&m, &o, &f, Feed::List(&files, None)), (files.iter().map(|x| format!("{}:needle", x.1)).collect::<Vec<_>>(), 4));
+        let asked = Files { threads: 2, ..f.clone() };
+        assert_eq!(scheduled(&m, &o, &asked, Feed::List(&files, None)).1, 2, "-j is kept");
+        let warm = policy::tests::Given::new(2, None, &WARM_MACOS, None);
+        assert_eq!(scheduled(&warm, &o, &f, Feed::List(&files, None)).1, 2, "warm reads add none");
         std::fs::remove_dir_all(&root).unwrap();
     }
 
@@ -4026,27 +4086,6 @@ mod tests {
         all.extend_from_slice("last:1:text\nlong:1:x\u{FFFD}y\n".as_bytes());
         assert_eq!(written(), all);
         assert!(!sink.broken.load(Ordering::Relaxed) && !stop.is_set());
-    }
-
-    #[test]
-    fn a_cold_tree_earns_threads_by_its_slow_reads() {
-        let o = Files::default();
-        let most = cold_threads().saturating_sub(default_threads(&o));
-        let reads = |all: u64, slow: u64| {
-            let c = Counters::default();
-            c.small_reads.store(all, Ordering::Relaxed);
-            c.slow_reads.store(slow, Ordering::Relaxed);
-            cold_extra(&o, &c)
-        };
-        assert_eq!(reads(15, 15), 0, "too few reads to tell");
-        assert_eq!(reads(1000, 700), 0, "mostly fast reads are a warm tree");
-        assert_eq!(reads(16, 16), 1.min(most));
-        assert_eq!(reads(100, 80), 5.min(most));
-        assert_eq!(reads(1_000_000, 1_000_000), most);
-        let c = Counters::default();
-        c.small_reads.store(100, Ordering::Relaxed);
-        c.slow_reads.store(100, Ordering::Relaxed);
-        assert_eq!(cold_extra(&Files { threads: 4, ..Files::default() }, &c), 0, "-j is kept");
     }
 
     proptest::proptest! {

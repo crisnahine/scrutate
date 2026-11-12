@@ -1,5 +1,6 @@
-//! How many searches that walk directories this user runs at once, across processes, so that
-//! each takes its share of threads. The count is a System V semaphore: a search adds 1 with `SEM_UNDO`, so the kernel
+//! How many big searches (a walk of directories, a list of many files) this user runs at once,
+//! across processes, so that each takes its share of threads (`instant::policy`). The count is a
+//! System V semaphore: a search adds 1 with `SEM_UNDO`, so the kernel
 //! takes it back when the process dies, however it dies. Anything that fails (no System V IPC, a
 //! set with that key made by another user, a limit) leaves the count unknown and the search runs
 //! as it would alone. Only on macOS: on Linux the cores are the limit, and splitting them never
@@ -8,13 +9,6 @@
 
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
-
-/// Threads for each of `running` big searches when one alone takes `alone`. On macOS the kernel
-/// serves about four file-reading threads at full speed across all processes, so the threads are
-/// split (py-big, 4 at once: 235 ms each on 5 threads, 190 ms on 1).
-pub fn threads(alone: usize, running: usize) -> usize {
-    (alone / running.max(1)).max(1)
-}
 
 /// What this process does to the count: `HELD` searches, none while a write to stdout may block
 /// (a reader that stopped reading must not slow the others) or while the process is stopped from
@@ -340,22 +334,10 @@ mod sys {
     pub fn stop_self() {}
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
 
-    #[test]
-    fn shares() {
-        assert_eq!(threads(5, 1), 5);
-        assert_eq!(threads(5, 2), 2);
-        assert_eq!(threads(5, 3), 1);
-        assert_eq!(threads(5, 4), 1);
-        assert_eq!(threads(5, 9), 1);
-        assert_eq!(threads(12, 4), 3);
-        assert_eq!(threads(5, 0), 5, "an unknown count is one search");
-    }
-
-    #[cfg(target_os = "macos")]
     #[test]
     fn a_set_removed_under_a_running_process_is_made_again() {
         let a = Counted::start().expect("System V semaphores");
