@@ -255,7 +255,8 @@ pandas, scipy and others; the same tree as the size table below), 398 doc and kw
 
 - exact scan, int8 top-100 against float16 top-100: recall 0.9945 (top-10: 0.9915);
 - default scan (48 of 698 clusters) against the float16 exact top-100: 0.8910 with int8,
-  0.8901 with float16 (`bench/ivf_recall.py` at nprobe 48: 0.8922 and 0.8901);
+  0.8901 with float16 (`bench/ivf_recall.py` at nprobe 48: 0.8922 and 0.8901; the script ran on
+  the reference engine and was removed with it, and commit `9e70ae7` is the last that has it);
 - final top-10 of the whole pipeline: same first result for 376 of 398 queries, 96.1 % of the
   top-10 in common.
 

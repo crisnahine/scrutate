@@ -137,6 +137,10 @@ What would change the answer:
 
 ## Reproduce
 
+`bench/eval_transformers.py` ran on the Python reference engine and was removed with it. It last
+ran at commit `9e70ae7`, the last commit that has it: check that commit out to run the commands
+below.
+
 ```sh
 # in a fresh virtual environment with numpy, scipy, scikit-learn, lightgbm, the scrutate_ref
 # dependencies, the benchmark packages, torch and sentence-transformers
