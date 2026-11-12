@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 922" width="880" height="922" role="img" aria-labelledby="t d">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 1144" width="880" height="1144" role="img" aria-labelledby="t d">
 <!-- written by tools/gen_doc_assets.py; edit that, not this file -->
 <title id="t">Trust boundaries</title>
-<desc id="d">What crosses into scrutate (repository content, patterns, MCP requests) and what it writes (.scrutate), with the controls the security assessment names on the boundary each one guards. The network is not used.</desc>
+<desc id="d">What crosses into scrutate (repository content, patterns, MCP requests, a command line call to a running server) and what it writes (.scrutate), with the controls the security assessment names on the boundary each one guards. The network is not used.</desc>
 <style>
 text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif; }
 .m { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
@@ -20,32 +20,36 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 
 .wipe{transform-box:fill-box;transform-origin:left center}
 .spot{transform-box:fill-box;transform-origin:center}
-.k1{animation:k1 7.05s linear infinite}
-@keyframes k1 { 0.000% { stroke-dashoffset: 30.0; animation-timing-function: cubic-bezier(.6,0,.25,1); } 15.603% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 15.745% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 30.0; } }
-.k2{animation:k2 7.05s linear infinite}
-@keyframes k2 { 0.000% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 7.092% { stroke-dashoffset: 30.0; animation-timing-function: cubic-bezier(.6,0,.25,1); } 22.695% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 22.837% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 30.0; } }
-.k3{animation:k3 7.05s linear infinite}
-@keyframes k3 { 0.000% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 8.511% { stroke-dashoffset: 30.0; animation-timing-function: cubic-bezier(.6,0,.25,1); } 24.113% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 24.255% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 30.0; } }
-.k4{animation:k4 7.05s linear infinite}
-@keyframes k4 { 0.000% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 15.603% { stroke-dashoffset: 30.0; animation-timing-function: cubic-bezier(.6,0,.25,1); } 31.206% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 31.348% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 30.0; } }
-.k5{animation:k5 7.05s linear infinite}
-@keyframes k5 { 0.000% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 17.021% { stroke-dashoffset: 30.0; animation-timing-function: cubic-bezier(.6,0,.25,1); } 32.624% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 32.766% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 30.0; } }
-.k6{animation:k6 7.05s linear infinite}
-@keyframes k6 { 0.000% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 24.113% { stroke-dashoffset: 30.0; animation-timing-function: cubic-bezier(.6,0,.25,1); } 39.716% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 39.858% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 30.0; } }
-.k7{animation:k7 7.05s linear infinite}
-@keyframes k7 { 0.000% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 25.532% { stroke-dashoffset: 30.0; animation-timing-function: cubic-bezier(.6,0,.25,1); } 41.135% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 41.277% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 30.0; } }
-.k8{animation:k8 7.05s linear infinite}
-@keyframes k8 { 0.000% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 32.624% { stroke-dashoffset: 30.0; animation-timing-function: cubic-bezier(.6,0,.25,1); } 48.227% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 48.369% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 30.0; } }
-.k9{animation:k9 7.05s linear infinite}
-@keyframes k9 { 0.000% { transform: scaleX(0); animation-timing-function: steps(1, end); } 48.227% { transform: scaleX(0); animation-timing-function: cubic-bezier(.2,.7,.2,1); } 51.767% { transform: scaleX(1.03); animation-timing-function: ease-in-out; } 52.766% { transform: scaleX(1); animation-timing-function: steps(1, end); } 91.489% { transform: scaleX(1); animation-timing-function: ease-in; } 95.745% { transform: scaleX(0); animation-timing-function: steps(1, end); } 100.000% { transform: scaleX(0); } }
-.k10{animation:k10 7.05s linear infinite}
-@keyframes k10 { 0.000% { opacity: 0; animation-timing-function: steps(1, end); } 51.064% { opacity: 0; animation-timing-function: steps(1, end); } 51.206% { opacity: 1; animation-timing-function: steps(1, end); } 91.489% { opacity: 1; animation-timing-function: steps(1, end); } 91.631% { opacity: 0; animation-timing-function: steps(1, end); } 100.000% { opacity: 0; } }
+.k1{animation:k1 7.65s linear infinite}
+@keyframes k1 { 0.000% { stroke-dashoffset: 30.0; animation-timing-function: cubic-bezier(.6,0,.25,1); } 14.379% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 14.510% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 30.0; } }
+.k2{animation:k2 7.65s linear infinite}
+@keyframes k2 { 0.000% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 6.536% { stroke-dashoffset: 30.0; animation-timing-function: cubic-bezier(.6,0,.25,1); } 20.915% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 21.046% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 30.0; } }
+.k3{animation:k3 7.65s linear infinite}
+@keyframes k3 { 0.000% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 7.843% { stroke-dashoffset: 30.0; animation-timing-function: cubic-bezier(.6,0,.25,1); } 22.222% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 22.353% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 30.0; } }
+.k4{animation:k4 7.65s linear infinite}
+@keyframes k4 { 0.000% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 14.379% { stroke-dashoffset: 30.0; animation-timing-function: cubic-bezier(.6,0,.25,1); } 28.758% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 28.889% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 30.0; } }
+.k5{animation:k5 7.65s linear infinite}
+@keyframes k5 { 0.000% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 15.686% { stroke-dashoffset: 30.0; animation-timing-function: cubic-bezier(.6,0,.25,1); } 30.065% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 30.196% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 30.0; } }
+.k6{animation:k6 7.65s linear infinite}
+@keyframes k6 { 0.000% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 22.222% { stroke-dashoffset: 30.0; animation-timing-function: cubic-bezier(.6,0,.25,1); } 36.601% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 36.732% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 30.0; } }
+.k7{animation:k7 7.65s linear infinite}
+@keyframes k7 { 0.000% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 23.529% { stroke-dashoffset: 30.0; animation-timing-function: cubic-bezier(.6,0,.25,1); } 37.908% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 38.039% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 30.0; } }
+.k8{animation:k8 7.65s linear infinite}
+@keyframes k8 { 0.000% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 30.065% { stroke-dashoffset: 30.0; animation-timing-function: cubic-bezier(.6,0,.25,1); } 44.444% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 44.575% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 30.0; } }
+.k9{animation:k9 7.65s linear infinite}
+@keyframes k9 { 0.000% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 31.373% { stroke-dashoffset: 30.0; animation-timing-function: cubic-bezier(.6,0,.25,1); } 45.752% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 45.882% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 30.0; } }
+.k10{animation:k10 7.65s linear infinite}
+@keyframes k10 { 0.000% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 37.908% { stroke-dashoffset: 30.0; animation-timing-function: cubic-bezier(.6,0,.25,1); } 52.288% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 52.418% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 30.0; } }
+.k11{animation:k11 7.65s linear infinite}
+@keyframes k11 { 0.000% { transform: scaleX(0); animation-timing-function: steps(1, end); } 52.288% { transform: scaleX(0); animation-timing-function: cubic-bezier(.2,.7,.2,1); } 55.550% { transform: scaleX(1.03); animation-timing-function: ease-in-out; } 56.471% { transform: scaleX(1); animation-timing-function: steps(1, end); } 92.157% { transform: scaleX(1); animation-timing-function: ease-in; } 96.078% { transform: scaleX(0); animation-timing-function: steps(1, end); } 100.000% { transform: scaleX(0); } }
+.k12{animation:k12 7.65s linear infinite}
+@keyframes k12 { 0.000% { opacity: 0; animation-timing-function: steps(1, end); } 54.902% { opacity: 0; animation-timing-function: steps(1, end); } 55.033% { opacity: 1; animation-timing-function: steps(1, end); } 92.157% { opacity: 1; animation-timing-function: steps(1, end); } 92.288% { opacity: 0; animation-timing-function: steps(1, end); } 100.000% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
   .mv { animation: none !important; }
   .fd { animation-name: var(--calm) !important; }
 }
 </style>
-<defs><pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse"><rect x="10" y="10" width="2" height="2" fill="#2a2a2f"/></pattern></defs><rect width="880" height="922" rx="14" fill="#0c0c0e"/><rect x="10" y="10" width="860" height="902" rx="8" fill="url(#dots)"/><rect x="10.5" y="10.5" width="859" height="901" rx="8" fill="none" stroke="#2a2a2f"/>
+<defs><pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse"><rect x="10" y="10" width="2" height="2" fill="#2a2a2f"/></pattern></defs><rect width="880" height="1144" rx="14" fill="#0c0c0e"/><rect x="10" y="10" width="860" height="1124" rx="8" fill="url(#dots)"/><rect x="10.5" y="10.5" width="859" height="1123" rx="8" fill="none" stroke="#2a2a2f"/>
 <text x="40.0" y="46.0" class="m pre " font-size="12" fill="#f2eee3" letter-spacing="1.92">// TRUST BOUNDARIES</text><path d="M231.8 42.0 H840" stroke="#2a2a2f"/>
 <defs><marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M1.5 1.5 8.5 5 1.5 8.5" fill="none" stroke="#8f8f98" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
 <g transform="translate(32 72) scale(0.92727)">
@@ -109,42 +113,65 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <path class="mv k5" d="M201 488 L232 488" pathLength="100" fill="none" stroke="#d9ff3d" stroke-width="9" stroke-dasharray="30.0 300" stroke-dashoffset="30.0"/>
 <path d="M654 488 L686 488" class="arrow" marker-end="url(#ah)"/>
 <path class="mv k6" d="M654 488 L686 488" pathLength="100" fill="none" stroke="#d9ff3d" stroke-width="9" stroke-dasharray="30.0 300" stroke-dashoffset="30.0"/>
-<rect x="1" y="586" width="196" height="184" rx="4" class="card"/>
-<text x="17" y="613" class="h"><tspan class="m">.scrutate/</tspan></text>
-<text x="17" y="634" class="b">the index</text>
-<text x="17" y="654" class="b">directory, possibly</text>
-<text x="17" y="674" class="b">corrupted or</text>
-<text x="17" y="694" class="b">planted</text>
-<rect x="236" y="586" width="414" height="184" rx="4" class="gate"/>
+<rect x="1" y="586" width="196" height="224" rx="4" class="card"/>
+<g transform="translate(17.0 613.0) scale(0.01549 -0.01549)" fill="#f2eee3"><path d="M302 -16C468 -16 560 68 560 206C560 314 510 384 358 424C262 449 232 472 232 514C232 551 256 572 293 572C337 572 367 539 375 473L555 480C547 645 457 726 302 726C140 726 52 640 52 502C52 376 124 325 262 290C348 268 380 241 380 196C380 158 353 138 313 138C261 138 230 174 218 257L40 249C51 79 133 -16 302 -16Z"/><path transform="translate(600 0)" d="M80 0L540 0L540 158L260 158L260 279L520 279L520 433L260 433L260 552L532 552L532 710L80 710Z"/><path transform="translate(1200 0)" d="M302 -16C468 -16 560 68 560 206C560 314 510 384 358 424C262 449 232 472 232 514C232 551 256 572 293 572C337 572 367 539 375 473L555 480C547 645 457 726 302 726C140 726 52 640 52 502C52 376 124 325 262 290C348 268 380 241 380 196C380 158 353 138 313 138C261 138 230 174 218 257L40 249C51 79 133 -16 302 -16Z"/><path transform="translate(1800 0)" d="M302 -16C468 -16 560 68 560 206C560 314 510 384 358 424C262 449 232 472 232 514C232 551 256 572 293 572C337 572 367 539 375 473L555 480C547 645 457 726 302 726C140 726 52 640 52 502C52 376 124 325 262 290C348 268 380 241 380 196C380 158 353 138 313 138C261 138 230 174 218 257L40 249C51 79 133 -16 302 -16Z"/><path transform="translate(2400 0)" d="M70 0L530 0L530 158L390 158L390 552L530 552L530 710L70 710L70 552L210 552L210 158L70 158Z"/><path transform="translate(3000 0)" d="M300 -16C474 -16 572 116 572 354C572 592 474 726 300 726C126 726 28 592 28 354C28 116 126 -16 300 -16ZM300 138C241 138 212 196 212 354C212 512 241 572 300 572C359 572 388 512 388 354C388 196 359 138 300 138Z"/><path transform="translate(3600 0)" d="M60 0L230 0L230 357L390 0L540 0L540 710L370 710L370 353L210 710L60 710Z"/><path transform="translate(4800 0)" d="M302 -16C468 -16 560 68 560 206C560 314 510 384 358 424C262 449 232 472 232 514C232 551 256 572 293 572C337 572 367 539 375 473L555 480C547 645 457 726 302 726C140 726 52 640 52 502C52 376 124 325 262 290C348 268 380 241 380 196C380 158 353 138 313 138C261 138 230 174 218 257L40 249C51 79 133 -16 302 -16Z"/><path transform="translate(5400 0)" d="M300 -16C474 -16 572 116 572 354C572 592 474 726 300 726C126 726 28 592 28 354C28 116 126 -16 300 -16ZM300 138C241 138 212 196 212 354C212 512 241 572 300 572C359 572 388 512 388 354C388 196 359 138 300 138Z"/><path transform="translate(6000 0)" d="M306 -16C452 -16 546 88 568 273L387 280C377 189 345 138 306 138C246 138 212 215 212 354C212 494 246 572 306 572C348 572 378 523 387 436L568 443C546 625 452 726 306 726C130 726 28 584 28 354C28 124 130 -16 306 -16Z"/><path transform="translate(6600 0)" d="M40 0L220 0L220 183L266 252L380 0L570 0L367 405L570 710L358 710L220 466L220 710L40 710Z"/><path transform="translate(7200 0)" d="M80 0L540 0L540 158L260 158L260 279L520 279L520 433L260 433L260 552L532 552L532 710L80 710Z"/><path transform="translate(7800 0)" d="M210 0L390 0L390 552L560 552L560 710L40 710L40 552L210 552Z"/></g>
+<text x="17" y="634" class="b">another process on</text>
+<text x="17" y="654" class="b">this machine: of</text>
+<text x="17" y="674" class="b">this user, or of</text>
+<text x="17" y="694" class="b">another</text>
+<rect x="236" y="586" width="414" height="224" rx="4" class="gate"/>
 <rect x="251" y="604" width="6" height="6" fill="#d9ff3d"/>
-<text x="266" y="612" class="b">Written only under <tspan class="m">&lt;root&gt;/.scrutate/</tspan>;</text>
-<text x="266" y="632" class="b">segments go to a temporary directory there and</text>
-<text x="266" y="652" class="b">are renamed.</text>
+<text x="266" y="612" class="b"><tspan class="m">.scrutate/session.sock</tspan>, mode 0600, while</text>
+<text x="266" y="632" class="b"><tspan class="m">serve</tspan> runs; no network port; the command line</text>
+<text x="266" y="652" class="b">never starts a server.</text>
 <rect x="251" y="672" width="6" height="6" fill="#d9ff3d"/>
-<text x="266" y="680" class="b">A <tspan class="m">.scrutate</tspan> that is a link, or holds one, is</text>
-<text x="266" y="700" class="b">refused.</text>
-<rect x="251" y="720" width="6" height="6" fill="#d9ff3d"/>
-<text x="266" y="728" class="b"><tspan class="m">PRAGMA quick_check</tspan> on open, arrays</text>
-<text x="266" y="748" class="b">validated; a damaged index is rebuilt.</text>
-<path d="M686 678 L654 678" class="arrow" marker-end="url(#ah)" marker-start="url(#ah)"/>
-<path class="mv k7" d="M686 678 L654 678" pathLength="100" fill="none" stroke="#d9ff3d" stroke-width="9" stroke-dasharray="30.0 300" stroke-dashoffset="30.0"/>
-<path d="M232 678 L201 678" class="arrow" marker-end="url(#ah)" marker-start="url(#ah)"/>
-<path class="mv k8" d="M232 678 L201 678" pathLength="100" fill="none" stroke="#d9ff3d" stroke-width="9" stroke-dasharray="30.0 300" stroke-dashoffset="30.0"/>
-<rect x="690" y="34" width="189" height="736" rx="4" class="out"/>
-<path class="wipe mv k9" d="M702.1 45.0 H784.2 L781.1 67.0 H699.0 Z" fill="#d9ff3d"/>
+<text x="266" y="680" class="b">Both ends check the peer is the same user</text>
+<text x="266" y="700" class="b">before a byte is read; a link or a file of</text>
+<text x="266" y="720" class="b">another owner is refused.</text>
+<rect x="251" y="740" width="6" height="6" fill="#d9ff3d"/>
+<text x="266" y="748" class="b">The command line does the work itself unless</text>
+<text x="266" y="768" class="b">the server is the same build, settings and</text>
+<text x="266" y="788" class="b">root.</text>
+<path d="M201 698 L232 698" class="arrow" marker-end="url(#ah)"/>
+<path class="mv k7" d="M201 698 L232 698" pathLength="100" fill="none" stroke="#d9ff3d" stroke-width="9" stroke-dasharray="30.0 300" stroke-dashoffset="30.0"/>
+<path d="M654 698 L686 698" class="arrow" marker-end="url(#ah)"/>
+<path class="mv k8" d="M654 698 L686 698" pathLength="100" fill="none" stroke="#d9ff3d" stroke-width="9" stroke-dasharray="30.0 300" stroke-dashoffset="30.0"/>
+<rect x="1" y="826" width="196" height="184" rx="4" class="card"/>
+<text x="17" y="853" class="h"><tspan class="m">.scrutate/</tspan></text>
+<text x="17" y="874" class="b">the index</text>
+<text x="17" y="894" class="b">directory, possibly</text>
+<text x="17" y="914" class="b">corrupted or</text>
+<text x="17" y="934" class="b">planted</text>
+<rect x="236" y="826" width="414" height="184" rx="4" class="gate"/>
+<rect x="251" y="844" width="6" height="6" fill="#d9ff3d"/>
+<text x="266" y="852" class="b">Written only under <tspan class="m">&lt;root&gt;/.scrutate/</tspan>;</text>
+<text x="266" y="872" class="b">segments go to a temporary directory there and</text>
+<text x="266" y="892" class="b">are renamed.</text>
+<rect x="251" y="912" width="6" height="6" fill="#d9ff3d"/>
+<text x="266" y="920" class="b">A <tspan class="m">.scrutate</tspan> that is a link, or holds one, is</text>
+<text x="266" y="940" class="b">refused.</text>
+<rect x="251" y="960" width="6" height="6" fill="#d9ff3d"/>
+<text x="266" y="968" class="b"><tspan class="m">PRAGMA quick_check</tspan> on open, arrays</text>
+<text x="266" y="988" class="b">validated; a damaged index is rebuilt.</text>
+<path d="M686 918 L654 918" class="arrow" marker-end="url(#ah)" marker-start="url(#ah)"/>
+<path class="mv k9" d="M686 918 L654 918" pathLength="100" fill="none" stroke="#d9ff3d" stroke-width="9" stroke-dasharray="30.0 300" stroke-dashoffset="30.0"/>
+<path d="M232 918 L201 918" class="arrow" marker-end="url(#ah)" marker-start="url(#ah)"/>
+<path class="mv k10" d="M232 918 L201 918" pathLength="100" fill="none" stroke="#d9ff3d" stroke-width="9" stroke-dasharray="30.0 300" stroke-dashoffset="30.0"/>
+<rect x="690" y="34" width="189" height="976" rx="4" class="out"/>
+<path class="wipe mv k11" d="M702.1 45.0 H784.2 L781.1 67.0 H699.0 Z" fill="#d9ff3d"/>
 <text x="706" y="61" class="h"><tspan class="m">scrutate</tspan></text>
-<text x="706" y="61" class="hm mv k10"><tspan class="m">scrutate</tspan></text>
+<text x="706" y="61" class="hm mv k12"><tspan class="m">scrutate</tspan></text>
 <text x="706" y="82" class="b">Engine A, Engine B,</text>
 <text x="706" y="102" class="b">the CLI, the MCP</text>
 <text x="706" y="122" class="b">server and the</text>
 <text x="706" y="142" class="b">Python bindings.</text>
-<rect x="1" y="794" width="196" height="88" rx="4" fill="none" stroke="#2a2a2f" stroke-dasharray="5 5"/>
-<g transform="translate(17.0 821.0) scale(0.01549 -0.01549)" fill="#f2eee3"><path d="M60 0L230 0L230 357L390 0L540 0L540 710L370 710L370 353L210 710L60 710Z"/><path transform="translate(600 0)" d="M80 0L540 0L540 158L260 158L260 279L520 279L520 433L260 433L260 552L532 552L532 710L80 710Z"/><path transform="translate(1200 0)" d="M210 0L390 0L390 552L560 552L560 710L40 710L40 552L210 552Z"/><path transform="translate(1800 0)" d="M90 0L254 0L300 286L346 0L510 0L580 710L416 710L391 308L345 630L255 630L209 308L184 710L20 710Z"/><path transform="translate(2400 0)" d="M300 -16C474 -16 572 116 572 354C572 592 474 726 300 726C126 726 28 592 28 354C28 116 126 -16 300 -16ZM300 138C241 138 212 196 212 354C212 512 241 572 300 572C359 572 388 512 388 354C388 196 359 138 300 138Z"/><path transform="translate(3000 0)" d="M56 0L236 0L236 239L266 239C332 239 356 227 362 138L372 0L554 0L538 194C531 270 495 311 420 324C493 347 540 407 540 496C540 627 450 710 294 710L56 710ZM236 397L236 552L286 552C331 552 356 524 356 475C356 425 331 397 286 397Z"/><path transform="translate(3600 0)" d="M40 0L220 0L220 183L266 252L380 0L570 0L367 405L570 710L358 710L220 466L220 710L40 710Z"/></g>
-<text x="17" y="842" class="b">not used</text>
-<rect x="236" y="794" width="414" height="88" rx="4" class="gate"/>
-<rect x="251" y="812" width="6" height="6" fill="#d9ff3d"/>
-<text x="266" y="820" class="b">No network connections and no HTTP or DNS</text>
-<text x="266" y="840" class="b">dependency: <tspan class="m">cargo tree</tspan> has no networking</text>
-<text x="266" y="860" class="b">crate.</text>
+<rect x="1" y="1034" width="196" height="88" rx="4" fill="none" stroke="#2a2a2f" stroke-dasharray="5 5"/>
+<g transform="translate(17.0 1061.0) scale(0.01549 -0.01549)" fill="#f2eee3"><path d="M60 0L230 0L230 357L390 0L540 0L540 710L370 710L370 353L210 710L60 710Z"/><path transform="translate(600 0)" d="M80 0L540 0L540 158L260 158L260 279L520 279L520 433L260 433L260 552L532 552L532 710L80 710Z"/><path transform="translate(1200 0)" d="M210 0L390 0L390 552L560 552L560 710L40 710L40 552L210 552Z"/><path transform="translate(1800 0)" d="M90 0L254 0L300 286L346 0L510 0L580 710L416 710L391 308L345 630L255 630L209 308L184 710L20 710Z"/><path transform="translate(2400 0)" d="M300 -16C474 -16 572 116 572 354C572 592 474 726 300 726C126 726 28 592 28 354C28 116 126 -16 300 -16ZM300 138C241 138 212 196 212 354C212 512 241 572 300 572C359 572 388 512 388 354C388 196 359 138 300 138Z"/><path transform="translate(3000 0)" d="M56 0L236 0L236 239L266 239C332 239 356 227 362 138L372 0L554 0L538 194C531 270 495 311 420 324C493 347 540 407 540 496C540 627 450 710 294 710L56 710ZM236 397L236 552L286 552C331 552 356 524 356 475C356 425 331 397 286 397Z"/><path transform="translate(3600 0)" d="M40 0L220 0L220 183L266 252L380 0L570 0L367 405L570 710L358 710L220 466L220 710L40 710Z"/></g>
+<text x="17" y="1082" class="b">not used</text>
+<rect x="236" y="1034" width="414" height="88" rx="4" class="gate"/>
+<rect x="251" y="1052" width="6" height="6" fill="#d9ff3d"/>
+<text x="266" y="1060" class="b">No network connections and no HTTP or DNS</text>
+<text x="266" y="1080" class="b">dependency: <tspan class="m">cargo tree</tspan> has no networking</text>
+<text x="266" y="1100" class="b">crate.</text>
 </g>
 </svg>

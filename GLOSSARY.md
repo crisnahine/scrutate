@@ -90,8 +90,14 @@ items and ends with how many are left and the `offset` that continues it. `grep 
 pages its lines by the same rule (`ops::paged_counted`).
 
 **Repo**: an open repository (`scrutate::Repo`, in `stores.rs`): the searcher on its index plus
-the stores kept current around it. Front ends that stay open (the MCP server, the language server,
-the Python bindings, `watch`) hold one.
+the stores kept current around it. Front ends that stay open reach one through a session.
+
+**Session**: one repository held open for many calls (`session::Session`): the first-build wait,
+the refresh interval, a cancel flag per call, a panic kept inside its call, recovery, and reads
+side by side, each on a **reader** of its own (a `Repo` from `Repo::another`), with writes one at
+a time. The MCP server, the language server, the Python bindings and `watch` are its adapters. A
+command line call may use the session a running `serve` offers on `.scrutate/session.sock`, and
+does the work itself when the session is not the same build, settings and root, or would wait.
 
 **Stores**: the derived data under `.scrutate/` (the code index, the text index, the `tsquery`
 cache) and the one module that keeps them current (`stores.rs`). A caller names a **change set**

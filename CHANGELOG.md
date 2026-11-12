@@ -198,6 +198,15 @@ First release.
   line 18446744073709551615.
 
 ### Engine B: code intelligence
+- One session module (`session.rs`) holds a repository open for the MCP server, the language
+  server, the Python bindings and `watch`: the first-build wait, the refresh interval, a cancel
+  flag per call, a panic kept inside its call, recovery, and reads side by side, each on a reader
+  of its own (`Repo::another`, a second SQLite connection on the open index, up to 8). The MCP
+  server no longer holds one lock for a whole call: eight `references` calls sent together no
+  longer wait in line. The language server opens no second index for its saves, rebuilds a
+  damaged index and answers instead of asking for a retry, and scans for changes before a request
+  at most once a second. The repositories of one session write one at a time under one lock, so a
+  rebuild after damage is made once.
 - The models are trained on rows the engine writes. `bench/gen_features.py` indexes each
   benchmark package with the binary and reads `batch --features`; `bench/train_semantic.py` reads
   the chunks, the tokens of each view and the query terms from a hidden `views` command.
@@ -719,6 +728,13 @@ First release.
   `GrepIter.stats()["notes"]`.
 
 ### Product
+- An index command (`symbol`, `callers`, `callees`, `refs`, `outline`, `deps`, `rdeps`, `read`,
+  `similar`, `dupes`) uses the index a running `scrutate serve` holds open on the same root,
+  through `.scrutate/session.sock` (Unix, owner only, no network port), and prints the same bytes
+  and exit code a fresh process prints, every file looked at first. It never starts a server; any
+  difference (another build, another setting, another root, a stale socket, a server busy with a
+  write) and it does the work itself. `SCRUTATE_NO_SESSION=1` turns this off;
+  `SCRUTATE_SESSION_DEBUG=1` says why a call did not use a session.
 - The reference package lost its command line, MCP server and agent (`scrutate_ref/cli.py`,
   `mcp_server.py`, `agent.py`, `python -m scrutate_ref`, the `scrutate-ref` script and the `mcp`,
   `agent` and `all` extras): nothing in `bench/`, `tools/` or CI used them. The binary is the

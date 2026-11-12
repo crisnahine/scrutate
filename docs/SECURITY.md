@@ -7,7 +7,7 @@
 
 [Documentation](README.md) &nbsp;·&nbsp; Previous: [Test results](TEST_RESULTS.md) &nbsp;·&nbsp; Next: [Traceability](TRACEABILITY.md)
 
-**Contents**: [Threat model](#threat-model) &nbsp;·&nbsp; [Controls and evidence](#controls-and-evidence) &nbsp;·&nbsp; [Known gaps and residual risks](#known-gaps-and-residual-risks) &nbsp;·&nbsp; [Reporting](#reporting)
+**Contents**: [Threat model](#threat-model) &nbsp;·&nbsp; [Controls and evidence](#controls-and-evidence) &nbsp;·&nbsp; [The session socket](#the-session-socket) &nbsp;·&nbsp; [Known gaps and residual risks](#known-gaps-and-residual-risks) &nbsp;·&nbsp; [Reporting](#reporting)
 
 <!-- End of head. -->
 
@@ -21,8 +21,9 @@ Scrutate reads source trees chosen by the user and writes one cache directory (`
 each indexed repository. The assets are (1) the confidentiality of the source code, (2) the
 integrity of the machine running the tool, (3) availability (no hangs or resource exhaustion on
 hostile inputs). Attackers considered: a **hostile repository** (crafted files, names, symlinks,
-`.gitignore`, a corrupted or planted `.scrutate/` directory), a **hostile query** (patterns), and
-a **hostile MCP client** (malformed JSON-RPC, path escapes).
+`.gitignore`, a corrupted or planted `.scrutate/` directory), a **hostile query** (patterns),
+a **hostile MCP client** (malformed JSON-RPC, path escapes), and **another local process** that
+reaches the socket a running `serve` offers to command line calls (below).
 
 <p align="center">
 <img src="assets/diagram-trust-boundaries.svg" alt="Trust boundaries: repository content, patterns, MCP requests and the .scrutate directory, with the controls on each boundary; no network." width="880">
@@ -42,15 +43,89 @@ a **hostile MCP client** (malformed JSON-RPC, path escapes).
 | Resource exhaustion: files | Engine B skips files > 1 MB and binary files (NUL in the first 4 KB); chunk text and body are capped at 200 lines (40 for a container) and 32 KiB; tree-sitter parse per file; Engine A streams with bounded batches; `--max-filesize`, `--max-depth`, `--max-results`, `--max-count`. With `-z`, an archive or compressed file stops at 8 GiB expanded or a million members, a member at a line longer than 64 MiB, and a tar member's name from a long-name or PAX header is read up to 64 KiB, so a small archive cannot make `grep -z` hold gigabytes. Index time stays linear in nesting depth: a file of 60,000 nested Lisp calls, nested lists or 50,000 nested HTML elements indexes in under a second. The resolver does not read a file nested more than 2,000 levels deep, so such a file cannot overflow the stack of `refs`, the language server or the MCP server, or hold them for minutes. | robustness `hostile_text_shapes_never_panic` (5 MB line, 200k lines, 20 000-deep nesting); parse_index `deeply_nested_lisp_and_html_parse_in_linear_time` (Lisp and Scheme to 60,000 levels, bare lists to 80,000, HTML to 50,000). |
 | Hostile text | Invalid UTF-8 (lossy decode), BOM, CRLF/CR, UTF-16 with a byte-order mark (transcoded by both engines), multibyte boundaries, emoji identifiers, 255-byte names, spaces/unicode in paths. A real UTF-8 boundary panic was found by this suite and fixed (`text::prefix_bytes`). | same test; `parser_fuzz_smoke` (400 random inputs); proptest `parser_yields_well_formed_chunks`. |
 | Index corruption | `PRAGMA quick_check` on open; every segment array validated for dtype/shape/length on open; `scrutate check` runs `integrity_check` + deep validation (sorted ids, posting ranges, IVF permutation) and optional file re-hashing; damaged indexes are rebuilt automatically, also when a search first meets the damage in a segment array (a posting row, a pointer or a cluster table that points outside the segment); a planted non-database file is replaced; locked ≠ corrupt (never deletes a live database). | robustness `corrupted_index_is_detected_and_rebuilt` (5 corruption scenarios); cli `a_posting_row_outside_its_segment_triggers_a_rebuild`; `concurrent_indexers_and_readers_do_not_corrupt` (3 writers + 2 readers, 30× repeated, `integrity_check` ok). |
-| Panic containment | A panic in the CLI prints one diagnostic line and exits 2; a panic inside an MCP tool call is reported as a tool error and the server keeps running (poisoned lock recovered). The Python bindings take the engine lock back after a panic too. An index update that panics rolls back at once, and the next update clears a write transaction left open. A panic in the MCP server's first index build is reported on stderr and in each tool call's answer; calls stop waiting for it, and `serve` still exits when its input closes. | `cli::main_exit`, `mcp::serve`; `crates/scrutate-py/src/lib.rs`; mcp_protocol `a_first_build_that_panics_is_reported_and_the_server_still_answers_and_exits`. |
+| Panic containment | A panic in the CLI prints one diagnostic line and exits 2; a panic inside an MCP tool call is reported as a tool error and the server keeps running: the session closes the reader the call ran on and opens another. The Python bindings and the language server keep a panic inside its call the same way. An index update that panics rolls back at once, and the next update clears a write transaction left open. A panic in the MCP server's first index build is reported on stderr and in each tool call's answer; calls stop waiting for it, and `serve` still exits when its input closes. | `cli::main_exit`, `session.rs`; `session::tests::a_panic_inside_one_call_is_that_calls_error_and_the_session_goes_on`; mcp_protocol `a_first_build_that_panics_is_reported_and_the_server_still_answers_and_exits`. |
 | Supply chain | 210 crates in the dependency graph of the binary (every platform's), each with a permissive licence (MIT, Apache-2.0, BSD, ISC, Zlib, Unlicense, 0BSD, Unicode-3.0, CC0-1.0), plus one data file compiled in, a Han fold table derived from Unihan 18.0.0 (Unicode-3.0, `crates/scrutate/data/han_fold.txt`); `Cargo.lock` committed; `cargo audit` over the 255 locked crates: **0 vulnerabilities, 0 warnings** (RustSec advisory DB, 2026-11-11). The bundled SQLite was upgraded for RUSTSEC-2026-0459 (`rusqlite` 0.41, `libsqlite3-sys` 0.39). `ignore` is vendored with four documented changes (`vendor/ignore`; the SBOM marks it as a modified copy). `zip` 9, used only by `grep -z`, has no open advisory; `pyo3` was upgraded to 0.30 (2 advisories in 0.27). SBOM generated per release (`tools/sbom.py`, CycloneDX 1.5). | `cargo audit` output in docs/TEST_RESULTS.md; SBOM in release artifacts. |
 | Reproducible builds | Release profile pins codegen; `Cargo.lock` and a pinned toolchain (`rust-toolchain.toml`: 1.99.1). Two clean builds in two different build images (`rust:1-slim-bookworm` and `golang:1.26-bookworm` with rustup, both using the pinned 1.99.1 compiler, fresh containers) produced the same SHA-256 for the release commit (`261ed1a2...`, linux/arm64); the binary the Linux leaderboard measured, built in another directory, has that hash too. Reproducibility on other operating systems, or across source paths in general, is not claimed. | `tools/repro_docker.sh`, `bench/results/platforms/repro/`; `tools/reproducible_check.sh` (same machine). |
 | Signed releases | Release workflow attaches SHA-256 checksums and Sigstore build-provenance attestations (`actions/attest-build-provenance`) to every binary and wheel. | `.github/workflows/release.yml`, **not yet executed**; no release has been signed at the time of writing. |
 | Coverage-guided fuzzing | Four libFuzzer targets (`fuzz/`, nightly toolchain, AddressSanitizer): the `.npy` reader on arbitrary bytes; the text-index soundness property (a text a pattern matches must satisfy the pattern's trigram condition); the edit-distance matcher; every parser tier on arbitrary text under 60 file extensions. It found four real defects, each fixed with a regression test and its crash input kept in `fuzz/regressions/`: chunk line numbers shifted after form feeds (Python-style line splitting); a truncated string array panicked the `.npy` reader; a shape whose element count overflowed wrapped in release builds and could have produced an over-long slice view (undefined behaviour, now a saturating count and checked sizes); a zero-width string array with a huge shape requested a multi-terabyte allocation. | `bench/results/fuzz/` (run logs), `fuzz/regressions/`, unit tests `npy::header_tests::damaged_headers_are_errors_not_panics`, `parse::tests::form_feeds_and_lone_cr_do_not_shift_line_numbers`. |
 | Network file systems | A repository on an SMB share (Samba 4.23 server, macOS `smbfs` client): Engine A output identical to the local copy; Engine B indexes, answers, survives three concurrent `index` processes with readers, and passes `check --files`. Found and fixed: a blocking file lock fails at once on SMB (EAGAIN), so the text index polls `try_lock`. One host only: several machines sharing one index over a network file system is not supported (SQLite's documentation warns that its locking is unreliable there). | `tools/netfs_check.sh`, `bench/results/platforms/netfs-smb-macos.txt`. |
 | Untrusted `.scrutate.toml` | The configuration file sets option defaults only (booleans, numbers, globs); it cannot name programs or paths to execute. Unknown keys are rejected. `follow = true` in a repository's own file is ignored with a warning, so a cloned repository cannot make a search leave it through a symbolic link; the flag, the environment and the user's own file still can. | `config.rs` tests; `tests/cli.rs` (a link out of the repository). |
-| MCP server | Only reads the repository and writes `.scrutate/`; path arguments are confined; the server is stdio-only (no listening socket). Malformed input gets the JSON-RPC error the specification names, and the server keeps reading: a line that is not JSON or not UTF-8 gets -32700; a message that is not an object, an empty batch and a request without `method` get -32600; an unknown method gets -32601; an unknown tool and a missing tool name get -32602; an argument of the wrong type, or a negative number, is a tool error that names the argument. Notifications are never answered, and a client's own responses are ignored. An error quotes at most 200 characters of an argument. Each tool call has a thread of its own, at most 32 at once (further calls run on the reading thread), and they take turns on the index. | `mcp.rs`; manual protocol smoke test in docs/TEST_RESULTS.md. |
-| Python bindings | Engine behind a `Mutex`; `GrepIter` borrow-checked by PyO3; free-threaded declaration (`gil_used = false`) made after this review; stable ABI build. | `python/tests/test_bindings.py`. |
+| MCP server | Only reads the repository and writes `.scrutate/`; path arguments are confined; the server takes requests on stdio, and on Unix offers its open index to command line calls of the same user through `.scrutate/session.sock` (no network port; see [The session socket](#the-session-socket)). Malformed input gets the JSON-RPC error the specification names, and the server keeps reading: a line that is not JSON or not UTF-8 gets -32700; a message that is not an object, an empty batch and a request without `method` get -32600; an unknown method gets -32601; an unknown tool and a missing tool name get -32602; an argument of the wrong type, or a negative number, is a tool error that names the argument. Notifications are never answered, and a client's own responses are ignored. An error quotes at most 200 characters of an argument. Each tool call has a thread of its own, at most 32 at once (further calls run on the reading thread), and at most 8 read the index at once. | `mcp.rs`; manual protocol smoke test in docs/TEST_RESULTS.md. |
+| Python bindings | Engine behind a session (calls side by side, writes one at a time, a panic kept inside its call); `GrepIter` borrow-checked by PyO3; free-threaded declaration (`gil_used = false`) made after this review; stable ABI build. | `python/tests/test_bindings.py`. |
+
+## The session socket
+
+While `scrutate serve` runs on a repository, on Unix, it listens on a socket file at
+`<root>/.scrutate/session.sock`, so that an index command (`symbol`, `refs` and the others the CLI
+documents) can use the index the server holds open. This is a new local boundary; this section is
+its review.
+
+What it is. A Unix-domain stream socket, mode 0600, made when `serve` starts and removed when it
+exits. No TCP or UDP port is opened. The command line never starts a server: without a running
+`serve` there is no socket and nothing listens. The listening thread lives inside the `serve`
+process and ends with it, so no process outlives the command that started it. On Windows there is
+no socket and no session use: a named pipe with the same protection would be a boundary nobody
+here can run or test, so the command line always does its own work there.
+
+Checks, at both ends:
+
+- The server asks the system who the peer is (`getpeereid` on macOS and the BSDs, `SO_PEERCRED`
+  on Linux) and closes a connection from another user before it reads or writes a byte.
+- The command line connects only to a path that is a socket owned by its own user, in a
+  `.scrutate` directory owned by its own user, neither of them a symbolic link (`lstat`, no link
+  followed), then asks the system who the peer is and drops a server of another user.
+- The server greets with its identity: the executable file (device, inode, size, modification
+  time), the version, the index schema and content revisions, the model signatures, every
+  `SCRUTATE_*` setting that can change an answer, and its root. The command line compares it with
+  its own and uses the server only when all are the same.
+- A request is one line of at most 1 MB, read within 2 seconds; at most 16 connections are served
+  at once and a further one is closed. A greeting slower than 20 ms, an answer slower than 60 s,
+  a closed connection or any error makes the command line do the work itself.
+
+What a process of the same user can do through it that it could not do before: nothing. A
+request is an operation the command line could run itself (`ops::Op`, deserialised and run
+through the same `Repo` path, with the same path confinement: a path that leaves the root is
+refused as in a tool call); the answer is text that process could have computed by running
+`scrutate` in the same directory. The socket reads only the repository the server was started on
+and writes only its `.scrutate/`, both of which that user can already read and write. It can
+keep the server busy, as it could keep any process of its own busy; the limits above bound what
+one connection holds.
+
+What another user on the machine can do: nothing. The file mode keeps another user from
+connecting on systems that check a socket file's mode (Linux); everywhere, the server checks the
+peer's user before it reads a byte, so a connection from another user gets no greeting and no
+answer. Another user who plants a socket of their own at the path (only possible if they can
+write the repository's `.scrutate/`) is refused by the command line's owner and peer checks.
+
+What a hostile repository can do: it cannot point the socket elsewhere. The path is fixed
+(`.scrutate/session.sock` under the root); the existing rule that a `.scrutate` that is a symbolic
+link, or that holds one, is refused applies to the socket's name too (`files::index_dir` refuses
+the index, the server will not bind there, and the command line will not connect through a link).
+A checkout cannot hold a socket (git stores no sockets); a regular file planted at the path is not
+removed, the server offers no socket, and the command line passes it over.
+
+Edge cases:
+
+- A path too long for a socket address (103 bytes on macOS, 107 on Linux): the socket is named
+  from its directory, which the process enters for the call and leaves; the server does this at
+  its start before any thread runs, the command line before it starts any.
+- Two servers on one root: the first keeps the socket; a second finds a live server there and
+  offers none. When the first exits it removes the socket only if it is still the one it made
+  (device and inode), so it never removes another's.
+- A server that died without removing its socket (killed): a connect fails at once (refused), the
+  command line does its own work, and the next `serve` replaces the stale socket file.
+- A root that was moved: the socket moves with it, but the server's root in its greeting no
+  longer matches, so the command line does its own work. A root that was deleted takes the socket
+  with it.
+- A session that would have to wait (its first build or another write running, every reader
+  busy, another process holding the index's write lock): the command line does its own work.
+- `SCRUTATE_NO_SESSION=1` turns the use off; `SCRUTATE_SESSION_DEBUG=1` says on stderr why a
+  call did not use a session.
+
+Evidence: `tests/session.rs` (the same bytes and exit codes as a fresh process for every command,
+an edit seen at once, another build, another setting, the switch, a stale socket, a file that is
+no socket, two servers, a moved root, a deep root, the socket's mode). A peer of another user
+could not be faked without a second account and is checked by code review only.
 
 ## Known gaps and residual risks
 
@@ -68,7 +143,8 @@ a **hostile MCP client** (malformed JSON-RPC, path escapes).
   whose size it passes, and on Linux one `statfs` per search root, and per directory named `proc`
   or `sys` below one, into a buffer larger than
   `struct statfs` on every Linux ABI, of which only the first field (`f_type`) is read;
-  `lazy_bind.rs` (the executable on macOS arm64 only): assembly stubs for 133 libSystem
+  `session.rs`: `geteuid`, and `getpeereid` (macOS, the BSDs) or `getsockopt(SO_PEERCRED)` (Linux) into a `struct ucred` whose size it passes and checks, on a connected socket it owns;
+  `lazy_bind.rs` (the executable on macOS arm64 only): assembly stubs for 158 libSystem
   functions, each jumping to the address `dlsym` returned for its own name, with every argument
   register and the stack left as the caller set them; `fork` binds all of them first, so a child
   process never calls `dlsym`; `tests/lazy_bind.rs` runs variadic, floating-point, callback, panic

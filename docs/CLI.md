@@ -472,6 +472,17 @@ change in a file the answer does not cite or name waits for the next scan.
 At the end of its input (EOF) the server
 answers the calls in flight, lets a running index build finish, and exits.
 
+While it runs, the server offers its open index to command line calls of the same user on the
+same root: `symbol`, `callers`, `callees`, `refs`, `outline`, `deps`, `rdeps`, `read`, `similar`
+and `dupes` run there, with every file looked at first as always, and print the same bytes and
+exit code a fresh process gives (about 5 ms in place of 20 ms on this repository). The meeting
+point is a socket file, `.scrutate/session.sock` (owner only; Unix; no network port), removed
+when the server exits. A command never starts a server. When anything about the server is not
+as the command would do the work (another build of scrutate, another `SCRUTATE_*` setting,
+another root, a stale socket, a write running), the command does the work itself and says
+nothing; `SCRUTATE_SESSION_DEBUG=1` says why on stderr, and `SCRUTATE_NO_SESSION=1` turns the
+use off. Of two servers on one root, the first offers the socket.
+
 - Every tool but `reindex` is marked read-only (`readOnlyHint`), and all are marked as staying on
   this machine (`openWorldHint: false`), so clients that ask before a write do not ask for these.
 - The server returns `instructions`: which tool to start with and that answers are capped.
@@ -540,8 +551,9 @@ its last group with a `note:` line (`"note"` in JSON). An invalid pattern is an 
   Claude Code 2.1.322 shows the JSON in place of the text, and the text is the form with the
   snippets (measured with that client on 2026-11-11). Turn it on for a client whose scripts read
   tool results, such as Codex in Code Mode.
-- A call runs on a thread of its own, so `notifications/cancelled` reaches it: a call waiting for
-  the index or for its turn stops, an index update it runs (`reindex`, or the scan before a read)
+- A call runs on a thread of its own, so `notifications/cancelled` reaches it, and calls run
+  side by side, each on a reader of its own (up to the number of cores, at most 8; one more waits
+  for a reader): a call waiting for the index or for a reader stops, an index update it runs (`reindex`, or the scan before a read)
   stops and rolls back at its next batch, and the answer of one already computing is dropped.
   Nothing more is sent for a cancelled request.
 - While the first index of a repository is being built, by this server or by another process,
@@ -583,8 +595,8 @@ from the Engine B index:
 
 It advertises only these four, plus full text sync. Open documents are read from the editor's
 text, so an unsaved line still finds the word under the cursor; locations in other files come from
-disk. `didSave` updates the index incrementally on a second connection in a background thread,
-so requests keep being answered meanwhile. When the repository has no index, `initialize` builds
+disk. `didSave` updates the index incrementally in a background thread, so requests keep being
+answered meanwhile, and before a request the index is scanned for changes at most once a second. When the repository has no index, `initialize` builds
 one (as `scrutate index` does, without the text index) and reports it with `window/logMessage`;
 requests that arrive meanwhile wait for it. Columns are UTF-16 code units, as the protocol
 requires. The exit code is 0 after `shutdown` then `exit`, 1 otherwise. Logs go to stderr.

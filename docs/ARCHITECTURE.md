@@ -503,7 +503,8 @@ A new store is added there, with no edit in a caller.
 | `watch`, `serve --watch` | the files a burst names, else every file; waits | code index, text index when one exists |
 | `reindex` (MCP, `batch`), bindings `index()` | every file; waits | code index, text index when one exists |
 | an index command, `batch` | every file before the first operation; never waits | code index |
-| an MCP tool call, a bindings call | every file, at most once per refresh interval; never waits | code index |
+| an MCP tool call, a bindings call, a language server request | every file, at most once per refresh interval of the session; never waits | code index |
+| an index command a running `serve` answers | every file, in that session, before the operation; never waits (else the command does the work itself) | code index |
 | any operation on `Repo` | the files its answer cites and its arguments name, one `stat` each | code index |
 | `serve` and `lsp` start, an `lsp` save | every file; waits | code index |
 | `tsquery` | its own walk, one `stat` per file against the code index's record | `tsquery` cache |
@@ -531,6 +532,54 @@ one step (a transaction, a manifest rename, a file rename), so a reader of a sto
 commit and never half of one. A writer that keeps both indexes takes the two locks one after the
 other, code index first, and never holds both, so two writers cannot deadlock; between the two
 commits a reader can see the new code index beside the old text index, and no answer reads both.
+The repositories a session opens (`Repo::another`) share one more lock in the process, held by
+every write any of them makes, so they write one at a time and a rebuild after damage is made
+once, not once per reader; reads take no lock.
+
+### Sessions (`session.rs`)
+A session holds one repository open for many calls. The MCP server, the language server, the
+Python bindings and `watch` are its adapters: none of them keeps a `Repo` of its own, and each
+says only what its protocol needs to say (newline framing and progress notifications in
+`mcp.rs`, `Content-Length` framing and UTF-16 columns in `lsp.rs`).
+
+| `Session` | What it does |
+|---|---|
+| `open(root, Every)` | opens the index; `Every` is the refresh interval (`serve --refresh-interval`, else one second, shorter when a scan is cheap) |
+| `build()`, `building()`, `wait_built(cancel, limit, tick)`, `build_failed()` | the first build: every file, waiting for another writer; calls wait for it; a panic in it is reported until an update goes through |
+| `run(op, cancel)` | an operation on an index scanned at most once per interval, waiting up to 20 s for another process's first build |
+| `read(cancel, refresh, f)` | a function of the searcher (the language server's lookups), damage rebuilt and `f` run again |
+| `write(f)` | an update (a watch burst, a save, bindings `index()`) |
+| `run_scanned(op)` | a command line call: every file first, then the operation; nothing when it would have to wait |
+| `hold_writes()` | at exit: the first build is waited for and no write starts after it |
+
+Every call gets a cancel flag of its own, and a panic stays inside it: the call gets the error
+`Panicked`, its reader is closed, and the session goes on. Reads run side by side, each on a
+reader of its own: a SQLite connection with its statement cache, the segment maps and statistics
+(`LexStore`) and the searcher's caches, none of which can be shared between threads. Readers are
+opened when calls need them, from the open index without its triage (`Index::another`, about the
+cost of one SQLite open), up to the number of cores and at most 8, and kept; the model set is
+shared (`Arc<ModelSet>`). A ninth call waits for a reader. Writes take the shared writer lock;
+a read beside a write sees the index as of its last commit (WAL, one transaction per update, the
+segment manifest swapped in that transaction), the way a read in another process does. The scan
+before a read is a write: one at a time, and a call that waited for another call's scan does not
+scan again.
+
+A command line call may use the session that `serve` runs on its root. The session listens on a
+Unix socket at `.scrutate/session.sock` (mode 0600, the peer's user checked before a byte is
+read; no network port), from the server's start to its exit; the command line never starts one,
+and no process outlives its command. An index command (`symbol`, `callers`, `callees`, `refs`,
+`outline`, `deps`, `rdeps`, `read`, `similar`, `dupes`) sends its operation (`ops::Op`, as JSON)
+with its printing options; the session scans every file, runs it and prints the answer with the
+command line's own function, and the command line writes those bytes and exits with that code.
+The command line checks first: the socket file is a socket this user owns, the peer is this
+user, and the session's greeting names the same executable (device, inode, size and time), the
+same index schema and content revisions, the same models, the same `SCRUTATE_*` settings and the
+same root. Any difference, any error, a greeting slower than 20 ms, a session that would have to
+wait (a write running, every reader busy, another process holding the write lock): the command
+line does the work itself, as without a session, and says nothing unless
+`SCRUTATE_SESSION_DEBUG=1`. `SCRUTATE_NO_SESSION=1` turns the use off. `grep`, `search`, `find`
+and `batch` do not use it. Windows has no session use. The language server offers no socket:
+one meeting point per root keeps the "two sessions on one root" case to `serve` alone.
 
 ### Intelligence (`intel.rs`)
 Definitions and references, callers/callees, outline, imports mapped to files by the same
@@ -626,7 +675,7 @@ around it (see "Keeping the stores current" above). After an operation it checks
 arguments name, against the index with one `stat` each; when one changed or is gone, those
 files alone are updated and the operation runs again, once. `read_code` by path streams the file
 through a 64 KB buffer and stops after the last line it shows. The MCP server, the Python bindings,
-the language server and `watch` hold one; the MCP server builds the first index in the background and answers
+the language server and `watch` reach one through their session (`session.rs`); the MCP server builds the first index in the background and answers
 "still building" after a 20 second wait, and waits as long for another process that builds it.
 A cancelled call sets the flag the index update checks between batches, so a `reindex` or the
 scan before a read rolls back there.
@@ -636,7 +685,7 @@ The MCP server (`mcp.rs`) is an adapter: the tool table with its hints for clien
 two eras on one pipe: the `initialize` handshake of the revisions up to 2025-11-25, and revision
 2026-07-28, where each request names its version in `_meta` and nothing is remembered between
 requests. Each tool call runs on a thread of its own, so the loop keeps reading and a
-`notifications/cancelled` finds the call it names; the calls still take turns on the one index.
+`notifications/cancelled` finds the call it names; the session runs the calls side by side.
 A result is text cut to the byte budget; with `serve --structured` it also carries the JSON
 form in `structuredContent` when both fit. That is a switch because clients differ in which
 form they show their model, and the text is the one written for a model. The Python bindings expose both
@@ -649,10 +698,10 @@ converts between the index's lines and the protocol's UTF-16 columns. Definition
 ask `Names` about the name under the cursor first, so both name the same definition; a name it
 cannot place falls back to the lookup by name. `initialize` finds the root
 with the CLI's own rule (`cli::index_above`) from the editor's first folder, so the editor and a
-shell share the index at the repository top. The first index build holds
-the searcher's lock, so early requests wait for a complete index. A save updates the index on a
-second connection owned by a background thread; SQLite WAL lets requests keep reading while it
-writes.
+shell share the index at the repository top. Requests wait for the first index build, and
+the index is scanned before a request at most once a second (the session's interval). A save
+updates the index through the session's writer in a background thread; requests keep reading
+while it writes.
 
 ## Models (`models/`, `models.rs`)
 `semantic.npz` (14.6 MB: code-word vocabulary tables and projections) and `ranker.npz` (87 KB)
@@ -688,5 +737,6 @@ by the quality floor of `bench/quality.py` (docs/QUALITY.md).
 - Components are replaceable behind small interfaces: a grammar is a registry row; the ranker is
   an array file; the vector model is an `npz`; the store is a directory of immutable arrays.
 - No network, no execution of repository code, no background daemons: the engines are libraries
-  that a CLI, an MCP server and Python call directly.
+  that a CLI, an MCP server and Python call directly. A command line call may use a session a
+  running `serve` offers on a local socket, and never starts one.
 - Everything that can be measured is measured by a script in `bench/` that anyone can rerun.

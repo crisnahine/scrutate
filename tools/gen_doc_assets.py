@@ -807,8 +807,9 @@ def diagram_exit_codes():
 
 def diagram_security():
     s = Svg(880, 800, "Trust boundaries",
-            "What crosses into scrutate (repository content, patterns, MCP requests) and what it writes (.scrutate), "
-            "with the controls the security assessment names on the boundary each one guards. The network is not used.")
+            "What crosses into scrutate (repository content, patterns, MCP requests, a command line call to a running server) "
+            "and what it writes (.scrutate), with the controls the security assessment names on the boundary each one guards. "
+            "The network is not used.")
     sw, cx, cw, ex, ew = 196, 236, 414, 690, 189
     rows = [
         ("Repository content", "a hostile repository: crafted files, names, symlinks, `.gitignore`",
@@ -823,6 +824,10 @@ def diagram_security():
          ["stdio only, no listening socket.",
           "A path that leaves the root by its own parts is refused with nothing looked at.",
           "Malformed input gets the JSON-RPC error the specification names; at most 32 call threads at once."]),
+        ("Session socket", "another process on this machine: of this user, or of another",
+         ["`.scrutate/session.sock`, mode 0600, while `serve` runs; no network port; the command line never starts a server.",
+          "Both ends check the peer is the same user before a byte is read; a link or a file of another owner is refused.",
+          "The command line does the work itself unless the server is the same build, settings and root."]),
         ("`.scrutate/`", "the index directory, possibly corrupted or planted",
          ["Written only under `<root>/.scrutate/`; segments go to a temporary directory there and are renamed.",
           "A `.scrutate` that is a link, or holds one, is refused.",
