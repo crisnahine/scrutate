@@ -568,8 +568,9 @@ A command line call may use the session that `serve` runs on its root. The sessi
 Unix socket at `.scrutate/session.sock` (mode 0600, the peer's user checked before a byte is
 read; no network port), from the server's start to its exit; the command line never starts one,
 and no process outlives its command. An index command (`symbol`, `callers`, `callees`, `refs`,
-`outline`, `deps`, `rdeps`, `read`, `similar`, `dupes`) sends its operation (`ops::Op`, as JSON)
-with its printing options; the session scans every file, runs it and prints the answer with the
+`outline`, `deps`, `rdeps`, `read`, `similar`, `dupes`, `search`, the ranked part of `find`) sends
+its operation (`ops::Op`, as JSON) with its printing options (`--json`, the byte limit and offset,
+a search's `--why`); the session scans every file, runs it and prints the answer with the
 command line's own function, and the command line writes those bytes and exits with that code.
 The command line checks first: the socket file is a socket this user owns, the peer is this
 user, and the session's greeting names the same executable (device, inode, size and time), the
@@ -577,8 +578,11 @@ same index schema and content revisions, the same models, the same `SCRUTATE_*` 
 same root. Any difference, any error, a greeting slower than 20 ms, a session that would have to
 wait (a write running, every reader busy, another process holding the write lock): the command
 line does the work itself, as without a session, and says nothing unless
-`SCRUTATE_SESSION_DEBUG=1`. `SCRUTATE_NO_SESSION=1` turns the use off. `grep`, `search`, `find`
-and `batch` do not use it. Windows has no session use. The language server offers no socket:
+`SCRUTATE_SESSION_DEBUG=1`. `SCRUTATE_NO_SESSION=1` turns the use off. `grep`, `batch`, a
+`search` with `--also` another root (one session holds one repository) and the grep part of
+`find` do not use it. A socket path too long for a socket address is reached from its directory;
+the command line goes back by a descriptor of the directory it left, and stops with an error if
+even that fails. Windows has no session use. The language server offers no socket:
 one meeting point per root keeps the "two sessions on one root" case to `serve` alone.
 
 ### Intelligence (`intel.rs`)

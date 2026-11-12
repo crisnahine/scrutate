@@ -151,6 +151,104 @@ const COMMANDS: &[&[&str]] = &[
     &["--max-bytes", "1000", "--offset", "1", "callers", "helper"],
 ];
 
+/// A ranked search and a ranked find, with every option they take.
+const SEARCHES: &[&[&str]] = &[
+    &["search", "helper"],
+    &["search", "join a path", "-k", "2"],
+    &["search", "helper", "--json"],
+    &["search", "point norm", "--why"],
+    &["search", "point norm", "-a", "helper", "-a", "", "-a", "point norm", "--why", "-k", "3"],
+    &["search", "zzqx_nothing_here"],
+    &["search", "zzqx_nothing_here", "--json"],
+    &["search", "helper", "--also", "."],
+    &["--max-bytes", "120", "search", "helper"],
+    &["--max-bytes", "300", "--offset", "1", "search", "helper", "--why"],
+    &["--offset", "9", "search", "helper"],
+    &["find", "helper"],
+    &["find", "how is a path joined?"],
+    &["find", "helper", "-k", "1", "--json"],
+    &["find", "zzqx_nothing_here"],
+    &["find", "zzqx(nothing"],
+    &["--max-bytes", "100", "find", "point norm"],
+];
+
+#[test]
+fn a_ranked_search_through_a_session_prints_what_a_fresh_process_prints() {
+    let r = Repo::new("search");
+    let _server = Server::start(&r.root);
+    for args in SEARCHES {
+        let (through, said) = r.through(args, &[]);
+        assert_eq!(said, "[scrutate] session: answered by the session", "{args:?}");
+        assert_eq!(through, r.fresh(args), "{args:?}");
+    }
+    // an edit made just before is in the answer
+    fs::write(r.root.join("pkg/late.py"), "def frobnicate_widgets():\n    return 1\n").unwrap();
+    let ((code, out, err), said) = r.through(&["search", "frobnicate widgets", "-k", "1"], &[]);
+    assert_eq!(said, "[scrutate] session: answered by the session");
+    assert_eq!(code, 0, "{err}");
+    assert!(out.starts_with("pkg/late.py:1-2"), "{out}");
+    assert!(err.contains("indexed 1 changed files"), "{err}");
+    // a search of several repositories opens each one and does its own work
+    let other = Repo::new("search_other");
+    let args = ["search", "helper", "--also", other.root.to_str().unwrap()];
+    r.fresh(&args); // the other repository's first build, said once
+    let want = r.fresh(&args);
+    let (through, said) = r.through(&args, &[]);
+    assert_eq!(said, "");
+    assert_eq!(through, want);
+}
+
+#[test]
+fn a_ranked_search_does_the_work_itself_when_the_session_is_not_its_own_or_is_gone() {
+    let r = Repo::new("search_differs");
+    let server = Server::start(&r.root);
+    for args in [&["search", "helper", "--why"][..], &["find", "helper", "--json"]] {
+        let want = r.fresh(args);
+        let (got, said) = r.through(args, &[("SCRUTATE_THREADS", "2")]);
+        assert!(said.contains("the session differs"), "{said}");
+        assert_eq!(got, want);
+        let (got, said) = r.through(args, &[("SCRUTATE_NO_SESSION", "1")]);
+        assert_eq!((said.as_str(), &got), ("", &want));
+    }
+    drop(server);
+    let (got, said) = r.through(&["search", "helper"], &[]);
+    assert!(said.contains("no session at"), "{said}");
+    assert_eq!(got, r.fresh(&["search", "helper"]));
+}
+
+#[test]
+fn a_long_socket_path_leaves_relative_arguments_to_the_callers_directory() {
+    let base = std::env::temp_dir().join(format!("scrutate_sess_far_{}", std::process::id()));
+    let rel = format!("{}/{}", "d".repeat(60), "e".repeat(60));
+    let r = Repo::at(base.join(&rel));
+    assert!(r.socket().as_os_str().len() > 110);
+    let _server = Server::start(&r.root);
+    let base = base.canonicalize().unwrap();
+    let file = format!("{rel}/pkg/use.py");
+    let run = |args: &[&str], env: &[(&str, &str)]| {
+        let mut c = Command::new(BIN);
+        c.arg("--root").arg(&rel).args(args).current_dir(&base).env_remove("SCRUTATE_ROOT").env("SCRUTATE_SESSION_DEBUG", "1").stdin(Stdio::null());
+        for (k, v) in env {
+            c.env(k, v);
+        }
+        let out = c.output().unwrap();
+        (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
+    };
+    for args in [&["search", "helper"][..], &["outline", &file]] {
+        let (code, out, err) = run(args, &[("SCRUTATE_NO_SESSION", "1")]);
+        assert_eq!(code, 0, "{args:?}: {err}");
+        let (c, o, e) = run(args, &[]);
+        assert!(e.contains("answered by the session"), "{args:?}: {e}");
+        assert_eq!((c, &o), (code, &out), "{args:?}");
+        // a session that differs: the command line came back from the socket's directory and
+        // does the work itself, from where it was started
+        let (c, o, e) = run(args, &[("SCRUTATE_THREADS", "2")]);
+        assert!(e.contains("the session differs"), "{args:?}: {e}");
+        assert_eq!((c, &o), (code, &out), "{args:?}");
+    }
+    let _ = fs::remove_dir_all(&base);
+}
+
 #[test]
 fn a_command_line_call_through_a_session_prints_what_a_fresh_process_prints() {
     let r = Repo::new("same");

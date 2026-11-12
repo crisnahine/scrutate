@@ -222,7 +222,7 @@ lazy! {
     dispatch_release = "dispatch_release", lseek = "lseek",
     // a session's socket, and the command line call that asks it
     socket = "socket", bind = "bind", listen = "listen", accept = "accept", connect = "connect", getpeereid = "getpeereid",
-    setsockopt = "setsockopt", recv = "recv", send = "send", chmod = "chmod", ns_get_executable_path = "_NSGetExecutablePath",
+    setsockopt = "setsockopt", recv = "recv", send = "send", chmod = "chmod", ns_get_executable_path = "_NSGetExecutablePath", fchdir = "fchdir",
     pthread_cond_timedwait_relative_np = "pthread_cond_timedwait_relative_np",
     // panics: unwinding and the backtrace
     unwind_backtrace = "_Unwind_Backtrace", unwind_delete_exception = "_Unwind_DeleteException", unwind_get_cfa = "_Unwind_GetCFA",

@@ -1234,6 +1234,10 @@ pub fn run() -> Result<i32> {
                     roots.push((root.clone(), canonical));
                 }
             }
+            if roots.len() == 1 {
+                let op = Op::Search { query, alt, k, snippets: true };
+                return run_request(&cli.root, crate::session::Request { op, json, max_bytes: page.0, offset: page.1, outside: None, why });
+            }
             // (hit, its repository) with the path a reader opens from here: another repository's
             // results carry its path as given
             let mut hits: Vec<(crate::search::Hit, usize)> = Vec::new();
@@ -1580,9 +1584,16 @@ fn text_room(max_bytes: usize) -> usize {
 }
 
 fn run_op(root: &Path, op: Op, json: bool, (max_bytes, offset): (usize, usize), outside: Option<&str>) -> Result<i32> {
-    let request = crate::session::Request { op, json, max_bytes, offset, outside: outside.map(str::to_string) };
+    run_request(root, crate::session::Request { op, json, max_bytes, offset, outside: outside.map(str::to_string), why: false })
+}
+
+fn run_request(root: &Path, request: crate::session::Request) -> Result<i32> {
+    let outside = request.outside.as_deref();
     // a session `serve` runs on this root does the same work with the index already open
-    let asked = crate::session::wanted().then(|| std::fs::canonicalize(root).ok()).flatten().and_then(|r| crate::session::ask(&r, &request));
+    let asked = match crate::session::wanted().then(|| std::fs::canonicalize(root).ok()).flatten() {
+        Some(r) => crate::session::ask(&r, &request)?,
+        None => None,
+    };
     let p = match asked {
         Some((p, st)) => {
             said_indexed(&st);
@@ -1623,6 +1634,10 @@ fn printed(answer: crate::ops::Answer, r: &crate::session::Request) -> Result<cr
         writeln!(p.err, "{}{}", answer.text(), why.map(|w| format!(" ({w})")).unwrap_or_default())?;
         p.code = 1;
         return Ok(p);
+    } else if let (false, Op::Search { query, alt, .. }, Answer::Hits { hits, .. }) = (answer.is_empty(), &r.op, &answer) {
+        // a ranked search shows `--why` and lights up the words of every phrasing as given
+        let words: Vec<String> = std::iter::once(query).chain(alt).flat_map(|q| query_words(q)).collect();
+        writeln!(p.out, "{}", crate::ops::paged(crate::fmt::hit_blocks(hits, &words, true, r.why), "results", text_room(r.max_bytes), r.offset))?;
     } else {
         let text = answer.text_within(text_room(r.max_bytes), r.offset);
         write!(p.out, "{text}{}", if text.ends_with('\n') { "" } else { "\n" })?;
@@ -2230,10 +2245,9 @@ fn find_command(root: &Path, query: &str, k: usize, json: bool, no_color: bool) 
         }
     }
     if has_index || small_repo() {
+        // find pages nothing: its answer is whole
         let op = Op::Search { query: query.to_string(), alt: Vec::new(), k, snippets: true };
-        let crate::ops::Answer::Hits { hits, .. } = open_fresh(root)?.run_as_is(&op)? else { unreachable!("a search answers hits") };
-        print_hits(&hits, &[query.to_string()], false, json)?;
-        return Ok(if hits.is_empty() { 1 } else { 0 });
+        return run_request(root, crate::session::Request { op, json, max_bytes: usize::MAX, offset: 0, outside: None, why: false });
     }
     eprintln!("[scrutate] no index for this large repository: identifier search (run `scrutate index` for ranked results)");
     let q = Query {

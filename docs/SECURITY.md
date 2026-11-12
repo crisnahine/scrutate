@@ -56,8 +56,8 @@ reaches the socket a running `serve` offers to command line calls (below).
 ## The session socket
 
 While `scrutate serve` runs on a repository, on Unix, it listens on a socket file at
-`<root>/.scrutate/session.sock`, so that an index command (`symbol`, `refs` and the others the CLI
-documents) can use the index the server holds open. This is a new local boundary; this section is
+`<root>/.scrutate/session.sock`, so that an index command (`symbol`, `refs`, `search`, the ranked part of `find` and the
+others the CLI documents) can use the index the server holds open. This is a new local boundary; this section is
 its review.
 
 What it is. A Unix-domain stream socket, mode 0600, made when `serve` starts and removed when it
@@ -83,7 +83,8 @@ Checks, at both ends:
   a closed connection or any error makes the command line do the work itself.
 
 What a process of the same user can do through it that it could not do before: nothing. A
-request is an operation the command line could run itself (`ops::Op`, deserialised and run
+request is an operation the command line could run itself (`ops::Op`, a ranked search
+included, with how to print it: `--json`, the byte limit and offset, `--why`; deserialised and run
 through the same `Repo` path, with the same path confinement: a path that leaves the root is
 refused as in a tool call); the answer is text that process could have computed by running
 `scrutate` in the same directory. The socket reads only the repository the server was started on
@@ -108,7 +109,11 @@ Edge cases:
 
 - A path too long for a socket address (103 bytes on macOS, 107 on Linux): the socket is named
   from its directory, which the process enters for the call and leaves; the server does this at
-  its start before any thread runs, the command line before it starts any.
+  its start before any thread runs, the command line before it starts any. The process opens
+  the directory it was in before it enters and goes back through that descriptor (`fchdir`), so
+  a working directory renamed or unreachable by its path meanwhile is still the one it returns
+  to. If even that fails, the command line stops with an error instead of going on in the wrong
+  directory, and a server offers no socket.
 - Two servers on one root: the first keeps the socket; a second finds a live server there and
   offers none. When the first exits it removes the socket only if it is still the one it made
   (device and inode), so it never removes another's.
@@ -122,9 +127,12 @@ Edge cases:
 - `SCRUTATE_NO_SESSION=1` turns the use off; `SCRUTATE_SESSION_DEBUG=1` says on stderr why a
   call did not use a session.
 
-Evidence: `tests/session.rs` (the same bytes and exit codes as a fresh process for every command,
+Evidence: `tests/session.rs` (the same bytes and exit codes as a fresh process for every command, a ranked search and
+find with each of their options,
 an edit seen at once, another build, another setting, the switch, a stale socket, a file that is
-no socket, two servers, a moved root, a deep root, the socket's mode). A peer of another user
+no socket, two servers, a moved root, a deep root, a deep root reached from another directory with relative
+arguments, the socket's mode) and the unit test of the return to a renamed working directory
+in `session.rs`. A peer of another user
 could not be faked without a second account and is checked by code review only.
 
 ## Known gaps and residual risks

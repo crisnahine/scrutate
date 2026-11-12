@@ -74,6 +74,16 @@ fn a_panic_unwinds_and_runs_destructors() {
 }
 
 #[test]
+fn a_return_by_directory_descriptor_reaches_the_system() {
+    use std::os::unix::io::AsRawFd;
+    extern "C" {
+        fn fchdir(fd: c_int) -> c_int;
+    }
+    let here = std::fs::File::open(".").unwrap();
+    assert_eq!(unsafe { fchdir(here.as_raw_fd()) }, 0);
+}
+
+#[test]
 fn fork_binds_every_stub_first() {
     assert!(lazy_bind::unbound() > 50, "{} stubs unbound: are the stubs linked in?", lazy_bind::unbound());
     let pid = unsafe { fork() };

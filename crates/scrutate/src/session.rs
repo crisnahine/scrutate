@@ -398,6 +398,8 @@ pub struct Request {
     pub max_bytes: usize,
     pub offset: usize,
     pub outside: Option<String>,
+    /// a ranked search's `--why`
+    pub why: bool,
 }
 
 /// The printed answer: standard output, standard error and the exit code, as the command line
@@ -481,8 +483,8 @@ pub use unix::{ask, listen, Listening};
 
 /// No session use on Windows: a command line call does the work itself.
 #[cfg(not(unix))]
-pub fn ask(_root: &Path, _request: &Request) -> Option<(Printed, UpdateStats)> {
-    None
+pub fn ask(_root: &Path, _request: &Request) -> Result<Option<(Printed, UpdateStats)>> {
+    Ok(None)
 }
 
 #[cfg(not(unix))]
@@ -513,6 +515,7 @@ mod unix {
 
     extern "C" {
         fn geteuid() -> u32;
+        fn fchdir(fd: i32) -> i32;
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         fn getpeereid(fd: i32, uid: *mut u32, gid: *mut u32) -> i32;
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -536,19 +539,39 @@ mod unix {
         }
     }
 
+    /// The process could not go back to the working directory `short` left.
+    #[derive(Debug)]
+    pub(super) struct NotBack(std::io::Error);
+
+    impl std::fmt::Display for NotBack {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "cannot go back to the working directory after reaching the session socket: {}", self.0)
+        }
+    }
+
+    impl std::error::Error for NotBack {}
+
+    fn not_back(e: &std::io::Error) -> bool {
+        e.get_ref().is_some_and(|i| i.is::<NotBack>())
+    }
+
     /// `f` of the socket at `path`. A path too long for a socket address (103 bytes on macOS, 107
-    /// on Linux) is named from its directory, which this process enters for the call and leaves:
-    /// so only while it runs no other thread (a command line call, a server before it starts any).
-    fn short<T>(path: &Path, f: impl FnOnce(&Path) -> std::io::Result<T>) -> std::io::Result<T> {
+    /// on Linux) is named from its directory, which this process enters for the call and leaves
+    /// through a descriptor of the directory it was in, so a renamed or unreachable path does not
+    /// matter: so only while it runs no other thread (a command line call, a server before it
+    /// starts any). An error that holds `NotBack`: the process is still in the socket's directory.
+    pub(super) fn short<T>(path: &Path, f: impl FnOnce(&Path) -> std::io::Result<T>) -> std::io::Result<T> {
         const ROOM: usize = if cfg!(any(target_os = "linux", target_os = "android")) { 107 } else { 103 };
         if path.as_os_str().len() <= ROOM {
             return f(path);
         }
         let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else { return f(path) };
-        let back = std::env::current_dir()?;
+        let here = std::fs::File::open(".")?;
         std::env::set_current_dir(dir)?;
         let r = f(Path::new(name));
-        std::env::set_current_dir(back)?;
+        if unsafe { fchdir(here.as_raw_fd()) } != 0 {
+            return Err(std::io::Error::other(NotBack(std::io::Error::last_os_error())));
+        }
         r
     }
 
@@ -594,15 +617,26 @@ mod unix {
                 debug(&format!("{} is not a socket of this user; not listening", path.display()));
                 return None;
             }
-            if short(&path, |p| UnixStream::connect(p)).is_ok() {
-                debug("another session of this root is listening");
-                return None;
+            match short(&path, |p| UnixStream::connect(p)) {
+                Ok(_) => {
+                    debug("another session of this root is listening");
+                    return None;
+                }
+                Err(e) if not_back(&e) => {
+                    debug(&e.to_string());
+                    return None;
+                }
+                Err(_) => {}
             }
             let _ = std::fs::remove_file(&path); // left by a session that ended without removing it
         }
         let listener = match short(&path, |p| UnixListener::bind(p)) {
             Ok(l) => l,
             Err(e) => {
+                if not_back(&e) {
+                    // bound, maybe, but a server in the wrong directory offers nothing
+                    let _ = std::fs::remove_file(&path);
+                }
                 debug(&format!("cannot listen at {}: {e}", path.display()));
                 return None;
             }
@@ -654,24 +688,35 @@ mod unix {
 
     /// The answer of the session running on `root` (canonical) to `request`, printed as the
     /// command line prints it, with what the scan before it updated. None, quietly, when there is
-    /// no session or anything about it is not as this process would do the work.
-    pub fn ask(root: &Path, request: &Request) -> Option<(Printed, UpdateStats)> {
+    /// no session or anything about it is not as this process would do the work. An error only
+    /// when this process could not go back to its working directory: it must stop.
+    pub fn ask(root: &Path, request: &Request) -> Result<Option<(Printed, UpdateStats)>> {
         let path = socket_path(root);
         if std::fs::symlink_metadata(&path).is_err() {
-            return None;
+            return Ok(None);
         }
-        let r = asked(&path, root, request);
+        let mut lost = None;
+        let r = asked(&path, root, request, &mut lost);
+        if let Some(e) = lost {
+            return Err(e.into());
+        }
         if let Err(why) = &r {
             debug(why);
         }
-        r.ok()
+        Ok(r.ok())
     }
 
-    fn asked(path: &Path, root: &Path, request: &Request) -> std::result::Result<(Printed, UpdateStats), String> {
+    fn asked(path: &Path, root: &Path, request: &Request, lost: &mut Option<std::io::Error>) -> std::result::Result<(Printed, UpdateStats), String> {
         if !ours(path) {
             return Err(format!("{} is not a socket of this user", path.display()));
         }
-        let conn = short(path, |p| UnixStream::connect(p)).map_err(|e| format!("no session at {}: {e}", path.display()))?;
+        let conn = short(path, |p| UnixStream::connect(p)).map_err(|e| {
+            let why = format!("no session at {}: {e}", path.display());
+            if not_back(&e) {
+                *lost = Some(e);
+            }
+            why
+        })?;
         if !same_user(&conn) {
             return Err("the session runs as another user".into());
         }
@@ -865,6 +910,42 @@ mod tests {
         release.join().unwrap();
         assert!(matches!(a, Ok(Answer::Hits { ref hits, .. }) if hits.len() == 1), "{:?}", a.err());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_long_socket_path_comes_back_to_the_callers_directory_even_after_it_was_renamed() {
+        const NAME: &str = "session::tests::a_long_socket_path_comes_back_to_the_callers_directory_even_after_it_was_renamed";
+        // the working directory belongs to the whole process, so this runs alone in one of its own
+        if std::env::var_os("SCRUTATE_TEST_SHORT").is_none() {
+            let out = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", NAME, "--test-threads=1"])
+                .env("SCRUTATE_TEST_SHORT", "1")
+                .output()
+                .unwrap();
+            let said = String::from_utf8_lossy(&out.stdout);
+            assert!(out.status.success() && said.contains("1 passed"), "{said}{}", String::from_utf8_lossy(&out.stderr));
+            return;
+        }
+        let base = std::env::temp_dir().join(format!("scrutate_session_short_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (caller, moved, deep) = (base.join("caller"), base.join("moved"), base.join("d".repeat(60)).join("e".repeat(60)));
+        std::fs::create_dir_all(&caller).unwrap();
+        std::fs::create_dir_all(&deep).unwrap();
+        let (base, deep) = (base.canonicalize().unwrap(), deep.canonicalize().unwrap());
+        std::env::set_current_dir(&caller).unwrap();
+        let sock = deep.join("session.sock");
+        assert!(sock.as_os_str().len() > 110);
+        let r = unix::short(&sock, |p| {
+            assert_eq!(p, Path::new("session.sock"));
+            assert_eq!(std::env::current_dir()?.canonicalize()?, deep);
+            // the path the caller's directory had is gone by the time the call comes back
+            std::fs::rename(base.join("caller"), base.join("moved"))
+        });
+        assert!(r.is_ok(), "{r:?}");
+        assert_eq!(std::env::current_dir().unwrap().canonicalize().unwrap(), moved.canonicalize().unwrap());
+        std::env::set_current_dir(std::env::temp_dir()).unwrap();
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

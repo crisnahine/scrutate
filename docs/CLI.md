@@ -493,8 +493,9 @@ At the end of its input (EOF) the server
 answers the calls in flight, lets a running index build finish, and exits.
 
 While it runs, the server offers its open index to command line calls of the same user on the
-same root: `symbol`, `callers`, `callees`, `refs`, `outline`, `deps`, `rdeps`, `read`, `similar`
-and `dupes` run there, with every file looked at first as always, and print the same bytes and
+same root: `symbol`, `callers`, `callees`, `refs`, `outline`, `deps`, `rdeps`, `read`, `similar`,
+`dupes`, `search` (of this repository alone: with `--also` another root it does its own work) and
+the ranked part of `find` run there, with every file looked at first as always, and print the same bytes and
 exit code a fresh process gives (about 12 ms in place of 28 ms on a copy of this repository). The meeting
 point is a socket file, `.scrutate/session.sock` (owner only; Unix; no network port), removed
 when the server exits. A command never starts a server. When anything about the server is not

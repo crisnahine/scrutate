@@ -220,6 +220,11 @@ First release.
   `self::`, `static::`, `parent::` and `C::m()`, and the global function an unqualified call
   falls back to. A `use` maps to the file of the class or function it names; `require` paths are
   mapped as before. PHP occurrences no longer say `not resolved in this language`.
+- `search` and the ranked part of `find` use a running `serve` session too, under the same rules
+  and with the same bytes, exit code and freshness as a fresh process for every option (about
+  half the time or less). A `search` with `--also` another root does its own work. A command line
+  call that reaches a deep socket from its directory goes back by a descriptor of the directory
+  it left, and stops with an error if it cannot.
 - The models are trained on rows the engine writes. `bench/gen_features.py` indexes each
   benchmark package with the binary and reads `batch --features`; `bench/train_semantic.py` reads
   the chunks, the tokens of each view and the query terms from a hidden `views` command.
@@ -742,7 +747,7 @@ First release.
 
 ### Product
 - An index command (`symbol`, `callers`, `callees`, `refs`, `outline`, `deps`, `rdeps`, `read`,
-  `similar`, `dupes`) uses the index a running `scrutate serve` holds open on the same root,
+  `similar`, `dupes`, `search`, the ranked part of `find`) uses the index a running `scrutate serve` holds open on the same root,
   through `.scrutate/session.sock` (Unix, owner only, no network port), and prints the same bytes
   and exit code a fresh process prints, every file looked at first. It never starts a server; any
   difference (another build, another setting, another root, a stale socket, a server busy with a
