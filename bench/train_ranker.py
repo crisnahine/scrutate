@@ -11,12 +11,14 @@ usage:
                                                a row of 50 queries or more, or below the old ranker
                                                over all queries of a variant, by more than the
                                                confidence interval
+  train_ranker.py sealed  TAG RANKER.npz       the ranker on the SEALED group, all languages and each
+                                               one (bench/eval_sealed.sh runs it once per ranker)
 
 Each query type is reported twice: the queries whose answer is a function or method ("doc"), and
 those whose answer is a type ("doc:type"). Older feature files have function answers only.
-DEV and TEST include the other-language packages of groups.CODE_DEV / CODE_TEST unless
-PYTHON_ONLY=1. RANKER_PARAMS='{"n_estimators": 400}' overrides PARAMS (for tuning with cv);
-TYPE_WEIGHT=0.5 overrides the weight of a type query's rows in training (default 1: every query
+DEV, TEST and SEALED include the other-language packages of groups.CODE_DEV / CODE_TEST /
+CODE_SEALED unless PYTHON_ONLY=1. RANKER_PARAMS='{"n_estimators": 400}' overrides PARAMS (for
+tuning with cv); TYPE_WEIGHT=0.5 overrides the weight of a type query's rows in training (default 1: every query
 counts the same; 0 leaves the type queries out).
 """
 from __future__ import annotations
@@ -33,7 +35,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 from evalcore import bootstrap_ci, fmt_row, mrr_values, paired_diff_ci, summarize  # noqa: E402
-from groups import CODE_DEV, CODE_TEST, DEV, TEST, WORK, language  # noqa: E402
+from groups import CODE_DEV, CODE_SEALED, CODE_TEST, DEV, SEALED, TEST, WORK, language  # noqa: E402
 
 from scrutate_ref.rank import TreeEnsemble  # noqa: E402
 from scrutate_ref.search import FEATURES, FI, linear_score, prune_indices  # noqa: E402
@@ -48,7 +50,7 @@ if os.environ.get("THREADS"):
     PARAMS["n_jobs"] = int(os.environ["THREADS"])
 PARAMS.update(json.loads(os.environ.get("RANKER_PARAMS", "{}")))
 if not os.environ.get("PYTHON_ONLY"):
-    DEV, TEST = DEV + CODE_DEV, TEST + CODE_TEST
+    DEV, TEST, SEALED = DEV + CODE_DEV, TEST + CODE_TEST, SEALED + CODE_SEALED
 # 1: every query counts the same. Package-held-out MRR on DEV over all queries by this weight:
 # 0.55 (0), 0.62 (0.1), 0.64 (0.3), 0.65 (1); less lifts the function doc and kw rows by up to
 # 0.03 and costs the type rows up to 0.4.
@@ -262,6 +264,21 @@ def main() -> None:
         print("worse over all queries beyond the confidence interval:", "; ".join(overall) or "none")
         if (below or overall) and "--gate" in sys.argv:
             sys.exit(1)
+    elif cmd == "sealed":
+        data = load(tag, SEALED)
+        missing = [p for p, rs in data.items() if not rs]
+        if missing:
+            sys.exit(f"no {tag} features for {', '.join(missing)}")
+        ens = TreeEnsemble.load(sys.argv[3])
+        recs = [r for rs in data.values() for r in rs]
+        for lang in ["all"] + sorted({r["lang"] for r in recs}):
+            for variant in ("A", "B"):
+                res = evaluate([r for r in recs if lang in ("all", r["lang"]) and r["variant"] == variant], ens)
+                print_eval(res, f"SEALED (held out, evaluated once) {lang}, variant {variant}")
+                for label, sel in (("function", lambda t: ":" not in t), ("type", lambda t: ":" in t)):
+                    v = [v for t, d in res.items() if sel(t) for v in mrr_values(d["LEARNED ranker"])]
+                    if v:
+                        print(f"  learned ranker MRR@10 over all {lang} {label} queries: {np.mean(v):.4f} (n={len(v)})")
 
 if __name__ == "__main__":
     main()

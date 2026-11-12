@@ -15,6 +15,9 @@ dropped from the query, so a doc query does not contain the identifier.
 
 usage: python bench/make_bench_code.py fetch            clone the repositories in groups.CODE
        python bench/make_bench_code.py [tag ...]        build (default: every tag in groups.CODE)
+
+Each group (CODE_DEV, CODE_TEST, CODE_SEALED) is built in a run of its own, so that its random
+stream starts where the published sets did.
 """
 from __future__ import annotations
 

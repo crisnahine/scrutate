@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run benchmark queries through the engine; save candidate features + relevance labels.
 
-usage: gen_features.py MODEL.npz TAG GROUP[DEV|TEST] [--variants A,B] [--pkgs a,b]
+usage: gen_features.py MODEL.npz TAG GROUP[DEV|TEST|SEALED] [--variants A,B] [--pkgs a,b]
 Writes $SCRUTATE_WORK/feat/TAG/{variant}_{pkg}.pkl (gzip-compressed)
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 from evalcore import is_relevant, load_queries  # noqa: E402
-from groups import BENCH, DEV, TEST, WORK  # noqa: E402
+from groups import BENCH, DEV, SEALED, TEST, WORK  # noqa: E402
 
 from scrutate_ref.index import Index  # noqa: E402
 from scrutate_ref.search import FEATURES, Searcher  # noqa: E402
@@ -33,7 +33,7 @@ def main() -> None:
             opts[f] = a[i + 1]
             del a[i : i + 2]
     model_path, tag, group = a[0], a[1], a[2]
-    pkgs = opts["--pkgs"].split(",") if opts["--pkgs"] else (DEV if group == "DEV" else TEST)
+    pkgs = opts["--pkgs"].split(",") if opts["--pkgs"] else {"DEV": DEV, "TEST": TEST, "SEALED": SEALED}[group]
     model = SemanticModel.load(model_path) if model_path != "none" else None
     outdir = os.path.join(WORK, "feat", tag)
     os.makedirs(outdir, exist_ok=True)

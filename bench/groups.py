@@ -11,6 +11,11 @@ SP = site.getsitepackages()[0]
 # held out: only touched for the final report
 TEST = ["networkx", "mcp", "rich"]
 
+# sealed hold-out: never used to pretrain, tune, fit or test; evaluated once with the final ranker
+# (bench/eval_sealed.sh). click 8.5.1 (BSD-3-Clause), httpx 0.28.1 (BSD-3-Clause), attrs 26.1.0 (MIT;
+# `attr` holds the source, `attrs` only re-exports it)
+SEALED = ["click", "httpx", "attr"]
+
 # used to tune hyper-parameters and to train the learned ranker
 DEV = ["pydantic", "pptx", "docx", "werkzeug", "seaborn", "openpyxl", "joblib"]
 
@@ -56,15 +61,25 @@ CODE = {
     "ts_pixijs": ("typescript", "https://github.com/pixijs/pixijs", "v8.22.0", ["src"], "MIT"),
     "js_ws": ("javascript", "https://github.com/websockets/ws", "8.22.2", ["lib"], "MIT"),
     "ts_rxjs": ("typescript", "https://github.com/ReactiveX/rxjs", "7.8.2", ["src"], "Apache-2.0"),
+    "rs_rayon": ("rust", "https://github.com/rayon-rs/rayon", "v1.12.0", ["src", "rayon-core/src"],
+                 "MIT OR Apache-2.0"),
+    "go_gin": ("go", "https://github.com/gin-gonic/gin", "v1.12.0", ["."], "MIT"),
+    "java_commons_collections": ("java", "https://github.com/apache/commons-collections",
+                                 "rel/commons-collections-4.6.0", ["src/main/java"], "Apache-2.0"),
+    "js_videojs": ("javascript", "https://github.com/videojs/video.js", "v8.24.2", ["src/js"], "Apache-2.0"),
+    "ts_typeorm": ("typescript", "https://github.com/typeorm/typeorm", "1.1.2", ["packages/typeorm/src"], "MIT"),
 }
 CODE_DEV = ["rs_tokio", "rs_clap", "rs_chrono", "go_grpc", "go_zap", "go_cobra",
             "java_commons_lang", "java_gson", "java_javapoet", "java_guava",
             "js_commander", "js_axios", "ts_immutable", "js_eslint", "js_three", "ts_vue"]
 CODE_TEST = ["rs_ripgrep", "rs_serde_json", "go_protobuf", "go_prometheus", "java_jsoup", "java_commons_io",
              "js_ws", "js_lodash", "ts_rxjs", "ts_pixijs"]
+CODE_SEALED = ["rs_rayon", "go_gin", "java_commons_collections", "js_videojs", "ts_typeorm"]
 
-assert not (set(TEST) & set(DEV) | set(TEST) & set(PRETRAIN) | set(DEV) & set(PRETRAIN))
-assert not set(CODE_DEV) & set(CODE_TEST) and set(CODE_DEV) | set(CODE_TEST) == set(CODE)
+_py = [PRETRAIN, DEV, TEST, SEALED]
+_code = [CODE_DEV, CODE_TEST, CODE_SEALED]
+assert len({p for g in _py for p in g}) == sum(len(g) for g in _py), "a package is in two groups"
+assert len({p for g in _code for p in g}) == sum(len(g) for g in _code) == len(CODE), "a repository is in two groups or none"
 
 
 def language(pkg: str) -> str:

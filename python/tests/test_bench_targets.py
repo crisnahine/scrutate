@@ -79,3 +79,14 @@ def test_a_type_query_is_answered_by_the_type_alone():
     assert not is_relevant(q, "A.java", "Holder.Holder", "Holder", "method")
     f = {"match": "name", "name": "fetch"}
     assert is_relevant(f, "a.py", "fetch", "fetch", "function") and is_relevant(f, "a.py", "fetch", "fetch")
+
+
+def test_the_groups_are_disjoint():
+    import groups
+
+    py = [groups.PRETRAIN, groups.DEV, groups.TEST, groups.SEALED]
+    code = [groups.CODE_DEV, groups.CODE_TEST, groups.CODE_SEALED]
+    for gs in (py, code):
+        names = [p for g in gs for p in g]
+        assert len(names) == len(set(names)), sorted(p for p in set(names) if names.count(p) > 1)
+    assert {t for g in code for t in g} == set(groups.CODE)

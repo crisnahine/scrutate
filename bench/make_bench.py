@@ -20,7 +20,8 @@ after its function queries and from their own random stream, so the function que
 same as when functions were the only answers. A type query is answered by the type's own chunk,
 not by an impl block or a constructor of the same name.
 
-usage: python bench/make_bench.py [pkg ...]      (default: all DEV + TEST packages)
+usage: python bench/make_bench.py [pkg ...]      (default: all DEV + TEST packages; the SEALED ones
+       only when named, in a run of their own)
 """
 from __future__ import annotations
 
