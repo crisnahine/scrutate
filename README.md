@@ -1,80 +1,190 @@
-# Scrutate
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.svg">
+    <img src="docs/assets/hero-light.svg" width="100%" alt="Scrutate: instant code search and code intelligence in one Rust binary. A scan beam passes over real code and lights the lines that scrutate grep --ident indexDir matches.">
+  </picture>
+</p>
 
-**Universal instant code search and persistent code intelligence, in one Rust binary.**
+<p align="center"><b>Universal instant code search and persistent code intelligence, in one Rust binary.</b></p>
 
-```
+<p align="center">
+  <a href="LICENSE"><img src="docs/assets/badge-licence.svg" alt="licence: Apache-2.0" height="22"></a>
+  <a href="#install"><img src="docs/assets/badge-rust.svg" alt="rust: 1.91 or newer" height="22"></a>
+  <a href="#status-010"><img src="docs/assets/badge-platforms.svg" alt="platforms: macOS, Linux, Windows" height="22"></a>
+</p>
+
+<p align="center">
+  <a href="#install"><b>Install</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#quick-start"><b>Quick start</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#benchmarks"><b>Benchmarks</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#documentation"><b>Documentation</b></a>
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/demo-dark.svg">
+    <img src="docs/assets/demo-light.svg" width="100%" alt="A terminal running four scrutate commands in a copy of its own source: grep -F max_filesize, grep --ident indexDir, search &quot;parse a size like 10M&quot; and callers text_within, each with the output the binary printed.">
+  </picture>
+</p>
+
+## Two engines, one binary
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/engines-dark.svg">
+    <img src="docs/assets/engines-light.svg" width="100%" alt="What you ask (CLI, Python, MCP for agents, LSP for editors) goes to Engine A, search with no index (walk, ignore rules, match, stream), or Engine B, the index (parse, symbols, call edges, text index, ranker). Engine A returns matches; Engine B returns ranked results, definitions and callers, and references.">
+  </picture>
+</p>
+
+Scrutate is two independent engines behind one CLI.
+
+**Engine A, universal instant search.** No index, no parsers, no background process. Literal,
+regex (linear-time, size-limited), identifier (all casings), fuzzy, multiline, whole-word and
+inverted matching over every readable file, with `.gitignore` awareness, parallel traversal,
+streaming results, cancellation, colour or JSON Lines output. Built on the same `grep-*` /
+`ignore` crates ripgrep is assembled from, and differentially tested against ripgrep.
+
+**Engine B, code intelligence.** A persistent, incremental index (SQLite + memory-mapped
+segments): tree-sitter symbols for 60 languages (72 with `--features extra-langs`), keyword
+heuristics for the rest, call edges, imports, BM25 postings, semantic vectors and a LightGBM
+ranker; and a trigram text index that answers grep-style queries with Engine A's exact output.
+Ranked search by meaning, name or identifier; definitions, callers/callees, references,
+outlines, dependencies, similar and duplicate code, structural queries, cross-repository search.
+
+[How the engines work and why](docs/ARCHITECTURE.md)
+
+## Quick start
+
+Build the binary first ([Install](#install)). Every command, option and exit code is in
+[docs/CLI.md](docs/CLI.md).
+
+### Search any folder, no index (Engine A)
+
+```sh
 scrutate grep "refresh_token" .                 # Engine A: instant, index-free, ignore-aware search
 scrutate grep --ident refreshToken .            #   one spelling finds refresh_token / RefreshToken / REFRESH_TOKEN
 scrutate grep --fuzzy=1 "shortest_pth" .        #   approximate matching (Myers bit-parallel)
 scrutate grep --fuzzy-regex=1 '(get|set)_valu'  #   a regex within N edits
 scrutate grep -P '(?<=self\.)cache\b' .         #   PCRE2: look-around, backreferences
 scrutate grep -z "TODO" dist/                   #   inside zip/tar archives and compressed files
+```
+
+### Index the repository (Engine B)
+
+```sh
 scrutate index && scrutate grep --index "PM_RESUME"   # Engine B text index: the same answer, from a trigram index
 scrutate search "where do we renew expired tokens"   # Engine B: ranked search by meaning, learned ranker
 scrutate callers refresh_token                  #   call graph, definitions, references, outline
 scrutate refs Graph --def networkx/classes/graph.py   # references resolved through imports and scopes
 scrutate dupes                                  #   exact and near-duplicate functions
 scrutate tsquery python '(class_definition name: (identifier) @c)'   # structural search (tree-sitter)
+```
+
+### Serve agents and editors
+
+```sh
 scrutate serve --watch                          # MCP server for AI coding agents, index kept fresh
 scrutate lsp                                    # language server for editors (VS Code, JetBrains)
 ```
 
-Scrutate is two independent engines behind one CLI:
+## What it does
 
-- **Engine A, universal instant search.** No index, no parsers, no background process. Literal,
-  regex (linear-time, size-limited), identifier (all casings), fuzzy, multiline, whole-word and
-  inverted matching over every readable file, with `.gitignore` awareness, parallel traversal,
-  streaming results, cancellation, colour or JSON Lines output. Built on the same `grep-*` /
-  `ignore` crates ripgrep is assembled from, and differentially tested against ripgrep.
-- **Engine B, code intelligence.** A persistent, incremental index (SQLite + memory-mapped
-  segments): tree-sitter symbols for 60 languages (72 with `--features extra-langs`), keyword
-  heuristics for the rest, call edges, imports, BM25 postings, semantic vectors and a LightGBM
-  ranker; and a trigram text index that answers grep-style queries with Engine A's exact output.
-  Ranked search by meaning, name or identifier; definitions, callers/callees, references,
-  outlines, dependencies, similar and duplicate code, structural queries, cross-repository search.
+<table>
+<tr>
+<td width="33%" valign="top"><img src="docs/assets/icon-regex.svg" width="24" height="24" alt=""><br><b>Regex</b><br>Literal, regex in linear time, and PCRE2 (<code>-P</code>).</td>
+<td width="33%" valign="top"><img src="docs/assets/icon-ident.svg" width="24" height="24" alt=""><br><b>Any casing</b><br>One spelling finds snake, camel and upper case (<code>--ident</code>).</td>
+<td width="33%" valign="top"><img src="docs/assets/icon-fuzzy.svg" width="24" height="24" alt=""><br><b>Fuzzy</b><br>Matches within N edits, also for a regex (<code>--fuzzy</code>).</td>
+</tr>
+<tr>
+<td valign="top"><img src="docs/assets/icon-archive.svg" width="24" height="24" alt=""><br><b>Archives</b><br>Inside zip and tar files and compressed files (<code>-z</code>).</td>
+<td valign="top"><img src="docs/assets/icon-textindex.svg" width="24" height="24" alt=""><br><b>Text index</b><br>A trigram index, Engine A's exact output (<code>grep --index</code>).</td>
+<td valign="top"><img src="docs/assets/icon-ranked.svg" width="24" height="24" alt=""><br><b>Ranked</b><br>By meaning, name or identifier, with a learned ranker (<code>search</code>).</td>
+</tr>
+<tr>
+<td valign="top"><img src="docs/assets/icon-callgraph.svg" width="24" height="24" alt=""><br><b>Call graph</b><br>Definitions, callers, callees, outlines, imports (<code>callers</code>).</td>
+<td valign="top"><img src="docs/assets/icon-refs.svg" width="24" height="24" alt=""><br><b>References</b><br>Each name resolved through imports and scopes (<code>refs</code>).</td>
+<td valign="top"><img src="docs/assets/icon-dupes.svg" width="24" height="24" alt=""><br><b>Duplicates</b><br>Exact and near copies of a function, similar code (<code>dupes</code>).</td>
+</tr>
+<tr>
+<td valign="top"><img src="docs/assets/icon-structural.svg" width="24" height="24" alt=""><br><b>Structure</b><br>tree-sitter queries on the syntax tree (<code>tsquery</code>).</td>
+<td valign="top"><img src="docs/assets/icon-watch.svg" width="24" height="24" alt=""><br><b>Kept fresh</b><br>An incremental index that follows edits (<code>watch</code>).</td>
+<td valign="top"><img src="docs/assets/icon-repos.svg" width="24" height="24" alt=""><br><b>Many repos</b><br>Search other repositories too (<code>search --also</code>).</td>
+</tr>
+<tr>
+<td valign="top"><img src="docs/assets/icon-mcp.svg" width="24" height="24" alt=""><br><b>MCP server</b><br>Tools for AI coding agents, on stdio (<code>serve</code>).</td>
+<td valign="top"><img src="docs/assets/icon-lsp.svg" width="24" height="24" alt=""><br><b>Editors</b><br>A language server: definitions, references, symbols (<code>lsp</code>).</td>
+<td valign="top"><img src="docs/assets/icon-python.svg" width="24" height="24" alt=""><br><b>Python</b><br>Streamed grep with the GIL released, and the index (<a href="#python">bindings</a>).</td>
+</tr>
+</table>
+
+## Benchmarks
 
 Everything below is measured; the numbers come from scripts in `bench/` that you can rerun.
 
-## Status: 0.1.0
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/bench-walltime-dark.svg">
+    <img src="docs/assets/bench-walltime-light.svg" width="100%" alt="Median wall time, warm cache, scrutate against the fastest other tool on six benchmarks from docs/LEADERBOARD.md, and start-up time from docs/BENCHMARKS.md. The full numbers are in the image description and in those documents.">
+  </picture>
+</p>
 
-This is the first release. It is **not** declared production-ready: docs/RELEASE_READINESS.md says
-exactly what is and is not verified.
+[docs/LEADERBOARD.md](docs/LEADERBOARD.md) is generated from the raw results in `bench/results/`,
+with 30 runs per contender and 95% intervals.
 
-- **Platforms**: macOS arm64, Linux aarch64 and Linux x86_64 are built and tested (Linux in clean
-  containers with no Python on the image, including static musl binaries and wheels for CPython
-  3.10 to 3.13 and free-threaded 3.14). macOS x86_64 and Windows x86_64 are cross-built here.
-  On GitHub's runners (CI run 43013926055, commit `9384c18`, private repository) every job
-  passed: the Rust tests on macOS arm64, macOS x86_64, Linux x86_64, Linux arm64, Windows x86_64
-  and Windows ARM64, and the editor integrations (docs/INSTALL.md).
-- **Tests**: 122 Rust tests (unit, 60-language snapshot, robustness, property, end-to-end CLI and
-  MCP, incremental parsing), 82 Python reference tests, the bindings tests, Rust/Python parity, fuzz
-  regressions and a reproducible-build check, all passing (docs/TEST_RESULTS.md). Engine A agrees
-  with ripgrep on 2,000 random corpora and patterns, run three ways: as shipped, with the parallel
-  walk forced, and with every file searched in ranges.
-- **Benchmarks** (docs/LEADERBOARD.md, generated from the raw results in `bench/results/`; 30 runs
-  per contender, 95% intervals): on the development Mac (Apple M3 Pro, shared with other work, so
-  none of this is a publishable #1 claim), Engine A is significantly fastest in
-  all 37 warm-cache benchmarks and all 5 cold-cache ones: 15 to 30% ahead of the next tool on 12 of
-  13 text searches of the Linux kernel tree and 45% ahead on the one with 1.3 million matching
-  lines, 15 to 30% on five of six LLVM rows, 24 to 26% on 200,000 small files, 17 to 24% on a
-  211-file repository, 43 to 58% on a 740 MB file, 23 to 28% with a cold cache. Six rows that other
-  work on the laptop disturbed were measured twice; the table gives both. Structural search is 6 and
-  14 times faster than ast-grep. Against Zoekt the text index builds 25 times faster, is a tenth of
-  the size, answers in 0.37 of the median time and serves 1.2 times the queries per second; all
-  eight indexed metrics lead. In a 5-CPU Linux virtual machine on the same Mac, Engine A is
-  significantly fastest on all 14 Linux-tree benchmarks (7 to 16% ahead of ripgrep on 11, 40% with
-  very many matches, 59% on the complex regex, 24 times faster than ast-grep on the structural
-  query) and on all 4 cold-cache ones, where it takes 0.28 to 0.30 of the next tool's time. There
-  the text index leads Zoekt and livegrep on all 8 indexed metrics (3.9 times the throughput of the
-  next).
-- **Engine B** gives bit-identical features, scores and rankings to the Python reference it was
-  developed against: the parity check fails on any difference in a feature, a score or a top 10,
-  over 300 queries built from the documented functions of networkx and 50 from the engine's own
-  sources. On held-out code in Python and five more languages its learned ranker beats its own
-  lexical layer for function and type answers on every query type but one, which ties
-  (docs/QUALITY.md).
-- `cargo clippy -D warnings` and `cargo fmt` are clean; `cargo audit` reports no vulnerabilities;
-  an SBOM is generated.
+On the development Mac (Apple M3 Pro, shared with other work, so none of this is a publishable #1
+claim), Engine A is significantly fastest in all 37 warm-cache benchmarks and all 5 cold-cache
+ones:
+
+- 15 to 30% ahead of the next tool on 12 of 13 text searches of the Linux kernel tree, and 45% ahead
+  on the one with 1.3 million matching lines;
+- 15 to 30% on five of six LLVM rows, 24 to 26% on 200,000 small files, 17 to 24% on a 211-file
+  repository, 43 to 58% on a 740 MB file, 23 to 28% with a cold cache.
+
+Six rows that other work on the laptop disturbed were measured twice; the table gives both.
+Structural search is 6 and 14 times faster than ast-grep.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/bench-index-dark.svg">
+    <img src="docs/assets/bench-index-light.svg" width="100%" alt="The text index against zoekt and livegrep on the Linux tree in a Linux virtual machine: full index build time, index size and median query time, from docs/LEADERBOARD.md.">
+  </picture>
+</p>
+
+Against Zoekt the text index builds 25 times faster, is a tenth of the size, answers in 0.37 of the
+median time and serves 1.2 times the queries per second; all eight indexed metrics lead.
+
+In a 5-CPU Linux virtual machine on the same Mac, Engine A is significantly fastest on all 14
+Linux-tree benchmarks (7 to 16% ahead of ripgrep on 11, 40% with very many matches, 59% on the
+complex regex, 24 times faster than ast-grep on the structural query) and on all 4 cold-cache
+ones, where it takes 0.28 to 0.30 of the next tool's time. There the text index leads Zoekt and
+livegrep on all 8 indexed metrics (3.9 times the throughput of the next).
+
+More: [docs/BENCHMARKS.md](docs/BENCHMARKS.md) (latency, CPU, memory, start-up, concurrency, index
+metrics), [docs/dashboard.html](docs/dashboard.html) (every run so far) and
+[docs/QUALITY.md](docs/QUALITY.md) (ranking quality on held-out code).
+
+## For AI agents and editors
+
+`scrutate serve` is an MCP server on stdio. Start it from inside a repository, or give it the
+repository with `--root`; `--watch` also updates the index from filesystem events.
+
+```sh
+scrutate --root /path/to/repo serve --watch
+```
+
+`scrutate lsp` is a Language Server Protocol server on stdio: definitions, references and symbols
+from the index.
+
+```sh
+scrutate --root /path/to/repo lsp
+```
+
+Client set-up for each agent and editor is in [integrations/](integrations/):
+[MCP clients](integrations/mcp/README.md), [VS Code](integrations/vscode/README.md),
+[Neovim](integrations/neovim/README.md), [JetBrains](integrations/jetbrains/), and GitHub Action,
+GitLab, Bitbucket and pre-commit.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/divider-dark.svg">
+  <img src="docs/assets/divider-light.svg" width="100%" alt="">
+</picture>
 
 ## Install
 
@@ -86,7 +196,9 @@ cargo build --release -p scrutate --locked      # target/release/scrutate
 
 No release archive is published yet. `.github/workflows/release.yml` builds archives, checksums,
 Sigstore attestations, musl binaries and wheels for every platform once the repository is public;
-it is private for now (docs/INSTALL.md).
+it is private for now ([docs/INSTALL.md](docs/INSTALL.md)).
+
+## Python
 
 Python bindings (`pip install` the wheel built by maturin from `crates/scrutate-py`):
 
@@ -98,33 +210,85 @@ repo = scrutate.Repo("."); repo.index()
 print(repo.search("parse a date string", k=5))
 ```
 
+## Status: 0.1.0
+
+This is the first release. It is **not** declared production-ready:
+[docs/RELEASE_READINESS.md](docs/RELEASE_READINESS.md) says exactly what is and is not verified.
+
+**Platforms.** macOS arm64, Linux aarch64 and Linux x86_64 are built and tested (Linux in clean
+containers with no Python on the image, including static musl binaries and wheels for CPython
+3.10 to 3.13 and free-threaded 3.14). macOS x86_64 and Windows x86_64 are cross-built here.
+On GitHub's runners (CI run 43013926055, commit `9384c18`, private repository) every job
+passed: the Rust tests on macOS arm64, macOS x86_64, Linux x86_64, Linux arm64, Windows x86_64
+and Windows ARM64, and the editor integrations ([docs/INSTALL.md](docs/INSTALL.md)).
+
+**Tests.** 122 Rust tests (unit, 60-language snapshot, robustness, property, end-to-end CLI and
+MCP, incremental parsing), 82 Python reference tests, the bindings tests, Rust/Python parity, fuzz
+regressions and a reproducible-build check, all passing ([docs/TEST_RESULTS.md](docs/TEST_RESULTS.md)).
+Engine A agrees with ripgrep on 2,000 random corpora and patterns, run three ways: as shipped,
+with the parallel walk forced, and with every file searched in ranges.
+
+**Benchmarks.** See [Benchmarks](#benchmarks) above: generated from the raw results in
+`bench/results/`, 30 runs per contender, 95% intervals, on a shared laptop, so not a
+publishable #1 claim.
+
+**Engine B.** It gives bit-identical features, scores and rankings to the Python reference it was
+developed against: the parity check fails on any difference in a feature, a score or a top 10,
+over 300 queries built from the documented functions of networkx and 50 from the engine's own
+sources. On held-out code in Python and five more languages its learned ranker beats its own
+lexical layer for function and type answers on every query type but one, which ties
+([docs/QUALITY.md](docs/QUALITY.md)).
+
+**Code checks.** `cargo clippy -D warnings` and `cargo fmt` are clean; `cargo audit` reports no
+vulnerabilities; an SBOM is generated.
+
 ## Documentation
 
-| | |
-|---|---|
-| docs/CLI.md | every command, option, exit code, environment variable, config file |
-| docs/ARCHITECTURE.md | how the engines work and why |
-| docs/LEADERBOARD.md | the benchmark leaderboard: every tool, every benchmark, confidence intervals, statuses (generated) |
-| docs/BENCHMARKS.md | latency, CPU, memory, start-up, concurrency and index metrics against grep-class tools (generated) |
-| docs/QUALITY.md | ranking quality on held-out code (MRR, hit@k) |
-| docs/LANGUAGES.md | verified language capability registry (generated) |
-| docs/SECURITY.md | threat model, controls, evidence, residual risks |
-| docs/TRACEABILITY.md | every mission requirement → implementation → evidence → PASS/PARTIAL/BLOCKED |
-| docs/RELEASE_READINESS.md | what 0.1.0 is, remaining defects and incomplete requirements |
-| docs/COMPETITIVE.md | evidence-based positioning against existing tools |
-| docs/NAMING.md | how the name was chosen and what was (not) checked |
-| docs/TEST_RESULTS.md | every quality gate with its command and output (generated) |
-| docs/DELIVERY.md | where each deliverable lives, and the release artifacts with their hashes |
-| docs/RELEASING.md | the release checklist |
-| docs/dashboard.html | every benchmark run so far, charted (generated) |
-| GLOSSARY.md | the words this codebase uses for its own concepts |
-| docs/INSTALL.md, docs/DEPENDENCIES.md, docs/ROADMAP.md, docs/RESEARCH.md, CHANGELOG.md, CONTRIBUTING.md | |
-| integrations/ | VS Code, Neovim, JetBrains, GitHub Action, GitLab, Bitbucket, MCP, pre-commit |
+<table>
+<tr>
+<td width="50%" valign="top"><img src="docs/assets/icon-map.svg" width="20" height="20" alt=""> <a href="docs/README.md"><b>Documentation hub</b></a><br>Where to start, and a map of every document</td>
+<td width="50%" valign="top"><img src="docs/assets/icon-terminal.svg" width="20" height="20" alt=""> <a href="docs/CLI.md"><b>CLI</b></a><br>Every command, option, exit code, environment variable, config file</td>
+</tr>
+<tr>
+<td valign="top"><img src="docs/assets/icon-doc.svg" width="20" height="20" alt=""> <a href="docs/ARCHITECTURE.md"><b>Architecture</b></a><br>How the engines work and why</td>
+<td valign="top"><img src="docs/assets/icon-chart.svg" width="20" height="20" alt=""> <a href="docs/LEADERBOARD.md"><b>Leaderboard</b></a><br>The benchmark leaderboard: every tool, every benchmark, confidence intervals, statuses (generated)</td>
+</tr>
+<tr>
+<td valign="top"><img src="docs/assets/icon-chart.svg" width="20" height="20" alt=""> <a href="docs/BENCHMARKS.md"><b>Benchmarks</b></a><br>Latency, CPU, memory, start-up, concurrency and index metrics against grep-class tools (generated)</td>
+<td valign="top"><img src="docs/assets/icon-ranked.svg" width="20" height="20" alt=""> <a href="docs/QUALITY.md"><b>Quality</b></a><br>Ranking quality on held-out code (MRR, hit@k)</td>
+</tr>
+<tr>
+<td valign="top"><img src="docs/assets/icon-language.svg" width="20" height="20" alt=""> <a href="docs/LANGUAGES.md"><b>Languages</b></a><br>Verified language capability registry (generated)</td>
+<td valign="top"><img src="docs/assets/icon-shield.svg" width="20" height="20" alt=""> <a href="docs/SECURITY.md"><b>Security</b></a><br>Threat model, controls, evidence, residual risks</td>
+</tr>
+<tr>
+<td valign="top"><img src="docs/assets/icon-check.svg" width="20" height="20" alt=""> <a href="docs/TRACEABILITY.md"><b>Traceability</b></a><br>Every mission requirement to implementation to evidence to PASS/PARTIAL/BLOCKED</td>
+<td valign="top"><img src="docs/assets/icon-flag.svg" width="20" height="20" alt=""> <a href="docs/RELEASE_READINESS.md"><b>Release readiness</b></a><br>What 0.1.0 is, remaining defects and incomplete requirements</td>
+</tr>
+<tr>
+<td valign="top"><img src="docs/assets/icon-doc.svg" width="20" height="20" alt=""> <a href="docs/COMPETITIVE.md"><b>Competitive</b></a><br>Evidence-based positioning against existing tools</td>
+<td valign="top"><img src="docs/assets/icon-tag.svg" width="20" height="20" alt=""> <a href="docs/NAMING.md"><b>Naming</b></a><br>How the name was chosen and what was (not) checked</td>
+</tr>
+<tr>
+<td valign="top"><img src="docs/assets/icon-check.svg" width="20" height="20" alt=""> <a href="docs/TEST_RESULTS.md"><b>Test results</b></a><br>Every quality gate with its command and output (generated)</td>
+<td valign="top"><img src="docs/assets/icon-archive.svg" width="20" height="20" alt=""> <a href="docs/DELIVERY.md"><b>Delivery</b></a><br>Where each deliverable lives, and the release artifacts with their hashes</td>
+</tr>
+<tr>
+<td valign="top"><img src="docs/assets/icon-flag.svg" width="20" height="20" alt=""> <a href="docs/RELEASING.md"><b>Releasing</b></a><br>The release checklist</td>
+<td valign="top"><img src="docs/assets/icon-chart.svg" width="20" height="20" alt=""> <a href="docs/dashboard.html"><b>Dashboard</b></a><br>Every benchmark run so far, charted (generated)</td>
+</tr>
+<tr>
+<td valign="top"><img src="docs/assets/icon-book.svg" width="20" height="20" alt=""> <a href="GLOSSARY.md"><b>Glossary</b></a><br>The words this codebase uses for its own concepts</td>
+<td valign="top"><img src="docs/assets/icon-plug.svg" width="20" height="20" alt=""> <a href="integrations/"><b>Integrations</b></a><br>VS Code, Neovim, JetBrains, GitHub Action, GitLab, Bitbucket, MCP, pre-commit</td>
+</tr>
+<tr>
+<td valign="top" colspan="2"><img src="docs/assets/icon-doc.svg" width="20" height="20" alt=""> <b>Also</b><br><a href="docs/INSTALL.md">INSTALL</a>, <a href="docs/DEPENDENCIES.md">DEPENDENCIES</a>, <a href="docs/ROADMAP.md">ROADMAP</a>, <a href="docs/RESEARCH.md">RESEARCH</a>, <a href="CHANGELOG.md">CHANGELOG</a>, <a href="CONTRIBUTING.md">CONTRIBUTING</a></td>
+</tr>
+</table>
 
 ## Licence
 
 Apache-2.0. See [LICENSE](LICENSE). Every crate compiled into the binary is under a licence
 compatible with it (MIT, BSD, Zlib, Unicode-3.0 or Apache-2.0); their licence and notice files are
 collected in `THIRD_PARTY_NOTICES.txt`, which release archives, wheels and the `.deb` and `.rpm`
-packages include
-(`tools/third_party_notices.py`).
+packages include (`tools/third_party_notices.py`).
