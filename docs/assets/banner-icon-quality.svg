@@ -1,5 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" aria-labelledby="title desc">
-<title id="title">Ranking quality</title>
-<desc id="desc">Icon for Ranking quality.</desc>
-<path d="M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17z" fill="none" stroke="#6f6a5e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 7.5a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9z" fill="none" stroke="#6f6a5e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 11.25a.75.75 0 1 1 0 1.5.75.75 0 0 1 0-1.5z" fill="none" stroke="#6f6a5e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-labelledby="t d">
+<!-- written by tools/gen_doc_assets.py; edit that, not this file -->
+<title id="t">Ranking quality</title>
+<desc id="d">Icon for Ranking quality.</desc>
+<style></style>
+<rect width="32" height="32" rx="6" fill="#0c0c0e"/><g transform="translate(5 5) scale(.9167)"><path d="M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17z" fill="none" stroke="#f2eee3" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 7.5a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9z" fill="none" stroke="#f2eee3" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 11.25a.75.75 0 1 1 0 1.5.75.75 0 0 1 0-1.5z" fill="none" stroke="#f2eee3" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></g>
 </svg>

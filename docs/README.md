@@ -1,9 +1,6 @@
 <!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="assets/banner-docs-dark.svg">
-<img src="assets/banner-docs-light.svg" alt="Documentation. Every document, grouped by what you came to do" width="880">
-</picture>
+<img src="assets/banner-docs.svg" alt="Documentation. Every document, grouped by what you came to do" width="880">
 </p>
 
 # Documentation
@@ -14,7 +11,7 @@ The documents are grouped by what you came to do: use scrutate, understand how i
 
 <table>
 <tr>
-<th colspan="2" align="left"><br>Use it<br><sub>Install it, run it, connect it to an editor, an agent or CI.</sub></th>
+<th colspan="2" align="left"><img src="assets/banner-group-use.svg" width="100%" alt="01 Use it"><br><sub>Install it, run it, connect it to an editor, an agent or CI.</sub></th>
 </tr>
 <tr>
 <td width="50%" valign="top">
@@ -64,7 +61,7 @@ How do I call both engines from Python?
 <td width="50%"></td>
 </tr>
 <tr>
-<th colspan="2" align="left"><br>Understand it<br><sub>How the engines work and what the words mean.</sub></th>
+<th colspan="2" align="left"><img src="assets/banner-group-understand.svg" width="100%" alt="02 Understand it"><br><sub>How the engines work and what the words mean.</sub></th>
 </tr>
 <tr>
 <td width="50%" valign="top">
@@ -84,7 +81,7 @@ What does each word of this codebase mean?
 <td width="50%"></td>
 </tr>
 <tr>
-<th colspan="2" align="left"><br>Trust it<br><sub>Measurements, tests, security and the evidence behind every claim.</sub></th>
+<th colspan="2" align="left"><img src="assets/banner-group-trust.svg" width="100%" alt="03 Trust it"><br><sub>Measurements, tests, security and the evidence behind every claim.</sub></th>
 </tr>
 <tr>
 <td width="50%" valign="top">
@@ -134,7 +131,7 @@ The benchmark results as charts (open it in a browser)
 <td width="50%"></td>
 </tr>
 <tr>
-<th colspan="2" align="left"><br>Work on it<br><sub>How changes are made, released and planned.</sub></th>
+<th colspan="2" align="left"><img src="assets/banner-group-work.svg" width="100%" alt="04 Work on it"><br><sub>How changes are made, released and planned.</sub></th>
 </tr>
 <tr>
 <td width="50%" valign="top">

@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 497" width="880" height="497" role="img" aria-labelledby="t d">
+<!-- written by tools/gen_doc_assets.py; edit that, not this file -->
+<title id="t">Platforms: what is built, tested and supported</title>
+<desc id="d">macOS arm64, Linux aarch64 and Linux x86_64 are supported, with binaries and wheels built and tested. macOS x86_64, Windows x86_64 and Windows ARM64 pass the Rust tests on GitHub runners but have no wheel yet, so they are not supported yet.</desc>
+<style>
+text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif; }
+.m { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
+.pre { white-space: pre; }
+.h { font-size: 15px; font-weight: 700; fill: #0c0c0e; }
+.hm { font-size: 15px; font-weight: 700; fill: #0c0c0e; }
+.b { font-size: 14px; fill: #6f6a5e; }
+.bi { font-size: 14px; fill: #0c0c0e; }
+.b .m, .bi .m { fill: #0c0c0e; }
+.lbl { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; font-size: 11.5px; letter-spacing: 1.6px; fill: #6f6a5e; }
+.card, .inset { fill: #f2eee3; stroke: #cfc9ba; stroke-width: 1; }
+.store { fill: #f2eee3; stroke: #0c0c0e; stroke-width: 1.25; }
+.out { fill: #f2eee3; stroke: #0c0c0e; stroke-width: 1.5; }
+.arrow { fill: none; stroke: #6f6a5e; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.gate { fill: #f2eee3; stroke: #6f6a5e; stroke-width: 1.25; stroke-dasharray: 6 5; }
+</style>
+<rect width="880" height="497" rx="14" fill="#f2eee3"/><rect x="10.5" y="10.5" width="859" height="476" rx="8" fill="none" stroke="#cfc9ba"/>
+<text x="40.0" y="46.0" class="m pre " font-size="12" fill="#0c0c0e" letter-spacing="1.92">// PLATFORMS: WHAT IS BUILT, TESTED AND SUPPORTED</text><path d="M512.6 42.0 H840" stroke="#cfc9ba"/>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M1.5 1.5 8.5 5 1.5 8.5" fill="none" stroke="#6f6a5e" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<g transform="translate(32 72) scale(0.92727)">
+<text x="18" y="22" class="lbl">PLATFORM</text>
+<text x="176" y="22" class="lbl">BINARY</text>
+<text x="556" y="22" class="lbl">WHEELS</text>
+<text x="716" y="22" class="lbl">STATUS</text>
+<rect x="1" y="36" width="878" height="388" rx="4" class="card"/>
+<text x="18" y="65" class="h">macOS arm64</text>
+<text x="176" y="64" class="b">Built and tested natively.</text>
+<text x="556" y="65" class="b">cp39-abi3, cp314t</text>
+<path d="M715.6 47.0 H827.6 L824.0 73.0 H712.0 Z" fill="#d9ff3d"/>
+<path d="M724 60.0 l4 4 7-8" fill="none" stroke="#0c0c0e" stroke-width="1.9" stroke-linecap="square"/>
+<text x="742" y="65" class="bi" style="fill: #0c0c0e">supported</text>
+<line x1="2" y1="84" x2="878" y2="84" stroke="#cfc9ba"/>
+<text x="18" y="112" class="h">Linux aarch64</text>
+<text x="176" y="112" class="b">Built and tested in a clean container;</text>
+<text x="176" y="132" class="b">glibc and static musl.</text>
+<text x="556" y="112" class="b">cp39-abi3, cp314t</text>
+<path d="M715.6 105.0 H827.6 L824.0 131.0 H712.0 Z" fill="#d9ff3d"/>
+<path d="M724 118.0 l4 4 7-8" fill="none" stroke="#0c0c0e" stroke-width="1.9" stroke-linecap="square"/>
+<text x="742" y="123" class="bi" style="fill: #0c0c0e">supported</text>
+<line x1="2" y1="152" x2="878" y2="152" stroke="#cfc9ba"/>
+<text x="18" y="180" class="h">Linux x86_64</text>
+<text x="176" y="180" class="b">Cross-built on arm64; the Linux tests run</text>
+<text x="176" y="200" class="b">in an amd64 container.</text>
+<text x="556" y="180" class="b">cp39-abi3, cp314t</text>
+<path d="M715.6 173.0 H827.6 L824.0 199.0 H712.0 Z" fill="#d9ff3d"/>
+<path d="M724 186.0 l4 4 7-8" fill="none" stroke="#0c0c0e" stroke-width="1.9" stroke-linecap="square"/>
+<text x="742" y="191" class="bi" style="fill: #0c0c0e">supported</text>
+<line x1="2" y1="220" x2="878" y2="220" stroke="#cfc9ba"/>
+<text x="18" y="248" class="h">macOS x86_64</text>
+<text x="176" y="248" class="b">Tests pass on GitHub's <tspan class="m">macos-15-intel</tspan></text>
+<text x="176" y="268" class="b">runner.</text>
+<text x="556" y="248" class="b">not built</text>
+<rect x="712" y="241.0" width="150" height="26" fill="none" stroke="#cfc9ba" stroke-width="1.25"/>
+<text x="726" y="259" class="b">not supported yet</text>
+<line x1="2" y1="288" x2="878" y2="288" stroke="#cfc9ba"/>
+<text x="18" y="316" class="h">Windows x86_64</text>
+<text x="176" y="316" class="b">Tests pass on GitHub's <tspan class="m">windows-latest</tspan></text>
+<text x="176" y="336" class="b">runner.</text>
+<text x="556" y="316" class="b">not built</text>
+<rect x="712" y="309.0" width="150" height="26" fill="none" stroke="#cfc9ba" stroke-width="1.25"/>
+<text x="726" y="327" class="b">not supported yet</text>
+<line x1="2" y1="356" x2="878" y2="356" stroke="#cfc9ba"/>
+<text x="18" y="384" class="h">Windows ARM64</text>
+<text x="176" y="384" class="b">Tests pass on GitHub's <tspan class="m">windows-11-arm</tspan></text>
+<text x="176" y="404" class="b">runner.</text>
+<text x="556" y="384" class="b">not built</text>
+<rect x="712" y="377.0" width="150" height="26" fill="none" stroke="#cfc9ba" stroke-width="1.25"/>
+<text x="726" y="395" class="b">not supported yet</text>
+</g>
+</svg>

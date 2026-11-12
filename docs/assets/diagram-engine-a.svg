@@ -1,0 +1,117 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 717" width="880" height="717" role="img" aria-labelledby="t d">
+<!-- written by tools/gen_doc_assets.py; edit that, not this file -->
+<title id="t">Engine A: from the command line to output</title>
+<desc id="d">The command line is parsed, the ignore-aware parallel walker visits the files, each file's first read decides its path (small file, stream reader, split file, long lines), and the output is batched per file.</desc>
+<style>
+text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif; }
+.m { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
+.pre { white-space: pre; }
+.h { font-size: 15px; font-weight: 700; fill: #f2eee3; }
+.hm { font-size: 15px; font-weight: 700; fill: #0c0c0e; }
+.b { font-size: 14px; fill: #8f8f98; }
+.bi { font-size: 14px; fill: #f2eee3; }
+.b .m, .bi .m { fill: #f2eee3; }
+.lbl { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; font-size: 11.5px; letter-spacing: 1.6px; fill: #8f8f98; }
+.card, .inset { fill: #0c0c0e; stroke: #2a2a2f; stroke-width: 1; }
+.store { fill: #0c0c0e; stroke: #f2eee3; stroke-width: 1.25; }
+.out { fill: #0c0c0e; stroke: #f2eee3; stroke-width: 1.5; }
+.arrow { fill: none; stroke: #8f8f98; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.gate { fill: #0c0c0e; stroke: #8f8f98; stroke-width: 1.25; stroke-dasharray: 6 5; }
+
+.blk { fill: none; stroke: #d9ff3d; stroke-width: 9; stroke-dashoffset: 30; animation: blk 9s ease-in-out 3 both; }
+@keyframes blk { 0% { stroke-dashoffset: 30; } 18%, 100% { stroke-dashoffset: -100; } }
+
+.wipe{transform-box:fill-box;transform-origin:left center;animation:wipe 0.5s cubic-bezier(.2,.7,.2,1) both}
+@keyframes wipe { from { transform: scaleX(0); } }
+.hit{animation:hit 0.5s steps(1, end) both}
+@keyframes hit { from { fill: currentColor; } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+</style>
+<defs><pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse"><rect x="10" y="10" width="2" height="2" fill="#2a2a2f"/></pattern></defs><rect width="880" height="717" rx="14" fill="#0c0c0e"/><rect x="10" y="10" width="860" height="697" rx="8" fill="url(#dots)"/><rect x="10.5" y="10.5" width="859" height="696" rx="8" fill="none" stroke="#2a2a2f"/>
+<text x="40.0" y="46.0" class="m pre " font-size="12" fill="#f2eee3" letter-spacing="1.92">// ENGINE A: FROM THE COMMAND LINE TO OUTPUT</text><path d="M465.8 42.0 H840" stroke="#2a2a2f"/>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M1.5 1.5 8.5 5 1.5 8.5" fill="none" stroke="#8f8f98" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<g transform="translate(32 72) scale(0.92727)">
+<rect x="1" y="1" width="262" height="222" rx="4" class="card"/>
+<g transform="translate(17.0 28.0) scale(0.01549 -0.01549)" fill="#f2eee3"><path d="M306 -16C452 -16 546 88 568 273L387 280C377 189 345 138 306 138C246 138 212 215 212 354C212 494 246 572 306 572C348 572 378 523 387 436L568 443C546 625 452 726 306 726C130 726 28 584 28 354C28 124 130 -16 306 -16Z"/><path transform="translate(600 0)" d="M300 -16C474 -16 572 116 572 354C572 592 474 726 300 726C126 726 28 592 28 354C28 116 126 -16 300 -16ZM300 138C241 138 212 196 212 354C212 512 241 572 300 572C359 572 388 512 388 354C388 196 359 138 300 138Z"/><path transform="translate(1200 0)" d="M254 110L346 110L400 345L400 0L560 0L560 710L380 710L300 416L220 710L40 710L40 0L200 0L200 345Z"/><path transform="translate(1800 0)" d="M254 110L346 110L400 345L400 0L560 0L560 710L380 710L300 416L220 710L40 710L40 0L200 0L200 345Z"/><path transform="translate(2400 0)" d="M14 0L192 0L219 117L381 117L408 0L586 0L406 710L194 710ZM300 476L347 268L253 268Z"/><path transform="translate(3000 0)" d="M60 0L230 0L230 357L390 0L540 0L540 710L370 710L370 353L210 710L60 710Z"/><path transform="translate(3600 0)" d="M54 0L246 0C455 0 572 127 572 355C572 583 455 710 246 710L54 710ZM234 158L234 552L252 552C343 552 388 487 388 355C388 223 343 158 252 158Z"/><path transform="translate(4800 0)" d="M90 0L550 0L550 158L270 158L270 710L90 710Z"/><path transform="translate(5400 0)" d="M70 0L530 0L530 158L390 158L390 552L530 552L530 710L70 710L70 552L210 552L210 158L70 158Z"/><path transform="translate(6000 0)" d="M60 0L230 0L230 357L390 0L540 0L540 710L370 710L370 353L210 710L60 710Z"/><path transform="translate(6600 0)" d="M80 0L540 0L540 158L260 158L260 279L520 279L520 433L260 433L260 552L532 552L532 710L80 710Z"/></g>
+<text x="17" y="49" class="b"><tspan class="m">scrutate grep PATTERN</tspan></text>
+<text x="17" y="69" class="b">Arguments of the plain</text>
+<text x="17" y="89" class="b">shapes are read by hand,</text>
+<text x="17" y="109" class="b">anything else by clap.</text>
+<rect x="309" y="1" width="262" height="222" rx="4" class="card"/>
+<g transform="translate(325.0 28.0) scale(0.01549 -0.01549)" fill="#f2eee3"><path d="M90 0L254 0L300 286L346 0L510 0L580 710L416 710L391 308L345 630L255 630L209 308L184 710L20 710Z"/><path transform="translate(600 0)" d="M14 0L192 0L219 117L381 117L408 0L586 0L406 710L194 710ZM300 476L347 268L253 268Z"/><path transform="translate(1200 0)" d="M90 0L550 0L550 158L270 158L270 710L90 710Z"/><path transform="translate(1800 0)" d="M40 0L220 0L220 183L266 252L380 0L570 0L367 405L570 710L358 710L220 466L220 710L40 710Z"/></g>
+<text x="325" y="49" class="b">The <tspan class="m">ignore</tspan> parallel</text>
+<text x="325" y="69" class="b">walker: <tspan class="m">.gitignore</tspan>,</text>
+<text x="325" y="89" class="b"><tspan class="m">.ignore</tspan>, global excludes;</text>
+<text x="325" y="109" class="b">hidden files off.</text>
+<text x="325" y="129" class="b">Threads: the cores (at most</text>
+<text x="325" y="149" class="b">12); on macOS the</text>
+<text x="325" y="169" class="b">performance cores; more</text>
+<text x="325" y="189" class="b">when files come from the</text>
+<text x="325" y="209" class="b">disk.</text>
+<rect x="617" y="1" width="262" height="222" rx="4" class="card"/>
+<g transform="translate(633.0 28.0) scale(0.01549 -0.01549)" fill="#f2eee3"><path d="M90 0L270 0L270 271L532 271L532 425L270 425L270 552L550 552L550 710L90 710Z"/><path transform="translate(600 0)" d="M70 0L530 0L530 158L390 158L390 552L530 552L530 710L70 710L70 552L210 552L210 158L70 158Z"/><path transform="translate(1200 0)" d="M56 0L236 0L236 239L266 239C332 239 356 227 362 138L372 0L554 0L538 194C531 270 495 311 420 324C493 347 540 407 540 496C540 627 450 710 294 710L56 710ZM236 397L236 552L286 552C331 552 356 524 356 475C356 425 331 397 286 397Z"/><path transform="translate(1800 0)" d="M302 -16C468 -16 560 68 560 206C560 314 510 384 358 424C262 449 232 472 232 514C232 551 256 572 293 572C337 572 367 539 375 473L555 480C547 645 457 726 302 726C140 726 52 640 52 502C52 376 124 325 262 290C348 268 380 241 380 196C380 158 353 138 313 138C261 138 230 174 218 257L40 249C51 79 133 -16 302 -16Z"/><path transform="translate(2400 0)" d="M210 0L390 0L390 552L560 552L560 710L40 710L40 552L210 552Z"/><path transform="translate(3600 0)" d="M56 0L236 0L236 239L266 239C332 239 356 227 362 138L372 0L554 0L538 194C531 270 495 311 420 324C493 347 540 407 540 496C540 627 450 710 294 710L56 710ZM236 397L236 552L286 552C331 552 356 524 356 475C356 425 331 397 286 397Z"/><path transform="translate(4200 0)" d="M80 0L540 0L540 158L260 158L260 279L520 279L520 433L260 433L260 552L532 552L532 710L80 710Z"/><path transform="translate(4800 0)" d="M14 0L192 0L219 117L381 117L408 0L586 0L406 710L194 710ZM300 476L347 268L253 268Z"/><path transform="translate(5400 0)" d="M54 0L246 0C455 0 572 127 572 355C572 583 455 710 246 710L54 710ZM234 158L234 552L252 552C343 552 388 487 388 355C388 223 343 158 252 158Z"/><path transform="translate(6600 0)" d="M300 -16C474 -16 572 116 572 354C572 592 474 726 300 726C126 726 28 592 28 354C28 116 126 -16 300 -16ZM300 138C241 138 212 196 212 354C212 512 241 572 300 572C359 572 388 512 388 354C388 196 359 138 300 138Z"/><path transform="translate(7200 0)" d="M90 0L270 0L270 271L532 271L532 425L270 425L270 552L550 552L550 710L90 710Z"/><path transform="translate(8400 0)" d="M14 0L192 0L219 117L381 117L408 0L586 0L406 710L194 710ZM300 476L347 268L253 268Z"/><path transform="translate(9600 0)" d="M90 0L270 0L270 271L532 271L532 425L270 425L270 552L550 552L550 710L90 710Z"/><path transform="translate(10200 0)" d="M70 0L530 0L530 158L390 158L390 552L530 552L530 710L70 710L70 552L210 552L210 158L70 158Z"/><path transform="translate(10800 0)" d="M90 0L550 0L550 158L270 158L270 710L90 710Z"/><path transform="translate(11400 0)" d="M80 0L540 0L540 158L260 158L260 279L520 279L520 433L260 433L260 552L532 552L532 710L80 710Z"/></g>
+<text x="633" y="49" class="b">64 KB and one byte. A NUL</text>
+<text x="633" y="69" class="b">byte or a byte-order mark</text>
+<text x="633" y="89" class="b">sends the file to the</text>
+<text x="633" y="109" class="b">stream reader.</text>
+<path d="M265 112 L305 112" class="arrow" marker-end="url(#ah)"/>
+<path d="M265 112 L305 112" class="blk" pathLength="100" style="stroke-dasharray: 25.0 200; animation-delay: 0s"/>
+<path d="M573 112 L613 112" class="arrow" marker-end="url(#ah)"/>
+<path d="M573 112 L613 112" class="blk" pathLength="100" style="stroke-dasharray: 25.0 200; animation-delay: 1.2s"/>
+<rect x="1" y="307" width="206" height="202" rx="4" class="card"/>
+<g transform="translate(17.0 334.0) scale(0.01549 -0.01549)" fill="#f2eee3"><path d="M302 -16C468 -16 560 68 560 206C560 314 510 384 358 424C262 449 232 472 232 514C232 551 256 572 293 572C337 572 367 539 375 473L555 480C547 645 457 726 302 726C140 726 52 640 52 502C52 376 124 325 262 290C348 268 380 241 380 196C380 158 353 138 313 138C261 138 230 174 218 257L40 249C51 79 133 -16 302 -16Z"/><path transform="translate(600 0)" d="M254 110L346 110L400 345L400 0L560 0L560 710L380 710L300 416L220 710L40 710L40 0L200 0L200 345Z"/><path transform="translate(1200 0)" d="M14 0L192 0L219 117L381 117L408 0L586 0L406 710L194 710ZM300 476L347 268L253 268Z"/><path transform="translate(1800 0)" d="M90 0L550 0L550 158L270 158L270 710L90 710Z"/><path transform="translate(2400 0)" d="M90 0L550 0L550 158L270 158L270 710L90 710Z"/><path transform="translate(3600 0)" d="M90 0L270 0L270 271L532 271L532 425L270 425L270 552L550 552L550 710L90 710Z"/><path transform="translate(4200 0)" d="M70 0L530 0L530 158L390 158L390 552L530 552L530 710L70 710L70 552L210 552L210 158L70 158Z"/><path transform="translate(4800 0)" d="M90 0L550 0L550 158L270 158L270 710L90 710Z"/><path transform="translate(5400 0)" d="M80 0L540 0L540 158L260 158L260 279L520 279L520 433L260 433L260 552L532 552L532 710L80 710Z"/></g>
+<text x="17" y="355" class="b">A short first read is</text>
+<text x="17" y="375" class="b">the whole file:</text>
+<text x="17" y="395" class="b">searched in the</text>
+<text x="17" y="415" class="b">thread's own buffer.</text>
+<rect x="225" y="307" width="206" height="202" rx="4" class="card"/>
+<g transform="translate(241.0 334.0) scale(0.01549 -0.01549)" fill="#f2eee3"><path d="M90 0L550 0L550 158L270 158L270 710L90 710Z"/><path transform="translate(600 0)" d="M14 0L192 0L219 117L381 117L408 0L586 0L406 710L194 710ZM300 476L347 268L253 268Z"/><path transform="translate(1200 0)" d="M56 0L236 0L236 239L266 239C332 239 356 227 362 138L372 0L554 0L538 194C531 270 495 311 420 324C493 347 540 407 540 496C540 627 450 710 294 710L56 710ZM236 397L236 552L286 552C331 552 356 524 356 475C356 425 331 397 286 397Z"/><path transform="translate(1800 0)" d="M304 -16C372 -16 424 17 455 65L459 0L564 0L564 376L300 376L300 246L398 246C396 174 368 141 318 141C250 141 212 215 212 354C212 494 246 569 306 569C349 569 377 536 387 452L570 462C539 639 451 726 304 726C132 726 28 584 28 354C28 124 136 -16 304 -16Z"/><path transform="translate(2400 0)" d="M80 0L540 0L540 158L260 158L260 279L520 279L520 433L260 433L260 552L532 552L532 710L80 710Z"/><path transform="translate(3000 0)" d="M56 0L236 0L236 239L266 239C332 239 356 227 362 138L372 0L554 0L538 194C531 270 495 311 420 324C493 347 540 407 540 496C540 627 450 710 294 710L56 710ZM236 397L236 552L286 552C331 552 356 524 356 475C356 425 331 397 286 397Z"/><path transform="translate(4200 0)" d="M90 0L270 0L270 271L532 271L532 425L270 425L270 552L550 552L550 710L90 710Z"/><path transform="translate(4800 0)" d="M70 0L530 0L530 158L390 158L390 552L530 552L530 710L70 710L70 552L210 552L210 158L70 158Z"/><path transform="translate(5400 0)" d="M90 0L550 0L550 158L270 158L270 710L90 710Z"/><path transform="translate(6000 0)" d="M80 0L540 0L540 158L260 158L260 279L520 279L520 433L260 433L260 552L532 552L532 710L80 710Z"/></g>
+<text x="241" y="355" class="b">The stream reader, up</text>
+<text x="241" y="375" class="b">to 1 MB with a</text>
+<text x="241" y="395" class="b">searcher made for</text>
+<text x="241" y="415" class="b">that file.</text>
+<rect x="449" y="307" width="206" height="202" rx="4" class="card"/>
+<g transform="translate(465.0 334.0) scale(0.01549 -0.01549)" fill="#f2eee3"><path d="M302 -16C468 -16 560 68 560 206C560 314 510 384 358 424C262 449 232 472 232 514C232 551 256 572 293 572C337 572 367 539 375 473L555 480C547 645 457 726 302 726C140 726 52 640 52 502C52 376 124 325 262 290C348 268 380 241 380 196C380 158 353 138 313 138C261 138 230 174 218 257L40 249C51 79 133 -16 302 -16Z"/><path transform="translate(600 0)" d="M70 0L250 0L250 240L308 240C454 240 560 336 560 474C560 612 454 710 308 710L70 710ZM250 398L250 552L290 552C347 552 376 526 376 474C376 423 347 398 290 398Z"/><path transform="translate(1200 0)" d="M90 0L550 0L550 158L270 158L270 710L90 710Z"/><path transform="translate(1800 0)" d="M70 0L530 0L530 158L390 158L390 552L530 552L530 710L70 710L70 552L210 552L210 158L70 158Z"/><path transform="translate(2400 0)" d="M210 0L390 0L390 552L560 552L560 710L40 710L40 552L210 552Z"/><path transform="translate(3600 0)" d="M90 0L270 0L270 271L532 271L532 425L270 425L270 552L550 552L550 710L90 710Z"/><path transform="translate(4200 0)" d="M70 0L530 0L530 158L390 158L390 552L530 552L530 710L70 710L70 552L210 552L210 158L70 158Z"/><path transform="translate(4800 0)" d="M90 0L550 0L550 158L270 158L270 710L90 710Z"/><path transform="translate(5400 0)" d="M80 0L540 0L540 158L260 158L260 279L520 279L520 433L260 433L260 552L532 552L532 710L80 710Z"/></g>
+<text x="465" y="355" class="b">Ranges of whole lines</text>
+<text x="465" y="375" class="b">(8 MB each); one</text>
+<text x="465" y="395" class="b">window of ranges per</text>
+<text x="465" y="415" class="b">thread.</text>
+<rect x="673" y="307" width="206" height="202" rx="4" class="card"/>
+<g transform="translate(689.0 334.0) scale(0.01549 -0.01549)" fill="#f2eee3"><path d="M300 -16C474 -16 572 116 572 354C572 592 474 726 300 726C126 726 28 592 28 354C28 116 126 -16 300 -16ZM300 138C241 138 212 196 212 354C212 512 241 572 300 572C359 572 388 512 388 354C388 196 359 138 300 138Z"/><path transform="translate(600 0)" d="M60 0L230 0L230 357L390 0L540 0L540 710L370 710L370 353L210 710L60 710Z"/><path transform="translate(1200 0)" d="M80 0L540 0L540 158L260 158L260 279L520 279L520 433L260 433L260 552L532 552L532 710L80 710Z"/><path transform="translate(2400 0)" d="M90 0L550 0L550 158L270 158L270 710L90 710Z"/><path transform="translate(3000 0)" d="M300 -16C474 -16 572 116 572 354C572 592 474 726 300 726C126 726 28 592 28 354C28 116 126 -16 300 -16ZM300 138C241 138 212 196 212 354C212 512 241 572 300 572C359 572 388 512 388 354C388 196 359 138 300 138Z"/><path transform="translate(3600 0)" d="M60 0L230 0L230 357L390 0L540 0L540 710L370 710L370 353L210 710L60 710Z"/><path transform="translate(4200 0)" d="M304 -16C372 -16 424 17 455 65L459 0L564 0L564 376L300 376L300 246L398 246C396 174 368 141 318 141C250 141 212 215 212 354C212 494 246 569 306 569C349 569 377 536 387 452L570 462C539 639 451 726 304 726C132 726 28 584 28 354C28 124 136 -16 304 -16Z"/><path transform="translate(5400 0)" d="M90 0L550 0L550 158L270 158L270 710L90 710Z"/><path transform="translate(6000 0)" d="M70 0L530 0L530 158L390 158L390 552L530 552L530 710L70 710L70 552L210 552L210 158L70 158Z"/><path transform="translate(6600 0)" d="M60 0L230 0L230 357L390 0L540 0L540 710L370 710L370 353L210 710L60 710Z"/><path transform="translate(7200 0)" d="M80 0L540 0L540 158L260 158L260 279L520 279L520 433L260 433L260 552L532 552L532 710L80 710Z"/></g>
+<text x="689" y="355" class="b">No line break before</text>
+<text x="689" y="375" class="b">the last byte: a</text>
+<text x="689" y="395" class="b">plain -F literal</text>
+<text x="689" y="415" class="b">reads it in two</text>
+<text x="689" y="435" class="b">passes through small</text>
+<text x="689" y="455" class="b">buffers; else one</text>
+<text x="689" y="475" class="b">buffer of the file's</text>
+<text x="689" y="495" class="b">size.</text>
+<path d="M457 301 V295 H871 V301" fill="none" stroke="#2a2a2f" stroke-width="1.5"/>
+<text x="664" y="287" class="lbl" text-anchor="middle">64 MB OR MORE</text>
+<path d="M748 225 L748 249" class="arrow"/>
+<path d="M748 225 L748 249" class="blk" pathLength="100" style="stroke-dasharray: 30.0 200; animation-delay: 2.4s"/>
+<path d="M104.0 249 H776.0" class="arrow"/>
+<path d="M104 249 L104 303" class="arrow" marker-end="url(#ah)"/>
+<path d="M104 249 L104 303" class="blk" pathLength="100" style="stroke-dasharray: 18.5 200; animation-delay: 3.4s"/>
+<path d="M328 249 L328 303" class="arrow" marker-end="url(#ah)"/>
+<path d="M328 249 L328 303" class="blk" pathLength="100" style="stroke-dasharray: 18.5 200; animation-delay: 3.4s"/>
+<path d="M552 249 L552 303" class="arrow" marker-end="url(#ah)"/>
+<path d="M552 249 L552 303" class="blk" pathLength="100" style="stroke-dasharray: 18.5 200; animation-delay: 3.4s"/>
+<path d="M776 249 L776 303" class="arrow" marker-end="url(#ah)"/>
+<path d="M776 249 L776 303" class="blk" pathLength="100" style="stroke-dasharray: 18.5 200; animation-delay: 3.4s"/>
+<rect x="1" y="559" width="878" height="102" rx="4" class="out"/>
+<path class="wipe" style="animation-delay:6.10s" d="M13.2 569.0 H83.0 L79.8 592.0 H10.0 Z" fill="#d9ff3d"/>
+<g class="hit" transform="translate(17.0 586.0) scale(0.01549 -0.01549)" fill="#0c0c0e" color="#f2eee3" style="animation-delay:6.10s"><path d="M300 -16C474 -16 572 116 572 354C572 592 474 726 300 726C126 726 28 592 28 354C28 116 126 -16 300 -16ZM300 138C241 138 212 196 212 354C212 512 241 572 300 572C359 572 388 512 388 354C388 196 359 138 300 138Z"/><path transform="translate(600 0)" d="M300 -16C460 -16 550 70 550 244L550 711L370 711L370 224C370 170 345 138 300 138C255 138 230 170 230 224L230 711L50 711L50 244C50 70 140 -16 300 -16Z"/><path transform="translate(1200 0)" d="M210 0L390 0L390 552L560 552L560 710L40 710L40 552L210 552Z"/><path transform="translate(1800 0)" d="M70 0L250 0L250 240L308 240C454 240 560 336 560 474C560 612 454 710 308 710L70 710ZM250 398L250 552L290 552C347 552 376 526 376 474C376 423 347 398 290 398Z"/><path transform="translate(2400 0)" d="M300 -16C460 -16 550 70 550 244L550 711L370 711L370 224C370 170 345 138 300 138C255 138 230 170 230 224L230 711L50 711L50 244C50 70 140 -16 300 -16Z"/><path transform="translate(3000 0)" d="M210 0L390 0L390 552L560 552L560 710L40 710L40 552L210 552Z"/></g>
+<text x="17" y="607" class="b">Matches are batched per file and sent to the caller's sink while other threads keep searching; plain</text>
+<text x="17" y="627" class="b">piped output shares one 64 KB buffer, so the lines of many files leave in one write.</text>
+<text x="17" y="647" class="b">Ctrl-C, <tspan class="m">--max-results</tspan> or a closed pipe cancels the walk between files. <tspan class="m">--sort</tspan> gives path order.</text>
+<path d="M104 511 L104 555" class="arrow" marker-end="url(#ah)"/>
+<path d="M104 511 L104 555" class="blk" pathLength="100" style="stroke-dasharray: 22.7 200; animation-delay: 4.6s"/>
+<path d="M328 511 L328 555" class="arrow" marker-end="url(#ah)"/>
+<path d="M328 511 L328 555" class="blk" pathLength="100" style="stroke-dasharray: 22.7 200; animation-delay: 4.6s"/>
+<path d="M552 511 L552 555" class="arrow" marker-end="url(#ah)"/>
+<path d="M552 511 L552 555" class="blk" pathLength="100" style="stroke-dasharray: 22.7 200; animation-delay: 4.6s"/>
+<path d="M776 511 L776 555" class="arrow" marker-end="url(#ah)"/>
+<path d="M776 511 L776 555" class="blk" pathLength="100" style="stroke-dasharray: 22.7 200; animation-delay: 4.6s"/>
+</g>
+</svg>

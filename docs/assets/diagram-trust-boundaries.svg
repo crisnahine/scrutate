@@ -1,0 +1,120 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 922" width="880" height="922" role="img" aria-labelledby="t d">
+<!-- written by tools/gen_doc_assets.py; edit that, not this file -->
+<title id="t">Trust boundaries</title>
+<desc id="d">What crosses into scrutate (repository content, patterns, MCP requests) and what it writes (.scrutate), with the controls the security assessment names on the boundary each one guards. The network is not used.</desc>
+<style>
+text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif; }
+.m { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
+.pre { white-space: pre; }
+.h { font-size: 15px; font-weight: 700; fill: #f2eee3; }
+.hm { font-size: 15px; font-weight: 700; fill: #0c0c0e; }
+.b { font-size: 14px; fill: #8f8f98; }
+.bi { font-size: 14px; fill: #f2eee3; }
+.b .m, .bi .m { fill: #f2eee3; }
+.lbl { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; font-size: 11.5px; letter-spacing: 1.6px; fill: #8f8f98; }
+.card, .inset { fill: #0c0c0e; stroke: #2a2a2f; stroke-width: 1; }
+.store { fill: #0c0c0e; stroke: #f2eee3; stroke-width: 1.25; }
+.out { fill: #0c0c0e; stroke: #f2eee3; stroke-width: 1.5; }
+.arrow { fill: none; stroke: #8f8f98; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.gate { fill: #0c0c0e; stroke: #8f8f98; stroke-width: 1.25; stroke-dasharray: 6 5; }
+
+.wipe{transform-box:fill-box;transform-origin:left center;animation:wipe 0.5s cubic-bezier(.2,.7,.2,1) both}
+@keyframes wipe { from { transform: scaleX(0); } }
+.hit{animation:hit 0.5s steps(1, end) both}
+@keyframes hit { from { fill: currentColor; } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+</style>
+<defs><pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse"><rect x="10" y="10" width="2" height="2" fill="#2a2a2f"/></pattern></defs><rect width="880" height="922" rx="14" fill="#0c0c0e"/><rect x="10" y="10" width="860" height="902" rx="8" fill="url(#dots)"/><rect x="10.5" y="10.5" width="859" height="901" rx="8" fill="none" stroke="#2a2a2f"/>
+<text x="40.0" y="46.0" class="m pre " font-size="12" fill="#f2eee3" letter-spacing="1.92">// TRUST BOUNDARIES</text><path d="M231.8 42.0 H840" stroke="#2a2a2f"/>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M1.5 1.5 8.5 5 1.5 8.5" fill="none" stroke="#8f8f98" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<g transform="translate(32 72) scale(0.92727)">
+<text x="1" y="18" class="lbl">OUTSIDE: UNTRUSTED</text>
+<text x="236" y="18" class="lbl">THE BOUNDARY: THE CONTROLS ON IT</text>
+<text x="690" y="18" class="lbl">INSIDE</text>
+<rect x="1" y="34" width="196" height="252" rx="4" class="card"/>
+<g transform="translate(17.0 61.0) scale(0.01519 -0.01519)" fill="#f2eee3"><path d="M56 0L236 0L236 239L266 239C332 239 356 227 362 138L372 0L554 0L538 194C531 270 495 311 420 324C493 347 540 407 540 496C540 627 450 710 294 710L56 710ZM236 397L236 552L286 552C331 552 356 524 356 475C356 425 331 397 286 397Z"/><path transform="translate(600 0)" d="M80 0L540 0L540 158L260 158L260 279L520 279L520 433L260 433L260 552L532 552L532 710L80 710Z"/><path transform="translate(1200 0)" d="M70 0L250 0L250 240L308 240C454 240 560 336 560 474C560 612 454 710 308 710L70 710ZM250 398L250 552L290 552C347 552 376 526 376 474C376 423 347 398 290 398Z"/><path transform="translate(1800 0)" d="M300 -16C474 -16 572 116 572 354C572 592 474 726 300 726C126 726 28 592 28 354C28 116 126 -16 300 -16ZM300 138C241 138 212 196 212 354C212 512 241 572 300 572C359 572 388 512 388 354C388 196 359 138 300 138Z"/><path transform="translate(2400 0)" d="M302 -16C468 -16 560 68 560 206C560 314 510 384 358 424C262 449 232 472 232 514C232 551 256 572 293 572C337 572 367 539 375 473L555 480C547 645 457 726 302 726C140 726 52 640 52 502C52 376 124 325 262 290C348 268 380 241 380 196C380 158 353 138 313 138C261 138 230 174 218 257L40 249C51 79 133 -16 302 -16Z"/><path transform="translate(3000 0)" d="M70 0L530 0L530 158L390 158L390 552L530 552L530 710L70 710L70 552L210 552L210 158L70 158Z"/><path transform="translate(3600 0)" d="M210 0L390 0L390 552L560 552L560 710L40 710L40 552L210 552Z"/><path transform="translate(4200 0)" d="M300 -16C474 -16 572 116 572 354C572 592 474 726 300 726C126 726 28 592 28 354C28 116 126 -16 300 -16ZM300 138C241 138 212 196 212 354C212 512 241 572 300 572C359 572 388 512 388 354C388 196 359 138 300 138Z"/><path transform="translate(4800 0)" d="M56 0L236 0L236 239L266 239C332 239 356 227 362 138L372 0L554 0L538 194C531 270 495 311 420 324C493 347 540 407 540 496C540 627 450 710 294 710L56 710ZM236 397L236 552L286 552C331 552 356 524 356 475C356 425 331 397 286 397Z"/><path transform="translate(5400 0)" d="M210 0L390 0L390 300L576 710L386 710L300 486L214 710L24 710L210 300Z"/><path transform="translate(6600 0)" d="M306 -16C452 -16 546 88 568 273L387 280C377 189 345 138 306 138C246 138 212 215 212 354C212 494 246 572 306 572C348 572 378 523 387 436L568 443C546 625 452 726 306 726C130 726 28 584 28 354C28 124 130 -16 306 -16Z"/><path transform="translate(7200 0)" d="M300 -16C474 -16 572 116 572 354C572 592 474 726 300 726C126 726 28 592 28 354C28 116 126 -16 300 -16ZM300 138C241 138 212 196 212 354C212 512 241 572 300 572C359 572 388 512 388 354C388 196 359 138 300 138Z"/><path transform="translate(7800 0)" d="M60 0L230 0L230 357L390 0L540 0L540 710L370 710L370 353L210 710L60 710Z"/><path transform="translate(8400 0)" d="M210 0L390 0L390 552L560 552L560 710L40 710L40 552L210 552Z"/><path transform="translate(9000 0)" d="M80 0L540 0L540 158L260 158L260 279L520 279L520 433L260 433L260 552L532 552L532 710L80 710Z"/><path transform="translate(9600 0)" d="M60 0L230 0L230 357L390 0L540 0L540 710L370 710L370 353L210 710L60 710Z"/><path transform="translate(10200 0)" d="M210 0L390 0L390 552L560 552L560 710L40 710L40 552L210 552Z"/></g>
+<text x="17" y="82" class="b">a hostile</text>
+<text x="17" y="102" class="b">repository: crafted</text>
+<text x="17" y="122" class="b">files, names,</text>
+<text x="17" y="142" class="b">symlinks,</text>
+<text x="17" y="162" class="b"><tspan class="m">.gitignore</tspan></text>
+<rect x="236" y="34" width="414" height="252" rx="4" class="gate"/>
+<rect x="251" y="52" width="6" height="6" fill="#d9ff3d"/>
+<text x="266" y="60" class="b">Parsed as data: nothing is evaluated, imported</text>
+<text x="266" y="80" class="b">or run. One exception: <tspan class="m">grep -z</tspan> runs the</text>
+<text x="266" y="100" class="b">system's decompressors on compressed files.</text>
+<rect x="251" y="120" width="6" height="6" fill="#d9ff3d"/>
+<text x="266" y="128" class="b">Symlinks are not followed by default; <tspan class="m">-L</tspan></text>
+<text x="266" y="148" class="b">follows with loop detection.</text>
+<rect x="251" y="168" width="6" height="6" fill="#d9ff3d"/>
+<text x="266" y="176" class="b">Engine B skips binary files and files over 1</text>
+<text x="266" y="196" class="b">MB; the resolver does not read a file nested</text>
+<text x="266" y="216" class="b">more than 2,000 levels.</text>
+<rect x="251" y="236" width="6" height="6" fill="#d9ff3d"/>
+<text x="266" y="244" class="b"><tspan class="m">follow = true</tspan> in the repository's own</text>
+<text x="266" y="264" class="b"><tspan class="m">.scrutate.toml</tspan> is ignored with a warning.</text>
+<path d="M201 160 L232 160" class="arrow" marker-end="url(#ah)"/>
+<path d="M654 160 L686 160" class="arrow" marker-end="url(#ah)"/>
+<rect x="1" y="302" width="196" height="88" rx="4" class="card"/>
+<g transform="translate(17.0 329.0) scale(0.01549 -0.01549)" fill="#f2eee3"><path d="M70 0L250 0L250 240L308 240C454 240 560 336 560 474C560 612 454 710 308 710L70 710ZM250 398L250 552L290 552C347 552 376 526 376 474C376 423 347 398 290 398Z"/><path transform="translate(600 0)" d="M14 0L192 0L219 117L381 117L408 0L586 0L406 710L194 710ZM300 476L347 268L253 268Z"/><path transform="translate(1200 0)" d="M210 0L390 0L390 552L560 552L560 710L40 710L40 552L210 552Z"/><path transform="translate(1800 0)" d="M210 0L390 0L390 552L560 552L560 710L40 710L40 552L210 552Z"/><path transform="translate(2400 0)" d="M80 0L540 0L540 158L260 158L260 279L520 279L520 433L260 433L260 552L532 552L532 710L80 710Z"/><path transform="translate(3000 0)" d="M56 0L236 0L236 239L266 239C332 239 356 227 362 138L372 0L554 0L538 194C531 270 495 311 420 324C493 347 540 407 540 496C540 627 450 710 294 710L56 710ZM236 397L236 552L286 552C331 552 356 524 356 475C356 425 331 397 286 397Z"/><path transform="translate(3600 0)" d="M60 0L230 0L230 357L390 0L540 0L540 710L370 710L370 353L210 710L60 710Z"/><path transform="translate(4200 0)" d="M302 -16C468 -16 560 68 560 206C560 314 510 384 358 424C262 449 232 472 232 514C232 551 256 572 293 572C337 572 367 539 375 473L555 480C547 645 457 726 302 726C140 726 52 640 52 502C52 376 124 325 262 290C348 268 380 241 380 196C380 158 353 138 313 138C261 138 230 174 218 257L40 249C51 79 133 -16 302 -16Z"/></g>
+<text x="17" y="350" class="b">a hostile query</text>
+<rect x="236" y="302" width="414" height="88" rx="4" class="gate"/>
+<rect x="251" y="320" width="6" height="6" fill="#d9ff3d"/>
+<text x="266" y="328" class="b">Rust <tspan class="m">regex</tspan>: linear time, no backtracking,</text>
+<text x="266" y="348" class="b">size limits (20 MB regex, 10 MB DFA); an</text>
+<text x="266" y="368" class="b">oversized pattern is an error.</text>
+<path d="M201 346 L232 346" class="arrow" marker-end="url(#ah)"/>
+<path d="M654 346 L686 346" class="arrow" marker-end="url(#ah)"/>
+<rect x="1" y="406" width="196" height="164" rx="4" class="card"/>
+<g transform="translate(17.0 433.0) scale(0.01549 -0.01549)" fill="#f2eee3"><path d="M254 110L346 110L400 345L400 0L560 0L560 710L380 710L300 416L220 710L40 710L40 0L200 0L200 345Z"/><path transform="translate(600 0)" d="M306 -16C452 -16 546 88 568 273L387 280C377 189 345 138 306 138C246 138 212 215 212 354C212 494 246 572 306 572C348 572 378 523 387 436L568 443C546 625 452 726 306 726C130 726 28 584 28 354C28 124 130 -16 306 -16Z"/><path transform="translate(1200 0)" d="M70 0L250 0L250 240L308 240C454 240 560 336 560 474C560 612 454 710 308 710L70 710ZM250 398L250 552L290 552C347 552 376 526 376 474C376 423 347 398 290 398Z"/><path transform="translate(2400 0)" d="M306 -16C452 -16 546 88 568 273L387 280C377 189 345 138 306 138C246 138 212 215 212 354C212 494 246 572 306 572C348 572 378 523 387 436L568 443C546 625 452 726 306 726C130 726 28 584 28 354C28 124 130 -16 306 -16Z"/><path transform="translate(3000 0)" d="M90 0L550 0L550 158L270 158L270 710L90 710Z"/><path transform="translate(3600 0)" d="M70 0L530 0L530 158L390 158L390 552L530 552L530 710L70 710L70 552L210 552L210 158L70 158Z"/><path transform="translate(4200 0)" d="M80 0L540 0L540 158L260 158L260 279L520 279L520 433L260 433L260 552L532 552L532 710L80 710Z"/><path transform="translate(4800 0)" d="M60 0L230 0L230 357L390 0L540 0L540 710L370 710L370 353L210 710L60 710Z"/><path transform="translate(5400 0)" d="M210 0L390 0L390 552L560 552L560 710L40 710L40 552L210 552Z"/></g>
+<text x="17" y="454" class="b">a hostile client:</text>
+<text x="17" y="474" class="b">malformed JSON-RPC,</text>
+<text x="17" y="494" class="b">path escapes</text>
+<rect x="236" y="406" width="414" height="164" rx="4" class="gate"/>
+<rect x="251" y="424" width="6" height="6" fill="#d9ff3d"/>
+<text x="266" y="432" class="b">stdio only, no listening socket.</text>
+<rect x="251" y="452" width="6" height="6" fill="#d9ff3d"/>
+<text x="266" y="460" class="b">A path that leaves the root by its own parts</text>
+<text x="266" y="480" class="b">is refused with nothing looked at.</text>
+<rect x="251" y="500" width="6" height="6" fill="#d9ff3d"/>
+<text x="266" y="508" class="b">Malformed input gets the JSON-RPC error the</text>
+<text x="266" y="528" class="b">specification names; at most 32 call threads</text>
+<text x="266" y="548" class="b">at once.</text>
+<path d="M201 488 L232 488" class="arrow" marker-end="url(#ah)"/>
+<path d="M654 488 L686 488" class="arrow" marker-end="url(#ah)"/>
+<rect x="1" y="586" width="196" height="184" rx="4" class="card"/>
+<text x="17" y="613" class="h"><tspan class="m">.scrutate/</tspan></text>
+<text x="17" y="634" class="b">the index</text>
+<text x="17" y="654" class="b">directory, possibly</text>
+<text x="17" y="674" class="b">corrupted or</text>
+<text x="17" y="694" class="b">planted</text>
+<rect x="236" y="586" width="414" height="184" rx="4" class="gate"/>
+<rect x="251" y="604" width="6" height="6" fill="#d9ff3d"/>
+<text x="266" y="612" class="b">Written only under <tspan class="m">&lt;root&gt;/.scrutate/</tspan>;</text>
+<text x="266" y="632" class="b">segments go to a temporary directory there and</text>
+<text x="266" y="652" class="b">are renamed.</text>
+<rect x="251" y="672" width="6" height="6" fill="#d9ff3d"/>
+<text x="266" y="680" class="b">A <tspan class="m">.scrutate</tspan> that is a link, or holds one, is</text>
+<text x="266" y="700" class="b">refused.</text>
+<rect x="251" y="720" width="6" height="6" fill="#d9ff3d"/>
+<text x="266" y="728" class="b"><tspan class="m">PRAGMA quick_check</tspan> on open, arrays</text>
+<text x="266" y="748" class="b">validated; a damaged index is rebuilt.</text>
+<path d="M686 678 L654 678" class="arrow" marker-end="url(#ah)" marker-start="url(#ah)"/>
+<path d="M232 678 L201 678" class="arrow" marker-end="url(#ah)" marker-start="url(#ah)"/>
+<rect x="690" y="34" width="189" height="736" rx="4" class="out"/>
+<path class="wipe" style="animation-delay:0.40s" d="M702.1 45.0 H784.2 L781.1 67.0 H699.0 Z" fill="#d9ff3d"/>
+<text color="#f2eee3" style="animation-delay:0.40s" x="706" y="61" class="hm hit"><tspan class="m">scrutate</tspan></text>
+<text x="706" y="82" class="b">Engine A, Engine B,</text>
+<text x="706" y="102" class="b">the CLI, the MCP</text>
+<text x="706" y="122" class="b">server and the</text>
+<text x="706" y="142" class="b">Python bindings.</text>
+<rect x="1" y="794" width="196" height="88" rx="4" fill="none" stroke="#2a2a2f" stroke-dasharray="5 5"/>
+<g transform="translate(17.0 821.0) scale(0.01549 -0.01549)" fill="#f2eee3"><path d="M60 0L230 0L230 357L390 0L540 0L540 710L370 710L370 353L210 710L60 710Z"/><path transform="translate(600 0)" d="M80 0L540 0L540 158L260 158L260 279L520 279L520 433L260 433L260 552L532 552L532 710L80 710Z"/><path transform="translate(1200 0)" d="M210 0L390 0L390 552L560 552L560 710L40 710L40 552L210 552Z"/><path transform="translate(1800 0)" d="M90 0L254 0L300 286L346 0L510 0L580 710L416 710L391 308L345 630L255 630L209 308L184 710L20 710Z"/><path transform="translate(2400 0)" d="M300 -16C474 -16 572 116 572 354C572 592 474 726 300 726C126 726 28 592 28 354C28 116 126 -16 300 -16ZM300 138C241 138 212 196 212 354C212 512 241 572 300 572C359 572 388 512 388 354C388 196 359 138 300 138Z"/><path transform="translate(3000 0)" d="M56 0L236 0L236 239L266 239C332 239 356 227 362 138L372 0L554 0L538 194C531 270 495 311 420 324C493 347 540 407 540 496C540 627 450 710 294 710L56 710ZM236 397L236 552L286 552C331 552 356 524 356 475C356 425 331 397 286 397Z"/><path transform="translate(3600 0)" d="M40 0L220 0L220 183L266 252L380 0L570 0L367 405L570 710L358 710L220 466L220 710L40 710Z"/></g>
+<text x="17" y="842" class="b">not used</text>
+<rect x="236" y="794" width="414" height="88" rx="4" class="gate"/>
+<rect x="251" y="812" width="6" height="6" fill="#d9ff3d"/>
+<text x="266" y="820" class="b">No network connections and no HTTP or DNS</text>
+<text x="266" y="840" class="b">dependency: <tspan class="m">cargo tree</tspan> has no networking</text>
+<text x="266" y="860" class="b">crate.</text>
+</g>
+</svg>

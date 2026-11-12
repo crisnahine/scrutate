@@ -1,5 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" aria-labelledby="title desc">
-<title id="title">Test results</title>
-<desc id="desc">Icon for Test results.</desc>
-<path d="M4 6.5l1.5 1.5 3-3" fill="none" stroke="#6f6a5e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="M11.5 7H20" fill="none" stroke="#6f6a5e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 13.5l1.5 1.5 3-3" fill="none" stroke="#6f6a5e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="M11.5 14H20" fill="none" stroke="#6f6a5e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="M11.5 19.5H20" fill="none" stroke="#6f6a5e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-labelledby="t d">
+<!-- written by tools/gen_doc_assets.py; edit that, not this file -->
+<title id="t">Test results</title>
+<desc id="d">Icon for Test results.</desc>
+<style></style>
+<rect width="32" height="32" rx="6" fill="#0c0c0e"/><g transform="translate(5 5) scale(.9167)"><path d="M4 6.5l1.5 1.5 3-3" fill="none" stroke="#f2eee3" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M11.5 7H20" fill="none" stroke="#f2eee3" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 13.5l1.5 1.5 3-3" fill="none" stroke="#f2eee3" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M11.5 14H20" fill="none" stroke="#f2eee3" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M11.5 19.5H20" fill="none" stroke="#f2eee3" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></g>
 </svg>

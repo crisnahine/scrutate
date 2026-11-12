@@ -7,9 +7,11 @@ Run from anywhere (Python 3.9 or newer, standard library only):
     python3 tools/gen_doc_assets.py --check    # fail when a committed file differs from what this script writes,
                                                # an SVG is malformed or too large, or a link or #anchor is broken
 
-Light and dark images come from one drawing each: the drawing names colour tokens (@ink@, @beam@ ...)
-and THEMES fills them in. The heads of the generated documents are written by their own generators
-(DOC_HEAD in each); --check compares those with the head this script would write.
+The images are drawn in the README's system (tools/gen_assets.py: its tokens, parts and outlined type):
+flat ink or paper panels, one file each, and the highlighter colour only on what a diagram is about.
+A drawing names colour tokens (@fg@, @dim@, @rule@, @mark@ ...) and its panel, ink or paper, fills them in.
+The heads of the generated documents are written by their own generators (DOC_HEAD in each); --check
+compares those with the head this script would write.
 """
 
 import argparse
@@ -17,23 +19,17 @@ import ast
 import os
 import re
 import sys
-import xml.dom.minidom
 from xml.sax.saxutils import escape
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 ASSETS = os.path.join(ROOT, "docs", "assets")
 
-# the palette, the type and the motion rules are the README images': one source, so the two
-# sets cannot drift apart
+# the palette, the type, the parts and the image rules are the README's: one source, so the two sets cannot drift apart
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import gen_assets as G  # noqa: E402
+from gen_assets import INK, PAPER, MARK, ALERT, ON, W, PAD, SANS, MONO, EASE, REDUCED  # noqa: E402
 
-KEYS = ("ink", "muted", "line", "card", "card2", "beam", "violet", "amber", "ok", "bad")
-THEMES = {
-    name: {**{k: t[k] for k in KEYS}, "soft": f"{float(re.search(r'([0-9.]+)[)]$', t['beamsoft']).group(1)):.2f}"}
-    for name, t in G.THEMES.items()
-}
-SANS, MONO, EASE, REDUCED, ICON_MID = G.SANS, G.MONO, G.EASE, G.REDUCED, G.ICON_GREY
+WRITTEN = "<!-- written by tools/gen_doc_assets.py; edit that, not this file -->"
 
 # Icons on a 24 px grid, strokes only.
 ICONS = {
@@ -120,6 +116,7 @@ GROUPS = [
     ("trust", "Trust it", "Measurements, tests, security and the evidence behind every claim."),
     ("work", "Work on it", "How changes are made, released and planned."),
 ]
+GROUP_ON = {"use": "paper", "understand": "ink", "trust": "paper", "work": "ink"}   # the panel each group's banners take
 GENERATORS = {
     "docs/LEADERBOARD.md": "bench/make_leaderboard_md.py",
     "docs/BENCHMARKS.md": "bench/make_benchmarks_md.py",
@@ -183,36 +180,98 @@ def rich(x, y, text, cls, anchor=None):
 STYLE = f"""
 text {{ font-family: {SANS}; }}
 .m {{ font-family: {MONO}; }}
-.h {{ font-size: 15px; font-weight: 600; fill: @ink@; }}
-.b {{ font-size: 14px; fill: @muted@; }}
-.bi {{ font-size: 14px; fill: @ink@; }}
-.lbl {{ font-size: 14px; font-weight: 600; fill: @muted@; }}
-.card {{ fill: @card@; stroke: @line@; stroke-width: 1; }}
-.inset {{ fill: @card2@; stroke: @line@; stroke-width: 1; }}
-.store {{ fill: @card@; stroke: @violet@; stroke-width: 1.25; }}
-.out {{ fill: @card@; stroke: @beam@; stroke-width: 1.25; }}
-.arrow {{ fill: none; stroke: @muted@; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }}
-.gate {{ fill: @card2@; stroke: @muted@; stroke-width: 1.25; stroke-dasharray: 6 5; }}
+.pre {{ white-space: pre; }}
+.h {{ font-size: 15px; font-weight: 700; fill: @fg@; }}
+.hm {{ font-size: 15px; font-weight: 700; fill: {INK}; }}
+.b {{ font-size: 14px; fill: @dim@; }}
+.bi {{ font-size: 14px; fill: @fg@; }}
+.b .m, .bi .m {{ fill: @fg@; }}
+.lbl {{ font-family: {MONO}; font-size: 11.5px; letter-spacing: 1.6px; fill: @dim@; }}
+.card, .inset {{ fill: @bg@; stroke: @rule@; stroke-width: 1; }}
+.store {{ fill: @bg@; stroke: @fg@; stroke-width: 1.25; }}
+.out {{ fill: @bg@; stroke: @fg@; stroke-width: 1.5; }}
+.arrow {{ fill: none; stroke: @dim@; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }}
+.gate {{ fill: @bg@; stroke: @dim@; stroke-width: 1.25; stroke-dasharray: 6 5; }}
 """
 
-FLOW_STYLE = f"""
-.flow {{ fill: none; stroke: @beam@; stroke-width: 2.5; stroke-linecap: round; stroke-dasharray: 10 200;
-  stroke-dashoffset: 30; animation: flow 10s {EASE} infinite; }}
-@keyframes flow {{ 0% {{ stroke-dashoffset: 30; }} 14%, 100% {{ stroke-dashoffset: -100; }} }}
+# A block of the highlighter runs along each arrow of the path, in order, three times, then the diagram is still.
+BLOCK_STYLE = f"""
+.blk {{ fill: none; stroke: @mark@; stroke-width: 9; stroke-dashoffset: 30; animation: blk 9s ease-in-out 3 both; }}
+@keyframes blk {{ 0% {{ stroke-dashoffset: 30; }} 18%, 100% {{ stroke-dashoffset: -100; }} }}
 """
 
+R_CARD = 4          # corner of a card inside a diagram
+MARGIN, TOP = 32, 72  # where a diagram's drawing sits inside its panel, under its label
+
+
+def tokens(on):
+    c = ON[on]
+    return {"fg": c["fg"], "dim": c["dim"], "rule": c["rule"], "bg": c["bg"], "mark": MARK, "alert": ALERT, "ink": INK}
+
+
+def fill(src, on):
+    t = tokens(on)
+    out = re.sub(r"@(\w+)@", lambda m: t[m.group(1)], src)
+    if re.search(r"@\w+@", out):
+        raise SystemExit("unfilled colour token")
+    return out
+
+
+def document(w, h, title, desc, body, style):
+    animated = "@keyframes" in style
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" width="{w}" height="{h}" role="img" '
+            f'aria-labelledby="t d">\n{WRITTEN}\n<title id="t">{escape(title)}</title>\n<desc id="d">{escape(desc)}</desc>\n'
+            f"<style>{style}{REDUCED + chr(10) if animated else ''}</style>\n{body}\n</svg>\n")
+
+
+def outlined(text):
+    """True when the headline font has every letter of `text` in capitals."""
+    return "`" not in text and all(ch == " " or ch in G.font()["glyphs"] for ch in text.upper())
+
+
+def lbl(x, y, text, anchor=None):
+    """A small label in spaced mono capitals."""
+    return f'<text x="{x:g}" y="{y:g}" class="lbl"' + (f' text-anchor="{anchor}"' if anchor else "") + f">{escape(text.upper())}</text>"
 
 
 class Svg:
-    def __init__(self, w, h, title, desc):
-        self.w, self.h, self.title, self.desc = w, h, title, desc
-        self.body, self.style, self.defs, self.flows = [], [STYLE], [], 0
+    def __init__(self, w, h, title, desc, on="ink"):
+        self.w, self.h, self.title, self.desc, self.on = w, h, title, desc, on
+        self.body, self.style, self.defs, self.flows, self.last = [], [STYLE], [], 0, 0.0
 
     def add(self, s):
         self.body.append(s)
 
-    def card(self, x, y, w, title, text, cls="card", h=None, title_mono=False):
-        """A card with a title and wrapped body paragraphs; returns its height."""
+    def heading(self, x, y, text, marked=False, mono_title=False, room=None):
+        """A card's title at baseline y: outlined capitals, or bold system text when it holds code.
+        `marked` puts it on a highlighter slab that wipes in after the last block has run."""
+        cap = 11 if room is None else min(11, room / G.type_w(text.upper(), 1))   # a long title is set a little smaller
+        plain = not mono_title and outlined(text) and cap >= 9.5
+        t = f"`{text}`" if mono_title else text
+        at = "animation-delay:@at@s"   # filled in by svg(), once every arrow is known
+        if plain:
+            w, top, h = G.type_w(text.upper(), cap), y - cap - 6, cap + 12
+        else:
+            w, top, h = text_width(t, 15) * 0.93, y - 16, 22
+        if marked:
+            self.add(G.marker(x - 7, top, w + 14, h, "wipe", at))
+        if plain:
+            extra = f' color="@fg@" style="{at}"' if marked else ""
+            self.add(G.words(text.upper(), x, y, cap, INK if marked else "@fg@", cls="hit" if marked else "", extra=extra))
+        elif marked:
+            self.add(rich(x, y, t, "hm hit").replace("<text ", f'<text color="@fg@" style="{at}" ', 1))
+        else:
+            self.add(rich(x, y, t, "h"))
+
+    def box(self, x, y, w, h, cls):
+        if cls == "store":   # a store has its top right corner cut, like the README's cards
+            k = 12
+            self.add(f'<path d="M{x:g} {y:g} H{x + w - k:g} L{x + w:g} {y + k:g} V{y + h:g} H{x:g} Z" class="store"/>')
+        else:
+            self.add(f'<rect x="{x:g}" y="{y:g}" width="{w:g}" height="{h:g}" rx="{R_CARD}" class="{cls}"/>')
+
+    def card(self, x, y, w, title, text, cls="card", h=None, title_mono=False, marked=None):
+        """A card with a title and wrapped body paragraphs; returns its height. An `out` card is marked."""
         lines = []
         for para in ([text] if isinstance(text, str) else text):
             lines += wrap(para, w - 32, 14)
@@ -220,10 +279,11 @@ class Svg:
         h = h or need
         if h < need:
             raise SystemExit(f"card {title!r} needs {need}px, has {h}")
-        self.add(f'<rect x="{x:g}" y="{y:g}" width="{w:g}" height="{h:g}" rx="12" class="{cls}"/>')
+        self.box(x, y, w, h, cls)
         ty = y + 26
         if title:
-            self.add(rich(x + 16, ty, f"`{title}`" if title_mono else title, "h"))
+            self.heading(x + 16, y + 27, title, marked=(cls == "out") if marked is None else marked,
+                         mono_title=title_mono, room=w - 32)
             ty += 22
         else:
             ty = y + 24
@@ -243,38 +303,33 @@ class Svg:
         self.add(f'<path d="{d}" class="arrow"{marks}/>')
         if flow is not None:
             self.flows += 1
+            self.last = max(self.last, flow)
             length = sum(abs(x1 - x0) + abs(y1 - y0) for (x0, y0), (x1, y1) in zip(pts, pts[1:]))
-            dash = min(30.0, 18 / length * 100)  # an 18 px light, whatever the arrow's length
-            self.add(f'<path d="{d}" class="flow" pathLength="100" '
+            dash = min(30.0, 10 / length * 100)  # a 10 px block, whatever the arrow's length
+            self.add(f'<path d="{d}" class="blk" pathLength="100" '
                      f'style="stroke-dasharray: {dash:.1f} 200; animation-delay: {flow:g}s"/>')
 
-    def svg(self, theme):
+    def svg(self):
+        """The drawing, scaled into a panel under a `// TITLE` label."""
         if self.flows:
-            self.style.append(FLOW_STYLE)
-        animated = any("animation" in s for s in self.style)
-        style = "".join(self.style) + (REDUCED + "\n" if animated else "")
-        marker = ('<marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" '
-                  'orient="auto-start-reverse"><path d="M1.5 1.5 8.5 5 1.5 8.5" fill="none" stroke="@muted@" '
-                  'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker>')
-        src = "\n".join([
-            f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {self.w} {self.h}" width="{self.w}" height="{self.h}" '
-            f'role="img" aria-labelledby="title desc">',
-            f"<title id=\"title\">{escape(self.title)}</title>",
-            f"<desc id=\"desc\">{escape(self.desc)}</desc>",
-            f"<style>{style}</style>",
-            "<defs>" + marker + "".join(self.defs) + "</defs>",
+            self.style.append(BLOCK_STYLE)
+        if any("wipe" in b for b in self.body):
+            self.style.append("\n" + G.wipe_style() + "\n")
+        sc = (W - 2 * MARGIN) / self.w
+        H = round(TOP + self.h * sc + 30)
+        head = ('<marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" '
+                'orient="auto-start-reverse"><path d="M1.5 1.5 8.5 5 1.5 8.5" fill="none" stroke="@dim@" '
+                'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker>')
+        body = "\n".join([
+            G.panel(H, self.on, dots=self.on == "ink"),
+            G.label(MARGIN + 8, 46, "", self.title, self.on, W - MARGIN - 8),
+            "<defs>" + head + "".join(self.defs) + "</defs>",
+            f'<g transform="translate({MARGIN} {TOP}) scale({sc:.5f})">',
             *self.body,
-            "</svg>",
-        ]) + "\n"
-        return fill(src, theme)
-
-
-def fill(src, theme):
-    t = THEMES[theme]
-    out = re.sub(r"@(\w+)@", lambda m: t[m.group(1)], src)
-    if re.search(r"@\w+@", out):
-        raise SystemExit("unfilled colour token")
-    return out
+            "</g>",
+        ])
+        src = document(W, H, self.title, self.desc, body, "".join(self.style))
+        return fill(src.replace("@at@", f"{self.last + 1.5 if self.flows else 0.4:.2f}"), self.on)
 
 
 def icon_paths(name, stroke, width=1.75):
@@ -282,59 +337,70 @@ def icon_paths(name, stroke, width=1.75):
                    'stroke-linecap="round" stroke-linejoin="round"/>' for d in ICONS[name])
 
 
-# ---------------------------------------------------------------- banners and icons
+# ---------------------------------------------------------------- banners, group strips and icons
 
-BANNER_STYLE = f"""
-.title {{ font-size: 32px; font-weight: 700; fill: @ink@; }}
-.line {{ font-size: 15px; fill: @muted@; }}
-.brand {{ font-size: 14px; fill: @muted@; letter-spacing: .5px; }}
-.code {{ fill: @line@; }}
-.hit {{ fill: @beam@; }}
-.band {{ fill: @beam@; opacity: @soft@; }}
-.beam {{ animation: sweep 12s {EASE} infinite; }}
-.lit {{ animation: lit 12s {EASE} infinite; }}
-@keyframes sweep {{ 0% {{ transform: translateX(-196px); opacity: 0; }} 5% {{ opacity: 1; }}
-  45% {{ transform: translateX(0); opacity: 1; }} 92% {{ transform: translateX(0); opacity: 1; }}
-  100% {{ transform: translateX(0); opacity: 0; }} }}
-@keyframes lit {{ 0%, 44% {{ opacity: 0; }} 52%, 92% {{ opacity: 1; }} 100% {{ opacity: 0; }} }}
-"""
-
-CODE_LINES = [(0, 120), (16, 140), (16, 96), (32, 128), (16, 72), (0, 24), (0, 108)]
-HITS = [(1, 40, 52), (4, 36, 36)]  # line, start within the line, length
+def group_no(g):
+    return f"{[k for k, _, _ in GROUPS].index(g) + 1:02d}"
 
 
-def banner(key, title, line, icon):
-    if text_width(title, 32) > 500 or text_width(line, 15) > 520:
-        raise SystemExit(f"banner text too long: {key}")
-    s = Svg(880, 160, f"{title}: scrutate documentation", f"Banner for the {title} page. {line}")
-    s.style.append(BANNER_STYLE)
-    s.add('<rect x="0.5" y="0.5" width="879" height="159" rx="12" class="card"/>')
-    s.add('<rect x="32" y="44" width="72" height="72" rx="16" class="inset"/>')
-    s.add(f'<g transform="translate(47 59) scale(1.75)">{icon_paths(icon, "@beam@")}</g>')
-    s.add('<text x="128" y="62" class="brand m">scrutate / docs</text>')
-    s.add(f'<text x="128" y="100" class="title">{escape(title)}</text>')
-    s.add(rich(128, 128, line, "line"))
-    x0, y0 = 664, 38
-    for i, (ind, ln) in enumerate(CODE_LINES):
-        s.add(f'<rect x="{x0 + ind}" y="{y0 + i * 13}" width="{ln}" height="6" rx="3" class="code"/>')
-    s.add('<g class="lit">')
-    for i, start, ln in HITS:
-        ind = CODE_LINES[i][0]
-        s.add(f'<rect x="{x0 + ind + start - 4}" y="{y0 + i * 13 - 4}" width="{ln + 8}" height="14" rx="5" class="band"/>')
-        s.add(f'<rect x="{x0 + ind + start}" y="{y0 + i * 13}" width="{ln}" height="6" rx="3" class="hit"/>')
-    s.add("</g>")
-    s.defs.append('<linearGradient id="glow" x1="0" x2="1"><stop offset="0" stop-color="@beam@" stop-opacity="0"/>'
-                  '<stop offset="1" stop-color="@beam@" stop-opacity="0.22"/></linearGradient>')
-    s.add('<g class="beam"><rect x="824" y="30" width="28" height="100" fill="url(#glow)"/>'
-          '<rect x="851" y="30" width="2" height="100" rx="1" class="hit"/></g>')
-    return s
+def banner(key, title, line, icon, group=None):
+    """A document's banner: its group label, its title in outlined capitals with a highlighter cursor, the
+    question it answers and its icon. The hub's banner (no group) is taller."""
+    on = GROUP_ON[group] if group else "ink"
+    c = ON[on]
+    hub_banner = group is None
+    H = 168 if hub_banner else 150
+    b = [G.panel(H, on)]
+    if hub_banner:
+        tag_text = "SCRUTATE // DOCS"
+        tw = G.text_w(tag_text, 11, True, 0.14) + 18
+        b.append(G.label(PAD, 44, "", f"{len(DOCS)} documents // {len(GROUPS)} groups", on, W - PAD - tw - 16))
+        b.append(G.tag(W - PAD - tw, 30, tag_text, on)[0])
+    else:
+        b.append(G.label(PAD, 44, group_no(group), next(n for g, n, _ in GROUPS if g == group), on, W - PAD))
+    t = title.upper()
+    room = W - 2 * PAD - 110
+    cap = min(46 if hub_banner else 34, room / (G.type_w(t, 1) + 0.8))
+    base = 114 if hub_banner else 98
+    b.append(G.words(t, PAD, base, cap, c["fg"]))
+    cx = PAD + G.type_w(t, cap) + cap * 0.2
+    # the cursor after the title: on paper an ink edge keeps the highlighter visible
+    edge = f' stroke="{INK}" stroke-width="1.5"' if on == "paper" else ""
+    b.append(f'<rect class="blink" x="{cx:.1f}" y="{base - cap:.1f}" width="{cap * 0.58:.1f}" height="{cap:.1f}" fill="{MARK}"{edge}/>')
+    if text_width(line, 15) > room:
+        raise SystemExit(f"banner line too long: {key}")
+    b.append(rich(PAD, base + 31, line, "q"))
+    s = 60
+    ix, iy = W - PAD - s, (H - s) / 2 + 12
+    b.append(G.ticks(ix, iy, s, s, c["dim"]))
+    k = 1.9
+    b.append(f'<g transform="translate({ix + (s - 24 * k) / 2:.1f} {iy + (s - 24 * k) / 2:.1f}) scale({k})">{icon_paths(icon, c["fg"])}</g>')
+    style = (f"\n.m {{ font-family: {MONO}; }} .pre {{ white-space: pre; }}\n"
+             f"text {{ font-family: {SANS}; }} .q {{ font-size: 15px; fill: {c['dim']}; }}\n"
+             ".blink { animation: blink 1.1s steps(1) .8s 4 both; }\n@keyframes blink { 50% { opacity: 0; } }\n")
+    return document(W, H, f"{title}: scrutate documentation", f"Banner for the {title} page. {line}", "\n".join(b), style)
+
+
+def group_strip(g, name):
+    """The band before each group on the hub: `// 01  USE IT`."""
+    on = GROUP_ON[g]
+    c = ON[on]
+    H, n = 84, group_no(g)
+    b = [G.panel(H, on, frame=False), G.words("//", PAD, 56, 26, c["dim"]), G.words(n, PAD + 58, 56, 26, c["fg"])]
+    x = PAD + 58 + G.type_w(n, 26) + 26
+    b.append(G.words(name.upper(), x, 53, 19, c["fg"]))
+    end = x + G.type_w(name.upper(), 19) + 22
+    b.append(f'<path d="M{end:.1f} 44 H{W - PAD - 34}" stroke="{c["rule"]}"/>')
+    b.append(G.crosshair(W - PAD - 12, 44, 8, c["dim"]))
+    style = "\n"
+    return document(W, H, f"{n}: {name}", f"Group {n} of the documentation hub: {name.lower()}.", "\n".join(b), style)
 
 
 def icon_svg(name, title):
-    body = icon_paths(name, ICON_MID)
-    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" '
-            f'aria-labelledby="title desc">\n<title id="title">{escape(title)}</title>\n'
-            f'<desc id="desc">Icon for {escape(title)}.</desc>\n{body}\n</svg>\n')
+    """An ink chip with the icon in paper strokes, as the README's icons: one file reads on both page colours."""
+    body = (f'<rect width="32" height="32" rx="6" fill="{INK}"/><g transform="translate(5 5) scale(.9167)">'
+            f'{icon_paths(name, PAPER, 1.9)}</g>')
+    return document(32, 32, title, f"Icon for {title}.", body, "")
 
 
 # ---------------------------------------------------------------- diagrams
@@ -370,8 +436,8 @@ def diagram_engine_a():
         s.card(x, y2, w4, t, b, h=h2)
     # bracket over the two paths for files of 64 MB or more
     by = y2 - 12
-    s.add(f'<path d="M{px[2] + 8} {by + 6} V{by} H{px[3] + w4 - 8} V{by + 6}" fill="none" stroke="@line@" stroke-width="1.5"/>')
-    s.add(rich((px[2] + px[3] + w4) / 2, by - 8, "64 MB or more", "lbl", "middle"))
+    s.add(f'<path d="M{px[2] + 8} {by + 6} V{by} H{px[3] + w4 - 8} V{by + 6}" fill="none" stroke="@rule@" stroke-width="1.5"/>')
+    s.add(lbl((px[2] + px[3] + w4) / 2, by - 8, "64 MB or more", "middle"))
     bus = top + h1 + 26
     cx3 = xs[2] + w3 / 2
     s.arrow([(cx3, top + h1 + 2), (cx3, bus)], head=False, flow=2.4)
@@ -486,7 +552,7 @@ def diagram_text_index():
             "the pattern becomes a trigram condition, the postings give candidate files, and Engine A's per-file "
             "searcher reads only those.")
     w, xs = 270, [1, 305, 609]
-    s.add(rich(1, 16, "When indexing", "lbl"))
+    s.add(lbl(1, 16, "When indexing"))
     r1 = [
         ("Files", "Exactly the files Engine A's default walk visits: the same walker, the same ignore rules.", "card"),
         ("Trigrams per file", "Byte trigrams, ASCII case folded. Each posting has two mask bytes: the bytes that "
@@ -500,7 +566,7 @@ def diagram_text_index():
     for i in range(2):
         s.arrow([(xs[i] + w + 2, y1 + h1 / 2), (xs[i + 1] - 4, y1 + h1 / 2)], flow=i * 1.0)
     y2 = y1 + h1 + 64
-    s.add(rich(1, y2 - 14, "When searching", "lbl"))
+    s.add(lbl(1, y2 - 14, "When searching"))
     r2 = [
         ("Pattern", "Its regex syntax tree is walked: literals, small classes and alternations become string sets.", "card"),
         ("Trigram condition", "A boolean condition: necessary, never sufficient. Evaluated over the postings as bitsets.", "card"),
@@ -551,13 +617,13 @@ def diagram_front_ends():
     for i, c in enumerate(mids):
         s.arrow([(lw + 3, c), (268, c), (268, my + mh / 2), (mx - 4, my + mh / 2)], flow=i * 0.4)
     rx, rw = 566, 313
-    s.add(f'<rect x="{rx}" y="1" width="{rw}" height="{total - 1}" rx="12" class="store"/>')
-    s.add(rich(rx + 16, 27, "`.scrutate/`", "h"))
+    s.box(rx, 1, rw, total - 1, "store")
+    s.heading(rx + 16, 27, "`.scrutate/`", marked=True)
     parts = [("`index.db`", "SQLite, WAL"), ("`seg/`", "memory-mapped arrays"),
              ("`text/`", "trigram segments"), ("`tsquery/`", "the `tsquery` cache")]
     py = 42
     for name, what in parts:
-        s.add(f'<rect x="{rx + 12}" y="{py}" width="{rw - 24}" height="34" rx="8" class="inset"/>')
+        s.add(f'<rect x="{rx + 12}" y="{py}" width="{rw - 24}" height="34" rx="2" class="inset"/>')
         if text_width(what, 14) > (rw - 24 - 110) * 0.9:
             raise SystemExit(f"front ends: {what} does not fit")
         s.add(rich(rx + 26, py + 22, name, "bi"))
@@ -584,17 +650,17 @@ def diagram_cli_map():
             "code intelligence (symbol, callers, callees, refs, outline, deps, rdeps, similar, dupes), "
             "maintenance (index, check, stats, languages, config, completions) and servers (serve, lsp, watch).")
     fams = [
-        ("Search, no index", "beam", 130, [
+        ("Search, no index", "fg", 130, [
             ("grep", "alias `g`: regex, literal, identifier, fuzzy"),
             ("tsquery", "tree-sitter structural query"),
         ]),
-        ("Search the index", "beam", 130, [
+        ("Search the index", "fg", 130, [
             ("search", "alias `s`: ranked by meaning, name, identifier"),
             ("find", "regex-looking: `grep`; otherwise ranked"),
             ("grep --index", "`grep` through the text index"),
             ("batch", "JSON-lines requests, one index open"),
         ]),
-        ("Code intelligence", "beam", 200, [
+        ("Code intelligence", "fg", 200, [
             ("symbol", "where it is defined"),
             ("callers / callees", "call graph edges resolved to definitions"),
             ("refs", "every whole-word occurrence, resolved to its definition"),
@@ -603,7 +669,7 @@ def diagram_cli_map():
             ("similar", "code similar to a symbol or `path:line`"),
             ("dupes", "exact and near-duplicate functions"),
         ]),
-        ("Maintenance", "beam", 130, [
+        ("Maintenance", "fg", 130, [
             ("index", "build or update `.scrutate/`"),
             ("check", "verify the index"),
             ("stats", "index statistics"),
@@ -611,7 +677,7 @@ def diagram_cli_map():
             ("config", "the configuration file in effect"),
             ("completions", "shell completion scripts"),
         ]),
-        ("Servers", "beam", 130, [
+        ("Servers", "fg", 130, [
             ("serve", "MCP server on stdio"),
             ("lsp", "language server on stdio"),
             ("watch", "keep the index up to date"),
@@ -635,9 +701,9 @@ def diagram_cli_map():
         for i in row:
             name, col, ncol, cmds = fams[i]
             x, w = boxes[i]
-            s.add(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="12" class="card"/>')
-            s.add(f'<circle cx="{x + 21}" cy="{y + 21}" r="5" fill="@{col}@"/>')
-            s.add(rich(x + 34, y + 26, name, "h"))
+            s.add(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="{R_CARD}" class="card"/>')
+            s.add(f'<rect x="{x + 16}" y="{y + 16}" width="11" height="11" fill="@{col}@"/>')
+            s.heading(x + 36, y + 27, name)
             cy = y + 56
             for cmd, ls in laid(i):
                 s.add(rich(x + 16, cy, f"`{cmd}`", "bi"))
@@ -652,11 +718,11 @@ def diagram_cli_map():
 
 def diagram_exit_codes():
     s = Svg(880, 150, "Exit codes",
-            "0: results found. 1: no results. 2: error. 130: interrupted.")
-    tiles = [("0", "ok", "results found", ""),
-             ("1", "muted", "no results", ""),
-             ("2", "bad", "error", "Bad arguments, an unreadable index, an invalid pattern..."),
-             ("130", "amber", "interrupted", "Ctrl-C, or stopped early for a reason other than `--max-results`.")]
+            "0: results found. 1: no results. 2: error. 130: interrupted.", on="paper")
+    tiles = [("0", "mark", "results found", ""),
+             ("1", "dim", "no results", ""),
+             ("2", "alert", "error", "Bad arguments, an unreadable index, an invalid pattern..."),
+             ("130", "alert", "interrupted", "Ctrl-C, or stopped early for a reason other than `--max-results`.")]
     w = 208
     hs = []
     for t in tiles:
@@ -664,8 +730,10 @@ def diagram_exit_codes():
     h = max(hs)
     for i, (code, col, label, text) in enumerate(tiles):
         x = 1 + i * (w + 15.67)
-        s.add(f'<rect x="{x:g}" y="1" width="{w}" height="{h}" rx="12" class="card"/>')
-        s.add(f'<text x="{x + 16:g}" y="38" class="m" style="font-size: 28px; font-weight: 700" fill="@{col}@">{code}</text>')
+        s.add(f'<rect x="{x:g}" y="1" width="{w}" height="{h}" rx="{R_CARD}" class="card"/>')
+        if col == "mark":   # the one code that means something was found
+            s.add(G.marker(x + 7, 13, G.type_w(code, 22) + 20, 34))
+        s.add(G.words(code, x + 16, 40, 22, "@ink@" if col == "mark" else f"@{col}@"))
         s.add(rich(x + 16, 62, label, "h"))
         yy = 86
         for ln in (wrap(text, w - 32, 14) if text else []):
@@ -699,9 +767,9 @@ def diagram_security():
           "`PRAGMA quick_check` on open, arrays validated; a damaged index is rebuilt."]),
     ]
     y = 34
-    s.add(rich(1, 18, "Outside: untrusted", "lbl"))
-    s.add(rich(cx, 18, "The boundary: the controls on it", "lbl"))
-    s.add(rich(ex, 18, "Inside", "lbl"))
+    s.add(lbl(1, 18, "Outside: untrusted"))
+    s.add(lbl(cx, 18, "The boundary: the controls on it"))
+    s.add(lbl(ex, 18, "Inside"))
     spans_y = []
     for title, who, ctrls in rows:
         lines = []
@@ -711,12 +779,12 @@ def diagram_security():
         sh = Svg.need(sw, title, who)
         h = max(ch, sh)
         s.card(1, y, sw, title, who, h=h, cls="card")
-        s.add(f'<rect x="{cx}" y="{y}" width="{cw}" height="{h}" rx="12" class="gate"/>')
+        s.add(f'<rect x="{cx}" y="{y}" width="{cw}" height="{h}" rx="{R_CARD}" class="gate"/>')
         ty = y + 26
         for l in lines:
             for i, ln in enumerate(l):
                 if i == 0:
-                    s.add(f'<circle cx="{cx + 18}" cy="{ty - 5}" r="3" fill="@beam@"/>')
+                    s.add(f'<rect x="{cx + 15}" y="{ty - 8}" width="6" height="6" fill="@mark@"/>')
                 s.add(rich(cx + 30, ty, ln, "bi" if False else "b"))
                 ty += 20
             ty += 8
@@ -737,14 +805,14 @@ def diagram_security():
     net = ["No network connections and no HTTP or DNS dependency: `cargo tree` has no networking crate."]
     nh = Svg.need(sw, "Network", "not used")
     nh = max(nh, 16 + 20 * len(wrap(net[0], cw - 32, 14)) + 12)
-    s.add(f'<rect x="1" y="{y}" width="{sw}" height="{nh}" rx="12" fill="none" stroke="@line@" stroke-dasharray="5 5"/>')
-    s.add(rich(17, y + 26, "Network", "h"))
+    s.add(f'<rect x="1" y="{y}" width="{sw}" height="{nh}" rx="{R_CARD}" fill="none" stroke="@rule@" stroke-dasharray="5 5"/>')
+    s.heading(17, y + 27, "Network")
     s.add(rich(17, y + 48, "not used", "b"))
-    s.add(f'<rect x="{cx}" y="{y}" width="{cw}" height="{nh}" rx="12" class="gate"/>')
+    s.add(f'<rect x="{cx}" y="{y}" width="{cw}" height="{nh}" rx="{R_CARD}" class="gate"/>')
     ty = y + 26
     for i, ln in enumerate(wrap(net[0], cw - 32, 14)):
         if i == 0:
-            s.add(f'<circle cx="{cx + 18}" cy="{ty - 5}" r="3" fill="@beam@"/>')
+            s.add(f'<rect x="{cx + 15}" y="{ty - 8}" width="6" height="6" fill="@mark@"/>')
         s.add(rich(cx + 30, ty, ln, "b"))
         ty += 20
     s.h = int(y + nh + 2)
@@ -755,7 +823,7 @@ def diagram_platforms():
     s = Svg(880, 420, "Platforms: what is built, tested and supported",
             "macOS arm64, Linux aarch64 and Linux x86_64 are supported, with binaries and wheels built and tested. "
             "macOS x86_64, Windows x86_64 and Windows ARM64 pass the Rust tests on GitHub runners but have no wheel yet, "
-            "so they are not supported yet.")
+            "so they are not supported yet.", on="paper")
     rows = [
         ("macOS arm64", "Built and tested natively.", "cp39-abi3, cp314t", True),
         ("Linux aarch64", "Built and tested in a clean container; glibc and static musl.", "cp39-abi3, cp314t", True),
@@ -766,11 +834,11 @@ def diagram_platforms():
     ]
     cols = [(18, "Platform"), (176, "Binary"), (556, "Wheels"), (716, "Status")]
     for x, t in cols:
-        s.add(rich(x, 22, t, "lbl"))
+        s.add(lbl(x, 22, t))
     y = 36
     heights = [max(48, 14 + 20 * len(wrap(r[1], 360, 14)) + 14) for r in rows]
     total = sum(heights)
-    s.add(f'<rect x="1" y="{y}" width="878" height="{total}" rx="12" class="card"/>')
+    s.add(f'<rect x="1" y="{y}" width="878" height="{total}" rx="{R_CARD}" class="card"/>')
     for (plat, binary, wheels, ok), h in zip(rows, heights):
         ty = y + 29 if h == 48 else y + 28
         s.add(rich(18, ty, plat, "h"))
@@ -781,15 +849,15 @@ def diagram_platforms():
             by += 20
         s.add(rich(556, ty, wheels, "b" if ok else "b"))
         if ok:
-            s.add(f'<rect x="712" y="{y + h / 2 - 13}" width="104" height="26" rx="13" fill="none" stroke="@ok@" stroke-width="1.25"/>')
-            s.add(f'<path d="M724 {y + h / 2} l4 4 7-8" fill="none" stroke="@ok@" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>')
-            s.add(rich(742, y + h / 2 + 5, "supported", "b"))
+            s.add(G.marker(712, y + h / 2 - 13, 112, 26))
+            s.add(f'<path d="M724 {y + h / 2} l4 4 7-8" fill="none" stroke="@ink@" stroke-width="1.9" stroke-linecap="square"/>')
+            s.add(rich(742, y + h / 2 + 5, "supported", "bi").replace('class="bi"', 'class="bi" style="fill: @ink@"'))
         else:
-            s.add(f'<rect x="712" y="{y + h / 2 - 13}" width="150" height="26" rx="13" fill="none" stroke="@line@" stroke-width="1.25"/>')
+            s.add(f'<rect x="712" y="{y + h / 2 - 13}" width="150" height="26" fill="none" stroke="@rule@" stroke-width="1.25"/>')
             s.add(rich(726, y + h / 2 + 5, "not supported yet", "b"))
         y += h
         if y < 36 + total:
-            s.add(f'<line x1="2" y1="{y}" x2="878" y2="{y}" stroke="@line@"/>')
+            s.add(f'<line x1="2" y1="{y}" x2="878" y2="{y}" stroke="@rule@"/>')
     s.h = int(y + 2)
     return s
 
@@ -805,17 +873,6 @@ DIAGRAMS = {
     "trust-boundaries": diagram_security,
     "platforms": diagram_platforms,
 }
-
-
-def fix_height(s):
-    # The height is known once a drawing is laid out; rewrite the header with it.
-    out = {}
-    for theme in THEMES:
-        txt = s.svg(theme)
-        txt = re.sub(r'viewBox="0 0 (\d+) \d+" width="(\d+)" height="\d+"',
-                     lambda m: f'viewBox="0 0 {m.group(1)} {s.h}" width="{m.group(2)}" height="{s.h}"', txt, count=1)
-        out[theme] = txt
-    return out
 
 
 # ---------------------------------------------------------------- documents
@@ -866,10 +923,7 @@ def headings(md):
 def banner_block(path, key, title, line):
     a = rel(path, "docs/assets")
     return ["<p align=\"center\">",
-            "<picture>",
-            f"<source media=\"(prefers-color-scheme: dark)\" srcset=\"{a}/banner-{key}-dark.svg\">",
-            f"<img src=\"{a}/banner-{key}-light.svg\" alt=\"{escape(title)}. {escape(line)}\" width=\"880\">",
-            "</picture>",
+            f"<img src=\"{a}/banner-{key}.svg\" alt=\"{escape(title)}. {escape(line)}\" width=\"880\">",
             "</p>"]
 
 
@@ -927,9 +981,10 @@ def hub():
         "documents before and after it in its group. A document written by a script says so at the top; "
         "change the script, not the page.",
         "", HEAD_END, "", "<table>"]
-    # One table, so the columns line up from group to group.
+    # One table, so the columns line up from group to group; each group opens with its band.
     for g, name, line in GROUPS:
-        out += ["<tr>", f'<th colspan="2" align="left"><br>{escape(name)}<br><sub>{escape(line)}</sub></th>', "</tr>"]
+        out += ["<tr>", f'<th colspan="2" align="left"><img src="assets/banner-group-{g}.svg" width="100%" '
+                f'alt="{group_no(g)} {escape(name)}"><br><sub>{escape(line)}</sub></th>', "</tr>"]
         docs = [d for d in DOCS if d[5] == g]
         for i in range(0, len(docs), 2):
             out.append("<tr>")
@@ -958,15 +1013,12 @@ def planned():
         k = key.lstrip("+")
         files[f"docs/assets/banner-icon-{k}.svg"] = icon_svg(icon, title)
         if not key.startswith("+"):
-            b = banner(k, title, line, icon)
-            for theme in THEMES:
-                files[f"docs/assets/banner-{k}-{theme}.svg"] = b.svg(theme)
-    hb = banner("docs", "Documentation", "Every document, grouped by what you came to do", "docs")
-    for theme in THEMES:
-        files[f"docs/assets/banner-docs-{theme}.svg"] = hb.svg(theme)
+            files[f"docs/assets/banner-{k}.svg"] = banner(k, title, line, icon, d[5])
+    files["docs/assets/banner-docs.svg"] = banner("docs", "Documentation", "Every document, grouped by what you came to do", "docs")
+    for g, name, _ in GROUPS:
+        files[f"docs/assets/banner-group-{g}.svg"] = group_strip(g, name)
     for name, fn in DIAGRAMS.items():
-        for theme, txt in fix_height(fn()).items():
-            files[f"docs/assets/diagram-{name}-{theme}.svg"] = txt
+        files[f"docs/assets/diagram-{name}.svg"] = fn().svg()
     files[HUB] = hub()
     for d in headed():
         if d[1] in GENERATORS:
@@ -986,18 +1038,9 @@ def generator_head(gen):
 
 
 def check_svg(path, txt, problems):
-    try:
-        xml.dom.minidom.parseString(txt.encode())
-    except Exception as e:
-        problems.append(f"{path}: not valid XML ({e})")
-    if len(txt.encode()) > 120 * 1024:
-        problems.append(f"{path}: over 120 KB")
-    if "<title" not in txt or "<desc" not in txt:
-        problems.append(f"{path}: no title or desc")
-    outside = txt.replace('xmlns="http://www.w3.org/2000/svg"', "")
-    for bad in ("http", "<script", "@import", "font-face", "href="):
-        if bad in outside:
-            problems.append(f"{path}: contains {bad!r}")
+    """The README's image rules (gen_assets.svg_problems): valid XML, a title and a desc, under 150 KB,
+    no gradient, filter, script or outside reference, and a reduced-motion rule wherever there is motion."""
+    problems += G.svg_problems(path, txt)
 
 
 def check_links(path, text, problems):

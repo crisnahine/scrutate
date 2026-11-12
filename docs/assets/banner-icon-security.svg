@@ -1,5 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" aria-labelledby="title desc">
-<title id="title">Security</title>
-<desc id="desc">Icon for Security.</desc>
-<path d="M12 3 4.5 6v5.5c0 4.5 3.2 8 7.5 9.5 4.3-1.5 7.5-5 7.5-9.5V6z" fill="none" stroke="#6f6a5e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" fill="none" stroke="#6f6a5e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-labelledby="t d">
+<!-- written by tools/gen_doc_assets.py; edit that, not this file -->
+<title id="t">Security</title>
+<desc id="d">Icon for Security.</desc>
+<style></style>
+<rect width="32" height="32" rx="6" fill="#0c0c0e"/><g transform="translate(5 5) scale(.9167)"><path d="M12 3 4.5 6v5.5c0 4.5 3.2 8 7.5 9.5 4.3-1.5 7.5-5 7.5-9.5V6z" fill="none" stroke="#f2eee3" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" fill="none" stroke="#f2eee3" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></g>
 </svg>

@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 252" width="880" height="252" role="img" aria-labelledby="t d">
+<!-- written by tools/gen_doc_assets.py; edit that, not this file -->
+<title id="t">Exit codes</title>
+<desc id="d">0: results found. 1: no results. 2: error. 130: interrupted.</desc>
+<style>
+text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif; }
+.m { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
+.pre { white-space: pre; }
+.h { font-size: 15px; font-weight: 700; fill: #0c0c0e; }
+.hm { font-size: 15px; font-weight: 700; fill: #0c0c0e; }
+.b { font-size: 14px; fill: #6f6a5e; }
+.bi { font-size: 14px; fill: #0c0c0e; }
+.b .m, .bi .m { fill: #0c0c0e; }
+.lbl { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; font-size: 11.5px; letter-spacing: 1.6px; fill: #6f6a5e; }
+.card, .inset { fill: #f2eee3; stroke: #cfc9ba; stroke-width: 1; }
+.store { fill: #f2eee3; stroke: #0c0c0e; stroke-width: 1.25; }
+.out { fill: #f2eee3; stroke: #0c0c0e; stroke-width: 1.5; }
+.arrow { fill: none; stroke: #6f6a5e; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.gate { fill: #f2eee3; stroke: #6f6a5e; stroke-width: 1.25; stroke-dasharray: 6 5; }
+</style>
+<rect width="880" height="252" rx="14" fill="#f2eee3"/><rect x="10.5" y="10.5" width="859" height="231" rx="8" fill="none" stroke="#cfc9ba"/>
+<text x="40.0" y="46.0" class="m pre " font-size="12" fill="#0c0c0e" letter-spacing="1.92">// EXIT CODES</text><path d="M175.7 42.0 H840" stroke="#cfc9ba"/>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M1.5 1.5 8.5 5 1.5 8.5" fill="none" stroke="#6f6a5e" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<g transform="translate(32 72) scale(0.92727)">
+<rect x="1" y="1" width="208" height="160" rx="4" class="card"/>
+<path d="M12.0 13.0 H50.6 L46.6 47.0 H8.0 Z" fill="#d9ff3d"/>
+<g transform="translate(17.0 40.0) scale(0.03099 -0.03099)" fill="#0c0c0e"><path d="M300 -16C464 -16 560 124 560 354C560 584 464 726 300 726C136 726 40 584 40 354C40 124 136 -16 300 -16ZM225 300C224 317 224 335 224 354C224 510 251 572 300 572C321 572 338 561 351 535L226 294ZM300 138C279 138 262 149 249 175L374 416L375 411C376 394 376 375 376 354C376 199 349 138 300 138Z"/></g>
+<text x="17" y="62" class="h">results found</text>
+<rect x="224.67" y="1" width="208" height="160" rx="4" class="card"/>
+<g transform="translate(240.7 40.0) scale(0.03099 -0.03099)" fill="#6f6a5e"><path d="M40 0L560 0L560 158L410 158L410 710L250 710C250 610 214 574 130 574L64 574L64 426L230 426L230 158L40 158Z"/></g>
+<text x="240.67" y="62" class="h">no results</text>
+<rect x="448.34" y="1" width="208" height="160" rx="4" class="card"/>
+<g transform="translate(464.3 40.0) scale(0.03099 -0.03099)" fill="#ff5a36"><path d="M40 0L560 0L560 158L241 158C245 182 270 203 376 262C511 337 560 394 560 512C560 641 482 726 314 726C144 726 55 635 42 486L228 476C238 538 257 572 310 572C353 572 376 546 376 500C376 440 341 414 286 386C97 290 40 188 40 0Z"/></g>
+<text x="464.34" y="62" class="h">error</text>
+<text x="464.34" y="86" class="b">Bad arguments, an</text>
+<text x="464.34" y="106" class="b">unreadable index, an</text>
+<text x="464.34" y="126" class="b">invalid pattern...</text>
+<rect x="672.01" y="1" width="208" height="160" rx="4" class="card"/>
+<g transform="translate(688.0 40.0) scale(0.03099 -0.03099)" fill="#ff5a36"><path d="M40 0L560 0L560 158L410 158L410 710L250 710C250 610 214 574 130 574L64 574L64 426L230 426L230 158L40 158Z"/><path transform="translate(600 0)" d="M296 -16C464 -16 560 68 560 202C560 291 514 354 430 379C501 403 540 453 540 530C540 656 448 726 298 726C146 726 62 647 48 516L228 508C232 548 252 574 296 574C330 574 356 552 356 502C356 454 330 432 286 432L234 432L234 300L286 300C348 300 376 269 376 218C376 166 348 138 300 138C260 138 226 156 220 212L40 204C48 68 126 -16 296 -16Z"/><path transform="translate(1200 0)" d="M300 -16C464 -16 560 124 560 354C560 584 464 726 300 726C136 726 40 584 40 354C40 124 136 -16 300 -16ZM225 300C224 317 224 335 224 354C224 510 251 572 300 572C321 572 338 561 351 535L226 294ZM300 138C279 138 262 149 249 175L374 416L375 411C376 394 376 375 376 354C376 199 349 138 300 138Z"/></g>
+<text x="688.01" y="62" class="h">interrupted</text>
+<text x="688.01" y="86" class="b">Ctrl-C, or stopped</text>
+<text x="688.01" y="106" class="b">early for a reason</text>
+<text x="688.01" y="126" class="b">other than</text>
+<text x="688.01" y="146" class="b"><tspan class="m">--max-results</tspan>.</text>
+</g>
+</svg>

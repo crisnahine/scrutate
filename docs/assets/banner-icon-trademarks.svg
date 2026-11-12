@@ -1,5 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" aria-labelledby="title desc">
-<title id="title">Trademark policy</title>
-<desc id="desc">Icon for Trademark policy.</desc>
-<path d="M3 12V4.5A1.5 1.5 0 0 1 4.5 3H12l9 9-9 9z" fill="none" stroke="#6f6a5e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="M7.5 6.5a1 1 0 1 1 0 2 1 1 0 0 1 0-2z" fill="none" stroke="#6f6a5e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-labelledby="t d">
+<!-- written by tools/gen_doc_assets.py; edit that, not this file -->
+<title id="t">Trademark policy</title>
+<desc id="d">Icon for Trademark policy.</desc>
+<style></style>
+<rect width="32" height="32" rx="6" fill="#0c0c0e"/><g transform="translate(5 5) scale(.9167)"><path d="M3 12V4.5A1.5 1.5 0 0 1 4.5 3H12l9 9-9 9z" fill="none" stroke="#f2eee3" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M7.5 6.5a1 1 0 1 1 0 2 1 1 0 0 1 0-2z" fill="none" stroke="#f2eee3" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></g>
 </svg>
