@@ -363,7 +363,7 @@ def diagram_engine_a():
         ("Small file", "A short first read is the whole file: searched in the thread's own buffer."),
         ("Larger file", "The stream reader, up to 1 MB with a searcher made for that file."),
         ("Split file", "Ranges of whole lines (8 MB each); one window of ranges per thread."),
-        ("Long lines", "No line break before the last byte: one buffer of the file's exact size."),
+        ("One long line", "No line break before the last byte: a plain -F literal reads it in two passes through small buffers; else one buffer of the file's size."),
     ]
     w4, y2 = 206, top + h1 + 84
     h2 = max(Svg.need(w4, t, b) for t, b in paths)
