@@ -589,7 +589,7 @@ near: MinHash/LSH over token 3-grams, nested chunks excluded), and **structural 
 language over all files of a language, parallel, no index needed).
 
 `refs` resolves names (`resolve/`). Engine A finds the whole-word occurrences; for each file
-that holds one (Python, JavaScript/TypeScript, Rust, Go, Java), the file is parsed again with
+that holds one (Python, JavaScript/TypeScript, Rust, Go, Java, PHP), the file is parsed again with
 tree-sitter to find the identifier node, its qualifier, the enclosing scopes and the names its
 imports bind, while definitions and their nesting come from the index's `chunks` rows. A file
 whose tree is more than 2,000 levels deep is not read (its occurrences are listed as nested too
@@ -625,14 +625,17 @@ The resolver is one walker and one rule set per language. The walker (`resolve/m
 what every language shares: the scopes the definitions of the index make, the lookup memo, the
 depth guards and the order of the steps (the import at a name's own statement, the definition's
 own name, then the local scopes, the receiver and its type, the imports, the package and the
-wildcard imports). A rule set (`resolve/python.rs`, `js.rs`, `rust.rs`, `go.rs`, `java.rs`)
+wildcard imports). A rule set (`resolve/python.rs`, `js.rs`, `rust.rs`, `go.rs`, `java.rs`, `php.rs`)
 implements the `Rules` trait: its grammars, what binds a name, which blocks a local does not
 leave, how a receiver and a base class list are read, how a module path maps to files, and, for
-Java, its own walk of locals, fields, classes around and overloads. A step a rule set leaves out
+Java and PHP, a walk of its own: Java's locals, fields, classes around and overloads; PHP's
+namespaces, `use`, typed locals and properties, `$this`, `self::` and `parent::`. A PHP class is
+found by its name in the index and kept when the file that defines it declares the namespace the
+reference names, so no list of namespaces is built. A step a rule set leaves out
 is the walker's own. The walker picks a file's rule set with one `match` on its language, in a
 macro, so a language added to the `Lang` enum that has no rule set does not compile; there is no
 other test of a language in the walker. The node kind tables near the top of the walker
-(functions, local binders, patterns) still list the kinds of all five grammars together. A
+(functions, local binders, patterns) still list the kinds of the first five grammars together; PHP does not read them. A
 file's language comes from one place, `langs::detect`: by its name, and by its text where an
 extension is shared (`.h`, `.m`, `.pp`, `.cls`); the parser, the resolver and `names.rs` all ask it.
 

@@ -2,7 +2,7 @@
 //!
 //! Query time only. Definitions come from the index (`chunks`); scopes, qualifiers and import
 //! bindings come from parsing the files that hold occurrences (and the modules they import) again
-//! with tree-sitter. Python, JavaScript/TypeScript, Rust, Go and Java are understood; other
+//! with tree-sitter. Python, JavaScript/TypeScript, Rust, Go, Java and PHP are understood; other
 //! languages leave their occurrences unresolved.
 //!
 //! This module is the walker: the steps every language shares (scopes from the definitions of
@@ -21,6 +21,7 @@ use crate::index::{ChunkRow, Index, Symbol};
 mod go;
 mod java;
 mod js;
+mod php;
 mod python;
 mod rust;
 
@@ -32,9 +33,10 @@ pub enum Lang {
     Rust,
     Go,
     Java,
+    Php,
 }
 
-const LANGS: [Lang; 5] = [Lang::Python, Lang::Js, Lang::Rust, Lang::Go, Lang::Java];
+const LANGS: [Lang; 6] = [Lang::Python, Lang::Js, Lang::Rust, Lang::Go, Lang::Java, Lang::Php];
 
 /// `$e` with `$r` naming the rule set of `$lang`.
 macro_rules! rules {
@@ -58,6 +60,10 @@ macro_rules! rules {
             }
             Lang::Java => {
                 type $r = java::Java;
+                $e
+            }
+            Lang::Php => {
+                type $r = php::Php;
                 $e
             }
         }
@@ -325,6 +331,8 @@ pub struct Resolver<'a> {
     /// Java: by class, the types it extends and implements, and the fields it declares
     java_bases: HashMap<i64, Rc<Vec<std::result::Result<i64, &'static str>>>>,
     java_fields: HashMap<i64, Rc<HashSet<String>>>,
+    /// PHP: a full name and the kinds looked for -> the definition it names
+    php_paths: HashMap<String, std::result::Result<i64, &'static str>>,
     /// by class: the classes it inherits from, in method resolution order (`linearized`)
     orders: HashMap<i64, Rc<Vec<i64>>>,
     /// by scope node id, what was looked for and name: the byte ranges found, so a use in a big
@@ -696,6 +704,7 @@ impl<'a> Resolver<'a> {
             java_paths: HashMap::new(),
             java_bases: HashMap::new(),
             java_fields: HashMap::new(),
+            php_paths: HashMap::new(),
             orders: HashMap::new(),
             found: HashMap::new(),
         })
@@ -3264,6 +3273,35 @@ mod tests {
                 ("main.go", "p.Make()", "Make", "p/a.go Make"),
                 ("main.go", "qq.Make()", "Make", "q/a.go Make"),
                 ("main.go", "fmt.Println()", "Println", "external"),
+            ],
+        );
+    }
+
+    #[test]
+    fn php_rules() {
+        let log = "<?php\nnamespace Lib {\n    trait Logs { public function log() {} }\n    interface Shows { public function show(); }\n}\n";
+        let page = "<?php\nnamespace Web;\n\nclass Page implements \\Lib\\Shows\n{\n    use \\Lib\\Logs;\n    const LIMIT = 3;\n    public $title;\n    public function show() { $this->log(); return $this->title . self::LIMIT; }\n}\n";
+        let main = "<?php\nnamespace Web;\n\nfunction run(Page $p, $q)\n{\n    if ($q instanceof Page) { $p->show(); }\n    foreach ([$p] as $p) { $p->show(); }\n    $p = new \\Web\\Page();\n    return $p->show() . \\Lib\\helper() . PHP_EOL . strlen($q);\n}\n";
+        resolver_case(
+            "php",
+            &[("lib/log.php", log), ("web/Page.php", page), ("web/main.php", main), ("lib/helper.php", "<?php\nnamespace Lib;\n\nfunction helper() {}\n")],
+            &[
+                // a method of a trait the class uses; a braced namespace
+                ("web/Page.php", "$this->log()", "log", "lib/log.php Logs.log"),
+                ("web/Page.php", "implements \\Lib\\Shows", "Shows", "lib/log.php Shows"),
+                ("web/Page.php", "implements \\Lib\\Shows", "Lib", "namespace"),
+                ("web/Page.php", "$this->title", "title", "field or key"),
+                ("web/Page.php", "self::LIMIT", "LIMIT", "field or key"),
+                ("web/main.php", "$q instanceof Page", "Page", "web/Page.php Page"),
+                ("web/main.php", "$q instanceof", "q", "local variable"),
+                ("web/main.php", "Page) { $p->show()", "show", "web/Page.php Page.show"),
+                // a `foreach` target has no type the resolver reads
+                ("web/main.php", "as $p) { $p->show()", "show", "receiver"),
+                // the latest assignment before the use decides
+                ("web/main.php", "return $p->show()", "show", "web/Page.php Page.show"),
+                ("web/main.php", "\\Lib\\helper()", "helper", "lib/helper.php helper"),
+                ("web/main.php", "PHP_EOL", "PHP_EOL", "constant"),
+                ("web/main.php", "strlen($q)", "strlen", "external"),
             ],
         );
     }

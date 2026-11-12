@@ -144,7 +144,8 @@ docs/RELEASING.md, public, tag `v0.1.0`.
   (twice the cores, at most 24) and its disk-read time (75 µs) are the macOS values, in the
   `OTHER` row of the table in `crates/scrutate/src/policy.rs`; a measured row goes there.
 - References: resolution for more languages (C#, C/C++ includes); today `refs` resolves
-  Python, JavaScript/TypeScript, Rust, Go and Java.
+  Python, JavaScript/TypeScript, Rust, Go, Java and PHP. A language is one more rule set under
+  `resolve/`.
 - `cargo install`: int8 weights for the semantic model, with the quality check QUALITY.md uses.
 - Benchmark leadership on dedicated idle hardware (R-14.11): every number here comes from a
   developer laptop shared with other work, and Linux x86_64 has no benchmark run at all. In the

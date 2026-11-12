@@ -213,6 +213,13 @@ First release.
   The walker tests a file's language in one `match`, so a language without a rule set does not
   compile. A file's language comes from one function, `langs::detect`, which the parser, the
   resolver and `names.rs` share. No answer changed.
+- `refs`, `callers`, `callees`, `deps`, `rdeps` and the language server resolve PHP, a sixth rule
+  set (`resolve/php.rs`): `namespace` and `use` (aliased, grouped, `use function`), classes,
+  traits and interfaces, `$x->m()` through the class of `$x` (`$this`, the latest assignment of
+  `new C()` or of a call with a declared return type, a typed parameter, a typed property),
+  `self::`, `static::`, `parent::` and `C::m()`, and the global function an unqualified call
+  falls back to. A `use` maps to the file of the class or function it names; `require` paths are
+  mapped as before. PHP occurrences no longer say `not resolved in this language`.
 - The models are trained on rows the engine writes. `bench/gen_features.py` indexes each
   benchmark package with the binary and reads `batch --features`; `bench/train_semantic.py` reads
   the chunks, the tokens of each view and the query terms from a hidden `views` command.
