@@ -278,7 +278,9 @@ definitions never holds all their copies at once. A `.h` file is parsed as C++ o
 when its text shows it (docs/CLI.md lists the signs), as C otherwise. A method's qualified name uses its owner's bare type (`Stack.push` for
 `impl<T> Stack<T>`), and qualified names keep at most 32 segments. The tree walk keeps its own
 list of ancestors and visits children with a cursor, so a deeply nested or a very wide file
-indexes in linear time. Constants (`const`, `static`, enum members, `#define` values and the
+indexes in linear time. A call's name is read from the two ends of its target: the last
+separator inside the target is found by a binary search over the offsets of that separator in
+the file, gathered once per file, so a chain of calls costs time linear in its length. Constants (`const`, `static`, enum members, `#define` values and the
 like) are chunks of kind `constant` that get no postings and no vectors: name lookups find them,
 ranked search never sees them. A JavaScript or TypeScript object literal's methods are owned by
 the name that holds the literal (`api.get`), so `callers` treats them as methods, never as free

@@ -326,7 +326,11 @@ First release.
 - A file without a grammar whose definitions nest deeply is indexed in time linear in its size
   (a 1 MB Perl file of 1,400 nested `sub` lines: 0.83 s of CPU, now 0.2 s). Nested PHP
   `include` and `require` lines and declarations deep inside C or C++ `#if` blocks no longer
-  take time quadratic in the nesting depth (16,000 nested PHP includes: 20 s, now 0.06 s).
+  take time quadratic in the nesting depth (16,000 nested PHP includes: 20 s, now 0.06 s),
+  and neither does a chain of calls such as `a()()()` or `x.a().a()` (a 256 KB file of one
+  chain: 22 s, now 0.25 s). A C++ call is named for an operator only when at most three marks
+  follow `operator`, so `a.operator()()()` no longer stores names as long as the chain (a
+  16 KB file made 64 MB of names).
 - A damaged segment found while segments are merged rebuilds the index where the update ended
   with an internal error; `serve --watch` and `watch` report an update that panics and keep
   watching.
