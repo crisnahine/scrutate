@@ -127,7 +127,14 @@ type Name = Result<Option<Vec<u8>>, ()>;
 
 /// The tar crate reads a long-name or PAX header whole, up to gigabytes, so they are read here.
 fn tar<R: Read>(r: R, each: &mut dyn FnMut(Option<&str>, &mut dyn Read) -> bool, failed: &mut dyn FnMut(String)) -> std::io::Result<()> {
-    let mut a = tar::Archive::new(r);
+    struct Shared<R>(std::rc::Rc<std::cell::RefCell<R>>);
+    impl<R: Read> Read for Shared<R> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.0.borrow_mut().read(buf)
+        }
+    }
+    let r = std::rc::Rc::new(std::cell::RefCell::new(r));
+    let mut a = tar::Archive::new(Shared(r.clone()));
     // the name and size the extension headers give the next member
     let mut name: Name = Ok(None);
     let mut size = None;
@@ -137,6 +144,15 @@ fn tar<R: Read>(r: R, each: &mut dyn FnMut(Option<&str>, &mut dyn Read) -> bool,
         }
         let mut e = entry?;
         let t = e.header().entry_type();
+        // the extension blocks of an old-GNU sparse member sit before its data and are not in its
+        // size, so they are read past here where the raw walk does not count them
+        if t.is_gnu_sparse() && e.header().as_gnu().is_some_and(|g| g.is_extended()) {
+            let mut ext = tar::GnuExtSparseHeader::new();
+            ext.set_is_extended(true);
+            while ext.is_extended() {
+                r.borrow_mut().read_exact(ext.as_mut_bytes())?;
+            }
+        }
         let known = e.header().as_gnu().is_some() || e.header().as_ustar().is_some();
         if known && t.is_gnu_longname() {
             let mut v = Vec::new();

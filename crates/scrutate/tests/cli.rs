@@ -1693,6 +1693,65 @@ fn search_zip_skips_a_tar_member_whose_long_name_is_too_long() {
     assert_eq!(err.matches("a.tar: a member name longer than 64 KiB; skipped").count(), 2, "{err}");
 }
 
+#[test]
+fn search_zip_reads_the_members_after_an_old_gnu_sparse_member() {
+    let r = Repo::new("zipsparse");
+    // an old-GNU sparse member of `n` 512-byte segments: four in its header, 21 in each extension block
+    let sparse = |n: u64, data: &[u8]| {
+        let mut h = tar::Header::new_gnu();
+        h.set_path("sparse.bin").unwrap();
+        h.set_mode(0o644);
+        h.set_entry_type(tar::EntryType::GNUSparse);
+        h.set_size(n * 512);
+        let g = h.as_gnu_mut().unwrap();
+        let segs: Vec<u64> = (0..n).map(|i| i * 1024).collect();
+        for (s, &o) in g.sparse.iter_mut().zip(&segs) {
+            s.set_offset(o);
+            s.set_length(512);
+        }
+        g.set_is_extended(n > 4);
+        g.set_real_size(n * 1024);
+        h.set_cksum();
+        let mut out = h.as_bytes().to_vec();
+        let rest: Vec<u64> = segs.into_iter().skip(4).collect();
+        for (i, chunk) in rest.chunks(21).enumerate() {
+            let mut ext = tar::GnuExtSparseHeader::new();
+            for (s, &o) in ext.sparse.iter_mut().zip(chunk) {
+                s.set_offset(o);
+                s.set_length(512);
+            }
+            ext.set_is_extended((i + 1) * 21 < rest.len());
+            out.extend_from_slice(ext.as_bytes());
+        }
+        let mut d = data.to_vec();
+        d.resize(n as usize * 512, b'x');
+        out.extend_from_slice(&d);
+        out
+    };
+    let file = |name: &str, data: &[u8]| {
+        let mut h = tar::Header::new_gnu();
+        h.set_path(name).unwrap();
+        h.set_size(data.len() as u64);
+        h.set_mode(0o644);
+        h.set_cksum();
+        let mut out = h.as_bytes().to_vec();
+        out.extend_from_slice(data);
+        out.resize(512 + data.len().div_ceil(512) * 512, 0);
+        out
+    };
+    // member data shaped like a header and its body, where a reader that skips no extension block looks
+    let mut forged = vec![b'x'; 24 * 512];
+    forged.extend(file("fake.txt", b"needle forged\n"));
+    for (name, n, data) in [("four.tar", 4, &[][..]), ("forged.tar", 26, &forged[..]), ("five.tar", 5, &[][..])] {
+        let mut t = sparse(n, data);
+        t.extend(file("b.txt", b"needle here\n"));
+        t.extend([0; 1024]);
+        r.write(name, &t);
+        let (code, out, err) = r.run(&["grep", "-z", "needle", name]);
+        assert_eq!((code, out.as_str(), err.as_str()), (0, format!("{name}{{b.txt}}:1:needle here\n").as_str(), ""), "{name}");
+    }
+}
+
 /// Poll `ok` every 100 ms until it holds or `secs` pass.
 fn wait_for(secs: u64, what: &str, mut ok: impl FnMut() -> bool) {
     let t0 = std::time::Instant::now();
