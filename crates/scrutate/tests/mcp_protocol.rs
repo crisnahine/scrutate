@@ -124,6 +124,45 @@ fn a_client_that_disconnects_during_the_first_build_leaves_a_complete_index() {
     assert_eq!(files, 600);
 }
 
+// the planted id overflows, which panics, only where overflow checks are on
+#[cfg(debug_assertions)]
+#[test]
+fn a_first_build_that_panics_is_reported_and_the_server_still_answers_and_exits() {
+    let r = Repo::new("build_panic", 1);
+    assert!(Command::new(BIN).arg("--root").arg(&r.root).args(["index", "--no-text"]).status().unwrap().success());
+    let db = rusqlite::Connection::open(r.root.join(".scrutate/index.db")).unwrap();
+    db.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('next_id',?1)", [i64::MAX.to_string()]).unwrap();
+    drop(db);
+    fs::write(r.root.join("pkg/new.py"), "def fresh_fn():\n    return 1\n").unwrap();
+    let mut c = Command::new(BIN);
+    c.arg("--root").arg(&r.root).arg("serve").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = c.spawn().unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let call = |id: i64, meta: Value| json!({"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": {"name": "find_symbol", "arguments": {"name": "make_widget_0"}, "_meta": meta}});
+    for m in [call(1, json!({})), call(2, json!({"progressToken": "t"}))] {
+        writeln!(stdin, "{m}").unwrap();
+    }
+    drop(stdin);
+    let t0 = std::time::Instant::now();
+    while child.try_wait().unwrap().is_none() && t0.elapsed().as_secs() < 60 {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let exited = child.try_wait().unwrap().is_some();
+    if !exited {
+        let _ = child.kill();
+    }
+    let out = child.wait_with_output().unwrap();
+    assert!(exited, "serve did not exit when its input closed");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("indexing failed"), "{err}");
+    let msgs: Vec<Value> = String::from_utf8_lossy(&out.stdout).lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    for id in [1, 2] {
+        let m = msgs.iter().find(|m| m["id"] == id).unwrap_or_else(|| panic!("no answer to {id}: {msgs:?}"));
+        let text = m["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(m["result"]["isError"] == true && text.contains("index could not be built"), "{m}");
+    }
+}
+
 #[test]
 fn notifications_get_no_answer_and_batches_get_an_array() {
     let r = Repo::new("batch", 2);

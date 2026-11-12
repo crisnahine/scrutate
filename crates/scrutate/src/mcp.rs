@@ -233,7 +233,7 @@ const MAX_CALLS: usize = 32;
 
 /// One tool call from its first wait to its answer. A cancelled call sends nothing more: it
 /// stops waiting for the index or for its turn, and an answer already being computed is dropped.
-fn run_call(send: &Wire, repo: &Mutex<Repo>, building: &AtomicBool, calls: &Calls, settings: &Settings, call: Call) {
+fn run_call(send: &Wire, repo: &Mutex<Repo>, building: &AtomicBool, build_failed: &AtomicBool, calls: &Calls, settings: &Settings, call: Call) {
     let Call { id, name, args, stateless, structured, progress, cancelled } = call;
     let (started, mut reported) = (Instant::now(), 0);
     let gone = || cancelled.load(Ordering::Relaxed);
@@ -257,7 +257,12 @@ fn run_call(send: &Wire, repo: &Mutex<Repo>, building: &AtomicBool, calls: &Call
         (!gone()).then(|| {
             repo.set_cancel(Arc::clone(&cancelled));
             let c = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| call_tool(&mut repo, &name, &args, settings))).unwrap_or_else(|_| {
-                Called::note(format!("error: internal failure while running {name} (a bug: please report it); the server keeps running"), true)
+                let text = if build_failed.load(Ordering::Acquire) {
+                    "error: the index could not be built: internal failure while indexing (a bug: please report it, with the server's stderr); `scrutate index --force` in the repository may clear it, and the server keeps running".to_string()
+                } else {
+                    format!("error: internal failure while running {name} (a bug: please report it); the server keeps running")
+                };
+                Called::note(text, true)
             });
             repo.set_cancel(Arc::default());
             c
@@ -281,20 +286,25 @@ fn run_call(send: &Wire, repo: &Mutex<Repo>, building: &AtomicBool, calls: &Call
 /// JSON beside its text. Off unless asked for: Claude Code (2.1.322) shows its model that JSON in
 /// place of the text, which has the snippets and says how to page.
 pub fn serve(repo: Arc<Mutex<Repo>>, settings: Settings, version: &str, structured: bool) -> Result<()> {
-    let building = Arc::new(AtomicBool::new(true));
+    let (building, build_failed) = (Arc::new(AtomicBool::new(true)), Arc::new(AtomicBool::new(false)));
     {
-        let (repo, building) = (Arc::clone(&repo), Arc::clone(&building));
+        let (repo, building, build_failed) = (Arc::clone(&repo), Arc::clone(&building), Arc::clone(&build_failed));
         std::thread::Builder::new().name("scrutate-index".into()).spawn(move || {
-            if let Ok(mut g) = repo.lock() {
-                if let Err(e) = g.update(false) {
-                    eprintln!("[scrutate] indexing failed: {e:#}");
+            // a panic must still end the wait of every call, and of the exit
+            let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| repo.lock().map(|mut g| g.update(false))));
+            match built {
+                Ok(Ok(Err(e))) => eprintln!("[scrutate] indexing failed: {e:#}"),
+                Err(_) => {
+                    build_failed.store(true, Ordering::Release);
+                    eprintln!("[scrutate] indexing failed: internal failure (a bug: please report it); each tool call tries again");
                 }
+                _ => {}
             }
             building.store(false, Ordering::Release);
         })?;
     }
     let calls = Calls::default();
-    let server = Server { repo: &repo, building: &building, calls: &calls, settings: &settings, version, structured };
+    let server = Server { repo: &repo, building: &building, build_failed: &build_failed, calls: &calls, settings: &settings, version, structured };
     let (server, send) = (&server, &to_stdout as &Wire);
     std::thread::scope(|scope| -> Result<()> {
         let mut stdin = std::io::stdin().lock();
@@ -374,6 +384,7 @@ fn clamp_bytes(n: usize) -> usize {
 struct Server<'a> {
     repo: &'a Mutex<Repo>,
     building: &'a AtomicBool,
+    build_failed: &'a AtomicBool,
     calls: &'a Calls,
     settings: &'a Settings,
     version: &'a str,
@@ -459,8 +470,8 @@ impl Server<'_> {
                     cancelled: self.calls.begin(&id),
                     id,
                 };
-                let (repo, building, calls, settings) = (self.repo, self.building, self.calls, self.settings);
-                let run = move || run_call(send, repo, building, calls, settings, call);
+                let (repo, building, build_failed, calls, settings) = (self.repo, self.building, self.build_failed, self.calls, self.settings);
+                let run = move || run_call(send, repo, building, build_failed, calls, settings, call);
                 if calls.map().len() > MAX_CALLS {
                     run();
                 } else {
@@ -534,7 +545,8 @@ mod tests {
         let (building, calls) = (AtomicBool::new(true), Calls::default());
         let send = |m: Value| sent.lock().unwrap().push(m);
         std::thread::scope(|s| {
-            let job = s.spawn(|| run_call(&send, &repo, &building, &calls, &Settings::new(None, Some(0.0)), call(&calls, 7, json!("tok"))));
+            let job =
+                s.spawn(|| run_call(&send, &repo, &building, &AtomicBool::new(false), &calls, &Settings::new(None, Some(0.0)), call(&calls, 7, json!("tok"))));
             std::thread::sleep(Duration::from_millis(2300));
             assert!(!job.is_finished(), "the call waits for the index as long as it reports progress");
             building.store(false, Ordering::Release);
@@ -563,14 +575,14 @@ mod tests {
         std::thread::scope(|s| {
             // waiting for the index: the notice ends the wait
             let waiting = call(&calls, 1, Value::Null);
-            let job = s.spawn(|| run_call(&send, &repo, &building, &calls, &Settings::new(None, Some(0.0)), waiting));
+            let job = s.spawn(|| run_call(&send, &repo, &building, &AtomicBool::new(false), &calls, &Settings::new(None, Some(0.0)), waiting));
             calls.cancel(&json!(1));
             job.join().unwrap();
             building.store(false, Ordering::Release);
             // waiting for its turn: it gives the turn up when it comes
             let turn = repo.lock().unwrap();
             let queued = call(&calls, 2, Value::Null);
-            let job = s.spawn(|| run_call(&send, &repo, &building, &calls, &Settings::new(None, Some(0.0)), queued));
+            let job = s.spawn(|| run_call(&send, &repo, &building, &AtomicBool::new(false), &calls, &Settings::new(None, Some(0.0)), queued));
             calls.cancel(&json!(2));
             drop(turn);
             job.join().unwrap();
