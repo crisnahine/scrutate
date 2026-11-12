@@ -718,6 +718,11 @@ impl<'a> Resolver<'a> {
         fi
     }
 
+    /// Drops the loaded copy of `path`; a later use loads it again.
+    pub fn forget(&mut self, path: &str) {
+        self.cache.remove(path);
+    }
+
     fn load(&mut self, path: &str) -> FileInfo {
         let src = repo_text(&self.ix.root, path).unwrap_or_default();
         let spec = crate::parse::spec_for(path, &src);
@@ -784,6 +789,10 @@ impl<'a> Resolver<'a> {
     /// Resolve the occurrence of `name` at 1-based `line`, 0-based byte `col` of `path`.
     pub fn resolve_at(&mut self, path: &str, line: u64, col: usize, name: &str) -> Resolution {
         self.looked_up.clear();
+        if crate::langs::spec_for(path).and_then(|s| lang_of(s.id)).is_none() {
+            // whether a grammar exists does not depend on the content the sniff reads
+            return Err(if crate::parse::spec_for(path, "").is_some() { UNREAD } else { "no grammar" });
+        }
         let fi = self.file(path);
         let (Some(lang), Some(tree)) = (fi.lang, fi.tree.as_ref()) else {
             return Err(if crate::parse::spec_for(path, &fi.src).is_some() { UNREAD } else { "no grammar" });
@@ -1977,6 +1986,8 @@ impl<'a> Resolver<'a> {
     /// the files `refs` would look its names up in. None when the resolver does not read the
     /// language of `from`; an empty list when it reads it and finds no file.
     pub fn import_files(&mut self, from: &str, line: i64, module: &str) -> Option<Vec<String>> {
+        // the content sniff decides only between languages the resolver does not read
+        lang_of(crate::langs::spec_for(from)?.id)?;
         let fi = self.file(from);
         let lang = fi.lang?;
         let mut out: Vec<String> = Vec::new();
@@ -4224,6 +4235,19 @@ mod tests {
         drop(s);
         let _ = std::fs::remove_dir_all(&root);
         assert!(defs.iter().all(|d| !d.contains(" module ")) && !defs.is_empty(), "{defs:?}");
+    }
+
+    #[test]
+    fn an_import_in_a_language_without_a_resolver_loads_no_file() {
+        let (root, s) = indexed("unread_import", &[("a.h", "int a(void);\n"), ("m.c", "#include \"a.h\"\nint m(void) { return a(); }\n")]);
+        let mut rv = Resolver::new(&s.ix).unwrap();
+        let found = rv.import_files("m.c", 1, "a.h");
+        let used = rv.resolve_at("m.c", 2, 21, "a");
+        let cached = rv.cache.len();
+        drop(rv);
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!((found, used, cached), (None, Err(UNREAD), 0));
     }
 
     #[test]

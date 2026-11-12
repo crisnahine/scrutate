@@ -194,7 +194,13 @@ pub fn rdeps_counted(ix: &Index, target: &str) -> Result<(Vec<Importer>, usize)>
     let target_dir = target.rsplit_once('/').map_or("", |(d, _)| d);
     let mut names = crate::resolve::Resolver::new(ix)?;
     let (mut out, mut unsure) = (Vec::new(), 0);
+    let mut prev = String::new();
     for (path, line, module) in rows {
+        // rows come by path: an importer is dropped once read, so memory does not grow with their number
+        if path != prev {
+            names.forget(&prev);
+            prev.clone_from(&path);
+        }
         if path == target {
             continue;
         }
