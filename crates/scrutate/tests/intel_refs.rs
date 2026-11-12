@@ -640,6 +640,16 @@ fn a_file_nested_too_deeply_is_reported_unread_and_one_nested_500_deep_resolves(
 }
 
 #[test]
+fn an_indexed_file_now_holding_a_bom_and_a_nul_byte_does_not_panic_the_resolver() {
+    let r = Repo::new("bom_nul", &[("a.py", "from b import foo\nfoo()\n"), ("b.py", "def foo():\n    pass\n")]);
+    fs::write(r.root.join("b.py"), b"\xef\xbb\xbfdef foo():\n    pass\n\x00\n").unwrap();
+    let got = scrutate::resolve::resolved_references(&r.lib(), "foo", 50).unwrap();
+    // the index is not refreshed: its definition of `foo` in b.py still stands
+    let a: Vec<_> = got.occurrences.iter().filter(|o| o.path == "a.py").map(|o| (o.line, o.resolution.is_ok())).collect();
+    assert_eq!(a, vec![(1, true), (2, true)]);
+}
+
+#[test]
 fn a_relative_import_that_climbs_above_the_root_names_no_file() {
     let r = Repo::new(
         "above_root",

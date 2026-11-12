@@ -834,7 +834,8 @@ impl<'a> Resolver<'a> {
         let mut text = src.as_str();
         if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
             bytes.drain(..3);
-            text = &src[3..];
+            // `src` is empty when the bytes hold a NUL
+            text = src.strip_prefix('\u{FEFF}').unwrap_or(&src);
         }
         let raw = (!utf16 && !src.is_empty() && text.as_bytes() != bytes).then(|| {
             let starts = std::iter::once(0).chain(bytes.iter().enumerate().filter(|(_, &c)| c == b'\n').map(|(i, _)| i + 1)).collect();
