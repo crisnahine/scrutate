@@ -195,6 +195,8 @@ First release.
 - Lock files with an ordinary extension (`package-lock.json`, `npm-shrinkwrap.json`,
   `pnpm-lock.yaml`, `packages.lock.json`, `Package.resolved`, `.terraform.lock.hcl`, Gradle
   `*.lockfile`, `bun.lockb`) are left out of the index like `*.lock`; `grep` still searches them.
+- The language server reads a document from disk only under the root; a document outside it is
+  answered from the text the editor sent, or not at all.
 - An index built by a newer scrutate is no longer rebuilt by an older one. It is read as it is
   when only the parsing rules are newer, and refused with exit 2 and a clear message when its
   schema, model or text format is newer; `scrutate index --force` rebuilds it with the version

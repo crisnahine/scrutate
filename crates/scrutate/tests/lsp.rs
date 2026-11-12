@@ -393,6 +393,39 @@ fn a_backslash_in_a_unix_file_name_stays_in_the_uri() {
 }
 
 #[test]
+fn a_document_that_is_not_under_the_root_is_never_read_from_disk() {
+    let r = Repo::new("confined");
+    r.write("repo/a.py", "def secret_word():\n    return 1\n");
+    r.write("outside/secret.py", "secret_word\n");
+    let root = r.root.join("repo");
+
+    let mut child = Command::new(BIN).arg("lsp").current_dir(&root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
+    c.request("initialize", json!({"processId": null, "rootUri": uri(&root), "capabilities": {}}));
+    c.notify("initialized", json!({}));
+    // a name that is no URI, a URI outside the root, and one that leaves it through a missing folder
+    let outside = uri(&r.root.join("outside/secret.py"));
+    let through = format!("{}/missing/../../outside/secret.py", uri(&root));
+    for doc in ["../outside/secret.py", outside.as_str(), through.as_str()] {
+        let pos = json!({"textDocument": {"uri": doc}, "position": {"line": 0, "character": 2}});
+        let def = c.request("textDocument/definition", pos.clone());
+        assert!(def["result"].is_null() || def["result"].as_array().is_some_and(|a| a.is_empty()), "definition for {doc}: {def}");
+        let mut p = pos;
+        p["context"] = json!({"includeDeclaration": true});
+        let refs = c.request("textDocument/references", p);
+        assert!(refs["result"].is_null() || refs["result"].as_array().is_some_and(|a| a.is_empty()), "references for {doc}: {refs}");
+    }
+    // the same document works once the editor has sent its text
+    c.notify("textDocument/didOpen", json!({"textDocument": {"uri": outside, "languageId": "python", "version": 1, "text": "secret_word\n"}}));
+    let def = c.request("textDocument/definition", json!({"textDocument": {"uri": outside}, "position": {"line": 0, "character": 2}}));
+    assert_eq!(places(&def["result"]).len(), 1, "{def}");
+    c.request("shutdown", Value::Null);
+    c.notify("exit", Value::Null);
+    drop(c);
+    child.wait().unwrap();
+}
+
+#[test]
 fn a_destructor_an_operator_and_a_raw_identifier_are_one_name() {
     let r = Repo::new("cppnames");
     r.write(

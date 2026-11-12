@@ -237,9 +237,15 @@ struct Lines<'a> {
 impl Lines<'_> {
     fn get(&mut self, rel: &str) -> &[String] {
         if !self.cache.contains_key(rel) {
+            // a key that is not a path of plain names under the root (a URI outside it, `..`) is
+            // an open document's text or nothing: the disk is read under the root only
+            let inside = !rel.is_empty() && Path::new(rel).components().all(|c| matches!(c, std::path::Component::Normal(_)));
             let text = match self.docs.get(rel) {
                 Some(t) => t.clone(),
-                None => std::fs::read(self.root.join(rel)).ok().and_then(|raw| crate::index::decode_source(&raw).map(|c| c.into_owned())).unwrap_or_default(),
+                None if inside => {
+                    std::fs::read(self.root.join(rel)).ok().and_then(|raw| crate::index::decode_source(&raw).map(|c| c.into_owned())).unwrap_or_default()
+                }
+                None => String::new(),
             };
             self.cache.insert(rel.to_string(), split_lines(&text));
         }
