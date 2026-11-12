@@ -620,6 +620,9 @@ pub struct Index {
     /// last syntax tree of recently indexed files, with a use counter for eviction
     trees: HashMap<String, (u64, PrevParse)>,
     tree_tick: u64,
+    /// most source bytes the tree cache held at once
+    #[cfg(test)]
+    trees_peak: usize,
     /// which file `db` has open, to notice another process deleting it and building a new one
     db_id: Option<(u64, u64)>,
 }
@@ -701,6 +704,8 @@ impl Index {
             scan_cost: 1.0,
             trees: HashMap::new(),
             tree_tick: 0,
+            #[cfg(test)]
+            trees_peak: 0,
             cancel: Arc::default(),
             db_id: file_id(&db_path),
         };
@@ -1099,6 +1104,7 @@ impl Index {
             Ok(Ok(c)) => c,
             failed => {
                 let _ = self.db.execute_batch("ROLLBACK");
+                self.evict_trees();
                 for name in &seg_names {
                     let _ = std::fs::remove_dir_all(self.seg_dir.join(name));
                 }
@@ -1236,13 +1242,39 @@ impl Index {
         let progress = self.progress && std::io::IsTerminal::is_terminal(&std::io::stderr());
         let mut done = 0usize;
         let mut last_tick = Instant::now();
-        for batch in todo.chunks(256) {
+        // only the last files parsed stay in the tree cache, so the others drop their tree at once
+        let mut keep_from = todo.len();
+        let mut kept = 0u64;
+        for (i, (rel, _)) in todo.iter().enumerate().rev() {
+            let n = std::fs::metadata(root.join(rel)).map(|m| m.len()).unwrap_or(0);
+            if n > TREE_CACHE_BYTES as u64 {
+                continue; // never cached
+            }
+            if kept + n > TREE_CACHE_BYTES as u64 {
+                break;
+            }
+            kept += n;
+            keep_from = i;
+        }
+        for (b, batch) in todo.chunks(256).enumerate() {
             if self.cancel.load(std::sync::atomic::Ordering::Relaxed) {
                 anyhow::bail!("cancelled");
             }
             let prevs: Vec<Option<PrevParse>> = batch.iter().map(|(rel, _)| self.trees.remove(rel).map(|t| t.1)).collect();
-            let results: Vec<(String, Processed)> =
-                batch.par_iter().zip(prevs).map(|((rel, kh), prev)| (rel.clone(), process(&root, rel, kh.as_deref(), model.as_deref(), prev))).collect();
+            let results: Vec<(String, Processed)> = batch
+                .par_iter()
+                .zip(prevs)
+                .enumerate()
+                .map(|(i, ((rel, kh), prev))| {
+                    let mut res = process(&root, rel, kh.as_deref(), model.as_deref(), prev);
+                    if let Processed::New(.., tree) = &mut res {
+                        if b * 256 + i < keep_from {
+                            *tree = None;
+                        }
+                    }
+                    (rel.clone(), res)
+                })
+                .collect();
             done += batch.len();
             if progress && (last_tick.elapsed().as_millis() >= 200 || done == todo.len()) {
                 eprint!("\r[scrutate] indexing {done}/{} files...", todo.len());
@@ -1267,6 +1299,10 @@ impl Index {
                         if let Some(tree) = tree.filter(|t| t.source_len() <= TREE_CACHE_BYTES) {
                             self.tree_tick += 1;
                             self.trees.insert(rel.clone(), (self.tree_tick, tree));
+                            #[cfg(test)]
+                            {
+                                self.trees_peak = self.trees_peak.max(self.trees.values().map(|t| t.1.source_len()).sum());
+                            }
                         }
                         let t = Instant::now();
                         removed.extend(self.delete_file(&rel)?);
@@ -1294,11 +1330,11 @@ impl Index {
                     }
                 }
             }
+            self.evict_trees();
         }
         if progress && done > 0 {
             eprint!("\r{}\r", " ".repeat(60)); // clear the progress line
         }
-        self.evict_trees();
         if builder.n > 0 {
             self.flush_segment(builder, seg_names)?;
         }
@@ -1726,5 +1762,24 @@ mod tests {
         assert_eq!(ix.update(false).unwrap().files_changed, 1);
         drop(ix);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_build_of_many_c_files_holds_no_more_trees_than_the_cache_bound() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_trees_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let body: String = (0..200).map(|i| format!("int f{i}(int x) {{ return x + {i}; }}\n")).collect();
+        for i in 0..1000 {
+            std::fs::write(root.join(format!("m{i}.c")), format!("/* {i} */\n{body}")).unwrap();
+        }
+        let mut ix = super::Index::open(&root, None).unwrap();
+        ix.update(false).unwrap();
+        let held: usize = ix.trees.values().map(|t| t.1.source_len()).sum();
+        let peak = ix.trees_peak;
+        drop(ix);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(held <= super::TREE_CACHE_BYTES, "{held}");
+        assert!(peak <= super::TREE_CACHE_BYTES, "peak {peak}");
     }
 }
