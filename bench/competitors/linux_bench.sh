@@ -63,7 +63,11 @@ if [ ! -x $B/bin/grep ]; then
 fi
 if [ ! -x $B/bin/ack ]; then
   step "ack 3.10.0 (standalone file from beyondgrep.com)"
-  fetch https://beyondgrep.com/ack-v3.10.0 ack && cp $B/src/ack $B/bin/ack && chmod +x $B/bin/ack
+  # the hash is the one Homebrew's formula pins for this file, so the file is checked whatever the
+  # state of the site's certificate (it expired on 2026-11-06 and curl then refuses the site)
+  fetch https://beyondgrep.com/ack-v3.10.0 ack || curl -fsSLk -o $B/src/ack https://beyondgrep.com/ack-v3.10.0
+  echo "28a740de59bdb52000a281aa89dc9d44a24a1f144cdfe4bc24b7d0582b40e90e  $B/src/ack" | sha256sum -c -
+  cp $B/src/ack $B/bin/ack && chmod +x $B/bin/ack
 fi
 if [ ! -x $B/go/bin/zoekt ]; then
   step "Go and Zoekt (go install, as its README says)"
