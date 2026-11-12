@@ -15,7 +15,7 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::{Instant, SystemTime};
+use std::time::Instant;
 
 use anyhow::{anyhow, bail, Context, Result};
 use memmap2::Mmap;
@@ -986,13 +986,10 @@ impl TextIndex {
     }
 }
 
-fn mtime_ns(md: &std::fs::Metadata) -> i64 {
-    md.modified().ok().and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok()).map(|d| d.as_nanos() as i64).unwrap_or(0)
-}
-
 /// Size, mtime and status change time: an edit that keeps the first two moves the third.
 fn stamp(md: &std::fs::Metadata) -> (u64, i64, i64) {
-    (md.len(), mtime_ns(md), crate::index::Stat::of(md).ctime)
+    let st = crate::index::Stat::of(md);
+    (md.len(), st.mtime, st.ctime)
 }
 
 /// The files Engine A's default search visits, relative to `root`, with size, mtime and status
