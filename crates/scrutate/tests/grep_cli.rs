@@ -98,6 +98,24 @@ fn arguments_that_are_not_utf8_are_errors_not_aborts() {
 
 #[cfg(unix)]
 #[test]
+fn with_e_a_first_path_that_is_not_utf8_is_a_path() {
+    use std::os::unix::ffi::OsStrExt;
+    let d = Dir::new("utf8path");
+    d.write("a.txt", b"Foo bar\n");
+    let bad = std::ffi::OsStr::from_bytes(b"\xff");
+    // a missing path, as ripgrep reports it, and the search goes on
+    let (code, out, err) = run(&d.0, &["grep".as_ref(), "-e".as_ref(), "Foo".as_ref(), bad, "a.txt".as_ref()], &[]);
+    assert_eq!((code, out.as_str()), (2, "a.txt:1:Foo bar\n"), "{err}");
+    assert!(err.contains("No such file or directory"), "{err}");
+    // as a pattern it is still refused
+    let usage = "error: invalid UTF-8 was detected in one or more arguments\n\nUsage: scrutate grep [OPTIONS] [PATTERN] [PATHS]...\n\nFor more information, try '--help'.\n";
+    for args in [vec!["grep".as_ref(), bad, "a.txt".as_ref()], vec!["grep".as_ref(), "--json".as_ref(), bad]] {
+        assert_eq!(run(&d.0, &args, &[]), (2, String::new(), usage.to_string()), "{args:?}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn a_link_named_on_the_command_line_is_searched_as_ripgrep_does() {
     let d = Dir::new("rootlinks");
     d.write("real/a.txt", b"foo\n");

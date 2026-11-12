@@ -105,8 +105,9 @@ pub enum Shell {
 #[cfg_attr(test, derive(Debug, PartialEq))]
 pub struct GrepArgs {
     /// the pattern (omit it when patterns are given with -e)
+    /// (not a `String`: with -e it is the first path)
     #[arg(required_unless_present_any = ["regexp", "type_list"])]
-    pub pattern: Option<String>,
+    pub pattern: Option<std::ffi::OsString>,
     /// files or directories to search, `-` for standard input (default: standard input when it is
     /// a pipe or a file, otherwise the current directory)
     pub paths: Vec<PathBuf>,
@@ -437,7 +438,7 @@ fn plain_grep(args: &[String]) -> Option<(bool, GrepArgs)> {
         return None;
     }
     let mut positional = positional.into_iter().cloned();
-    g.pattern = positional.next();
+    g.pattern = positional.next().map(Into::into);
     g.paths = positional.map(PathBuf::from).collect();
     (g.pattern.is_some() || !g.regexp.is_empty()).then_some((no_color, g))
 }
@@ -910,6 +911,13 @@ pub fn run() -> Result<i32> {
             Some((no_color, grep)) => (PathBuf::from("."), no_color, grep),
             None => {
                 let GrepCli { root, no_color, cmd: GrepCmd::Grep(grep) } = GrepCli::parse();
+                if grep.regexp.is_empty() && grep.pattern.as_ref().is_some_and(|p| p.to_str().is_none()) {
+                    // clap's own error for a `String` argument
+                    let mut cmd = GrepCli::command();
+                    cmd.build();
+                    let grep = cmd.find_subcommand_mut("grep").expect("the grep subcommand");
+                    grep.error(clap::error::ErrorKind::InvalidUtf8, "invalid UTF-8 was detected in one or more arguments").exit();
+                }
                 (root, no_color, grep)
             }
         };
@@ -1042,7 +1050,7 @@ pub fn run() -> Result<i32> {
                 _ => Mode::Regex,
             };
             let (pattern, mode) = if regexp.is_empty() {
-                instant::join_patterns(&[pattern.unwrap_or_default()], mode, fixed_strings)?
+                instant::join_patterns(&[pattern.and_then(|p| p.into_string().ok()).unwrap_or_default()], mode, fixed_strings)?
             } else {
                 // with -e, the first positional argument is a path
                 if let Some(p) = pattern {
