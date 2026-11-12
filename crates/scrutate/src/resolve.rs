@@ -1410,10 +1410,19 @@ impl<'a> Resolver<'a> {
                 let mut cur = n.walk();
                 stack.extend(n.named_children(&mut cur));
             }
+            out.sort();
             out
         });
-        let mut binder = in_scope.iter().filter(|b| b.0 < at.start_byte()).max_by_key(|b| b.0).copied();
         let root = fi.tree.as_ref()?.root_node();
+        let at_byte = at.start_byte();
+        let reach = self.found_in(scope, "binder reach", name, || {
+            in_scope.iter().map(|&(a, b)| root.named_descendant_for_byte_range(a, b).map_or((0, 0), |n| binder_reach(lang, n, scope))).collect()
+        });
+        // the latest binder that reaches the use: not one of a block that has ended, a closure or a branch
+        let mut binder = (0..in_scope.partition_point(|b| b.0 < at_byte)).rev().map(|i| (in_scope[i], reach[i])).find_map(|((a, b), (s, e))| {
+            let seen = s <= at_byte && at_byte < e && root.named_descendant_for_byte_range(a, b).is_some_and(|n| visible(n, at_byte));
+            seen.then_some((a, b))
+        });
         if binder.is_none() && scope.id() != root.id() {
             // a module-level or static variable, declared anywhere at the top of the file
             binder = self
@@ -2760,10 +2769,7 @@ impl Resolver<'_> {
         while let Some(outer) = enclosing_function(func).filter(|_| func.kind() != "function_item") {
             func = outer;
         }
-        let block_scoped: &[&str] = match lang {
-            Lang::Python => &["list_comprehension", "set_comprehension", "dictionary_comprehension", "generator_expression"],
-            _ => &["statement_block", "block", "compound_statement", "for_statement", "for_in_statement", "for_expression"],
-        };
+        let block_scoped = block_scoped(lang);
         let binders = self.binders_in(func, name, src, false);
         binders.iter().any(|&(start, end)| {
             let Some(b) = func.descendant_for_byte_range(start, end) else { return false };
@@ -2804,6 +2810,28 @@ impl Resolver<'_> {
             .filter(seen)
             .max_by_key(|b| b.start_byte())
     }
+}
+
+/// The nodes a local bound in them does not leave: blocks, and in Python only comprehensions.
+fn block_scoped(lang: Lang) -> &'static [&'static str] {
+    match lang {
+        Lang::Python => &["list_comprehension", "set_comprehension", "dictionary_comprehension", "generator_expression"],
+        _ => &["statement_block", "block", "compound_statement", "for_statement", "for_in_statement", "for_expression"],
+    }
+}
+
+/// The bytes a binder `b` in the function `scope` can reach: the innermost block, function or
+/// class around it (a JavaScript `var` skips blocks), else all of `scope`.
+fn binder_reach(lang: Lang, b: Node, scope: Node) -> (usize, usize) {
+    let blocks = if lang == Lang::Js && is_js_var(b) { &[] } else { block_scoped(lang) };
+    let mut n = b.parent();
+    while let Some(p) = n.filter(|p| p.id() != scope.id()) {
+        if blocks.contains(&p.kind()) || FUNCTION_NODES.contains(&p.kind()) || CLASS_NODES.contains(&p.kind()) {
+            return (p.start_byte(), p.end_byte());
+        }
+        n = p.parent();
+    }
+    (scope.start_byte(), scope.end_byte())
 }
 
 /// The innermost function around `node`.
@@ -4180,6 +4208,107 @@ mod tests {
                 ("main.go", "l.Norm()", "Norm", "shapes/line.go Line.Norm"),
                 ("main.go", "q.Norm()", "Norm", "shapes/point.go Point.Norm"),
                 ("main.go", "r.Norm()", "Norm", "shapes/line.go Line.Norm"),
+            ],
+        );
+    }
+
+    #[test]
+    fn a_variable_has_the_type_of_the_latest_binder_in_scope_at_the_use() {
+        let (point, line) = ("shapes.py Point.norm", "shapes.py Line.norm");
+        resolver_case(
+            "shadow_py",
+            &[
+                ("shapes.py", "class Point:\n    def norm(self):\n        return 1\n\n\nclass Line:\n    def norm(self):\n        return 2\n"),
+                (
+                    "use.py",
+                    "from shapes import Point, Line\n\n\ndef branch(c):\n    p = Point()\n    if c:\n        p = Line()\n    return p.norm() + 1\n\n\ndef lam():\n    p = Point()\n    f = lambda p: p.norm() + 2\n    return p.norm() + 3\n\n\ndef comp(xs):\n    p = Point()\n    ys = [p for p in xs]\n    return p.norm() + 4\n\n\ndef nested():\n    p = Point()\n\n    def inner():\n        p = Line()\n        return p\n    return p.norm() + 5\n\n\ndef arms(c):\n    if c:\n        p = Point()\n        return p.norm() + 6\n    else:\n        p = Line()\n        return p.norm() + 7\n",
+                ),
+            ],
+            &[
+                // a function is one scope: an assignment in an `if` rebinds the name
+                ("use.py", "p.norm() + 1", "norm", line),
+                ("use.py", "p.norm() + 2", "norm", "receiver"),
+                ("use.py", "p.norm() + 3", "norm", point),
+                ("use.py", "p.norm() + 4", "norm", point),
+                ("use.py", "p.norm() + 5", "norm", point),
+                ("use.py", "p.norm() + 6", "norm", point),
+                ("use.py", "p.norm() + 7", "norm", line),
+            ],
+        );
+        let (point, line) = ("shapes.js Point.norm", "shapes.js Line.norm");
+        resolver_case(
+            "shadow_js",
+            &[
+                ("shapes.js", "export class Point {\n  norm() { return 1; }\n}\nexport class Line {\n  norm() { return 2; }\n}\n"),
+                (
+                    "use.js",
+                    "import { Point, Line } from './shapes';\n\nexport function sibling(c) {\n  const p = new Point();\n  if (c) {\n    const p = new Line();\n    p.norm() + 1;\n  }\n  return p.norm() + 2;\n}\n\nexport function enclosing(c) {\n  let p = new Point();\n  if (c) {\n    let p = new Line();\n    if (c) {\n      return p.norm() + 3;\n    }\n  }\n}\n\nexport function arrow() {\n  const p = new Point();\n  const f = (p) => p.norm() + 4;\n  return p.norm() + 5;\n}\n\nexport function hoisted(c) {\n  var p = new Point();\n  if (c) {\n    var p = new Line();\n  }\n  return p.norm() + 6;\n}\n\nexport function loops(v) {\n  const p = new Point();\n  for (const p of [new Line()]) {}\n  try {} catch (p) {}\n  return p.norm() + 7;\n}\n",
+                ),
+            ],
+            &[
+                ("use.js", "p.norm() + 1", "norm", line),
+                ("use.js", "p.norm() + 2", "norm", point),
+                ("use.js", "p.norm() + 3", "norm", line),
+                ("use.js", "p.norm() + 4", "norm", "receiver"),
+                ("use.js", "p.norm() + 5", "norm", point),
+                // `var` belongs to the whole function
+                ("use.js", "p.norm() + 6", "norm", line),
+                ("use.js", "p.norm() + 7", "norm", point),
+            ],
+        );
+        resolver_case(
+            "shadow_ts",
+            &[
+                ("shapes.ts", "export class Point {\n  norm() { return 1; }\n}\nexport class Line {\n  norm() { return 2; }\n}\n"),
+                (
+                    "use.ts",
+                    "import { Point, Line } from './shapes';\n\nexport function sibling(c: boolean, f: (p: Line) => number) {\n  const p: Point = make();\n  if (c) {\n    const p: Line = make();\n  }\n  return p.norm() + 1;\n}\n",
+                ),
+            ],
+            &[("use.ts", "p.norm() + 1", "norm", "shapes.ts Point.norm")],
+        );
+        let (point, line) = ("shapes.rs Point.norm", "shapes.rs Line.norm");
+        resolver_case(
+            "shadow_rs",
+            &[
+                ("lib.rs", "mod shapes;\nmod user;\n"),
+                ("shapes.rs", "pub struct Point;\n\nimpl Point {\n    pub fn new() -> Point {\n        Point\n    }\n    pub fn norm(&self) -> u32 {\n        1\n    }\n}\n\npub struct Line;\n\nimpl Line {\n    pub fn norm(&self) -> u32 {\n        2\n    }\n}\n"),
+                (
+                    "user.rs",
+                    "use crate::shapes::{Line, Point};\n\npub fn sibling(c: bool) -> u32 {\n    let p = Point::new();\n    if c {\n        let p = Line {};\n        p.norm() + 1;\n    }\n    p.norm() + 2\n}\n\npub fn enclosing(c: bool) -> u32 {\n    let p = Point::new();\n    if c {\n        let p = Line {};\n        if c {\n            return p.norm() + 3;\n        }\n    }\n    0\n}\n\npub fn closure() -> u32 {\n    let p = Point::new();\n    let f = |p: Line| p.norm() + 4;\n    p.norm() + 5\n}\n\npub fn branches(o: Option<Line>) -> u32 {\n    let p = Point::new();\n    if let Some(p) = o {\n        return p.norm() + 6;\n    }\n    let n = match o {\n        Some(p) => 1,\n        None => 2,\n    };\n    p.norm() + 7\n}\n\npub fn own_value() -> u32 {\n    let p = Point::new();\n    let p = p.norm() + 8;\n    p\n}\n",
+                ),
+            ],
+            &[
+                ("user.rs", "p.norm() + 1", "norm", line),
+                ("user.rs", "p.norm() + 2", "norm", point),
+                ("user.rs", "p.norm() + 3", "norm", line),
+                ("user.rs", "p.norm() + 4", "norm", line),
+                ("user.rs", "p.norm() + 5", "norm", point),
+                ("user.rs", "p.norm() + 6", "norm", "receiver"),
+                ("user.rs", "p.norm() + 7", "norm", point),
+                // a `let` does not see itself in its own value
+                ("user.rs", "p.norm() + 8", "norm", point),
+            ],
+        );
+        let (point, line) = ("shapes/point.go Point.Norm", "shapes/line.go Line.Norm");
+        resolver_case(
+            "shadow_go",
+            &[
+                ("go.mod", "module example.com/m\n"),
+                ("shapes/point.go", "package shapes\n\ntype Point struct{}\n\nfunc (p *Point) Norm() int {\n\treturn 1\n}\n"),
+                ("shapes/line.go", "package shapes\n\ntype Line struct{}\n\nfunc (l Line) Norm() int {\n\treturn 2\n}\n"),
+                (
+                    "main.go",
+                    "package main\n\nimport \"example.com/m/shapes\"\n\nfunc sibling(c bool) int {\n\tp := &shapes.Point{}\n\tif c {\n\t\tp := shapes.Line{}\n\t\t_ = p.Norm() + 1\n\t}\n\treturn p.Norm() + 2\n}\n\nfunc enclosing(c bool) int {\n\tp := &shapes.Point{}\n\tif c {\n\t\tp := shapes.Line{}\n\t\tif c {\n\t\t\treturn p.Norm() + 3\n\t\t}\n\t}\n\treturn 0\n}\n\nfunc closure() int {\n\tp := &shapes.Point{}\n\tf := func(p shapes.Line) int { return p.Norm() + 4 }\n\t_ = f\n\treturn p.Norm() + 5\n}\n\nfunc switched(v interface{}) int {\n\tp := &shapes.Point{}\n\tswitch p := v.(type) {\n\tcase shapes.Line:\n\t\t_ = p\n\t}\n\tif p := 1; p > 0 {\n\t}\n\treturn p.Norm() + 6\n}\n",
+                ),
+            ],
+            &[
+                ("main.go", "p.Norm() + 1", "Norm", line),
+                ("main.go", "p.Norm() + 2", "Norm", point),
+                ("main.go", "p.Norm() + 3", "Norm", line),
+                ("main.go", "p.Norm() + 4", "Norm", line),
+                ("main.go", "p.Norm() + 5", "Norm", point),
+                ("main.go", "p.Norm() + 6", "Norm", point),
             ],
         );
     }

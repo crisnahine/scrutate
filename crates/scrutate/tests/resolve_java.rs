@@ -338,3 +338,53 @@ public class Main {
     assert!(!text.contains("could not"), "{text}");
     assert_eq!(r.run(&["callers", "p/Main.java:9", "--json"]), (1, "[]\n".to_string()));
 }
+
+#[test]
+fn a_java_variable_has_the_type_of_the_declaration_in_scope_at_the_use() {
+    let use_java = "import java.util.function.Function;
+
+public class Use {
+    Line p;
+
+    int sibling(boolean c) {
+        if (c) {
+            Line p = new Line();
+            p.norm();
+        }
+        Point p = new Point();
+        return p.norm();
+    }
+
+    int lambda() {
+        Function<Line, Integer> f = p -> p.norm();
+        Point p = new Point();
+        return p.norm() + f.apply(null);
+    }
+
+    int arms(int v) {
+        switch (v) {
+            case 1: {
+                Line p = new Line();
+                return p.norm();
+            }
+            default: {
+                Point p = new Point();
+                return p.norm();
+            }
+        }
+    }
+
+    int field() {
+        return p.norm();
+    }
+}
+";
+    let files: Vec<(String, &str)> = vec![
+        ("j/Point.java".to_string(), "public class Point {\n    public int norm() { return 1; }\n}\n"),
+        ("j/Line.java".to_string(), "public class Line {\n    public int norm() { return 2; }\n}\n"),
+        ("j/Use.java".to_string(), use_java),
+    ];
+    let r = Repo::with("shadow", &files);
+    assert_eq!(r.refs_of("norm", "j/Point.java:2"), ["Point.java:2", "Use.java:12", "Use.java:18", "Use.java:29"]);
+    assert_eq!(r.refs_of("norm", "j/Line.java:2"), ["Line.java:2", "Use.java:25", "Use.java:35", "Use.java:9"]);
+}
