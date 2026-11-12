@@ -66,3 +66,27 @@ fn views_print_the_chunks_of_a_file_and_the_terms_of_a_query() {
     assert!(recs[2]["error"].is_string() && recs[2].get("chunks").is_none(), "{}", recs[2]);
     let _ = fs::remove_dir_all(&root);
 }
+
+#[test]
+fn views_read_given_text_and_print_a_files_language_test_flag_subwords_and_stop_list() {
+    let root = tree("views_text", &[("keep.txt", "")]);
+    let q = root.join("q.jsonl");
+    let reqs = [
+        serde_json::json!({"text": "/// Adds two numbers.\npub fn add(a: i64, b: i64) -> i64 {\n    a + b\n}\n", "path": "src/math_test.rs"}),
+        serde_json::json!({"text": "export function total() { return 1; }\n", "path": "lib/shop.ts"}),
+        serde_json::json!({"split": "parseHTTPResponse_v2"}),
+        serde_json::json!({"stopwords": true}),
+    ];
+    fs::write(&q, reqs.iter().map(|r| format!("{r}\n")).collect::<String>()).unwrap();
+    let recs = run(&root, &["views", q.to_str().unwrap()]);
+    assert_eq!((recs[0]["lang"].as_str(), recs[0]["test"].as_bool()), (Some("rust"), Some(true)));
+    let add = recs[0]["chunks"].as_array().unwrap().iter().find(|c| c["name"] == "add").expect("add");
+    assert_eq!((add["kind"].as_str(), add["start"].as_u64(), add["doc"].as_str()), (Some("function"), Some(2), Some("Adds two numbers.")));
+    assert_eq!((recs[1]["lang"].as_str(), recs[1]["test"].as_bool()), (Some("typescript"), Some(false)));
+    assert_eq!(recs[2]["subwords"], serde_json::json!(scrutate::text::raw_subwords("parseHTTPResponse_v2")));
+    let stop: Vec<&str> = recs[3]["stopwords"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+    assert!(stop.windows(2).all(|w| w[0] < w[1]), "sorted, each once");
+    assert_eq!(stop.len(), scrutate::text::QUERY_STOP.len());
+    assert!(stop.iter().all(|w| scrutate::text::QUERY_STOP.contains(w)));
+    let _ = fs::remove_dir_all(&root);
+}

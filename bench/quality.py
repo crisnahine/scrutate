@@ -51,7 +51,7 @@ def corpus_files():
                     yield os.path.relpath(os.path.join(dp, fn), REPO).replace(os.sep, "/")
 
 
-def variant_a(rel: str, src: str, with_targets: bool):
+def variant_a(rel: str, src: str, with_targets: bool, chunks: list[dict]):
     """The file with its doc comments removed, and the targets they document."""
     import make_bench
     import make_bench_code
@@ -59,7 +59,7 @@ def variant_a(rel: str, src: str, with_targets: bool):
     if rel.endswith(".py"):
         a, _, targets = make_bench.process_file(src, rel, with_targets)
     else:
-        a, _, targets = make_bench_code.process_file(src, rel, "rust", with_targets)
+        a, _, targets = make_bench_code.process_file(src, rel, "rust", with_targets, chunks)
     for t in targets:
         t["path"] = rel
     return a, targets
@@ -67,15 +67,21 @@ def variant_a(rel: str, src: str, with_targets: bool):
 
 def make() -> None:
     import make_bench
+    import make_bench_code
     from groups import is_test_path
 
+    files = []
+    for rel in corpus_files():
+        with open(os.path.join(REPO, rel), encoding="utf8") as f:
+            files.append((rel, f.read()))
+    code = [(rel, src) for rel, src in files if not rel.endswith(".py")]
+    chunks = {rel: rec.get("chunks", []) for (rel, _), rec in zip(code, make_bench_code.engine_files(code))}
     targets = []
     os.makedirs(os.path.dirname(FROZEN), exist_ok=True)
     # the same bytes for the same code: no times, owners or compression date in the archive
     with open(FROZEN, "wb") as raw, gzip.GzipFile(fileobj=raw, mode="wb", mtime=0, filename="") as gz, tarfile.open(fileobj=gz, mode="w") as tar:
-        for rel in corpus_files():
-            with open(os.path.join(REPO, rel), encoding="utf8") as f:
-                text, found = variant_a(rel, f.read(), not is_test_path(rel))
+        for rel, src in files:
+            text, found = variant_a(rel, src, not is_test_path(rel), chunks.get(rel, []))
             targets += found
             data = text.encode("utf8")
             info = tarfile.TarInfo(rel)

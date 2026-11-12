@@ -24,14 +24,11 @@ usage:
 """
 from __future__ import annotations
 
-import json
 import math
 import os
 import pickle
 import re
-import subprocess
 import sys
-import tempfile
 import time
 from collections import Counter
 
@@ -40,13 +37,10 @@ import scipy.sparse as sp
 
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
-from evalcore import first_relevant_rank, load_queries, summarize  # noqa: E402
+from evalcore import engine_views, first_relevant_rank, load_queries, summarize  # noqa: E402
 from groups import BENCH, DEV, PRETRAIN, SP  # noqa: E402
 
-from scrutate_ref.pretrain import TEST_PARTS  # noqa: E402
 from scrutate_ref.semantic import SemanticModel, _sublog, view_counts  # noqa: E402
-
-REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 
 SENT_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z`(\[])")
 
@@ -70,27 +64,27 @@ def first_sentence(ds: str) -> str:
 
 
 # ------------------------------------------------------------------------------ extraction
+TEST_PARTS = {"test", "tests", "testing", "_tests", "conftest.py", "benchmarks", "asv_bench", "docs",
+              "examples", "doc"}
+
+
 def _is_excluded(path: str) -> bool:
     parts = path.lower().split(os.sep)
     return any(p in TEST_PARTS or p.startswith("test_") or p.endswith("_test.py") for p in parts)
 
 
-def engine_views(requests: list[dict]):
-    """The engine's answer to each `views` request, in order: a file's chunks with the tokens of
-    each view (`{"file", "path"}`), or a query's terms (`{"query"}`)."""
-    binary = os.environ.get("SCRUTATE_BIN") or os.path.join(REPO, "target", "release", "scrutate")
-    with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as f:
-        f.write("".join(json.dumps(r) + "\n" for r in requests))
+def view_request(path: str, rel: str) -> dict:
+    """The file by its path, or its text when the file has carriage returns: the model was trained
+    on files read with universal newlines, which the engine's own read of the bytes keeps."""
+    with open(path, "rb") as f:
+        raw = f.read()
+    if b"\r" not in raw:
+        return {"file": path, "path": rel}
     try:
-        p = subprocess.Popen([binary, "--root", REPO, "views", f.name], stdout=subprocess.PIPE, text=True)
-        n = 0
-        for line in p.stdout:
-            n += 1
-            yield json.loads(line)
-        if p.wait() != 0 or n != len(requests):
-            raise SystemExit(f"{binary} views failed after {n} of {len(requests)} requests")
-    finally:
-        os.unlink(f.name)
+        with open(path, encoding="utf8") as f:
+            return {"text": f.read(), "path": rel}
+    except UnicodeDecodeError:
+        return {"file": path, "path": rel}
 
 
 def query_terms_of(texts: list[str]) -> dict[str, list[str]]:
@@ -133,7 +127,7 @@ def extract(cache: str, pkg_list: str | None) -> None:
                         files.append(p)
     t0 = time.time()
     # one list per file (kept together: hard negatives)
-    found = [g for g in map(_functions, engine_views([{"file": p, "path": os.path.relpath(p, SP)} for p in files])) if g]
+    found = [g for g in map(_functions, engine_views([view_request(p, os.path.relpath(p, SP)) for p in files])) if g]
     terms = query_terms_of([first_sentence(f[4]) for g in found for f in g if f[4]])
     groups = [[(a, b, c, d, terms[first_sentence(doc)] if doc else [], body) for a, b, c, d, doc, body in g] for g in found]
     n = sum(len(g) for g in groups)
@@ -237,7 +231,7 @@ def dev_data(variant="A"):
         root = os.path.join(BENCH, "src", variant, pkg)
         files = [os.path.join(dp, fn) for dp, _, fns in os.walk(root) for fn in fns if fn.endswith(".py")]
         chunks = []
-        for rec in engine_views([{"file": p, "path": os.path.relpath(p, root)} for p in files]):
+        for rec in engine_views([view_request(p, os.path.relpath(p, root)) for p in files]):
             for c in rec.get("chunks", []):
                 if c["kind"] != "window":
                     v = c["views"]

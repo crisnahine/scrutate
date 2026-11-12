@@ -35,10 +35,8 @@ import sys
 from collections import Counter
 
 sys.path.insert(0, os.path.dirname(__file__))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
+from evalcore import engine_views  # noqa: E402
 from groups import BENCH, DEV, SP, TEST, is_test_path  # noqa: E402
-
-from scrutate_ref.text import STOPWORDS, split_identifier  # noqa: E402
 
 LIMITS = {"doc": 1200, "kw": 600, "name": 500, "id": 300, "qid": 300}
 SECTION_START = re.compile(r"^(parameters|returns?|args|arguments|see also|notes?|examples?|"
@@ -198,6 +196,11 @@ def make_queries(targets: list[dict], rng: random.Random, type_rng: random.Rando
     funcs = [t for t in targets if t["target_kind"] == "function"]
     types = [t for t in targets if t["target_kind"] == "type"]
     queries: list[dict] = []
+    # the engine's query stop list and identifier splitting, asked once for every name
+    names = list(dict.fromkeys(t["name"] for t in targets))
+    recs = list(engine_views([{"stopwords": True}] + [{"split": n} for n in names]))
+    stop = set(recs[0]["stopwords"])
+    subwords = {r["split"]: r["subwords"] for r in recs[1:]}
 
     def draw(items_of, rng, text_cnt, name_cnt):
         def add(kind, items):
@@ -212,13 +215,13 @@ def make_queries(targets: list[dict], rng: random.Random, type_rng: random.Rando
         kw_items = []
         for t in ts:
             words = [w for w in re.findall(r"[A-Za-z][A-Za-z0-9_]{2,}", t["query"])
-                     if w.lower() not in STOPWORDS]
+                     if w.lower() not in stop]
             if len(words) >= 3:
                 idx = sorted(rng.sample(range(len(words)), 3))
                 kw_items.append((t, " ".join(words[i] for i in idx), {"match": "qualname"}))
         add("kw", kw_items)
-        add("name", [(t, " ".join(split_identifier(t["name"])), {"match": "name"})
-                     for t in ts if len(split_identifier(t["name"])) >= 2])
+        add("name", [(t, " ".join(subwords[t["name"]]), {"match": "name"})
+                     for t in ts if len(subwords[t["name"]]) >= 2])
         add("id", [(t, t["name"], {"match": "name"}) for t in ts
                    if len(t["name"]) >= 4 and name_cnt[t["name"]] == 1])
         add("qid", [(t, qid_text(t["qualname"]), {"match": "qualname_suffix"})

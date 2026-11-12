@@ -90,9 +90,16 @@ build_bench() {
   "$PY" bench/make_bench.py $SEALED_PY
   "$PY" bench/make_bench_code.py $CODE_SEALED
 }
+engine() { # the engine of this checkout reads the files for the builders and writes the rows (SCRUTATE_BIN names another build)
+  if [ -z "${SCRUTATE_BIN:-}" ]; then
+    stage sealed_build cargo build --release -p scrutate --locked
+    export SCRUTATE_BIN="${CARGO_TARGET_DIR:-$PWD/target}/release/scrutate"
+  fi
+}
 if have_bench; then
   log "bench: reusing the sealed queries in $SCRUTATE_WORK/bench"
 else
+  engine
   stage sealed_bench build_bench
 fi
 
@@ -110,10 +117,7 @@ else
   for p in $SEALED_PY $CODE_SEALED; do for v in A B; do
     rm -rf "$SCRUTATE_WORK/bench/src/$v/$p/.scrutate"
   done; done
-  if [ -z "${SCRUTATE_BIN:-}" ]; then
-    stage sealed_build cargo build --release -p scrutate --locked
-    export SCRUTATE_BIN="${CARGO_TARGET_DIR:-$PWD/target}/release/scrutate"
-  fi
+  engine
   stage sealed_features "$PY" bench/gen_features.py models/semantic.npz "${TAG}sealed" SEALED \
     --pkgs "$(echo $SEALED_PY $CODE_SEALED | tr ' ' ,)"
 fi

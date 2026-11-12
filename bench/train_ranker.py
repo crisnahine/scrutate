@@ -20,6 +20,10 @@ DEV, TEST and SEALED include the other-language packages of groups.CODE_DEV / CO
 CODE_SEALED unless PYTHON_ONLY=1. RANKER_PARAMS='{"n_estimators": 400}' overrides PARAMS (for
 tuning with cv); TYPE_WEIGHT=0.5 overrides the weight of a type query's rows in training (default 1: every query
 counts the same; 0 leaves the type queries out).
+
+The feature names, the features and the engine's linear blend of each candidate come from the
+feature files (bench/gen_features.py); the ranker sees the PRUNE candidates best by that blend, as
+in the engine. DROP zeroes features for the ranker and leaves the blend as the engine computed it.
 """
 from __future__ import annotations
 
@@ -38,7 +42,10 @@ from evalcore import bootstrap_ci, fmt_row, mrr_values, paired_diff_ci, summariz
 from groups import CODE_DEV, CODE_SEALED, CODE_TEST, DEV, SEALED, TEST, WORK, language  # noqa: E402
 
 from scrutate_ref.rank import TreeEnsemble  # noqa: E402
-from scrutate_ref.search import FEATURES, FI, linear_score, prune_indices  # noqa: E402
+
+PRUNE = 200  # the engine's search::PRUNE
+FEATURES: list[str] = []  # the engine's feature names, read with the first feature file
+FI: dict[str, int] = {}
 
 DROP = [p for p in os.environ.get("DROP", "").split(",") if p]  # ablation: zero these feature groups
 
@@ -86,7 +93,11 @@ def load(tag: str, pkgs: list[str]):
                 gz = fh.read(2) == b"\x1f\x8b"
             with (gzip.open if gz else open)(f, "rb") as fh:
                 d = pickle.load(fh)
-            assert d["features"] == FEATURES, "feature set changed; regenerate features"
+            if not FEATURES:
+                FEATURES.extend(d["features"])
+                FI.update((n, i) for i, n in enumerate(FEATURES))
+            assert d["features"] == FEATURES, f"{f} has other features than the files before it; regenerate features"
+            assert all("lin" in r for r in d["recs"]), f"{f} has no linear blend; regenerate features"
             drop = [i for i, n in enumerate(FEATURES) if any(n.startswith(p) for p in DROP)]
             for r in d["recs"]:
                 r["variant"] = os.path.basename(f).split("_")[0]
@@ -99,9 +110,15 @@ def load(tag: str, pkgs: list[str]):
     return out
 
 
+def prune_indices(lin: np.ndarray, n: int = PRUNE) -> np.ndarray:
+    if len(lin) <= n:
+        return np.arange(len(lin))
+    return np.argsort(-lin, kind="stable")[:n]  # ties: lower index first, as in the engine
+
+
 def pruned(rec):
     X, y = rec["X"], rec["y"]
-    keep = prune_indices(linear_score(X))
+    keep = prune_indices(rec["lin"])
     return X[keep], y[keep], keep
 
 
@@ -134,9 +151,9 @@ def rank_of_first(scores, y, limit=10):
 
 
 SCORERS = {
-    "bm25 (lexical)": lambda X: X[:, FI["lex_log"]],
-    "semantic only": lambda X: X[:, FI["sem_mix"]],
-    "linear blend": linear_score,
+    "bm25 (lexical)": lambda r: r["X"][:, FI["lex_log"]],
+    "semantic only": lambda r: r["X"][:, FI["sem_mix"]],
+    "linear blend": lambda r: r["lin"],
 }
 
 
@@ -144,8 +161,9 @@ def evaluate(recs, ranker=None, types=ROWS):
     res = {}
     scorers = dict(SCORERS)
     if ranker is not None:
-        def ltr(X):
-            keep = prune_indices(linear_score(X))
+        def ltr(r):
+            X = r["X"]
+            keep = prune_indices(r["lin"])
             out = np.full(len(X), -1e9, np.float32)
             out[keep] = ranker.predict(X[keep])
             return out
@@ -155,7 +173,7 @@ def evaluate(recs, ranker=None, types=ROWS):
         if not rs:
             continue
         for name, fn in scorers.items():
-            res.setdefault(t, {})[name] = [rank_of_first(fn(r["X"]), r["y"]) for r in rs]
+            res.setdefault(t, {})[name] = [rank_of_first(fn(r), r["y"]) for r in rs]
     return res
 
 

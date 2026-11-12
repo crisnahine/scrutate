@@ -5,8 +5,8 @@ Reads `Unihan_Variants.txt` (inside https://www.unicode.org/Public/UCD/latest/uc
 keeps one pair per character whose `kSimplifiedVariant` differs from itself: the first listed value
 that is not the character. A target that is itself folded is followed to the end of its chain, so
 folding twice gives the same result as folding once. A pair is kept only when both characters are in
-the scripts the engines cut into pairs (`_unspaced`), the only place the fold applies. Both engines
-read the output file.
+the scripts the engine cuts into pairs (`unspaced`), the only place the fold applies. The engine
+embeds the output file.
 
 usage: gen_han_fold.py PATH/TO/Unihan_Variants.txt
 """
@@ -16,8 +16,16 @@ import os
 import re
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "python"))
-from scrutate_ref.text import _unspaced  # noqa: E402
+
+def unspaced(c: str) -> bool:
+    """Scripts written without spaces between words, as the engine's text.rs lists them: Han,
+    Hiragana, Katakana, and Thai, Lao, Tibetan, Myanmar, Khmer, the Tai scripts, Balinese and Javanese."""
+    o = ord(c)
+    return (0x0E00 <= o <= 0x109F or 0x1780 <= o <= 0x17FF or 0x1950 <= o <= 0x19DF or 0x1A20 <= o <= 0x1AAF
+            or 0x1B00 <= o <= 0x1B7F or 0xA980 <= o <= 0xA9FF or 0xAA60 <= o <= 0xAADF or 0x3005 <= o <= 0x3007 or 0x3040 <= o <= 0x30FF or 0x31F0 <= o <= 0x31FF
+            or 0x3400 <= o <= 0x4DBF or 0x4E00 <= o <= 0x9FFF or 0xF900 <= o <= 0xFAFF or 0xFF66 <= o <= 0xFF9F
+            or 0x20000 <= o <= 0x323AF)
+
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "crates", "scrutate", "data", "han_fold.txt")
 
@@ -49,7 +57,7 @@ def main() -> int:
             to = fold[to]
             chained += 1
         fold[src] = to
-    fold = {s: t for s, t in fold.items() if s != t and _unspaced(s) and _unspaced(t)}
+    fold = {s: t for s, t in fold.items() if s != t and unspaced(s) and unspaced(t)}
     pairs = "".join(s + fold[s] for s in sorted(fold))
     with open(OUT, "w", encoding="utf-8", newline="\n") as f:
         f.write(f"# Unihan {version.group(1)} kSimplifiedVariant, traditional then simplified, by tools/gen_han_fold.py\n")

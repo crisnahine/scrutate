@@ -87,7 +87,14 @@ build_bench() {
   "$PY" bench/make_bench.py $DEV_PY
   "$PY" bench/make_bench_code.py $CODE_DEV
 }
+engine() { # the engine of this checkout reads the files for the builders and writes the rows (SCRUTATE_BIN names another build)
+  if [ -z "${SCRUTATE_BIN:-}" ]; then
+    stage build cargo build --release -p scrutate --locked
+    export SCRUTATE_BIN="${CARGO_TARGET_DIR:-$PWD/target}/release/scrutate"
+  fi
+}
 if [ -n "${REBUILD:-}" ] || ! have_bench; then
+  engine
   stage bench build_bench
 else
   log "bench: reusing $SCRUTATE_WORK/bench"
@@ -108,11 +115,7 @@ features() { # tag, group, packages...
 if have_feat "${TAG}dev" $DEV_PY $CODE_DEV && have_feat "${TAG}test" $TEST_PY $CODE_TEST; then
   log "features: reusing ${TAG}dev and ${TAG}test"
 else
-  # the engine of this checkout writes the rows (SCRUTATE_BIN names another build)
-  if [ -z "${SCRUTATE_BIN:-}" ]; then
-    stage build cargo build --release -p scrutate --locked
-    export SCRUTATE_BIN="${CARGO_TARGET_DIR:-$PWD/target}/release/scrutate"
-  fi
+  engine
   # an index made by another engine version must not be reused
   find "$SCRUTATE_WORK/bench/src" -mindepth 3 -maxdepth 3 -name .scrutate -type d -exec rm -rf {} +
   t0=$SECONDS

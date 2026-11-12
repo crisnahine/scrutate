@@ -661,8 +661,8 @@ pub enum Cmd {
         timing: bool,
     },
     /// print the chunks of files with the tokens of each view, and the terms of queries, as the
-    /// index and the vector model see them, from a JSON-lines file ({"file": ..., "path": ...} or
-    /// {"query": ...}): the input of the vector model's training
+    /// index and the vector model see them, from a JSON-lines file ({"file" or "text", "path"},
+    /// {"query"}, {"split"} or {"stopwords": true}): the input of training and of the benchmarks
     #[command(hide = true)]
     Views { file: PathBuf },
 }
@@ -1499,9 +1499,10 @@ pub fn run() -> Result<i32> {
 }
 
 /// One line per request: `{"file", "path"}` reads `file` and parses it as `path` (its language
-/// and module come from `path`); `{"query"}` gives the query's terms.
+/// and module come from `path`), `{"text", "path"}` parses `text` so; `{"query"}` gives the
+/// query's terms, `{"split"}` a name's subwords and `{"stopwords": true}` the query stop list.
 fn views_command(file: &Path) -> Result<i32> {
-    use crate::text::{query_terms, tokenize2, BODY_CAP};
+    use crate::text::{query_terms, raw_subwords, tokenize2, BODY_CAP, QUERY_STOP};
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     for line in std::io::BufReader::new(std::fs::File::open(file)?).lines() {
@@ -1515,11 +1516,27 @@ fn views_command(file: &Path) -> Result<i32> {
             writeln!(out, "{}", serde_json::json!({"query": q, "terms": query_terms(q)}))?;
             continue;
         }
-        let (Some(src), Some(rel)) = (s("file"), s("path")) else { anyhow::bail!("a request needs \"query\", or \"file\" and \"path\": {line}") };
-        let parsed = std::fs::read(src)
-            .map_err(anyhow::Error::from)
-            .and_then(|raw| String::from_utf8(raw).map_err(anyhow::Error::from))
-            .and_then(|text| std::panic::catch_unwind(|| crate::parse::parse_source(rel, &text)).map_err(|_| anyhow::anyhow!("the parser panicked")));
+        if let Some(name) = s("split") {
+            writeln!(out, "{}", serde_json::json!({"split": name, "subwords": raw_subwords(name)}))?;
+            continue;
+        }
+        if req.get("stopwords").is_some() {
+            let mut stop: Vec<&str> = QUERY_STOP.iter().copied().collect();
+            stop.sort_unstable();
+            writeln!(out, "{}", serde_json::json!({"stopwords": stop}))?;
+            continue;
+        }
+        let Some(rel) = s("path").filter(|_| s("file").is_some() || s("text").is_some()) else {
+            anyhow::bail!("a request needs \"query\", \"split\", \"stopwords\", or \"file\" or \"text\" with \"path\": {line}")
+        };
+        let text = match (s("text"), s("file")) {
+            (Some(text), _) => Ok(text.to_string()),
+            (None, Some(src)) => std::fs::read(src).map_err(anyhow::Error::from).and_then(|raw| String::from_utf8(raw).map_err(anyhow::Error::from)),
+            (None, None) => unreachable!(),
+        };
+        let lang = text.as_ref().ok().and_then(|t| crate::parse::spec_for(rel, t)).map(|spec| spec.id);
+        let parsed =
+            text.and_then(|text| std::panic::catch_unwind(|| crate::parse::parse_source(rel, &text)).map_err(|_| anyhow::anyhow!("the parser panicked")));
         let rec = match parsed {
             Ok(chunks) => {
                 let chunks: Vec<serde_json::Value> = chunks
@@ -1538,7 +1555,7 @@ fn views_command(file: &Path) -> Result<i32> {
                         })
                     })
                     .collect();
-                serde_json::json!({"path": rel, "chunks": chunks})
+                serde_json::json!({"path": rel, "lang": lang, "test": crate::text::is_test_path(rel), "chunks": chunks})
             }
             Err(e) => serde_json::json!({"path": rel, "error": format!("{e:#}")}),
         };

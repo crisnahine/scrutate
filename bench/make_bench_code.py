@@ -30,13 +30,9 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
-from evalcore import TYPE_KINDS  # noqa: E402
+from evalcore import TYPE_KINDS, engine_views  # noqa: E402
 from groups import BENCH, CODE, CODE_SRC  # noqa: E402
 from make_bench import SECTION_START, clean_rst, make_queries, split_docstring, summary  # noqa: E402
-
-from scrutate_ref.parse import language_for, parse_source  # noqa: E402
-from scrutate_ref.text import is_test_path  # noqa: E402
 
 LANG_EXT = {"rust": (".rs",), "go": (".go",), "java": (".java",),
             "javascript": (".js", ".mjs", ".cjs"), "typescript": (".ts", ".js")}
@@ -96,14 +92,19 @@ def rebuild(rest: str, tags: list[str], prefix: str | None) -> str:
     return "/**\n" + "".join(f" * {b}\n" for b in body) + " */"
 
 
-def process_file(src: str, rel: str, lang: str, with_targets: bool):
-    """-> (variantA_src, variantB_src, targets)."""
+def engine_files(files: list[tuple[str, str]]) -> list[dict]:
+    """The engine's reading of each (path, text): its language, its test flag and its chunks."""
+    return list(engine_views([{"text": src, "path": rel} for rel, src in files]))
+
+
+def process_file(src: str, rel: str, lang: str, with_targets: bool, chunks: list[dict]):
+    """-> (variantA_src, variantB_src, targets); ``chunks`` is the engine's reading of ``src``."""
     starts, type_starts = {}, {}
-    for c in parse_source(rel, src):
-        if c.kind in ("function", "method"):
-            starts.setdefault(c.start, c)
-        elif c.kind in TYPE_KINDS:
-            type_starts.setdefault(c.start, c)
+    for c in chunks:
+        if c["kind"] in ("function", "method"):
+            starts.setdefault(c["start"], c)
+        elif c["kind"] in TYPE_KINDS:
+            type_starts.setdefault(c["start"], c)
     lines = src.split("\n")
     targets, editsA, editsB = [], [], []
     for a, b, desc, tags, prefix in doc_blocks(src, lang):
@@ -121,16 +122,16 @@ def process_file(src: str, rel: str, lang: str, with_targets: bool):
             c = starts.get(line) or type_starts.get(line)
         if not (with_targets and c is not None and first):
             continue
-        name = c.name
+        name = c["name"]
         if lang == "go" and first.startswith(name + " "):
             first = first[len(name) + 1:]
-        is_func = c.kind in ("function", "method")
+        is_func = c["kind"] in ("function", "method")
         if name == "constructor" or name.startswith("__") or name.startswith("test") \
                 or (not is_func and name.startswith("Test")) or SECTION_START.match(first):
             continue
         q = clean_rst(first).rstrip(".:;, ")
         if 4 <= len(q.split()) <= 30:
-            targets.append({"name": name, "qualname": c.qualname, "query": q,
+            targets.append({"name": name, "qualname": c["qualname"], "query": q,
                             "target_kind": "function" if is_func else "type"})
 
     def apply(edits):
@@ -165,7 +166,7 @@ def build_package(tag: str, rng: random.Random) -> dict:
     base = {v: os.path.join(BENCH, "src", v, tag) for v in ("A", "B")}
     for d in base.values():
         shutil.rmtree(d, ignore_errors=True)
-    all_targets, nfiles = [], 0
+    all_targets, files = [], []
     pkg_root = os.path.join(CODE_SRC, tag)
     for full in source_files(pkg_root, subs, LANG_EXT[lang]):
         rel = os.path.relpath(full, pkg_root)
@@ -174,12 +175,13 @@ def build_package(tag: str, rng: random.Random) -> dict:
                 src = f.read()
         except (UnicodeDecodeError, OSError):
             continue
-        if len(src) > 400_000:
-            continue
-        nfiles += 1
-        flang = language_for(rel)
+        if len(src) <= 400_000:
+            files.append((rel, src))
+    nfiles = len(files)
+    for (rel, src), rec in zip(files, engine_files(files)):
+        flang = rec["lang"]
         a, b, targets = process_file(src, rel, "typescript" if flang in ("typescript", "tsx") else flang,
-                                     with_targets=not is_test_path(rel))
+                                     not rec["test"], rec.get("chunks", []))
         for v, text in (("A", a), ("B", b)):
             dst = os.path.join(base[v], rel)
             os.makedirs(os.path.dirname(dst), exist_ok=True)

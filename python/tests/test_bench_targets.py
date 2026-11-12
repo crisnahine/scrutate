@@ -3,10 +3,15 @@ import os
 import random
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "bench"))
 import make_bench  # noqa: E402
 import make_bench_code  # noqa: E402
-from evalcore import is_relevant  # noqa: E402
+from evalcore import engine_binary, is_relevant  # noqa: E402
+
+# the builders read files and words through the engine
+needs_engine = pytest.mark.skipif(not os.path.exists(engine_binary()), reason="no scrutate binary (set SCRUTATE_BIN)")
 
 PY = '''
 class Holder:
@@ -44,8 +49,10 @@ def test_python_classes_are_type_targets():
     assert got == {("Holder", "type"), ("Holder.Inner", "type"), ("Holder.fetch_value", "function")}
 
 
+@needs_engine
 def test_rust_types_are_targets_and_an_impl_is_not():
-    targets = make_bench_code.process_file(RS, "src/m.rs", "rust", with_targets=True)[2]
+    chunks = make_bench_code.engine_files([("src/m.rs", RS)])[0]["chunks"]
+    targets = make_bench_code.process_file(RS, "src/m.rs", "rust", True, chunks)[2]
     got = {(t["qualname"], t["target_kind"]) for t in targets}
     assert got == {("Holder", "type"), ("Lang", "type"), ("Holder.fetch_value", "function")}
 
@@ -61,6 +68,7 @@ def _targets(n_func, n_type):
     return out
 
 
+@needs_engine
 def test_type_queries_move_no_function_query():
     funcs = _targets(40, 0)
     both = _targets(40, 25)

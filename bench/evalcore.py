@@ -1,12 +1,41 @@
-"""Shared evaluation utilities: relevance matching, metrics, bootstrap confidence intervals."""
+"""Shared evaluation utilities: relevance matching, metrics, bootstrap confidence intervals, and the
+engine's own reading of files and words."""
 from __future__ import annotations
 
 import json
 import os
+import subprocess
+import tempfile
 
 import numpy as np
 
 from groups import BENCH
+
+REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+
+
+def engine_binary() -> str:
+    return os.environ.get("SCRUTATE_BIN") or os.path.join(REPO, "target", "release", "scrutate")
+
+
+def engine_views(requests: list[dict]):
+    """The engine's answer to each request of the hidden `views` command, in order: a file's
+    language, test flag and chunks with the tokens of each view (`{"file" or "text", "path"}`), a
+    query's terms (`{"query"}`), a name's subwords (`{"split"}`) or the query stop list
+    (`{"stopwords": true}`)."""
+    binary = engine_binary()
+    with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False, encoding="utf8") as f:
+        f.write("".join(json.dumps(r) + "\n" for r in requests))
+    try:
+        p = subprocess.Popen([binary, "--root", REPO, "views", f.name], stdout=subprocess.PIPE, text=True, encoding="utf8")
+        n = 0
+        for line in p.stdout:
+            n += 1
+            yield json.loads(line)
+        if p.wait() != 0 or n != len(requests):
+            raise SystemExit(f"{binary} views failed after {n} of {len(requests)} requests")
+    finally:
+        os.unlink(f.name)
 
 
 def load_queries(pkg: str, types: tuple[str, ...] | None = None) -> list[dict]:
