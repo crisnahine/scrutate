@@ -125,7 +125,9 @@ Linux, elsewhere twice the cores, at most 24), `--sort`,
 exists). On macOS, searches of one user that run at the same time split the default threads
 between them and take them back as the others end: each gets the default divided by the number
 running, at least 1 (py-big, four at once: 244 ms each before, 185 ms now; one alone is
-unchanged). A search joins that count once it has searched 1,000 files; one given a thread count
+unchanged). A search that walks directories joins that count when it starts, so four searches
+of a small repository started together run on one thread each (13.3 ms each, GNU grep 14.5 ms;
+before, 20 threads on 5 cores and 14.7 ms); one given a thread count
 (`-j`, `SCRUTATE_THREADS`, `threads`) keeps it and is not counted, and neither is one waiting on a
 reader that does not read or one stopped with Ctrl-Z, until it goes on. A search stopped with
 SIGSTOP, which no program can see coming, stays counted until it continues or ends. The count

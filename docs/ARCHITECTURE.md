@@ -61,13 +61,18 @@ capabilities those crates do not provide rather than re-implementing what they a
   this way, 8.3 ms with a thread per slow read). `-j` overrides all of it.
 - **Searches at the same time (macOS)**: the kernel there serves about four file-reading threads
   at full speed across all processes, so four searches on five threads each are slower than four
-  on one (py-big: 244 ms against 189 ms). A walk that has searched 1,000 files adds 1 to a
-  System V semaphore kept per user (`running.rs`), with `SEM_UNDO` so the kernel takes it back
-  however the process dies, and looks at the value every 64 files: its share is the default
-  thread count divided by the searches running, and the threads over the share pause between
-  directories (`pause` in the vendored walker) until the share rises again. Two at once: 113 ms
-  to 91 ms; four: 244 ms to 185 ms; eight: 482 ms to 413 ms; one alone and a tree under 1,000
-  files make no system call for it. A process leaves the count while a write to a pipe or a
+  on one (py-big: 244 ms against 189 ms). A walk of directories adds 1 to a System V semaphore
+  kept per user when it starts (`running.rs`), with `SEM_UNDO` so the kernel takes it back
+  however the process dies. Its share is the default thread count divided by the searches
+  running: it starts that many threads, looks at the value again once after its first four
+  files (searches started together each saw fewer of the others than there are) and, past
+  1,000 files, every 64 files; the threads over the share pause between directories (`pause` in
+  the vendored walker) until the share rises again. A paused thread sleeps a thirty-second of
+  the time it has been paused, at most 1 ms: the walk cannot end before it wakes, and a sleep
+  of 1 ms cost a 13 ms search more than a millisecond. Two at once on py-big: 113 ms to 91 ms;
+  four: 244 ms to 185 ms; eight: 482 ms to 413 ms. Four at once on the ripgrep sources, 250
+  files: 14.7 ms to 13.3 ms, where GNU grep takes 14.5 ms and `-j1` 13.1 ms. One alone makes
+  three system calls for it; a search of one directory without subdirectories makes none. A process leaves the count while a write to a pipe or a
   terminal may block and while it is stopped from its terminal: the SIGTSTP handler, installed
   only while a search is counted and only when nothing else handles the signal, takes the process
   out, stops it with the default action, and puts it back when it continues. On Linux the cores

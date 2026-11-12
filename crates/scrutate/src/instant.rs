@@ -2631,13 +2631,16 @@ fn search_stdin(o: &Options, matcher: &AnyMatcher, c: &Counters, cancel: &Atomic
     c.alone.store(false, Ordering::Relaxed);
 }
 
-/// A walk joins the count of big searches running (`crate::running`) once it has searched this
-/// many files, so a repository smaller than that never makes the system calls. A walk starts
-/// with all its threads and the ones over its share pause.
+/// A walk joins the count of searches running (`crate::running`) when it starts, and takes its
+/// share of the threads from then: four searches of a small repository started together ran 20
+/// threads on 5 cores (14.5 ms each, against 12.5 ms on one thread each). It looks at the count
+/// again only once it has searched this many files, so a small repository makes the system
+/// calls once, and once more after `COUNTED_EARLY` files.
 const COUNTED_AFTER: u64 = 1000;
+const COUNTED_EARLY: u64 = 4;
 
-/// `SCRUTATE_GREP_DEBUG`: a line on stderr when a walk joins the count of big searches running
-/// and when that count changes, with the threads it takes (`None`: no count on this system).
+/// `SCRUTATE_GREP_DEBUG`: a line on stderr when a walk joins the count of searches running and
+/// when that count changes, with the threads it takes (`None`: no count on this system).
 fn show_share(shown: &AtomicUsize, running: Option<usize>, threads: usize) {
     static DEBUG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if !*DEBUG.get_or_init(|| std::env::var_os("SCRUTATE_GREP_DEBUG").is_some_and(|v| !v.is_empty())) {
@@ -2669,18 +2672,29 @@ fn walk(
         Small::Big(seen) => Arc::new(seen),
     };
     let threads = default_threads(o);
-    // counted once the walk has proved big, and only without -j: a number asked for is kept
+    // counted only without -j: a number asked for is kept
     let counted = (o.threads == 0).then(|| Arc::new(std::sync::OnceLock::<Option<crate::running::Counted>>::new()));
-    let share = Arc::new(AtomicUsize::new(threads));
     let shown = Arc::new(AtomicUsize::new(0));
+    let first = match &counted {
+        Some(counted) => {
+            let k = counted.get_or_init(crate::running::Counted::start).as_ref().and_then(|n| n.running());
+            let first = k.map_or(threads, |k| crate::running::threads(threads, k));
+            show_share(&shown, k, first);
+            first
+        }
+        None => threads,
+    };
+    let share = Arc::new(AtomicUsize::new(first));
+    let early = Arc::new(AtomicBool::new(false));
     // raised as reads turn out to come from the disk: the walk grows by that many threads
     let cold = Arc::new(AtomicUsize::new(cold_extra(o, counters)));
     // the threads the walk runs: the share plus the cold ones
-    let want = Arc::new(AtomicUsize::new(threads + cold.load(Ordering::Relaxed)));
+    let want = Arc::new(AtomicUsize::new(first + cold.load(Ordering::Relaxed)));
     let mut wb = walk_builder(roots, o)?;
-    wb.threads(threads);
+    // the share starts, and the rest when the count falls or the reads turn out cold
+    wb.threads(first);
     if o.threads == 0 {
-        wb.grow_threads(cold_threads().saturating_sub(threads), Arc::clone(&want));
+        wb.grow_threads(cold_threads().max(threads).saturating_sub(first), Arc::clone(&want));
     }
     let walker = wb.build_parallel();
     let (tx, rx) = mpsc::channel::<Vec<Hit>>();
@@ -2701,6 +2715,7 @@ fn walk(
             let searched = Arc::clone(&searched);
             let (cold, want, share, shown) = (Arc::clone(&cold), Arc::clone(&want), Arc::clone(&share), Arc::clone(&shown));
             let counted = counted.clone();
+            let early = Arc::clone(&early);
             let mut files = 0u32;
             // made on the first file: the threads kept for a cold walk mostly never run
             let mut fw = None;
@@ -2738,9 +2753,12 @@ fn walk(
                 if changed {
                     cold.fetch_max(extra, Ordering::Relaxed);
                 }
-                // looked at again as searches start and end; a small tree never gets here
+                // looked at again as searches start and end, and once after the first few files:
+                // searches started together each saw fewer of the others than there are
                 files = files.wrapping_add(1);
-                if let Some(counted) = counted.as_ref().filter(|_| files % 64 == 16 && c.files_searched.load(Ordering::Relaxed) >= COUNTED_AFTER) {
+                let searched = c.files_searched.load(Ordering::Relaxed);
+                let again = (files % 64 == 16 && searched >= COUNTED_AFTER) || (searched >= COUNTED_EARLY && !early.swap(true, Ordering::Relaxed));
+                if let Some(counted) = counted.as_ref().filter(|_| again) {
                     let n = counted.get_or_init(crate::running::Counted::start);
                     let k = n.as_ref().and_then(|n| n.running());
                     let now = k.map_or(threads, |k| crate::running::threads(threads, k));

@@ -98,9 +98,11 @@ First release.
 - On macOS, searches of one user that run at the same time split the threads between them and
   take them back as the others end, because the kernel there serves about four file-reading
   threads at full speed across all processes: two at once on py-big went from 113 ms to 91 ms
-  each, four from 244 ms to 185 ms, eight from 482 ms to 413 ms. A search given `-j`, one waiting
-  on its reader and one stopped with Ctrl-Z are not counted; `SCRUTATE_GREP_DEBUG=1` shows the
-  count.
+  each, four from 244 ms to 185 ms, eight from 482 ms to 413 ms. A search that walks directories
+  joins the count when it starts, a small repository's too: four searches of the ripgrep
+  sources started together took 14.7 ms and take 13.3 ms (GNU grep 14.5 ms). A search given
+  `-j`, one waiting on its reader and one stopped with Ctrl-Z are not counted;
+  `SCRUTATE_GREP_DEBUG=1` shows the count.
 - On Linux a tree read from the disk gets up to 64 threads, whatever the cores: the Linux tree
   with a cold cache in a 5-CPU VM, 1.22 s on 5 threads, 0.37 s this way (git grep 1.23 s, ugrep
   0.64 s). A small tree stops before many threads start (231 files cold: 5.8 ms, ripgrep 7.5 ms).
