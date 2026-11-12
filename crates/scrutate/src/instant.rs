@@ -614,9 +614,46 @@ impl Matcher for FuzzyMatcher {
     }
 }
 
+/// `-F` with one case-sensitive literal of one line: a substring search finds what the regex
+/// engine would, without building it (0.4 M instructions and 30 pages touched at start-up).
+#[derive(Clone, Debug)]
+pub struct Literal(memchr::memmem::Finder<'static>);
+
+impl Literal {
+    fn of(o: &Options, insensitive: bool) -> Option<Literal> {
+        let p = o.pattern.as_bytes();
+        let plain = o.mode == Mode::Literal && !insensitive && !o.word && !o.multiline;
+        // the length bound keeps it to patterns the regex engine's size limit lets through
+        (plain && !p.is_empty() && p.len() <= 1024 && !p.contains(&b'\n')).then(|| Literal(memchr::memmem::Finder::new(p).into_owned()))
+    }
+}
+
+impl Matcher for Literal {
+    type Captures = NoCaptures;
+    type Error = NoError;
+
+    fn find_at(&self, haystack: &[u8], at: usize) -> Result<Option<MatchSpan>, NoError> {
+        let n = self.0.needle().len();
+        Ok(haystack.get(at..).and_then(|h| self.0.find(h)).map(|i| MatchSpan::new(at + i, at + i + n)))
+    }
+
+    fn new_captures(&self) -> Result<NoCaptures, NoError> {
+        Ok(NoCaptures::new())
+    }
+
+    fn line_terminator(&self) -> Option<LineTerminator> {
+        Some(LineTerminator::default())
+    }
+
+    fn find_candidate_line(&self, haystack: &[u8]) -> Result<Option<grep_matcher::LineMatchKind>, NoError> {
+        Ok(self.0.find(haystack).map(grep_matcher::LineMatchKind::Confirmed))
+    }
+}
+
 // ------------------------------------------------------------------------- matcher selection
 #[derive(Clone)]
 pub enum AnyMatcher {
+    Literal(Literal),
     Regex(LineRegex),
     Fuzzy(Box<FuzzyMatcher>),
     Pcre2(grep_pcre2::RegexMatcher),
@@ -630,6 +667,7 @@ impl AnyMatcher {
             m.line_terminator().is_none() && !m.non_matching_bytes().is_some_and(|b| b.contains(b'\n'))
         }
         match self {
+            AnyMatcher::Literal(m) => can(m),
             AnyMatcher::Regex(m) => can(m),
             AnyMatcher::Fuzzy(m) => can(m.as_ref()),
             AnyMatcher::Pcre2(m) => can(m),
@@ -639,6 +677,7 @@ impl AnyMatcher {
 
     fn search_slice<S: Sink>(&self, searcher: &mut Searcher, slice: &[u8], sink: S) -> Result<(), S::Error> {
         match self {
+            AnyMatcher::Literal(m) => searcher.search_slice(m, slice, sink),
             AnyMatcher::Regex(m) => searcher.search_slice(m, slice, sink),
             AnyMatcher::Fuzzy(m) => searcher.search_slice(m.as_ref(), slice, sink),
             AnyMatcher::Pcre2(m) => searcher.search_slice(m, slice, sink),
@@ -648,6 +687,7 @@ impl AnyMatcher {
 
     fn search_file<S: Sink>(&self, searcher: &mut Searcher, file: &std::fs::File, sink: S) -> Result<(), S::Error> {
         match self {
+            AnyMatcher::Literal(m) => searcher.search_file(m, file, sink),
             AnyMatcher::Regex(m) => searcher.search_file(m, file, sink),
             AnyMatcher::Fuzzy(m) => searcher.search_file(m.as_ref(), file, sink),
             AnyMatcher::Pcre2(m) => searcher.search_file(m, file, sink),
@@ -657,6 +697,7 @@ impl AnyMatcher {
 
     fn search_reader<R: std::io::Read, S: Sink>(&self, searcher: &mut Searcher, reader: R, sink: S) -> Result<(), S::Error> {
         match self {
+            AnyMatcher::Literal(m) => searcher.search_reader(m, reader, sink),
             AnyMatcher::Regex(m) => searcher.search_reader(m, reader, sink),
             AnyMatcher::Fuzzy(m) => searcher.search_reader(m.as_ref(), reader, sink),
             AnyMatcher::Pcre2(m) => searcher.search_reader(m, reader, sink),
@@ -1032,6 +1073,9 @@ pub fn build_matcher(o: &Options) -> Result<AnyMatcher> {
         }
     }
     let Translated { insensitive, pattern: pat } = o.translate();
+    if let Some(m) = Literal::of(o, insensitive) {
+        return Ok(AnyMatcher::Literal(m));
+    }
     match o.mode {
         Mode::Fuzzy { max_edits } => Ok(AnyMatcher::Fuzzy(Box::new(FuzzyMatcher::new(&pat, max_edits, insensitive)?))),
         Mode::FuzzyRegex { max_edits } => Ok(AnyMatcher::FuzzyRegex(Box::new(crate::fuzzyre::FuzzyRegex::new(&pat, max_edits, insensitive)?))),
@@ -1326,6 +1370,7 @@ fn each_match(matcher: &AnyMatcher, line: &[u8], mut f: impl FnMut(usize, usize)
     let mut at = 0;
     let find = |at: usize| -> Option<MatchSpan> {
         match matcher {
+            AnyMatcher::Literal(m) => m.find_at(line, at).ok().flatten(),
             AnyMatcher::Regex(m) => m.find_at(line, at).ok().flatten(),
             AnyMatcher::Fuzzy(m) => m.find_at(line, at).ok().flatten(),
             AnyMatcher::Pcre2(m) => m.find_at(line, at).ok().flatten(),
@@ -2266,7 +2311,7 @@ mod split {
     pub(super) fn first(file: &File, buf: &mut Vec<u8>) -> First {
         let max = SMALL_FILE as usize;
         if buf.len() <= max {
-            buf.resize(max + 1, 0);
+            *buf = vec![0; max + 1];
         }
         let read = read_at(file, &mut buf[..max + 1], 0);
         // Windows moves the file's position on a read at an offset; the stream reader starts at it

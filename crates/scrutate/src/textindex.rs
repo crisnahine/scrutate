@@ -1382,6 +1382,7 @@ mod tests {
                         let Ok(m) = instant::build_matcher(&o) else { continue };
                         let cond = query_for(&o).unwrap();
                         let is_match = |h: &str| match &m {
+                            instant::AnyMatcher::Literal(m) => m.is_match(h.as_bytes()).unwrap(),
                             instant::AnyMatcher::Regex(m) => m.is_match(h.as_bytes()).unwrap(),
                             instant::AnyMatcher::Fuzzy(m) => m.is_match(h.as_bytes()).unwrap(),
                             instant::AnyMatcher::Pcre2(m) => m.is_match(h.as_bytes()).unwrap(),

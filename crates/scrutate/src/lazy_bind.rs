@@ -213,6 +213,13 @@ lazy! {
     pthread_cond_broadcast = "pthread_cond_broadcast", pthread_cond_destroy = "pthread_cond_destroy",
     pthread_cond_signal = "pthread_cond_signal", pthread_cond_wait = "pthread_cond_wait", pthread_detach = "pthread_detach",
     sched_yield = "sched_yield",
+    // what a search of one file never calls: the threads a larger tree starts, the count of big
+    // searches running, a canonical path
+    pthread_create = "pthread_create", pthread_join = "pthread_join", pthread_attr_init = "pthread_attr_init",
+    pthread_attr_destroy = "pthread_attr_destroy", pthread_attr_setstacksize = "pthread_attr_setstacksize", nanosleep = "nanosleep",
+    semget = "semget", semop = "semop", semctl = "semctl", realpath = "realpath$DARWIN_EXTSN",
+    dispatch_semaphore_signal = "dispatch_semaphore_signal", dispatch_semaphore_wait = "dispatch_semaphore_wait",
+    dispatch_release = "dispatch_release", lseek = "lseek",
     // panics: unwinding and the backtrace
     unwind_backtrace = "_Unwind_Backtrace", unwind_delete_exception = "_Unwind_DeleteException", unwind_get_cfa = "_Unwind_GetCFA",
     unwind_get_data_rel_base = "_Unwind_GetDataRelBase", unwind_get_ip = "_Unwind_GetIP", unwind_get_ip_info = "_Unwind_GetIPInfo",
