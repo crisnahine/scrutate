@@ -956,6 +956,59 @@ fn deps_and_rdeps_resolve_rust_paths_in_a_crate_below_the_root() {
     }
 }
 
+#[test]
+fn a_binary_test_example_bench_or_build_script_is_a_crate_root_of_its_own() {
+    let r = Repo::new(
+        "rust_roots",
+        &[
+            ("Cargo.toml", "[package]\nname = \"demo\"\n"),
+            ("src/lib.rs", "pub mod util;\n\npub fn helper() -> u8 {\n    1\n}\n"),
+            ("src/util.rs", "pub fn util() -> u8 {\n    1\n}\n"),
+            ("src/bin/tool.rs", "mod util;\n\nfn main() {\n    crate::util::util();\n    util::util();\n}\n"),
+            ("src/bin/util.rs", "pub fn util() -> u8 {\n    3\n}\n"),
+            ("src/bin/multi/main.rs", "mod part;\n\nfn main() {\n    part::part();\n    crate::part::part();\n}\n"),
+            ("src/bin/multi/part.rs", "pub fn part() {}\n"),
+            (
+                "tests/it.rs",
+                "mod common;\n\n#[test]\nfn t() {\n    let n = common::helper();\n    assert_eq!(n, 2);\n}\n\nfn u(other: &str, it: &str) -> usize {\n    other::helper() + it::helper()\n}\n",
+            ),
+            ("tests/other.rs", "pub fn helper() -> u8 {\n    5\n}\n"),
+            ("tests/common/mod.rs", "pub mod helpers;\n\npub fn helper() -> u8 {\n    crate::common::helpers::deep()\n}\n"),
+            ("tests/common/helpers.rs", "pub fn deep() -> u8 {\n    2\n}\n"),
+            ("tests/suite/main.rs", "mod case;\n\nfn main() {\n    case::case();\n}\n"),
+            ("tests/suite/case.rs", "pub fn case() {}\n"),
+            ("examples/demo.rs", "mod shared;\n\nfn main() {\n    shared::shared();\n}\n"),
+            ("examples/shared/mod.rs", "pub fn shared() {}\n"),
+            ("benches/b.rs", "mod common;\n\nfn main() {\n    common::helper();\n}\n"),
+            ("benches/common.rs", "pub fn helper() -> u8 {\n    4\n}\n"),
+            ("build.rs", "mod codegen;\n\nfn main() {\n    codegen::codegen();\n}\n"),
+            ("codegen.rs", "pub fn codegen() {}\n"),
+        ],
+    );
+    let calls = |name: &str| r.resolved(name).into_iter().filter(|(at, def)| !at.starts_with(def.as_str())).collect::<Vec<_>>();
+    assert_eq!(calls("util"), pairs(&[("src/bin/tool.rs:4", "src/bin/util.rs"), ("src/bin/tool.rs:5", "src/bin/util.rs")]));
+    // a test file is no module of the one beside it, nor of itself
+    assert_eq!(
+        calls("helper"),
+        pairs(&[("benches/b.rs:4", "benches/common.rs"), ("tests/it.rs:10", "-"), ("tests/it.rs:10", "-"), ("tests/it.rs:5", "tests/common/mod.rs")])
+    );
+    assert_eq!(calls("deep"), pairs(&[("tests/common/mod.rs:4", "tests/common/helpers.rs")]));
+    assert_eq!(calls("part"), pairs(&[("src/bin/multi/main.rs:4", "src/bin/multi/part.rs"), ("src/bin/multi/main.rs:5", "src/bin/multi/part.rs")]));
+    assert_eq!(calls("case"), pairs(&[("tests/suite/main.rs:4", "tests/suite/case.rs")]));
+    assert_eq!(calls("shared"), pairs(&[("examples/demo.rs:4", "examples/shared/mod.rs")]));
+    assert_eq!(calls("codegen"), pairs(&[("build.rs:4", "codegen.rs")]));
+    let want = |v: &[(&str, &str)]| v.iter().map(|(m, f)| (m.to_string(), f.to_string())).collect::<Vec<_>>();
+    assert_eq!(deps_of(&r, "tests/it.rs"), want(&[("common", "tests/common/mod.rs")]));
+    assert_eq!(deps_of(&r, "src/bin/tool.rs"), want(&[("util", "src/bin/util.rs")]));
+    assert_eq!(deps_of(&r, "src/lib.rs"), want(&[("util", "src/util.rs")]));
+    assert_eq!(importers(&r, "tests/common/mod.rs"), ["tests/it.rs"]);
+    assert_eq!(importers(&r, "tests/common/helpers.rs"), ["tests/common/mod.rs"]);
+    assert_eq!(importers(&r, "src/bin/util.rs"), ["src/bin/tool.rs"]);
+    assert_eq!(importers(&r, "benches/common.rs"), ["benches/b.rs"]);
+    assert_eq!(importers(&r, "codegen.rs"), ["build.rs"]);
+    assert_eq!(importers(&r, "src/util.rs"), ["src/lib.rs"]);
+}
+
 /// The answer of the language server to one request on `rel` at (0-based) `line` and `character`.
 fn lsp_answer(r: &Repo, method: &str, rel: &str, line: u32, character: u32) -> String {
     let uri = format!("file://{}", r.root.join(rel).display());

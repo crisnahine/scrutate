@@ -2209,7 +2209,7 @@ impl<'a> Resolver<'a> {
         let fi = self.file(from);
         let (Some(Lang::Rust), Some(tree)) = (fi.lang, &fi.tree) else { return Vec::new() };
         let mut out = Vec::new();
-        let mut stack = vec![(tree.root_node(), Self::rust_mod_dir(from))];
+        let mut stack = vec![(tree.root_node(), self.rust_own_dir(from))];
         while let Some((n, dir)) = stack.pop() {
             let mut cur = n.walk();
             for ch in n.named_children(&mut cur) {
@@ -2235,7 +2235,14 @@ impl<'a> Resolver<'a> {
         if d.is_empty() {
             cands = vec!["lib.rs".into(), "main.rs".into()];
         }
-        cands.retain(|c| self.files.contains(c) && c != path);
+        cands.push(join(&d, "build.rs"));
+        if self.rust_target_dir(&d) {
+            let mut roots: Vec<String> = self.files.iter().filter(|f| f.ends_with(".rs") && dir_of(f) == d).cloned().collect();
+            roots.sort();
+            cands.extend(roots);
+        }
+        cands.retain(|c| self.files.contains(c) && c != path && (!c.ends_with("/build.rs") && c != "build.rs" || self.rust_root_file(c)));
+        cands.dedup();
         cands
     }
 
@@ -2289,11 +2296,47 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    /// The directory a Rust file's own `mod` and `self::` start at: its module's, or its own
+    /// directory when it is a crate root.
+    fn rust_own_dir(&self, path: &str) -> String {
+        if self.rust_root_file(path) {
+            dir_of(path).to_string()
+        } else {
+            Self::rust_mod_dir(path)
+        }
+    }
+
+    /// `build.rs` beside a `Cargo.toml`, or a file directly in a target folder: a crate root.
+    fn rust_root_file(&self, path: &str) -> bool {
+        match path.rsplit_once('/').unwrap_or(("", path)) {
+            (dir, "build.rs") => self.files.contains(&join(dir, "Cargo.toml")),
+            (dir, base) => base.ends_with(".rs") && self.rust_target_dir(dir),
+        }
+    }
+
+    /// A package's `src/bin`, `tests`, `examples` or `benches`, where Cargo takes each file for a crate.
+    fn rust_target_dir(&self, dir: &str) -> bool {
+        let (up, last) = dir.rsplit_once('/').unwrap_or(("", dir));
+        let package = match last {
+            "bin" => match up.rsplit_once('/').unwrap_or(("", up)) {
+                (p, "src") => p,
+                _ => return false,
+            },
+            "tests" | "examples" | "benches" => up,
+            _ => return false,
+        };
+        self.files.contains(&join(package, "Cargo.toml"))
+    }
+
     fn rust_crate_root(&self, path: &str) -> Option<String> {
+        if self.rust_root_file(path) {
+            return Some(dir_of(path).to_string());
+        }
         let mut d = dir_of(path).to_string();
         loop {
             let c = |f: &str| if d.is_empty() { f.to_string() } else { format!("{d}/{f}") };
-            if self.files.contains(&c("lib.rs")) || self.files.contains(&c("main.rs")) {
+            // a module below a target folder belongs to the crates of the files there
+            if self.files.contains(&c("lib.rs")) || self.files.contains(&c("main.rs")) || self.rust_target_dir(&d) {
                 return Some(d);
             }
             if d.is_empty() {
@@ -2327,9 +2370,9 @@ impl<'a> Resolver<'a> {
         let first = *segs.first()?;
         let (mut dir, mut i) = match first {
             "crate" => (self.rust_crate_root(from)?, 1),
-            "self" => (Self::rust_mod_dir(from), 1),
+            "self" => (self.rust_own_dir(from), 1),
             "super" => {
-                let mut d = Self::rust_mod_dir(from);
+                let mut d = self.rust_own_dir(from);
                 let mut i = 0;
                 while segs.get(i) == Some(&"super") {
                     d = dir_of(&d).to_string();
@@ -2338,10 +2381,15 @@ impl<'a> Resolver<'a> {
                 (d, i)
             }
             other => {
+                // a file beside a crate root such as `tests/it.rs` is its module only when it declares it
+                let root = self.rust_root_file(from);
+                let declared = !root || self.rust_mods(from).iter().any(|(_, n, _)| n == other);
                 if let Some(d) = self.crates().get(other).cloned() {
                     (d, 1)
-                } else if self.rust_mod_file(&join(&Self::rust_mod_dir(from), other)).is_some() {
-                    (Self::rust_mod_dir(from), 0)
+                } else if declared && self.rust_mod_file(&join(&self.rust_own_dir(from), other)).is_some() {
+                    (self.rust_own_dir(from), 0)
+                } else if root {
+                    return None;
                 } else {
                     (self.rust_crate_root(from)?, 0) // 2015-edition paths start at the crate root
                 }
@@ -2352,7 +2400,16 @@ impl<'a> Resolver<'a> {
             self.rust_mod_file(&dir)?;
             i += 1;
         }
-        self.rust_mod_file(&dir).map(|f| vec![f])
+        if self.rust_root_file(from) && dir == dir_of(from) {
+            return Some(vec![from.to_string()]);
+        }
+        if let Some(f) = self.rust_mod_file(&dir) {
+            return Some(vec![f]);
+        }
+        // the root of a module below a target folder: any of the crates there
+        let mut roots: Vec<String> = self.files.iter().filter(|f| f.ends_with(".rs") && dir_of(f) == dir && self.rust_target_dir(&dir)).cloned().collect();
+        roots.sort();
+        (!roots.is_empty()).then_some(roots)
     }
 
     fn go_dirs(&mut self) -> &HashMap<String, Vec<String>> {
