@@ -1078,8 +1078,8 @@ const CORE: &[LangSpec] = &[
         defs: &[
             d("declProc", "function", &[NameRule::Custom(pascal_proc_name)]),
             d("defProc", "function", &[NameRule::Custom(pascal_proc_name)]),
+            // a class is a `declType` whose value is a `declClass`, which has no name of its own
             d("declType", "type", N),
-            d("declClass", "class", N),
         ],
         calls: &[c("exprCall", "")],
         docstring: false,

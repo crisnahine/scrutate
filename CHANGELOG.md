@@ -266,6 +266,8 @@ First release.
   every member after it was lost with a checksum warning.
 - A large file whose lines are too long for the line probes to see is streamed: 100 MB of 4 MB
   lines peaked at 103 MB and peak at 15 to 18 MB.
+- A case-insensitive search for a long literal no longer slows to seconds on lines that almost
+  match it (10 MB of lines of 79 `=` against a pattern of 80: 1.2 s, now 0.01 s).
 - A large file of one line searched for a plain `-F` literal is read through small buffers in
   two passes: on a 100 MB line peak memory falls from 103 MB to under 6 MB, and CPU time by a
   third with output and by half with `-c`.
@@ -293,7 +295,12 @@ First release.
   edit that keeps a file's size and modification time (`cp -p`, `rsync -t`, `touch -r`); its
   format is 3, and the next `index --text` or `grep --index --update` rebuilds an older one.
 - A full index build of a C, Go or Java tree no longer keeps every file's syntax tree in memory:
-  40 MB of C in 600 files took 2.1 GB and takes 0.56 GB.
+  40 MB of C in 600 files took 2.1 GB and takes 0.56 GB. The cache counts the trees that
+  parses really keep, so C++ headers and files too large to parse take none of its budget.
+- Haskell type synonyms, Puppet functions, LLVM named types and OCaml classes (the last two
+  with `extra-langs`) are definitions: their rules named grammar nodes that do not exist.
+- A file without a grammar whose definitions nest deeply is indexed in time linear in its size
+  (a 1 MB Perl file of 1,400 nested `sub` lines: 0.83 s of CPU, now 0.2 s).
 - A damaged segment found while segments are merged rebuilds the index where the update ended
   with an internal error; `serve --watch` and `watch` report an update that panics and keep
   watching.
