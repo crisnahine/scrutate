@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" aria-labelledby="title desc">
+<title id="title">Glossary</title>
+<desc id="desc">Icon for Glossary.</desc>
+<path d="M6 3h11.5a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" fill="none" stroke="#8b949e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 7.5h6.5" fill="none" stroke="#8b949e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 11h6.5" fill="none" stroke="#8b949e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 17.5a2 2 0 0 1 2-2h12.5" fill="none" stroke="#8b949e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

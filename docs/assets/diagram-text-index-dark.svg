@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 538" width="880" height="538" role="img" aria-labelledby="title desc">
+<title id="title">The text index: trigrams narrow the files, Engine A confirms</title>
+<desc id="desc">When indexing, each file's byte trigrams and mask bytes go into immutable segments. When searching, the pattern becomes a trigram condition, the postings give candidate files, and Engine A's per-file searcher reads only those.</desc>
+<style>
+text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif; }
+.m { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
+.h { font-size: 15px; font-weight: 600; fill: #e6edf3; }
+.b { font-size: 14px; fill: #8b949e; }
+.bi { font-size: 14px; fill: #e6edf3; }
+.lbl { font-size: 14px; font-weight: 600; fill: #8b949e; }
+.card { fill: #161b22; stroke: #30363d; stroke-width: 1; }
+.inset { fill: #0d1117; stroke: #30363d; stroke-width: 1; }
+.store { fill: #161b22; stroke: #a78bfa; stroke-width: 1.25; }
+.out { fill: #161b22; stroke: #5eead4; stroke-width: 1.25; }
+.arrow { fill: none; stroke: #8b949e; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.gate { fill: #0d1117; stroke: #8b949e; stroke-width: 1.25; stroke-dasharray: 6 5; }
+
+.flow { fill: none; stroke: #5eead4; stroke-width: 2.5; stroke-linecap: round; stroke-dasharray: 10 200;
+  stroke-dashoffset: 30; animation: flow 10s cubic-bezier(.2,.7,.2,1) infinite; }
+@keyframes flow { 0% { stroke-dashoffset: 30; } 14%, 100% { stroke-dashoffset: -100; } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M1.5 1.5 8.5 5 1.5 8.5" fill="none" stroke="#8b949e" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<text x="1" y="16" class="lbl">When indexing</text>
+<rect x="1" y="30" width="270" height="142" rx="12" class="card"/>
+<text x="17" y="56" class="h">Files</text>
+<text x="17" y="78" class="b">Exactly the files Engine A's</text>
+<text x="17" y="98" class="b">default walk visits: the</text>
+<text x="17" y="118" class="b">same walker, the same ignore</text>
+<text x="17" y="138" class="b">rules.</text>
+<rect x="305" y="30" width="270" height="142" rx="12" class="card"/>
+<text x="321" y="56" class="h">Trigrams per file</text>
+<text x="321" y="78" class="b">Byte trigrams, ASCII case</text>
+<text x="321" y="98" class="b">folded. Each posting has two</text>
+<text x="321" y="118" class="b">mask bytes: the bytes that</text>
+<text x="321" y="138" class="b">follow, the positions modulo</text>
+<text x="321" y="158" class="b">8.</text>
+<rect x="609" y="30" width="270" height="142" rx="12" class="store"/>
+<text x="625" y="56" class="h">Segments</text>
+<text x="625" y="78" class="b">Sorted trigram keys, delta +</text>
+<text x="625" y="98" class="b">LEB128 posting lists. No</text>
+<text x="625" y="118" class="b">file contents.</text>
+<path d="M273 101 L301 101" class="arrow" marker-end="url(#ah)"/>
+<path d="M273 101 L301 101" class="flow" pathLength="100" style="stroke-dasharray: 30.0 200; animation-delay: 0s"/>
+<path d="M577 101 L605 101" class="arrow" marker-end="url(#ah)"/>
+<path d="M577 101 L605 101" class="flow" pathLength="100" style="stroke-dasharray: 30.0 200; animation-delay: 1s"/>
+<text x="1" y="222" class="lbl">When searching</text>
+<rect x="1" y="236" width="270" height="142" rx="12" class="card"/>
+<text x="17" y="262" class="h">Pattern</text>
+<text x="17" y="284" class="b">Its regex syntax tree is</text>
+<text x="17" y="304" class="b">walked: literals, small</text>
+<text x="17" y="324" class="b">classes and alternations</text>
+<text x="17" y="344" class="b">become string sets.</text>
+<rect x="305" y="236" width="270" height="142" rx="12" class="card"/>
+<text x="321" y="262" class="h">Trigram condition</text>
+<text x="321" y="284" class="b">A boolean condition:</text>
+<text x="321" y="304" class="b">necessary, never sufficient.</text>
+<text x="321" y="324" class="b">Evaluated over the postings</text>
+<text x="321" y="344" class="b">as bitsets.</text>
+<rect x="609" y="236" width="270" height="142" rx="12" class="card"/>
+<text x="625" y="262" class="h">Candidate files</text>
+<text x="625" y="284" class="b">Strings of four bytes or</text>
+<text x="625" y="304" class="b">more must line up.</text>
+<text x="625" y="324" class="b"><tspan class="m">kernel_thread</tspan> on the Linux</text>
+<text x="625" y="344" class="b">tree: 164 files instead of</text>
+<text x="625" y="364" class="b">1,781.</text>
+<path d="M273 307 L301 307" class="arrow" marker-end="url(#ah)"/>
+<path d="M273 307 L301 307" class="flow" pathLength="100" style="stroke-dasharray: 30.0 200; animation-delay: 2.2s"/>
+<path d="M577 307 L605 307" class="arrow" marker-end="url(#ah)"/>
+<path d="M577 307 L605 307" class="flow" pathLength="100" style="stroke-dasharray: 30.0 200; animation-delay: 3.2s"/>
+<path d="M744 174 L744 232" class="arrow" marker-end="url(#ah)"/>
+<path d="M744 174 L744 232" class="flow" pathLength="100" style="stroke-dasharray: 30.0 200; animation-delay: 2.2s"/>
+<rect x="305" y="434" width="574" height="102" rx="12" class="out"/>
+<text x="321" y="460" class="h">Engine A confirms</text>
+<text x="321" y="482" class="b">Engine A's own per-file searcher reads the candidate files from</text>
+<text x="321" y="502" class="b">the source tree, with the same translated pattern.</text>
+<text x="321" y="522" class="b">Results equal Engine A's on the indexed snapshot.</text>
+<path d="M744 380 L744 430" class="arrow" marker-end="url(#ah)"/>
+<path d="M744 380 L744 430" class="flow" pathLength="100" style="stroke-dasharray: 30.0 200; animation-delay: 4.4s"/>
+</svg>

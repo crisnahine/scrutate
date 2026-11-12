@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 160" width="880" height="160" role="img" aria-labelledby="title desc">
+<title id="title">GitHub Actions: scrutate documentation</title>
+<desc id="desc">Banner for the GitHub Actions page. How do I run scrutate in a GitHub workflow?</desc>
+<style>
+text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif; }
+.m { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
+.h { font-size: 15px; font-weight: 600; fill: #1f2328; }
+.b { font-size: 14px; fill: #59636e; }
+.bi { font-size: 14px; fill: #1f2328; }
+.lbl { font-size: 14px; font-weight: 600; fill: #59636e; }
+.card { fill: #f6f8fa; stroke: #d1d9e0; stroke-width: 1; }
+.inset { fill: #ffffff; stroke: #d1d9e0; stroke-width: 1; }
+.store { fill: #f6f8fa; stroke: #6d28d9; stroke-width: 1.25; }
+.out { fill: #f6f8fa; stroke: #0f766e; stroke-width: 1.25; }
+.arrow { fill: none; stroke: #59636e; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.gate { fill: #ffffff; stroke: #59636e; stroke-width: 1.25; stroke-dasharray: 6 5; }
+
+.title { font-size: 32px; font-weight: 700; fill: #1f2328; }
+.line { font-size: 15px; fill: #59636e; }
+.brand { font-size: 14px; fill: #59636e; letter-spacing: .5px; }
+.code { fill: #d1d9e0; }
+.hit { fill: #0f766e; }
+.band { fill: #0f766e; opacity: 0.12; }
+.beam { animation: sweep 12s cubic-bezier(.2,.7,.2,1) infinite; }
+.lit { animation: lit 12s cubic-bezier(.2,.7,.2,1) infinite; }
+@keyframes sweep { 0% { transform: translateX(-196px); opacity: 0; } 5% { opacity: 1; }
+  45% { transform: translateX(0); opacity: 1; } 92% { transform: translateX(0); opacity: 1; }
+  100% { transform: translateX(0); opacity: 0; } }
+@keyframes lit { 0%, 44% { opacity: 0; } 52%, 92% { opacity: 1; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M1.5 1.5 8.5 5 1.5 8.5" fill="none" stroke="#59636e" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker><linearGradient id="glow" x1="0" x2="1"><stop offset="0" stop-color="#0f766e" stop-opacity="0"/><stop offset="1" stop-color="#0f766e" stop-opacity="0.22"/></linearGradient></defs>
+<rect x="0.5" y="0.5" width="879" height="159" rx="12" class="card"/>
+<rect x="32" y="44" width="72" height="72" rx="16" class="inset"/>
+<g transform="translate(47 59) scale(1.75)"><path d="M7 3h10a4 4 0 0 1 4 4v10a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4z" fill="none" stroke="#0f766e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 8.5v7l6-3.5z" fill="none" stroke="#0f766e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></g>
+<text x="128" y="62" class="brand m">scrutate / docs</text>
+<text x="128" y="100" class="title">GitHub Actions</text>
+<text x="128" y="128" class="line">How do I run scrutate in a GitHub workflow?</text>
+<rect x="664" y="38" width="120" height="6" rx="3" class="code"/>
+<rect x="680" y="51" width="140" height="6" rx="3" class="code"/>
+<rect x="680" y="64" width="96" height="6" rx="3" class="code"/>
+<rect x="696" y="77" width="128" height="6" rx="3" class="code"/>
+<rect x="680" y="90" width="72" height="6" rx="3" class="code"/>
+<rect x="664" y="103" width="24" height="6" rx="3" class="code"/>
+<rect x="664" y="116" width="108" height="6" rx="3" class="code"/>
+<g class="lit">
+<rect x="716" y="47" width="60" height="14" rx="5" class="band"/>
+<rect x="720" y="51" width="52" height="6" rx="3" class="hit"/>
+<rect x="712" y="86" width="44" height="14" rx="5" class="band"/>
+<rect x="716" y="90" width="36" height="6" rx="3" class="hit"/>
+</g>
+<g class="beam"><rect x="824" y="30" width="28" height="100" fill="url(#glow)"/><rect x="851" y="30" width="2" height="100" rx="1" class="hit"/></g>
+</svg>

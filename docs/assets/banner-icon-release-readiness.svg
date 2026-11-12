@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" aria-labelledby="title desc">
+<title id="title">Release readiness</title>
+<desc id="desc">Icon for Release readiness.</desc>
+<path d="M5 21V4" fill="none" stroke="#8b949e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 4h11.5l-2.5 4 2.5 4H5" fill="none" stroke="#8b949e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 440" width="880" height="440" role="img" aria-labelledby="title desc">
+<title id="title">Engine B: a ranked query</title>
+<desc id="desc">A query gets candidates from field-weighted BM25, an exact name lookup and semantic nearest neighbours; 48 features per candidate go through a LightGBM LambdaRank ensemble, which orders the results.</desc>
+<style>
+text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif; }
+.m { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
+.h { font-size: 15px; font-weight: 600; fill: #e6edf3; }
+.b { font-size: 14px; fill: #8b949e; }
+.bi { font-size: 14px; fill: #e6edf3; }
+.lbl { font-size: 14px; font-weight: 600; fill: #8b949e; }
+.card { fill: #161b22; stroke: #30363d; stroke-width: 1; }
+.inset { fill: #0d1117; stroke: #30363d; stroke-width: 1; }
+.store { fill: #161b22; stroke: #a78bfa; stroke-width: 1.25; }
+.out { fill: #161b22; stroke: #5eead4; stroke-width: 1.25; }
+.arrow { fill: none; stroke: #8b949e; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.gate { fill: #0d1117; stroke: #8b949e; stroke-width: 1.25; stroke-dasharray: 6 5; }
+
+.flow { fill: none; stroke: #5eead4; stroke-width: 2.5; stroke-linecap: round; stroke-dasharray: 10 200;
+  stroke-dashoffset: 30; animation: flow 10s cubic-bezier(.2,.7,.2,1) infinite; }
+@keyframes flow { 0% { stroke-dashoffset: 30; } 14%, 100% { stroke-dashoffset: -100; } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M1.5 1.5 8.5 5 1.5 8.5" fill="none" stroke="#8b949e" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="214" y="1" width="330" height="82" rx="12" class="card"/>
+<text x="230" y="27" class="h">BM25 by field</text>
+<text x="230" y="49" class="b">Weights: name 10, qualified name 3,</text>
+<text x="230" y="69" class="b">signature 3, docs 5, body 1, path 2.</text>
+<rect x="214" y="99" width="330" height="62" rx="12" class="card"/>
+<text x="230" y="125" class="h">Exact lookup</text>
+<text x="230" y="147" class="b">The name or the qualified name.</text>
+<rect x="214" y="177" width="330" height="102" rx="12" class="card"/>
+<text x="230" y="203" class="h">Semantic neighbours</text>
+<text x="230" y="225" class="b">The query encoded into the chunks'</text>
+<text x="230" y="245" class="b">256-d space; in a large segment, 48</text>
+<text x="230" y="265" class="b">IVF clusters probed.</text>
+<rect x="1" y="99.5" width="170" height="82" rx="12" class="card"/>
+<text x="17" y="125.5" class="h">Query</text>
+<text x="17" y="147.5" class="b">Words, a name or</text>
+<text x="17" y="167.5" class="b">an identifier.</text>
+<rect x="590" y="1" width="289" height="279" rx="12" class="card"/>
+<text x="606" y="27" class="h">48 features per candidate</text>
+<text x="606" y="49" class="b">Lexical scores and ranks per</text>
+<text x="606" y="69" class="b">field, the z-scored semantic</text>
+<text x="606" y="89" class="b">similarity of both views,</text>
+<text x="606" y="109" class="b">literal hits, name coverage,</text>
+<text x="606" y="129" class="b">the name as typed, kind,</text>
+<text x="606" y="149" class="b">lengths, test-path flags.</text>
+<path d="M173 140.5 L192 140.5 L192 42 L210 42" class="arrow" marker-end="url(#ah)"/>
+<path d="M173 140.5 L192 140.5 L192 42 L210 42" class="flow" pathLength="100" style="stroke-dasharray: 13.3 200; animation-delay: 0s"/>
+<path d="M546 42 L586 42" class="arrow" marker-end="url(#ah)"/>
+<path d="M546 42 L586 42" class="flow" pathLength="100" style="stroke-dasharray: 30.0 200; animation-delay: 1.4s"/>
+<path d="M173 140.5 L192 140.5 L192 130 L210 130" class="arrow" marker-end="url(#ah)"/>
+<path d="M173 140.5 L192 140.5 L192 130 L210 130" class="flow" pathLength="100" style="stroke-dasharray: 30.0 200; animation-delay: 0s"/>
+<path d="M546 130 L586 130" class="arrow" marker-end="url(#ah)"/>
+<path d="M546 130 L586 130" class="flow" pathLength="100" style="stroke-dasharray: 30.0 200; animation-delay: 1.4s"/>
+<path d="M173 140.5 L192 140.5 L192 228 L210 228" class="arrow" marker-end="url(#ah)"/>
+<path d="M173 140.5 L192 140.5 L192 228 L210 228" class="flow" pathLength="100" style="stroke-dasharray: 14.5 200; animation-delay: 0s"/>
+<path d="M546 228 L586 228" class="arrow" marker-end="url(#ah)"/>
+<path d="M546 228 L586 228" class="flow" pathLength="100" style="stroke-dasharray: 30.0 200; animation-delay: 1.4s"/>
+<rect x="590" y="336" width="289" height="102" rx="12" class="card"/>
+<text x="606" y="362" class="h">Ranker</text>
+<text x="606" y="384" class="b">A LightGBM LambdaRank ensemble,</text>
+<text x="606" y="404" class="b">exported to plain arrays and</text>
+<text x="606" y="424" class="b">evaluated in Rust.</text>
+<rect x="214" y="336" width="330" height="102" rx="12" class="out"/>
+<text x="230" y="362" class="h">Ranked results</text>
+<text x="230" y="384" class="b">Ties broken by id. The Python</text>
+<text x="230" y="404" class="b">reference returns the same features,</text>
+<text x="230" y="424" class="b">scores and rankings.</text>
+<path d="M734.5 282 L734.5 332" class="arrow" marker-end="url(#ah)"/>
+<path d="M734.5 282 L734.5 332" class="flow" pathLength="100" style="stroke-dasharray: 30.0 200; animation-delay: 2.8s"/>
+<path d="M588 387 L548 387" class="arrow" marker-end="url(#ah)"/>
+<path d="M588 387 L548 387" class="flow" pathLength="100" style="stroke-dasharray: 30.0 200; animation-delay: 4s"/>
+</svg>

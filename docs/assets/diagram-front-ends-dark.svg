@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 521" width="880" height="521" role="img" aria-labelledby="title desc">
+<title id="title">Front ends share one index directory</title>
+<desc id="desc">The CLI, the Python bindings, the MCP server, the language server and the watcher go through the same operations to one .scrutate directory; writers take turns, readers answer from the last commit.</desc>
+<style>
+text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif; }
+.m { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
+.h { font-size: 15px; font-weight: 600; fill: #e6edf3; }
+.b { font-size: 14px; fill: #8b949e; }
+.bi { font-size: 14px; fill: #e6edf3; }
+.lbl { font-size: 14px; font-weight: 600; fill: #8b949e; }
+.card { fill: #161b22; stroke: #30363d; stroke-width: 1; }
+.inset { fill: #0d1117; stroke: #30363d; stroke-width: 1; }
+.store { fill: #161b22; stroke: #a78bfa; stroke-width: 1.25; }
+.out { fill: #161b22; stroke: #5eead4; stroke-width: 1.25; }
+.arrow { fill: none; stroke: #8b949e; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.gate { fill: #0d1117; stroke: #8b949e; stroke-width: 1.25; stroke-dasharray: 6 5; }
+
+.flow { fill: none; stroke: #5eead4; stroke-width: 2.5; stroke-linecap: round; stroke-dasharray: 10 200;
+  stroke-dashoffset: 30; animation: flow 10s cubic-bezier(.2,.7,.2,1) infinite; }
+@keyframes flow { 0% { stroke-dashoffset: 30; } 14%, 100% { stroke-dashoffset: -100; } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M1.5 1.5 8.5 5 1.5 8.5" fill="none" stroke="#8b949e" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="1" y="1" width="240" height="102" rx="12" class="card"/>
+<text x="17" y="27" class="h">CLI</text>
+<text x="17" y="49" class="b">Index commands and</text>
+<text x="17" y="69" class="b"><tspan class="m">batch</tspan>. <tspan class="m">grep</tspan> never opens</text>
+<text x="17" y="89" class="b">the index.</text>
+<rect x="1" y="115" width="240" height="82" rx="12" class="card"/>
+<text x="17" y="141" class="h">Python bindings</text>
+<text x="17" y="163" class="b">Both engines, the GIL</text>
+<text x="17" y="183" class="b">released.</text>
+<rect x="1" y="209" width="240" height="82" rx="12" class="card"/>
+<text x="17" y="235" class="h">MCP server</text>
+<text x="17" y="257" class="b"><tspan class="m">scrutate serve</tspan>:</text>
+<text x="17" y="277" class="b">fourteen tools on stdio.</text>
+<rect x="1" y="303" width="240" height="102" rx="12" class="card"/>
+<text x="17" y="329" class="h">Language server</text>
+<text x="17" y="351" class="b"><tspan class="m">scrutate lsp</tspan>: a save</text>
+<text x="17" y="371" class="b">updates the index on a</text>
+<text x="17" y="391" class="b">second connection.</text>
+<rect x="1" y="417" width="240" height="102" rx="12" class="card"/>
+<text x="17" y="443" class="h">Watch</text>
+<text x="17" y="465" class="b"><tspan class="m">scrutate watch</tspan>,</text>
+<text x="17" y="485" class="b"><tspan class="m">serve --watch</tspan>: one more</text>
+<text x="17" y="505" class="b">writer.</text>
+<rect x="296" y="158.5" width="224" height="202" rx="12" class="card"/>
+<text x="312" y="184.5" class="h">One engine</text>
+<text x="312" y="206.5" class="b">Operations (<tspan class="m">ops.rs</tspan>):</text>
+<text x="312" y="226.5" class="b">every front end gets</text>
+<text x="312" y="246.5" class="b">the same arguments,</text>
+<text x="312" y="266.5" class="b">defaults and answers.</text>
+<text x="312" y="286.5" class="b"><tspan class="m">Repo</tspan> (<tspan class="m">lib.rs</tspan>) keeps</text>
+<text x="312" y="306.5" class="b">the index up to date</text>
+<text x="312" y="326.5" class="b">and rebuilds a corrupt</text>
+<text x="312" y="346.5" class="b">one.</text>
+<path d="M243 52 L268 52 L268 259.5 L292 259.5" class="arrow" marker-end="url(#ah)"/>
+<path d="M243 52 L268 52 L268 259.5 L292 259.5" class="flow" pathLength="100" style="stroke-dasharray: 7.0 200; animation-delay: 0s"/>
+<path d="M243 156 L268 156 L268 259.5 L292 259.5" class="arrow" marker-end="url(#ah)"/>
+<path d="M243 156 L268 156 L268 259.5 L292 259.5" class="flow" pathLength="100" style="stroke-dasharray: 11.8 200; animation-delay: 0.4s"/>
+<path d="M243 250 L268 250 L268 259.5 L292 259.5" class="arrow" marker-end="url(#ah)"/>
+<path d="M243 250 L268 250 L268 259.5 L292 259.5" class="flow" pathLength="100" style="stroke-dasharray: 30.0 200; animation-delay: 0.8s"/>
+<path d="M243 354 L268 354 L268 259.5 L292 259.5" class="arrow" marker-end="url(#ah)"/>
+<path d="M243 354 L268 354 L268 259.5 L292 259.5" class="flow" pathLength="100" style="stroke-dasharray: 12.5 200; animation-delay: 1.2s"/>
+<path d="M243 468 L268 468 L268 259.5 L292 259.5" class="arrow" marker-end="url(#ah)"/>
+<path d="M243 468 L268 468 L268 259.5 L292 259.5" class="flow" pathLength="100" style="stroke-dasharray: 7.0 200; animation-delay: 1.6s"/>
+<rect x="566" y="1" width="313" height="518" rx="12" class="store"/>
+<text x="582" y="27" class="h"><tspan class="m">.scrutate/</tspan></text>
+<rect x="578" y="42" width="289" height="34" rx="8" class="inset"/>
+<text x="592" y="64" class="bi"><tspan class="m">index.db</tspan></text>
+<text x="688" y="64" class="b">SQLite, WAL</text>
+<rect x="578" y="84" width="289" height="34" rx="8" class="inset"/>
+<text x="592" y="106" class="bi"><tspan class="m">seg/</tspan></text>
+<text x="688" y="106" class="b">memory-mapped arrays</text>
+<rect x="578" y="126" width="289" height="34" rx="8" class="inset"/>
+<text x="592" y="148" class="bi"><tspan class="m">text/</tspan></text>
+<text x="688" y="148" class="b">trigram segments</text>
+<rect x="578" y="168" width="289" height="34" rx="8" class="inset"/>
+<text x="592" y="190" class="bi"><tspan class="m">tsquery/</tspan></text>
+<text x="688" y="190" class="b">the <tspan class="m">tsquery</tspan> cache</text>
+<text x="582" y="238" class="b">Writers take turns: the SQLite</text>
+<text x="582" y="258" class="b">transaction and the text index</text>
+<text x="582" y="278" class="b">lock file.</text>
+<text x="582" y="304" class="b">A read never waits for a writer:</text>
+<text x="582" y="324" class="b">it answers from the last committed</text>
+<text x="582" y="344" class="b">index.</text>
+<path d="M522 259.5 L562 259.5" class="arrow" marker-end="url(#ah)"/>
+<path d="M522 259.5 L562 259.5" class="flow" pathLength="100" style="stroke-dasharray: 30.0 200; animation-delay: 2.4s"/>
+</svg>
