@@ -161,6 +161,8 @@ def hero() -> str:
             '<linearGradient id="trail" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="{{beam}}" stop-opacity="0"/>'
             '<stop offset="1" stop-color="{{beam}}" stop-opacity=".22"/></linearGradient>',
             f'<clipPath id="code"><rect x="{cx + 1}" y="{cy + 44}" width="{cw - 2}" height="{ch - 45}" rx="11"/></clipPath>',
+            '<linearGradient id="fade" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="{{card}}" stop-opacity="0"/>'
+            '<stop offset=".85" stop-color="{{card}}"/></linearGradient>',
             "</defs>"]
     # left: mark, wordmark, line, chips
     body.append(mark_paths("url(#hm)", "url(#hm)", 1.25, 36, 52))
@@ -197,6 +199,8 @@ def hero() -> str:
                         f'<rect x="{cx + 1}" y="{y - 19}" width="3" height="{lh}" fill="{{{{beam}}}}"/></g>')
         body.append(f'<text x="{cx + 44}" y="{y}" class="m" font-size="15" fill="{{{{muted}}}}" text-anchor="end" opacity=".8">{n}</text>')
         body.append(f'<text x="{cx + 60}" y="{y}" class="m code" font-size="{fs}" fill="{{{{ink}}}}" xml:space="preserve">{code_line(s, HERO_QUERY)}</text>')
+    # real lines are longer than the card: they fade out at its right edge
+    body.append(f'<rect x="{cx + cw - 96}" y="{cy + 45}" width="95" height="{ch - 46}" fill="url(#fade)"/>')
     # the beam: a bright line with a soft trail above it, parked at the bottom when still
     body.append(f'<g class="beam"><rect x="{cx + 1}" y="{y_last - 60}" width="{cw - 2}" height="60" fill="url(#trail)"/>'
                 f'<rect x="{cx + 1}" y="{y_last - 1}" width="{cw - 2}" height="2.5" fill="url(#hg)"/></g>')
