@@ -2024,10 +2024,12 @@ struct FileWorker {
     /// for files named on the command line, made on the first one
     named: Option<Searcher>,
     small: Vec<u8>,
+    /// the plain output of a file before it is written
+    out: Vec<u8>,
 }
 
 fn file_worker(o: &Options) -> FileWorker {
-    FileWorker { searcher: make_searcher(o, BinaryDetection::quit(0)), named: None, small: Vec::new() }
+    FileWorker { searcher: make_searcher(o, BinaryDetection::quit(0)), named: None, small: Vec::new(), out: Vec::new() }
 }
 
 fn make_searcher(o: &Options, binary: BinaryDetection) -> Searcher {
@@ -2165,7 +2167,7 @@ fn search_one(w: &mut FileWorker, r: &Run, path: &Path, rel: Arc<str>, size: Opt
         }
     }
     let whole: Option<&[u8]> = owned.as_deref().or(small.map(|n| &w.small[..n]));
-    let mut sink = Collector { convert: named, ..r.collector(Arc::clone(&rel)) };
+    let mut sink = Collector { convert: named, out: std::mem::take(&mut w.out), ..r.collector(Arc::clone(&rel)) };
     let res = match whole {
         // only the stream reader turns NUL bytes into line breaks
         Some(b) if named && memchr::memchr(0, b).is_some() => r.matcher.search_reader(searcher, b, &mut sink),
@@ -2180,13 +2182,13 @@ fn search_one(w: &mut FileWorker, r: &Run, path: &Path, rel: Arc<str>, size: Opt
     if let Err(e) = res {
         c.failed(format!("{rel}: {e}"));
     }
-    report(r, sink, rel, named);
+    w.out = report(r, sink, rel, named);
 }
 
 /// The end of one file's search: what it found leaves (a search aborted by an error or
 /// cancellation still reports it). As ripgrep, a file the walk found that holds a NUL byte has
-/// no count and is not listed.
-fn report(r: &Run, mut sink: Collector, rel: Arc<str>, named: bool) {
+/// no count and is not listed. Returns the emptied output buffer, for the next file.
+fn report(r: &Run, mut sink: Collector, rel: Arc<str>, named: bool) -> Vec<u8> {
     let o = r.o;
     sink.flush();
     if sink.matched && (named || !sink.binary || !(o.count_only || o.files_only)) {
@@ -2196,6 +2198,13 @@ fn report(r: &Run, mut sink: Collector, rel: Arc<str>, named: bool) {
             let _ = r.tx.send(vec![Hit { path: rel, line: sink.file_count, column: 0, text: String::new(), spans: Vec::new(), context: false }]);
         }
     }
+    let mut out = std::mem::take(&mut sink.out);
+    out.clear();
+    // a buffer that grew past the usual flush size (a context group held whole) is not kept
+    if out.capacity() > 1 << 17 {
+        out = Vec::new();
+    }
+    out
 }
 
 /// `-z`: every member of an archive, or the decompressed file, as a file of its own, reported as
