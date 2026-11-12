@@ -387,11 +387,11 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
             Answer::Grep { groups, stopped_at: stopped.then_some(*max_results) }
         }
         Op::Symbol { name, limit } => {
-            let (hits, stopped) = cut(targets(s, name, limit + 1, false)?, *limit, RAISE_LIMIT);
+            let (hits, stopped) = cut(targets(s, name, limit.saturating_add(1), false)?, *limit, RAISE_LIMIT);
             Answer::Hits { hits, words: Vec::new(), snippet: true, stopped }
         }
         Op::Callers { name, limit } => {
-            let (hits, mut undecided, mut unchecked) = callers(s, name, limit + 1)?;
+            let (hits, mut undecided, mut unchecked) = callers(s, name, limit.saturating_add(1))?;
             let (hits, stopped) = cut(hits, *limit, RAISE_LIMIT);
             // the unchecked ones come last and the undecided before them, so the one cut off was one of those
             if stopped.is_some() {
@@ -401,7 +401,7 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
             Answer::Callers { hits, undecided, unchecked, stopped }
         }
         Op::Callees { name, limit } => {
-            let (resolved, external, from) = callees(s, name, limit + 1)?;
+            let (resolved, external, from) = callees(s, name, limit.saturating_add(1))?;
             let (resolved, stopped) = cut(resolved, *limit, RAISE_LIMIT);
             Answer::Callees { resolved, external, from, stopped }
         }
@@ -474,7 +474,7 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
             Answer::Dupes(groups, stopped)
         }
         Op::Tsquery { lang, query, limit } => {
-            let caps = crate::intel::tsquery(lang, query, std::slice::from_ref(&s.ix.root), limit + 1, Some(&s.ix.root))?;
+            let caps = crate::intel::tsquery(lang, query, std::slice::from_ref(&s.ix.root), limit.saturating_add(1), Some(&s.ix.root))?;
             let (caps, stopped) = cut(caps, *limit, RAISE_LIMIT);
             Answer::Captures(caps, stopped)
         }

@@ -1486,6 +1486,40 @@ fn json_answers_that_stop_at_their_limit_say_so() {
 }
 
 #[test]
+fn the_largest_limit_is_no_limit() {
+    let r = Repo::new("maxlimit");
+    r.write("a.py", b"def f():\n    pass\n");
+    r.write("b.py", b"def f():\n    pass\n");
+    r.write("c.py", b"def h():\n    pass\n\n\ndef g():\n    f()\n    h()\n\n\ndef k():\n    f()\n");
+    let body = b"def total():\n    return compute_total(1, 2, 3) + other_value(4, 5, 6)\n";
+    r.write("d.py", body);
+    r.write("e.py", body);
+    assert_eq!(r.run(&["index", "--no-text"]).0, 0);
+    let max = u64::MAX.to_string();
+    let q = "(function_definition name: (identifier) @n)";
+    for (args, want) in [
+        (&["symbol", "f"][..], 2),
+        (&["callers", "f"], 2),
+        (&["callees", "g"], 1),
+        (&["tsquery", "python", q], 5),
+        (&["dupes", "--min-tokens", "0", "--threshold", "1"], 1),
+    ] {
+        let (code, out, err) = r.run(&[args, &["--limit", &max, "--json"]].concat());
+        assert_eq!(code, 0, "{args:?}: {out}{err}");
+        let n = if args[0] == "tsquery" {
+            out.lines().count()
+        } else {
+            let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+            v.as_array().or_else(|| v["resolved"].as_array()).map_or(0, Vec::len)
+        };
+        assert!(n >= want, "{args:?}: {out}");
+        assert!(!err.contains("stopped"), "{args:?}: {err}");
+    }
+    let (code, out, err) = r.run(&["similar", "d.py:1", "-k", &max]);
+    assert!(code == 0 && out.contains("e.py:1-2"), "{out}{err}");
+}
+
+#[test]
 fn a_count_stops_at_max_count() {
     let r = Repo::new("countmax");
     r.write("f.txt", b"a\na\na\na\nb\n");

@@ -268,7 +268,7 @@ pub fn similar(s: &mut Searcher, target: &str, k: usize) -> Result<Vec<(Hit, f32
     if b.iter().all(|x| *x == 0.0) {
         bail!("{} has no implementation vector (its body is too short to compare)", shown(&row.qualname));
     }
-    let near = s.ix.lex()?.scan_b(&b, k * 3, row.id)?;
+    let near = s.ix.lex()?.scan_b(&b, k.saturating_mul(3), row.id)?;
     let my_tokens: HashSet<String> = tokenize2(&row.text, Some(BODY_CAP)).0.into_iter().collect();
     let mut out = Vec::new();
     for (id, cos) in near {
