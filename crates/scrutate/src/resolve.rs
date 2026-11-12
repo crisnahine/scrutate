@@ -37,6 +37,11 @@ fn lang_of(spec_id: &str) -> Option<Lang> {
     }
 }
 
+/// The language the resolver reads `path` in; the content sniff decides only between others.
+fn path_lang(path: &str) -> Option<Lang> {
+    lang_of(crate::langs::spec_for(path)?.id)
+}
+
 /// Definition chosen for an occurrence and how it was found, or why none was.
 pub type Resolution = std::result::Result<(i64, &'static str), &'static str>;
 
@@ -69,6 +74,9 @@ pub const UNREAD: &str = "not resolved in this language";
 struct FileInfo {
     lang: Option<Lang>,
     src: String,
+    /// the bytes on disk and where each line starts, when decoding `src` replaced invalid UTF-8:
+    /// Engine A's columns count those bytes
+    raw: Option<(Vec<u8>, Vec<usize>)>,
     tree: Option<Tree>,
     defs: Vec<Def>,
     bindings: Vec<Binding>,
@@ -128,12 +136,16 @@ fn text<'s>(n: Node, src: &'s str) -> &'s str {
 /// The text of `rel` under `root` when it is a regular file inside `root` of at most
 /// `MAX_FILE_BYTES`: a FIFO would block the read, and a symlink could lead out of the repository.
 pub fn repo_text(root: &std::path::Path, rel: &str) -> Option<String> {
+    crate::index::decode_source(&repo_bytes(root, rel)?).map(|t| t.into_owned())
+}
+
+fn repo_bytes(root: &std::path::Path, rel: &str) -> Option<Vec<u8>> {
     let p = root.join(rel);
     let meta = std::fs::symlink_metadata(&p).ok()?;
     if !meta.is_file() || meta.len() > crate::index::MAX_FILE_BYTES || !std::fs::canonicalize(&p).ok()?.starts_with(root) {
         return None;
     }
-    crate::index::decode_source(&std::fs::read(&p).ok()?).map(|t| t.into_owned())
+    std::fs::read(&p).ok()
 }
 
 /// The segments of a module path below the repository's own package, when the checkout is that
@@ -731,8 +743,39 @@ impl<'a> Resolver<'a> {
         self.cache.remove(path);
     }
 
+    /// A match at bytes `a..b` of `line` as Engine A reads `path` -> the same span in the decoded
+    /// line Engine A prints, and the column `resolve_at` takes, which counts a BOM on line 1.
+    fn decoded_span(&mut self, path: &str, line: u64, (a, b): (usize, usize)) -> ((usize, usize), usize) {
+        if path_lang(path).is_none() {
+            return ((a, b), a);
+        }
+        let fi = self.file(path);
+        let (a, b) = match &fi.raw {
+            Some((bytes, starts)) => {
+                let start = starts.get(line.saturating_sub(1) as usize).copied().unwrap_or(bytes.len());
+                let at = |x: usize| String::from_utf8_lossy(&bytes[start..(start + x).min(bytes.len())]).len();
+                (at(a), at(b))
+            }
+            None => (a, b),
+        };
+        let bom = if line == 1 && fi.src.starts_with('\u{FEFF}') { '\u{FEFF}'.len_utf8() } else { 0 };
+        ((a, b), a + bom)
+    }
+
     fn load(&mut self, path: &str) -> FileInfo {
-        let src = repo_text(&self.ix.root, path).unwrap_or_default();
+        let mut bytes = repo_bytes(&self.ix.root, path).unwrap_or_default();
+        let src = crate::index::decode_source(&bytes).map(|t| t.into_owned()).unwrap_or_default();
+        // Engine A reads UTF-16 decoded, and UTF-8 without its BOM
+        let utf16 = bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]);
+        let mut text = src.as_str();
+        if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+            bytes.drain(..3);
+            text = &src[3..];
+        }
+        let raw = (!utf16 && !src.is_empty() && text.as_bytes() != bytes).then(|| {
+            let starts = std::iter::once(0).chain(bytes.iter().enumerate().filter(|(_, &c)| c == b'\n').map(|(i, _)| i + 1)).collect();
+            (bytes, starts)
+        });
         let spec = crate::parse::spec_for(path, &src);
         let lang = spec.and_then(|s| lang_of(s.id));
         let tree = match (spec, lang) {
@@ -751,7 +794,7 @@ impl<'a> Resolver<'a> {
             _ => Vec::new(),
         };
         let defs = self.defs_of(path).unwrap_or_default();
-        FileInfo { lang, src, tree, defs, bindings }
+        FileInfo { lang, src, raw, tree, defs, bindings }
     }
 
     fn defs_of(&self, path: &str) -> Result<Vec<Def>> {
@@ -797,7 +840,7 @@ impl<'a> Resolver<'a> {
     /// Resolve the occurrence of `name` at 1-based `line`, 0-based byte `col` of `path`.
     pub fn resolve_at(&mut self, path: &str, line: u64, col: usize, name: &str) -> Resolution {
         self.looked_up.clear();
-        if crate::langs::spec_for(path).and_then(|s| lang_of(s.id)).is_none() {
+        if path_lang(path).is_none() {
             // whether a grammar exists does not depend on the content the sniff reads
             return Err(if crate::parse::spec_for(path, "").is_some() { UNREAD } else { "no grammar" });
         }
@@ -1989,8 +2032,7 @@ impl<'a> Resolver<'a> {
     /// the files `refs` would look its names up in. None when the resolver does not read the
     /// language of `from`; an empty list when it reads it and finds no file.
     pub fn import_files(&mut self, from: &str, line: i64, module: &str) -> Option<Vec<String>> {
-        // the content sniff decides only between languages the resolver does not read
-        lang_of(crate::langs::spec_for(from)?.id)?;
+        path_lang(from)?;
         let fi = self.file(from);
         let lang = fi.lang?;
         let mut out: Vec<String> = Vec::new();
@@ -3488,8 +3530,9 @@ pub fn resolved_references(s: &Searcher, name: &str, max_results: u64) -> Result
     for h in hits {
         let line_text = h.text.trim_end_matches(['\n', '\r']).to_string();
         for &(a, b) in &h.spans {
+            let ((da, db), col) = rv.decoded_span(&h.path, h.line, (a, b));
             // the occurrence as this file spells it
-            let resolution = rv.resolve_at(&h.path, h.line, a, h.text.get(a..b).unwrap_or(bare));
+            let resolution = rv.resolve_at(&h.path, h.line, col, h.text.get(da..db).unwrap_or(bare));
             occurrences.push(Occurrence { path: h.path.to_string(), line: h.line, column: a as u64 + 1, text: line_text.clone(), resolution });
         }
     }

@@ -524,6 +524,33 @@ fn a_file_with_one_bad_byte_is_resolved_and_queried() {
 }
 
 #[test]
+fn a_use_after_a_bom_or_a_bad_byte_on_its_line_is_resolved() {
+    let files: &[(&str, &[u8])] = &[
+        ("helper.py", b"def go():\n    return 1\n"),
+        ("bom.py", b"\xef\xbb\xbffrom helper import go\n\ndef run():\n    return go()\n"),
+        ("latin.py", b"from helper import go\nx = \"caf\xe9 au lait\"; go()\n"),
+        ("both.py", b"\xef\xbb\xbfx = \"caf\xe9\"; from helper import go\ngo()\n"),
+    ];
+    let r = Repo::at(scratch("bom_latin"), files);
+    r.index();
+    let want = [
+        ("bom.py:1", "helper.py"),
+        ("bom.py:4", "helper.py"),
+        ("both.py:1", "helper.py"),
+        ("both.py:2", "helper.py"),
+        ("helper.py:1", "helper.py"),
+        ("latin.py:1", "helper.py"),
+        ("latin.py:2", "helper.py"),
+    ];
+    assert_eq!(r.resolved("go"), pairs(&want));
+    let v = r.json(&["refs", "go", "--json"]);
+    let cols: Vec<u64> =
+        v["definitions"][0]["references"].as_array().unwrap().iter().filter(|o| o["path"] == "latin.py").map(|o| o["column"].as_u64().unwrap()).collect();
+    // columns stay the byte columns `grep` prints
+    assert_eq!(cols, vec![20, 21], "{v}");
+}
+
+#[test]
 fn a_relative_import_that_climbs_above_the_root_names_no_file() {
     let r = Repo::new(
         "above_root",
