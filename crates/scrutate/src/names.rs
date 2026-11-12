@@ -49,7 +49,15 @@ impl<'a> Names<'a> {
         let bare = &crate::intel::bare_name(s, name)?;
         let q = crate::instant::Query { want_spans: true, ..crate::resolve::name_search(bare, max_results) };
         let (found, mut truncated) = crate::intel::occurrences(&s.ix.root, &q, &s.cancel)?;
-        let hits: Vec<crate::instant::Line> = found.into_iter().filter_map(|r| if let crate::instant::Record::Match(l) = r { Some(l) } else { None }).collect();
+        let mut notes = Vec::new();
+        let mut hits = Vec::new();
+        for r in found {
+            match r {
+                crate::instant::Record::Match(l) => hits.push(l),
+                crate::instant::Record::Note { path, text, .. } => notes.push((path.to_string(), text)),
+                _ => {}
+            }
+        }
         let mut occurrences = Vec::new();
         // Engine A stops at `max_results` lines; one long line can hold more uses than that
         let total: usize = hits.iter().map(|h| h.spans.len()).sum();
@@ -80,7 +88,7 @@ impl<'a> Names<'a> {
                 }
             }
         }
-        Ok(Resolved { definitions, occurrences, truncated, first_overload })
+        Ok(Resolved { definitions, occurrences, truncated, notes, first_overload })
     }
 
     /// What the resolver makes of the occurrences of `name` in lines `start..=end` of `path`.

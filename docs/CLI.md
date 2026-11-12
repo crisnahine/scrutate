@@ -406,7 +406,9 @@ behaviour without resolution: definitions, callers and every occurrence grouped 
 symbol (it never misses anything, and works without an index). Both search the files the MCP
 `grep_code` tool searches: hidden files included, the directories the index skips left out. With `--json`, each definition has
 a `references` list (`path`, `line`, `column` in bytes, `text`, `via`) and the document has an
-`unresolved` list with a `reason` (left out with `--def`). Resolution reads the index's
+`unresolved` list with a `reason` (left out with `--def`). A file whose search a NUL byte
+stopped after a match is named in a `note:` line at the end (`notes` in JSON, each with `path`
+and `note`): a use after that byte is not listed. Resolution reads the index's
 definitions and parses the files that hold occurrences again, so it needs no index change. The
 MCP `references` tool gives the same answer (`textual` and `def` are arguments there).
 

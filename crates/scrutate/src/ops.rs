@@ -246,7 +246,11 @@ pub fn output_schema(tool: &str) -> Value {
         "dependencies" => list(obj(json!({"line": ty("integer"), "module": ty("string"), "resolved": {"type": ["string", "null"]}}), &["line", "module"])),
         "dependents" => list(obj(json!({"path": ty("string"), "line": ty("integer"), "module": ty("string")}), &["path", "line", "module"])),
         "references" => {
-            obj(json!({"name": ty("string"), "definitions": list(span("qualname")), "truncated": ty("boolean")}), &["name", "definitions", "truncated"])
+            let note = obj(json!({"path": ty("string"), "note": ty("string")}), &["path", "note"]);
+            obj(
+                json!({"name": ty("string"), "definitions": list(span("qualname")), "truncated": ty("boolean"), "notes": list(note)}),
+                &["name", "definitions", "truncated"],
+            )
         }
         "similar_code" => {
             let mut hit = span("qualname");
@@ -855,7 +859,7 @@ impl Answer {
             Answer::Refs { refs, .. } => refs.is_empty(),
             Answer::Resolved { refs, only, .. } => match only {
                 Some(_) => false,
-                None => refs.definitions.is_empty() && refs.occurrences.is_empty(),
+                None => refs.definitions.is_empty() && refs.occurrences.is_empty() && refs.notes.is_empty(),
             },
             Answer::Similar(v) => v.is_empty(),
             Answer::Dupes(v, _) => v.is_empty(),
@@ -1134,6 +1138,9 @@ impl Answer {
                         .unresolved()
                         .map(|o| line_of(o, json!({"path": o.path, "line": o.line, "column": o.column, "reason": o.resolution.err()})))
                         .collect();
+                }
+                if !refs.notes.is_empty() {
+                    v["notes"] = refs.notes.iter().map(|(path, note)| json!({"path": path, "note": note})).collect();
                 }
                 v
             }

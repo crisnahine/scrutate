@@ -3863,6 +3863,9 @@ pub struct Resolved {
     pub definitions: Vec<ChunkRow>,
     pub occurrences: Vec<Occurrence>,
     pub truncated: bool,
+    /// files whose search stopped at a NUL byte, each with what the search said: a use after
+    /// that byte is not among the occurrences
+    pub notes: Vec<(String, String)>,
     /// by overloaded definition: the first of its overloads, which stands for them all where the
     /// arguments of a call do not pick one
     pub(crate) first_overload: HashMap<i64, i64>,
@@ -3915,6 +3918,9 @@ pub fn resolved_text(r: &Resolved, only: Option<i64>) -> String {
                 out.push_str(&format!("    {}:{}:{}: {}  ({})\n", shown(&o.path), o.line, o.column, o.shown_line().0, o.resolution.err().unwrap_or("")));
             }
         }
+    }
+    for (path, note) in &r.notes {
+        out.push_str(&format!("note: {}: {note}\n", shown(path)));
     }
     out
 }

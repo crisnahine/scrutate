@@ -175,7 +175,8 @@ First release.
   each file is searched only to its first match, so the count was of files.
 - The MCP `grep_code` tool shows a file whose search a NUL byte stopped after a match with a
   `note:` line at the end of its last group; it printed the note as line 18446744073709551615.
-  `grep --symbols` shows that note the same way; it dropped it.
+  `grep --symbols` shows that note the same way; it dropped it. `refs` and the MCP
+  `references` tool end with a `note:` line for such a file (`notes` in JSON); they said nothing.
 - A cancelled `grep_code` or `references` call stops its Engine A search between files; the
   search ran on to the end and its answer was dropped.
 - `references` and `refs` search the files `grep_code` searches: hidden files included, the
