@@ -260,15 +260,14 @@ pub fn location(target: &str) -> Option<(&str, i64)> {
     Some((path.trim_start_matches("./"), line))
 }
 
-/// The chunk a target refers to: a location, a qualified name, or a plain name (first definition).
+/// The chunk a target refers to: a location (a window's too, which has vectors like any chunk), a
+/// qualified name, or a plain name (first definition).
 pub fn locate(s: &Searcher, target: &str) -> Result<Option<ChunkRow>> {
     if let Some((path, line)) = location(target) {
-        // a window is a stretch of lines, not a definition
-        let at = match s.ix.chunk_at(path, line)? {
-            Some(c) => Some(c),
-            None => s.ix.chunk_at(&crate::fmt::unshown(path), line)?,
+        return match s.ix.chunk_at(path, line)? {
+            Some(c) => Ok(Some(c)),
+            None => s.ix.chunk_at(&crate::fmt::unshown(path), line),
         };
-        return Ok(at.filter(|c| c.kind != "window"));
     }
     let hits = s.find_symbol(target, 1)?;
     match hits.first() {

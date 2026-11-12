@@ -1170,6 +1170,30 @@ fn refs_callers_and_callees_take_the_names_symbol_takes() {
 }
 
 #[test]
+fn a_window_location_works_where_lines_are_enough_and_is_named_where_a_symbol_is_needed() {
+    let app = |name: &str, port: u32| {
+        format!(
+            "const express = require(\"express\");\nconst {name} = express();\n\nfunction handler(req, res) {{\n  res.send(\"ok\");\n}}\n\n\
+             {name}.get(\"/\", handler);\n{name}.listen({port}, () => {{\n  console.log(\"listening on the port\");\n}});\n\nmodule.exports = {name};\n"
+        )
+    };
+    let (a, b) = (app("app", 3000), app("api", 4000));
+    let r = Repo::new("window_loc", &[("app.js", a.as_str()), ("api.js", b.as_str())]);
+    let (_, found) = r.run(&["search", "-k", "1", "listening on the port"]);
+    let loc = found.split_whitespace().next().unwrap().to_string();
+    assert!(found.contains("[window]"), "{found}");
+    // the window has vectors: the other file's window is like it
+    let (code, out) = r.run(&["similar", &loc]);
+    assert_eq!(code, 0, "{out}");
+    // a tool that needs a symbol says what the location is
+    for cmd in ["symbol", "callers"] {
+        let (code, out) = r.run(&[cmd, &loc]);
+        assert_ne!(code, 0, "{cmd}: {out}");
+        assert!(out.contains("outside every definition"), "{cmd}: {out}");
+    }
+}
+
+#[test]
 fn similar_on_a_constant_says_constants_are_not_compared() {
     let r = Repo::new("similar_const", &[("k.py", "MAX_SIZE = 10\n\n\ndef grow(x):\n    return x + MAX_SIZE * 2 + len(str(x))\n")]);
     let (code, out) = r.run(&["similar", "MAX_SIZE"]);

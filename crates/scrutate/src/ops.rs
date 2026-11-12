@@ -622,8 +622,10 @@ fn targets(s: &Searcher, name: &str, limit: usize, windows: bool) -> Result<Vec<
         let sql = format!("SELECT {} FROM chunks WHERE path=?1 AND kind='window' AND start<=?2 AND end>=?2 ORDER BY start LIMIT 1", crate::index::CHUNK_COLS);
         at = rusqlite::OptionalExtension::optional(s.ix.db.query_row(&sql, rusqlite::params![path, line], ChunkRow::from_row))?;
     }
-    match at.filter(|c| windows || c.kind != "window") {
-        Some(c) => Ok(vec![Hit::from_row(&c, true)]),
+    match at {
+        Some(c) if windows || c.kind != "window" => Ok(vec![Hit::from_row(&c, true)]),
+        // a search result can be a window: say what the location is, and which commands take it
+        Some(_) => bail!("no symbol at {}: these lines are outside every definition (callees and similar take such a location)", echo(name)),
         None => bail!("no symbol at {}", echo(name)),
     }
 }

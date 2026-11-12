@@ -36,7 +36,9 @@ or one whole definition. \
 Every tool only reads, except reindex, which refreshes the index (a cache under .scrutate/). \
 Results are capped; a tool says when it stopped early and which argument raises the limit. \
 Each result begins with its location (path:start-end). Pass that location wherever a tool takes a symbol name \
-to mean that one definition: read_code symbol, find_symbol, callers, callees, similar_code, references def.";
+to mean that one definition: read_code symbol, find_symbol, callers, callees, similar_code, references def. \
+A result of kind window is a stretch of lines outside every definition: callees and similar_code take its location, \
+and read_code reads it by path and lines; find_symbol, callers and references def answer that no symbol is there.";
 
 /// The tools, each with the hints clients use to decide whether a call needs approval and, with
 /// `structured`, the schema of the JSON its results carry.

@@ -186,8 +186,11 @@ line that holds its text. Every line no chunk keeps (past those caps, outside th
 only in a constant) is in overlapping 50-line windows named after the definition that holds it,
 the file's stem outside them, so ranked search reads every line of an indexed file; a line of
 only brackets or a closing word (`end`, `fi`, `done`, `esac`) is in a window only next to other
-lines. A window is no symbol: `symbol`, `callers`, `callees`, `refs --def`, `outline` and the
-language server never return one. In Rust, PHP, JavaScript, TypeScript, Java, Kotlin, Scala,
+lines. A window is no symbol: `symbol`, `refs --def`, `outline` and the language server never
+return one, and a window's location given to `symbol`, `callers` or `refs --def` is answered
+with "these lines are outside every definition". `callers` does list a window, or the module
+chunk, as the caller of a call written outside every definition, and `callees` and `similar`
+take a window's location. In Rust, PHP, JavaScript, TypeScript, Java, Kotlin, Scala,
 Groovy, Dart, Swift, Elixir and Gleam a definition starts at the attribute lines right above it
 (`#[...]` or `@...`), as a Python definition starts at its decorators. On the Linux kernel tree
 the windows add 8.9% chunks and 11.9% to the code index (the text index is not touched). The parser hands over byte ranges; the index cuts each chunk's text
