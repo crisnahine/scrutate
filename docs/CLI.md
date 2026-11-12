@@ -270,7 +270,10 @@ refers to. For Python, JavaScript, TypeScript, Rust and Go the rules are, in ord
    `this.N`, `cls.N` and `Self::N` look in the enclosing class or impl. A receiver that is a
    local variable or a parameter (`x.N`) is looked up in the type its declaration states: an
    annotation (`x: T`, `x T`, `x: &T`) or what it is built from (`T(...)`, `new T(...)`,
-   `T::new(...)`, `T { .. }`, `&T{}`), the nearest declaration before the use. A variable that
+   `T::new(...)`, `T { .. }`, `&T{}`), the nearest declaration before the use that is in scope
+   there: not one in a block that has ended, a closure or lambda, an `if let` or `match` arm, or
+   the declaration's own value (a Python function is one scope, and a JavaScript `var` belongs
+   to its whole function). A variable that
    gets its value from a function call takes the function's declared return type (through `?`
    and holders such as `Box`, `Rc` and `Arc` in Rust, `await` in TypeScript); `self.x.N` takes
    the declared type of the field `x`, and a module-level or static variable its declared or
@@ -307,7 +310,9 @@ parameters, lambda parameters and the variables of `for`, `catch`, an `instanceo
 try-with-resources. A plain name is also looked up in the enclosing class and the classes and
 interfaces it extends, through nested, inner and anonymous classes, enums with methods, records
 and default methods. A receiver goes through its declared type, a chain through declared return
-types, and a receiver typed by an interface resolves to the interface's method. The number of
+types, a class in front of a call (`Util.foo()`, also `p.Util.foo()` with `p` a package of the
+repository) is a use of that class, a local, a parameter or a field there is that variable,
+and a receiver typed by an interface resolves to the interface's method. The number of
 arguments picks one overload; when it does not, the call, like a method reference (`Sq::grow`),
 stands for every overload of the name. Undecided: an untyped lambda parameter, an element of a
 generic type (`list.get(0).area()`), a value of a type parameter, and a class whose base type is
@@ -323,7 +328,8 @@ when it runs the script; such a sibling wins over a standard library module of t
 while `import logging` in a package that has its own `logging.py` stays the standard library);
 JavaScript relative paths with the usual extensions and
 `index` files (a `.js` import finds the `.ts` source), and the names a project gives its own
-folders in `tsconfig.json` or `jsconfig.json` (`paths`, `baseUrl`), then a workspace package by
+folders in `tsconfig.json` or `jsconfig.json` (`paths`, `baseUrl`, also through a relative
+`extends`, a string or a list whose later entries win), then a workspace package by
 its `package.json` name: through `exports` (the conditions `types`, `import`, `default`, `require`
 and `node` in that order, then any other by name), `module`, `main` or an `index` file; a target
 in a build directory the repository does not hold stands for the same path under `src/`
@@ -331,7 +337,10 @@ in a build directory the repository does not hold stands for the same path under
 path in the package; of two packages with one name, the one nearest the importing file. A
 declaration file (`.d.ts`) stands in only when no implementation has the name (`./m` with `m.js`
 and `m.d.ts` side by side is `m.js`). Rust module files (`a.rs`, `a/mod.rs`) from
-the crate root, workspace crates by their `Cargo.toml` name; Go import paths through the module
+the crate root, workspace crates by their `Cargo.toml` name; a file directly in a package's
+`src/bin/`, `tests/`, `examples/` or `benches/`, and `build.rs`, is a crate root of its own
+(`mod common;` in `tests/it.rs` is `tests/common/mod.rs`), a file beside it is its module only
+when it declares it, and `path` entries of `Cargo.toml` are not read; Go import paths through the module
 path in `go.mod` (by the directory they end with when there is no `go.mod`). `tsconfig.json`,
 `jsconfig.json`, `package.json`, `Cargo.toml` and `go.mod` are read only when they are regular
 files inside the repository, of at most 1 MB. Re-exports (`from .x import N` in `__init__.py`, `export {N} from`,

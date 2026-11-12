@@ -221,6 +221,17 @@ First release.
     and holds a NUL byte.
   - `refs` through a typed variable takes linear time: 5,000 uses went from 23 to 32 s to
     under 0.25 s.
+  - A Java class in front of a call (`Util.foo()`, `p.Util.foo()` with a one-part package of
+    the repository) is a use of the class, and a variable there is a local or a field: every
+    static call on a class was "not found".
+  - Rust binaries, tests, examples, benches and `build.rs` are crate roots of their own, so
+    `mod common;` in `tests/it.rs` finds `tests/common/mod.rs` and `crate::` in
+    `src/bin/tool.rs` starts at that file.
+  - A variable's type comes from the declaration in scope at the use, no longer from one in a
+    block that has ended or from a closure's parameter.
+  - A Java diamond of interfaces no longer takes exponential time (over 100 s to 0.04 s at 57
+    interfaces).
+  - A tsconfig `extends` written as a list is read.
   - `refs` counts every use on a line, where it stopped at 64 without saying so;
     `--max-results N` (MCP `max_results`) counts uses, not lines. `grep` with color or `--json`
     lists every match on a line.
