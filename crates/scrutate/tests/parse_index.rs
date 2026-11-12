@@ -576,6 +576,47 @@ fn a_definitions_documentation_is_in_no_window() {
     assert_eq!(windows("a.erl", "-module(a).\n\ng() -> 1.\n\n%% Adds one.\n-spec f(integer()) -> integer().\nf(X) -> X + 1.\n"), [("a".into(), 6, 6)]);
 }
 
+#[test]
+fn without_a_grammar_the_comment_above_a_definition_is_its_documentation() {
+    // (file, source, where `first` ends, a word of the documentation of `second`); the keyword tier
+    // reads these unless the build has their grammar, which must agree
+    let cases: &[(&str, &str, i64, &str)] = &[
+        ("a.ml", "let first x = x + 1\n\n(** Computes the total. *)\nlet second y = first y\n", 1, "Computes"),
+        ("a.ml", "let first x = x + 1\n\n(*\n   Computes the total.\n*)\nlet second y = first y\n", 1, "Computes"),
+        (
+            "a.f90",
+            "subroutine first()\nend subroutine first\n\n! Computes the total.\nsubroutine second()\n  call first()\nend subroutine second\n",
+            2,
+            "Computes",
+        ),
+        ("a.f", "      subroutine first()\n      end\nC     Computes the total.\n      subroutine second()\n      end\n", 2, "Computes"),
+        ("a.purs", "data First = First\n\n{- | Computes the total.\n   Over two lines. -}\ndata Second = Second\n", 1, "Computes"),
+        ("a.sql", "create table first (x int);\n\n/* Computes the total.\n   Over two lines. */\ncreate table second (y int);\n", 1, "Computes"),
+    ];
+    let mut wrong = Vec::new();
+    for &(path, src, end, word) in cases {
+        // the Fortran grammar reads free form only: it finds no subroutine in fixed form
+        if path == "a.f" && cfg!(feature = "extra-langs") {
+            continue;
+        }
+        let chunks = parse_source(path, src);
+        let first = chunks.iter().find(|c| c.name.eq_ignore_ascii_case("first")).map(|c| c.end);
+        let second = chunks.iter().find(|c| c.name.eq_ignore_ascii_case("second")).map(|c| c.doc.as_str());
+        if first != Some(end) || !second.is_some_and(|d| d.contains(word)) {
+            wrong.push(format!("{path}: first ends at {first:?}, second's doc {second:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    // a mark of another language starts code here: these lines stay in the chunk above
+    for (path, src) in [
+        ("a.nim", "proc first() =\n  discard\n\"text\".echo\nproc second() =\n  discard\n"),
+        ("a.nim", "proc first() =\n  discard\n(*p).x = 1\nproc second() =\n  discard\n"),
+        ("a.cr", "def first\n  1\n!done\ndef second\n  2\nend\n"),
+    ] {
+        assert_eq!(parse_source(path, src).iter().find(|c| c.name == "first").map(|c| c.end), Some(3), "{path}: {src}");
+    }
+}
+
 /// (kind, start, end, calls) of the module chunk and the windows that hold calls.
 fn outside_calls(path: &str, src: &str) -> Vec<(String, i64, i64, Vec<String>)> {
     parse_source(path, src)

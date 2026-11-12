@@ -267,6 +267,19 @@ fn search_finds_a_documented_function_once_when_its_comment_lines_carry_no_mark(
 }
 
 #[test]
+fn search_finds_the_definition_below_a_comment_in_a_language_without_a_grammar() {
+    let r = Repo::new("heur_doc");
+    r.write("a.ml", b"let first x = x + 1\n\n(** Computes the zqvortex total. *)\nlet second y = first y\n");
+    r.write("a.f90", b"subroutine first()\nend subroutine first\n\n! Computes the zqvortex sum.\nsubroutine second()\n  call first()\nend subroutine second\n");
+    let (code, out, err) = r.run(&["search", "zqvortex", "-k", "5", "--json"]);
+    assert_eq!(code, 0, "{err}");
+    let hits: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
+    let mut got: Vec<_> = hits.iter().map(|h| (h["path"].as_str().unwrap_or(""), h["name"].as_str().unwrap_or(""))).collect();
+    got.sort();
+    assert_eq!(got, [("a.f90", "second"), ("a.ml", "second")], "{out}");
+}
+
+#[test]
 fn search_finds_a_line_past_what_a_long_function_keeps_as_one_hit_naming_it() {
     let r = Repo::new("long_fn");
     let mut src = String::from("def very_long(x):\n");

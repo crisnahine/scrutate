@@ -2048,9 +2048,70 @@ fn is_comment_line(line: &str) -> bool {
         || t.starts_with("///")
 }
 
+/// Comment marks of the keyword tier beyond the shared ones, by file extension: `!`, `"`, `(*`
+/// and `{` start code in other languages.
+struct Marks {
+    lines: &'static [&'static str],
+    /// (opener, closer) of block comments whose inner lines may carry no mark
+    blocks: &'static [(&'static str, &'static str)],
+    /// fixed-form Fortran: `c` or `C` in the first column
+    fixed: bool,
+}
+
+fn heuristic_marks(path: &str) -> Marks {
+    let ext = basename(path).rsplit_once('.').map_or("", |(_, e)| e);
+    let (lines, blocks): (&'static [&'static str], &'static [(&'static str, &'static str)]) = match ext {
+        "ml" | "mli" | "mll" | "mly" | "sml" | "sig" | "fs" | "fsi" | "fsx" => (&["(*"], &[("(*", "*)")]),
+        "tla" => (&["(*", "\\*"], &[("(*", "*)")]),
+        "pas" | "dpr" | "lpr" | "pp" => (&["(*", "{"], &[("(*", "*)"), ("{", "}")]),
+        "f90" | "f95" | "f03" | "f08" | "F90" | "f" | "for" | "F" | "f77" | "ftn" => (&["!"], &[]),
+        "vim" => (&["\""], &[]),
+        "hs" | "lhs" | "elm" | "purs" | "idr" | "agda" | "dhall" => (&["{-"], &[("{-", "-}")]),
+        "ps1" | "psm1" | "psd1" => (&["<#"], &[("<#", "#>")]),
+        "lisp" | "cl" | "el" | "scm" | "ss" | "rkt" | "clj" => (&[], &[("#|", "|#")]),
+        "nim" | "nims" => (&[], &[("#[", "]#")]),
+        "d" | "di" => (&[], &[("/+", "+/")]),
+        "m" => (&[], &[("%{", "%}")]),
+        _ => (&[], &[]),
+    };
+    Marks { lines, blocks, fixed: matches!(ext, "f" | "for" | "F" | "f77" | "ftn") }
+}
+
+fn is_marked(line: &str, m: &Marks) -> bool {
+    let t = line.trim_start();
+    let b = line.as_bytes();
+    is_comment_line(line)
+        || m.lines.iter().any(|k| t.starts_with(k))
+        || m.fixed && matches!(b.first(), Some(b'c' | b'C')) && !b.get(1).is_some_and(|c| c.is_ascii_alphanumeric())
+}
+
+/// A block comment searched upward for its opener spans at most this many lines.
+const MAX_BLOCK_LINES: usize = 200;
+
+/// The first line of the comment block that ends right above line `at` (0-based, exclusive),
+/// no higher than `floor`; `at` when there is none.
+fn comment_top(lines: &[&str], floor: usize, mut at: usize, m: &Marks) -> usize {
+    while at > floor {
+        // the last line of a block comment: up to the line that opens it
+        let t = lines[at - 1].trim();
+        let block = [("/*", "*/")].iter().chain(m.blocks).find(|(o, c)| t.ends_with(c) && !t.starts_with(o));
+        let opener = block.and_then(|&(open, close)| {
+            let from = at.saturating_sub(MAX_BLOCK_LINES).max(floor);
+            (from..at - 1).rev().take_while(|&j| !lines[j].contains(close)).find(|&j| lines[j].trim_start().starts_with(open))
+        });
+        match opener {
+            Some(j) => at = j,
+            None if is_marked(lines[at - 1], m) => at -= 1,
+            None => break,
+        }
+    }
+    at
+}
+
 /// Keyword-introduced definitions for languages without a grammar (or whose grammar found nothing).
-pub fn heuristic_chunks(source: &str) -> Vec<Chunk> {
+pub fn heuristic_chunks(path: &str, source: &str) -> Vec<Chunk> {
     let lines = split_lines(source);
+    let marks = heuristic_marks(path);
     let mut defs: Vec<(usize, &'static str, String)> = Vec::new();
     for (i, line) in lines.iter().enumerate() {
         if let Some((kind, name)) = heuristic_def(line) {
@@ -2074,17 +2135,20 @@ pub fn heuristic_chunks(source: &str) -> Vec<Chunk> {
         let cap = if CONTAINERS.contains(kind) { MAX_CONTAINER_LINES } else { MAX_CHUNK_LINES };
         // trailing blank/comment lines belong to the next definition
         let mut e = end;
-        while e > start + 1 && (lines[e - 1].trim().is_empty() || is_comment_line(lines[e - 1])) {
-            e -= 1;
+        loop {
+            while e > start + 1 && lines[e - 1].trim().is_empty() {
+                e -= 1;
+            }
+            match comment_top(&lines, start + 1, e, &marks) {
+                top if top < e => e = top,
+                _ => break,
+            }
         }
         let seg = &lines[*start..e.max(start + 1)];
         let text = head(&seg.join("\n"), cap);
         let body = head(&seg[1..].join("\n"), cap);
         // doc: comment lines directly above
-        let mut d = *start;
-        while d > 0 && is_comment_line(lines[d - 1]) {
-            d -= 1;
-        }
+        let d = comment_top(&lines, 0, *start, &marks);
         let doc = if d < *start { clean_comment(&lines[d..*start].join("\n")) } else { String::new() };
         let doc_lines = (!doc.is_empty()).then_some((d as i64 + 1, *start as i64));
         out.push(Chunk {
@@ -2160,7 +2224,7 @@ pub fn parse_file_with(path: &str, source: &str, prev: Option<PrevParse>) -> (Pa
     // prose has keyword-looking lines ("module will be called foo" in Kconfig help text)
     let base = basename(path);
     let prose = base.starts_with("Kconfig") || base.to_ascii_lowercase().ends_with(".txt");
-    let chunks = if prose { Vec::new() } else { heuristic_chunks(source) };
+    let chunks = if prose { Vec::new() } else { heuristic_chunks(path, source) };
     (Parsed { chunks: finish(path, source, chunks, String::new(), Vec::new()), imports: Vec::new() }, None)
 }
 
