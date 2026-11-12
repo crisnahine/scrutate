@@ -63,7 +63,10 @@ First release.
   two more files: 15.3 ms to 11.0 ms (ugrep 16.5 ms).
 - `-P` / `--pcre2`: PCRE2 syntax (look-around, backreferences), stopped by PCRE2's match limit
   on exponential patterns, with a warning naming the file.
-- `-z` / `--search-zip`: zip and tar members (`archive.zip{member}`) and compressed files.
+- `-z` / `--search-zip`: zip and tar members (`archive.zip{member}`) and compressed files. A
+  compressed file that expands to one long line stops at 64 MiB with a warning and no longer
+  fills memory, control characters in a member name are shown as escapes so a name cannot forge
+  an output line, and an archive named alone names the member of each line.
 - `--fuzzy` patterns up to 4096 characters (64-bit blocks beyond 128); an edit is one character
   (`naïve` is one edit from `naive`), and `-i` and `-S` fold case as for a regex. `grep --index
   --fuzzy` agrees with the walk. `--fuzzy-regex[=N]`: a regex within N edits (bit-parallel
@@ -126,7 +129,8 @@ First release.
 - A file named on the command line that holds a NUL byte is searched as ripgrep does: counts and
   lists include it, and line output prints `binary file matches (found "\0" byte around offset
   N)` (a `binary` record with `--json`). A file the walk finds with a NUL byte is left out of `-c`
-  and `-l`, so `-v -l`, `-v` and `-v -c` agree.
+  and `-l`, so `-v -l`, `-v` and `-v -c` agree; when its search stops at a NUL byte after a
+  match, also past the first 64 KB, a last line says so, as ripgrep's does.
 - `-c` and `-l` give one record per path given, as ripgrep does, also for a file two paths reach.
 - `--sort` with `--max-results N` prints the first N matches in path order, the same on every run.
 - `--sort` prints in the order of `rg --sort path`: the paths as given, and under each its files

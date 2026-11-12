@@ -76,7 +76,7 @@
   (else `rootUri`), so it uses the index at the top.
 - **Shell completion**: `scrutate completions bash|zsh|fish|powershell|elvish`.
 - **Cancellation**: Ctrl-C stops a search between files and exits 130; a closed pipe
-  (`| head`) stops it silently.
+  (`| head`) stops it silently, with `-c`, `-l`, `--sort`, `--type-list` and `languages` too.
 
 ## Engine A: `grep` (alias `g`)
 
@@ -101,7 +101,12 @@ character positions (a bounded repeat counts each copy), and a pattern within N 
 empty string is refused. `-z` also searches inside zip and tar archives (members are shown as
 `archive.zip{dir/file}`) and compressed files: gzip in process; bzip2, xz, zstd, lz4, brotli and
 `.Z` through the system's tools, as ripgrep does. An archive or compressed file stops at 8 GiB
-expanded or a million members. Archives inside archives are not opened, and `--index` does not
+expanded or a million members, and a member or compressed file stops with a warning at a line
+longer than 64 MiB (not with `-U`, which holds the whole member). An archive named alone is
+searched as a directory of its members, so each line names its member, also when it is the only
+one; a compressed file named alone prints no name. Control characters in a member name are shown
+as escapes (`\n`, `\x1b`, a backslash as two), so a name cannot forge an output line; `--json`
+keeps the name as it is. Archives inside archives are not opened, and `--index` does not
 cover archive members. `-e PATTERN` (repeatable) gives several
 patterns; a line matching any of them matches, and the first positional argument is then a path.
 Options mirror grep/ripgrep where the meaning is identical: `-i`, `-S` (smart case), `-w`, `-U`
@@ -145,7 +150,9 @@ file named on the command line that holds a NUL byte is searched as ripgrep does
 ends a line, counts and lists include the file, and line output prints one line in place of its
 lines, `binary file matches (found "\0" byte around offset N)` (with `--json`, a record
 `{"type": "binary", "path", "text"}`). A file the walk finds with a NUL byte is left out of `-c`
-and `-l`, so `-v -l`, `-v` and `-v -c` agree. `-c` and `-l` give one record per path given: a
+and `-l`, so `-v -l`, `-v` and `-v -c` agree. When the search of such a file stops at a NUL byte
+after a match, a last line says so, as ripgrep does: `path: WARNING: stopped searching binary
+file after match (found "\0" byte around offset N)` (a `binary` record with `--json`). `-c` and `-l` give one record per path given: a
 file that two paths reach is counted or listed twice. Smart case folds only a pattern that has a literal and no uppercase letter in
 it, so `-S '\p{Ll}'` stays case-sensitive and matches lowercase letters only. Of `-i` and `-S`
 the later one wins, and `SCRUTATE_GREP_SMART_CASE` applies only when neither is given. With
