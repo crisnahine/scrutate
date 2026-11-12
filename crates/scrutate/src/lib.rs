@@ -122,13 +122,15 @@ impl Repo {
 
     /// An index a failed rebuild left closed is opened and built again before anything reads it.
     /// An index a newer scrutate took over since it was opened, in a form this one cannot read,
-    /// is an error for every operation until the process is restarted with that scrutate.
+    /// is an error for every operation until the process is restarted with that scrutate, or
+    /// `index --force` builds a new database in its place.
     fn reopened(&mut self) -> Result<()> {
-        match &self.searcher {
+        match &mut self.searcher {
             None => {
                 self.reopen(false)?;
             }
             Some(s) => {
+                s.ix.reopen_if_replaced()?;
                 if let Some(n) = s.ix.newer().filter(|n| !n.readable) {
                     return Err(n.into());
                 }

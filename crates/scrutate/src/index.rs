@@ -620,6 +620,22 @@ pub struct Index {
     /// last syntax tree of recently indexed files, with a use counter for eviction
     trees: HashMap<String, (u64, PrevParse)>,
     tree_tick: u64,
+    /// which file `db` has open, to notice another process deleting it and building a new one
+    db_id: Option<(u64, u64)>,
+}
+
+/// Device and inode of a file. None on Windows, where a file SQLite has open cannot be deleted.
+fn file_id(path: &Path) -> Option<(u64, u64)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata(path).ok().map(|m| (m.dev(), m.ino()))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        None
+    }
 }
 
 impl Index {
@@ -686,6 +702,7 @@ impl Index {
             trees: HashMap::new(),
             tree_tick: 0,
             cancel: Arc::default(),
+            db_id: file_id(&db_path),
         };
         if let Triage::Rebuild(why) = triage {
             // an index of another schema or model: drop its contents *inside* the database, so
@@ -877,8 +894,25 @@ impl Index {
         }
     }
 
+    /// Open the index again when another process deleted the database this one has open and
+    /// built a new one in its place (a rebuild after damage, `index --force`): writing on would go
+    /// into the deleted file, and its segments into the new one's directory.
+    pub fn reopen_if_replaced(&mut self) -> Result<()> {
+        let now = file_id(&self.dir.join("index.db"));
+        if self.db_id.is_none() || now.is_none() || now == self.db_id {
+            return Ok(());
+        }
+        eprintln!("[scrutate] index database replaced by another process; opening the new one");
+        let mut fresh = Index::open(&self.root, self.model.clone())?;
+        fresh.progress = self.progress;
+        fresh.cancel = Arc::clone(&self.cancel);
+        *self = fresh;
+        Ok(())
+    }
+
     /// The segment store, with statistics for the chunks that are alive right now.
     pub fn lex(&mut self) -> Result<&mut LexStore> {
+        self.reopen_if_replaced()?;
         let ver = self.meta("data_version").unwrap_or_else(|| "0".into());
         let names = self.segments();
         if self.lex.as_ref().map(|l| l.names != names).unwrap_or(true) {
@@ -981,6 +1015,7 @@ impl Index {
     /// `update`; with `wait` false a write lock held by another process is an error at once.
     /// `only`: look at these files alone, instead of every file of the tree.
     fn update_with(&mut self, force: bool, wait: bool, only: Option<&[String]>) -> Result<UpdateStats> {
+        self.reopen_if_replaced()?;
         if !self.dir.join("index.db").is_file() {
             return Err(Damaged("index database deleted").into());
         }

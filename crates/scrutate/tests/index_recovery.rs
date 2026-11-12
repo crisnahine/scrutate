@@ -265,6 +265,52 @@ fn index_dir_deleted_under_an_open_repo_is_rebuilt_whole() {
     }
 }
 
+fn files_of(root: &Path) -> Vec<String> {
+    let db = rusqlite::Connection::open(root.join(".scrutate/index.db")).unwrap();
+    let mut q = db.prepare("SELECT path FROM files ORDER BY path").unwrap();
+    q.query_map([], |r| r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap()
+}
+
+// a database file another process has open cannot be deleted on Windows
+#[cfg(unix)]
+#[test]
+fn a_database_another_process_rebuilt_is_reopened_and_not_written_after_it_was_deleted() {
+    let t = Tmp::new("replaced");
+    fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+    let mut long = scrutate::Repo::open(&t.0).unwrap();
+    long.update(false).unwrap();
+    let mut reader = scrutate::Repo::open(&t.0).unwrap();
+    assert!(text(&mut reader, "search_code", serde_json::json!({"query": "alpha"})).contains("a.py"));
+    // what another process's rebuild after damage does
+    scrutate::index::wipe_index(&t.0);
+    scrutate::Repo::open(&t.0).unwrap().update(true).unwrap();
+    fs::write(t.0.join("b.py"), "def beta():\n    return 2\n").unwrap();
+    assert!(text(&mut long, "find_symbol", serde_json::json!({"name": "beta"})).contains("b.py"));
+    assert_eq!(files_of(&t.0), ["a.py", "b.py"], "the update went into the database on disk");
+    assert!(long.ix.segments().iter().all(|s| seg_dir(&t.0).join(s).is_dir()), "{:?}", long.ix.segments());
+    // a reader whose segments were deleted reads the new ones, without a rebuild
+    let ver = meta_of(&t.0, "data_version");
+    assert!(text(&mut reader, "search_code", serde_json::json!({"query": "beta"})).contains("b.py"));
+    assert!(reader.update(false).is_ok());
+    assert_eq!(meta_of(&t.0, "data_version"), ver, "nothing was rebuilt");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_process_on_an_index_rebuilt_by_force_answers_from_the_new_one() {
+    let t = indexed_tree("forced_under");
+    let mut repo = scrutate::Repo::open(&t.0).unwrap();
+    let op = |name: &str| scrutate::ops::Op::Symbol { name: name.into(), limit: 5 };
+    assert!(repo.run(&op("alpha"), 0.0).is_ok());
+    set_meta_of(&t.0, "schema_version", &(scrutate::index::SCHEMA_VERSION + 1).to_string());
+    assert!(repo.run(&op("alpha"), 0.0).err().is_some_and(|e| e.is::<scrutate::index::Newer>()));
+    assert_eq!(run(&t.0, &["index", "--force", "--no-text"]).0, 0);
+    fs::write(t.0.join("b.py"), "def beta():\n    return 2\n").unwrap();
+    let r = repo.run(&op("beta"), 0.0).map(|a| a.text_within(100_000, 0));
+    assert!(r.as_ref().is_ok_and(|s| s.contains("b.py")), "{r:?}");
+    assert_eq!(files_of(&t.0), ["a.py", "b.py"]);
+}
+
 #[test]
 fn a_held_write_lock_does_not_block_readers() {
     let t = Tmp::new("locked");
