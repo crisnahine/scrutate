@@ -106,7 +106,18 @@ capabilities those crates do not provide rather than re-implementing what they a
   So the global git excludes file is read the first time a walk meets a repository (reading git's
   configuration and compiling the file cost 0.5 M in every walk outside one), the walk takes the
   current directory the command line already has for `.`, a search without the index does not
-  resolve the repository root, and a tree of one file starts no thread: 19.2 M. Measured and left alone: the
+  resolve the repository root, and a tree of one file starts no thread: 19.2 M. Then the pages:
+  that search took 459 page reclaims against 307 for GNU grep and 291 for a Rust hello-world,
+  most of them pages of the executable's own code. `scrutate grep` reads arguments of the plain
+  shapes by hand and gives anything else to clap (a property test holds the two to the same
+  answer), `-F` with one literal is a substring search that builds no regex engine, 14 more
+  system functions bind on first use, and on macOS the linker drops the unused libiconv and
+  puts the functions a small search runs side by side from `crates/scrutate/startup.order`
+  (`tools/order_file.py` writes it from an instrumented run and checks how many of its names a
+  release link still has; a name the link no longer has is passed over). That is 17.2 M
+  instructions and 354 page reclaims, 3.1 MB of peak memory where it was 4.8 MB, and the CPU
+  time of GNU grep. The order file is for macOS on Apple silicon; the other targets link as
+  before. Measured and left alone: the
   binary's 37,000 pointer fix-ups (applied lazily by the kernel, no cost), its code-signature page
   size (no difference), and its 85 MB size (0.05 to 0.2 ms).
 - **What bounds a search on macOS**: opening a file. On APFS `open` costs 8 to 11 µs for a file

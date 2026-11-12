@@ -39,6 +39,10 @@ First release.
   process spawning, the unwinder) are bound on their first call instead of at launch; dyld spends
   about 3.3 µs on each imported symbol. With the grep-only argument parser (clap otherwise builds
   all 24 subcommands), start-up is 1.9 ms, against 1.5 ms for a Rust hello-world.
+- Faster start: a one-file `scrutate grep` uses 2 M fewer instructions, 105 fewer page reclaims
+  and 1.7 MB less memory. Plain argument shapes skip clap, `-F` with one literal skips the regex
+  engine, and the macOS executable on Apple silicon is linked with an order file
+  (`crates/scrutate/startup.order`, written and checked by `tools/order_file.py`).
 - macOS builds need macOS 13 or newer: the binary gets chained fixups, which the kernel applies as
   pages are first touched.
 - A `.gitignore` used on many paths compiles its globs into one set after a while (the Linux
