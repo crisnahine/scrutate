@@ -6,6 +6,7 @@ import json
 import os
 import signal
 import subprocess
+import sys
 import threading
 import time
 
@@ -169,6 +170,31 @@ def test_similar_with_k_zero_leaves_the_repo_usable(repo):
     r.index()
     assert r.similar("make_widget_3", 0) == []
     assert r.symbol("make_widget_3")
+
+
+def test_exclude_dirs_of_the_root_s_file_applies_to_every_process(tmp_path, monkeypatch):
+    monkeypatch.delenv("SCRUTATE_INDEX_EXCLUDE_DIRS", raising=False)
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    (tmp_path / ".scrutate.toml").write_text('[index]\nexclude_dirs = ["gen"]\n')
+    for rel, name in [("gen/g.py", "g_fn"), ("src/s.py", "s_fn")]:
+        (tmp_path / rel).parent.mkdir(exist_ok=True)
+        (tmp_path / rel).write_text(f"def {name}():\n    return 1\n")
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    (sub / ".scrutate.toml").write_text('[index]\nexclude_dirs = ["src"]\n')
+    r = scrutate.Repo(str(tmp_path))
+    r.index()
+    assert r.symbol("g_fn") == [] and r.symbol("s_fn")
+    # another process started in a folder with its own file updates the same index the same way
+    code = f"import scrutate; r = scrutate.Repo({str(tmp_path)!r}); r.index(); print(len(r.symbol('g_fn')), len(r.symbol('s_fn')))"
+    out = subprocess.run([sys.executable, "-c", code], cwd=sub, capture_output=True, text=True, check=True).stdout
+    assert out.split() == ["0", "1"]
+    if "SCRUTATE_BIN" in os.environ or os.path.exists(CLI):
+        cli = subprocess.run([os.path.abspath(CLI), "symbol", "g_fn"], cwd=sub, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        assert cli.returncode == 1, cli.stdout + cli.stderr
+        assert subprocess.run([os.path.abspath(CLI), "symbol", "s_fn"], cwd=sub, capture_output=True, stdin=subprocess.DEVNULL).returncode == 0
+    assert r.symbol("g_fn") == [] and r.symbol("s_fn")
 
 
 def test_grep_argument_errors_at_call_time(repo):

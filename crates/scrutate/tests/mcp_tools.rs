@@ -649,6 +649,22 @@ fn similar_code_says_a_short_body_is_too_short_to_compare() {
 }
 
 #[test]
+fn the_repository_s_own_exclude_dirs_applies_whatever_directory_the_server_runs_in() {
+    let mut r = Repo::new(
+        "exclude_dirs",
+        &[
+            (".scrutate.toml", "[index]\nexclude_dirs = [\"gen\", \"*\", \"/src\"]\n"),
+            ("gen/g.py", "def g_fn():\n    return 1\n"),
+            ("src/s.py", "def s_fn():\n    return 2\n"),
+        ],
+    );
+    assert_eq!(r.ok("find_symbol", json!({"name": "g_fn"})), "(no results)");
+    assert!(r.ok("find_symbol", json!({"name": "s_fn"})).starts_with("src/s.py:1-2"));
+    let grep = r.ok("grep_code", json!({"pattern": "_fn"}));
+    assert!(grep.contains("src/s.py") && !grep.contains("gen/g.py"), "{grep}");
+}
+
+#[test]
 fn similar_code_reads_a_location_as_the_other_tools_read_it() {
     let body = "def area(w, h):\n    scaled = compute_scale(w) * adjust_height(h)\n    return finalize_area(scaled, w, h)\n";
     let mut r = Repo::new("similar_spellings", &[("src/geo.py", body), ("src/geo_copy.py", body)]);

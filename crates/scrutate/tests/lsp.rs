@@ -572,3 +572,26 @@ fn a_name_ending_in_a_question_mark_bang_or_prime_is_one_word_after_a_receiver()
     drop(c);
     child.wait().unwrap();
 }
+
+#[test]
+fn the_index_s_exclude_dirs_comes_from_its_root_not_the_server_s_directory() {
+    let r = Repo::new("excludedirs");
+    r.write(".git/HEAD", "ref: refs/heads/main\n");
+    r.write(".scrutate.toml", "[index]\nexclude_dirs = [\"gen\"]\n");
+    r.write("gen/g.py", "def g_fn():\n    return 1\n");
+    r.write("src/s.py", "def s_fn():\n    return 2\n");
+    r.write("elsewhere/.scrutate.toml", "[index]\nexclude_dirs = [\"src\"]\n");
+    let mut child =
+        Command::new(BIN).arg("lsp").current_dir(r.root.join("elsewhere")).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
+    c.request("initialize", json!({"processId": null, "rootUri": uri(&r.root), "capabilities": {}}));
+    c.notify("initialized", json!({}));
+    for (q, n) in [("g_fn", 0), ("s_fn", 1)] {
+        let ws = c.request("workspace/symbol", json!({"query": q}));
+        assert_eq!(ws["result"].as_array().map(Vec::len), Some(n), "{q}: {ws}");
+    }
+    c.request("shutdown", Value::Null);
+    c.notify("exit", Value::Null);
+    drop(c);
+    child.wait().unwrap();
+}

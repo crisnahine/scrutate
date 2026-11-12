@@ -1163,6 +1163,64 @@ fn a_path_outside_the_directory_of_the_configuration_file_is_not_touched_by_its_
 }
 
 #[test]
+fn exclude_dirs_follows_the_index_wherever_a_command_starts() {
+    let r = Repo::new("excludedirs");
+    r.write(".git/HEAD", b"ref: refs/heads/main\n");
+    // names that are no directory name, or a pattern, exclude nothing else
+    r.write(".scrutate.toml", b"[index]\nexclude_dirs = [\"gen\", \"*\", \"..\", \"../src\", \"/src\", \"a/src\", \"\"]\n");
+    r.write("gen/g.py", b"def g_fn():\n    return 1\n");
+    r.write("src/s.py", b"def s_fn():\n    return 2\n");
+    r.write("sub/.scrutate.toml", b"[index]\nexclude_dirs = [\"src\"]\n");
+    r.write("sub/t.py", b"def t_fn():\n    return 3\n");
+    let sub = r.root.join("sub");
+    let user = r.root.join("user.toml");
+    fs::write(&user, b"[index]\nexclude_dirs = [\"src\"]\n").unwrap();
+    let user = user.to_string_lossy().into_owned();
+    let found = |cwd: &Path, name: &str, env: &[(&str, &str)]| run_in(cwd, &["symbol", name], env).0 == 0;
+    let stats = |cwd: &Path| run_in(cwd, &["stats"], &[]).1.lines().find(|l| l.contains("\"files\"")).map(String::from);
+    assert_eq!(run_in(&r.root, &["index"], &[]).0, 0);
+    let top_stats = stats(&r.root);
+    for (cwd, env) in [(&r.root, &[][..]), (&sub, &[]), (&r.root, &[("SCRUTATE_CONFIG", user.as_str())]), (&sub, &[]), (&r.root, &[])] {
+        assert!(!found(cwd, "g_fn", env), "{cwd:?} {env:?}: gen/ is excluded by the root's file");
+        assert!(found(cwd, "s_fn", env) && found(cwd, "t_fn", env), "{cwd:?} {env:?}: another file's list does not apply");
+        assert_eq!(stats(cwd), top_stats, "{cwd:?} {env:?}");
+    }
+    let (_, _, err) = run_in(&sub, &["symbol", "s_fn"], &[]);
+    assert!(err.contains("sub") && err.contains(".scrutate.toml is ignored: the index reads it from"), "{err}");
+    let (_, _, err) = run_in(&r.root, &["symbol", "s_fn"], &[("SCRUTATE_CONFIG", &user)]);
+    assert!(err.contains("user.toml is ignored"), "{err}");
+    let (_, _, err) = run_in(&r.root, &["symbol", "s_fn"], &[]);
+    assert!(!err.contains("ignored"), "{err}");
+    // the user's environment replaces the file's list; without it the list comes back
+    assert!(found(&sub, "g_fn", &[("SCRUTATE_INDEX_EXCLUDE_DIRS", "")]));
+    assert!(!found(&sub, "g_fn", &[]));
+    assert!(!found(&r.root, "s_fn", &[("SCRUTATE_INDEX_EXCLUDE_DIRS", "src")]));
+    assert!(found(&r.root, "s_fn", &[]));
+    // the MCP server and batch read the same list, from any directory
+    r.write("q.jsonl", b"{\"op\": \"grep_code\", \"pattern\": \"_fn\"}\n");
+    let q = r.root.join("q.jsonl").to_string_lossy().into_owned();
+    for cwd in [&r.root, &sub] {
+        let (code, out, err) = run_in(cwd, &["batch", &q], &[]);
+        assert_eq!(code, 0, "{err}");
+        assert!(out.contains("src/s.py") && out.contains("sub/t.py") && !out.contains("gen/g.py"), "{out}");
+        let mut child = Command::new(BIN).arg("serve").current_dir(cwd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        for m in [
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}"#,
+            r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"find_symbol","arguments":{"name":"g_fn"}}}"#,
+            r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"find_symbol","arguments":{"name":"s_fn"}}}"#,
+        ] {
+            writeln!(stdin, "{m}").unwrap();
+        }
+        drop(stdin);
+        let text = String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).into_owned();
+        assert!(!text.contains("gen/g.py") && text.contains("src/s.py:1"), "{cwd:?}: {text}");
+    }
+    let (_, out, _) = run_in(&sub, &["config"], &[]);
+    assert!(out.contains("index exclude_dirs, from ") && out.contains("gen, *"), "{out}");
+}
+
+#[test]
 fn serve_and_watch_in_a_subdirectory_use_the_index_above() {
     use std::io::BufRead;
     let r = nested_repo("subserve");

@@ -890,10 +890,12 @@ pub fn run() -> Result<i32> {
     // the globs of a .scrutate.toml match from its directory, so they do not go through the
     // environment, where -g's meaning (from each searched path) would apply
     let mut cfg_globs = Vec::new();
+    let mut cfg_excludes = false;
     // a bad file stops the commands that read it, after clap has had --help and --version
     let cfg_error = cfg_path.as_deref().and_then(|p| {
         crate::config::load(p)
             .map(|mut cfg| {
+                cfg_excludes = !cfg.index.exclude_dirs.is_empty();
                 if local {
                     cfg_globs = std::mem::take(&mut cfg.grep.globs);
                     crate::config::confine(&mut cfg);
@@ -972,6 +974,17 @@ pub fn run() -> Result<i32> {
     }
     if let Some(top) = found_index {
         eprintln!("[scrutate] using the index in {}", top.display().to_string().trim_start_matches(r"\\?\"));
+    }
+    // every process that updates an index must leave out the same directories, so only the root's own file counts
+    if cfg_excludes && uses_index && std::env::var_os("SCRUTATE_INDEX_EXCLUDE_DIRS").is_none() {
+        let own = cli.root.join(CONFIG_FILE);
+        let same = |a: &Path, b: &Path| std::fs::canonicalize(a).ok().zip(std::fs::canonicalize(b).ok()).is_some_and(|(a, b)| a == b);
+        if let Some(p) = cfg_path.as_deref().filter(|p| !same(p, &own)) {
+            diagnostic(
+                "warning",
+                &format!("exclude_dirs in {} is ignored: the index reads it from {} (or SCRUTATE_INDEX_EXCLUDE_DIRS)", p.display(), own.display()),
+            );
+        }
     }
     let no_color = cli.no_color;
     let page = (cli.max_bytes.unwrap_or(usize::MAX), cli.offset);
@@ -1242,6 +1255,14 @@ pub fn run() -> Result<i32> {
             vars.sort();
             for (k, v) in vars {
                 println!("  {k}={v}");
+            }
+            let root = match (root_given, &cwd) {
+                (false, Some(cwd)) => index_above(cwd).unwrap_or_else(|| cwd.clone()),
+                _ => cli.root.clone(),
+            };
+            let excluded = crate::files::config_excludes(&root);
+            if std::env::var_os("SCRUTATE_INDEX_EXCLUDE_DIRS").is_none() && !excluded.is_empty() {
+                println!("\nindex exclude_dirs, from {}: {}", root.join(CONFIG_FILE).display(), excluded.join(", "));
             }
             Ok(0)
         }

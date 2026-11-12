@@ -380,7 +380,20 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
                 first_in_path_order: true,
                 // the files the index holds: hidden ones too, none of the directories it skips
                 hidden: true,
-                globs: crate::files::skipped_dirs(&s.ix.root).iter().map(|d| format!("!{d}")).collect(),
+                // a name, never a pattern: `*` in a repository's exclude_dirs must not hide every file
+                globs: crate::files::skipped_dirs(&s.ix.root)
+                    .iter()
+                    .map(|d| {
+                        d.chars().fold("!".to_string(), |mut g, c| {
+                            if "*?[]{}".contains(c) {
+                                g.extend(['[', c, ']']);
+                            } else {
+                                g.push(c);
+                            }
+                            g
+                        })
+                    })
+                    .collect(),
                 ..crate::instant::Options::default()
             };
             let (groups, stopped) = crate::intel::grouped_grep(s, &o)?;

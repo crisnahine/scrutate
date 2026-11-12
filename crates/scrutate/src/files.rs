@@ -65,14 +65,35 @@ fn in_git(root: &Path) -> bool {
     root.ancestors().any(|a| a.join(".git").exists())
 }
 
-/// Directory names the code index never enters: `SKIP_DIRS` (less `SKIP_UNLESS_GIT` inside a git
-/// repository) plus those in `SCRUTATE_INDEX_EXCLUDE_DIRS`.
-fn skip_dirs(git: bool) -> Vec<String> {
+/// Most names `exclude_dirs` of a repository's `.scrutate.toml` adds; the rest are not read.
+const MAX_CONFIG_EXCLUDES: usize = 1000;
+
+/// Directory names the code index of `root` never enters: `SKIP_DIRS` (less `SKIP_UNLESS_GIT`
+/// inside a git repository) plus those in `SCRUTATE_INDEX_EXCLUDE_DIRS`, or when it is not set,
+/// in `[index] exclude_dirs` of `<root>/.scrutate.toml`. A name with a path separator, `.` and
+/// `..` name no directory and are dropped.
+fn skip_dirs(root: &Path) -> Vec<String> {
+    let git = in_git(root);
     let mut skip: Vec<String> = SKIP_DIRS.iter().filter(|d| !(git && SKIP_UNLESS_GIT.contains(d))).map(|s| s.to_string()).collect();
-    if let Ok(v) = std::env::var("SCRUTATE_INDEX_EXCLUDE_DIRS") {
-        skip.extend(split_names(&v));
-    }
+    let named = match std::env::var("SCRUTATE_INDEX_EXCLUDE_DIRS") {
+        Ok(v) => split_names(&v),
+        Err(_) => config_excludes(root),
+    };
+    skip.extend(named.into_iter().filter(|n| n != "." && n != ".." && !n.chars().any(std::path::is_separator)));
     skip
+}
+
+/// `[index] exclude_dirs` of the root's own `.scrutate.toml`: the setting belongs to the index, so
+/// every process that updates it reads the same list, wherever it starts. The file is read as
+/// other repository files are: a regular file inside the root, of at most 1 MB.
+pub(crate) fn config_excludes(root: &Path) -> Vec<String> {
+    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let Some(text) = crate::resolve::repo_text(&root, ".scrutate.toml") else { return Vec::new() };
+    let Ok(table) = text.parse::<toml::Table>() else { return Vec::new() };
+    let names = table.get("index").and_then(|i| i.get("exclude_dirs")).and_then(|v| v.as_array());
+    names
+        .map(|a| a.iter().filter_map(|v| v.as_str()).map(|n| n.trim().to_string()).filter(|n| !n.is_empty()).take(MAX_CONFIG_EXCLUDES).collect())
+        .unwrap_or_default()
 }
 
 /// A comma-separated list of names; `\,` is a comma inside a name.
@@ -91,7 +112,7 @@ pub fn split_names(v: &str) -> Vec<String> {
 
 /// The directory names the code index of `root` never enters.
 pub fn skipped_dirs(root: &Path) -> Vec<String> {
-    skip_dirs(in_git(root))
+    skip_dirs(root)
 }
 
 /// Relative paths ('/' separated, sorted) of the files worth indexing: the same rules as ripgrep's
@@ -112,7 +133,7 @@ pub struct CodeWalk {
 
 impl CodeWalk {
     pub fn new(root: &Path) -> CodeWalk {
-        CodeWalk { root: root.to_path_buf(), skip: Arc::new(skip_dirs(in_git(root))) }
+        CodeWalk { root: root.to_path_buf(), skip: Arc::new(skip_dirs(root)) }
     }
 
     pub fn builder(&self, start: &Path) -> ignore::WalkBuilder {

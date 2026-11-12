@@ -18,7 +18,7 @@
 //! smart_case = true        # SCRUTATE_GREP_SMART_CASE
 //!
 //! [index]
-//! exclude_dirs = ["generated", "third_party"]   # SCRUTATE_INDEX_EXCLUDE_DIRS
+//! exclude_dirs = ["generated", "third_party"]   # SCRUTATE_INDEX_EXCLUDE_DIRS; read from the root's own file only
 //! refresh_interval = 2.0                         # SCRUTATE_REFRESH_INTERVAL (seconds, `serve`)
 //! ```
 
@@ -127,9 +127,6 @@ pub fn apply_as_env(cfg: &Config) {
     }
     if !cfg.grep.types.is_empty() {
         set("SCRUTATE_GREP_TYPES", cfg.grep.types.join(","));
-    }
-    if !cfg.index.exclude_dirs.is_empty() {
-        set("SCRUTATE_INDEX_EXCLUDE_DIRS", cfg.index.exclude_dirs.iter().map(|d| d.replace(',', "\\,")).collect::<Vec<_>>().join(","));
     }
     if let Some(v) = cfg.index.refresh_interval {
         set("SCRUTATE_REFRESH_INTERVAL", v.to_string());
