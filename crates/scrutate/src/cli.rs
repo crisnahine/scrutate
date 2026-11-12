@@ -1724,16 +1724,19 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
             }
         }
         if out.stats || out.json {
+            // -l stops each file at its first match: the matches were not counted
+            let matches = (!o.files_only).then_some(stats.matches);
             let rec = serde_json::json!({"type": "summary", "schema": SCHEMA, "files_searched": stats.files_searched, "files_matched": stats.files_matched,
-                "matches": stats.matches, "bytes_searched": stats.bytes_searched, "errors": stats.errors, "elapsed_ms": stats.elapsed_ms, "cancelled": stats.cancelled});
+                "matches": matches, "bytes_searched": stats.bytes_searched, "errors": stats.errors, "elapsed_ms": stats.elapsed_ms, "cancelled": stats.cancelled});
             if out.json {
                 writeln!(w, "{rec}")?;
             } else {
                 eprintln!(
-                    "{} matches in {} of {} files ({:.1} MB) in {:.1} ms{}{}",
-                    stats.matches,
+                    "{}{} of {} files{} ({:.1} MB) in {:.1} ms{}{}",
+                    matches.map(|n| format!("{n} matches in ")).unwrap_or_default(),
                     stats.files_matched,
                     stats.files_searched,
+                    if matches.is_none() { " match" } else { "" },
                     stats.bytes_searched as f64 / 1e6,
                     stats.elapsed_ms,
                     if stats.errors > 0 { format!(", {} unreadable", stats.errors) } else { String::new() },

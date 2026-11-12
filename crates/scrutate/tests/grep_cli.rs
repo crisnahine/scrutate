@@ -1207,6 +1207,25 @@ fn a_case_insensitive_literal_matches_every_case_form_up_to_the_last_byte() {
 }
 
 /// What each span of the JSON match records picks out of their `text`, by line.
+#[test]
+fn file_list_statistics_count_files_not_matches() {
+    let d = Dir::new("liststats");
+    for i in 0..8 {
+        d.write(&format!("f{i}.txt"), b"foo\nfoo\n");
+    }
+    // -l stops each file at its first match, so the number of matches is not known
+    let (code, out, err) = d.run(&["grep", "-l", "--stats", "foo"]);
+    assert_eq!((code, out.lines().count()), (0, 8));
+    assert!(err.starts_with("8 of 8 files match ("), "{err}");
+    let (_, out, _) = d.run(&["grep", "--json", "-l", "foo"]);
+    let summary: serde_json::Value = serde_json::from_str(out.lines().last().unwrap()).unwrap();
+    assert_eq!((summary["type"].as_str(), summary["files_matched"].as_u64()), (Some("summary"), Some(8)), "{out}");
+    assert!(summary["matches"].is_null(), "{out}");
+    // the other modes count every match
+    let (_, _, err) = d.run(&["grep", "-c", "--stats", "foo"]);
+    assert!(err.starts_with("16 matches in 8 of 8 files ("), "{err}");
+}
+
 fn json_spans(out: &str) -> Vec<(u64, Vec<String>)> {
     out.lines()
         .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
