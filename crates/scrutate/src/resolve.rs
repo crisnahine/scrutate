@@ -1393,8 +1393,9 @@ impl<'a> Resolver<'a> {
         None
     }
 
-    /// The type of the variable `at` names: its nearest declaration before the use in the
-    /// function around it, else a declaration at the top level of the file.
+    /// The type of the variable `at` names: its nearest declaration before the use that reaches
+    /// it, in the function around it and the functions around that, else a declaration at the top
+    /// level of the file.
     fn variable_ty(&mut self, path: &str, fi: &FileInfo, lang: Lang, at: Node) -> Option<Ty> {
         let src = fi.src.as_str();
         let name = text(at, src);
@@ -1404,6 +1405,10 @@ impl<'a> Resolver<'a> {
             if FUNCTION_NODES.contains(&p.kind()) {
                 break;
             }
+        }
+        // a closure sees the locals of the functions around it; a Rust `fn` item does not
+        while let Some(outer) = enclosing_function(scope).filter(|_| scope.kind() != "function_item") {
+            scope = outer;
         }
         let binds = |n: Node| {
             n.kind() == "identifier"
@@ -4395,6 +4400,97 @@ mod tests {
                 ("main.go", "p.Norm() + 5", "Norm", point),
                 ("main.go", "p.Norm() + 6", "Norm", point),
             ],
+        );
+    }
+
+    #[test]
+    fn a_closure_or_nested_function_sees_the_variables_of_the_functions_around_it() {
+        let (point, line) = ("shapes.py Point.norm", "shapes.py Line.norm");
+        resolver_case(
+            "closure_py",
+            &[
+                ("shapes.py", "class Point:\n    def norm(self):\n        return 1\n\n\nclass Line:\n    def norm(self):\n        return 2\n"),
+                (
+                    "use.py",
+                    "from shapes import Point, Line\n\n\ndef lam(xs):\n    p = Point()\n    return list(map(lambda x: p.norm() + 1, xs))\n\n\ndef nest():\n    p = Point()\n\n    def inner():\n        return p.norm() + 2\n    return inner\n\n\ndef shadow(xs):\n    p = Point()\n    return list(map(lambda p: p.norm() + 3, xs))\n\n\ndef later():\n    def inner():\n        return p.norm() + 4\n    p = Point()\n    return inner()\n\n\ndef deep():\n    p = Point()\n\n    def a():\n        def b():\n            return p.norm() + 5\n        return b\n    return a\n\n\ndef own():\n    p = Point()\n\n    def inner():\n        p = Line()\n        return p.norm() + 6\n    return inner\n",
+                ),
+            ],
+            &[
+                ("use.py", "p.norm() + 1", "norm", point),
+                ("use.py", "p.norm() + 2", "norm", point),
+                // the closure's own parameter wins, and it has no type
+                ("use.py", "p.norm() + 3", "norm", "receiver"),
+                // a variable bound after the closure is not taken: the call may come before it
+                ("use.py", "p.norm() + 4", "norm", "receiver"),
+                ("use.py", "p.norm() + 5", "norm", point),
+                ("use.py", "p.norm() + 6", "norm", line),
+            ],
+        );
+        let (point, line) = ("shapes.js Point.norm", "shapes.js Line.norm");
+        resolver_case(
+            "closure_js",
+            &[
+                ("shapes.js", "export class Point {\n  norm() { return 1; }\n}\nexport class Line {\n  norm() { return 2; }\n}\n"),
+                (
+                    "use.js",
+                    "import { Point, Line } from './shapes';\n\nexport function arrow(xs) {\n  const p = new Point();\n  return xs.map(x => p.norm() + 1);\n}\n\nexport function expr(xs) {\n  const p = new Point();\n  return xs.map(function (x) { return p.norm() + 2; });\n}\n\nexport function shadow(xs) {\n  const p = new Point();\n  return xs.map((p) => p.norm() + 3);\n}\n\nexport function later() {\n  const f = () => p.norm() + 4;\n  const p = new Point();\n  return f();\n}\n\nexport function deep() {\n  const p = new Point();\n  return () => () => p.norm() + 5;\n}\n\nexport function own(c) {\n  const p = new Point();\n  if (c) {\n    const p = new Line();\n  }\n  return () => { const q = 1; return p.norm() + 6; };\n}\n\nexport function inner() {\n  const p = new Point();\n  return () => { const p = new Line(); return p.norm() + 7; };\n}\n",
+                ),
+            ],
+            &[
+                ("use.js", "p.norm() + 1", "norm", point),
+                ("use.js", "p.norm() + 2", "norm", point),
+                ("use.js", "p.norm() + 3", "norm", "receiver"),
+                ("use.js", "p.norm() + 4", "norm", "receiver"),
+                ("use.js", "p.norm() + 5", "norm", point),
+                // a binder in a block that has ended is not seen from a closure after it
+                ("use.js", "p.norm() + 6", "norm", point),
+                ("use.js", "p.norm() + 7", "norm", line),
+            ],
+        );
+        let (point, line) = ("shapes.ts Point.norm", "shapes.ts Line.norm");
+        resolver_case(
+            "closure_ts",
+            &[
+                ("shapes.ts", "export class Point {\n  norm() { return 1; }\n}\nexport class Line {\n  norm() { return 2; }\n}\n"),
+                (
+                    "use.ts",
+                    "import { Point, Line } from './shapes';\n\nexport function f(xs: number[]) {\n  const p = new Point();\n  return xs.map(x => p.norm() + 1);\n}\n\nexport function g(p: Point) {\n  return [1].map(() => p.norm() + 2);\n}\n\nexport function h(xs: Line[]) {\n  const p = new Point();\n  return xs.map((p: Line) => p.norm() + 3);\n}\n",
+                ),
+            ],
+            &[("use.ts", "p.norm() + 1", "norm", point), ("use.ts", "p.norm() + 2", "norm", point), ("use.ts", "p.norm() + 3", "norm", line)],
+        );
+        let point = "shapes.rs Point.norm";
+        resolver_case(
+            "closure_rs",
+            &[
+                ("lib.rs", "mod shapes;\nmod user;\n"),
+                ("shapes.rs", "pub struct Point;\n\nimpl Point {\n    pub fn new() -> Point {\n        Point\n    }\n    pub fn norm(&self) -> u32 {\n        1\n    }\n}\n\npub struct Line;\n\nimpl Line {\n    pub fn norm(&self) -> u32 {\n        2\n    }\n}\n"),
+                (
+                    "user.rs",
+                    "use crate::shapes::{Line, Point};\n\npub fn closure(xs: &[u32]) -> u32 {\n    let p = Point::new();\n    xs.iter().map(|x| p.norm() + 1).sum()\n}\n\npub fn shadow(xs: &[Line]) -> u32 {\n    let p = Point::new();\n    xs.iter().map(|p| p.norm() + 2).sum()\n}\n\npub fn deep() -> u32 {\n    let p = Point::new();\n    let f = || {\n        let g = || p.norm() + 3;\n        g()\n    };\n    f()\n}\n\npub fn item() -> u32 {\n    let p = Point::new();\n    fn inner(p: &Line) -> u32 {\n        p.norm() + 4\n    }\n    fn other() -> u32 {\n        let f = || p.norm() + 5;\n        f()\n    }\n    0\n}\n",
+                ),
+            ],
+            &[
+                ("user.rs", "p.norm() + 1", "norm", point),
+                ("user.rs", "p.norm() + 2", "norm", "receiver"),
+                ("user.rs", "p.norm() + 3", "norm", point),
+                // a `fn` item does not see the locals of the function around it
+                ("user.rs", "p.norm() + 4", "norm", "shapes.rs Line.norm"),
+                ("user.rs", "p.norm() + 5", "norm", "receiver"),
+            ],
+        );
+        let point = "shapes/point.go Point.Norm";
+        resolver_case(
+            "closure_go",
+            &[
+                ("go.mod", "module example.com/m\n"),
+                ("shapes/point.go", "package shapes\n\ntype Point struct{}\n\nfunc (p *Point) Norm() int {\n\treturn 1\n}\n"),
+                (
+                    "main.go",
+                    "package main\n\nimport \"example.com/m/shapes\"\n\nfunc closure() int {\n\tp := &shapes.Point{}\n\tf := func() int { return p.Norm() + 1 }\n\treturn f()\n}\n\nfunc deep() int {\n\tp := &shapes.Point{}\n\tf := func() func() int {\n\t\treturn func() int { return p.Norm() + 2 }\n\t}\n\treturn f()()\n}\n",
+                ),
+            ],
+            &[("main.go", "p.Norm() + 1", "Norm", point), ("main.go", "p.Norm() + 2", "Norm", point)],
         );
     }
 
