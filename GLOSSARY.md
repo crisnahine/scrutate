@@ -92,6 +92,14 @@ the one recovery rule for damage.
 (`models::ModelSet`), each loaded on its first use. The index stores the vector model's
 signature; another model makes the vectors anew and keeps the rest of the index.
 
+**Candidate source**: one way a ranked search finds candidates (`search::Source`): exact names,
+lexical (BM25) or semantic (vectors). The candidates are the union of the sources' answers, and
+each candidate gets the 48 **features** by name (`search::FEATURES`). `batch --features` prints
+them: these are the **training rows** the ranker is fitted on.
+
+**Quality floor**: the lowest MRR@10 and hit@5 the ranking may reach on this repository's own
+code before CI fails (`bench/quality.py`, `bench/quality/floor.json`).
+
 **Translation**: what a pattern asks every matcher of it to find (`Pattern::translate`): the
 pattern in the form its mode means, and whether case is folded. Engine A's matcher and the text
 index's trigram condition are both built from it.
