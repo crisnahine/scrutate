@@ -59,6 +59,18 @@ fn a_node_with_many_children_parses_in_linear_time() {
 }
 
 #[test]
+fn deeply_nested_lisp_and_html_parse_in_linear_time() {
+    for (path, head) in [("a.lisp", "(defun f () "), ("a.scm", "(define (f) ")] {
+        let make = |n: usize| format!("{head}{}{})", "(g ".repeat(n), ")".repeat(n));
+        assert_parse_scales_linearly(path, 15000, make, |_, chunks| {
+            assert!(chunks.iter().any(|c| c.qualname == "f" && c.calls.contains("g")), "{path}");
+        });
+    }
+    assert_parse_scales_linearly("a.lisp", 20000, |n| "(".repeat(n) + &")".repeat(n), |_, _| {});
+    assert_parse_scales_linearly("a.html", 12500, |n| "<div>".repeat(n) + &"</div>".repeat(n), |_, _| {});
+}
+
+#[test]
 fn a_file_of_many_sibling_definitions_parses_in_linear_time() {
     for (path, line) in [
         ("w.js", "function f{i}(x) {{ return x + {i}; }}"),

@@ -711,13 +711,18 @@ fn callee_name(lang: &str, node: Node, field: &str, src: &[u8]) -> Option<String
         // R `obj$meth(x)` calls `meth`
         target = target.child_by_field_name("rhs")?;
     }
-    let mut t = txt(src, target.start_byte(), target.end_byte());
     if matches!(lang, "scheme" | "racket" | "elisp" | "commonlisp") {
+        // the symbol ends at a space or a bracket: a deep nested form's whole text is not copied
+        let s = &src[target.start_byte().min(src.len())..target.end_byte().min(src.len())];
+        let lead = s.iter().take_while(|b| b.is_ascii_whitespace()).count();
+        let end = s[lead..].iter().position(|b| b.is_ascii_whitespace() || b"()[]{}\"'`,;".contains(b)).map_or(s.len(), |i| lead + i);
+        let t = String::from_utf8_lossy(&s[..end]);
         // an operator such as `-` or `<=` is not a name; a Common Lisp package prefix is not part of it
         let name = LISP_SYMBOL.find(t.trim())?.as_str();
         let name = if lang == "commonlisp" { name.rsplit(':').next().unwrap_or(name) } else { name };
         return name.chars().any(char::is_alphabetic).then(|| name.to_string());
     }
+    let mut t = txt(src, target.start_byte(), target.end_byte());
     // D and Solidity `new Point(1, 2)` is a call whose callee is `new Point`
     if let Some(rest) = t.strip_prefix("new").filter(|r| r.starts_with(char::is_whitespace)) {
         t = rest.trim_start().to_string();
@@ -1625,6 +1630,10 @@ fn parse_tree(spec: &'static LangSpec, source: &str, prev: Option<PrevParse>) ->
 
 fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Option<PrevParse>) -> Option<(GrammarOutput, Option<PrevParse>)> {
     let src = source.as_bytes();
+    if spec.defs.is_empty() && spec.calls.is_empty() && spec.imports.is_empty() && !spec.docstring && !crate::langs::CONSTANT_LANGS.contains(&spec.id) {
+        // the walk would find nothing, and HTML's scanner takes time quadratic in the nesting depth
+        return Some(((Vec::new(), String::new(), Vec::new(), Vec::new()), None));
+    }
     let t = std::time::Instant::now();
     let tree = parse_tree(spec, source, prev)?;
     if crate::index::prof::enabled() {
@@ -1637,6 +1646,8 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
     let mut loose: Vec<(i64, String)> = Vec::new();
     let mut def_stack: Vec<usize> = Vec::new();
     let mut heads: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    // ancestors in `heads`, so a call need not scan its ancestors
+    let mut open_heads = 0usize;
     let mut stack: Vec<(Node, bool, bool, usize)> = vec![(tree.root_node(), false, false, 0)];
     let mut ancestors: Vec<(Node, Vec<Node>)> = Vec::new();
     let mut pos: Vec<usize> = Vec::new();
@@ -1644,6 +1655,7 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
         if exiting {
             ancestors.pop();
             pos.pop();
+            open_heads -= usize::from(heads.contains(&node.id()));
             if pushed {
                 def_stack.pop();
             }
@@ -1808,7 +1820,7 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
             }
         } else if let Some(call) = spec.calls.iter().find(|c| c.node == t) {
             let in_signature = ancestors.last().map(|p| matches!(p.0.kind(), "signature" | "function_signature" | "method_signature")).unwrap_or(false);
-            let in_head = !heads.is_empty() && (heads.contains(&node.id()) || ancestors.iter().any(|(a, _)| heads.contains(&a.id())));
+            let in_head = open_heads > 0 || heads.contains(&node.id());
             if !(in_signature || in_head) {
                 let mut outside = BTreeSet::new();
                 let calls = match def_stack.last() {
@@ -1838,6 +1850,7 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
         let kids: Vec<Node> = node.children(&mut node.walk()).collect();
         stack.extend(kids.iter().enumerate().rev().map(|(i, &ch)| (ch, false, false, i)));
         ancestors.push((node, kids));
+        open_heads += usize::from(heads.contains(&node.id()));
     }
     let mut mdoc = String::new();
     if spec.docstring {
