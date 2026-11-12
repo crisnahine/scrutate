@@ -1629,11 +1629,15 @@ impl<'a> Resolver<'a> {
 
     /// `name` as a member of the container definition `id` (methods, nested classes), base classes included.
     fn member(&mut self, id: i64, name: &str, depth: usize) -> Option<i64> {
+        self.member_seen(id, name, depth, &mut HashMap::new())
+    }
+
+    fn member_seen(&mut self, id: i64, name: &str, depth: usize, seen: &mut HashMap<i64, usize>) -> Option<i64> {
         if self.nest > 32 {
             return None;
         }
         self.nest += 1;
-        let r = self.member_inner(id, name, depth);
+        let r = self.member_inner(id, name, depth, seen);
         self.nest -= 1;
         r
     }
@@ -1645,7 +1649,7 @@ impl<'a> Resolver<'a> {
         self.file(&path).defs.iter().find(|d| d.name == name && strip_generics(&d.qualname) == want).map(|d| d.id)
     }
 
-    fn member_inner(&mut self, id: i64, name: &str, depth: usize) -> Option<i64> {
+    fn member_inner(&mut self, id: i64, name: &str, depth: usize, seen: &mut HashMap<i64, usize>) -> Option<i64> {
         if let Some(d) = self.declared_member(id, name) {
             return Some(d);
         }
@@ -1691,7 +1695,10 @@ impl<'a> Resolver<'a> {
             return None;
         }
         for bid in self.bases(id) {
-            if let Some(m) = self.member(bid, name, depth + 1) {
+            if java_seen(seen, bid, depth + 1) {
+                continue;
+            }
+            if let Some(m) = self.member_seen(bid, name, depth + 1, seen) {
                 return Some(m);
             }
         }

@@ -689,6 +689,52 @@ fn refs_of_a_name_bound_in_many_blocks_of_one_function_takes_linear_time() {
 }
 
 #[test]
+fn a_method_looked_up_through_a_wide_diamond_of_bases_reads_each_base_once() {
+    // three levels of classes that each extend every class of the level below, and calls of a
+    // method none of them has: the cost grows with the bases read, not with the paths to them
+    let make = |w: usize, py: bool| {
+        let names = |l: usize| (0..w).map(|i| format!("C{l}_{i}")).collect::<Vec<_>>().join(", ");
+        let mut src = String::new();
+        for l in (1..=3).rev() {
+            for i in 0..w {
+                let below = if l < 3 { names(l + 1) } else { String::new() };
+                src += &match (py, below.is_empty()) {
+                    (true, _) => format!("class C{l}_{i}({below}):\n    pass\n\n"),
+                    (false, true) => format!("class C{l}_{i} {{}}\n"),
+                    (false, false) => format!("class C{l}_{i} implements {below} {{}}\n"),
+                };
+            }
+        }
+        if py {
+            format!("{src}class Top({}):\n    pass\n\ndef f(t: Top):\n{}", names(1), "    t.z()\n".repeat(40))
+        } else {
+            format!("{src}class Top implements {} {{}}\nfunction f(t: Top) {{\n{}}}\n", names(1), "  t.z();\n".repeat(40))
+        }
+    };
+    for (file, other) in
+        [("a.py", ("b.py", "class Other:\n    def z(self):\n        return 2\n")), ("a.ts", ("b.ts", "class Other { z(): number { return 2; } }\n"))]
+    {
+        let best = |w: usize| {
+            let r = Repo::new("diamond", &[other, (file, &make(w, file.ends_with(".py")))]);
+            (0..3)
+                .map(|_| {
+                    let t = Instant::now();
+                    let out = Command::new(BIN).args(["refs", "z"]).current_dir(&r.root).output().unwrap();
+                    let took = t.elapsed();
+                    assert!(String::from_utf8_lossy(&out.stdout).contains("(1 references)"));
+                    took
+                })
+                .min()
+                .unwrap()
+        };
+        // three times as wide: 9 times the bases read, 27 times the paths
+        let (small, large) = (best(7), best(21));
+        let ratio = large.as_secs_f64() / small.as_secs_f64().max(0.005);
+        assert!(ratio < 8.0, "{file}: width 7 took {small:?}, width 21 took {large:?}");
+    }
+}
+
+#[test]
 fn a_file_nested_too_deeply_is_reported_unread_and_one_nested_500_deep_resolves() {
     let class = ("b.py", "class A:\n    def m(self):\n        pass\n");
     let deep = |head: &str, n: usize| format!("from b import A\n\ndef f():\n    {head}{}A(){}\n    x.m()\n", "(".repeat(n), ")".repeat(n));
