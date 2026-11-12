@@ -114,6 +114,20 @@ pub fn word_at(line: &str, at: usize) -> Option<(usize, usize)> {
     (a < b).then_some((a, b))
 }
 
+/// `a..b` widened to the name the language of `path` writes there, by the rule the parser names
+/// calls with: `valid?` in Ruby, `update!` in Julia, `step'` in Haskell, `is.ready` in R.
+fn widen(line: &str, a: usize, b: usize, path: &str) -> (usize, usize) {
+    let Some(lang) = crate::langs::spec_for(path).map(|s| s.id) else { return (a, b) };
+    let mut start = a;
+    while let Some(c) = line[..start].chars().next_back().filter(|c| lang == "r" && (is_ident(*c) || *c == '.')) {
+        start -= c.len_utf8();
+    }
+    match crate::parse::name_rule(lang).find(&line[start..]) {
+        Some(m) if start + m.end() >= b => (start, start + m.end()),
+        _ => (a, b),
+    }
+}
+
 /// Start and end byte of the run of characters around `a..b` up to a space, bracket, quote or
 /// comma: `get-user`, `list->vec`, `Foo::Bar.new`.
 fn run_around(line: &str, a: usize, b: usize) -> (usize, usize) {
@@ -444,24 +458,28 @@ impl Server {
         }
     }
 
-    /// The identifier under the cursor, the text just before it, and the line with its byte range.
-    fn word_in_line(&self, p: &Value) -> Option<(String, usize, usize)> {
-        let rel = self.key(p["textDocument"]["uri"].as_str()?);
-        let line = p["position"]["line"].as_u64()? as usize;
-        let mut lines = self.lines();
-        let text = lines.get(&rel).get(line)?.clone();
-        let (a, b) = word_at(&text, utf16_to_byte(&text, p["position"]["character"].as_u64()?))?;
-        Some((text, a, b))
+    /// The line under the cursor and the byte range of the name there: the identifier, widened
+    /// to the name the file's language writes (`valid?`, `step'`, `is.ready`) when the index has it.
+    fn word_in_line(&self, s: &Searcher, p: &Value) -> Result<Option<(String, usize, usize)>> {
+        let Some(rel) = p["textDocument"]["uri"].as_str().map(|u| self.key(u)) else { return Ok(None) };
+        let (Some(line), Some(ch)) = (p["position"]["line"].as_u64(), p["position"]["character"].as_u64()) else { return Ok(None) };
+        let Some(text) = self.lines().get(&rel).get(line as usize).cloned() else { return Ok(None) };
+        let Some((a, b)) = word_at(&text, utf16_to_byte(&text, ch)) else { return Ok(None) };
+        let (wa, wb) = widen(&text, a, b, &rel);
+        // `x-y` is a subtraction in most languages: only a name the index knows is taken
+        if (wa, wb) != (a, b) && !s.find_symbol(&text[wa..wb], 1)?.is_empty() {
+            return Ok(Some((text, wa, wb)));
+        }
+        Ok(Some((text, a, b)))
     }
 
-    /// The identifier under the cursor and the text just before it.
-    fn ident_at(&self, p: &Value) -> Option<(String, String)> {
-        let (text, a, b) = self.word_in_line(p)?;
-        Some((text[a..b].to_string(), text[..a].to_string()))
+    /// The name under the cursor and the text just before it.
+    fn ident_at(&self, s: &Searcher, p: &Value) -> Result<Option<(String, String)>> {
+        Ok(self.word_in_line(s, p)?.map(|(text, a, b)| (text[a..b].to_string(), text[..a].to_string())))
     }
 
     fn definition(&self, s: &Searcher, p: &Value) -> Result<Value> {
-        let Some((text, a, b)) = self.word_in_line(p) else { return Ok(Value::Null) };
+        let Some((text, a, b)) = self.word_in_line(s, p)? else { return Ok(Value::Null) };
         let (ident, before) = (&text[a..b], &text[..a]);
         let here = p["textDocument"]["uri"].as_str().and_then(|u| self.rel(u));
         // the run up to the word (`my-trim`, `Foo::Bar` in `Foo::Bar.new`), then the whole run as
@@ -485,7 +503,7 @@ impl Server {
     }
 
     fn references(&self, s: &Searcher, p: &Value) -> Result<Value> {
-        let Some((ident, before)) = self.ident_at(p) else { return Ok(Value::Null) };
+        let Some((ident, before)) = self.ident_at(s, p)? else { return Ok(Value::Null) };
         let include_decl = p["context"]["includeDeclaration"].as_bool().unwrap_or(true);
         // the definition under the cursor; an unresolved cursor falls back to every textual occurrence
         let here = p["textDocument"]["uri"].as_str().and_then(|u| self.rel(u));
@@ -523,10 +541,22 @@ impl Server {
             }
         }
         let width = ident.encode_utf16().count() as u64;
+        // `valid` in `valid?` is another name; `x` in `x-y` is not, as the index has no `x-y`
+        let mut known: HashMap<String, bool> = HashMap::new();
         for g in &r.groups {
             for h in &g.lines {
                 let text = h.text.trim_end_matches(['\n', '\r']);
                 for off in find_word(text, &ident) {
+                    let (wa, wb) = widen(text, off, off + ident.len(), &g.path);
+                    if (wa, wb) != (off, off + ident.len()) {
+                        let wider = &text[wa..wb];
+                        if !known.contains_key(wider) {
+                            known.insert(wider.to_string(), !s.find_symbol(wider, 1)?.is_empty());
+                        }
+                        if known[wider] {
+                            continue;
+                        }
+                    }
                     let (l, a) = (h.line.saturating_sub(1), byte_to_utf16(text, off));
                     if seen.insert((g.path.clone(), l, a)) {
                         out.push(json!({"uri": path_to_uri(&self.root.join(&g.path)), "range": range(l, a, l, a + width)}));

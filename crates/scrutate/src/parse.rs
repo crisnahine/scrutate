@@ -750,15 +750,19 @@ fn callee_name(lang: &str, node: Node, field: &str, src: &[u8]) -> Option<String
     if lang == "julia" && !op.is_empty() && op.chars().all(|c| c.is_ascii_punctuation()) {
         return Some(op.to_string());
     }
-    let name = match lang {
-        "ruby" | "elixir" => &*PREDICATE_NAME,
-        "julia" => &*BANG_NAME,
-        "r" => &*R_NAME,
-        "bash" => &*BASH_NAME,
-        "haskell" | "ocaml" | "fsharp" | "nix" => &*PRIMED_NAME,
-        _ => &*IDENT_START,
-    };
-    name.find(t).map(|m| m.as_str().to_string())
+    name_rule(lang).find(t).map(|m| m.as_str().to_string())
+}
+
+/// The pattern of a name at the start of a text in `lang`.
+pub(crate) fn name_rule(lang: &str) -> &'static Regex {
+    match lang {
+        "ruby" | "elixir" => &PREDICATE_NAME,
+        "julia" => &BANG_NAME,
+        "r" => &R_NAME,
+        "bash" => &BASH_NAME,
+        "haskell" | "ocaml" | "fsharp" | "nix" => &PRIMED_NAME,
+        _ => &IDENT_START,
+    }
 }
 
 // the name characters some languages allow past a plain identifier, as their definitions keep them

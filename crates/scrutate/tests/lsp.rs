@@ -356,3 +356,62 @@ fn a_backslash_in_a_unix_file_name_stays_in_the_uri() {
     drop(c);
     child.wait().unwrap();
 }
+
+#[test]
+fn a_name_ending_in_a_question_mark_bang_or_prime_is_one_word_after_a_receiver() {
+    let r = Repo::new("suffix");
+    r.write(
+        "a.rb",
+        "class Rec\n  def valid\n    @valid\n  end\n\n  def valid?\n    true\n  end\n\n  def save\n    1\n  end\n\n  def save!\n    2\n  end\n\n  def run(o)\n    valid?\n    o.valid?()\n    self.save!\n    return unless valid?\n    o.save!(1) if o.valid?\n  end\nend\n",
+    );
+    r.write("a.ex", "defmodule M do\n  def ok(x), do: x\n  def ok?(x), do: x\n  def run(x), do: ok?(x)\n  def go(x), do: M.ok?(x)\nend\n");
+    r.write(
+        "a.jl",
+        "function update(x)\n    return x\nend\n\nfunction update!(x)\n    return x\nend\n\nfunction run(x)\n    update!(x)\n    return Main.update!(x)\nend\n",
+    );
+    r.write(
+        "a.hs",
+        "module A where\n\nstep :: Int -> Int\nstep x = x\n\nstep' :: Int -> Int\nstep' x = x + 1\n\nrun :: Int -> Int\nrun y = step' y - step y\n",
+    );
+    r.write("a.R", "ready <- function(x) {\n  TRUE\n}\n\nis.ready <- function(x) {\n  TRUE\n}\n\nrun <- function(x) {\n  is.ready(x)\n}\n");
+    r.write("b.py", "def x():\n    return 1\n\n\ndef use(v):\n    return x-v\n");
+
+    let mut child = Command::new(BIN).arg("lsp").current_dir(&r.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
+    c.request("initialize", json!({"processId": null, "rootUri": uri(&r.root), "capabilities": {}}));
+    c.notify("initialized", json!({}));
+    // (file, line, text the cursor sits one character into, definition line, reference lines)
+    let cases: &[(&str, u64, &str, u64, &[u64])] = &[
+        ("a.rb", 19, "valid?", 5, &[5, 18, 19, 21, 22]),
+        ("a.rb", 20, "save!", 13, &[13, 20, 22]),
+        ("a.rb", 22, "save!", 13, &[13, 20, 22]),
+        ("a.ex", 4, "ok?", 2, &[2, 3, 4]),
+        ("a.jl", 10, "update!", 4, &[4, 9, 10]),
+        ("a.rb", 1, "valid", 1, &[1, 2]),
+        // a Haskell function starts at its type signature
+        ("a.hs", 9, "step'", 5, &[5, 6, 9]),
+        ("a.hs", 9, "step y", 2, &[2, 3, 9]),
+        ("a.R", 9, "is.ready", 4, &[4, 9]),
+        ("a.R", 9, "ready", 4, &[4, 9]),
+        ("b.py", 5, "x-v", 0, &[0, 5]),
+    ];
+    for &(file, line, needle, want, refs) in cases {
+        let text = fs::read_to_string(r.root.join(file)).unwrap();
+        let src = text.lines().nth(line as usize).unwrap();
+        let ch = utf16(&src[..src.find(needle).unwrap()]) + 1;
+        let pos = json!({"textDocument": {"uri": uri(&r.root.join(file))}, "position": {"line": line, "character": ch}});
+        let def = c.request("textDocument/definition", pos.clone());
+        let got: Vec<(String, u64)> = places(&def["result"]).into_iter().map(|(f, l, _)| (f, l)).collect();
+        assert_eq!(got, [(file.to_string(), want)], "definition {file}:{line} {needle:?}: {def}");
+        let mut p = pos;
+        p["context"] = json!({"includeDeclaration": true});
+        let found = c.request("textDocument/references", p);
+        let mut lines: Vec<u64> = places(&found["result"]).into_iter().map(|(_, l, _)| l).collect();
+        lines.sort();
+        assert_eq!(lines, refs, "references {file}:{line} {needle:?}: {found}");
+    }
+    c.request("shutdown", Value::Null);
+    c.notify("exit", Value::Null);
+    drop(c);
+    child.wait().unwrap();
+}
