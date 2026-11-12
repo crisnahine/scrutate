@@ -270,6 +270,8 @@ First release.
   answered from the text the editor sent, or not at all.
 - A path in a tool call that leaves the repository by its own parts is refused before anything
   is looked at; on Windows a share on another machine named in a call was connected to first.
+  An absolute path elsewhere (`/a.py`) no longer names the repository's file of the same
+  relative name in `outline`, `dependencies`, `dependents` and locations.
   The language server reads no file behind a link that leaves the root, and on Windows it works
   on a workspace on a share or in WSL (`file://wsl.localhost/...`). MCP `callees` says how many
   outside names it left out past 50.
