@@ -136,6 +136,8 @@ pub struct Resolver<'a> {
     /// Java: by class, the types it extends and implements, and the fields it declares
     java_bases: HashMap<i64, Rc<Vec<std::result::Result<i64, &'static str>>>>,
     java_fields: HashMap<i64, Rc<HashSet<String>>>,
+    /// by class: the classes it inherits from, in method resolution order (`linearized`)
+    orders: HashMap<i64, Rc<Vec<i64>>>,
     /// by scope node id, what was looked for and name: the byte ranges found, so a use in a big
     /// function does not walk all of it
     found: HashMap<(usize, &'static str, String), Spans>,
@@ -760,6 +762,7 @@ impl<'a> Resolver<'a> {
             java_paths: HashMap::new(),
             java_bases: HashMap::new(),
             java_fields: HashMap::new(),
+            orders: HashMap::new(),
             found: HashMap::new(),
         })
     }
@@ -1629,15 +1632,11 @@ impl<'a> Resolver<'a> {
 
     /// `name` as a member of the container definition `id` (methods, nested classes), base classes included.
     fn member(&mut self, id: i64, name: &str, depth: usize) -> Option<i64> {
-        self.member_seen(id, name, depth, &mut HashMap::new())
-    }
-
-    fn member_seen(&mut self, id: i64, name: &str, depth: usize, seen: &mut HashMap<i64, usize>) -> Option<i64> {
         if self.nest > 32 {
             return None;
         }
         self.nest += 1;
-        let r = self.member_inner(id, name, depth, seen);
+        let r = self.member_inner(id, name, depth);
         self.nest -= 1;
         r
     }
@@ -1649,7 +1648,7 @@ impl<'a> Resolver<'a> {
         self.file(&path).defs.iter().find(|d| d.name == name && strip_generics(&d.qualname) == want).map(|d| d.id)
     }
 
-    fn member_inner(&mut self, id: i64, name: &str, depth: usize, seen: &mut HashMap<i64, usize>) -> Option<i64> {
+    fn member_inner(&mut self, id: i64, name: &str, depth: usize) -> Option<i64> {
         if let Some(d) = self.declared_member(id, name) {
             return Some(d);
         }
@@ -1691,18 +1690,15 @@ impl<'a> Resolver<'a> {
         if fi.lang == Some(Lang::Java) {
             return self.java_inherited(id, name, depth, &mut HashMap::new());
         }
-        if depth >= 3 {
-            return None;
-        }
-        for bid in self.bases(id) {
-            if java_seen(seen, bid, depth + 1) {
-                continue;
+        let order = match self.orders.get(&id) {
+            Some(o) => Rc::clone(o),
+            None => {
+                let o = Rc::new(self.linearized(id, 0, &mut HashMap::new()).0);
+                self.orders.insert(id, Rc::clone(&o));
+                o
             }
-            if let Some(m) = self.member_seen(bid, name, depth + 1, seen) {
-                return Some(m);
-            }
-        }
-        None
+        };
+        order[1..].iter().find_map(|&b| self.declared_member(b, name))
     }
 
     /// `name` as a member a Java type `id` inherits: its bases in header order, each with its own bases first.
@@ -4674,6 +4670,30 @@ mod tests {
                 ("p.py", "super().size() + 4", "size", "external"),
                 ("p.py", "super().__init__()", "__init__", "external"),
                 ("g/g.go", "b.Base.Size()", "Size", "g/g.go Base.Size"),
+            ],
+        );
+    }
+
+    #[test]
+    fn an_inherited_method_is_the_first_in_the_method_resolution_order() {
+        let py = "class A:\n    def m(self):\n        return 1\n\n\nclass B(A):\n    pass\n\n\nclass C(A):\n    def m(self):\n        return 2\n\n\nclass D(B, C):\n    def k(self):\n        return self.m() + 1\n\n\nclass P1:\n    def top(self):\n        return 0\n\n\nclass P2(P1):\n    pass\n\n\nclass P3(P2):\n    pass\n\n\nclass P4(P3):\n    pass\n\n\nclass P5(P4):\n    pass\n\n\nclass X:\n    def w(self):\n        return 3\n\n\nclass Y:\n    def w(self):\n        return 4\n\n\nclass XY(X, Y):\n    pass\n\n\nclass YX(Y, X):\n    pass\n\n\nclass Bad(XY, YX):\n    pass\n\n\ndef use():\n    return D().m() + P5().top() + Bad().w()\n";
+        let ts = "export class T1 {\n  m() { return 1; }\n}\nexport class T2 extends T1 {}\nexport class T3 extends T2 {}\nexport class T4 extends T3 {}\nexport class T5 extends T4 {\n  k() { return this.m() + 1; }\n}\nexport interface Named {\n  name(): string;\n}\nexport class N extends T5 implements Named {\n  name() { return 'n'; }\n}\nexport function use(n: N) {\n  return new T5().m() + n.m() + n.name().length;\n}\n";
+        let js = "export class J1 {\n  m() { return 1; }\n}\nexport class J2 extends J1 {}\nexport class J3 extends J2 {}\nexport class J4 extends J3 {}\nexport class J5 extends J4 {}\nexport function use() {\n  return new J5().m() + 2;\n}\n";
+        resolver_case(
+            "mro",
+            &[("p.py", py), ("t.ts", ts), ("j.js", js)],
+            &[
+                // Python's order for D is D, B, C, A
+                ("p.py", "self.m() + 1", "m", "p.py C.m"),
+                ("p.py", "D().m()", "m", "p.py C.m"),
+                ("p.py", "P5().top()", "top", "p.py P1.top"),
+                // Python refuses Bad (no consistent order): the bases in header order, XY first
+                ("p.py", "Bad().w()", "w", "p.py X.w"),
+                ("t.ts", "this.m() + 1", "m", "t.ts T1.m"),
+                ("t.ts", "new T5().m()", "m", "t.ts T1.m"),
+                ("t.ts", "n.m()", "m", "t.ts T1.m"),
+                ("t.ts", "n.name()", "name", "t.ts N.name"),
+                ("j.js", "new J5().m()", "m", "j.js J1.m"),
             ],
         );
     }
