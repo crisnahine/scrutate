@@ -636,6 +636,11 @@ pub enum Cmd {
         #[arg(long)]
         timing: bool,
     },
+    /// print the chunks of files with the tokens of each view, and the terms of queries, as the
+    /// index and the vector model see them, from a JSON-lines file ({"file": ..., "path": ...} or
+    /// {"query": ...}): the input of the vector model's training
+    #[command(hide = true)]
+    Views { file: PathBuf },
 }
 
 fn parse_size(s: &str) -> Result<u64> {
@@ -1446,7 +1451,57 @@ pub fn run() -> Result<i32> {
             Ok(0)
         }
         Cmd::Batch { file, features, timing } => batch_command(&cli.root, &file, features, timing),
+        Cmd::Views { file } => views_command(&file),
     }
+}
+
+/// One line per request: `{"file", "path"}` reads `file` and parses it as `path` (its language
+/// and module come from `path`); `{"query"}` gives the query's terms.
+fn views_command(file: &Path) -> Result<i32> {
+    use crate::text::{query_terms, tokenize2, BODY_CAP};
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    for line in std::io::BufReader::new(std::fs::File::open(file)?).lines() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let req: serde_json::Value = serde_json::from_str(&line)?;
+        let s = |k: &str| req.get(k).and_then(|v| v.as_str());
+        if let Some(q) = s("query") {
+            writeln!(out, "{}", serde_json::json!({"query": q, "terms": query_terms(q)}))?;
+            continue;
+        }
+        let (Some(src), Some(rel)) = (s("file"), s("path")) else { anyhow::bail!("a request needs \"query\", or \"file\" and \"path\": {line}") };
+        let parsed = std::fs::read(src)
+            .map_err(anyhow::Error::from)
+            .and_then(|raw| String::from_utf8(raw).map_err(anyhow::Error::from))
+            .and_then(|text| std::panic::catch_unwind(|| crate::parse::parse_source(rel, &text)).map_err(|_| anyhow::anyhow!("the parser panicked")));
+        let rec = match parsed {
+            Ok(chunks) => {
+                let chunks: Vec<serde_json::Value> = chunks
+                    .iter()
+                    .map(|c| {
+                        let qual = c.qualname.rfind('.').map_or("", |i| &c.qualname[..i]);
+                        serde_json::json!({
+                            "kind": c.kind, "name": c.name, "qualname": c.qualname, "start": c.start, "doc": c.doc,
+                            "views": {
+                                "name": tokenize2(&c.name, None).0,
+                                "qual": tokenize2(qual, None).0,
+                                "sig": tokenize2(&c.sig, Some(80)).0,
+                                "doc": tokenize2(&c.doc, Some(200)).0,
+                                "body": tokenize2(&c.body, Some(BODY_CAP)).0,
+                            }
+                        })
+                    })
+                    .collect();
+                serde_json::json!({"path": rel, "chunks": chunks})
+            }
+            Err(e) => serde_json::json!({"path": rel, "error": format!("{e:#}")}),
+        };
+        writeln!(out, "{rec}")?;
+    }
+    Ok(0)
 }
 
 /// Run one index operation and print its answer; exit code 1 when nothing was found. `outside`:

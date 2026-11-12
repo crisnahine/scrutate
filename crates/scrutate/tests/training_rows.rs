@@ -1,4 +1,5 @@
-//! What the training scripts read from the binary: `batch --features` (the ranker's rows).
+//! What the training scripts read from the binary: `batch --features` (the ranker's rows) and the
+//! hidden `views` command (the vector model's chunks, view tokens and query terms).
 
 use std::fs;
 use std::path::PathBuf;
@@ -43,5 +44,25 @@ fn batch_features_name_every_feature_once_per_query() {
     for key in ["exact_ids", "lex_ids", "sem_ids"] {
         assert!(rec[key].is_array(), "{key}: {rec}");
     }
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn views_print_the_chunks_of_a_file_and_the_terms_of_a_query() {
+    let root = tree("views", &[("src/shop.py", SHOP)]);
+    let q = root.join("q.jsonl");
+    let file = root.join("src/shop.py");
+    let req = serde_json::json!({"file": file, "path": "shop.py"});
+    fs::write(&q, format!("{req}\n{{\"query\": \"sum the order lines\"}}\n{{\"file\": \"missing.py\", \"path\": \"missing.py\"}}\n")).unwrap();
+    let recs = run(&root, &["views", q.to_str().unwrap()]);
+    assert_eq!(recs.len(), 3);
+    assert_eq!(recs[0]["path"], "shop.py");
+    let total = recs[0]["chunks"].as_array().unwrap().iter().find(|c| c["qualname"] == "Order.total").expect("Order.total");
+    assert_eq!(total["kind"], "method");
+    assert_eq!(total["doc"], "Sum of the lines.");
+    assert_eq!(total["views"]["name"], serde_json::json!(scrutate::text::tokenize2("total", None).0));
+    assert_eq!(total["views"]["qual"], serde_json::json!(scrutate::text::tokenize2("Order", None).0));
+    assert_eq!(recs[1]["terms"], serde_json::json!(scrutate::text::query_terms("sum the order lines")));
+    assert!(recs[2]["error"].is_string() && recs[2].get("chunks").is_none(), "{}", recs[2]);
     let _ = fs::remove_dir_all(&root);
 }

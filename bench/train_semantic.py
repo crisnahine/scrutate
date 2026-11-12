@@ -24,14 +24,16 @@ usage:
 """
 from __future__ import annotations
 
+import json
 import math
 import os
 import pickle
 import re
+import subprocess
 import sys
+import tempfile
 import time
 from collections import Counter
-from multiprocessing import Pool
 
 import numpy as np
 import scipy.sparse as sp
@@ -41,10 +43,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 from evalcore import first_relevant_rank, load_queries, summarize  # noqa: E402
 from groups import BENCH, DEV, PRETRAIN, SP  # noqa: E402
 
-from scrutate_ref.parse import parse_source  # noqa: E402
 from scrutate_ref.pretrain import TEST_PARTS  # noqa: E402
 from scrutate_ref.semantic import SemanticModel, _sublog, view_counts  # noqa: E402
-from scrutate_ref.text import BODY_CAP, query_terms, tokenize2  # noqa: E402
+
+REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 
 SENT_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z`(\[])")
 
@@ -73,26 +75,38 @@ def _is_excluded(path: str) -> bool:
     return any(p in TEST_PARTS or p.startswith("test_") or p.endswith("_test.py") for p in parts)
 
 
-def _extract(path_root):
-    path, root = path_root
-    rel = os.path.relpath(path, root)
+def engine_views(requests: list[dict]):
+    """The engine's answer to each `views` request, in order: a file's chunks with the tokens of
+    each view (`{"file", "path"}`), or a query's terms (`{"query"}`)."""
+    binary = os.environ.get("SCRUTATE_BIN") or os.path.join(REPO, "target", "release", "scrutate")
+    with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as f:
+        f.write("".join(json.dumps(r) + "\n" for r in requests))
     try:
-        with open(path, encoding="utf8") as f:
-            src = f.read()
-        chunks = parse_source(rel, src)
-    except Exception:
-        return []
+        p = subprocess.Popen([binary, "--root", REPO, "views", f.name], stdout=subprocess.PIPE, text=True)
+        n = 0
+        for line in p.stdout:
+            n += 1
+            yield json.loads(line)
+        if p.wait() != 0 or n != len(requests):
+            raise SystemExit(f"{binary} views failed after {n} of {len(requests)} requests")
+    finally:
+        os.unlink(f.name)
+
+
+def query_terms_of(texts: list[str]) -> dict[str, list[str]]:
+    """The engine's query terms of each text."""
+    texts = list(dict.fromkeys(texts))
+    return {r["query"]: r["terms"] for r in engine_views([{"query": t} for t in texts])}
+
+
+def _functions(rec: dict) -> list[tuple]:
+    """The documented-or-not functions of one file: (name, qual, sig, doc tokens, doc text, body)."""
     out = []
-    for c in chunks:
-        if c.kind not in ("function", "method"):
+    for c in rec.get("chunks", []):  # a file that does not read or parse has none
+        v = c["views"]
+        if c["kind"] not in ("function", "method") or not v["name"] or len(v["body"]) < 2:
             continue
-        name_s = tokenize2(c.name)[0]
-        body_s = tokenize2(c.body, BODY_CAP)[0]
-        if not name_s or len(body_s) < 2:
-            continue
-        qual = c.qualname.rsplit(".", 1)[0] if "." in c.qualname else ""
-        q = query_terms(first_sentence(c.doc)) if c.doc else []
-        out.append((name_s, tokenize2(qual)[0], tokenize2(c.sig, 80)[0], tokenize2(c.doc, 200)[0], q, body_s))
+        out.append((v["name"], v["qual"], v["sig"], v["doc"], c["doc"], v["body"]))
     return out
 
 
@@ -116,13 +130,12 @@ def extract(cache: str, pkg_list: str | None) -> None:
                 if f.endswith(".py"):
                     p = os.path.join(dp, f)
                     if not _is_excluded(os.path.relpath(p, SP)):
-                        files.append((p, SP))
+                        files.append(p)
     t0 = time.time()
-    groups = []  # one list per file (kept together: hard negatives)
-    with Pool(2) as pool:
-        for res in pool.imap(_extract, files, chunksize=8):
-            if res:
-                groups.append(res)
+    # one list per file (kept together: hard negatives)
+    found = [g for g in map(_functions, engine_views([{"file": p, "path": os.path.relpath(p, SP)} for p in files])) if g]
+    terms = query_terms_of([first_sentence(f[4]) for g in found for f in g if f[4]])
+    groups = [[(a, b, c, d, terms[first_sentence(doc)] if doc else [], body) for a, b, c, d, doc, body in g] for g in found]
     n = sum(len(g) for g in groups)
     nd = sum(1 for g in groups for f in g if len(f[4]) >= 2)
     print(f"{len(dirs)} packages, {len(files)} files, {n:,} functions, {nd:,} with a usable docstring sentence ({time.time()-t0:.0f}s)")
@@ -222,25 +235,17 @@ def dev_data(variant="A"):
     data = []
     for pkg in DEV:
         root = os.path.join(BENCH, "src", variant, pkg)
+        files = [os.path.join(dp, fn) for dp, _, fns in os.walk(root) for fn in fns if fn.endswith(".py")]
         chunks = []
-        for dp, _, fns in os.walk(root):
-            for fn in fns:
-                if fn.endswith(".py"):
-                    p = os.path.join(dp, fn)
-                    rel = os.path.relpath(p, root)
-                    try:
-                        src = open(p, encoding="utf8").read()
-                        for c in parse_source(rel, src):
-                            if c.kind == "window":
-                                continue
-                            qual = c.qualname.rsplit(".", 1)[0] if "." in c.qualname else ""
-                            chunks.append((rel, c.qualname, c.name, tokenize2(c.name)[0], tokenize2(qual)[0],
-                                           tokenize2(c.sig, 80)[0], tokenize2(c.doc, 200)[0], tokenize2(c.body, BODY_CAP)[0]))
-                    except Exception:
-                        pass
+        for rec in engine_views([{"file": p, "path": os.path.relpath(p, root)} for p in files]):
+            for c in rec.get("chunks", []):
+                if c["kind"] != "window":
+                    v = c["views"]
+                    chunks.append((rec["path"], c["qualname"], c["name"], v["name"], v["qual"], v["sig"], v["doc"], v["body"]))
         # its chunks carry no kind, so the type answers are left out
         data.append((pkg, chunks, [q for q in load_queries(pkg) if q.get("target_kind") != "type"]))
     _DEV_CACHE[variant] = data
+    _DEV_CACHE["terms"] = {**_DEV_CACHE.get("terms", {}), **query_terms_of([q["query"] for _, _, qs in data for q in qs])}
     return data
 
 
@@ -268,7 +273,7 @@ def evaluate(model: SemanticModel, types=("doc", "kw"), variant="A") -> dict:
         for q in qs:
             if q["type"] not in types:
                 continue
-            z = model.encode_query(query_terms(q["query"]))
+            z = model.encode_query(_DEV_CACHE["terms"][q["query"]])
             if z is None:
                 ranks[q["type"]].append(None)
                 continue

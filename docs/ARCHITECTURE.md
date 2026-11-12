@@ -641,8 +641,11 @@ a model that makes vectors reads and parses the files, for their vectors alone; 
 content changed is indexed whole as usual. The index is then the one a fresh build with that model
 writes (`tests/models.rs` compares every row and segment array). A switch that stops halfway
 leaves the index as it was, and until one commits a search does not compare its query with the
-vectors of another model. Training (numpy + LightGBM) lives in `bench/train_semantic.py` and the
-reference package.
+vectors of another model. Training (numpy + LightGBM) lives in `bench/train_semantic.py` and
+`bench/train_ranker.py`, and reads its inputs from the engine: `bench/gen_features.py` indexes
+each benchmark package with the binary and keeps the rows `batch --features` prints, and
+`train_semantic.py` reads the chunks, view tokens and query terms of the hidden `views` command.
+Until the reference stops mirroring the engine, both give the rows the reference gave, bit for bit.
 
 ## Design rules for the next decade
 - Formats are versioned (`schema_version`, `.npy` headers, JSONL `schema`) and migrations are a

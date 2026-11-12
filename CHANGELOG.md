@@ -192,6 +192,12 @@ First release.
   line 18446744073709551615.
 
 ### Engine B: code intelligence
+- The models are trained on rows the engine writes. `bench/gen_features.py` indexes each
+  benchmark package with the binary and reads `batch --features`; `bench/train_semantic.py` reads
+  the chunks, the tokens of each view and the query terms from a hidden `views` command.
+  `bench/retrain_ranker.sh` and `bench/eval_sealed.sh` build the binary first. On six packages,
+  one per language, both variants, the rows equal the reference's bit for bit (7,836 queries,
+  1,171,940 candidates), and so do the vector model's inputs.
 - `batch --features` names the features: each line has `feature_names` (the order of every
   candidate's `x`), and each candidate its `name` and `kind`, so a training script needs no second
   list. In `search.rs` the candidate sources are a list and the features tables filled by name;

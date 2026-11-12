@@ -96,7 +96,7 @@ else
   stage sealed_bench build_bench
 fi
 
-# 2. features with the reference engine of this checkout
+# 2. features from the engine of this checkout (SCRUTATE_BIN names another build)
 have_feat() {
   local p v
   for p in $SEALED_PY $CODE_SEALED; do for v in A B; do
@@ -110,6 +110,10 @@ else
   for p in $SEALED_PY $CODE_SEALED; do for v in A B; do
     rm -rf "$SCRUTATE_WORK/bench/src/$v/$p/.scrutate"
   done; done
+  if [ -z "${SCRUTATE_BIN:-}" ]; then
+    stage sealed_build cargo build --release -p scrutate --locked
+    export SCRUTATE_BIN="${CARGO_TARGET_DIR:-$PWD/target}/release/scrutate"
+  fi
   stage sealed_features "$PY" bench/gen_features.py models/semantic.npz "${TAG}sealed" SEALED \
     --pkgs "$(echo $SEALED_PY $CODE_SEALED | tr ' ' ,)"
 fi

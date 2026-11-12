@@ -306,6 +306,8 @@ samples), and a dictionary to version in the index, for a few percent.
 ## Reproduce
 
 ```sh
+# the features come from target/release/scrutate, which retrain_ranker.sh builds first
+# (SCRUTATE_BIN names another build);
 # a virtual environment with numpy, lightgbm, scikit-learn, the reference engine's dependencies
 # and the DEV, TEST and SEALED packages at the versions named in the scripts' headers
 export SCRUTATE_WORK=/some/scratch SCRUTATE_VENV=/path/to/venv THREADS=4

@@ -19,7 +19,7 @@
 #   RANKER_PARAMS  passed to train_ranker.py
 #   TYPE_WEIGHT=w  weight of a type query's rows in training (default 1: every query counts the same)
 #
-# Stages: benchmark, DEV and TEST features with the reference engine of this checkout, fit on DEV,
+# Stages: benchmark, DEV and TEST features from the engine of this checkout, fit on DEV,
 # evaluation of the old and new ranker on TEST (function rows and type rows, all languages and
 # each one). The new ranker goes to models/ranker.npz only when on TEST no row of 50 queries or
 # more is below BM25 and the mean over all queries of a variant is not below the old ranker's,
@@ -93,7 +93,7 @@ else
   log "bench: reusing $SCRUTATE_WORK/bench"
 fi
 
-# 2. features with the reference engine of this checkout (single-threaded; DEV and TEST side by side)
+# 2. features from the engine of this checkout (DEV and TEST side by side)
 csv() { echo "$*" | tr ' ' ,; }
 have_feat() { # tag, packages...
   local t=$1 p v
@@ -108,6 +108,11 @@ features() { # tag, group, packages...
 if have_feat "${TAG}dev" $DEV_PY $CODE_DEV && have_feat "${TAG}test" $TEST_PY $CODE_TEST; then
   log "features: reusing ${TAG}dev and ${TAG}test"
 else
+  # the engine of this checkout writes the rows (SCRUTATE_BIN names another build)
+  if [ -z "${SCRUTATE_BIN:-}" ]; then
+    stage build cargo build --release -p scrutate --locked
+    export SCRUTATE_BIN="${CARGO_TARGET_DIR:-$PWD/target}/release/scrutate"
+  fi
   # an index made by another engine version must not be reused
   find "$SCRUTATE_WORK/bench/src" -mindepth 3 -maxdepth 3 -name .scrutate -type d -exec rm -rf {} +
   t0=$SECONDS
