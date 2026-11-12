@@ -149,18 +149,26 @@ fn dir_of(p: &str) -> &str {
     p.rsplit_once('/').map(|(d, _)| d).unwrap_or("")
 }
 
-fn join(base: &str, rel: &str) -> String {
+/// `rel` from the directory `base`; a path that climbs above the root keeps its leading `..`, so it
+/// names no file of the repository.
+pub(crate) fn join(base: &str, rel: &str) -> String {
     let mut parts: Vec<&str> = if base.is_empty() { Vec::new() } else { base.split('/').collect() };
     for seg in rel.split('/') {
         match seg {
             "" | "." => {}
-            ".." => {
+            ".." if parts.last().is_some_and(|p| *p != "..") => {
                 parts.pop();
             }
             s => parts.push(s),
         }
     }
     parts.join("/")
+}
+
+/// The path a Python relative import (`.`, `.x`, `..pkg.mod`) of `from` names, before a suffix.
+pub(crate) fn py_relative(from: &str, module: &str) -> String {
+    let ups = module.chars().take_while(|c| *c == '.').count();
+    join(dir_of(from), &format!("{}{}", "../".repeat(ups.saturating_sub(1)), module[ups..].replace('.', "/")))
 }
 
 /// `Foo<'a, T>.new` -> `Foo.new`: impl blocks carry their generics in the qualified name.
@@ -1878,12 +1886,7 @@ impl<'a> Resolver<'a> {
     fn py_rooted(&self, from: &str, module: &str) -> Option<String> {
         let try_base = |base: &str| self.py_try_base(base);
         if module.starts_with('.') {
-            let ups = module.chars().take_while(|c| *c == '.').count();
-            let mut base = dir_of(from).to_string();
-            for _ in 1..ups {
-                base = dir_of(&base).to_string();
-            }
-            let target = join(&base, &module[ups..].replace('.', "/"));
+            let target = py_relative(from, module);
             return if target.is_empty() { self.first_file(&["__init__.py".to_string()]) } else { try_base(&target) };
         }
         let slashed = module.replace('.', "/");
@@ -4609,6 +4612,11 @@ public class Main extends Base {
     fn helpers() {
         assert_eq!(strip_generics("Foo<'a, T>.new"), "Foo.new");
         assert_eq!(join("a/b", "../c/./d"), "a/c/d");
+        assert_eq!(join("src", "../../lib"), "../lib");
+        assert_eq!(
+            (py_relative("src/b.py", "..x.y"), py_relative("src/b.py", "...x"), py_relative("src/b.py", ".")),
+            ("x/y".into(), "../x".into(), "src".into())
+        );
         assert_eq!(Resolver::rust_mod_dir("src/a/b.rs"), "src/a/b");
         assert_eq!(Resolver::rust_mod_dir("src/a/mod.rs"), "src/a");
         assert_eq!(cargo_package_name("[workspace]\nname = \"no\"\n[package]\nname = \"grep-matcher\"\n"), Some("grep-matcher".into()));

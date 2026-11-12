@@ -9,6 +9,7 @@ use rusqlite::params;
 
 use crate::fmt::{echo, shown};
 use crate::index::{ChunkRow, Index, CHUNK_COLS};
+use crate::resolve::join;
 use crate::search::{Hit, Searcher, CODE_KINDS};
 use crate::text::{name_key, tokenize2, BODY_CAP};
 use crate::tscache::Key;
@@ -67,39 +68,14 @@ const SOURCE_EXTS: &[&str] = &[
     ".lua", ".c", ".h", ".cc", ".cpp", ".hpp", ".cs", ".jl", ".r", ".R", ".sh", ".zig", ".elm",
 ];
 
-fn join(base: &str, rel: &str) -> String {
-    let mut parts: Vec<&str> = if base.is_empty() { Vec::new() } else { base.split('/').collect() };
-    for seg in rel.split('/') {
-        match seg {
-            "" | "." => {}
-            ".." => {
-                parts.pop();
-            }
-            s => parts.push(s),
-        }
-    }
-    parts.join("/")
-}
-
 /// The repository path a relative import of `from` names before an extension or an index file
 /// is tried (`./x`, `../x`, Python's `.x`, `..pkg.mod` and `.`); None for any other module.
 fn relative_path(module: &str, from: &str) -> Option<String> {
     let dir = from.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
-    let up = |levels: usize| {
-        let mut base = dir.to_string();
-        for _ in 1..levels {
-            base = base.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default();
-        }
-        base
-    };
     if module.starts_with("./") || module.starts_with("../") {
         Some(join(dir, module))
-    } else if module.chars().all(|c| c == '.') {
-        Some(up(module.len()))
     } else if module.starts_with('.') {
-        // python relative import: `.x` / `..pkg.mod`
-        let ups = module.chars().take_while(|c| *c == '.').count();
-        Some(join(&up(ups), &module[ups..].replace('.', "/")))
+        Some(crate::resolve::py_relative(from, module))
     } else {
         None
     }

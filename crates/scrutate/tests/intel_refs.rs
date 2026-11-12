@@ -524,6 +524,35 @@ fn a_file_with_one_bad_byte_is_resolved_and_queried() {
 }
 
 #[test]
+fn a_relative_import_that_climbs_above_the_root_names_no_file() {
+    let r = Repo::new(
+        "above_root",
+        &[
+            ("lib.js", "export function h() { return 1 }\n"),
+            ("src/a.js", "import { h } from '../../lib';\nh();\n"),
+            ("src/c.js", "import { h } from '../lib';\nh();\n"),
+            ("helper.py", "def go():\n    return 1\n"),
+            ("src/__init__.py", ""),
+            ("src/b.py", "from ...helper import go\ngo()\n"),
+            ("src/d.py", "from ..helper import go\ngo()\n"),
+        ],
+    );
+    let resolved = |path: &str| -> Vec<String> {
+        r.json(&["deps", path, "--json"]).as_array().unwrap().iter().filter_map(|d| d["resolved"].as_str().map(str::to_string)).collect()
+    };
+    assert_eq!(resolved("src/a.js"), Vec::<String>::new());
+    assert_eq!(resolved("src/b.py"), Vec::<String>::new());
+    assert_eq!(resolved("src/c.js"), vec!["lib.js"]);
+    assert_eq!(resolved("src/d.py"), vec!["helper.py"]);
+    let got = r.resolved("h");
+    assert!(got.contains(&("src/a.js:2".to_string(), "-".to_string())) && got.contains(&("src/c.js:2".to_string(), "lib.js".to_string())), "{got:?}");
+    let got = r.resolved("go");
+    assert!(got.contains(&("src/b.py:2".to_string(), "-".to_string())) && got.contains(&("src/d.py:2".to_string(), "helper.py".to_string())), "{got:?}");
+    let (_, out) = r.run(&["rdeps", "lib.js"]);
+    assert!(out.contains("src/c.js") && !out.contains("src/a.js"), "{out}");
+}
+
+#[test]
 fn tsquery_skips_files_over_the_index_size_limit() {
     let big = format!("def small():\n    pass\n{}", "x = 1\n".repeat(200_000));
     let r = Repo::new("bigts", &[("big.py", &big), ("ok.py", "def fine():\n    pass\n")]);
