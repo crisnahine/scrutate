@@ -7,10 +7,11 @@ the wordmark are trademarks of Cris Nahine, the maintainer of Scrutate. They are
 marks today. The name has not been cleared by a lawyer (docs/NAMING.md says what was and was not
 checked).
 
-The code is under an open source licence (LICENSE). That licence covers the code. It does not
-give anyone a right to the name or the logo; this page says what you may do with them. The aim
-is simple: when people see "Scrutate", they should get the software this project released, or be
-told plainly that they are not.
+The code is under an open source licence, MIT or Apache-2.0 at your choice (LICENSE-MIT,
+LICENSE-APACHE). That licence covers the code. It does not give anyone a right to the name or
+the logo; this page says what you may do with them. The aim is simple: when people see
+"Scrutate", they should get the software this project released, or be told plainly that they
+are not.
 
 ## You may, without asking
 

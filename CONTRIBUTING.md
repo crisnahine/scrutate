@@ -11,11 +11,13 @@
 
 ## Licence of contributions
 
-Scrutate is open source (LICENSE) and stays so. A contribution is accepted under the
+Scrutate is open source, under MIT or Apache-2.0 at the user's choice (LICENSE-MIT,
+LICENSE-APACHE), and stays so. A contribution is accepted under the
 [contributor licence agreement](CLA.md): you keep the copyright in what you write, you give the
 project a licence to it that also lets the maintainer offer other terms (a commercial licence,
 for example), and the project promises that what it accepts stays available under the open
-source licence it had that day. You agree once, by ticking the line in the pull request form.
+source licence it had that day. What is merged is offered to everyone under the same two
+licences. You agree once, by ticking the line in the pull request form.
 
 The name and the logo are covered by the [trademark policy](TRADEMARKS.md): a fork with changes
 beyond packaging takes its own name.

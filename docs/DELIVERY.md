@@ -33,9 +33,9 @@ The fifteen items the mission asks for (section 11), each with where it lives in
 
 `tools/release_local.sh` on the release commit writes them to `dist/` (macOS) and, run in a clean
 `rust:1-slim-bookworm` container, to `dist-linux/` (neither is in git; `SHA256SUMS` in each lists
-the files' checksums). Every archive holds the binary, LICENSE, README.md, CHANGELOG.md,
-THIRD_PARTY_NOTICES.txt, docs/ and integrations/. The `.deb` and `.rpm` packages
-(`packaging/linux/build-packages.sh`) carry THIRD_PARTY_NOTICES.txt too.
+the files' checksums). Every archive holds the binary, LICENSE-APACHE, LICENSE-MIT, README.md,
+CHANGELOG.md, THIRD_PARTY_NOTICES.txt, docs/ and integrations/. The `.deb` and `.rpm` packages
+(`packaging/linux/build-packages.sh`) carry the two licence files and THIRD_PARTY_NOTICES.txt too.
 
 | Artifact | Platform | Binary SHA-256 |
 |---|---|---|

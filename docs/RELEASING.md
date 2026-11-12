@@ -179,7 +179,8 @@ uvx --with jsonschema --with pyyaml python packaging/validate_manifests.py --dra
 
 `--draft` lets the all-zero sha256 placeholders through; without it the check fails on them, so
 it is run without `--draft` only once the manifests carry the release checksums. The `.deb` and
-`.rpm` (`packaging/linux/build-packages.sh`) carry `THIRD_PARTY_NOTICES.txt`
+`.rpm` (`packaging/linux/build-packages.sh`) carry `LICENSE-APACHE`, `LICENSE-MIT` and
+`THIRD_PARTY_NOTICES.txt`
 (`/usr/share/doc/scrutate/` in the `.deb`, `/usr/share/licenses/scrutate/` in the `.rpm`).
 
 `dist-linux/` is `tools/release_local.sh` run in a clean `rust:1-slim-bookworm` container on a
@@ -221,6 +222,11 @@ is the order immutable releases need. Its notes are the version's section of `CH
 R-6.1, R-9.10 and R-12.2 in docs/TRACEABILITY.md are PASS from run 43013926055, the first green
 run of `ci.yml`. R-6.12 and R-13.9 stay PARTIAL until `release.yml` and `benchmarks.yml` have run
 on a runner: flip them from the recorded runs, not before.
+
+When the repository goes public: enable GitHub Sponsors on the `crisnahine` account (only the
+account's owner can enrol it), then add `.github/FUNDING.yml` with `github: crisnahine` and a
+"Sponsor" line to the "Sponsor and hire" section of README.md. Not before: a sponsor button that
+leads nowhere is worse than none.
 
 After the release is out: take `open-pull-requests-limit: 0` out of `.github/dependabot.yml`.
 Version updates are paused until then, because each Dependabot pull request runs `ci.yml` on six

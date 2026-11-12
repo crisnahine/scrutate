@@ -634,6 +634,12 @@ First release.
   keeps the copyright, the maintainer may also offer other licence terms, and what is accepted
   stays under the open source licence); the name and the logo have a trademark policy
   (`TRADEMARKS.md`).
+- The licence is `MIT OR Apache-2.0` at the user's choice, where it was Apache-2.0 alone:
+  `LICENSE` is now `LICENSE-APACHE` beside a new `LICENSE-MIT`, and the crate, the wheel, the
+  reference package, the VS Code extension, the Homebrew, Scoop and winget manifests, the `.deb`
+  and `.rpm`, the release archives and `THIRD_PARTY_NOTICES.txt` say so. `vendor/ignore` keeps
+  `Unlicense OR MIT`. The README has a "Sponsor and hire" section: paid terms, support,
+  sponsored features and work for hire, asked for through GitHub.
 - Unified `find`, MCP server (14 tools), configuration files with environment-variable precedence,
   shell completions, progress reporting; errors as JSON records with `--json` or
   `SCRUTATE_DIAGNOSTICS=json`.

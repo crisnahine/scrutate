@@ -602,7 +602,7 @@ def _hero():
     sy = wy + 62
     b.append(statement(PAD, sy, HERO_LINE[0], HERO_LINE[1], 26, "ink", slab_cls=slab_cls))
     b.append(mono(W - PAD, sy, HERO_SMALL, 10.5, c["dim"], 0.14, "end"))
-    b.append(mono(W - PAD, sy + 40, f"APACHE-2.0 // {spec['version'].upper()}", 10.5, c["dim"], 0.14, "end"))
+    b.append(mono(W - PAD, sy + 40, f"MIT OR APACHE-2.0 // {spec['version'].upper()}", 10.5, c["dim"], 0.14, "end"))
 
     # each search is a group: its label, its command, its marks and its counts; the groups cross-fade
     cur_pts, ret_pts = [], []
@@ -1042,7 +1042,7 @@ def engines() -> str:
 
 # ---------------------------------------------------------------- section strips
 
-# (file, panel, number, words): a band before each README section; the words are outlined, so they read on a phone
+# (file, panel, number, words[, title]): a band before each README section; the words are outlined, so they read on a phone
 STRIPS = [
     ("strip-quick-start", "paper", "02", "FOURTEEN COMMANDS"),
     ("strip-what-it-does", "ink", "03", "FIFTEEN THINGS IT DOES"),
@@ -1052,7 +1052,8 @@ STRIPS = [
     ("strip-python", "ink", "07", "IMPORT SCRUTATE"),
     ("strip-status", "paper", "08", "NOT DECLARED PRODUCTION-READY"),
     ("strip-documentation", "ink", "09", "EVERY DOCUMENT"),
-    ("strip-licence", "paper", "10", "APACHE-2.0"),
+    ("strip-sponsor", "paper", "10", "PAID SUPPORT AND HIRE"),
+    ("strip-licence", "ink", "11", "MIT OR APACHE-2.0", "MIT OR Apache-2.0"),
 ]
 
 
@@ -1075,7 +1076,7 @@ def seek(clk, x0, x1, y, cx, r, colour, t0=0.6, on="ink"):
             + f'<rect class="{dot} spot" x="{-r * 0.5:.1f}" y="{-r * 0.5:.1f}" width="{r:.1f}" height="{r:.1f}" fill="{MARK}"{edge}/></g>')
 
 
-def strip(on, n, s, i=0):
+def strip(on, n, s, i=0, title=None):
     c = ON[on]
     H = 92
     b = [panel(H, on, frame=False)]
@@ -1087,7 +1088,7 @@ def strip(on, n, s, i=0):
     b.append(f'<path d="M{end:.1f} 48 H{W - PAD - 34}" stroke="{c["rule"]}"/>')
     clk = Clock(4.8)
     b.append(seek(clk, end, W - PAD - 24, 48, W - PAD - 12, 8, c["dim"], t0=0.3 + 0.3 * (i % 3), on=on))
-    return svg(W, H, f"{n}: {s.capitalize()}", f"Section {n} of the README: {s.lower()}.", "\n".join(b),
+    return svg(W, H, f"{n}: {title or s.capitalize()}", f"Section {n} of the README: {title or s.lower()}.", "\n".join(b),
                SPOT_CSS + "\n" + clk.css(), animated=True)
 
 
@@ -1148,7 +1149,7 @@ def rust_version() -> str:
         return re.search(r'^rust-version = "([^"]+)"', f.read(), re.M).group(1)
 
 
-BADGES = {"licence": ("licence", "Apache-2.0"), "rust": ("rust", f"{rust_version()} or newer"), "platforms": ("platforms", "macOS  Linux  Windows")}
+BADGES = {"licence": ("licence", "MIT OR Apache-2.0"), "rust": ("rust", f"{rust_version()} or newer"), "platforms": ("platforms", "macOS  Linux  Windows")}
 
 
 def badge(key: str) -> str:
@@ -1178,8 +1179,10 @@ def social() -> str:
     b.append(f'<g transform="translate({(SW - ww) / 2:.1f} 330)">{wm}</g>')
     b.append(cut(48, 400, 760, 176, INK, 22))
     b.append(statement(72, 460, HERO_LINE[0], HERO_LINE[1], 40, "ink"))
-    b.append(f'<rect x="{SW - 470}" y="{SH - 78}" width="470" height="78" fill="{INK}"/>')
-    b.append(mono(SW - 64, SH - 40, HERO_SMALL + " // APACHE-2.0", 18, c["dim"], 0.16, "end"))
+    foot = HERO_SMALL + " // MIT OR APACHE-2.0"
+    fw = round(text_w(foot, 18, True, 0.16)) + 64 + 32
+    b.append(f'<rect x="{SW - fw}" y="{SH - 78}" width="{fw}" height="78" fill="{INK}"/>')
+    b.append(mono(SW - 64, SH - 40, foot, 18, c["dim"], 0.16, "end"))
     return svg(SW, SH, "Scrutate", f"Social preview: the wordmark SCRUTATE over real grep output with every match marked, and {HERO_DESC}.",
                "\n".join(b))
 
@@ -1413,8 +1416,8 @@ def outputs(only=None):
         out["logo.svg"] = logo()
         out["hero.svg"] = hero()
         out["engines.svg"] = engines()
-        for i, (name, on, n, s) in enumerate(STRIPS):
-            out[f"{name}.svg"] = strip(on, n, s, i)
+        for i, (name, on, n, s, *title) in enumerate(STRIPS):
+            out[f"{name}.svg"] = strip(on, n, s, i, *title)
         out["social-preview.svg"] = social()
         for n in ICONS:
             out[f"icon-{n}.svg"] = icon(n)

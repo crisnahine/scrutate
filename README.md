@@ -3,7 +3,7 @@
 <p align="center"><b>Universal instant code search and persistent code intelligence, in one Rust binary.</b></p>
 
 <p align="center">
-  <a href="LICENSE"><img src="docs/assets/badge-licence.svg" alt="licence: Apache-2.0" height="24"></a>
+  <a href="#licence"><img src="docs/assets/badge-licence.svg" alt="licence: MIT OR Apache-2.0" height="24"></a>
   <a href="#install"><img src="docs/assets/badge-rust.svg" alt="rust: 1.91 or newer" height="24"></a>
   <a href="#status-010"><img src="docs/assets/badge-platforms.svg" alt="platforms: macOS, Linux, Windows" height="24"></a>
 </p>
@@ -282,15 +282,40 @@ vulnerabilities; an SBOM is generated.
 </tr>
 </table>
 
+<p align="center"><img src="docs/assets/strip-sponsor.svg" width="100%" alt=""></p>
+
+## Sponsor and hire
+
+Scrutate is free to use under the licence in the next section. The maintainer also takes paid
+work around it:
+
+- a commercial licence or other terms, where a company's policy needs them
+- paid support
+- sponsored features
+- work for hire on code search and code intelligence
+
+To ask, reach the maintainer through the [GitHub profile](https://github.com/crisnahine), or
+[open an issue](https://github.com/crisnahine/scrutate/issues/new?title=Commercial%20inquiry)
+titled "Commercial inquiry". Leave the details out of the issue: the maintainer answers with a
+private channel.
+
 <p align="center"><img src="docs/assets/strip-licence.svg" width="100%" alt=""></p>
 
 ## Licence
 
-Apache-2.0. See [LICENSE](LICENSE). Every crate compiled into the binary is under a licence
-compatible with it (MIT, Apache-2.0, BSD, ISC, Zlib, Unlicense, 0BSD, Unicode-3.0 or CC0-1.0); their
-licence and notice files are
+Scrutate is licensed under either of
+
+- the MIT licence ([LICENSE-MIT](LICENSE-MIT))
+- the Apache License 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+
+at your option (SPDX: `MIT OR Apache-2.0`). That covers the code, the models, the documents and
+images, the integrations and packaging, the benchmark harness and its results, and the tests. The
+vendored walker in `vendor/ignore` keeps its upstream terms, `Unlicense OR MIT`.
+
+Every crate compiled into the binary is under a licence compatible with both (MIT, Apache-2.0,
+BSD, ISC, Zlib, Unlicense, 0BSD, Unicode-3.0 or CC0-1.0); their licence and notice files are
 collected in `THIRD_PARTY_NOTICES.txt`, which release archives, wheels and the `.deb` and `.rpm`
 packages include (`tools/third_party_notices.py`).
 
-Contributions are accepted under the [contributor licence agreement](CLA.md). The name and the
-logo are covered by the [trademark policy](TRADEMARKS.md).
+Contributions are accepted under the [contributor licence agreement](CLA.md) and offered under
+the same two licences. The name and the logo are covered by the [trademark policy](TRADEMARKS.md).
