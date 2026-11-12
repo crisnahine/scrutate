@@ -197,6 +197,11 @@ First release.
   `*.lockfile`, `bun.lockb`) are left out of the index like `*.lock`; `grep` still searches them.
 - The language server reads a document from disk only under the root; a document outside it is
   answered from the text the editor sent, or not at all.
+- `read_code` gives one answer for a path outside the repository whether or not a file is there,
+  and a definition read with `symbol` fails when its file cannot be read as text, as the read of
+  that file by `path` does. The Python bindings read a path spelling (`./pkg/a.py`) and a
+  location (`pkg/a.py:3-9`) as the MCP tools do in `symbol`, `outline`, `dependencies` and
+  `dependents`, and `read` has the same 1 MB cap and text check.
 - An index built by a newer scrutate is no longer rebuilt by an older one. It is read as it is
   when only the parsing rules are newer, and refused with exit 2 and a clear message when its
   schema, model or text format is newer; `scrutate index --force` rebuilds it with the version

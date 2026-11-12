@@ -477,8 +477,12 @@ impl Repo {
         limit: usize,
     ) -> PyResult<Bound<'py, PyAny>> {
         let n = name.to_string();
+        // a location (`path:start-end`) and a path spelling are read as the MCP tools read them
         let hits = py
-            .detach(move || self.fresh()?.find_symbol(&n, limit.saturating_add(1)))
+            .detach(move || {
+                let s = self.fresh()?;
+                scrutate::ops::targets(&s, &n, limit.saturating_add(1), false)
+            })
             .map_err(err)?;
         results(py, hits_py(hits), limit)
     }
@@ -518,7 +522,10 @@ impl Repo {
     fn outline<'py>(&self, py: Python<'py>, path: &str) -> PyResult<Vec<Bound<'py, PyDict>>> {
         let p = path.to_string();
         let rows = py
-            .detach(move || scrutate::intel::outline(&self.fresh()?.ix, &p))
+            .detach(move || {
+                let s = self.fresh()?;
+                scrutate::intel::outline(&s.ix, &scrutate::ops::repo_path(&s, &p))
+            })
             .map_err(err)?;
         rows.iter()
             .map(|r| {
@@ -541,7 +548,10 @@ impl Repo {
     ) -> PyResult<Vec<(i64, String, Option<String>)>> {
         let p = path.to_string();
         let deps = py
-            .detach(move || scrutate::intel::deps(&self.fresh()?.ix, &p))
+            .detach(move || {
+                let s = self.fresh()?;
+                scrutate::intel::deps(&s.ix, &scrutate::ops::repo_path(&s, &p))
+            })
             .map_err(err)?;
         Ok(deps
             .into_iter()
@@ -552,8 +562,11 @@ impl Repo {
     /// Files importing a module or repository file: list of (path, line, module as written).
     fn dependents(&self, py: Python<'_>, target: &str) -> PyResult<Vec<(String, i64, String)>> {
         let t = target.to_string();
-        py.detach(move || scrutate::intel::rdeps(&self.fresh()?.ix, &t))
-            .map_err(err)
+        py.detach(move || {
+            let s = self.fresh()?;
+            scrutate::intel::rdeps(&s.ix, &scrutate::ops::repo_path(&s, &t))
+        })
+        .map_err(err)
     }
 
     /// Code similar to a symbol or `path:line`: list of (hit, cosine, jaccard).
@@ -634,18 +647,21 @@ impl Repo {
         let end = end
             .unwrap_or(i64::MAX)
             .min(start.saturating_add(max_lines - 1));
-        let (r, root) = py.detach(|| {
+        let r = py.detach(|| {
             let s = lock(&self.inner);
-            (s.read_lines(path, start, end), s.ix.root.clone())
+            scrutate::ops::read_range(&s, path, start.max(1), end)
         });
         let e = match r {
             Ok((lines, _)) => return Ok(lines.join("\n")),
             Err(e) => e.to_string(),
         };
-        Err(match std::fs::canonicalize(root.join(path)) {
-            Err(_) => PyFileNotFoundError::new_err(e),
-            Ok(p) if !p.starts_with(&root) => PyValueError::new_err(e),
-            Ok(_) => PyOSError::new_err(e),
+        // the engine's message already says which: no file is looked at here
+        Err(if e == "path outside repo" {
+            PyValueError::new_err(e)
+        } else if e.starts_with("cannot read ") {
+            PyFileNotFoundError::new_err(e)
+        } else {
+            PyOSError::new_err(e)
         })
     }
 }

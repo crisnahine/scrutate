@@ -96,6 +96,29 @@ def test_repo_index_and_intelligence(repo):
         r.read("/etc/passwd")
 
 
+def test_paths_and_locations_read_as_the_mcp_tools_read_them(repo):
+    r = scrutate.Repo(str(repo))
+    r.index()
+    # a location an earlier answer printed, and another spelling of a path
+    sym = r.symbol("make_widget_3")[0]
+    at = r.symbol(f"{sym.path}:{sym.start}-{sym.end}")
+    assert [(h.path, h.name) for h in at] == [("pkg/m3.py", "make_widget_3")]
+    assert r.outline("./pkg/m3.py") == r.outline("pkg/m3.py") and r.outline("pkg/m3.py")
+    assert r.outline("pkg/../pkg/m3.py") == r.outline("pkg/m3.py")
+    assert r.dependencies("./pkg/m3.py") == [(3, "os", None)]
+    assert r.dependents("./pkg/m3.py") == r.dependents("pkg/m3.py")
+    # an outside path answers the same whether or not a file is there, a missing one inside differently
+    with pytest.raises(ValueError):
+        r.read("../no_such_file_outside_the_repo")
+    with pytest.raises(ValueError):
+        r.read("/no/such/file/outside/the/repo")
+    with pytest.raises(FileNotFoundError):
+        r.read("pkg/nope.py")
+    os.symlink("/etc/hosts", os.path.join(str(repo), "leaves.txt"))
+    with pytest.raises(FileNotFoundError):
+        r.read("leaves.txt")
+
+
 def test_a_cut_answer_says_where_it_stopped(repo):
     (repo / "cut.py").write_text(
         "def target():\n    return 1\n\n\n"

@@ -421,7 +421,10 @@ does the same. An invalid pattern is an error.
   the end `P has N lines: start=S is past the end`; an `end` before `start` and a path that is
   not a regular file are errors. A file is read through a 64 KB buffer and only as far as the last
   line asked for, with at most 1 MB of line text (a longer line is cut and says so). A file with
-  a NUL byte in its first 8 KB is refused. A file over 1 MB that was not read to its end closes
+  a NUL byte in its first 8 KB is refused, and a definition read with `symbol` goes through the
+  same reader, so it fails as the read of its file would. A path that leaves the repository by
+  its own parts answers `path outside repo` whether or not a file is there, and a link that
+  leaves it answers as a missing file does. A file over 1 MB that was not read to its end closes
   with `of P, more lines follow` in place of the line count, and the JSON `file_lines` is `null`.
 - `references` ends with a closing line when `max_results` cut the search, answers `(no
   results)` when nothing is found, and refuses an empty name.

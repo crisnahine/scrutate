@@ -750,32 +750,6 @@ impl Searcher {
     pub fn callees(&self, name: &str, limit: usize) -> Result<(Vec<Hit>, Vec<String>)> {
         crate::ops::callees(self, name, limit).map(|(resolved, external, _)| (resolved, external))
     }
-
-    pub fn read(&self, path: &str, start: i64, end: Option<i64>, max_lines: i64) -> String {
-        let end = end.unwrap_or(i64::MAX).min(start.saturating_add(max_lines - 1));
-        match self.read_lines(path, start, end) {
-            Ok((lines, _)) => lines.join("\n"),
-            Err(e) => format!("error: {e}"),
-        }
-    }
-
-    /// Lines `start..=end` of a repository file, numbered, and how many lines the file has.
-    pub fn read_lines(&self, path: &str, start: i64, end: i64) -> Result<(Vec<String>, i64)> {
-        let shown = crate::fmt::echo(path);
-        let canon = std::fs::canonicalize(self.ix.root.join(path)).map_err(|_| anyhow::anyhow!("cannot read {shown}"))?;
-        if !canon.starts_with(&self.ix.root) {
-            anyhow::bail!("path outside repo");
-        }
-        if !canon.is_file() {
-            anyhow::bail!("{shown} is not a regular file");
-        }
-        let bytes = std::fs::read(&canon).map_err(|_| anyhow::anyhow!("cannot read {shown}"))?;
-        let text = String::from_utf8_lossy(&bytes);
-        let lines = crate::text::split_lines(&text);
-        let n = lines.len() as i64;
-        let out = (start.max(1)..=end.min(n)).map(|i| format!("{i:>5}  {}", lines[(i - 1) as usize])).collect();
-        Ok((out, n))
-    }
 }
 
 fn mean_std(v: &[f32]) -> (f32, f32) {

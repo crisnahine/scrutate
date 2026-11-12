@@ -128,6 +128,48 @@ fn many_lines(n: usize) -> String {
 }
 
 #[test]
+fn read_code_answers_the_same_for_an_outside_path_whether_or_not_it_exists() {
+    let mut r = Repo::new("outside", &[("a.py", "def f():\n    return 1\n")]);
+    let there = r.root.parent().unwrap().join(format!("{}_there.txt", r.root.file_name().unwrap().to_string_lossy()));
+    fs::write(&there, "secret\n").unwrap();
+    let name = there.file_name().unwrap().to_string_lossy().into_owned();
+    // by its own parts the path leaves the repository: no file is looked at
+    let a = r.err("read_code", json!({"path": format!("../{name}")}));
+    let b = r.err("read_code", json!({"path": format!("../{name}.missing")}));
+    assert_eq!(a, b);
+    assert!(a.contains("outside"), "{a}");
+    let a = r.err("read_code", json!({"path": there.to_string_lossy()}));
+    let b = r.err("read_code", json!({"path": format!("{}.missing", there.to_string_lossy())}));
+    assert_eq!(a, b);
+    // a link that leaves the repository reads as a file that is not there
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&there, r.root.join("link.txt")).unwrap();
+        let a = r.err("read_code", json!({"path": "link.txt"}));
+        let b = r.err("read_code", json!({"path": "gone.txt"}));
+        assert_eq!(a.replace("link.txt", "X"), b.replace("gone.txt", "X"));
+        assert!(!a.contains("secret"), "{a}");
+    }
+    // a path that leaves and comes back, and the absolute path of a file inside, still read
+    let inside = format!("../{}/a.py", r.root.file_name().unwrap().to_string_lossy());
+    assert!(r.ok("read_code", json!({"path": inside})).contains("def f()"));
+    assert!(r.ok("read_code", json!({"path": r.root.join("a.py").to_string_lossy()})).contains("def f()"));
+    let _ = fs::remove_file(&there);
+}
+
+#[test]
+fn read_code_of_a_symbol_reads_as_read_code_of_its_path_does() {
+    // the index takes a file as text by its first 4 KB, read_code by its first 8 KB
+    let body = format!("def f():\n    return 1\n\n# {}\nx = \"\0\"\n", "pad ".repeat(1250));
+    let mut r = Repo::new("late_nul", &[("a.py", body.as_str()), ("b.py", "def g():\n    return 2\n")]);
+    assert_eq!(heads(&r.ok("find_symbol", json!({"name": "f"}))), ["a.py:1-2  [function] f"]);
+    let by_path = r.err("read_code", json!({"path": "a.py"}));
+    assert!(by_path.contains("not a text file"), "{by_path}");
+    assert_eq!(r.err("read_code", json!({"symbol": "f"})), by_path);
+    assert!(r.ok("read_code", json!({"symbol": "g"})).contains("return 2"));
+}
+
+#[test]
 fn read_code_says_where_it_stopped() {
     let mut r = Repo::new("read", &[("many.py", &many_lines(9000)), ("empty.py", ""), ("three.py", "a = 1\nb = 2\nc = 3\n")]);
     let text = r.ok("read_code", json!({"path": "many.py", "max_bytes": 100_000}));

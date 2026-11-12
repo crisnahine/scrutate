@@ -420,21 +420,22 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
             if rows.is_empty() {
                 bail!("no definition matches {}", echo(symbol));
             }
-            let read = |r: ChunkRow| {
-                let mut text = s.read(&r.path, r.start, Some(r.end), READ_LINES);
+            let read = |r: ChunkRow| -> Result<(ChunkRow, String)> {
+                let mut text = read_range(s, &r.path, r.start, r.end.min(r.start.saturating_add(READ_LINES - 1)))?.0.join("\n");
                 if r.end - r.start + 1 > READ_LINES {
                     text.push_str(&format!("\n(the definition goes on to line {}: read_code path={} start={})", r.end, r.path, r.start + READ_LINES));
                 }
-                (r, text)
+                Ok((r, text))
             };
             let (rows, stopped) = cut(rows, READ_DEFINITIONS, "pass path to keep the ones of one file, or a location (path:start-end) for one");
-            Answer::Definitions(rows.into_iter().map(read).collect(), stopped)
+            Answer::Definitions(rows.into_iter().map(read).collect::<Result<_>>()?, stopped)
         }
         Op::Read { path, start, end, .. } => {
             let path = path.as_deref().unwrap_or("");
             // a path copied from an answer has its control characters written as escapes
             let read_back = crate::fmt::unshown(path);
-            let exists = |p: &str| s.ix.root.join(p).exists();
+            // a path that leaves the repository by its own parts is not looked at
+            let exists = |p: &str| within(&s.ix.root, p).starts_with(&s.ix.root) && s.ix.root.join(p).exists();
             let printed = read_back != path && crate::fmt::shown(&read_back) == path && exists(&read_back);
             let path = if printed || (read_back != path && !exists(path)) { read_back.as_ref() } else { path };
             let start = (*start).max(1);
@@ -481,16 +482,35 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
     })
 }
 
+/// `root` joined with `path` by their parts alone: `.` dropped and `..` taking a part away, with
+/// no file looked at.
+fn within(root: &std::path::Path, path: &str) -> std::path::PathBuf {
+    let mut out = std::path::PathBuf::new();
+    for c in root.join(path).components() {
+        match c {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 /// Lines `start..=end` of a repository file, numbered, read only as far as they go and at most
 /// `READ_BYTES` of them; and how many lines the file has, when the read reached its end or the
 /// file is small enough to count them.
-fn read_range(s: &Searcher, path: &str, start: i64, end: i64) -> Result<(Vec<String>, Option<i64>)> {
+pub fn read_range(s: &Searcher, path: &str, start: i64, end: i64) -> Result<(Vec<String>, Option<i64>)> {
     use std::io::BufRead;
     let shown = echo(path);
-    let canon = std::fs::canonicalize(s.ix.root.join(path)).map_err(|_| anyhow!("cannot read {shown}"))?;
-    if !canon.starts_with(&s.ix.root) {
-        bail!("path outside repo");
-    }
+    // the answer for a path outside the repository must not tell whether a file is there: one
+    // that leaves by its own parts is outside, and a link that leaves reads as a missing file
+    let canon = match std::fs::canonicalize(s.ix.root.join(path)) {
+        Ok(c) if c.starts_with(&s.ix.root) => c,
+        _ if !within(&s.ix.root, path).starts_with(&s.ix.root) => bail!("path outside repo"),
+        _ => bail!("cannot read {shown}"),
+    };
     if !canon.is_file() {
         bail!("{shown} is not a regular file");
     }
@@ -577,7 +597,7 @@ pub fn capture_line(c: &Capture) -> String {
 
 /// `path` as the index spells it, when it names a repository file in a spelling `read_code`
 /// accepts (`./a.py`, `pkg/../a.py`, another case on a case-insensitive file system); else as given.
-fn repo_path(s: &Searcher, path: &str) -> String {
+pub fn repo_path(s: &Searcher, path: &str) -> String {
     let mut parts: Vec<&str> = Vec::new();
     for seg in path.split('/') {
         match seg {
@@ -614,7 +634,7 @@ fn repo_path(s: &Searcher, path: &str) -> String {
 /// The definitions `name` stands for: the one at a location (the `path:start-end` an earlier
 /// answer printed), else every one `find_symbol` finds. With `windows`, a line outside every
 /// definition stands for the first window that holds it, which holds that line's calls.
-fn targets(s: &Searcher, name: &str, limit: usize, windows: bool) -> Result<Vec<Hit>> {
+pub fn targets(s: &Searcher, name: &str, limit: usize, windows: bool) -> Result<Vec<Hit>> {
     let Some((path, line)) = crate::intel::location(name) else { return s.find_symbol(name, limit) };
     let path = repo_path(s, path);
     let mut at = s.ix.chunk_at(&path, line)?;
