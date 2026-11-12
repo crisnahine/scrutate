@@ -131,7 +131,10 @@ def _parser(lang: str) -> Parser:
 
 # ---------------------------------------------------------------------- helpers
 _PYSTR = re.compile(r'^[rRuUbBfF]{0,2}("""|\'\'\'|"|\')')
-_COMMENT_MARK = re.compile(r"^\s*(/\*+|\*+/|\*|//+!?|#+|--+)\s?")
+# what Rust's `trim` and `char::is_whitespace` take as white space: Python's own set also has
+# U+001C to U+001F, so `strip()` and `\s` would cut windows differently around such a line
+WS = "\t\n\x0b\x0c\r \x85\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000"
+_COMMENT_MARK = re.compile(rf"^[{WS}]*(/\*+|\*+/|\*|//+!?|#+|--+)[{WS}]?")
 
 
 def _py_string_content(raw: str) -> str:
@@ -146,8 +149,8 @@ def _py_string_content(raw: str) -> str:
 
 
 def _clean_comment(raw: str) -> str:
-    lines = [_COMMENT_MARK.sub("", ln).rstrip("*/ ").rstrip() for ln in raw.split("\n")]
-    return "\n".join(ln for ln in lines if ln.strip()).strip()
+    lines = [_COMMENT_MARK.sub("", ln).rstrip("*/ ").rstrip(WS) for ln in raw.split("\n")]
+    return "\n".join(ln for ln in lines if ln.strip(WS)).strip(WS)
 
 
 def _capped(text: str, cut: bool = False) -> str:
@@ -190,7 +193,7 @@ def _windows(lines: list[str], a: int, b: int, qualname: str, size: int = 50, ov
             nbytes += more
             n += 1
         seg = lines[i : i + n]
-        if "".join(seg).strip():
+        if "".join(seg).strip(WS):
             t = _capped("\n".join(seg))
             out.append(Chunk("", qualname, "window", i + 1, i + len(seg), t, body=t))
         if i + n >= b:
@@ -208,7 +211,7 @@ def window_chunks(source: str, size: int = 50, overlap: int = 10, first_line: in
 
 def _is_closer(line: str) -> bool:
     """Brackets alone or a block's closing word: nothing to search for."""
-    t = line.strip()
+    t = line.strip(WS)
     return t.rstrip(";,") in ("end", "fi", "done", "esac") or all(c in "{}[]();," for c in t)
 
 
@@ -270,11 +273,11 @@ def _uncovered_windows(lines: list[str], spans: list[tuple[int, int]], defs: lis
         while j < n and not covered[j] and owner[j] == owner[i]:
             j += 1
         a, b = i, j
-        while a < b and not lines[a].strip():
+        while a < b and not lines[a].strip(WS):
             a += 1
-        while b > a and not lines[b - 1].strip():
+        while b > a and not lines[b - 1].strip(WS):
             b -= 1
-        if any(lines[k].strip() and not _is_closer(lines[k]) for k in range(a, b)):
+        if any(lines[k].strip(WS) and not _is_closer(lines[k]) for k in range(a, b)):
             out += _windows(lines, a, b, defs[owner[i]].qualname if owner[i] >= 0 else stem)
         i = j
     return out
@@ -290,12 +293,12 @@ def _callee_name(lang: str, node, how: str, src: bytes) -> str | None:
     if target is None:
         return None
     txt = src[target.start_byte : target.end_byte].decode("utf8", "replace")
-    if txt.startswith("new") and txt[3:4].isspace():  # a callee `new Point` calls `Point`
-        txt = txt[3:].lstrip()
+    if txt.startswith("new") and txt[3:4] and txt[3:4] in WS:  # a callee `new Point` calls `Point`
+        txt = txt[3:].lstrip(WS)
     for sep in ("::", ".", "->"):
         if sep in txt:
             txt = txt.rsplit(sep, 1)[-1]
-    txt = txt.strip().rstrip("!")
+    txt = txt.strip(WS).rstrip("!")
     if lang == "rust" and txt.startswith("r#"):  # `r#type` is the name `type`
         txt = txt[2:]
     # a JavaScript private method is named with its `#`
@@ -338,10 +341,10 @@ def _def_name(node, src: bytes) -> str | None:
         n = node.child_by_field_name("type")
     name = src[n.start_byte : n.end_byte].decode("utf8", "replace") if n is not None else None
     if name is not None and node.type == "impl_item":  # the bare type: `impl<T> crate::Stack<T>` is `Stack`
-        name = name.split("<", 1)[0].rsplit("::", 1)[-1].strip() or name
+        name = name.split("<", 1)[0].rsplit("::", 1)[-1].strip(WS) or name
     if name is not None:
         # a quoted (`'run'() {}`) or computed (`[kRun]() {}`) name is named by what it holds
-        name = name.strip().strip('"`')
+        name = name.strip(WS).strip('"`')
         if name.startswith("'"):
             name = name.strip("'")
         if name.startswith("[") and name.endswith("]") and len(name) > 2:
@@ -478,7 +481,7 @@ def _js_member_path(node, src: bytes) -> str | None:
         return None
     key = src[key.start_byte : key.end_byte].decode("utf8", "replace")
     obj = node.child_by_field_name("object")
-    if not key or "." in key or any(c.isspace() for c in key) or obj is None:
+    if not key or "." in key or any(c in WS for c in key) or obj is None:
         return None
     base = _js_member_path(obj, src)
     return None if base is None else base + "." + key
@@ -505,7 +508,7 @@ def _js_this_member(node, src: bytes) -> str | None:
     else:
         return None
     key = src[key.start_byte : key.end_byte].decode("utf8", "replace")
-    return key if key and "." not in key and not any(c.isspace() for c in key) else None
+    return key if key and "." not in key and not any(c in WS for c in key) else None
 
 
 def _js_default_export(node, src: bytes) -> str | None:
@@ -723,7 +726,7 @@ def parse_source(path: str, source: str) -> list[Chunk]:
             sig_end = body_node.start_byte if body_node is not None else min(
                 node.end_byte, node.start_byte + 200)
             text_start, above = _attr_start(src, outer.start_byte, _ATTR_MARK.get(lang, b""))
-            sig = txt(text_start, sig_end).strip()
+            sig = txt(text_start, sig_end).strip(WS)
             doc, doc_lines = _leading_comment(node, src)
             if doc_lines:
                 # its documentation is searchable in its doc field
@@ -779,7 +782,7 @@ def parse_source(path: str, source: str) -> list[Chunk]:
     spans.append((1, min(head_end, _kept(head, 1 << 62))))
     head = _capped(head)
     module = None
-    if head.strip():
+    if head.strip(WS):
         mdoc = ""
         if is_py:
             s, _ = _py_docstring_node(tree.root_node)

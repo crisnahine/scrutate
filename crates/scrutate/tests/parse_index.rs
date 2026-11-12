@@ -576,6 +576,15 @@ fn lines_no_chunk_keeps_are_windows_named_after_the_definition_that_holds_them()
 }
 
 #[test]
+fn a_line_of_separator_control_characters_is_not_blank() {
+    // U+001C to U+001F are white space to Python's strip and not to `trim`: the reference follows this
+    let py = "def f():\n    \"\"\"Doc.\"\"\"\n    return 1\n\u{1c}\nx = 1\n\u{1d}\u{1e}\u{1f}\n\n";
+    assert_eq!(windows("a.py", py), [("a".into(), 4, 6)]);
+    // a no-break space and a line separator are white space to both
+    assert_eq!(windows("a.py", "def f():\n    return 1\n\u{a0}\nx = 1\n\u{2028}\n"), [("a".into(), 4, 4)]);
+}
+
+#[test]
 fn a_definitions_documentation_is_in_no_window() {
     // each file: a first definition, then a documented one whose comment has lines without a comment mark
     let cases: &[(&str, &str)] = &[

@@ -417,6 +417,14 @@ def test_lines_no_chunk_keeps_are_windows_named_after_the_definition_that_holds_
     assert _windows("a.go", "package p\n\nfunc f() {}\n\nconst Max = 3\n") == [("a", 5, 5)]
 
 
+def test_a_line_of_separator_control_characters_is_not_blank():
+    # U+001C to U+001F are white space to Python's strip and not to the Rust engine's trim
+    py = 'def f():\n    """Doc."""\n    return 1\n\x1c\nx = 1\n\x1d\x1e\x1f\n\n'
+    assert _windows("a.py", py) == [("a", 4, 6)]
+    # a no-break space and a line separator are white space to both
+    assert _windows("a.py", 'def f():\n    return 1\n\xa0\nx = 1\n\u2028\n') == [("a", 4, 4)]
+
+
 def test_a_definitions_documentation_is_in_no_window():
     # each file: a first definition, then a documented one whose comment has lines without a comment mark
     cases = [
