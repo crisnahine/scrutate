@@ -12,7 +12,7 @@ use rayon::prelude::*;
 use rusqlite::{params, Connection, OptionalExtension};
 use sha1::{Digest, Sha1};
 
-use crate::lex::{merge_segments, pack_bags, quantize, FileLex, LexStore, QVecs, SegmentBuilder, NF};
+use crate::lex::{merge_segments, pack_bags, quantize, FileLex, LexStore, QVecs, SegmentBuilder};
 use crate::parse::{parse_file_with, PrevParse};
 use crate::semantic::SemanticModel;
 use crate::text::{is_test_path, name_key, tokenize2, BODY_CAP};
@@ -1634,10 +1634,6 @@ impl Index {
             "semantic": self.model.is_some(),
             "segments": self.segments().len(),
         }))
-    }
-
-    pub fn nf() -> usize {
-        NF
     }
 }
 
