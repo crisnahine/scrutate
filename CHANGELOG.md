@@ -200,6 +200,11 @@ First release.
 - Lock files with an ordinary extension (`package-lock.json`, `npm-shrinkwrap.json`,
   `pnpm-lock.yaml`, `packages.lock.json`, `Package.resolved`, `.terraform.lock.hcl`, Gradle
   `*.lockfile`, `bun.lockb`) are left out of the index like `*.lock`; `grep` still searches them.
+- Less memory in `grep`: `-j1` on a file of one very long line holds no more than the default
+  mode (141 MB to 103 MB for a 100 MB line); `-j1` on large trees holds less (LLVM 9.4 to
+  8.3 MB, binheavy 4.6 to 3.7, smallfiles 3.8 to 3.3) and is faster (the Linux tree 2.44 s to
+  2.36 s, py-big 132 ms to 126 ms); the default mode on one 740 MB file holds 6.1 MB where it
+  held 14.3 MB.
 - `refs`, `deps` and `rdeps`:
   - `rdeps` on a header no longer loads every including file, and `rdeps` of a module with
     thousands of importers stays near the size of one file (3.8 GB to 103 MB for 5,000

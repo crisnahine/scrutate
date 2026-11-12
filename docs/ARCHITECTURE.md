@@ -87,6 +87,17 @@ capabilities those crates do not provide rather than re-implementing what they a
   goes into one buffer of its exact size, each thread filling its own part, and is searched there:
   the time is the kernel copying pages, which spreads as far as opening files does (100 MB on an
   M3 Pro: 12.6 ms on one thread, 4.0 ms on the five performance cores, 6.7 ms on all eleven).
+  On one thread a file is never split, but one with no line break at its probe points is still
+  read into a buffer of its size: the stream reader grows its buffer to 3^k times 64 KiB, which
+  held 141 MB for one 100 MB line where the exact buffer holds 103 MB. The newline count of a
+  split file reads 256 KiB at a time per thread (1 MiB each held 14.3 MB on a 740 MB file,
+  6.1 MB now).
+- **Memory of a walk**: a search thread keeps its output buffer from one file to the next, a
+  queued walk entry is 96 bytes where it was 144 (its rare ignore error is boxed), and a walk on
+  one thread queues its entries in a plain vector (LLVM with `-j1`: 9.4 to 8.3 MB of peak
+  memory). What `-j1` still holds over GNU grep on a large tree, 1 to 3 MB, is mostly memory the
+  system allocator has freed and not given back (its per-CPU magazines, as the walk thread moves
+  between cores), the ignore matchers, and whole directories read at once.
 - **Roots without directories**: when no root holds a directory the walk would enter, a sequential
   walk with the same rules runs first on the calling thread, and three threads search the files
   as it finds them; when those files turn out to come from the disk, it adds threads. The first
