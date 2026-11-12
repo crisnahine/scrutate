@@ -15,7 +15,8 @@
 //! | `watch`, `serve --watch` | the files a burst names, else every file; waits | code index, text index when one exists |
 //! | `reindex` (MCP, `batch`), bindings `index()` | every file; waits | code index, text index when one exists |
 //! | an index command, `batch` | every file before the first operation; never waits | code index |
-//! | an MCP tool call, a bindings call | every file, at most once per refresh interval; never waits | code index |
+//! | an MCP tool call, a bindings call, a language server request | every file, at most once per refresh interval of the session; never waits | code index |
+//! | an index command a running `serve` answers | every file, in that session, before the operation; never waits (else the command does the work itself) | code index |
 //! | any operation on `Repo` | the files its answer cites and its arguments name, one `stat` each | code index |
 //! | `serve` and `lsp` start, an `lsp` save | every file; waits | code index |
 //! | `tsquery` | its own walk, one `stat` per file against the code index's record | `tsquery` cache |
@@ -31,14 +32,19 @@
 //! and each commits in one step (a transaction; a manifest rename; a file rename), so a reader of
 //! one store sees its last commit and never half of one. Writers that keep both indexes take the
 //! two locks one after the other, code index first, and never hold both; no answer reads both.
+//! Inside one process the repositories of one root that `Repo::another` opened share one more
+//! lock, held by every write any of them makes (an update, the scan before a read, the update of
+//! the files an answer cites, a rebuild), so they write one at a time and a rebuild one of them
+//! makes is not made again by the next; their reads take no lock and run side by side.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use anyhow::Result;
 
 use crate::index::{self, UpdateStats};
+use crate::models::ModelSet;
 use crate::ops;
 use crate::search::Searcher;
 use crate::textindex::{self, TextStats};
@@ -143,13 +149,36 @@ pub struct Repo {
     stale: bool,
     /// an update of the index went through since `take_updated` was last asked
     updated: bool,
+    models: Arc<ModelSet>,
+    /// held by every write this repository makes; shared with the ones `another` opened
+    writer: Arc<Mutex<()>>,
+}
+
+/// The writer lock, also after a panic in a write that held it: the stores commit whole or not at all.
+fn hold(writer: &Mutex<()>) -> MutexGuard<'_, ()> {
+    writer.lock().unwrap_or_else(|p| p.into_inner())
 }
 
 impl Repo {
     /// Open (or create) the index of `root`, without updating it.
     pub fn open(root: &Path) -> Result<Repo> {
         let searcher = crate::open(root)?;
-        Ok(Repo { root: searcher.ix.root.clone(), searcher: Some(searcher), stale: false, updated: false })
+        Ok(Repo::around(searcher, Arc::default()))
+    }
+
+    fn around(searcher: Searcher, writer: Arc<Mutex<()>>) -> Repo {
+        let (root, models) = (searcher.ix.root.clone(), Arc::clone(&searcher.ix.models));
+        Repo { root, searcher: Some(searcher), stale: false, updated: false, models, writer }
+    }
+
+    /// Another open repository on the same index, to read beside this one: a connection of its
+    /// own, the same model set, and this one's writer lock.
+    pub fn another(&self) -> Result<Repo> {
+        let ix = match &self.searcher {
+            Some(s) => s.ix.another()?,
+            None => index::Index::open(&self.root, Arc::clone(&self.models))?,
+        };
+        Ok(Repo::around(Searcher::new(ix), Arc::clone(&self.writer)))
     }
 
     /// `open` for an update; with `force`, an index of a newer scrutate that this one cannot read
@@ -162,6 +191,11 @@ impl Repo {
             }
             r => r,
         }
+    }
+
+    /// The lock every write of this repository holds, shared with the ones `another` opened.
+    pub fn writer(&self) -> Arc<Mutex<()>> {
+        Arc::clone(&self.writer)
     }
 
     pub fn into_searcher(self) -> Searcher {
@@ -214,6 +248,8 @@ impl Repo {
 
     /// The code index brought up to date with `changes`; a damaged one is built again.
     fn update_code(&mut self, changes: &Changes, force: bool, progress: bool) -> Result<UpdateStats> {
+        let writer = Arc::clone(&self.writer);
+        let _w = hold(&writer);
         self.reopened()?;
         self.ix.progress |= progress;
         let r = match changes {
@@ -221,7 +257,7 @@ impl Repo {
             _ => self.ix.update(force),
         };
         let r = match r {
-            Err(e) if index::error_is_corruption(&e) => self.recover(&e),
+            Err(e) if index::error_is_corruption(&e) => self.rebuild(&e),
             other => other,
         };
         self.updated |= r.is_ok();
@@ -254,9 +290,11 @@ impl Repo {
     /// read-only) the read answers from the last committed index, and stderr says why once. A
     /// lock held while the committed index has no file is a first build: `index::BeingBuilt`.
     pub fn refresh(&mut self, min_interval: f64) -> Result<Option<UpdateStats>> {
+        let writer = Arc::clone(&self.writer);
+        let _w = hold(&writer);
         self.reopened()?;
         match self.ix.refresh_or_fail(min_interval) {
-            Err(e) if index::error_is_corruption(&e) => self.recover(&e).map(Some),
+            Err(e) if index::error_is_corruption(&e) => self.rebuild(&e).map(Some),
             Err(e) if e.is::<index::Busy>() && !self.ix.has_files()? => Err(index::BeingBuilt.into()),
             Err(e) if e.is::<index::Newer>() => Err(e),
             Err(e) => {
@@ -314,24 +352,37 @@ impl Repo {
         if stale.is_empty() {
             return first;
         }
-        match self.ix.update_paths(&stale, false) {
-            Ok(_) => self.recovering(|s| ops::run(s, op)),
-            Err(e) if index::error_is_corruption(&e) => {
-                self.recover(&e)?;
-                self.recovering(|s| ops::run(s, op))
+        let updated = {
+            let writer = Arc::clone(&self.writer);
+            let _w = hold(&writer);
+            match self.ix.update_paths(&stale, false) {
+                Err(e) if index::error_is_corruption(&e) => self.rebuild_unless_rebuilt(&e).map(|_| true),
+                // another writer holds the lock, or the index cannot be written: answer as it is
+                r => Ok(r.is_ok()),
             }
-            // another writer holds the lock, or the index cannot be written: answer as it is
-            Err(_) => first,
+        };
+        match updated {
+            Ok(true) => self.recovering(|s| ops::run(s, op)),
+            Ok(false) => first,
+            Err(e) => Err(e),
         }
     }
 
     /// Run `f` on the searcher; when it meets a damaged code index, the index is built again and
     /// `f` runs once more.
     pub fn recovering<T>(&mut self, mut f: impl FnMut(&mut Searcher) -> Result<T>) -> Result<T> {
-        self.reopened()?;
+        {
+            // a closed index is built again before the read: a write
+            let writer = Arc::clone(&self.writer);
+            let _w = self.searcher.is_none().then(|| hold(&writer));
+            self.reopened()?;
+        }
         match f(self) {
             Err(e) if index::error_is_corruption(&e) => {
-                self.recover(&e)?;
+                let writer = Arc::clone(&self.writer);
+                let w = hold(&writer);
+                self.rebuild_unless_rebuilt(&e)?;
+                drop(w);
                 f(self)
             }
             other => other,
@@ -341,6 +392,25 @@ impl Repo {
     /// The recovery of a damaged code index: its files are deleted (the index is a cache, the
     /// sources are the truth) and it is built again from every file.
     pub fn recover(&mut self, why: &anyhow::Error) -> Result<UpdateStats> {
+        let writer = Arc::clone(&self.writer);
+        let _w = hold(&writer);
+        self.rebuild(why)
+    }
+
+    /// `rebuild`, unless a repository sharing this one's writer lock built the index again since
+    /// this one opened it: then this one opens the new index. Called with the writer lock held.
+    fn rebuild_unless_rebuilt(&mut self, why: &anyhow::Error) -> Result<()> {
+        if let Some(s) = &mut self.searcher {
+            let before = s.ix.db_id();
+            if before.is_some() && s.ix.reopen_if_replaced().is_ok() && s.ix.db_id() != before {
+                return Ok(());
+            }
+        }
+        self.rebuild(why).map(|_| ())
+    }
+
+    /// `recover` with the writer lock already held.
+    fn rebuild(&mut self, why: &anyhow::Error) -> Result<UpdateStats> {
         eprintln!("[scrutate] index damaged ({why:#}); rebuilding");
         let progress = self.searcher.as_ref().is_some_and(|s| s.ix.progress);
         self.searcher = None; // the database is closed before its files are deleted
@@ -349,7 +419,7 @@ impl Repo {
     }
 
     fn reopen(&mut self, progress: bool) -> Result<UpdateStats> {
-        let mut s = crate::open(&self.root)?;
+        let mut s = Searcher::new(index::Index::open(&self.root, Arc::clone(&self.models))?);
         s.ix.progress = progress;
         let st = s.ix.update(true);
         self.searcher = Some(s);
@@ -384,7 +454,7 @@ mod tests {
     fn a_rebuild_that_could_not_reopen_the_index_is_an_error_until_it_can() {
         let root = std::env::temp_dir().join(format!("scrutate_reopen_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        let mut repo = Repo { searcher: None, root: root.clone(), stale: false, updated: false };
+        let mut repo = Repo { searcher: None, root: root.clone(), stale: false, updated: false, models: ModelSet::from_env(), writer: Arc::default() };
         let op = ops::Op::Symbol { name: "f".into(), limit: 5 };
         repo.set_cancel(Arc::default());
         assert!(repo.update(false).is_err());

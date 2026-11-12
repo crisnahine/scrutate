@@ -4,11 +4,24 @@
 use std::fs;
 use std::path::PathBuf;
 
+use scrutate::session::{Every, Session};
 use serde_json::{json, Value};
 
 struct Repo {
     root: PathBuf,
     repo: scrutate::Repo,
+    /// what `serve --refresh-interval 0` holds: a scan before every call
+    session: Session,
+}
+
+/// What `serve --refresh-interval SECONDS` holds open on `root`.
+fn session(root: &std::path::Path, seconds: f64) -> Session {
+    Session::open(root, Every::given(Some(seconds))).unwrap()
+}
+
+/// A tool call as the server makes it, with the size limit it was started with.
+fn call_tool(s: &Session, tool: &str, args: &Value) -> scrutate::mcp::Called {
+    scrutate::mcp::call_tool(s, tool, args, &scrutate::mcp::Settings::new(None), &Default::default())
 }
 
 impl Repo {
@@ -25,12 +38,12 @@ impl Repo {
         }
         let root = fs::canonicalize(&root).unwrap();
         let repo = scrutate::Repo::open(&root).unwrap();
-        Repo { root, repo }
+        Repo { session: session(&root, 0.0), root, repo }
     }
 
     /// (failed, text)
     fn call(&mut self, tool: &str, args: Value) -> (bool, String) {
-        let c = scrutate::mcp::call_tool(&mut self.repo, tool, &args, &scrutate::mcp::Settings::new(None, Some(0.0)));
+        let c = call_tool(&self.session, tool, &args);
         (c.is_error, c.text)
     }
 
@@ -632,9 +645,9 @@ fn an_answer_inside_the_refresh_interval_shows_the_files_it_cites_as_they_are_no
     let geo = "def make_point():\n    return 1\n\n\ndef caller_one():\n    return make_point()\n";
     let mut r = Repo::new("fresh", &[("geo.py", geo), ("other.py", "def unrelated():\n    return 2\n")]);
     // one scan at the first call, none after it for an hour
-    let settings = scrutate::mcp::Settings::new(None, Some(3600.0));
-    let call = |r: &mut Repo, tool: &str, args: Value| {
-        let c = scrutate::mcp::call_tool(&mut r.repo, tool, &args, &settings);
+    let s = session(&r.root, 3600.0);
+    let call = |_: &mut Repo, tool: &str, args: Value| {
+        let c = call_tool(&s, tool, &args);
         assert!(!c.is_error, "{tool} {args}: {}", c.text);
         c.text
     };
@@ -707,7 +720,7 @@ fn a_tool_that_stops_at_its_limit_says_so_and_names_the_argument() {
         let text = r.ok(tool, args.clone());
         let end = last(&text);
         assert!(end.starts_with(&format!("(stopped at {shown} ")) && end.contains(raise), "{tool}: {end}");
-        let c = scrutate::mcp::call_tool(&mut r.repo, tool, &args, &scrutate::mcp::Settings::new(None, Some(0.0)));
+        let c = call_tool(&r.session, tool, &args);
         assert_eq!(c.structured["stopped_at"], shown, "{tool}");
     }
     let whole = r.ok("callers", json!({"name": "target", "limit": 100}));
@@ -846,7 +859,7 @@ fn duplicates_say_where_limit_stopped_them() {
     let one = r.ok("duplicates", json!({"min_tokens": 1, "limit": 1}));
     assert_eq!(one.lines().filter(|l| l.starts_with("exact")).count(), 1, "{one}");
     assert_eq!(one.lines().last(), Some("(stopped at 1 groups: raise limit to see more)"), "{one}");
-    let c = scrutate::mcp::call_tool(&mut r.repo, "duplicates", &json!({"min_tokens": 1, "limit": 1}), &scrutate::mcp::Settings::new(None, Some(0.0)));
+    let c = call_tool(&r.session, "duplicates", &json!({"min_tokens": 1, "limit": 1}));
     assert_eq!(c.structured["stopped_at"], 1, "{}", c.structured);
 }
 
@@ -855,7 +868,7 @@ fn duplicates_say_where_limit_stopped_them() {
 fn a_path_through_a_linked_folder_reads_nothing_outside_the_repository() {
     use std::os::unix::fs::symlink;
     let leak = "def leaked_fn():\n    TOKEN = 'outside_root_mark'\n    return TOKEN\n";
-    let mut r = Repo::new("linkdir", &[("src/a.py", "def inside_fn():\n    return 1\n"), ("sub/b.py", "def sub_fn():\n    return 2\n")]);
+    let r = Repo::new("linkdir", &[("src/a.py", "def inside_fn():\n    return 1\n"), ("sub/b.py", "def sub_fn():\n    return 2\n")]);
     let outside = r.root.with_file_name(format!("{}_outside", r.root.file_name().unwrap().to_string_lossy()));
     let _ = fs::remove_dir_all(&outside);
     fs::create_dir_all(&outside).unwrap();
@@ -864,8 +877,8 @@ fn a_path_through_a_linked_folder_reads_nothing_outside_the_repository() {
     symlink(&outside, r.root.join("link")).unwrap();
     symlink(r.root.join("src"), r.root.join("inlink")).unwrap();
     // one scan at the first call, so later calls go through the files their arguments name
-    let settings = scrutate::mcp::Settings::new(None, Some(3600.0));
-    let mut call = |tool: &str, args: Value| scrutate::mcp::call_tool(&mut r.repo, tool, &args, &settings);
+    let s = session(&r.root, 3600.0);
+    let call = |tool: &str, args: Value| call_tool(&s, tool, &args);
     assert!(call("find_symbol", json!({"name": "sub_fn"})).text.starts_with("sub/b.py:1-2"));
     let calls = [
         ("find_symbol", json!({"name": "link/secret.py:1"})),
@@ -909,12 +922,11 @@ fn a_root_reached_through_a_link_indexes_a_new_file_an_argument_names() {
     let via = r.root.with_file_name(format!("{}_via", r.root.file_name().unwrap().to_string_lossy()));
     let _ = fs::remove_file(&via);
     std::os::unix::fs::symlink(&r.root, &via).unwrap();
-    let mut repo = scrutate::Repo::open(&via).unwrap();
-    let settings = scrutate::mcp::Settings::new(None, Some(3600.0));
-    assert!(scrutate::mcp::call_tool(&mut repo, "find_symbol", &json!({"name": "first_fn"}), &settings).text.starts_with("a.py:1-2"));
+    let s = session(&via, 3600.0);
+    assert!(call_tool(&s, "find_symbol", &json!({"name": "first_fn"})).text.starts_with("a.py:1-2"));
     fs::write(r.root.join("b.py"), "def second_fn():\n    return 2\n").unwrap();
-    let c = scrutate::mcp::call_tool(&mut repo, "outline", &json!({"path": "b.py"}), &settings);
+    let c = call_tool(&s, "outline", &json!({"path": "b.py"}));
     assert!(!c.is_error && c.text.contains("second_fn"), "{}", c.text);
-    drop(repo);
+    drop(s);
     let _ = fs::remove_file(&via);
 }

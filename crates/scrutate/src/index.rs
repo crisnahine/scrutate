@@ -840,6 +840,40 @@ impl Index {
         Ok(ix)
     }
 
+    /// Another connection on the database this one has open, for a reader beside it in the same
+    /// process: the same models, no triage and no schema work, which the first open did. A
+    /// database that this way cannot open (a read-only directory) is opened as `open` does.
+    pub fn another(&self) -> Result<Index> {
+        let db_path = self.dir.join("index.db");
+        let opened = Connection::open(&db_path).and_then(|db| {
+            db.busy_timeout(Duration::from_secs(30))?;
+            db.execute_batch("PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-32000;")?;
+            db.query_row("SELECT count(*) FROM meta", [], |_| Ok(()))?;
+            Ok(db)
+        });
+        let Ok(db) = opened else { return Index::open(&self.root, Arc::clone(&self.models)) };
+        db.set_prepared_statement_cache_capacity(64);
+        Ok(Index {
+            root: self.root.clone(),
+            dir: self.dir.clone(),
+            seg_dir: self.seg_dir.clone(),
+            models: Arc::clone(&self.models),
+            sig: self.sig.clone(),
+            db,
+            progress: false,
+            lex: None,
+            lex_ver: None,
+            last_refresh: None,
+            scan_cost: 1.0,
+            trees: HashMap::new(),
+            tree_tick: 0,
+            #[cfg(test)]
+            trees_peak: 0,
+            cancel: Arc::default(),
+            db_id: file_id(&db_path),
+        })
+    }
+
     /// A WAL database in a read-only directory cannot be read the usual way (its `-shm` cannot be
     /// created). Nobody without root can write it there either, so it is read as a fixed file,
     /// unless a `-wal` holds transactions not yet copied into it.

@@ -28,6 +28,7 @@ pub mod resolve;
 pub mod running;
 pub mod search;
 pub mod semantic;
+pub mod session;
 pub mod stores;
 pub mod text;
 pub mod textindex;

@@ -5,7 +5,7 @@
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
@@ -15,6 +15,7 @@ use termcolor::{Color, ColorChoice, ColorSpec, WriteColor};
 use crate::fmt::{fmt_hits, hits_json};
 use crate::instant::{self, Case, Files, Mode, Output, Paths, Pattern, Query, Record, Report};
 use crate::ops::Op;
+use crate::session::Session;
 use crate::stores::Writer;
 use crate::text::query_words;
 
@@ -685,10 +686,14 @@ fn by_content(id: &str) -> Vec<&'static str> {
 
 fn open_fresh(root: &Path) -> Result<crate::Repo> {
     let (s, st) = crate::open_updated(root, false)?;
+    said_indexed(&st);
+    Ok(s)
+}
+
+fn said_indexed(st: &crate::index::UpdateStats) {
     if st.files_changed > 0 || st.files_removed > 0 {
         eprintln!("[scrutate] indexed {} changed files ({} chunks, {:.1}s)", st.files_changed, st.chunks, st.seconds);
     }
-    Ok(s)
 }
 
 fn color_choice(no_color: bool) -> ColorChoice {
@@ -1400,30 +1405,29 @@ pub fn run() -> Result<i32> {
             if cli.offset != 0 {
                 anyhow::bail!("--offset does nothing with serve: a tool call takes its own offset");
             }
-            let s = crate::Repo::open(&cli.root)?;
-            let root = s.ix.root.clone();
-            let s = Arc::new(Mutex::new(s));
+            let s = Arc::new(Session::open(&cli.root, crate::session::Every::given(refresh_interval))?);
+            // command line calls of this user may use the session until the server exits; before
+            // any thread starts, as a long socket path is named from its directory
+            let _listening = crate::session::listen(&s, printed);
             if watch {
                 let s = Arc::clone(&s);
                 std::thread::Builder::new().name("scrutate-watch".into()).spawn(move || {
                     static NEVER: AtomicBool = AtomicBool::new(false);
-                    // the searcher's lock makes this the only writer in the process; the index's own
+                    let root = s.root().to_path_buf();
+                    // the session's writer lock orders this with its other writes; the index's own
                     // locks order it with other processes
                     let r = crate::watch::run(
                         &root,
                         &NEVER,
                         || eprintln!("[scrutate] watching {}", root.display()),
-                        unwinding(|changes| {
-                            s.lock().unwrap_or_else(|p| p.into_inner()).update_stores(Writer::Watch, changes, false)?;
-                            Ok(())
-                        }),
+                        |changes| s.write(|repo| repo.update_stores(Writer::Watch, changes, false)).map(|_| ()),
                     );
                     if let Err(e) = r {
                         eprintln!("[scrutate] watching stopped: {e:#}");
                     }
                 })?;
             }
-            crate::mcp::serve(s, crate::mcp::Settings::new(cli.max_bytes, refresh_interval), crate::VERSION, structured)?;
+            crate::mcp::serve(s, crate::mcp::Settings::new(cli.max_bytes), crate::VERSION, structured)?;
             Ok(0)
         }
         Cmd::Lsp => crate::lsp::serve(&cli.root, root_given),
@@ -1576,33 +1580,58 @@ fn text_room(max_bytes: usize) -> usize {
 }
 
 fn run_op(root: &Path, op: Op, json: bool, (max_bytes, offset): (usize, usize), outside: Option<&str>) -> Result<i32> {
-    use crate::ops::Answer;
-    let mut s = if op.reads_index() { open_fresh(root)? } else { crate::Repo::open(root)? };
-    let answer = match (s.run_as_is(&op), outside) {
-        (Err(e), Some(why)) => anyhow::bail!("{e:#} ({why})"),
-        (answer, _) => answer?,
+    let request = crate::session::Request { op, json, max_bytes, offset, outside: outside.map(str::to_string) };
+    // a session `serve` runs on this root does the same work with the index already open
+    let asked = crate::session::wanted().then(|| std::fs::canonicalize(root).ok()).flatten().and_then(|r| crate::session::ask(&r, &request));
+    let p = match asked {
+        Some((p, st)) => {
+            said_indexed(&st);
+            p
+        }
+        None => {
+            let op = &request.op;
+            let mut s = if op.reads_index() { open_fresh(root)? } else { crate::Repo::open(root)? };
+            let answer = match (s.run_as_is(op), outside) {
+                (Err(e), Some(why)) => anyhow::bail!("{e:#} ({why})"),
+                (answer, _) => answer?,
+            };
+            printed(answer, &request)?
+        }
     };
+    print!("{}", p.out);
+    eprint!("{}", p.err);
+    Ok(p.code)
+}
+
+/// An answer as `run_op` prints it: standard output, standard error and the exit code (1 when
+/// nothing was found). A session prints with this too.
+fn printed(answer: crate::ops::Answer, r: &crate::session::Request) -> Result<crate::session::Printed> {
+    use crate::ops::Answer;
+    use std::fmt::Write as _;
+    let mut p = crate::session::Printed::default();
     // these print nothing on standard output when empty, so a pipeline sees no lines
     let quiet = matches!(answer, Answer::Outline { .. } | Answer::Deps { .. } | Answer::Rdeps { .. } | Answer::Similar(_) | Answer::Dupes(..));
-    let why = outside.filter(|_| answer.is_empty());
-    if json {
-        println!("{}", serde_json::to_string_pretty(&answer.envelope())?);
+    let why = r.outside.as_deref().filter(|_| answer.is_empty());
+    if r.json {
+        writeln!(p.out, "{}", serde_json::to_string_pretty(&answer.envelope())?)?;
         // standard output keeps the JSON's shape, so the stop line goes beside it
         let note = answer.stop_note();
         if !note.is_empty() {
-            eprintln!("{note}");
+            writeln!(p.err, "{note}")?;
         }
     } else if quiet && answer.is_empty() {
-        eprintln!("{}{}", answer.text(), why.map(|w| format!(" ({w})")).unwrap_or_default());
-        return Ok(1);
+        writeln!(p.err, "{}{}", answer.text(), why.map(|w| format!(" ({w})")).unwrap_or_default())?;
+        p.code = 1;
+        return Ok(p);
     } else {
-        let text = answer.text_within(text_room(max_bytes), offset);
-        print!("{text}{}", if text.ends_with('\n') { "" } else { "\n" });
+        let text = answer.text_within(text_room(r.max_bytes), r.offset);
+        write!(p.out, "{text}{}", if text.ends_with('\n') { "" } else { "\n" })?;
     }
     if let Some(w) = why {
-        eprintln!("[scrutate] {w}");
+        writeln!(p.err, "[scrutate] {w}")?;
     }
-    Ok(if answer.is_empty() { 1 } else { 0 })
+    p.code = if answer.is_empty() { 1 } else { 0 };
+    Ok(p)
 }
 
 /// `watch`: update the indexes once the watch is in place, then after every burst of file changes
@@ -1611,9 +1640,9 @@ fn watch_command(root: &Path) -> Result<i32> {
     let root = std::fs::canonicalize(root).with_context(|| format!("watch {}", root.display()))?;
     let stop = Arc::new(AtomicBool::new(false));
     interrupt::install(Arc::clone(&stop));
-    let mut repo = crate::Repo::open(&root)?;
+    let session = Session::open(&root, crate::session::Every::given(None))?;
     let update = |changes: &crate::stores::Changes| -> Result<()> {
-        let up = repo.update_stores(Writer::Watch, changes, false)?;
+        let up = session.write(|repo| repo.update_stores(Writer::Watch, changes, false))?;
         let (st, text) = (up.code.unwrap_or_default(), up.text);
         let text_changed = text.as_ref().map(|t| t.files_changed + t.files_removed).unwrap_or(0);
         if st.files_changed + st.files_removed + text_changed > 0 {
@@ -1627,16 +1656,8 @@ fn watch_command(root: &Path) -> Result<i32> {
         }
         Ok(())
     };
-    crate::watch::run(&root, &stop, || eprintln!("[scrutate] watching {}", root.display()), unwinding(update))?;
+    crate::watch::run(&root, &stop, || eprintln!("[scrutate] watching {}", root.display()), update)?;
     Ok(if stop.load(Ordering::Relaxed) { 130 } else { 0 })
-}
-
-/// A watch update whose panic, which the panic hook prints, becomes an error, so the watch goes on.
-fn unwinding(mut update: impl FnMut(&crate::stores::Changes) -> Result<()>) -> impl FnMut(&crate::stores::Changes) -> Result<()> {
-    move |changes| {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| update(changes)))
-            .unwrap_or_else(|_| Err(anyhow::anyhow!("internal failure (a bug: please report it); the next change updates again")))
-    }
 }
 
 /// `check`: integrity of the database and the segments; with `--files`, re-hash every indexed file.
@@ -2437,22 +2458,25 @@ mod tests {
         std::fs::write(root.join("a.txt"), "0\n").unwrap();
         let stop = std::sync::atomic::AtomicBool::new(false);
         let calls = std::sync::atomic::AtomicUsize::new(0);
+        let session = crate::session::Session::open(&root, crate::session::Every::given(None)).unwrap();
         let r = std::thread::scope(|sc| {
             let watch = sc.spawn(|| {
                 crate::watch::run(
                     &root,
                     &stop,
                     || {},
-                    super::unwinding(|_| {
-                        let n = calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                        if n == 2 {
-                            panic!("an update that panics");
-                        }
-                        if n > 2 {
-                            stop.store(true, std::sync::atomic::Ordering::Relaxed);
-                        }
-                        Ok(())
-                    }),
+                    |_| {
+                        session.write(|_| {
+                            let n = calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                            if n == 2 {
+                                panic!("an update that panics");
+                            }
+                            if n > 2 {
+                                stop.store(true, std::sync::atomic::Ordering::Relaxed);
+                            }
+                            Ok(())
+                        })
+                    },
                 )
             });
             let t0 = std::time::Instant::now();

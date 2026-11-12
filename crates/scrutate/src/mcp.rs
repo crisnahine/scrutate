@@ -11,13 +11,12 @@ use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use serde_json::{json, Value};
 
 use crate::ops;
-use crate::Repo;
+use crate::session::{Panicked, Session, BUILD_WAIT};
 
 /// Revisions that open with the `initialize` handshake.
 const HANDSHAKE_VERSIONS: &[&str] = &["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
@@ -126,35 +125,10 @@ impl Called {
 }
 
 /// Run one tool; errors become text for the model.
-pub fn call_tool(repo: &mut Repo, name: &str, args: &Value, settings: &Settings) -> Called {
+pub fn call_tool(session: &Session, name: &str, args: &Value, settings: &Settings, cancel: &Arc<AtomicBool>) -> Called {
     let max_bytes = args.get("max_bytes").and_then(Value::as_u64).map_or(settings.max_bytes, |n| clamp_bytes(n as usize));
     let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
-    let mut scan_and_run = |op: &ops::Op| {
-        if !settings.floor {
-            return repo.run(op, settings.refresh_interval);
-        }
-        let mut last = settings.last_scan.lock().unwrap_or_else(|p| p.into_inner());
-        if last.is_some_and(|t| t.elapsed().as_secs_f64() < settings.refresh_interval) {
-            return repo.run_as_is(op);
-        }
-        let answer = repo.run(op, 0.0);
-        // a scan that could not run (another process holds the write lock) does not start the interval
-        if answer.is_ok() && !repo.is_stale() {
-            *last = Some(Instant::now());
-        }
-        answer
-    };
-    let run = |op: ops::Op| {
-        let started = Instant::now();
-        loop {
-            match scan_and_run(&op) {
-                // another process is building the first index: wait for it as for a build of our own
-                Err(e) if e.is::<crate::index::BeingBuilt>() && started.elapsed() < BUILD_WAIT => std::thread::sleep(Duration::from_millis(200)),
-                answer => return answer,
-            }
-        }
-    };
-    match ops::Op::from_tool(name, args).and_then(run) {
+    match ops::Op::from_tool(name, args).and_then(|op| session.run(&op, cancel)) {
         Ok(answer) => {
             let text = answer.text_within(max_bytes, offset);
             let mut structured = answer.structured(text.len(), max_bytes, offset);
@@ -165,6 +139,14 @@ pub fn call_tool(repo: &mut Repo, name: &str, args: &Value, settings: &Settings)
             Called { text, structured, is_error: false }
         }
         Err(e) if e.is::<crate::index::BeingBuilt>() => Called::note(STILL_BUILDING.to_string(), false),
+        Err(e) if e.is::<Panicked>() => {
+            let text = if session.build_failed() {
+                "error: the index could not be built: internal failure while indexing (a bug: please report it, with the server's stderr); `scrutate index --force` in the repository may clear it, and the server keeps running".to_string()
+            } else {
+                format!("error: internal failure while running {name} (a bug: please report it); the server keeps running")
+            };
+            Called::note(text, true)
+        }
         Err(e) => Called::note(format!("error: {e}"), true),
     }
 }
@@ -231,55 +213,34 @@ struct Call {
     cancelled: Arc<AtomicBool>,
 }
 
-/// How long a tool call waits for an index that is still being built before it answers that it
-/// is (well under the 60 s after which Codex gives a call up). A client that sent a progress
-/// token hears every `PROGRESS_SECONDS` that the build goes on, and gets the real answer.
-const BUILD_WAIT: Duration = Duration::from_secs(20);
+/// A tool call waits up to `BUILD_WAIT` for an index that is still being built before it answers
+/// that it is. A client that sent a progress token hears every `PROGRESS_SECONDS` that the build
+/// goes on, and gets the real answer.
 const PROGRESS_SECONDS: u64 = 2;
 /// Calls beyond this many in flight run on the thread that reads requests.
 const MAX_CALLS: usize = 32;
 
 /// One tool call from its first wait to its answer. A cancelled call sends nothing more: it
 /// stops waiting for the index or for its turn, and an answer already being computed is dropped.
-fn run_call(send: &Wire, repo: &Mutex<Repo>, building: &AtomicBool, build_failed: &AtomicBool, calls: &Calls, settings: &Settings, call: Call) {
+fn run_call(send: &Wire, session: &Session, calls: &Calls, settings: &Settings, call: Call) {
     let Call { id, name, args, stateless, structured, progress, cancelled } = call;
-    let (started, mut reported) = (Instant::now(), 0);
+    let mut reported = 0;
     let gone = || cancelled.load(Ordering::Relaxed);
-    while building.load(Ordering::Acquire) && !gone() && (!progress.is_null() || started.elapsed() < BUILD_WAIT) {
-        std::thread::sleep(Duration::from_millis(20));
-        let seconds = started.elapsed().as_secs();
+    let limit = progress.is_null().then_some(BUILD_WAIT);
+    let built = session.wait_built(&cancelled, limit, |waited| {
+        let seconds = waited.as_secs();
         if !progress.is_null() && seconds >= reported + PROGRESS_SECONDS {
             reported = seconds;
             let params = json!({"progressToken": progress, "progress": seconds, "message": "building the index of this repository"});
             send(json!({"jsonrpc": "2.0", "method": "notifications/progress", "params": params}));
         }
-    }
+    });
     let called = if gone() {
         None
-    } else if building.load(Ordering::Acquire) {
+    } else if !built {
         Some(Called::note(STILL_BUILDING.to_string(), false))
     } else {
-        // a panic in an earlier call poisons the lock; the repository behind it is whole
-        let mut repo = repo.lock().unwrap_or_else(|p| p.into_inner());
-        // a panic inside one tool call must not take the server down: it becomes a tool error
-        (!gone()).then(|| {
-            repo.set_cancel(Arc::clone(&cancelled));
-            let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| call_tool(&mut repo, &name, &args, settings)));
-            if repo.take_updated() {
-                // an update went through, so a later failure is not the first build's
-                build_failed.store(false, Ordering::Release);
-            }
-            let c = run.unwrap_or_else(|_| {
-                let text = if build_failed.load(Ordering::Acquire) {
-                    "error: the index could not be built: internal failure while indexing (a bug: please report it, with the server's stderr); `scrutate index --force` in the repository may clear it, and the server keeps running".to_string()
-                } else {
-                    format!("error: internal failure while running {name} (a bug: please report it); the server keeps running")
-                };
-                Called::note(text, true)
-            });
-            repo.set_cancel(Arc::default());
-            c
-        })
+        Some(call_tool(session, &name, &args, settings, &cancelled))
     };
     calls.map().remove(&id.to_string());
     if let Some(c) = called.filter(|_| !gone()) {
@@ -298,26 +259,18 @@ fn run_call(send: &Wire, repo: &Mutex<Repo>, building: &AtomicBool, build_failed
 /// `structured`: every tool declares an `outputSchema` and every result carries the answer as
 /// JSON beside its text. Off unless asked for: Claude Code (2.1.322) shows its model that JSON in
 /// place of the text, which has the snippets and says how to page.
-pub fn serve(repo: Arc<Mutex<Repo>>, settings: Settings, version: &str, structured: bool) -> Result<()> {
-    let (building, build_failed) = (Arc::new(AtomicBool::new(true)), Arc::new(AtomicBool::new(false)));
+pub fn serve(session: Arc<Session>, settings: Settings, version: &str, structured: bool) -> Result<()> {
+    session.building();
     {
-        let (repo, building, build_failed) = (Arc::clone(&repo), Arc::clone(&building), Arc::clone(&build_failed));
-        std::thread::Builder::new().name("scrutate-index".into()).spawn(move || {
-            // a panic must still end the wait of every call, and of the exit
-            let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| repo.lock().map(|mut g| g.update(false))));
-            match built {
-                Ok(Ok(Err(e))) => eprintln!("[scrutate] indexing failed: {e:#}"),
-                Err(_) => {
-                    build_failed.store(true, Ordering::Release);
-                    eprintln!("[scrutate] indexing failed: internal failure (a bug: please report it); each tool call tries again");
-                }
-                _ => {}
-            }
-            building.store(false, Ordering::Release);
+        let session = Arc::clone(&session);
+        std::thread::Builder::new().name("scrutate-index".into()).spawn(move || match session.build() {
+            Err(e) if e.is::<Panicked>() => eprintln!("[scrutate] indexing failed: internal failure (a bug: please report it); each tool call tries again"),
+            Err(e) => eprintln!("[scrutate] indexing failed: {e:#}"),
+            Ok(_) => {}
         })?;
     }
     let calls = Calls::default();
-    let server = Server { repo: &repo, building: &building, build_failed: &build_failed, calls: &calls, settings: &settings, version, structured };
+    let server = Server { session: &session, calls: &calls, settings: &settings, version, structured };
     let (server, send) = (&server, &to_stdout as &Wire);
     std::thread::scope(|scope| -> Result<()> {
         let mut stdin = std::io::stdin().lock();
@@ -359,33 +312,19 @@ pub fn serve(repo: Arc<Mutex<Repo>>, settings: Settings, version: &str, structur
         }
         Ok(())
     })?;
-    // the first build may not hold the lock yet: let it finish before the exit takes the lock
-    while building.load(Ordering::Acquire) {
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    // held until the process exits, so no index writer is inside a transaction the exit would cut
-    std::mem::forget(repo.lock().unwrap_or_else(|p| p.into_inner()));
+    session.hold_writes();
     Ok(())
 }
 
-/// The answer size and refresh policy `serve` was started with.
+/// The answer size `serve` was started with.
 pub struct Settings {
     /// answer size of a call that gives no `max_bytes`
     max_bytes: usize,
-    refresh_interval: f64,
-    /// the interval was given explicitly: no scan sooner, however cheap scans are
-    floor: bool,
-    last_scan: Mutex<Option<Instant>>,
 }
 
 impl Settings {
-    pub fn new(max_bytes: Option<usize>, refresh_interval: Option<f64>) -> Settings {
-        Settings {
-            max_bytes: max_bytes.map_or(ops::AGENT_BYTES, clamp_bytes),
-            refresh_interval: refresh_interval.unwrap_or(1.0),
-            floor: refresh_interval.is_some(),
-            last_scan: Mutex::new(None),
-        }
+    pub fn new(max_bytes: Option<usize>) -> Settings {
+        Settings { max_bytes: max_bytes.map_or(ops::AGENT_BYTES, clamp_bytes) }
     }
 }
 
@@ -395,9 +334,7 @@ fn clamp_bytes(n: usize) -> usize {
 
 /// What every message is handled with.
 struct Server<'a> {
-    repo: &'a Mutex<Repo>,
-    building: &'a AtomicBool,
-    build_failed: &'a AtomicBool,
+    session: &'a Session,
     calls: &'a Calls,
     settings: &'a Settings,
     version: &'a str,
@@ -483,8 +420,8 @@ impl Server<'_> {
                     cancelled: self.calls.begin(&id),
                     id,
                 };
-                let (repo, building, build_failed, calls, settings) = (self.repo, self.building, self.build_failed, self.calls, self.settings);
-                let run = move || run_call(send, repo, building, build_failed, calls, settings, call);
+                let (session, calls, settings) = (self.session, self.calls, self.settings);
+                let run = move || run_call(send, session, calls, settings, call);
                 if calls.map().len() > MAX_CALLS {
                     run();
                 } else {
@@ -499,16 +436,19 @@ impl Server<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::Every;
+    use std::time::Duration;
 
-    /// A repository with one function, its index built, and the messages a call sends.
-    fn fixture(name: &str) -> (std::path::PathBuf, Mutex<Repo>, Mutex<Vec<Value>>) {
+    /// A repository with one function, its session with the first build done, and the messages a
+    /// call sends.
+    fn fixture(name: &str) -> (std::path::PathBuf, Session, Mutex<Vec<Value>>) {
         let root = std::env::temp_dir().join(format!("scrutate_mcp_{name}_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::write(root.join("src/geo.py"), "def make_point():\n    return 1\n").unwrap();
-        let mut repo = Repo::open(&root).unwrap();
-        repo.update(false).unwrap();
-        (root, Mutex::new(repo), Mutex::new(Vec::new()))
+        let session = Session::open(&root, Every::given(Some(0.0))).unwrap();
+        session.build().unwrap();
+        (root, session, Mutex::new(Vec::new()))
     }
 
     fn call(calls: &Calls, id: i64, progress: Value) -> Call {
@@ -518,73 +458,51 @@ mod tests {
 
     #[test]
     fn a_cancelled_call_stops_the_reindex_it_runs() {
-        let (root, repo, _) = fixture("cancel_reindex");
-        let mut repo = repo.into_inner().unwrap();
-        let settings = Settings::new(None, Some(0.0));
+        let (root, session, _) = fixture("cancel_reindex");
+        let settings = Settings::new(None);
         // what `notifications/cancelled` sets for the call in flight
-        repo.set_cancel(Arc::new(AtomicBool::new(true)));
-        let called = call_tool(&mut repo, "reindex", &json!({"force": true}), &settings);
+        let called = call_tool(&session, "reindex", &json!({"force": true}), &settings, &Arc::new(AtomicBool::new(true)));
         assert!(called.is_error && called.text.contains("cancelled"), "{}", called.text);
-        repo.set_cancel(Arc::default());
-        let called = call_tool(&mut repo, "find_symbol", &json!({"name": "make_point"}), &settings);
+        let called = call_tool(&session, "find_symbol", &json!({"name": "make_point"}), &settings, &Arc::default());
         assert!(called.text.contains("src/geo.py"), "the index is as it was: {}", called.text);
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn a_call_waits_for_another_process_that_builds_the_first_index() {
-        let root = std::env::temp_dir().join(format!("scrutate_mcp_other_build_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("src")).unwrap();
-        std::fs::write(root.join("src/geo.py"), "def make_point():\n    return 1\n").unwrap();
-        let mut repo = Repo::open(&root).unwrap();
-        // what another process holds while it builds the first index
-        let other = rusqlite::Connection::open(root.join(crate::files::INDEX_DIR).join("index.db")).unwrap();
-        other.execute_batch("BEGIN IMMEDIATE").unwrap();
-        let release = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(600));
-            other.execute_batch("ROLLBACK").unwrap();
-        });
-        let settings = Settings::new(None, Some(3600.0));
-        let called = call_tool(&mut repo, "find_symbol", &json!({"name": "make_point"}), &settings);
-        release.join().unwrap();
-        assert!(called.text.contains("src/geo.py"), "{}", called.text);
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn only_a_call_that_updates_the_index_clears_the_failed_first_build() {
-        let (root, repo, sent) = fixture("build_failed_reset");
+    fn a_call_that_panics_is_a_tool_error_and_only_a_call_that_updates_clears_the_failed_first_build() {
+        let (root, session, sent) = fixture("build_failed_reset");
         // the state a first build that panicked leaves
-        repo.lock().unwrap().take_updated();
-        let (building, build_failed, calls) = (AtomicBool::new(false), AtomicBool::new(true), Calls::default());
+        session.build_failing_for_test();
+        assert!(session.build_failed());
+        let calls = Calls::default();
         let send = |m: Value| sent.lock().unwrap().push(m);
-        let settings = Settings::new(None, Some(0.0));
+        let settings = Settings::new(None);
         // neither a call with a bad argument nor a read of a file by its path looks at the index
         let read = Call { name: "read_code".into(), args: json!({"path": "src/geo.py"}), ..call(&calls, 5, Value::Null) };
         let bad = Call { args: json!({"name": 7}), ..call(&calls, 6, Value::Null) };
         for c in [read, bad] {
-            run_call(&send, &repo, &building, &build_failed, &calls, &settings, c);
-            assert!(build_failed.load(Ordering::Acquire));
+            run_call(&send, &session, &calls, &settings, c);
+            assert!(session.build_failed());
         }
-        run_call(&send, &repo, &building, &build_failed, &calls, &settings, call(&calls, 7, Value::Null));
+        std::fs::write(root.join("src/geo.py"), "def make_point():\n    return 2\n").unwrap();
+        run_call(&send, &session, &calls, &settings, call(&calls, 7, Value::Null));
         let sent = sent.lock().unwrap();
         assert_eq!((&sent[0]["result"]["isError"], &sent[1]["result"]["isError"], &sent[2]["result"]["isError"]), (&json!(false), &json!(true), &json!(false)));
-        assert!(!build_failed.load(Ordering::Acquire));
+        assert!(!session.build_failed());
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn a_call_with_a_progress_token_reports_while_the_index_is_built_and_then_answers() {
-        let (root, repo, sent) = fixture("progress");
-        let (building, calls) = (AtomicBool::new(true), Calls::default());
+        let (root, session, sent) = fixture("progress");
+        let calls = Calls::default();
         let send = |m: Value| sent.lock().unwrap().push(m);
+        session.building();
         std::thread::scope(|s| {
-            let job =
-                s.spawn(|| run_call(&send, &repo, &building, &AtomicBool::new(false), &calls, &Settings::new(None, Some(0.0)), call(&calls, 7, json!("tok"))));
+            let job = s.spawn(|| run_call(&send, &session, &calls, &Settings::new(None), call(&calls, 7, json!("tok"))));
             std::thread::sleep(Duration::from_millis(2300));
             assert!(!job.is_finished(), "the call waits for the index as long as it reports progress");
-            building.store(false, Ordering::Release);
+            session.build().unwrap();
         });
         let sent = sent.lock().unwrap().clone();
         let (last, progress) = sent.split_last().unwrap();
@@ -604,25 +522,23 @@ mod tests {
 
     #[test]
     fn a_cancelled_call_sends_nothing() {
-        let (root, repo, sent) = fixture("cancel");
-        let (building, calls) = (AtomicBool::new(true), Calls::default());
+        let (root, session, sent) = fixture("cancel");
+        let calls = Calls::default();
         let send = |m: Value| sent.lock().unwrap().push(m);
+        session.building();
         std::thread::scope(|s| {
             // waiting for the index: the notice ends the wait
             let waiting = call(&calls, 1, Value::Null);
-            let job = s.spawn(|| run_call(&send, &repo, &building, &AtomicBool::new(false), &calls, &Settings::new(None, Some(0.0)), waiting));
+            let job = s.spawn(|| run_call(&send, &session, &calls, &Settings::new(None), waiting));
             calls.cancel(&json!(1));
-            job.join().unwrap();
-            building.store(false, Ordering::Release);
-            // waiting for its turn: it gives the turn up when it comes
-            let turn = repo.lock().unwrap();
-            let queued = call(&calls, 2, Value::Null);
-            let job = s.spawn(|| run_call(&send, &repo, &building, &AtomicBool::new(false), &calls, &Settings::new(None, Some(0.0)), queued));
-            calls.cancel(&json!(2));
-            drop(turn);
             job.join().unwrap();
             calls.cancel(&json!(99)); // a notice for a request that is not there is ignored
         });
+        session.build().unwrap();
+        // cancelled before its answer: the answer is dropped
+        let done = call(&calls, 2, Value::Null);
+        calls.cancel(&json!(2));
+        run_call(&send, &session, &calls, &Settings::new(None), done);
         assert_eq!(*sent.lock().unwrap(), Vec::<Value>::new());
         assert!(calls.map().is_empty());
         let _ = std::fs::remove_dir_all(root);

@@ -95,6 +95,17 @@ impl Repo {
     fn lib(&self) -> scrutate::Repo {
         scrutate::Repo::open(&self.root).unwrap()
     }
+
+    /// What `serve --refresh-interval 0` holds open on the repository.
+    fn session(&self) -> scrutate::session::Session {
+        scrutate::session::Session::open(&self.root, scrutate::session::Every::given(Some(0.0))).unwrap()
+    }
+}
+
+/// A tool call as the server makes it, with `cancel` as its cancel flag.
+fn call_tool(s: &scrutate::session::Session, tool: &str, args: &Value, cancel: bool) -> scrutate::mcp::Called {
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(cancel));
+    scrutate::mcp::call_tool(s, tool, args, &scrutate::mcp::Settings::new(None), &cancel)
 }
 
 impl Drop for Repo {
@@ -191,10 +202,10 @@ fn a_fifo_where_a_config_is_expected_does_not_hang() {
     assert_eq!(r.run(&["deps", "main.ts"]).0, 0);
     assert_eq!(r.run(&["refs", "fromA"]).0, 0);
     assert_eq!(r.run(&["refs", "shared"]).0, 0);
-    let mut lib = r.lib();
+    let lib = r.session();
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let c = scrutate::mcp::call_tool(&mut lib, "read_code", &json!({"path": "pipe.txt"}), &scrutate::mcp::Settings::new(None, Some(0.0)));
+        let c = call_tool(&lib, "read_code", &json!({"path": "pipe.txt"}), false);
         let _ = tx.send((c.is_error, c.text));
     });
     let (failed, text) = rx.recv_timeout(Duration::from_secs(20)).expect("read_code of a FIFO returns");
@@ -843,14 +854,14 @@ fn reindex_force_sees_an_edit_that_keeps_size_and_mtime() {
     let mtime = fs::metadata(&p).unwrap().modified().unwrap();
     fs::write(&p, "def omega_name():\n    return 1\n").unwrap();
     fs::File::options().write(true).open(&p).unwrap().set_modified(mtime).unwrap();
-    let mut lib = r.lib();
-    let plain = scrutate::mcp::call_tool(&mut lib, "reindex", &json!({}), &scrutate::mcp::Settings::new(None, Some(0.0)));
+    let lib = r.session();
+    let plain = call_tool(&lib, "reindex", &json!({}), false);
     assert!(!plain.is_error, "{}", plain.text);
-    let forced = scrutate::mcp::call_tool(&mut lib, "reindex", &json!({"force": true}), &scrutate::mcp::Settings::new(None, Some(0.0)));
+    let forced = call_tool(&lib, "reindex", &json!({"force": true}), false);
     assert!(!forced.is_error, "{}", forced.text);
-    let found = scrutate::mcp::call_tool(&mut lib, "find_symbol", &json!({"name": "omega_name"}), &scrutate::mcp::Settings::new(None, Some(0.0)));
+    let found = call_tool(&lib, "find_symbol", &json!({"name": "omega_name"}), false);
     assert!(found.text.contains("a.py:1-2"), "{}", found.text);
-    let wrong = scrutate::mcp::call_tool(&mut lib, "reindex", &json!({"force": "yes"}), &scrutate::mcp::Settings::new(None, Some(0.0)));
+    let wrong = call_tool(&lib, "reindex", &json!({"force": "yes"}), false);
     assert!(wrong.is_error, "{}", wrong.text);
 }
 
@@ -899,12 +910,10 @@ fn alt_queries_are_clamped_and_a_cancelled_search_stops() {
     };
     assert_eq!(alt.len(), scrutate::ops::ALT_QUERIES);
     let r = Repo::new("cancel", &[("a.py", "def refresh_token():\n    return 1\n")]);
-    let mut lib = r.lib();
-    let settings = scrutate::mcp::Settings::new(None, Some(0.0));
+    let lib = r.session();
     let args = json!({"query": "refresh", "alt_queries": ["renew token"]});
-    assert!(!scrutate::mcp::call_tool(&mut lib, "search_code", &args, &settings).is_error);
-    lib.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-    let c = scrutate::mcp::call_tool(&mut lib, "search_code", &args, &settings);
+    assert!(!call_tool(&lib, "search_code", &args, false).is_error);
+    let c = call_tool(&lib, "search_code", &args, true);
     assert!(c.is_error && c.text.contains("cancelled"), "{}", c.text);
 }
 

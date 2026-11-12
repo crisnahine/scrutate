@@ -226,12 +226,12 @@ fn damaged_chunk_text_is_rebuilt_on_the_next_call() {
 fn damaged_chunk_text_is_rebuilt_inside_an_explicit_refresh_interval() {
     let t = Tmp::new("blob_interval");
     fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();
-    let mut repo = scrutate::Repo::open(&t.0).unwrap();
-    let settings = scrutate::mcp::Settings::new(None, Some(3600.0));
+    let session = scrutate::session::Session::open(&t.0, scrutate::session::Every::given(Some(3600.0))).unwrap();
+    let settings = scrutate::mcp::Settings::new(None);
     let args = serde_json::json!({"query": "alpha"});
-    assert!(scrutate::mcp::call_tool(&mut repo, "search_code", &args, &settings).text.contains("alpha"));
-    repo.ix.damage_for_tests("UPDATE chunks SET text=x'00112233'").unwrap();
-    let c = scrutate::mcp::call_tool(&mut repo, "search_code", &args, &settings);
+    assert!(scrutate::mcp::call_tool(&session, "search_code", &args, &settings, &Default::default()).text.contains("alpha"));
+    scrutate::Repo::open(&t.0).unwrap().ix.damage_for_tests("UPDATE chunks SET text=x'00112233'").unwrap();
+    let c = scrutate::mcp::call_tool(&session, "search_code", &args, &settings, &Default::default());
     assert!(!c.is_error && c.text.contains("alpha"), "{}", c.text);
 }
 
@@ -364,8 +364,9 @@ fn a_read_while_another_process_builds_the_first_index_says_so() {
     assert_eq!(code, 2, "{err}");
     assert!(err.contains("being built by another process"), "{err}");
 
-    let mut repo = scrutate::Repo::open(&t.0).unwrap();
-    let c = scrutate::mcp::call_tool(&mut repo, "find_symbol", &serde_json::json!({"name": "only_here"}), &scrutate::mcp::Settings::new(None, Some(0.0)));
+    let session = scrutate::session::Session::open(&t.0, scrutate::session::Every::given(Some(0.0))).unwrap();
+    let c =
+        scrutate::mcp::call_tool(&session, "find_symbol", &serde_json::json!({"name": "only_here"}), &scrutate::mcp::Settings::new(None), &Default::default());
     assert!(!c.is_error && c.text.contains("still building its index"), "{}", c.text);
 
     other.execute_batch("ROLLBACK").unwrap();

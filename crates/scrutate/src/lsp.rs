@@ -5,34 +5,20 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Arc, Mutex, MutexGuard};
+use std::sync::atomic::AtomicBool;
+use std::sync::{mpsc, Arc};
 
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 
-use crate::index::{ChunkRow, Index};
+use crate::index::ChunkRow;
 use crate::names::Names;
 use crate::ops::{self, Answer, Op};
 use crate::search::Searcher;
+use crate::session::{Every, Session};
 use crate::text::name_key;
 
-type Shared = Arc<Mutex<Option<crate::Repo>>>;
-
 const MAX_MESSAGE: usize = 256 << 20;
-
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|p| p.into_inner())
-}
-
-/// Have the open repository build its damaged index again (`Repo::recover`); requests wait on the
-/// lock until the new index is there.
-fn recover(shared: &Shared, why: &anyhow::Error) {
-    if let Some(repo) = lock(shared).as_mut() {
-        if let Err(e) = repo.recover(why) {
-            eprintln!("scrutate: index rebuild failed: {e:#}");
-        }
-    }
-}
 
 fn send(msg: &Value) {
     let body = msg.to_string();
@@ -326,12 +312,11 @@ struct Server {
     root: PathBuf,
     /// `--root` named the root: without a folder from the editor it is used as given
     root_given: bool,
-    searcher: Shared,
+    /// None until `initialize`, and when the folder is refused or its index cannot be opened
+    session: Option<Arc<Session>>,
     /// open documents by repository-relative path (by URI when outside the root)
     docs: HashMap<String, String>,
     saves: Option<mpsc::Sender<()>>,
-    /// what a request met in a damaged database: the save worker has the index built again
-    damaged: Arc<Mutex<Option<anyhow::Error>>>,
     initialized: bool,
     shutdown: bool,
 }
@@ -376,41 +361,39 @@ impl Server {
         let root = top.unwrap_or(folder);
         self.root = std::fs::canonicalize(&root).unwrap_or(root);
         let existed = crate::index::exists(&self.root);
-        let (ready_tx, ready_rx) = mpsc::channel();
-        let (shared, root) = (Arc::clone(&self.searcher), self.root.clone());
-        let builder = std::thread::Builder::new().name("scrutate-index".into()).spawn(move || {
-            let mut g = lock(&shared);
-            let _ = ready_tx.send(()); // requests now wait for the index instead of seeing an empty one
-            if let Some(why) = refused {
-                eprintln!("{why}");
-                return log(1, &why);
-            }
-            if !existed {
-                log(3, &format!("scrutate: no index in {}; building it", root.display()));
-            }
-            // another process's first build: read what it commits as it commits it
-            let opened = crate::open_updated(&root, false).or_else(|e| match e.is::<crate::index::BeingBuilt>() {
-                true => crate::Repo::open(&root).map(|s| (s, Default::default())),
-                false => Err(e),
-            });
-            match opened {
-                Ok((s, st)) => {
-                    if !existed || st.files_changed > 0 || st.files_removed > 0 {
-                        log(
-                            3,
-                            &format!(
-                                "scrutate: index ready ({} files, {} changed, {} chunks, {:.1}s)",
-                                st.files_total, st.files_changed, st.chunks, st.seconds
+        if let Some(why) = refused {
+            eprintln!("{why}");
+            log(1, &why);
+        } else {
+            match Session::open(&self.root, Every::given(None)) {
+                Ok(session) => {
+                    let session = Arc::new(session);
+                    // requests wait for the index instead of seeing an empty one
+                    session.building();
+                    self.session = Some(Arc::clone(&session));
+                    let root = self.root.clone();
+                    let built = std::thread::Builder::new().name("scrutate-index".into()).spawn(move || {
+                        if !existed {
+                            log(3, &format!("scrutate: no index in {}; building it", root.display()));
+                        }
+                        match session.build() {
+                            Ok(st) if !existed || st.files_changed > 0 || st.files_removed > 0 => log(
+                                3,
+                                &format!(
+                                    "scrutate: index ready ({} files, {} changed, {} chunks, {:.1}s)",
+                                    st.files_total, st.files_changed, st.chunks, st.seconds
+                                ),
                             ),
-                        );
+                            Ok(_) => {}
+                            Err(e) => log(1, &format!("scrutate: indexing failed: {e:#}")),
+                        }
+                    });
+                    if built.is_err() {
+                        self.session = None;
                     }
-                    *g = Some(s);
                 }
                 Err(e) => log(1, &format!("scrutate: indexing failed: {e:#}")),
             }
-        });
-        if builder.is_ok() {
-            let _ = ready_rx.recv();
         }
         self.saves = self.save_worker();
         json!({
@@ -426,32 +409,17 @@ impl Server {
         })
     }
 
-    /// Saves are indexed on a second connection, so requests keep reading meanwhile (WAL).
+    /// Saves are indexed by the session's writer, so requests keep reading meanwhile (WAL).
     fn save_worker(&self) -> Option<mpsc::Sender<()>> {
         let (tx, rx) = mpsc::channel::<()>();
-        let (shared, root, damaged) = (Arc::clone(&self.searcher), self.root.clone(), Arc::clone(&self.damaged));
+        let session = Arc::clone(self.session.as_ref()?);
         std::thread::Builder::new()
             .name("scrutate-save".into())
             .spawn(move || {
-                let mut ix: Option<Index> = None;
                 let mut said_newer = false;
                 while rx.recv().is_ok() {
                     while rx.try_recv().is_ok() {} // one update covers every save queued meanwhile
-                    if let Some(why) = lock(&damaged).take() {
-                        ix = None;
-                        recover(&shared, &why);
-                        continue;
-                    }
-                    if ix.is_none() {
-                        // the main index's model: another signature would make the index rebuild itself
-                        let Some(model) = lock(&shared).as_ref().map(|s| s.ix.models.clone()) else { continue };
-                        ix = Index::open(&root, model).map_err(|e| eprintln!("scrutate: {e:#}")).ok();
-                    }
-                    match ix.as_mut().and_then(|ix| ix.update(false).err()) {
-                        Some(e) if crate::index::error_is_corruption(&e) => {
-                            ix = None;
-                            recover(&shared, &e);
-                        }
+                    match session.write(|repo| repo.update(false)).err() {
                         // an index a newer scrutate built is not updated: said once, not per save
                         Some(e) if e.downcast_ref::<crate::index::Newer>().is_some() => {
                             if !std::mem::replace(&mut said_newer, true) {
@@ -510,24 +478,21 @@ impl Server {
             self.shutdown = true;
             return Ok(Value::Null);
         }
-        let mut g = lock(&self.searcher);
-        let mut run = |f: &mut dyn FnMut(&mut Searcher) -> Result<Value>| -> Reply {
-            let s = g.as_mut().ok_or((-32603, "the index is not available (see the log)".to_string()))?;
-            // a newer scrutate took the index over since it was opened: nothing here can read it
-            if let Some(newer) = s.ix.newer().filter(|n| !n.readable) {
-                return Err((-32603, newer.to_string()));
-            }
-            f(s).map_err(|e| {
-                if crate::index::error_is_corruption(&e) {
-                    // the index is a cache: the save worker builds it again
-                    *lock(&self.damaged) = Some(e);
-                    if let Some(tx) = &self.saves {
-                        let _ = tx.send(());
+        let session = self.session.clone();
+        let run = |f: &mut dyn FnMut(&mut Searcher) -> Result<Value>| -> Reply {
+            let session = session.as_ref().ok_or((-32603, "the index is not available (see the log)".to_string()))?;
+            let never = Arc::new(AtomicBool::new(false));
+            session.wait_built(&never, None, |_| {});
+            // a damaged index is built again and the request answered from the new one
+            session
+                .read(&never, true, |s| {
+                    // a newer scrutate took the index over since it was opened: nothing here can read it
+                    if let Some(newer) = s.ix.newer().filter(|n| !n.readable) {
+                        return Err(newer.into());
                     }
-                    return (-32603, "the index database is damaged and is being rebuilt; ask again".to_string());
-                }
-                (-32603, format!("{e:#}"))
-            })
+                    f(s)
+                })
+                .map_err(|e| (-32603, format!("{e:#}")))
         };
         match method {
             "textDocument/definition" => run(&mut |s| self.definition(s, p)),
@@ -728,16 +693,7 @@ fn document_symbol(lines: &mut Lines, rel: &str, r: &ChunkRow) -> Value {
 
 /// Serve until `exit` or end of input. -> the process exit code (0 only after `shutdown`).
 pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
-    let mut srv = Server {
-        root: root.to_path_buf(),
-        root_given,
-        searcher: Arc::new(Mutex::new(None)),
-        docs: HashMap::new(),
-        saves: None,
-        damaged: Arc::default(),
-        initialized: false,
-        shutdown: false,
-    };
+    let mut srv = Server { root: root.to_path_buf(), root_given, session: None, docs: HashMap::new(), saves: None, initialized: false, shutdown: false };
     let mut input = std::io::stdin().lock();
     while let Some(body) = read_message(&mut input)? {
         let msg: Value = match serde_json::from_slice(&body) {
@@ -859,13 +815,15 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::write(root.join("src/geo.py"), "def make_point():\n    return 1\n").unwrap();
-        let shared: Shared = Arc::new(Mutex::new(Some(crate::open_updated(&root, false).unwrap().0)));
+        let session = Session::open(&root, Every::given(Some(3600.0))).unwrap();
+        session.build().unwrap();
+        let never = Arc::new(AtomicBool::new(false));
+        assert_eq!(session.read(&never, false, |s| s.find_symbol("make_point", 5)).unwrap().len(), 1);
         let db = root.join(".scrutate/index.db");
         std::fs::write(&db, vec![0xA5u8; std::fs::metadata(&db).unwrap().len() as usize]).unwrap();
-        recover(&shared, &anyhow::anyhow!("a test"));
-        let hits = lock(&shared).as_ref().expect("an index after the rebuild").find_symbol("make_point", 5).unwrap();
+        let hits = session.read(&never, false, |s| s.find_symbol("make_point", 5)).unwrap();
         assert_eq!(hits.len(), 1, "the rebuilt index answers");
-        drop(shared);
+        drop(session);
         let _ = std::fs::remove_dir_all(&root);
     }
 

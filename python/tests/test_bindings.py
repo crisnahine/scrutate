@@ -334,3 +334,28 @@ def test_a_note_on_a_file_reaches_the_stats(tmp_path):
     assert [m.line for m in it] == [1]
     notes = it.stats()["notes"]
     assert len(notes) == 1 and notes[0][0].endswith("nul.py") and "binary" in notes[0][1], notes
+
+
+def test_calls_from_several_threads_run_side_by_side_and_see_an_edit(repo):
+    r = scrutate.Repo(str(repo))
+    r.index()
+    want = [h.path for h in r.symbol("make_widget_3")]
+    out, errors = [], []
+
+    def call():
+        try:
+            for _ in range(20):
+                out.append([h.path for h in r.symbol("make_widget_3")])
+        except Exception as e:  # a failure in a thread must fail the test
+            errors.append(e)
+
+    threads = [threading.Thread(target=call) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors and len(out) == 160 and all(o == want for o in out)
+    (repo / "pkg" / "late.py").write_text("def arrived_late():\n    return 1\n")
+    r.index()
+    assert [h.path for h in r.symbol("arrived_late")] == ["pkg/late.py"]
+    assert r.stats()["files"] >= 21

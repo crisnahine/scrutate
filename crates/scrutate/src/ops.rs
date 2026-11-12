@@ -49,6 +49,8 @@ pub const READ_DEFINITIONS: usize = 20;
 /// the 10,000 at which Codex cuts a tool result and Claude Code warns.
 pub const AGENT_BYTES: usize = 24_000;
 
+/// Serialized as a command line sends it to a session; a grep never goes that way.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Op {
     /// `snippets`: each hit carries its text (off for a caller that reads locations only).
     Search {
@@ -58,6 +60,7 @@ pub enum Op {
         snippets: bool,
     },
     /// An Engine A search of the repository's files, its lines grouped by enclosing symbol.
+    #[serde(skip)]
     Grep {
         pattern: Pattern,
         scope: Scope,

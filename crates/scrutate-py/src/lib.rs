@@ -20,13 +20,14 @@ use pyo3::types::{PyDict, PyList, PyType};
 
 use scrutate::instant::{self, Files, Output, Pattern, Query, Record};
 use scrutate::ops::{Answer, Op};
+use scrutate::session::{Every, Session};
 
 fn err<E: std::fmt::Display>(e: E) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
 }
 
-/// The engine lock, also after a panic in an earlier call (as the MCP server takes it), so one
-/// failed call does not make every later call on the Repo fail.
+/// A lock, also after a panic in an earlier call, so one failed call does not make every later
+/// call fail.
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -374,7 +375,7 @@ fn grep(
 pub struct Repo {
     root: PathBuf,
     /// shared with the thread of an `index()` call, which outlives a Ctrl-C
-    inner: Arc<Mutex<scrutate::Repo>>,
+    session: Arc<Session>,
 }
 
 fn hits_py(hits: Vec<scrutate::search::Hit>) -> Vec<Hit> {
@@ -399,9 +400,10 @@ fn results<'py, T: IntoPyObject<'py>>(
 
 impl Repo {
     /// Run one operation with the GIL released, on an index brought up to date at most once a
-    /// second, as the MCP server runs a tool call (`scrutate::Repo::run`).
+    /// second, as the MCP server runs a tool call (`Session::run`). Calls from several Python
+    /// threads run side by side.
     fn run(&self, py: Python<'_>, op: Op) -> PyResult<Answer> {
-        py.detach(move || lock(&self.inner).run(&op, 1.0))
+        py.detach(move || self.session.run(&op, &Arc::default()))
             .map_err(err)
     }
 }
@@ -418,10 +420,12 @@ impl Repo {
     fn new(py: Python<'_>, root: &str) -> PyResult<Self> {
         let root = PathBuf::from(root);
         let r2 = root.clone();
-        let s = py.detach(move || scrutate::Repo::open(&r2)).map_err(err)?;
+        let s = py
+            .detach(move || Session::open(&r2, Every::given(None)))
+            .map_err(err)?;
         Ok(Repo {
             root,
-            inner: Arc::new(Mutex::new(s)),
+            session: Arc::new(s),
         })
     }
 
@@ -436,17 +440,16 @@ impl Repo {
     #[pyo3(signature = (force=false))]
     fn index<'py>(&self, py: Python<'py>, force: bool) -> PyResult<Bound<'py, PyDict>> {
         let (tx, rx) = mpsc::channel();
-        let inner = Arc::clone(&self.inner);
+        let session = Arc::clone(&self.session);
         let cancel = Arc::new(AtomicBool::new(false));
         let c2 = Arc::clone(&cancel);
         std::thread::Builder::new()
             .name("scrutate-index".into())
             .spawn(move || {
-                let _ = tx.send(
-                    lock(&inner)
-                        .update_until(force, c2)
-                        .map(|up| up.code.unwrap_or_default()),
-                );
+                let _ = tx.send(session.write(|repo| {
+                    repo.update_until(force, c2)
+                        .map(|up| up.code.unwrap_or_default())
+                }));
             })
             .map_err(err)?;
         let st = wait(py, &Mutex::new(rx))
@@ -717,7 +720,9 @@ impl Repo {
 
     /// Index statistics as a dict. GIL released while it waits for the engine.
     fn stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let v = py.detach(|| lock(&self.inner).ix.stats()).map_err(err)?;
+        let v = py
+            .detach(|| self.session.read(&Arc::default(), false, |s| s.ix.stats()))
+            .map_err(err)?;
         let d = PyDict::new(py);
         if let Some(m) = v.as_object() {
             for (k, val) in m {
@@ -752,7 +757,7 @@ impl Repo {
             start,
             end: Some(end),
         };
-        let r = py.detach(|| lock(&self.inner).run(&op, 1.0));
+        let r = py.detach(|| self.session.run(&op, &Arc::default()));
         let e = match r {
             Ok(Answer::Read { lines, .. }) => return Ok(lines.join("\n")),
             Ok(_) => return Err(unexpected()),
@@ -777,7 +782,8 @@ fn version() -> &'static str {
 
 /// Thread-safety review for free-threaded Python (`gil_used = false`):
 /// * `Match` and `Hit` are frozen (immutable after construction);
-/// * `Repo` keeps the engine behind a `Mutex`; every method locks it;
+/// * `Repo` holds a `Session`, which runs calls from several threads side by side, each on a
+///   reader of its own, and its writes one at a time;
 /// * `GrepIter` methods take `&mut self`: PyO3's borrow checker rejects concurrent mutable access
 ///   with an exception instead of racing; the channel receiver is additionally behind a `Mutex`;
 /// * the module holds no other global mutable state.
