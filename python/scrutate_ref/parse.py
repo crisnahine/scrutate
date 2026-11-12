@@ -173,14 +173,24 @@ def _kept(text: str, n: int) -> int:
 def _windows(lines: list[str], a: int, b: int, qualname: str, size: int = 50, overlap: int = 10) -> list[Chunk]:
     """Overlapping line windows of the 0-based lines a..b."""
     out: list[Chunk] = []
-    step = max(1, size - overlap)
-    for i in range(a, b, step):
-        seg = lines[i : min(i + size, b)]
+    i = a
+    while i < b:
+        # as many lines as the text cap holds, one at least: a window of very long lines is short
+        n = nbytes = 0
+        while n < size and i + n < b:
+            more = len(lines[i + n].encode()) + (1 if n else 0)
+            if n and nbytes + more > MAX_CHUNK_BYTES:
+                break
+            nbytes += more
+            n += 1
+        seg = lines[i : i + n]
         if "".join(seg).strip():
             t = _capped("\n".join(seg))
             out.append(Chunk("", qualname, "window", i + 1, i + len(seg), t, body=t))
-        if i + size >= b:
+        if i + n >= b:
             break
+        # a window the cap cut short holds no line twice
+        i += n if n < size else max(1, size - overlap)
     return out
 
 

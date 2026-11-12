@@ -310,7 +310,17 @@ fn windows_of(source: &str, lines: &[&str], a: usize, b: usize, qualname: &str) 
     let mut out = Vec::new();
     let mut i = a;
     while i < b {
-        let seg = &lines[i..(i + size).min(b)];
+        // as many lines as the text cap holds, one at least: a window of very long lines is short
+        let (mut n, mut bytes) = (0, 0);
+        while n < size && i + n < b {
+            let more = lines[i + n].len() + (n > 0) as usize;
+            if n > 0 && bytes + more > MAX_CHUNK_BYTES {
+                break;
+            }
+            bytes += more;
+            n += 1;
+        }
+        let seg = &lines[i..i + n];
         if seg.iter().any(|l| !l.trim().is_empty()) {
             let last = seg[seg.len() - 1];
             // through the last line's newline, so the lines read back are these lines
@@ -324,10 +334,11 @@ fn windows_of(source: &str, lines: &[&str], a: usize, b: usize, qualname: &str) 
                 ..Default::default()
             });
         }
-        if i + size >= b {
+        if i + n >= b {
             break;
         }
-        i += size - overlap;
+        // a window the cap cut short holds no line twice
+        i += if n < size { n } else { size - overlap };
     }
     out
 }

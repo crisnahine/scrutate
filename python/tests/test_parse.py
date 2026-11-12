@@ -141,6 +141,18 @@ def test_the_comment_right_above_a_python_definition_is_its_documentation():
         assert (c.start, c.doc) == (start, doc), (src, qualname)
 
 
+def test_windows_of_very_long_lines_keep_every_line():
+    line = "x" * 1990
+    src = "".join(f"# word{i:04d} {line}\n" for i in range(60))
+    chunks = parse_source("data.py", src)
+    for i in range(60):
+        assert any(f"word{i:04d} " in c.text for c in chunks), i + 1
+    # the module chunk keeps the first 16 lines, the windows the rest, none of them cut
+    windows = [c for c in chunks if c.kind == "window"]
+    assert all(not w.text.endswith("\n...") for w in windows)
+    assert [(w.start, w.end) for w in windows] == [(17, 32), (33, 48), (49, 60)]
+
+
 def test_documentation_is_taken_across_attributes_and_onto_go_constants():
     cases = [  # (file, source, qualname, first line of the chunk: its attribute lines, documentation)
         ("a.rs", "/// A target.\n#[derive(Debug, Clone)]\npub struct Target {\n    x: i32,\n}\n", "Target", 2, "A target."),

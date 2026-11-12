@@ -590,6 +590,22 @@ fn many_top_level_calls_parse_in_linear_time() {
 }
 
 #[test]
+fn windows_of_very_long_lines_keep_every_line() {
+    // 60 lines of 2,000 bytes: 50 of them are 100 KB, three times what a chunk's text keeps
+    let line = "x".repeat(1_990);
+    let src: String = (0..60).map(|i| format!("# word{i:04} {line}\n")).collect();
+    let chunks = parse_source("data.py", &src);
+    for i in 0..60 {
+        let word = format!("word{i:04} ");
+        assert!(chunks.iter().any(|c| c.text.contains(&word)), "line {} is in no chunk's text", i + 1);
+    }
+    // the module chunk keeps the first 16 lines, the windows the rest, none of them cut
+    let windows: Vec<_> = chunks.iter().filter(|c| c.kind == "window").collect();
+    assert!(windows.iter().all(|w| !w.text.ends_with("\n...")), "no window is cut");
+    assert_eq!(windows.iter().map(|w| (w.start, w.end)).collect::<Vec<_>>(), [(17, 32), (33, 48), (49, 60)]);
+}
+
+#[test]
 fn a_definition_starts_at_the_attribute_lines_right_above_it() {
     let rs = "/// Shows one.\n#[get(\"/users/show\")]\n#[inline]\npub fn show() {}\n\n#[cfg(test)]\n\nmod tests {}\n";
     let chunks = parse_source("a.rs", rs);
