@@ -373,6 +373,7 @@ impl Server {
             .name("scrutate-save".into())
             .spawn(move || {
                 let mut ix: Option<Index> = None;
+                let mut said_newer = false;
                 while rx.recv().is_ok() {
                     while rx.try_recv().is_ok() {} // one update covers every save queued meanwhile
                     if damaged.swap(false, Ordering::Relaxed) {
@@ -389,6 +390,12 @@ impl Server {
                         Some(e) if crate::index::error_is_corruption(&e) => {
                             ix = None;
                             replace_damaged(&shared, &root);
+                        }
+                        // an index a newer scrutate built is not updated: said once, not per save
+                        Some(e) if e.downcast_ref::<crate::index::Newer>().is_some() => {
+                            if !std::mem::replace(&mut said_newer, true) {
+                                eprintln!("scrutate: {e:#}");
+                            }
                         }
                         Some(e) => eprintln!("scrutate: index update failed: {e:#}"),
                         None => {}
@@ -445,6 +452,10 @@ impl Server {
         let g = lock(&self.searcher);
         let run = |f: &dyn Fn(&Searcher) -> Result<Value>| -> Reply {
             let s = g.as_ref().ok_or((-32603, "the index is not available (see the log)".to_string()))?;
+            // a newer scrutate took the index over since it was opened: nothing here can read it
+            if let Some(newer) = s.ix.newer().filter(|n| !n.readable) {
+                return Err((-32603, newer.to_string()));
+            }
             f(s).map_err(|e| {
                 if crate::index::error_is_corruption(&e) {
                     // the index is a cache: the save worker builds it again

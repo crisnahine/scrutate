@@ -308,6 +308,41 @@ fn no_first_index_of_the_home_directory_when_the_editor_names_no_folder() {
 }
 
 #[test]
+fn an_index_a_newer_scrutate_took_over_is_an_error_for_every_request() {
+    let r = Repo::new("newer");
+    r.write("app.py", "def user():\n    return 1\n\ndef get():\n    return user()\n");
+    let mut child = Command::new(BIN).arg("lsp").current_dir(&r.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
+    c.request("initialize", json!({"processId": null, "rootUri": uri(&r.root), "capabilities": {}}));
+    c.notify("initialized", json!({}));
+    let pos = json!({"textDocument": {"uri": uri(&r.root.join("app.py"))}, "position": {"line": 4, "character": 12}});
+    let def = c.request("textDocument/definition", pos.clone());
+    assert_eq!(places(&def["result"]).len(), 1, "{def}");
+    // what a newer scrutate leaves behind: a schema this server cannot read
+    let db = rusqlite::Connection::open(r.root.join(".scrutate/index.db")).unwrap();
+    db.execute("UPDATE meta SET value = CAST(value AS INTEGER) + 1 WHERE key = 'schema_version'", []).unwrap();
+    let schema: String = db.query_row("SELECT value FROM meta WHERE key = 'schema_version'", [], |row| row.get(0)).unwrap();
+    for method in ["textDocument/definition", "textDocument/references"] {
+        let mut p = pos.clone();
+        p["context"] = json!({"includeDeclaration": true});
+        let answer = c.request(method, p);
+        let message = answer["error"]["message"].as_str().unwrap_or_default().to_string();
+        assert!(message.contains("newer scrutate"), "{method}: {answer}");
+    }
+    // a save must not rebuild it either
+    r.write("app.py", "def user():\n    return 2\n\ndef get():\n    return user()\n");
+    c.notify("textDocument/didSave", json!({"textDocument": {"uri": uri(&r.root.join("app.py"))}}));
+    let again = c.request("workspace/symbol", json!({"query": "user"}));
+    assert!(again["error"]["message"].as_str().unwrap_or_default().contains("newer scrutate"), "{again}");
+    let now: String = db.query_row("SELECT value FROM meta WHERE key = 'schema_version'", [], |row| row.get(0)).unwrap();
+    assert_eq!(now, schema);
+    c.request("shutdown", Value::Null);
+    c.notify("exit", Value::Null);
+    drop(c);
+    child.wait().unwrap();
+}
+
+#[test]
 fn definition_takes_the_name_with_dashes_arrows_and_colons_around_the_cursor() {
     let r = Repo::new("names");
     r.write("core.clj", "(ns app.core)\n\n(defn get-user [id]\n  {:id id})\n\n(defn run []\n  (get-user 1))\n");
