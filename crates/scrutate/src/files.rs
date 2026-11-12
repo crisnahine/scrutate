@@ -75,19 +75,23 @@ const MAX_CONFIG_EXCLUDES: usize = 1000;
 fn skip_dirs(root: &Path) -> Vec<String> {
     let git = in_git(root);
     let mut skip: Vec<String> = SKIP_DIRS.iter().filter(|d| !(git && SKIP_UNLESS_GIT.contains(d))).map(|s| s.to_string()).collect();
-    let named = match std::env::var("SCRUTATE_INDEX_EXCLUDE_DIRS") {
-        Ok(v) => split_names(&v),
-        Err(_) => config_excludes(root),
-    };
-    // a backslash is a separator on Windows and an escape in the `!name` glob of `grep_code`
-    skip.extend(named.into_iter().filter(|n| n != "." && n != ".." && !n.chars().any(|c| std::path::is_separator(c) || c == '\\')));
+    match std::env::var("SCRUTATE_INDEX_EXCLUDE_DIRS") {
+        Ok(v) => skip.extend(split_names(&v).into_iter().filter(|n| is_dir_name(n))),
+        Err(_) => skip.extend(config_excludes(root)),
+    }
     skip
+}
+
+/// A name `exclude_dirs` can use: a backslash is a separator on Windows and an escape in the
+/// `!name` glob of `grep_code`.
+fn is_dir_name(n: &str) -> bool {
+    n != "." && n != ".." && !n.chars().any(|c| std::path::is_separator(c) || c == '\\')
 }
 
 /// `[index] exclude_dirs` of the root's own `.scrutate.toml`: the setting belongs to the index, so
 /// every process that updates it reads the same list, wherever it starts. The file, after links
 /// are resolved, is read as other repository files are: a regular file inside the root, of at
-/// most 1,000,000 bytes.
+/// most 1,000,000 bytes. Names that are no directory name are dropped.
 pub(crate) fn config_excludes(root: &Path) -> Vec<String> {
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let real = std::fs::canonicalize(root.join(".scrutate.toml")).ok();
@@ -96,7 +100,10 @@ pub(crate) fn config_excludes(root: &Path) -> Vec<String> {
     let Ok(table) = text.parse::<toml::Table>() else { return Vec::new() };
     let names = table.get("index").and_then(|i| i.get("exclude_dirs")).and_then(|v| v.as_array());
     names
-        .map(|a| a.iter().filter_map(|v| v.as_str()).map(|n| n.trim().to_string()).filter(|n| !n.is_empty()).take(MAX_CONFIG_EXCLUDES).collect())
+        .map(|a| {
+            let names = a.iter().filter_map(|v| v.as_str()).map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
+            names.take(MAX_CONFIG_EXCLUDES).filter(|n| is_dir_name(n)).collect()
+        })
         .unwrap_or_default()
 }
 

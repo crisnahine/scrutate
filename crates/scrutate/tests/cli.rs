@@ -1216,8 +1216,10 @@ fn exclude_dirs_follows_the_index_wherever_a_command_starts() {
         let text = String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).into_owned();
         assert!(!text.contains("gen/g.py") && text.contains("src/s.py:1"), "{cwd:?}: {text}");
     }
+    // `config` lists the names the index uses, not those it drops
     let (_, out, _) = run_in(&sub, &["config"], &[]);
-    assert!(out.contains("index exclude_dirs, from ") && out.contains("gen, *"), "{out}");
+    let line = out.lines().find(|l| l.starts_with("index exclude_dirs, from ")).unwrap_or_default();
+    assert!(line.ends_with(".scrutate.toml: gen, *"), "{out}");
 }
 
 #[test]
