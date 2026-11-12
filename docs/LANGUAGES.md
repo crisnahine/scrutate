@@ -111,15 +111,6 @@ A `.m` file is read as objc when its first 4000 bytes hold `@interface`, `@imple
 | `sample.nim` | Nim | function |
 | `sample.pl` | Perl | function |
 | `sample.sql` | SQL | function, type |
-| `sample.el` | Emacs Lisp | function, macro |
-| `sample.scm` | Scheme | function, macro |
-| `sample.rkt` | Racket | function, struct |
-| `sample.lisp` | Common Lisp | class, function, key, macro |
-| `sample.pas` | Pascal | function, type |
-| `sample.adb` | Ada | function, type |
-| `sample.m` | MATLAB / Objective-C (sniffed) | function |
-| `sample.mm` | Objective-C++ | class, function, method |
-| `sample.s` | Assembly (labels) | function |
 | `sample.txt` | plain text (windows) | (windows only) |
 
 ## Optional grammars (`--features extra-langs`, +~80 MB of parse tables)

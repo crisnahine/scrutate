@@ -38,9 +38,7 @@ LANGS_RS = os.path.join(ROOT, "crates", "scrutate", "src", "langs.rs")
 HEURISTIC_ONLY = {
     # languages covered by the keyword tier (no grammar in this build); sample -> note
     "sample.erb": "ERB / EJS templates (directive markup hides embedded definitions: windows only)",
-    "sample.cr": "Crystal", "sample.nim": "Nim", "sample.pl": "Perl", "sample.sql": "SQL", "sample.el": "Emacs Lisp",
-    "sample.scm": "Scheme", "sample.rkt": "Racket", "sample.lisp": "Common Lisp", "sample.pas": "Pascal", "sample.adb": "Ada",
-    "sample.m": "MATLAB / Objective-C (sniffed)", "sample.mm": "Objective-C++", "sample.s": "Assembly (labels)", "sample.txt": "plain text (windows)",
+    "sample.cr": "Crystal", "sample.nim": "Nim", "sample.pl": "Perl", "sample.sql": "SQL", "sample.txt": "plain text (windows)",
 }
 
 
@@ -145,8 +143,10 @@ def main() -> int:
     out.append("## Heuristic tier (samples in the snapshot test)\n")
     out.append("| Sample | Language | Definition kinds verified |")
     out.append("|---|---|---|")
+    grammar_exts = {e.lower() for r in regs for e in r["extensions"] + r["extensions_by_content"]}
     for fn, lang in HEURISTIC_ONLY.items():
-        if fn in expected:
+        # a sample a grammar reads belongs to the grammar table only
+        if fn in expected and os.path.splitext(fn)[1].lower() not in grammar_exts:
             kinds = sorted({k for k, _ in expected[fn] if k not in ("module", "window")})
             out.append(f"| `{fn}` | {lang} | {', '.join(kinds) if kinds else '(windows only)'} |")
     out.append("\n## Optional grammars (`--features extra-langs`, +~80 MB of parse tables)\n")
