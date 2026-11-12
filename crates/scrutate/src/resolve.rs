@@ -305,6 +305,7 @@ const LOCAL_BINDERS: &[(&str, &str)] = &[
     ("pair_pattern", "value"),
     ("rest_pattern", ""),
     ("catch_clause", "parameter"),
+    ("arrow_function", "parameter"),
     ("named_expression", "name"),
     ("splat_pattern", ""),
 ];
@@ -1425,9 +1426,10 @@ impl<'a> Resolver<'a> {
             scope = outer;
         }
         let binds = |n: Node| {
-            n.kind() == "identifier"
+            matches!(n.kind(), "identifier" | "shorthand_property_identifier_pattern" | "shorthand_field_identifier")
                 && text(n, src) == name
-                && (is_local_binder(n, src) || n.parent().is_some_and(|p| matches!(p.kind(), "static_item" | "const_item")))
+                && (is_local_binder(n, src)
+                    || n.parent().is_some_and(|p| matches!(p.kind(), "static_item" | "const_item") || (p.id() != scope.id() && names_definition(p, n))))
         };
         let in_scope = self.found_in(scope, "binder", name, || {
             let (mut out, mut stack) = (Vec::new(), vec![scope]);
@@ -1446,10 +1448,18 @@ impl<'a> Resolver<'a> {
         let reach = self.found_in(scope, "binder reach", name, || {
             in_scope.iter().map(|&(a, b)| root.named_descendant_for_byte_range(a, b).map_or((0, 0), |n| binder_reach(lang, n, scope))).collect()
         });
-        // the latest binder that reaches the use: not one of a block that has ended, a closure or a branch
-        let mut binder = (0..in_scope.partition_point(|b| b.0 < at_byte)).rev().map(|i| (in_scope[i], reach[i])).find_map(|((a, b), (s, e))| {
-            let seen = s <= at_byte && at_byte < e && root.named_descendant_for_byte_range(a, b).is_some_and(|n| visible(n, at_byte));
-            seen.then_some((a, b))
+        // a Python comprehension binds its variables after the element that uses them
+        let comprehension = (in_scope.partition_point(|b| b.0 < at_byte)..in_scope.len())
+            .filter(|&i| lang == Lang::Python && holds(reach[i], at_byte) && reach[i] != (scope.start_byte(), scope.end_byte()))
+            .filter(|&i| root.named_descendant_for_byte_range(reach[i].0, reach[i].1).is_some_and(|n| block_scoped(lang).contains(&n.kind())))
+            .min_by_key(|&i| reach[i].1 - reach[i].0)
+            .map(|i| in_scope[i]);
+        // else the latest binder that reaches the use: not one of a block that has ended, a closure or a branch
+        let mut binder = comprehension.or_else(|| {
+            (0..in_scope.partition_point(|b| b.0 < at_byte)).rev().map(|i| (in_scope[i], reach[i])).find_map(|((a, b), (s, e))| {
+                let seen = s <= at_byte && at_byte < e && root.named_descendant_for_byte_range(a, b).is_some_and(|n| visible(n, at_byte));
+                seen.then_some((a, b))
+            })
         });
         if binder.is_none() && scope.id() != root.id() {
             // a module-level or static variable, declared anywhere at the top of the file
@@ -2910,6 +2920,10 @@ fn block_scoped(lang: Lang) -> &'static [&'static str] {
 fn binder_reach(lang: Lang, b: Node, scope: Node) -> (usize, usize) {
     let blocks = if lang == Lang::Js && is_js_var(b) { &[] } else { block_scoped(lang) };
     let mut n = b.parent();
+    // the name of a function or class binds around it; that of a function expression only inside
+    if let Some(d) = n.filter(|&d| names_definition(d, b) && !matches!(d.kind(), "function_expression" | "function" | "class")) {
+        n = d.parent();
+    }
     while let Some(p) = n.filter(|p| p.id() != scope.id()) {
         if blocks.contains(&p.kind()) || FUNCTION_NODES.contains(&p.kind()) || CLASS_NODES.contains(&p.kind()) {
             return (p.start_byte(), p.end_byte());
@@ -2917,6 +2931,11 @@ fn binder_reach(lang: Lang, b: Node, scope: Node) -> (usize, usize) {
         n = p.parent();
     }
     (scope.start_byte(), scope.end_byte())
+}
+
+/// Whether `n` is the name of the function or class `d`.
+fn names_definition(d: Node, n: Node) -> bool {
+    (FUNCTION_NODES.contains(&d.kind()) || CLASS_NODES.contains(&d.kind())) && d.child_by_field_name("name").is_some_and(|x| x.id() == n.id())
 }
 
 /// The innermost function around `node`.
@@ -4506,6 +4525,46 @@ mod tests {
                 ),
             ],
             &[("main.go", "p.Norm() + 1", "Norm", point), ("main.go", "p.Norm() + 2", "Norm", point)],
+        );
+    }
+
+    #[test]
+    fn an_inner_binding_hides_a_typed_variable_of_the_functions_around_it() {
+        let js_shapes = "export class Point {\n  norm() { return 1; }\n}\nexport class Line {\n  norm() { return 2; }\n}\n";
+        let js_use = "import { Point } from './shapes';\n\nexport function f(xs) {\n  const p = new Point();\n  xs.map(p => p.norm() + 1);\n  xs.map(({ p }) => p.norm() + 2);\n  xs.map((p = 0) => p.norm() + 3);\n  xs.map((...p) => p.norm() + 4);\n  const k = () => {\n    try { g(); } catch (p) { p.norm() + 5; }\n    for (const p of xs) { p.norm() + 6; }\n    function p() { return 0; }\n    return p.norm() + 11;\n  };\n  const h = function p() { return p.norm() + 7; };\n  xs.map(([a, p]) => p.norm() + 8);\n  xs.map(({ q: p }) => p.norm() + 9);\n  xs.map(function (p) { return p.norm() + 10; });\n  return [h, k];\n}\n";
+        // the first line holding `p.norm() + 1` is the one of check 1, not of 10 or 11; the checks
+        // in `int` are of a binding with a type from outside
+        let calls = |file: &'static str, call: &str, name: &'static str, n: usize, int: &[usize]| -> Vec<(&'static str, String, &'static str, &'static str)> {
+            (1..=n).map(|i| (file, format!("{call} + {i}"), name, if int.contains(&i) { "external" } else { "receiver" })).collect()
+        };
+        let run = |tag: &str, files: &[(&str, &str)], checks: Vec<(&'static str, String, &'static str, &'static str)>| {
+            let checks: Vec<_> = checks.iter().map(|(f, n, m, w)| (*f, n.as_str(), *m, *w)).collect();
+            resolver_case(tag, files, &checks);
+        };
+        run("inner_js", &[("shapes.js", js_shapes), ("use.js", js_use)], calls("use.js", "p.norm()", "norm", 11, &[]));
+        run("inner_ts", &[("shapes.ts", js_shapes), ("use.ts", &js_use.replace("(xs)", "(xs: any[])"))], calls("use.ts", "p.norm()", "norm", 11, &[]));
+        run(
+            "inner_py",
+            &[("shapes.py", "class Point:\n    def norm(self):\n        return 1\n"), ("use.py", "from shapes import Point\n\n\ndef f1(xs):\n    p = Point()\n    return list(map(lambda p=0: p.norm() + 1, xs))\n\n\ndef f2(xs):\n    p = Point()\n\n    def g():\n        for p in xs:\n            return p.norm() + 2\n    return g\n\n\ndef f3(o):\n    p = Point()\n\n    def g():\n        with open(o) as p:\n            return p.norm() + 3\n    return g\n\n\ndef f4():\n    p = Point()\n\n    def g():\n        try:\n            h()\n        except ValueError as p:\n            return p.norm() + 4\n    return g\n\n\ndef f5(xs):\n    p = Point()\n    return lambda: [p.norm() + 5 for p in xs]\n\n\ndef f6(xs):\n    p = Point()\n\n    def g():\n        if (p := xs[0]):\n            return p.norm() + 6\n    return g\n\n\ndef f7(o):\n    p = Point()\n\n    def g():\n        match o:\n            case p:\n                return p.norm() + 7\n    return g\n\n\ndef f8(xs):\n    p = Point()\n    return list(map(lambda *p: p.norm() + 8, xs))\n\n\ndef f9(xs):\n    p = Point()\n\n    def g():\n        for a, p in xs:\n            return p.norm() + 9\n    return g\n\n\ndef f10(o):\n    p = Point()\n\n    def g():\n        match o:\n            case [a, p]:\n                return p.norm() + 10\n    return g\n\n\ndef f11(o):\n    p = Point()\n\n    def g(*, p=None):\n        return p.norm() + 11\n    return g\n")],
+            calls("use.py", "p.norm()", "norm", 11, &[]),
+        );
+        run(
+            "inner_rs",
+            &[
+                ("lib.rs", "mod shapes;\nmod user;\n"),
+                ("shapes.rs", "pub struct Point;\n\nimpl Point {\n    pub fn new() -> Point {\n        Point\n    }\n    pub fn norm(&self) -> u32 {\n        1\n    }\n}\n"),
+                ("user.rs", "use crate::shapes::Point;\n\npub fn f(xs: &[(u32, u32)], o: Option<u32>) -> u32 {\n    let p = Point::new();\n    let g = || {\n        xs.iter().map(|(a, p)| p.norm() + 1).count();\n        if let Some(p) = o { p.norm() + 2; }\n        let mut it = xs.iter();\n        while let Some(p) = it.next() { p.norm() + 3; }\n        for p in xs { p.norm() + 4; }\n        match o { Some(p) => p.norm() + 5, None => 0 };\n        xs.iter().map(|&(a, p)| p.norm() + 6).count();\n        if let Some(ref p) = o { p.norm() + 7; }\n        match o { Some(p @ 1..=3) => p.norm() + 8, _ => 0 };\n        for (a, p) in xs { p.norm() + 9; }\n        0\n    };\n    g()\n}\n"),
+            ],
+            calls("user.rs", "p.norm()", "norm", 9, &[]),
+        );
+        run(
+            "inner_go",
+            &[
+                ("go.mod", "module example.com/m\n"),
+                ("shapes/point.go", "package shapes\n\ntype Point struct{}\n\nfunc (p *Point) Norm() int {\n\treturn 1\n}\n"),
+                ("main.go", "package main\n\nimport \"example.com/m/shapes\"\n\nfunc f(xs []int, x interface{}, ch chan int) int {\n\tp := &shapes.Point{}\n\tg := func() int {\n\t\th := func(p int) int { return p.Norm() + 1 }\n\t\tfor _, p := range xs {\n\t\t\tp.Norm() + 2\n\t\t}\n\t\tif p := x; p != nil {\n\t\t\tp.Norm() + 3\n\t\t}\n\t\tswitch p := x.(type) {\n\t\tdefault:\n\t\t\tp.Norm() + 4\n\t\t}\n\t\tk := func() (p int) { return p.Norm() + 5 }\n\t\tfor p := 0; p < 3; p++ {\n\t\t\tp.Norm() + 6\n\t\t}\n\t\tselect {\n\t\tcase p := <-ch:\n\t\t\tp.Norm() + 7\n\t\t}\n\t\tv := func(p ...int) int { return p.Norm() + 8 }\n\t\treturn h(0) + k() + v()\n\t}\n\treturn g()\n}\n"),
+            ],
+            calls("main.go", "p.Norm()", "Norm", 8, &[1, 5, 8]),
         );
     }
 
