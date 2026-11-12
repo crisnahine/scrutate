@@ -31,6 +31,11 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRUTATE = os.environ.get("SCRUTATE_BIN", os.path.join(HERE, "..", "target", "release", "scrutate"))
+WORK = os.environ.get("SCRUTATE_WORK", os.path.join(HERE, "..", "..", "work"))
+# the tools run without these and without the caller's own settings: any SCRUTATE_ variable in a
+# search's environment is a setting to scrutate, which then reads its arguments the slower way
+for _name in [k for k in os.environ if k.startswith("SCRUTATE_")]:
+    del os.environ[_name]
 
 
 # --------------------------------------------------------------------------- tool discovery
@@ -532,7 +537,7 @@ def bench_index(corpora: dict, runs: int, cold: bool) -> list[dict]:
     """Engine B: cold index build, warm no-op update, incremental update after one edit, index size,
     ranked-query latency (in-process via `batch --timing`, and whole-process via `scrutate search`)."""
     rows = []
-    qfile = os.path.join(os.environ.get("SCRUTATE_WORK", os.path.join(HERE, "..", "..", "work")), "bench", "queries", "networkx.json")
+    qfile = os.path.join(WORK, "bench", "queries", "networkx.json")
     for cname, cdir in corpora.items():
         shutil.rmtree(os.path.join(cdir, ".scrutate"), ignore_errors=True)
         if cold:

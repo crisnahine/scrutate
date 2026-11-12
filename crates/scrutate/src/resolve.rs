@@ -37,6 +37,11 @@ fn lang_of(spec_id: &str) -> Option<Lang> {
     }
 }
 
+/// The language the resolver reads `path` in; the content sniff decides only between others.
+fn path_lang(path: &str) -> Option<Lang> {
+    lang_of(crate::langs::spec_for(path)?.id)
+}
+
 /// Definition chosen for an occurrence and how it was found, or why none was.
 pub type Resolution = std::result::Result<(i64, &'static str), &'static str>;
 
@@ -69,6 +74,9 @@ pub const UNREAD: &str = "not resolved in this language";
 struct FileInfo {
     lang: Option<Lang>,
     src: String,
+    /// the bytes on disk and where each line starts, when decoding `src` replaced invalid UTF-8:
+    /// Engine A's columns count those bytes
+    raw: Option<(Vec<u8>, Vec<usize>)>,
     tree: Option<Tree>,
     defs: Vec<Def>,
     bindings: Vec<Binding>,
@@ -119,6 +127,9 @@ pub struct Resolver<'a> {
     /// Java: by class, the types it extends and implements, and the fields it declares
     java_bases: HashMap<i64, Rc<Vec<std::result::Result<i64, &'static str>>>>,
     java_fields: HashMap<i64, Rc<HashSet<String>>>,
+    /// by function around a use (its node id) and name: the byte ranges of the identifiers in it
+    /// that may bind the name, found once so a use checks only these
+    binders: HashMap<(usize, String), Vec<(usize, usize)>>,
 }
 
 fn text<'s>(n: Node, src: &'s str) -> &'s str {
@@ -128,12 +139,16 @@ fn text<'s>(n: Node, src: &'s str) -> &'s str {
 /// The text of `rel` under `root` when it is a regular file inside `root` of at most
 /// `MAX_FILE_BYTES`: a FIFO would block the read, and a symlink could lead out of the repository.
 pub fn repo_text(root: &std::path::Path, rel: &str) -> Option<String> {
+    crate::index::decode_source(&repo_bytes(root, rel)?).map(|t| t.into_owned())
+}
+
+fn repo_bytes(root: &std::path::Path, rel: &str) -> Option<Vec<u8>> {
     let p = root.join(rel);
     let meta = std::fs::symlink_metadata(&p).ok()?;
     if !meta.is_file() || meta.len() > crate::index::MAX_FILE_BYTES || !std::fs::canonicalize(&p).ok()?.starts_with(root) {
         return None;
     }
-    crate::index::decode_source(&std::fs::read(&p).ok()?).map(|t| t.into_owned())
+    std::fs::read(&p).ok()
 }
 
 /// The segments of a module path below the repository's own package, when the checkout is that
@@ -149,18 +164,26 @@ fn dir_of(p: &str) -> &str {
     p.rsplit_once('/').map(|(d, _)| d).unwrap_or("")
 }
 
-fn join(base: &str, rel: &str) -> String {
+/// `rel` from the directory `base`; a path that climbs above the root keeps its leading `..`, so it
+/// names no file of the repository.
+pub(crate) fn join(base: &str, rel: &str) -> String {
     let mut parts: Vec<&str> = if base.is_empty() { Vec::new() } else { base.split('/').collect() };
     for seg in rel.split('/') {
         match seg {
             "" | "." => {}
-            ".." => {
+            ".." if parts.last().is_some_and(|p| *p != "..") => {
                 parts.pop();
             }
             s => parts.push(s),
         }
     }
     parts.join("/")
+}
+
+/// The path a Python relative import (`.`, `.x`, `..pkg.mod`) of `from` names, before a suffix.
+pub(crate) fn py_relative(from: &str, module: &str) -> String {
+    let ups = module.chars().take_while(|c| *c == '.').count();
+    join(dir_of(from), &format!("{}{}", "../".repeat(ups.saturating_sub(1)), module[ups..].replace('.', "/")))
 }
 
 /// `Foo<'a, T>.new` -> `Foo.new`: impl blocks carry their generics in the qualified name.
@@ -706,6 +729,7 @@ impl<'a> Resolver<'a> {
             java_paths: HashMap::new(),
             java_bases: HashMap::new(),
             java_fields: HashMap::new(),
+            binders: HashMap::new(),
         })
     }
 
@@ -718,8 +742,73 @@ impl<'a> Resolver<'a> {
         fi
     }
 
+    /// Drops the loaded copy of `path`; a later use loads it again.
+    pub fn forget(&mut self, path: &str) {
+        self.cache.remove(path);
+        // node ids name nodes of trees still loaded
+        self.binders.clear();
+    }
+
+    /// The identifiers in `scope` named `name` that bind it: a Java local or parameter, else
+    /// what `is_local_binder` takes.
+    fn binders_in(&mut self, scope: Node, name: &str, src: &str, java: bool) -> Vec<(usize, usize)> {
+        let key = (scope.id(), name.to_string());
+        if let Some(b) = self.binders.get(&key) {
+            return b.clone();
+        }
+        let mut out = Vec::new();
+        let mut stack = vec![scope];
+        while let Some(n) = stack.pop() {
+            let binder = if java {
+                n.kind() == "identifier" && text(n, src) == name && java_binder(n)
+            } else {
+                matches!(n.kind(), "identifier" | "shorthand_property_identifier_pattern" | "shorthand_field_identifier")
+                    && text(n, src) == name
+                    && is_local_binder(n, src)
+            };
+            if binder {
+                out.push((n.start_byte(), n.end_byte()));
+            }
+            let mut cur = n.walk();
+            stack.extend(n.named_children(&mut cur));
+        }
+        self.binders.insert(key, out.clone());
+        out
+    }
+
+    /// A match at bytes `a..b` of `line` as Engine A reads `path` -> the same span in the decoded
+    /// line Engine A prints, and the column `resolve_at` takes, which counts a BOM on line 1.
+    fn decoded_span(&mut self, path: &str, line: u64, (a, b): (usize, usize)) -> ((usize, usize), usize) {
+        if path_lang(path).is_none() {
+            return ((a, b), a);
+        }
+        let fi = self.file(path);
+        let (a, b) = match &fi.raw {
+            Some((bytes, starts)) => {
+                let start = starts.get(line.saturating_sub(1) as usize).copied().unwrap_or(bytes.len());
+                let at = |x: usize| String::from_utf8_lossy(&bytes[start..(start + x).min(bytes.len())]).len();
+                (at(a), at(b))
+            }
+            None => (a, b),
+        };
+        let bom = if line == 1 && fi.src.starts_with('\u{FEFF}') { '\u{FEFF}'.len_utf8() } else { 0 };
+        ((a, b), a + bom)
+    }
+
     fn load(&mut self, path: &str) -> FileInfo {
-        let src = repo_text(&self.ix.root, path).unwrap_or_default();
+        let mut bytes = repo_bytes(&self.ix.root, path).unwrap_or_default();
+        let src = crate::index::decode_source(&bytes).map(|t| t.into_owned()).unwrap_or_default();
+        // Engine A reads UTF-16 decoded, and UTF-8 without its BOM
+        let utf16 = bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]);
+        let mut text = src.as_str();
+        if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+            bytes.drain(..3);
+            text = &src[3..];
+        }
+        let raw = (!utf16 && !src.is_empty() && text.as_bytes() != bytes).then(|| {
+            let starts = std::iter::once(0).chain(bytes.iter().enumerate().filter(|(_, &c)| c == b'\n').map(|(i, _)| i + 1)).collect();
+            (bytes, starts)
+        });
         let spec = crate::parse::spec_for(path, &src);
         let lang = spec.and_then(|s| lang_of(s.id));
         let tree = match (spec, lang) {
@@ -738,7 +827,7 @@ impl<'a> Resolver<'a> {
             _ => Vec::new(),
         };
         let defs = self.defs_of(path).unwrap_or_default();
-        FileInfo { lang, src, tree, defs, bindings }
+        FileInfo { lang, src, raw, tree, defs, bindings }
     }
 
     fn defs_of(&self, path: &str) -> Result<Vec<Def>> {
@@ -784,6 +873,10 @@ impl<'a> Resolver<'a> {
     /// Resolve the occurrence of `name` at 1-based `line`, 0-based byte `col` of `path`.
     pub fn resolve_at(&mut self, path: &str, line: u64, col: usize, name: &str) -> Resolution {
         self.looked_up.clear();
+        if path_lang(path).is_none() {
+            // whether a grammar exists does not depend on the content the sniff reads
+            return Err(if crate::parse::spec_for(path, "").is_some() { UNREAD } else { "no grammar" });
+        }
         let fi = self.file(path);
         let (Some(lang), Some(tree)) = (fi.lang, fi.tree.as_ref()) else {
             return Err(if crate::parse::spec_for(path, &fi.src).is_some() { UNREAD } else { "no grammar" });
@@ -885,7 +978,7 @@ impl<'a> Resolver<'a> {
         let func = enclosing_function(node).map(|f| f.byte_range());
         let local_import = |b: &&Binding| b.local == name && func.as_ref().is_some_and(|r| b.sites.iter().any(|s| r.contains(s)));
         let local_import = fi.bindings.iter().find(local_import).cloned();
-        if local_import.is_none() && shadowed(lang, node, name, &fi.src) {
+        if local_import.is_none() && self.shadowed(lang, node, name, &fi.src) {
             return Err("local variable");
         }
         // `const app = require("./app")` is a constant and an import: the import says what it is
@@ -1869,12 +1962,7 @@ impl<'a> Resolver<'a> {
     fn py_rooted(&self, from: &str, module: &str) -> Option<String> {
         let try_base = |base: &str| self.py_try_base(base);
         if module.starts_with('.') {
-            let ups = module.chars().take_while(|c| *c == '.').count();
-            let mut base = dir_of(from).to_string();
-            for _ in 1..ups {
-                base = dir_of(&base).to_string();
-            }
-            let target = join(&base, &module[ups..].replace('.', "/"));
+            let target = py_relative(from, module);
             return if target.is_empty() { self.first_file(&["__init__.py".to_string()]) } else { try_base(&target) };
         }
         let slashed = module.replace('.', "/");
@@ -1977,6 +2065,7 @@ impl<'a> Resolver<'a> {
     /// the files `refs` would look its names up in. None when the resolver does not read the
     /// language of `from`; an empty list when it reads it and finds no file.
     pub fn import_files(&mut self, from: &str, line: i64, module: &str) -> Option<Vec<String>> {
+        path_lang(from)?;
         let fi = self.file(from);
         let lang = fi.lang?;
         let mut out: Vec<String> = Vec::new();
@@ -2522,46 +2611,62 @@ fn top_level<'f>(fi: &'f FileInfo, name: &str) -> Option<&'f Def> {
     it.clone().find(|d| d.kind != "impl").or_else(|| it.next())
 }
 
-/// A parameter or local variable named `name` in the functions around `node` (a closure sees the
-/// locals of the function it is written in) hides outer definitions; one bound in a nested
-/// function, block or comprehension that does not hold `node` does not.
-fn shadowed(lang: Lang, node: Node, name: &str, src: &str) -> bool {
-    let at = node.start_byte();
-    let holds = |n: Node| n.start_byte() <= at && at < n.end_byte();
-    let Some(mut func) = enclosing_function(node) else { return false };
-    // a Rust `fn` item does not see the locals of the function around it
-    while let Some(outer) = enclosing_function(func).filter(|_| func.kind() != "function_item") {
-        func = outer;
-    }
-    let block_scoped: &[&str] = match lang {
-        Lang::Python => &["list_comprehension", "set_comprehension", "dictionary_comprehension", "generator_expression"],
-        _ => &["statement_block", "block", "compound_statement", "for_statement", "for_in_statement", "for_expression"],
-    };
-    // (node, inside a block that does not hold the use): there only a JS `var` reaches the use
-    let mut stack = vec![(func, false)];
-    while let Some((n, aside)) = stack.pop() {
-        if matches!(n.kind(), "identifier" | "shorthand_property_identifier_pattern" | "shorthand_field_identifier")
-            && text(n, src) == name
-            && is_local_binder(n, src)
-            && (!aside || is_js_var(n))
-            && visible(n, at)
-        {
-            return true;
+impl Resolver<'_> {
+    /// A parameter or local variable named `name` in the functions around `node` (a closure sees
+    /// the locals of the function it is written in) hides outer definitions; one bound in a nested
+    /// function, block or comprehension that does not hold `node` does not.
+    fn shadowed(&mut self, lang: Lang, node: Node, name: &str, src: &str) -> bool {
+        let at = node.start_byte();
+        let holds = |n: Node| n.start_byte() <= at && at < n.end_byte();
+        let Some(mut func) = enclosing_function(node) else { return false };
+        // a Rust `fn` item does not see the locals of the function around it
+        while let Some(outer) = enclosing_function(func).filter(|_| func.kind() != "function_item") {
+            func = outer;
         }
-        let mut cur = n.walk();
-        for c in n.named_children(&mut cur) {
-            if holds(c) {
-                stack.push((c, aside));
-            } else if block_scoped.contains(&c.kind()) {
-                if lang == Lang::Js {
-                    stack.push((c, true));
+        let block_scoped: &[&str] = match lang {
+            Lang::Python => &["list_comprehension", "set_comprehension", "dictionary_comprehension", "generator_expression"],
+            _ => &["statement_block", "block", "compound_statement", "for_statement", "for_in_statement", "for_expression"],
+        };
+        let binders = self.binders_in(func, name, src, false);
+        binders.iter().any(|&(start, end)| {
+            let Some(b) = func.descendant_for_byte_range(start, end) else { return false };
+            let mut down: Vec<Node> = std::iter::successors(Some(b), |n| n.parent()).take_while(|n| n.id() != func.id()).collect();
+            down.reverse();
+            // a block that does not hold the use is seen into only for a JS `var`; a function never
+            let mut aside = false;
+            for c in down {
+                if holds(c) {
+                    continue;
                 }
-            } else if !FUNCTION_NODES.contains(&c.kind()) {
-                stack.push((c, aside));
+                if block_scoped.contains(&c.kind()) {
+                    if lang != Lang::Js {
+                        return false;
+                    }
+                    aside = true;
+                } else if FUNCTION_NODES.contains(&c.kind()) {
+                    return false;
+                }
             }
-        }
+            (!aside || is_js_var(b)) && visible(b, at)
+        })
     }
-    false
+
+    /// The nearest local variable or parameter named `name` that `node` sees, in the method around
+    /// it and the methods around that (an anonymous class or a lambda sees the locals around it).
+    fn java_local<'t>(&mut self, node: Node<'t>, name: &str, src: &str) -> Option<Node<'t>> {
+        const SCOPES: &[&str] =
+            &["method_declaration", "constructor_declaration", "compact_constructor_declaration", "lambda_expression", "static_initializer"];
+        let at = node.start_byte();
+        let top = std::iter::successors(node.parent(), |n| n.parent()).filter(|n| SCOPES.contains(&n.kind())).last()?;
+        let binders = self.binders_in(top, name, src, true);
+        let seen = |b: &Node| java_scope(*b).is_some_and(|s| s.start_byte() <= at && at < s.end_byte());
+        binders
+            .iter()
+            .filter(|&&(start, _)| start <= at)
+            .filter_map(|&(start, end)| top.descendant_for_byte_range(start, end))
+            .filter(seen)
+            .max_by_key(|b| b.start_byte())
+    }
 }
 
 /// The innermost function around `node`.
@@ -2812,31 +2917,6 @@ fn java_scope(b: Node) -> Option<Node> {
     }
 }
 
-/// The nearest local variable or parameter named `name` that `node` sees, in the method around
-/// it and the methods around that (an anonymous class or a lambda sees the locals around it).
-fn java_local<'t>(node: Node<'t>, name: &str, src: &str) -> Option<Node<'t>> {
-    const SCOPES: &[&str] = &["method_declaration", "constructor_declaration", "compact_constructor_declaration", "lambda_expression", "static_initializer"];
-    let at = node.start_byte();
-    let top = std::iter::successors(node.parent(), |n| n.parent()).filter(|n| SCOPES.contains(&n.kind())).last()?;
-    let (mut best, mut stack): (Option<Node>, Vec<Node>) = (None, vec![top]);
-    while let Some(n) = stack.pop() {
-        if n.start_byte() > at {
-            continue;
-        }
-        if n.kind() == "identifier"
-            && text(n, src) == name
-            && java_binder(n)
-            && java_scope(n).is_some_and(|s| s.start_byte() <= at && at < s.end_byte())
-            && best.is_none_or(|b| b.start_byte() < n.start_byte())
-        {
-            best = Some(n);
-        }
-        let mut cur = n.walk();
-        stack.extend(n.named_children(&mut cur));
-    }
-    best
-}
-
 /// What a Java local binder is declared with: (its type unless `var`, its value).
 fn java_declared<'t>(b: Node<'t>, src: &str) -> (Option<Node<'t>>, Option<Node<'t>>) {
     let Some(p) = b.parent() else { return (None, None) };
@@ -2962,7 +3042,7 @@ impl<'a> Resolver<'a> {
         let src = fi.src.as_str();
         let typed = node.kind() == "type_identifier" || p.is_some_and(|p| p.kind().ends_with("annotation"));
         if !typed {
-            if java_local(node, name, src).is_some() {
+            if self.java_local(node, name, src).is_some() {
                 return Err("local variable");
             }
             if self.java_is_field(fi, node, name) {
@@ -3085,7 +3165,7 @@ impl<'a> Resolver<'a> {
         }
         let (head, hname) = (segs[0], text(segs[0], src));
         // a variable hides a type, a type a package
-        if head.kind() == "identifier" && (java_local(head, hname, src).is_some() || self.java_is_field(fi, head, hname)) {
+        if head.kind() == "identifier" && (self.java_local(head, hname, src).is_some() || self.java_is_field(fi, head, hname)) {
             return self.type_of(path, fi, Lang::Java, q).ok_or("receiver");
         }
         let cur = match self.java_type(fi, head, hname) {
@@ -3296,7 +3376,7 @@ impl<'a> Resolver<'a> {
     fn java_variable_ty(&mut self, path: &str, fi: &FileInfo, e: Node) -> Option<Ty> {
         let src = fi.src.as_str();
         let name = text(e, src);
-        if let Some(b) = java_local(e, name, src) {
+        if let Some(b) = self.java_local(e, name, src) {
             let (ty, value) = java_declared(b, src);
             return match ty {
                 Some(t) => self.built_ty(path, fi, Lang::Java, b, value, e).or_else(|| self.ty_of_type(path, fi, Lang::Java, t)),
@@ -3426,8 +3506,34 @@ pub struct Occurrence {
     pub line: u64,
     /// 1-based byte column
     pub column: u64,
-    pub text: String,
+    /// the line, shared by every use on it
+    pub text: std::sync::Arc<str>,
+    /// where the use starts in `text`, in bytes: not `column - 1` after a byte that is not UTF-8
+    pub at: usize,
     pub resolution: Resolution,
+}
+
+impl Occurrence {
+    /// The line as an answer shows it, and whether it was cut: whole when short, else the part
+    /// around the use. A minified line holds thousands of uses, and each would print all of it.
+    pub fn shown_line(&self) -> (std::borrow::Cow<'_, str>, bool) {
+        const WHOLE: usize = 400;
+        const SIDE: usize = 150;
+        let t = &*self.text;
+        if t.len() <= WHOLE {
+            return (t.trim().into(), false);
+        }
+        let at = self.at.min(t.len());
+        let (mut a, mut b) = (at.saturating_sub(SIDE), (at + SIDE).min(t.len()));
+        while !t.is_char_boundary(a) {
+            a -= 1;
+        }
+        while !t.is_char_boundary(b) {
+            b += 1;
+        }
+        let (before, after) = (if a > 0 { "..." } else { "" }, if b < t.len() { "..." } else { "" });
+        (format!("{before}{}{after}", &t[a..b]).into(), true)
+    }
 }
 
 pub struct Resolved {
@@ -3468,15 +3574,19 @@ pub fn name_search(bare: &str, max_results: u64) -> crate::instant::Options {
 pub fn resolved_references(s: &Searcher, name: &str, max_results: u64) -> Result<Resolved> {
     let bare = &crate::intel::bare_name(s, name)?;
     let o = crate::instant::Options { want_spans: true, ..name_search(bare, max_results) };
-    let (hits, truncated) = crate::intel::occurrences(&s.ix.root, &o)?;
+    let (hits, mut truncated) = crate::intel::occurrences(&s.ix.root, &o)?;
     let mut rv = Resolver::new(&s.ix)?;
     let mut occurrences = Vec::new();
+    // Engine A stops at `max_results` lines; one long line can hold more uses than that
+    let total: usize = hits.iter().map(|h| h.spans.len()).sum();
+    truncated |= total as u64 > max_results;
     for h in hits {
-        let line_text = h.text.trim_end_matches(['\n', '\r']).to_string();
-        for &(a, b) in &h.spans {
+        let line_text: std::sync::Arc<str> = h.text.trim_end_matches(['\n', '\r']).into();
+        for &(a, b) in h.spans.iter().take(max_results.saturating_sub(occurrences.len() as u64) as usize) {
+            let ((da, db), col) = rv.decoded_span(&h.path, h.line, (a, b));
             // the occurrence as this file spells it
-            let resolution = rv.resolve_at(&h.path, h.line, a, h.text.get(a..b).unwrap_or(bare));
-            occurrences.push(Occurrence { path: h.path.to_string(), line: h.line, column: a as u64 + 1, text: line_text.clone(), resolution });
+            let resolution = rv.resolve_at(&h.path, h.line, col, h.text.get(da..db).unwrap_or(bare));
+            occurrences.push(Occurrence { path: h.path.to_string(), line: h.line, column: a as u64 + 1, text: line_text.clone(), at: da, resolution });
         }
     }
     let mut definitions: Vec<ChunkRow> = crate::intel::definitions(&s.ix, bare)?.into_iter().filter(|d| same_name(&d.name, bare)).collect();
@@ -3506,7 +3616,7 @@ pub fn resolved_text(r: &Resolved, only: Option<i64>) -> String {
         let occ: Vec<&Occurrence> = r.of(d.id).collect();
         out.push_str(&format!("{}:{}-{}  [{}] {}  ({} references)\n", shown(&d.path), d.start, d.end, d.kind, shown(&d.qualname), occ.len()));
         for o in occ {
-            out.push_str(&format!("    {}:{}:{}: {}\n", shown(&o.path), o.line, o.column, o.text.trim()));
+            out.push_str(&format!("    {}:{}:{}: {}\n", shown(&o.path), o.line, o.column, o.shown_line().0));
         }
     }
     let unresolved: Vec<&Occurrence> = r.unresolved().collect();
@@ -3518,7 +3628,7 @@ pub fn resolved_text(r: &Resolved, only: Option<i64>) -> String {
         None => {
             out.push_str(&format!("unresolved ({}):\n", unresolved.len()));
             for o in unresolved {
-                out.push_str(&format!("    {}:{}:{}: {}  ({})\n", shown(&o.path), o.line, o.column, o.text.trim(), o.resolution.err().unwrap_or("")));
+                out.push_str(&format!("    {}:{}:{}: {}  ({})\n", shown(&o.path), o.line, o.column, o.shown_line().0, o.resolution.err().unwrap_or("")));
             }
         }
     }
@@ -4227,6 +4337,19 @@ mod tests {
     }
 
     #[test]
+    fn an_import_in_a_language_without_a_resolver_loads_no_file() {
+        let (root, s) = indexed("unread_import", &[("a.h", "int a(void);\n"), ("m.c", "#include \"a.h\"\nint m(void) { return a(); }\n")]);
+        let mut rv = Resolver::new(&s.ix).unwrap();
+        let found = rv.import_files("m.c", 1, "a.h");
+        let used = rv.resolve_at("m.c", 2, 21, "a");
+        let cached = rv.cache.len();
+        drop(rv);
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!((found, used, cached), (None, Err(UNREAD), 0));
+    }
+
+    #[test]
     fn rust_rules() {
         let lib = "mod a;\nmod b;\npub use b::Thing;\n\nfn top() {}\n";
         let a = "pub fn make() {}\n\npub struct Thing;\n\nimpl Thing {\n    pub fn new() -> Self {\n        Self::helper();\n        Thing\n    }\n    fn helper() {}\n}\n";
@@ -4585,6 +4708,11 @@ public class Main extends Base {
     fn helpers() {
         assert_eq!(strip_generics("Foo<'a, T>.new"), "Foo.new");
         assert_eq!(join("a/b", "../c/./d"), "a/c/d");
+        assert_eq!(join("src", "../../lib"), "../lib");
+        assert_eq!(
+            (py_relative("src/b.py", "..x.y"), py_relative("src/b.py", "...x"), py_relative("src/b.py", ".")),
+            ("x/y".into(), "../x".into(), "src".into())
+        );
         assert_eq!(Resolver::rust_mod_dir("src/a/b.rs"), "src/a/b");
         assert_eq!(Resolver::rust_mod_dir("src/a/mod.rs"), "src/a");
         assert_eq!(cargo_package_name("[workspace]\nname = \"no\"\n[package]\nname = \"grep-matcher\"\n"), Some("grep-matcher".into()));

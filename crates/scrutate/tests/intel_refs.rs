@@ -524,6 +524,134 @@ fn a_file_with_one_bad_byte_is_resolved_and_queried() {
 }
 
 #[test]
+fn a_use_after_a_bom_or_a_bad_byte_on_its_line_is_resolved() {
+    let files: &[(&str, &[u8])] = &[
+        ("helper.py", b"def go():\n    return 1\n"),
+        ("bom.py", b"\xef\xbb\xbffrom helper import go\n\ndef run():\n    return go()\n"),
+        ("latin.py", b"from helper import go\nx = \"caf\xe9 au lait\"; go()\n"),
+        ("both.py", b"\xef\xbb\xbfx = \"caf\xe9\"; from helper import go\ngo()\n"),
+    ];
+    let r = Repo::at(scratch("bom_latin"), files);
+    r.index();
+    let want = [
+        ("bom.py:1", "helper.py"),
+        ("bom.py:4", "helper.py"),
+        ("both.py:1", "helper.py"),
+        ("both.py:2", "helper.py"),
+        ("helper.py:1", "helper.py"),
+        ("latin.py:1", "helper.py"),
+        ("latin.py:2", "helper.py"),
+    ];
+    assert_eq!(r.resolved("go"), pairs(&want));
+    let v = r.json(&["refs", "go", "--json"]);
+    let cols: Vec<u64> =
+        v["definitions"][0]["references"].as_array().unwrap().iter().filter(|o| o["path"] == "latin.py").map(|o| o["column"].as_u64().unwrap()).collect();
+    // columns stay the byte columns `grep` prints
+    assert_eq!(cols, vec![20, 21], "{v}");
+}
+
+#[test]
+fn every_use_on_one_long_line_is_counted_up_to_max_results() {
+    let line = format!("import {{g}} from \"./lib\";{}\n", "g();".repeat(2000));
+    let r = Repo::new("one_line", &[("lib.js", "export function g() { return 1 }\n"), ("min.js", &line)]);
+    // every reference repeats the long line: more output than a pipe holds, so read it as it comes
+    let run = |args: &[&str]| String::from_utf8(Command::new(BIN).args(args).current_dir(&r.root).output().unwrap().stdout).unwrap();
+    let count = |v: &Value| v["definitions"][0]["references"].as_array().unwrap().iter().filter(|o| o["path"] == "min.js").count();
+    let v: Value = serde_json::from_str(&run(&["refs", "g", "--json", "--max-results", "5000"])).unwrap();
+    assert_eq!((count(&v), &v["truncated"]), (2001, &json!(false)));
+    let v: Value = serde_json::from_str(&run(&["refs", "g", "--json", "--max-results", "100"])).unwrap();
+    assert_eq!(&v["truncated"], &json!(true));
+    assert!(count(&v) < 100, "{}", count(&v));
+    assert!(run(&["refs", "g", "--max-results", "100"]).contains("stopped at max_results=100"));
+    // a use on a long line shows the part of the line around it, not the 8 KB line 2,000 times
+    let text = run(&["refs", "g", "--max-results", "5000"]);
+    assert!(text.len() < 2001 * 600, "{} bytes", text.len());
+    let third = text.lines().find(|l| l.contains("min.js:1:33:")).unwrap();
+    assert!(third.contains("...import {g} from \"./lib\";g();g();") || third.contains(": import {g} from \"./lib\";g();g();"), "{third}");
+    assert!(third.ends_with("..."), "{third}");
+    let v: Value = serde_json::from_str(&run(&["refs", "g", "--json", "--max-results", "5000"])).unwrap();
+    let uses = v["definitions"][0]["references"].as_array().unwrap();
+    let long = uses.iter().find(|o| o["path"] == "min.js" && o["column"] == 4001).unwrap();
+    assert_eq!(long["cut"], json!(true), "{long}");
+    let shown = long["text"].as_str().unwrap();
+    assert!(shown.len() < 400 && shown.starts_with("...") && shown.ends_with("...") && shown.contains("g();g();"), "{shown}");
+    // a short line is whole and says nothing about a cut
+    let short = &v["definitions"][0];
+    assert!(short["references"].as_array().unwrap().iter().all(|o| o["path"] != "lib.js" || o.get("cut").is_none()), "{short}");
+}
+
+/// `refs NAME` on `make(n)` and `make(4 * n)` (best of 3 runs each) fails if the larger costs 10x
+/// or more, where linear work gives 4x and quadratic 16x; `want(n)` is the count it must print.
+fn assert_refs_scale_linearly(file: &str, other: (&str, &str), name: &str, n: usize, make: impl Fn(usize) -> String, want: impl Fn(usize) -> String) {
+    let best = |k: usize| {
+        let r = Repo::new("refs_scale", &[other, (file, &make(k))]);
+        (0..3)
+            .map(|_| {
+                let t = Instant::now();
+                let out = Command::new(BIN).args(["refs", name, "--max-results", "50000"]).current_dir(&r.root).output().unwrap();
+                let took = t.elapsed();
+                let out = String::from_utf8_lossy(&out.stdout).into_owned();
+                assert!(out.contains(&want(k)), "{}", out.lines().next().unwrap_or(""));
+                took
+            })
+            .min()
+            .unwrap()
+    };
+    let (small, large) = (best(n), best(4 * n));
+    let ratio = large.as_secs_f64() / small.as_secs_f64().max(0.005);
+    assert!(ratio < 10.0, "{file}: {n} uses took {small:?}, {} took {large:?}", 4 * n);
+}
+
+#[test]
+fn refs_in_one_big_function_takes_linear_time() {
+    assert_refs_scale_linearly(
+        "bundle.js",
+        ("lib.js", "export function g() { return 1 }\n"),
+        "g",
+        500,
+        |n| format!("import {{g}} from \"./lib\";\nfunction f(){{var a=0;\n{}}}\n", "g();\n".repeat(n)),
+        |n| format!("({} references)", n + 2),
+    );
+    assert_refs_scale_linearly(
+        "A.java",
+        ("B.java", "class B {}\n"),
+        "x",
+        500,
+        |n| format!("class A {{\n  void f() {{\n    int x = 0;\n{}  }}\n}}\n", "    System.out.println(x);\n".repeat(n)),
+        |n| format!("unresolved ({}):", n + 1),
+    );
+}
+
+#[test]
+fn a_relative_import_that_climbs_above_the_root_names_no_file() {
+    let r = Repo::new(
+        "above_root",
+        &[
+            ("lib.js", "export function h() { return 1 }\n"),
+            ("src/a.js", "import { h } from '../../lib';\nh();\n"),
+            ("src/c.js", "import { h } from '../lib';\nh();\n"),
+            ("helper.py", "def go():\n    return 1\n"),
+            ("src/__init__.py", ""),
+            ("src/b.py", "from ...helper import go\ngo()\n"),
+            ("src/d.py", "from ..helper import go\ngo()\n"),
+        ],
+    );
+    let resolved = |path: &str| -> Vec<String> {
+        r.json(&["deps", path, "--json"]).as_array().unwrap().iter().filter_map(|d| d["resolved"].as_str().map(str::to_string)).collect()
+    };
+    assert_eq!(resolved("src/a.js"), Vec::<String>::new());
+    assert_eq!(resolved("src/b.py"), Vec::<String>::new());
+    assert_eq!(resolved("src/c.js"), vec!["lib.js"]);
+    assert_eq!(resolved("src/d.py"), vec!["helper.py"]);
+    let got = r.resolved("h");
+    assert!(got.contains(&("src/a.js:2".to_string(), "-".to_string())) && got.contains(&("src/c.js:2".to_string(), "lib.js".to_string())), "{got:?}");
+    let got = r.resolved("go");
+    assert!(got.contains(&("src/b.py:2".to_string(), "-".to_string())) && got.contains(&("src/d.py:2".to_string(), "helper.py".to_string())), "{got:?}");
+    let (_, out) = r.run(&["rdeps", "lib.js"]);
+    assert!(out.contains("src/c.js") && !out.contains("src/a.js"), "{out}");
+}
+
+#[test]
 fn tsquery_skips_files_over_the_index_size_limit() {
     let big = format!("def small():\n    pass\n{}", "x = 1\n".repeat(200_000));
     let r = Repo::new("bigts", &[("big.py", &big), ("ok.py", "def fine():\n    pass\n")]);

@@ -256,6 +256,20 @@ enum GrepCmd {
     Grep(GrepArgs),
 }
 
+/// The environment variables clap reads for `grep` (a test holds the list to clap's): with one
+/// of them set, `plain_grep` is not used. Any other variable is read after the arguments, by
+/// code both ways share.
+const GREP_ENV: [&str; 8] = [
+    "SCRUTATE_ROOT",
+    "SCRUTATE_GREP_TYPES",
+    "SCRUTATE_GREP_HIDDEN",
+    "SCRUTATE_GREP_NO_IGNORE",
+    "SCRUTATE_GREP_FOLLOW",
+    "SCRUTATE_GREP_MAX_FILESIZE",
+    "SCRUTATE_GREP_MAX_DEPTH",
+    "SCRUTATE_THREADS",
+];
+
 /// `scrutate grep ARGS` of the plain shapes (`[-FiwnlcU...] [-e PATTERN]... [-g GLOB]... [-j N]
 /// [PATTERN] [PATH]...`, flags anywhere, each at most once), read without clap: clap's parse of
 /// even these is 1.3 M instructions and 4 page-ins, more than a small search. `None` for anything
@@ -890,8 +904,8 @@ pub fn run() -> Result<i32> {
     // as with every other setting, the environment and the command line replace the file's globs
     let cfg_globs = if std::env::var_os("SCRUTATE_GREP_GLOBS").is_none() { cfg_globs } else { Vec::new() };
     let mut cli = if matches!(args.get(1).map(String::as_str), Some("grep" | "g")) {
-        // a setting from the environment or a file is clap's to read
-        let settings = cfg_path.is_some() || std::env::vars_os().any(|(k, _)| k.as_encoded_bytes().starts_with(b"SCRUTATE_"));
+        // a setting from a file, or from a variable clap reads for grep, is clap's to read
+        let settings = cfg_path.is_some() || GREP_ENV.iter().any(|name| std::env::var_os(name).is_some());
         let (root, no_color, grep) = match (!settings).then(|| plain_grep(&args)).flatten() {
             Some((no_color, grep)) => (PathBuf::from("."), no_color, grep),
             None => {
@@ -2061,6 +2075,21 @@ mod tests {
         for line in ["grep -F -F x", "grep --help", "grep -A 2 x", "grep -e", "grep -- -x", "index x", "grep -j=1 x", "grep x --root ."] {
             assert!(super::plain_grep(&args(line)).is_none(), "{line}");
         }
+    }
+
+    #[test]
+    fn every_variable_clap_reads_for_grep_sends_the_arguments_to_clap() {
+        use clap::CommandFactory;
+        let cmd = super::GrepCli::command();
+        let mut read: Vec<String> = Vec::new();
+        for c in std::iter::once(&cmd).chain(cmd.get_subcommands()) {
+            read.extend(c.get_arguments().filter_map(|a| a.get_env()).map(|e| e.to_string_lossy().into_owned()));
+        }
+        read.sort();
+        read.dedup();
+        let mut listed: Vec<String> = super::GREP_ENV.iter().map(|s| s.to_string()).collect();
+        listed.sort();
+        assert_eq!(read, listed);
     }
 
     #[test]

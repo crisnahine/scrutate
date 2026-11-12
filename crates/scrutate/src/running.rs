@@ -1,5 +1,5 @@
-//! How many big searches this user runs at once, across processes, so that each takes its share
-//! of threads. The count is a System V semaphore: a search adds 1 with `SEM_UNDO`, so the kernel
+//! How many searches that walk directories this user runs at once, across processes, so that
+//! each takes its share of threads. The count is a System V semaphore: a search adds 1 with `SEM_UNDO`, so the kernel
 //! takes it back when the process dies, however it dies. Anything that fails (no System V IPC, a
 //! set with that key made by another user, a limit) leaves the count unknown and the search runs
 //! as it would alone. Only on macOS: on Linux the cores are the limit, and splitting them never

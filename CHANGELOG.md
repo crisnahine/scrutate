@@ -39,10 +39,13 @@ First release.
   process spawning, the unwinder) are bound on their first call instead of at launch; dyld spends
   about 3.3 µs on each imported symbol. With the grep-only argument parser (clap otherwise builds
   all 24 subcommands), start-up is 1.9 ms, against 1.5 ms for a Rust hello-world.
-- Faster start: a one-file `scrutate grep` uses 2 M fewer instructions, 105 fewer page reclaims
-  and 1.7 MB less memory. Plain argument shapes skip clap, `-F` with one literal skips the regex
-  engine, and the macOS executable on Apple silicon is linked with an order file
-  (`crates/scrutate/startup.order`, written and checked by `tools/order_file.py`).
+- Faster start: a one-file `scrutate grep` uses 2 M fewer instructions, 131 fewer page reclaims
+  and 2.2 MB less memory (328 reclaims and 2.6 MB; GNU grep 308 and 2.05 MB). Plain argument
+  shapes skip clap, `-F` with one literal skips the regex engine, and the macOS executable on
+  Apple silicon is linked with an order file (`crates/scrutate/startup.order`, written and
+  checked by `tools/order_file.py`, which traces the release links under lldb). The release
+  profile links one object (fat LTO, one codegen unit) so the linker can place every function
+  the file names.
 - macOS builds need macOS 13 or newer: the binary gets chained fixups, which the kernel applies as
   pages are first touched.
 - A `.gitignore` used on many paths compiles its globs into one set after a while (the Linux
@@ -98,9 +101,11 @@ First release.
 - On macOS, searches of one user that run at the same time split the threads between them and
   take them back as the others end, because the kernel there serves about four file-reading
   threads at full speed across all processes: two at once on py-big went from 113 ms to 91 ms
-  each, four from 244 ms to 185 ms, eight from 482 ms to 413 ms. A search given `-j`, one waiting
-  on its reader and one stopped with Ctrl-Z are not counted; `SCRUTATE_GREP_DEBUG=1` shows the
-  count.
+  each, four from 244 ms to 185 ms, eight from 482 ms to 413 ms. A search that walks directories
+  joins the count when it starts, a small repository's too: four searches of the ripgrep
+  sources started together took 14.7 ms and take 13.3 ms (GNU grep 14.5 ms). A search given
+  `-j`, one waiting on its reader and one stopped with Ctrl-Z are not counted;
+  `SCRUTATE_GREP_DEBUG=1` shows the count.
 - On Linux a tree read from the disk gets up to 64 threads, whatever the cores: the Linux tree
   with a cold cache in a 5-CPU VM, 1.22 s on 5 threads, 0.37 s this way (git grep 1.23 s, ugrep
   0.64 s). A small tree stops before many threads start (231 files cold: 5.8 ms, ripgrep 7.5 ms).
@@ -195,6 +200,21 @@ First release.
 - Lock files with an ordinary extension (`package-lock.json`, `npm-shrinkwrap.json`,
   `pnpm-lock.yaml`, `packages.lock.json`, `Package.resolved`, `.terraform.lock.hcl`, Gradle
   `*.lockfile`, `bun.lockb`) are left out of the index like `*.lock`; `grep` still searches them.
+- `refs`, `deps` and `rdeps`:
+  - `rdeps` on a header no longer loads every including file, and `rdeps` of a module with
+    thousands of importers stays near the size of one file (3.8 GB to 103 MB for 5,000
+    importers).
+  - A relative import that climbs above the repository root (`../../lib` from `src/a.js`,
+    `from ...x` in `src/b.py`) resolves to no file.
+  - `refs` resolves uses on line 1 of a file with a byte-order mark and uses after an invalid
+    UTF-8 byte on the same line, and the language server places them right.
+  - `refs` counts every use on a line, where it stopped at 64 without saying so;
+    `--max-results N` (MCP `max_results`) counts uses, not lines. `grep` with color or `--json`
+    lists every match on a line.
+  - `refs` in one large function, as in a bundle, takes linear time: 4,000 calls went from 28 s
+    to 0.12 s.
+  - A use on a line longer than 400 bytes shows the part of the line around it: 2,000 uses on
+    one 8 KB line printed 16 MB and print under 1 MB.
 - `grep -z` reads at most 64 KiB of a tar member's long name or PAX path; a 306 KB archive with
   a 300 MiB name took 1.27 GB and takes 5.6 MB.
 - Context output (`-A`, `-B`, `-C`) on several threads no longer runs one file's lines into

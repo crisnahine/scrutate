@@ -1851,10 +1851,17 @@ impl<'s> Spare<'s> {
                 Err(now) => parked = now,
             }
         }
+        // The walk cannot end until a paused thread has woken, so a short
+        // walk must not wait long for it: each sleep is a thirty-second
+        // of the time paused so far, between 50 microseconds and 1 ms.
+        let since = std::time::Instant::now();
         let mut wait = std::time::Duration::from_micros(50);
         loop {
             std::thread::sleep(wait);
-            wait = (wait * 2).min(std::time::Duration::from_millis(1));
+            wait = (since.elapsed() / 32).clamp(
+                std::time::Duration::from_micros(50),
+                std::time::Duration::from_millis(1),
+            );
             let parked = self.parked.load(AtomicOrdering::Acquire);
             let go = quit_now.load(AtomicOrdering::SeqCst)
                 || active_workers.load(AtomicOrdering::Acquire) <= parked
