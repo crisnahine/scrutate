@@ -41,8 +41,9 @@ three), so two versions on one checkout never rebuild the index in turn.
 ## 2. Benchmarks on the release binary
 
 Move the previous results out of the way first: the harness resumes from an existing file, and
-refuses one whose rows another binary measured. Each
-goes to `bench/results/<platform>/superseded/` with the first four hex digits of its binary in
+refuses one whose rows another binary measured (`--force` with no `--only` drops those rows
+before the first new one is saved, and `bench/compare_tools.py --only` refuses such a file too).
+Each goes to `bench/results/<platform>/superseded/` with the first four hex digits of its binary in
 the name, a row in that directory's `README.md`, and an entry in `HISTORY` in
 `bench/make_dashboard.py`.
 

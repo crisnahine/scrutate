@@ -13,7 +13,7 @@ work=${1:?work directory}
 out=bench/results/platforms/linux-x86_64
 mkdir -p "$work" "$out"
 build='
-  set -e
+  set -eo pipefail
   apt-get update -qq && apt-get install -y -qq gcc-x86-64-linux-gnu g++-x86-64-linux-gnu libc6-dev-amd64-cross file > /dev/null
   rm -rf /work/src && mkdir -p /work/src
   tar -C /src --exclude=./.claude --exclude=./target --exclude=./dist --exclude=.scrutate --exclude=./fuzz -cf - . | tar -C /work/src -xf -
@@ -26,7 +26,7 @@ build='
   file target/x86_64-unknown-linux-gnu/release/scrutate
   echo "test binaries: $(wc -l < /work/tests.txt)"'
 run='
-  set -e
+  set -eo pipefail
   cd /work/src
   uname -m
   target/x86_64-unknown-linux-gnu/release/scrutate --version

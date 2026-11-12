@@ -40,8 +40,9 @@ THIRD_PARTY_NOTICES.txt, docs/ and integrations/. The `.deb` and `.rpm` packages
 | `scrutate-0.1.0-cp315-abi3.abi3t-manylinux_2_34_aarch64.whl` | Linux aarch64, CPython 3.15 and newer, standard and free-threaded | |
 | `scrutate-0.1.0.cdx.json` | | CycloneDX SBOM of the binary's dependencies |
 
-`tools/release_local.sh` builds one wheel of each kind when `uv` finds the interpreters (3.12,
-3.14t and 3.15), and only the one for `python3` otherwise. The static musl binary is built and
+With `uv` installed, `tools/release_local.sh` builds one wheel of each kind (interpreters 3.12,
+3.14t and 3.15) and stops when `uv` finds one of them missing; without `uv` it builds only the
+one for `python3`. The static musl binary is built and
 tested by `tools/linux_verify.sh` but not packaged here. Signed archives, attestations and the
 other platforms come from `.github/workflows/release.yml` once the repository is public.
 

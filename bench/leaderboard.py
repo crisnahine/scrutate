@@ -903,6 +903,9 @@ def main() -> int:
         # rows kept from an earlier run would get this binary's hash over another binary's timings
         if data["benchmarks"] and not same and not (a.force and not a.only):
             raise SystemExit(f"{a.out} holds rows that another scrutate binary, or base, measured: move the file away, or measure every row again with --force")
+        if not same:
+            # a run that dies part way must not leave the other binary's rows under this one's hash
+            data["benchmarks"] = {}
         data["environment"] = env
         data["corpora"] = json.load(open(os.path.join(a.corpora, "manifest.json")))
         data["settings"] = {"runs": a.runs, "cache": a.cache, "cold_prepare": a.cold_prepare, "max_load": a.max_load, "warmup": 1,

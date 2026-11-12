@@ -19,6 +19,7 @@ aliases (some environments alias `grep` to another program) are bypassed.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -641,6 +642,7 @@ def environment(tools: dict) -> dict:
         "cores": os.cpu_count(),
         "mem_gb": round(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1e9, 1),
         "tools": {k: {"version": v.get("version"), "path": v.get("exe"), "note": v.get("note")} for k, v in tools.items()},
+        "scrutate_sha256": hashlib.sha256(open(SCRUTATE, "rb").read()).hexdigest(),
     }
 
 
@@ -663,7 +665,11 @@ def main() -> int:
     if a.skip_index:
         phases.discard("index")
     res = json.load(open(out)) if a.only and os.path.exists(out) else {}
-    res.update({"environment": environment(tools), "corpora": {k: corpus_stats(v) for k, v in corpora.items()}, "runs": a.runs})
+    env = environment(tools)
+    # phases kept from the file would stand under this binary's hash
+    if res and res.get("environment", {}).get("scrutate_sha256") != env["scrutate_sha256"]:
+        raise SystemExit(f"{out} holds phases that another scrutate binary measured: move the file away, or run every phase")
+    res.update({"environment": env, "corpora": {k: corpus_stats(v) for k, v in corpora.items()}, "runs": a.runs})
 
     def save():
         json.dump(res, open(out, "w"), indent=1)

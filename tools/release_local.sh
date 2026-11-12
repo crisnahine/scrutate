@@ -33,7 +33,12 @@ if command -v maturin >/dev/null; then
   cmp -s LICENSE crates/scrutate-py/LICENSE || { echo "crates/scrutate-py/LICENSE (the wheel's copy) differs from LICENSE"; exit 1; }
   python3 tools/third_party_notices.py --package scrutate-py --out crates/scrutate-py/THIRD_PARTY_NOTICES.txt
   # one wheel per kind: cp39-abi3 (standard CPython up to 3.14), cp314t, abi3t (3.15 and newer)
-  if command -v uv > /dev/null; then pys=$(for v in 3.12 3.14t 3.15; do uv python find "$v" 2> /dev/null || true; done); else pys=python3; fi
+  if command -v uv > /dev/null; then
+    pys=""
+    for pv in 3.12 3.14t 3.15; do
+      pys="$pys $(uv python find "$pv")" || { echo "no Python $pv for its wheel: uv python install $pv"; exit 1; }
+    done
+  else pys=python3; fi
   for py in $pys; do maturin build --release --strip -m crates/scrutate-py/Cargo.toml -o dist -i "$py"; done
 fi
 python3 tools/sbom.py --out "dist/scrutate-$v.cdx.json"
