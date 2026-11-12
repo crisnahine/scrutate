@@ -60,3 +60,6 @@ def test_is_test_path():
     for p in ["src/contest.cc", "src/latest.rs", "src/Contest.kt", "src/Latest.cs", "src/attest.jsx", "src/spec.rb",
               "src/test.cfg/a.py", "src/a.test/b.py", "MyApp.Testing.Core/a.cs", "src/button.test.md", "src/_test"]:
         assert not is_test_path(p), p
+    # a name whose lower case has another length: `İ` grows, the Kelvin sign shrinks
+    assert not is_test_path("\u0130.cs") and is_test_path("\u0130Test.java")
+    assert is_test_path("a/\u212aTest.kt") and not is_test_path("a/\u212atest.kt")

@@ -307,11 +307,11 @@ pub fn is_test_path(path: &str) -> bool {
     let script = matches!(ext, "js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx" | "mts" | "cts") && (stem.ends_with(".test") || stem.ends_with(".spec"));
     // `parser_test.rs`, `parser_spec.rb`, `config_test.cc`
     let suffixed = !ext.is_empty() && (stem.ends_with("_test") || stem.ends_with("_spec"));
-    // JUnit and its kin name a test class `FooTest` or `FooTests`: with the capital, `Contest.java` is none
-    let class = matches!(ext, "java" | "kt" | "cs" | "swift" | "php") && {
-        let name = &path[path.len() - base.len()..path.len() - ext.len() - 1];
-        name.ends_with("Test") || name.ends_with("Tests")
-    };
+    // JUnit and its kin name a test class `FooTest` or `FooTests`: with the capital, `Contest.java`
+    // is none. The name as written: lower case can have another length (`İ`, the Kelvin sign).
+    let written = path.rsplit('/').next().unwrap_or(&path);
+    let name = written.rsplit_once('.').map_or(written, |(n, _)| n);
+    let class = matches!(ext, "java" | "kt" | "cs" | "swift" | "php") && (name.ends_with("Test") || name.ends_with("Tests"));
     parts[..parts.len() - 1].iter().any(|p| TEST_PARTS.contains(p))
         || project
         || base.starts_with("test_")
@@ -479,6 +479,11 @@ mod tests {
         ] {
             assert!(!is_test_path(p), "{p}");
         }
+        // a name whose lower case has another length in bytes: `İ` grows, the Kelvin sign shrinks
+        assert!(!is_test_path("\u{130}.cs"));
+        assert!(is_test_path("\u{130}Test.java"));
+        assert!(is_test_path("a/\u{212a}Test.kt"));
+        assert!(!is_test_path("a/\u{212a}test.kt"));
     }
 
     #[test]

@@ -218,8 +218,10 @@ def is_test_path(path: str) -> bool:
     script = ext in ("js", "jsx", "mjs", "cjs", "ts", "tsx", "mts", "cts") and stem.endswith((".test", ".spec"))
     # `parser_test.rs`, `parser_spec.rb`, `config_test.cc`
     suffixed = bool(ext) and stem.endswith(("_test", "_spec"))
-    # JUnit and its kin name a test class `FooTest` or `FooTests`: with the capital, `Contest.java` is none
-    name = path[len(path) - len(base):len(path) - len(ext) - 1] if ext else ""
+    # JUnit and its kin name a test class `FooTest` or `FooTests`: with the capital, `Contest.java`
+    # is none. The name as written: lower case can have another length (`İ`, the Kelvin sign).
+    written = path.split("/")[-1]
+    name = written.rpartition(".")[0] if "." in written else written
     cls = ext in ("java", "kt", "cs", "swift", "php") and name.endswith(("Test", "Tests"))
     return (any(p in _TEST_PARTS for p in parts[:-1]) or project or base.startswith("test_") or script or suffixed
             or cls or base in ("conftest.py", "tests.py"))
