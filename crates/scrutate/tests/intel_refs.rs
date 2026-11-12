@@ -670,6 +670,25 @@ fn refs_through_a_typed_variable_takes_linear_time() {
 }
 
 #[test]
+fn refs_of_a_name_bound_in_many_blocks_of_one_function_takes_linear_time() {
+    let n = 300;
+    let blocks = |n: usize, block: &str| (0..n).map(|i| block.replace('N', &i.to_string())).collect::<String>();
+    let want = |n: usize| format!("unresolved ({}):", 2 * n);
+    let cases = [
+        ("a.py", ("b.py", ""), "def f(c):\n", "    ys = [x + N for x in c]\n", ""),
+        ("a.js", ("b.js", ""), "function f() {\n", "  { let x = N; g(x); }\n", "}\n"),
+        ("a.ts", ("b.ts", ""), "function f(): void {\n", "  { const x: number = N; g(x); }\n", "}\n"),
+        ("src/lib.rs", ("Cargo.toml", "[package]\nname = \"t\"\n"), "pub fn f() {\n", "    { let x = N; g(x); }\n", "}\n"),
+        ("main.go", ("go.mod", "module t\n"), "package main\n\nfunc f() {\n", "\t{\n\t\tx := N\n\t\tg(x)\n\t}\n", "}\n"),
+        ("A.java", ("B.java", "class B {}\n"), "class A {\n  void f() {\n", "    { int x = N; g(x); }\n", "  }\n}\n"),
+        ("c.py", ("b.py", ""), "def f(c):\n", "    if c:\n        x = N\n        g(x)\n", ""),
+    ];
+    for (file, other, head, block, tail) in cases {
+        assert_refs_scale_linearly(file, other, "x", n, |n| format!("{head}{}{tail}", blocks(n, block)), want);
+    }
+}
+
+#[test]
 fn a_file_nested_too_deeply_is_reported_unread_and_one_nested_500_deep_resolves() {
     let class = ("b.py", "class A:\n    def m(self):\n        pass\n");
     let deep = |head: &str, n: usize| format!("from b import A\n\ndef f():\n    {head}{}A(){}\n    x.m()\n", "(".repeat(n), ")".repeat(n));

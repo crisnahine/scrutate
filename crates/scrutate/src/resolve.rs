@@ -136,10 +136,8 @@ pub struct Resolver<'a> {
     /// Java: by class, the types it extends and implements, and the fields it declares
     java_bases: HashMap<i64, Rc<Vec<std::result::Result<i64, &'static str>>>>,
     java_fields: HashMap<i64, Rc<HashSet<String>>>,
-    /// by function around a use (its node id) and name: the byte ranges of the identifiers in it
-    /// that may bind the name, found once so a use checks only these
-    binders: HashMap<(usize, String), Vec<(usize, usize)>>,
-    /// the same for `variable_ty`: by scope node id, what was looked for and name, the byte ranges found
+    /// by scope node id, what was looked for and name: the byte ranges found, so a use in a big
+    /// function does not walk all of it
     found: HashMap<(usize, &'static str, String), Spans>,
 }
 
@@ -341,10 +339,25 @@ fn is_local_binder(n: Node, src: &str) -> bool {
 /// in its own branch, a `catch` or Go statement initializer only in that statement, a Python
 /// parameter only in the function body, and a `let` or `for` not in its own value.
 fn visible(b: Node, at: usize) -> bool {
-    if b.start_byte() == at {
-        return true;
-    }
-    let within = |n: Option<Node>| n.is_some_and(|n| n.start_byte() <= at && at < n.end_byte());
+    b.start_byte() == at || sees(visible_spans(b), at)
+}
+
+const EVERYWHERE: (usize, usize) = (0, usize::MAX);
+const NOWHERE: (usize, usize) = (0, 0);
+
+fn holds((start, end): (usize, usize), at: usize) -> bool {
+    start <= at && at < end
+}
+
+/// Whether byte `at` is in the first span and in neither of the other two.
+fn sees([within, not, nor]: [(usize, usize); 3], at: usize) -> bool {
+    holds(within, at) && !holds(not, at) && !holds(nor, at)
+}
+
+/// Where the binder `b` is seen, for `visible`: a span a use must be in, and two it must not be in.
+fn visible_spans(b: Node) -> [(usize, usize); 3] {
+    let span = |n: Option<Node>| n.map_or(NOWHERE, |n| (n.start_byte(), n.end_byte()));
+    let only = |n: Option<Node>| [span(n), NOWHERE, NOWHERE];
     let mut n = b;
     while let Some(p) = n.parent() {
         let k = p.kind();
@@ -359,23 +372,23 @@ fn visible(b: Node, at: usize) -> bool {
                     c = g;
                 }
                 let branch = c.parent();
-                !within(p.child_by_field_name("value")) && within(branch) && !within(branch.and_then(|g| g.child_by_field_name("alternative")))
+                [span(branch), span(p.child_by_field_name("value")), span(branch.and_then(|g| g.child_by_field_name("alternative")))]
             }
-            "let_declaration" => !within(p.child_by_field_name("value")) && !within(p.child_by_field_name("alternative")),
-            "for_expression" => !within(p.child_by_field_name("value")),
-            "match_arm" | "catch_clause" | "type_switch_statement" => within(Some(p)),
+            "let_declaration" => [EVERYWHERE, span(p.child_by_field_name("value")), span(p.child_by_field_name("alternative"))],
+            "for_expression" => [EVERYWHERE, span(p.child_by_field_name("value")), NOWHERE],
+            "match_arm" | "catch_clause" | "type_switch_statement" => only(Some(p)),
             // Python evaluates defaults and annotations in the scope around the function
-            "parameters" | "lambda_parameters" => within(p.parent().and_then(|f| f.child_by_field_name("body"))),
-            "receive_statement" | "range_clause" => within(p.parent()),
+            "parameters" | "lambda_parameters" => only(p.parent().and_then(|f| f.child_by_field_name("body"))),
+            "receive_statement" | "range_clause" => only(p.parent()),
             "short_var_declaration" => match p.parent() {
-                Some(g) if g.kind() == "for_clause" => within(g.parent()),
-                Some(g) if g.child_by_field_name("initializer").map(|i| i.id()) == Some(p.id()) => within(Some(g)),
-                _ => true,
+                Some(g) if g.kind() == "for_clause" => only(g.parent()),
+                Some(g) if g.child_by_field_name("initializer").map(|i| i.id()) == Some(p.id()) => only(Some(g)),
+                _ => [EVERYWHERE, NOWHERE, NOWHERE],
             },
-            _ => true,
+            _ => [EVERYWHERE, NOWHERE, NOWHERE],
         };
     }
-    true
+    [EVERYWHERE, NOWHERE, NOWHERE]
 }
 
 /// The receiver or path in front of a member name (`obj` of `obj.N`, `a::b` of `a::b::N`).
@@ -747,7 +760,6 @@ impl<'a> Resolver<'a> {
             java_paths: HashMap::new(),
             java_bases: HashMap::new(),
             java_fields: HashMap::new(),
-            binders: HashMap::new(),
             found: HashMap::new(),
         })
     }
@@ -765,7 +777,6 @@ impl<'a> Resolver<'a> {
     pub fn forget(&mut self, path: &str) {
         self.cache.remove(path);
         // node ids name nodes of trees still loaded
-        self.binders.clear();
         self.found.clear();
     }
 
@@ -802,11 +813,7 @@ impl<'a> Resolver<'a> {
 
     /// The identifiers in `scope` named `name` that bind it: a Java local or parameter, else
     /// what `is_local_binder` takes.
-    fn binders_in(&mut self, scope: Node, name: &str, src: &str, java: bool) -> Vec<(usize, usize)> {
-        let key = (scope.id(), name.to_string());
-        if let Some(b) = self.binders.get(&key) {
-            return b.clone();
-        }
+    fn binders_in(scope: Node, name: &str, src: &str, java: bool) -> Vec<(usize, usize)> {
         let mut out = Vec::new();
         let mut stack = vec![scope];
         while let Some(n) = stack.pop() {
@@ -823,7 +830,6 @@ impl<'a> Resolver<'a> {
             let mut cur = n.walk();
             stack.extend(n.named_children(&mut cur));
         }
-        self.binders.insert(key, out.clone());
         out
     }
 
@@ -2792,35 +2798,35 @@ impl Resolver<'_> {
     /// function, block or comprehension that does not hold `node` does not.
     fn shadowed(&mut self, lang: Lang, node: Node, name: &str, src: &str) -> bool {
         let at = node.start_byte();
-        let holds = |n: Node| n.start_byte() <= at && at < n.end_byte();
         let Some(mut func) = enclosing_function(node) else { return false };
         // a Rust `fn` item does not see the locals of the function around it
         while let Some(outer) = enclosing_function(func).filter(|_| func.kind() != "function_item") {
             func = outer;
         }
-        let block_scoped = block_scoped(lang);
-        let binders = self.binders_in(func, name, src, false);
-        binders.iter().any(|&(start, end)| {
-            let Some(b) = func.descendant_for_byte_range(start, end) else { return false };
-            let mut down: Vec<Node> = std::iter::successors(Some(b), |n| n.parent()).take_while(|n| n.id() != func.id()).collect();
-            down.reverse();
-            // a block that does not hold the use is seen into only for a JS `var`; a function never
-            let mut aside = false;
-            for c in down {
-                if holds(c) {
-                    continue;
-                }
-                if block_scoped.contains(&c.kind()) {
-                    if lang != Lang::Js {
-                        return false;
-                    }
-                    aside = true;
-                } else if FUNCTION_NODES.contains(&c.kind()) {
-                    return false;
-                }
-            }
-            (!aside || is_js_var(b)) && visible(b, at)
-        })
+        // per binder: the block or function a use must be in to see it, its span, `visible_spans`
+        let rows = self.found_in(func, "shadowing binders", name, || {
+            let mut rows: Vec<[(usize, usize); 5]> = Self::binders_in(func, name, src, false)
+                .into_iter()
+                .filter_map(|(start, end)| {
+                    let b = func.descendant_for_byte_range(start, end)?;
+                    let [within, not, nor] = visible_spans(b);
+                    Some([shadow_scope(lang, b, func), (b.start_byte(), b.end_byte()), within, not, nor])
+                })
+                .collect();
+            rows.sort_unstable();
+            rows.concat()
+        });
+        let (rows, _) = rows.as_chunks::<5>();
+        let seen_in = |scope: (usize, usize)| {
+            let rows = &rows[rows.partition_point(|r| r[0] < scope)..];
+            rows.iter().take_while(|r| r[0] == scope).any(|&[_, (b, _), within, not, nor]| b == at || sees([within, not, nor], at))
+        };
+        // the scopes that hold the use are the nodes around it
+        seen_in(EVERYWHERE)
+            || std::iter::successors(Some(node), |n| n.parent())
+                .take_while(|n| n.id() != func.id())
+                .map(|n| (n.start_byte(), n.end_byte()))
+                .any(|scope| holds(scope, at) && seen_in(scope))
     }
 
     /// The nearest local variable or parameter named `name` that `node` sees, in the method around
@@ -2830,15 +2836,42 @@ impl Resolver<'_> {
             &["method_declaration", "constructor_declaration", "compact_constructor_declaration", "lambda_expression", "static_initializer"];
         let at = node.start_byte();
         let top = std::iter::successors(node.parent(), |n| n.parent()).filter(|n| SCOPES.contains(&n.kind())).last()?;
-        let binders = self.binders_in(top, name, src, true);
-        let seen = |b: &Node| java_scope(*b).is_some_and(|s| s.start_byte() <= at && at < s.end_byte());
-        binders
-            .iter()
-            .filter(|&&(start, _)| start <= at)
-            .filter_map(|&(start, end)| top.descendant_for_byte_range(start, end))
-            .filter(seen)
-            .max_by_key(|b| b.start_byte())
+        // per binder: its scope and its span
+        let rows = self.found_in(top, "java binders", name, || {
+            let mut rows: Vec<[(usize, usize); 2]> = Self::binders_in(top, name, src, true)
+                .into_iter()
+                .filter_map(|(start, end)| {
+                    let s = java_scope(top.descendant_for_byte_range(start, end)?)?;
+                    Some([(s.start_byte(), s.end_byte()), (start, end)])
+                })
+                .collect();
+            rows.sort_unstable();
+            rows.concat()
+        });
+        let (rows, _) = rows.as_chunks::<2>();
+        // the scopes that hold the use are the nodes around it
+        std::iter::successors(Some(node), |n| n.parent())
+            .filter(|n| holds((n.start_byte(), n.end_byte()), at))
+            .filter_map(|n| {
+                let scope = (n.start_byte(), n.end_byte());
+                let rows = &rows[rows.partition_point(|r| r[0] < scope)..];
+                let rows = &rows[..rows.partition_point(|r| r[0] == scope)];
+                let before = rows.partition_point(|r| r[1].0 <= at);
+                before.checked_sub(1).map(|i| (rows[i][1], n))
+            })
+            .max_by_key(|&((start, _), _)| start)
+            .and_then(|((start, end), n)| n.descendant_for_byte_range(start, end))
     }
+}
+
+/// The innermost block or function between binder `b` and its function `func` (a JavaScript
+/// `var` skips blocks), else everywhere: a use outside it does not see `b`.
+fn shadow_scope(lang: Lang, b: Node, func: Node) -> (usize, usize) {
+    let blocks = if lang == Lang::Js && is_js_var(b) { &[] } else { block_scoped(lang) };
+    std::iter::successors(Some(b), |n| n.parent())
+        .take_while(|n| n.id() != func.id())
+        .find(|n| blocks.contains(&n.kind()) || FUNCTION_NODES.contains(&n.kind()))
+        .map_or(EVERYWHERE, |n| (n.start_byte(), n.end_byte()))
 }
 
 /// The nodes a local bound in them does not leave: blocks, and in Python only comprehensions.
