@@ -461,7 +461,11 @@ imports bind, while definitions and their nesting come from the index's `chunks`
 whose tree is more than 2,000 levels deep is not read (its occurrences are listed as nested too
 deeply to read) and the type walks stop at 32 nested steps, so hostile nesting cannot overflow
 the stack or make a request take minutes; the binders and assignments of a name are found once
-per scope, so a function of thousands of uses resolves in linear time. The Java walks over base
+per scope, so a function of thousands of uses resolves in linear time. A variable's
+declaration is looked for in the function around the use and the functions around that, up to a
+Rust `fn` item; only declarations before the use count. An inherited method of a Python,
+JavaScript or TypeScript class is the first along the class's method resolution order, kept per
+class. The Java walks over base
 types read a type reached by many paths once per depth, so a diamond of interfaces costs linear
 time. An
 occurrence goes to the innermost scope that defines the name, then the file's top level, then

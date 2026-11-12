@@ -236,6 +236,16 @@ First release.
   - A Java diamond of interfaces no longer takes exponential time (over 100 s to 0.04 s at 57
     interfaces).
   - A tsconfig `extends` written as a list is read.
+  - A method a Python, JavaScript or TypeScript class inherits is the one Python's method
+    resolution order (or the `extends` chain) reaches first, up to 8 levels of bases: a diamond
+    such as `class D(B, C)` calls `C.m` where it named `A.m`, and a chain of more than 3 classes
+    no longer answers not found.
+  - A variable used inside a closure, lambda, arrow function, nested function or Go func literal
+    has the type of its declaration in the functions around it, so `xs.map(x => p.norm())` is a
+    call of `Point.norm`; a Rust `fn` item still sees none of the locals around it.
+  - tsconfig `paths` are read as TypeScript reads them: relative to the `baseUrl` the configs
+    end with after `extends`, inherited or not, else to the folder of the config that sets
+    `paths`.
   - `refs` and `callers` stay fast in a function where many blocks bind the same name (2,000
     blocks: 11 to 13 s before, 0.14 s) and through a wide diamond of Python or TypeScript base
     classes.
