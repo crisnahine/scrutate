@@ -1257,6 +1257,8 @@ impl Index {
                     if let Processed::New(.., tree) = &mut res {
                         let n = tree.as_ref().map_or(0, |t| t.source_len() as isize);
                         if room.fetch_sub(n, std::sync::atomic::Ordering::Relaxed) < n {
+                            // a tree that does not fit gives its room back, so smaller ones can still use it
+                            room.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
                             *tree = None;
                         }
                     }
@@ -1767,6 +1769,30 @@ mod tests {
         drop(ix);
         let _ = std::fs::remove_dir_all(&root);
         assert_eq!(held, 20);
+    }
+
+    #[test]
+    fn a_tree_too_large_for_the_room_left_leaves_that_room_to_smaller_trees() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_trees_large_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        // three trees of 0.9 MB, of which two fit; the small trees come in the next batch
+        for i in 0..3 {
+            std::fs::write(root.join(format!("a{i}.c")), "int g(void);\n".repeat(69_000)).unwrap();
+        }
+        for i in 0..260 {
+            std::fs::write(root.join(format!("b{i:03}.h")), "class B { public: int f(); };\n").unwrap();
+        }
+        for i in 0..20 {
+            std::fs::write(root.join(format!("z{i}.c")), format!("int f{i}(int x) {{ return x + {i}; }}\n")).unwrap();
+        }
+        let mut ix = super::Index::open(&root, None).unwrap();
+        ix.update(false).unwrap();
+        let large = ix.trees.keys().filter(|p| p.starts_with('a')).count();
+        let small = ix.trees.keys().filter(|p| p.starts_with('z')).count();
+        drop(ix);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!((large, small), (2, 20));
     }
 
     #[test]
