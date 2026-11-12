@@ -17,8 +17,10 @@ The version is written in `crates/scrutate/Cargo.toml`, `crates/scrutate-py/Carg
 directory name too). The date is in the `CHANGELOG.md` heading, the title of `docs/DELIVERY.md`
 and the scope line of `docs/SECURITY.md`.
 
-`python3 tools/check_version.py 0.1.0` fails when the version in either `Cargo.toml` or in
-`integrations/vscode/package.json` differs from the one given. The release workflow runs it on
+`python3 tools/check_version.py 0.1.0` fails when any of them differs from the version given:
+both `Cargo.toml` files, the VS Code `package.json` and its lock file, the Scoop manifest, the
+winget directory and manifests, the Homebrew URL, the GitLab and Bitbucket templates, and the
+examples in the GitHub Action and pre-commit READMEs. The release workflow runs it on
 the tag (without its `v`) before anything else and refuses a tag that does not match.
 
 The oldest compiler that builds is `rust-version` in the workspace `Cargo.toml`: 1.91, which the

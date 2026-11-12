@@ -11,6 +11,23 @@ import sys
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 
 
+# every other place a release writes its version: (file, pattern whose group 1 is the version)
+WRITTEN = [
+    ("integrations/vscode/package-lock.json", r'^  "version": "([^"]+)"'),
+    ("integrations/vscode/package-lock.json", r'^    "": \{\n      "name": "[^"]+",\n      "version": "([^"]+)"'),
+    ("packaging/scoop/scrutate.json", r'^    "version": "([^"]+)"'),
+    ("packaging/scoop/scrutate.json", r"/releases/download/v([0-9][^/]*)/"),
+    ("packaging/scoop/scrutate.json", r"scrutate-([0-9][^-]*)-[a-z0-9_]+-pc-windows-msvc"),
+    ("packaging/homebrew/scrutate.rb", r"/refs/tags/v([^/]+)\.tar\.gz"),
+    ("integrations/gitlab/.gitlab-ci.yml", r'^  SCRUTATE_VERSION: "([^"]+)"'),
+    ("integrations/bitbucket/bitbucket-pipelines.yml", r"export V=(\S+)"),
+    ("integrations/github/README.md", r"scrutate@v(\S+)"),
+    ("integrations/github/README.md", r"version: v(\S+)"),
+    ("integrations/pre-commit/README.md", r"rev: v(\S+)"),
+]
+WINGET = "packaging/winget/manifests/c/crisnahine/Scrutate"
+
+
 def declared() -> dict[str, str]:
     out = {}
     for f in ("crates/scrutate/Cargo.toml", "crates/scrutate-py/Cargo.toml"):
@@ -19,6 +36,20 @@ def declared() -> dict[str, str]:
             out[f] = re.search(r'^version = "([^"]+)"', fh.read(), re.M).group(1)
     with open(os.path.join(ROOT, "integrations/vscode/package.json")) as fh:
         out["integrations/vscode/package.json"] = json.load(fh)["version"]
+    for f, pattern in WRITTEN:
+        with open(os.path.join(ROOT, f)) as fh:
+            found = re.findall(pattern, fh.read(), re.M)
+        # a pattern that finds nothing means the file changed shape: that fails too
+        for i, v in enumerate(found or ["(no version found)"]):
+            out[f"{f} ({pattern}, {i + 1})"] = v
+    for d in sorted(os.listdir(os.path.join(ROOT, WINGET))):
+        out[f"{WINGET}/{d}/"] = d
+        for name in sorted(os.listdir(os.path.join(ROOT, WINGET, d))):
+            with open(os.path.join(ROOT, WINGET, d, name)) as fh:
+                text = fh.read()
+            for i, v in enumerate(re.findall(r"^PackageVersion: (\S+)", text, re.M) + re.findall(r"/releases/download/v([0-9][^/]*)/", text)
+                                  + re.findall(r"scrutate-([0-9][^-]*)-[a-z0-9_]+-pc-windows-msvc", text) or ["(no version found)"]):
+                out[f"{WINGET}/{d}/{name} ({i + 1})"] = v
     return out
 
 
