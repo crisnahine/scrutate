@@ -235,23 +235,30 @@ impl Repo {
         }
     }
 
-    /// Of `paths` (from the root), the files the index has no row for that a scan would index:
-    /// one lookup and one `stat` each, and the ignore rules read for those alone.
+    /// Of `paths` (from the root), the files the index has no row for that a scan would index,
+    /// each under the path a scan lists it by: one lookup and one `stat` each, and the ignore
+    /// rules read for those alone.
     fn unindexed(&self, paths: &[String]) -> Vec<String> {
         let mut membership: Option<files::Membership> = None;
         let skipped = files::skipped_dirs(&self.root);
         let mut out = Vec::new();
         for p in paths {
             let plain = !p.is_empty() && Path::new(p).components().all(|c| matches!(c, std::path::Component::Normal(_)));
-            let known = || self.ix.db.query_row("SELECT 1 FROM files WHERE path=?1", [p], |_| Ok(())).is_ok();
-            if !plain || !parse::is_indexable(p) || p.split('/').any(|n| skipped.iter().any(|s| s == n)) || known() {
+            if !plain {
                 continue;
             }
-            if !index::file_inside(&self.root, p).is_some_and(|m| m.len() <= index::MAX_FILE_BYTES) {
+            // through a link that stays inside, or in another case, the file would get a second row
+            let real = std::fs::canonicalize(self.root.join(p)).ok();
+            let Some(p) = real.and_then(|r| r.strip_prefix(&self.root).ok().map(|r| instant::slashed(r.to_string_lossy()))) else { continue };
+            let known = || self.ix.db.query_row("SELECT 1 FROM files WHERE path=?1", [&p], |_| Ok(())).is_ok();
+            if !parse::is_indexable(&p) || p.split('/').any(|n| skipped.iter().any(|s| s == n)) || known() || out.contains(&p) {
                 continue;
             }
-            if membership.get_or_insert_with(|| files::Membership::new(&self.root)).may_contain(&self.root.join(p)) {
-                out.push(p.clone());
+            if !index::file_inside(&self.root, &p).is_some_and(|m| m.len() <= index::MAX_FILE_BYTES) {
+                continue;
+            }
+            if membership.get_or_insert_with(|| files::Membership::new(&self.root)).may_contain(&self.root.join(&p)) {
+                out.push(p);
             }
         }
         out

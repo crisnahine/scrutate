@@ -701,6 +701,12 @@ fn a_path_through_a_linked_folder_reads_nothing_outside_the_repository() {
     // a link that stays inside the repository answers as before
     let inner = call("outline", json!({"path": "inlink/a.py"}));
     assert!(!inner.is_error && inner.text.contains("inside_fn"), "{}", inner.text);
+    // and a new file named through it is indexed once, under the path a scan lists
+    fs::write(r.root.join("src/fresh.py"), "def fresh_fn():\n    return 3\n").unwrap();
+    let fresh = call("outline", json!({"path": "inlink/fresh.py"}));
+    assert!(!fresh.is_error && fresh.text.contains("fresh_fn"), "{}", fresh.text);
+    let found = call("find_symbol", json!({"name": "fresh_fn"})).text;
+    assert!(found.starts_with("src/fresh.py:1-2") && !found.contains("inlink/"), "{found}");
     let _ = fs::remove_dir_all(&outside);
 }
 
