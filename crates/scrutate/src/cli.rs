@@ -1762,36 +1762,43 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
     })
 }
 
-/// One hit in colour: its path and line number when asked for, and its matches highlighted.
+/// One hit in colour: its path and line number when asked for, and its matches highlighted. Each
+/// line of a multi-line match gets its own, as in plain output, and a highlight stops at its end.
 fn write_colour(w: &mut impl WriteColor, h: &instant::Hit, path: bool, number: bool) -> std::io::Result<()> {
     let sep = if h.context { "-" } else { ":" };
-    if path {
-        w.set_color(ColorSpec::new().set_fg(Some(Color::Magenta)))?;
-        write!(w, "{}", h.path)?;
-        w.reset()?;
-        write!(w, "{sep}")?;
-    }
-    if number {
-        w.set_color(ColorSpec::new().set_fg(Some(Color::Green)))?;
-        write!(w, "{}", h.line)?;
-        w.reset()?;
-        write!(w, "{sep}")?;
-    }
-    // the spans lie on character boundaries of the text
     let text = h.text.as_str();
-    let mut pos = 0;
-    for &(a, b) in &h.spans {
-        let (a, b) = (a.min(text.len()), b.min(text.len()));
-        if a < pos || !text.is_char_boundary(a) || !text.is_char_boundary(b) {
-            continue;
+    let mut start = 0;
+    for (k, part) in text.split('\n').enumerate() {
+        let end = start + part.len();
+        if path {
+            w.set_color(ColorSpec::new().set_fg(Some(Color::Magenta)))?;
+            write!(w, "{}", h.path)?;
+            w.reset()?;
+            write!(w, "{sep}")?;
         }
-        write!(w, "{}", &text[pos..a])?;
-        w.set_color(ColorSpec::new().set_fg(Some(Color::Red)).set_bold(true))?;
-        write!(w, "{}", &text[a..b])?;
-        w.reset()?;
-        pos = b;
+        if number {
+            w.set_color(ColorSpec::new().set_fg(Some(Color::Green)))?;
+            write!(w, "{}", h.line + k as u64)?;
+            w.reset()?;
+            write!(w, "{sep}")?;
+        }
+        // the spans lie on character boundaries of the text
+        let mut pos = start;
+        for &(a, b) in &h.spans {
+            let (x, y) = (a.max(start), b.min(end));
+            if x < pos || x > y || (x == y && a < b) || !text.is_char_boundary(x) || !text.is_char_boundary(y) {
+                continue;
+            }
+            write!(w, "{}", &text[pos..x])?;
+            w.set_color(ColorSpec::new().set_fg(Some(Color::Red)).set_bold(true))?;
+            write!(w, "{}", &text[x..y])?;
+            w.reset()?;
+            pos = y;
+        }
+        writeln!(w, "{}", &text[pos..end])?;
+        start = end + 1;
     }
-    writeln!(w, "{}", &text[pos..])
+    Ok(())
 }
 
 fn broken_pipe(e: &anyhow::Error) -> bool {
@@ -2102,6 +2109,20 @@ mod tests {
         std::fs::write(root.join("a.txt"), b"x\x80\xffabc def abc\nab\xffcd\n").unwrap();
         let out = coloured(&root, r"abc|b(?-u:\xFF)c", false);
         assert_eq!(highlighted(&out), ["abc", "abc", "b\u{FFFD}c"], "{out:?}");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn colour_gives_each_line_of_a_multi_line_match_its_path_and_number() {
+        let root = std::env::temp_dir().join(format!("scrutate_cli_colour_ml_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("m.txt"), "one\nfoo\nbar baz\nend\n").unwrap();
+        let out = coloured(&root, r"foo\nbar|baz", true);
+        let plain = regex::Regex::new("\x1b\\[[0-9;]*m").unwrap().replace_all(&out, "");
+        assert_eq!(plain, "m.txt:2:foo\nm.txt:3:bar baz\n", "{out:?}");
+        // a highlight that crosses a line break is cut at it
+        assert_eq!(highlighted(&out), ["foo", "bar", "baz"], "{out:?}");
         std::fs::remove_dir_all(&root).unwrap();
     }
 
