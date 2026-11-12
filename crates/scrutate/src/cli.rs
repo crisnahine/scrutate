@@ -1301,8 +1301,13 @@ pub fn run() -> Result<i32> {
             if paging && !lines.is_empty() {
                 err = writeln!(w, "{}", crate::ops::paged(lines, "matches", page.0, page.1)).err();
             }
-            if n > limit && !json && err.is_none() {
-                err = writeln!(w, "{}", crate::ops::stop_line(Some(crate::ops::Stop { at: limit, how: crate::ops::RAISE_LIMIT }), "matches")).err();
+            if n > limit && err.is_none() {
+                let note = crate::ops::stop_line(Some(crate::ops::Stop { at: limit, how: crate::ops::RAISE_LIMIT }), "matches");
+                if json {
+                    eprintln!("{note}");
+                } else {
+                    err = writeln!(w, "{note}").err();
+                }
             }
             if let Some(e) = err {
                 if e.kind() != std::io::ErrorKind::BrokenPipe {
@@ -1434,6 +1439,11 @@ fn run_op(root: &Path, op: Op, json: bool, (max_bytes, offset): (usize, usize), 
     let why = outside.filter(|_| answer.is_empty());
     if json {
         println!("{}", serde_json::to_string_pretty(&answer.json())?);
+        // standard output keeps the JSON's shape, so the stop line goes beside it
+        let note = answer.stop_note();
+        if !note.is_empty() {
+            eprintln!("{note}");
+        }
     } else if quiet && answer.is_empty() {
         eprintln!("{}{}", answer.text(), why.map(|w| format!(" ({w})")).unwrap_or_default());
         return Ok(1);
@@ -1945,7 +1955,13 @@ fn batch_command(root: &Path, file: &Path, features: bool, timing: bool) -> Resu
         if let Some(tool) = req.get("op").and_then(|v| v.as_str()) {
             // any operation, named and given arguments as an MCP tool call is
             let rec = match Op::from_tool(tool, &req).and_then(|op| s.run_as_is(&op)) {
-                Ok(answer) => serde_json::json!({"op": tool, "result": answer.json()}),
+                Ok(answer) => {
+                    let mut rec = serde_json::json!({"op": tool, "result": answer.json()});
+                    if let Some(stop) = answer.stopped() {
+                        rec["stopped_at"] = serde_json::json!(stop.at);
+                    }
+                    rec
+                }
                 Err(e) => serde_json::json!({"op": tool, "error": e.to_string()}),
             };
             writeln!(out, "{rec}")?;

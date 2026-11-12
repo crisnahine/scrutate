@@ -1451,6 +1451,41 @@ fn batch_runs_any_operation() {
 }
 
 #[test]
+fn json_answers_that_stop_at_their_limit_say_so() {
+    let r = Repo::new("jsonstop");
+    let body = "def f():\n    return compute_total(1, 2, 3) + other_value(4, 5, 6)\n\n\ndef m():\n    return alpha_beta(7) * gamma_delta(8) - epsilon(9)\n";
+    r.write("a.py", body.as_bytes());
+    r.write("b.py", body.as_bytes());
+    r.write("c.py", b"def h():\n    pass\n\n\ndef g():\n    f()\n    h()\n\n\ndef k():\n    f()\n");
+    assert_eq!(r.run(&["index", "--no-text"]).0, 0);
+    let q = "(function_definition name: (identifier) @n)";
+    for (args, note) in [
+        (&["symbol", "f", "--limit", "1"][..], "(stopped at 1 results: raise limit to see more)"),
+        (&["callers", "f", "--limit", "1"], "(stopped at 1 results: raise limit to see more)"),
+        (&["callees", "g", "--limit", "1"], "(stopped at 1 callees: raise limit to see more)"),
+        (&["dupes", "--min-tokens", "2", "--limit", "1"], "(stopped at 1 groups: raise limit to see more)"),
+        (&["tsquery", "python", q, "--limit", "1"], "(stopped at 1 matches: raise limit to see more)"),
+        (&["refs", "f", "--max-results", "1"], "(the search stopped at max_results=1 occurrences"),
+    ] {
+        let (code, out, err) = r.run(&[args, &["--json"]].concat());
+        assert_eq!(code, 0, "{args:?}: {err}");
+        assert!(!out.contains("stopped at"), "{args:?}: the JSON keeps its shape: {out}");
+        assert!(err.contains(note), "{args:?}: {err}");
+        let roomy: Vec<&str> = args.iter().map(|a| if *a == "1" { "50" } else { a }).chain(["--json"]).collect();
+        let (code, _, err) = r.run(&roomy);
+        assert!(code == 0 && !err.contains("stopped"), "{roomy:?}: {err}");
+    }
+    r.write("q.jsonl", b"{\"op\": \"find_symbol\", \"name\": \"f\", \"limit\": 1}\n{\"op\": \"find_symbol\", \"name\": \"f\", \"limit\": 5}\n");
+    let (code, out, _) = r.run(&["batch", "q.jsonl"]);
+    assert_eq!(code, 0);
+    let recs: Vec<serde_json::Value> = out.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    assert_eq!(recs[0]["result"].as_array().map(Vec::len), Some(1), "{out}");
+    assert_eq!(recs[0]["stopped_at"], 1, "{out}");
+    assert_eq!(recs[1]["result"].as_array().map(Vec::len), Some(2), "{out}");
+    assert!(recs[1].get("stopped_at").is_none(), "{out}");
+}
+
+#[test]
 fn a_count_stops_at_max_count() {
     let r = Repo::new("countmax");
     r.write("f.txt", b"a\na\na\na\nb\n");

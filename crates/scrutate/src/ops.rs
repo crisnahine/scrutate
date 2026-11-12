@@ -1356,6 +1356,15 @@ impl Answer {
         }
     }
 
+    /// The line the text ends with when the answer stopped at its limit, else empty.
+    pub fn stop_note(&self) -> String {
+        match self {
+            Answer::Refs { refs, max_results, .. } => stopped_at(refs.truncated, *max_results),
+            Answer::Resolved { refs, max_results, .. } => stopped_at(refs.truncated, *max_results),
+            _ => self.stopped().map(|s| stop_line(Some(s), self.parts().noun)).unwrap_or_default(),
+        }
+    }
+
     /// The answer as JSON, the shape `--json` prints.
     pub fn json(&self) -> Value {
         match self {
