@@ -918,7 +918,7 @@ const CORE: &[LangSpec] = &[
             d("bind", "function", &[NameRule::Custom(haskell_name)]),
             d("data_type", "type", N),
             d("newtype", "type", N),
-            d("type_synomym", "type", N),
+            d("type_synonym", "type", N),
             d("class", "class", N),
             d("instance", "impl", N),
         ],
@@ -970,7 +970,6 @@ const CORE: &[LangSpec] = &[
         language: || tree_sitter_julia::LANGUAGE.into(),
         defs: &[
             d("function_definition", "function", &[NameRule::Custom(julia_name)]),
-            d("short_function_definition", "function", &[NameRule::Custom(julia_name)]),
             d("assignment", "function", &[NameRule::Custom(julia_assignment)]),
             d("struct_definition", "struct", &[NameRule::Custom(julia_type_head)]),
             d("abstract_definition", "type", &[NameRule::Custom(julia_type_head)]),
@@ -1323,7 +1322,7 @@ const CORE: &[LangSpec] = &[
             d("class_definition", "class", &[NameRule::ChildKind(&["identifier", "class_identifier"])]),
             d("defined_resource_type", "function", &[NameRule::ChildKind(&["class_identifier", "identifier"])]),
             d("node_definition", "block", &[NameRule::ChildKind(&["node_name"])]),
-            d("function_definition", "function", &[NameRule::ChildKind(&["identifier", "class_identifier"])]),
+            d("function_declaration", "function", &[NameRule::ChildKind(&["identifier", "class_identifier"])]),
         ],
         calls: &[c("function_call", "")],
         docstring: false,
@@ -1526,6 +1525,11 @@ fn llvm_fn_name(n: Node, src: &[u8]) -> Option<String> {
 }
 
 #[cfg(feature = "extra-langs")]
+fn llvm_type_name(n: Node, src: &[u8]) -> Option<String> {
+    child_text(n, src, &["local_var"]).map(|s| s.trim_start_matches('%').to_string())
+}
+
+#[cfg(feature = "extra-langs")]
 const QML_IMPORTS: &[ImportRule] = &[
     imp("ui_import", ImportHow::Fields("source")),
     imp("import_statement", ImportHow::Fields("source")),
@@ -1557,7 +1561,7 @@ const EXTRA: &[LangSpec] = &[
             d("let_binding", "function", &[NameRule::Field("pattern")]),
             d("type_binding", "type", N),
             d("module_binding", "module", &[NameRule::ChildKind(&["module_name"])]),
-            d("class_binding", "class", N),
+            d("class_binding", "class", &[NameRule::ChildKind(&["class_name"])]),
         ],
         calls: &[c("application_expression", "function")],
         docstring: false,
@@ -1704,7 +1708,7 @@ const EXTRA: &[LangSpec] = &[
         exts: &[".ll"],
         files: &[],
         language: || tree_sitter_llvm::LANGUAGE.into(),
-        defs: &[d("fn_define", "function", &[NameRule::Custom(llvm_fn_name)]), d("type_def", "type", &[NameRule::ChildKind(&["local_var"])])],
+        defs: &[d("fn_define", "function", &[NameRule::Custom(llvm_fn_name)]), d("global_type", "type", &[NameRule::Custom(llvm_type_name)])],
         calls: &[c("instruction_call", "callee")],
         docstring: false,
         wrappers: &[],

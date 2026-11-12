@@ -8,6 +8,9 @@ class nginx (
 define nginx::vhost (String $server) {
   file { "/etc/nginx/${server}": ensure => file }
 }
+function nginx::port(String $server) >> Integer {
+  80
+}
 node 'web.example.com' {
   include nginx
 }

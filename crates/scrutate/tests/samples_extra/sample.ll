@@ -1,4 +1,6 @@
 ; ModuleID = 'sample'
+%Point = type { i32, i32 }
+
 define i32 @add(i32 %a, i32 %b) {
 entry:
   %sum = add i32 %a, %b

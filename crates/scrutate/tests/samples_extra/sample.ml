@@ -9,4 +9,9 @@ module Shape = struct
   let area_of_square side = side *. side
 end
 
+class counter = object
+  val mutable n = 0
+  method incr = n <- n + 1
+end
+
 let main () = print_float (distance { x = 0.; y = 0. } { x = 3.; y = 4. })

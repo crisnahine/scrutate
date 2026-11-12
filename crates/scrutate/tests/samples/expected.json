@@ -675,6 +675,10 @@
       "Age"
     ],
     [
+      "type",
+      "Name"
+    ],
+    [
       "class",
       "Shape"
     ],
@@ -693,10 +697,6 @@
     [
       "function",
       "main"
-    ],
-    [
-      "window",
-      "sample"
     ]
   ],
   "sample.html": [
@@ -1153,6 +1153,10 @@
     [
       "function",
       "nginx::vhost"
+    ],
+    [
+      "function",
+      "nginx::port"
     ],
     [
       "block",
