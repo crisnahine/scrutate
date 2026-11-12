@@ -102,6 +102,7 @@ pub enum Shell {
 
 /// The arguments of `scrutate grep`.
 #[derive(clap::Args)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
 pub struct GrepArgs {
     /// the pattern (omit it when patterns are given with -e)
     #[arg(required_unless_present_any = ["regexp", "type_list"])]
@@ -253,6 +254,178 @@ enum GrepCmd {
     /// Engine A: instant search of files (no index). PATTERN is a regex unless -F, --ident or --fuzzy
     #[command(alias = "g", version)]
     Grep(GrepArgs),
+}
+
+/// `scrutate grep ARGS` of the plain shapes (`[-FiwnlcU...] [-e PATTERN]... [-g GLOB]... [-j N]
+/// [PATTERN] [PATH]...`, flags anywhere, each at most once), read without clap: clap's parse of
+/// even these is 1.3 M instructions and 4 page-ins, more than a small search. `None` for anything
+/// else, which clap then parses (and reports when it is wrong); `plain_grep_is_clap` holds the
+/// two to the same answer. Returns `--no-color` and the arguments.
+fn plain_grep(args: &[String]) -> Option<(bool, GrepArgs)> {
+    const BOOLS: [(char, &str); 24] = [
+        ('F', "fixed-strings"),
+        ('\0', "ident"),
+        ('P', "pcre2"),
+        ('z', "search-zip"),
+        ('i', "ignore-case"),
+        ('S', "smart-case"),
+        ('w', "word"),
+        ('U', "multiline"),
+        ('v', "invert-match"),
+        ('l', "files-with-matches"),
+        ('c', "count"),
+        ('H', "with-filename"),
+        ('I', "no-filename"),
+        ('n', "line-number"),
+        ('N', "no-line-number"),
+        ('L', "follow"),
+        ('\0', "hidden"),
+        ('\0', "no-ignore"),
+        ('\0', "index"),
+        ('\0', "sort"),
+        ('\0', "json"),
+        ('\0', "stats"),
+        ('\0', "symbols"),
+        ('\0', "no-color"),
+    ];
+    const VALUES: [(char, &str); 3] = [('e', "regexp"), ('g', "glob"), ('j', "threads")];
+    let mut g = GrepArgs {
+        pattern: None,
+        paths: Vec::new(),
+        regexp: Vec::new(),
+        index: false,
+        update: false,
+        fixed_strings: false,
+        ident: false,
+        fuzzy: None,
+        fuzzy_regex: None,
+        pcre2: false,
+        search_zip: false,
+        ignore_case: false,
+        smart_case: false,
+        word: false,
+        multiline: false,
+        invert_match: false,
+        files_with_matches: false,
+        count: false,
+        with_filename: false,
+        no_filename: false,
+        line_number: false,
+        no_line_number: false,
+        after: 0,
+        before: 0,
+        context: None,
+        max_count: None,
+        max_results: None,
+        globs: Vec::new(),
+        types: Vec::new(),
+        type_list: false,
+        hidden: false,
+        no_ignore: false,
+        follow: false,
+        max_filesize: None,
+        max_depth: None,
+        threads: 0,
+        sort: false,
+        json: false,
+        stats: false,
+        symbols: false,
+    };
+    let mut no_color = false;
+    let mut seen = 0u32;
+    let mut threads_seen = false;
+    let mut positional: Vec<&String> = Vec::new();
+    // what clap takes for a flag's value given as the next argument
+    fn value_of(v: Option<&String>) -> Option<&String> {
+        v.filter(|v| !v.starts_with('-'))
+    }
+    let mut set = |i: usize, g: &mut GrepArgs| -> Option<()> {
+        if seen & 1 << i != 0 {
+            return None;
+        }
+        seen |= 1 << i;
+        // of -i and -S, -H and -I, -n and -N the later wins
+        match i {
+            0 => g.fixed_strings = true,
+            1 => g.ident = true,
+            2 => g.pcre2 = true,
+            3 => g.search_zip = true,
+            4 => (g.ignore_case, g.smart_case) = (true, false),
+            5 => (g.smart_case, g.ignore_case) = (true, false),
+            6 => g.word = true,
+            7 => g.multiline = true,
+            8 => g.invert_match = true,
+            9 => g.files_with_matches = true,
+            10 => g.count = true,
+            11 => (g.with_filename, g.no_filename) = (true, false),
+            12 => (g.no_filename, g.with_filename) = (true, false),
+            13 => (g.line_number, g.no_line_number) = (true, false),
+            14 => (g.no_line_number, g.line_number) = (true, false),
+            15 => g.follow = true,
+            16 => g.hidden = true,
+            17 => g.no_ignore = true,
+            18 => g.index = true,
+            19 => g.sort = true,
+            20 => g.json = true,
+            21 => g.stats = true,
+            22 => g.symbols = true,
+            _ => no_color = true,
+        }
+        Some(())
+    };
+    let mut value = |i: usize, v: &String, g: &mut GrepArgs| -> Option<()> {
+        match i {
+            0 => g.regexp.push(v.clone()),
+            1 => g.globs.push(v.clone()),
+            _ if threads_seen || v.is_empty() || !v.bytes().all(|b| b.is_ascii_digit()) => return None,
+            _ => {
+                threads_seen = true;
+                g.threads = v.parse().ok()?;
+            }
+        }
+        Some(())
+    };
+    if !matches!(args.get(1).map(String::as_str), Some("grep" | "g")) || args.iter().any(|a| a.contains('\u{FFFD}')) {
+        return None;
+    }
+    let mut rest = args[2..].iter();
+    while let Some(a) = rest.next() {
+        if let Some(name) = a.strip_prefix("--") {
+            if let Some(i) = BOOLS.iter().position(|f| f.1 == name) {
+                set(i, &mut g)?;
+            } else {
+                let i = VALUES.iter().position(|f| f.1 == name)?;
+                value(i, value_of(rest.next())?, &mut g)?;
+            }
+        } else if let Some(shorts) = a.strip_prefix('-').filter(|s| !s.is_empty()) {
+            for (at, c) in shorts.char_indices() {
+                if let Some(i) = BOOLS.iter().position(|f| f.0 == c) {
+                    set(i, &mut g)?;
+                    continue;
+                }
+                let i = VALUES.iter().position(|f| f.0 == c)?;
+                let attached = &shorts[at + 1..];
+                if attached.is_empty() {
+                    value(i, value_of(rest.next())?, &mut g)?;
+                } else if !attached.starts_with(['=', '-']) {
+                    value(i, &attached.to_string(), &mut g)?;
+                } else {
+                    return None;
+                }
+                break;
+            }
+        } else {
+            positional.push(a);
+        }
+    }
+    // clap refuses an empty path
+    if positional.iter().skip(1).any(|p| p.is_empty()) {
+        return None;
+    }
+    let mut positional = positional.into_iter().cloned();
+    g.pattern = positional.next();
+    g.paths = positional.map(PathBuf::from).collect();
+    (g.pattern.is_some() || !g.regexp.is_empty()).then_some((no_color, g))
 }
 
 #[derive(Subcommand)]
@@ -714,7 +887,15 @@ pub fn run() -> Result<i32> {
     // as with every other setting, the environment and the command line replace the file's globs
     let cfg_globs = if std::env::var_os("SCRUTATE_GREP_GLOBS").is_none() { cfg_globs } else { Vec::new() };
     let mut cli = if matches!(args.get(1).map(String::as_str), Some("grep" | "g")) {
-        let GrepCli { root, no_color, cmd: GrepCmd::Grep(grep) } = GrepCli::parse();
+        // a setting from the environment or a file is clap's to read
+        let settings = cfg_path.is_some() || std::env::vars_os().any(|(k, _)| k.as_encoded_bytes().starts_with(b"SCRUTATE_"));
+        let (root, no_color, grep) = match (!settings).then(|| plain_grep(&args)).flatten() {
+            Some((no_color, grep)) => (PathBuf::from("."), no_color, grep),
+            None => {
+                let GrepCli { root, no_color, cmd: GrepCmd::Grep(grep) } = GrepCli::parse();
+                (root, no_color, grep)
+            }
+        };
         Cli { root, no_color, max_bytes: None, offset: 0, cmd: Cmd::Grep(grep) }
     } else {
         Cli::parse()
@@ -1806,6 +1987,79 @@ pub fn main_exit() {
 
 #[cfg(test)]
 mod tests {
+    use clap::Parser;
+    use proptest::prelude::*;
+
+    /// What clap makes of `scrutate ARGS`, as `plain_grep` answers.
+    fn clap_grep(args: &[String]) -> Option<(bool, super::GrepArgs)> {
+        let super::GrepCli { root, no_color, cmd: super::GrepCmd::Grep(g) } = super::GrepCli::try_parse_from(args).ok()?;
+        assert_eq!(root, std::path::PathBuf::from("."));
+        Some((no_color, g))
+    }
+
+    // inside the shapes, near them (values that start with `-` or `=`, flags given twice) and outside
+    const TOKENS: &str = "-F|-i|-S|-w|-U|-v|-l|-c|-H|-I|-n|-N|-L|-P|-z|-Fi|-nF|-iw|-lc|-HI|--fixed-strings|--ignore-case|--smart-case|--word|--count|--line-number|--no-line-number|--with-filename|--no-filename|--hidden|--no-ignore|--ident|--index|--sort|--json|--stats|--no-color|--follow|-e|-e|-ex|-Fex|-e=x|-e-x|--regexp|-g|-g|-g*.rs|--glob|-j|-j1|-j4|-Fj2|-j=2|--threads|--regexp=x|--glob=x|--threads=2|hello|a.txt|src|x y||-|--|-x|-1|01|+1|*.c|!*.h|=x|--fuzzy|--update|-A|-C|2|-h|--help|-V|--root|--max-count|-t|rs|--type-list|é|-é";
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(20000))]
+        #[test]
+        fn plain_grep_is_clap(sub in prop::sample::select(vec!["grep", "g"]), picks in prop::collection::vec(0..TOKENS.split('|').count(), 0..7)) {
+            if std::env::vars_os().any(|(k, _)| k.as_encoded_bytes().starts_with(b"SCRUTATE_")) {
+                return Ok(()); // clap would read them, and plain_grep is not asked then
+            }
+            let args: Vec<String> = ["scrutate", sub].into_iter().chain(picks.iter().map(|&i| TOKENS.split('|').nth(i).unwrap())).map(String::from).collect();
+            if let Some(plain) = super::plain_grep(&args) {
+                prop_assert_eq!(Some(plain), clap_grep(&args), "{:?}", args);
+            }
+        }
+
+        #[test]
+        fn plain_grep_is_clap_inside_its_shapes(
+            flags in prop::sample::subsequence(vec!["-F", "-i", "-S", "-w", "-U", "-v", "-l", "-c", "-H", "-I", "-n", "-N", "--hidden", "--no-ignore", "--ident", "--no-color", "--json", "-j2"], 0..6).prop_shuffle(),
+            values in prop::collection::vec(prop::sample::select(vec!["-e", "-g", "--regexp", "--glob", "", "pos"]), 0..5),
+            words in prop::collection::vec("[a-z.*!/é]{0,4}", 5),
+        ) {
+            let mut args: Vec<String> = vec!["scrutate".into(), "grep".into()];
+            for (i, v) in values.iter().enumerate() {
+                match *v {
+                    "pos" | "" => args.push(words[i].clone()),
+                    flag => args.extend([flag.to_string(), words[i].clone()]),
+                }
+            }
+            for (i, f) in flags.iter().enumerate() {
+                args.insert(2 + (i * 3) % (args.len() - 1), f.to_string());
+            }
+            let plain = super::plain_grep(&args);
+            let clap = clap_grep(&args);
+            if plain.is_some() {
+                prop_assert_eq!(plain, clap, "{:?}", args);
+            } else {
+                // declined only where clap fails or a value is empty or starts with a dash
+                prop_assert!(clap.is_none() || args.iter().any(|a| a.is_empty()), "{:?}", args);
+            }
+        }
+    }
+
+    #[test]
+    fn plain_grep_takes_the_common_shapes() {
+        for line in [
+            "grep -F -e zqxjkvbw_never_present_symbol",
+            "grep -j1 -F -i -w -e a -e b",
+            "g -n -U pattern src a.txt",
+            "grep --no-ignore --hidden -g !.git -g !.scrutate -e x",
+            "grep -Fl x -",
+            "grep --ident refreshToken",
+            "grep -g *.c -g *.h -e x",
+        ] {
+            let args: Vec<String> = std::iter::once("scrutate").chain(line.split(' ')).map(String::from).collect();
+            assert!(super::plain_grep(&args).is_some(), "{line}");
+        }
+        let args = |s: &str| -> Vec<String> { std::iter::once("scrutate").chain(s.split(' ')).map(String::from).collect() };
+        for line in ["grep -F -F x", "grep --help", "grep -A 2 x", "grep -e", "grep -- -x", "index x", "grep -j=1 x", "grep x --root ."] {
+            assert!(super::plain_grep(&args(line)).is_none(), "{line}");
+        }
+    }
+
     #[test]
     fn sizes_that_overflow_are_refused() {
         assert_eq!(super::parse_size("10M").unwrap(), 10 << 20);
