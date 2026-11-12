@@ -1548,10 +1548,11 @@ impl<'a> Sink for Collector<'a> {
 
 impl Collector<'_> {
     /// Match number `n` (counted over all threads) is past `max_results`: another thread got there
-    /// first, so this one is not reported.
+    /// first, so this one is not reported, nor counted.
     fn over_limit(&self, n: u64) -> bool {
         let over = self.max_results.is_some_and(|max| n > max);
         if over {
+            self.stats_matches.fetch_sub(1, Ordering::Relaxed);
             self.cancel.store(true, Ordering::Relaxed);
         }
         over

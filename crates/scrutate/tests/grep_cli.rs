@@ -152,6 +152,26 @@ fn max_results_holds_for_counts_and_file_lists() {
 }
 
 #[test]
+fn max_results_statistics_count_only_the_matches_printed() {
+    let d = Dir::new("maxstats");
+    for i in 0..16 {
+        d.write(&format!("f{i}.txt"), "foo\n".repeat(200).as_bytes());
+    }
+    for _ in 0..20 {
+        for j in ["2", "4", "8"] {
+            for max in ["1", "3"] {
+                let (_, out, err) = d.run(&["grep", "--stats", "-j", j, "--max-results", max, "foo"]);
+                assert_eq!(err.split(' ').next(), Some(out.lines().count().to_string().as_str()), "-j {j}: {out}{err}");
+                assert_eq!(out.lines().count().to_string(), max, "-j {j}: {out}");
+                let (_, out, _) = d.run(&["grep", "--json", "-j", j, "--max-results", max, "foo"]);
+                let printed = out.lines().filter(|l| l.contains(r#""type":"match""#)).count();
+                assert!(out.contains(&format!(r#""matches":{printed},"#)) && printed.to_string() == max, "-j {j}: {out}");
+            }
+        }
+    }
+}
+
+#[test]
 fn context_lines_of_crlf_files_lose_the_carriage_return_too() {
     let d = Dir::new("crlf");
     d.write("crlf.txt", b"ctx1\r\nfoo\r\nctx2\r\n");
