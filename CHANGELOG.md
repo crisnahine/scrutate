@@ -654,7 +654,9 @@ First release.
   themselves, in absolute entries only, so a `scrutate.exe` in the opened folder is never run.
 - `release.yml` refuses a tag whose version differs from the packages' (`tools/check_version.py`)
   and runs all of `ci.yml` on the tagged commit before anything is published. Every workflow
-  action is pinned to a commit.
+  action is pinned to a commit. The glibc archives are built on Ubuntu 22.04 and the job fails
+  when the binary asks for a glibc newer than 2.34 (one built on Ubuntu 24.04 asks for 2.39 and
+  does not start on Debian 12 or Ubuntu 22.04).
 - The GitHub Action puts scrutate's exit code in its `exit-code` output and fails its step only on
   an error (2), so a job can gate on results.
 - Benchmark suite (`bench/leaderboard.py`, `bench/indexed.py`): grep, ripgrep, ack, ag, git grep,

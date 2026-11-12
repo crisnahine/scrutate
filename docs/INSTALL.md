@@ -33,6 +33,9 @@ install -m 0755 "scrutate-$v-$t/scrutate" ~/.local/bin/scrutate
 scrutate completions bash > ~/.local/share/bash-completion/completions/scrutate   # or zsh/fish/powershell
 ```
 
+The `-linux-gnu` archives need glibc 2.34 or newer (Debian 12, Ubuntu 22.04, RHEL 9 and later);
+the `-linux-musl` archives are static and run on any Linux.
+
 Windows: unzip, put `scrutate.exe` on `PATH`, `scrutate completions powershell | Out-String | Invoke-Expression`.
 
 ## From source (any platform with stable Rust 1.91 or newer)

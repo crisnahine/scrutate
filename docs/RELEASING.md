@@ -71,7 +71,9 @@ Linux, about 1.5 hours, in a Colima VM with one virtual CPU per performance core
 (`colima start --cpu 5 --memory 12`; with 8, three run on efficiency cores and every tool's
 medians move by 10 to 30%). The commands are in the headers of
 `bench/competitors/linux_bench.sh` and `bench/competitors/linux_indexed.sh`; run the second
-after the first. Colima shares only the home directory with containers.
+after the first. Colima shares only the home directory with containers. Every tool the first
+script downloads is checked against a SHA-256 written in the script: a new version of a tool
+needs its new hash there, taken from the tool's own release page.
 
 Then read the results before going on:
 
@@ -171,7 +173,10 @@ for Linux, docs/TEST_RESULTS.md for macOS). The archives contain `docs/`, so bui
 A tag `v*` starts `.github/workflows/release.yml` (every platform, signing, attestations). It
 checks the version first, then runs all of `ci.yml` on the tagged commit (`workflow_call`); the
 release job waits for that run and for the binaries and wheels. The package definitions in
-`packaging/` need the release checksums (packaging/README.md). The release workflow has not
+`packaging/` need the release checksums (packaging/README.md). The two `-linux-gnu` binaries are
+built on Ubuntu 22.04 runners and a step fails when one asks for a glibc newer than 2.34; when
+GitHub retires that image, build them in a container of that glibc or older, never on a newer
+runner (a build on Ubuntu 24.04 asks for 2.39). The release workflow has not
 run. A manual run of it (`gh workflow run release.yml`) is a rehearsal: it builds, tests and
 packages the binaries and the three wheel kinds on every platform, installs each wheel, and
 publishes and signs nothing. It runs 8 binary jobs and 18 wheel jobs, six of each kind on macOS
