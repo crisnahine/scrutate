@@ -1189,3 +1189,38 @@ fn a_case_insensitive_literal_matches_every_case_form_up_to_the_last_byte() {
     let (code, out, _) = d.run(&["grep", "-j1", "-n", "-F", "-i", "-e", "pm_resume", "a.txt"]);
     assert_eq!((code, out), (0, format!("4:pm_re\u{17F}ume {filler}\n5:PM_RESUME\n")));
 }
+
+/// What each span of the JSON match records picks out of their `text`, by line.
+fn json_spans(out: &str) -> Vec<(u64, Vec<String>)> {
+    out.lines()
+        .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
+        .filter(|v| v["type"] == "match")
+        .map(|v| {
+            let text = v["text"].as_str().unwrap();
+            let spans = v["spans"].as_array().unwrap();
+            let picked = spans.iter().map(|s| text[s["start"].as_u64().unwrap() as usize..s["end"].as_u64().unwrap() as usize].to_string()).collect();
+            assert_eq!(v["column"].as_u64(), spans.first().map(|s| s["start"].as_u64().unwrap() + 1), "{v}");
+            (v["line"].as_u64().unwrap(), picked)
+        })
+        .collect()
+}
+
+#[test]
+fn json_spans_lie_inside_the_text_they_describe() {
+    let d = Dir::new("spans");
+    d.write("inv.txt", b"x\x80\xffabc def abc\nq\xffz abc\xff\nab\xffcd\r\nend\n");
+    d.write("crlf.txt", b"one abc\r\ntwo\r\n");
+    let s = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let (code, out, _) = d.run(&["grep", "--json", "-e", "abc", "-e", r"b(?-u:\xFF)c", "inv.txt"]);
+    assert_eq!(code, 0);
+    assert_eq!(json_spans(&out), [(1, s(&["abc", "abc"])), (2, s(&["abc"])), (3, s(&["b\u{FFFD}c"]))]);
+    for (args, want) in [
+        (&["grep", "--json", "abc\r", "crlf.txt"][..], "abc"),
+        (&["grep", "--json", "-U", r"abc\r\n", "crlf.txt"], "abc"),
+        (&["grep", "--json", "-U", r"abc\r\ntwo", "crlf.txt"], "abc\r\ntwo"),
+    ] {
+        let (code, out, _) = d.run(args);
+        assert_eq!(code, 0, "{args:?}");
+        assert_eq!(json_spans(&out), [(1, s(&[want]))], "{args:?}");
+    }
+}

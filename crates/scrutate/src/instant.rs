@@ -89,6 +89,9 @@ pub struct Options {
     /// compute the byte ranges of the matches inside each line (colour / JSON output); off, the
     /// line is reported without a second pass of the matcher over it
     pub want_spans: bool,
+    /// the ranges and `Hit::column` count bytes of `Hit::text` (invalid UTF-8 shown as U+FFFD,
+    /// no line end) instead of bytes of the line as read
+    pub text_spans: bool,
     /// search the members of zip/tar archives and the contents of compressed files (`-z`)
     pub search_zip: bool,
     /// archive member names are reported as they are (for JSON, which escapes them); off, with
@@ -148,6 +151,7 @@ impl Default for Options {
             files_only: false,
             want_bytes: false,
             want_spans: false,
+            text_spans: false,
             search_zip: false,
             raw_member_names: false,
             paths_as_given: false,
@@ -164,7 +168,7 @@ impl Default for Options {
 }
 
 /// One result record. `line` is 1-based; `column` is the 1-based byte offset of the first match in
-/// the line (0 when not applicable, e.g. inverted matches). A `line` of `NOTE_LINE` is a note on
+/// the line (0 when not applicable, e.g. inverted matches), in `text` with `Options::text_spans`. A `line` of `NOTE_LINE` is a note on
 /// the file, its text in `text`: a named file with a NUL byte matched (`Options::paths_as_given`),
 /// or the search of a walked file that matched stopped at a NUL byte.
 #[derive(Clone, Debug, serde::Serialize)]
@@ -174,7 +178,8 @@ pub struct Hit {
     pub line: u64,
     pub column: u64,
     pub text: String,
-    /// byte ranges of the matches within `text`
+    /// byte ranges of the matches: within `text` with `Options::text_spans`, else within the line
+    /// as read (they differ where it holds invalid UTF-8, and a match may end in its line break)
     pub spans: Vec<(usize, usize)>,
     /// true for context lines (-A/-B), false for matching lines
     pub context: bool,
@@ -1385,6 +1390,7 @@ struct Collector<'a> {
     plain: Option<&'a PlainSink>,
     out: Vec<u8>,
     want_spans: bool,
+    text_spans: bool,
     stats_matches: &'a AtomicU64,
     max_results: Option<u64>,
     matched: bool,
@@ -1417,6 +1423,49 @@ struct Collector<'a> {
     numbered: bool,
     /// `-c` counts each match of a multi-line search, not each merged group of lines
     count_each: bool,
+}
+
+/// Offsets into `line` (a match may run on into the line end left out of it) as offsets into
+/// `text`, `lossy(line)`: inside it and on character boundaries, a U+FFFD that a match ends or
+/// starts within taken whole.
+fn text_offsets(spans: &mut [(usize, usize)], line: &[u8], text: &str, valid: bool) {
+    // each piece of the line: where it starts in `line` and in `text`, its valid and invalid bytes
+    let whole = [(0, 0, line.len(), 0)];
+    let split: Vec<(usize, usize, usize, usize)>;
+    let pieces = if valid {
+        &whole[..]
+    } else {
+        let (mut r, mut t) = (0, 0);
+        split = line
+            .utf8_chunks()
+            .map(|c| {
+                let p = (r, t, c.valid().len(), c.invalid().len());
+                r += p.2 + p.3;
+                t += p.2 + if p.3 > 0 { '\u{FFFD}'.len_utf8() } else { 0 };
+                p
+            })
+            .collect();
+        &split
+    };
+    let at = |x: usize, up: bool| {
+        let Some(&(r, t, v, n)) = pieces.get(pieces.partition_point(|p| p.0 <= x).saturating_sub(1)) else { return 0 };
+        let d = x - r;
+        let mut y = if d <= v {
+            t + d
+        } else if d < v + n {
+            t + v + if up { '\u{FFFD}'.len_utf8() } else { 0 }
+        } else {
+            text.len()
+        };
+        y = y.min(text.len());
+        while !text.is_char_boundary(y) {
+            y = if up { y + 1 } else { y - 1 };
+        }
+        y
+    };
+    for s in spans {
+        *s = (at(s.0, false), at(s.1, true));
+    }
 }
 
 fn spans_in(matcher: &AnyMatcher, line: &[u8]) -> Vec<(usize, usize)> {
@@ -1604,8 +1653,12 @@ impl Collector<'_> {
         if self.over_limit(n) {
             return Ok(false);
         }
-        let text = lossy(line).into_owned();
-        let spans = if self.invert || !self.want_spans { Vec::new() } else { spans_in(self.matcher, bytes) };
+        let text = lossy(line);
+        let mut spans = if self.invert || !self.want_spans { Vec::new() } else { spans_in(self.matcher, bytes) };
+        if self.text_spans {
+            text_offsets(&mut spans, line, &text, matches!(text, std::borrow::Cow::Borrowed(_)));
+        }
+        let text = text.into_owned();
         let column = spans.first().map(|s| s.0 as u64 + 1).unwrap_or(0);
         self.matched = true;
         self.push(Hit { path: Arc::clone(&self.path), line: number.unwrap_or(0) + self.line_base, column, text, spans, context: false });
@@ -2159,6 +2212,7 @@ impl<'a> Run<'a> {
             plain: self.plain,
             out: Vec::new(),
             want_spans: o.want_spans,
+            text_spans: o.text_spans,
             stats_matches: &self.c.matches,
             max_results: o.max_results,
             matched: false,
@@ -3290,6 +3344,21 @@ mod tests {
         pub(super) static NO_ONE_LINE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
         /// the most batches of hits that waited for this thread's searches
         pub(super) static MOST_QUEUED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    #[test]
+    fn offsets_in_a_line_with_invalid_utf8_become_offsets_in_its_text() {
+        // one invalid piece of three bytes keeps the length; a match inside it takes the U+FFFD whole
+        let line = b"a\xF0\x9F\x98b\xFFc";
+        let text = lossy(line);
+        assert_eq!(text, "a\u{FFFD}b\u{FFFD}c");
+        let mut spans = [(0, 1), (2, 3), (1, 4), (4, 5), (5, 6), (6, 7), (6, 9)];
+        text_offsets(&mut spans, line, &text, false);
+        assert_eq!(spans, [(0, 1), (1, 4), (1, 4), (4, 5), (5, 8), (8, 9), (8, 9)]);
+        // valid text: only cut to its end, on a character boundary
+        let mut spans = [(1, 2), (2, 7)];
+        text_offsets(&mut spans, "aé".as_bytes(), "aé", true);
+        assert_eq!(spans, [(1, 3), (1, 3)]);
     }
 
     #[test]

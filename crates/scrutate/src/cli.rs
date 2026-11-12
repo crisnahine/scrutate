@@ -1106,6 +1106,7 @@ pub fn run() -> Result<i32> {
                 files_only: files_with_matches,
                 want_bytes: stats || json,
                 want_spans: json || color_choice(no_color) != ColorChoice::Never,
+                text_spans: true,
                 search_zip,
                 raw_member_names: json,
                 paths_as_given: !paths.is_empty(),
@@ -1607,12 +1608,6 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
     }
     // buffered: one write per 64 KB instead of several per matching line
     let mut w = termcolor::BufferedStandardStream::stdout(color_choice(out.no_color));
-    let mut path_color = ColorSpec::new();
-    path_color.set_fg(Some(Color::Magenta));
-    let mut line_color = ColorSpec::new();
-    line_color.set_fg(Some(Color::Green));
-    let mut match_color = ColorSpec::new();
-    match_color.set_fg(Some(Color::Red)).set_bold(true);
     let mut collected: Vec<instant::Hit> = Vec::new();
     let mut pipe_closed = false; // the reader went away (`| head`): stop quietly, like ripgrep (exit 0)
     let mut counts: Vec<(Arc<str>, u64)> = Vec::new();
@@ -1659,36 +1654,7 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
             w.write_all(&linebuf)?;
             return Ok(());
         }
-        if o.with_filename {
-            w.set_color(&path_color)?;
-            write!(w, "{}", h.path)?;
-            w.reset()?;
-            write!(w, "{}", if h.context { "-" } else { ":" })?;
-        }
-        if o.line_numbers {
-            w.set_color(&line_color)?;
-            write!(w, "{}", h.line)?;
-            w.reset()?;
-            write!(w, "{}", if h.context { "-" } else { ":" })?;
-        }
-        if h.spans.is_empty() {
-            writeln!(w, "{}", h.text)?;
-        } else {
-            let bytes = h.text.as_bytes();
-            let mut pos = 0;
-            for &(a, b) in &h.spans {
-                let (a, b) = (a.min(bytes.len()), b.min(bytes.len()));
-                if a < pos {
-                    continue;
-                }
-                write!(w, "{}", String::from_utf8_lossy(&bytes[pos..a]))?;
-                w.set_color(&match_color)?;
-                write!(w, "{}", String::from_utf8_lossy(&bytes[a..b]))?;
-                w.reset()?;
-                pos = b;
-            }
-            writeln!(w, "{}", String::from_utf8_lossy(&bytes[pos..]))?;
-        }
+        write_colour(w, h, o.with_filename, o.line_numbers)?;
         Ok(())
     };
     let stats = {
@@ -1794,6 +1760,38 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
     } else {
         1
     })
+}
+
+/// One hit in colour: its path and line number when asked for, and its matches highlighted.
+fn write_colour(w: &mut impl WriteColor, h: &instant::Hit, path: bool, number: bool) -> std::io::Result<()> {
+    let sep = if h.context { "-" } else { ":" };
+    if path {
+        w.set_color(ColorSpec::new().set_fg(Some(Color::Magenta)))?;
+        write!(w, "{}", h.path)?;
+        w.reset()?;
+        write!(w, "{sep}")?;
+    }
+    if number {
+        w.set_color(ColorSpec::new().set_fg(Some(Color::Green)))?;
+        write!(w, "{}", h.line)?;
+        w.reset()?;
+        write!(w, "{sep}")?;
+    }
+    // the spans lie on character boundaries of the text
+    let text = h.text.as_str();
+    let mut pos = 0;
+    for &(a, b) in &h.spans {
+        let (a, b) = (a.min(text.len()), b.min(text.len()));
+        if a < pos || !text.is_char_boundary(a) || !text.is_char_boundary(b) {
+            continue;
+        }
+        write!(w, "{}", &text[pos..a])?;
+        w.set_color(ColorSpec::new().set_fg(Some(Color::Red)).set_bold(true))?;
+        write!(w, "{}", &text[a..b])?;
+        w.reset()?;
+        pos = b;
+    }
+    writeln!(w, "{}", &text[pos..])
 }
 
 fn broken_pipe(e: &anyhow::Error) -> bool {
@@ -2070,6 +2068,42 @@ pub fn main_exit() {
 mod tests {
     use clap::Parser;
     use proptest::prelude::*;
+
+    /// `scrutate grep` in colour on a terminal, as `grep_command` writes it.
+    fn coloured(dir: &std::path::Path, pattern: &str, multiline: bool) -> String {
+        let o = crate::instant::Options {
+            pattern: pattern.into(),
+            mode: crate::instant::Mode::Regex,
+            multiline,
+            want_spans: true,
+            text_spans: true,
+            first_in_path_order: true,
+            ..crate::instant::Options::default()
+        };
+        let mut hits = Vec::new();
+        crate::instant::search(&[dir.to_path_buf()], &o, std::sync::Arc::default(), |h| hits.push(h)).unwrap();
+        let mut w = termcolor::Buffer::ansi();
+        for h in &hits {
+            super::write_colour(&mut w, h, true, true).unwrap();
+        }
+        String::from_utf8(w.into_inner()).unwrap()
+    }
+
+    /// The text written in the colour of matches.
+    fn highlighted(out: &str) -> Vec<&str> {
+        out.split("\x1b[31m").skip(1).map(|s| &s[..s.find("\x1b[0m").unwrap()]).collect()
+    }
+
+    #[test]
+    fn colour_highlights_the_matches_in_lines_with_invalid_utf8() {
+        let root = std::env::temp_dir().join(format!("scrutate_cli_colour_inv_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.txt"), b"x\x80\xffabc def abc\nab\xffcd\n").unwrap();
+        let out = coloured(&root, r"abc|b(?-u:\xFF)c", false);
+        assert_eq!(highlighted(&out), ["abc", "abc", "b\u{FFFD}c"], "{out:?}");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     #[test]
     fn a_watch_whose_update_panics_goes_on_and_runs_the_next_update() {
