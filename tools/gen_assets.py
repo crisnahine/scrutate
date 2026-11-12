@@ -1556,7 +1556,8 @@ def main() -> int:
     if a.what in ("capture", "capture-hero"):
         if not (a.bin and a.repo):
             ap.error(f"{a.what} needs --bin and --repo")
-        return (capture if a.what == "capture" else capture_hero)(a.bin, a.repo)
+        # the commands run inside --repo, so a relative --bin must not be read from there
+        return (capture if a.what == "capture" else capture_hero)(os.path.abspath(a.bin), a.repo)
     if a.what == "font":
         if not a.otf:
             ap.error("font needs --otf")
