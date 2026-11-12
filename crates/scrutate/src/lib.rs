@@ -81,13 +81,15 @@ pub struct Repo {
     root: std::path::PathBuf,
     /// the last refresh failed and stderr said why
     stale: bool,
+    /// an update of the index went through since `take_updated` was last asked
+    updated: bool,
 }
 
 impl Repo {
     /// Open (or create) the index of `root`, without updating it.
     pub fn open(root: &Path) -> Result<Repo> {
         let searcher = open(root)?;
-        Ok(Repo { root: searcher.ix.root.clone(), searcher: Some(searcher), stale: false })
+        Ok(Repo { root: searcher.ix.root.clone(), searcher: Some(searcher), stale: false, updated: false })
     }
 
     /// `open` for an update; with `force`, an index of a newer scrutate that this one cannot read
@@ -109,6 +111,11 @@ impl Repo {
     /// Whether the last refresh could not update the index, so answers come from it as it was.
     pub fn is_stale(&self) -> bool {
         self.stale
+    }
+
+    /// Whether an update of the index went through since this was last asked.
+    pub fn take_updated(&mut self) -> bool {
+        std::mem::take(&mut self.updated)
     }
 
     /// The cancel flag of the next operation; nothing to set while the index is closed.
@@ -143,10 +150,12 @@ impl Repo {
     /// cache, the sources are the truth.
     pub fn update(&mut self, force: bool) -> Result<index::UpdateStats> {
         self.reopened()?;
-        match self.ix.update(force) {
+        let r = match self.ix.update(force) {
             Err(e) if index::error_is_corruption(&e) => self.rebuild(&e),
             other => other,
-        }
+        };
+        self.updated |= r.is_ok();
+        r
     }
 
     /// `update` that stops between batches of files once `cancel` is set, and then leaves the
@@ -181,6 +190,7 @@ impl Repo {
             }
             Ok(st) => {
                 self.stale &= st.is_none();
+                self.updated |= st.is_some();
                 Ok(st)
             }
         }
@@ -313,7 +323,7 @@ mod tests {
     fn a_rebuild_that_could_not_reopen_the_index_is_an_error_until_it_can() {
         let root = std::env::temp_dir().join(format!("scrutate_reopen_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        let mut repo = Repo { searcher: None, root: root.clone(), stale: false };
+        let mut repo = Repo { searcher: None, root: root.clone(), stale: false, updated: false };
         let op = ops::Op::Symbol { name: "f".into(), limit: 5 };
         repo.set_cancel(std::sync::Arc::default());
         assert!(repo.update(false).is_err());

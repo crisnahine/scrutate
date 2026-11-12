@@ -257,8 +257,8 @@ fn run_call(send: &Wire, repo: &Mutex<Repo>, building: &AtomicBool, build_failed
         (!gone()).then(|| {
             repo.set_cancel(Arc::clone(&cancelled));
             let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| call_tool(&mut repo, &name, &args, settings)));
-            if run.is_ok() {
-                // this call refreshed the index itself, so a later failure is not the first build's
+            if repo.take_updated() {
+                // an update went through, so a later failure is not the first build's
                 build_failed.store(false, Ordering::Release);
             }
             let c = run.unwrap_or_else(|_| {
@@ -545,12 +545,23 @@ mod tests {
     }
 
     #[test]
-    fn a_call_that_answers_clears_the_failed_first_build() {
+    fn only_a_call_that_updates_the_index_clears_the_failed_first_build() {
         let (root, repo, sent) = fixture("build_failed_reset");
+        // the state a first build that panicked leaves
+        repo.lock().unwrap().take_updated();
         let (building, build_failed, calls) = (AtomicBool::new(false), AtomicBool::new(true), Calls::default());
         let send = |m: Value| sent.lock().unwrap().push(m);
-        run_call(&send, &repo, &building, &build_failed, &calls, &Settings::new(None, Some(0.0)), call(&calls, 7, Value::Null));
-        assert_eq!(sent.lock().unwrap()[0]["result"]["isError"], false);
+        let settings = Settings::new(None, Some(0.0));
+        // neither a call with a bad argument nor a read of a file by its path looks at the index
+        let read = Call { name: "read_code".into(), args: json!({"path": "src/geo.py"}), ..call(&calls, 5, Value::Null) };
+        let bad = Call { args: json!({"name": 7}), ..call(&calls, 6, Value::Null) };
+        for c in [read, bad] {
+            run_call(&send, &repo, &building, &build_failed, &calls, &settings, c);
+            assert!(build_failed.load(Ordering::Acquire));
+        }
+        run_call(&send, &repo, &building, &build_failed, &calls, &settings, call(&calls, 7, Value::Null));
+        let sent = sent.lock().unwrap();
+        assert_eq!((&sent[0]["result"]["isError"], &sent[1]["result"]["isError"], &sent[2]["result"]["isError"]), (&json!(false), &json!(true), &json!(false)));
         assert!(!build_failed.load(Ordering::Acquire));
         let _ = std::fs::remove_dir_all(&root);
     }

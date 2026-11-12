@@ -209,7 +209,12 @@ fn index_search_symbol_refs_outline_deps() {
     assert_eq!(code, 0);
     assert!(out.contains("pkg/m4.py"), "{out}");
     let (code, out, _) = r.run(&["dupes", "--min-tokens", "3", "--threshold", "0.6", "--json"]);
-    assert!(code == 0 || code == 1, "{out}");
+    assert_eq!(code, 0, "{out}");
+    let groups: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
+    let widgets = |g: &serde_json::Value| {
+        g["members"].as_array().is_some_and(|m| m.len() == 12 && m.iter().all(|x| x[1].as_str().is_some_and(|n| n.starts_with("make_widget_"))))
+    };
+    assert!(groups.iter().any(widgets), "the twelve make_widget functions are one group: {out}");
     let (code, out, _) = r.run(&["tsquery", "python", "(function_definition name: (identifier) @n)", "."]);
     assert_eq!(code, 0);
     assert_eq!(out.lines().count(), 24, "{out}");

@@ -759,6 +759,33 @@ pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn lines_are_read_from_the_disk_only_under_the_root() {
+        let base = std::env::temp_dir().join(format!("scrutate_lsp_lines_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("repo");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(base.join("outside")).unwrap();
+        std::fs::write(root.join("src/a.py"), "inside = 1\n").unwrap();
+        std::fs::write(base.join("outside/secret.py"), "TOKEN = 'outside'\n").unwrap();
+        std::os::unix::fs::symlink(base.join("outside"), root.join("link")).unwrap();
+        std::os::unix::fs::symlink(root.join("src"), root.join("inlink")).unwrap();
+        let root = root.canonicalize().unwrap();
+        let docs = HashMap::from([("../open.py".to_string(), "from the editor\n".to_string())]);
+        let mut lines = Lines { root: &root, docs: &docs, cache: HashMap::new() };
+        assert_eq!(lines.get("src/a.py"), ["inside = 1", ""]);
+        assert_eq!(lines.get("inlink/a.py"), ["inside = 1", ""]);
+        // a link that leaves the root, a path that climbs out of it and an absolute one read nothing
+        let outside = base.join("outside/secret.py");
+        for rel in ["link/secret.py", "../outside/secret.py", outside.to_str().unwrap(), ""] {
+            assert_eq!(lines.get(rel), [""], "{rel}");
+        }
+        // an open document is the editor's text whatever its key
+        assert_eq!(lines.get("../open.py"), ["from the editor", ""]);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     #[test]
     fn utf16_columns() {
         let line = "s = \"é🙂\"; p = make_point()";

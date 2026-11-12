@@ -61,7 +61,7 @@ def test_grep_cancel_and_max_results(repo):
     it.cancel()
     assert list(it) == []
     hits = list(scrutate.grep("e", [str(repo)], max_results=5))
-    assert len(hits) <= 5
+    assert len(hits) == 5
 
 
 def test_repo_index_and_intelligence(repo):
