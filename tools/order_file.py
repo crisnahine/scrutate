@@ -42,6 +42,8 @@ SEARCHES = [
     ["-F", "-w", "-e", "hello"],
     ["-n", "-l", "hello"],
     ["-c", "hello"],
+    # last, so that it only adds what records and JSON output run on top of the plain searches
+    ["--json", "-F", "-e", "hello"],
 ]
 # lldb with a breakpoint on every function takes about 20 s a search on an idle machine
 SEARCH_SECONDS = int(os.environ.get("ORDER_FILE_SEARCH_SECONDS", "60"))
