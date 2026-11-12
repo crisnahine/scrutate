@@ -3,7 +3,7 @@
 const vscode = require("vscode");
 const { execFile } = require("child_process");
 const { LanguageClient } = require("vscode-languageclient/node");
-const { findRoot, fileOf } = require("./root");
+const { findRoot, fileOf, resolveBinary } = require("./root");
 
 /** @type {LanguageClient | undefined} */
 let client;
@@ -13,7 +13,12 @@ function folder() {
   return f && f.length ? f[0].uri.fsPath : undefined;
 }
 
-const binary = () => vscode.workspace.getConfiguration("scrutate").get("path", "scrutate");
+function binary() {
+  const setting = vscode.workspace.getConfiguration("scrutate").get("path", "scrutate");
+  const bin = resolveBinary(setting);
+  if (!bin) throw new Error(`${setting} was not found on PATH: install scrutate, or set scrutate.path to its full path`);
+  return bin;
+}
 
 /** The command's output, and the root its paths are from. @returns {Promise<{out: string, root: string}>} */
 async function run(args) {
@@ -74,7 +79,13 @@ async function withErrors(f) {
 function startClient() {
   const cwd = folder();
   if (!cwd) return;
-  const bin = binary();
+  let bin;
+  try {
+    bin = binary();
+  } catch (e) {
+    vscode.window.showErrorMessage(`Scrutate: ${e.message}`);
+    return;
+  }
   // the server finds the repository top above the folder itself
   client = new LanguageClient(
     "scrutate",

@@ -63,7 +63,7 @@
           "type": "string",
           "default": "scrutate",
           "scope": "machine",
-          "description": "Path to the scrutate binary. A machine setting: a workspace cannot change which program runs."
+          "description": "Path to the scrutate binary. A machine setting: a workspace cannot change which program runs. On Windows a bare name is looked up on PATH, never in the opened folder."
         },
         "scrutate.results": {
           "type": "number",
