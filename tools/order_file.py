@@ -16,12 +16,14 @@ included. Names carry a hash of how their crate was built, which differs between
 file holds the names of both. The release profile links one object (fat LTO, one codegen unit),
 so ld64 can place every function; with ThinLTO it passes over the promoted `.llvm.N` functions
 and the local ones several objects hold. Needs lldb (Xcode's command line tools). On one machine
-processes started under lldb came to hang in dyld's open of their own executable; the tool gives
-up after a minute a search (`ORDER_FILE_SEARCH_SECONDS` raises that on a busy machine).
+processes started under lldb came to hang in dyld's open of their own executable when started
+from the build's path, so lldb runs a copy of it; the tool gives up after a minute a search
+(`ORDER_FILE_SEARCH_SECONDS` raises that on a busy machine).
 """
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -95,10 +97,14 @@ def traced(exe, symbols, dirs):
         job = os.path.join(tmp, "job.json")
         out = os.path.join(tmp, "out.json")
         runs = [(["grep"] + args, where) for args in SEARCHES for where in dirs]
+        # under lldb a start from the build's own path came to hang in dyld's open of the executable,
+        # where a copy of the same file starts: the copy is what runs
+        copy = os.path.join(tmp, "scrutate")
+        shutil.copy2(exe, copy)
         with open(job, "w") as f:
-            json.dump({"exe": exe, "out": out, "runs": runs, "addrs": symbols}, f)
+            json.dump({"exe": copy, "out": out, "runs": runs, "addrs": symbols}, f)
         # a fresh executable's first start is the one the system scans; under lldb it can hang there
-        subprocess.run([exe, "--version"], stdout=subprocess.DEVNULL, check=True)
+        subprocess.run([copy, "--version"], stdout=subprocess.DEVNULL, check=True)
         try:
             run(["lldb", "--batch", "--no-lldbinit", "-o", f"command script import {os.path.abspath(__file__)}"], env=dict(os.environ, ORDER_FILE_JOB=job), timeout=SEARCH_SECONDS * len(runs))
         except subprocess.TimeoutExpired:
