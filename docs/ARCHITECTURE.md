@@ -65,7 +65,8 @@ capabilities those crates do not provide rather than re-implementing what they a
 - **Traversal**: the `ignore` parallel walker (work-stealing across threads, `.gitignore` /
   `.ignore` / global excludes, hidden files off by default, symlink loop detection, max depth and
   size filters, type globs derived from the language registry). The crate is vendored
-  (`vendor/ignore`) with four changes. The global git excludes path is read from `~/.gitconfig` by
+  (`vendor/ignore`) with nine changes, all listed in the workspace `Cargo.toml`; four of them
+  shape a walk's speed. The global git excludes path is read from `~/.gitconfig` by
   a small parser instead of a regex compiled for each run (0.4 ms of a 6 ms search). An idle walker
   thread first waits 10 µs, doubling up to the original 1 ms, before it looks for work again; with a
   fixed 1 ms, a walk of a few hundred files spent whole milliseconds asleep (598 files: 12.3 ms to

@@ -44,7 +44,7 @@ PURPOSE = {
     "tar": "tar archive members for `grep -z`",
     "zip": "zip archive members for `grep -z` (stored and deflate)",
     "half": "float16 semantic model weights",
-    "ignore": "parallel, ignore-aware directory walking (a copy in vendor/ignore with four changes, listed in the workspace Cargo.toml)",
+    "ignore": "parallel, ignore-aware directory walking (a copy in vendor/ignore; its changes are listed in the workspace Cargo.toml)",
     "matrixmultiply": "sgemm for k-means (pure Rust)",
     "memchr": "newline and NUL scans when one large file is searched in ranges",
     "memmap2": "memory-mapped segments",

@@ -131,7 +131,8 @@ First release.
   files drop the `\r`.
 - A pattern or option value that is not UTF-8 is an error (a path may be any bytes), and
   `--max-filesize` refuses a size past 64 bits.
-- `ignore` 0.4.34 is vendored (`vendor/ignore`) with two changes: the global git excludes path is
+- `ignore` 0.4.34 is vendored (`vendor/ignore`) with nine changes, listed in the workspace
+  `Cargo.toml`. Among them: the global git excludes path is
   read from `~/.gitconfig` without compiling a regex (about 0.4 ms of every search in a git
   repository), and an idle walker thread waits 10 µs at first instead of 1 ms before it looks for
   work again (a 598-file package: 10.7 ms to 8.1 ms).
