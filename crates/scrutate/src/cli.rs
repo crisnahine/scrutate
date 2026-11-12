@@ -1263,7 +1263,7 @@ pub fn run() -> Result<i32> {
                     print_hits(&hits, &qs, why, json)?;
                 } else {
                     let words: Vec<String> = qs.iter().flat_map(|q| query_words(q)).collect();
-                    println!("{}", crate::ops::paged(crate::fmt::hit_blocks(&hits, &words, true, why), "results", page.0, page.1));
+                    println!("{}", crate::ops::paged(crate::fmt::hit_blocks(&hits, &words, true, why), "results", text_room(page.0), page.1));
                 }
             }
             if let (Some(other), false) = (other, json) {
@@ -1372,7 +1372,7 @@ pub fn run() -> Result<i32> {
                 }
             })?;
             if paging && !lines.is_empty() {
-                err = writeln!(w, "{}", crate::ops::paged(lines, "matches", page.0, page.1)).err();
+                err = writeln!(w, "{}", crate::ops::paged(lines, "matches", text_room(page.0), page.1)).err();
             }
             if n > limit && err.is_none() {
                 let note = crate::ops::stop_line(Some(crate::ops::Stop { at: limit, how: crate::ops::RAISE_LIMIT }), "matches");
@@ -1549,6 +1549,15 @@ fn views_command(file: &Path) -> Result<i32> {
 
 /// Run one index operation and print its answer; exit code 1 when nothing was found. `outside`:
 /// why an argument names nothing in this index, said with an empty answer or an error.
+/// What a paged text may take, so that it and the newline the command line ends it with fit the limit.
+fn text_room(max_bytes: usize) -> usize {
+    if max_bytes == usize::MAX {
+        max_bytes
+    } else {
+        max_bytes.saturating_sub(1)
+    }
+}
+
 fn run_op(root: &Path, op: Op, json: bool, (max_bytes, offset): (usize, usize), outside: Option<&str>) -> Result<i32> {
     use crate::ops::Answer;
     let mut s = if op.reads_index() { open_fresh(root)? } else { crate::Repo::open(root)? };
@@ -1570,7 +1579,7 @@ fn run_op(root: &Path, op: Op, json: bool, (max_bytes, offset): (usize, usize), 
         eprintln!("{}{}", answer.text(), why.map(|w| format!(" ({w})")).unwrap_or_default());
         return Ok(1);
     } else {
-        let text = answer.text_within(max_bytes, offset);
+        let text = answer.text_within(text_room(max_bytes), offset);
         print!("{text}{}", if text.ends_with('\n') { "" } else { "\n" });
     }
     if let Some(w) = why {
@@ -1805,7 +1814,7 @@ fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
     }
     // buffered: one write per 64 KB instead of several per matching line
     let mut w = match out.page {
-        Some((max_bytes, offset)) => Out::Paged(Paged { max_bytes, offset, items: Vec::new(), held: 0, rest: 0, line: Vec::new() }),
+        Some((max_bytes, offset)) => Out::Paged(Paged { max_bytes: text_room(max_bytes), offset, items: Vec::new(), held: 0, rest: 0, line: Vec::new() }),
         None => Out::Stream(termcolor::BufferedStandardStream::stdout(color_choice(out.no_color))),
     };
     let mut collected: Vec<Record> = Vec::new();

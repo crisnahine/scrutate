@@ -696,6 +696,8 @@ First release.
   `--offset` that continues; exit code as for the whole answer. Without it the answer stays
   whole, so pipelines see every line (on this repository `grep -n "fn " .` printed 285 KB; with
   `--max-bytes 4000`, 4,000 bytes or fewer).
+  The newline that ends a paged answer on the command line counts too: an answer that filled
+  its limit exactly printed one byte more (`grep`, `refs`, `callers`, `search`, `tsquery`).
 - `find` lists the lines of its Engine A search in path order, as it said; they came in the
   order the threads finished.
 - The Python bindings gain `Repo.references`, `Repo.call` (any MCP tool by name, with paging),

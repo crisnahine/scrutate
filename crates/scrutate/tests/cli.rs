@@ -1659,6 +1659,30 @@ fn read_reads_lines_or_a_definition_as_read_code_does() {
 }
 
 #[test]
+fn a_paged_answer_and_its_closing_newline_fit_the_limit() {
+    let r = Repo::new("page_fit");
+    let mut src = String::from("def target():\n    return 1\n\n\n");
+    for i in 0..60 {
+        src.push_str(&format!("def caller_{i}():\n    return target()\n\n\n"));
+    }
+    r.write("a.py", src.as_bytes());
+    for i in 0..40 {
+        r.write(&format!("d{}/f{i:02}.txt", i % 4), format!("needle {i} one\nneedle {i} two\n").as_bytes());
+    }
+    r.run(&["index"]);
+    // an answer that fills its limit exactly used to print one byte more: the newline after it
+    for limit in 300..520 {
+        let l = limit.to_string();
+        for cmd in [vec!["grep", "-n", "needle", "."], vec!["callers", "target"], vec!["refs", "target"], vec!["search", "caller", "-k", "50"]] {
+            let mut args = cmd.clone();
+            args.extend(["--max-bytes", l.as_str()]);
+            let out = r.run(&args).1;
+            assert!(out.len() <= limit, "{cmd:?} --max-bytes {limit} printed {} bytes", out.len());
+        }
+    }
+}
+
+#[test]
 fn a_shell_caller_can_bound_a_grep() {
     let r = Repo::new("grep_budget");
     for i in 0..40 {
