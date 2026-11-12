@@ -478,8 +478,7 @@ def bench_startup(tools: dict, runs: int) -> list[dict]:
             if status != "ok":
                 rows.append({"tool": tool, "status": status})
                 continue
-            # `files`: how many files the directory held (results from before this field: none)
-            rows.append({"tool": tool, "status": "ok", "files": 1, "startup_median_ms": 1000 * statistics.median(walls), "startup_min_ms": 1000 * min(walls)})
+            rows.append({"tool": tool, "status": "ok", "startup_median_ms": 1000 * statistics.median(walls), "startup_min_ms": 1000 * min(walls)})
     return rows
 
 

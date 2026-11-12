@@ -121,7 +121,7 @@ Lower is better. **bold** = fastest in the row. `n/a` = the tool cannot express 
 | massive | ack | 8.736 | 22.8 |
 | massive | ag | 4.207 | 14.1 |
 
-## Startup (empty directory, no match; median ms)
+## Startup (a directory with one file, no match; median ms)
 
 | Tool | startup median | min |
 |---|---|---|
@@ -157,9 +157,9 @@ Both tools parse every file with tree-sitter on each run (no index); scrutate's 
 
 | Corpus | Files | Lines | Corpus MB | Index build s (cold) | peak RSS MB | no-op update s | 1-file edit update s | Index MB | Index/corpus | ranked search p50 / p95 ms (in-process) | `scrutate search` whole process ms (warm / cold) |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| small | 598 | 199,721 | 7 | 0.4 | 368 | 0.02 | 0.06 | 19 | 2.64× | — | — |
-| big | 6,817 | 3,016,971 | 122 | 5.2 | 824 | 0.06 | 0.12 | 287 | 2.34× | — | — |
-| massive | 54,536 | 24,135,768 | 979 | 49.9 | 1863 | 1.65 | 4.73 | 2285 | 2.33× | — | — |
+| small | 598 | 199,721 | 7 | 0.4 | 368 | 0.02 | 0.06 | 19 | 2.64× | - | - |
+| big | 6,817 | 3,016,971 | 122 | 5.2 | 824 | 0.06 | 0.12 | 287 | 2.34× | - | - |
+| massive | 54,536 | 24,135,768 | 979 | 49.9 | 1863 | 1.65 | 4.73 | 2285 | 2.33× | - | - |
 
 No competitor in this comparison builds a persistent index, so there is nothing to compare these numbers with; they are the cost side of the ranked, semantic and structural capabilities the grep-class tools do not have. Ranking quality is measured separately (docs/QUALITY.md).
 
