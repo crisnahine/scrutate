@@ -1535,6 +1535,39 @@ fn search_zip_reads_archive_members_and_compressed_files() {
 }
 
 #[test]
+fn search_zip_of_one_archive_names_its_members_as_a_directory_does() {
+    use std::io::Write as _;
+    let r = Repo::new("zipalone");
+    let zip_of = |name: &str, members: &[(&str, &str)]| {
+        let mut z = zip::ZipWriter::new(fs::File::create(r.root.join(name)).unwrap());
+        for (m, data) in members {
+            z.start_file(*m, zip::write::SimpleFileOptions::default()).unwrap();
+            z.write_all(data.as_bytes()).unwrap();
+        }
+        z.finish().unwrap();
+    };
+    zip_of("whole.zip", &[("a.txt", "needle a\nneedle a\nneedle a\n"), ("b.txt", "needle b\nneedle b\n")]);
+    zip_of("one.zip", &[("a.txt", "needle a\n")]);
+    let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    e.write_all(b"needle gz\n").unwrap();
+    r.write("c.txt.gz", &e.finish().unwrap());
+    for (args, want) in [
+        (&["-c", "needle", "whole.zip"][..], "whole.zip{a.txt}:3\nwhole.zip{b.txt}:2\n"),
+        (
+            &["--sort", "needle", "whole.zip"],
+            "whole.zip{a.txt}:1:needle a\nwhole.zip{a.txt}:2:needle a\nwhole.zip{a.txt}:3:needle a\nwhole.zip{b.txt}:1:needle b\nwhole.zip{b.txt}:2:needle b\n",
+        ),
+        (&["-I", "-c", "needle", "whole.zip"], "3\n2\n"),
+        (&["needle", "one.zip"], "one.zip{a.txt}:1:needle a\n"),
+        (&["needle", "c.txt.gz"], "1:needle gz\n"),
+    ] {
+        let (code, out, err) = r.run(&[&["grep", "-z"][..], args].concat());
+        assert_eq!((code, out.as_str()), (0, want), "{args:?}: {err}");
+    }
+    assert_eq!(r.run(&["grep", "-c", "needle", "c.txt.gz"]).1, "", "without -z it is one binary file");
+}
+
+#[test]
 fn search_zip_shows_control_characters_of_member_names_as_escapes() {
     use std::io::Write as _;
     let r = Repo::new("zipnames");

@@ -29,6 +29,11 @@ pub enum Kind {
 const OTHER: &[&str] = &[".bz2", ".tbz", ".tbz2", ".xz", ".txz", ".lzma", ".zst", ".zstd", ".tzst", ".lz4", ".br", ".z"];
 
 impl Kind {
+    /// an archive, not one compressed file
+    pub fn has_members(self) -> bool {
+        !matches!(self, Kind::Gz | Kind::Other)
+    }
+
     pub fn of(path: &str) -> Option<Kind> {
         let l = path.to_ascii_lowercase();
         let tar_inside = |ext: &str| l.strip_suffix(ext).is_some_and(|s| s.ends_with(".tar"));

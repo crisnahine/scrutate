@@ -886,8 +886,13 @@ pub fn run() -> Result<i32> {
                 search_zip,
                 raw_member_names: json,
                 paths_as_given: !paths.is_empty(),
-                // as ripgrep: one path that is not a directory is searched without its name
-                with_filename: with_filename || (!no_filename && !(paths.len() == 1 && !paths[0].is_dir())),
+                // as ripgrep: one path that is not a directory is searched without its name; with
+                // -z an archive is a directory of its members
+                with_filename: with_filename
+                    || (!no_filename
+                        && !(paths.len() == 1
+                            && !paths[0].is_dir()
+                            && !(search_zip && crate::archive::Kind::of(&paths[0].to_string_lossy()).is_some_and(|k| k.has_members())))),
                 line_numbers: !no_line_number,
                 small_tree: std::env::var("SCRUTATE_SMALL_TREE").ok().and_then(|v| v.parse().ok()),
                 cwd: cwd.clone(),
