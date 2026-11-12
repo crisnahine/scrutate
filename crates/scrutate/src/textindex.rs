@@ -899,7 +899,8 @@ fn read_manifest(dir: &Path) -> Result<Option<Manifest>> {
     let p = dir.join("manifest.json");
     match std::fs::read(&p) {
         Ok(b) => {
-            let m: Manifest = serde_json::from_slice(&b).with_context(|| format!("{} is not a text index manifest", p.display()))?;
+            let m: Manifest = serde_json::from_slice(&b)
+                .with_context(|| format!("{} is not a text index manifest: `scrutate index --text` rebuilds the text index", p.display()))?;
             if m.format > FORMAT {
                 bail!(
                     "text index built by a newer scrutate (format {}, this version has {FORMAT}): this version cannot read it; use the newer scrutate, or `scrutate index --text --force` to rebuild it with this one",
@@ -1083,8 +1084,17 @@ fn update_with(root: &Path, force: bool, progress: bool, only: Option<&[String]>
     crate::index::write_gitignore(&root.join(".scrutate"))?;
     let lock = File::options().create(true).truncate(false).write(true).open(dir.join("lock"))?;
     lock_exclusive(&lock)?;
-    let old = if force { None } else { read_manifest(&dir)? };
     let mut damaged = false;
+    let old = match read_manifest(&dir) {
+        _ if force => None,
+        // a manifest a crash cut short is rebuilt as a damaged segment is; one of a newer scrutate is refused
+        Err(e) if e.downcast_ref::<serde_json::Error>().is_some() => {
+            eprintln!("[scrutate] text index damaged ({e:#}); rebuilding");
+            damaged = true;
+            None
+        }
+        m => m?,
+    };
     let mut segs: Vec<Segment> = match &old {
         Some(m) => m.segments.iter().map(|s| Segment::open(&dir, &s.name, &s.live)).collect::<Result<_>>().unwrap_or_else(|e| {
             eprintln!("[scrutate] text index damaged ({e:#}); rebuilding");
@@ -1175,21 +1185,28 @@ fn update_with(root: &Path, force: bool, progress: bool, only: Option<&[String]>
     }
     let live_docs: usize = segs.iter().map(|s| (0..s.ndocs).filter(|&d| s.is_live(d)).count()).sum();
     let all_docs: usize = segs.iter().map(|s| s.ndocs).sum();
-    if segs.len() > MAX_SEGMENTS || (all_docs > 0 && (all_docs - live_docs) * 10 > all_docs * 3) {
+    let many_dead = all_docs > 0 && (all_docs - live_docs) * 10 > all_docs * 3;
+    if many_dead || segs.len() > MAX_SEGMENTS {
+        // too many segments alone: the largest stays as it is, so the small ones a watch adds
+        // do not write the whole index again every few updates
+        let kept = (!many_dead).then(|| {
+            let largest = (0..segs.len()).max_by_key(|&i| segs[i].ndocs).unwrap_or(0);
+            segs.remove(largest)
+        });
+        let merged_live: usize = segs.iter().map(|s| (0..s.ndocs).filter(|&d| s.is_live(d)).count()).sum();
         let name = format!("s{:08}", next_segment_number(&dir)?);
         merge_segments(&dir.join(&name), &segs.iter().collect::<Vec<_>>())?;
-        std::fs::write(dir.join(&name).join(&live_name), all_live(live_docs))?;
-        segs = vec![Segment::open(&dir, &name, &live_name)?];
+        std::fs::write(dir.join(&name).join(&live_name), all_live(merged_live))?;
+        segs = kept.into_iter().chain([Segment::open(&dir, &name, &live_name)?]).collect();
     }
     // liveness of the segments kept: a new file per generation, so a reader of the old manifest
-    // keeps a consistent view until it reopens
+    // keeps a consistent view until it reopens. Written also when a file of that name is there:
+    // an update that stopped before its manifest left one, with the liveness of that run
     for s in &segs {
         let p = dir.join(&s.name).join(&live_name);
-        if !p.exists() {
-            let tmp = p.with_extension("tmp");
-            crate::index::write_new(&tmp, &s.live)?;
-            std::fs::rename(&tmp, &p)?;
-        }
+        let tmp = p.with_extension("tmp");
+        crate::index::write_new(&tmp, &s.live)?;
+        std::fs::rename(&tmp, &p)?;
     }
     let m = Manifest { format: FORMAT, generation, segments: segs.iter().map(|s| SegRef { name: s.name.clone(), live: live_name.clone() }).collect() };
     let tmp = dir.join("manifest.json.tmp");

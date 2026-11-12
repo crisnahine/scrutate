@@ -1,0 +1,118 @@
+//! The text index across updates that go wrong or come often: a manifest cut short, a liveness
+//! file left by a failed update, and many small updates beside one large segment.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+
+const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
+
+struct Tmp(PathBuf);
+
+impl Tmp {
+    fn new(name: &str) -> Tmp {
+        let p = std::env::temp_dir().join(format!("scrutate_text_index_{}_{}", name, std::process::id()));
+        let _ = fs::remove_dir_all(&p);
+        fs::create_dir_all(&p).unwrap();
+        Tmp(fs::canonicalize(&p).unwrap())
+    }
+}
+
+impl Drop for Tmp {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// (exit code, stdout, stderr)
+fn run(root: &Path, args: &[&str]) -> (i32, String, String) {
+    let out = Command::new(BIN).arg("--root").arg(root).args(args).stdin(Stdio::null()).output().unwrap();
+    (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
+}
+
+fn segments(root: &Path) -> Vec<String> {
+    let m: serde_json::Value = serde_json::from_slice(&fs::read(root.join(".scrutate/text/manifest.json")).unwrap()).unwrap();
+    m["segments"].as_array().unwrap().iter().map(|s| s["name"].as_str().unwrap().to_string()).collect()
+}
+
+/// The lines `grep --index -c` prints, sorted.
+fn counts(root: &Path, pattern: &str) -> Vec<String> {
+    let (code, out, err) = run(root, &["grep", "--index", "-c", pattern]);
+    assert!(code == 0 || code == 1, "{err}");
+    let mut lines: Vec<String> = out.lines().map(str::to_string).collect();
+    lines.sort();
+    lines
+}
+
+#[test]
+fn a_manifest_cut_short_is_rebuilt_by_the_next_update() {
+    let t = Tmp::new("manifest");
+    fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+    assert_eq!(run(&t.0, &["index", "--text"]).0, 0);
+    let manifest = t.0.join(".scrutate/text/manifest.json");
+    for cut in ["", "{\"format\":"] {
+        fs::write(&manifest, cut).unwrap();
+        // a search cannot write the index: it says what to run
+        let (code, _, err) = run(&t.0, &["grep", "--index", "alpha"]);
+        assert_eq!(code, 2, "{err}");
+        assert!(err.contains("index --text"), "{err}");
+        let (code, _, err) = run(&t.0, &["index", "--text"]);
+        assert_eq!(code, 0, "{err}");
+        assert!(err.contains("damaged") && err.contains("rebuilding"), "{err}");
+        assert_eq!(counts(&t.0, "alpha"), ["a.py:1"]);
+    }
+}
+
+#[test]
+fn a_liveness_file_left_by_a_failed_update_is_written_again() {
+    let t = Tmp::new("live");
+    fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+    fs::write(t.0.join("b.py"), "def beta():\n    return alpha()\n").unwrap();
+    // enough other documents that one dead one starts no merge
+    for i in 0..10 {
+        fs::write(t.0.join(format!("other{i}.txt")), format!("nothing {i}\n")).unwrap();
+    }
+    assert_eq!(run(&t.0, &["index", "--text"]).0, 0);
+    let seg = t.0.join(".scrutate/text").join(&segments(&t.0)[0]);
+    // what an update that stopped before its manifest leaves: the next generation's liveness
+    // file, with every document of the segment still live
+    fs::copy(seg.join("live-00000001.bin"), seg.join("live-00000002.bin")).unwrap();
+    fs::write(t.0.join("a.py"), "def alpha():\n    return 22\n").unwrap();
+    assert_eq!(run(&t.0, &["index", "--text"]).0, 0);
+    assert_eq!(segments(&t.0).len(), 2);
+    assert_eq!(counts(&t.0, "alpha"), ["a.py:1", "b.py:1"]);
+    let (_, out, _) = run(&t.0, &["grep", "--index", "return"]);
+    let mut lines: Vec<&str> = out.lines().collect();
+    lines.sort();
+    assert_eq!(lines, ["a.py:2:    return 22", "b.py:2:    return alpha()"]);
+}
+
+#[test]
+fn small_updates_do_not_write_the_large_segment_again() {
+    let t = Tmp::new("merge");
+    for i in 0..60 {
+        fs::write(t.0.join(format!("f{i:02}.py")), format!("def fn_{i}():\n    return {i}\n")).unwrap();
+    }
+    assert_eq!(run(&t.0, &["index", "--text"]).0, 0);
+    let first = segments(&t.0);
+    assert_eq!(first.len(), 1);
+    for round in 0..9 {
+        fs::write(t.0.join(format!("f{round:02}.py")), format!("def fn_{round}():\n    return {round} + {round}\n# round {round}\n")).unwrap();
+        assert_eq!(run(&t.0, &["index", "--text"]).0, 0);
+        let now = segments(&t.0);
+        assert!(now.contains(&first[0]), "round {round}: the segment of the first build is gone: {now:?}");
+        assert!(now.len() <= 5, "round {round}: {now:?}");
+    }
+    // every file is found once, the changed ones in their new text
+    assert_eq!(counts(&t.0, "def fn_").len(), 60);
+    assert_eq!(counts(&t.0, "# round").len(), 9);
+    // when most documents of the large segment are dead, everything is merged into one
+    for i in 0..40 {
+        fs::write(t.0.join(format!("f{i:02}.py")), format!("def fn_{i}():\n    return 0\n# again {i}\n")).unwrap();
+    }
+    assert_eq!(run(&t.0, &["index", "--text"]).0, 0);
+    let now = segments(&t.0);
+    assert!(!now.contains(&first[0]) && now.len() == 1, "{now:?}");
+    assert_eq!(counts(&t.0, "def fn_").len(), 60);
+    assert_eq!(counts(&t.0, "# again").len(), 40);
+}

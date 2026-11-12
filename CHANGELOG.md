@@ -195,6 +195,11 @@ First release.
 - Lock files with an ordinary extension (`package-lock.json`, `npm-shrinkwrap.json`,
   `pnpm-lock.yaml`, `packages.lock.json`, `Package.resolved`, `.terraform.lock.hcl`, Gradle
   `*.lockfile`, `bun.lockb`) are left out of the index like `*.lock`; `grep` still searches them.
+- The text index survives more: a file over 64 MB that is shortened while it is read no longer
+  ends the process (it was mapped; it is read in pieces now), a manifest cut short by a crash is
+  rebuilt by the next update, a liveness file left by an update that stopped early no longer
+  makes a file match twice, and many small updates no longer write a large index again (the
+  largest segment stays out of a merge that only the number of segments asks for).
 - The language server reads a document from disk only under the root; a document outside it is
   answered from the text the editor sent, or not at all.
 - `read_code` gives one answer for a path outside the repository whether or not a file is there,

@@ -321,8 +321,12 @@ matches `k` under `-i`). Files with a NUL byte index only the bytes before it (l
 stops there) and are always searched by multi-line queries; UTF-16 files and files unreadable at
 index time are always searched. Updates are incremental (size + mtime), write new segments and a new
 liveness file per generation, then swap `manifest.json` atomically, so readers never see a half
-state; more than four segments, or more than 30% dead documents, merges them by a streaming k-way
-merge. Writers serialise on a lock file (polled with `try_lock`: SMB mounts answer a blocking lock
+state; more than four segments merges all but the largest by a streaming k-way merge, so the
+small segments a watch adds do not write the whole index again, and more than 30% dead documents
+merges all of them. A file over 64 MB is read in pieces of 1 MB, never mapped: a mapped file that
+another process shortens ends the reader with SIGBUS. A manifest that is not valid JSON (a crash
+can leave it empty) is rebuilt by the next update like a damaged segment, and the liveness file
+of a generation is written again when an update that stopped early left one. Writers serialise on a lock file (polled with `try_lock`: SMB mounts answer a blocking lock
 with EAGAIN). The index stores no file contents (409 MB for the 1.6 GB Linux v7.3 tree; docs/LEADERBOARD.md
 compares sizes with Zoekt and livegrep, whose indexes hold the text), so a query reads the
 candidate files from the source tree.
