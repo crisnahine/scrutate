@@ -1,4 +1,16 @@
+<!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="assets/banner-competitive-dark.svg">
+<img src="assets/banner-competitive-light.svg" alt="Competitive position. What does the evidence say against other tools?" width="880">
+</picture>
+</p>
+
 # Competitive positioning: what the evidence supports
+
+[Documentation](README.md) &nbsp;·&nbsp; Previous: [Release readiness](RELEASE_READINESS.md)
+
+<!-- End of head. -->
 
 This page says what Scrutate 0.1.0 does better than the tools it was measured against, where it
 ties, and where it is behind. Every performance statement points at docs/LEADERBOARD.md (generated

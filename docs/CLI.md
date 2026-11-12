@@ -1,8 +1,38 @@
+<!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="assets/banner-cli-dark.svg">
+<img src="assets/banner-cli-light.svg" alt="Command line. What does each command do, and what does it print?" width="880">
+</picture>
+</p>
+
 # Command-line reference
+
+[Documentation](README.md) &nbsp;·&nbsp; Previous: [Install](INSTALL.md) &nbsp;·&nbsp; Next: [MCP server](../integrations/mcp/README.md)
+
+**Contents**: [Conventions](#conventions) &nbsp;·&nbsp; [Engine A: grep](#engine-a-grep-alias-g) &nbsp;·&nbsp; [Engine B](#engine-b)
+
+<!-- End of head. -->
 
 `scrutate --help` and `scrutate <command> --help` are authoritative; this page explains the model.
 
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="assets/diagram-cli-map-dark.svg">
+<img src="assets/diagram-cli-map-light.svg" alt="The commands by family: search without an index, search the index, code intelligence, maintenance, servers." width="880">
+</picture>
+<br><sub>The commands by family. The sections below are the reference.</sub>
+</p>
+
 ## Conventions
+
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="assets/diagram-exit-codes-dark.svg">
+<img src="assets/diagram-exit-codes-light.svg" alt="Exit codes: 0 results found, 1 no results, 2 error, 130 interrupted." width="880">
+</picture>
+<br><sub>Exit codes, as the first convention below states them.</sub>
+</p>
 
 - **Exit codes**: `0` results found, `1` no results, `2` error (bad arguments, unreadable index,
   invalid pattern, a `--root` that is not an existing directory, a search path that does not

@@ -1,4 +1,16 @@
+<!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner-glossary-dark.svg">
+<img src="docs/assets/banner-glossary-light.svg" alt="Glossary. What does each word of this codebase mean?" width="880">
+</picture>
+</p>
+
 # Glossary
+
+[Documentation](docs/README.md) &nbsp;·&nbsp; Previous: [Languages](docs/LANGUAGES.md)
+
+<!-- End of head. -->
 
 The words this codebase uses for its own concepts. One meaning each; code, docs and reviews use them
 the same way.

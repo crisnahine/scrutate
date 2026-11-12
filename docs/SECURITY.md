@@ -1,4 +1,18 @@
+<!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="assets/banner-security-dark.svg">
+<img src="assets/banner-security-light.svg" alt="Security. What can a hostile repository, query or client do?" width="880">
+</picture>
+</p>
+
 # Security assessment (0.1.0)
+
+[Documentation](README.md) &nbsp;·&nbsp; Previous: [Test results](TEST_RESULTS.md) &nbsp;·&nbsp; Next: [Traceability](TRACEABILITY.md)
+
+**Contents**: [Threat model](#threat-model) &nbsp;·&nbsp; [Controls and evidence](#controls-and-evidence) &nbsp;·&nbsp; [Known gaps and residual risks](#known-gaps-and-residual-risks) &nbsp;·&nbsp; [Reporting](#reporting)
+
+<!-- End of head. -->
 
 Scope: the `scrutate` binary (Engine A, Engine B, CLI, MCP server) and the Python bindings, as
 built from this repository on 2026-11-11. This is a self-assessment by the authors with the tests
@@ -12,6 +26,14 @@ integrity of the machine running the tool, (3) availability (no hangs or resourc
 hostile inputs). Attackers considered: a **hostile repository** (crafted files, names, symlinks,
 `.gitignore`, a corrupted or planted `.scrutate/` directory), a **hostile query** (patterns), and
 a **hostile MCP client** (malformed JSON-RPC, path escapes).
+
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="assets/diagram-trust-boundaries-dark.svg">
+<img src="assets/diagram-trust-boundaries-light.svg" alt="Trust boundaries: repository content, patterns, MCP requests and the .scrutate directory, with the controls on each boundary; no network." width="880">
+</picture>
+<br><sub>What crosses into scrutate, and the controls from the table below on each boundary. The network is not used.</sub>
+</p>
 
 ## Controls and evidence
 

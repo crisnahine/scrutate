@@ -1,4 +1,16 @@
+<!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="assets/banner-naming-dark.svg">
+<img src="assets/banner-naming-light.svg" alt="Naming. Why is it called scrutate, and how was that checked?" width="880">
+</picture>
+</p>
+
 # Project name: **Scrutate**
+
+[Documentation](README.md) &nbsp;·&nbsp; Previous: [Research](RESEARCH.md)
+
+<!-- End of head. -->
 
 *scrutate*: an English verb descended from Latin *scrūtor / scrūtārī*, "to search carefully,
 search into or out, examine thoroughly, investigate" (Lewis & Short, *A Latin Dictionary*, 1879,

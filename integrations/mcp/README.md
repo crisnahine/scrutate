@@ -1,4 +1,16 @@
+<!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="../../docs/assets/banner-mcp-dark.svg">
+<img src="../../docs/assets/banner-mcp-light.svg" alt="MCP server. How do I give an agent scrutate's tools?" width="880">
+</picture>
+</p>
+
 # Scrutate as an MCP server
+
+[Documentation](../../docs/README.md) &nbsp;·&nbsp; Previous: [Command line](../../docs/CLI.md) &nbsp;·&nbsp; Next: [VS Code](../vscode/README.md)
+
+<!-- End of head. -->
 
 `scrutate serve` speaks the Model Context Protocol over stdio (JSON-RPC 2.0): the handshake
 revisions 2024-11-05 / 2025-03-26 / 2025-06-18 / 2025-11-25, and revision 2026-07-28, which has

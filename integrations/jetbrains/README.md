@@ -1,4 +1,16 @@
+<!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="../../docs/assets/banner-jetbrains-dark.svg">
+<img src="../../docs/assets/banner-jetbrains-light.svg" alt="JetBrains IDEs. How do I run scrutate from a JetBrains IDE?" width="880">
+</picture>
+</p>
+
 # Scrutate in JetBrains IDEs
+
+[Documentation](../../docs/README.md) &nbsp;·&nbsp; Previous: [Neovim](../neovim/README.md) &nbsp;·&nbsp; Next: [GitHub Actions](../github/README.md)
+
+<!-- End of head. -->
 
 A dedicated plugin (IntelliJ Platform SDK, Gradle build) is not part of 0.1.0. What ships is an
 **External Tools** definition, which every JetBrains IDE supports without a plugin:

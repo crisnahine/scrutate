@@ -1,4 +1,18 @@
+<!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="assets/banner-traceability-dark.svg">
+<img src="assets/banner-traceability-light.svg" alt="Traceability. Which requirement is met, and what is the evidence?" width="880">
+</picture>
+</p>
+
 # Requirement traceability matrix
+
+[Documentation](README.md) &nbsp;·&nbsp; Previous: [Security](SECURITY.md) &nbsp;·&nbsp; Next: [Release readiness](RELEASE_READINESS.md)
+
+**Contents**: [2A. Engine A: universal instant search](#2a-engine-a-universal-instant-search) &nbsp;·&nbsp; [2B. Engine B: deep code intelligence](#2b-engine-b-deep-code-intelligence) &nbsp;·&nbsp; [2C. Unified query layer](#2c-unified-query-layer) &nbsp;·&nbsp; [3. Universal support](#3-universal-support) &nbsp;·&nbsp; [4. Extreme performance](#4-extreme-performance) &nbsp;·&nbsp; [5. World-class Rust engineering](#5-world-class-rust-engineering) &nbsp;·&nbsp; [6. Enterprise and future-proofing](#6-enterprise-and-future-proofing) &nbsp;·&nbsp; [7. Project identity](#7-project-identity) &nbsp;·&nbsp; [8. Actually build the product](#8-actually-build-the-product) &nbsp;·&nbsp; [9. Zero-gap quality assurance](#9-zero-gap-quality-assurance) &nbsp;·&nbsp; [10. Release gates (0.1.0)](#10-release-gates-010) &nbsp;·&nbsp; [12. Edge cases, reliability, ecosystem](#12-edge-cases-reliability-ecosystem) &nbsp;·&nbsp; [13. Hybrid Rust + Python stack](#13-hybrid-rust--python-stack) &nbsp;·&nbsp; [14. Benchmark leadership](#14-benchmark-leadership) &nbsp;·&nbsp; [Tally](#tally)
+
+<!-- End of head. -->
 
 Every requirement of the mission (sections 1 to 14), with its implementation, source location,
 verification method, evidence and status. Status words follow the mission's definitions:

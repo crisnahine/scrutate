@@ -1,4 +1,16 @@
+<!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="../../docs/assets/banner-github-dark.svg">
+<img src="../../docs/assets/banner-github-light.svg" alt="GitHub Actions. How do I run scrutate in a GitHub workflow?" width="880">
+</picture>
+</p>
+
 # GitHub Actions
+
+[Documentation](../../docs/README.md) &nbsp;·&nbsp; Previous: [JetBrains IDEs](../jetbrains/README.md) &nbsp;·&nbsp; Next: [pre-commit hook](../pre-commit/README.md)
+
+<!-- End of head. -->
 
 The action in `.github/actions/scrutate` downloads a release binary for the runner (Linux, macOS
 or Windows; x86_64 or arm64), checks it against the release's checksum, puts it on `PATH` and

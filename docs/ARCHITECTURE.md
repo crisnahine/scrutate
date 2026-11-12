@@ -1,4 +1,18 @@
+<!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="assets/banner-architecture-dark.svg">
+<img src="assets/banner-architecture-light.svg" alt="Architecture. How do the two engines work inside?" width="880">
+</picture>
+</p>
+
 # Architecture
+
+[Documentation](README.md) &nbsp;·&nbsp; Next: [Languages](LANGUAGES.md)
+
+**Contents**: [Engine A: universal instant search](#engine-a-universal-instant-search-cratesscrutatesrcinstantrs) &nbsp;·&nbsp; [Engine B: code intelligence](#engine-b-code-intelligence-indexrs-lexrs-parsers-langsrs-searchrs-intelrs) &nbsp;·&nbsp; [Unified layer](#unified-layer-opsrs-librs-clirs-mcprs-cratesscrutate-py) &nbsp;·&nbsp; [Models](#models-models) &nbsp;·&nbsp; [Design rules for the next decade](#design-rules-for-the-next-decade)
+
+<!-- End of head. -->
 
 Scrutate is one binary with two independent engines and a thin unifying layer.
 
@@ -20,6 +34,14 @@ Scrutate is one binary with two independent engines and a thin unifying layer.
 ```
 
 ## Engine A: universal instant search (`crates/scrutate/src/instant.rs`)
+
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="assets/diagram-engine-a-dark.svg">
+<img src="assets/diagram-engine-a-light.svg" alt="Engine A: the command line, the walk, the first read of each file, four ways to search a file, and the output." width="880">
+</picture>
+<br><sub>Engine A's path for one search. A file's first read picks how it is searched; the bullets below give each path's limits and measurements.</sub>
+</p>
 
 Built on the `grep-searcher`, `grep-regex`, `grep-matcher` and `ignore` crates, the published
 components ripgrep itself is assembled from (their crates.io pages describe them as ripgrep's
@@ -220,6 +242,14 @@ capabilities those crates do not provide rather than re-implementing what they a
 
 ## Engine B: code intelligence (`index.rs`, `lex.rs`, `parse.rs`, `langs.rs`, `search.rs`, `intel.rs`)
 
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="assets/diagram-engine-b-update-dark.svg">
+<img src="assets/diagram-engine-b-update-light.svg" alt="Engine B's update: walk, hash, parse and chunk; symbols and call edges go to SQLite, BM25 postings and vectors to a new segment, in one transaction." width="880">
+</picture>
+<br><sub>One index update, from the walk to the commit. Parsing, Storage and its Lifecycle below describe each step.</sub>
+</p>
+
 ### Parsing (`parse.rs`, `langs.rs`)
 Three tiers so every file yields something useful (see docs/LANGUAGES.md): tree-sitter grammars
 driven by a **data-driven rule registry** (per language: which node kinds are definitions, how the
@@ -325,6 +355,14 @@ folded, so two spellings of one accented name are one name.
   and `create_new`, so the index never writes through a link.
 
 ### Retrieval and ranking (`search.rs`, `semantic.rs`, `rank.rs`)
+
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="assets/diagram-ranked-query-dark.svg">
+<img src="assets/diagram-ranked-query-light.svg" alt="A ranked query: BM25 by field, exact lookup and semantic neighbours give candidates; 48 features each go through the LightGBM ranker." width="880">
+</picture>
+<br><sub>A ranked query: three sources of candidates, 48 features per candidate, one learned ranker.</sub>
+</p>
 A query produces candidates from three sources: field-weighted BM25 (name 10, qualified name 3,
 signature 3, docs 5, body 1, path 2), exact name/qualified-name lookup, and semantic nearest
 neighbours (the query is encoded into the same 256-d space as the chunks by a contrastively
@@ -346,6 +384,14 @@ decided by exact float64 products summed in a fixed order, and the lower cluster
 tie.
 
 ### Text index (`textindex.rs`)
+
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="assets/diagram-text-index-dark.svg">
+<img src="assets/diagram-text-index-light.svg" alt="The text index: trigrams and mask bytes per file in segments; a pattern becomes a trigram condition, the postings give candidate files, Engine A searches them." width="880">
+</picture>
+<br><sub>The text index names the files that can match; Engine A decides what matches.</sub>
+</p>
 The indexed counterpart of Engine A, for repeated grep-style queries on large trees (the job Zoekt
 and livegrep do). It covers exactly the files Engine A's default walk visits (same walker, same
 ignore rules) and stores, per file, the set of byte trigrams (ASCII case folded), as immutable
@@ -444,6 +490,14 @@ gives the same prefix. Files are written to a temporary name and renamed; an unr
 counts as empty. Eviction is by query file, least recently used first, above 128 MB in total.
 
 ## Unified layer (`ops.rs`, `lib.rs`, `cli.rs`, `mcp.rs`, `crates/scrutate-py`)
+
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="assets/diagram-front-ends-dark.svg">
+<img src="assets/diagram-front-ends-light.svg" alt="The CLI, Python bindings, MCP server, language server and watcher go through one engine to one .scrutate directory." width="880">
+</picture>
+<br><sub>Every front end goes through the same operations to one <code>.scrutate/</code> directory.</sub>
+</p>
 `find QUERY` chooses: regex-looking → Engine A; otherwise ranked search when an index exists or
 the repository is small enough to index on the spot; otherwise identifier grep. `grep --index` sends
 an Engine A query through the text index. Both engines stay

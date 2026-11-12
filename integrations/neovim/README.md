@@ -1,4 +1,16 @@
+<!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="../../docs/assets/banner-neovim-dark.svg">
+<img src="../../docs/assets/banner-neovim-light.svg" alt="Neovim. How do I use scrutate from Neovim?" width="880">
+</picture>
+</p>
+
 # Scrutate for Neovim
+
+[Documentation](../../docs/README.md) &nbsp;·&nbsp; Previous: [VS Code](../vscode/README.md) &nbsp;·&nbsp; Next: [JetBrains IDEs](../jetbrains/README.md)
+
+<!-- End of head. -->
 
 ```lua
 -- lazy.nvim

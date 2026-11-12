@@ -1,4 +1,16 @@
+<!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="../../docs/assets/banner-vscode-dark.svg">
+<img src="../../docs/assets/banner-vscode-light.svg" alt="VS Code. How do I use the language server in VS Code?" width="880">
+</picture>
+</p>
+
 # Scrutate for VS Code
+
+[Documentation](../../docs/README.md) &nbsp;·&nbsp; Previous: [MCP server](../mcp/README.md) &nbsp;·&nbsp; Next: [Neovim](../neovim/README.md)
+
+<!-- End of head. -->
 
 The extension starts `scrutate lsp` as a language server for the open folder, so **Go to
 Definition**, **Find All References**, **Go to Symbol in Workspace** and the **Outline** view work

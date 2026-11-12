@@ -1,4 +1,18 @@
+<!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="assets/banner-roadmap-dark.svg">
+<img src="assets/banner-roadmap-light.svg" alt="Roadmap. What is done, what is blocked and what is next?" width="880">
+</picture>
+</p>
+
 # Roadmap
+
+[Documentation](README.md) &nbsp;·&nbsp; Previous: [Dependencies](DEPENDENCIES.md) &nbsp;·&nbsp; Next: [Research](RESEARCH.md)
+
+**Contents**: [Done in this release](#done-in-this-release) &nbsp;·&nbsp; [Blocked: needs the repository published](#blocked-needs-the-repository-published) &nbsp;·&nbsp; [Next](#next)
+
+<!-- End of head. -->
 
 What was planned after 0.1.0, what this release already did, what cannot be done without
 publishing the repository, and what is next. Each item names the gap it closes in

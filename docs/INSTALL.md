@@ -1,4 +1,16 @@
+<!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="assets/banner-install-dark.svg">
+<img src="assets/banner-install-light.svg" alt="Install. How do I install, update and remove scrutate?" width="880">
+</picture>
+</p>
+
 # Installation, update, uninstallation
+
+[Documentation](README.md) &nbsp;·&nbsp; Next: [Command line](CLI.md)
+
+<!-- End of head. -->
 
 Scrutate is a single static-friendly binary plus an optional Python package. Nothing runs in the
 background and nothing phones home.
@@ -7,6 +19,14 @@ background and nothing phones home.
 
 A platform is declared supported only after its binary and wheel were built, installed and tested
 on it. Every row below names the evidence; `bench/results/platforms/` holds the logs.
+
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="assets/diagram-platforms-dark.svg">
+<img src="assets/diagram-platforms-light.svg" alt="Platforms: macOS arm64, Linux aarch64 and Linux x86_64 supported; macOS x86_64, Windows x86_64 and Windows ARM64 tested on CI runners, no wheel, not supported yet." width="880">
+</picture>
+<br><sub>A summary of the table below: three platforms supported, three tested on GitHub runners with no wheel yet.</sub>
+</p>
 
 | Platform | Binary | Wheels | Status | Evidence |
 |---|---|---|---|---|

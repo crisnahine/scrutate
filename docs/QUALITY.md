@@ -1,4 +1,18 @@
+<!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="assets/banner-quality-dark.svg">
+<img src="assets/banner-quality-light.svg" alt="Ranking quality. How good are ranked answers on code it was not fitted on?" width="880">
+</picture>
+</p>
+
 # Ranking quality (Engine B)
+
+[Documentation](README.md) &nbsp;·&nbsp; Previous: [Benchmarks](BENCHMARKS.md) &nbsp;·&nbsp; Next: [Test results](TEST_RESULTS.md)
+
+**Contents**: [Protocol](#protocol) &nbsp;·&nbsp; [Python, variant A: every docstring removed (MRR@10)](#python-variant-a-every-docstring-removed-mrr10) &nbsp;·&nbsp; [Python, variant B: first docstring sentence removed](#python-variant-b-first-docstring-sentence-removed) &nbsp;·&nbsp; [Other languages](#other-languages) &nbsp;·&nbsp; [What weighing type answers cost](#what-weighing-type-answers-cost) &nbsp;·&nbsp; [The sealed group](#the-sealed-group) &nbsp;·&nbsp; [What these numbers say and do not say](#what-these-numbers-say-and-do-not-say) &nbsp;·&nbsp; [int8 vectors (schema 13)](#int8-vectors-schema-13) &nbsp;·&nbsp; [Semantic model and ranker](#semantic-model-and-ranker) &nbsp;·&nbsp; [Reproduce](#reproduce)
+
+<!-- End of head. -->
 
 How good are the answers, as opposed to how fast? Numbers below are produced by
 `bench/retrain_ranker.sh` (its `eval` and `compare` stages; logs `eval.log`, `eval_python.log` and

@@ -1,4 +1,16 @@
+<!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="assets/banner-release-readiness-dark.svg">
+<img src="assets/banner-release-readiness-light.svg" alt="Release readiness. Is 0.1.0 ready, and what is still missing?" width="880">
+</picture>
+</p>
+
 # Release-readiness assessment: Scrutate 0.1.0
+
+[Documentation](README.md) &nbsp;·&nbsp; Previous: [Traceability](TRACEABILITY.md) &nbsp;·&nbsp; Next: [Competitive position](COMPETITIVE.md)
+
+<!-- End of head. -->
 
 **Verdict: 0.1.0 is a verified first release for developer use on the platforms INSTALL.md
 declares (macOS arm64, Linux aarch64, Linux x86_64). It is not declared production-ready for mission-critical

@@ -1,4 +1,18 @@
+<!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="assets/banner-releasing-dark.svg">
+<img src="assets/banner-releasing-light.svg" alt="Releasing. Which steps does a release take, in order?" width="880">
+</picture>
+</p>
+
 # Releasing
+
+[Documentation](README.md) &nbsp;·&nbsp; Previous: [Contributing](../CONTRIBUTING.md) &nbsp;·&nbsp; Next: [Delivery index](DELIVERY.md)
+
+**Contents**: [1. Version and date](#1-version-and-date) &nbsp;·&nbsp; [2. Benchmarks on the release binary](#2-benchmarks-on-the-release-binary) &nbsp;·&nbsp; [3. Generated documents](#3-generated-documents) &nbsp;·&nbsp; [4. Documents that carry the numbers by hand](#4-documents-that-carry-the-numbers-by-hand) &nbsp;·&nbsp; [5. Quality gates](#5-quality-gates) &nbsp;·&nbsp; [6. Platform checks and artifacts](#6-platform-checks-and-artifacts) &nbsp;·&nbsp; [7. What a published release adds](#7-what-a-published-release-adds)
+
+<!-- End of head. -->
 
 The steps a release takes here, in order. The list comes from what the 0.1.0 release touched
 (`git log --stat` on its last commits) and from what the scripts refuse. Tick a step when its

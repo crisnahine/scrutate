@@ -1,4 +1,16 @@
+<!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="../../docs/assets/banner-precommit-dark.svg">
+<img src="../../docs/assets/banner-precommit-light.svg" alt="pre-commit hook. How do I stop a commit that adds duplicate functions?" width="880">
+</picture>
+</p>
+
 # pre-commit hook
+
+[Documentation](../../docs/README.md) &nbsp;·&nbsp; Previous: [GitHub Actions](../github/README.md)
+
+<!-- End of head. -->
 
 Fail a commit when the repository holds exact duplicate functions, and list them. `--min-tokens`
 is the smallest function that counts, in distinct tokens of its body; `--threshold` below 1 also
