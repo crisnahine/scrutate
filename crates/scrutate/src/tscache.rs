@@ -1,8 +1,9 @@
 //! Per-file results of `tsquery`, so files whose content did not change are not parsed again.
 //!
 //! One file per (scrutate version, language, query text, searched paths) under
-//! `.scrutate/tsquery/`, mapping a file's content hash to that file's captures (paths are filled
-//! in on use). A complete run keeps
+//! `.scrutate/tsquery/`, mapping a file's content hash and name (`key`) to that file's captures
+//! (paths are filled in on use). The content hash is the one the code index records, so a file
+//! whose stat the code index says is current is not read at all on a hit. A complete run keeps
 //! only the entries it used, so a file holds the current tree's results; the files themselves are
 //! evicted least recently used first once together they exceed `MAX_BYTES`. Files are replaced by
 //! rename, so a reader or a crash never sees half of one; anything unreadable counts as empty.
@@ -32,6 +33,13 @@ pub fn hash(parts: &[&[u8]]) -> Key {
     let mut out = [0u8; 16];
     h.finalize_variable(&mut out).expect("blake2b finalize");
     out
+}
+
+/// The key of one file's captures: the content hash the code index records for such bytes, and
+/// the file name, which with the content decides the file's language.
+pub fn key(content_hash: &str, path: &str) -> Key {
+    let name = path.rsplit('/').next().unwrap_or(path).to_lowercase();
+    hash(&[content_hash.as_bytes(), name.as_bytes()])
 }
 
 pub struct Cache {

@@ -303,18 +303,6 @@ impl Searcher {
 
     // ------------------------------------------------------------ candidates + features
     pub fn candidates(&mut self, query: &str, use_literal: bool) -> Result<Candidates> {
-        match self.candidates_once(query, use_literal) {
-            // damage a query finds in a segment: the sources are intact, index them again
-            Err(e) if crate::index::error_is_corruption(&e) => {
-                eprintln!("[scrutate] index unreadable ({e:#}); rebuilding");
-                self.ix.rebuild()?;
-                self.candidates_once(query, use_literal)
-            }
-            other => other,
-        }
-    }
-
-    fn candidates_once(&mut self, query: &str, use_literal: bool) -> Result<Candidates> {
         let q = QueryInfo::parse(query);
         self.sync()?;
         let keys = lex_keys(&q);

@@ -19,7 +19,7 @@ impl Repo {
             fs::write(&p, body).unwrap();
         }
         let root = fs::canonicalize(&root).unwrap();
-        let (s, _) = scrutate::open_updated(&root, true).unwrap();
+        let s = scrutate::open_updated(&root, true).unwrap().0.into_searcher();
         Repo { root, s }
     }
 

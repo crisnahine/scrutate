@@ -15,6 +15,7 @@ use termcolor::{Color, ColorChoice, ColorSpec, WriteColor};
 use crate::fmt::{fmt_hits, hits_json};
 use crate::instant::{self, Case, Files, Mode, Output, Paths, Pattern, Query, Record, Report};
 use crate::ops::Op;
+use crate::stores::Writer;
 use crate::text::query_words;
 
 pub use crate::ops::SCHEMA;
@@ -653,7 +654,7 @@ fn by_content(id: &str) -> Vec<&'static str> {
     crate::langs::BY_CONTENT.iter().filter(|(_, ids)| ids.contains(&id)).map(|(e, _)| *e).collect()
 }
 
-fn open_fresh(root: &Path) -> Result<crate::search::Searcher> {
+fn open_fresh(root: &Path) -> Result<crate::Repo> {
     let (s, st) = crate::open_updated(root, false)?;
     if st.files_changed > 0 || st.files_removed > 0 {
         eprintln!("[scrutate] indexed {} changed files ({} chunks, {:.1}s)", st.files_changed, st.chunks, st.seconds);
@@ -1142,16 +1143,16 @@ pub fn run() -> Result<i32> {
             grep_command(q, f, GrepOutput { files_with_matches, count, sort, json, stats, symbols, root: cli.root, no_color, indexed: index, update, under })
         }
         Cmd::Index { force, text, no_text } => {
-            let progress = std::io::stderr().is_terminal();
-            if !text {
-                let mut repo = crate::Repo::open_to_update(&cli.root, force)?;
-                repo.ix.progress = true;
-                let st = repo.update(force)?;
+            let w = match (text, no_text) {
+                (true, _) => Writer::IndexText,
+                (_, true) => Writer::IndexCode,
+                _ => Writer::Index,
+            };
+            let up = crate::stores::update(&cli.root, w, force)?;
+            if let Some(st) = up.code {
                 println!("{} files, {} changed, {} chunks, semantic={}, {:.1}s", st.files_total, st.files_changed, st.chunks, st.semantic, st.seconds);
             }
-            if !no_text {
-                let root = std::fs::canonicalize(&cli.root).unwrap_or_else(|_| cli.root.clone());
-                let t = crate::textindex::update(&root, force, progress)?;
+            if let Some(t) = up.text {
                 println!(
                     "text index: {} files, {} changed, {} removed, {} segment(s), {:.1} MB, {:.1}s",
                     t.files,
@@ -1190,7 +1191,7 @@ pub fn run() -> Result<i32> {
             let mut hits: Vec<(crate::search::Hit, usize)> = Vec::new();
             for (i, (root, _)) in roots.iter().enumerate() {
                 let mut s = open_fresh(root)?;
-                let part = if alt.is_empty() { s.search(&query, k, true)? } else { s.search_many(&qs, k, true)? };
+                let part = s.recovering(|s| if alt.is_empty() { s.search(&query, k, true) } else { s.search_many(&qs, k, true) })?;
                 hits.extend(part.into_iter().map(|h| (h, i)));
             }
             let shown = |(h, i): &(crate::search::Hit, usize)| {
@@ -1364,9 +1365,8 @@ pub fn run() -> Result<i32> {
                         &root,
                         &NEVER,
                         || eprintln!("[scrutate] watching {}", root.display()),
-                        unwinding(|| {
-                            s.lock().unwrap_or_else(|p| p.into_inner()).update(false)?;
-                            crate::watch::update_text(&root)?;
+                        unwinding(|changes| {
+                            s.lock().unwrap_or_else(|p| p.into_inner()).update_stores(Writer::Watch, changes, false)?;
                             Ok(())
                         }),
                     );
@@ -1454,7 +1454,7 @@ pub fn run() -> Result<i32> {
 fn run_op(root: &Path, op: Op, json: bool, (max_bytes, offset): (usize, usize), outside: Option<&str>) -> Result<i32> {
     use crate::ops::Answer;
     let mut s = open_fresh(root)?;
-    let answer = match (crate::ops::run(&mut s, &op), outside) {
+    let answer = match (s.recovering(|s| crate::ops::run(s, &op)), outside) {
         (Err(e), Some(why)) => anyhow::bail!("{e:#} ({why})"),
         (answer, _) => answer?,
     };
@@ -1488,9 +1488,9 @@ fn watch_command(root: &Path) -> Result<i32> {
     let stop = Arc::new(AtomicBool::new(false));
     interrupt::install(Arc::clone(&stop));
     let mut repo = crate::Repo::open(&root)?;
-    let update = || -> Result<()> {
-        let st = repo.update(false)?;
-        let text = crate::watch::update_text(&root)?;
+    let update = |changes: &crate::stores::Changes| -> Result<()> {
+        let up = repo.update_stores(Writer::Watch, changes, false)?;
+        let (st, text) = (up.code.unwrap_or_default(), up.text);
         let text_changed = text.as_ref().map(|t| t.files_changed + t.files_removed).unwrap_or(0);
         if st.files_changed + st.files_removed + text_changed > 0 {
             eprintln!(
@@ -1508,9 +1508,9 @@ fn watch_command(root: &Path) -> Result<i32> {
 }
 
 /// A watch update whose panic, which the panic hook prints, becomes an error, so the watch goes on.
-fn unwinding(mut update: impl FnMut() -> Result<()>) -> impl FnMut() -> Result<()> {
-    move || {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(&mut update))
+fn unwinding(mut update: impl FnMut(&crate::stores::Changes) -> Result<()>) -> impl FnMut(&crate::stores::Changes) -> Result<()> {
+    move |changes| {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| update(changes)))
             .unwrap_or_else(|_| Err(anyhow::anyhow!("internal failure (a bug: please report it); the next change updates again")))
     }
 }
@@ -1589,7 +1589,7 @@ fn indexed_candidates(root: &Path, q: &Query, update: bool, under: Option<&str>)
         }
     }
     if update {
-        crate::textindex::update(&root, false, false)?;
+        crate::stores::update(&root, Writer::GrepUpdate, false)?;
     }
     let ti = crate::textindex::TextIndex::open(&root)?
         .ok_or_else(|| anyhow::anyhow!("no text index in {}; build it with `scrutate index --text` (or add --update)", root.display()))?;
@@ -1980,7 +1980,7 @@ fn find_command(root: &Path, query: &str, k: usize, json: bool, no_color: bool) 
     }
     if has_index || small_repo() {
         let mut s = open_fresh(root)?;
-        let hits = s.search(query, k, true)?;
+        let hits = s.recovering(|s| s.search(query, k, true))?;
         print_hits(&hits, &[query.to_string()], false, json)?;
         return Ok(if hits.is_empty() { 1 } else { 0 });
     }
@@ -2050,7 +2050,7 @@ fn batch_command(root: &Path, file: &Path, features: bool, timing: bool) -> Resu
         let mut rec = serde_json::Map::new();
         rec.insert("query".into(), serde_json::Value::String(query.clone()));
         if features {
-            let c = s.candidates(&query, true)?;
+            let c = s.recovering(|s| s.candidates(&query, true))?;
             let scores = s.score(&c.x)?;
             let hits = s.hits(&c, &scores, k, false)?;
             rec.insert("hits".into(), hits_json(&hits));
@@ -2070,7 +2070,7 @@ fn batch_command(root: &Path, file: &Path, features: bool, timing: bool) -> Resu
         } else {
             let mut qs = vec![query.clone()];
             qs.extend(alt.iter().cloned());
-            let hits = if alt.is_empty() { s.search(&query, k, false)? } else { s.search_many(&qs, k, false)? };
+            let hits = s.recovering(|s| if alt.is_empty() { s.search(&query, k, false) } else { s.search_many(&qs, k, false) })?;
             rec.insert("hits".into(), hits_json(&hits));
         }
         if timing {
@@ -2209,7 +2209,7 @@ mod tests {
                     &root,
                     &stop,
                     || {},
-                    super::unwinding(|| {
+                    super::unwinding(|_| {
                         let n = calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                         if n == 2 {
                             panic!("an update that panics");

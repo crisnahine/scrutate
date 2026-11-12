@@ -480,7 +480,7 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
             let (caps, stopped) = cut(caps, *limit, RAISE_LIMIT);
             Answer::Captures(caps, stopped)
         }
-        Op::Reindex { force } => Answer::Reindexed(s.ix.update(*force)?),
+        Op::Reindex { .. } => bail!("reindex keeps every store current: run it through Repo"),
     })
 }
 

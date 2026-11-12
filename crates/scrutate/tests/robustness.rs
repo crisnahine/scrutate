@@ -358,15 +358,13 @@ fn corrupted_index_is_detected_and_rebuilt() {
     let bytes = fs::read(&ids).unwrap();
     fs::write(&ids, &bytes[..bytes.len() / 2]).unwrap();
     {
-        let mut ix = r.index();
-        let names = recover_and_names(&mut ix);
+        let names = recover_and_names(&r.root);
         assert_eq!(names.len(), 30, "rebuilt after truncated segment");
     }
     // 2. a segment directory deleted entirely
     fs::remove_dir_all(&seg).ok();
     {
-        let mut ix = r.index();
-        let names = recover_and_names(&mut ix);
+        let names = recover_and_names(&r.root);
         assert_eq!(names.len(), 30, "rebuilt after missing segment");
     }
     // 3. garbage written over the database header
@@ -379,16 +377,14 @@ fn corrupted_index_is_detected_and_rebuilt() {
     let _ = fs::remove_file(dir.join("index.db-wal"));
     let _ = fs::remove_file(dir.join("index.db-shm"));
     {
-        let mut ix = r.index();
-        let names = recover_and_names(&mut ix);
+        let names = recover_and_names(&r.root);
         assert_eq!(names.len(), 30, "rebuilt after corrupted database header");
     }
     // 4. database replaced by a non-database file
     fs::write(&db, b"this is not a database at all").unwrap();
     let _ = fs::remove_file(dir.join("index.db-wal"));
     {
-        let mut ix = r.index();
-        let names = recover_and_names(&mut ix);
+        let names = recover_and_names(&r.root);
         assert_eq!(names.len(), 30, "rebuilt after bogus database file");
     }
     // 5. a corrupted vector/posting file with a valid header but garbage content
@@ -401,21 +397,19 @@ fn corrupted_index_is_detected_and_rebuilt() {
     }
     fs::write(&ptr0, &bytes).unwrap();
     {
-        let mut ix = r.index();
-        let names = recover_and_names(&mut ix);
+        let names = recover_and_names(&r.root);
         assert_eq!(names.len(), 30, "rebuilt or survived garbage postings");
     }
 }
 
-/// Open the store (which validates segments); on failure the index must rebuild itself.
-fn recover_and_names(ix: &mut Index) -> Vec<String> {
-    eprintln!("recovering: {:?}", ix.segments());
-    ix.update(false).unwrap();
-    let _ = ix.lex().expect("store opens after recovery");
-    // a search through the store must work too
-    let n = ix.lex().unwrap().n_alive;
+/// Open the repository as a front end does and read the segments (which validates them): damage
+/// either meets is rebuilt from the sources.
+fn recover_and_names(root: &Path) -> Vec<String> {
+    let mut repo = scrutate::Repo::open(root).unwrap();
+    repo.update(false).unwrap();
+    let n = repo.recovering(|s| Ok(s.ix.lex()?.n_alive)).expect("store opens after recovery");
     assert!(n > 0);
-    symbol_names(ix)
+    symbol_names(&repo.ix)
 }
 
 // ------------------------------------------------------------------------- concurrency

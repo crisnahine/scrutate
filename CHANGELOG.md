@@ -655,6 +655,13 @@ First release.
   `SCRUTATE_INDEX_EXCLUDE_DIRS`, ripgrep without its configuration), cuts the same chunks, keeps
   the lower index at the 200-candidate cut and refuses `read()` paths outside the repository;
   the parity check fails on any difference.
+- One module, `stores.rs`, keeps every store under `.scrutate/` current: callers name a change
+  set and never a store. The MCP and `batch` `reindex` and the bindings' `index()` now bring the
+  text index up to date too when there is one, so `grep --index` finds what they indexed; they
+  never make one. The watcher hands its file list to the module as an argument, and damage to
+  either index is recovered by one rule, the language server's included.
+- `tsquery` keys its cache by the content hash the code index records, so a warm run reads no
+  file whose stat the index holds as current. Files an earlier build cached are parsed once more.
 
 ### Product
 - `[index] exclude_dirs` is read from the `.scrutate.toml` at the root of the index (or

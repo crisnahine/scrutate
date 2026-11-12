@@ -78,9 +78,15 @@ mean that definition and no other of the same name (`intel::location`).
 **Budget**: the size limit of an answer as text (`Answer::text_within`). A cut answer keeps whole
 items and ends with how many are left and the `offset` that continues it.
 
-**Repo**: an open repository (`scrutate::Repo`): the searcher on its index plus the rules for
-keeping the index usable (bring it up to date, rebuild it when its database is damaged). Front ends
-that stay open (the MCP server, the Python bindings, `watch`) hold one.
+**Repo**: an open repository (`scrutate::Repo`, in `stores.rs`): the searcher on its index plus
+the stores kept current around it. Front ends that stay open (the MCP server, the language server,
+the Python bindings, `watch`) hold one.
+
+**Stores**: the derived data under `.scrutate/` (the code index, the text index, the `tsquery`
+cache) and the one module that keeps them current (`stores.rs`). A caller names a **change set**
+(`stores::Changes`: every file, or the files a watch burst names) and what it does
+(`stores::Writer`), never a store; the module holds the rule per operation for when to look and
+the one recovery rule for damage.
 
 **Model set**: the vector model, the ranker and the feature list the ranker reads
 (`models::ModelSet`), each loaded on its first use. The index stores the vector model's

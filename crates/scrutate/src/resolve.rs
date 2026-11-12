@@ -3964,6 +3964,7 @@ mod tests {
             std::fs::write(f, body).unwrap();
         }
         let (s, _) = crate::open_updated(&root, false).unwrap();
+        let s = s.into_searcher();
         (root, s)
     }
 

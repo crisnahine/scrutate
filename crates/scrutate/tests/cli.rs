@@ -2112,6 +2112,25 @@ fn tsquery_cache_output_equals_a_fresh_parse() {
     assert_eq!(r.run(&sub), r.run(&[&sub[..], &["--no-cache"]].concat()));
 }
 
+/// The code index's record of a file whose stat it holds as current names the cached captures,
+/// and the file is not read: shown with a record made to look current for other bytes.
+#[test]
+fn tsquery_takes_the_content_hash_the_code_index_records_for_a_current_file() {
+    let r = Repo::new("tscache_index");
+    r.write("a.py", b"def one():\n    return 1\n");
+    assert_eq!(r.run(&["index", "--no-text"]).0, 0);
+    let q = "(function_definition name: (identifier) @n)";
+    assert_eq!(r.run(&["tsquery", "python", q]).1, "a.py:1:5  @n (identifier)  one\n");
+    r.write("a.py", b"def two():\n    return 2\n");
+    let md = fs::metadata(r.root.join("a.py")).unwrap();
+    let ix = scrutate::index::Index::open(&fs::canonicalize(&r.root).unwrap(), scrutate::models::ModelSet::none()).unwrap();
+    let s = scrutate::index::Stat::of(&md);
+    ix.damage_for_tests(&format!("UPDATE files SET size={}, mtime_ns={}, ctime_ns={} WHERE path='a.py'", s.size, s.mtime, s.ctime)).unwrap();
+    drop(ix);
+    assert_eq!(r.run(&["tsquery", "python", q]).1, "a.py:1:5  @n (identifier)  one\n", "the file was read");
+    assert_eq!(r.run(&["tsquery", "python", q, "--no-cache"]).1, "a.py:1:5  @n (identifier)  two\n");
+}
+
 #[test]
 fn tsquery_on_a_single_file() {
     let r = python_repo("tsqfile");

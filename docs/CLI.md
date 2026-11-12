@@ -503,7 +503,8 @@ its last group with a `note:` line (`"note"` in JSON). An invalid pattern is an 
 - `structural_search` refuses an empty query, a query without a `@capture` and an unknown
   predicate, as `tsquery` does.
 - `reindex` takes `force` (boolean): every file is read again, also one whose size and
-  modification time did not change, and a damaged index is rebuilt.
+  modification time did not change, and a damaged index is rebuilt. It brings the text index
+  up to date too when there is one, so `grep --index` sees what it indexed; it never makes one.
 - `serve --structured` (`SCRUTATE_MCP_STRUCTURED=1`) adds an `outputSchema` to every tool and
   `structuredContent` to every result, beside its text: `{"schema": 1, "complete": true,
   "result": ...}`, where `result` is what the matching CLI command prints with `--json`. When the
@@ -618,7 +619,10 @@ the same time in that process.
 
 ### `tsquery` cache
 Each file's captures are kept in `--root`/.scrutate/tsquery/, one file per (scrutate version,
-language, query text, searched paths), keyed by a hash of the file's content. A file whose content
+language, query text, searched paths), keyed by a hash of the file's content and its name. The
+hash is the one the code index records, so with an index in `--root` a file whose size,
+modification time and change time the index holds as current is not read when its captures are
+cached. A file whose content
 was seen before is not parsed again; the output is byte-identical to `--no-cache`, which parses everything and
 leaves the cache alone. A run that visits every file keeps only the entries it used, so edited and
 deleted files do not accumulate. The directory is bounded at 128 MB: beyond it the least recently

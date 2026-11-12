@@ -280,14 +280,20 @@ pub fn tsquery_each(
         bail!("unknown predicate #{} (supported: #eq?, #match?, #any-of? and their not- and any- forms)", p.operator);
     }
     let names: Vec<String> = q.capture_names().iter().map(|n| n.to_string()).collect();
-    let mut files: Vec<(PathBuf, String, String)> = Vec::new();
+    // (path, path from its root, path shown, the code index's hash of it when its stat is current)
+    let mut files: Vec<(PathBuf, String, String, Option<String>)> = Vec::new();
+    // the code index's record saves reading a file whose captures are cached
+    let recorded = cache_root.map(crate::stores::recorded).unwrap_or_default();
+    let top = cache_root.filter(|_| !recorded.is_empty()).and_then(|r| std::fs::canonicalize(r).ok());
     for root in roots {
+        let under = top.as_ref().and_then(|t| std::fs::canonicalize(root).ok()?.strip_prefix(t).ok().map(|p| crate::instant::slashed(p.to_string_lossy())));
         let mut wb = ignore::WalkBuilder::new(root);
         wb.hidden(true).git_ignore(true).add_custom_ignore_filename(crate::instant::RGIGNORE).sort_by_file_path(|a, b| a.cmp(b));
         for entry in wb.build().flatten() {
-            if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) || entry.metadata().map_or(true, |m| m.len() > crate::index::MAX_FILE_BYTES) {
+            if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
                 continue;
             }
+            let Some(md) = entry.metadata().ok().filter(|m| m.len() <= crate::index::MAX_FILE_BYTES) else { continue };
             let path = entry.path();
             let rel = crate::instant::slashed(path.strip_prefix(root).unwrap_or(path).to_string_lossy());
             // a root that is the file itself: report it as given (the extension check needs a name)
@@ -302,7 +308,11 @@ pub fn tsquery_each(
                 } else {
                     rel.clone()
                 };
-                files.push((path.to_path_buf(), rel, shown));
+                let known = under.as_ref().and_then(|u| {
+                    let (stat, hash) = recorded.get(&if u.is_empty() { rel.clone() } else { format!("{u}/{rel}") })?;
+                    (crate::index::Stat::of(&md) == *stat).then(|| hash.clone())
+                });
+                files.push((path.to_path_buf(), rel, shown, known));
             }
         }
     }
@@ -328,19 +338,28 @@ pub fn tsquery_each(
                     let ok = parser.set_language(language_ref).is_ok();
                     (parser, ok, tx.clone())
                 },
-                |(parser, ok, tx), (i, (path, rel, shown))| {
+                |(parser, ok, tx), (i, (path, rel, shown, known))| {
                     if stop_ref.load(std::sync::atomic::Ordering::Relaxed) {
                         return;
                     }
                     let mut out = Vec::new();
                     let mut key = None;
                     let mut complete = true;
+                    let hit = |key: Option<Key>| {
+                        key.and_then(|k| cached.and_then(|c| c.get(&k))).map(|h| h.iter().map(|c| Capture { path: shown.clone(), ..c.clone() }).collect())
+                    };
+                    // an entry is stored only for content of this language, so a hit needs no read
+                    let k = known.as_deref().and_then(|h| cached.map(|_| crate::tscache::key(h, rel)));
+                    if let Some(caps) = hit(k) {
+                        let _ = tx.send((i, k, caps, true));
+                        return;
+                    }
                     if *ok {
-                        if let Some(src) = std::fs::read(path).ok().and_then(|raw| crate::index::decode_source(&raw).map(|t| t.into_owned())) {
+                        let raw = std::fs::read(path).ok();
+                        if let Some((raw, src)) = raw.as_deref().and_then(|raw| Some((raw, crate::index::decode_source(raw)?.into_owned()))) {
                             if crate::parse::spec_for(rel, &src).map(|s| s.id) == Some(spec.id) {
-                                key = cached.map(|_| crate::tscache::hash(&[src.as_bytes()]));
-                                if let Some(hit) = key.and_then(|k| cached.and_then(|c| c.get(&k))) {
-                                    let caps = hit.iter().map(|c| Capture { path: shown.clone(), ..c.clone() }).collect();
+                                key = cached.map(|_| crate::tscache::key(&crate::index::content_hash(raw), rel));
+                                if let Some(caps) = hit(key) {
                                     let _ = tx.send((i, key, caps, true));
                                     return;
                                 }

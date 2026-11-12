@@ -899,6 +899,24 @@ pub fn dir_of(root: &Path) -> PathBuf {
     root.join(".scrutate").join("text")
 }
 
+/// Whether `root` has a text index (built, of any format).
+pub fn exists(root: &Path) -> bool {
+    dir_of(root).join("manifest.json").exists()
+}
+
+/// A text index whose files are not what an update wrote: an update met it and stopped, so the
+/// caller can build the index again (`stores`).
+#[derive(Debug)]
+pub struct Damaged(pub anyhow::Error);
+
+impl std::fmt::Display for Damaged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:#}", self.0)
+    }
+}
+
+impl std::error::Error for Damaged {}
+
 fn read_manifest(dir: &Path) -> Result<Option<Manifest>> {
     let p = dir.join("manifest.json");
     match std::fs::read(&p) {
@@ -1091,27 +1109,18 @@ fn update_with(root: &Path, force: bool, progress: bool, only: Option<&[String]>
     crate::index::write_gitignore(&root.join(".scrutate"))?;
     let lock = File::options().create(true).truncate(false).write(true).open(dir.join("lock"))?;
     lock_exclusive(&lock)?;
-    let mut damaged = false;
     let old = match read_manifest(&dir) {
         _ if force => None,
-        // a manifest a crash cut short is rebuilt as a damaged segment is; one of a newer scrutate is refused
-        Err(e) if e.downcast_ref::<serde_json::Error>().is_some() => {
-            eprintln!("[scrutate] text index damaged ({e:#}); rebuilding");
-            damaged = true;
-            None
-        }
+        // a manifest a crash cut short is damage, as a damaged segment is; one of a newer scrutate is refused
+        Err(e) if e.downcast_ref::<serde_json::Error>().is_some() => return Err(Damaged(e).into()),
         m => m?,
     };
     let mut segs: Vec<Segment> = match &old {
-        Some(m) => m.segments.iter().map(|s| Segment::open(&dir, &s.name, &s.live)).collect::<Result<_>>().unwrap_or_else(|e| {
-            eprintln!("[scrutate] text index damaged ({e:#}); rebuilding");
-            damaged = true;
-            Vec::new()
-        }),
+        Some(m) => m.segments.iter().map(|s| Segment::open(&dir, &s.name, &s.live)).collect::<Result<_>>().map_err(Damaged)?,
         None => Vec::new(),
     };
-    // a new or rebuilt index needs every file
-    let only = only.filter(|_| old.is_some() && !damaged);
+    // a new index needs every file
+    let only = only.filter(|_| old.is_some());
     let generation = old.as_ref().map(|m| m.generation).unwrap_or(0) + 1;
     let live_name = format!("live-{generation:08}.bin");
     let files = match only {
@@ -1205,11 +1214,7 @@ fn update_with(root: &Path, force: bool, progress: bool, only: Option<&[String]>
             segs.remove(largest)
         });
         // the merge slices the posting data with the stored offsets
-        if let Err(e) = segs.iter().try_for_each(|s| s.validate(true)) {
-            eprintln!("[scrutate] text index damaged ({e:#}); rebuilding");
-            drop((segs, kept, lock));
-            return update_with(root, true, progress, None);
-        }
+        segs.iter().try_for_each(|s| s.validate(true)).map_err(Damaged)?;
         let merged_live: usize = segs.iter().map(|s| (0..s.ndocs).filter(|&d| s.is_live(d)).count()).sum();
         let name = format!("s{:08}", next_segment_number(&dir)?);
         merge_segments(&dir.join(&name), &segs.iter().collect::<Vec<_>>())?;

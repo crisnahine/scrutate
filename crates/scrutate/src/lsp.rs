@@ -5,7 +5,6 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex, MutexGuard};
 
 use anyhow::{bail, Context, Result};
@@ -16,7 +15,7 @@ use crate::names::Names;
 use crate::search::Searcher;
 use crate::text::name_key;
 
-type Shared = Arc<Mutex<Option<Searcher>>>;
+type Shared = Arc<Mutex<Option<crate::Repo>>>;
 
 const MAX_MESSAGE: usize = 256 << 20;
 
@@ -24,15 +23,13 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|p| p.into_inner())
 }
 
-/// Put a fresh index in place of a damaged one. The caller has closed its own connection; the
-/// readers' one closes here, and requests wait on the lock until the new index is there.
-fn replace_damaged(shared: &Shared, root: &Path) {
-    let mut g = lock(shared);
-    *g = None;
-    crate::index::wipe_index(root);
-    match crate::open_updated(root, true) {
-        Ok((s, _)) => *g = Some(s),
-        Err(e) => eprintln!("scrutate: index rebuild failed: {e:#}"),
+/// Have the open repository build its damaged index again (`Repo::recover`); requests wait on the
+/// lock until the new index is there.
+fn recover(shared: &Shared, why: &anyhow::Error) {
+    if let Some(repo) = lock(shared).as_mut() {
+        if let Err(e) = repo.recover(why) {
+            eprintln!("scrutate: index rebuild failed: {e:#}");
+        }
     }
 }
 
@@ -332,8 +329,8 @@ struct Server {
     /// open documents by repository-relative path (by URI when outside the root)
     docs: HashMap<String, String>,
     saves: Option<mpsc::Sender<()>>,
-    /// a request met a damaged database: the save worker replaces the index
-    damaged: Arc<AtomicBool>,
+    /// what a request met in a damaged database: the save worker has the index built again
+    damaged: Arc<Mutex<Option<anyhow::Error>>>,
     initialized: bool,
     shutdown: bool,
 }
@@ -392,7 +389,7 @@ impl Server {
             }
             // another process's first build: read what it commits as it commits it
             let opened = crate::open_updated(&root, false).or_else(|e| match e.is::<crate::index::BeingBuilt>() {
-                true => crate::open(&root).map(|s| (s, Default::default())),
+                true => crate::Repo::open(&root).map(|s| (s, Default::default())),
                 false => Err(e),
             });
             match opened {
@@ -439,9 +436,9 @@ impl Server {
                 let mut said_newer = false;
                 while rx.recv().is_ok() {
                     while rx.try_recv().is_ok() {} // one update covers every save queued meanwhile
-                    if damaged.swap(false, Ordering::Relaxed) {
+                    if let Some(why) = lock(&damaged).take() {
                         ix = None;
-                        replace_damaged(&shared, &root);
+                        recover(&shared, &why);
                         continue;
                     }
                     if ix.is_none() {
@@ -452,7 +449,7 @@ impl Server {
                     match ix.as_mut().and_then(|ix| ix.update(false).err()) {
                         Some(e) if crate::index::error_is_corruption(&e) => {
                             ix = None;
-                            replace_damaged(&shared, &root);
+                            recover(&shared, &e);
                         }
                         // an index a newer scrutate built is not updated: said once, not per save
                         Some(e) if e.downcast_ref::<crate::index::Newer>().is_some() => {
@@ -522,7 +519,7 @@ impl Server {
             f(s).map_err(|e| {
                 if crate::index::error_is_corruption(&e) {
                     // the index is a cache: the save worker builds it again
-                    self.damaged.store(true, Ordering::Relaxed);
+                    *lock(&self.damaged) = Some(e);
                     if let Some(tx) = &self.saves {
                         let _ = tx.send(());
                     }
@@ -722,7 +719,7 @@ pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
         searcher: Arc::new(Mutex::new(None)),
         docs: HashMap::new(),
         saves: None,
-        damaged: Arc::new(AtomicBool::new(false)),
+        damaged: Arc::default(),
         initialized: false,
         shutdown: false,
     };
@@ -850,7 +847,7 @@ mod tests {
         let shared: Shared = Arc::new(Mutex::new(Some(crate::open_updated(&root, false).unwrap().0)));
         let db = root.join(".scrutate/index.db");
         std::fs::write(&db, vec![0xA5u8; std::fs::metadata(&db).unwrap().len() as usize]).unwrap();
-        replace_damaged(&shared, &root);
+        recover(&shared, &anyhow::anyhow!("a test"));
         let hits = lock(&shared).as_ref().expect("an index after the rebuild").find_symbol("make_point", 5).unwrap();
         assert_eq!(hits.len(), 1, "the rebuilt index answers");
         drop(shared);

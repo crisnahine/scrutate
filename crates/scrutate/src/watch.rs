@@ -5,7 +5,6 @@
 //! One that touches a directory or a rule file, loses events, or comes while a directory has no
 //! watch or the last walk is old walks the tree and updates everything.
 
-use std::cell::RefCell;
 #[cfg_attr(target_os = "macos", allow(unused_imports))]
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -24,6 +23,7 @@ use notify::{RecursiveMode, Watcher};
 
 #[cfg_attr(target_os = "macos", allow(unused_imports))]
 use crate::files::{CodeWalk, INDEX_DIR};
+use crate::stores::{Changes, Named};
 
 /// A burst of events ends after this much quiet.
 pub const DEBOUNCE: Duration = Duration::from_millis(200);
@@ -35,40 +35,8 @@ const MAX_WAIT: Duration = Duration::from_secs(2);
 #[cfg_attr(target_os = "macos", allow(dead_code))]
 const WALK_EVERY: Duration = Duration::from_secs(30);
 
-/// The files one burst named, relative to the root, as each index's walk would list them; a file
-/// that is gone is in both.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct BurstFiles {
-    pub code: Vec<String>,
-    pub text: Vec<String>,
-}
-
-thread_local! {
-    static BURST: RefCell<Option<BurstFiles>> = const { RefCell::new(None) };
-}
-
-/// While `on_change` runs for a burst that named files only: those files. The indexes' updates
-/// then look at them alone instead of walking the tree.
-pub fn burst_files() -> Option<BurstFiles> {
-    BURST.with_borrow(|b| b.clone())
-}
-
-/// Run `f` with `burst_files()` answering `files` on this thread.
-#[cfg_attr(target_os = "macos", allow(dead_code))]
-pub(crate) fn with_burst<T>(files: Option<BurstFiles>, f: impl FnOnce() -> T) -> T {
-    struct Reset;
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            BURST.set(None);
-        }
-    }
-    BURST.set(files);
-    let _reset = Reset;
-    f()
-}
-
 fn has_text_index(root: &Path) -> bool {
-    crate::textindex::dir_of(root).join("manifest.json").exists()
+    crate::textindex::exists(root)
 }
 
 /// Under the root, and not the root itself, the index directory or `.git`.
@@ -272,9 +240,9 @@ impl Burst {
 
     /// The burst's files for each index, as the walks list their directories; None when a
     /// directory the walks enter came, went or was replaced, so the tree must be walked.
-    fn files(&self, root: &Path, code: &CodeWalk, walked: &Walked) -> Option<BurstFiles> {
+    fn files(&self, root: &Path, code: &CodeWalk, walked: &Walked) -> Option<Named> {
         let mut listed: HashMap<&Path, Listing> = HashMap::new();
-        let mut out = BurstFiles::default();
+        let mut out = Named::default();
         for p in &self.paths {
             let Some(parent) = p.parent() else { continue };
             let md = std::fs::symlink_metadata(p).ok();
@@ -404,17 +372,17 @@ fn debug() -> bool {
 }
 
 /// Watch `root` until `stop` is set. Once the watch is in place `on_change` runs, then `on_ready`;
-/// after that `on_change` runs once per debounced burst that changes what an index holds, with
-/// `burst_files()` naming the files when the burst does not walk the tree. An error from the first
+/// after that `on_change` runs once per debounced burst that changes what an index holds, with the
+/// burst's change set: the files it names when it does not walk the tree. An error from the first
 /// `on_change`, or the root going away, ends the watch; later update errors are reported.
 #[cfg(not(target_os = "macos"))]
-pub fn run(root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), mut on_change: impl FnMut() -> Result<()>) -> Result<()> {
+pub fn run(root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), mut on_change: impl FnMut(&Changes) -> Result<()>) -> Result<()> {
     let root = std::fs::canonicalize(root).with_context(|| format!("watch {}", root.display()))?;
     let (tx, rx) = mpsc::channel();
     let mut watcher = notify::recommended_watcher(tx).context("start the file watcher")?;
     let code = CodeWalk::new(&root);
     let mut walked = sync_watches(&mut watcher, &root, &code, None)?;
-    on_change()?;
+    on_change(&Changes::All)?;
     on_ready();
     let debug = debug();
     while !stop.load(Ordering::Relaxed) {
@@ -449,7 +417,7 @@ pub fn run(root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), mut on_chang
         if debug {
             eprintln!("[scrutate] burst: {} paths, full walk: {}", burst.paths.len(), if named.is_none() { "yes" } else { "no" });
         }
-        if let Err(e) = with_burst(named, &mut on_change) {
+        if let Err(e) = on_change(&named.map_or(Changes::All, Changes::Named)) {
             eprintln!("[scrutate] update failed: {e:#}");
         }
     }
@@ -461,9 +429,9 @@ pub fn run(root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), mut on_chang
 /// edits. So the index's own incremental check runs on a timer: it compares sizes and nanosecond
 /// times, and the pause grows with what a check costs (about a tenth of the time at most).
 #[cfg(target_os = "macos")]
-pub fn run(root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), mut on_change: impl FnMut() -> Result<()>) -> Result<()> {
+pub fn run(root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), mut on_change: impl FnMut(&Changes) -> Result<()>) -> Result<()> {
     let root = std::fs::canonicalize(root).with_context(|| format!("watch {}", root.display()))?;
-    on_change()?;
+    on_change(&Changes::All)?;
     on_ready();
     let mut pause = Duration::from_secs(1);
     while !stop.load(Ordering::Relaxed) {
@@ -476,25 +444,12 @@ pub fn run(root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), mut on_chang
         }
         root_present(&root)?;
         let t1 = Instant::now();
-        if let Err(e) = on_change() {
+        if let Err(e) = on_change(&Changes::All) {
             eprintln!("[scrutate] update failed: {e:#}");
         }
         pause = (t1.elapsed() * 10).clamp(Duration::from_secs(1), Duration::from_secs(30));
     }
     Ok(())
-}
-
-/// Bring the text index up to date when the repository has one: the files of the burst being
-/// handled, else every file.
-pub fn update_text(root: &Path) -> Result<Option<crate::textindex::TextStats>> {
-    if !has_text_index(root) {
-        return Ok(None);
-    }
-    match burst_files() {
-        Some(b) => crate::textindex::update_paths(root, &b.text),
-        None => crate::textindex::update(root, false, false),
-    }
-    .map(Some)
 }
 
 #[cfg(test)]
@@ -525,7 +480,7 @@ mod tests {
 
     /// The walk of the tree as it is now, then these events; -> the burst's files, None when it
     /// walks the tree. `change` runs between the walk and the events.
-    fn burst(root: &Path, change: impl FnOnce(), events: &[notify::Result<Event>]) -> Option<BurstFiles> {
+    fn burst(root: &Path, change: impl FnOnce(), events: &[notify::Result<Event>]) -> Option<Named> {
         let code = CodeWalk::new(root);
         let walked = Walked::new(root, &code);
         change();
@@ -539,9 +494,9 @@ mod tests {
         b.files(root, &code, &walked)
     }
 
-    fn both(paths: &[&str]) -> Option<BurstFiles> {
+    fn both(paths: &[&str]) -> Option<Named> {
         let v: Vec<String> = paths.iter().map(|p| p.to_string()).collect();
-        Some(BurstFiles { code: v.clone(), text: v })
+        Some(Named { code: v.clone(), text: v })
     }
 
     #[test]
@@ -576,7 +531,7 @@ mod tests {
             // a new directory the walks do not enter
             ev(EventKind::Create(CreateKind::Folder), &[&root.join("src/new.tmp")]),
         ] {
-            assert_eq!(burst(&root, || (), &[e]), Some(BurstFiles::default()));
+            assert_eq!(burst(&root, || (), &[e]), Some(Named::default()));
         }
         std::fs::remove_dir_all(&root).unwrap();
     }
@@ -709,15 +664,5 @@ mod tests {
         let dirs: HashSet<PathBuf> = ["/r/b/c", "/r/a/z/y", "/r", "/r/b", "/r/a", "/r/a/z", "/r/c/a"].iter().map(PathBuf::from).collect();
         let order: Vec<String> = watch_order(&root, &dirs).iter().map(|p| p.display().to_string()).collect();
         assert_eq!(order, ["/r", "/r/a", "/r/b", "/r/a/z", "/r/b/c", "/r/c/a", "/r/a/z/y"]);
-    }
-
-    #[test]
-    fn burst_files_answer_only_inside_with_burst() {
-        let f = BurstFiles { code: vec!["a.py".into()], text: vec![] };
-        assert_eq!(with_burst(Some(f.clone()), burst_files), Some(f));
-        assert_eq!(burst_files(), None);
-        let caught = std::panic::catch_unwind(|| with_burst(Some(BurstFiles::default()), || panic!("update")));
-        assert!(caught.is_err());
-        assert_eq!(burst_files(), None, "reset after a panic too");
     }
 }

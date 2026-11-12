@@ -1,0 +1,400 @@
+//! Keeps every store under `.scrutate/` current: the code index (`index.rs`), the text index
+//! (`textindex.rs`) and the `tsquery` cache (`tscache.rs`). A caller names what it is doing (a
+//! `Writer`, or a read through `Repo`) and what changed (`Changes`); this module decides which
+//! stores that touches, when it looks for changes, and what happens when a store is damaged.
+//!
+//! When each operation looks for changes, and what it keeps current:
+//!
+//! | Operation | Looks for changes | Keeps current |
+//! |---|---|---|
+//! | `index` | every file; waits for another writer | code index, text index (built when missing) |
+//! | `index --no-text` | every file; waits | code index |
+//! | `index --text` | every file; waits | text index (built when missing) |
+//! | `grep --index --update` | every file; waits | text index (built when missing) |
+//! | `grep --index` | does not look: answers from the last text index build | nothing |
+//! | `watch`, `serve --watch` | the files a burst names, else every file; waits | code index, text index when one exists |
+//! | `reindex` (MCP, `batch`), bindings `index()` | every file; waits | code index, text index when one exists |
+//! | an index command, `batch` | every file before the first operation; never waits | code index |
+//! | an MCP tool call, a bindings call | every file, at most once per refresh interval; never waits | code index |
+//! | any operation on `Repo` | the files its answer cites and its arguments name, one `stat` each | code index |
+//! | `serve` and `lsp` start, an `lsp` save | every file; waits | code index |
+//! | `tsquery` | its own walk, one `stat` per file against the code index's record | `tsquery` cache |
+//!
+//! Recovery: a store found damaged is built again from the sources, once, by the process that
+//! found it, which says so on stderr; an operation that met the damage then runs again. The code
+//! index's files are deleted first (`Repo::recover`); the text index is rebuilt in place, its
+//! manifest swapped last. `grep --index` without `--update` reports a damaged text index instead,
+//! since it promises not to walk the tree.
+//!
+//! Locking: each store has its own writer lock (the code index a SQLite write transaction, the
+//! text index `.scrutate/text/lock`, the `tsquery` cache none: its files are replaced by rename),
+//! and each commits in one step (a transaction; a manifest rename; a file rename), so a reader of
+//! one store sees its last commit and never half of one. Writers that keep both indexes take the
+//! two locks one after the other, code index first, and never hold both; no answer reads both.
+
+use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+
+use anyhow::Result;
+
+use crate::index::{self, UpdateStats};
+use crate::ops;
+use crate::search::Searcher;
+use crate::textindex::{self, TextStats};
+
+/// What changed since the stores were last brought up to date.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Changes {
+    /// any file of the tree: walk it
+    All,
+    /// these files alone (a watch burst that named files only)
+    Named(Named),
+}
+
+/// Files relative to the root, as each index's walk lists them in their directories; a file that
+/// is gone is in both.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Named {
+    pub code: Vec<String>,
+    pub text: Vec<String>,
+}
+
+/// An operation that writes the stores (the rows of the table above that keep more than the code
+/// index before a read).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Writer {
+    /// `scrutate index`
+    Index,
+    /// `scrutate index --no-text`
+    IndexCode,
+    /// `scrutate index --text`
+    IndexText,
+    /// `grep --index --update`
+    GrepUpdate,
+    /// a watch burst, `scrutate watch` or `serve --watch`
+    Watch,
+    /// MCP and `batch` `reindex`, bindings `index()`
+    Reindex,
+}
+
+impl Writer {
+    fn code(self) -> bool {
+        !matches!(self, Writer::IndexText | Writer::GrepUpdate)
+    }
+
+    /// The one place that decides whether the text index is kept: `index` (unless `--no-text`) and
+    /// `grep --index --update` build it, the other writers keep one that exists and never make one.
+    fn text(self, root: &Path) -> bool {
+        match self {
+            Writer::IndexCode => false,
+            Writer::Index | Writer::IndexText | Writer::GrepUpdate => true,
+            Writer::Watch | Writer::Reindex => textindex::exists(root),
+        }
+    }
+
+    /// Progress lines on a terminal: the `index` command's alone.
+    fn progress(self) -> bool {
+        matches!(self, Writer::Index | Writer::IndexCode | Writer::IndexText) && std::io::IsTerminal::is_terminal(&std::io::stderr())
+    }
+}
+
+/// What an update did, store by store; None for a store it did not keep.
+#[derive(Debug, Default)]
+pub struct Updated {
+    pub code: Option<UpdateStats>,
+    pub text: Option<TextStats>,
+}
+
+/// Bring the stores `w` keeps up to date with every file of the tree at `root`. The code index is
+/// opened only when `w` keeps it; with `force` every file is read again, and a code index of a
+/// newer scrutate that this one cannot read is replaced.
+pub fn update(root: &Path, w: Writer, force: bool) -> Result<Updated> {
+    if w.code() {
+        let mut repo = Repo::open_to_update(root, force)?;
+        return repo.update_stores(w, &Changes::All, force);
+    }
+    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    Ok(Updated { code: None, text: Some(update_text(&root, &Changes::All, force, w.progress())?) })
+}
+
+/// The text index brought up to date; a damaged one is built again.
+fn update_text(root: &Path, changes: &Changes, force: bool, progress: bool) -> Result<TextStats> {
+    let r = match changes {
+        Changes::Named(n) if !force => textindex::update_paths(root, &n.text),
+        _ => textindex::update(root, force, progress),
+    };
+    match r {
+        Err(e) if e.is::<textindex::Damaged>() => {
+            eprintln!("[scrutate] text index damaged ({e:#}); rebuilding");
+            textindex::update(root, true, progress)
+        }
+        r => r,
+    }
+}
+
+/// An open repository: the searcher on its code index, which it derefs to, and the stores kept
+/// current around it.
+pub struct Repo {
+    /// `None` while a damaged index is being replaced, and after a rebuild that could not reopen it
+    searcher: Option<Searcher>,
+    root: PathBuf,
+    /// the last refresh failed and stderr said why
+    stale: bool,
+    /// an update of the index went through since `take_updated` was last asked
+    updated: bool,
+}
+
+impl Repo {
+    /// Open (or create) the index of `root`, without updating it.
+    pub fn open(root: &Path) -> Result<Repo> {
+        let searcher = crate::open(root)?;
+        Ok(Repo { root: searcher.ix.root.clone(), searcher: Some(searcher), stale: false, updated: false })
+    }
+
+    /// `open` for an update; with `force`, an index of a newer scrutate that this one cannot read
+    /// is deleted, to be built again by this one.
+    pub fn open_to_update(root: &Path, force: bool) -> Result<Repo> {
+        match Repo::open(root) {
+            Err(e) if force && e.is::<index::Newer>() => {
+                index::wipe_index(root);
+                Repo::open(root)
+            }
+            r => r,
+        }
+    }
+
+    pub fn into_searcher(self) -> Searcher {
+        self.searcher.expect("the index was not reopened after a rebuild")
+    }
+
+    /// Whether the last refresh could not update the index, so answers come from it as it was.
+    pub fn is_stale(&self) -> bool {
+        self.stale
+    }
+
+    /// Whether an update of the index went through since this was last asked.
+    pub fn take_updated(&mut self) -> bool {
+        std::mem::take(&mut self.updated)
+    }
+
+    /// The cancel flag of the next operation; nothing to set while the index is closed.
+    pub fn set_cancel(&mut self, cancel: Arc<AtomicBool>) {
+        if let Some(s) = &mut self.searcher {
+            // an update the operation runs (a reindex, the scan before a read) stops at its next batch
+            s.ix.cancel = Arc::clone(&cancel);
+            s.cancel = cancel;
+        }
+    }
+
+    /// An index a failed rebuild left closed is opened and built again before anything reads it.
+    /// An index a newer scrutate took over since it was opened, in a form this one cannot read,
+    /// is an error for every operation until the process is restarted with that scrutate, or
+    /// `index --force` builds a new database in its place.
+    fn reopened(&mut self) -> Result<()> {
+        match &mut self.searcher {
+            None => {
+                self.reopen(false)?;
+            }
+            Some(s) => {
+                s.ix.reopen_if_replaced()?;
+                if let Some(n) = s.ix.newer().filter(|n| !n.readable) {
+                    return Err(n.into());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Bring the code index up to date with every file, as a read that waits for another writer
+    /// does (`serve` and `lsp` start).
+    pub fn update(&mut self, force: bool) -> Result<UpdateStats> {
+        self.update_code(&Changes::All, force, false)
+    }
+
+    /// The code index brought up to date with `changes`; a damaged one is built again.
+    fn update_code(&mut self, changes: &Changes, force: bool, progress: bool) -> Result<UpdateStats> {
+        self.reopened()?;
+        self.ix.progress |= progress;
+        let r = match changes {
+            Changes::Named(n) if !force => self.ix.update_paths(&n.code, true),
+            _ => self.ix.update(force),
+        };
+        let r = match r {
+            Err(e) if index::error_is_corruption(&e) => self.recover(&e),
+            other => other,
+        };
+        self.updated |= r.is_ok();
+        r
+    }
+
+    /// Bring the stores `w` keeps up to date with `changes`: the code index first, then the text
+    /// index, each under its own writer lock.
+    pub fn update_stores(&mut self, w: Writer, changes: &Changes, force: bool) -> Result<Updated> {
+        let code = if w.code() { Some(self.update_code(changes, force, w.progress())?) } else { None };
+        let text = if w.text(&self.root) { Some(update_text(&self.root, changes, force, w.progress())?) } else { None };
+        Ok(Updated { code, text })
+    }
+
+    /// `update_stores` for a `reindex` that stops between batches of files once `cancel` is set,
+    /// and then leaves the code index as it was.
+    // shortcut: a rebuild after damage and the text index do not see the flag, give them the flag if that matters
+    pub fn update_until(&mut self, force: bool, cancel: Arc<AtomicBool>) -> Result<Updated> {
+        self.reopened()?;
+        self.ix.cancel = cancel;
+        let r = self.update_stores(Writer::Reindex, &Changes::All, force);
+        if let Some(s) = &mut self.searcher {
+            s.ix.cancel = Default::default();
+        }
+        r
+    }
+
+    /// `update` before a read, unless the index was checked less than `min_interval` seconds
+    /// ago. When it cannot run (another process holds the write lock, the index directory is
+    /// read-only) the read answers from the last committed index, and stderr says why once. A
+    /// lock held while the committed index has no file is a first build: `index::BeingBuilt`.
+    pub fn refresh(&mut self, min_interval: f64) -> Result<Option<UpdateStats>> {
+        self.reopened()?;
+        match self.ix.refresh_or_fail(min_interval) {
+            Err(e) if index::error_is_corruption(&e) => self.recover(&e).map(Some),
+            Err(e) if e.is::<index::Busy>() && !self.ix.has_files()? => Err(index::BeingBuilt.into()),
+            Err(e) if e.is::<index::Newer>() => Err(e),
+            Err(e) => {
+                if !self.stale {
+                    eprintln!("[scrutate] index not updated ({e:#}); answering from it as it is");
+                    self.stale = true;
+                }
+                Ok(None)
+            }
+            Ok(st) => {
+                self.stale &= st.is_none();
+                self.updated |= st.is_some();
+                Ok(st)
+            }
+        }
+    }
+
+    /// Run one operation on an index refreshed as `refresh` does (operations that do not read
+    /// the index skip that). A `reindex` keeps the text index too, when there is one.
+    pub fn run(&mut self, op: &ops::Op, min_interval: f64) -> Result<ops::Answer> {
+        if !matches!(op, ops::Op::Read { symbol: None, .. } | ops::Op::Reindex { .. }) {
+            self.refresh(min_interval)?;
+        }
+        self.run_as_is(op)
+    }
+
+    /// Run one operation on the index without a scan of the tree. The files the answer cites
+    /// (and the ones its arguments name) are checked against the index, one `stat` each: when
+    /// one changed or is gone, or a named one is new and a scan would index it, those files
+    /// alone are updated and the answer computed again, once. A file no answer cites or names
+    /// waits for the next scan. A damaged database is rebuilt and the operation run again. A
+    /// `reindex` brings every store up to date (`Writer::Reindex`).
+    pub fn run_as_is(&mut self, op: &ops::Op) -> Result<ops::Answer> {
+        if let ops::Op::Reindex { force } = op {
+            let up = self.update_stores(Writer::Reindex, &Changes::All, *force)?;
+            return Ok(ops::Answer::Reindexed(up.code.unwrap_or_default()));
+        }
+        let first = self.recovering(|s| ops::run(s, op));
+        if self.searcher.is_none() {
+            return first;
+        }
+        let named = op.named_paths();
+        let mut paths = named.clone();
+        if let Ok(a) = &first {
+            paths.extend(a.cited().into_iter().map(str::to_string));
+        }
+        let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+        let stale = match self.ix.stale(&paths) {
+            Ok(mut s) => {
+                s.extend(self.ix.unindexed(&named));
+                s
+            }
+            Err(_) => return first,
+        };
+        if stale.is_empty() {
+            return first;
+        }
+        match self.ix.update_paths(&stale, false) {
+            Ok(_) => self.recovering(|s| ops::run(s, op)),
+            Err(e) if index::error_is_corruption(&e) => {
+                self.recover(&e)?;
+                self.recovering(|s| ops::run(s, op))
+            }
+            // another writer holds the lock, or the index cannot be written: answer as it is
+            Err(_) => first,
+        }
+    }
+
+    /// Run `f` on the searcher; when it meets a damaged code index, the index is built again and
+    /// `f` runs once more.
+    pub fn recovering<T>(&mut self, mut f: impl FnMut(&mut Searcher) -> Result<T>) -> Result<T> {
+        self.reopened()?;
+        match f(self) {
+            Err(e) if index::error_is_corruption(&e) => {
+                self.recover(&e)?;
+                f(self)
+            }
+            other => other,
+        }
+    }
+
+    /// The recovery of a damaged code index: its files are deleted (the index is a cache, the
+    /// sources are the truth) and it is built again from every file.
+    pub fn recover(&mut self, why: &anyhow::Error) -> Result<UpdateStats> {
+        eprintln!("[scrutate] index damaged ({why:#}); rebuilding");
+        let progress = self.searcher.as_ref().is_some_and(|s| s.ix.progress);
+        self.searcher = None; // the database is closed before its files are deleted
+        index::wipe_index(&self.root);
+        self.reopen(progress)
+    }
+
+    fn reopen(&mut self, progress: bool) -> Result<UpdateStats> {
+        let mut s = crate::open(&self.root)?;
+        s.ix.progress = progress;
+        let st = s.ix.update(true);
+        self.searcher = Some(s);
+        st
+    }
+}
+
+impl std::ops::Deref for Repo {
+    type Target = Searcher;
+    fn deref(&self) -> &Searcher {
+        self.searcher.as_ref().expect("the index was not reopened after a rebuild")
+    }
+}
+
+impl std::ops::DerefMut for Repo {
+    fn deref_mut(&mut self) -> &mut Searcher {
+        self.searcher.as_mut().expect("the index was not reopened after a rebuild")
+    }
+}
+
+/// The code index's record of each file it holds, for the `tsquery` cache: the stat and content
+/// hash by path from the root. Empty when there is no code index: this never creates one.
+pub fn recorded(root: &Path) -> std::collections::HashMap<String, (index::Stat, String)> {
+    index::recorded(root)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_rebuild_that_could_not_reopen_the_index_is_an_error_until_it_can() {
+        let root = std::env::temp_dir().join(format!("scrutate_reopen_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let mut repo = Repo { searcher: None, root: root.clone(), stale: false, updated: false };
+        let op = ops::Op::Symbol { name: "f".into(), limit: 5 };
+        repo.set_cancel(Arc::default());
+        assert!(repo.update(false).is_err());
+        assert!(repo.refresh(0.0).is_err());
+        assert!(repo.run(&op, 0.0).is_err());
+        assert!(repo.run_as_is(&op).is_err());
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "def f():\n    return 1\n").unwrap();
+        assert!(matches!(repo.run_as_is(&op), Ok(ops::Answer::Hits { ref hits, .. }) if hits.len() == 1));
+        drop(repo);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}

@@ -196,3 +196,39 @@ fn an_index_of_the_previous_format_is_rebuilt_by_the_next_update_and_a_newer_one
         assert!(err.contains("newer scrutate"), "{args:?}: {err}");
     }
 }
+
+/// `batch` with the lines of `ops`, as an MCP client asks; the query file lies outside the tree.
+fn batch(root: &Path, name: &str, ops: &str) -> (i32, String, String) {
+    let q = std::env::temp_dir().join(format!("scrutate_text_index_q_{name}_{}.jsonl", std::process::id()));
+    fs::write(&q, ops).unwrap();
+    let r = run(root, &["batch", q.to_str().unwrap()]);
+    let _ = fs::remove_file(&q);
+    r
+}
+
+#[test]
+fn a_reindex_brings_the_text_index_up_to_date_too() {
+    let t = Tmp::new("reindex");
+    fs::write(t.0.join("a.py"), "def one():\n    return 1\n").unwrap();
+    assert_eq!(run(&t.0, &["index"]).0, 0);
+    fs::write(t.0.join("b.py"), "zzqtoken = 1\n").unwrap();
+    let (code, out, err) = batch(&t.0, "reindex", "{\"op\": \"reindex\"}\n");
+    assert_eq!(code, 0, "{out}{err}");
+    let (code, out, err) = run(&t.0, &["grep", "--index", "-n", "zzqtoken"]);
+    assert_eq!((code, out.as_str()), (0, "b.py:1:zzqtoken = 1\n"), "{err}");
+}
+
+#[test]
+fn a_reindex_keeps_no_text_index_where_there_is_none_and_rebuilds_a_damaged_one() {
+    let t = Tmp::new("reindex_keep");
+    fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+    assert_eq!(run(&t.0, &["index", "--no-text"]).0, 0);
+    assert_eq!(batch(&t.0, "keep_none", "{\"op\": \"reindex\"}\n").0, 0);
+    assert!(!t.0.join(".scrutate/text").exists(), "a reindex made a text index");
+    assert_eq!(run(&t.0, &["index", "--text"]).0, 0);
+    fs::write(t.0.join(".scrutate/text/manifest.json"), "").unwrap();
+    let (code, _, err) = batch(&t.0, "keep_damaged", "{\"op\": \"reindex\"}\n");
+    assert_eq!(code, 0, "{err}");
+    assert!(err.contains("text index damaged") && err.contains("rebuilding"), "{err}");
+    assert_eq!(counts(&t.0, "alpha"), ["a.py:1"]);
+}

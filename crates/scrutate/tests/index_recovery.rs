@@ -737,7 +737,7 @@ fn a_running_process_stops_updating_when_a_newer_scrutate_takes_over_the_index()
     fs::write(t.0.join("b.py"), "def beta():\n    return 2\n").unwrap();
     assert!(ix.refresh(0.0).unwrap().is_none());
     assert!(ix.update(false).unwrap_err().is::<scrutate::index::Newer>());
-    assert!(ix.update_paths(&["b.py".into()]).is_err());
+    assert!(ix.update_paths(&["b.py".into()], false).is_err());
     assert_eq!(ix.meta("content_rev"), Some(rev));
     ix.set_meta("schema_version", &(scrutate::index::SCHEMA_VERSION + 1).to_string()).unwrap();
     assert!(ix.refresh(0.0).unwrap_err().is::<scrutate::index::Newer>());

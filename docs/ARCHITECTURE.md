@@ -453,13 +453,60 @@ files above the root, the exclude file of every nested repository, git's global 
 and the configuration files that name it). On Linux their directories are watched after the
 tree's own, and a failure there does not make every burst walk; on Windows they are watched
 next to the recursive watch on the root. An event naming one of them walks the tree. A
-burst ends after 200 ms of quiet, and each burst runs the existing incremental updates
-(`Index::update`, `textindex::update` when a text index exists). The watch ends with an error
+burst ends after 200 ms of quiet, and each burst hands its change set (the files it names, or
+every file) to `Repo::update_stores`, which updates the code index and the text index when one
+exists. The watch ends with an error
 when its root is gone; an update that panics is reported on stderr and the next change updates
 again. No new write path: the
 watcher is one more writer behind the same SQLite transaction and text index lock file, so a crash
 mid-update leaves the previous snapshot. Reads by the update itself are not events, so updates do
 not trigger themselves. Not a daemon: it runs only while the command (or server) runs.
+
+### Keeping the stores current (`stores.rs`)
+`.scrutate/` holds three stores: the code index, the text index and the `tsquery` cache. One
+module keeps them current. A caller names what it does (`stores::Writer`, or a read through
+`Repo`) and what changed (`stores::Changes`: every file, or the files a watch burst names), never a
+store; the module decides which stores that touches, when it looks, and what happens on damage.
+A new store is added there, with no edit in a caller.
+
+| Operation | Looks for changes | Keeps current |
+|---|---|---|
+| `index` | every file; waits for another writer | code index, text index (built when missing) |
+| `index --no-text` | every file; waits | code index |
+| `index --text` | every file; waits | text index (built when missing) |
+| `grep --index --update` | every file; waits | text index (built when missing) |
+| `grep --index` | does not look: answers from the last text index build | nothing |
+| `watch`, `serve --watch` | the files a burst names, else every file; waits | code index, text index when one exists |
+| `reindex` (MCP, `batch`), bindings `index()` | every file; waits | code index, text index when one exists |
+| an index command, `batch` | every file before the first operation; never waits | code index |
+| an MCP tool call, a bindings call | every file, at most once per refresh interval; never waits | code index |
+| any operation on `Repo` | the files its answer cites and its arguments name, one `stat` each | code index |
+| `serve` and `lsp` start, an `lsp` save | every file; waits | code index |
+| `tsquery` | its own walk, one `stat` per file against the code index's record | `tsquery` cache |
+
+Whether a text index is kept is decided in one place (`Writer::text`): `index` (unless
+`--no-text`) and `grep --index --update` build it, and every other writer keeps one that exists
+and never makes one. `tsquery` keys a file's cached captures by the content hash the code index
+records and the file name, so a file whose stat the code index holds as current is not read on a
+hit; the other files are read and hashed the same way.
+
+Recovery has one rule: a store found damaged is built again from the sources, once, by the process
+that found it, which says so on stderr, and an operation that met the damage runs again. The code
+index's files are deleted first (`Repo::recover`, which every front end reaches: the CLI, `batch`
+and the MCP server through `Repo::run` and `Repo::recovering`, the bindings through
+`Repo::recovering`, the language server and the watcher through `Repo`); the text index is
+rebuilt in place and its manifest swapped last. `Index` and `textindex` only report damage
+(`index::Damaged`, `textindex::Damaged`). `grep --index` without `--update` reports a damaged text
+index instead of rebuilding it, since it promises not to walk the tree. An index file that does
+not open at all is still sorted out when `Index::open` opens it (`Triage`), before any caller holds
+it.
+
+Locking: each store has its own writer lock (the code index a SQLite write transaction, the text
+index `.scrutate/text/lock`, the `tsquery` cache none, its files replaced by rename) and commits in
+one step (a transaction, a manifest rename, a file rename), so a reader of a store sees its last
+commit and never half of one. A writer that keeps both indexes takes the two locks one after the
+other, code index first, and never holds both, so two writers cannot deadlock; between the two
+commits a reader can see the new code index beside the old text index, and no answer reads both.
 
 ### Intelligence (`intel.rs`)
 Definitions and references, callers/callees, outline, imports mapped to files by the same
@@ -538,9 +585,8 @@ textual in one and resolved in another). An answer renders within a byte budget:
 a line with how many are left and the offset that continues it, because an agent's harness cuts a
 long tool result where it likes (Codex at 10,000 tokens, from the middle).
 
-`Repo` (`lib.rs`) is an open repository: the searcher on its index and the one copy of the rules
-for keeping the index usable (bring it up to date; when the database is corrupt, delete it and
-build it again). After an operation it checks the files the answer cites, and the files its
+`Repo` (`stores.rs`) is an open repository: the searcher on its index and the stores kept current
+around it (see "Keeping the stores current" above). After an operation it checks the files the answer cites, and the files its
 arguments name, against the index with one `stat` each; when one changed or is gone, those
 files alone are updated and the operation runs again, once. `read_code` by path streams the file
 through a 64 KB buffer and stops after the last line it shows. The MCP server, the Python bindings

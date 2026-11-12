@@ -462,7 +462,7 @@ fn process(root: &Path, rel: &str, known_hash: Option<&str>, model: Option<&Sema
     let Some(source) = decode_source(&raw) else {
         return Processed::Skip(stat);
     };
-    let h = format!("{:x}", Sha1::digest(&raw));
+    let h = content_hash(&raw);
     if Some(h.as_str()) == known_hash {
         return Processed::Same(stat);
     }
@@ -474,6 +474,30 @@ fn process(root: &Path, rel: &str, known_hash: Option<&str>, model: Option<&Sema
             Processed::Skip(stat)
         }
     }
+}
+
+/// The hash of a file's bytes the index records for it.
+pub fn content_hash(raw: &[u8]) -> String {
+    format!("{:x}", Sha1::digest(raw))
+}
+
+/// Of the files the index of `root` holds, the stat and content hash it recorded, by path; empty
+/// when there is no index or it cannot be read. Opens the database read-only and creates nothing.
+pub fn recorded(root: &Path) -> HashMap<String, (Stat, String)> {
+    let read = || -> rusqlite::Result<HashMap<String, (Stat, String)>> {
+        let db = Connection::open_with_flags(root.join(".scrutate").join("index.db"), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let version: Option<String> = db.query_row("SELECT value FROM meta WHERE key='schema_version'", [], |r| r.get(0)).optional()?;
+        if version.as_deref() != Some(SCHEMA_VERSION.to_string().as_str()) {
+            return Ok(HashMap::new());
+        }
+        let mut q = db.prepare("SELECT path, size, mtime_ns, ctime_ns, hash FROM files WHERE hash != 'SKIP' AND ctime_ns IS NOT NULL")?;
+        let rows = q.query_map([], |r| Ok((r.get::<_, String>(0)?, (Stat { size: r.get(1)?, mtime: r.get(2)?, ctime: r.get(3)? }, r.get::<_, String>(4)?))))?;
+        rows.collect()
+    };
+    if !exists(root) {
+        return HashMap::new();
+    }
+    read().unwrap_or_default()
 }
 
 /// Source text of a file: UTF-16 with a byte-order mark is transcoded (Windows tools write it), a
@@ -624,14 +648,16 @@ impl Newer {
 /// True when an error anywhere in `e`'s chain is SQLite corruption or other damage to the index
 /// files (a chunk text that does not inflate, `Damaged`).
 pub fn error_is_corruption(e: &anyhow::Error) -> bool {
-    e.chain().any(|c| {
-        c.is::<Damaged>()
-            || match c.downcast_ref::<rusqlite::Error>() {
-                Some(rusqlite::Error::FromSqlConversionFailure(_, rusqlite::types::Type::Blob, _)) => true,
-                Some(e) => is_corruption(e),
-                None => false,
-            }
-    })
+    // a `Damaged` context is not one of the chain's links
+    e.downcast_ref::<Damaged>().is_some()
+        || e.chain().any(|c| {
+            c.is::<Damaged>()
+                || match c.downcast_ref::<rusqlite::Error>() {
+                    Some(rusqlite::Error::FromSqlConversionFailure(_, rusqlite::types::Type::Blob, _)) => true,
+                    Some(e) => is_corruption(e),
+                    None => false,
+                }
+        })
 }
 
 /// Delete the index files of `root` (used after an operation reported database corruption on a
@@ -836,13 +862,9 @@ impl Index {
         Ok(db)
     }
 
-    /// Forget every indexed file and segment (inside one write transaction).
-    fn clear(&mut self) -> Result<()> {
-        self.clear_with(None)
-    }
-
-    /// `clear`; with `stamp_for` (a model signature), of an index triage found to need a rebuild,
-    /// stamped with this version in the same transaction. Another process that found the same
+    /// Forget every indexed file and segment (inside one write transaction); with `stamp_for` (a
+    /// model signature), of an index triage found to need a rebuild, stamped with this version in
+    /// the same transaction. Another process that found the same
     /// index may have done that first and be building it: then nothing is cleared, and its write
     /// lock is not waited for.
     fn clear_with(&mut self, stamp_for: Option<&str>) -> Result<()> {
@@ -1066,10 +1088,8 @@ impl Index {
                         if attempt <= 5 {
                             continue;
                         }
-                        // a segment vanished or was damaged while we were running: rebuild from the sources
-                        eprintln!("[scrutate] index unreadable ({e:#}); rebuilding");
-                        self.rebuild()?;
-                        break LexStore::open(&self.seg_dir, &self.segments())?;
+                        // a segment vanished or was damaged while we were running: `Repo` rebuilds
+                        return Err(e.context(Damaged("a segment is unreadable")));
                     }
                 }
             };
@@ -1102,10 +1122,9 @@ impl Index {
     }
 
     // ---- update
-    /// Inside `watch`'s handling of a burst that named files only, the update looks at those alone.
+    /// Bring the index up to date with every file of the tree; waits for another writer.
     pub fn update(&mut self, force: bool) -> Result<UpdateStats> {
-        let named = if force { None } else { crate::watch::burst_files().map(|b| b.code) };
-        self.update_with(force, true, named.as_deref())
+        self.update_with(force, true, None)
     }
 
     /// Of `paths` (repository paths the index may hold), the ones whose file is gone or whose
@@ -1130,10 +1149,10 @@ impl Index {
         Ok(out)
     }
 
-    /// `update` of just these files, without a walk of the tree; fails at once when another
-    /// process holds the write lock.
-    pub fn update_paths(&mut self, paths: &[String]) -> Result<UpdateStats> {
-        self.update_with(false, false, Some(paths))
+    /// `update` of just these files, without a walk of the tree; without `wait` it fails at once
+    /// when another process holds the write lock.
+    pub fn update_paths(&mut self, paths: &[String], wait: bool) -> Result<UpdateStats> {
+        self.update_with(false, wait, Some(paths))
     }
 
     fn has_ctime(&self) -> bool {
@@ -1578,12 +1597,6 @@ impl Index {
             self.last_refresh = Some(Instant::now());
         }
         st.map(Some)
-    }
-
-    /// Forget every indexed file and segment, then index the repository again from scratch.
-    pub fn rebuild(&mut self) -> Result<UpdateStats> {
-        self.clear()?;
-        self.update(true)
     }
 
     /// A new data version, inside the caller's write transaction; a chunk count recorded for the
@@ -2190,8 +2203,7 @@ mod tests {
         std::fs::write(root.join("b.py"), "def two():\n    return 2\n").unwrap();
         std::fs::remove_file(root.join("c.py")).unwrap();
         std::fs::write(root.join("d.py"), "def new():\n    return 3\n").unwrap();
-        let named = crate::watch::BurstFiles { code: vec!["a.py".into(), "c.py".into(), "d.py".into()], text: vec![] };
-        let st = crate::watch::with_burst(Some(named), || ix.update(false)).unwrap();
+        let st = ix.update_paths(&["a.py".into(), "c.py".into(), "d.py".into()], true).unwrap();
         assert_eq!((st.files_changed, st.files_removed), (2, 1));
         assert_eq!(paths(&ix), ["a.py", "b.py", "d.py"]);
         // b.py was not named, so only a walk sees it

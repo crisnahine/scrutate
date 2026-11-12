@@ -403,12 +403,16 @@ fn results<'py, T: IntoPyObject<'py>>(
 }
 
 impl Repo {
-    /// The engine with its index brought up to date (checked at most once a second), as the CLI
-    /// and the MCP server see it before every operation.
-    fn fresh(&self) -> anyhow::Result<std::sync::MutexGuard<'_, scrutate::Repo>> {
+    /// `f` on the engine with its index brought up to date (checked at most once a second), as
+    /// the CLI and the MCP server see it before every operation; a damaged index is built again
+    /// and `f` runs once more.
+    fn fresh<T>(
+        &self,
+        f: impl FnMut(&mut scrutate::search::Searcher) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
         let mut s = lock(&self.inner);
         s.refresh(1.0)?;
-        Ok(s)
+        s.recovering(f)
     }
 }
 
@@ -443,7 +447,11 @@ impl Repo {
         std::thread::Builder::new()
             .name("scrutate-index".into())
             .spawn(move || {
-                let _ = tx.send(lock(&inner).update_until(force, c2));
+                let _ = tx.send(
+                    lock(&inner)
+                        .update_until(force, c2)
+                        .map(|up| up.code.unwrap_or_default()),
+                );
             })
             .map_err(err)?;
         let st = wait(py, &Mutex::new(rx))
@@ -474,15 +482,14 @@ impl Repo {
         let q = query.to_string();
         let hits = py
             .detach(move || {
-                let mut s = self.fresh()?;
-                match alt {
+                self.fresh(|s| match &alt {
                     Some(a) if !a.is_empty() => {
-                        let mut qs = vec![q];
-                        qs.extend(a);
+                        let mut qs = vec![q.clone()];
+                        qs.extend(a.iter().cloned());
                         s.search_many(&qs, k, with_text)
                     }
                     _ => s.search(&q, k, with_text),
-                }
+                })
             })
             .map_err(err)?;
         Ok(hits_py(hits))
@@ -501,8 +508,7 @@ impl Repo {
         // a location (`path:start-end`) and a path spelling are read as the MCP tools read them
         let hits = py
             .detach(move || {
-                let s = self.fresh()?;
-                scrutate::ops::targets(&s, &n, limit.saturating_add(1), false)
+                self.fresh(|s| scrutate::ops::targets(s, &n, limit.saturating_add(1), false))
             })
             .map_err(err)?;
         results(py, hits_py(hits), limit)
@@ -518,7 +524,7 @@ impl Repo {
     ) -> PyResult<Bound<'py, PyAny>> {
         let n = name.to_string();
         let hits = py
-            .detach(move || self.fresh()?.callers(&n, limit.saturating_add(1)))
+            .detach(move || self.fresh(|s| s.callers(&n, limit.saturating_add(1))))
             .map_err(err)?;
         results(py, hits_py(hits), limit)
     }
@@ -534,7 +540,7 @@ impl Repo {
     ) -> PyResult<(Bound<'py, PyAny>, Vec<String>)> {
         let n = name.to_string();
         let (hits, ext) = py
-            .detach(move || self.fresh()?.callees(&n, limit.saturating_add(1)))
+            .detach(move || self.fresh(|s| s.callees(&n, limit.saturating_add(1))))
             .map_err(err)?;
         Ok((results(py, hits_py(hits), limit)?, ext))
     }
@@ -543,10 +549,7 @@ impl Repo {
     fn outline<'py>(&self, py: Python<'py>, path: &str) -> PyResult<Vec<Bound<'py, PyDict>>> {
         let p = path.to_string();
         let rows = py
-            .detach(move || {
-                let s = self.fresh()?;
-                s.ix.outline(&scrutate::ops::repo_path(&s, &p))
-            })
+            .detach(move || self.fresh(|s| s.ix.outline(&scrutate::ops::repo_path(s, &p))))
             .map_err(err)?;
         rows.iter()
             .map(|r| {
@@ -570,8 +573,9 @@ impl Repo {
         let p = path.to_string();
         let deps = py
             .detach(move || {
-                let s = self.fresh()?;
-                scrutate::names::Names::new(&s)?.imports(&scrutate::ops::repo_path(&s, &p))
+                self.fresh(|s| {
+                    scrutate::names::Names::new(s)?.imports(&scrutate::ops::repo_path(s, &p))
+                })
             })
             .map_err(err)?;
         Ok(deps
@@ -584,12 +588,11 @@ impl Repo {
     fn dependents(&self, py: Python<'_>, target: &str) -> PyResult<Vec<(String, i64, String)>> {
         let t = target.to_string();
         py.detach(move || {
-            let s = self.fresh()?;
-            anyhow::Ok(
-                scrutate::names::Names::new(&s)?
-                    .importers(&scrutate::ops::repo_path(&s, &t))?
-                    .0,
-            )
+            self.fresh(|s| {
+                Ok(scrutate::names::Names::new(s)?
+                    .importers(&scrutate::ops::repo_path(s, &t))?
+                    .0)
+            })
         })
         .map_err(err)
     }
@@ -599,10 +602,7 @@ impl Repo {
     fn similar(&self, py: Python<'_>, target: &str, k: usize) -> PyResult<Vec<(Hit, f32, f32)>> {
         let t = target.to_string();
         let out = py
-            .detach(move || {
-                let mut g = self.fresh()?;
-                scrutate::intel::similar(&mut g, &t, k)
-            })
+            .detach(move || self.fresh(|s| scrutate::intel::similar(s, &t, k)))
             .map_err(err)?;
         Ok(out.into_iter().map(|(h, c, j)| (h.into(), c, j)).collect())
     }
@@ -619,12 +619,9 @@ impl Repo {
     ) -> PyResult<Bound<'py, PyAny>> {
         let groups = py
             .detach(move || {
-                scrutate::intel::dupes(
-                    &self.fresh()?.ix,
-                    min_tokens,
-                    threshold,
-                    limit.saturating_add(1),
-                )
+                self.fresh(|s| {
+                    scrutate::intel::dupes(&s.ix, min_tokens, threshold, limit.saturating_add(1))
+                })
             })
             .map_err(err)?;
         let dicts = groups
