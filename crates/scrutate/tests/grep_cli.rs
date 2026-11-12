@@ -367,6 +367,32 @@ fn context_groups_are_separated_as_ripgrep_does() {
 }
 
 #[test]
+fn context_output_of_large_files_on_many_threads_is_not_interleaved() {
+    let d = Dir::new("ctxmix");
+    for f in ["a", "b", "c", "d"] {
+        let text: String = (0..40_000).map(|i| format!("hit {f} {i}\nctx\nctx\nctx\n")).collect();
+        d.write(&format!("{f}.txt"), text.as_bytes());
+    }
+    let (code, one, err) = d.run(&["grep", "-C1", "-j", "1", "hit"]);
+    assert_eq!(code, 0, "{err}");
+    let (_, many, _) = d.run(&["grep", "-C1", "-j", "4", "hit"]);
+    // a line of one file right after a line of another, with no separator between them
+    let mut switches = 0;
+    let mut last: Option<&str> = None;
+    for l in many.lines() {
+        if l == "--" {
+            last = None;
+            continue;
+        }
+        let file = &l[..5];
+        switches += usize::from(last.is_some_and(|f| f != file));
+        last = Some(file);
+    }
+    assert_eq!(switches, 0);
+    assert_eq!(sorted(&many), sorted(&one));
+}
+
+#[test]
 fn file_names_are_printed_as_ripgrep_prints_them() {
     let d = Dir::new("withname");
     d.write("a.txt", b"foo\nbar\nfoo2\n");

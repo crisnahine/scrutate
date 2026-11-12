@@ -1348,6 +1348,9 @@ struct Collector<'a> {
     multiline: bool,
     /// context lines are asked for and this file has written no plain output yet
     first: bool,
+    /// context lines on several threads: plain output leaves only at the end of a group, so no
+    /// other file's lines land inside one
+    whole_groups: bool,
     /// plain lines start with `path`
     named: bool,
     /// plain lines have line numbers
@@ -1440,7 +1443,7 @@ impl<'a> Sink for Collector<'a> {
             }
             self.matched = true;
             let number = if self.numbered { mat.line_number().unwrap_or(0) + self.line_base } else { 0 };
-            if line.len() >= 1 << 16 && !self.hold && !(self.multiline && memchr::memchr(b'\n', line).is_some()) {
+            if line.len() >= 1 << 16 && !self.hold && !self.whole_groups && !(self.multiline && memchr::memchr(b'\n', line).is_some()) {
                 // a very long line is written from where it is instead of being copied into the buffer
                 let mut head = Vec::with_capacity(self.path.len() + 24);
                 format_plain(&mut head, if self.named { &self.path } else { "" }, number, b"", false);
@@ -1450,7 +1453,7 @@ impl<'a> Sink for Collector<'a> {
             } else {
                 format_plain(&mut self.out, if self.named { &self.path } else { "" }, number, lossy(line).as_bytes(), false);
             }
-            if self.out.len() >= 1 << 16 && !self.hold {
+            if self.out.len() >= 1 << 16 && !self.hold && !self.whole_groups {
                 p.write(&self.out, std::mem::take(&mut self.first), self.cancel);
                 self.out.clear();
             }
@@ -1502,7 +1505,12 @@ impl<'a> Sink for Collector<'a> {
     }
 
     fn context_break(&mut self, _s: &Searcher) -> Result<bool, std::io::Error> {
-        if self.plain.is_some() {
+        if let Some(p) = self.plain.filter(|_| self.whole_groups && !self.hold && self.out.len() >= 1 << 16) {
+            // the next group is a first output: the sink writes the `--` before it
+            p.write(&self.out, std::mem::take(&mut self.first), self.cancel);
+            self.out.clear();
+            self.first = true;
+        } else if self.plain.is_some() {
             self.out.extend_from_slice(b"--\n");
         }
         Ok(true)
@@ -1935,7 +1943,9 @@ fn small_first(
         }
         drop(work_tx);
         if let Some((path, rel, size, named)) = held.filter(|_| !cancel.load(Ordering::Relaxed)) {
+            c.alone.store(true, Ordering::Relaxed);
             search_one(&mut file_worker(o), &Run { matcher, o, c, cancel, tx: &tx, plain }, &path, rel, size, named);
+            c.alone.store(false, Ordering::Relaxed);
         }
         drop(tx);
         drain(rx, &mut *on_hit);
@@ -1966,6 +1976,9 @@ struct Counters {
     /// there are any: the flag is all a file pays for until there are
     pseudo_dirs: Mutex<Vec<PathBuf>>,
     has_pseudo_dirs: AtomicBool,
+    /// one file is searched and no other at the same time: its output need not wait for the end
+    /// of a context group
+    alone: AtomicBool,
 }
 
 impl Counters {
@@ -2066,6 +2079,7 @@ impl<'a> Run<'a> {
             binary_at: None,
             multiline: o.multiline,
             first: o.before > 0 || o.after > 0,
+            whole_groups: (o.before > 0 || o.after > 0) && default_threads(o) > 1 && !self.c.alone.load(Ordering::Relaxed),
             named: o.with_filename,
             numbered: o.line_numbers,
             count_each: o.multiline && o.count_only && !o.invert && self.matcher.spans_lines(),
@@ -2599,6 +2613,7 @@ fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Opti
 /// Search standard input, reported as `STDIN_LABEL`.
 fn search_stdin(o: &Options, matcher: &AnyMatcher, c: &Counters, cancel: &AtomicBool, plain: Option<&PlainSink>, on_hit: &mut impl FnMut(Hit)) {
     let (tx, rx) = mpsc::channel::<Vec<Hit>>();
+    c.alone.store(true, Ordering::Relaxed);
     std::thread::scope(|s| {
         s.spawn(move || {
             let mut fw = file_worker(o);
@@ -2606,6 +2621,7 @@ fn search_stdin(o: &Options, matcher: &AnyMatcher, c: &Counters, cancel: &Atomic
         });
         drain(rx, &mut *on_hit);
     });
+    c.alone.store(false, Ordering::Relaxed);
 }
 
 /// A walk joins the count of big searches running (`crate::running`) once it has searched this
