@@ -816,6 +816,80 @@ fn standard_input_is_searched_when_it_is_a_pipe_or_a_file() {
     assert!(code == 2 && err.contains("text index"), "{code} {err}");
 }
 
+/// `scrutate ARGS` in `cwd`, killed and failed after 20 s: a read that blocks must not hang the tests.
+#[cfg(unix)]
+fn run_limited(cwd: &Path, args: &[&str]) -> (i32, String, String) {
+    let mut child = Command::new(BIN)
+        .args(args)
+        .current_dir(cwd)
+        .env_remove("NO_COLOR")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let t0 = std::time::Instant::now();
+    while child.try_wait().unwrap().is_none() {
+        if t0.elapsed().as_secs() >= 20 {
+            let _ = child.kill();
+            panic!("scrutate {args:?} did not finish in 20 s");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let out = child.wait_with_output().unwrap();
+    (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_named_pipe_or_dev_stdin_given_as_a_path_is_searched_as_ripgrep_does() {
+    let d = Dir::new("fifo");
+    let fifo = |rel: &str| {
+        let p = d.0.join(rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        assert!(Command::new("mkfifo").arg(&p).status().unwrap().success());
+        p
+    };
+    // a writer that waits for a reader; one never met leaves its thread blocked until the tests end
+    let feed = |p: PathBuf, text: &'static [u8]| {
+        std::thread::spawn(move || {
+            use std::io::Write;
+            let _ = fs::OpenOptions::new().write(true).open(&p).and_then(|mut f| f.write_all(text));
+        })
+    };
+    let p = fifo("p");
+    for (args, want) in [
+        (&["grep", "foo", "p"][..], "1:foo one\n2:foo two\n"),
+        (&["grep", "-H", "foo", "p"], "p:1:foo one\np:2:foo two\n"),
+        (&["grep", "-c", "foo", "p"], "2\n"),
+        (&["grep", "-l", "foo", "p"], "p\n"),
+        (&["grep", "-z", "foo", "p"], "1:foo one\n2:foo two\n"),
+    ] {
+        let w = feed(p.clone(), b"foo one\nfoo two\n");
+        let (code, out, err) = run_limited(&d.0, args);
+        assert_eq!((code, out.as_str()), (0, want), "{args:?}: {err}");
+        w.join().unwrap();
+    }
+    let w = feed(p.clone(), b"foo one\n");
+    let (code, out, err) = run_limited(&d.0, &["grep", "--json", "foo", "p"]);
+    assert!(code == 0 && out.contains(r#""path":"p""#) && out.contains("foo one"), "{code} {out} {err}");
+    w.join().unwrap();
+    // a pipe named as /dev/stdin
+    let mut child = Command::new(BIN).args(["grep", "foo", "/dev/stdin"]).current_dir(&d.0).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    {
+        use std::io::Write;
+        child.stdin.take().unwrap().write_all(b"foo piped\n").unwrap();
+    }
+    let out = child.wait_with_output().unwrap();
+    assert_eq!((out.status.code(), String::from_utf8_lossy(&out.stdout).as_ref()), (Some(0), "1:foo piped\n"));
+    // a pipe the walk finds is skipped: reading it would wait for a writer
+    fs::remove_file(&p).unwrap();
+    fifo("dir/q");
+    d.write("dir/a.txt", b"foo a\n");
+    let (code, out, err) = run_limited(&d.0, &["grep", "foo", "dir"]);
+    assert_eq!((code, out.as_str()), (0, "dir/a.txt:1:foo a\n"), "{err}");
+}
+
 #[test]
 fn a_sorted_search_with_a_cap_keeps_the_first_matches_in_path_order() {
     let d = Dir::new("orderedcap");

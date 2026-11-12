@@ -1830,6 +1830,12 @@ fn has_dirs(roots: &[PathBuf], o: &Options) -> bool {
     })
 }
 
+/// A regular file, or anything but a directory named on the command line (a named pipe,
+/// `/dev/stdin`), as ripgrep does; a pipe met in a directory could wait for a writer forever.
+fn searchable(e: &ignore::DirEntry) -> bool {
+    e.file_type().is_some_and(|t| t.is_file() || (e.depth() == 0 && !t.is_dir()))
+}
+
 enum Small {
     Done,
     /// more files than the budget: the paths already searched, each with the times it was (overlapping
@@ -1902,7 +1908,7 @@ fn small_first(
                     continue;
                 }
             };
-            if !entry.file_type().is_some_and(|t| t.is_file()) {
+            if !searchable(&entry) {
                 c.met_dir(&entry);
                 continue;
             }
@@ -2708,7 +2714,7 @@ fn walk(
                         return WalkState::Continue;
                     }
                 };
-                if !entry.file_type().is_some_and(|t| t.is_file()) {
+                if !searchable(&entry) {
                     c.met_dir(&entry);
                     return WalkState::Continue;
                 }
@@ -2798,7 +2804,7 @@ fn list_files(roots: &[PathBuf], labels: &[PathBuf], o: &Options, c: &Counters) 
     walk_builder(roots, o)?.build_parallel().run(|| {
         Box::new(|entry| {
             match entry {
-                Ok(e) if e.file_type().is_some_and(|t| t.is_file()) => {
+                Ok(e) if searchable(&e) => {
                     let item = (e.path().to_path_buf(), label(e.path(), labels, o), o.paths_as_given && e.depth() == 0);
                     found.lock().unwrap_or_else(|p| p.into_inner()).push(item);
                 }
