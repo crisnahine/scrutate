@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" aria-labelledby="title desc">
 <title id="title">pre-commit hook</title>
 <desc id="desc">Icon for pre-commit hook.</desc>
-<path d="M3 12h5.5" fill="none" stroke="#8b949e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="M15.5 12H21" fill="none" stroke="#8b949e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 8.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7z" fill="none" stroke="#8b949e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M3 12h5.5" fill="none" stroke="#6f6a5e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="M15.5 12H21" fill="none" stroke="#6f6a5e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 8.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7z" fill="none" stroke="#6f6a5e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

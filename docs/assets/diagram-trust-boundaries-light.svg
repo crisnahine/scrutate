@@ -4,18 +4,18 @@
 <style>
 text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif; }
 .m { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
-.h { font-size: 15px; font-weight: 600; fill: #1f2328; }
-.b { font-size: 14px; fill: #59636e; }
-.bi { font-size: 14px; fill: #1f2328; }
-.lbl { font-size: 14px; font-weight: 600; fill: #59636e; }
-.card { fill: #f6f8fa; stroke: #d1d9e0; stroke-width: 1; }
-.inset { fill: #ffffff; stroke: #d1d9e0; stroke-width: 1; }
-.store { fill: #f6f8fa; stroke: #6d28d9; stroke-width: 1.25; }
-.out { fill: #f6f8fa; stroke: #0f766e; stroke-width: 1.25; }
-.arrow { fill: none; stroke: #59636e; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.gate { fill: #ffffff; stroke: #59636e; stroke-width: 1.25; stroke-dasharray: 6 5; }
+.h { font-size: 15px; font-weight: 600; fill: #0c0c0e; }
+.b { font-size: 14px; fill: #6f6a5e; }
+.bi { font-size: 14px; fill: #0c0c0e; }
+.lbl { font-size: 14px; font-weight: 600; fill: #6f6a5e; }
+.card { fill: #f2eee3; stroke: #cfc9ba; stroke-width: 1; }
+.inset { fill: #ffffff; stroke: #cfc9ba; stroke-width: 1; }
+.store { fill: #f2eee3; stroke: #0c0c0e; stroke-width: 1.25; }
+.out { fill: #f2eee3; stroke: #0c0c0e; stroke-width: 1.25; }
+.arrow { fill: none; stroke: #6f6a5e; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.gate { fill: #ffffff; stroke: #6f6a5e; stroke-width: 1.25; stroke-dasharray: 6 5; }
 </style>
-<defs><marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M1.5 1.5 8.5 5 1.5 8.5" fill="none" stroke="#59636e" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M1.5 1.5 8.5 5 1.5 8.5" fill="none" stroke="#6f6a5e" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
 <text x="1" y="18" class="lbl">Outside: untrusted</text>
 <text x="236" y="18" class="lbl">The boundary: the controls on it</text>
 <text x="690" y="18" class="lbl">Inside</text>
@@ -27,18 +27,18 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <text x="17" y="142" class="b">symlinks,</text>
 <text x="17" y="162" class="b"><tspan class="m">.gitignore</tspan></text>
 <rect x="236" y="34" width="414" height="252" rx="12" class="gate"/>
-<circle cx="254" cy="55" r="3" fill="#0f766e"/>
+<circle cx="254" cy="55" r="3" fill="#0c0c0e"/>
 <text x="266" y="60" class="b">Parsed as data: nothing is evaluated, imported</text>
 <text x="266" y="80" class="b">or run. One exception: <tspan class="m">grep -z</tspan> runs the</text>
 <text x="266" y="100" class="b">system's decompressors on compressed files.</text>
-<circle cx="254" cy="123" r="3" fill="#0f766e"/>
+<circle cx="254" cy="123" r="3" fill="#0c0c0e"/>
 <text x="266" y="128" class="b">Symlinks are not followed by default; <tspan class="m">-L</tspan></text>
 <text x="266" y="148" class="b">follows with loop detection.</text>
-<circle cx="254" cy="171" r="3" fill="#0f766e"/>
+<circle cx="254" cy="171" r="3" fill="#0c0c0e"/>
 <text x="266" y="176" class="b">Engine B skips binary files and files over 1</text>
 <text x="266" y="196" class="b">MB; the resolver does not read a file nested</text>
 <text x="266" y="216" class="b">more than 2,000 levels.</text>
-<circle cx="254" cy="239" r="3" fill="#0f766e"/>
+<circle cx="254" cy="239" r="3" fill="#0c0c0e"/>
 <text x="266" y="244" class="b"><tspan class="m">follow = true</tspan> in the repository's own</text>
 <text x="266" y="264" class="b"><tspan class="m">.scrutate.toml</tspan> is ignored with a warning.</text>
 <path d="M201 160 L232 160" class="arrow" marker-end="url(#ah)"/>
@@ -47,7 +47,7 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <text x="17" y="328" class="h">Patterns</text>
 <text x="17" y="350" class="b">a hostile query</text>
 <rect x="236" y="302" width="414" height="88" rx="12" class="gate"/>
-<circle cx="254" cy="323" r="3" fill="#0f766e"/>
+<circle cx="254" cy="323" r="3" fill="#0c0c0e"/>
 <text x="266" y="328" class="b">Rust <tspan class="m">regex</tspan>: linear time, no backtracking,</text>
 <text x="266" y="348" class="b">size limits (20 MB regex, 10 MB DFA); an</text>
 <text x="266" y="368" class="b">oversized pattern is an error.</text>
@@ -59,12 +59,12 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <text x="17" y="474" class="b">malformed JSON-RPC,</text>
 <text x="17" y="494" class="b">path escapes</text>
 <rect x="236" y="406" width="414" height="164" rx="12" class="gate"/>
-<circle cx="254" cy="427" r="3" fill="#0f766e"/>
+<circle cx="254" cy="427" r="3" fill="#0c0c0e"/>
 <text x="266" y="432" class="b">stdio only, no listening socket.</text>
-<circle cx="254" cy="455" r="3" fill="#0f766e"/>
+<circle cx="254" cy="455" r="3" fill="#0c0c0e"/>
 <text x="266" y="460" class="b">A path that leaves the root by its own parts</text>
 <text x="266" y="480" class="b">is refused with nothing looked at.</text>
-<circle cx="254" cy="503" r="3" fill="#0f766e"/>
+<circle cx="254" cy="503" r="3" fill="#0c0c0e"/>
 <text x="266" y="508" class="b">Malformed input gets the JSON-RPC error the</text>
 <text x="266" y="528" class="b">specification names; at most 32 call threads</text>
 <text x="266" y="548" class="b">at once.</text>
@@ -77,14 +77,14 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <text x="17" y="674" class="b">corrupted or</text>
 <text x="17" y="694" class="b">planted</text>
 <rect x="236" y="586" width="414" height="184" rx="12" class="gate"/>
-<circle cx="254" cy="607" r="3" fill="#0f766e"/>
+<circle cx="254" cy="607" r="3" fill="#0c0c0e"/>
 <text x="266" y="612" class="b">Written only under <tspan class="m">&lt;root&gt;/.scrutate/</tspan>;</text>
 <text x="266" y="632" class="b">segments go to a temporary directory there and</text>
 <text x="266" y="652" class="b">are renamed.</text>
-<circle cx="254" cy="675" r="3" fill="#0f766e"/>
+<circle cx="254" cy="675" r="3" fill="#0c0c0e"/>
 <text x="266" y="680" class="b">A <tspan class="m">.scrutate</tspan> that is a link, or holds one, is</text>
 <text x="266" y="700" class="b">refused.</text>
-<circle cx="254" cy="723" r="3" fill="#0f766e"/>
+<circle cx="254" cy="723" r="3" fill="#0c0c0e"/>
 <text x="266" y="728" class="b"><tspan class="m">PRAGMA quick_check</tspan> on open, arrays</text>
 <text x="266" y="748" class="b">validated; a damaged index is rebuilt.</text>
 <path d="M686 678 L654 678" class="arrow" marker-end="url(#ah)" marker-start="url(#ah)"/>
@@ -95,11 +95,11 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <text x="706" y="102" class="b">the CLI, the MCP</text>
 <text x="706" y="122" class="b">server and the</text>
 <text x="706" y="142" class="b">Python bindings.</text>
-<rect x="1" y="794" width="196" height="88" rx="12" fill="none" stroke="#d1d9e0" stroke-dasharray="5 5"/>
+<rect x="1" y="794" width="196" height="88" rx="12" fill="none" stroke="#cfc9ba" stroke-dasharray="5 5"/>
 <text x="17" y="820" class="h">Network</text>
 <text x="17" y="842" class="b">not used</text>
 <rect x="236" y="794" width="414" height="88" rx="12" class="gate"/>
-<circle cx="254" cy="815" r="3" fill="#0f766e"/>
+<circle cx="254" cy="815" r="3" fill="#0c0c0e"/>
 <text x="266" y="820" class="b">No network connections and no HTTP or DNS</text>
 <text x="266" y="840" class="b">dependency: <tspan class="m">cargo tree</tspan> has no networking</text>
 <text x="266" y="860" class="b">crate.</text>

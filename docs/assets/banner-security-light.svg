@@ -4,23 +4,23 @@
 <style>
 text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif; }
 .m { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
-.h { font-size: 15px; font-weight: 600; fill: #1f2328; }
-.b { font-size: 14px; fill: #59636e; }
-.bi { font-size: 14px; fill: #1f2328; }
-.lbl { font-size: 14px; font-weight: 600; fill: #59636e; }
-.card { fill: #f6f8fa; stroke: #d1d9e0; stroke-width: 1; }
-.inset { fill: #ffffff; stroke: #d1d9e0; stroke-width: 1; }
-.store { fill: #f6f8fa; stroke: #6d28d9; stroke-width: 1.25; }
-.out { fill: #f6f8fa; stroke: #0f766e; stroke-width: 1.25; }
-.arrow { fill: none; stroke: #59636e; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.gate { fill: #ffffff; stroke: #59636e; stroke-width: 1.25; stroke-dasharray: 6 5; }
+.h { font-size: 15px; font-weight: 600; fill: #0c0c0e; }
+.b { font-size: 14px; fill: #6f6a5e; }
+.bi { font-size: 14px; fill: #0c0c0e; }
+.lbl { font-size: 14px; font-weight: 600; fill: #6f6a5e; }
+.card { fill: #f2eee3; stroke: #cfc9ba; stroke-width: 1; }
+.inset { fill: #ffffff; stroke: #cfc9ba; stroke-width: 1; }
+.store { fill: #f2eee3; stroke: #0c0c0e; stroke-width: 1.25; }
+.out { fill: #f2eee3; stroke: #0c0c0e; stroke-width: 1.25; }
+.arrow { fill: none; stroke: #6f6a5e; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.gate { fill: #ffffff; stroke: #6f6a5e; stroke-width: 1.25; stroke-dasharray: 6 5; }
 
-.title { font-size: 32px; font-weight: 700; fill: #1f2328; }
-.line { font-size: 15px; fill: #59636e; }
-.brand { font-size: 14px; fill: #59636e; letter-spacing: .5px; }
-.code { fill: #d1d9e0; }
-.hit { fill: #0f766e; }
-.band { fill: #0f766e; opacity: 0.12; }
+.title { font-size: 32px; font-weight: 700; fill: #0c0c0e; }
+.line { font-size: 15px; fill: #6f6a5e; }
+.brand { font-size: 14px; fill: #6f6a5e; letter-spacing: .5px; }
+.code { fill: #cfc9ba; }
+.hit { fill: #0c0c0e; }
+.band { fill: #0c0c0e; opacity: 0.16; }
 .beam { animation: sweep 12s cubic-bezier(.2,.7,.2,1) infinite; }
 .lit { animation: lit 12s cubic-bezier(.2,.7,.2,1) infinite; }
 @keyframes sweep { 0% { transform: translateX(-196px); opacity: 0; } 5% { opacity: 1; }
@@ -29,10 +29,10 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 @keyframes lit { 0%, 44% { opacity: 0; } 52%, 92% { opacity: 1; } 100% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
 </style>
-<defs><marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M1.5 1.5 8.5 5 1.5 8.5" fill="none" stroke="#59636e" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker><linearGradient id="glow" x1="0" x2="1"><stop offset="0" stop-color="#0f766e" stop-opacity="0"/><stop offset="1" stop-color="#0f766e" stop-opacity="0.22"/></linearGradient></defs>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M1.5 1.5 8.5 5 1.5 8.5" fill="none" stroke="#6f6a5e" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker><linearGradient id="glow" x1="0" x2="1"><stop offset="0" stop-color="#0c0c0e" stop-opacity="0"/><stop offset="1" stop-color="#0c0c0e" stop-opacity="0.22"/></linearGradient></defs>
 <rect x="0.5" y="0.5" width="879" height="159" rx="12" class="card"/>
 <rect x="32" y="44" width="72" height="72" rx="16" class="inset"/>
-<g transform="translate(47 59) scale(1.75)"><path d="M12 3 4.5 6v5.5c0 4.5 3.2 8 7.5 9.5 4.3-1.5 7.5-5 7.5-9.5V6z" fill="none" stroke="#0f766e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" fill="none" stroke="#0f766e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></g>
+<g transform="translate(47 59) scale(1.75)"><path d="M12 3 4.5 6v5.5c0 4.5 3.2 8 7.5 9.5 4.3-1.5 7.5-5 7.5-9.5V6z" fill="none" stroke="#0c0c0e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" fill="none" stroke="#0c0c0e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></g>
 <text x="128" y="62" class="brand m">scrutate / docs</text>
 <text x="128" y="100" class="title">Security</text>
 <text x="128" y="128" class="line">What can a hostile repository, query or client do?</text>

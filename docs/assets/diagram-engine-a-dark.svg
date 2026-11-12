@@ -4,23 +4,23 @@
 <style>
 text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif; }
 .m { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
-.h { font-size: 15px; font-weight: 600; fill: #e6edf3; }
-.b { font-size: 14px; fill: #8b949e; }
-.bi { font-size: 14px; fill: #e6edf3; }
-.lbl { font-size: 14px; font-weight: 600; fill: #8b949e; }
-.card { fill: #161b22; stroke: #30363d; stroke-width: 1; }
-.inset { fill: #0d1117; stroke: #30363d; stroke-width: 1; }
-.store { fill: #161b22; stroke: #a78bfa; stroke-width: 1.25; }
-.out { fill: #161b22; stroke: #5eead4; stroke-width: 1.25; }
-.arrow { fill: none; stroke: #8b949e; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.gate { fill: #0d1117; stroke: #8b949e; stroke-width: 1.25; stroke-dasharray: 6 5; }
+.h { font-size: 15px; font-weight: 600; fill: #f2eee3; }
+.b { font-size: 14px; fill: #8f8f98; }
+.bi { font-size: 14px; fill: #f2eee3; }
+.lbl { font-size: 14px; font-weight: 600; fill: #8f8f98; }
+.card { fill: #0c0c0e; stroke: #2a2a2f; stroke-width: 1; }
+.inset { fill: #000000; stroke: #2a2a2f; stroke-width: 1; }
+.store { fill: #0c0c0e; stroke: #f2eee3; stroke-width: 1.25; }
+.out { fill: #0c0c0e; stroke: #d9ff3d; stroke-width: 1.25; }
+.arrow { fill: none; stroke: #8f8f98; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.gate { fill: #000000; stroke: #8f8f98; stroke-width: 1.25; stroke-dasharray: 6 5; }
 
-.flow { fill: none; stroke: #5eead4; stroke-width: 2.5; stroke-linecap: round; stroke-dasharray: 10 200;
+.flow { fill: none; stroke: #d9ff3d; stroke-width: 2.5; stroke-linecap: round; stroke-dasharray: 10 200;
   stroke-dashoffset: 30; animation: flow 10s cubic-bezier(.2,.7,.2,1) infinite; }
 @keyframes flow { 0% { stroke-dashoffset: 30; } 14%, 100% { stroke-dashoffset: -100; } }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
 </style>
-<defs><marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M1.5 1.5 8.5 5 1.5 8.5" fill="none" stroke="#8b949e" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M1.5 1.5 8.5 5 1.5 8.5" fill="none" stroke="#8f8f98" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
 <rect x="1" y="1" width="262" height="222" rx="12" class="card"/>
 <text x="17" y="27" class="h">Command line</text>
 <text x="17" y="49" class="b"><tspan class="m">scrutate grep PATTERN</tspan></text>
@@ -76,7 +76,7 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <text x="689" y="455" class="b">buffers; else one</text>
 <text x="689" y="475" class="b">buffer of the file's</text>
 <text x="689" y="495" class="b">size.</text>
-<path d="M457 301 V295 H871 V301" fill="none" stroke="#30363d" stroke-width="1.5"/>
+<path d="M457 301 V295 H871 V301" fill="none" stroke="#2a2a2f" stroke-width="1.5"/>
 <text x="664" y="287" class="lbl" text-anchor="middle">64 MB or more</text>
 <path d="M748 225 L748 249" class="arrow"/>
 <path d="M748 225 L748 249" class="flow" pathLength="100" style="stroke-dasharray: 30.0 200; animation-delay: 2.4s"/>

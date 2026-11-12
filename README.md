@@ -1,37 +1,22 @@
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.svg">
-    <img src="docs/assets/hero-light.svg" width="100%" alt="Scrutate: instant code search and code intelligence in one Rust binary. A scan beam passes over real code and lights the lines that scrutate grep --ident indexDir matches.">
-  </picture>
-</p>
+<p align="center"><img src="docs/assets/hero.svg" width="100%" alt="Scrutate: instant code search and code intelligence in one Rust binary. The wordmark lies over the real output of scrutate grep --ident indexDir src, every match marked with a highlighter."></p>
 
 <p align="center"><b>Universal instant code search and persistent code intelligence, in one Rust binary.</b></p>
 
 <p align="center">
-  <a href="LICENSE"><img src="docs/assets/badge-licence.svg" alt="licence: Apache-2.0" height="22"></a>
-  <a href="#install"><img src="docs/assets/badge-rust.svg" alt="rust: 1.91 or newer" height="22"></a>
-  <a href="#status-010"><img src="docs/assets/badge-platforms.svg" alt="platforms: macOS, Linux, Windows" height="22"></a>
+  <a href="LICENSE"><img src="docs/assets/badge-licence.svg" alt="licence: Apache-2.0" height="24"></a>
+  <a href="#install"><img src="docs/assets/badge-rust.svg" alt="rust: 1.91 or newer" height="24"></a>
+  <a href="#status-010"><img src="docs/assets/badge-platforms.svg" alt="platforms: macOS, Linux, Windows" height="24"></a>
 </p>
 
 <p align="center">
   <a href="#install"><b>Install</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#quick-start"><b>Quick start</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#benchmarks"><b>Benchmarks</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#documentation"><b>Documentation</b></a>
 </p>
 
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/demo-dark.svg">
-    <img src="docs/assets/demo-light.svg" width="100%" alt="A terminal running four scrutate commands in a copy of its own source: grep -F max_filesize, grep --ident indexDir, search &quot;parse a size like 10M&quot; and callers text_within, each with the output the binary printed.">
-  </picture>
-</p>
+<p align="center"><img src="docs/assets/demo.svg" width="100%" alt="A terminal running four scrutate commands in a copy of its own source: grep -F max_filesize, grep --ident indexDir, search &quot;parse a size like 10M&quot; and callers text_within, each with the output the binary printed."></p>
 
 ## Two engines, one binary
 
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/engines-dark.svg">
-    <img src="docs/assets/engines-light.svg" width="100%" alt="What you ask (CLI, Python, MCP for agents, LSP for editors) goes to Engine A, search with no index (walk, ignore rules, match, stream), or Engine B, the index (parse, symbols, call edges, text index, ranker). Engine A returns matches; Engine B returns ranked results, definitions and callers, and references.">
-  </picture>
-</p>
+<p align="center"><img src="docs/assets/engines.svg" width="100%" alt="What you ask (CLI, Python, MCP for agents, LSP for editors) goes to Engine A, search with no index (walk, ignore rules, match, stream), or Engine B, the index (parse, symbols, call edges, text index, ranker). Engine A returns matches; Engine B returns ranked results, definitions and callers, and references."></p>
 
 Scrutate is two independent engines behind one CLI.
 
@@ -49,6 +34,8 @@ Ranked search by meaning, name or identifier; definitions, callers/callees, refe
 outlines, dependencies, similar and duplicate code, structural queries, cross-repository search.
 
 [How the engines work and why](docs/ARCHITECTURE.md)
+
+<p align="center"><img src="docs/assets/strip-quick-start.svg" width="100%" alt=""></p>
 
 ## Quick start
 
@@ -84,35 +71,39 @@ scrutate serve --watch                          # MCP server for AI coding agent
 scrutate lsp                                    # language server for editors (VS Code, JetBrains)
 ```
 
+<p align="center"><img src="docs/assets/strip-what-it-does.svg" width="100%" alt=""></p>
+
 ## What it does
 
 <table>
 <tr>
-<td width="33%" valign="top"><img src="docs/assets/icon-regex.svg" width="24" height="24" alt=""><br><b>Regex</b><br>Literal, regex in linear time, and PCRE2 (<code>-P</code>).</td>
-<td width="33%" valign="top"><img src="docs/assets/icon-ident.svg" width="24" height="24" alt=""><br><b>Any casing</b><br>One spelling finds snake, camel and upper case (<code>--ident</code>).</td>
-<td width="33%" valign="top"><img src="docs/assets/icon-fuzzy.svg" width="24" height="24" alt=""><br><b>Fuzzy</b><br>Matches within N edits, also for a regex (<code>--fuzzy</code>).</td>
+<td width="33%" valign="top"><img src="docs/assets/icon-regex.svg" width="28" height="28" alt=""><br><b>Regex</b><br>Literal, regex in linear time, and PCRE2 (<code>-P</code>).</td>
+<td width="33%" valign="top"><img src="docs/assets/icon-ident.svg" width="28" height="28" alt=""><br><b>Any casing</b><br>One spelling finds snake, camel and upper case (<code>--ident</code>).</td>
+<td width="33%" valign="top"><img src="docs/assets/icon-fuzzy.svg" width="28" height="28" alt=""><br><b>Fuzzy</b><br>Matches within N edits, also for a regex (<code>--fuzzy</code>).</td>
 </tr>
 <tr>
-<td valign="top"><img src="docs/assets/icon-archive.svg" width="24" height="24" alt=""><br><b>Archives</b><br>Inside zip and tar files and compressed files (<code>-z</code>).</td>
-<td valign="top"><img src="docs/assets/icon-textindex.svg" width="24" height="24" alt=""><br><b>Text index</b><br>A trigram index, Engine A's exact output (<code>grep --index</code>).</td>
-<td valign="top"><img src="docs/assets/icon-ranked.svg" width="24" height="24" alt=""><br><b>Ranked</b><br>By meaning, name or identifier, with a learned ranker (<code>search</code>).</td>
+<td valign="top"><img src="docs/assets/icon-archive.svg" width="28" height="28" alt=""><br><b>Archives</b><br>Inside zip and tar files and compressed files (<code>-z</code>).</td>
+<td valign="top"><img src="docs/assets/icon-textindex.svg" width="28" height="28" alt=""><br><b>Text index</b><br>A trigram index, Engine A's exact output (<code>grep --index</code>).</td>
+<td valign="top"><img src="docs/assets/icon-ranked.svg" width="28" height="28" alt=""><br><b>Ranked</b><br>By meaning, name or identifier, with a learned ranker (<code>search</code>).</td>
 </tr>
 <tr>
-<td valign="top"><img src="docs/assets/icon-callgraph.svg" width="24" height="24" alt=""><br><b>Call graph</b><br>Definitions, callers, callees, outlines, imports (<code>callers</code>).</td>
-<td valign="top"><img src="docs/assets/icon-refs.svg" width="24" height="24" alt=""><br><b>References</b><br>Each name resolved through imports and scopes (<code>refs</code>).</td>
-<td valign="top"><img src="docs/assets/icon-dupes.svg" width="24" height="24" alt=""><br><b>Duplicates</b><br>Exact and near copies of a function, similar code (<code>dupes</code>).</td>
+<td valign="top"><img src="docs/assets/icon-callgraph.svg" width="28" height="28" alt=""><br><b>Call graph</b><br>Definitions, callers, callees, outlines, imports (<code>callers</code>).</td>
+<td valign="top"><img src="docs/assets/icon-refs.svg" width="28" height="28" alt=""><br><b>References</b><br>Each name resolved through imports and scopes (<code>refs</code>).</td>
+<td valign="top"><img src="docs/assets/icon-dupes.svg" width="28" height="28" alt=""><br><b>Duplicates</b><br>Exact and near copies of a function, similar code (<code>dupes</code>).</td>
 </tr>
 <tr>
-<td valign="top"><img src="docs/assets/icon-structural.svg" width="24" height="24" alt=""><br><b>Structure</b><br>tree-sitter queries on the syntax tree (<code>tsquery</code>).</td>
-<td valign="top"><img src="docs/assets/icon-watch.svg" width="24" height="24" alt=""><br><b>Kept fresh</b><br>An incremental index that follows edits (<code>watch</code>).</td>
-<td valign="top"><img src="docs/assets/icon-repos.svg" width="24" height="24" alt=""><br><b>Many repos</b><br>Search other repositories too (<code>search --also</code>).</td>
+<td valign="top"><img src="docs/assets/icon-structural.svg" width="28" height="28" alt=""><br><b>Structure</b><br>tree-sitter queries on the syntax tree (<code>tsquery</code>).</td>
+<td valign="top"><img src="docs/assets/icon-watch.svg" width="28" height="28" alt=""><br><b>Kept fresh</b><br>An incremental index that follows edits (<code>watch</code>).</td>
+<td valign="top"><img src="docs/assets/icon-repos.svg" width="28" height="28" alt=""><br><b>Many repos</b><br>Search other repositories too (<code>search --also</code>).</td>
 </tr>
 <tr>
-<td valign="top"><img src="docs/assets/icon-mcp.svg" width="24" height="24" alt=""><br><b>MCP server</b><br>Tools for AI coding agents, on stdio (<code>serve</code>).</td>
-<td valign="top"><img src="docs/assets/icon-lsp.svg" width="24" height="24" alt=""><br><b>Editors</b><br>A language server: definitions, references, symbols (<code>lsp</code>).</td>
-<td valign="top"><img src="docs/assets/icon-python.svg" width="24" height="24" alt=""><br><b>Python</b><br>Streamed grep with the GIL released, and the index (<a href="#python">bindings</a>).</td>
+<td valign="top"><img src="docs/assets/icon-mcp.svg" width="28" height="28" alt=""><br><b>MCP server</b><br>Tools for AI coding agents, on stdio (<code>serve</code>).</td>
+<td valign="top"><img src="docs/assets/icon-lsp.svg" width="28" height="28" alt=""><br><b>Editors</b><br>A language server: definitions, references, symbols (<code>lsp</code>).</td>
+<td valign="top"><img src="docs/assets/icon-python.svg" width="28" height="28" alt=""><br><b>Python</b><br>Streamed grep with the GIL released, and the index (<a href="#python">bindings</a>).</td>
 </tr>
 </table>
+
+<p align="center"><img src="docs/assets/strip-benchmarks.svg" width="100%" alt=""></p>
 
 ## Benchmarks
 
@@ -120,8 +111,8 @@ Everything below is measured; the numbers come from scripts in `bench/` that you
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/bench-walltime-dark.svg">
-    <img src="docs/assets/bench-walltime-light.svg" width="100%" alt="Median wall time, warm cache, scrutate against the fastest other tool on six benchmarks from docs/LEADERBOARD.md, and start-up time from docs/BENCHMARKS.md. The full numbers are in the image description and in those documents.">
+    <source media="(max-width: 600px)" srcset="docs/assets/bench-walltime-phone.svg">
+    <img src="docs/assets/bench-walltime.svg" width="100%" alt="Median wall time, warm cache, scrutate against the fastest other tool on six benchmarks from docs/LEADERBOARD.md, and start-up time from docs/BENCHMARKS.md; the faster bar of each pair is marked. The full numbers are in the image description and in those documents.">
   </picture>
 </p>
 
@@ -142,8 +133,8 @@ Structural search is 6 and 14 times faster than ast-grep.
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/bench-index-dark.svg">
-    <img src="docs/assets/bench-index-light.svg" width="100%" alt="The text index against zoekt and livegrep on the Linux tree in a Linux virtual machine: full index build time, index size and median query time, from docs/LEADERBOARD.md.">
+    <source media="(max-width: 600px)" srcset="docs/assets/bench-index-phone.svg">
+    <img src="docs/assets/bench-index.svg" width="100%" alt="The text index against zoekt and livegrep on the Linux tree in a Linux virtual machine: full index build time, index size and median query time, from docs/LEADERBOARD.md.">
   </picture>
 </p>
 
@@ -159,6 +150,8 @@ livegrep on all 8 indexed metrics (3.9 times the throughput of the next).
 More: [docs/BENCHMARKS.md](docs/BENCHMARKS.md) (latency, CPU, memory, start-up, concurrency, index
 metrics), [docs/dashboard.html](docs/dashboard.html) (every run so far) and
 [docs/QUALITY.md](docs/QUALITY.md) (ranking quality on held-out code).
+
+<p align="center"><img src="docs/assets/strip-agents.svg" width="100%" alt=""></p>
 
 ## For AI agents and editors
 
@@ -181,10 +174,7 @@ Client set-up for each agent and editor is in [integrations/](integrations/):
 [Neovim](integrations/neovim/README.md), [JetBrains](integrations/jetbrains/), and GitHub Action,
 GitLab, Bitbucket and pre-commit.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/divider-dark.svg">
-  <img src="docs/assets/divider-light.svg" width="100%" alt="">
-</picture>
+<p align="center"><img src="docs/assets/strip-install.svg" width="100%" alt=""></p>
 
 ## Install
 
@@ -198,6 +188,8 @@ No release archive is published yet. `.github/workflows/release.yml` builds arch
 Sigstore attestations, musl binaries and wheels for every platform once the repository is public;
 it is private for now ([docs/INSTALL.md](docs/INSTALL.md)).
 
+<p align="center"><img src="docs/assets/strip-python.svg" width="100%" alt=""></p>
+
 ## Python
 
 Python bindings (`pip install` the wheel built by maturin from `crates/scrutate-py`):
@@ -209,6 +201,8 @@ for m in scrutate.grep("TODO", ["."], mode="literal"):      # streamed, GIL rele
 repo = scrutate.Repo("."); repo.index()
 print(repo.search("parse a date string", k=5))
 ```
+
+<p align="center"><img src="docs/assets/strip-status.svg" width="100%" alt=""></p>
 
 ## Status: 0.1.0
 
@@ -241,6 +235,8 @@ lexical layer for function and type answers on every query type but one, which t
 
 **Code checks.** `cargo clippy -D warnings` and `cargo fmt` are clean; `cargo audit` reports no
 vulnerabilities; an SBOM is generated.
+
+<p align="center"><img src="docs/assets/strip-documentation.svg" width="100%" alt=""></p>
 
 ## Documentation
 
@@ -285,6 +281,8 @@ vulnerabilities; an SBOM is generated.
 <td valign="top" colspan="2"><img src="docs/assets/icon-doc.svg" width="20" height="20" alt=""> <b>Also</b><br><a href="docs/INSTALL.md">INSTALL</a>, <a href="docs/DEPENDENCIES.md">DEPENDENCIES</a>, <a href="docs/ROADMAP.md">ROADMAP</a>, <a href="docs/RESEARCH.md">RESEARCH</a>, <a href="CHANGELOG.md">CHANGELOG</a>, <a href="CONTRIBUTING.md">CONTRIBUTING</a></td>
 </tr>
 </table>
+
+<p align="center"><img src="docs/assets/strip-licence.svg" width="100%" alt=""></p>
 
 ## Licence
 

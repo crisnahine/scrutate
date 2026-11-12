@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The README's benchmark charts, docs/assets/bench-{walltime,index}-{light,dark}.svg, from the raw results.
+"""The README's benchmark charts, docs/assets/bench-{walltime,index}.svg, from the raw results.
 
 usage:
   python3 bench/make_readme_charts.py [--warm FILE.json] [--compare FILE.json] [--indexed FILE.json] [--check]
@@ -12,7 +12,8 @@ usage:
 Each default is the current file under bench/results/ when it exists (macos-arm64/leaderboard-warm.json,
 macos-arm64/compare.json, linux-aarch64/indexed.json), else the published run under superseded/.
 Values are formatted by the same function as docs/LEADERBOARD.md, so a chart shows that page's numbers.
-Ranking quality (docs/QUALITY.md) is not charted: its numbers live in run logs that are not committed.
+The faster bar of each pair is the highlighter, whichever tool it belongs to. Ranking quality
+(docs/QUALITY.md) is not charted: its numbers live in run logs that are not committed.
 """
 from __future__ import annotations
 
@@ -25,7 +26,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, ".."))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 sys.path.insert(0, HERE)
-import gen_assets as G  # noqa: E402  (palette, SVG wrapper, write/check)
+import gen_assets as G  # noqa: E402  (tokens, parts, SVG wrapper, write/check)
 from make_leaderboard_md import ms  # noqa: E402
 
 RESULTS = os.path.join(ROOT, "bench", "results")
@@ -47,56 +48,76 @@ def default(platform: str, name: str, published: str) -> str:
     return cur if os.path.exists(cur) else os.path.join(RESULTS, platform, "superseded", published)
 
 
-def bar(x, y, w, h, colour, cls):
-    # 4 px rounded data end, square at the baseline
-    r = min(4, w / 2, h / 2)
-    d = f"M{x} {y} H{x + w - r} Q{x + w} {y} {x + w} {y + r} V{y + h - r} Q{x + w} {y + h} {x + w - r} {y + h} H{x} Z"
-    return f'<path class="{cls}" d="{d}" fill="{colour}"/>'
+def bar(x, y, w, h, win, on, name, label, k):
+    """One bar, drawn like a pen stroke: the winner's is the highlighter with its name in ink, the other a dim
+    outline; the value follows in mono."""
+    c = G.ON[on]
+    delay = f"animation-delay:{0.3 + 0.1 * k:.2f}s"
+    if win:
+        out = [G.marker(x, y, w, h, "wipe", delay)]
+    else:
+        out = [f'<rect class="wipe" style="{delay}" x="{x + .75:.1f}" y="{y + .75:.1f}" width="{max(w - 1.5, 1):.1f}" '
+               f'height="{h - 1.5:.1f}" fill="none" stroke="{c["dim"]}" stroke-width="1.5"/>']
+    inside = G.text_w(name, 12, True) + 16 <= w
+    out.append(G.mono(x + 8 if inside else x + w + 10, y + h / 2 + 4.5, name, 12,
+                      G.INK if inside and win else c["fg"] if inside or win else c["dim"], weight="700" if win else ""))
+    vx = x + w + 10 + (0 if inside else G.text_w(name, 12, True) + 10)
+    out.append(G.mono(vx, y + h / 2 + 4.5, label, 13, c["fg"], weight="700" if win else ""))
+    return "".join(out)
 
 
-def grow_style(T=1.6):
-    """Bars grow to their value once and stay; the values follow."""
-    return "\n".join([
-        f".g{{transform-box: fill-box; transform-origin: left center; animation: grow {T}s {G.EASE} .3s 1 both}}",
-        f".v{{animation: show .5s {G.EASE} {T}s 1 both}}",
-        "@keyframes grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }",
-        "@keyframes show { from { opacity: 0; } to { opacity: 1; } }"])
+PHONE_W = 440   # the second, narrow version of each chart, which README.md shows to screens under 600 px
 
 
-def tool_name(x, y, t, us, anchor="end"):
-    weight = ' font-weight="600"' if us else ""
-    return (f'<text x="{x}" y="{y}" class="s" font-size="14" fill="{{{{{"ink" if us else "muted"}}}}}" '
-            f'text-anchor="{anchor}"{weight}>{G.esc(t)}</text>')
+def lay(W):
+    """Margins and type for the wide and the phone version."""
+    pad = G.PAD if W > 600 else 24
+    return pad, 28 if W > 600 else 19
 
 
-def walltime(warm: dict, compare: dict) -> str:
+def head(n, title, sub, on, W):
+    pad, cap = lay(W)
+    return G.label(pad, 46, n, sub, on, W - pad) + G.words(title, pad, 98 if W > 600 else 90, cap, G.ON[on]["fg"])
+
+
+def foot(b, y, W, lines, colour):
+    """Source lines in small mono, wrapped to the panel; returns the y after them."""
+    pad, _ = lay(W)
+    per = int((W - 2 * pad) / (11 * 0.62))
+    for ln in lines:
+        while ln:
+            cut = len(ln) if len(ln) <= per else ln.rfind(" ", 0, per) + 1 or per
+            b.append(G.mono(pad, y, ln[:cut].rstrip(), 11, colour))
+            ln, y = ln[cut:], y + 17
+    return y
+
+
+def walltime(warm: dict, compare: dict, W=G.W) -> str:
     env = warm["environment"]
-    W = 880
-    lx, tx, bx, bw = 24, 372, 384, 380   # label, tool name (right-aligned), bar start, longest bar
-    bh, gap, row_h = 18, 4, 76
+    on, wide = "paper", W > 600
+    c = G.ON[on]
+    pad, _ = lay(W)
+    bh, gap = 22, 6
+    bx, bw, row_h = (392, 300, 84) if wide else (pad, W - 2 * pad - 120, 128)
     runs = warm["settings"]["runs"]
-    b = ['<text x="24" y="30" class="s" font-size="19" font-weight="600" fill="{{ink}}">Wall time, warm cache, lower is better</text>',
-         '<text x="24" y="54" class="s" font-size="14" fill="{{muted}}">scrutate against the fastest other tool on each benchmark. '
-         'Each row has its own scale.</text>',
-         '<rect x="656" y="19" width="14" height="14" rx="3" fill="{{beam}}"/><text x="676" y="31" class="s" font-size="14" fill="{{ink}}">scrutate</text>'
-         '<rect x="750" y="19" width="14" height="14" rx="3" fill="{{others}}"/><text x="770" y="31" class="s" font-size="14" fill="{{ink}}">fastest other</text>']
-    y = 76
+    b = [head("04", "WALL TIME, WARM CACHE", "lower is better // each row has its own scale" if wide else "lower is better", on, W),
+         G.mono(W - pad, 98, "MARKED: THE FASTER OF THE TWO", 11, c["dim"], 0.14, "end") if wide else
+         G.mono(pad, 116, "MARKED: THE FASTER OF THE TWO", 11, c["dim"], 0.14)]
+    y = 126 if wide else 132
+    k = 0
 
     def row(title, detail, pairs):
-        nonlocal y
-        b.append(f'<path d="M24 {y} H{W - 24}" stroke="{{{{line}}}}"/>')
-        b.append(f'<text x="{lx}" y="{y + 32}" class="s" font-size="15" font-weight="600" fill="{{{{ink}}}}">{G.esc(title)}</text>')
+        nonlocal y, k
+        b.append(f'<path d="M{pad} {y} H{W - pad}" stroke="{c["rule"]}"/>')
+        b.append(f'<text x="{pad}" y="{y + (36 if wide else 28)}" class="s" font-size="16" font-weight="700" fill="{c["fg"]}">{G.esc(title)}</text>')
         if detail:
-            b.append(f'<text x="{lx}" y="{y + 54}" class="s" font-size="14" fill="{{{{muted}}}}">{G.esc(detail)}</text>')
-        top = y + (row_h - 2 * bh - gap) / 2
+            b.append(G.mono(pad, y + (58 if wide else 48), detail, 11, c["dim"]))
+        top = y + (row_h - 2 * bh - gap) / 2 if wide else y + 62
         vmax = max(v for _, v, _ in pairs)
+        vmin = min(v for _, v, _ in pairs)
         for i, (tool, v, label) in enumerate(pairs):
-            yy = top + i * (bh + gap)
-            w = max(2.0, bw * v / vmax)
-            us = tool == "scrutate"
-            b.append(tool_name(tx, yy + 14, tool, us))
-            b.append(bar(bx, yy, round(w, 1), bh, "{{beam}}" if us else "{{others}}", "g"))
-            b.append(f'<text class="m v" x="{bx + w + 8:.1f}" y="{yy + 14}" font-size="14" fill="{{{{ink}}}}">{G.esc(label)}</text>')
+            b.append(bar(bx, top + i * (bh + gap), round(max(3.0, bw * v / vmax), 1), bh, v == vmin, on, tool, label, k))
+            k += 1
         y += row_h
 
     for bid, title in WALL_ROWS:
@@ -110,66 +131,72 @@ def walltime(warm: dict, compare: dict) -> str:
             pairs.append((t, x["median"], f"{ms(x['median'])} ms" + (f" ({n} runs)" if n and n < runs else "")))
         row(title, f"ratio {r['ratio']:.3f}, 95% CI {r['ci95'][0]:.3f} to {r['ci95'][1]:.3f}, {r['status']}", pairs)
     sha = env.get("scrutate_sha256", "")[:8]
-    b.append(f'<path d="M24 {y} H{W - 24}" stroke="{{{{line}}}}"/>')
-    b.append(f'<text x="24" y="{y + 24}" class="s" font-size="14" fill="{{{{muted}}}}">{G.esc(env["cpu"])}, macOS, shared with other work, '
-             f'{env["date"][:10]}, binary {sha}, {runs} runs, medians. docs/LEADERBOARD.md</text>')
-    y += 40
+    b.append(f'<path d="M{pad} {y} H{W - pad}" stroke="{c["rule"]}"/>')
+    y = foot(b, y + 22, W, [f"{env['cpu']}, macOS, shared with other work, {env['date'][:10]}, binary {sha}, "
+                            f"{runs} runs, medians. docs/LEADERBOARD.md"], c["dim"]) - 6
     # start-up comes from another harness with another run count: its own block and its own source line
     st = {TOOL_LABEL.get(s["tool"], s["tool"]): s["startup_median_ms"] for s in compare["startup"] if "startup_median_ms" in s}
     other = min((t for t in st if t != "scrutate"), key=st.get)
     # older results measured an empty directory and say nothing; newer ones record the one file
     one = any(s.get("files") for s in compare["startup"])
-    row("Start-up, a directory with one file" if one else "Start-up, empty directory", "", [("scrutate", st["scrutate"], f"{st['scrutate']:.1f} ms"), (other, st[other], f"{st[other]:.1f} ms")])
+    row("Start-up, a directory with one file" if one else "Start-up, empty directory", "",
+        [("scrutate", st["scrutate"], f"{st['scrutate']:.1f} ms"), (other, st[other], f"{st[other]:.1f} ms")])
     cenv = compare["environment"]
-    b.append(f'<path d="M24 {y} H{W - 24}" stroke="{{{{line}}}}"/>')
-    b.append(f'<text x="24" y="{y + 24}" class="s" font-size="14" fill="{{{{muted}}}}">{G.esc(cenv["cpu"])}, macOS, {cenv["date"][:10]}, '
-             f'{compare["runs"]} runs, medians. docs/BENCHMARKS.md</text>')
-    H = int(y + 40)
+    b.append(f'<path d="M{pad} {y} H{W - pad}" stroke="{c["rule"]}"/>')
+    y = foot(b, y + 22, W, [f"{cenv['cpu']}, macOS, {cenv['date'][:10]}, {compare['runs']} runs, medians. docs/BENCHMARKS.md"], c["dim"])
+    H = int(y + 10)
     parts = []
     for bid, t in WALL_ROWS:
         r = warm["benchmarks"][bid]
         bc = r["best_competitor"]
         parts.append(f"{t}: scrutate {ms(r['tools']['scrutate']['median'])} ms, {bc} {ms(r['tools'][bc]['median'])} ms")
-    desc = (f"Horizontal bars of median wall time, scrutate against the fastest other tool. {'; '.join(parts)}. "
-            f"Start-up in {'a directory with one file' if one else 'an empty directory'}: scrutate {st['scrutate']:.1f} ms, {other} {st[other]:.1f} ms.")
-    return G.svg(W, H, "Wall time against the fastest other tool", desc, "\n".join(b), grow_style(), animated=True)
+    desc = (f"Horizontal bars of median wall time, scrutate against the fastest other tool; the faster bar of each pair is "
+            f"marked with a highlighter. {'; '.join(parts)}. "
+            f"Start-up in {'a directory with one file' if one else 'an empty directory'}: scrutate {st['scrutate']:.1f} ms, "
+            f"{other} {st[other]:.1f} ms.")
+    return G.svg(W, H, "Wall time against the fastest other tool", desc, G.panel(H, on, w=W) + "\n".join(b),
+                 G.wipe_style(0.7), animated=True)
 
 
-def indexed(data: dict) -> str:
+def indexed(data: dict, W=G.W) -> str:
     env = data["environment"]
     tools = list(data["tools"])
-    W = 880
-    panels = [("Full index build", lambda t: t["index"]["median"], lambda t: f"{t['index']['median']:.2f} s"),
-              ("Index size", lambda t: t["index"]["bytes"], lambda t: f"{t['index']['bytes'] / 1e6:,.0f} MB"),
-              ("Query time, median", lambda t: t["latency"]["p50"], lambda t: f"{ms(t['latency']['p50'])} ms")]
-    b = ['<text x="24" y="30" class="s" font-size="19" font-weight="600" fill="{{ink}}">The text index against zoekt and livegrep, lower is better</text>',
-         f'<text x="24" y="54" class="s" font-size="14" fill="{{{{muted}}}}">The Linux tree, the same {data["settings"]["queries"]} queries for every tool. '
-         'Each panel has its own scale.</text>']
-    pw, px0, y0 = 266, 24, 76
+    on, wide = "ink", W > 600
+    c = G.ON[on]
+    pad, _ = lay(W)
+    panels = [("FULL INDEX BUILD", lambda t: t["index"]["median"], lambda t: f"{t['index']['median']:.2f} s"),
+              ("INDEX SIZE", lambda t: t["index"]["bytes"], lambda t: f"{t['index']['bytes'] / 1e6:,.0f} MB"),
+              ("QUERY TIME, MEDIAN", lambda t: t["latency"]["p50"], lambda t: f"{ms(t['latency']['p50'])} ms")]
+    q = data["settings"]["queries"]
+    b = [head("04", "THE TEXT INDEX", f"the Linux tree, the same {q} queries for every tool // lower is better" if wide
+              else "lower is better", on, W),
+         G.mono(W - pad, 98, "AGAINST ZOEKT AND LIVEGREP", 11, c["dim"], 0.14, "end") if wide else
+         G.mono(pad, 116, f"AGAINST ZOEKT AND LIVEGREP // {q} QUERIES", 11, c["dim"], 0.14)]
+    pw, y0 = (252, 132) if wide else (W - 2 * pad, 138)
+    ph = 44 + len(tools) * 34 + 12
+    k = 0
     for i, (title, val, label) in enumerate(panels):
-        x = px0 + i * (pw + 21)
-        b.append(f'<path d="M{x} {y0} H{x + pw}" stroke="{{{{line}}}}"/>')
-        b.append(f'<text x="{x}" y="{y0 + 30}" class="s" font-size="15" font-weight="600" fill="{{{{ink}}}}">{title}</text>')
-        vmax = max(val(data["tools"][t]) for t in tools)
+        x, yp = (pad + i * (pw + 22), y0) if wide else (pad, y0 + i * ph)
+        b.append(f'<path d="M{x} {yp} H{x + pw}" stroke="{c["rule"]}"/>')
+        b.append(G.mono(x, yp + 26, title, 11, c["fg"], 0.14))
+        vals = {t: val(data["tools"][t]) for t in tools}
+        vmax, vmin = max(vals.values()), min(vals.values())
         for j, t in enumerate(tools):
-            yy = y0 + 48 + j * 30
-            us = t == "scrutate"
-            w = max(2.0, 110 * val(data["tools"][t]) / vmax)
-            b.append(tool_name(x, yy + 14, t, us, "start"))
-            b.append(bar(x + 70, yy, round(w, 1), 18, "{{beam}}" if us else "{{others}}", "g"))
-            b.append(f'<text class="m v" x="{x + 70 + w + 8:.1f}" y="{yy + 14}" font-size="14" fill="{{{{ink}}}}">{label(data["tools"][t])}</text>')
-    y = y0 + 48 + len(tools) * 30 + 8
+            b.append(bar(x, yp + 44 + j * 34, round(max(3.0, (140 if wide else 220) * vals[t] / vmax), 1), 24, vals[t] == vmin,
+                         on, t, label(data["tools"][t]), k))
+            k += 1
+    y = y0 + (ph if wide else 3 * ph)
     st = data["settings"]
-    b.append(f'<path d="M24 {y} H{W - 24}" stroke="{{{{line}}}}"/>')
-    b.append(f'<text x="24" y="{y + 24}" class="s" font-size="14" fill="{{{{muted}}}}">A Linux VM on the Apple M3 Pro, {env.get("cpus")} CPUs, '
-             f'{env["date"][:10]}, binary {env.get("scrutate_sha256", "")[:8]}, {st["index_runs"]} builds, {st["runs"]} runs of each query, '
-             'medians.</text>')
-    b.append(f'<text x="24" y="{y + 44}" class="s" font-size="14" fill="{{{{muted}}}}">docs/LEADERBOARD.md, Engine B against zoekt and livegrep</text>')
-    H = y + 60
+    b.append(f'<path d="M{pad} {y} H{W - pad}" stroke="{c["rule"]}"/>')
+    y = foot(b, y + 22, W, [f"A Linux VM on the Apple M3 Pro, {env.get('cpus')} CPUs, {env['date'][:10]}, binary "
+                            f"{env.get('scrutate_sha256', '')[:8]}, {st['index_runs']} builds, {st['runs']} runs of each query, medians.",
+                            "docs/LEADERBOARD.md, Engine B against zoekt and livegrep"], c["dim"])
+    H = int(y + 10)
     desc = "; ".join(f"{t}: build {data['tools'][t]['index']['median']:.2f} s, size {data['tools'][t]['index']['bytes'] / 1e6:,.0f} MB, "
                      f"median query {ms(data['tools'][t]['latency']['p50'])} ms" for t in tools)
-    return G.svg(W, H, "The text index against zoekt and livegrep", "Three bar charts, lower is better. " + desc + ".",
-                 "\n".join(b), grow_style(), animated=True)
+    return G.svg(W, H, "The text index against zoekt and livegrep", "Three bar charts, lower is better; the smallest bar "
+                 "of each is marked with a highlighter. " + desc + ".", G.panel(H, on, w=W) + "\n".join(b),
+                 G.wipe_style(0.7), animated=True)
 
 
 def main() -> int:
@@ -185,11 +212,8 @@ def main() -> int:
         compare = json.load(f)
     with open(a.indexed) as f:
         idx = json.load(f)
-    wall, ix = walltime(warm, compare), indexed(idx)
-    files = {}
-    for th in G.THEMES:
-        files[f"bench-walltime-{th}.svg"] = G.themed(wall, th)
-        files[f"bench-index-{th}.svg"] = G.themed(ix, th)
+    files = {"bench-walltime.svg": walltime(warm, compare), "bench-walltime-phone.svg": walltime(warm, compare, PHONE_W),
+             "bench-index.svg": indexed(idx), "bench-index-phone.svg": indexed(idx, PHONE_W)}
     return G.write_or_check(files, G.ASSETS, a.check)
 
 

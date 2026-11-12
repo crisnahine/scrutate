@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 712" width="440" height="712" role="img" aria-labelledby="t d">
+<!-- written by tools/gen_assets.py; edit that, not this file -->
+<title id="t">The text index against zoekt and livegrep</title>
+<desc id="d">Three bar charts, lower is better; the smallest bar of each is marked with a highlighter. scrutate: build 4.23 s, size 428 MB, median query 11.2 ms; zoekt: build 117.37 s, size 4,238 MB, median query 47.6 ms; livegrep: build 24.31 s, size 7,781 MB, median query 73.4 ms.</desc>
+<style>
+.s{font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif} .m{font-family:ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace} .pre{white-space:pre}
+.wipe{transform-box:fill-box;transform-origin:left center;animation:wipe 0.7s cubic-bezier(.2,.7,.2,1) both}
+@keyframes wipe { from { transform: scaleX(0); } }
+.hit{animation:hit 0.7s steps(1, end) both}
+@keyframes hit { from { fill: currentColor; } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+</style>
+<rect width="440" height="712" rx="14" fill="#0c0c0e"/><rect x="10.5" y="10.5" width="419" height="691" rx="8" fill="none" stroke="#2a2a2f"/><text x="24.0" y="46.0" class="m pre " font-size="12" fill="#f2eee3" letter-spacing="1.92">// 04  LOWER IS BETTER</text><path d="M243.9 42.0 H416" stroke="#2a2a2f"/><g transform="translate(24.0 90.0) scale(0.02676 -0.02676)" fill="#f2eee3"><path d="M210 0L390 0L390 552L560 552L560 710L40 710L40 552L210 552Z"/><path transform="translate(600 0)" d="M40 0L220 0L220 278L380 278L380 0L560 0L560 710L380 710L380 436L220 436L220 710L40 710Z"/><path transform="translate(1200 0)" d="M80 0L540 0L540 158L260 158L260 279L520 279L520 433L260 433L260 552L532 552L532 710L80 710Z"/><path transform="translate(2400 0)" d="M210 0L390 0L390 552L560 552L560 710L40 710L40 552L210 552Z"/><path transform="translate(3000 0)" d="M80 0L540 0L540 158L260 158L260 279L520 279L520 433L260 433L260 552L532 552L532 710L80 710Z"/><path transform="translate(3600 0)" d="M24 0L214 0L298 230L382 0L576 0L424 356L574 710L384 710L302 486L220 710L26 710L176 358Z"/><path transform="translate(4200 0)" d="M210 0L390 0L390 552L560 552L560 710L40 710L40 552L210 552Z"/><path transform="translate(5400 0)" d="M70 0L530 0L530 158L390 158L390 552L530 552L530 710L70 710L70 552L210 552L210 158L70 158Z"/><path transform="translate(6000 0)" d="M60 0L230 0L230 357L390 0L540 0L540 710L370 710L370 353L210 710L60 710Z"/><path transform="translate(6600 0)" d="M54 0L246 0C455 0 572 127 572 355C572 583 455 710 246 710L54 710ZM234 158L234 552L252 552C343 552 388 487 388 355C388 223 343 158 252 158Z"/><path transform="translate(7200 0)" d="M80 0L540 0L540 158L260 158L260 279L520 279L520 433L260 433L260 552L532 552L532 710L80 710Z"/><path transform="translate(7800 0)" d="M24 0L214 0L298 230L382 0L576 0L424 356L574 710L384 710L302 486L220 710L26 710L176 358Z"/></g>
+<text x="24.0" y="116.0" class="m pre " font-size="11" fill="#8f8f98" letter-spacing="1.54">AGAINST ZOEKT AND LIVEGREP // 20 QUERIES</text>
+<path d="M24 138 H416" stroke="#2a2a2f"/>
+<text x="24.0" y="164.0" class="m pre " font-size="11" fill="#f2eee3" letter-spacing="1.54">FULL INDEX BUILD</text>
+<path class="wipe" style="animation-delay:0.30s" d="M27.4 182.0 H35.3 L31.9 206.0 H24.0 Z" fill="#d9ff3d"/><text x="41.9" y="198.5" class="m pre " font-size="12" fill="#f2eee3" font-weight="700">scrutate</text><text x="111.4" y="198.5" class="m pre " font-size="13" fill="#f2eee3" font-weight="700">4.23 s</text>
+<rect class="wipe" style="animation-delay:0.40s" x="24.8" y="216.8" width="218.5" height="22.5" fill="none" stroke="#8f8f98" stroke-width="1.5"/><text x="32.0" y="232.5" class="m pre " font-size="12" fill="#f2eee3">zoekt</text><text x="254.0" y="232.5" class="m pre " font-size="13" fill="#f2eee3">117.37 s</text>
+<rect class="wipe" style="animation-delay:0.50s" x="24.8" y="250.8" width="44.1" height="22.5" fill="none" stroke="#8f8f98" stroke-width="1.5"/><text x="79.6" y="266.5" class="m pre " font-size="12" fill="#8f8f98">livegrep</text><text x="149.1" y="266.5" class="m pre " font-size="13" fill="#f2eee3">24.31 s</text>
+<path d="M24 296 H416" stroke="#2a2a2f"/>
+<text x="24.0" y="322.0" class="m pre " font-size="11" fill="#f2eee3" letter-spacing="1.54">INDEX SIZE</text>
+<path class="wipe" style="animation-delay:0.60s" d="M27.4 340.0 H39.5 L36.1 364.0 H24.0 Z" fill="#d9ff3d"/><text x="46.1" y="356.5" class="m pre " font-size="12" fill="#f2eee3" font-weight="700">scrutate</text><text x="115.6" y="356.5" class="m pre " font-size="13" fill="#f2eee3" font-weight="700">428 MB</text>
+<rect class="wipe" style="animation-delay:0.70s" x="24.8" y="374.8" width="118.3" height="22.5" fill="none" stroke="#8f8f98" stroke-width="1.5"/><text x="32.0" y="390.5" class="m pre " font-size="12" fill="#f2eee3">zoekt</text><text x="153.8" y="390.5" class="m pre " font-size="13" fill="#f2eee3">4,238 MB</text>
+<rect class="wipe" style="animation-delay:0.80s" x="24.8" y="408.8" width="218.5" height="22.5" fill="none" stroke="#8f8f98" stroke-width="1.5"/><text x="32.0" y="424.5" class="m pre " font-size="12" fill="#f2eee3">livegrep</text><text x="254.0" y="424.5" class="m pre " font-size="13" fill="#f2eee3">7,781 MB</text>
+<path d="M24 454 H416" stroke="#2a2a2f"/>
+<text x="24.0" y="480.0" class="m pre " font-size="11" fill="#f2eee3" letter-spacing="1.54">QUERY TIME, MEDIAN</text>
+<path class="wipe" style="animation-delay:0.90s" d="M27.4 498.0 H60.9 L57.5 522.0 H24.0 Z" fill="#d9ff3d"/><text x="67.5" y="514.5" class="m pre " font-size="12" fill="#f2eee3" font-weight="700">scrutate</text><text x="137.0" y="514.5" class="m pre " font-size="13" fill="#f2eee3" font-weight="700">11.2 ms</text>
+<rect class="wipe" style="animation-delay:1.00s" x="24.8" y="532.8" width="141.2" height="22.5" fill="none" stroke="#8f8f98" stroke-width="1.5"/><text x="32.0" y="548.5" class="m pre " font-size="12" fill="#f2eee3">zoekt</text><text x="176.7" y="548.5" class="m pre " font-size="13" fill="#f2eee3">47.6 ms</text>
+<rect class="wipe" style="animation-delay:1.10s" x="24.8" y="566.8" width="218.5" height="22.5" fill="none" stroke="#8f8f98" stroke-width="1.5"/><text x="32.0" y="582.5" class="m pre " font-size="12" fill="#f2eee3">livegrep</text><text x="254.0" y="582.5" class="m pre " font-size="13" fill="#f2eee3">73.4 ms</text>
+<path d="M24 612 H416" stroke="#2a2a2f"/>
+<text x="24.0" y="634.0" class="m pre " font-size="11" fill="#8f8f98">A Linux VM on the Apple M3 Pro, 5 CPUs, 2026-11-10,</text>
+<text x="24.0" y="651.0" class="m pre " font-size="11" fill="#8f8f98">binary 261ed1a2, 5 builds, 20 runs of each query,</text>
+<text x="24.0" y="668.0" class="m pre " font-size="11" fill="#8f8f98">medians.</text>
+<text x="24.0" y="685.0" class="m pre " font-size="11" fill="#8f8f98">docs/LEADERBOARD.md, Engine B against zoekt and livegrep</text>
+</svg>
