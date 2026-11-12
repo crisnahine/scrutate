@@ -305,11 +305,14 @@ First release.
   format is 3, and the next `index --text` or `grep --index --update` rebuilds an older one.
 - A full index build of a C, Go or Java tree no longer keeps every file's syntax tree in memory:
   40 MB of C in 600 files took 2.1 GB and takes 0.56 GB. The cache counts the trees that
-  parses really keep, so C++ headers and files too large to parse take none of its budget.
+  parses really keep, so C++ headers and files too large to parse take none of its budget, and
+  a tree too large for the room left gives that room back to smaller ones.
 - Haskell type synonyms, Puppet functions, LLVM named types and OCaml classes (the last two
   with `extra-langs`) are definitions: their rules named grammar nodes that do not exist.
 - A file without a grammar whose definitions nest deeply is indexed in time linear in its size
-  (a 1 MB Perl file of 1,400 nested `sub` lines: 0.83 s of CPU, now 0.2 s).
+  (a 1 MB Perl file of 1,400 nested `sub` lines: 0.83 s of CPU, now 0.2 s). Nested PHP
+  `include` and `require` lines and declarations deep inside C or C++ `#if` blocks no longer
+  take time quadratic in the nesting depth (16,000 nested PHP includes: 20 s, now 0.06 s).
 - A damaged segment found while segments are merged rebuilds the index where the update ended
   with an internal error; `serve --watch` and `watch` report an update that panics and keep
   watching.
@@ -600,10 +603,14 @@ First release.
 ### Product
 - `[index] exclude_dirs` is read from the `.scrutate.toml` at the root of the index (or
   `SCRUTATE_INDEX_EXCLUDE_DIRS`), so the command line, the servers and the bindings index the
-  same files wherever they start; the reference engine reads it the same way. A `--json` answer
+  same files wherever they start; the reference engine reads it the same way. A name with a
+  slash or a backslash excludes nothing (a backslash made `grep_code` fail or hide a folder the
+  index holds), the file may be a link to a file inside the root (at most 1,000,000 bytes), and
+  `scrutate config` lists only the names the index uses. A `--json` answer
   that stops at its limit says so on standard error, and a `batch` record carries `stopped_at`.
   `grep --index` from a hidden or ignored directory says the index never enters it (exit 2)
-  where it printed nothing. `--limit` at the largest integer is no limit. `similar` reads a
+  where it printed nothing. `--limit` at the largest integer is no limit, and `dupes --min-tokens` at the
+  largest value finds nothing where it wrapped to a negative minimum. `similar` reads a
   location's path as the other commands do.
 - Contributions are accepted under a contributor licence agreement (`CLA.md`: the contributor
   keeps the copyright, the maintainer may also offer other licence terms, and what is accepted

@@ -237,7 +237,7 @@ often while files change.
 The code index holds every file the ignore rules let through, hidden files included, except
 binary files, files over 1 MB, `.git/`, `.scrutate/`, the directories named in
 `SCRUTATE_INDEX_EXCLUDE_DIRS`, or when it is not set in `exclude_dirs` of the root's
-`.scrutate.toml` (names only: at most 1000, and a name with `/`, `.` or `..` is dropped), and cache and tool directories by name (`node_modules`,
+`.scrutate.toml` (names only: at most 1000; a name with `/` or `\`, `.` and `..` exclude nothing; in the variable `\,` is a comma inside a name; the file may be a link to a file inside the root), and cache and tool directories by name (`node_modules`,
 `__pycache__`, `.venv`, `.mypy_cache`, `.pytest_cache`, `.next`, `.tox`, `.idea`, `.vscode`).
 `build`, `dist`, `target` and `venv` are skipped by name outside a git repository; inside one,
 the ignore files decide, so a `target/` that `.gitignore` does not list is indexed. Data,
