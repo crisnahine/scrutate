@@ -713,8 +713,7 @@ pub(crate) fn index_above(cwd: &Path) -> Option<PathBuf> {
         }
         if dir.join(".git").exists() {
             // a home directory kept in git is no project: nothing is built there from below
-            let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" });
-            let build_here = nearest.is_none() && home.as_deref().map(Path::new) != Some(dir);
+            let build_here = nearest.is_none() && !is_home(dir);
             if has_index(dir) || build_here {
                 nearest = Some(dir);
             }
@@ -724,12 +723,16 @@ pub(crate) fn index_above(cwd: &Path) -> Option<PathBuf> {
     nearest.filter(|d| *d != cwd).map(Path::to_path_buf)
 }
 
+/// `dir` is the home directory, the two compared with links resolved.
+fn is_home(dir: &Path) -> bool {
+    let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).is_some_and(|h| canonical(Path::new(&h)) == canonical(dir))
+}
+
 /// Why no first index is built in `dir`: it is the home directory or a filesystem root, so the
 /// index would read everything below it. None when `dir` is neither, or already has an index.
 pub(crate) fn no_first_build(dir: &Path) -> Option<String> {
-    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" });
-    let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-    let wide = dir.parent().is_none() || home.is_some_and(|h| canonical(Path::new(&h)) == canonical(dir));
+    let wide = dir.parent().is_none() || is_home(dir);
     (wide && !dir.join(crate::files::INDEX_DIR).is_dir()).then(|| {
         format!(
             "[scrutate] {} is the home directory or a filesystem root and has no index: pass --root DIR for a project, or run `scrutate index` here to index everything below it",

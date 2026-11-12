@@ -1197,6 +1197,24 @@ fn no_first_index_of_the_home_directory_without_asking() {
     assert!(code == 0 && out.contains("notes.py:1"), "{out}{err}");
 }
 
+#[cfg(unix)]
+#[test]
+fn a_home_directory_kept_in_git_is_not_indexed_from_below_when_home_is_a_link() {
+    let h = Repo::new("homelink");
+    h.write("realhome/.git/HEAD", b"ref: refs/heads/main\n");
+    h.write("realhome/notes/n.py", b"def note_fn():\n    return 1\n");
+    std::os::unix::fs::symlink(h.root.join("realhome"), h.root.join("homelink")).unwrap();
+    let notes = h.root.join("realhome/notes");
+    for home in ["realhome", "homelink"] {
+        let home = h.root.join(home).to_string_lossy().into_owned();
+        let (code, out, err) = run_in(&notes, &["stats"], &[("HOME", home.as_str())]);
+        assert_eq!(code, 0, "{home}: {out}{err}");
+        assert!(!err.contains("using the index in"), "{home}: {err}");
+        assert!(!h.root.join("realhome/.scrutate").exists(), "HOME={home} indexed the home directory");
+        let _ = fs::remove_dir_all(notes.join(".scrutate"));
+    }
+}
+
 #[test]
 fn rgignore_files_keep_files_out_of_the_code_index() {
     let r = Repo::new("rgignore");
