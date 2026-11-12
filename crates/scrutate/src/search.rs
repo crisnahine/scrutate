@@ -188,13 +188,87 @@ pub struct Searcher {
     pub cancel: Arc<std::sync::atomic::AtomicBool>,
 }
 
+/// A source of candidates. The candidates are the union of the sources' ids in `Source::ALL`
+/// order; a source with a rank feature sets it to 1 / (1 + rank) for each candidate it found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    /// definitions whose name or qualified name the query has (`QueryInfo::keys`, `dotted`)
+    Exact,
+    /// field-weighted BM25 over the segment store
+    Lexical,
+    /// the vector model's nearest chunks
+    Semantic,
+}
+
+impl Source {
+    pub const ALL: [Source; 3] = [Source::Exact, Source::Lexical, Source::Semantic];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Source::Exact => "exact",
+            Source::Lexical => "lex",
+            Source::Semantic => "sem",
+        }
+    }
+
+    fn rank_feature(self) -> Option<usize> {
+        match self {
+            Source::Exact => None,
+            Source::Lexical => Some(fi("lex_rank")),
+            Source::Semantic => Some(fi("sem_rank")),
+        }
+    }
+}
+
+/// The BM25 fields as `field_scores` returns them (all fields first), each with its two features.
+const LEX_FIELDS: [(usize, usize); 7] = [
+    (fi("lex_log"), fi("lex_ratio")),
+    (fi("name_log"), fi("name_ratio")),
+    (fi("qual_log"), fi("qual_ratio")),
+    (fi("sig_log"), fi("sig_ratio")),
+    (fi("doc_log"), fi("doc_ratio")),
+    (fi("body_log"), fi("body_ratio")),
+    (fi("path_log"), fi("path_ratio")),
+];
+
+type RowFeature = fn(&ChunkRow) -> f32;
+type QueryFeature = fn(&QueryInfo) -> f32;
+
+/// Features of a candidate's own row.
+const ROW_FEATURES: [(usize, RowFeature); 11] = [
+    (fi("k_function"), |r| (r.kind == "function") as i32 as f32),
+    (fi("k_method"), |r| (r.kind == "method") as i32 as f32),
+    (fi("k_class"), |r| matches!(r.kind.as_str(), "class" | "struct" | "trait" | "interface" | "type" | "enum" | "impl") as i32 as f32),
+    (fi("k_module"), |r| (r.kind == "module") as i32 as f32),
+    (fi("k_other"), |r| (r.kind == "window") as i32 as f32),
+    (fi("is_test"), |r| r.is_test as f32),
+    (fi("log_nbody"), |r| (r.nbody as f64).ln_1p() as f32),
+    (fi("has_doc"), |r| (r.ndoc > 0) as i32 as f32),
+    (fi("log_ndoc"), |r| (r.ndoc as f64).ln_1p() as f32),
+    (fi("qual_depth"), |r| r.qualname.matches('.').count() as f32),
+    (fi("is_private"), |r| (r.name.starts_with('_') && !r.name.starts_with("__")) as i32 as f32),
+];
+
+/// Features of the query alone, the same for every candidate.
+const QUERY_FEATURES: [(usize, QueryFeature); 4] = [
+    (fi("n_terms"), |q| q.terms.len() as f32),
+    (fi("n_lits"), |q| q.lits.len() as f32),
+    (fi("n_words"), |q| q.words.len() as f32),
+    (fi("has_ident"), |q| (!q.keys.is_empty() && (!q.dotted.is_empty() || q.text.contains('_') || !q.wholes.is_empty())) as i32 as f32),
+];
+
 pub struct Candidates {
     pub q: QueryInfo,
     pub rows: Vec<ChunkRow>,
     pub x: Vec<Features>,
-    pub lex_ids: Vec<i64>,
-    pub sem_ids: Vec<i64>,
-    pub exact_ids: Vec<i64>,
+    /// the ids each source found, best first, in `Source::ALL` order
+    pub found: [Vec<i64>; 3],
+}
+
+impl Candidates {
+    pub fn ids(&self, source: Source) -> &[i64] {
+        &self.found[source as usize]
+    }
 }
 
 /// A symbol name with every separator a language writes (`::`, `->`, `#`) as a dot. A separator
@@ -306,62 +380,51 @@ impl Searcher {
         let q = QueryInfo::parse(query);
         self.sync()?;
         let keys = lex_keys(&q);
-        let lex_ids = self.ix.lex()?.search(&keys, LEX_LIMIT)?.0;
         let models = Arc::clone(&self.ix.models);
         let model = if q.terms.is_empty() || !self.ix.vectors_fit() { None } else { models.semantic()? };
-        let (sem_ids, qz): (Vec<i64>, Option<Vec<f32>>) = match (model, q.terms.is_empty()) {
-            (Some(m), false) => match m.encode_query(&q.terms) {
-                Some(z) => (self.ix.lex()?.semantic_top(&z, SEM_LIMIT, None)?, Some(z)),
-                None => (Vec::new(), None),
-            },
-            _ => (Vec::new(), None),
-        };
-        let exact_ids = self.exact(&q, 60)?;
+        let qz: Option<Vec<f32>> = model.and_then(|m| m.encode_query(&q.terms));
+        let mut found: [Vec<i64>; 3] = Default::default();
+        for s in Source::ALL {
+            found[s as usize] = self.find(s, &q, &keys, qz.as_deref())?;
+        }
         let want_lit = use_literal && !q.lits.is_empty();
         let mut ids: Vec<i64> = Vec::new();
         let mut seen = HashSet::new();
-        for lst in [&exact_ids, &lex_ids, &sem_ids] {
-            for &i in lst {
-                if seen.insert(i) {
-                    ids.push(i);
-                }
+        for &i in found.iter().flatten() {
+            if seen.insert(i) {
+                ids.push(i);
             }
         }
         if ids.is_empty() {
-            return Ok(Candidates { q, rows: Vec::new(), x: Vec::new(), lex_ids, sem_ids, exact_ids });
+            return Ok(Candidates { q, rows: Vec::new(), x: Vec::new(), found });
         }
         let by_id = self.ix.chunks(&ids)?;
         ids.retain(|i| by_id.contains_key(i));
         let rows: Vec<ChunkRow> = ids.iter().map(|i| by_id[i].clone()).collect();
         let n = ids.len();
         let lit = if want_lit { Self::literal_hits(&q.lits, &rows) } else { HashMap::new() };
-        let lex_rank: HashMap<i64, usize> = lex_ids.iter().enumerate().map(|(r, &c)| (c, r + 1)).collect();
-        let sem_rank: HashMap<i64, usize> = sem_ids.iter().enumerate().map(|(r, &c)| (c, r + 1)).collect();
 
         let mut x: Vec<Features> = vec![[0f32; NFEAT]; n];
+        for s in Source::ALL {
+            let Some(f) = s.rank_feature() else { continue };
+            let rank: HashMap<i64, usize> = found[s as usize].iter().enumerate().map(|(r, &c)| (c, r + 1)).collect();
+            for r in 0..n {
+                x[r][f] = rank.get(&ids[r]).map(|&k| 1.0 / (1.0 + k as f32)).unwrap_or(0.0);
+            }
+        }
         // --- lexical
         let s = self.ix.lex()?.field_scores(&keys, &ids)?;
-        let pairs = [
-            ("lex_log", "lex_ratio"),
-            ("name_log", "name_ratio"),
-            ("qual_log", "qual_ratio"),
-            ("sig_log", "sig_ratio"),
-            ("doc_log", "doc_ratio"),
-            ("body_log", "body_ratio"),
-            ("path_log", "path_ratio"),
-        ];
-        for (j, (lg, ra)) in pairs.iter().enumerate() {
+        for (j, &(lg, ra)) in LEX_FIELDS.iter().enumerate() {
             let mx = s.iter().map(|r| r[j]).fold(f32::NEG_INFINITY, f32::max).max(1e-9);
             for (r, row) in s.iter().enumerate() {
                 let col = row[j].max(0.0);
-                x[r][fi(lg)] = (col as f64).ln_1p() as f32;
-                x[r][fi(ra)] = col / mx;
+                x[r][lg] = (col as f64).ln_1p() as f32;
+                x[r][ra] = col / mx;
             }
         }
         let lx: Vec<f32> = s.iter().map(|r| r[0]).collect();
         let (mean, std) = mean_std(&lx);
         for r in 0..n {
-            x[r][fi("lex_rank")] = lex_rank.get(&ids[r]).map(|&k| 1.0 / (1.0 + k as f32)).unwrap_or(0.0);
             x[r][fi("lex_z")] = (lx[r] - mean) / (std + 1e-9);
         }
         // --- semantic
@@ -375,17 +438,13 @@ impl Searcher {
                     x[r][fi(zdst)] = (src[r] - m) / (sd + 1e-9);
                 }
             }
-            for r in 0..n {
-                x[r][fi("sem_rank")] = sem_rank.get(&ids[r]).map(|&k| 1.0 / (1.0 + k as f32)).unwrap_or(0.0);
-            }
         }
         // --- exactness / name overlap / structure
         let tset: HashSet<&str> = q.terms.iter().map(|s| s.as_str()).collect();
-        let exact_set: HashSet<i64> = exact_ids.iter().copied().collect();
+        let exact_set: HashSet<i64> = found[Source::Exact as usize].iter().copied().collect();
         let names: Vec<String> = rows.iter().map(|r| r.name.clone()).collect();
         for (r, row) in rows.iter().enumerate() {
             let cid = ids[r];
-            let name = row.name.as_str();
             let nt: HashSet<&str> = row.name_tok.split_whitespace().collect();
             let inter = nt.intersection(&tset).count();
             let f = &mut x[r];
@@ -398,18 +457,9 @@ impl Searcher {
                 f[fi("lit_hits")] = (hits as f64).ln_1p() as f32;
                 f[fi("lit_def")] = is_def as f32;
             }
-            let k = row.kind.as_str();
-            f[fi("k_function")] = (k == "function") as i32 as f32;
-            f[fi("k_method")] = (k == "method") as i32 as f32;
-            f[fi("k_class")] = matches!(k, "class" | "struct" | "trait" | "interface" | "type" | "enum" | "impl") as i32 as f32;
-            f[fi("k_module")] = (k == "module") as i32 as f32;
-            f[fi("k_other")] = (k == "window") as i32 as f32;
-            f[fi("is_test")] = row.is_test as f32;
-            f[fi("log_nbody")] = (row.nbody as f64).ln_1p() as f32;
-            f[fi("has_doc")] = (row.ndoc > 0) as i32 as f32;
-            f[fi("log_ndoc")] = (row.ndoc as f64).ln_1p() as f32;
-            f[fi("qual_depth")] = row.qualname.matches('.').count() as f32;
-            f[fi("is_private")] = (name.starts_with('_') && !name.starts_with("__")) as i32 as f32;
+            for (i, feature) in ROW_FEATURES {
+                f[i] = feature(row);
+            }
         }
         // a name the query has as typed, in one Unicode form: a whole token first, punctuation and
         // case included (`valid?` is not `valid`, `BurstFiles` not `burst_files`), then the last
@@ -436,22 +486,31 @@ impl Searcher {
             x[r][fi("log_ncallers")] = (c as f64).ln_1p() as f32;
         }
         // --- query level + file cohesion
-        let has_ident = !q.keys.is_empty() && (!q.dotted.is_empty() || q.text.contains('_') || !q.wholes.is_empty());
+        let query_level = QUERY_FEATURES.map(|(i, feature)| (i, feature(&q)));
         let mut top_paths: HashMap<&str, usize> = HashMap::new();
-        for cid in lex_ids.iter().take(30) {
+        for cid in found[Source::Lexical as usize].iter().take(30) {
             if let Some(r) = by_id.get(cid) {
                 *top_paths.entry(r.path.as_str()).or_insert(0) += 1;
             }
         }
         for (r, row) in rows.iter().enumerate() {
             let f = &mut x[r];
-            f[fi("n_terms")] = q.terms.len() as f32;
-            f[fi("n_lits")] = q.lits.len() as f32;
-            f[fi("n_words")] = q.words.len() as f32;
-            f[fi("has_ident")] = has_ident as i32 as f32;
+            for (i, v) in query_level {
+                f[i] = v;
+            }
             f[fi("file_frac")] = top_paths.get(row.path.as_str()).copied().unwrap_or(0) as f32 / 30.0;
         }
-        Ok(Candidates { q, rows, x, lex_ids, sem_ids, exact_ids })
+        Ok(Candidates { q, rows, x, found })
+    }
+
+    /// The ids `source` finds for the query, best first.
+    fn find(&mut self, source: Source, q: &QueryInfo, keys: &[i64], qz: Option<&[f32]>) -> Result<Vec<i64>> {
+        Ok(match (source, qz) {
+            (Source::Exact, _) => self.exact(q, 60)?,
+            (Source::Lexical, _) => self.ix.lex()?.search(keys, LEX_LIMIT)?.0,
+            (Source::Semantic, Some(z)) => self.ix.lex()?.semantic_top(z, SEM_LIMIT, None)?,
+            (Source::Semantic, None) => Vec::new(),
+        })
     }
 
     // ---------------------------------------------------------------------- scoring

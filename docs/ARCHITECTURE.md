@@ -387,7 +387,10 @@ neighbours (the query is encoded into the same 256-d space as the chunks by a co
 trained code-word model, inference only, bundled in the binary). 48 features per candidate
 (lexical scores and ranks per field, z-scored semantic similarities of both views, literal hits,
 name coverage, the name as typed (case included), kind, lengths, test-path flags...) go through a
-LightGBM LambdaRank ensemble exported to plain arrays and evaluated in Rust. All arithmetic is
+LightGBM LambdaRank ensemble exported to plain arrays and evaluated in Rust. In `search.rs` the
+sources are a list (`Source::ALL`, each with the rank feature it fills) and the features are
+tables filled by name (`LEX_FIELDS`, `ROW_FEATURES`, `QUERY_FEATURES`), so a new source or a
+feature of a row or of the query is one entry. All arithmetic is
 specified to the bit: the Python reference implementation (`python/scrutate_ref`, which also trains the models) and the Rust engine
 return identical features, scores and rankings, each on the index it built itself
 (`bench/parity.py`: networkx 300/300 queries; the clustered path on go_protobuf, 41,377 chunks,

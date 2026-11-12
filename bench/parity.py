@@ -250,7 +250,12 @@ def compare_search(py, rs, ix: Index) -> list[str]:
     score_worst, cand_mismatch, top10_mismatch, top1_mismatch = 0.0, 0, 0, 0
     for q, p in py.items():
         r = rs[q]["raw"]
-        rc = {by_id[c["id"]]: (c["x"], c["score"]) for c in r["candidates"] if c["id"] in by_id}
+        # the engine names its features; read them in the reference's order
+        if sorted(r["feature_names"]) != sorted(FEATURES):
+            problems.append(f"feature names differ: rust {r['feature_names']}")
+            break
+        at = [r["feature_names"].index(f) for f in FEATURES]
+        rc = {by_id[c["id"]]: ([c["x"][i] for i in at], c["score"]) for c in r["candidates"] if c["id"] in by_id}
         if set(rc) != set(p["cands"]):
             cand_mismatch += 1
         for k in set(rc) & set(p["cands"]):

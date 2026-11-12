@@ -630,7 +630,7 @@ pub enum Cmd {
     /// run many ranked queries from a JSON-lines file ({"query": ..., "k": 10, "alt": [...]})
     Batch {
         file: PathBuf,
-        /// include the 48 features and scores of every candidate (parity testing)
+        /// include every candidate with its score and features (`x`, in the order of `feature_names`)
         #[arg(long)]
         features: bool,
         #[arg(long)]
@@ -2059,14 +2059,16 @@ fn batch_command(root: &Path, file: &Path, features: bool, timing: bool) -> Resu
                 .iter()
                 .zip(&c.x)
                 .zip(&scores)
-                .map(|((r, x), sc)| serde_json::json!({"id": r.id, "path": r.path, "qualname": r.qualname, "score": sc, "x": x.to_vec()}))
+                .map(|((r, x), sc)| serde_json::json!({"id": r.id, "path": r.path, "name": r.name, "qualname": r.qualname, "kind": r.kind, "score": sc, "x": x.to_vec()}))
                 .collect();
+            // once per query, so a candidate's `x` stays a plain array in this order
+            rec.insert("feature_names".into(), serde_json::json!(crate::search::FEATURES.as_slice()));
             rec.insert("candidates".into(), serde_json::Value::Array(cands));
             rec.insert("terms".into(), serde_json::json!(c.q.terms));
             rec.insert("lits".into(), serde_json::json!(c.q.lits));
-            rec.insert("lex_ids".into(), serde_json::json!(c.lex_ids));
-            rec.insert("sem_ids".into(), serde_json::json!(c.sem_ids));
-            rec.insert("exact_ids".into(), serde_json::json!(c.exact_ids));
+            for source in crate::search::Source::ALL {
+                rec.insert(format!("{}_ids", source.name()), serde_json::json!(c.ids(source)));
+            }
         } else {
             let mut qs = vec![query.clone()];
             qs.extend(alt.iter().cloned());

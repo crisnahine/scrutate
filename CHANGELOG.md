@@ -192,6 +192,10 @@ First release.
   line 18446744073709551615.
 
 ### Engine B: code intelligence
+- `batch --features` names the features: each line has `feature_names` (the order of every
+  candidate's `x`), and each candidate its `name` and `kind`, so a training script needs no second
+  list. In `search.rs` the candidate sources are a list and the features tables filled by name;
+  no feature, score or ranking changed (parity on the engine's source and on networkx).
 - The index keeps its tables to itself: the database handle is no longer public, and the other
   modules ask `Index` what they need (the chunks of a file, of a name or at a line, the callers
   of a name, a file's imports, whether a path has a row) instead of running SQL on its tables.
