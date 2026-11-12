@@ -55,6 +55,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, ".."))
 SCRUTATE = os.environ.get("SCRUTATE_BIN", os.path.join(ROOT, "target", "release", "scrutate"))
 SCRUTATE_BASE = os.environ.get("SCRUTATE_BASE_BIN") or None
+# the tools run without these and without the caller's own settings: any SCRUTATE_ variable in a
+# search's environment is a setting to scrutate, which then reads its arguments the slower way
+for _name in [k for k in os.environ if k.startswith("SCRUTATE_")]:
+    del os.environ[_name]
 
 
 def which(*names):
