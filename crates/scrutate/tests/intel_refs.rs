@@ -1522,8 +1522,8 @@ fn every_outlined_sample_name_is_found_by_symbol() {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         fs::copy(dir.join(&name), root.join(&name)).unwrap();
-        let ix = scrutate::index::Index::open(&fs::canonicalize(&root).unwrap(), None).unwrap();
-        let mut s = scrutate::search::Searcher::new(ix, None);
+        let ix = scrutate::index::Index::open(&fs::canonicalize(&root).unwrap(), scrutate::models::ModelSet::none()).unwrap();
+        let mut s = scrutate::search::Searcher::new(ix);
         s.ix.update(false).unwrap();
         for row in scrutate::intel::outline(&s.ix, &name).unwrap() {
             total += 1;

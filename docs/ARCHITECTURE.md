@@ -7,7 +7,7 @@
 
 [Documentation](README.md) &nbsp;·&nbsp; Next: [Languages](LANGUAGES.md)
 
-**Contents**: [Engine A: universal instant search](#engine-a-universal-instant-search-cratesscrutatesrcinstantrs) &nbsp;·&nbsp; [Engine B: code intelligence](#engine-b-code-intelligence-indexrs-lexrs-parsers-langsrs-searchrs-intelrs) &nbsp;·&nbsp; [Unified layer](#unified-layer-opsrs-librs-clirs-mcprs-cratesscrutate-py) &nbsp;·&nbsp; [Models](#models-models) &nbsp;·&nbsp; [Design rules for the next decade](#design-rules-for-the-next-decade)
+**Contents**: [Engine A: universal instant search](#engine-a-universal-instant-search-cratesscrutatesrcinstantrs) &nbsp;·&nbsp; [Engine B: code intelligence](#engine-b-code-intelligence-indexrs-lexrs-parsers-langsrs-searchrs-intelrs) &nbsp;·&nbsp; [Unified layer](#unified-layer-opsrs-librs-clirs-mcprs-cratesscrutate-py) &nbsp;·&nbsp; [Models](#models-models-modelsrs) &nbsp;·&nbsp; [Design rules for the next decade](#design-rules-for-the-next-decade)
 
 <!-- End of head. -->
 
@@ -334,8 +334,8 @@ folded, so two spellings of one accented name are one name.
   batches of 256 files and rolls back; a panic inside an update rolls back at once, and the next
   update clears a transaction left open), a **content revision** (`content_rev` in `meta`: an
   index built with older parsing rules reads every file again on its next full update),
-  **schema and model versioning** (an older schema or another model of an index without a model
-  revision clears and re-indexes inside the database so concurrent processes stay consistent),
+  **schema and model versioning** (an older schema clears and re-indexes inside the database so
+  concurrent processes stay consistent; another vector model makes the vectors anew, see Models),
   **an order between versions** (an index records the schema version, content revision and
   model revision of the scrutate that built it, and a binary rebuilds or re-reads only an index
   older than itself: a newer content revision is read as it is and never updated, a newer
@@ -537,12 +537,28 @@ the searcher's lock, so early requests wait for a complete index. A save updates
 second connection owned by a background thread; SQLite WAL lets requests keep reading while it
 writes.
 
-## Models (`models/`)
+## Models (`models/`, `models.rs`)
 `semantic.npz` (14.6 MB: code-word vocabulary tables and projections) and `ranker.npz` (87 KB)
 are embedded in the binary with `include_bytes!`; `SCRUTATE_SEMANTIC` / `SCRUTATE_RANKER` can
-point at other files or `none`. The index records the model signature (a blake2b hash of the
-model file) and re-indexes when it changes. Training (numpy + LightGBM) lives in
-`bench/train_semantic.py` and the reference package.
+point at other files or `none`. `models.rs` holds them as one model set, with the feature list
+the ranker reads (`FEATURES`) and the model revision. Each part loads on its first use, once per
+process, and the threads of a server share it: `symbol`, `outline` and the other lookups never
+unpack either file. A ranker whose feature names are not `FEATURES` is an error the moment a
+search ranks with it; commands that do not rank never read it.
+
+The index records the signature of the vector model: a blake2b hash of the model file, the text
+the reference engine writes too. The bundled model's is a constant in `models.rs`, which a test
+checks against the file; a model named at run time is hashed on first need and the hash kept in `.scrutate/model.sig` beside the file's
+size, modification time and status change time (where the system has none, a file rewritten with
+its old size and modification time keeps its old signature). Another vector model makes the
+vectors anew in the next update, inside its write transaction: each segment is written again with
+its postings and the new vectors, or none for `none`, and no database row is written again. Only
+a model that makes vectors reads and parses the files, for their vectors alone; a file whose
+content changed is indexed whole as usual. The index is then the one a fresh build with that model
+writes (`tests/models.rs` compares every row and segment array). A switch that stops halfway
+leaves the index as it was, and until one commits a search does not compare its query with the
+vectors of another model. Training (numpy + LightGBM) lives in `bench/train_semantic.py` and the
+reference package.
 
 ## Design rules for the next decade
 - Formats are versioned (`schema_version`, `.npy` headers, JSONL `schema`) and migrations are a

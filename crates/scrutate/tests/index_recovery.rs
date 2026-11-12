@@ -35,7 +35,7 @@ fn run(root: &Path, args: &[&str]) -> (i32, String) {
 fn leftover_segment_with_the_next_name_does_not_block_an_update() {
     let t = Tmp::new("orphan");
     fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();
-    let mut ix = Index::open(&t.0, None).unwrap();
+    let mut ix = Index::open(&t.0, scrutate::models::ModelSet::none()).unwrap();
     ix.update(false).unwrap();
     // what a writer stopped before COMMIT leaves: the counter rolled back, the directories stayed
     let next = ix.meta("seg_counter").unwrap().parse::<i64>().unwrap() + 1;
@@ -48,7 +48,7 @@ fn leftover_segment_with_the_next_name_does_not_block_an_update() {
     let st = ix.update(false).unwrap();
     assert_eq!(st.files_changed, 1);
     drop(ix);
-    let mut ix = Index::open(&t.0, None).unwrap();
+    let mut ix = Index::open(&t.0, scrutate::models::ModelSet::none()).unwrap();
     fs::write(t.0.join("c.py"), "def gamma():\n    return 3\n").unwrap();
     assert_eq!(ix.update(false).unwrap().files_changed, 1);
     assert!(ix.check(false).unwrap().problems.is_empty());
@@ -67,7 +67,7 @@ fn missing_root_is_an_error_and_nothing_is_created() {
     fs::write(&file, "x").unwrap();
     let (code, err) = run(&file, &["index", "--no-text"]);
     assert_eq!(code, 2, "{err}");
-    assert!(Index::open(&missing, None).is_err());
+    assert!(Index::open(&missing, scrutate::models::ModelSet::none()).is_err());
 }
 
 #[cfg(unix)]
@@ -107,7 +107,7 @@ fn an_edit_that_keeps_size_and_mtime_is_seen() {
     let f = t.0.join("a.py");
     fs::write(&f, "def alpha():\n    return 1\n").unwrap();
     let mtime = fs::metadata(&f).unwrap().modified().unwrap();
-    let mut ix = Index::open(&t.0, None).unwrap();
+    let mut ix = Index::open(&t.0, scrutate::models::ModelSet::none()).unwrap();
     ix.update(false).unwrap();
     fs::write(&f, "def omega():\n    return 1\n").unwrap();
     fs::File::options().write(true).open(&f).unwrap().set_modified(mtime).unwrap();
@@ -124,7 +124,7 @@ fn an_edit_that_keeps_size_and_mtime_is_seen() {
 fn survives(name: &str, damage: impl FnOnce(&Path, &Index)) {
     let t = Tmp::new(name);
     fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();
-    let mut ix = Index::open(&t.0, scrutate::default_model().unwrap()).unwrap();
+    let mut ix = Index::open(&t.0, scrutate::models::ModelSet::from_env()).unwrap();
     ix.update(false).unwrap();
     damage(&t.0, &ix);
     drop(ix);
@@ -478,7 +478,7 @@ fn a_chmod_alone_drops_a_file_and_brings_it_back_without_a_forced_update() {
     let f = t.0.join("a.py");
     fs::write(&f, "def alpha():\n    return 1\n").unwrap();
     fs::write(t.0.join("b.py"), "def beta():\n    return 2\n").unwrap();
-    let mut ix = Index::open(&t.0, None).unwrap();
+    let mut ix = Index::open(&t.0, scrutate::models::ModelSet::none()).unwrap();
     ix.update(false).unwrap();
     let alphas = |ix: &Index| ix.db.query_row("SELECT COUNT(*) FROM chunks WHERE name='alpha'", [], |r| r.get::<_, i64>(0)).unwrap();
     chmod(&f, 0o000);
@@ -527,7 +527,7 @@ fn an_emptied_chunks_table_is_damage_and_is_rebuilt() {
 fn an_index_whose_files_table_has_no_ctime_column_is_read_and_upgraded() {
     let t = Tmp::new("no_ctime");
     fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();
-    Index::open(&t.0, None).unwrap().update(false).unwrap();
+    Index::open(&t.0, scrutate::models::ModelSet::none()).unwrap().update(false).unwrap();
     // the table as the reference engine creates it, with a row written its way
     let con = rusqlite::Connection::open(t.0.join(".scrutate/index.db")).unwrap();
     con.execute_batch(
@@ -549,11 +549,11 @@ fn an_index_whose_files_table_has_no_ctime_column_is_read_and_upgraded() {
 fn an_index_of_files_without_chunks_is_not_taken_for_damage() {
     let t = Tmp::new("no_chunks");
     fs::write(t.0.join("empty.py"), "").unwrap();
-    let mut ix = Index::open(&t.0, None).unwrap();
+    let mut ix = Index::open(&t.0, scrutate::models::ModelSet::none()).unwrap();
     ix.update(false).unwrap();
     let before = ix.meta("data_version");
     drop(ix);
-    let mut ix = Index::open(&t.0, None).unwrap();
+    let mut ix = Index::open(&t.0, scrutate::models::ModelSet::none()).unwrap();
     ix.update(false).unwrap();
     ix.lex().unwrap();
     assert_eq!(ix.meta("data_version"), before);
@@ -600,7 +600,7 @@ fn write_new_replaces_a_planted_link_instead_of_following_it() {
 fn a_transaction_left_open_by_a_failed_update_is_rolled_back_by_the_next() {
     let t = Tmp::new("left_open");
     fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();
-    let mut ix = Index::open(&t.0, None).unwrap();
+    let mut ix = Index::open(&t.0, scrutate::models::ModelSet::none()).unwrap();
     ix.update(false).unwrap();
     // what a panic in the middle of an update leaves on the connection
     ix.db.execute_batch("BEGIN IMMEDIATE; DELETE FROM chunks;").unwrap();
@@ -615,7 +615,7 @@ fn a_transaction_left_open_by_a_failed_update_is_rolled_back_by_the_next() {
 fn a_cancelled_update_leaves_the_index_as_it_was() {
     let t = Tmp::new("cancel");
     fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();
-    let mut ix = Index::open(&t.0, None).unwrap();
+    let mut ix = Index::open(&t.0, scrutate::models::ModelSet::none()).unwrap();
     ix.update(false).unwrap();
     fs::write(t.0.join("b.py"), "def beta():\n    return 2\n").unwrap();
     ix.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -633,13 +633,13 @@ fn an_index_built_with_older_parsing_rules_is_read_again_once() {
     let t = Tmp::new("content_rev");
     fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();
     fs::write(t.0.join("b.py"), "def beta():\n    return 2\n").unwrap();
-    let mut ix = Index::open(&t.0, None).unwrap();
+    let mut ix = Index::open(&t.0, scrutate::models::ModelSet::none()).unwrap();
     ix.update(false).unwrap();
     assert_eq!(ix.meta("content_rev").as_deref(), Some(scrutate::index::CONTENT_REVISION.to_string().as_str()));
     // what an older build left: its own symbol names and an older revision
     ix.db.execute_batch("UPDATE chunks SET name='old_alpha' WHERE name='alpha'; UPDATE meta SET value='0' WHERE key='content_rev';").unwrap();
     drop(ix);
-    let mut ix = Index::open(&t.0, None).unwrap();
+    let mut ix = Index::open(&t.0, scrutate::models::ModelSet::none()).unwrap();
     let st = ix.update(false).unwrap();
     assert_eq!(st.files_changed, 2);
     let names: i64 = ix.db.query_row("SELECT COUNT(*) FROM chunks WHERE name='alpha'", [], |r| r.get(0)).unwrap();
@@ -647,7 +647,7 @@ fn an_index_built_with_older_parsing_rules_is_read_again_once() {
     assert_eq!(ix.meta("content_rev").as_deref(), Some(scrutate::index::CONTENT_REVISION.to_string().as_str()));
     assert_eq!(ix.update(false).unwrap().files_changed, 0);
     drop(ix);
-    assert_eq!(Index::open(&t.0, None).unwrap().update(false).unwrap().files_changed, 0);
+    assert_eq!(Index::open(&t.0, scrutate::models::ModelSet::none()).unwrap().update(false).unwrap().files_changed, 0);
 }
 
 fn meta_of(root: &Path, key: &str) -> Option<String> {
@@ -732,7 +732,7 @@ fn an_index_without_a_model_revision_is_not_rebuilt() {
 fn a_running_process_stops_updating_when_a_newer_scrutate_takes_over_the_index() {
     let t = Tmp::new("newer_live");
     fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();
-    let mut ix = Index::open(&t.0, None).unwrap();
+    let mut ix = Index::open(&t.0, scrutate::models::ModelSet::none()).unwrap();
     ix.update(false).unwrap();
     let rev = (scrutate::index::CONTENT_REVISION + 1).to_string();
     ix.set_meta("content_rev", &rev).unwrap();
@@ -744,7 +744,7 @@ fn a_running_process_stops_updating_when_a_newer_scrutate_takes_over_the_index()
     ix.set_meta("schema_version", &(scrutate::index::SCHEMA_VERSION + 1).to_string()).unwrap();
     assert!(ix.refresh(0.0).unwrap_err().is::<scrutate::index::Newer>());
     drop(ix);
-    assert!(Index::open(&t.0, None).err().is_some_and(|e| e.is::<scrutate::index::Newer>()));
+    assert!(Index::open(&t.0, scrutate::models::ModelSet::none()).err().is_some_and(|e| e.is::<scrutate::index::Newer>()));
     // a long-lived process answers every operation with the error, without touching the index
     let t = indexed_tree("newer_repo");
     let mut repo = scrutate::Repo::open(&t.0).unwrap();

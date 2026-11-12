@@ -25,19 +25,8 @@ pub struct SemanticModel {
     pub wa: f32,
     pub cfg: serde_json::Value,
     pub n_pairs: Option<i64>,
-    sig: String,
     u32: OnceLock<Vec<f32>>,
     v32: OnceLock<Vec<f32>>,
-}
-
-/// A hash of the model file: a retrained model of the same shape still gets a new signature.
-fn file_sig(bytes: &[u8]) -> String {
-    use blake2::digest::{Update, VariableOutput};
-    let mut h = blake2::Blake2bVar::new(16).expect("blake2b-128");
-    h.update(bytes);
-    let mut out = [0u8; 16];
-    h.finalize_variable(&mut out).expect("blake2b finalize");
-    format!("blake2b:{}", out.iter().map(|b| format!("{b:02x}")).collect::<String>())
 }
 
 fn sublog(c: u32) -> f64 {
@@ -47,14 +36,14 @@ fn sublog(c: u32) -> f64 {
 impl SemanticModel {
     pub fn load(path: &Path) -> Result<SemanticModel> {
         let bytes = std::fs::read(path).with_context(|| format!("load semantic model {}", path.display()))?;
-        Self::from_arrays(load_npz_bytes(&bytes).with_context(|| format!("load semantic model {}", path.display()))?, file_sig(&bytes))
+        Self::from_arrays(load_npz_bytes(&bytes).with_context(|| format!("load semantic model {}", path.display()))?)
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<SemanticModel> {
-        Self::from_arrays(load_npz_bytes(bytes).context("load embedded semantic model")?, file_sig(bytes))
+        Self::from_arrays(load_npz_bytes(bytes).context("load embedded semantic model")?)
     }
 
-    fn from_arrays(arrays: Vec<(String, crate::npy::Npy)>, sig: String) -> Result<SemanticModel> {
+    fn from_arrays(arrays: Vec<(String, crate::npy::Npy)>) -> Result<SemanticModel> {
         let mut map: HashMap<String, crate::npy::Npy> = arrays.into_iter().collect();
         let mut take = |name: &str| map.remove(name).ok_or_else(|| anyhow!("model lacks {name}"));
         let va = take("va")?.to_strings()?;
@@ -84,15 +73,9 @@ impl SemanticModel {
             wa,
             cfg,
             n_pairs,
-            sig,
             u32: OnceLock::new(),
             v32: OnceLock::new(),
         })
-    }
-
-    /// The signature the index stores, so a model change rebuilds the index (same text as Python).
-    pub fn signature(&self) -> String {
-        self.sig.clone()
     }
 
     /// Build the weighted float32 tables (worth it before embedding many chunks).

@@ -167,8 +167,8 @@ fn the_model_signature_is_a_hash_of_the_model_file() {
     h.finalize_variable(&mut out).unwrap();
     // the text python/scrutate_ref computes: "blake2b:" + hashlib.blake2b(data, digest_size=16).hexdigest()
     let want = format!("blake2b:{}", out.iter().map(|b| format!("{b:02x}")).collect::<String>());
-    assert_eq!(scrutate::semantic::SemanticModel::load(&path).unwrap().signature(), want);
-    assert_eq!(scrutate::semantic::SemanticModel::from_bytes(&bytes).unwrap().signature(), want);
+    assert_eq!(scrutate::models::BUNDLED_SIGNATURE, want);
+    assert_eq!(scrutate::models::file_signature(&bytes), want);
 }
 
 fn symbols(path: &str, src: &str) -> Vec<(String, String)> {

@@ -13,6 +13,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use sha1::{Digest, Sha1};
 
 use crate::lex::{merge_segments, pack_bags, quantize, FileLex, LexStore, QVecs, SegmentBuilder};
+use crate::models::ModelSet;
 use crate::parse::{parse_file_with, PrevParse};
 use crate::semantic::SemanticModel;
 use crate::text::{is_test_path, name_key, tokenize2, BODY_CAP};
@@ -23,11 +24,7 @@ pub const SCHEMA_VERSION: u32 = 13;
 /// an index of an older revision reads every file again on its next update, and one of a newer
 /// revision is read as it is and never updated.
 pub const CONTENT_REVISION: u32 = 2;
-/// The semantic model the stored vectors are made with. Bump it with every change of the embedded
-/// model (its signature changes then too): an index of a lower revision (or none) and another
-/// signature is rebuilt, and one of a higher revision is refused, since its vectors do not match
-/// the queries this binary encodes.
-pub const MODEL_REVISION: u32 = 1;
+pub use crate::models::REVISION as MODEL_REVISION;
 pub const MAX_SEGMENTS: usize = 6; // more live segments than this triggers a merge of the small ones
 pub const SMALL_INDEX_ROWS: usize = 8000; // an index this small is kept as ONE segment
 /// Rows per segment flushed during one update: bounds the memory of building the inverted index
@@ -248,7 +245,6 @@ pub fn build_rows(rel: &str, source: &str, model: Option<&SemanticModel>, prev: 
     let mut rows = Vec::new();
     let mut bags: Vec<Vec<HashMap<String, u32>>> = Vec::new();
     let mut vecs = QVecs::default();
-    let k = model.map(|m| m.k).unwrap_or(0);
     let prof = prof::enabled();
     let t = Instant::now();
     let (parsed, tree) = parse_file_with(rel, source, prev);
@@ -284,20 +280,7 @@ pub fn build_rows(rel: &str, source: &str, model: Option<&SemanticModel>, prev: 
         }
         let t = Instant::now();
         if let Some(m) = model.filter(|_| lexed) {
-            let mut z = vec![0f32; 2 * k];
-            if c.kind != "window" {
-                if let Some(za) = m.encode_chunk(&name_s, &qual_s, &sig_s, &doc_s, &[]) {
-                    z[..k].copy_from_slice(&za);
-                }
-            }
-            if let Some(zb) = m.encode_chunk(&[], &[], &[], &[], &body_s) {
-                z[k..].copy_from_slice(&zb);
-            }
-            let mut q = vec![0i8; 2 * k];
-            let (qa, qb) = q.split_at_mut(k);
-            vecs.scale.push(quantize(&z[..k], qa));
-            vecs.scale.push(quantize(&z[k..], qb));
-            vecs.q.extend(q);
+            push_vectors(m, c.kind, [&name_s, &qual_s, &sig_s, &doc_s, &body_s], &mut vecs);
         }
         if prof {
             prof::add(&prof::ENCODE, t);
@@ -331,6 +314,53 @@ pub fn build_rows(rel: &str, source: &str, model: Option<&SemanticModel>, prev: 
     }
     let vec = if model.is_some() && !rows.is_empty() { Some(vecs) } else { None };
     (rows, pack_bags(&bags, vec), parsed.imports, tree)
+}
+
+/// The (A view, B view) vector of one chunk from its stemmed name, qualifier, signature, doc and
+/// body words, quantized onto the end of `vecs`.
+fn push_vectors(m: &SemanticModel, kind: &str, [name, qual, sig, doc, body]: [&[String]; 5], vecs: &mut QVecs) {
+    let k = m.k;
+    let mut z = vec![0f32; 2 * k];
+    if kind != "window" {
+        if let Some(za) = m.encode_chunk(name, qual, sig, doc, &[]) {
+            z[..k].copy_from_slice(&za);
+        }
+    }
+    if let Some(zb) = m.encode_chunk(&[], &[], &[], &[], body) {
+        z[k..].copy_from_slice(&zb);
+    }
+    let mut q = vec![0i8; 2 * k];
+    let (qa, qb) = q.split_at_mut(k);
+    vecs.scale.push(quantize(&z[..k], qa));
+    vecs.scale.push(quantize(&z[k..], qb));
+    vecs.q.extend(q);
+}
+
+/// The vectors `build_rows` makes for the file at `rel`, without its rows and postings; None when
+/// its content no longer has the hash `known_hash` (or does not parse), so it must be indexed again.
+fn file_vectors(root: &Path, rel: &str, known_hash: &str, m: &SemanticModel) -> Option<QVecs> {
+    let raw = std::fs::read(root.join(rel)).ok()?;
+    let source = decode_source(&raw)?;
+    if format!("{:x}", Sha1::digest(&raw)) != known_hash {
+        return None;
+    }
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut vecs = QVecs::default();
+        for mut c in parse_file_with(rel, &source, None).0.chunks.into_iter().filter(|c| c.kind != "constant") {
+            c.fill(source.as_bytes());
+            let qual = c.qualname.rfind('.').map_or("", |i| &c.qualname[..i]);
+            let toks = [
+                tokenize2(&c.name, None).0,
+                tokenize2(qual, None).0,
+                tokenize2(&c.sig, Some(80)).0,
+                tokenize2(&c.doc, Some(200)).0,
+                tokenize2(&c.body, Some(BODY_CAP)).0,
+            ];
+            push_vectors(m, c.kind, [&toks[0], &toks[1], &toks[2], &toks[3], &toks[4]], &mut vecs);
+        }
+        vecs
+    }))
+    .ok()
 }
 
 enum Processed {
@@ -607,7 +637,9 @@ pub struct Index {
     pub root: PathBuf,
     pub dir: PathBuf,
     pub seg_dir: PathBuf,
-    pub model: Option<Arc<SemanticModel>>,
+    pub models: Arc<ModelSet>,
+    /// the signature of `models`' vector model, as the index stores it
+    sig: String,
     pub db: Connection,
     /// print indexing progress to stderr when it is a terminal (set by the CLI)
     pub progress: bool,
@@ -642,7 +674,7 @@ fn file_id(path: &Path) -> Option<(u64, u64)> {
 }
 
 impl Index {
-    pub fn open(root: &Path, model: Option<Arc<SemanticModel>>) -> Result<Index> {
+    pub fn open(root: &Path, models: Arc<ModelSet>) -> Result<Index> {
         crate::files::index_dir(root)?;
         let root = std::fs::canonicalize(root).with_context(|| format!("open {}", root.display()))?;
         let dir = crate::files::index_dir(&root)?;
@@ -650,9 +682,9 @@ impl Index {
         std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
         write_gitignore(&dir)?;
         let db_path = dir.join("index.db");
-        let sem_sig = model.as_ref().map(|m| m.signature()).unwrap_or_else(|| "none".into());
+        let sem_sig = models.signature(&dir)?;
         let wrong_type = db_path.is_dir() || std::fs::symlink_metadata(&seg_dir).is_ok_and(|m| !m.is_dir());
-        let triage = if wrong_type { Triage::Garbage("index files of the wrong type") } else { Self::triage(&db_path, &sem_sig) };
+        let triage = if wrong_type { Triage::Garbage("index files of the wrong type") } else { Self::triage(&db_path) };
         if let Triage::Newer(n) = triage {
             return Err(n.into());
         }
@@ -695,7 +727,8 @@ impl Index {
             root,
             dir,
             seg_dir,
-            model,
+            models,
+            sig: sem_sig.clone(),
             db,
             progress: false,
             lex: None,
@@ -710,7 +743,7 @@ impl Index {
             db_id: file_id(&db_path),
         };
         if let Triage::Rebuild(why) = triage {
-            // an index of another schema or model: drop its contents *inside* the database, so
+            // an index of another schema: drop its contents *inside* the database, so
             // other processes using the same index keep a consistent (if briefly empty) view
             eprintln!("[scrutate] {why}; rebuilding the index");
             ix.clear_with(Some(sem_sig.as_str()))?;
@@ -719,8 +752,8 @@ impl Index {
             if ix.meta("schema_version").as_deref() != Some(SCHEMA_VERSION.to_string().as_str()) {
                 ix.set_meta("schema_version", &SCHEMA_VERSION.to_string())?;
             }
-            // an index from before the model revision keeps none until it is rebuilt
-            if ix.meta("model_sig").as_deref() != Some(sem_sig.as_str()) {
+            // an index with files keeps the vectors of its model until an update makes them anew
+            if ix.meta("model_sig").as_deref() != Some(sem_sig.as_str()) && !ix.has_files()? {
                 ix.set_meta("model_sig", &sem_sig)?;
                 ix.set_meta("model_rev", &MODEL_REVISION.to_string())?;
             }
@@ -766,7 +799,7 @@ impl Index {
     /// index may have done that first and be building it: then nothing is cleared, and its write
     /// lock is not waited for.
     fn clear_with(&mut self, stamp_for: Option<&str>) -> Result<()> {
-        let done = |db: &Connection| stamp_for.is_some_and(|sig| Self::rebuild_reason(db, sig).is_none());
+        let done = |db: &Connection| stamp_for.is_some() && Self::rebuild_reason(db).is_none();
         self.lex = None;
         self.lex_ver = None;
         self.db.busy_timeout(Duration::ZERO)?;
@@ -814,7 +847,7 @@ impl Index {
     /// What to do with the index files found on disk. Only an unmistakably damaged database is
     /// declared garbage: a locked one (another process writing) is reused, since deleting the files
     /// of a live database would break every other process using it.
-    fn triage(db_path: &Path, sem_sig: &str) -> Triage {
+    fn triage(db_path: &Path) -> Triage {
         if !db_path.exists() {
             return Triage::Reuse;
         }
@@ -843,17 +876,15 @@ impl Index {
         if let Some(n) = Newer::of(get).filter(|n| !n.readable) {
             return Triage::Newer(n);
         }
-        Self::rebuild_reason(&con, sem_sig).map_or(Triage::Reuse, Triage::Rebuild)
+        Self::rebuild_reason(&con).map_or(Triage::Reuse, Triage::Rebuild)
     }
 
-    /// Why a readable index of this or an older version must be emptied and built again.
-    fn rebuild_reason(db: &Connection, sem_sig: &str) -> Option<&'static str> {
+    /// Why a readable index of this or an older version must be emptied and built again. Another
+    /// vector model is no reason: an update makes the vectors anew and keeps the rest.
+    fn rebuild_reason(db: &Connection) -> Option<&'static str> {
         let get = |k: &str| db.query_row("SELECT value FROM meta WHERE key=?1", [k], |r| r.get::<_, String>(0)).optional().ok().flatten();
         if get("schema_version").as_deref() != Some(SCHEMA_VERSION.to_string().as_str()) {
             return Some("index schema changed");
-        }
-        if get("model_sig").as_deref() != Some(sem_sig) {
-            return Some("semantic model changed");
         }
         if get("segments").is_some_and(|v| serde_json::from_str::<Vec<String>>(&v).is_err()) {
             return Some("segment list unreadable");
@@ -950,7 +981,7 @@ impl Index {
             return Ok(());
         }
         eprintln!("[scrutate] index database replaced by another process; opening the new one");
-        let mut fresh = Index::open(&self.root, self.model.clone())?;
+        let mut fresh = Index::open(&self.root, Arc::clone(&self.models))?;
         fresh.progress = self.progress;
         fresh.cancel = Arc::clone(&self.cancel);
         *self = fresh;
@@ -963,12 +994,15 @@ impl Index {
         let ver = self.meta("data_version").unwrap_or_else(|| "0".into());
         let names = self.segments();
         if self.lex.as_ref().map(|l| l.names != names).unwrap_or(true) {
+            let vectors = self.meta("model_sig").is_some_and(|s| s != "none");
             let mut names = names;
             let mut attempt = 0;
             let store = loop {
-                let opened = LexStore::open(&self.seg_dir, &names).and_then(|s| match &self.model {
-                    Some(_) if s.segs.iter().any(|g| g.n > 0 && g.vec.is_none()) => Err(Damaged("a segment has no vectors").into()),
-                    _ => Ok(s),
+                let opened = LexStore::open(&self.seg_dir, &names).and_then(|s| {
+                    if vectors && s.segs.iter().any(|g| g.n > 0 && g.vec.is_none()) {
+                        return Err(Damaged("a segment has no vectors").into());
+                    }
+                    Ok(s)
                 });
                 match opened {
                     Ok(s) => break s,
@@ -1074,11 +1108,12 @@ impl Index {
             return Err(n.into());
         }
         let t0 = Instant::now();
-        let mut st = UpdateStats { semantic: self.model.is_some(), ..Default::default() };
+        let mut st = UpdateStats { semantic: self.models.semantic_enabled(), ..Default::default() };
         // if the statistics held in memory describe exactly the state we start from, they can be
         // patched afterwards instead of recomputed
         let mut removed: Vec<i64> = Vec::new();
         let mut seg_names: Vec<String> = Vec::new();
+        let mut replaced: Vec<String> = Vec::new();
         // a panic in an earlier update may have left its transaction open on this connection
         if !self.db.is_autocommit() {
             let _ = self.db.execute_batch("ROLLBACK");
@@ -1097,9 +1132,13 @@ impl Index {
         }
         self.gc_segments();
         let cur_ver = self.meta("data_version").unwrap_or_else(|| "0".into());
-        let in_sync =
-            self.lex.is_some() && self.lex_ver.as_deref() == Some(cur_ver.as_str()) && self.lex.as_ref().map(|l| l.names == self.segments()).unwrap_or(false);
-        let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.update_inner(force, only, &mut st, &mut removed, &mut seg_names)));
+        // vectors made anew replace every segment: what is held in memory is read again
+        let in_sync = self.meta("model_sig").as_deref() == Some(self.sig.as_str())
+            && self.lex.is_some()
+            && self.lex_ver.as_deref() == Some(cur_ver.as_str())
+            && self.lex.as_ref().map(|l| l.names == self.segments()).unwrap_or(false);
+        let run =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.update_inner(force, only, &mut st, &mut removed, &mut seg_names, &mut replaced)));
         let changed = match run {
             Ok(Ok(c)) => c,
             failed => {
@@ -1122,6 +1161,9 @@ impl Index {
         // read under the write lock: after COMMIT another writer's version could be read instead
         let committed = self.meta("data_version");
         retry_busy(|| self.db.execute_batch("COMMIT"))?;
+        for name in &replaced {
+            let _ = std::fs::remove_dir_all(self.seg_dir.join(name));
+        }
         if changed {
             let mut patched = false;
             if in_sync {
@@ -1171,6 +1213,7 @@ impl Index {
         st: &mut UpdateStats,
         removed: &mut Vec<i64>,
         seg_names: &mut Vec<String>,
+        replaced: &mut Vec<String>,
     ) -> Result<bool> {
         if let Some(why) = Self::chunks_lost(&self.db)? {
             return Err(Damaged(why).into());
@@ -1226,18 +1269,26 @@ impl Index {
         if only.is_none() {
             self.scan_cost = scan_t0.elapsed().as_secs_f64();
         }
+        let switching = self.meta("model_sig").as_deref() != Some(self.sig.as_str());
+        let models = Arc::clone(&self.models);
+        let model = if switching || !todo.is_empty() { models.semantic()? } else { None };
+        if switching {
+            self.vectors_anew(model, &mut todo, &gone, seg_names, replaced)?;
+            self.set_meta("model_sig", &self.sig)?;
+            self.set_meta("model_rev", &MODEL_REVISION.to_string())?;
+            changed = true;
+        }
         let mut next_id: i64 = self.meta("next_id").and_then(|v| v.parse().ok()).unwrap_or(1); // ids are never reused
         for g in &gone {
             removed.extend(self.delete_file(g)?);
             st.files_removed += 1;
             changed = true;
         }
-        let k = self.model.as_ref().map(|m| m.k).unwrap_or(0);
+        let k = model.map(|m| m.k).unwrap_or(0);
         let mut builder = SegmentBuilder::new(k);
-        if let (Some(m), false) = (&self.model, todo.is_empty()) {
+        if let (Some(m), false) = (model, todo.is_empty()) {
             m.warm(); // build the weight tables once, before the parallel pass
         }
-        let model = self.model.clone();
         let root = self.root.clone();
         let progress = self.progress && std::io::IsTerminal::is_terminal(&std::io::stderr());
         let mut done = 0usize;
@@ -1253,7 +1304,7 @@ impl Index {
                 .par_iter()
                 .zip(prevs)
                 .map(|((rel, kh), prev)| {
-                    let mut res = process(&root, rel, kh.as_deref(), model.as_deref(), prev);
+                    let mut res = process(&root, rel, kh.as_deref(), model, prev);
                     if let Processed::New(.., tree) = &mut res {
                         let n = tree.as_ref().map_or(0, |t| t.source_len() as isize);
                         if room.fetch_sub(n, std::sync::atomic::Ordering::Relaxed) < n {
@@ -1339,6 +1390,87 @@ impl Index {
             self.set_meta("chunks_at", &format!("{ver} {}", st.chunks))?;
         }
         Ok(changed)
+    }
+
+    /// Write every segment again with the vectors `model` makes (none without a model), and its
+    /// other arrays as they are, in place of the old one in the manifest (inside the update's
+    /// transaction). One segment's vectors are held at a time. The rows of files in `todo` or
+    /// `gone` are left out, as are those of a file whose content is not what the index recorded:
+    /// that file joins `todo`, to be indexed whole.
+    fn vectors_anew(
+        &mut self,
+        model: Option<&SemanticModel>,
+        todo: &mut Vec<(String, Option<String>)>,
+        gone: &[String],
+        seg_names: &mut Vec<String>,
+        replaced: &mut Vec<String>,
+    ) -> Result<()> {
+        let mut q = self.db.prepare(
+            "SELECT f.path, f.hash, MIN(c.id), SUM(c.kind != 'constant') FROM files f JOIN chunks c ON c.path = f.path \
+             WHERE f.hash != 'SKIP' GROUP BY f.path ORDER BY MIN(c.id)",
+        )?;
+        let files: Vec<(String, String, i64, i64)> = q.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?.collect::<rusqlite::Result<_>>()?;
+        drop(q);
+        let queued: HashSet<&str> = todo.iter().map(|t| t.0.as_str()).chain(gone.iter().map(String::as_str)).collect();
+        let files: Vec<_> = files.into_iter().filter(|f| f.3 > 0 && !queued.contains(f.0.as_str())).collect();
+        if let (Some(m), false) = (model, files.is_empty()) {
+            m.warm();
+        }
+        let k = model.map_or(0, |m| m.k);
+        let mut again = Vec::new();
+        let mut names = Vec::new();
+        let old = self.segments();
+        for name in &old {
+            let seg = crate::lex::Segment::open(&self.seg_dir.join(name)).map_err(|_| Damaged("a listed segment does not open"))?;
+            let mine: Vec<&(String, String, i64, i64)> = files.iter().filter(|f| seg.row_of(f.2).is_some()).collect();
+            let mut vecs = QVecs::default();
+            let mut at: HashMap<i64, usize> = HashMap::new();
+            let mut alive = vec![false; seg.n];
+            for batch in mine.chunks(256) {
+                if self.cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    anyhow::bail!("cancelled");
+                }
+                let root = &self.root;
+                let made: Vec<Option<QVecs>> = match model {
+                    Some(m) => batch.par_iter().map(|(rel, hash, ..)| file_vectors(root, rel, hash, m)).collect(),
+                    None => batch.iter().map(|_| Some(QVecs::default())).collect(),
+                };
+                for (&(rel, _, first, n), v) in batch.iter().zip(made) {
+                    let fits = v.as_ref().filter(|v| model.is_none() || v.scale.len() == 2 * *n as usize);
+                    let Some(v) = fits else {
+                        again.push((rel.clone(), None));
+                        continue;
+                    };
+                    for i in 0..*n {
+                        let r = seg.row_of(first + i).ok_or(Damaged("a chunk has no segment row"))?;
+                        alive[r] = true;
+                        if model.is_some() {
+                            at.insert(first + i, vecs.scale.len() / 2 + i as usize);
+                        }
+                    }
+                    vecs.q.extend_from_slice(&v.q);
+                    vecs.scale.extend_from_slice(&v.scale);
+                }
+            }
+            replaced.push(name.clone());
+            if !alive.contains(&true) {
+                continue;
+            }
+            let of = |id: i64| {
+                let r = *at.get(&id)?;
+                Some((&vecs.q[r * 2 * k..(r + 1) * 2 * k], &vecs.scale[r * 2..r * 2 + 2]))
+            };
+            let vectors = if model.is_some() { crate::lex::Vectors::Made(k, &of) } else { crate::lex::Vectors::Dropped };
+            let dest = self.new_segment_name()?;
+            seg_names.push(dest.clone());
+            crate::lex::merge_segments_with(&self.seg_dir.join(&dest), &[&seg], &[&alive], vectors)?;
+            names.push(dest);
+        }
+        todo.extend(again);
+        self.set_meta("segments", &serde_json::to_string(&names)?)?;
+        self.lex = None;
+        self.lex_ver = None;
+        Ok(())
     }
 
     /// Drop the least recently parsed trees until the kept sources fit in TREE_CACHE_BYTES.
@@ -1620,6 +1752,12 @@ impl Index {
     }
 
     /// Whether the committed index holds any file.
+    /// Whether the index holds vectors made by this process's vector model, so a query vector
+    /// can be compared with them.
+    pub fn vectors_fit(&self) -> bool {
+        self.sig != "none" && self.meta("model_sig").as_deref() == Some(self.sig.as_str())
+    }
+
     pub fn has_files(&self) -> Result<bool> {
         Ok(self.db.query_row("SELECT EXISTS(SELECT 1 FROM files)", [], |r| r.get(0))?)
     }
@@ -1633,7 +1771,7 @@ impl Index {
             "symbols": q("SELECT COUNT(*) FROM chunks WHERE kind NOT IN ('window','module')")?,
             "call_edges": q("SELECT COUNT(*) FROM refs")?,
             "imports": q("SELECT COUNT(*) FROM imports")?,
-            "semantic": self.model.is_some(),
+            "semantic": self.models.semantic_enabled(),
             "segments": self.segments().len(),
         }))
     }
@@ -1647,7 +1785,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("a.py"), "def alpha():\n    return 1\n").unwrap();
-        let mut ix = super::Index::open(&root, None).unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
         ix.update(false).unwrap();
         let files = |ix: &super::Index| ix.db.query_row("SELECT COUNT(*) FROM files", [], |r| r.get::<_, i64>(0)).unwrap();
         // what a process that found the old schema meets once another one cleared the index for
@@ -1673,7 +1811,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("scrutate_ix_refresh_{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("a.py"), "def alpha():\n    return 1\n").unwrap();
-        let mut ix = super::Index::open(&root, None).unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
         assert!(ix.last_refresh.is_none());
         ix.update(false).unwrap();
         assert!(ix.last_refresh.is_some());
@@ -1691,7 +1829,7 @@ mod tests {
         // a pool of its own: other tests fill the global pool's caches at the same time
         let pool = rayon::ThreadPoolBuilder::new().num_threads(3).build().unwrap();
         let left = pool.install(|| {
-            let mut ix = super::Index::open(&root, None).unwrap();
+            let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
             ix.update(false).unwrap();
             rayon::broadcast(|_| crate::text::cache_len()).into_iter().sum::<usize>() + crate::text::cache_len()
         });
@@ -1708,7 +1846,7 @@ mod tests {
         // one segment just over the size that gets an inverted-file index
         std::fs::write(root.join("big.py"), funcs(0, crate::lex::IVF_MIN_ROWS - 2)).unwrap();
         std::fs::write(root.join("small.py"), funcs(100_000, 10)).unwrap();
-        let mut ix = super::Index::open(&root, None).unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
         ix.update(false).unwrap();
         let first = ix.segments();
         let rows = ix.db.query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get::<_, i64>(0)).unwrap() as usize;
@@ -1730,7 +1868,7 @@ mod tests {
         for name in ["a.py", "b.py", "c.py"] {
             std::fs::write(root.join(name), "def one():\n    return 1\n").unwrap();
         }
-        let mut ix = super::Index::open(&root, None).unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
         ix.update(false).unwrap();
         let paths = |ix: &super::Index| {
             ix.db.prepare("SELECT path FROM files ORDER BY path").unwrap().query_map([], |r| r.get(0)).unwrap().collect::<Result<Vec<String>, _>>().unwrap()
@@ -1763,7 +1901,7 @@ mod tests {
         for i in 0..300 {
             std::fs::write(root.join(format!("z{i}.py")), &body).unwrap();
         }
-        let mut ix = super::Index::open(&root, None).unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
         ix.update(false).unwrap();
         let held = ix.trees.len();
         drop(ix);
@@ -1786,7 +1924,7 @@ mod tests {
         for i in 0..20 {
             std::fs::write(root.join(format!("z{i}.c")), format!("int f{i}(int x) {{ return x + {i}; }}\n")).unwrap();
         }
-        let mut ix = super::Index::open(&root, None).unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
         ix.update(false).unwrap();
         let large = ix.trees.keys().filter(|p| p.starts_with('a')).count();
         let small = ix.trees.keys().filter(|p| p.starts_with('z')).count();
@@ -1805,7 +1943,7 @@ mod tests {
                 std::fs::write(root.join(format!("a{i}.c")), format!("int f{i}(int x) {{ return x + {i}; }}\n")).unwrap();
             }
             extra(&root);
-            let mut ix = super::Index::open(&root, None).unwrap();
+            let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
             ix.update(false).unwrap();
             let c_trees = ix.trees.keys().filter(|p| p.ends_with(".c")).count();
             let peak = ix.trees_peak;
@@ -1842,7 +1980,7 @@ mod tests {
         for i in 0..1000 {
             std::fs::write(root.join(format!("m{i}.c")), format!("/* {i} */\n{body}")).unwrap();
         }
-        let mut ix = super::Index::open(&root, None).unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
         ix.update(false).unwrap();
         let held: usize = ix.trees.values().map(|t| t.1.source_len()).sum();
         let peak = ix.trees_peak;

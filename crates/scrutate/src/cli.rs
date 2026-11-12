@@ -2032,7 +2032,7 @@ fn batch_command(root: &Path, file: &Path, features: bool, timing: bool) -> Resu
         rec.insert("query".into(), serde_json::Value::String(query.clone()));
         if features {
             let c = s.candidates(&query, true)?;
-            let scores = s.score(&c.x);
+            let scores = s.score(&c.x)?;
             let hits = s.hits(&c, &scores, k, false)?;
             rec.insert("hits".into(), hits_json(&hits));
             let cands: Vec<serde_json::Value> = c

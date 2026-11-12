@@ -59,6 +59,10 @@ items and ends with how many are left and the `offset` that continues it.
 keeping the index usable (bring it up to date, rebuild it when its database is damaged). Front ends
 that stay open (the MCP server, the Python bindings, `watch`) hold one.
 
+**Model set**: the vector model, the ranker and the feature list the ranker reads
+(`models::ModelSet`), each loaded on its first use. The index stores the vector model's
+signature; another model makes the vectors anew and keeps the rest of the index.
+
 **Translation**: what a query's options ask every matcher of them to find
 (`Options::translate`): the pattern in the form its mode means, and whether case is folded. Engine
 A's matcher and the text index's trigram condition are both built from it.

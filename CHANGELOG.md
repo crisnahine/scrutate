@@ -175,6 +175,14 @@ First release.
   each file is searched only to its first match, so the count was of files.
 
 ### Engine B: code intelligence
+- The vector model, the ranker and the feature list are one model set (`models.rs`), loaded on
+  first use: `symbol` on this crate's index takes 6.8 ms CPU with the model, as without it
+  (25.8 ms before), and a ranked search 20.5 ms (30.2 ms). The bundled model's signature is a
+  constant a test checks, with the same value as before, so no process hashes the model.
+- A change of vector model makes the vectors anew instead of rebuilding the index: switching to
+  `SCRUTATE_SEMANTIC=none` costs 22 ms CPU instead of 507 ms, and the index equals a fresh build
+  with that model. A ranker whose features differ from this version's makes `search` fail with
+  what differs; before, it was dropped without a word.
 - Incremental index (SQLite + memory-mapped segments), content hashing, atomic updates,
   compaction, GC, corruption detection and self-healing rebuild, schema/model versioning,
   multi-process safety, `check` command.

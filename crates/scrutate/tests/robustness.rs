@@ -30,7 +30,7 @@ impl Repo {
     }
     fn index(&self) -> Index {
         // no semantic model: these tests are about robustness, not ranking
-        Index::open(&self.root, None).expect("open index")
+        Index::open(&self.root, scrutate::models::ModelSet::none()).expect("open index")
     }
 }
 
@@ -444,7 +444,7 @@ fn concurrent_indexers_and_readers_do_not_corrupt() {
         .map(|w| {
             let root = root.clone();
             std::thread::spawn(move || {
-                let mut ix = Index::open(&root, None).unwrap();
+                let mut ix = Index::open(&root, scrutate::models::ModelSet::none()).unwrap();
                 for round in 0..3 {
                     fs::write(root.join(format!("pkg/w{w}.py")), format!("def writer_{w}_{round}():\n    pass\n")).unwrap();
                     ix.update(false).unwrap();
@@ -456,7 +456,7 @@ fn concurrent_indexers_and_readers_do_not_corrupt() {
         .map(|_| {
             let root = root.clone();
             std::thread::spawn(move || {
-                let mut ix = Index::open(&root, None).unwrap();
+                let mut ix = Index::open(&root, scrutate::models::ModelSet::none()).unwrap();
                 for _ in 0..20 {
                     let _ = ix.refresh(0.0).unwrap();
                     let n = ix.lex().unwrap().n_alive as i64;

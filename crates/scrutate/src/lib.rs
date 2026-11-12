@@ -18,6 +18,7 @@ pub mod langs;
 pub mod lex;
 pub mod lsp;
 pub mod mcp;
+pub mod models;
 pub mod npy;
 pub mod ops;
 pub mod parse;
@@ -32,37 +33,15 @@ pub mod tscache;
 pub mod watch;
 
 use std::path::Path;
-use std::sync::Arc;
 
 use anyhow::Result;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-static SEMANTIC_NPZ: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../models/semantic.npz"));
-static RANKER_NPZ: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../models/ranker.npz"));
-
-/// The bundled semantic model, or the one named by `SCRUTATE_SEMANTIC` (`none` disables it).
-pub fn default_model() -> Result<Option<Arc<semantic::SemanticModel>>> {
-    match std::env::var("SCRUTATE_SEMANTIC").ok().as_deref() {
-        Some("none") | Some("") => Ok(None),
-        Some(p) => Ok(Some(Arc::new(semantic::SemanticModel::load(Path::new(p))?))),
-        None => Ok(Some(Arc::new(semantic::SemanticModel::from_bytes(SEMANTIC_NPZ)?))),
-    }
-}
-
-/// The bundled ranker, or the one named by `SCRUTATE_RANKER` (`none` disables it: linear blend only).
-pub fn default_ranker() -> Result<Option<Arc<rank::TreeEnsemble>>> {
-    match std::env::var("SCRUTATE_RANKER").ok().as_deref() {
-        Some("none") | Some("") => Ok(None),
-        Some(p) => Ok(Some(Arc::new(rank::TreeEnsemble::load(Path::new(p))?))),
-        None => Ok(Some(Arc::new(rank::TreeEnsemble::from_bytes(RANKER_NPZ)?))),
-    }
-}
-
-/// Open (or create) the index of `root` and a searcher on it, with the default models.
+/// Open (or create) the index of `root` and a searcher on it, with the model set the environment
+/// names (`models::ModelSet::from_env`).
 pub fn open(root: &Path) -> Result<search::Searcher> {
-    let ix = index::Index::open(root, default_model()?)?;
-    Ok(search::Searcher::new(ix, default_ranker()?))
+    Ok(search::Searcher::new(index::Index::open(root, models::ModelSet::from_env())?))
 }
 
 /// Open and bring the index up to date: `Repo::update` with `force`, else `Repo::refresh`, which

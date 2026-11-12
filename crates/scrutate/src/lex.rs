@@ -467,8 +467,23 @@ impl SegmentBuilder {
     }
 }
 
+/// Where the vectors of a merged segment come from.
+pub enum Vectors<'a> {
+    /// the ones the segments hold
+    Kept,
+    /// none: the index keeps no vectors
+    Dropped,
+    /// made anew: the (A view, B view) codes and scales of a chunk id, `2 * k` and 2 values
+    Made(usize, &'a dyn Fn(i64) -> Option<(&'a [i8], &'a [f32])>),
+}
+
 /// Write one segment holding only the alive documents of `segs` (any order, ids may interleave).
 pub fn merge_segments(dest: &Path, segs: &[&Segment], alive: &[&[bool]]) -> Result<()> {
+    merge_segments_with(dest, segs, alive, Vectors::Kept)
+}
+
+/// `merge_segments`, with the vectors `vectors` names.
+pub fn merge_segments_with(dest: &Path, segs: &[&Segment], alive: &[&[bool]], vectors: Vectors) -> Result<()> {
     // the loops below index the arrays directly
     for s in segs {
         s.validate_deep().map_err(|_| damaged())?;
@@ -488,15 +503,21 @@ pub fn merge_segments(dest: &Path, segs: &[&Segment], alive: &[&[bool]]) -> Resu
         dl_cat.extend(s.dl().iter().zip(a.iter()).filter(|(_, &al)| al).map(|(&d, _)| d));
     }
     let dl: Vec<f32> = order.iter().map(|&i| dl_cat[i]).collect();
-    let k = segs.iter().map(|s| s.k).max().unwrap_or(0);
-    let has_vec = segs.iter().any(|s| s.vec.is_some());
+    let (k, has_vec) = match vectors {
+        Vectors::Kept => (segs.iter().map(|s| s.k).max().unwrap_or(0), segs.iter().any(|s| s.vec.is_some())),
+        Vectors::Dropped => (0, false),
+        Vectors::Made(k, _) => (k, true),
+    };
     let vec: Option<QVecs> = if has_vec && k > 0 {
         let mut cat = QVecs::default();
         for (s, a) in segs.iter().zip(alive) {
-            if s.vec.is_some() {
+            if s.vec.is_some() || matches!(vectors, Vectors::Made(..)) {
                 for (r, &al) in a.iter().enumerate() {
                     if al {
-                        let (q, sc) = s.vec_row(r).ok_or_else(damaged)?;
+                        let (q, sc) = match &vectors {
+                            Vectors::Made(_, of) => of(s.ids()[r]).ok_or(crate::index::Damaged("a chunk has no vector"))?,
+                            _ => s.vec_row(r).ok_or_else(damaged)?,
+                        };
                         cat.q.extend_from_slice(q);
                         cat.scale.extend_from_slice(sc);
                     }

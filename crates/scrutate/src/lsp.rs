@@ -445,7 +445,7 @@ impl Server {
                     }
                     if ix.is_none() {
                         // the main index's model: another signature would make the index rebuild itself
-                        let Some(model) = lock(&shared).as_ref().map(|s| s.ix.model.clone()) else { continue };
+                        let Some(model) = lock(&shared).as_ref().map(|s| s.ix.models.clone()) else { continue };
                         ix = Index::open(&root, model).map_err(|e| eprintln!("scrutate: {e:#}")).ok();
                     }
                     match ix.as_mut().and_then(|ix| ix.update(false).err()) {

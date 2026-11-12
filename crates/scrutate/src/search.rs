@@ -15,7 +15,6 @@ use unicode_normalization::UnicodeNormalization;
 
 use crate::index::{ChunkRow, Index, CHUNK_COLS};
 use crate::lex::tok_key;
-use crate::rank::TreeEnsemble;
 use crate::text::{literal_candidates, name_key, query_terms, query_wholes, Words, QUERY_STOP};
 
 pub const PRUNE: usize = 200; // the learned ranker sees (at most) this many candidates
@@ -23,56 +22,7 @@ pub const LEX_LIMIT: usize = 100;
 pub const SEM_LIMIT: usize = 100;
 pub const CODE_KINDS: &[&str] = &["function", "method", "class", "struct", "trait", "interface", "type", "enum", "impl"];
 
-pub const FEATURES: [&str; 48] = [
-    "lex_log",
-    "lex_ratio",
-    "lex_rank",
-    "lex_z",
-    "name_log",
-    "name_ratio",
-    "qual_log",
-    "qual_ratio",
-    "sig_log",
-    "sig_ratio",
-    "doc_log",
-    "doc_ratio",
-    "body_log",
-    "body_ratio",
-    "path_log",
-    "path_ratio",
-    "sem_a",
-    "sem_b",
-    "sem_mix",
-    "sem_a_z",
-    "sem_b_z",
-    "sem_mix_z",
-    "sem_rank",
-    "exact_name",
-    "exact_qual",
-    "name_overlap",
-    "name_cover",
-    "name_same_set",
-    "lit_hits",
-    "lit_def",
-    "k_function",
-    "k_method",
-    "k_class",
-    "k_module",
-    "k_other",
-    "is_test",
-    "log_nbody",
-    "has_doc",
-    "log_ndoc",
-    "qual_depth",
-    "is_private",
-    "log_ncallers",
-    "n_terms",
-    "n_lits",
-    "n_words",
-    "has_ident",
-    "file_frac",
-    "exact_case",
-];
+pub use crate::models::FEATURES;
 pub const NFEAT: usize = FEATURES.len();
 
 pub const fn fi(name: &str) -> usize {
@@ -233,7 +183,6 @@ pub fn lex_keys(q: &QueryInfo) -> Vec<i64> {
 
 pub struct Searcher {
     pub ix: Index,
-    pub ranker: Option<Arc<TreeEnsemble>>,
     ver: Option<String>,
     callers_cache: HashMap<String, i64>,
     /// set when the call being answered was cancelled: `search_many` stops between queries
@@ -305,9 +254,8 @@ fn plain(name: &str) -> String {
 }
 
 impl Searcher {
-    pub fn new(ix: Index, ranker: Option<Arc<TreeEnsemble>>) -> Searcher {
-        let ranker = ranker.filter(|r| r.feature_names == FEATURES);
-        Searcher { ix, ranker, ver: None, callers_cache: HashMap::new(), cancel: Arc::default() }
+    pub fn new(ix: Index) -> Searcher {
+        Searcher { ix, ver: None, callers_cache: HashMap::new(), cancel: Arc::default() }
     }
 
     fn sync(&mut self) -> Result<()> {
@@ -412,7 +360,9 @@ impl Searcher {
         self.sync()?;
         let keys = lex_keys(&q);
         let lex_ids = self.ix.lex()?.search(&keys, LEX_LIMIT)?.0;
-        let (sem_ids, qz): (Vec<i64>, Option<Vec<f32>>) = match (&self.ix.model, q.terms.is_empty()) {
+        let models = Arc::clone(&self.ix.models);
+        let model = if q.terms.is_empty() || !self.ix.vectors_fit() { None } else { models.semantic()? };
+        let (sem_ids, qz): (Vec<i64>, Option<Vec<f32>>) = match (model, q.terms.is_empty()) {
             (Some(m), false) => match m.encode_query(&q.terms) {
                 Some(z) => (self.ix.lex()?.semantic_top(&z, SEM_LIMIT, None)?, Some(z)),
                 None => (Vec::new(), None),
@@ -558,14 +508,16 @@ impl Searcher {
     }
 
     // ---------------------------------------------------------------------- scoring
-    pub fn score(&self, x: &[Features]) -> Vec<f64> {
+    /// Scores of candidate feature rows: the ranker's, or the linear blend without one. A ranker
+    /// that does not fit this engine's features is an error.
+    pub fn score(&self, x: &[Features]) -> Result<Vec<f64>> {
         let n = x.len();
         if n == 0 {
-            return Vec::new();
+            return Ok(Vec::new());
         }
         let lin: Vec<f32> = x.iter().map(linear_score).collect();
-        let Some(ranker) = &self.ranker else {
-            return lin.iter().map(|&v| v as f64).collect();
+        let Some(ranker) = self.ix.models.ranker()? else {
+            return Ok(lin.iter().map(|&v| v as f64).collect());
         };
         let keep = prune_indices(&lin, PRUNE);
         let mut out = vec![-1e9f64; n];
@@ -573,7 +525,7 @@ impl Searcher {
             let row: Vec<f64> = x[i].iter().map(|&v| v as f64).collect();
             out[i] = ranker.predict_row(&row);
         }
-        out
+        Ok(out)
     }
 
     pub fn hits(&self, c: &Candidates, scores: &[f64], k: usize, with_text: bool) -> Result<Vec<Hit>> {
@@ -642,7 +594,7 @@ impl Searcher {
 
     pub fn search(&mut self, query: &str, k: usize, with_text: bool) -> Result<Vec<Hit>> {
         let c = self.candidates(query, true)?;
-        let scores = self.score(&c.x);
+        let scores = self.score(&c.x)?;
         self.hits(&c, &scores, k, with_text)
     }
 
