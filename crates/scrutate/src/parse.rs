@@ -729,6 +729,13 @@ fn callee_name(lang: &str, node: Node, field: &str, src: &[u8]) -> Option<String
         return name.chars().any(char::is_alphabetic).then(|| name.to_string());
     }
     let mut t = txt(src, target.start_byte(), target.end_byte());
+    if lang == "cpp" {
+        // `a.operator+(b)` parses as a call of `a` with `.operator+` in an error node
+        let lost = node.children(&mut node.walk()).find(|c| c.is_error()).map(|c| txt(src, c.start_byte(), c.end_byte()));
+        if let Some(name) = cpp_operator_or_destructor(lost.as_deref().filter(|l| l.contains("operator")).unwrap_or(&t)) {
+            return Some(name);
+        }
+    }
     // D and Solidity `new Point(1, 2)` is a call whose callee is `new Point`
     if let Some(rest) = t.strip_prefix("new").filter(|r| r.starts_with(char::is_whitespace)) {
         t = rest.trim_start().to_string();
@@ -759,6 +766,19 @@ fn callee_name(lang: &str, node: Node, field: &str, src: &[u8]) -> Option<String
         return Some(op.to_string());
     }
     name_rule(lang).find(t).map(|m| m.as_str().to_string())
+}
+
+/// `operator==` or `~Shape` at the end of a C++ call target, as their definitions are named.
+fn cpp_operator_or_destructor(t: &str) -> Option<String> {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    if let Some(i) = t.rfind("operator").filter(|&i| !t[..i].ends_with(word)) {
+        let op: String = t[i + "operator".len()..].split_whitespace().collect();
+        if !op.is_empty() && op.chars().all(|c| c.is_ascii_punctuation()) {
+            return Some(format!("operator{op}"));
+        }
+    }
+    let tail = t.rsplit(['.', ':', '>']).next()?.trim();
+    IDENT_START.find(tail.strip_prefix('~')?).map(|m| format!("~{}", m.as_str()))
 }
 
 /// The pattern of a name at the start of a text in `lang`.

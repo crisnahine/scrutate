@@ -1030,6 +1030,23 @@ fn wrong_calls(cases: &[(&str, &str, &str, &[&str])]) -> Vec<String> {
 }
 
 #[test]
+fn an_explicit_cpp_destructor_or_operator_call_records_that_name() {
+    let cases: &[(&str, &str, &str, &[&str])] = &[
+        ("m.cpp", "void f(S& a) { a.~S(); }\n", "f", &["~S"]),
+        ("m.cpp", "void f(S* p) { p->~S(); }\n", "f", &["~S"]),
+        ("m.cpp", "void f(S* p) { p->Base::~Base(); }\n", "f", &["~Base"]),
+        ("m.cpp", "void f(S& a, S& b) { a.operator==(b); }\n", "f", &["operator=="]),
+        ("m.cpp", "void f(S* p) { p->operator()(3); }\n", "f", &["operator()"]),
+        ("m.cpp", "void f(S& a) { a.operator[](1); }\n", "f", &["operator[]"]),
+        ("m.cpp", "void f(S& b) { S::operator+(b); }\n", "f", &["operator+"]),
+        // the bitwise operator before a call is no destructor
+        ("m.cpp", "int f() { return ~bits(); }\n", "f", &["bits"]),
+    ];
+    let wrong = wrong_calls(cases);
+    assert!(wrong.is_empty(), "{wrong:?}");
+}
+
+#[test]
 fn a_plain_call_and_a_constructor_call_record_the_called_name() {
     let cases: &[(&str, &str, &str, &[&str])] = &[
         ("m.py", "def f():\n    g(1)\n    Point(1, 2)\n", "f", &["Point", "g"]),
