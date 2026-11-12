@@ -1,4 +1,4 @@
-//! Segment store: memory-mapped BM25 postings + semantic vectors (Lucene-style; port of python/scrutate_ref/lex.py).
+//! Segment store: memory-mapped BM25 postings + semantic vectors (Lucene-style).
 //!
 //! An index is a list of immutable *segments* (`<index>/seg/sNNNNNN/`). Every update that adds chunks
 //! writes one new segment; deletions are not written anywhere (a chunk is alive iff its id is still
@@ -57,7 +57,7 @@ pub struct QVecs {
 }
 
 /// Symmetric int8 quantization of one vector (value = q * scale), written into `q`; returns the
-/// scale. Same float32 steps and ties-to-even rounding as `quantize` in the Python reference.
+/// scale. Float32 steps, ties rounded to even.
 pub fn quantize(v: &[f32], q: &mut [i8]) -> f32 {
     let s = v.iter().fold(0f32, |m, x| m.max(x.abs())) / 127.0;
     let d = if s > 0.0 { s } else { 1.0 };
@@ -603,7 +603,6 @@ impl Rng {
 /// `dot_seq64`, the lowest cluster number on a tie. A float32 product in any summation order is
 /// within k * 2^-24 of the true dot product, so the winner always scores within `margin` of the
 /// float32 maximum; only rows with more than one centroid that close are decided by `dot_seq64`.
-/// The reference does the same with numpy's product, so both engines pick the same cluster.
 fn nearest(x: &[f32], k: usize, cent: &[f32], nk: usize) -> Vec<i32> {
     let margin = 4.0 * k as f32 * f32::EPSILON;
     let n = x.len() / k;
@@ -656,8 +655,7 @@ fn dot_seq64(a: &[f32], b: &[f32]) -> f64 {
     s
 }
 
-/// Divide each row by its norm; the squares are summed in float32 in index order, like `_unit` in
-/// the reference.
+/// Divide each row by its norm; the squares are summed in float32 in index order.
 fn normalize_rows(m: &mut [f32], k: usize) {
     for row in m.chunks_mut(k) {
         let mut s = 0f32;
@@ -748,8 +746,8 @@ pub fn build_ivf(tmp: &Path, vec: &QVecs, n: usize, k: usize) -> Result<Vec<usiz
 }
 
 // ------------------------------------------------------------------------------ store
-/// a . b accumulated in float64 and rounded once, like `_dot64` in the reference (numpy sums in
-/// another order; float32 sums would let near-tied rows swap places between the engines).
+/// a . b accumulated in float64 and rounded once (a float32 sum moves with the order of its
+/// additions, and near-tied rows would swap places with it).
 fn dot64(a: &[f32], b: &[f32]) -> f32 {
     let mut acc = [0f64; 4];
     let chunks = a.len() / 4;
@@ -1224,7 +1222,7 @@ impl LexStore {
     }
 
     /// -> (sim of the A view, sim of the B view) for each id; 0 where a chunk has no vector.
-    /// Accumulated in float64 and rounded to float32, like the Python reference.
+    /// Accumulated in float64 and rounded to float32.
     pub fn sem_pair(&self, ids: &[i64], qz: &[f32]) -> Result<(Vec<f32>, Vec<f32>)> {
         let mut sa = vec![0f32; ids.len()];
         let mut sb = vec![0f32; ids.len()];
@@ -1266,8 +1264,8 @@ mod tests {
     }
 
     #[test]
-    fn quantize_matches_python_reference() {
-        // scrutate_ref.lex.quantize(np.array([...], np.float32)); -0.25 / scale = -63.5 rounds to even
+    fn quantize_rounds_ties_to_even() {
+        // -0.25 / scale = -63.5 rounds to even
         let v = [0.5f32, -0.25, 0.125, 0.0, -0.5, 0.3, 0.003, -0.002];
         let mut q = [0i8; 8];
         let s = quantize(&v, &mut q);

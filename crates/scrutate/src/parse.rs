@@ -5,8 +5,6 @@
 //! 2. heuristic symbols for languages without a grammar: definition lines introduced by the usual
 //!    keywords (`def`, `fn`, `function`, `class`, `sub`, ...), with the block below them;
 //! 3. overlapping line windows for everything else.
-//!
-//! For the seven languages of the Python reference engine the output is identical to it.
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::LazyLock;

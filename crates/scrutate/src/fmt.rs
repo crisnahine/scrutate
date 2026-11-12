@@ -1,5 +1,4 @@
-//! Plain-text rendering of hits (same layout as the Python reference, so tools and people see the
-//! same thing from either engine).
+//! Plain-text rendering of hits.
 
 use std::borrow::Cow;
 

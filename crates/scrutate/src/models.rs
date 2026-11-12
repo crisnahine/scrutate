@@ -127,8 +127,8 @@ impl ModelSet {
         self.semantic.is_some()
     }
 
-    /// The signature the index stores for its vectors (`none` without a vector model): the same
-    /// text the reference engine writes. A model named at run time is hashed once and the hash
+    /// The signature the index stores for its vectors (`none` without a vector model). A model
+    /// named at run time is hashed once and the hash
     /// kept in `cache_dir` beside the file's size and times.
     pub fn signature(&self, cache_dir: &Path) -> Result<String> {
         match self.semantic.as_ref().map(|p| &p.source) {
@@ -174,7 +174,7 @@ fn fits(names: &[String]) -> std::result::Result<(), String> {
     Ok(())
 }
 
-/// The text `python/scrutate_ref` stores for a model file: a hash of its bytes.
+/// The signature of a model file: a hash of its bytes.
 pub fn file_signature(bytes: &[u8]) -> String {
     use blake2::digest::{Update, VariableOutput};
     let mut h = blake2::Blake2bVar::new(16).expect("blake2b-128");

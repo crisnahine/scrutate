@@ -1,4 +1,4 @@
-//! Learned ranker: a LightGBM tree ensemble exported to plain arrays (port of python/scrutate_ref/rank.py).
+//! Learned ranker: a LightGBM tree ensemble exported to plain arrays (`python/scrutate_ref/rank.py` writes them).
 //! Training happens offline (Python toolkit); here only the traversal is needed.
 
 use std::path::Path;
@@ -49,7 +49,7 @@ impl TreeEnsemble {
 
     /// Score of one feature row (LightGBM semantics: `x <= threshold` goes left, NaN goes right).
     pub fn predict_row(&self, x: &[f64]) -> f64 {
-        let mut s = 0.0f64; // leaves summed tree by tree, then the base: same order as the reference
+        let mut s = 0.0f64; // leaves summed tree by tree, then the base: one order, so a score has the same bits everywhere
         for t in 0..self.trees {
             let base = t * self.m;
             let mut i = 0usize;

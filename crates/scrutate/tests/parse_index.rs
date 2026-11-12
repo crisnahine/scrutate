@@ -189,7 +189,7 @@ fn the_model_signature_is_a_hash_of_the_model_file() {
     h.update(&bytes);
     let mut out = [0u8; 16];
     h.finalize_variable(&mut out).unwrap();
-    // the text python/scrutate_ref computes: "blake2b:" + hashlib.blake2b(data, digest_size=16).hexdigest()
+    // the signature of a model file: "blake2b:" and the 16-byte BLAKE2b of its bytes in hex
     let want = format!("blake2b:{}", out.iter().map(|b| format!("{b:02x}")).collect::<String>());
     assert_eq!(scrutate::models::BUNDLED_SIGNATURE, want);
     assert_eq!(scrutate::models::file_signature(&bytes), want);
@@ -643,7 +643,7 @@ fn lines_no_chunk_keeps_are_windows_named_after_the_definition_that_holds_them()
 
 #[test]
 fn a_line_of_separator_control_characters_is_not_blank() {
-    // U+001C to U+001F are white space to Python's strip and not to `trim`: the reference follows this
+    // U+001C to U+001F are white space to Python's strip and not to `trim`
     let py = "def f():\n    \"\"\"Doc.\"\"\"\n    return 1\n\u{1c}\nx = 1\n\u{1d}\u{1e}\u{1f}\n\n";
     assert_eq!(windows("a.py", py), [("a".into(), 4, 6)]);
     // a no-break space and a line separator are white space to both

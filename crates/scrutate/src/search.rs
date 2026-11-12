@@ -1,4 +1,4 @@
-//! Hybrid retrieval (port of python/scrutate_ref/search.py).
+//! Hybrid retrieval.
 //!
 //! Candidates come from three sources: field-weighted BM25 over the segment store, semantic vectors,
 //! and exact name / qualified-name lookup. Each candidate gets 48 features (per-field BM25, semantic

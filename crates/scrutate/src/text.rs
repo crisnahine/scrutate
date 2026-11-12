@@ -1,4 +1,4 @@
-//! Tokenization shared by indexing and querying (a faithful port of python/scrutate_ref/text.py).
+//! Tokenization shared by indexing and querying.
 //!
 //! Everything is lowercase, identifier-aware (camelCase / snake_case are split) and stemmed with the
 //! Snowball English stemmer, so `refreshTokens`, `refresh_token` and "refreshing tokens" all meet at

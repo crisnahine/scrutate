@@ -527,7 +527,7 @@ fn an_index_whose_files_table_has_no_ctime_column_is_read_and_upgraded() {
     let t = Tmp::new("no_ctime");
     fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();
     Index::open(&t.0, scrutate::models::ModelSet::none()).unwrap().update(false).unwrap();
-    // the table as the reference engine creates it, with a row written its way
+    // the table as it was before the ctime column, with a row written that way
     let con = rusqlite::Connection::open(t.0.join(".scrutate/index.db")).unwrap();
     con.execute_batch(
         "CREATE TABLE f2(path TEXT PRIMARY KEY, size INTEGER, mtime_ns INTEGER, hash TEXT);
@@ -539,7 +539,7 @@ fn an_index_whose_files_table_has_no_ctime_column_is_read_and_upgraded() {
     assert!(text(&mut repo, "find_symbol", serde_json::json!({"name": "alpha"})).contains("a.py"));
     // the first update reads the file again (no ctime on record), parses nothing, and records one
     assert_eq!(repo.update(false).unwrap().files_changed, 0);
-    // the stored format, as the reference engine reads and writes it
+    // the stored format, read through a connection of its own
     let con = rusqlite::Connection::open(t.0.join(".scrutate/index.db")).unwrap();
     let ctime: Option<i64> = con.query_row("SELECT ctime_ns FROM files WHERE path='a.py'", [], |r| r.get(0)).unwrap();
     assert!(ctime.is_some());

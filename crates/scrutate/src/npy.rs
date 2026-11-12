@@ -1,7 +1,7 @@
 //! Minimal reader/writer for NumPy `.npy` files (memory-mapped or in memory) and `.npz` archives.
 //!
-//! The index keeps the exact file layout the Python reference engine writes, so an index built by
-//! either engine is readable by the other (that is how the parity tests work). Only the dtypes the
+//! The segments and the model files are in numpy's own layout, so the training scripts read and
+//! write them as they are. Only the dtypes the
 //! engine uses are supported: i64, i32, u64, u32, u8, i8, f32, f64, f16, bool and fixed-width unicode strings.
 
 use std::fs::File;

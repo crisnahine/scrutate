@@ -1,6 +1,5 @@
 //! Incremental on-disk index: SQLite (chunks, call refs, manifest) + memory-mapped segments
-//! (BM25 postings, vectors). Port of python/scrutate_ref/index.py; the layout is identical, so an index built by
-//! the Python reference engine opens here and vice versa.
+//! (BM25 postings, vectors).
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -20,7 +19,7 @@ use crate::text::{is_test_path, name_key, tokenize2, BODY_CAP};
 
 pub const SCHEMA_VERSION: u32 = 13;
 /// What the parser and tokenizer make of a file. Bump it with every change of the rules in
-/// `langs.rs`, `parse.rs` or `text.rs` (and the same in the reference's `parse.py` and `text.py`):
+/// `langs.rs`, `parse.rs` or `text.rs`:
 /// an index of an older revision reads every file again on its next update, and one of a newer
 /// revision is read as it is and never updated.
 pub const CONTENT_REVISION: u32 = 2;
@@ -440,8 +439,8 @@ impl Stat {
         Stat { size: md.len() as i64, mtime: mtime_ns(md), ctime }
     }
 
-    /// Whether a recorded row still describes the file; a row without a ctime (written by the
-    /// reference engine, or before the column existed) is read again once.
+    /// Whether a recorded row still describes the file; a row without a ctime (written
+    /// before the column existed) is read again once.
     fn matches(&self, size: i64, mtime: i64, ctime: Option<i64>) -> bool {
         self.size == size && self.mtime == mtime && ctime == Some(self.ctime)
     }
@@ -1285,7 +1284,7 @@ impl Index {
             return Err(Damaged(why).into());
         }
         if !self.has_ctime() {
-            // an index built by the reference engine, or before the column existed
+            // an index built before the column existed
             self.db.execute_batch("ALTER TABLE files ADD COLUMN ctime_ns INTEGER")?;
         }
         let mut changed = false;

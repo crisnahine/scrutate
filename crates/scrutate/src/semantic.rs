@@ -1,4 +1,4 @@
-//! Code-word semantic model (port of python/scrutate_ref/semantic.py, inference only).
+//! Code-word semantic model, inference only (`bench/train_semantic.py` fits it).
 //!
 //! Two embedding tables: view A (words that *describe* a function: name, enclosing class, signature,
 //! docstring) and view B (identifiers that *implement* it). A text is embedded as the L2-normalised,
@@ -100,8 +100,8 @@ impl SemanticModel {
         }
     }
 
-    /// Weighted sum of word vectors, accumulated in float64 (same as the Python reference, so both
-    /// engines produce bit-identical float32 vectors).
+    /// Weighted sum of word vectors, accumulated in float64, as the trainer pools them
+    /// (`python/scrutate_ref/semantic.py`).
     fn proj(&self, counts: &[(usize, u32)], idf: &[f32], table: &[f16], warmed: &OnceLock<Vec<f32>>) -> Option<Vec<f64>> {
         if counts.is_empty() {
             return None;
