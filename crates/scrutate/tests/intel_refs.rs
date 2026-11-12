@@ -1009,6 +1009,37 @@ fn a_binary_test_example_bench_or_build_script_is_a_crate_root_of_its_own() {
     assert_eq!(importers(&r, "src/util.rs"), ["src/lib.rs"]);
 }
 
+#[test]
+fn a_tsconfig_extends_list_is_read_in_order_with_the_later_one_winning() {
+    let main = "import { helper } from \"@lib/util\";\n\nexport function run(): number {\n  return helper();\n}\n";
+    let alias = |to: &str| format!("{{ \"compilerOptions\": {{ \"baseUrl\": \".\", \"paths\": {{ \"@lib/*\": [\"{to}/*\"] }} }} }}\n");
+    let (lib, old) = (alias("lib"), alias("old"));
+    let cases: [(&str, &str); 6] = [
+        ("{ \"extends\": \"./base.json\" }\n", "lib/util.ts"),
+        ("{ \"extends\": [\"./base.json\"] }\n", "lib/util.ts"),
+        ("{ \"extends\": [\"./old.json\", \"./base.json\"] }\n", "lib/util.ts"),
+        ("{ \"extends\": [\"./base.json\", \"./old\"] }\n", "old/util.ts"),
+        // a package or a missing file is passed over, as in the string form
+        ("{ \"extends\": [\"./base.json\", \"@tsconfig/node16/tsconfig.json\", \"./missing.json\"] }\n", "lib/util.ts"),
+        ("{ \"extends\": [\"./base.json\"], \"compilerOptions\": { \"paths\": { \"@lib/*\": [\"old/*\"] } } }\n", "old/util.ts"),
+    ];
+    for (config, want) in cases {
+        let r = Repo::new(
+            "tsext",
+            &[
+                ("tsconfig.json", config),
+                ("base.json", &lib),
+                ("old.json", &old),
+                ("app/main.ts", main),
+                ("lib/util.ts", "export function helper(): number {\n  return 2;\n}\n"),
+                ("old/util.ts", "export function helper(): number {\n  return 3;\n}\n"),
+            ],
+        );
+        let uses: Vec<(String, String)> = r.resolved("helper").into_iter().filter(|(at, _)| at.starts_with("app/")).collect();
+        assert_eq!(uses, pairs(&[("app/main.ts:1", want), ("app/main.ts:4", want)]), "{config}");
+    }
+}
+
 /// The answer of the language server to one request on `rel` at (0-based) `line` and `character`.
 fn lsp_answer(r: &Repo, method: &str, rel: &str, line: u32, character: u32) -> String {
     let uri = format!("file://{}", r.root.join(rel).display());

@@ -92,7 +92,7 @@ struct FileInfo {
 }
 
 /// What a `tsconfig.json` or `jsconfig.json` says about import names, as repository paths.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct TsPaths {
     /// `baseUrl`: the directory a name that is not relative is looked up in
     base: Option<String>,
@@ -2284,7 +2284,8 @@ impl<'a> Resolver<'a> {
         let mut dir = dir_of(from).to_string();
         loop {
             if !self.ts.contains_key(&dir) {
-                let found = ["tsconfig.json", "jsconfig.json"].iter().find_map(|name| ts_config(&self.ix.root, &join(&dir, name), 0)).map(Rc::new);
+                let found =
+                    ["tsconfig.json", "jsconfig.json"].iter().find_map(|name| ts_config(&self.ix.root, &join(&dir, name), 0, &mut HashMap::new())).map(Rc::new);
                 self.ts.insert(dir.clone(), found);
             }
             if let Some(found) = &self.ts[&dir] {
@@ -2477,9 +2478,19 @@ impl<'a> Resolver<'a> {
 
 const DECLARATIONS: [&str; 3] = [".d.ts", ".d.mts", ".d.cts"];
 
-/// `baseUrl` and `paths` of the config at `path`; what it does not set comes from the config it
-/// extends by a relative path. None when neither is set anywhere.
-fn ts_config(root: &std::path::Path, path: &str, depth: usize) -> Option<TsPaths> {
+/// `baseUrl` and `paths` of the config at `path`; what it does not set comes from the configs it
+/// extends by a relative path, a later one of an `extends` list winning. None when neither is set anywhere.
+fn ts_config(root: &std::path::Path, path: &str, depth: usize, memo: &mut HashMap<(String, usize), Option<TsPaths>>) -> Option<TsPaths> {
+    let key = (path.to_string(), depth);
+    if let Some(r) = memo.get(&key) {
+        return r.clone();
+    }
+    let r = ts_config_read(root, path, depth, memo);
+    memo.insert(key, r.clone());
+    r
+}
+
+fn ts_config_read(root: &std::path::Path, path: &str, depth: usize, memo: &mut HashMap<(String, usize), Option<TsPaths>>) -> Option<TsPaths> {
     let text = repo_text(root, path)?;
     let v: serde_json::Value = serde_json::from_str(&plain_json(&text)).ok()?;
     let (dir, options) = (dir_of(path), &v["compilerOptions"]);
@@ -2490,15 +2501,24 @@ fn ts_config(root: &std::path::Path, path: &str, depth: usize) -> Option<TsPaths
         let places = places.as_array().into_iter().flatten().filter_map(|p| p.as_str()).map(|p| join(&at, p)).collect();
         out.aliases.push((pattern.clone(), places));
     }
-    if let Some(parent) = v["extends"].as_str().filter(|e| e.starts_with('.') && depth < 4) {
+    let parents: Vec<&str> = match &v["extends"] {
+        serde_json::Value::Array(list) => list.iter().filter_map(|e| e.as_str()).collect(),
+        e => e.as_str().into_iter().collect(),
+    };
+    let mut inherited = TsPaths::default();
+    for parent in parents.into_iter().filter(|e| e.starts_with('.') && depth < 4) {
         let parent = join(dir, parent);
         let parent = if parent.ends_with(".json") { parent } else { format!("{parent}.json") };
-        if let Some(inherited) = ts_config(root, &parent, depth + 1) {
-            out.base = out.base.or(inherited.base);
-            if out.aliases.is_empty() {
-                out.aliases = inherited.aliases;
+        if let Some(p) = ts_config(root, &parent, depth + 1, memo) {
+            inherited.base = p.base.or(inherited.base);
+            if !p.aliases.is_empty() {
+                inherited.aliases = p.aliases;
             }
         }
+    }
+    out.base = out.base.or(inherited.base);
+    if out.aliases.is_empty() {
+        out.aliases = inherited.aliases;
     }
     (out.base.is_some() || !out.aliases.is_empty()).then_some(out)
 }
