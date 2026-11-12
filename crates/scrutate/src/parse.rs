@@ -2160,17 +2160,11 @@ pub fn heuristic_chunks(path: &str, source: &str) -> Vec<Chunk> {
     if defs.is_empty() {
         return Vec::new();
     }
+    let indents: Vec<usize> = defs.iter().map(|(i, ..)| indent_of(lines[*i])).collect();
     let mut out = Vec::new();
     for (di, (start, kind, name)) in defs.iter().enumerate() {
-        let my_indent = indent_of(lines[*start]);
         // the block ends before the next definition at the same or a shallower indentation
-        let mut end = lines.len();
-        for (next, _, _) in &defs[di + 1..] {
-            if indent_of(lines[*next]) <= my_indent {
-                end = *next;
-                break;
-            }
-        }
+        let end = (di + 1..defs.len()).find(|&j| indents[j] <= indents[di]).map_or(lines.len(), |j| defs[j].0);
         let cap = if CONTAINERS.contains(kind) { MAX_CONTAINER_LINES } else { MAX_CHUNK_LINES };
         // trailing blank/comment lines belong to the next definition
         let mut e = end;
@@ -2183,9 +2177,21 @@ pub fn heuristic_chunks(path: &str, source: &str) -> Vec<Chunk> {
                 _ => break,
             }
         }
+        // a line past either cap for the text and for the body, so that `head` marks the cut
         let seg = &lines[*start..e.max(start + 1)];
-        let text = head(&seg.join("\n"), cap);
-        let body = head(&seg[1..].join("\n"), cap);
+        let mut bytes = 0;
+        let body_lines = seg[1..]
+            .iter()
+            .take(cap + 1)
+            .take_while(|l| {
+                let before = bytes;
+                bytes += l.len() + 1;
+                before <= MAX_CHUNK_BYTES + 1
+            })
+            .count();
+        let shown = &seg[..1 + body_lines];
+        let text = head(&shown.join("\n"), cap);
+        let body = head(&shown[1..].join("\n"), cap);
         // doc: comment lines directly above
         let d = comment_top(&lines, 0, *start, &marks);
         let doc = if d < *start { clean_comment(&lines[d..*start].join("\n")) } else { String::new() };

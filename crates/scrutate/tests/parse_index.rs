@@ -94,6 +94,48 @@ fn lock_files_are_not_indexed_whatever_their_extension() {
 }
 
 #[test]
+fn a_staircase_of_nested_definitions_without_a_grammar_parses_in_time_linear_in_its_size() {
+    // each definition is indented one deeper, so each one's block runs to the end of the file
+    let best = |m: usize| {
+        let src: String = (0..m).map(|i| format!("{}sub f{i} {{\n", " ".repeat(i))).collect();
+        (0..3)
+            .map(|_| {
+                let t = Instant::now();
+                let chunks = scrutate::parse::parse_file_with("a.pl", &src, None).0.chunks;
+                let took = t.elapsed();
+                assert_eq!(chunks.iter().filter(|c| c.kind == "function").count(), m);
+                took
+            })
+            .min()
+            .unwrap()
+    };
+    // 16 times the bytes: linear work takes about 16 times as long, work over the rest of the file per definition 64 times
+    let (small, large) = (best(250), best(1000));
+    let ratio = large.as_secs_f64() / small.as_secs_f64().max(0.005);
+    assert!(ratio < 32.0, "250 definitions took {small:?}, 1000 took {large:?}");
+    // the text and the body are the block's first lines up to both caps, "\n..." when cut
+    let head = |s: &str| {
+        let end = s.match_indices('\n').nth(scrutate::parse::MAX_CHUNK_LINES - 1).map_or(s.len(), |(i, _)| i);
+        let kept = &s[..s[..end].floor_char_boundary(scrutate::parse::MAX_CHUNK_BYTES)];
+        if kept.len() < s.len() {
+            format!("{kept}\n...")
+        } else {
+            s.to_string()
+        }
+    };
+    let cases = [(9, 4, 199), (9, 4, 200), (9, 4, 201), (9, 4, 300), (9, 3300, 9), (9, 3300, 10), (20000, 3000, 4), (20000, 3000, 5)];
+    let more = [(40000, 9, 3), (9, 32766, 1), (9, 32767, 1), (9, 32768, 1), (9, 16383, 2), (9, 16384, 2), (9, 16382, 3)];
+    for (first, len, n) in cases.into_iter().chain(more) {
+        let head_line = format!("sub a {{{}", "#".repeat(first - 7));
+        let lines: Vec<String> = std::iter::once(head_line).chain((0..n).map(|_| format!("  {}", "x".repeat(len - 2)))).collect();
+        let chunks = scrutate::parse::parse_file_with("a.pl", &(lines.join("\n") + "\n"), None).0.chunks;
+        let a = chunks.iter().find(|c| c.name == "a").unwrap();
+        assert_eq!(a.text, head(&lines.join("\n")), "{first} {len} {n}");
+        assert_eq!(a.body, head(&lines[1..].join("\n")), "{first} {len} {n}");
+    }
+}
+
+#[test]
 fn a_file_of_many_sibling_definitions_parses_in_linear_time() {
     for (path, line) in [
         ("w.js", "function f{i}(x) {{ return x + {i}; }}"),
