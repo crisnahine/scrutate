@@ -202,7 +202,11 @@ binary files, files over 1 MB, `.git/`, `.scrutate/`, the directories named in
 `SCRUTATE_INDEX_EXCLUDE_DIRS`, and cache and tool directories by name (`node_modules`,
 `__pycache__`, `.venv`, `.mypy_cache`, `.pytest_cache`, `.next`, `.tox`, `.idea`, `.vscode`).
 `build`, `dist`, `target` and `venv` are skipped by name outside a git repository; inside one,
-the ignore files decide, so a `target/` that `.gitignore` does not list is indexed. A comma
+the ignore files decide, so a `target/` that `.gitignore` does not list is indexed. Data,
+generated and binary files are left out by extension (`.lock`, `.sum`, `.csv`, `.log`,
+`.min.js`, `.map`, archives, media) and lock files by name (`package-lock.json`,
+`npm-shrinkwrap.json`, `pnpm-lock.yaml`, `packages.lock.json`, `Package.resolved`,
+`.terraform.lock.hcl`, `*.lockfile`, `bun.lockb`); `scrutate grep` still searches them. A comma
 inside a name in `SCRUTATE_INDEX_EXCLUDE_DIRS` is written `\,`. The ignore files are the ones
 `grep` reads, `.rgignore` included. A `.h` file is read as Objective-C when it holds
 `@interface`, `@protocol`, `@implementation` or `@class`, as C++ when a line starts with

@@ -1400,7 +1400,7 @@ const CORE: &[LangSpec] = &[
     LangSpec {
         id: "toml",
         exts: &[".toml"],
-        files: &["Cargo.lock", "Pipfile", "poetry.lock"],
+        files: &["Pipfile"],
         language: || tree_sitter_toml_ng::LANGUAGE.into(),
         defs: &[
             d("table", "block", &[NameRule::ChildKind(&["bare_key", "dotted_key", "quoted_key"])]),

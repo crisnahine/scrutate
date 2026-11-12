@@ -189,6 +189,9 @@ First release.
   file they are part of, and a definition with its windows is one result. A definition starts
   at the attribute lines right above it (Rust `#[...]`, decorators and annotations), so
   `#[get("/users")]` above a handler is found with it.
+- Lock files with an ordinary extension (`package-lock.json`, `npm-shrinkwrap.json`,
+  `pnpm-lock.yaml`, `packages.lock.json`, `Package.resolved`, `.terraform.lock.hcl`, Gradle
+  `*.lockfile`, `bun.lockb`) are left out of the index like `*.lock`; `grep` still searches them.
 - An index built by a newer scrutate is no longer rebuilt by an older one. It is read as it is
   when only the parsing rules are newer, and refused with exit 2 and a clear message when its
   schema, model or text format is newer; `scrutate index --force` rebuilds it with the version
@@ -363,7 +366,9 @@ First release.
   functions hold their bodies.
 - Chunk text and body are cut at 32 KiB, and a chunk ends on the last line that holds its text.
   A file of many sibling definitions or of deep nesting indexes in linear time (20,000 one-line
-  JavaScript functions: 58 s to 0.8 s). A segment of 20,000 rows or more is not written again
+  JavaScript functions: 58 s to 0.8 s; 60,000 nested Lisp calls: 19 s to 0.3 s; 50,000 nested
+  HTML elements: 15 s to 0.1 s, as HTML and XML are no longer parsed, no definition being read
+  from them). A segment of 20,000 rows or more is not written again
   when a few of its rows die: compaction judged it by its live rows, so every save near that
   size rewrote it.
 - Inside a git repository the ignore files decide for `build`, `dist`, `target` and `venv`;
