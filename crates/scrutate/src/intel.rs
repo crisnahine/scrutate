@@ -246,10 +246,7 @@ pub fn location(target: &str) -> Option<(&str, i64)> {
 /// qualified name, or a plain name (first definition).
 pub fn locate(s: &Searcher, target: &str) -> Result<Option<ChunkRow>> {
     if let Some((path, line)) = location(target) {
-        return match s.ix.chunk_at(path, line)? {
-            Some(c) => Ok(Some(c)),
-            None => s.ix.chunk_at(&crate::fmt::unshown(path), line),
-        };
+        return s.ix.chunk_at(&crate::ops::repo_path(s, path), line);
     }
     let hits = s.find_symbol(target, 1)?;
     match hits.first() {

@@ -107,6 +107,16 @@ def test_paths_and_locations_read_as_the_mcp_tools_read_them(repo):
     assert r.outline("pkg/../pkg/m3.py") == r.outline("pkg/m3.py")
     assert r.dependencies("./pkg/m3.py") == [(3, "os", None)]
     assert r.dependents("./pkg/m3.py") == r.dependents("pkg/m3.py")
+
+    def similar(target):
+        return [(h.path, h.start) for h, _, _ in r.similar(target, k=3)]
+
+    want = similar("pkg/m3.py:6")
+    assert want
+    for target in ["pkg/../pkg/m3.py:6", "./pkg/m3.py:6", os.path.join(str(repo), "pkg", "m3.py") + ":6"]:
+        assert similar(target) == want, target
+    with pytest.raises(RuntimeError, match="no symbol or location matches"):
+        r.similar(f"../{repo.name}/pkg/m3.py:6")
     # an outside path answers the same whether or not a file is there, a missing one inside differently
     with pytest.raises(ValueError):
         r.read("../no_such_file_outside_the_repo")

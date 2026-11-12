@@ -648,6 +648,28 @@ fn similar_code_says_a_short_body_is_too_short_to_compare() {
     assert!(text.contains("too short to compare") && !text.contains("empty body"), "{text}");
 }
 
+#[test]
+fn similar_code_reads_a_location_as_the_other_tools_read_it() {
+    let body = "def area(w, h):\n    scaled = compute_scale(w) * adjust_height(h)\n    return finalize_area(scaled, w, h)\n";
+    let mut r = Repo::new("similar_spellings", &[("src/geo.py", body), ("src/geo_copy.py", body)]);
+    let want = r.ok("similar_code", json!({"target": "src/geo.py:1"}));
+    assert!(want.contains("src/geo_copy.py:1-3"), "{want}");
+    let abs = format!("{}:1", r.root.join("src/geo.py").to_string_lossy().replace('\\', "/"));
+    let mut spellings = vec!["src/../src/geo.py:1".to_string(), "./src/geo.py:1".to_string(), "src//geo.py:1".to_string(), abs];
+    // another case of the name reaches the file only where the file system ignores case
+    if r.root.join("SRC/GEO.py").exists() {
+        spellings.push("SRC/GEO.py:1".to_string());
+    }
+    for target in spellings {
+        assert_eq!(r.ok("similar_code", json!({"target": target})), want, "{target}");
+        assert!(!r.call("find_symbol", json!({"name": target})).0, "{target}");
+    }
+    // a path that leaves the root is not looked at, though it comes back to the same file
+    let name = r.root.file_name().unwrap().to_string_lossy().into_owned();
+    let (failed, text) = r.call("similar_code", json!({"target": format!("../{name}/src/geo.py:1")}));
+    assert!(failed && text.contains("no symbol or location matches"), "{text}");
+}
+
 #[cfg(unix)]
 #[test]
 fn a_backslash_in_a_unix_file_name_stays_in_the_paths_answers_print() {
