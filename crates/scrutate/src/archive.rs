@@ -89,9 +89,9 @@ pub fn walk(path: &Path, kind: Kind, each: &mut dyn FnMut(Option<&str>, &mut dyn
             each(None, &mut r);
             Ok(())
         }
-        Kind::Tar => tar(Capped { inner: Box::new(File::open(path)?) as Box<dyn Read>, left: MAX_EXPANDED }, each),
-        Kind::TarGz => tar(Capped { inner: Box::new(flate2::read::MultiGzDecoder::new(File::open(path)?)) as Box<dyn Read>, left: MAX_EXPANDED }, each),
-        Kind::TarOther => tar(Capped { inner: external(path)?, left: MAX_EXPANDED }, each),
+        Kind::Tar => tar(Capped { inner: Box::new(File::open(path)?) as Box<dyn Read>, left: MAX_EXPANDED }, each, failed),
+        Kind::TarGz => tar(Capped { inner: Box::new(flate2::read::MultiGzDecoder::new(File::open(path)?)) as Box<dyn Read>, left: MAX_EXPANDED }, each, failed),
+        Kind::TarOther => tar(Capped { inner: external(path)?, left: MAX_EXPANDED }, each, failed),
         Kind::Zip => {
             let mut z = zip::ZipArchive::new(File::open(path)?).map_err(std::io::Error::other)?;
             let mut left = MAX_EXPANDED;
@@ -118,22 +118,118 @@ pub fn walk(path: &Path, kind: Kind, each: &mut dyn FnMut(Option<&str>, &mut dyn
     }
 }
 
-fn tar<R: Read>(r: R, each: &mut dyn FnMut(Option<&str>, &mut dyn Read) -> bool) -> std::io::Result<()> {
+/// The longest member name kept from a GNU long-name or PAX header; a zip name is at most 64 KiB
+/// by its format.
+const MAX_NAME: u64 = 64 << 10;
+
+/// A member name from an extension header (None: it gives none); Err: longer than `MAX_NAME`.
+type Name = Result<Option<Vec<u8>>, ()>;
+
+/// The tar crate reads a long-name or PAX header whole, up to gigabytes, so they are read here.
+fn tar<R: Read>(r: R, each: &mut dyn FnMut(Option<&str>, &mut dyn Read) -> bool, failed: &mut dyn FnMut(String)) -> std::io::Result<()> {
     let mut a = tar::Archive::new(r);
-    for (n, entry) in a.entries()?.enumerate() {
+    // the name and size the extension headers give the next member
+    let mut name: Name = Ok(None);
+    let mut size = None;
+    for (n, entry) in a.entries()?.raw(true).enumerate() {
         if n >= MAX_MEMBERS {
             break;
         }
         let mut e = entry?;
-        if !e.header().entry_type().is_file() {
+        let t = e.header().entry_type();
+        let known = e.header().as_gnu().is_some() || e.header().as_ustar().is_some();
+        if known && t.is_gnu_longname() {
+            let mut v = Vec::new();
+            (&mut e).take(MAX_NAME + 1).read_to_end(&mut v)?;
+            while v.last() == Some(&0) {
+                v.pop();
+            }
+            name = if v.len() as u64 > MAX_NAME { Err(()) } else { Ok(Some(v)) };
             continue;
         }
-        let name = e.path().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+        if known && t.is_pax_local_extensions() {
+            let (path, s) = pax(&mut e)?;
+            match path {
+                Ok(Some(p)) => name = Ok(Some(p)),
+                Err(()) => name = Err(()),
+                Ok(None) => {}
+            }
+            size = size.or(s);
+            continue;
+        }
+        if t.is_gnu_longlink() || t.is_pax_global_extensions() {
+            continue;
+        }
+        let (name, size) = (std::mem::replace(&mut name, Ok(None)), size.take());
+        if size.is_some_and(|s| s != e.size()) {
+            return Err(std::io::Error::other("a member's size in its PAX header differs from its header; stopped"));
+        }
+        if !t.is_file() {
+            continue;
+        }
+        let Ok(name) = name else {
+            failed(format!("a member name longer than {} KiB; skipped", MAX_NAME >> 10));
+            continue;
+        };
+        let name = match name {
+            Some(v) => String::from_utf8_lossy(&v).into_owned(),
+            None => String::from_utf8_lossy(&e.header().path_bytes()).into_owned(),
+        };
         if !each(Some(&name), &mut e) {
             break;
         }
     }
     Ok(())
+}
+
+/// The `path` and `size` records of a PAX header, read record by
+/// record so that other records, such as extended attributes, are skipped and not held.
+fn pax(r: &mut dyn Read) -> std::io::Result<(Name, Option<u64>)> {
+    fn byte(r: &mut dyn Read) -> std::io::Result<Option<u8>> {
+        let mut b = [0];
+        Ok((r.read(&mut b)? == 1).then_some(b[0]))
+    }
+    let (mut path, mut size) = (Ok(None), None);
+    loop {
+        // "<length> <key>=<value>\n", the length counting the whole record
+        let (mut len, mut digits) = (0u64, 0u64);
+        loop {
+            match byte(r)? {
+                Some(b @ b'0'..=b'9') if digits < 19 => {
+                    len = len * 10 + u64::from(b - b'0');
+                    digits += 1;
+                }
+                Some(b' ') if digits > 0 => break,
+                _ => return Ok((path, size)),
+            }
+        }
+        let mut left = len.saturating_sub(digits + 1);
+        let mut key = Vec::new();
+        while left > 0 {
+            left -= 1;
+            match byte(r)? {
+                Some(b'=') => break,
+                Some(b) if key.len() < 64 => key.push(b),
+                Some(_) => {}
+                None => return Ok((path, size)),
+            }
+        }
+        // the value, then its newline
+        let value = left.saturating_sub(1);
+        if key == b"path" && value > MAX_NAME {
+            path = Err(());
+        } else if key == b"path" || (key == b"size" && value <= 20) {
+            let mut v = Vec::new();
+            (&mut *r).take(value).read_to_end(&mut v)?;
+            left -= v.len() as u64;
+            if key == b"path" {
+                path = Ok(Some(v));
+            } else {
+                size = std::str::from_utf8(&v).ok().and_then(|s| s.parse().ok());
+            }
+        }
+        std::io::copy(&mut (&mut *r).take(left), &mut std::io::sink())?;
+    }
 }
 
 #[cfg(test)]

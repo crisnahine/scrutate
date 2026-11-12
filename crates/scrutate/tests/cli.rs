@@ -1616,6 +1616,65 @@ fn search_zip_stops_a_member_whose_line_is_too_long_and_goes_on() {
     assert!(err.contains("a.tar.gz{long.txt}: a line longer than 64 MiB"), "{err}");
 }
 
+#[test]
+fn search_zip_skips_a_tar_member_whose_long_name_is_too_long() {
+    let r = Repo::new("ziplongname");
+    let file = |b: &mut tar::Builder<Vec<u8>>, name: &str, data: &[u8]| {
+        let mut h = tar::Header::new_gnu();
+        h.set_size(data.len() as u64);
+        h.set_mode(0o644);
+        h.set_cksum();
+        b.append_data(&mut h, name, data).unwrap();
+    };
+    let pax = |b: &mut tar::Builder<Vec<u8>>, records: &[(&str, &[u8])]| {
+        let mut data = Vec::new();
+        for (k, v) in records {
+            let rest = k.len() + v.len() + 3;
+            let mut n = rest + 1;
+            while n != rest + n.to_string().len() {
+                n = rest + n.to_string().len();
+            }
+            data.extend_from_slice(format!("{n} {k}=").as_bytes());
+            data.extend_from_slice(v);
+            data.push(b'\n');
+        }
+        let mut h = tar::Header::new_ustar();
+        h.set_entry_type(tar::EntryType::XHeader);
+        h.set_path("PaxHeader").unwrap();
+        h.set_size(data.len() as u64);
+        h.set_mode(0o644);
+        h.set_cksum();
+        b.append(&h, &data[..]).unwrap();
+    };
+    let gnu_name = format!("d/{}.txt", "g".repeat(200));
+    let pax_name = format!("p/{}.txt", "p".repeat(300));
+    let mut b = tar::Builder::new(Vec::new());
+    file(&mut b, &gnu_name, b"needle gnu\n");
+    pax(&mut b, &[("path", pax_name.as_bytes())]);
+    file(&mut b, "short", b"needle pax\n");
+    // an extended attribute far larger than any name, as macOS tar writes for a resource fork
+    pax(&mut b, &[("LIBARCHIVE.xattr.big", &vec![b'x'; 300 << 10][..]), ("path", b"xattr.txt")]);
+    file(&mut b, "short2", b"needle xattr\n");
+    file(&mut b, &format!("{}.txt", "a".repeat(1 << 20)), b"needle huge gnu\n");
+    pax(&mut b, &[("path", &vec![b'b'; 1 << 20][..])]);
+    file(&mut b, "short3", b"needle huge pax\n");
+    file(&mut b, "after.txt", b"needle after\n");
+    r.write("a.tar", &b.into_inner().unwrap());
+    let (code, out, err) = r.run(&["grep", "--sort", "-z", "needle"]);
+    assert_eq!(
+        (code, out.as_str()),
+        (
+            0,
+            format!(
+                "a.tar{{after.txt}}:1:needle after\na.tar{{{gnu_name}}}:1:needle gnu\na.tar{{{pax_name}}}:1:needle pax\na.tar{{xattr.txt}}:1:needle xattr\n"
+            )
+            .as_str()
+        ),
+        "{err}"
+    );
+    assert_eq!(err.matches("a.tar: a member name longer than 64 KiB; skipped").count(), 2, "{err}");
+}
+
 /// Poll `ok` every 100 ms until it holds or `secs` pass.
 fn wait_for(secs: u64, what: &str, mut ok: impl FnMut() -> bool) {
     let t0 = std::time::Instant::now();
