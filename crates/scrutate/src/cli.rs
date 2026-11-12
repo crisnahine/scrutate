@@ -820,8 +820,12 @@ pub fn run() -> Result<i32> {
             let scoped_globs = if globs.is_empty() && !cfg_globs.is_empty() { Some(Arc::new(instant::ScopedGlobs::new(&cfg_root, &cfg_globs)?)) } else { None };
             let globs = if globs.is_empty() { std::env::var("SCRUTATE_GREP_GLOBS").map(|v| split_globs(&v)).unwrap_or_default() } else { globs };
             if type_list {
+                let mut so = std::io::stdout().lock();
                 for (name, globs) in instant::type_list() {
-                    println!("{name}: {}", globs.join(", "));
+                    match writeln!(so, "{name}: {}", globs.join(", ")) {
+                        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => break,
+                        r => r?,
+                    }
                 }
                 return Ok(0);
             }
@@ -1159,10 +1163,14 @@ pub fn run() -> Result<i32> {
             Ok(0)
         }
         Cmd::Languages { json: false } => {
+            let mut so = std::io::stdout().lock();
             for spec in crate::langs::LANGS.iter() {
                 let labelled = |label: &str, v: &[&str]| (!v.is_empty()).then(|| format!("{label}{}", v.join(" ")));
                 let parts = [labelled("", spec.exts), labelled("by content: ", &by_content(spec.id)), labelled("files: ", spec.files)];
-                println!("{:<16} {}", spec.id, parts.into_iter().flatten().collect::<Vec<_>>().join("  "));
+                match writeln!(so, "{:<16} {}", spec.id, parts.into_iter().flatten().collect::<Vec<_>>().join("  ")) {
+                    Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => break,
+                    r => r?,
+                }
             }
             Ok(0)
         }
@@ -1440,7 +1448,7 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
             if defer {
                 collected.push(h);
             } else if let Err(e) = emit(&h, &mut w) {
-                if e.downcast_ref::<std::io::Error>().map(|e| e.kind() == std::io::ErrorKind::BrokenPipe).unwrap_or(false) {
+                if broken_pipe(&e) {
                     pipe_closed = true;
                     cancel.store(true, Ordering::Relaxed);
                 }
@@ -1462,48 +1470,58 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
     if !out.sort {
         counts.sort_by(|a, b| a.0.cmp(&b.0));
     }
-    if out.count {
-        for (p, c) in &counts {
-            if out.json {
-                writeln!(w, "{}", serde_json::json!({"type": "count", "schema": SCHEMA, "path": p, "count": c}))?;
-            } else if o.with_filename {
-                writeln!(w, "{p}:{c}")?;
-            } else {
-                writeln!(w, "{c}")?;
+    // a reader that went away (`| head`) ends the output quietly, as on the line path
+    let written = (|| -> Result<()> {
+        if out.count {
+            for (p, c) in &counts {
+                if out.json {
+                    writeln!(w, "{}", serde_json::json!({"type": "count", "schema": SCHEMA, "path": p, "count": c}))?;
+                } else if o.with_filename {
+                    writeln!(w, "{p}:{c}")?;
+                } else {
+                    writeln!(w, "{c}")?;
+                }
+            }
+        } else if out.files_with_matches {
+            for (p, _) in &counts {
+                if out.json {
+                    writeln!(w, "{}", serde_json::json!({"type": "file", "schema": SCHEMA, "path": p}))?;
+                } else {
+                    writeln!(w, "{p}")?;
+                }
+            }
+        } else if out.symbols {
+            grouped_by_symbol(&out.root, &mut collected, &mut w, out.json)?;
+        } else if defer {
+            for h in &collected {
+                emit(h, &mut w)?;
             }
         }
-    } else if out.files_with_matches {
-        for (p, _) in &counts {
+        if out.stats || out.json {
+            let rec = serde_json::json!({"type": "summary", "schema": SCHEMA, "files_searched": stats.files_searched, "files_matched": stats.files_matched,
+                "matches": stats.matches, "bytes_searched": stats.bytes_searched, "errors": stats.errors, "elapsed_ms": stats.elapsed_ms, "cancelled": stats.cancelled});
             if out.json {
-                writeln!(w, "{}", serde_json::json!({"type": "file", "schema": SCHEMA, "path": p}))?;
+                writeln!(w, "{rec}")?;
             } else {
-                writeln!(w, "{p}")?;
+                eprintln!(
+                    "{} matches in {} of {} files ({:.1} MB) in {:.1} ms{}{}",
+                    stats.matches,
+                    stats.files_matched,
+                    stats.files_searched,
+                    stats.bytes_searched as f64 / 1e6,
+                    stats.elapsed_ms,
+                    if stats.errors > 0 { format!(", {} unreadable", stats.errors) } else { String::new() },
+                    if stats.cancelled { ", stopped early" } else { "" }
+                );
             }
         }
-    } else if out.symbols {
-        grouped_by_symbol(&out.root, &mut collected, &mut w, out.json)?;
-    } else if defer {
-        for h in &collected {
-            emit(h, &mut w)?;
+        Ok(())
+    })();
+    if let Err(e) = written {
+        if broken_pipe(&e) {
+            return Ok(if found { 0 } else { 1 });
         }
-    }
-    if out.stats || out.json {
-        let rec = serde_json::json!({"type": "summary", "schema": SCHEMA, "files_searched": stats.files_searched, "files_matched": stats.files_matched,
-            "matches": stats.matches, "bytes_searched": stats.bytes_searched, "errors": stats.errors, "elapsed_ms": stats.elapsed_ms, "cancelled": stats.cancelled});
-        if out.json {
-            writeln!(w, "{rec}")?;
-        } else {
-            eprintln!(
-                "{} matches in {} of {} files ({:.1} MB) in {:.1} ms{}{}",
-                stats.matches,
-                stats.files_matched,
-                stats.files_searched,
-                stats.bytes_searched as f64 / 1e6,
-                stats.elapsed_ms,
-                if stats.errors > 0 { format!(", {} unreadable", stats.errors) } else { String::new() },
-                if stats.cancelled { ", stopped early" } else { "" }
-            );
-        }
+        return Err(e);
     }
     if let Err(e) = w.flush() {
         if e.kind() != std::io::ErrorKind::BrokenPipe {
@@ -1520,6 +1538,10 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
     } else {
         1
     })
+}
+
+fn broken_pipe(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<std::io::Error>().is_some_and(|e| e.kind() == std::io::ErrorKind::BrokenPipe)
 }
 
 /// A path given to search does not exist or cannot be opened (grep's exit 2); files the walk

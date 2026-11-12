@@ -682,6 +682,33 @@ fn a_file_with_a_nul_byte_found_by_the_walk_is_left_out_of_counts_and_lists() {
 }
 
 #[test]
+fn a_reader_that_closes_early_ends_the_output_quietly() {
+    use std::io::BufRead;
+    let d = Dir::new("pipeclose");
+    for i in 0..3000 {
+        d.write(&format!("a_file_with_a_long_name_so_that_the_list_fills_the_pipe_{i:05}.txt"), b"needle\n");
+    }
+    d.write("many.txt", "needle on a line\n".repeat(20_000).as_bytes());
+    for args in [
+        &["grep", "-l", "needle"][..],
+        &["grep", "-c", "needle"],
+        &["grep", "--sort", "needle"],
+        &["grep", "--sort", "--json", "needle"],
+        &["grep", "--type-list"],
+        &["languages"],
+    ] {
+        let mut c = Command::new(BIN);
+        c.args(args).current_dir(&d.0).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut child = c.spawn().unwrap();
+        let mut first = String::new();
+        std::io::BufReader::new(child.stdout.take().unwrap()).read_line(&mut first).unwrap();
+        let out = child.wait_with_output().unwrap();
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(!first.is_empty() && err.is_empty() && out.status.code() == Some(0), "{args:?}: {:?} {err}", out.status);
+    }
+}
+
+#[test]
 fn a_walked_file_whose_search_stops_at_a_nul_byte_says_so_after_its_matches() {
     let d = Dir::new("walkstop");
     for f in ["d/a.bin", "d/b.bin", "d/c.bin", "d/e.bin"] {
