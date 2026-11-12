@@ -1128,3 +1128,14 @@ fn a_fuzzy_regex_counts_an_edit_as_one_character_and_folds_case_as_without_it() 
         assert!(!walk.1.is_empty(), "{args:?}");
     }
 }
+
+#[test]
+fn a_case_insensitive_literal_matches_every_case_form_up_to_the_last_byte() {
+    let d = Dir::new("foldfind");
+    let filler = "x".repeat(70);
+    d.write("a.txt", format!("{filler}\n\u{212A}önig\nkoenig\npm_re\u{17F}ume {filler}\nPM_RESUME").as_bytes());
+    let (code, out, _) = d.run(&["grep", "-j1", "-n", "-i", "-e", "KÖNIG", "a.txt"]);
+    assert_eq!((code, out.as_str()), (0, "2:\u{212A}önig\n"));
+    let (code, out, _) = d.run(&["grep", "-j1", "-n", "-F", "-i", "-e", "pm_resume", "a.txt"]);
+    assert_eq!((code, out), (0, format!("4:pm_re\u{17F}ume {filler}\n5:PM_RESUME\n")));
+}

@@ -22,6 +22,9 @@ use grep_regex::RegexMatcherBuilder;
 use grep_searcher::{BinaryDetection, Searcher, SearcherBuilder, Sink, SinkContext, SinkMatch};
 use ignore::{overrides::OverrideBuilder, WalkBuilder, WalkState};
 
+#[path = "foldfind.rs"]
+mod foldfind;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     Regex,
@@ -709,12 +712,14 @@ impl AnyMatcher {
 /// grep-regex's matcher, except that the regex engine is kept from running its automaton over every
 /// byte in two cases: a regex with no usable literal prefix whose every match ends in one of a few
 /// literals (`\w+_(suspend|resume)\(`) finds candidate lines by searching for those literals, and a
-/// regex whose every match starts a line (`^(a|aa)+$`) looks only at line starts.
+/// regex whose every match starts a line (`^(a|aa)+$`) looks only at line starts. A case-insensitive
+/// literal finds candidate lines with its own finder.
 #[derive(Clone, Debug)]
 pub struct LineRegex {
     inner: grep_regex::RegexMatcher,
     suffixes: Option<regex::bytes::Regex>,
     line_start: Option<LineStart>,
+    fold: Option<foldfind::FoldFinder>,
 }
 
 /// For a regex whose every match begins at a line start: the line starts that begin with one of its
@@ -733,11 +738,11 @@ impl LineRegex {
         let lines = inner.line_terminator().is_some();
         let suffixes = if lines { suffix_searcher(pattern, insensitive) } else { None };
         let line_start = if lines && suffixes.is_none() { line_start(pattern, insensitive) } else { None };
-        LineRegex { inner, suffixes, line_start }
+        LineRegex { inner, suffixes, line_start, fold: None }
     }
 
     fn plain(inner: grep_regex::RegexMatcher) -> LineRegex {
-        LineRegex { inner, suffixes: None, line_start: None }
+        LineRegex { inner, suffixes: None, line_start: None, fold: None }
     }
 
     /// The end of the match anchored at `at`, when `at` starts a line of a haystack without line
@@ -839,6 +844,9 @@ impl Matcher for LineRegex {
         self.inner.line_terminator()
     }
     fn find_candidate_line(&self, haystack: &[u8]) -> Result<Option<grep_matcher::LineMatchKind>, NoError> {
+        if let Some(f) = &self.fold {
+            return Ok(f.find(haystack).map(grep_matcher::LineMatchKind::Candidate));
+        }
         if let Some(ls) = &self.line_start {
             // the searcher calls this at the start of a line, with whole lines
             let mut next = ls.prefixes.iter().any(|p| haystack.starts_with(p)).then_some(0);
@@ -1105,7 +1113,11 @@ pub fn build_matcher(o: &Options) -> Result<AnyMatcher> {
                 .line_terminator(if o.multiline { None } else { Some(b'\n') });
             let m = b.build(&pat).with_context(|| format!("invalid pattern {:?}", o.pattern))?;
             let suffix_ok = !o.word && o.mode != Mode::Literal;
-            Ok(AnyMatcher::Regex(if suffix_ok { LineRegex::new(m, &pat, insensitive) } else { LineRegex::plain(m) }))
+            let mut m = if suffix_ok { LineRegex::new(m, &pat, insensitive) } else { LineRegex::plain(m) };
+            if insensitive && m.line_terminator().is_some() {
+                m.fold = foldfind::FoldFinder::new(&pat);
+            }
+            Ok(AnyMatcher::Regex(m))
         }
     }
 }
@@ -3936,5 +3948,73 @@ mod tests {
         c.small_reads.store(100, Ordering::Relaxed);
         c.slow_reads.store(100, Ordering::Relaxed);
         assert_eq!(cold_extra(&Options { threads: 4, ..Options::default() }, &c), 0, "-j is kept");
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(4000))]
+        #[test]
+        fn a_case_insensitive_literal_finds_every_line_the_regex_matches(
+            needle in proptest::collection::vec(0usize..FOLD_CHARS.len(), 1..8),
+            pieces in proptest::collection::vec((0u8..4, 0usize..80, proptest::collection::vec(0usize..64, 8)), 0..8),
+            regex in proptest::prelude::any::<bool>(),
+            word in proptest::prelude::any::<bool>(),
+        ) {
+            let chars: Vec<char> = needle.iter().map(|&i| FOLD_CHARS[i]).collect();
+            let pattern: String = chars.iter().collect();
+            let mut hay = Vec::new();
+            for (kind, pad, picks) in &pieces {
+                // padding puts the piece on either side of 16, 32 and 64 byte boundaries
+                hay.extend(std::iter::repeat_n(b'x', *pad));
+                match kind {
+                    0 | 1 => {
+                        let miss = *kind == 1;
+                        for (n, &c) in chars.iter().enumerate() {
+                            let forms = fold_class(c);
+                            let c = if miss && n == picks[0] % chars.len() { FOLD_CHARS[picks[1] % FOLD_CHARS.len()] } else { forms[picks[n % 8] % forms.len()] };
+                            hay.extend(c.to_string().as_bytes());
+                        }
+                    }
+                    2 => hay.extend(picks.iter().map(|&p| [b'\n', b' ', 0xFF, 0xC3, b'A', b'a', b'_', b'0'][p % 8])),
+                    _ => hay.push(b'\n'),
+                }
+            }
+            let mode = if regex { Mode::Regex } else { Mode::Literal };
+            let pattern = if regex { regex::escape(&pattern) } else { pattern };
+            let o = Options { pattern, mode, case: Case::Insensitive, word, ..Options::default() };
+            let AnyMatcher::Regex(m) = build_matcher(&o).unwrap() else { panic!("not a regex matcher") };
+            let mut start = 0;
+            for line in hay.split(|&b| b == b'\n') {
+                let end = start + line.len();
+                if m.inner.is_match(line).unwrap() {
+                    let got = m.find_candidate_line(&hay[start..]).unwrap();
+                    let at = match got {
+                        Some(grep_matcher::LineMatchKind::Candidate(i) | grep_matcher::LineMatchKind::Confirmed(i)) => start + i,
+                        None => usize::MAX,
+                    };
+                    proptest::prop_assert!(at <= end, "{:?} in {:?}: line {start}..{end}, candidate {at}", o.pattern, String::from_utf8_lossy(&hay));
+                }
+                start = end + 1;
+            }
+        }
+    }
+
+    const FOLD_CHARS: &[char] = &[
+        'a', 'b', 'c', 'e', 'P', 'm', 'R', 'z', 'k', 'K', 's', 'S', '_', '0', '-', '.', 'ß', 'ẞ', 'σ', 'Σ', 'ς', 'İ', 'ı', 'i', 'I', 'é', 'Ö', 'ö', '\u{212A}',
+        '\u{17F}', '\u{301}', ' ',
+    ];
+
+    #[test]
+    fn a_case_insensitive_literal_has_its_own_finder_only_when_it_can() {
+        let fold = |pattern: &str, mode, case| match build_matcher(&Options { pattern: pattern.into(), mode, case, ..Options::default() }).unwrap() {
+            AnyMatcher::Regex(m) => m.fold.is_some(),
+            _ => false,
+        };
+        assert!(fold("pm_resume", Mode::Literal, Case::Insensitive));
+        assert!(fold("KÖNIG", Mode::Regex, Case::Insensitive));
+        assert!(fold("error", Mode::Literal, Case::Smart));
+        assert!(!fold("error", Mode::Literal, Case::Sensitive));
+        assert!(!fold("[A-Z]+_RESUME", Mode::Regex, Case::Insensitive));
+        assert!(!fold("ks", Mode::Literal, Case::Insensitive));
+        assert!(!fold("Error", Mode::Literal, Case::Smart));
     }
 }
