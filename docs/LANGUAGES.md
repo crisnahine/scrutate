@@ -1,9 +1,6 @@
 <!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="assets/banner-languages-dark.svg">
-<img src="assets/banner-languages-light.svg" alt="Languages. What does the index find in each language?" width="880">
-</picture>
+<img src="assets/banner-languages.svg" alt="Languages. What does the index find in each language?" width="880">
 </p>
 
 # Language capability registry (verified)

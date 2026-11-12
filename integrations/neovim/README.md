@@ -1,9 +1,6 @@
 <!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="../../docs/assets/banner-neovim-dark.svg">
-<img src="../../docs/assets/banner-neovim-light.svg" alt="Neovim. How do I use scrutate from Neovim?" width="880">
-</picture>
+<img src="../../docs/assets/banner-neovim.svg" alt="Neovim. How do I use scrutate from Neovim?" width="880">
 </p>
 
 # Scrutate for Neovim

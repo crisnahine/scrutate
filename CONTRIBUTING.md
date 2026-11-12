@@ -1,9 +1,6 @@
 <!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner-contributing-dark.svg">
-<img src="docs/assets/banner-contributing-light.svg" alt="Contributing. What must pass before a change is merged?" width="880">
-</picture>
+<img src="docs/assets/banner-contributing.svg" alt="Contributing. What must pass before a change is merged?" width="880">
 </p>
 
 # Contributing

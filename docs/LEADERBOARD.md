@@ -1,9 +1,6 @@
 <!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="assets/banner-leaderboard-dark.svg">
-<img src="assets/banner-leaderboard-light.svg" alt="Leaderboard. Where is scrutate faster or slower, and how sure is that?" width="880">
-</picture>
+<img src="assets/banner-leaderboard.svg" alt="Leaderboard. Where is scrutate faster or slower, and how sure is that?" width="880">
 </p>
 
 # Benchmark leaderboard

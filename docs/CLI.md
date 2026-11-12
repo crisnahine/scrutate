@@ -1,9 +1,6 @@
 <!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="assets/banner-cli-dark.svg">
-<img src="assets/banner-cli-light.svg" alt="Command line. What does each command do, and what does it print?" width="880">
-</picture>
+<img src="assets/banner-cli.svg" alt="Command line. What does each command do, and what does it print?" width="880">
 </p>
 
 # Command-line reference
@@ -17,20 +14,14 @@
 `scrutate --help` and `scrutate <command> --help` are authoritative; this page explains the model.
 
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="assets/diagram-cli-map-dark.svg">
-<img src="assets/diagram-cli-map-light.svg" alt="The commands by family: search without an index, search the index, code intelligence, maintenance, servers." width="880">
-</picture>
+<img src="assets/diagram-cli-map.svg" alt="The commands by family: search without an index, search the index, code intelligence, maintenance, servers." width="880">
 <br><sub>The commands by family. The sections below are the reference.</sub>
 </p>
 
 ## Conventions
 
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="assets/diagram-exit-codes-dark.svg">
-<img src="assets/diagram-exit-codes-light.svg" alt="Exit codes: 0 results found, 1 no results, 2 error, 130 interrupted." width="880">
-</picture>
+<img src="assets/diagram-exit-codes.svg" alt="Exit codes: 0 results found, 1 no results, 2 error, 130 interrupted." width="880">
 <br><sub>Exit codes, as the first convention below states them.</sub>
 </p>
 

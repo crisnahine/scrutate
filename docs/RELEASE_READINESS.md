@@ -1,9 +1,6 @@
 <!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="assets/banner-release-readiness-dark.svg">
-<img src="assets/banner-release-readiness-light.svg" alt="Release readiness. Is 0.1.0 ready, and what is still missing?" width="880">
-</picture>
+<img src="assets/banner-release-readiness.svg" alt="Release readiness. Is 0.1.0 ready, and what is still missing?" width="880">
 </p>
 
 # Release-readiness assessment: Scrutate 0.1.0

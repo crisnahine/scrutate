@@ -1,9 +1,6 @@
 <!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="assets/banner-traceability-dark.svg">
-<img src="assets/banner-traceability-light.svg" alt="Traceability. Which requirement is met, and what is the evidence?" width="880">
-</picture>
+<img src="assets/banner-traceability.svg" alt="Traceability. Which requirement is met, and what is the evidence?" width="880">
 </p>
 
 # Requirement traceability matrix

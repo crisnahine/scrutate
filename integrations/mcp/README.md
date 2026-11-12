@@ -1,9 +1,6 @@
 <!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="../../docs/assets/banner-mcp-dark.svg">
-<img src="../../docs/assets/banner-mcp-light.svg" alt="MCP server. How do I give an agent scrutate's tools?" width="880">
-</picture>
+<img src="../../docs/assets/banner-mcp.svg" alt="MCP server. How do I give an agent scrutate's tools?" width="880">
 </p>
 
 # Scrutate as an MCP server

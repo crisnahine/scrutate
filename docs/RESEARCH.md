@@ -1,9 +1,6 @@
 <!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="assets/banner-research-dark.svg">
-<img src="assets/banner-research-light.svg" alt="Research. Would a small transformer model rank code better?" width="880">
-</picture>
+<img src="assets/banner-research.svg" alt="Research. Would a small transformer model rank code better?" width="880">
 </p>
 
 # Research: a small transformer embedding model for Engine B

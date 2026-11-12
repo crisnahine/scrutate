@@ -13,10 +13,7 @@ from third_party_notices import data_files
 # The page head (banner and navigation); tools/gen_doc_assets.py --check compares it with its table.
 DOC_HEAD = """<!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="assets/banner-dependencies-dark.svg">
-<img src="assets/banner-dependencies-light.svg" alt="Dependencies. Which crates and data are compiled in, and why?" width="880">
-</picture>
+<img src="assets/banner-dependencies.svg" alt="Dependencies. Which crates and data are compiled in, and why?" width="880">
 </p>
 
 # Toolchain and dependencies

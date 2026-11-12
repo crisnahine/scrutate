@@ -1,9 +1,6 @@
 <!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="../../docs/assets/banner-precommit-dark.svg">
-<img src="../../docs/assets/banner-precommit-light.svg" alt="pre-commit hook. How do I stop a commit that adds duplicate functions?" width="880">
-</picture>
+<img src="../../docs/assets/banner-precommit.svg" alt="pre-commit hook. How do I stop a commit that adds duplicate functions?" width="880">
 </p>
 
 # pre-commit hook

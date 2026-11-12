@@ -1,9 +1,6 @@
 <!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="../../docs/assets/banner-github-dark.svg">
-<img src="../../docs/assets/banner-github-light.svg" alt="GitHub Actions. How do I run scrutate in a GitHub workflow?" width="880">
-</picture>
+<img src="../../docs/assets/banner-github.svg" alt="GitHub Actions. How do I run scrutate in a GitHub workflow?" width="880">
 </p>
 
 # GitHub Actions

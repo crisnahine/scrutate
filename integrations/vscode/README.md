@@ -1,9 +1,6 @@
 <!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="../../docs/assets/banner-vscode-dark.svg">
-<img src="../../docs/assets/banner-vscode-light.svg" alt="VS Code. How do I use the language server in VS Code?" width="880">
-</picture>
+<img src="../../docs/assets/banner-vscode.svg" alt="VS Code. How do I use the language server in VS Code?" width="880">
 </p>
 
 # Scrutate for VS Code

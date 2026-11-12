@@ -1,9 +1,6 @@
 <!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="assets/banner-test-results-dark.svg">
-<img src="assets/banner-test-results-light.svg" alt="Test results. Did every quality gate pass, and what did it print?" width="880">
-</picture>
+<img src="assets/banner-test-results.svg" alt="Test results. Did every quality gate pass, and what did it print?" width="880">
 </p>
 
 # Test and quality-gate results

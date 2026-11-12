@@ -1,9 +1,6 @@
 <!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="assets/banner-competitive-dark.svg">
-<img src="assets/banner-competitive-light.svg" alt="Competitive position. What does the evidence say against other tools?" width="880">
-</picture>
+<img src="assets/banner-competitive.svg" alt="Competitive position. What does the evidence say against other tools?" width="880">
 </p>
 
 # Competitive positioning: what the evidence supports

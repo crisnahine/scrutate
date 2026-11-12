@@ -1,9 +1,6 @@
 <!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="assets/banner-roadmap-dark.svg">
-<img src="assets/banner-roadmap-light.svg" alt="Roadmap. What is done, what is blocked and what is next?" width="880">
-</picture>
+<img src="assets/banner-roadmap.svg" alt="Roadmap. What is done, what is blocked and what is next?" width="880">
 </p>
 
 # Roadmap

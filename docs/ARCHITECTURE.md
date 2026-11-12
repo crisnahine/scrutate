@@ -1,9 +1,6 @@
 <!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="assets/banner-architecture-dark.svg">
-<img src="assets/banner-architecture-light.svg" alt="Architecture. How do the two engines work inside?" width="880">
-</picture>
+<img src="assets/banner-architecture.svg" alt="Architecture. How do the two engines work inside?" width="880">
 </p>
 
 # Architecture
@@ -36,10 +33,7 @@ Scrutate is one binary with two independent engines and a thin unifying layer.
 ## Engine A: universal instant search (`crates/scrutate/src/instant.rs`)
 
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="assets/diagram-engine-a-dark.svg">
-<img src="assets/diagram-engine-a-light.svg" alt="Engine A: the command line, the walk, the first read of each file, four ways to search a file, and the output." width="880">
-</picture>
+<img src="assets/diagram-engine-a.svg" alt="Engine A: the command line, the walk, the first read of each file, four ways to search a file, and the output." width="880">
 <br><sub>Engine A's path for one search. A file's first read picks how it is searched; the bullets below give each path's limits and measurements.</sub>
 </p>
 
@@ -244,10 +238,7 @@ capabilities those crates do not provide rather than re-implementing what they a
 ## Engine B: code intelligence (`index.rs`, `lex.rs`, `parse.rs`, `langs.rs`, `search.rs`, `intel.rs`)
 
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="assets/diagram-engine-b-update-dark.svg">
-<img src="assets/diagram-engine-b-update-light.svg" alt="Engine B's update: walk, hash, parse and chunk; symbols and call edges go to SQLite, BM25 postings and vectors to a new segment, in one transaction." width="880">
-</picture>
+<img src="assets/diagram-engine-b-update.svg" alt="Engine B's update: walk, hash, parse and chunk; symbols and call edges go to SQLite, BM25 postings and vectors to a new segment, in one transaction." width="880">
 <br><sub>One index update, from the walk to the commit. Parsing, Storage and its Lifecycle below describe each step.</sub>
 </p>
 
@@ -358,10 +349,7 @@ folded, so two spellings of one accented name are one name.
 ### Retrieval and ranking (`search.rs`, `semantic.rs`, `rank.rs`)
 
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="assets/diagram-ranked-query-dark.svg">
-<img src="assets/diagram-ranked-query-light.svg" alt="A ranked query: BM25 by field, exact lookup and semantic neighbours give candidates; 48 features each go through the LightGBM ranker." width="880">
-</picture>
+<img src="assets/diagram-ranked-query.svg" alt="A ranked query: BM25 by field, exact lookup and semantic neighbours give candidates; 48 features each go through the LightGBM ranker." width="880">
 <br><sub>A ranked query: three sources of candidates, 48 features per candidate, one learned ranker.</sub>
 </p>
 A query produces candidates from three sources: field-weighted BM25 (name 10, qualified name 3,
@@ -387,10 +375,7 @@ tie.
 ### Text index (`textindex.rs`)
 
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="assets/diagram-text-index-dark.svg">
-<img src="assets/diagram-text-index-light.svg" alt="The text index: trigrams and mask bytes per file in segments; a pattern becomes a trigram condition, the postings give candidate files, Engine A searches them." width="880">
-</picture>
+<img src="assets/diagram-text-index.svg" alt="The text index: trigrams and mask bytes per file in segments; a pattern becomes a trigram condition, the postings give candidate files, Engine A searches them." width="880">
 <br><sub>The text index names the files that can match; Engine A decides what matches.</sub>
 </p>
 The indexed counterpart of Engine A, for repeated grep-style queries on large trees (the job Zoekt
@@ -497,10 +482,7 @@ counts as empty. Eviction is by query file, least recently used first, above 128
 ## Unified layer (`ops.rs`, `lib.rs`, `cli.rs`, `mcp.rs`, `crates/scrutate-py`)
 
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="assets/diagram-front-ends-dark.svg">
-<img src="assets/diagram-front-ends-light.svg" alt="The CLI, Python bindings, MCP server, language server and watcher go through one engine to one .scrutate directory." width="880">
-</picture>
+<img src="assets/diagram-front-ends.svg" alt="The CLI, Python bindings, MCP server, language server and watcher go through one engine to one .scrutate directory." width="880">
 <br><sub>Every front end goes through the same operations to one <code>.scrutate/</code> directory.</sub>
 </p>
 `find QUERY` chooses: regex-looking → Engine A; otherwise ranked search when an index exists or

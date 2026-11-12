@@ -1,9 +1,6 @@
 <!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="assets/banner-delivery-dark.svg">
-<img src="assets/banner-delivery-light.svg" alt="Delivery index. Where is each delivered item in this repository?" width="880">
-</picture>
+<img src="assets/banner-delivery.svg" alt="Delivery index. Where is each delivered item in this repository?" width="880">
 </p>
 
 # Delivery index: Scrutate 0.1.0 (2026-11-11)

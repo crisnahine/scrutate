@@ -1,9 +1,6 @@
 <!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="../../docs/assets/banner-jetbrains-dark.svg">
-<img src="../../docs/assets/banner-jetbrains-light.svg" alt="JetBrains IDEs. How do I run scrutate from a JetBrains IDE?" width="880">
-</picture>
+<img src="../../docs/assets/banner-jetbrains.svg" alt="JetBrains IDEs. How do I run scrutate from a JetBrains IDE?" width="880">
 </p>
 
 # Scrutate in JetBrains IDEs

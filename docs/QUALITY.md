@@ -1,9 +1,6 @@
 <!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="assets/banner-quality-dark.svg">
-<img src="assets/banner-quality-light.svg" alt="Ranking quality. How good are ranked answers on code it was not fitted on?" width="880">
-</picture>
+<img src="assets/banner-quality.svg" alt="Ranking quality. How good are ranked answers on code it was not fitted on?" width="880">
 </p>
 
 # Ranking quality (Engine B)

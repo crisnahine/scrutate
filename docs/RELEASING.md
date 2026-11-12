@@ -1,9 +1,6 @@
 <!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="assets/banner-releasing-dark.svg">
-<img src="assets/banner-releasing-light.svg" alt="Releasing. Which steps does a release take, in order?" width="880">
-</picture>
+<img src="assets/banner-releasing.svg" alt="Releasing. Which steps does a release take, in order?" width="880">
 </p>
 
 # Releasing

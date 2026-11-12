@@ -15,10 +15,7 @@ import sys
 # The page head (banner and navigation); tools/gen_doc_assets.py --check compares it with its table.
 DOC_HEAD = """<!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="assets/banner-benchmarks-dark.svg">
-<img src="assets/banner-benchmarks-light.svg" alt="Benchmarks. What do time, memory and start-up cost, tool by tool?" width="880">
-</picture>
+<img src="assets/banner-benchmarks.svg" alt="Benchmarks. What do time, memory and start-up cost, tool by tool?" width="880">
 </p>
 
 # Benchmarks

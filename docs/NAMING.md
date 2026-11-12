@@ -1,9 +1,6 @@
 <!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="assets/banner-naming-dark.svg">
-<img src="assets/banner-naming-light.svg" alt="Naming. Why is it called scrutate, and how was that checked?" width="880">
-</picture>
+<img src="assets/banner-naming.svg" alt="Naming. Why is it called scrutate, and how was that checked?" width="880">
 </p>
 
 # Project name: **Scrutate**

@@ -1,9 +1,6 @@
 <!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="assets/banner-security-dark.svg">
-<img src="assets/banner-security-light.svg" alt="Security. What can a hostile repository, query or client do?" width="880">
-</picture>
+<img src="assets/banner-security.svg" alt="Security. What can a hostile repository, query or client do?" width="880">
 </p>
 
 # Security assessment (0.1.0)
@@ -28,10 +25,7 @@ hostile inputs). Attackers considered: a **hostile repository** (crafted files, 
 a **hostile MCP client** (malformed JSON-RPC, path escapes).
 
 <p align="center">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="assets/diagram-trust-boundaries-dark.svg">
-<img src="assets/diagram-trust-boundaries-light.svg" alt="Trust boundaries: repository content, patterns, MCP requests and the .scrutate directory, with the controls on each boundary; no network." width="880">
-</picture>
+<img src="assets/diagram-trust-boundaries.svg" alt="Trust boundaries: repository content, patterns, MCP requests and the .scrutate directory, with the controls on each boundary; no network." width="880">
 <br><sub>What crosses into scrutate, and the controls from the table below on each boundary. The network is not used.</sub>
 </p>
 
