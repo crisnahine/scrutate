@@ -2155,9 +2155,10 @@ fn search_one(w: &mut FileWorker, r: &Run, path: &Path, rel: Arc<str>, size: Opt
                         split::Outcome::Stream => {}
                         split::Outcome::Buffer(b) => owned = Some(b),
                     }
-                } else if len <= MID_FILE {
+                } else if len <= MID_FILE && range_threads(o) > 1 {
                     // a searcher of its own, so the thread's keeps the buffer size it had: where a
-                    // NUL byte after the first fill stops the output depends on that size
+                    // NUL byte after the first fill stops the output depends on that size. One
+                    // thread meets the files in a fixed order and keeps its one searcher
                     searcher = fresh.insert(make_searcher(o, if named { BinaryDetection::convert(0) } else { BinaryDetection::quit(0) }));
                 }
             }
@@ -2240,9 +2241,10 @@ const SMALL_FILE: u64 = 64 << 10;
 const MID_FILE: u64 = 1 << 20;
 
 /// Line-at-a-time searches whose results do not depend on neighbouring lines or on a running count.
-/// `-l` stays sequential: it stops at the first match.
+/// `-l` stays sequential: it stops at the first match. On one thread a file is never split, but a
+/// file of one long line is still read into a buffer of its size (`split::search`).
 fn splittable(o: &Options) -> bool {
-    !o.multiline && o.before == 0 && o.after == 0 && o.max_count.is_none() && o.max_results.is_none() && !o.files_only && range_threads(o) > 1
+    !o.multiline && o.before == 0 && o.after == 0 && o.max_count.is_none() && o.max_results.is_none() && !o.files_only
 }
 
 mod split {
@@ -2404,10 +2406,13 @@ mod split {
             Ok(_) => {}
             Err(_) => return Outcome::Stream,
         }
+        // one thread only asks whether the file has a line break to split at: the stream holds 3^k
+        // times 64 KiB for a long line (141.6 MB peak resident for one 100 MB line, 103.9 whole)
+        let one = range_threads(o) == 1;
         let mut bounds = vec![0u64];
         let mut probe = vec![0u8; 64 << 10];
         let mut x = chunk;
-        while x < size {
+        while x < size && !(one && bounds.len() > 1) {
             match line_start(file, x, &mut probe) {
                 Ok(Some(b)) if b < size => {
                     bounds.push(b);
@@ -2420,6 +2425,9 @@ mod split {
         bounds.push(size);
         if bounds.len() < 3 {
             return whole(file, size, default_threads(o)).map_or(Outcome::Stream, Outcome::Buffer);
+        }
+        if one {
+            return Outcome::Stream;
         }
         let ranges: Vec<(u64, u64)> = bounds.windows(2).map(|w| (w[0], w[1])).collect();
         let threads = range_threads(o).min(ranges.len());
