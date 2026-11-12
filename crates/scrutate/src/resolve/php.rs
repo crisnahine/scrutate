@@ -52,12 +52,13 @@ impl Rules for Php {
     }
 
     // a `require` of a path is left to the mapping of paths onto files
-    fn import_files(r: &mut Resolver, from: &str, _fi: &FileInfo, _line: i64, module: &str) -> Option<Vec<String>> {
+    fn reads_import(module: &str) -> bool {
         let name = module.trim_start_matches('\\');
-        if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '\\') {
-            return None;
-        }
-        Some(Self::module_files(r, from, name).unwrap_or_default())
+        !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '\\')
+    }
+
+    fn import_files(r: &mut Resolver, from: &str, _fi: &FileInfo, _line: i64, module: &str) -> Option<Vec<String>> {
+        Some(Self::module_files(r, from, module).unwrap_or_default())
     }
 }
 

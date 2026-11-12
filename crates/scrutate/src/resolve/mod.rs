@@ -235,6 +235,12 @@ trait Rules {
     /// The files of `module` as an import of `from` names it.
     fn module_files(r: &mut Resolver, from: &str, module: &str) -> Option<Vec<String>>;
 
+    /// Whether the resolver maps an import recorded as `module`; the generic mapping of paths
+    /// onto files takes the others, without a parse.
+    fn reads_import(_module: &str) -> bool {
+        true
+    }
+
     /// The files the import statement of `from` at `line`, recorded as `module`, names; None
     /// when the resolver leaves that statement to the generic mapping.
     fn import_files(r: &mut Resolver, from: &str, fi: &FileInfo, line: i64, module: &str) -> Option<Vec<String>>;
@@ -1821,7 +1827,9 @@ impl<'a> Resolver<'a> {
     /// the files `refs` would look its names up in. None when the resolver does not read the
     /// language of `from`; an empty list when it reads it and finds no file.
     pub fn import_files(&mut self, from: &str, line: i64, module: &str) -> Option<Vec<String>> {
-        path_lang(from)?;
+        if !rules!(path_lang(from)?, R => R::reads_import(module)) {
+            return None;
+        }
         let fi = self.file(from);
         let lang = fi.lang?;
         let mut out = rules!(lang, R => R::import_files(self, from, &fi, line, module))?;
