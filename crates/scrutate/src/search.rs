@@ -167,6 +167,22 @@ pub struct QueryInfo {
     pub dotted: Vec<String>, // Class.method style keys
 }
 
+/// The query cut at blanks only, so a name keeps its punctuation.
+fn typed_tokens(text: &str) -> impl Iterator<Item = &str> {
+    text.split([' ', '\t', '\n', '\r', '\x0b', '\x0c']).filter(|t| !t.is_empty())
+}
+
+/// The last part of a dotted token (`Rec.valid?`, `Shape::~Shape`, `Rec#valid?`); the token itself
+/// when it has no such part.
+fn typed_tail(token: &str) -> &str {
+    token.rsplit(['.', ':', '#']).next().filter(|t| !t.is_empty()).unwrap_or(token)
+}
+
+/// Whether a token holds an ASCII character that is no letter, digit or underscore.
+fn punctuated(token: &str) -> bool {
+    token.bytes().any(|b| b.is_ascii() && !b.is_ascii_alphanumeric() && b != b'_')
+}
+
 impl QueryInfo {
     pub fn parse(text: &str) -> QueryInfo {
         let words: Vec<String> = Words::new(text).map(|w| w.to_lowercase()).collect();
@@ -183,6 +199,18 @@ impl QueryInfo {
         // one word, or stop words alone, is most likely a name: `find`, `get`, `id`
         if keys.is_empty() || words.len() == 1 {
             keys.extend(words.iter().map(|w| name_key(w)).filter(|k| !k.is_empty() && seen.insert(k.clone())));
+        }
+        // a name written with punctuation is stored whole: `valid?`, `Get-Greeting`, `list->vector`
+        let tokens: Vec<&str> = typed_tokens(text).collect();
+        for t in &tokens {
+            for name in [*t, typed_tail(t)] {
+                if punctuated(name) && (name.chars().count() >= 3 || tokens.len() == 1) {
+                    let k = name_key(name);
+                    if seen.insert(k.clone()) {
+                        keys.push(k);
+                    }
+                }
+            }
         }
         let dotted_re = Regex::new(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+").unwrap();
         let mut dotted = Vec::new();
@@ -485,13 +513,24 @@ impl Searcher {
             f[fi("qual_depth")] = row.qualname.matches('.').count() as f32;
             f[fi("is_private")] = (name.starts_with('_') && !name.starts_with("__")) as i32 as f32;
         }
-        // a name the query has as typed, case included (`BurstFiles` is not `burst_files`), in one
-        // Unicode form; when no candidate is spelled as typed, every exact name is as near as it gets
-        let typed: HashSet<String> = Words::new(&q.text).map(|w| w.nfc().collect()).collect();
-        let as_typed: Vec<bool> = names.iter().map(|nm| !nm.is_empty() && typed.contains(&nm.nfc().collect::<String>())).collect();
-        let any = as_typed.contains(&true);
-        for (r, typed) in as_typed.iter().enumerate() {
-            x[r][fi("exact_case")] = if any { *typed as i32 as f32 } else { x[r][fi("exact_name")] };
+        // a name the query has as typed, in one Unicode form: a whole token first, punctuation and
+        // case included (`valid?` is not `valid`, `BurstFiles` not `burst_files`), then the last
+        // part of a dotted token, then a word of letters and digits; when no candidate is spelled
+        // as typed, every exact name is as near as it gets
+        let nfc = |s: &str| s.nfc().collect::<String>();
+        let named: Vec<String> = names.iter().map(|nm| nfc(nm)).collect();
+        let spelled = |typed: HashSet<String>| {
+            let hits: Vec<bool> = named.iter().map(|nm| !nm.is_empty() && typed.contains(nm)).collect();
+            hits.contains(&true).then_some(hits)
+        };
+        let as_typed = spelled(typed_tokens(&q.text).map(nfc).collect())
+            .or_else(|| spelled(typed_tokens(&q.text).map(|t| nfc(typed_tail(t))).collect()))
+            .or_else(|| spelled(Words::new(&q.text).map(nfc).collect()));
+        for r in 0..names.len() {
+            x[r][fi("exact_case")] = match &as_typed {
+                Some(hits) => hits[r] as i32 as f32,
+                None => x[r][fi("exact_name")],
+            };
         }
         self.ncallers(&names)?;
         for (r, nm) in names.iter().enumerate() {
@@ -537,8 +576,14 @@ impl Searcher {
     }
 
     pub fn hits(&self, c: &Candidates, scores: &[f64], k: usize, with_text: bool) -> Result<Vec<Hit>> {
+        // a name typed with its punctuation (`valid?`, `Get-Greeting`, `list->vector`, the last
+        // part of `Rec.valid?`) comes first: no name the ranker was fitted on is written so
+        let typed: HashSet<String> = typed_tokens(&c.q.text).flat_map(|t| [t, typed_tail(t)]).filter(|t| punctuated(t)).map(|t| t.nfc().collect()).collect();
+        let first: Vec<bool> = c.rows.iter().map(|r| !typed.is_empty() && r.kind != "window" && typed.contains(&r.name.nfc().collect::<String>())).collect();
         let mut order: Vec<usize> = (0..c.rows.len()).collect();
-        order.sort_by(|&a, &b| scores[b].partial_cmp(&scores[a]).unwrap_or(std::cmp::Ordering::Equal).then(c.rows[a].id.cmp(&c.rows[b].id)));
+        order.sort_by(|&a, &b| {
+            first[b].cmp(&first[a]).then(scores[b].partial_cmp(&scores[a]).unwrap_or(std::cmp::Ordering::Equal)).then(c.rows[a].id.cmp(&c.rows[b].id))
+        });
         let mut picked: Vec<Hit> = Vec::new();
         let mut best_by_key: HashMap<(String, String, bool), usize> = HashMap::new();
         for r in order {

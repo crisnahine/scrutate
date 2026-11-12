@@ -771,6 +771,48 @@ fn a_name_as_typed_is_a_feature_and_an_impl_is_its_own_hit() {
 }
 
 #[test]
+fn a_name_typed_with_its_punctuation_is_the_name_as_typed() {
+    let root = tree(
+        "case_punct",
+        &[
+            ("a.rb", "class Rec\n  def valid\n    @valid\n  end\n\n  def valid?\n    true\n  end\nend\n"),
+            ("a.ps1", "function Greeting {\n    \"hi\"\n}\n\nfunction Get-Greeting {\n    \"hi\"\n}\n\nfunction Set-Greeting {\n    \"ho\"\n}\n"),
+            ("a.scm", "(define (vector x) x)\n\n(define (list->vector x) x)\n"),
+            ("a.js", "function http() {\n  return 1;\n}\n\nfunction $http() {\n  return 2;\n}\n"),
+        ],
+    );
+    let mut repo = scrutate::Repo::open(&root).unwrap();
+    repo.update(false).unwrap();
+    let f = |n: &str| scrutate::search::FEATURES.iter().position(|x| *x == n).unwrap();
+    // (exact_name, exact_case) of the candidate called `name`
+    let mut get = |q: &str, name: &str| {
+        let c = repo.candidates(q, true).unwrap();
+        let i = c.rows.iter().position(|r| r.name == name).unwrap_or_else(|| panic!("{q}: no candidate {name}"));
+        (c.x[i][f("exact_name")], c.x[i][f("exact_case")])
+    };
+    for (q, typed, plain) in
+        [("valid?", "valid?", "valid"), ("Get-Greeting", "Get-Greeting", "Greeting"), ("list->vector", "list->vector", "vector"), ("$http", "$http", "http")]
+    {
+        assert_eq!(get(q, typed), (1.0, 1.0), "{q}: {typed}");
+        assert_eq!(get(q, plain).1, 0.0, "{q}: {plain}");
+    }
+    // the last part of a dotted name, and the plain names as before
+    assert_eq!(get("Rec.valid?", "valid?").1, 1.0);
+    assert_eq!(get("Rec.valid?", "valid").1, 0.0);
+    assert_eq!((get("valid", "valid").1, get("valid", "valid?").1), (1.0, 0.0));
+    assert_eq!((get("Greeting", "Greeting").1, get("Greeting", "Get-Greeting").1), (1.0, 0.0));
+    // in a sentence too
+    assert_eq!((get("is the record valid? or not", "valid?").1, get("is the record valid? or not", "valid").1), (1.0, 0.0));
+    // and the name typed whole is the first result, whatever the ranker makes of its words
+    for q in ["valid?", "Get-Greeting", "list->vector", "$http"] {
+        assert_eq!(repo.search(q, 3, false).unwrap()[0].name, q);
+    }
+    for (q, first) in [("valid", "valid"), ("Greeting", "Greeting"), ("vector", "vector"), ("http", "http")] {
+        assert_eq!(repo.search(q, 3, false).unwrap()[0].name, first, "{q}");
+    }
+}
+
+#[test]
 fn swift_protocol_requirements_kotlin_type_aliases_and_elixir_guards_are_symbols() {
     let swift = symbols("c.swift", "protocol Payable {\n    func pay(amount: Int)\n}\n");
     assert!(has(&swift, "function", "Payable.pay"), "{swift:?}");

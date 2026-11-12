@@ -179,6 +179,31 @@ BURST_RS = ("/// Keeps the files of one burst.\npub struct BurstFiles {\n    n: 
             "        self.n\n    }\n}\n\n/// The files of one burst.\npub fn burst_files() -> usize {\n    0\n}\n")
 
 
+def test_a_name_typed_with_its_punctuation_is_the_name_as_typed(tmp_path):
+    from scrutate_ref.search import FI
+
+    (tmp_path / "a.js").write_text("function http() {\n  return 1;\n}\n\nfunction $http() {\n  return 2;\n}\n\n"
+                                   "class Api {\n  $get() {\n    return 3;\n  }\n\n  get() {\n    return 4;\n  }\n}\n")
+    s = make(str(tmp_path))
+
+    def get(q, name):
+        _, rows, X = s.candidates(q)
+        i = next(i for i, r in enumerate(rows) if r["name"] == name)
+        return float(X[i, FI["exact_name"]]), float(X[i, FI["exact_case"]])
+
+    assert get("$http", "$http") == (1.0, 1.0)
+    assert get("$http", "http")[1] == 0.0
+    assert (get("http", "http")[1], get("http", "$http")[1]) == (1.0, 0.0)
+    # the last part of a dotted name
+    assert (get("Api.$get", "$get")[1], get("Api.$get", "get")[1]) == (1.0, 0.0)
+    # in a sentence too
+    assert (get("where is $http called", "$http")[1], get("where is $http called", "http")[1]) == (1.0, 0.0)
+    # and the name typed whole is the first result, whatever the ranker makes of its words
+    assert s.search("$http", k=3, with_text=False)[0].name == "$http"
+    assert s.search("Api.$get", k=3, with_text=False)[0].name == "$get"
+    assert s.search("http", k=3, with_text=False)[0].name == "http"
+
+
 def test_a_name_as_typed_is_a_feature_and_an_impl_is_its_own_hit(tmp_path):
     from scrutate_ref.search import FI
 

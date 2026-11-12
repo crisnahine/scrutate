@@ -74,6 +74,22 @@ class Hit:
         return "\n".join(lines[at : at + max_lines])
 
 
+def typed_tokens(text: str) -> list[str]:
+    """The query cut at blanks only, so a name keeps its punctuation."""
+    return [t for t in re.split(r"[ \t\n\r\x0b\x0c]", text) if t]
+
+
+def punctuated(token: str) -> bool:
+    """Whether a token holds an ASCII character that is no letter, digit or underscore."""
+    return any(ord(c) < 128 and not (c.isalnum() or c == "_") for c in token)
+
+
+def typed_tail(token: str) -> str:
+    """The last part of a dotted token (`Rec.valid?`, `Shape::~Shape`, `Rec#valid?`); the token
+    itself when it has no such part."""
+    return re.split(r"[.:#]", token)[-1] or token
+
+
 @dataclass
 class QueryInfo:
     text: str
@@ -91,6 +107,13 @@ class QueryInfo:
         # one word, or stop words alone, is most likely a name: `find`, `get`, `id`
         if not keys or len(words) == 1:
             keys = list(dict.fromkeys(keys + [k for k in map(name_key, words) if k]))
+        # a name written with punctuation is stored whole: `valid?`, `Get-Greeting`, `list->vector`
+        tokens = typed_tokens(text)
+        for t in tokens:
+            for name in (t, typed_tail(t)):
+                if punctuated(name) and (len(name) >= 3 or len(tokens) == 1):
+                    keys.append(name_key(name))
+        keys = list(dict.fromkeys(keys))
         dotted = [".".join(name_key(p) for p in d.split("."))
                   for d in re.findall(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+", text)]
         return cls(text, query_terms(text), query_wholes(text), literal_candidates(text), words, keys,
@@ -273,11 +296,22 @@ class Searcher:
             X[r, FI["log_ndoc"]] = math.log1p(row["ndoc"] or 0)
             X[r, FI["qual_depth"]] = (row["qualname"] or "").count(".")
             X[r, FI["is_private"]] = 1.0 if name.startswith("_") and not name.startswith("__") else 0.0
-        # a name the query has as typed, case included (`BurstFiles` is not `burst_files`), in one
-        # Unicode form; when no candidate is spelled as typed, every exact name is as near as it gets
-        typed = {unicodedata.normalize("NFC", w) for w in text_words(q.text)}
-        as_typed = [bool(nm) and unicodedata.normalize("NFC", nm) in typed for nm in names]
-        if any(as_typed):
+        # a name the query has as typed, in one Unicode form: a whole token first, punctuation and
+        # case included (`valid?` is not `valid`, `BurstFiles` not `burst_files`), then the last
+        # part of a dotted token, then a word of letters and digits; when no candidate is spelled
+        # as typed, every exact name is as near as it gets
+        def nfc(s):
+            return unicodedata.normalize("NFC", s)
+
+        named = [nfc(nm) for nm in names]
+        as_typed = None
+        for typed in ({nfc(t) for t in typed_tokens(q.text)}, {nfc(typed_tail(t)) for t in typed_tokens(q.text)},
+                      {nfc(w) for w in text_words(q.text)}):
+            hits = [bool(nm) and nm in typed for nm in named]
+            if any(hits):
+                as_typed = hits
+                break
+        if as_typed is not None:
             X[:, FI["exact_case"]] = [1.0 if t else 0.0 for t in as_typed]
         else:
             X[:, FI["exact_case"]] = X[:, FI["exact_name"]]
@@ -310,7 +344,13 @@ class Searcher:
         return out
 
     def _hits(self, q: QueryInfo, rows, X, scores, k: int, with_text: bool = True) -> list[Hit]:
-        order = np.lexsort((np.array([r["id"] for r in rows]), -np.asarray(scores)))  # ties: lower id first
+        # a name typed with its punctuation (`valid?`, `Get-Greeting`, `list->vector`, the last
+        # part of `Rec.valid?`) comes first: no name the ranker was fitted on is written so
+        typed = {unicodedata.normalize("NFC", t) for tok in typed_tokens(q.text) for t in (tok, typed_tail(tok))
+                 if punctuated(t)}
+        later = np.array([not (typed and r["kind"] != "window" and unicodedata.normalize("NFC", r["name"] or "") in typed)
+                          for r in rows], bool)
+        order = np.lexsort((np.array([r["id"] for r in rows]), -np.asarray(scores), later))  # ties: lower id first
         picked: list[Hit] = []
         best_by_key: dict[tuple, int] = {}
         for r in order:
