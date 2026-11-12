@@ -847,7 +847,9 @@ impl Index {
         let db_path = self.dir.join("index.db");
         let opened = Connection::open(&db_path).and_then(|db| {
             db.busy_timeout(Duration::from_secs(30))?;
-            db.execute_batch("PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-32000;")?;
+            // a page cache of 2 MB: with 32 MB each, eight readers held 77 MB more under eight
+            // calls, and the system's file cache serves the pages they share as fast
+            db.execute_batch("PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-2000;")?;
             db.query_row("SELECT count(*) FROM meta", [], |_| Ok(()))?;
             Ok(db)
         });
