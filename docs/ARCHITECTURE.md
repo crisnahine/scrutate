@@ -86,8 +86,8 @@ capabilities those crates do not provide rather than re-implementing what they a
   multiline and a byte-order mark keep the single pass. A file with no line break before its
   last byte goes into one buffer of its exact size and is searched there: the threads fill it in
   1 MiB pieces in file order, and the first line break or NUL byte sends the file to the stream,
-  so lines too long for the probes to see (100 MB of 4 MB lines) hold 15 to 18 MB, not the
-  file. The time is the kernel copying pages, which spreads as far as opening files does (100 MB
+  so lines too long for the probes to see (100 MB of 4 MB lines) hold 15 to 18 MB where they
+  held the whole file. The time is the kernel copying pages, which spreads as far as opening files does (100 MB
   on an M3 Pro: 12.6 ms on one thread, 4.0 ms on the five performance cores, 6.7 ms on all
   eleven).
   On one thread a file is never split, but one with no line break at its probe points is still
