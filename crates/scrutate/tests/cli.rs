@@ -1123,6 +1123,34 @@ fn the_globs_of_the_configuration_file_match_from_its_directory_whatever_path_is
 }
 
 #[test]
+fn grep_index_refuses_a_directory_the_index_never_enters() {
+    let r = Repo::new("indexunder");
+    r.write(".git/HEAD", b"ref: refs/heads/main\n");
+    r.write(".gitignore", b"gen/\nout/*\n!out/keep/\n");
+    r.write("src/.gitignore", b"local/\n");
+    for f in ["gen/a.txt", "gen/inner/b.txt", ".hid/c.txt", "src/local/d.txt", "out/keep/e.txt", "out/drop/f.txt", "src/g.txt", "top.txt"] {
+        r.write(f, format!("needle {f}\n").as_bytes());
+    }
+    assert_eq!(r.run(&["index", "--text"]).0, 0);
+    for dir in ["gen", "gen/inner", ".hid", "src/local", "out/drop"] {
+        let cwd = r.root.join(dir);
+        assert_eq!(run_in(&cwd, &["grep", "needle"], &[]).0, 0, "{dir}: plain grep walks it");
+        for args in [&["grep", "--index", "needle"][..], &["grep", "--index", "--update", "needle"], &["grep", "--index", "--symbols", "needle"]] {
+            let (code, out, err) = run_in(&cwd, args, &[]);
+            assert_eq!((code, out.as_str()), (2, ""), "{dir} {args:?}: {err}");
+            assert!(err.contains("the current directory is not in the index (hidden or ignored); search without --index"), "{dir}: {err}");
+        }
+    }
+    for dir in ["src", "out/keep", "out"] {
+        let cwd = r.root.join(dir);
+        let walk = run_in(&cwd, &["grep", "--sort", "needle"], &[]);
+        let (code, out, err) = run_in(&cwd, &["grep", "--sort", "--index", "needle"], &[]);
+        assert_eq!((code, &out), (walk.0, &walk.1), "{dir}: {err}");
+        assert_eq!(code, 0, "{dir}");
+    }
+}
+
+#[test]
 fn a_path_outside_the_directory_of_the_configuration_file_is_not_touched_by_its_globs() {
     let r = Repo::new("cfgoutside");
     r.write(".git/HEAD", b"ref: refs/heads/main\n");

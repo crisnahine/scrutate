@@ -1543,6 +1543,17 @@ struct GrepOutput {
 /// the text index when `update`); with `under`, that directory of the root and the files in it.
 fn indexed_candidates(root: &Path, o: &Options, update: bool, under: Option<&str>) -> Result<(PathBuf, Vec<String>)> {
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    if let Some(dir) = under {
+        // the walk of the root never enters a hidden or ignored directory, so its index cannot answer for one
+        let mut at = root.clone();
+        for step in dir.split('/') {
+            let next = at.join(step);
+            if !crate::textindex::walk_entries(&at, Some(1)).0.contains(&next) {
+                anyhow::bail!("the current directory is not in the index (hidden or ignored); search without --index");
+            }
+            at = next;
+        }
+    }
     if update {
         crate::textindex::update(&root, false, false)?;
     }
