@@ -393,6 +393,46 @@ fn a_backslash_in_a_unix_file_name_stays_in_the_uri() {
 }
 
 #[test]
+fn references_are_placed_right_after_a_byte_order_mark_or_an_invalid_byte() {
+    let r = Repo::new("columns");
+    r.write("helper.py", "def go():\n    return 1\n");
+    fs::write(r.root.join("bom.py"), b"\xef\xbb\xbffrom helper import go\ngo()\n").unwrap();
+    fs::write(r.root.join("latin.py"), b"from helper import go\nx = \"caf\xe9 au lait\"; go()\n").unwrap();
+
+    let mut child = Command::new(BIN).arg("lsp").current_dir(&r.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
+    c.request("initialize", json!({"processId": null, "rootUri": uri(&r.root), "capabilities": {}}));
+    c.notify("initialized", json!({}));
+    let all = [
+        ("bom.py".to_string(), 0, 19),
+        ("bom.py".to_string(), 1, 0),
+        ("helper.py".to_string(), 0, 4),
+        ("latin.py".to_string(), 0, 19),
+        ("latin.py".to_string(), 1, 20),
+    ];
+    let ask = |c: &mut Client, file: &str, line: u64, character: u64| {
+        let pos = json!({"textDocument": {"uri": uri(&r.root.join(file))}, "position": {"line": line, "character": character}, "context": {"includeDeclaration": true}});
+        let found = c.request("textDocument/references", pos);
+        let mut got = places(&found["result"]);
+        got.sort();
+        got
+    };
+    // an editor counts characters without the mark: `go` on line 1 of the file that has one
+    assert_eq!(ask(&mut c, "bom.py", 0, 20), all);
+    assert_eq!(ask(&mut c, "latin.py", 1, 21), all);
+    // the same once the editor has sent the text, which has no mark
+    c.notify(
+        "textDocument/didOpen",
+        json!({"textDocument": {"uri": uri(&r.root.join("bom.py")), "languageId": "python", "version": 1, "text": "from helper import go\ngo()\n"}}),
+    );
+    assert_eq!(ask(&mut c, "bom.py", 0, 20), all);
+    c.request("shutdown", Value::Null);
+    c.notify("exit", Value::Null);
+    drop(c);
+    child.wait().unwrap();
+}
+
+#[test]
 fn a_document_that_is_not_under_the_root_is_never_read_from_disk() {
     let r = Repo::new("confined");
     r.write("repo/a.py", "def secret_word():\n    return 1\n");

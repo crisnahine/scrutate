@@ -563,6 +563,21 @@ fn every_use_on_one_long_line_is_counted_up_to_max_results() {
     assert_eq!(&v["truncated"], &json!(true));
     assert!(count(&v) < 100, "{}", count(&v));
     assert!(run(&["refs", "g", "--max-results", "100"]).contains("stopped at max_results=100"));
+    // a use on a long line shows the part of the line around it, not the 8 KB line 2,000 times
+    let text = run(&["refs", "g", "--max-results", "5000"]);
+    assert!(text.len() < 2001 * 600, "{} bytes", text.len());
+    let third = text.lines().find(|l| l.contains("min.js:1:33:")).unwrap();
+    assert!(third.contains("...import {g} from \"./lib\";g();g();") || third.contains(": import {g} from \"./lib\";g();g();"), "{third}");
+    assert!(third.ends_with("..."), "{third}");
+    let v: Value = serde_json::from_str(&run(&["refs", "g", "--json", "--max-results", "5000"])).unwrap();
+    let uses = v["definitions"][0]["references"].as_array().unwrap();
+    let long = uses.iter().find(|o| o["path"] == "min.js" && o["column"] == 4001).unwrap();
+    assert_eq!(long["cut"], json!(true), "{long}");
+    let shown = long["text"].as_str().unwrap();
+    assert!(shown.len() < 400 && shown.starts_with("...") && shown.ends_with("...") && shown.contains("g();g();"), "{shown}");
+    // a short line is whole and says nothing about a cut
+    let short = &v["definitions"][0];
+    assert!(short["references"].as_array().unwrap().iter().all(|o| o["path"] != "lib.js" || o.get("cut").is_none()), "{short}");
 }
 
 /// `refs NAME` on `make(n)` and `make(4 * n)` (best of 3 runs each) fails if the larger costs 10x

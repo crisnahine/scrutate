@@ -561,7 +561,7 @@ impl Server {
                     if matches!(o.resolution, Ok((_, "definition"))) {
                         continue;
                     }
-                    let (l, a) = (o.line.saturating_sub(1), byte_to_utf16(&o.text, o.column as usize - 1));
+                    let (l, a) = (o.line.saturating_sub(1), byte_to_utf16(&o.text, o.at));
                     out.push(json!({"uri": path_to_uri(&self.root.join(&o.path)), "range": range(l, a, l, a + width)}));
                 }
                 return Ok(Value::Array(out));

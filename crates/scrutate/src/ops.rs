@@ -1367,7 +1367,17 @@ impl Answer {
                 "truncated": refs.truncated,
             }),
             Answer::Resolved { name, refs, only, .. } => {
-                let occurrence = |o: &crate::resolve::Occurrence| json!({"path": o.path, "line": o.line, "column": o.column, "text": o.text, "via": o.resolution.ok().map(|x| x.1)});
+                // a use on a long line carries the part of the line around it, and says so
+                let line_of = |o: &crate::resolve::Occurrence, mut v: Value| {
+                    let (text, cut) = o.shown_line();
+                    v["text"] = json!(if cut { text.as_ref() } else { &*o.text });
+                    if cut {
+                        v["cut"] = json!(true);
+                    }
+                    v
+                };
+                let occurrence =
+                    |o: &crate::resolve::Occurrence| line_of(o, json!({"path": o.path, "line": o.line, "column": o.column, "via": o.resolution.ok().map(|x| x.1)}));
                 let mut v = json!({
                     "schema": SCHEMA,
                     "name": name,
@@ -1380,7 +1390,7 @@ impl Answer {
                 if only.is_none() {
                     v["unresolved"] = refs
                         .unresolved()
-                        .map(|o| json!({"path": o.path, "line": o.line, "column": o.column, "text": o.text, "reason": o.resolution.err()}))
+                        .map(|o| line_of(o, json!({"path": o.path, "line": o.line, "column": o.column, "reason": o.resolution.err()})))
                         .collect();
                 }
                 v

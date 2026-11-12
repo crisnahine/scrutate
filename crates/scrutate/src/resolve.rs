@@ -3508,7 +3508,32 @@ pub struct Occurrence {
     pub column: u64,
     /// the line, shared by every use on it
     pub text: std::sync::Arc<str>,
+    /// where the use starts in `text`, in bytes: not `column - 1` after a byte that is not UTF-8
+    pub at: usize,
     pub resolution: Resolution,
+}
+
+impl Occurrence {
+    /// The line as an answer shows it, and whether it was cut: whole when short, else the part
+    /// around the use. A minified line holds thousands of uses, and each would print all of it.
+    pub fn shown_line(&self) -> (std::borrow::Cow<'_, str>, bool) {
+        const WHOLE: usize = 400;
+        const SIDE: usize = 150;
+        let t = &*self.text;
+        if t.len() <= WHOLE {
+            return (t.trim().into(), false);
+        }
+        let at = self.at.min(t.len());
+        let (mut a, mut b) = (at.saturating_sub(SIDE), (at + SIDE).min(t.len()));
+        while !t.is_char_boundary(a) {
+            a -= 1;
+        }
+        while !t.is_char_boundary(b) {
+            b += 1;
+        }
+        let (before, after) = (if a > 0 { "..." } else { "" }, if b < t.len() { "..." } else { "" });
+        (format!("{before}{}{after}", &t[a..b]).into(), true)
+    }
 }
 
 pub struct Resolved {
@@ -3561,7 +3586,7 @@ pub fn resolved_references(s: &Searcher, name: &str, max_results: u64) -> Result
             let ((da, db), col) = rv.decoded_span(&h.path, h.line, (a, b));
             // the occurrence as this file spells it
             let resolution = rv.resolve_at(&h.path, h.line, col, h.text.get(da..db).unwrap_or(bare));
-            occurrences.push(Occurrence { path: h.path.to_string(), line: h.line, column: a as u64 + 1, text: line_text.clone(), resolution });
+            occurrences.push(Occurrence { path: h.path.to_string(), line: h.line, column: a as u64 + 1, text: line_text.clone(), at: da, resolution });
         }
     }
     let mut definitions: Vec<ChunkRow> = crate::intel::definitions(&s.ix, bare)?.into_iter().filter(|d| same_name(&d.name, bare)).collect();
@@ -3591,7 +3616,7 @@ pub fn resolved_text(r: &Resolved, only: Option<i64>) -> String {
         let occ: Vec<&Occurrence> = r.of(d.id).collect();
         out.push_str(&format!("{}:{}-{}  [{}] {}  ({} references)\n", shown(&d.path), d.start, d.end, d.kind, shown(&d.qualname), occ.len()));
         for o in occ {
-            out.push_str(&format!("    {}:{}:{}: {}\n", shown(&o.path), o.line, o.column, o.text.trim()));
+            out.push_str(&format!("    {}:{}:{}: {}\n", shown(&o.path), o.line, o.column, o.shown_line().0));
         }
     }
     let unresolved: Vec<&Occurrence> = r.unresolved().collect();
@@ -3603,7 +3628,7 @@ pub fn resolved_text(r: &Resolved, only: Option<i64>) -> String {
         None => {
             out.push_str(&format!("unresolved ({}):\n", unresolved.len()));
             for o in unresolved {
-                out.push_str(&format!("    {}:{}:{}: {}  ({})\n", shown(&o.path), o.line, o.column, o.text.trim(), o.resolution.err().unwrap_or("")));
+                out.push_str(&format!("    {}:{}:{}: {}  ({})\n", shown(&o.path), o.line, o.column, o.shown_line().0, o.resolution.err().unwrap_or("")));
             }
         }
     }

@@ -195,6 +195,21 @@ First release.
 - Lock files with an ordinary extension (`package-lock.json`, `npm-shrinkwrap.json`,
   `pnpm-lock.yaml`, `packages.lock.json`, `Package.resolved`, `.terraform.lock.hcl`, Gradle
   `*.lockfile`, `bun.lockb`) are left out of the index like `*.lock`; `grep` still searches them.
+- `refs`, `deps` and `rdeps`:
+  - `rdeps` on a header no longer loads every including file, and `rdeps` of a module with
+    thousands of importers stays near the size of one file (3.8 GB to 103 MB for 5,000
+    importers).
+  - A relative import that climbs above the repository root (`../../lib` from `src/a.js`,
+    `from ...x` in `src/b.py`) resolves to no file.
+  - `refs` resolves uses on line 1 of a file with a byte-order mark and uses after an invalid
+    UTF-8 byte on the same line, and the language server places them right.
+  - `refs` counts every use on a line, where it stopped at 64 without saying so;
+    `--max-results N` (MCP `max_results`) counts uses, not lines. `grep` with color or `--json`
+    lists every match on a line.
+  - `refs` in one large function, as in a bundle, takes linear time: 4,000 calls went from 28 s
+    to 0.12 s.
+  - A use on a line longer than 400 bytes shows the part of the line around it: 2,000 uses on
+    one 8 KB line printed 16 MB and print under 1 MB.
 - `grep -z` reads at most 64 KiB of a tar member's long name or PAX path; a 306 KB archive with
   a 300 MiB name took 1.27 GB and takes 5.6 MB.
 - Context output (`-A`, `-B`, `-C`) on several threads no longer runs one file's lines into
