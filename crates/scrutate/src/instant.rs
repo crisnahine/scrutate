@@ -2429,7 +2429,7 @@ mod split {
     /// into the file. The time goes to the kernel copying pages into fresh memory, and that work
     /// spreads as far as opening files does (100 MB on macOS: 12.6 ms on one thread, 4.0 ms on 5,
     /// 6.7 ms on 11).
-    fn whole(file: &File, size: u64, threads: usize) -> Option<Vec<u8>> {
+    pub(super) fn whole(file: &File, size: u64, threads: usize) -> Option<Vec<u8>> {
         const PIECE: usize = 1 << 20;
         let mut buf = vec![0u8; usize::try_from(size).ok()?];
         let stop = AtomicBool::new(false);
@@ -2444,7 +2444,8 @@ mod split {
                 }
             };
             std::thread::scope(|s| {
-                for _ in 1..threads.clamp(1, size.div_ceil(PIECE as u64) as usize) {
+                // an empty file has no piece, and clamp panics on a bound below 1
+                for _ in 1..threads.clamp(1, size.div_ceil(PIECE as u64).max(1) as usize) {
                     s.spawn(work);
                 }
                 work();
@@ -2535,7 +2536,7 @@ mod split {
             }
         };
         std::thread::scope(|s| {
-            for _ in 1..threads.clamp(1, pieces as usize) {
+            for _ in 1..threads.clamp(1, pieces.max(1) as usize) {
                 s.spawn(work);
             }
             work();
@@ -3379,6 +3380,21 @@ mod tests {
             }
         }
         NO_ONE_LINE.with(|c| c.set(false));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn an_empty_file_is_read_whole_on_any_thread_count() {
+        let root = std::env::temp_dir().join(format!("scrutate_empty_whole_{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("a.txt");
+        std::fs::write(&path, b"").unwrap();
+        let file = std::fs::File::open(&path).unwrap();
+        let finder = memchr::memmem::Finder::new(b"abcd");
+        for threads in [1, 3] {
+            assert_eq!(split::whole(&file, 0, threads), Some(Vec::new()));
+            assert_eq!(split::literal_in_pieces(&file, 0, &finder, threads, 4), Some(false));
+        }
         std::fs::remove_dir_all(&root).unwrap();
     }
 
