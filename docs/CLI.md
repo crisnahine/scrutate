@@ -68,7 +68,12 @@
 - **Configuration**: the nearest `.scrutate.toml` from the current directory up to the top of
   the repository (the directory that holds `.git` or `.scrutate`), else
   `$XDG_CONFIG_HOME/scrutate/config.toml`; `$SCRUTATE_CONFIG` names a file, and with `--root` the
-  file in that directory is used. The globs of a `.scrutate.toml` match each path from the file's
+  file in that directory is used. `[index] exclude_dirs` is read only from the `.scrutate.toml`
+  at the root of the index, so every command, the MCP server, the language server and the Python
+  bindings leave out the same directories wherever they start; in any other file (a
+  `.scrutate.toml` in a subdirectory, `$SCRUTATE_CONFIG`, your `config.toml`) it is ignored with
+  a warning. `SCRUTATE_INDEX_EXCLUDE_DIRS`, when set, replaces it (set it empty to index those
+  directories). The globs of a `.scrutate.toml` match each path from the file's
   directory, whatever path is searched and wherever the command runs. A path outside that
   directory and a path named on the command line are not filtered by them, and `-g` or
   `SCRUTATE_GREP_GLOBS` replaces them. `follow = true` in a repository's own `.scrutate.toml`
@@ -100,7 +105,8 @@
   (`../two/src/db.py:5-6`), is answered from that repository's index by `symbol`, `callers`,
   `callees`, `refs --def`, `outline`, `deps`, `rdeps` and `similar`; a file under no index is
   answered as one that `is outside the repository`.
-  `grep --index` from a subdirectory answers for that subdirectory; `tsquery` walks from the
+  `grep --index` from a subdirectory answers for that subdirectory, and from a directory the
+  index never enters (hidden or ignored) it says so and exits 2; `tsquery` walks from the
   current directory and keeps its cache in the root's index; `serve` and `watch` use the index
   above. The language server applies the same rule to the editor's first workspace folder
   (else `rootUri`), so it uses the index at the top.
@@ -239,7 +245,8 @@ often while files change.
 
 The code index holds every file the ignore rules let through, hidden files included, except
 binary files, files over 1 MB, `.git/`, `.scrutate/`, the directories named in
-`SCRUTATE_INDEX_EXCLUDE_DIRS`, and cache and tool directories by name (`node_modules`,
+`SCRUTATE_INDEX_EXCLUDE_DIRS`, or when it is not set in `exclude_dirs` of the root's
+`.scrutate.toml` (names only: at most 1000, and a name with `/`, `.` or `..` is dropped), and cache and tool directories by name (`node_modules`,
 `__pycache__`, `.venv`, `.mypy_cache`, `.pytest_cache`, `.next`, `.tox`, `.idea`, `.vscode`).
 `build`, `dist`, `target` and `venv` are skipped by name outside a git repository; inside one,
 the ignore files decide, so a `target/` that `.gitignore` does not list is indexed. Data,
@@ -406,7 +413,8 @@ sentence on standard error. When `symbol`, `callers`, `callees`, `dupes`, `tsque
 answer ends with a line that says so and names the argument that raises it (`(stopped at 30
 results: raise limit to see more)`): the MCP argument `limit`, and `--limit` for `symbol`,
 `callers`, `callees`, `dupes` and `tsquery`; with `serve --structured` the JSON carries
-`stopped_at`.
+`stopped_at`. With `--json` the JSON keeps its shape and that line goes to standard error; a
+`batch` record that stopped carries `stopped_at`.
 
 `--max-bytes BYTES` (or `SCRUTATE_MAX_BYTES`) limits the size of such an answer, and of the
 answers of `search` and `tsquery` (`--json` ignores both). A cut answer

@@ -572,6 +572,13 @@ First release.
   the parity check fails on any difference.
 
 ### Product
+- `[index] exclude_dirs` is read from the `.scrutate.toml` at the root of the index (or
+  `SCRUTATE_INDEX_EXCLUDE_DIRS`), so the command line, the servers and the bindings index the
+  same files wherever they start; the reference engine reads it the same way. A `--json` answer
+  that stops at its limit says so on standard error, and a `batch` record carries `stopped_at`.
+  `grep --index` from a hidden or ignored directory says the index never enters it (exit 2)
+  where it printed nothing. `--limit` at the largest integer is no limit. `similar` reads a
+  location's path as the other commands do.
 - Contributions are accepted under a contributor licence agreement (`CLA.md`: the contributor
   keeps the copyright, the maintainer may also offer other licence terms, and what is accepted
   stays under the open source licence); the name and the logo have a trademark policy
