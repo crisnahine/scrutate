@@ -158,6 +158,33 @@ fn read_code_answers_the_same_for_an_outside_path_whether_or_not_it_exists() {
 }
 
 #[test]
+fn a_path_that_leaves_the_root_by_its_parts_is_refused_without_a_look() {
+    let mut r = Repo::new("lexical", &[("a.py", "def f():\n    return 1\n")]);
+    // the same file through a spelling that is not under the root as the index knows it: on
+    // macOS the temporary directory is reached through a link
+    let alias = std::env::temp_dir().join(r.root.file_name().unwrap()).join("a.py");
+    if !alias.starts_with(&r.root) && alias.is_file() {
+        let text = r.err("read_code", json!({"path": alias.to_string_lossy()}));
+        assert!(text.contains("outside"), "{text}");
+        // a location or an outline of it names no file of the repository either
+        let (_, text) = r.call("outline", json!({"path": alias.to_string_lossy()}));
+        assert!(text.contains("no symbols"), "{text}");
+    }
+    assert!(r.ok("read_code", json!({"path": "./a.py"})).contains("def f()"));
+}
+
+#[test]
+fn callees_says_how_many_outside_names_it_left_out() {
+    let calls: String = (10..70).map(|i| format!("    ext_{i}()\n")).collect();
+    let mut r = Repo::new("externals", &[("a.py", &format!("def big():\n{calls}"))]);
+    let text = r.ok("callees", json!({"name": "big"}));
+    assert!(text.contains("ext_59") && !text.contains("ext_60,") && !text.contains("ext_69"), "{text}");
+    assert!(text.contains("(and 10 more)"), "{text}");
+    let few = Repo::new("externals_few", &[("a.py", "def small():\n    ext_1()\n    ext_2()\n")]).ok("callees", json!({"name": "small"}));
+    assert!(few.contains("ext_2") && !few.contains("more)"), "{few}");
+}
+
+#[test]
 fn read_code_of_a_symbol_reads_as_read_code_of_its_path_does() {
     // the index takes a file as text by its first 4 KB, read_code by its first 8 KB
     let body = format!("def f():\n    return 1\n\n# {}\nx = \"\0\"\n", "pad ".repeat(1250));

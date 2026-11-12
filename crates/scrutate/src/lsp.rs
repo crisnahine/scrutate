@@ -166,9 +166,20 @@ fn qualifier(before: &str) -> Option<&str> {
 }
 
 pub fn path_to_uri(p: &Path) -> String {
-    let s = crate::instant::slashed(p.to_string_lossy());
-    let mut out = String::from(if s.starts_with('/') { "file://" } else { "file:///" });
-    for b in s.bytes() {
+    uri_of(&crate::instant::slashed(p.to_string_lossy()))
+}
+
+/// The `file:` URI of a path written with `/`. A share (`//server/share/x`, or the
+/// `//?/UNC/server/share/x` that `canonicalize` gives on Windows) has its machine as the host.
+fn uri_of(path: &str) -> String {
+    let (head, path) = match path.strip_prefix("//?/UNC/") {
+        Some(share) => ("file://", share),
+        None if path.starts_with("//") => ("file:", path),
+        None if path.starts_with('/') => ("file://", path),
+        None => ("file:///", path),
+    };
+    let mut out = String::from(head);
+    for b in path.bytes() {
         if b.is_ascii_alphanumeric() || b"-._~/:".contains(&b) {
             out.push(b as char);
         } else {
@@ -179,8 +190,16 @@ pub fn path_to_uri(p: &Path) -> String {
 }
 
 pub fn uri_to_path(uri: &str) -> Option<PathBuf> {
+    path_of_uri(uri, cfg!(windows)).map(PathBuf::from)
+}
+
+/// The path a `file:` URI names, written with `/`. A host other than `localhost` is a share's
+/// machine on Windows (`file://wsl.localhost/Ubuntu/home` is `//wsl.localhost/Ubuntu/home`) and
+/// another machine's file elsewhere, which is no path here.
+fn path_of_uri(uri: &str, windows: bool) -> Option<String> {
     let rest = uri.strip_prefix("file://")?;
-    let rest = rest.strip_prefix("localhost").unwrap_or(rest).as_bytes();
+    let (host, rest) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
+    let rest = rest.as_bytes();
     let mut raw = Vec::with_capacity(rest.len());
     let mut i = 0;
     while i < rest.len() {
@@ -197,12 +216,33 @@ pub fn uri_to_path(uri: &str) -> Option<PathBuf> {
         }
     }
     let s = String::from_utf8(raw).ok()?;
+    if !host.is_empty() && !host.eq_ignore_ascii_case("localhost") {
+        return windows.then(|| format!("//{host}{s}"));
+    }
     // `/C:/x` on Windows
-    let s = match s.as_bytes() {
-        [b'/', d, b':', ..] if cfg!(windows) && d.is_ascii_alphabetic() => s[1..].to_string(),
+    Some(match s.as_bytes() {
+        [b'/', d, b':', ..] if windows && d.is_ascii_alphabetic() => s[1..].to_string(),
         _ => s,
-    };
-    Some(PathBuf::from(s))
+    })
+}
+
+/// Whether resolving `path` stays on the machine and share of `root` (both written with `/`).
+/// On Windows a path on another machine's share is not resolved: that connects to the machine
+/// and offers it the user's login.
+fn same_share(path: &str, root: &str, windows: bool) -> bool {
+    // `server/share` of `//server/share/x` and `//?/UNC/server/share/x`, in lower case; an
+    // empty one for a device path
+    fn share(p: &str) -> Option<String> {
+        let rest = p.strip_prefix("//")?;
+        let rest = match rest.strip_prefix("?/UNC/") {
+            Some(unc) => unc,
+            None if rest.starts_with("?/") && rest.as_bytes().get(3) == Some(&b':') => return None,
+            None if rest.starts_with(['?', '.']) => "",
+            None => rest,
+        };
+        Some(rest.split('/').take(2).collect::<Vec<_>>().join("/").to_lowercase())
+    }
+    !windows || share(path).is_none_or(|s| share(root).is_some_and(|r| r == s && !s.is_empty()))
 }
 
 fn symbol_kind(kind: &str) -> u8 {
@@ -242,9 +282,8 @@ impl Lines<'_> {
             let inside = !rel.is_empty() && Path::new(rel).components().all(|c| matches!(c, std::path::Component::Normal(_)));
             let text = match self.docs.get(rel) {
                 Some(t) => t.clone(),
-                None if inside => {
-                    std::fs::read(self.root.join(rel)).ok().and_then(|raw| crate::index::decode_source(&raw).map(|c| c.into_owned())).unwrap_or_default()
-                }
+                // a regular file that resolves under the root, links on the way included
+                None if inside => crate::resolve::repo_text(self.root, rel).unwrap_or_default(),
                 None => String::new(),
             };
             self.cache.insert(rel.to_string(), split_lines(&text));
@@ -307,6 +346,10 @@ impl Server {
 
     fn rel(&self, uri: &str) -> Option<String> {
         let p = uri_to_path(uri)?;
+        let slashed = |p: &Path| p.to_string_lossy().replace('\\', "/");
+        if !same_share(&slashed(&p), &slashed(&self.root), cfg!(windows)) {
+            return None;
+        }
         let p = std::fs::canonicalize(&p).unwrap_or(p);
         let r = p.strip_prefix(&self.root).ok()?;
         Some(crate::instant::slashed(r.to_string_lossy()))
@@ -738,6 +781,34 @@ mod tests {
         let uri = path_to_uri(&p);
         assert!(uri.contains("a%20b/%C3%A9.rs"), "{uri}");
         assert_eq!(uri_to_path(&uri).unwrap(), PathBuf::from(p.to_string_lossy().replace('\\', "/")));
+    }
+
+    #[test]
+    fn a_uri_names_a_share_on_windows_and_no_file_elsewhere() {
+        // a workspace in WSL or on a share: the machine is the URI's host
+        assert_eq!(path_of_uri("file://wsl.localhost/Ubuntu/home/u/proj", true).as_deref(), Some("//wsl.localhost/Ubuntu/home/u/proj"));
+        assert_eq!(path_of_uri("file:////server/share/a%20b.py", true).as_deref(), Some("//server/share/a b.py"));
+        assert_eq!(path_of_uri("file:///C:/a%20b/x.rs", true).as_deref(), Some("C:/a b/x.rs"));
+        assert_eq!(path_of_uri("file://localhost/C:/x.rs", true).as_deref(), Some("C:/x.rs"));
+        assert_eq!(path_of_uri("file://LOCALHOST/home/u/x", false).as_deref(), Some("/home/u/x"));
+        assert_eq!(path_of_uri("file:///home/u/a%20b", false).as_deref(), Some("/home/u/a b"));
+        assert_eq!(path_of_uri("file://server/share/x", false), None, "another machine's file is no path here");
+        assert_eq!(path_of_uri("https://x/y", true), None);
+        // and back: what `canonicalize` gives for a share is written with its host
+        assert_eq!(uri_of("//?/UNC/server/share/repo/a b.py"), "file://server/share/repo/a%20b.py");
+        assert_eq!(uri_of("//server/share/a.py"), "file://server/share/a.py");
+        assert_eq!(uri_of("C:/x/a.py"), "file:///C:/x/a.py");
+        assert_eq!(uri_of("/home/u/a.py"), "file:///home/u/a.py");
+        for uri in ["file://server/share/repo/a%20b.py", "file:///C:/x/a.py"] {
+            assert_eq!(uri_of(&path_of_uri(uri, true).unwrap()), uri);
+        }
+        // a share on another machine than the root's is not resolved: that would connect to it
+        assert!(same_share("//server/share/repo/a.py", "//?/UNC/Server/Share/repo", true));
+        assert!(!same_share("//attacker/share/a.py", "//?/UNC/server/share/repo", true));
+        assert!(!same_share("//attacker/share/a.py", "C:/repo", true));
+        assert!(!same_share("//./pipe/x", "C:/repo", true));
+        assert!(same_share("D:/other/a.py", "C:/repo", true));
+        assert!(same_share("//anything/at/all", "/repo", false));
     }
 
     #[test]

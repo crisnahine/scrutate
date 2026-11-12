@@ -247,6 +247,11 @@ First release.
   largest segment stays out of a merge that only the number of segments asks for).
 - The language server reads a document from disk only under the root; a document outside it is
   answered from the text the editor sent, or not at all.
+- A path in a tool call that leaves the repository by its own parts is refused before anything
+  is looked at; on Windows a share on another machine named in a call was connected to first.
+  The language server reads no file behind a link that leaves the root, and on Windows it works
+  on a workspace on a share or in WSL (`file://wsl.localhost/...`). MCP `callees` says how many
+  outside names it left out past 50.
 - `read_code` gives one answer for a path outside the repository whether or not a file is there,
   and a definition read with `symbol` fails when its file cannot be read as text, as the read of
   that file by `path` does. The Python bindings read a path spelling (`./pkg/a.py`) and a

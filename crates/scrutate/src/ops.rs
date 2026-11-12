@@ -505,10 +505,14 @@ pub fn read_range(s: &Searcher, path: &str, start: i64, end: i64) -> Result<(Vec
     use std::io::BufRead;
     let shown = echo(path);
     // the answer for a path outside the repository must not tell whether a file is there: one
-    // that leaves by its own parts is outside, and a link that leaves reads as a missing file
+    // that leaves by its own parts is outside, with nothing looked at (on Windows a share on
+    // another machine would be connected to, and offered the user's login), and a link that
+    // leaves reads as a missing file
+    if !within(&s.ix.root, path).starts_with(&s.ix.root) {
+        bail!("path outside repo");
+    }
     let canon = match std::fs::canonicalize(s.ix.root.join(path)) {
         Ok(c) if c.starts_with(&s.ix.root) => c,
-        _ if !within(&s.ix.root, path).starts_with(&s.ix.root) => bail!("path outside repo"),
         _ => bail!("cannot read {shown}"),
     };
     if !canon.is_file() {
@@ -622,6 +626,10 @@ pub fn repo_path(s: &Searcher, path: &str) -> String {
     }
     if escaped && indexed(&read_back) {
         return read_back.into_owned();
+    }
+    // another spelling of a file of the repository; a path that leaves it is not looked at
+    if !within(&s.ix.root, path).starts_with(&s.ix.root) {
+        return plain;
     }
     std::fs::canonicalize(s.ix.root.join(path))
         .ok()
@@ -1184,7 +1192,9 @@ impl Answer {
                     if external.is_empty() {
                         String::new()
                     } else {
-                        format!("external: {}", external.iter().take(EXTERNAL_CALLEES).map(|e| shown(e)).collect::<Vec<_>>().join(", "))
+                        let more = external.len().saturating_sub(EXTERNAL_CALLEES);
+                        let listed = external.iter().take(EXTERNAL_CALLEES).map(|e| shown(e)).collect::<Vec<_>>().join(", ");
+                        format!("external: {listed}{}", if more > 0 { format!(" (and {more} more)") } else { String::new() })
                     },
                     stop_line(*stopped, "callees"),
                 ),

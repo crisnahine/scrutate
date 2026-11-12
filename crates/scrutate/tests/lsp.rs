@@ -455,6 +455,19 @@ fn a_document_that_is_not_under_the_root_is_never_read_from_disk() {
         let refs = c.request("textDocument/references", p);
         assert!(refs["result"].is_null() || refs["result"].as_array().is_some_and(|a| a.is_empty()), "references for {doc}: {refs}");
     }
+    // a link inside the root that leads outside is not followed: a file behind it answers as a
+    // file that is not there
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink("../outside", root.join("link")).unwrap();
+        let ask = |c: &mut Client, name: &str| {
+            let doc = format!("{}/link/{name}", uri(&root));
+            c.request("textDocument/definition", json!({"textDocument": {"uri": doc}, "position": {"line": 0, "character": 2}}))["result"].clone()
+        };
+        let there = ask(&mut c, "secret.py");
+        assert!(there.is_null() || there.as_array().is_some_and(|a| a.is_empty()), "{there}");
+        assert_eq!(there, ask(&mut c, "nothere.py"));
+    }
     // the same document works once the editor has sent its text
     c.notify("textDocument/didOpen", json!({"textDocument": {"uri": outside, "languageId": "python", "version": 1, "text": "secret_word\n"}}));
     let def = c.request("textDocument/definition", json!({"textDocument": {"uri": outside}, "position": {"line": 0, "character": 2}}));
