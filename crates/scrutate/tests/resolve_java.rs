@@ -388,3 +388,39 @@ public class Use {
     assert_eq!(r.refs_of("norm", "j/Point.java:2"), ["Point.java:2", "Use.java:12", "Use.java:18", "Use.java:29"]);
     assert_eq!(r.refs_of("norm", "j/Line.java:2"), ["Line.java:2", "Use.java:25", "Use.java:35", "Use.java:9"]);
 }
+
+#[test]
+fn a_diamond_of_interfaces_is_walked_once_per_type() {
+    // nine levels of six interfaces, each extending all six below: 6^8 paths from the class to the top
+    let w = 6;
+    let mut src = String::from("package p;\n\n");
+    for level in 0..9 {
+        for i in 0..w {
+            let below: Vec<String> = (0..w).map(|j| format!("I{}_{j}", level - 1)).collect();
+            let ext = if level == 0 { String::new() } else { format!(" extends {}", below.join(", ")) };
+            src.push_str(&format!("interface I{level}_{i}{ext} {{ }}\n"));
+        }
+    }
+    let top: Vec<String> = (0..w).map(|j| format!("I8_{j}")).collect();
+    src.push_str(&format!("class C implements {} {{\n    int run() {{\n", top.join(", ")));
+    src.push_str(&"        Other.foo();\n".repeat(20));
+    src.push_str("        missing();\n        return gone;\n    }\n}\nclass Other { static void foo() { } }\n");
+    let r = Repo::with("diamond", &[("p/All.java".to_string(), src.as_str())]);
+    let timed = |args: &[&str]| {
+        let mut child = Command::new(BIN).args(args).current_dir(&r.root).stdin(Stdio::null()).stdout(Stdio::piped()).spawn().unwrap();
+        let start = std::time::Instant::now();
+        while child.try_wait().unwrap().is_none() {
+            if start.elapsed() > std::time::Duration::from_secs(20) {
+                let _ = child.kill();
+                panic!("{args:?} did not return in 20 s");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).into_owned()
+    };
+    assert!(timed(&["refs", "Other"]).contains("[class] Other  (21 references)"));
+    assert!(timed(&["refs", "foo"]).contains("[method] Other.foo  (21 references)"));
+    assert!(timed(&["refs", "missing"]).contains("(not found)"));
+    assert!(timed(&["refs", "gone"]).contains("(external)"));
+    assert!(timed(&["callers", "Other.foo"]).contains("C.run"));
+}

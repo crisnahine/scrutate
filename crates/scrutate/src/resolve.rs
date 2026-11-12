@@ -1334,7 +1334,7 @@ impl<'a> Resolver<'a> {
         let fi = self.file(&path);
         let lang = fi.lang?;
         if lang == Lang::Java {
-            return self.java_field_ty(owner, name, 0);
+            return self.java_field_ty(owner, name, 0, &mut HashMap::new());
         }
         let d = fi.defs.iter().find(|d| d.id == owner)?;
         // the fields of a Rust type are on its struct, not on an impl block
@@ -1679,20 +1679,7 @@ impl<'a> Resolver<'a> {
             return None;
         }
         if fi.lang == Some(Lang::Java) {
-            if depth >= 8 {
-                return None;
-            }
-            for b in self.java_bases(id).iter() {
-                match *b {
-                    Ok(bid) if bid != id => {
-                        if let Some(m) = self.member(bid, name, depth + 1) {
-                            return Some(m);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            return None;
+            return self.java_inherited(id, name, depth, &mut HashMap::new());
         }
         if depth >= 3 {
             return None;
@@ -1703,6 +1690,28 @@ impl<'a> Resolver<'a> {
             }
         }
         None
+    }
+
+    /// `name` as a member a Java type `id` inherits: its bases in header order, each with its own bases first.
+    fn java_inherited(&mut self, id: i64, name: &str, depth: usize, seen: &mut HashMap<i64, usize>) -> Option<i64> {
+        if depth >= 8 || self.nest > 32 {
+            return None;
+        }
+        self.nest += 1;
+        let mut found = None;
+        for b in self.java_bases(id).iter() {
+            match *b {
+                Ok(bid) if bid != id && !java_seen(seen, bid, depth + 1) => {
+                    found = self.declared_member(bid, name).or_else(|| self.java_inherited(bid, name, depth + 1, seen));
+                    if found.is_some() {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.nest -= 1;
+        found
     }
 
     /// The types container `id` extends or implements, each resolved: Java supertypes, Python
@@ -3229,7 +3238,7 @@ impl<'a> Resolver<'a> {
                 JClass::Named(id) => {
                     let found = self.member(id, name, 0);
                     if found.is_none() {
-                        let (o, u) = self.java_base_state(id, 0);
+                        let (o, u) = self.java_base_state(id, 0, &mut HashMap::new());
                         outside |= o;
                         unknown |= u;
                     }
@@ -3353,7 +3362,7 @@ impl<'a> Resolver<'a> {
             let nested = self.member(c, s, 0).filter(|&m| self.def_kind(m).is_some_and(|k| CONTAINER_KINDS.contains(&k.as_str())));
             ty = match nested {
                 Some(m) => Ty::Local(m),
-                None => self.java_field_ty(c, s, 0).ok_or("receiver")?,
+                None => self.java_field_ty(c, s, 0, &mut HashMap::new()).ok_or("receiver")?,
             };
         }
         Ok(ty)
@@ -3375,7 +3384,7 @@ impl<'a> Resolver<'a> {
         if decl == Some("record_declaration") && self.java_field_names(id).contains(name) {
             return Err("field or key");
         }
-        match self.java_base_state(id, 0) {
+        match self.java_base_state(id, 0, &mut HashMap::new()) {
             (_, true) => Err("not found"),
             (true, false) => Err("external"),
             _ => Err("not found"),
@@ -3384,12 +3393,15 @@ impl<'a> Resolver<'a> {
 
     /// Whether class `id` extends or implements a type from outside the repository, and whether
     /// one of the types it extends could not be found, at any depth.
-    fn java_base_state(&mut self, id: i64, depth: usize) -> (bool, bool) {
+    fn java_base_state(&mut self, id: i64, depth: usize, seen: &mut HashMap<i64, usize>) -> (bool, bool) {
+        if java_seen(seen, id, depth) {
+            return (false, false);
+        }
         let (mut outside, mut unknown) = (false, false);
         for b in self.java_bases(id).iter() {
             match *b {
                 Ok(bid) if bid != id && depth < 8 => {
-                    let (o, u) = self.java_base_state(bid, depth + 1);
+                    let (o, u) = self.java_base_state(bid, depth + 1, seen);
                     outside |= o;
                     unknown |= u;
                 }
@@ -3547,8 +3559,8 @@ impl<'a> Resolver<'a> {
         }
         for c in java_classes(fi, e) {
             if let JClass::Named(id) = c {
-                if self.java_has_field(id, name, 0) {
-                    return self.java_field_ty(id, name, 0);
+                if self.java_has_field(id, name, 0, &mut HashMap::new()) {
+                    return self.java_field_ty(id, name, 0, &mut HashMap::new());
                 }
             }
         }
@@ -3557,14 +3569,17 @@ impl<'a> Resolver<'a> {
 
     /// Whether `name` is a field of a class around `node`, inherited ones included.
     fn java_is_field(&mut self, fi: &FileInfo, node: Node, name: &str) -> bool {
-        java_classes(fi, node).into_iter().any(|c| matches!(c, JClass::Named(id) if self.java_has_field(id, name, 0)))
+        java_classes(fi, node).into_iter().any(|c| matches!(c, JClass::Named(id) if self.java_has_field(id, name, 0, &mut HashMap::new())))
     }
 
-    fn java_has_field(&mut self, id: i64, name: &str, depth: usize) -> bool {
+    fn java_has_field(&mut self, id: i64, name: &str, depth: usize, seen: &mut HashMap<i64, usize>) -> bool {
+        if java_seen(seen, id, depth) {
+            return false;
+        }
         if self.java_field_names(id).contains(name) {
             return true;
         }
-        depth < 8 && self.java_bases(id).iter().any(|b| matches!(*b, Ok(bid) if bid != id && self.java_has_field(bid, name, depth + 1)))
+        depth < 8 && self.java_bases(id).iter().any(|b| matches!(*b, Ok(bid) if bid != id && self.java_has_field(bid, name, depth + 1, seen)))
     }
 
     /// The fields class `id` declares: field declarations, interface constants, enum constants
@@ -3589,7 +3604,10 @@ impl<'a> Resolver<'a> {
 
     /// The declared type of the field `name` of class `id`, inherited ones included; an enum
     /// constant has the type of its enum.
-    fn java_field_ty(&mut self, id: i64, name: &str, depth: usize) -> Option<Ty> {
+    fn java_field_ty(&mut self, id: i64, name: &str, depth: usize, seen: &mut HashMap<i64, usize>) -> Option<Ty> {
+        if java_seen(seen, id, depth) {
+            return None;
+        }
         let (path, _) = self.def_row(id)?;
         let fi = self.file(&path);
         let node = def_node(&fi, id)?;
@@ -3604,13 +3622,23 @@ impl<'a> Resolver<'a> {
         }
         for b in self.java_bases(id).iter() {
             if let Ok(bid) = *b {
-                if let Some(t) = self.java_field_ty(bid, name, depth + 1).filter(|_| bid != id) {
+                if let Some(t) = self.java_field_ty(bid, name, depth + 1, seen).filter(|_| bid != id) {
                     return Some(t);
                 }
             }
         }
         None
     }
+}
+
+/// Whether a walk over base types already came to `id` at `depth` or less, whose answer stands
+/// for this visit too; marks it otherwise. A type reached by many paths is read once per depth.
+fn java_seen(seen: &mut HashMap<i64, usize>, id: i64, depth: usize) -> bool {
+    if seen.get(&id).is_some_and(|&d| d <= depth) {
+        return true;
+    }
+    seen.insert(id, depth);
+    false
 }
 
 /// The fields a Java class declaration holds directly: (name, declared type; None for an enum constant).
