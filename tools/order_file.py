@@ -17,7 +17,7 @@ file holds the names of both. The release profile links one object (fat LTO, one
 so ld64 can place every function; with ThinLTO it passes over the promoted `.llvm.N` functions
 and the local ones several objects hold. Needs lldb (Xcode's command line tools). On one machine
 processes started under lldb came to hang in dyld's open of their own executable; the tool gives
-up after a minute a search.
+up after a minute a search (`ORDER_FILE_SEARCH_SECONDS` raises that on a busy machine).
 """
 import argparse
 import json
@@ -41,6 +41,8 @@ SEARCHES = [
     ["-n", "-l", "hello"],
     ["-c", "hello"],
 ]
+# lldb with a breakpoint on every function takes about 20 s a search on an idle machine
+SEARCH_SECONDS = int(os.environ.get("ORDER_FILE_SEARCH_SECONDS", "60"))
 HEADER = (
     "# The functions a small `scrutate grep` runs, for ld64's -order_file (build.rs passes it on\n"
     "# macOS). Written by tools/order_file.py; names a link no longer has are passed over.\n"
@@ -98,9 +100,9 @@ def traced(exe, symbols, dirs):
         # a fresh executable's first start is the one the system scans; under lldb it can hang there
         subprocess.run([exe, "--version"], stdout=subprocess.DEVNULL, check=True)
         try:
-            run(["lldb", "--batch", "--no-lldbinit", "-o", f"command script import {os.path.abspath(__file__)}"], env=dict(os.environ, ORDER_FILE_JOB=job), timeout=60 * len(runs))
+            run(["lldb", "--batch", "--no-lldbinit", "-o", f"command script import {os.path.abspath(__file__)}"], env=dict(os.environ, ORDER_FILE_JOB=job), timeout=SEARCH_SECONDS * len(runs))
         except subprocess.TimeoutExpired:
-            sys.exit(f"lldb took over a minute a search on {exe}; is the process stuck before main?")
+            sys.exit(f"lldb took over {SEARCH_SECONDS} s a search on {exe}; is the process stuck before main, or the machine busy (ORDER_FILE_SEARCH_SECONDS)?")
         return json.load(open(out))
 
 
