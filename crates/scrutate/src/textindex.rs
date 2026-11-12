@@ -1193,6 +1193,12 @@ fn update_with(root: &Path, force: bool, progress: bool, only: Option<&[String]>
             let largest = (0..segs.len()).max_by_key(|&i| segs[i].ndocs).unwrap_or(0);
             segs.remove(largest)
         });
+        // the merge slices the posting data with the stored offsets
+        if let Err(e) = segs.iter().try_for_each(|s| s.validate(true)) {
+            eprintln!("[scrutate] text index damaged ({e:#}); rebuilding");
+            drop((segs, kept, lock));
+            return update_with(root, true, progress, None);
+        }
         let merged_live: usize = segs.iter().map(|s| (0..s.ndocs).filter(|&d| s.is_live(d)).count()).sum();
         let name = format!("s{:08}", next_segment_number(&dir)?);
         merge_segments(&dir.join(&name), &segs.iter().collect::<Vec<_>>())?;

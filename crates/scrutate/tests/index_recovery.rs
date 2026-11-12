@@ -781,3 +781,34 @@ fn a_text_index_of_a_newer_format_is_refused_and_left_as_it_is() {
     assert_eq!(run(&t.0, &["index", "--text", "--force"]).0, 0);
     assert!(fs::read_to_string(&manifest).unwrap().contains(&ours));
 }
+
+/// Overwrite element `i` of a little-endian `.npy` array of 4- or 8-byte elements.
+fn patch_npy(path: &Path, i: usize, value: i64) {
+    let mut b = fs::read(path).unwrap();
+    let len_size = if b[6] == 1 { 2 } else { 4 };
+    let hlen = b[8..8 + len_size].iter().rev().fold(0usize, |a, &x| a * 256 + x as usize);
+    let data = 8 + len_size + hlen;
+    let header = String::from_utf8_lossy(&b[..data]).into_owned();
+    let w = if header.contains("<i8") || header.contains("<u8") { 8 } else { 4 };
+    b[data + i * w..data + (i + 1) * w].copy_from_slice(&value.to_le_bytes()[..w]);
+    fs::write(path, b).unwrap();
+}
+
+#[test]
+fn a_segment_row_out_of_range_is_rebuilt_by_the_merge_of_the_next_update() {
+    let t = Tmp::new("bad_row");
+    fs::write(t.0.join("a.py"), "def alpha():\n    return beta()\n").unwrap();
+    fs::write(t.0.join("b.py"), "def beta():\n    return 1\n").unwrap();
+    assert_eq!(run(&t.0, &["index"]).0, 0);
+    let segs: Vec<serde_json::Value> = serde_json::from_str(&meta_of(&t.0, "segments").unwrap()).unwrap();
+    let seg = seg_dir(&t.0).join(segs[0].as_str().unwrap());
+    patch_npy(&seg.join("doc0.npy"), 0, 99999);
+    // the new file's segment and the damaged one are merged
+    fs::write(t.0.join("c.py"), "def gamma():\n    return 3\n").unwrap();
+    let (code, err) = run(&t.0, &["index"]);
+    assert!(!err.contains("internal error"), "{err}");
+    assert_eq!(code, 0, "{err}");
+    let (code, err) = run(&t.0, &["symbol", "gamma"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(files_of(&t.0), ["a.py", "b.py", "c.py"]);
+}

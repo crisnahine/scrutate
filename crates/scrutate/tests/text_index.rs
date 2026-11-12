@@ -116,3 +116,36 @@ fn small_updates_do_not_write_the_large_segment_again() {
     assert_eq!(counts(&t.0, "def fn_").len(), 60);
     assert_eq!(counts(&t.0, "# again").len(), 40);
 }
+
+/// Overwrite the element `back` places before the end of a little-endian `.npy` array of 4- or
+/// 8-byte elements.
+fn patch_npy(path: &Path, back: usize, value: i64) {
+    let mut b = fs::read(path).unwrap();
+    let len_size = if b[6] == 1 { 2 } else { 4 };
+    let hlen = b[8..8 + len_size].iter().rev().fold(0usize, |a, &x| a * 256 + x as usize);
+    let data = 8 + len_size + hlen;
+    let header = String::from_utf8_lossy(&b[..data]).into_owned();
+    let w = if header.contains("<i8") || header.contains("<u8") { 8 } else { 4 };
+    let i = (b.len() - data) / w - back;
+    b[data + i * w..data + (i + 1) * w].copy_from_slice(&value.to_le_bytes()[..w]);
+    fs::write(path, b).unwrap();
+}
+
+#[test]
+fn a_posting_pointer_past_the_data_is_rebuilt_by_the_merge_of_the_next_update() {
+    let t = Tmp::new("bad_ptr");
+    fs::write(t.0.join("a.txt"), "hello world\n").unwrap();
+    fs::write(t.0.join("b.txt"), "other words\n").unwrap();
+    assert_eq!(run(&t.0, &["index", "--text"]).0, 0);
+    let seg = t.0.join(".scrutate/text").join(&segments(&t.0)[0]);
+    let post = fs::metadata(seg.join("post.bin")).unwrap().len();
+    // the start of the last posting list past the end of the data
+    patch_npy(&seg.join("ptr.npy"), 2, post as i64 + 1000);
+    // one of three documents dead: the update merges the segments
+    fs::write(t.0.join("a.txt"), "hello again\n").unwrap();
+    let (code, _, err) = run(&t.0, &["index", "--text"]);
+    assert!(!err.contains("internal error"), "{err}");
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(counts(&t.0, "hello"), ["a.txt:1"]);
+    assert_eq!(counts(&t.0, "words"), ["b.txt:1"]);
+}

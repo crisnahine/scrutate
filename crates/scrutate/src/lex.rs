@@ -469,6 +469,10 @@ impl SegmentBuilder {
 
 /// Write one segment holding only the alive documents of `segs` (any order, ids may interleave).
 pub fn merge_segments(dest: &Path, segs: &[&Segment], alive: &[&[bool]]) -> Result<()> {
+    // the loops below index the arrays directly
+    for s in segs {
+        s.validate_deep().map_err(|_| damaged())?;
+    }
     let mut ids: Vec<i64> = Vec::new();
     for (s, a) in segs.iter().zip(alive) {
         ids.extend(s.ids().iter().zip(a.iter()).filter(|(_, &al)| al).map(|(&i, _)| i));

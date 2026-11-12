@@ -1335,11 +1335,11 @@ pub fn run() -> Result<i32> {
                         &root,
                         &NEVER,
                         || eprintln!("[scrutate] watching {}", root.display()),
-                        || {
+                        unwinding(|| {
                             s.lock().unwrap_or_else(|p| p.into_inner()).update(false)?;
                             crate::watch::update_text(&root)?;
                             Ok(())
-                        },
+                        }),
                     );
                     if let Err(e) = r {
                         eprintln!("[scrutate] watching stopped: {e:#}");
@@ -1469,8 +1469,16 @@ fn watch_command(root: &Path) -> Result<i32> {
         }
         Ok(())
     };
-    crate::watch::run(&root, &stop, || eprintln!("[scrutate] watching {}", root.display()), update)?;
+    crate::watch::run(&root, &stop, || eprintln!("[scrutate] watching {}", root.display()), unwinding(update))?;
     Ok(if stop.load(Ordering::Relaxed) { 130 } else { 0 })
+}
+
+/// A watch update whose panic, which the panic hook prints, becomes an error, so the watch goes on.
+fn unwinding(mut update: impl FnMut() -> Result<()>) -> impl FnMut() -> Result<()> {
+    move || {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(&mut update))
+            .unwrap_or_else(|_| Err(anyhow::anyhow!("internal failure (a bug: please report it); the next change updates again")))
+    }
 }
 
 /// `check`: integrity of the database and the segments; with `--files`, re-hash every indexed file.
@@ -2014,6 +2022,48 @@ pub fn main_exit() {
 mod tests {
     use clap::Parser;
     use proptest::prelude::*;
+
+    #[test]
+    fn a_watch_whose_update_panics_goes_on_and_runs_the_next_update() {
+        let root = std::env::temp_dir().join(format!("scrutate_cli_watch_panic_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.txt"), "0\n").unwrap();
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let r = std::thread::scope(|sc| {
+            let watch = sc.spawn(|| {
+                crate::watch::run(
+                    &root,
+                    &stop,
+                    || {},
+                    super::unwinding(|| {
+                        let n = calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                        if n == 2 {
+                            panic!("an update that panics");
+                        }
+                        if n > 2 {
+                            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+                        }
+                        Ok(())
+                    }),
+                )
+            });
+            let t0 = std::time::Instant::now();
+            for i in 1.. {
+                if watch.is_finished() || t0.elapsed().as_secs() > 30 {
+                    break;
+                }
+                std::fs::write(root.join("a.txt"), format!("{i}\n")).unwrap();
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            }
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            watch.join()
+        });
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(r.is_ok_and(|r| r.is_ok()), "the watch stopped at the panic");
+        assert!(calls.into_inner() > 2, "no update after the panic");
+    }
 
     /// What clap makes of `scrutate ARGS`, as `plain_grep` answers.
     fn clap_grep(args: &[String]) -> Option<(bool, super::GrepArgs)> {
