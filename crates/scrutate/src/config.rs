@@ -16,6 +16,7 @@
 //! globs = ["!vendor/**"]   # a `.scrutate.toml`: matched from the file's directory; else SCRUTATE_GREP_GLOBS
 //! types = ["py", "rs"]     # SCRUTATE_GREP_TYPES
 //! smart_case = true        # SCRUTATE_GREP_SMART_CASE
+//! max_bytes = 24000        # SCRUTATE_GREP_MAX_BYTES (a bounded answer; piped output is whole without it)
 //!
 //! [index]
 //! exclude_dirs = ["generated", "third_party"]   # SCRUTATE_INDEX_EXCLUDE_DIRS; read from the root's own file only
@@ -46,6 +47,7 @@ pub struct Grep {
     pub threads: Option<usize>,
     pub max_filesize: Option<String>,
     pub max_depth: Option<usize>,
+    pub max_bytes: Option<usize>,
     #[serde(default)]
     pub globs: Vec<String>,
     #[serde(default)]
@@ -122,6 +124,9 @@ pub fn apply_as_env(cfg: &Config) {
     if let Some(v) = cfg.grep.max_depth {
         set("SCRUTATE_GREP_MAX_DEPTH", v.to_string());
     }
+    if let Some(v) = cfg.grep.max_bytes {
+        set("SCRUTATE_GREP_MAX_BYTES", v.to_string());
+    }
     if !cfg.grep.globs.is_empty() {
         set("SCRUTATE_GREP_GLOBS", cfg.grep.globs.join(","));
     }
@@ -154,11 +159,13 @@ mod tests {
 
     #[test]
     fn parses_documented_example() {
-        let c: Config =
-            toml::from_str("[grep]\nhidden = true\nthreads = 4\nglobs = [\"!vendor/**\"]\n[index]\nexclude_dirs = [\"generated\"]\nrefresh_interval = 2.0\n")
-                .unwrap();
+        let c: Config = toml::from_str(
+            "[grep]\nhidden = true\nthreads = 4\nmax_bytes = 4000\nglobs = [\"!vendor/**\"]\n[index]\nexclude_dirs = [\"generated\"]\nrefresh_interval = 2.0\n",
+        )
+        .unwrap();
         assert_eq!(c.grep.hidden, Some(true));
         assert_eq!(c.grep.threads, Some(4));
+        assert_eq!(c.grep.max_bytes, Some(4000));
         assert_eq!(c.grep.globs, vec!["!vendor/**"]);
         assert_eq!(c.index.exclude_dirs, vec!["generated"]);
         assert_eq!(c.index.refresh_interval, Some(2.0));

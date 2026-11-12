@@ -12,6 +12,7 @@ use serde_json::{json, Value};
 
 use crate::index::{ChunkRow, Index};
 use crate::names::Names;
+use crate::ops::{self, Answer, Op};
 use crate::search::Searcher;
 use crate::text::name_key;
 
@@ -509,9 +510,9 @@ impl Server {
             self.shutdown = true;
             return Ok(Value::Null);
         }
-        let g = lock(&self.searcher);
-        let run = |f: &dyn Fn(&Searcher) -> Result<Value>| -> Reply {
-            let s = g.as_ref().ok_or((-32603, "the index is not available (see the log)".to_string()))?;
+        let mut g = lock(&self.searcher);
+        let mut run = |f: &mut dyn FnMut(&mut Searcher) -> Result<Value>| -> Reply {
+            let s = g.as_mut().ok_or((-32603, "the index is not available (see the log)".to_string()))?;
             // a newer scrutate took the index over since it was opened: nothing here can read it
             if let Some(newer) = s.ix.newer().filter(|n| !n.readable) {
                 return Err((-32603, newer.to_string()));
@@ -529,10 +530,10 @@ impl Server {
             })
         };
         match method {
-            "textDocument/definition" => run(&|s| self.definition(s, p)),
-            "textDocument/references" => run(&|s| self.references(s, p)),
-            "textDocument/documentSymbol" => run(&|s| self.document_symbols(s, p)),
-            "workspace/symbol" => run(&|s| self.workspace_symbols(s, p)),
+            "textDocument/definition" => run(&mut |s| self.definition(s, p)),
+            "textDocument/references" => run(&mut |s| self.references(s, p)),
+            "textDocument/documentSymbol" => run(&mut |s| self.document_symbols(s, p)),
+            "workspace/symbol" => run(&mut |s| self.workspace_symbols(s, p)),
             _ => Err((-32601, format!("method not found: {method}"))),
         }
     }
@@ -564,7 +565,7 @@ impl Server {
         names.at(&rel, line + 1, before.len(), ident).ok().map(|(id, _)| id)
     }
 
-    fn definition(&self, s: &Searcher, p: &Value) -> Result<Value> {
+    fn definition(&self, s: &mut Searcher, p: &Value) -> Result<Value> {
         let Some((text, a, b)) = self.word_in_line(s, p)? else { return Ok(Value::Null) };
         let (ident, before) = (&text[a..b], &text[..a]);
         if let Some(d) = self.resolved_at(&mut Names::new(s)?, p, ident, before).map(|id| s.ix.chunk(id)).transpose()?.flatten() {
@@ -574,30 +575,31 @@ impl Server {
         // the run up to the word (`my-trim`, `Foo::Bar` in `Foo::Bar.new`), then the whole run as
         // one name (`get-user` from `get`) unless the word is the owner of what follows
         let (start, end) = run_around(&text, a, b);
-        let mut hits = if &text[start..b] != ident { s.find_symbol(&text[start..b], 50)? } else { Vec::new() };
+        let mut hits = if &text[start..b] != ident { definitions(s, &text[start..b])? } else { Vec::new() };
         let owner = [".", "::", "#"].iter().any(|sep| text[b..].starts_with(sep));
         if hits.is_empty() && end > b && !owner {
             hits = s.symbol_rows(&text[start..end], 50)?;
         }
         if hits.is_empty() {
             let qualified = match qualifier(before) {
-                Some(q) => s.find_symbol(&format!("{q}.{ident}"), 50)?,
+                Some(q) => definitions(s, &format!("{q}.{ident}"))?,
                 None => Vec::new(),
             };
-            hits = if qualified.is_empty() { s.find_symbol(ident, 50)? } else { qualified };
+            hits = if qualified.is_empty() { definitions(s, ident)? } else { qualified };
         }
         hits.sort_by_key(|h| Some(&h.path) != here.as_ref()); // stable: index order within each group
         let mut lines = self.lines();
         Ok(Value::Array(hits.iter().map(|h| lines.location(&h.path, h.start, h.end, &h.name)).collect()))
     }
 
-    fn references(&self, s: &Searcher, p: &Value) -> Result<Value> {
+    fn references(&self, s: &mut Searcher, p: &Value) -> Result<Value> {
         let Some((ident, before)) = self.ident_at(s, p)? else { return Ok(Value::Null) };
         let include_decl = p["context"]["includeDeclaration"].as_bool().unwrap_or(true);
         // the definition under the cursor; an unresolved cursor falls back to every textual occurrence
-        let mut names = Names::new(s)?;
-        if let Some(def_id) = self.resolved_at(&mut names, p, &ident, &before) {
-            let r = names.references(&ident, 5000)?;
+        let at = self.resolved_at(&mut Names::new(s)?, p, &ident, &before);
+        let refs = |s: &mut Searcher, textual: bool| ops::run(s, &Op::Refs { name: ident.clone(), max_results: REFERENCES, textual, def: None });
+        if let Some(def_id) = at {
+            let Answer::Resolved { refs: r, .. } = refs(s, false)? else { unreachable!("resolved references") };
             let mut lines = self.lines();
             let mut out = Vec::new();
             if let (true, Some(d)) = (include_decl, r.definitions.iter().find(|d| d.id == def_id)) {
@@ -614,7 +616,7 @@ impl Server {
             }
             return Ok(Value::Array(out));
         }
-        let r = crate::intel::references(s, &ident, 5000)?;
+        let Answer::Refs { refs: r, .. } = refs(s, true)? else { unreachable!("textual references") };
         let mut lines = self.lines();
         let mut seen: HashSet<(String, u64, u64)> = HashSet::new();
         let mut out = Vec::new();
@@ -652,9 +654,9 @@ impl Server {
         Ok(Value::Array(out))
     }
 
-    fn document_symbols(&self, s: &Searcher, p: &Value) -> Result<Value> {
+    fn document_symbols(&self, s: &mut Searcher, p: &Value) -> Result<Value> {
         let Some(rel) = p["textDocument"]["uri"].as_str().and_then(|u| self.rel(u)) else { return Ok(Value::Null) };
-        let rows = s.ix.outline(&rel)?;
+        let Answer::Outline { rows, .. } = ops::run(s, &Op::Outline { path: rel.clone() })? else { unreachable!("an outline") };
         let mut lines = self.lines();
         // rows come by start line, enclosing symbols first: a stack of open symbols nests them
         let mut roots: Vec<Value> = Vec::new();
@@ -681,7 +683,7 @@ impl Server {
         Ok(Value::Array(roots))
     }
 
-    fn workspace_symbols(&self, s: &Searcher, p: &Value) -> Result<Value> {
+    fn workspace_symbols(&self, s: &mut Searcher, p: &Value) -> Result<Value> {
         let q = name_key(p["query"].as_str().unwrap_or(""));
         let rows = s.ix.symbols_containing(&q)?;
         let mut lines = self.lines();
@@ -695,6 +697,19 @@ impl Server {
                 .collect(),
         ))
     }
+}
+
+/// Occurrences one references request reads at most.
+const REFERENCES: u64 = 5000;
+
+/// The definitions of `name` as the `symbol` operation lists them, up to 50; none for words that
+/// only look like a location (`a:1`).
+fn definitions(s: &mut Searcher, name: &str) -> Result<Vec<crate::search::Hit>> {
+    if crate::intel::location(name).is_some() {
+        return Ok(Vec::new());
+    }
+    let Answer::Hits { hits, .. } = ops::run(s, &Op::Symbol { name: name.to_string(), limit: 50 })? else { unreachable!("symbol answers hits") };
+    Ok(hits)
 }
 
 fn document_symbol(lines: &mut Lines, rel: &str, r: &ChunkRow) -> Value {

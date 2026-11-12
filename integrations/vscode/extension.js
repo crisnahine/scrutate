@@ -49,7 +49,7 @@ async function open(root, path, line) {
 /** @param {{out: string, root: string}} r @param {string} placeHolder */
 async function pickHits(r, placeHolder) {
   /** @type {any[]} */
-  const hits = JSON.parse(r.out || "[]");
+  const hits = r.out ? JSON.parse(r.out).result : [];
   if (!hits.length) return vscode.window.showInformationMessage("Scrutate: no results");
   const items = hits.map((h) => ({
     label: `${h.kind ? "[" + h.kind + "] " : ""}${h.qualname || h.name || ""}`,
@@ -142,7 +142,7 @@ function activate(context) {
         const name = wordUnderCursor();
         if (!name) return;
         const { out, root } = await run(["refs", "--json", "--", name]);
-        const r = JSON.parse(out || "{}");
+        const r = out ? JSON.parse(out).result : {};
         const items = [];
         for (const d of r.definitions || []) {
           items.push({ label: `[def] ${d.qualname}`, description: `${d.path}:${d.start}`, path: d.path, line: d.start });

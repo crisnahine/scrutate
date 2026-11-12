@@ -44,7 +44,13 @@
   id).
 - **Machine-readable output**: `--json` on every command. Engine A emits JSON Lines with
   `"schema": 1` and `"type"` ∈ {`match`, `context`, `count`, `file`, `summary`, `symbol_group`};
-  Engine B commands emit one JSON document. The schema number changes only on incompatible changes.
+  Engine B commands emit one JSON document, an answer's envelope: `{"schema": 2, "result": ...}`,
+  with `"stopped_at": N` when the answer stopped at its limit `N` with more left. `result` is the
+  answer itself; a `batch` record and the MCP server's structured result carry the same envelope.
+  The schema number changes only on incompatible changes: the envelope is schema 2 (in schema 1
+  the index commands printed the answer alone, and `refs` and the `grep_code` answer carried a
+  `schema` key of their own, which the envelope now holds). `tsquery --json`, `check`, `stats`,
+  `languages` and `config` print a report of their own, not an answer.
   In `match` and `context` records `spans` and `column` count bytes of `text` (an invalid byte
   is printed as U+FFFD, three bytes), and a span never runs past `text` into the line end; the
   Python bindings' `Match.spans` and `Match.column` count the same way.
@@ -232,6 +238,7 @@ often while files change.
 | `symbol NAME [--limit N]` | Where is it defined (`Class.method` works). The name is looked up as typed first: a whole stored name (`list->vec`, `Foo::Bar`, `#main`), a qualified name, or the end of one. Only when that finds nothing, `Type::method`, `Type#method` and `p->method` are read as `Type.method`; then a stored owner is compared without its generic arguments and path (`Stack<T>.push`, `crate::config::Config::new`, `App\Models\User::find`); last, for a name written as a path, a top-level definition of its last part. A name with a leading dot is looked up without it (`.helper` as `helper`). Names match with case and `_` ignored, and the definitions come in this order: the name spelled as typed before its namesakes in another case, then definitions outside test files, then types (`class`, `struct`, `enum`, `trait`, `interface`, `type`, `impl`) before functions and methods before the rest, and a definition with a body before one without. `callers`, `callees`, `similar`, `refs` and `read_code symbol` take names the same way. A method is named by its owner's bare type: `Stack.push` for `impl<T> Stack<T>` in Rust and for `void Stack<T>::push()` in C++. A dotted Lua or Elixir name is split off its owner: `function M.helper` is `helper` with the qualified name `M.helper`, `defmodule MyApp.Accounts.User` is `User`. A method of a JavaScript or TypeScript object literal, and a property whose value is a function, is named under what holds the literal: `api.get`, `store.sub.m`, `tool.build` for `module.exports.tool`, also through `as`, `satisfies` and parentheses; a literal nothing names keeps the bare name. A C or C++ function declared without a body (at file scope, in a namespace, in `extern "C"`, inside an include guard) is a `function` symbol, so a prototype and its definition are two symbols, the definition listed first; a method declared in its class and defined outside it is likewise two, the declaration (`method`) and the definition (`function`). An Objective-C method declared in an `@interface` is a `method` symbol beside its definition, and a function pointer typedef (`typedef int (*cb)(int)`) is the type `cb`. At most 20 definitions, or `--limit`. |
 | `callers NAME` / `callees NAME` (`--limit N`) | Call graph edges resolved to definitions (callee names outside the repository listed after `external:`). A call written outside every definition (a script's main block, a shell script's last `main "$@"`, top-level JavaScript) belongs to the chunk that holds its line: the module chunk for the lines before the first definition, else the first window that holds it. `callers` lists that chunk (`job.py:5-6  [window] job`), the resolver decides such a call as it does any other, and `callees FILE:LINE` for a line outside every definition answers for that chunk. A call matches a definition by the name as the call writes it (`Ok(1)` is not a call of `ok`) and in its own language family only: JavaScript and TypeScript; C, C++, CUDA and Objective-C; Java, Kotlin, Scala and Groovy; Erlang, Elixir and Gleam; C# and F#; every other language alone (a file of no known language matches any); an unknown qualifier (`Nope.refresh`) gives no results, and a name with a leading dot answers as the name without it (`callers .helper` as `callers helper`). A call the resolver ties to something else (a function of an imported module such as `subprocess.run`, a local variable, a field) is not a call of a namesake in the repository; `callees` lists such a name after `external:`. In a language the resolver does not read (every one outside Python, JavaScript, TypeScript, Rust, Go and Java), a call without a receiver runs the definition in its own file when there is one, a free function of that file or a method of the caller's own type: `callees` lists that one alone, and `callers` of a namesake in another file leaves the call out (`helper()` in `e.c` calls the `static` `helper` of `e.c`). For any other call the resolver cannot place, `callees` lists up to three definitions of the name, those in the caller's file first, then those in its directory. A file whose extension two languages share (`.m`, `.h`, `.pp`, `.cls`) is put in its family by its text, and a Nix function, which is a key, is listed as a callee, as is a macro of the repository (`#define SQUARE(x)`, `macro_rules! square`, a Lisp `defmacro`). A method call `x.m()` is never a call of a free function `m` in Rust, JavaScript, TypeScript, Go and Java, a receiver whose type comes from outside the repository makes the call external, and a definition's own name is not a call of it. Calls inside the arguments of a Rust macro (`println!("{}", f(x))`, `vec![k(1)]`) count. A method call records the method, not the receiver: Lua `obj:meth()`, Objective-C `[obj meth]`, R `obj$meth()`, PowerShell `$obj.Meth()`, PHP `$o?->m()`; `new Point()` in C++, Scala, Groovy, Dart, D and Solidity records `Point`. A Lisp name is recorded whole (`list->vec`, `set-car!`), and a JavaScript private method with its `#`. A call is recorded under the name its definition has: a Ruby or Elixir name keeps its trailing `?` or `!` (`valid?`, `save!`) and a Julia name its `!` (`update!`); an R name keeps its dots (`is.ready`), a Bash name its `::` (`ns::helper`), and a Haskell, OCaml, F# or Nix name its primes (`step'`); a PHP call through a namespace is recorded by its last part (`\App\Util\helper()` calls `helper`); a Rust raw identifier is recorded without its `r#` (`r#type()` calls `type`), and `symbol` and `callers` take either spelling. Dart, Groovy, Elixir, LLVM IR (`call @g`), TLA+ and Verilog (`g(x)` in an expression) record calls; an Elixir `def`, `use`, `alias` or `if` and the head of a definition are not calls. Verilog task calls and module instances, VHDL calls in a subprogram (a subprogram with a body is a function of its package body or architecture), Jsonnet calls, Make `$(call g,...)` and assembly `call`, `bl` and `jal` targets record calls; an assembly label holds its instructions up to the next label or section. Not recorded: a Verilog task call without parentheses (`h;`) or on a member (`obj.m(1);`). A VHDL indexed signal `a(i)` reads as a call, and an assembly call under a local label counts for that label and for the global one above it. `callers` lists first the callers the resolver ties to that definition, then those it could not decide (the ones that name the owner type or sit in the same package first), and says how many are undecided; for a name with thousands of call sites it asks the resolver about the 400 likeliest, lists the others last and says how many it did not check. A call of a class is a call of its constructor: `callers Point.__init__` lists `Point(1)`, and the same holds for a JavaScript or TypeScript `constructor` (`new Widget()`), a Java, C# or C++ constructor, PHP `__construct`, Swift `init`, and Ruby `initialize` through `Invoice.new`. A Java call that its arguments do not tie to one overload is a caller of each overload. A call through a base class, an interface, a trait or an abstract method that the target overrides or implements, at any depth, is listed among the undecided callers of the target (`b.size()` with `b: Base` for `Big.size`); a call that resolves to a sibling's override is not. A variable declared as the base type and built by a constructor in the same function (`Base b = new Big()`, `const b: Base = new Big()`, `b: Base = Big()`, Go `var s Sizer = Big{}`, Rust `Box::new(Big)`) is typed by the constructor until it is assigned again, so its call is a decided caller of the override. `callees` of a function that calls through the base type lists the base method only. A `super` call (Java, TypeScript and JavaScript `super.m()`, Python `super().m()` and `super(C, self).m()`) is a decided call of the nearest base method that defines it, by the method resolution order in Python (`super(C, self).m()` takes the first class after `C` in the order of the class the call sits in, and stays undecided when `C` is not in that order), and never a call of the override it sits in; with a base from outside the repository it is external. Go `x.Embedded.M()` resolves through the embedded field. |
 | `refs NAME [--def PATH[:LINE]] [--textual] [--max-results N]` | Every whole-word occurrence, each resolved to the definition it refers to, or listed as unresolved with a reason (see below). It takes the names `symbol` takes (`Stack::push`). `--max-results N` stops after N uses, every use on a line counted, and an answer that stopped says so. A use on a line longer than 400 bytes shows the 300 bytes around it, with `...` where the line is cut (`"cut": true` in JSON; `column` stays the byte column in the whole line). |
+| `read [PATH] [--symbol NAME] [--start N] [--end N]` | Lines of a file, or with `--symbol` whole definitions (a name, `Class.method` or a location; `PATH` then keeps the ones in that file): the MCP `read_code` tool, with its arguments, limits and answers (see `serve` below). A path is read from the current directory, as the other commands read one. Reading a file by its path does not update the index. |
 | `outline FILE` | Symbols of a file in source order. |
 | `deps FILE` / `rdeps TARGET` | Imports of a file (resolved to repository files when possible) / files importing a module or file. Imports resolve as in `refs`: Rust `crate::`, `self::` and `super::` paths and `mod` declarations (`deps` lists a `mod` line too), Go imports through `go.mod`, also from a module in a subdirectory, Python `from . import b`, TypeScript `./lib/c.js` to `c.ts` and `./types` to `types.d.ts`. `deps` gives one line per file a statement names. An `#include "util.h"` resolves to the file next to the including one; `rdeps` matches an import by its base name only when it resolves to no file. When nothing resolves to the target but some imports could not be resolved, `rdeps` says so: `no import resolves to X, but N imports could not be resolved and may name it`. It counts a relative import whose path is the target without its extension, the target or its directory, and, in a file that is not JavaScript or TypeScript, a bare import with a part spelled as the target's module name (`b` for `a/b.py` or `a/b/__init__.py`). A Java import resolves through the package declarations of the files, in any source root (`src/main/java` included): a class import to the class's file, `a.b.*` to the files of the package, a static import to the file of its class. An import is recorded as its statement writes it. JavaScript and TypeScript: the module of `import`, of `export ... from` and of `import x = require()`, and the argument of a `require` or `import()` call when it is a string or a template string without `${}`; an exported declaration is no import. PHP: `require` and `include` with either kind of quote, and `use`, plain, `function` or grouped (`use Foo\{A, B}` gives `Foo\A` and `Foo\B`). R: `library`, `require`, `requireNamespace` and `source`. Julia: each module of a `using` or `import` list, the module before a colon, and `include`. Ruby and Lua: `require` and its kin without a receiver, with a literal argument. Kotlin and C#: the imported name, not its alias. Objective-C `@import` and QML imports are recorded too. |
 | `similar TARGET [-k N]` | Code similar to a symbol or `path:line` (vector cosine + token Jaccard). A constant has no vector: `similar` on one is an error that says so. |
@@ -244,7 +251,7 @@ often while files change.
 | `serve [--refresh-interval S] [--max-bytes N] [--watch] [--structured]` | MCP server on stdio (see below); `--watch` also runs the watcher in a background thread; `--structured` also sends each answer as JSON. |
 | `lsp` | Language Server Protocol server on stdio (see below). |
 | `config [--json]` | Show the configuration file in effect. `--json` prints `{"root": ..., "configuration_file": ...}`: the root an index command run here uses, and the configuration file (`null` when none). It builds no index; the editor plugins read it to find the root. |
-| `batch FILE [--features] [--timing]` | Run requests from a JSON-lines file with one index open. A line `{"query": ..., "k": ...}` is a ranked search; a line `{"op": TOOL, ...}` runs any operation, named and given arguments as the MCP tool is (`{"op": "callers", "name": "parse"}`), and prints `{"op", "result"}` or `{"op", "error"}`. A line that is not JSON prints `{"error": "line 3, column 2: not JSON (...)"}` and the other lines still run. `--features` adds to a search every candidate (`id`, `path`, `name`, `qualname`, `kind`, `score` and its features `x`), the feature names once per line (`feature_names`, the order of `x`) and the ids each source found (`exact_ids`, `lex_ids`, `sem_ids`): the rows the ranker is trained on. |
+| `batch FILE [--features] [--timing]` | Run requests from a JSON-lines file with one index open. A line `{"query": ..., "k": ...}` is a ranked search; a line `{"op": TOOL, ...}` runs any operation, named and given arguments as the MCP tool is (`{"op": "callers", "name": "parse"}`), and prints the answer's envelope with the operation's name (`{"op", "schema", "result"}`, and `stopped_at` when it stopped at its limit) or `{"op", "error"}`. A line that is not JSON prints `{"error": "line 3, column 2: not JSON (...)"}` and the other lines still run. `--features` adds to a search every candidate (`id`, `path`, `name`, `qualname`, `kind`, `score` and its features `x`), the feature names once per line (`feature_names`, the order of `x`) and the ids each source found (`exact_ids`, `lex_ids`, `sem_ids`): the rows the ranker is trained on. |
 
 The code index holds every file the ignore rules let through, hidden files included, except
 binary files, files over 1 MB, `.git/`, `.scrutate/`, the directories named in
@@ -414,9 +421,10 @@ MCP `references` tool gives the same answer (`textual` and `def` are arguments t
 
 ### Answers from the index: one definition for every front end
 
-`symbol`, `callers`, `callees`, `refs`, `outline`, `deps`, `rdeps`, `similar` and `dupes` are
-operations (`ops.rs`): the CLI, the MCP server, `batch` and the Python bindings run the same code
-with the same defaults (search `k` 8, callers 30, callees 40, references 200, duplicates 50,
+`symbol`, `callers`, `callees`, `refs`, `read`, `outline`, `deps`, `rdeps`, `similar`, `dupes`
+and the ranked search of `search` and `find` are operations (`ops.rs`): the CLI, the MCP server,
+`batch`, the Python bindings and the language server run the same code, through the same check
+of the files an answer cites and the same recovery from a damaged index, with the same defaults (search `k` 8, callers 30, callees 40, references 200, duplicates 50,
 structural search 1000) and print the same text or JSON. An empty answer has exit code 1;
 `outline`, `deps`, `rdeps`, `similar` and `dupes` then print nothing on standard output and one
 sentence on standard error. When `symbol`, `callers`, `callees`, `dupes`, `tsquery`,
@@ -424,8 +432,8 @@ sentence on standard error. When `symbol`, `callers`, `callees`, `dupes`, `tsque
 answer ends with a line that says so and names the argument that raises it (`(stopped at 30
 results: raise limit to see more)`): the MCP argument `limit`, and `--limit` for `symbol`,
 `callers`, `callees`, `dupes` and `tsquery`; with `serve --structured` the JSON carries
-`stopped_at`. With `--json` the JSON keeps its shape and that line goes to standard error; a
-`batch` record that stopped carries `stopped_at`.
+`stopped_at`. With `--json` the envelope carries `stopped_at` and that line goes to standard
+error; a `batch` record that stopped carries `stopped_at` too.
 
 `--max-bytes BYTES` (or `SCRUTATE_MAX_BYTES`) limits the size of such an answer, and of the
 answers of `search` and `tsquery` (`--json` ignores both). A cut answer
@@ -434,6 +442,15 @@ offset=8, or narrow the request)`; `--offset 8` continues it. The whole answer, 
 included, fits the budget; only a budget smaller than one item and that line together is
 passed. An agent that runs the CLI through a shell can set the variable once, so no answer is cut
 by its harness in the middle.
+
+`grep` keeps its own budget, so a pipeline (`| wc -l`, `| xargs`) sees every line unless asked:
+`grep --max-bytes BYTES` (or `SCRUTATE_GREP_MAX_BYTES`, or `max_bytes` under `[grep]` in the
+configuration file; `SCRUTATE_MAX_BYTES` does not apply to it) prints whole lines in path order,
+as `--sort` does, and closes with `(N more lines not shown: call again with offset=K, or narrow
+the request)` when it cut the answer; `grep --offset K` continues it. The whole answer, that line
+included, fits the budget, and the exit code is the one of the whole answer. `-c`, `-l`,
+`--symbols` and context lines are cut the same way, by lines; `--json` is never cut. Without a
+budget the answer is whole, and a plain piped `grep` takes the same path it took before.
 
 ### `serve` (MCP)
 
@@ -470,8 +487,14 @@ answers the calls in flight, lets a running index build finish, and exits.
 - `grep_code` is an Engine A search of the files the index holds: hidden files such as `.github/`
   are searched; ignored files, `.git/` and the directories the index skips by name
   (`node_modules` and the like) are not (`scrutate grep` skips hidden files unless `--hidden`,
-  and reads those directories unless an ignore file excludes them). The pattern is a case-sensitive regex (`(?i)` for any
-  case); matching lines are grouped by enclosing symbol; `max_results` (default 100) stops it,
+  and reads those directories unless an ignore file excludes them). The pattern is a regex unless
+  `mode` names another matching mode (`literal`, `identifier`, `fuzzy` and `fuzzy_regex` within
+  `max_edits` edits, default 1, or `pcre2`), as `grep -F`, `--ident`, `--fuzzy`, `--fuzzy-regex`
+  and `-P` do; `case` is `sensitive` (the default), `insensitive` or `smart`, and `word` keeps
+  whole words. `path` keeps one file or directory of the repository (its answers still name
+  files from the root; one that leaves the repository is refused) and `globs` keeps the files
+  they match, as `grep -g` (`!` excludes); neither brings back a directory the index skips.
+  Matching lines are grouped by enclosing symbol; `max_results` (default 100) stops it,
   and the answer says so. A capped answer holds the first matches in path order, so the same call
 gives the same lines every time and a second page neither repeats nor skips one; `references`
 does the same, over the same files. A file whose search a NUL byte stopped after a match ends
@@ -506,8 +529,9 @@ its last group with a `note:` line (`"note"` in JSON). An invalid pattern is an 
   modification time did not change, and a damaged index is rebuilt. It brings the text index
   up to date too when there is one, so `grep --index` sees what it indexed; it never makes one.
 - `serve --structured` (`SCRUTATE_MCP_STRUCTURED=1`) adds an `outputSchema` to every tool and
-  `structuredContent` to every result, beside its text: `{"schema": 1, "complete": true,
-  "result": ...}`, where `result` is what the matching CLI command prints with `--json`. When the
+  `structuredContent` to every result, beside its text: the answer's envelope with `complete`
+  (`{"schema": 2, "complete": true, "result": ...}`), as the matching CLI command prints it with
+  `--json`. When the
   text and the JSON together pass one and a half times `max_bytes`, `result` is `null`,
   `complete` is `false` and `text` holds the page that fits; a larger `max_bytes` gets the whole
   answer as JSON. It is off by default because clients differ in what they show their model:
@@ -630,7 +654,7 @@ used query files are deleted, and a query whose results alone exceed it is not c
 is safe to delete at any time.
 
 ### Environment variables
-`SCRUTATE_ROOT`, `SCRUTATE_THREADS`, `SCRUTATE_GREP_{HIDDEN,NO_IGNORE,FOLLOW,SMART_CASE,MAX_FILESIZE,MAX_DEPTH,GLOBS,TYPES}`,
+`SCRUTATE_ROOT`, `SCRUTATE_THREADS`, `SCRUTATE_GREP_{HIDDEN,NO_IGNORE,FOLLOW,SMART_CASE,MAX_FILESIZE,MAX_DEPTH,MAX_BYTES,GLOBS,TYPES}`,
 `SCRUTATE_INDEX_EXCLUDE_DIRS`, `SCRUTATE_REFRESH_INTERVAL`, `SCRUTATE_MAX_BYTES`,
 `SCRUTATE_MCP_STRUCTURED`, `SCRUTATE_CONFIG`, `SCRUTATE_WATCH_DEBUG`, `SCRUTATE_GREP_DEBUG`, `SCRUTATE_SEMANTIC`
 (path or `none`; another model makes the stored vectors anew on the next update),

@@ -416,6 +416,48 @@ fn grep_code_searches_the_hidden_files_the_index_holds_but_not_git_internals() {
 }
 
 #[test]
+fn grep_code_takes_a_mode_a_case_and_a_scope() {
+    let mut r = Repo::new(
+        "grep_modes",
+        &[
+            ("src/a.py", "def refresh_token():\n    return 1\n"),
+            ("src/deep/b.py", "REFRESH_TOKEN = 2\n"),
+            ("docs/c.md", "refreshToken in the docs\n"),
+            (".github/ci.yml", "refresh_token: x\n"),
+            ("node_modules/d.js", "refresh_token()\n"),
+        ],
+    );
+    let files = |text: &str| {
+        let mut f: Vec<String> = text.lines().filter_map(|l| l.trim_start().split([':', ' ']).next().filter(|p| p.contains('.'))).map(String::from).collect();
+        f.sort();
+        f.dedup();
+        f
+    };
+    // every casing of the name, in the files the index holds
+    let all = r.ok("grep_code", json!({"pattern": "refreshToken", "mode": "identifier"}));
+    assert_eq!(files(&all), [".github/ci.yml", "docs/c.md", "src/a.py", "src/deep/b.py"], "{all}");
+    let scoped = r.ok("grep_code", json!({"pattern": "refreshToken", "mode": "identifier", "path": "src"}));
+    assert_eq!(files(&scoped), ["src/a.py", "src/deep/b.py"], "{scoped}");
+    assert!(scoped.contains("src/a.py:1-2  [function] refresh_token"), "the scope keeps the paths from the root: {scoped}");
+    let one = r.ok("grep_code", json!({"pattern": "refreshToken", "mode": "identifier", "path": "./src/deep/b.py"}));
+    assert_eq!(files(&one), ["src/deep/b.py"], "{one}");
+    let globbed = r.ok("grep_code", json!({"pattern": "refreshToken", "mode": "identifier", "globs": ["*.py", "!b.py"]}));
+    assert_eq!(files(&globbed), ["src/a.py"], "{globbed}");
+    // a glob of the caller does not bring back a directory the index skips
+    let skipped = r.ok("grep_code", json!({"pattern": "refresh_token", "globs": ["*.js"]}));
+    assert!(skipped.starts_with("0 matching lines"), "{skipped}");
+    let any_case = r.ok("grep_code", json!({"pattern": "REFRESH_token", "mode": "literal", "case": "insensitive"}));
+    assert_eq!(files(&any_case), [".github/ci.yml", "src/a.py", "src/deep/b.py"], "{any_case}");
+    let fuzzy = r.ok("grep_code", json!({"pattern": "refresh_tokne", "mode": "fuzzy", "max_edits": 2, "path": "src/a.py"}));
+    assert_eq!(files(&fuzzy), ["src/a.py"], "{fuzzy}");
+    assert!(r.ok("grep_code", json!({"pattern": "token", "word": true, "path": "docs"})).starts_with("0 matching lines"));
+    assert!(r.err("grep_code", json!({"pattern": "x", "path": "../elsewhere"})).contains("path outside repo"));
+    assert!(r.err("grep_code", json!({"pattern": "x", "path": "src/none"})).contains("no such file or directory in the repository"));
+    assert!(r.err("grep_code", json!({"pattern": "x", "mode": "glob"})).contains("unknown mode glob"));
+    assert!(r.err("grep_code", json!({"pattern": "x", "globs": "*.py"})).contains("globs must be an array of strings"));
+}
+
+#[test]
 fn grep_code_shows_a_binary_file_note_as_a_note() {
     let filler: String = (0..3000).map(|i| format!("x = {i}  # filler line to push the NUL past the first read\n")).collect();
     let body = format!("def needle_xyz():\n    return 1\n\n{filler}\0\nneedle_xyz()\n");

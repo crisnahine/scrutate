@@ -247,6 +247,13 @@ struct GrepCli {
     /// never print color (also when NO_COLOR is set and not empty)
     #[arg(long, global = true)]
     no_color: bool,
+    /// size limit, in bytes, of the answer, closing line included: whole lines in path order, then
+    /// a line with how many are left (not with --json); without it the answer is whole
+    #[arg(long, global = true, value_name = "BYTES", env = "SCRUTATE_GREP_MAX_BYTES")]
+    max_bytes: Option<usize>,
+    /// lines of the answer to skip, to continue one that --max-bytes cut
+    #[arg(long, global = true, value_name = "N", default_value_t = 0)]
+    offset: usize,
     #[command(subcommand)]
     cmd: GrepCmd,
 }
@@ -261,8 +268,9 @@ enum GrepCmd {
 /// The environment variables clap reads for `grep` (a test holds the list to clap's): with one
 /// of them set, `plain_grep` is not used. Any other variable is read after the arguments, by
 /// code both ways share.
-const GREP_ENV: [&str; 8] = [
+const GREP_ENV: [&str; 9] = [
     "SCRUTATE_ROOT",
+    "SCRUTATE_GREP_MAX_BYTES",
     "SCRUTATE_GREP_TYPES",
     "SCRUTATE_GREP_HIDDEN",
     "SCRUTATE_GREP_NO_IGNORE",
@@ -522,6 +530,22 @@ pub enum Cmd {
     /// files that import a module or file (reverse dependencies)
     Rdeps {
         target: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// lines of a file, or with --symbol whole definitions (as the MCP read_code tool)
+    Read {
+        /// a file of the repository; with --symbol, keep the definitions in this file
+        path: Option<String>,
+        /// a name, `Class.method` or a location (`path:start-end`) whose definitions to read
+        #[arg(long)]
+        symbol: Option<String>,
+        /// first line
+        #[arg(long, allow_negative_numbers = true)]
+        start: Option<i64>,
+        /// last line [default: 400 lines from start]
+        #[arg(long, allow_negative_numbers = true)]
+        end: Option<i64>,
         #[arg(long)]
         json: bool,
     },
@@ -878,6 +902,8 @@ fn named_file(cmd: &Cmd) -> Option<&str> {
         Cmd::Deps { file, .. } | Cmd::Outline { file, .. } => Some(file),
         Cmd::Rdeps { target, .. } => Some(target),
         Cmd::Refs { def: Some(d), .. } => loc(d).or(Some(d)),
+        Cmd::Read { path: Some(p), .. } => Some(p),
+        Cmd::Read { symbol: Some(s), .. } => loc(s),
         _ => None,
     }
 }
@@ -915,10 +941,10 @@ pub fn run() -> Result<i32> {
     let mut cli = if matches!(args.get(1).map(String::as_str), Some("grep" | "g")) {
         // a setting from a file, or from a variable clap reads for grep, is clap's to read
         let settings = cfg_path.is_some() || GREP_ENV.iter().any(|name| std::env::var_os(name).is_some());
-        let (root, no_color, grep) = match (!settings).then(|| plain_grep(&args)).flatten() {
-            Some((no_color, grep)) => (PathBuf::from("."), no_color, grep),
+        let (root, no_color, max_bytes, offset, grep) = match (!settings).then(|| plain_grep(&args)).flatten() {
+            Some((no_color, grep)) => (PathBuf::from("."), no_color, None, 0, grep),
             None => {
-                let GrepCli { root, no_color, cmd: GrepCmd::Grep(grep) } = GrepCli::parse();
+                let GrepCli { root, no_color, max_bytes, offset, cmd: GrepCmd::Grep(grep) } = GrepCli::parse();
                 if grep.regexp.is_empty() && grep.pattern.as_ref().is_some_and(|p| p.to_str().is_none()) {
                     // clap's own error for a `String` argument
                     let mut cmd = GrepCli::command();
@@ -926,12 +952,17 @@ pub fn run() -> Result<i32> {
                     let grep = cmd.find_subcommand_mut("grep").expect("the grep subcommand");
                     grep.error(clap::error::ErrorKind::InvalidUtf8, "invalid UTF-8 was detected in one or more arguments").exit();
                 }
-                (root, no_color, grep)
+                (root, no_color, max_bytes, offset, grep)
             }
         };
-        Cli { root, no_color, max_bytes: None, offset: 0, cmd: Cmd::Grep(grep) }
+        Cli { root, no_color, max_bytes, offset, cmd: Cmd::Grep(grep) }
     } else {
-        Cli::parse()
+        let mut cli = Cli::parse();
+        // grep's budget is its own: SCRUTATE_MAX_BYTES bounds index answers, never a grep
+        if matches!(cli.cmd, Cmd::Grep(_)) && !args.iter().any(|a| a == "--max-bytes" || a.starts_with("--max-bytes=")) {
+            cli.max_bytes = std::env::var("SCRUTATE_GREP_MAX_BYTES").ok().and_then(|v| v.parse().ok());
+        }
+        cli
     };
     if let Some(e) = cfg_error {
         if !matches!(cli.cmd, Cmd::Config { .. } | Cmd::Completions { .. }) {
@@ -1145,7 +1176,14 @@ pub fn run() -> Result<i32> {
             let roots: Vec<PathBuf> = if paths.is_empty() { vec![PathBuf::from(".")] } else { paths };
             f.paths = Paths::Walk(roots);
             let under = here.below();
-            grep_command(q, f, GrepOutput { files_with_matches, count, sort, json, stats, symbols, root: cli.root, no_color, indexed: index, update, under })
+            // a bounded answer is the same on every call, so --offset neither repeats nor skips a line
+            let page = (!json && (cli.max_bytes.is_some() || cli.offset > 0)).then_some((cli.max_bytes.unwrap_or(usize::MAX), cli.offset));
+            let (q, sort) = if page.is_some() { (Query { first_in_path_order: true, ..q }, true) } else { (q, sort) };
+            grep_command(
+                q,
+                f,
+                GrepOutput { files_with_matches, count, sort, json, stats, symbols, root: cli.root, no_color, indexed: index, update, under, page },
+            )
         }
         Cmd::Index { force, text, no_text } => {
             let w = match (text, no_text) {
@@ -1195,8 +1233,8 @@ pub fn run() -> Result<i32> {
             // results carry its path as given
             let mut hits: Vec<(crate::search::Hit, usize)> = Vec::new();
             for (i, (root, _)) in roots.iter().enumerate() {
-                let mut s = open_fresh(root)?;
-                let part = s.recovering(|s| if alt.is_empty() { s.search(&query, k, true) } else { s.search_many(&qs, k, true) })?;
+                let op = Op::Search { query: query.clone(), alt: alt.clone(), k, snippets: true };
+                let crate::ops::Answer::Hits { hits: part, .. } = open_fresh(root)?.run_as_is(&op)? else { unreachable!("a search answers hits") };
                 hits.extend(part.into_iter().map(|h| (h, i)));
             }
             let shown = |(h, i): &(crate::search::Hit, usize)| {
@@ -1218,7 +1256,7 @@ pub fn run() -> Result<i32> {
                 for (rec, (_, i)) in v.as_array_mut().into_iter().flatten().zip(&hits) {
                     rec["root"] = serde_json::json!(roots[*i].1.to_string_lossy());
                 }
-                println!("{}", serde_json::to_string_pretty(&v)?);
+                println!("{}", serde_json::to_string_pretty(&crate::ops::envelope(v, None))?);
             } else {
                 let hits: Vec<crate::search::Hit> = hits.iter().map(|x| crate::search::Hit { path: shown(x), ..x.0.clone() }).collect();
                 if json || hits.is_empty() {
@@ -1287,6 +1325,11 @@ pub fn run() -> Result<i32> {
             run_op(&cli.root, Op::Refs { name, max_results, textual, def }, json, page, outside.as_deref())
         }
         Cmd::Similar { target, k, json } => run_op(&cli.root, Op::Similar { target: here.location(&target), k }, json, page, outside.as_deref()),
+        Cmd::Read { path, symbol, start, end, json } => {
+            // the read_code tool's arguments, so the operation checks them as it checks a call
+            let args = serde_json::json!({"path": path.map(|p| here.path(&p)), "symbol": symbol.map(|s| here.location(&s)), "start": start, "end": end});
+            run_op(&cli.root, Op::from_tool("read_code", &args)?, json, page, outside.as_deref())
+        }
         Cmd::Dupes { min_tokens, threshold, limit, json } => run_op(&cli.root, Op::Dupes { min_tokens, threshold, limit }, json, page, outside.as_deref()),
         Cmd::Tsquery { lang, query, paths, limit, json, no_cache } => {
             // streamed: one JSON object or one text line per capture, in path order
@@ -1508,8 +1551,8 @@ fn views_command(file: &Path) -> Result<i32> {
 /// why an argument names nothing in this index, said with an empty answer or an error.
 fn run_op(root: &Path, op: Op, json: bool, (max_bytes, offset): (usize, usize), outside: Option<&str>) -> Result<i32> {
     use crate::ops::Answer;
-    let mut s = open_fresh(root)?;
-    let answer = match (s.recovering(|s| crate::ops::run(s, &op)), outside) {
+    let mut s = if op.reads_index() { open_fresh(root)? } else { crate::Repo::open(root)? };
+    let answer = match (s.run_as_is(&op), outside) {
         (Err(e), Some(why)) => anyhow::bail!("{e:#} ({why})"),
         (answer, _) => answer?,
     };
@@ -1517,7 +1560,7 @@ fn run_op(root: &Path, op: Op, json: bool, (max_bytes, offset): (usize, usize), 
     let quiet = matches!(answer, Answer::Outline { .. } | Answer::Deps { .. } | Answer::Rdeps { .. } | Answer::Similar(_) | Answer::Dupes(..));
     let why = outside.filter(|_| answer.is_empty());
     if json {
-        println!("{}", serde_json::to_string_pretty(&answer.json())?);
+        println!("{}", serde_json::to_string_pretty(&answer.envelope())?);
         // standard output keeps the JSON's shape, so the stop line goes beside it
         let note = answer.stop_note();
         if !note.is_empty() {
@@ -1602,7 +1645,7 @@ fn check_command(root: &Path, files: bool, json: bool) -> Result<i32> {
 
 fn print_hits(hits: &[crate::search::Hit], qs: &[String], why: bool, json: bool) -> Result<()> {
     if json {
-        println!("{}", serde_json::to_string_pretty(&hits_json(hits))?);
+        println!("{}", serde_json::to_string_pretty(&crate::ops::envelope(hits_json(hits), None))?);
     } else {
         let words: Vec<String> = qs.iter().flat_map(|q| query_words(q)).collect();
         println!("{}", fmt_hits(hits, &words, true, why));
@@ -1626,6 +1669,92 @@ struct GrepOutput {
     /// with `indexed`: only the files under this directory of the root (the current directory),
     /// named from it, as the walk names them
     under: Option<String>,
+    /// the text answer within a budget of bytes, from this line on
+    page: Option<(usize, usize)>,
+}
+
+/// Where grep's text goes: standard output, or the lines of an answer paged within a budget.
+enum Out {
+    Stream(termcolor::BufferedStandardStream),
+    Paged(Paged),
+}
+
+/// Lines kept up to what a budget can show; the ones after them are counted.
+struct Paged {
+    max_bytes: usize,
+    offset: usize,
+    items: Vec<String>,
+    held: usize,
+    rest: usize,
+    line: Vec<u8>,
+}
+
+impl Paged {
+    fn end_line(&mut self) {
+        let line = String::from_utf8_lossy(&self.line).into_owned();
+        self.line.clear();
+        if self.items.len() + self.rest < self.offset {
+            // skipped: only its place counts
+            self.items.push(String::new());
+        } else if self.rest == 0 && (self.held == 0 || self.held + line.len() < self.max_bytes) {
+            self.held += line.len() + 1;
+            self.items.push(line);
+        } else {
+            self.rest += 1;
+        }
+    }
+
+    fn text(mut self) -> String {
+        if !self.line.is_empty() {
+            self.end_line();
+        }
+        crate::ops::paged_counted(self.items, self.rest, "lines", self.max_bytes, self.offset)
+    }
+}
+
+impl Write for Out {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            Out::Stream(w) => w.write(buf),
+            Out::Paged(p) => {
+                for &b in buf {
+                    if b == b'\n' {
+                        p.end_line();
+                    } else {
+                        p.line.push(b);
+                    }
+                }
+                Ok(buf.len())
+            }
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            Out::Stream(w) => w.flush(),
+            Out::Paged(_) => Ok(()),
+        }
+    }
+}
+
+impl WriteColor for Out {
+    fn supports_color(&self) -> bool {
+        matches!(self, Out::Stream(w) if w.supports_color())
+    }
+
+    fn set_color(&mut self, spec: &ColorSpec) -> std::io::Result<()> {
+        match self {
+            Out::Stream(w) => w.set_color(spec),
+            Out::Paged(_) => Ok(()),
+        }
+    }
+
+    fn reset(&mut self) -> std::io::Result<()> {
+        match self {
+            Out::Stream(w) => w.reset(),
+            Out::Paged(_) => Ok(()),
+        }
+    }
 }
 
 /// The canonical root and the indexed files that can match `q` (after an incremental refresh of
@@ -1665,7 +1794,7 @@ fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
         Paths::List { .. } | Paths::Memory(_) => Vec::new(),
     };
     let colour = color_choice(out.no_color) != ColorChoice::Never;
-    let plain = !out.json && !colour && !out.sort && !out.symbols && q.report == Report::Lines;
+    let plain = !out.json && !colour && !out.sort && !out.symbols && q.report == Report::Lines && out.page.is_none();
     let sink = plain.then(|| Arc::new(instant::PlainSink::new(Box::new(crate::running::GivesWay(std::io::stdout())))));
     if out.indexed {
         let (root, files) = indexed_candidates(&out.root, &q, out.update, out.under.as_deref())?;
@@ -1675,7 +1804,10 @@ fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
         return grep_plain(&roots, &q, &f, out, cancel, sink);
     }
     // buffered: one write per 64 KB instead of several per matching line
-    let mut w = termcolor::BufferedStandardStream::stdout(color_choice(out.no_color));
+    let mut w = match out.page {
+        Some((max_bytes, offset)) => Out::Paged(Paged { max_bytes, offset, items: Vec::new(), held: 0, rest: 0, line: Vec::new() }),
+        None => Out::Stream(termcolor::BufferedStandardStream::stdout(color_choice(out.no_color))),
+    };
     let mut collected: Vec<Record> = Vec::new();
     let mut pipe_closed = false; // the reader went away (`| head`): stop quietly, like ripgrep (exit 0)
     let mut counts: Vec<Record> = Vec::new();
@@ -1684,7 +1816,7 @@ fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
     let mut linebuf: Vec<u8> = Vec::with_capacity(512);
     let groups = q.before > 0 || q.after > 0;
     let mut last: Option<(Arc<str>, u64, u64)> = None;
-    let mut emit = |r: &Record, w: &mut termcolor::BufferedStandardStream| -> Result<()> {
+    let mut emit = |r: &Record, w: &mut Out| -> Result<()> {
         let (h, context) = match r {
             Record::Match(h) => (h, false),
             Record::Context(h) => (h, true),
@@ -1824,7 +1956,19 @@ fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
         }
         return Err(e);
     }
-    if let Err(e) = w.flush() {
+    let flushed = match w {
+        Out::Paged(p) => {
+            let text = p.text();
+            let mut so = std::io::stdout().lock();
+            if text.is_empty() {
+                Ok(())
+            } else {
+                writeln!(so, "{text}").and_then(|_| so.flush())
+            }
+        }
+        Out::Stream(mut w) => w.flush(),
+    };
+    if let Err(e) = flushed {
         if e.kind() != std::io::ErrorKind::BrokenPipe {
             return Err(e.into());
         }
@@ -1958,7 +2102,7 @@ fn grep_plain(roots: &[PathBuf], q: &Query, f: &Files, out: GrepOutput, cancel: 
 }
 
 /// Engine B enrichment of Engine A results: group matching lines by the enclosing symbol.
-fn grouped_by_symbol(root: &Path, records: &mut Vec<Record>, w: &mut termcolor::BufferedStandardStream, json: bool) -> Result<()> {
+fn grouped_by_symbol(root: &Path, records: &mut Vec<Record>, w: &mut impl Write, json: bool) -> Result<()> {
     let s = open_fresh(root)?;
     let mut lines: Vec<Record> = std::mem::take(records).into_iter().filter(|r| matches!(r, Record::Match(_) | Record::Note { .. })).collect();
     // the index names a file by its path under the root, whatever path the search was given
@@ -2008,7 +2152,11 @@ fn find_command(root: &Path, query: &str, k: usize, json: bool, no_color: bool) 
     // a question mark ends a question, it does not make the words a regex
     let query = if query.contains(' ') { query.trim_end().strip_suffix('?').unwrap_or(query) } else { query };
     if looks_like_regex(query) {
-        let q = Query { pattern: Pattern { text: query.to_string(), mode: Mode::Regex, case: Case::Smart, ..Pattern::default() }, ..Query::default() };
+        let q = Query {
+            pattern: Pattern { text: query.to_string(), mode: Mode::Regex, case: Case::Smart, ..Pattern::default() },
+            first_in_path_order: true,
+            ..Query::default()
+        };
         let r = grep_command(
             q,
             Files::walk(vec![root.to_path_buf()]),
@@ -2024,6 +2172,7 @@ fn find_command(root: &Path, query: &str, k: usize, json: bool, no_color: bool) 
                 indexed: false,
                 update: false,
                 under: None,
+                page: None,
             },
         );
         // nothing grepped, or not a valid regex: words with punctuation, for the ranked search
@@ -2034,13 +2183,17 @@ fn find_command(root: &Path, query: &str, k: usize, json: bool, no_color: bool) 
         }
     }
     if has_index || small_repo() {
-        let mut s = open_fresh(root)?;
-        let hits = s.recovering(|s| s.search(query, k, true))?;
+        let op = Op::Search { query: query.to_string(), alt: Vec::new(), k, snippets: true };
+        let crate::ops::Answer::Hits { hits, .. } = open_fresh(root)?.run_as_is(&op)? else { unreachable!("a search answers hits") };
         print_hits(&hits, &[query.to_string()], false, json)?;
         return Ok(if hits.is_empty() { 1 } else { 0 });
     }
     eprintln!("[scrutate] no index for this large repository: identifier search (run `scrutate index` for ranked results)");
-    let q = Query { pattern: Pattern { text: query.to_string(), mode: Mode::Identifier, case: Case::Smart, ..Pattern::default() }, ..Query::default() };
+    let q = Query {
+        pattern: Pattern { text: query.to_string(), mode: Mode::Identifier, case: Case::Smart, ..Pattern::default() },
+        first_in_path_order: true,
+        ..Query::default()
+    };
     grep_command(
         q,
         Files::walk(vec![root.to_path_buf()]),
@@ -2056,6 +2209,7 @@ fn find_command(root: &Path, query: &str, k: usize, json: bool, no_color: bool) 
             indexed: false,
             update: false,
             under: None,
+            page: None,
         },
     )
 }
@@ -2086,10 +2240,8 @@ fn batch_command(root: &Path, file: &Path, features: bool, timing: bool) -> Resu
             // any operation, named and given arguments as an MCP tool call is
             let rec = match Op::from_tool(tool, &req).and_then(|op| s.run_as_is(&op)) {
                 Ok(answer) => {
-                    let mut rec = serde_json::json!({"op": tool, "result": answer.json()});
-                    if let Some(stop) = answer.stopped() {
-                        rec["stopped_at"] = serde_json::json!(stop.at);
-                    }
+                    let mut rec = answer.envelope();
+                    rec["op"] = serde_json::json!(tool);
                     rec
                 }
                 Err(e) => serde_json::json!({"op": tool, "error": e.to_string()}),
@@ -2125,9 +2277,8 @@ fn batch_command(root: &Path, file: &Path, features: bool, timing: bool) -> Resu
                 rec.insert(format!("{}_ids", source.name()), serde_json::json!(c.ids(source)));
             }
         } else {
-            let mut qs = vec![query.clone()];
-            qs.extend(alt.iter().cloned());
-            let hits = s.recovering(|s| if alt.is_empty() { s.search(&query, k, false) } else { s.search_many(&qs, k, false) })?;
+            let op = Op::Search { query: query.clone(), alt, k, snippets: false };
+            let crate::ops::Answer::Hits { hits, .. } = s.run_as_is(&op)? else { unreachable!("a search answers hits") };
             rec.insert("hits".into(), hits_json(&hits));
         }
         if timing {
@@ -2296,7 +2447,7 @@ mod tests {
 
     /// What clap makes of `scrutate ARGS`, as `plain_grep` answers.
     fn clap_grep(args: &[String]) -> Option<(bool, super::GrepArgs)> {
-        let super::GrepCli { root, no_color, cmd: super::GrepCmd::Grep(g) } = super::GrepCli::try_parse_from(args).ok()?;
+        let super::GrepCli { root, no_color, cmd: super::GrepCmd::Grep(g), .. } = super::GrepCli::try_parse_from(args).ok()?;
         assert_eq!(root, std::path::PathBuf::from("."));
         Some((no_color, g))
     }

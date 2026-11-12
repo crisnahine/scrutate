@@ -32,7 +32,13 @@ impl Repo {
     fn json(&self, args: &[&str]) -> serde_json::Value {
         let (code, out) = self.run(args);
         assert_eq!(code, 0, "{out}");
-        serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"))
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"));
+        // an answer leaves in its envelope; `check` prints a report of its own
+        if v["schema"] == 2 {
+            v["result"].clone()
+        } else {
+            v
+        }
     }
     /// (path, line) of every occurrence -> path of the definition it resolved to ("-" = unresolved).
     fn resolved(&self, name: &str) -> BTreeMap<(String, u64), String> {

@@ -118,7 +118,13 @@ impl Repo {
     fn json(&self, args: &[&str]) -> serde_json::Value {
         let (code, out) = self.run(args);
         assert_eq!(code, 0, "{out}");
-        serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"))
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"));
+        // an answer leaves in its envelope; `check` prints a report of its own
+        if v["schema"] == 2 {
+            v["result"].clone()
+        } else {
+            v
+        }
     }
     /// The relative `path:start` of each item of a `callers` or `callees` answer.
     fn names(&self, args: &[&str]) -> Vec<String> {
@@ -336,7 +342,8 @@ public class Main {
     assert_eq!(r.names(&["callers", "p/Util.java:4", "--json"]), ["Main.run", "Main.viaLocal"]);
     let (_, text) = r.run(&["callers", "p/Util.java:4"]);
     assert!(!text.contains("could not"), "{text}");
-    assert_eq!(r.run(&["callers", "p/Main.java:9", "--json"]), (1, "[]\n".to_string()));
+    let (code, out) = r.run(&["callers", "p/Main.java:9", "--json"]);
+    assert_eq!((code, serde_json::from_str::<serde_json::Value>(&out).unwrap()["result"].take()), (1, serde_json::json!([])), "{out}");
 }
 
 #[test]

@@ -490,15 +490,37 @@ pub fn occurrences(
     q: &crate::instant::Query,
     cancel: &std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(Vec<crate::instant::Record>, bool)> {
+    occurrences_in(root, &crate::files::repository_files(root), q, cancel)
+}
+
+/// `occurrences` in the file set `files` of the repository at `root`; a walk of paths as given
+/// (a directory of the repository) names its files from `root`, as the index does.
+pub fn occurrences_in(
+    root: &std::path::Path,
+    files: &crate::instant::Files,
+    q: &crate::instant::Query,
+    cancel: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<(Vec<crate::instant::Record>, bool)> {
     use crate::instant::Record;
     let mut found: Vec<Record> = Vec::new();
-    let mut sink = |r: Record| {
+    let from_root = |p: &mut std::sync::Arc<str>| {
+        if let Ok(rel) = std::path::Path::new(&**p).strip_prefix(root) {
+            *p = crate::instant::slashed(rel.to_string_lossy()).into();
+        }
+    };
+    let mut sink = |mut r: Record| {
+        if files.paths_as_given {
+            match &mut r {
+                Record::Match(h) => from_root(&mut h.path),
+                Record::Note { path, .. } => from_root(path),
+                _ => {}
+            }
+        }
         if matches!(r, Record::Match(_) | Record::Note { .. }) {
             found.push(r)
         }
     };
-    let files = crate::files::repository_files(root);
-    let stats = crate::instant::search(q, &files, std::sync::Arc::clone(cancel), crate::instant::Output::Records(&mut sink))?;
+    let stats = crate::instant::search(q, files, std::sync::Arc::clone(cancel), crate::instant::Output::Records(&mut sink))?;
     found.sort_by(|a, b| a.path().cmp(b.path()).then(a.order().cmp(&b.order())));
     Ok((found, stats.cancelled))
 }
@@ -531,8 +553,8 @@ pub fn group_by_symbol(ix: &Index, records: Vec<crate::instant::Record>) -> Resu
 
 /// An Engine A search of the repository with its matches grouped by enclosing symbol: the grep an
 /// agent asks for (MCP `grep_code`). It stops when the call is cancelled.
-pub fn grouped_grep(s: &Searcher, q: &crate::instant::Query) -> Result<(Vec<RefGroup>, bool)> {
-    let (found, truncated) = occurrences(&s.ix.root, q, &s.cancel)?;
+pub fn grouped_grep(s: &Searcher, q: &crate::instant::Query, files: &crate::instant::Files) -> Result<(Vec<RefGroup>, bool)> {
+    let (found, truncated) = occurrences_in(&s.ix.root, files, q, &s.cancel)?;
     Ok((group_by_symbol(&s.ix, found)?, truncated))
 }
 
@@ -565,7 +587,7 @@ pub fn references(s: &Searcher, name: &str, max_results: u64) -> Result<Referenc
     let bare = bare_name(s, name)?;
     let definitions = s.ix.definitions(&bare)?;
     let callers = s.callers(name, 200)?;
-    let (groups, truncated) = grouped_grep(s, &crate::resolve::name_search(&bare, max_results))?;
+    let (groups, truncated) = grouped_grep(s, &crate::resolve::name_search(&bare, max_results), &crate::files::repository_files(&s.ix.root))?;
     Ok(References { definitions, callers, groups, truncated })
 }
 

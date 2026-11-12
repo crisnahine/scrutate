@@ -69,8 +69,16 @@ fn tool_table() -> Value {
              "query": {"type": "string"},
              "alt_queries": {"type": ["array", "null"], "items": {"type": "string"}, "default": null},
              "k": {"type": "integer", "default": ops::SEARCH_K}}, "required": ["query"]}},
-        {"name": "grep_code", "description": "Exact regex search of the files the index holds: hidden ones such as .github/ included; ignored files, .git/ and dependency or cache directories such as node_modules/ not (case-sensitive; (?i) in the pattern for any case), matching lines grouped by the enclosing function/class.",
-         "inputSchema": {"type": "object", "properties": {"pattern": {"type": "string"}, "max_results": {"type": "integer", "default": ops::GREP_MAX}}, "required": ["pattern"]}},
+        {"name": "grep_code", "description": "Exact search of the files the index holds: hidden ones such as .github/ included; ignored files, .git/ and dependency or cache directories such as node_modules/ not. Matching lines are grouped by the enclosing function/class. `mode` identifier finds every casing of a name (refreshToken, refresh_token, REFRESH_TOKEN); fuzzy allows `max_edits` typos; `path` keeps one file or directory and `globs` keep files by name (`!` excludes).",
+         "inputSchema": {"type": "object", "properties": {
+             "pattern": {"type": "string"},
+             "mode": {"type": "string", "enum": ["regex", "literal", "identifier", "fuzzy", "fuzzy_regex", "pcre2"], "default": "regex"},
+             "case": {"type": "string", "enum": ["sensitive", "insensitive", "smart"], "default": "sensitive"},
+             "word": {"type": "boolean", "default": false, "description": "whole words only"},
+             "max_edits": {"type": "integer", "default": 1, "description": "edits a fuzzy match may need"},
+             "path": {"type": ["string", "null"], "default": null, "description": "a file or directory of the repository to search under"},
+             "globs": {"type": ["array", "null"], "items": {"type": "string"}, "default": null, "description": "keep the files these globs match, as grep -g (`!` excludes)"},
+             "max_results": {"type": "integer", "default": ops::GREP_MAX}}, "required": ["pattern"]}},
         {"name": "find_symbol", "description": "Where is this function/class/method defined? (`Class.method` works, as do `Class::method`, `Class#method` and a location from another answer).",
          "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "limit": {"type": "integer", "default": ops::SYMBOL_LIMIT}}, "required": ["name"]}},
         {"name": "callers", "description": "Which functions call this function?",
@@ -112,7 +120,7 @@ pub struct Called {
 impl Called {
     /// A sentence in place of an answer.
     fn note(text: String, is_error: bool) -> Called {
-        let structured = json!({"schema": ops::SCHEMA, "complete": false, "result": null, "text": text});
+        let structured = json!({"schema": ops::ANSWER_SCHEMA, "complete": false, "result": null, "text": text});
         Called { text, structured, is_error }
     }
 }

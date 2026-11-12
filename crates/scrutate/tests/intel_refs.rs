@@ -67,7 +67,13 @@ impl Repo {
     fn json(&self, args: &[&str]) -> Value {
         let (code, out, err) = self.exec(args);
         assert_eq!(code, 0, "{args:?}: {out}{err}");
-        serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"))
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"));
+        // an answer leaves in its envelope; `check` prints a report of its own
+        if v["schema"] == 2 {
+            v["result"].clone()
+        } else {
+            v
+        }
     }
 
     /// `path:line` of every occurrence -> path of the definition it resolved to ("-" = unresolved).
@@ -557,9 +563,9 @@ fn every_use_on_one_long_line_is_counted_up_to_max_results() {
     // every reference repeats the long line: more output than a pipe holds, so read it as it comes
     let run = |args: &[&str]| String::from_utf8(Command::new(BIN).args(args).current_dir(&r.root).output().unwrap().stdout).unwrap();
     let count = |v: &Value| v["definitions"][0]["references"].as_array().unwrap().iter().filter(|o| o["path"] == "min.js").count();
-    let v: Value = serde_json::from_str(&run(&["refs", "g", "--json", "--max-results", "5000"])).unwrap();
+    let v: Value = serde_json::from_str::<Value>(&run(&["refs", "g", "--json", "--max-results", "5000"])).unwrap()["result"].take();
     assert_eq!((count(&v), &v["truncated"]), (2001, &json!(false)));
-    let v: Value = serde_json::from_str(&run(&["refs", "g", "--json", "--max-results", "100"])).unwrap();
+    let v: Value = serde_json::from_str::<Value>(&run(&["refs", "g", "--json", "--max-results", "100"])).unwrap()["result"].take();
     assert_eq!(&v["truncated"], &json!(true));
     assert!(count(&v) < 100, "{}", count(&v));
     assert!(run(&["refs", "g", "--max-results", "100"]).contains("stopped at max_results=100"));
@@ -569,7 +575,7 @@ fn every_use_on_one_long_line_is_counted_up_to_max_results() {
     let third = text.lines().find(|l| l.contains("min.js:1:33:")).unwrap();
     assert!(third.contains("...import {g} from \"./lib\";g();g();") || third.contains(": import {g} from \"./lib\";g();g();"), "{third}");
     assert!(third.ends_with("..."), "{third}");
-    let v: Value = serde_json::from_str(&run(&["refs", "g", "--json", "--max-results", "5000"])).unwrap();
+    let v: Value = serde_json::from_str::<Value>(&run(&["refs", "g", "--json", "--max-results", "5000"])).unwrap()["result"].take();
     let uses = v["definitions"][0]["references"].as_array().unwrap();
     let long = uses.iter().find(|o| o["path"] == "min.js" && o["column"] == 4001).unwrap();
     assert_eq!(long["cut"], json!(true), "{long}");
@@ -994,7 +1000,7 @@ fn deps_of(r: &Repo, path: &str) -> Vec<(String, String)> {
 fn importers(r: &Repo, target: &str) -> Vec<String> {
     let (_, out, _) = r.exec(&["rdeps", target, "--json"]);
     let v: Value = serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"));
-    let mut files: Vec<String> = v.as_array().unwrap().iter().map(|d| d["path"].as_str().unwrap().to_string()).collect();
+    let mut files: Vec<String> = v["result"].as_array().unwrap().iter().map(|d| d["path"].as_str().unwrap().to_string()).collect();
     files.sort();
     files.dedup();
     files

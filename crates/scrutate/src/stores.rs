@@ -277,7 +277,7 @@ impl Repo {
     /// Run one operation on an index refreshed as `refresh` does (operations that do not read
     /// the index skip that). A `reindex` keeps the text index too, when there is one.
     pub fn run(&mut self, op: &ops::Op, min_interval: f64) -> Result<ops::Answer> {
-        if !matches!(op, ops::Op::Read { symbol: None, .. } | ops::Op::Reindex { .. }) {
+        if op.reads_index() {
             self.refresh(min_interval)?;
         }
         self.run_as_is(op)

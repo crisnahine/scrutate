@@ -672,6 +672,32 @@ First release.
   either index is recovered by one rule, the language server's included.
 - `tsquery` keys its cache by the content hash the code index records, so a warm run reads no
   file whose stat the index holds as current. Files an earlier build cached are parsed once more.
+- The CLI's index commands, `search` and `find` run their operations through `Repo`, so they
+  check the files an answer cites and recover from a damaged index as the MCP server does, and
+  the language server asks the operations for references, document symbols and the definitions
+  of a name.
+- Breaking, the JSON of the index commands (schema 2): `symbol`, `callers`, `callees`, `refs`,
+  `outline`, `deps`, `rdeps`, `similar`, `dupes`, `read`, `search` and the ranked `find` print
+  `{"schema": 2, "result": ...}` with `stopped_at` when the answer stopped at its limit, where
+  they printed the answer alone. What they printed is now under `result`, unchanged, except that
+  `refs --json` and the `grep_code` result lose their own `"schema": 1` to the envelope. A `batch`
+  record gains `"schema": 2` beside `op`, `result` and `stopped_at`, and the MCP structured result
+  says `"schema": 2`. Engine A's JSON Lines, the error records, `tsquery --json`, `check`,
+  `stats`, `languages` and `config` keep their shapes and schema 1. The VS Code and Neovim
+  plugins read `result`.
+- `scrutate read PATH [--start N] [--end N]` and `read --symbol NAME`: the MCP `read_code` tool
+  on the command line, with its arguments, checks and answers.
+- The MCP `grep_code` tool takes `mode` (`regex`, `literal`, `identifier`, `fuzzy`,
+  `fuzzy_regex`, `pcre2`, with `max_edits`), `case` (`sensitive`, `insensitive`, `smart`),
+  `word`, `path` (a file or directory of the repository) and `globs`; it was a case-sensitive
+  regex over every file the index holds.
+- `grep --max-bytes N` (`SCRUTATE_GREP_MAX_BYTES`, `[grep] max_bytes`) bounds a grep's text:
+  whole lines in path order, closing line included, then how many lines are left and the
+  `--offset` that continues; exit code as for the whole answer. Without it the answer stays
+  whole, so pipelines see every line (on this repository `grep -n "fn " .` printed 285 KB; with
+  `--max-bytes 4000`, 4,000 bytes or fewer).
+- `find` lists the lines of its Engine A search in path order, as it said; they came in the
+  order the threads finished.
 
 ### Product
 - The reference package lost its command line, MCP server and agent (`scrutate_ref/cli.py`,

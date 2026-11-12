@@ -1,7 +1,7 @@
 //! Every question a front end can ask of the index: its arguments with their defaults and limits,
 //! when the index is refreshed first, and a typed answer with one text form and one JSON form.
-//! The CLI, the MCP server, `batch` and the Python bindings parse into `Op` and render `Answer`;
-//! none of them holds a default, a limit or an output format of its own.
+//! The CLI, the MCP server, `batch`, the Python bindings and the language server parse into `Op`
+//! and render `Answer`; none of them holds a default, a limit or an output format of its own.
 
 use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Value};
@@ -12,12 +12,16 @@ use crate::intel::{Capture, DupGroup, RefGroup, References};
 use crate::names::{Dependency, Names, CALLERS_RESOLVED};
 
 use crate::fmt::{echo, shown};
+use crate::instant::{Case, Files, Mode, Pattern};
 use crate::resolve::Resolved;
 use crate::search::{Hit, Searcher};
 use crate::text::query_words;
 
-/// Version of every JSON record scrutate emits.
+/// Version of Engine A's JSON Lines and of the error records.
 pub const SCHEMA: u32 = 1;
+/// Version of the one JSON envelope every answer leaves in (`Answer::envelope`): the CLI's
+/// `--json` of an index command, a `batch` record and the MCP server's structured result.
+pub const ANSWER_SCHEMA: u32 = 2;
 
 pub const SEARCH_K: usize = 8;
 /// Alternative phrasings one search fuses at most: each costs a full search, and fusion gains
@@ -46,13 +50,17 @@ pub const READ_DEFINITIONS: usize = 20;
 pub const AGENT_BYTES: usize = 24_000;
 
 pub enum Op {
+    /// `snippets`: each hit carries its text (off for a caller that reads locations only).
     Search {
         query: String,
         alt: Vec<String>,
         k: usize,
+        snippets: bool,
     },
+    /// An Engine A search of the repository's files, its lines grouped by enclosing symbol.
     Grep {
-        pattern: String,
+        pattern: Pattern,
+        scope: Scope,
         max_results: u64,
     },
     Symbol {
@@ -124,6 +132,7 @@ impl Op {
         let natural = |k: &str| arg(k).map(|v| v.as_u64().ok_or_else(|| wrong(k, "a non-negative integer"))).transpose();
         let count = |k: &str, default: u64, max: u64| natural(k).map(|n| n.unwrap_or(default).clamp(1, max));
         let line = |k: &str| arg(k).map(|v| v.as_i64().ok_or_else(|| wrong(k, "an integer (a line number)"))).transpose();
+        let flag = |k: &str| arg(k).map(|v| v.as_bool().ok_or_else(|| wrong(k, "a boolean (true or false)"))).transpose().map(|b| b.unwrap_or(false));
         // read by the server, not here, but checked with the rest
         natural("max_bytes")?;
         natural("offset")?;
@@ -141,8 +150,28 @@ impl Op {
                         .collect(),
                 },
                 k: count("k", SEARCH_K as u64, 100)? as usize,
+                snippets: true,
             },
-            "grep_code" => Op::Grep { pattern: text("pattern")?, max_results: count("max_results", GREP_MAX, 5000)? },
+            "grep_code" => Op::Grep {
+                pattern: Pattern {
+                    text: text("pattern")?,
+                    mode: mode_named(opt_text("mode")?.as_deref().unwrap_or("regex"), natural("max_edits")?.unwrap_or(1).min(u8::MAX as u64) as u8)?,
+                    case: case_named(opt_text("case")?.as_deref().unwrap_or("sensitive"))?,
+                    word: flag("word")?,
+                    ..Pattern::default()
+                },
+                scope: Scope {
+                    path: opt_text("path")?,
+                    globs: match arg("globs") {
+                        None => Vec::new(),
+                        Some(v) => v
+                            .as_array()
+                            .and_then(|a| a.iter().map(|x| x.as_str().map(str::to_string)).collect::<Option<Vec<_>>>())
+                            .ok_or_else(|| wrong("globs", "an array of strings"))?,
+                    },
+                },
+                max_results: count("max_results", GREP_MAX, 5000)?,
+            },
             "find_symbol" => Op::Symbol { name: text("name")?, limit: count("limit", SYMBOL_LIMIT as u64, 500)? as usize },
             "callers" => Op::Callers { name: text("name")?, limit: count("limit", CALLERS_LIMIT as u64, 500)? as usize },
             "callees" => Op::Callees { name: text("name")?, limit: count("limit", CALLEES_LIMIT as u64, 500)? as usize },
@@ -165,12 +194,7 @@ impl Op {
                 if name.trim().is_empty() {
                     bail!("name is empty");
                 }
-                Op::Refs {
-                    name,
-                    max_results: count("max_results", REFS_MAX, 5000)?,
-                    textual: arg("textual").map(|v| v.as_bool().ok_or_else(|| wrong("textual", "a boolean (true or false)"))).transpose()?.unwrap_or(false),
-                    def: opt_text("def")?,
-                }
+                Op::Refs { name, max_results: count("max_results", REFS_MAX, 5000)?, textual: flag("textual")?, def: opt_text("def")? }
             }
             "similar_code" => Op::Similar { target: text("target")?, k: count("k", SIMILAR_K as u64, 50)? as usize },
             "duplicates" => Op::Dupes {
@@ -182,15 +206,19 @@ impl Op {
                 limit: count("limit", DUPES_LIMIT as u64, 500)? as usize,
             },
             "structural_search" => Op::Tsquery { lang: text("lang")?, query: text("query")?, limit: count("limit", TSQUERY_LIMIT as u64, 5000)? as usize },
-            "reindex" => Op::Reindex {
-                force: arg("force").map(|v| v.as_bool().ok_or_else(|| wrong("force", "a boolean (true or false)"))).transpose()?.unwrap_or(false),
-            },
+            "reindex" => Op::Reindex { force: flag("force")? },
             _ => bail!("unknown tool {}", echo(name)),
         })
     }
 }
 
 impl Op {
+    /// Whether the index is brought up to date before this operation: a line range of a file
+    /// reads the file alone, and a reindex is the update.
+    pub fn reads_index(&self) -> bool {
+        !matches!(self, Op::Read { symbol: None, .. } | Op::Reindex { .. })
+    }
+
     /// Repository files the arguments name (a path, or the file of a location), whose index
     /// entries an answer depends on even when it cites nothing.
     pub fn named_paths(&self) -> Vec<String> {
@@ -204,6 +232,62 @@ impl Op {
             Op::Refs { def: Some(def), .. } => vec![loc(def).unwrap_or_else(|| plain(def))],
             _ => Vec::new(),
         }
+    }
+}
+
+/// The matching mode a front end names: `regex`, `literal`, `identifier`, `fuzzy` and
+/// `fuzzy_regex` (within `max_edits` edits) or `pcre2`.
+pub fn mode_named(name: &str, max_edits: u8) -> Result<Mode> {
+    Ok(match name {
+        "regex" => Mode::Regex,
+        "literal" => Mode::Literal,
+        "identifier" => Mode::Identifier,
+        "pcre2" => Mode::Pcre2,
+        "fuzzy" => Mode::Fuzzy { max_edits },
+        "fuzzy_regex" => Mode::FuzzyRegex { max_edits },
+        other => bail!("unknown mode {}: regex, literal, identifier, pcre2, fuzzy or fuzzy_regex", echo(other)),
+    })
+}
+
+/// The case rule a front end names: `sensitive`, `insensitive` or `smart`.
+pub fn case_named(name: &str) -> Result<Case> {
+    Ok(match name {
+        "sensitive" => Case::Sensitive,
+        "insensitive" => Case::Insensitive,
+        "smart" => Case::Smart,
+        other => bail!("unknown case {}: sensitive, insensitive or smart", echo(other)),
+    })
+}
+
+/// Which files of the repository a grep reads: the ones a search of the repository covers
+/// (`files::repository_files`), under `path` (a file or directory, from the root) and kept by
+/// `globs` (as `grep -g`: `!` excludes).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Scope {
+    pub path: Option<String>,
+    pub globs: Vec<String>,
+}
+
+impl Scope {
+    fn files(&self, root: &std::path::Path) -> Result<Files> {
+        let mut f = crate::files::repository_files(root);
+        // the repository's own exclusions come last, where a later glob wins, so no glob of the caller brings them back
+        let skip = std::mem::take(&mut f.globs);
+        f.globs = self.globs.iter().cloned().chain(skip).collect();
+        let path = self.path.as_deref().map(|p| p.trim_start_matches("./")).filter(|p| !p.is_empty() && *p != ".");
+        if let Some(p) = path {
+            let p = crate::fmt::unshown(p);
+            if !inside(root, &p) {
+                bail!("path outside repo");
+            }
+            // a link that leaves the repository reads as a missing path, as read_code answers it
+            match std::fs::canonicalize(root.join(&*p)) {
+                Ok(c) if c.starts_with(root) => f.paths = crate::instant::Paths::Walk(vec![root.join(&*p)]),
+                _ => bail!("no such file or directory in the repository: {}", echo(&p)),
+            }
+            f.paths_as_given = true;
+        }
+        Ok(f)
     }
 }
 
@@ -277,6 +361,15 @@ pub fn output_schema(tool: &str) -> Value {
         json!({"schema": ty("integer"), "complete": complete, "result": {"anyOf": [result, ty("null")]}, "text": ty("string"), "stopped_at": stopped}),
         &["schema", "complete", "result"],
     )
+}
+
+/// An answer's JSON form in the envelope every front end prints.
+pub fn envelope(result: Value, stopped: Option<Stop>) -> Value {
+    let mut v = json!({"schema": ANSWER_SCHEMA, "result": result});
+    if let Some(stop) = stopped {
+        v["stopped_at"] = json!(stop.at);
+    }
+    v
 }
 
 /// Where an answer stopped because it reached its limit, and what to pass to see more.
@@ -371,21 +464,22 @@ pub enum Answer {
 /// Run one operation on the index as it is; `Repo::run` brings the index up to date first.
 pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
     Ok(match op {
-        Op::Search { query, alt, k } => {
+        Op::Search { query, alt, k, snippets } => {
             let mut qs = vec![query.clone()];
             qs.extend(alt.iter().filter(|a| !a.is_empty() && *a != query).cloned());
-            let hits = if qs.len() == 1 { s.search(query, *k, true)? } else { s.search_many(&qs, *k, true)? };
+            let hits = if qs.len() == 1 { s.search(query, *k, *snippets)? } else { s.search_many(&qs, *k, *snippets)? };
             Answer::Hits { hits, words: qs.iter().flat_map(|q| query_words(q)).collect(), snippet: true, stopped: None }
         }
-        Op::Grep { pattern, max_results } => {
+        Op::Grep { pattern, scope, max_results } => {
             let q = crate::instant::Query {
-                pattern: crate::instant::Pattern { text: pattern.clone(), ..Default::default() },
+                pattern: pattern.clone(),
                 max_results: Some(*max_results),
                 // a capped answer is the same on every call, so paging does not repeat or skip lines
                 first_in_path_order: true,
                 ..Default::default()
             };
-            let (groups, stopped) = crate::intel::grouped_grep(s, &q)?;
+            let files = scope.files(&s.ix.root)?;
+            let (groups, stopped) = crate::intel::grouped_grep(s, &q, &files)?;
             Answer::Grep { groups, stopped_at: stopped.then_some(*max_results) }
         }
         Op::Symbol { name, limit } => {
@@ -745,6 +839,8 @@ struct Parts {
     items: Vec<String>,
     tail: String,
     noun: &'static str,
+    /// items after `items` that were counted and not kept
+    rest: usize,
     /// the items are lines of a file: its path, the number of the first, and the file's length
     /// (None: unknown, more lines follow)
     file: Option<(String, i64, Option<i64>)>,
@@ -754,7 +850,12 @@ const CUT_ITEM: &str = "(this item is cut: pass a larger max_bytes to see all of
 
 /// `items` (one result each, possibly of several lines) as `Answer::text_within` pages them.
 pub fn paged(items: Vec<String>, noun: &'static str, max_bytes: usize, offset: usize) -> String {
-    Parts { items, noun, ..Parts::default() }.within(max_bytes, offset)
+    paged_counted(items, 0, noun, max_bytes, offset)
+}
+
+/// `paged` for a caller that kept the items up to what can be shown and counted the `rest`.
+pub fn paged_counted(items: Vec<String>, rest: usize, noun: &'static str, max_bytes: usize, offset: usize) -> String {
+    Parts { items, rest, noun, ..Parts::default() }.within(max_bytes, offset)
 }
 
 impl Parts {
@@ -798,7 +899,8 @@ impl Parts {
                 break;
             }
         }
-        let next = offset.min(self.items.len()) + count;
+        let all = self.items.len() + self.rest;
+        let next = offset.min(all) + count;
         if let Some((path, first, total)) = &self.file {
             let last = first + next as i64 - 1;
             if count > 0 && total.is_none_or(|t| last < t) {
@@ -809,12 +911,12 @@ impl Parts {
                 };
                 push(&mut out, &format!("(lines {}-{last} {of}: read_code path={path} start={} for more)", first + offset as i64, last + 1));
             }
-        } else if next < self.items.len() {
-            push(&mut out, &format!("({} more {} not shown: call again with offset={next}, or narrow the request)", self.items.len() - next, self.noun));
+        } else if next < all {
+            push(&mut out, &format!("({} more {} not shown: call again with offset={next}, or narrow the request)", all - next, self.noun));
         }
-        if next >= self.items.len() {
+        if next >= all {
             if offset > 0 && count == 0 {
-                push(&mut out, &format!("(no more {}: {} in all)", self.noun, self.items.len()));
+                push(&mut out, &format!("(no more {}: {all} in all)", self.noun));
             }
             push(&mut out, &self.tail);
         }
@@ -1043,13 +1145,19 @@ impl Answer {
     /// bytes that starts at item `offset`: the whole JSON form when both together fit one and a
     /// half times `max_bytes`, else `null` (the text then pages through the answer).
     pub fn structured(&self, text_len: usize, max_bytes: usize, offset: usize) -> Value {
-        let result = self.json();
-        let complete = offset == 0 && text_len + result.to_string().len() <= max_bytes.saturating_add(max_bytes / 2);
-        let mut v = json!({"schema": SCHEMA, "complete": complete, "result": if complete { result } else { Value::Null }});
-        if let Some(stop) = self.stopped() {
-            v["stopped_at"] = json!(stop.at);
+        let mut v = self.envelope();
+        let complete = offset == 0 && text_len + v["result"].to_string().len() <= max_bytes.saturating_add(max_bytes / 2);
+        v["complete"] = json!(complete);
+        if !complete {
+            v["result"] = Value::Null;
         }
         v
+    }
+
+    /// The one JSON form every front end gives: `{"schema", "result"}`, and `stopped_at` when
+    /// the answer stopped at its limit with more left.
+    pub fn envelope(&self) -> Value {
+        envelope(self.json(), self.stopped())
     }
 
     /// The limit the answer stopped at, when there were more.
@@ -1076,7 +1184,6 @@ impl Answer {
             Answer::Hits { hits, .. } | Answer::Callers { hits, .. } => hits_json(hits),
             Answer::Callees { resolved, external, .. } => json!({"resolved": hits_json(resolved), "external": external}),
             Answer::Grep { groups, stopped_at } => json!({
-                "schema": SCHEMA,
                 "groups": groups.iter().map(|g| with_note(json!({
                     "symbol": g.symbol.as_ref().map(|c| json!({"path": c.path, "start": c.start, "end": c.end, "kind": c.kind, "name": symbol_name(c)})),
                     "path": g.path,
@@ -1100,7 +1207,6 @@ impl Answer {
             Answer::Deps { deps, .. } => serde_json::to_value(deps).unwrap_or_default(),
             Answer::Rdeps { rows, .. } => rows.iter().map(|(p, l, m)| json!({"path": p, "line": l, "module": m})).collect(),
             Answer::Refs { name, refs, .. } => json!({
-                "schema": SCHEMA,
                 "name": name,
                 "definitions": refs.definitions.iter().map(chunk_json).collect::<Vec<_>>(),
                 "callers": hits_json(&refs.callers),
@@ -1124,7 +1230,6 @@ impl Answer {
                 let occurrence =
                     |o: &crate::resolve::Occurrence| line_of(o, json!({"path": o.path, "line": o.line, "column": o.column, "via": o.resolution.ok().map(|x| x.1)}));
                 let mut v = json!({
-                    "schema": SCHEMA,
                     "name": name,
                     "definitions": refs.definitions.iter().filter(|d| only.is_none_or(|id| d.id == id)).map(|c| json!({
                         "path": c.path, "start": c.start, "end": c.end, "kind": c.kind, "qualname": c.qualname,
@@ -1185,7 +1290,17 @@ mod tests {
     fn a_tool_call_without_optional_arguments_gets_the_defaults() {
         let op = |tool: &str, args: Value| Op::from_tool(tool, &args).unwrap();
         assert!(matches!(op("search_code", json!({"query": "q"})), Op::Search { k: SEARCH_K, .. }));
-        assert!(matches!(op("grep_code", json!({"pattern": "p"})), Op::Grep { max_results: GREP_MAX, .. }));
+        assert!(
+            matches!(op("grep_code", json!({"pattern": "p"})), Op::Grep { max_results: GREP_MAX, ref pattern, ref scope } if pattern.mode == Mode::Regex && pattern.case == Case::Sensitive && *scope == Scope::default())
+        );
+        let grep = op("grep_code", json!({"pattern": "p", "mode": "fuzzy", "max_edits": 2, "case": "smart", "word": true, "path": "src", "globs": ["*.rs"]}));
+        assert!(
+            matches!(grep, Op::Grep { ref pattern, ref scope, .. } if pattern.mode == Mode::Fuzzy { max_edits: 2 } && pattern.case == Case::Smart && pattern.word && scope.path.as_deref() == Some("src") && scope.globs == ["*.rs"])
+        );
+        assert_eq!(
+            Op::from_tool("grep_code", &json!({"pattern": "p", "mode": "glob"})).err().unwrap().to_string(),
+            "unknown mode glob: regex, literal, identifier, pcre2, fuzzy or fuzzy_regex"
+        );
         assert!(matches!(op("find_symbol", json!({"name": "n"})), Op::Symbol { limit: SYMBOL_LIMIT, .. }));
         assert!(matches!(op("callers", json!({"name": "n"})), Op::Callers { limit: CALLERS_LIMIT, .. }));
         assert!(matches!(op("callees", json!({"name": "n"})), Op::Callees { limit: CALLEES_LIMIT, .. }));

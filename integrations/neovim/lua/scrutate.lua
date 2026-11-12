@@ -81,7 +81,7 @@ end
 
 function M.search(query)
   local out, dir = run({ "search", "-k", tostring(M.config.results), "--json", "--", query })
-  if out then to_qf(vim.json.decode(out ~= "" and out or "[]"), dir) end
+  if out then to_qf(out ~= "" and vim.json.decode(out).result or {}, dir) end
 end
 
 function M.grep(pattern)
@@ -97,12 +97,12 @@ end
 
 function M.symbol(name)
   local out, dir = run({ "symbol", "--json", "--", name })
-  if out then to_qf(vim.json.decode(out ~= "" and out or "[]"), dir) end
+  if out then to_qf(out ~= "" and vim.json.decode(out).result or {}, dir) end
 end
 
 function M.callers(name)
   local out, dir = run({ "callers", "--json", "--", name })
-  if out then to_qf(vim.json.decode(out ~= "" and out or "[]"), dir) end
+  if out then to_qf(out ~= "" and vim.json.decode(out).result or {}, dir) end
 end
 
 function M.setup(opts)

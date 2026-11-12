@@ -172,6 +172,13 @@ fn config_file_sets_defaults_but_command_line_wins() {
     assert!(out.contains(".scrutate.toml") && out.contains("SCRUTATE_GREP_HIDDEN=true"), "{out}");
 }
 
+/// The JSON form of an index command's answer, out of the envelope every answer leaves in.
+fn answer(out: &str) -> serde_json::Value {
+    let mut v: serde_json::Value = serde_json::from_str(out).unwrap_or_else(|e| panic!("{e}: {out}"));
+    assert_eq!(v["schema"], 2, "{out}");
+    v["result"].take()
+}
+
 #[test]
 fn index_search_symbol_refs_outline_deps() {
     let r = python_repo("intel");
@@ -180,24 +187,24 @@ fn index_search_symbol_refs_outline_deps() {
     assert!(out.contains("13 files"), "{out}");
     let (code, out, _) = r.run(&["search", "build a widget with a size", "-k", "3", "--json"]);
     assert_eq!(code, 0);
-    let hits: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
+    let hits: Vec<serde_json::Value> = serde_json::from_value(answer(&out)).unwrap();
     assert!(!hits.is_empty() && hits[0]["name"].as_str().unwrap().starts_with("make_widget_"), "{out}");
     let (code, out, _) = r.run(&["symbol", "make_widget_4"]);
     assert_eq!(code, 0);
     assert!(out.contains("pkg/m4.py"), "{out}");
     let (code, out, _) = r.run(&["callers", "make_widget_4", "--json"]);
     assert_eq!(code, 0);
-    let callers: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
+    let callers: Vec<serde_json::Value> = serde_json::from_value(answer(&out)).unwrap();
     let names: Vec<&str> = callers.iter().map(|h| h["name"].as_str().unwrap()).collect();
     assert!(names.contains(&"use_4"), "{names:?}");
     let (code, out, _) = r.run(&["refs", "make_widget_4", "--json"]);
     assert_eq!(code, 0);
-    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let v: serde_json::Value = serde_json::from_value(answer(&out)).unwrap();
     assert_eq!(v["definitions"].as_array().unwrap().len(), 1);
     assert!(v["definitions"][0]["references"].as_array().unwrap().len() >= 2, "{out}");
     let (code, out, _) = r.run(&["refs", "make_widget_4", "--textual", "--json"]);
     assert_eq!(code, 0);
-    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let v: serde_json::Value = serde_json::from_value(answer(&out)).unwrap();
     assert!(v["references"].as_array().unwrap().len() >= 2, "{out}");
     let (code, out, _) = r.run(&["outline", "pkg/m4.py"]);
     assert_eq!(code, 0);
@@ -210,7 +217,7 @@ fn index_search_symbol_refs_outline_deps() {
     assert!(out.contains("pkg/m4.py"), "{out}");
     let (code, out, _) = r.run(&["dupes", "--min-tokens", "3", "--threshold", "0.6", "--json"]);
     assert_eq!(code, 0, "{out}");
-    let groups: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
+    let groups: Vec<serde_json::Value> = serde_json::from_value(answer(&out)).unwrap();
     let widgets = |g: &serde_json::Value| {
         g["members"].as_array().is_some_and(|m| m.len() == 12 && m.iter().all(|x| x[1].as_str().is_some_and(|n| n.starts_with("make_widget_"))))
     };
@@ -223,7 +230,7 @@ fn index_search_symbol_refs_outline_deps() {
     assert!(out.contains("near/a.py"), "{out}");
     for most in [u64::MAX.to_string(), (1u64 << 63).to_string()] {
         let (code, out, _) = r.run(&["dupes", "--min-tokens", &most, "--json"]);
-        assert_eq!((code, out.trim()), (1, "[]"), "{most}");
+        assert_eq!((code, answer(&out)), (1, serde_json::json!([])), "{most}");
     }
     std::fs::remove_dir_all(r.root.join("near")).unwrap();
     let (code, out, _) = r.run(&["tsquery", "python", "(function_definition name: (identifier) @n)", "."]);
@@ -255,7 +262,7 @@ fn search_finds_a_python_function_by_the_comment_above_it() {
     r.write("lib/tokens.py", b"def open_session():\n    return 1\n\n\n# Renews the zqvortex lease.\ndef renew(session):\n    return session.renew()\n");
     let (code, out, err) = r.run(&["search", "zqvortex", "-k", "3", "--json"]);
     assert_eq!(code, 0, "{err}");
-    let hits: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
+    let hits: Vec<serde_json::Value> = serde_json::from_value(answer(&out)).unwrap();
     assert!(hits.first().is_some_and(|h| h["path"] == "lib/tokens.py" && h["name"] == "renew"), "{out}");
 }
 
@@ -265,7 +272,7 @@ fn search_finds_a_rust_struct_by_the_doc_comment_above_its_derive() {
     r.write("src/lib.rs", b"pub fn open() {}\n\n/// Holds the zqvortex lease.\n#[derive(Debug, Clone)]\npub struct Lease {\n    id: u32,\n}\n");
     let (code, out, err) = r.run(&["search", "zqvortex", "-k", "3", "--json"]);
     assert_eq!(code, 0, "{err}");
-    let hits: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
+    let hits: Vec<serde_json::Value> = serde_json::from_value(answer(&out)).unwrap();
     assert!(hits.first().is_some_and(|h| h["path"] == "src/lib.rs" && h["name"] == "Lease"), "{out}");
 }
 
@@ -276,7 +283,7 @@ fn search_finds_a_documented_function_once_when_its_comment_lines_carry_no_mark(
     r.write("a.c", b"int open(void) { return 1; }\n\n/* Totals the zqvortex ledger.\n   Second line.  */\nint total(void) { return 2; }\n");
     let (code, out, err) = r.run(&["search", "zqvortex", "-k", "5", "--json"]);
     assert_eq!(code, 0, "{err}");
-    let hits: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
+    let hits: Vec<serde_json::Value> = serde_json::from_value(answer(&out)).unwrap();
     let mut got: Vec<_> = hits.iter().map(|h| (h["path"].as_str().unwrap_or(""), h["name"].as_str().unwrap_or(""))).collect();
     got.sort();
     assert_eq!(got, [("a.c", "total"), ("a.vim", "Renew")], "{out}");
@@ -289,7 +296,7 @@ fn search_finds_the_definition_below_a_comment_in_a_language_without_a_grammar()
     r.write("a.f90", b"subroutine first()\nend subroutine first\n\n! Computes the zqvortex sum.\nsubroutine second()\n  call first()\nend subroutine second\n");
     let (code, out, err) = r.run(&["search", "zqvortex", "-k", "5", "--json"]);
     assert_eq!(code, 0, "{err}");
-    let hits: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
+    let hits: Vec<serde_json::Value> = serde_json::from_value(answer(&out)).unwrap();
     let mut got: Vec<_> = hits.iter().map(|h| (h["path"].as_str().unwrap_or(""), h["name"].as_str().unwrap_or(""))).collect();
     got.sort();
     assert_eq!(got, [("a.f90", "second"), ("a.ml", "second")], "{out}");
@@ -306,7 +313,7 @@ fn search_finds_a_line_past_what_a_long_function_keeps_as_one_hit_naming_it() {
     r.write("long.py", src.as_bytes());
     let (code, out, err) = r.run(&["search", "zorblax step", "-k", "5", "--json"]);
     assert_eq!(code, 0, "{err}");
-    let hits: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
+    let hits: Vec<serde_json::Value> = serde_json::from_value(answer(&out)).unwrap();
     assert!(hits.first().is_some_and(|h| h["kind"] == "window" && h["name"] == "very_long"), "{out}");
     let (start, end) = (hits[0]["start"].as_i64().unwrap(), hits[0]["end"].as_i64().unwrap());
     assert!(start <= 451 && 451 <= end && end - start < 50, "the lines of the part that matched: {out}");
@@ -319,7 +326,7 @@ fn search_finds_the_attribute_above_a_rust_handler() {
     r.write("src/lib.rs", b"pub fn open() {}\n\n#[get(\"/users/zqshow\")]\npub fn show() -> u32 {\n    1\n}\n");
     let (code, out, err) = r.run(&["search", "zqshow", "-k", "3", "--json"]);
     assert_eq!(code, 0, "{err}");
-    let hits: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
+    let hits: Vec<serde_json::Value> = serde_json::from_value(answer(&out)).unwrap();
     assert!(hits.first().is_some_and(|h| h["name"] == "show" && h["start"] == 3), "{out}");
 }
 
@@ -330,7 +337,7 @@ fn search_also_merges_repositories() {
     b.write("lib/tokens.py", b"def refresh_expired_token(session):\n    \"\"\"Renew an expired access token.\"\"\"\n    return session.renew()\n");
     let (code, out, _) = run_in(&a.root, &["search", "renew an expired access token", "-k", "3", "--also", b.root.to_str().unwrap(), "--json"], &[]);
     assert_eq!(code, 0, "{out}");
-    let hits: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
+    let hits: Vec<serde_json::Value> = serde_json::from_value(answer(&out)).unwrap();
     let canon = |p: &Path| fs::canonicalize(p).unwrap().to_string_lossy().into_owned();
     assert!(hits.iter().any(|h| h["path"] == "lib/tokens.py" && h["root"] == canon(&b.root)), "the other repository's root in a field: {out}");
     assert!(hits.iter().any(|h| h["path"].as_str().unwrap().starts_with("pkg/") && h["root"] == canon(&a.root)), "{out}");
@@ -346,7 +353,7 @@ fn symbol_callers_and_callees_take_a_limit() {
     for cmd in ["symbol", "callers", "callees"] {
         let (code, out, _) = r.run(&[cmd, "--json", "--limit", "1", "make_widget_4"]);
         assert_eq!(code, 0, "{cmd}");
-        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let v: serde_json::Value = serde_json::from_value(answer(&out)).unwrap();
         let items = v.as_array().or_else(|| v["resolved"].as_array()).map_or(0, |a| a.len());
         assert!(items <= 1, "{cmd}: {out}");
     }
@@ -1611,6 +1618,96 @@ fn json_answers_that_stop_at_their_limit_say_so() {
 }
 
 #[test]
+fn an_index_command_and_a_batch_record_print_one_envelope() {
+    let r = Repo::new("envelope");
+    r.write("a.py", b"def f():\n    pass\n\n\ndef g():\n    return f()\n");
+    r.write("b.py", b"def f():\n    pass\n");
+    r.write("q.jsonl", b"{\"op\": \"find_symbol\", \"name\": \"f\", \"limit\": 1}\n{\"op\": \"outline\", \"path\": \"a.py\"}\n");
+    let (_, out, _) = r.run(&["batch", "q.jsonl"]);
+    let recs: Vec<serde_json::Value> = out.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    for (args, rec) in [(&["symbol", "f", "--limit", "1", "--json"][..], &recs[0]), (&["outline", "a.py", "--json"], &recs[1])] {
+        let (_, out, _) = r.run(args);
+        let mut cli: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let mut rec = rec.clone();
+        assert!(rec.as_object_mut().unwrap().remove("op").is_some_and(|op| op.is_string()), "{rec}");
+        assert_eq!(cli["schema"], 2, "{out}");
+        assert_eq!(cli.take(), rec, "{args:?}");
+    }
+    assert_eq!(recs[0]["stopped_at"], 1, "{out}");
+}
+
+#[test]
+fn read_reads_lines_or_a_definition_as_read_code_does() {
+    let r = Repo::new("read");
+    r.write("src/a.py", b"import os\n\n\ndef f():\n    return 1\n\n\ndef g():\n    return f()\n");
+    let (code, out, _) = r.run(&["read", "src/a.py", "--start", "4", "--end", "5"]);
+    assert_eq!((code, out.as_str()), (0, "    4  def f():\n    5      return 1\n(lines 4-5 of 9 in src/a.py: read_code path=src/a.py start=6 for more)\n"));
+    let (code, out, _) = run_in(&r.root.join("src"), &["read", "a.py", "--start", "8"], &[("SCRUTATE_ROOT", r.root.to_str().unwrap())]);
+    assert_eq!((code, out.as_str()), (0, "    8  def g():\n    9      return f()\n"), "a path from the current directory");
+    let (code, out, _) = r.run(&["read", "--symbol", "g"]);
+    assert_eq!((code, out.as_str()), (0, "src/a.py:8-9  [function] g\n    8  def g():\n    9      return f()\n"));
+    let (code, out, _) = r.run(&["read", "--symbol", "g", "--json"]);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!((code, &v["result"]["definitions"][0]["qualname"]), (0, &serde_json::json!("g")), "{out}");
+    let (code, _, err) = r.run(&["read", "src/a.py", "--start", "5", "--end", "2"]);
+    assert_eq!(code, 2);
+    assert!(err.contains("end (2) is before start (5)"), "{err}");
+    assert_eq!(r.run(&["read"]).0, 2, "a path or a symbol");
+    let (code, _, err) = r.run(&["read", "../elsewhere.py"]);
+    assert!(code == 2 && err.contains("outside"), "{err}");
+    assert_eq!(r.run(&["read", "--help"]).0, 0);
+}
+
+#[test]
+fn a_shell_caller_can_bound_a_grep() {
+    let r = Repo::new("grep_budget");
+    for i in 0..40 {
+        r.write(&format!("d{}/f{i:02}.txt", i % 4), format!("needle {i} one\nneedle {i} two\nother\n").as_bytes());
+    }
+    let whole = r.run(&["grep", "-n", "needle", "."]);
+    assert_eq!((whole.0, whole.1.lines().count()), (0, 80), "whole by default, piped");
+    let (code, cut, _) = r.run(&["grep", "-n", "needle", ".", "--max-bytes", "400"]);
+    assert_eq!(code, 0);
+    assert!(cut.len() <= 400, "{} bytes: {cut}", cut.len());
+    let shown = cut.lines().count() - 1;
+    let last = cut.lines().last().unwrap();
+    assert_eq!(last, format!("({} more lines not shown: call again with offset={shown}, or narrow the request)", 80 - shown));
+    // the lines come in path order, so the next page starts where this one stopped
+    let mut sorted: Vec<&str> = whole.1.lines().collect();
+    sorted.sort_by_key(|l| (l.split(':').next().unwrap().to_string(), l.split(':').nth(1).unwrap().parse::<u32>().unwrap()));
+    assert_eq!(cut.lines().take(shown).collect::<Vec<_>>(), sorted[..shown]);
+    let (_, next, _) = r.run(&["grep", "-n", "needle", ".", "--max-bytes", "400", "--offset", &shown.to_string()]);
+    assert_eq!(next.lines().next(), Some(sorted[shown]));
+    let env = run_in(&r.root, &["grep", "-n", "needle", "."], &[("SCRUTATE_GREP_MAX_BYTES", "400")]);
+    assert_eq!(env.1, cut, "the variable");
+    r.write(".scrutate.toml", b"[grep]\nmax_bytes = 400\n");
+    assert_eq!(r.run(&["grep", "-n", "needle", "."]).1, cut, "the configuration file");
+    fs::remove_file(r.root.join(".scrutate.toml")).unwrap();
+    // the budget of index answers is not grep's, and --json stays whole
+    assert_eq!(run_in(&r.root, &["grep", "-n", "needle", "."], &[("SCRUTATE_MAX_BYTES", "400")]).1.lines().count(), 80);
+    assert_eq!(r.run(&["grep", "--json", "needle", ".", "--max-bytes", "400"]).1.lines().filter(|l| l.contains("\"match\"")).count(), 80);
+    // a budget that holds everything changes nothing but the order
+    let (_, all, _) = r.run(&["grep", "-n", "needle", ".", "--max-bytes", "100000"]);
+    assert_eq!(all.lines().collect::<Vec<_>>(), sorted);
+    assert!(r.run(&["grep", "-c", "needle", ".", "--max-bytes", "100"]).1.lines().last().unwrap().contains("offset="));
+    assert_eq!(r.run(&["grep", "nothing_here", ".", "--max-bytes", "100"]), (1, String::new(), String::new()));
+}
+
+#[test]
+fn find_lists_grep_results_in_path_order() {
+    let r = Repo::new("find_sorted");
+    for i in 0..60 {
+        r.write(&format!("d{}/f{i:02}.rs", i % 6), format!("fn helper_{i}(x: u8) {{}}\n").as_bytes());
+    }
+    let (code, first, _) = r.run(&["find", "fn helper_[0-9]+\\("]);
+    assert_eq!(code, 0);
+    assert_eq!(first.lines().filter(|l| l.contains("fn helper_")).count(), 60);
+    let mut sorted: Vec<&str> = first.lines().collect();
+    sorted.sort();
+    assert_eq!(first.lines().collect::<Vec<_>>(), sorted);
+}
+
+#[test]
 fn the_largest_limit_is_no_limit() {
     let r = Repo::new("maxlimit");
     r.write("a.py", b"def f():\n    pass\n");
@@ -1634,7 +1731,7 @@ fn the_largest_limit_is_no_limit() {
         let n = if args[0] == "tsquery" {
             out.lines().count()
         } else {
-            let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+            let v: serde_json::Value = serde_json::from_value(answer(&out)).unwrap();
             v.as_array().or_else(|| v["resolved"].as_array()).map_or(0, Vec::len)
         };
         assert!(n >= want, "{args:?}: {out}");

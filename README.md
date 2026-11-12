@@ -76,6 +76,7 @@ scrutate grep -z "TODO" dist/                   #   inside zip/tar archives and 
 scrutate index && scrutate grep --index "PM_RESUME"   # Engine B text index: the same answer, from a trigram index
 scrutate search "where do we renew expired tokens"   # Engine B: ranked search by meaning, learned ranker
 scrutate callers refresh_token                  #   call graph, definitions, references, outline
+scrutate read --symbol refresh_token            #   one whole definition, or a file's lines
 scrutate refs Graph --def networkx/classes/graph.py   # references resolved through imports and scopes
 scrutate dupes                                  #   exact and near-duplicate functions
 scrutate tsquery python '(class_definition name: (identifier) @c)'   # structural search (tree-sitter)

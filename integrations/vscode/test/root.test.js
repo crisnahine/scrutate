@@ -17,7 +17,7 @@ const { findRoot, fileOf, resolveBinary } = require("../root");
 
     const root = await findRoot(bin, sub);
     assert.strictEqual(fs.realpathSync(root), repo, "a folder below the top answers from the top");
-    const hits = JSON.parse(cp.execFileSync(bin, ["symbol", "--json", "--", "make_point"], { cwd: root, stdio: ["ignore", "pipe", "ignore"] }).toString());
+    const hits = JSON.parse(cp.execFileSync(bin, ["symbol", "--json", "--", "make_point"], { cwd: root, stdio: ["ignore", "pipe", "ignore"] }).toString()).result;
     assert.strictEqual(hits.length, 1, JSON.stringify(hits));
     assert.ok(fs.existsSync(fileOf(root, hits[0].path)), hits[0].path);
     assert.ok(!fs.existsSync(path.join(sub, ".scrutate")), "no index in the folder");
