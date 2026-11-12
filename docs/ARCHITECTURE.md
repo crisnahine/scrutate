@@ -115,14 +115,21 @@ capabilities those crates do not provide rather than re-implementing what they a
   that search took 459 page reclaims against 307 for GNU grep and 291 for a Rust hello-world,
   most of them pages of the executable's own code. `scrutate grep` reads arguments of the plain
   shapes by hand and gives anything else to clap (a property test holds the two to the same
-  answer), `-F` with one literal is a substring search that builds no regex engine, 14 more
+  answer; a configuration file, or a variable clap reads for grep, also sends them to clap),
+  `-F` with one literal is a substring search that builds no regex engine, 14 more
   system functions bind on first use, and on macOS the linker drops the unused libiconv and
   puts the functions a small search runs side by side from `crates/scrutate/startup.order`
-  (`tools/order_file.py` writes it from an instrumented run and checks how many of its names a
-  release link still has; a name the link no longer has is passed over). That is 17.2 M
-  instructions and 354 page reclaims, 3.1 MB of peak memory where it was 4.8 MB, and the CPU
-  time of GNU grep. The order file is for macOS on Apple silicon; the other targets link as
-  before. Measured and left alone: the
+  (`tools/order_file.py` runs the release links under lldb with a breakpoint on every function
+  of the link map, so the standard library's functions are listed too, and checks how many of
+  the names a release link still has; a name the link no longer has is passed over). With
+  ThinLTO, ld64 passes over most of those functions: the `.llvm.N` ones it promoted and the
+  local ones several objects hold. So the release profile links one object (fat LTO, one
+  codegen unit). A search of a one-file directory touches 36 pages of the executable's
+  `__TEXT` where it touched 75: 17 M instructions, 328 page reclaims and 2.6 MB of peak memory
+  where it was 19.3 M, 459 and 4.8 MB (GNU grep: 308 and 2.05 MB), and the CPU time of GNU
+  grep. A release build takes 3 to 5 minutes from scratch where it took under 2. The order
+  file is for macOS on Apple silicon; the other targets link as before. Measured and left
+  alone: the
   binary's 37,000 pointer fix-ups (applied lazily by the kernel, no cost), its code-signature page
   size (no difference), and its 85 MB size (0.05 to 0.2 ms).
 - **What bounds a search on macOS**: opening a file. On APFS `open` costs 8 to 11 µs for a file

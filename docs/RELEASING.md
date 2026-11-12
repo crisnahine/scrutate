@@ -56,8 +56,10 @@ cargo build --release -p scrutate --locked && sleep 3600 && bash bench/run_macos
   the names in `crates/scrutate/startup.order` that the release links still have. Under 80 %, or
   after a toolchain or `Cargo.lock` change, write it again
   (`python3 tools/order_file.py --dirs ~/.cache/scrutate-bench/corpora/startup
-  ~/.cache/scrutate-bench/corpora/ripgrep`, about 10 minutes, needs the `llvm-tools` component)
-  and commit it. A stale file only costs pages at start; it never breaks the build.
+  ~/.cache/scrutate-bench/corpora/ripgrep`, about 15 minutes: two release links, each run under
+  lldb from Xcode's command line tools) and commit it. A process started under lldb can hang at
+  its start on some machines; the tool gives up after a minute a search and says so: run it
+  again. A stale file only costs pages at start; it never breaks the build.
 - A just-built executable starts about 0.2 ms slower than the same file an hour later. Wait.
 - Do not run `cargo test` or `cargo build` until the chain ends: both can replace the binary.
 - Do not edit `bench/run_macos.sh` while it runs. bash reads it as it goes.
