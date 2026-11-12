@@ -509,7 +509,13 @@ def icon(name: str) -> str:
 
 # ---------------------------------------------------------------- badges, divider, social preview
 
-BADGES = {"licence": ("licence", "Apache-2.0"), "rust": ("rust", "1.91 or newer"), "platforms": ("platforms", "macOS  Linux  Windows")}
+def rust_version() -> str:
+    """The workspace's `rust-version`, so the badge cannot say another one."""
+    with open(os.path.join(ROOT, "Cargo.toml"), encoding="utf8") as f:
+        return re.search(r'^rust-version = "([^"]+)"', f.read(), re.M).group(1)
+
+
+BADGES = {"licence": ("licence", "Apache-2.0"), "rust": ("rust", f"{rust_version()} or newer"), "platforms": ("platforms", "macOS  Linux  Windows")}
 
 
 def badge(key: str) -> str:

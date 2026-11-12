@@ -95,6 +95,8 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
+      # the committed images, charts and document heads are what their scripts write, and no link is broken
+      - run: python3 tools/gen_assets.py --check && python3 tools/gen_doc_assets.py --check && python3 bench/make_readme_charts.py --check
       # the versions parity was last checked with: a new grammar release can move a parse tree
       - run: pip install -e "python[test]" maturin -c python/constraints.txt
       - run: cargo build --release -p scrutate --locked

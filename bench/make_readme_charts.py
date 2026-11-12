@@ -117,7 +117,9 @@ def walltime(warm: dict, compare: dict) -> str:
     # start-up comes from another harness with another run count: its own block and its own source line
     st = {TOOL_LABEL.get(s["tool"], s["tool"]): s["startup_median_ms"] for s in compare["startup"] if "startup_median_ms" in s}
     other = min((t for t in st if t != "scrutate"), key=st.get)
-    row("Start-up, empty directory", "", [("scrutate", st["scrutate"], f"{st['scrutate']:.1f} ms"), (other, st[other], f"{st[other]:.1f} ms")])
+    # older results measured an empty directory and say nothing; newer ones record the one file
+    one = any(s.get("files") for s in compare["startup"])
+    row("Start-up, a directory with one file" if one else "Start-up, empty directory", "", [("scrutate", st["scrutate"], f"{st['scrutate']:.1f} ms"), (other, st[other], f"{st[other]:.1f} ms")])
     cenv = compare["environment"]
     b.append(f'<path d="M24 {y} H{W - 24}" stroke="{{{{line}}}}"/>')
     b.append(f'<text x="24" y="{y + 24}" class="s" font-size="14" fill="{{{{muted}}}}">{G.esc(cenv["cpu"])}, macOS, {cenv["date"][:10]}, '
@@ -129,7 +131,7 @@ def walltime(warm: dict, compare: dict) -> str:
         bc = r["best_competitor"]
         parts.append(f"{t}: scrutate {ms(r['tools']['scrutate']['median'])} ms, {bc} {ms(r['tools'][bc]['median'])} ms")
     desc = (f"Horizontal bars of median wall time, scrutate against the fastest other tool. {'; '.join(parts)}. "
-            f"Start-up in an empty directory: scrutate {st['scrutate']:.1f} ms, {other} {st[other]:.1f} ms.")
+            f"Start-up in {'a directory with one file' if one else 'an empty directory'}: scrutate {st['scrutate']:.1f} ms, {other} {st[other]:.1f} ms.")
     return G.svg(W, H, "Wall time against the fastest other tool", desc, "\n".join(b), grow_style(), animated=True)
 
 

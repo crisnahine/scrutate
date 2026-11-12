@@ -112,8 +112,11 @@ python3 bench/make_leaderboard_md.py --engine-a $M/leaderboard-warm.json --engin
   --engine-a $L/leaderboard-warm.json --engine-a $L/leaderboard-cold.json --indexed $M/indexed.json --indexed $L/indexed.json
 python3 bench/make_benchmarks_md.py $M/compare.json
 python3 bench/make_dashboard.py
+python3 bench/make_readme_charts.py      # the README's charts, from the same results (binary hash and date in the image)
 python3 tools/gen_dependencies_md.py     # when Cargo.lock changed
 python3 tools/gen_languages_md.py        # when a language changed
+python3 tools/gen_assets.py              # when the demo, a badge, the palette or rust-version changed
+python3 tools/gen_doc_assets.py          # banners and diagrams; then --check: links, anchors, heads
 python3 tools/scrub_home.py              # last: logs and results write ~ for the home directory
 ```
 

@@ -5,6 +5,7 @@
 #      PARITY_PYTHON (a python with the reference's dependencies; default python3),
 #      PARITY_NETWORKX (networkx package dir) and PARITY_SITE (site-packages with rich and mcp):
 #      default, where that python has them installed; PARITY_QUERIES (default 40)
+# A repository that is not there fails the run: a gate that compared nothing has not passed.
 set -u
 [ $# -eq 1 ] || { echo "usage: $0 RUST_BINARY" >&2; exit 2; }
 bin=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
@@ -34,7 +35,8 @@ for r in $repos; do
     *) name=${r#"$code/"} ;;
   esac
   if [ ! -d "$r" ]; then
-    echo "$name: missing, skipped"
+    echo "$name: missing (bench/make_bench_code.py fetch makes the clones; networkx, rich and mcp come from PARITY_PYTHON)"
+    failed=1
     continue
   fi
   q=$nq

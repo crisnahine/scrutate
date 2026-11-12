@@ -23,20 +23,17 @@ from xml.sax.saxutils import escape
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 ASSETS = os.path.join(ROOT, "docs", "assets")
 
+# the palette, the type and the motion rules are the README images': one source, so the two
+# sets cannot drift apart
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import gen_assets as G  # noqa: E402
+
+KEYS = ("ink", "muted", "line", "card", "card2", "beam", "violet", "amber", "ok", "bad")
 THEMES = {
-    "dark": {
-        "ink": "#e6edf3", "muted": "#8b949e", "line": "#30363d", "card": "#161b22", "card2": "#0d1117",
-        "beam": "#5eead4", "soft": "0.16", "violet": "#a78bfa", "amber": "#fbbf24", "ok": "#3fb950", "bad": "#f85149",
-    },
-    "light": {
-        "ink": "#1f2328", "muted": "#59636e", "line": "#d1d9e0", "card": "#f6f8fa", "card2": "#ffffff",
-        "beam": "#0f766e", "soft": "0.12", "violet": "#6d28d9", "amber": "#b45309", "ok": "#1a7f37", "bad": "#cf222e",
-    },
+    name: {**{k: t[k] for k in KEYS}, "soft": f"{float(re.search(r'([0-9.]+)[)]$', t['beamsoft']).group(1)):.2f}"}
+    for name, t in G.THEMES.items()
 }
-SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif'
-MONO = 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace'
-EASE = "cubic-bezier(.2,.7,.2,1)"
-ICON_MID = "#8b949e"
+SANS, MONO, EASE, REDUCED, ICON_MID = G.SANS, G.MONO, G.EASE, G.REDUCED, G.ICON_GREY
 
 # Icons on a 24 px grid, strokes only.
 ICONS = {
@@ -202,7 +199,6 @@ FLOW_STYLE = f"""
 @keyframes flow {{ 0% {{ stroke-dashoffset: 30; }} 14%, 100% {{ stroke-dashoffset: -100; }} }}
 """
 
-REDUCED = "@media (prefers-reduced-motion: reduce) { * { animation: none !important; } }"
 
 
 class Svg:

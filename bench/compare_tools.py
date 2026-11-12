@@ -9,7 +9,7 @@ For every (corpus, query, tool) the harness
   2. runs it N more times, warm cache, taking the median and minimum wall time, CPU time
      (user+sys) and peak RSS from the child's rusage (os.wait4);
   3. optionally drops the page cache (root only) and measures one cold run.
-Startup cost is measured on an empty directory; concurrency as K simultaneous processes, each with
+Startup cost is measured on a directory with one file; concurrency as K simultaneous processes, each with
 its own output file checked against the reference count, N rounds per cell.
 
 Only tools found on this machine are measured; the others are reported as "not available" so the
@@ -478,7 +478,8 @@ def bench_startup(tools: dict, runs: int) -> list[dict]:
             if status != "ok":
                 rows.append({"tool": tool, "status": status})
                 continue
-            rows.append({"tool": tool, "status": "ok", "startup_median_ms": 1000 * statistics.median(walls), "startup_min_ms": 1000 * min(walls)})
+            # `files`: how many files the directory held (results from before this field: none)
+            rows.append({"tool": tool, "status": "ok", "files": 1, "startup_median_ms": 1000 * statistics.median(walls), "startup_min_ms": 1000 * min(walls)})
     return rows
 
 

@@ -152,7 +152,8 @@ def main() -> int:
         w("")
         w("Cold-cache numbers are single runs and dominated by disk reads shared by all tools; they are reported for completeness, not ranking.\n")
     # startup
-    w("## Startup (a directory with one file, no match; median ms)\n")
+    where = "a directory with one file" if any(s.get("files") for s in d["startup"]) else "empty directory"
+    w(f"## Startup ({where}, no match; median ms)\n")
     w("| Tool | startup median | min |")
     w("|---|---|---|")
     timed = [x for x in d["startup"] if "startup_median_ms" in x]
