@@ -275,7 +275,11 @@ folded, so two spellings of one accented name are one name.
   `scrutate index --force` rebuilds it, so an old `serve` and a new command line on one
   checkout do not rebuild the index in turn), and multi-process safety (busy-timeout +
   retry on `SQLITE_BUSY`, never deleting a live database; a read never waits for another
-  process's writer and answers from the last committed index). A `.scrutate` that is a
+  process's writer and answers from the last committed index; a process whose database
+  another process deleted and built again, after damage or with `index --force`, notices it by
+  the file's device and inode on its next call and opens the new one, where on Windows the
+  open file cannot be deleted; two processes that find an index of an older schema clear it
+  once). A `.scrutate` that is a
   symbolic link, or that holds one, is refused, and files of fixed names are written with remove
   and `create_new`, so the index never writes through a link.
 

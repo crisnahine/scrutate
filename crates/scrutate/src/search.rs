@@ -312,7 +312,8 @@ impl Searcher {
 
     fn sync(&mut self) -> Result<()> {
         self.ix.lex()?;
-        let ver = self.ix.meta("data_version");
+        // the database's identity too: one built again in its place can reach the same version
+        let ver = Some(format!("{:?} {:?}", self.ix.db_id(), self.ix.meta("data_version")));
         if ver != self.ver {
             self.ver = ver;
             self.callers_cache.clear();

@@ -195,6 +195,17 @@ First release.
 - Lock files with an ordinary extension (`package-lock.json`, `npm-shrinkwrap.json`,
   `pnpm-lock.yaml`, `packages.lock.json`, `Package.resolved`, `.terraform.lock.hcl`, Gradle
   `*.lockfile`, `bun.lockb`) are left out of the index like `*.lock`; `grep` still searches them.
+- MCP tool calls no longer read a file outside the repository through a linked folder: a path a
+  call names, an answer cites or a watch event names is indexed only when it resolves inside
+  the root.
+- `serve` and `lsp` open the index another process built again (a rebuild after damage,
+  `index --force`) on their next call; before, they wrote into the deleted database and the two
+  processes rebuilt in turn. Two processes that meet an index of an older schema clear it once.
+- A panic in the first index build no longer leaves `serve` answering "still building" for good:
+  the failure is on stderr and in each tool call's answer, and `serve` exits when its input
+  closes.
+- `index` keeps an update and exits 0 when the segment merge after it fails; the next update
+  merges again.
 - The text index survives more: a file over 64 MB that is shortened while it is read no longer
   ends the process (it was mapped; it is read in pieces now), a manifest cut short by a crash is
   rebuilt by the next update, a liveness file left by an update that stopped early no longer

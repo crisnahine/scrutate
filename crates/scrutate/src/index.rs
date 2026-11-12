@@ -931,6 +931,11 @@ impl Index {
         }
     }
 
+    /// Which database file this is (device and inode), where the system has such a thing.
+    pub(crate) fn db_id(&self) -> Option<(u64, u64)> {
+        self.db_id
+    }
+
     /// Open the index again when another process deleted the database this one has open and
     /// built a new one in its place (a rebuild after damage, `index --force`): writing on would go
     /// into the deleted file, and its segments into the new one's directory.
