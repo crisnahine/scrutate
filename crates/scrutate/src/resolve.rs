@@ -104,11 +104,15 @@ struct TsPaths {
 
 impl TsPaths {
     /// The places of `paths` as repository paths: relative to the `baseUrl` the merged configs end
-    /// with, inherited or not, else to the folder of the config that sets them.
-    fn joined(mut self) -> TsPaths {
+    /// with, inherited or not, else to the folder of the config that sets them. A `${configDir}`
+    /// at the start of a place or of `baseUrl` stands for `config_dir`, the folder of the config
+    /// the lookup started from.
+    fn joined(mut self, config_dir: &str) -> TsPaths {
+        let sub = |p: &str| p.strip_prefix(CONFIG_DIR).map(|rest| join(config_dir, &format!("./{rest}")));
+        self.base = self.base.map(|b| sub(&b).unwrap_or(b));
         let at = self.base.clone().unwrap_or_else(|| self.paths_dir.clone());
         for (_, places) in &mut self.aliases {
-            *places = places.iter().map(|p| join(&at, p)).collect();
+            *places = places.iter().map(|p| sub(p).unwrap_or_else(|| join(&at, p))).collect();
         }
         self
     }
@@ -2347,7 +2351,7 @@ impl<'a> Resolver<'a> {
                 let found = ["tsconfig.json", "jsconfig.json"]
                     .iter()
                     .find_map(|name| ts_config(&self.ix.root, &join(&dir, name), 0, &mut HashMap::new()))
-                    .map(|c| Rc::new(c.joined()));
+                    .map(|c| Rc::new(c.joined(&dir)));
                 self.ts.insert(dir.clone(), found);
             }
             if let Some(found) = &self.ts[&dir] {
@@ -2540,6 +2544,9 @@ impl<'a> Resolver<'a> {
 
 const DECLARATIONS: [&str; 3] = [".d.ts", ".d.mts", ".d.cts"];
 
+/// The TypeScript 5.5 template for the folder of the config in use, replaced in `paths` and `baseUrl`.
+const CONFIG_DIR: &str = "${configDir}";
+
 /// `baseUrl` and `paths` of the config at `path`; what it does not set comes from the configs it
 /// extends by a relative path, a later one of an `extends` list winning. The places of `paths` are
 /// as written (`TsPaths::joined`). None when neither is set anywhere.
@@ -2557,7 +2564,8 @@ fn ts_config_read(root: &std::path::Path, path: &str, depth: usize, memo: &mut H
     let text = repo_text(root, path)?;
     let v: serde_json::Value = serde_json::from_str(&plain_json(&text)).ok()?;
     let (dir, options) = (dir_of(path), &v["compilerOptions"]);
-    let mut out = TsPaths { base: options["baseUrl"].as_str().map(|b| join(dir, b)), aliases: Vec::new(), paths_dir: dir.to_string() };
+    let base = options["baseUrl"].as_str().map(|b| if b.starts_with(CONFIG_DIR) { b.to_string() } else { join(dir, b) });
+    let mut out = TsPaths { base, aliases: Vec::new(), paths_dir: dir.to_string() };
     for (pattern, places) in options["paths"].as_object().into_iter().flatten() {
         let places = places.as_array().into_iter().flatten().filter_map(|p| p.as_str()).map(String::from).collect();
         out.aliases.push((pattern.clone(), places));
@@ -4180,6 +4188,34 @@ mod tests {
         drop(s);
         let _ = std::fs::remove_dir_all(&root);
         assert_eq!(plain_json("{\"a\": \"x // y\", /* c */ \"b\": [1, 2,], // d\n}"), "{\"a\": \"x // y\",  \"b\": [1, 2]}");
+    }
+
+    #[test]
+    fn ts_config_dir_stands_for_the_folder_of_the_config_the_lookup_started_from() {
+        resolver_case(
+            "tsconfigdir",
+            &[
+                ("tsconfig.base.json", "{\"compilerOptions\": {\"paths\": {\"@app/*\": [\"${configDir}/src/*\"]}}}\n"),
+                ("packages/web/tsconfig.json", "{\"extends\": \"../../tsconfig.base.json\"}\n"),
+                ("packages/web/src/util.ts", "export function helper() { return 1; }\n"),
+                ("packages/web/src/main.ts", "import { helper } from \"@app/util\";\n\nexport function main() {\n  return helper();\n}\n"),
+                ("tsconfig.other.json", "{\"compilerOptions\": {\"strict\": true}}\n"),
+                ("tsconfig.url.json", "{\"compilerOptions\": {\"baseUrl\": \"${configDir}/src\"}}\n"),
+                ("packages/api/tsconfig.json", "{\"extends\": [\"../../tsconfig.other.json\", \"../../tsconfig.url.json\"]}\n"),
+                ("packages/api/src/lib/db.ts", "export function db() { return 2; }\n"),
+                ("packages/api/src/main.ts", "import { db } from \"lib/db\";\n\nexport function main() {\n  return db();\n}\n"),
+                // not at the start: TypeScript leaves the text as it is
+                ("packages/mid/tsconfig.json", "{\"compilerOptions\": {\"paths\": {\"@mid/*\": [\"x/${configDir}/*\"]}}}\n"),
+                ("packages/mid/x/${configDir}/m.ts", "export function m() { return 3; }\n"),
+                ("packages/mid/x/packages/mid/m.ts", "export function m() { return 4; }\n"),
+                ("packages/mid/main.ts", "import { m } from \"@mid/m\";\n\nexport function main() {\n  return m();\n}\n"),
+            ],
+            &[
+                ("packages/web/src/main.ts", "return helper()", "helper", "packages/web/src/util.ts helper"),
+                ("packages/api/src/main.ts", "return db()", "db", "packages/api/src/lib/db.ts db"),
+                ("packages/mid/main.ts", "return m()", "m", "packages/mid/x/${configDir}/m.ts m"),
+            ],
+        );
     }
 
     #[test]
