@@ -646,7 +646,7 @@ impl Repo {
     ) -> PyResult<String> {
         let end = end
             .unwrap_or(i64::MAX)
-            .min(start.saturating_add(max_lines - 1));
+            .min(start.saturating_add(max_lines.saturating_sub(1)));
         let r = py.detach(|| {
             let s = lock(&self.inner);
             scrutate::ops::read_range(&s, path, start.max(1), end)

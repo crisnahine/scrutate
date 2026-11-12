@@ -215,6 +215,17 @@ fn index_search_symbol_refs_outline_deps() {
         g["members"].as_array().is_some_and(|m| m.len() == 12 && m.iter().all(|x| x[1].as_str().is_some_and(|n| n.starts_with("make_widget_"))))
     };
     assert!(groups.iter().any(widgets), "the twelve make_widget functions are one group: {out}");
+    // a minimum past the largest signed integer is no wrapped, negative one
+    let near = "    total = compute_alpha(x)\n    shifted = adjust_beta(total)\n    kept = filter_entries(shifted)\n    more = store_results(kept)\n    again = parse_payload(more)\n    final = send_request(again)\n";
+    r.write("near/a.py", format!("def f_a(x):\n{near}    return finalize_gamma(final, alpha_one)\n").as_bytes());
+    r.write("near/b.py", format!("def f_b(x):\n{near}    return finalize_gamma(final, omega_two)\n").as_bytes());
+    let (_, out, _) = r.run(&["dupes", "--min-tokens", "3", "--json"]);
+    assert!(out.contains("near/a.py"), "{out}");
+    for most in [u64::MAX.to_string(), (1u64 << 63).to_string()] {
+        let (code, out, _) = r.run(&["dupes", "--min-tokens", &most, "--json"]);
+        assert_eq!((code, out.trim()), (1, "[]"), "{most}");
+    }
+    std::fs::remove_dir_all(r.root.join("near")).unwrap();
     let (code, out, _) = r.run(&["tsquery", "python", "(function_definition name: (identifier) @n)", "."]);
     assert_eq!(code, 0);
     assert_eq!(out.lines().count(), 24, "{out}");

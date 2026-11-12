@@ -345,7 +345,7 @@ pub fn dupes(ix: &Index, min_tokens: usize, threshold: f32, limit: usize) -> Res
     let kinds = CODE_KINDS.iter().map(|k| format!("'{k}'")).collect::<Vec<_>>().join(",");
     let mut st = ix.db.prepare(&format!("SELECT id, path, qualname, start, end, text FROM chunks WHERE kind IN ({kinds}) AND nbody >= ?1 ORDER BY id"))?;
     let rows: Vec<(i64, String, String, i64, i64, String)> = st
-        .query_map([min_tokens as i64], |r| {
+        .query_map([i64::try_from(min_tokens).unwrap_or(i64::MAX)], |r| {
             Ok((r.get(0)?, r.get(1)?, r.get::<_, Option<String>>(2)?.unwrap_or_default(), r.get(3)?, r.get(4)?, crate::index::unpack_text(r.get_ref(5)?)?))
         })?
         .collect::<rusqlite::Result<_>>()?;

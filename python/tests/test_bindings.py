@@ -172,6 +172,18 @@ def test_similar_with_k_zero_leaves_the_repo_usable(repo):
     assert r.symbol("make_widget_3")
 
 
+def test_the_largest_counts_do_not_wrap_around(tmp_path):
+    near = "    total = compute_alpha(x)\n    shifted = adjust_beta(total)\n    kept = filter_entries(shifted)\n    more = store_results(kept)\n    again = parse_payload(more)\n    final = send_request(again)\n"
+    (tmp_path / "a.py").write_text(f"def f_a(x):\n{near}    return finalize_gamma(final, alpha_one)\n")
+    (tmp_path / "b.py").write_text(f"def f_b(x):\n{near}    return finalize_gamma(final, omega_two)\n")
+    r = scrutate.Repo(str(tmp_path))
+    r.index()
+    assert r.duplicates(min_tokens=3)
+    assert r.duplicates(min_tokens=2**64 - 1) == [] and r.duplicates(min_tokens=2**63) == []
+    assert r.read("a.py", 1, max_lines=-(2**63)) == ""
+    assert r.read("a.py", 1, max_lines=2**63 - 1).startswith("def f_a(x):")
+
+
 def test_exclude_dirs_of_the_root_s_file_applies_to_every_process(tmp_path, monkeypatch):
     monkeypatch.delenv("SCRUTATE_INDEX_EXCLUDE_DIRS", raising=False)
     (tmp_path / ".git").mkdir()
