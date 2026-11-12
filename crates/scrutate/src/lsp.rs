@@ -115,9 +115,22 @@ pub fn word_at(line: &str, at: usize) -> Option<(usize, usize)> {
 }
 
 /// `a..b` widened to the name the language of `path` writes there, by the rule the parser names
-/// calls with: `valid?` in Ruby, `update!` in Julia, `step'` in Haskell, `is.ready` in R.
+/// calls with: `valid?` in Ruby, `update!` in Julia, `step'` in Haskell, `is.ready` in R,
+/// `~Shape` and `operator==` in C++. In Rust the name of `r#type` is `type`.
 fn widen(line: &str, a: usize, b: usize, path: &str) -> (usize, usize) {
     let Some(lang) = crate::langs::spec_for(path).map(|s| s.id) else { return (a, b) };
+    let (word, rest) = (&line[a..b], &line[b..]);
+    match lang {
+        // a header is often C by its extension and C++ by its content
+        "c" | "cpp" if line[..a].ends_with('~') => return (a - 1, b),
+        "c" | "cpp" if word == "operator" => {
+            let call = ["()", "[]"].iter().find(|p| rest.starts_with(**p)).map(|p| p.len());
+            let n = call.unwrap_or_else(|| rest.find(|c: char| !"+-*/%^&|~!=<>,".contains(c)).unwrap_or(rest.len()));
+            return (a, b + n);
+        }
+        "rust" if word == "r" && rest.starts_with('#') => return word_at(line, b + 1).unwrap_or((a, b)),
+        _ => {}
+    }
     let mut start = a;
     while let Some(c) = line[..start].chars().next_back().filter(|c| lang == "r" && (is_ident(*c) || *c == '.')) {
         start -= c.len_utf8();

@@ -396,7 +396,7 @@ First release.
   names. A leading dot is dropped (`callers .helper`). The name spelled as typed comes before its
   namesakes in another case, then non-test files, types before functions and methods, and a
   definition with a body before one without. The language server's definition request takes the whole name under the cursor
-  (`get-user`, `Foo::Bar`).
+  (`get-user`, `Foo::Bar`, a C++ `~Shape` or `operator==`, the `type` of a Rust `r#type`).
 - A location (`path:start-end`) names exactly one definition in `symbol`, `callers` and
   `callees`. `callers` lists the callers the resolver ties to the definition first, then the
   undecided ones that name the owner type or share its package, and asks the resolver about at

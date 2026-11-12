@@ -393,6 +393,42 @@ fn a_backslash_in_a_unix_file_name_stays_in_the_uri() {
 }
 
 #[test]
+fn a_destructor_an_operator_and_a_raw_identifier_are_one_name() {
+    let r = Repo::new("cppnames");
+    r.write(
+        "shape.cpp",
+        "struct Shape {\n    Shape();\n    ~Shape();\n    bool operator==(const Shape& o) const;\n    int area() const;\n};\n\nShape::Shape() {}\n\nShape::~Shape() {}\n\nbool Shape::operator==(const Shape& o) const { return true; }\n\nint Shape::area() const { return 1; }\n\nint use(Shape& a, Shape& b) {\n    a.~Shape();\n    if (a.operator==(b)) { return a.area(); }\n    return a == b;\n}\n\nint bits() { return 1; }\n\nint flip() { return ~bits(); }\n",
+    );
+    r.write("raw.rs", "pub fn r#type() -> u32 {\n    1\n}\n\npub fn caller() -> u32 {\n    r#type() + 1\n}\n");
+
+    let mut child = Command::new(BIN).arg("lsp").current_dir(&r.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
+    c.request("initialize", json!({"processId": null, "rootUri": uri(&r.root), "capabilities": {}}));
+    c.notify("initialized", json!({}));
+    // (file, line, text the cursor sits one character into, definition lines)
+    let cases: &[(&str, u64, &str, &[u64])] = &[
+        ("shape.cpp", 16, "Shape", &[2, 9]),
+        ("shape.cpp", 17, "operator", &[3, 11]),
+        // `~` before a name the index has no destructor for is the bitwise operator
+        ("shape.cpp", 23, "bits", &[21]),
+        ("raw.rs", 5, "r#type", &[0]),
+    ];
+    for &(file, line, needle, want) in cases {
+        let text = fs::read_to_string(r.root.join(file)).unwrap();
+        let src = text.lines().nth(line as usize).unwrap();
+        let ch = utf16(&src[..src.find(needle).unwrap()]) + 1;
+        let def = c.request("textDocument/definition", json!({"textDocument": {"uri": uri(&r.root.join(file))}, "position": {"line": line, "character": ch}}));
+        let mut got: Vec<u64> = places(&def["result"]).into_iter().map(|(_, l, _)| l).collect();
+        got.sort();
+        assert_eq!(got, want, "definition {file}:{line} {needle:?}: {def}");
+    }
+    c.request("shutdown", Value::Null);
+    c.notify("exit", Value::Null);
+    drop(c);
+    child.wait().unwrap();
+}
+
+#[test]
 fn a_name_ending_in_a_question_mark_bang_or_prime_is_one_word_after_a_receiver() {
     let r = Repo::new("suffix");
     r.write(
