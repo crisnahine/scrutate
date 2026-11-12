@@ -140,6 +140,12 @@ impl Repo {
         out.sort();
         out
     }
+    /// `line reason` of each unresolved occurrence `refs NAME` finds in `file`.
+    fn reasons(&self, name: &str, file: &str) -> Vec<String> {
+        let v = self.json(&["refs", name, "--json"]);
+        let rows = v["unresolved"].as_array().unwrap().iter().filter(|o| o["path"] == file);
+        rows.map(|o| format!("{} {}", o["line"], o["reason"].as_str().unwrap())).collect()
+    }
 }
 
 impl Drop for Repo {
@@ -266,4 +272,69 @@ fn a_super_call_is_a_decided_call_of_the_base_method_and_no_call_of_the_override
     assert_eq!(r.names(&["callees", "Bigger.size", "--json"]), ["Big.size"]);
     assert_eq!(r.refs_of("size", "j/Base.java:2"), ["Base.java:2", "Big.java:3", "Use.java:2"]);
     assert_eq!(r.refs_of("size", "j/Big.java:3"), ["Big.java:3", "Big.java:4", "Bigger.java:2"]);
+}
+
+#[test]
+fn a_class_used_as_a_call_receiver_is_a_use_of_the_class_and_a_variable_receiver_is_a_local() {
+    let main = "package p;
+
+import java.util.List;
+import q.Lib;
+
+public class Main {
+    private List<String> items;
+
+    int foo() {
+        return 0;
+    }
+
+    int run(List<String> names) {
+        List<String> list = names;
+        list.add(\"a\");
+        names.add(\"b\");
+        items.add(\"c\");
+        return Util.foo() + Lib.lib() + Lib.Inner.deep() + Box.open() + Util.make().bar() + Util.<String>id(\"x\").length();
+    }
+
+    int viaLocal() {
+        Util foo = null;
+        return foo.foo();
+    }
+
+    static class Box {
+        static int open() {
+            return 5;
+        }
+    }
+}
+";
+    let files: Vec<(String, &str)> = vec![
+        (
+            "p/Util.java".to_string(),
+            "package p;\n\npublic class Util {\n    public static int foo() {\n        return 1;\n    }\n\n    public static Util make() {\n        return new Util();\n    }\n\n    public int bar() {\n        return 2;\n    }\n\n    public static <T> T id(T x) {\n        return x;\n    }\n}\n",
+        ),
+        (
+            "q/Lib.java".to_string(),
+            "package q;\n\npublic class Lib {\n    public static int lib() {\n        return 3;\n    }\n\n    public static class Inner {\n        public static int deep() {\n            return 4;\n        }\n    }\n}\n",
+        ),
+        ("p/Main.java".to_string(), main),
+    ];
+    let r = Repo::with("receiver", &files);
+    // a class of the same package, an imported one, a nested one, in front of a chain or a generic call
+    assert_eq!(
+        r.refs_of("Util", "p/Util.java:3"),
+        ["Main.java:18", "Main.java:18", "Main.java:18", "Main.java:22", "Util.java:3", "Util.java:8", "Util.java:9"]
+    );
+    assert_eq!(r.refs_of("Lib", "q/Lib.java:3"), ["Lib.java:3", "Main.java:18", "Main.java:18", "Main.java:4"]);
+    assert_eq!(r.refs_of("Box", "p/Main.java:26"), ["Main.java:18", "Main.java:26"]);
+    assert_eq!(r.reasons("Util", "p/Main.java"), Vec::<String>::new());
+    // a local, a parameter or a field in front of a call is that variable
+    assert_eq!(r.reasons("list", "p/Main.java"), ["14 local variable", "15 local variable"]);
+    assert_eq!(r.reasons("names", "p/Main.java"), ["13 local variable", "14 local variable", "16 local variable"]);
+    assert_eq!(r.reasons("items", "p/Main.java"), ["7 field or key", "17 field or key"]);
+    // a variable named as a method of the class around is no call of that method
+    assert_eq!(r.names(&["callers", "p/Util.java:4", "--json"]), ["Main.run", "Main.viaLocal"]);
+    let (_, text) = r.run(&["callers", "p/Util.java:4"]);
+    assert!(!text.contains("could not"), "{text}");
+    assert_eq!(r.run(&["callers", "p/Main.java:9", "--json"]), (1, "[]\n".to_string()));
 }

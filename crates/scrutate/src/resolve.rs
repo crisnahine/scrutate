@@ -3113,7 +3113,7 @@ impl<'a> Resolver<'a> {
     /// called, else a local, a field, a type.
     fn java_bare(&mut self, fi: &FileInfo, node: Node, name: &str) -> Resolution {
         let p = node.parent();
-        if p.is_some_and(|p| p.kind() == "method_invocation") {
+        if p.is_some_and(|p| p.kind() == "method_invocation" && p.child_by_field_name("name").map(|c| c.id()) == Some(node.id())) {
             return self.java_call(fi, node, name);
         }
         let src = fi.src.as_str();
