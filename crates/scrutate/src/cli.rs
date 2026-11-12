@@ -13,7 +13,7 @@ use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use termcolor::{Color, ColorChoice, ColorSpec, WriteColor};
 
 use crate::fmt::{fmt_hits, hits_json};
-use crate::instant::{self, Case, Mode, Options};
+use crate::instant::{self, Case, Files, Mode, Output, Paths, Pattern, Query, Record, Report};
 use crate::ops::Op;
 use crate::text::query_words;
 
@@ -1075,41 +1075,33 @@ pub fn run() -> Result<i32> {
             if paths.is_empty() && !index && grep_cli::is_readable_stdin() {
                 paths.push(PathBuf::from("-"));
             }
-            let mut o = Options {
-                pattern,
-                mode,
-                case: if ignore_case {
-                    Case::Insensitive
-                } else if smart_case {
-                    Case::Smart
-                } else {
-                    Case::Sensitive
-                },
-                word,
-                multiline,
+            let case = if ignore_case {
+                Case::Insensitive
+            } else if smart_case {
+                Case::Smart
+            } else {
+                Case::Sensitive
+            };
+            let q = Query {
+                pattern: Pattern { text: pattern, mode, case, word, multiline, ..Pattern::default() },
                 invert: invert_match,
-                hidden,
-                no_ignore,
-                follow_links: follow,
-                globs,
-                scoped_globs,
-                types,
-                max_filesize: max_filesize.as_deref().map(parse_size).transpose()?,
-                max_depth,
+                // -c with -l prints the count of the one match -l stops at
+                report: if files_with_matches {
+                    Report::Files
+                } else if count {
+                    Report::Counts
+                } else {
+                    Report::Lines
+                },
                 max_count,
                 max_results,
                 first_in_path_order: sort,
                 before: context.unwrap_or(before),
                 after: context.unwrap_or(after),
-                threads,
-                count_only: count,
-                files_only: files_with_matches,
                 want_bytes: stats || json,
                 want_spans: json || color_choice(no_color) != ColorChoice::Never,
                 text_spans: true,
-                search_zip,
                 raw_member_names: json,
-                paths_as_given: !paths.is_empty(),
                 // as ripgrep: one path that is not a directory is searched without its name; with
                 // -z an archive is a directory of its members
                 with_filename: with_filename
@@ -1118,26 +1110,36 @@ pub fn run() -> Result<i32> {
                             && !paths[0].is_dir()
                             && !(search_zip && crate::archive::Kind::of(&paths[0].to_string_lossy()).is_some_and(|k| k.has_members())))),
                 line_numbers: !no_line_number,
+            };
+            let mut f = Files {
+                hidden,
+                no_ignore,
+                follow_links: follow,
+                globs,
+                scoped_globs,
+                types,
+                max_filesize: max_filesize.as_deref().map(parse_size).transpose()?,
+                max_depth,
+                threads,
+                search_zip,
+                paths_as_given: !paths.is_empty(),
                 small_tree: std::env::var("SCRUTATE_SMALL_TREE").ok().and_then(|v| v.parse().ok()),
                 cwd: cwd.clone(),
-                ..Options::default()
+                ..Files::default()
             };
             if let Some(n) = std::env::var("SCRUTATE_SPLIT_FILE_BYTES").ok().and_then(|v| v.parse().ok()) {
-                o.split_file_bytes = n;
+                f.split_file_bytes = n;
             }
             if index {
-                o.check_indexable()?;
+                f.check_indexable()?;
                 if !paths.is_empty() {
                     anyhow::bail!("--index searches the indexed repository (--root); narrow it with -g/-t instead of paths");
                 }
             }
             let roots: Vec<PathBuf> = if paths.is_empty() { vec![PathBuf::from(".")] } else { paths };
+            f.paths = Paths::Walk(roots);
             let under = here.below();
-            grep_command(
-                roots,
-                o,
-                GrepOutput { files_with_matches, count, sort, json, stats, symbols, root: cli.root, no_color, indexed: index, update, under },
-            )
+            grep_command(q, f, GrepOutput { files_with_matches, count, sort, json, stats, symbols, root: cli.root, no_color, indexed: index, update, under })
         }
         Cmd::Index { force, text, no_text } => {
             let progress = std::io::stderr().is_terminal();
@@ -1571,9 +1573,9 @@ struct GrepOutput {
     under: Option<String>,
 }
 
-/// The canonical root and the indexed files that can match `o` (after an incremental refresh of
+/// The canonical root and the indexed files that can match `q` (after an incremental refresh of
 /// the text index when `update`); with `under`, that directory of the root and the files in it.
-fn indexed_candidates(root: &Path, o: &Options, update: bool, under: Option<&str>) -> Result<(PathBuf, Vec<String>)> {
+fn indexed_candidates(root: &Path, q: &Query, update: bool, under: Option<&str>) -> Result<(PathBuf, Vec<String>)> {
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     if let Some(dir) = under {
         // the walk of the root never enters a hidden or ignored directory, so its index cannot answer for one
@@ -1591,7 +1593,7 @@ fn indexed_candidates(root: &Path, o: &Options, update: bool, under: Option<&str
     }
     let ti = crate::textindex::TextIndex::open(&root)?
         .ok_or_else(|| anyhow::anyhow!("no text index in {}; build it with `scrutate index --text` (or add --update)", root.display()))?;
-    let mut files = ti.candidates(&crate::textindex::query_for(o)?, o.multiline)?;
+    let mut files = ti.candidates(&crate::textindex::query_for(q)?, q.pattern.multiline)?;
     if let Some(dir) = under {
         files = files.into_iter().filter_map(|f| f.strip_prefix(dir).and_then(|f| f.strip_prefix('/')).map(String::from)).collect();
         return Ok((root.join(dir), files));
@@ -1599,38 +1601,54 @@ fn indexed_candidates(root: &Path, o: &Options, update: bool, under: Option<&str
     Ok((root, files))
 }
 
-fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32> {
+/// `f.paths` holds the roots as given; with `--index` the search reads the indexed candidates.
+fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
     let cancel = Arc::new(AtomicBool::new(false));
     interrupt::install(Arc::clone(&cancel));
+    let roots = match &f.paths {
+        Paths::Walk(roots) => roots.clone(),
+        Paths::List { .. } => Vec::new(),
+    };
     let colour = color_choice(out.no_color) != ColorChoice::Never;
-    if !out.json && !colour && !out.sort && !out.symbols && !o.count_only && !o.files_only {
-        return grep_plain(roots, o, out, cancel);
+    let plain = !out.json && !colour && !out.sort && !out.symbols && q.report == Report::Lines;
+    let sink = plain.then(|| Arc::new(instant::PlainSink::new(Box::new(crate::running::GivesWay(std::io::stdout())))));
+    if out.indexed {
+        let (root, files) = indexed_candidates(&out.root, &q, out.update, out.under.as_deref())?;
+        f.paths = Paths::List { root, files };
+    }
+    if let Some(sink) = sink {
+        return grep_plain(&roots, &q, &f, out, cancel, sink);
     }
     // buffered: one write per 64 KB instead of several per matching line
     let mut w = termcolor::BufferedStandardStream::stdout(color_choice(out.no_color));
-    let mut collected: Vec<instant::Hit> = Vec::new();
+    let mut collected: Vec<Record> = Vec::new();
     let mut pipe_closed = false; // the reader went away (`| head`): stop quietly, like ripgrep (exit 0)
-    let mut counts: Vec<instant::Hit> = Vec::new();
+    let mut counts: Vec<Record> = Vec::new();
     let defer = out.sort || out.count || out.files_with_matches || out.symbols;
     let mut found = false;
     let mut linebuf: Vec<u8> = Vec::with_capacity(512);
-    let groups = o.before > 0 || o.after > 0;
+    let groups = q.before > 0 || q.after > 0;
     let mut last: Option<(Arc<str>, u64, u64)> = None;
-    let mut emit = |h: &instant::Hit, w: &mut termcolor::BufferedStandardStream| -> Result<()> {
-        if h.line == instant::NOTE_LINE {
-            if out.json {
-                let rec = serde_json::json!({"type": "binary", "schema": SCHEMA, "path": h.path, "text": h.text});
-                writeln!(w, "{}", with_path_bytes(rec, h.path_bytes.as_deref()))?;
-            } else if o.with_filename {
-                w.write_all(&grep_path(&h.path, h.path_bytes.as_deref(), colour))?;
-                writeln!(w, ": {}", h.text)?;
-            } else {
-                writeln!(w, "{}", h.text)?;
+    let mut emit = |r: &Record, w: &mut termcolor::BufferedStandardStream| -> Result<()> {
+        let (h, context) = match r {
+            Record::Match(h) => (h, false),
+            Record::Context(h) => (h, true),
+            Record::Note { path, path_bytes, text } => {
+                if out.json {
+                    let rec = serde_json::json!({"type": "binary", "schema": SCHEMA, "path": path, "text": text});
+                    writeln!(w, "{}", with_path_bytes(rec, path_bytes.as_deref()))?;
+                } else if q.with_filename {
+                    w.write_all(&grep_path(path, path_bytes.as_deref(), colour))?;
+                    writeln!(w, ": {text}")?;
+                } else {
+                    writeln!(w, "{text}")?;
+                }
+                return Ok(());
             }
-            return Ok(());
-        }
+            Record::Count { .. } | Record::File { .. } => return Ok(()),
+        };
         if out.json {
-            let rec = serde_json::json!({"type": if h.context { "context" } else { "match" }, "schema": SCHEMA, "path": h.path, "line": h.line,
+            let rec = serde_json::json!({"type": if context { "context" } else { "match" }, "schema": SCHEMA, "path": h.path, "line": h.line,
                 "column": h.column, "text": h.text, "spans": h.spans.iter().map(|(a, b)| serde_json::json!({"start": a, "end": b})).collect::<Vec<_>>()});
             writeln!(w, "{}", with_path_bytes(rec, h.path_bytes.as_deref()))?;
             return Ok(());
@@ -1648,42 +1666,38 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
             linebuf.clear();
             instant::format_plain(
                 &mut linebuf,
-                if o.with_filename { h.path_bytes.as_deref().unwrap_or(h.path.as_bytes()) } else { b"" },
-                if o.line_numbers { h.line } else { 0 },
+                if q.with_filename { h.path_bytes.as_deref().unwrap_or(h.path.as_bytes()) } else { b"" },
+                if q.line_numbers { h.line } else { 0 },
                 h.text.as_bytes(),
-                h.context,
+                context,
             );
             w.write_all(&linebuf)?;
             return Ok(());
         }
-        write_colour(w, h, o.with_filename, o.line_numbers)?;
+        write_colour(w, h, context, q.with_filename, q.line_numbers)?;
         Ok(())
     };
     let stats = {
-        let mut sink = |h: instant::Hit| {
-            if !h.context {
-                found = true;
-                if o.count_only || o.files_only {
-                    // per-file record: `line` carries the count
-                    counts.push(h);
+        let mut sink = |r: Record| {
+            match r {
+                Record::Context(_) => {}
+                Record::Count { .. } | Record::File { .. } => {
+                    found = true;
+                    counts.push(r);
                     return;
                 }
+                Record::Match(_) | Record::Note { .. } => found = true,
             }
             if defer {
-                collected.push(h);
-            } else if let Err(e) = emit(&h, &mut w) {
+                collected.push(r);
+            } else if let Err(e) = emit(&r, &mut w) {
                 if broken_pipe(&e) {
                     pipe_closed = true;
                     cancel.store(true, Ordering::Relaxed);
                 }
             }
         };
-        if out.indexed {
-            let (root, files) = indexed_candidates(&out.root, &o, out.update, out.under.as_deref())?;
-            instant::search_files(&root, files, &o, Arc::clone(&cancel), &mut sink)?
-        } else {
-            instant::search(&roots, &o, Arc::clone(&cancel), &mut sink)?
-        }
+        instant::search(&q, &f, Arc::clone(&cancel), Output::Records(&mut sink))?
     };
     warn_failures(&stats);
     if pipe_closed {
@@ -1692,40 +1706,43 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
     // a record per file searched: a file two paths reach is counted and listed twice, as ripgrep does
     // with --sort the search hands them over in ripgrep's order
     if !out.sort {
-        counts.sort_by(|a, b| a.path.cmp(&b.path));
+        counts.sort_by(|a, b| a.path().cmp(b.path()));
     }
     // a reader that went away (`| head`) ends the output quietly, as on the line path
     let written = (|| -> Result<()> {
         if out.count {
-            for instant::Hit { path: p, path_bytes: b, line: c, .. } in &counts {
+            for r in &counts {
+                let (p, b) = (r.path(), r.path_bytes());
+                let c = if let Record::Count { count, .. } = r { *count } else { 1 };
                 if out.json {
-                    writeln!(w, "{}", with_path_bytes(serde_json::json!({"type": "count", "schema": SCHEMA, "path": p, "count": c}), b.as_deref()))?;
-                } else if o.with_filename {
-                    w.write_all(&grep_path(p, b.as_deref(), colour))?;
+                    writeln!(w, "{}", with_path_bytes(serde_json::json!({"type": "count", "schema": SCHEMA, "path": p, "count": c}), b))?;
+                } else if q.with_filename {
+                    w.write_all(&grep_path(p, b, colour))?;
                     writeln!(w, ":{c}")?;
                 } else {
                     writeln!(w, "{c}")?;
                 }
             }
         } else if out.files_with_matches {
-            for instant::Hit { path: p, path_bytes: b, .. } in &counts {
+            for r in &counts {
+                let (p, b) = (r.path(), r.path_bytes());
                 if out.json {
-                    writeln!(w, "{}", with_path_bytes(serde_json::json!({"type": "file", "schema": SCHEMA, "path": p}), b.as_deref()))?;
+                    writeln!(w, "{}", with_path_bytes(serde_json::json!({"type": "file", "schema": SCHEMA, "path": p}), b))?;
                 } else {
-                    w.write_all(&grep_path(p, b.as_deref(), colour))?;
+                    w.write_all(&grep_path(p, b, colour))?;
                     writeln!(w)?;
                 }
             }
         } else if out.symbols {
             grouped_by_symbol(&out.root, &mut collected, &mut w, out.json)?;
         } else if defer {
-            for h in &collected {
-                emit(h, &mut w)?;
+            for r in &collected {
+                emit(r, &mut w)?;
             }
         }
         if out.stats || out.json {
             // -l stops each file at its first match: the matches were not counted
-            let matches = (!o.files_only).then_some(stats.matches);
+            let matches = (q.report != Report::Files).then_some(stats.matches);
             let rec = serde_json::json!({"type": "summary", "schema": SCHEMA, "files_searched": stats.files_searched, "files_matched": stats.files_matched,
                 "matches": matches, "bytes_searched": stats.bytes_searched, "errors": stats.errors, "elapsed_ms": stats.elapsed_ms, "cancelled": stats.cancelled});
             if out.json {
@@ -1757,7 +1774,7 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
             return Err(e.into());
         }
     }
-    if stats.cancelled && !o.max_results.map(|m| stats.matches >= m).unwrap_or(false) {
+    if stats.cancelled && !q.max_results.map(|m| stats.matches >= m).unwrap_or(false) {
         return Ok(130);
     }
     Ok(if missing_root(&roots, &stats) {
@@ -1788,10 +1805,10 @@ fn with_path_bytes(mut rec: serde_json::Value, bytes: Option<&[u8]>) -> serde_js
     rec
 }
 
-/// One hit in colour: its path and line number when asked for, and its matches highlighted. Each
+/// One line in colour: its path and line number when asked for, and its matches highlighted. Each
 /// line of a multi-line match gets its own, as in plain output, and a highlight stops at its end.
-fn write_colour(w: &mut impl WriteColor, h: &instant::Hit, path: bool, number: bool) -> std::io::Result<()> {
-    let sep = if h.context { "-" } else { ":" };
+fn write_colour(w: &mut impl WriteColor, h: &instant::Line, context: bool, path: bool, number: bool) -> std::io::Result<()> {
+    let sep = if context { "-" } else { ":" };
     let text = h.text.as_str();
     let mut start = 0;
     for (k, part) in text.split('\n').enumerate() {
@@ -1849,14 +1866,8 @@ fn warn_failures(stats: &instant::Stats) {
 }
 
 /// Plain unsorted output, written by the search threads (see `instant::PlainSink`).
-fn grep_plain(roots: Vec<PathBuf>, o: Options, out: GrepOutput, cancel: Arc<AtomicBool>) -> Result<i32> {
-    let sink = Arc::new(instant::PlainSink::new(Box::new(crate::running::GivesWay(std::io::stdout()))));
-    let stats = if out.indexed {
-        let (root, files) = indexed_candidates(&out.root, &o, out.update, out.under.as_deref())?;
-        instant::search_files_plain(&root, files, &o, Arc::clone(&cancel), Arc::clone(&sink))?
-    } else {
-        instant::search_plain(&roots, &o, Arc::clone(&cancel), Arc::clone(&sink))?
-    };
+fn grep_plain(roots: &[PathBuf], q: &Query, f: &Files, out: GrepOutput, cancel: Arc<AtomicBool>, sink: Arc<instant::PlainSink>) -> Result<i32> {
+    let stats = instant::search(q, f, Arc::clone(&cancel), Output::Plain(Arc::clone(&sink)))?;
     warn_failures(&stats);
     let found = stats.matches > 0;
     if sink.broken.load(Ordering::Relaxed) {
@@ -1879,10 +1890,10 @@ fn grep_plain(roots: Vec<PathBuf>, o: Options, out: GrepOutput, cancel: Arc<Atom
             if stats.cancelled { ", stopped early" } else { "" }
         );
     }
-    if stats.cancelled && !o.max_results.map(|m| stats.matches >= m).unwrap_or(false) {
+    if stats.cancelled && !q.max_results.map(|m| stats.matches >= m).unwrap_or(false) {
         return Ok(130);
     }
-    Ok(if missing_root(&roots, &stats) {
+    Ok(if missing_root(roots, &stats) {
         2
     } else if found {
         0
@@ -1892,16 +1903,21 @@ fn grep_plain(roots: Vec<PathBuf>, o: Options, out: GrepOutput, cancel: Arc<Atom
 }
 
 /// Engine B enrichment of Engine A results: group matching lines by the enclosing symbol.
-fn grouped_by_symbol(root: &Path, hits: &mut Vec<instant::Hit>, w: &mut termcolor::BufferedStandardStream, json: bool) -> Result<()> {
+fn grouped_by_symbol(root: &Path, records: &mut Vec<Record>, w: &mut termcolor::BufferedStandardStream, json: bool) -> Result<()> {
     let s = open_fresh(root)?;
-    let mut lines: Vec<instant::Hit> = std::mem::take(hits).into_iter().filter(|h| !h.context).collect();
+    let mut lines: Vec<Record> = std::mem::take(records).into_iter().filter(|r| matches!(r, Record::Match(_) | Record::Note { .. })).collect();
     // the index names a file by its path under the root, whatever path the search was given
     let mut named: std::collections::HashMap<std::sync::Arc<str>, std::sync::Arc<str>> = std::collections::HashMap::new();
-    for h in &mut lines {
+    for r in &mut lines {
         let under = |p: &str| std::fs::canonicalize(p).ok().and_then(|c| c.strip_prefix(&s.ix.root).ok().map(|r| instant::slashed(r.to_string_lossy())));
-        h.path = named.entry(h.path.clone()).or_insert_with_key(|p| under(p).map_or_else(|| p.clone(), Into::into)).clone();
+        let path = match r {
+            Record::Match(h) => &mut h.path,
+            Record::Note { path, .. } => path,
+            _ => continue,
+        };
+        *path = named.entry(path.clone()).or_insert_with_key(|p| under(p).map_or_else(|| p.clone(), Into::into)).clone();
     }
-    lines.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
+    lines.sort_by(|a, b| a.path().cmp(b.path()).then(a.order().cmp(&b.order())));
     for g in crate::intel::group_by_symbol(&s.ix, lines)? {
         // the text form is for a person or an agent: names escaped, as the index commands print them
         let shown = |s: &str| if json { std::borrow::Cow::Borrowed(s) } else { crate::fmt::shown(s) }.into_owned();
@@ -1937,10 +1953,10 @@ fn find_command(root: &Path, query: &str, k: usize, json: bool, no_color: bool) 
     // a question mark ends a question, it does not make the words a regex
     let query = if query.contains(' ') { query.trim_end().strip_suffix('?').unwrap_or(query) } else { query };
     if looks_like_regex(query) {
-        let o = Options { pattern: query.to_string(), mode: Mode::Regex, case: Case::Smart, ..Options::default() };
+        let q = Query { pattern: Pattern { text: query.to_string(), mode: Mode::Regex, case: Case::Smart, ..Pattern::default() }, ..Query::default() };
         let r = grep_command(
-            vec![root.to_path_buf()],
-            o,
+            q,
+            Files::walk(vec![root.to_path_buf()]),
             GrepOutput {
                 files_with_matches: false,
                 count: false,
@@ -1969,10 +1985,10 @@ fn find_command(root: &Path, query: &str, k: usize, json: bool, no_color: bool) 
         return Ok(if hits.is_empty() { 1 } else { 0 });
     }
     eprintln!("[scrutate] no index for this large repository: identifier search (run `scrutate index` for ranked results)");
-    let o = Options { pattern: query.to_string(), mode: Mode::Identifier, case: Case::Smart, ..Options::default() };
+    let q = Query { pattern: Pattern { text: query.to_string(), mode: Mode::Identifier, case: Case::Smart, ..Pattern::default() }, ..Query::default() };
     grep_command(
-        vec![root.to_path_buf()],
-        o,
+        q,
+        Files::walk(vec![root.to_path_buf()]),
         GrepOutput {
             files_with_matches: false,
             count: false,
@@ -2111,20 +2127,21 @@ mod tests {
 
     /// `scrutate grep` in colour on a terminal, as `grep_command` writes it.
     fn coloured(dir: &std::path::Path, pattern: &str, multiline: bool) -> String {
-        let o = crate::instant::Options {
-            pattern: pattern.into(),
-            mode: crate::instant::Mode::Regex,
-            multiline,
+        use crate::instant::{Files, Output, Pattern, Query, Record};
+        let q = Query {
+            pattern: Pattern { text: pattern.into(), multiline, ..Pattern::default() },
             want_spans: true,
             text_spans: true,
             first_in_path_order: true,
-            ..crate::instant::Options::default()
+            ..Query::default()
         };
-        let mut hits = Vec::new();
-        crate::instant::search(&[dir.to_path_buf()], &o, std::sync::Arc::default(), |h| hits.push(h)).unwrap();
+        let mut records = Vec::new();
+        crate::instant::search(&q, &Files::walk(vec![dir.to_path_buf()]), std::sync::Arc::default(), Output::Records(&mut |r| records.push(r))).unwrap();
         let mut w = termcolor::Buffer::ansi();
-        for h in &hits {
-            super::write_colour(&mut w, h, true, true).unwrap();
+        for r in &records {
+            if let Record::Match(h) = r {
+                super::write_colour(&mut w, h, false, true, true).unwrap();
+            }
         }
         String::from_utf8(w.into_inner()).unwrap()
     }
@@ -2170,17 +2187,9 @@ mod tests {
         assert_eq!(rec["path_bytes"], serde_json::json!([120, 255, 10, 46, 99]));
         assert!(super::with_path_bytes(serde_json::json!({"path": "a.c"}), None).get("path_bytes").is_none());
         // colour output is for a person: a line break in a name cannot start a line of its own
-        let h = crate::instant::Hit {
-            path: "x\nfake.txt:1:needle".into(),
-            line: 3,
-            column: 1,
-            text: "needle".into(),
-            spans: vec![(0, 6)],
-            context: false,
-            path_bytes: None,
-        };
+        let h = crate::instant::Line { path: "x\nfake.txt:1:needle".into(), path_bytes: None, line: 3, column: 1, text: "needle".into(), spans: vec![(0, 6)] };
         let mut w = termcolor::Buffer::ansi();
-        super::write_colour(&mut w, &h, true, true).unwrap();
+        super::write_colour(&mut w, &h, false, true, true).unwrap();
         let out = String::from_utf8(w.into_inner()).unwrap();
         let plain = regex::Regex::new("\x1b\\[[0-9;]*m").unwrap().replace_all(&out, "").into_owned();
         assert_eq!(plain, "x\\nfake.txt:1:needle:3:needle\n");

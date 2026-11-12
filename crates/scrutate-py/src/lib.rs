@@ -18,7 +18,7 @@ use pyo3::exceptions::{PyFileNotFoundError, PyOSError, PyRuntimeError, PyValueEr
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyType};
 
-use scrutate::instant::{self, Case, Mode, Options};
+use scrutate::instant::{self, Case, Files, Mode, Output, Pattern, Query, Record};
 
 fn err<E: std::fmt::Display>(e: E) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
@@ -61,16 +61,22 @@ impl Match {
     }
 }
 
-impl From<instant::Hit> for Match {
-    fn from(h: instant::Hit) -> Match {
-        Match {
+impl Match {
+    /// A matching or context line; None for a note on a file.
+    fn of(r: Record) -> Option<Match> {
+        let (h, context) = match r {
+            Record::Match(h) => (h, false),
+            Record::Context(h) => (h, true),
+            _ => return None,
+        };
+        Some(Match {
             path: h.path.to_string(),
             line: h.line,
             column: h.column,
             text: h.text,
             spans: h.spans,
-            context: h.context,
-        }
+            context,
+        })
     }
 }
 
@@ -139,8 +145,8 @@ fn parse_mode(mode: &str, fuzzy_edits: u8) -> PyResult<Mode> {
 pub struct GrepIter {
     /// behind a mutex only to satisfy `Sync` (a pyclass may be shared across Python threads);
     /// `__next__` takes `&mut self`, so the lock is never contended
-    rx: Option<Mutex<mpsc::Receiver<Vec<instant::Hit>>>>,
-    buf: VecDeque<instant::Hit>,
+    rx: Option<Mutex<mpsc::Receiver<Vec<Match>>>>,
+    buf: VecDeque<Match>,
     cancel: Arc<AtomicBool>,
     handle: Option<std::thread::JoinHandle<anyhow::Result<instant::Stats>>>,
     stats: Option<instant::Stats>,
@@ -167,7 +173,7 @@ impl GrepIter {
 
     fn __next__(mut slf: PyRefMut<'_, Self>, py: Python<'_>) -> PyResult<Option<Match>> {
         if let Some(h) = slf.buf.pop_front() {
-            return Ok(Some(h.into()));
+            return Ok(Some(h));
         }
         let this = &mut *slf;
         let Some(rx) = this.rx.as_ref() else {
@@ -181,7 +187,7 @@ impl GrepIter {
         match batch {
             Some(b) => {
                 this.buf.extend(b);
-                Ok(this.buf.pop_front().map(Into::into))
+                Ok(this.buf.pop_front())
             }
             None => {
                 this.rx = None;
@@ -269,22 +275,40 @@ fn grep(
     fuzzy_edits: u8,
     sort: bool,
 ) -> PyResult<GrepIter> {
-    let o = Options {
-        pattern,
-        mode: parse_mode(mode, fuzzy_edits)?,
-        case: match case {
-            "sensitive" => Case::Sensitive,
-            "insensitive" => Case::Insensitive,
-            "smart" => Case::Smart,
-            other => {
-                return Err(PyValueError::new_err(format!(
-                    "unknown case {other:?}: sensitive, insensitive or smart"
-                )))
-            }
+    let q = Query {
+        pattern: Pattern {
+            text: pattern,
+            mode: parse_mode(mode, fuzzy_edits)?,
+            case: match case {
+                "sensitive" => Case::Sensitive,
+                "insensitive" => Case::Insensitive,
+                "smart" => Case::Smart,
+                other => {
+                    return Err(PyValueError::new_err(format!(
+                        "unknown case {other:?}: sensitive, insensitive or smart"
+                    )))
+                }
+            },
+            word,
+            multiline,
+            ..Pattern::default()
         },
-        word,
-        multiline,
         invert,
+        max_count,
+        max_results,
+        before,
+        after,
+        want_spans: true,
+        text_spans: true,
+        ..Query::default()
+    };
+    // errors surface at call time, not at the first `next()`
+    instant::build_matcher(&q.pattern).map_err(|e| PyValueError::new_err(e.to_string()))?;
+    let roots: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+    let Some(first) = roots.first().cloned() else {
+        return Err(PyValueError::new_err("no paths to search"));
+    };
+    let f = Files {
         hidden,
         no_ignore,
         follow_links,
@@ -292,43 +316,39 @@ fn grep(
         types,
         max_filesize,
         max_depth,
-        max_count,
-        max_results,
-        before,
-        after,
         threads,
-        want_spans: true,
-        text_spans: true,
-        ..Options::default()
+        ..Files::walk(roots)
     };
-    // errors surface at call time, not at the first `next()`
-    instant::build_matcher(&o).map_err(|e| PyValueError::new_err(e.to_string()))?;
-    let roots: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
-    let Some(first) = roots.first() else {
-        return Err(PyValueError::new_err("no paths to search"));
-    };
-    instant::overrides(first, &o).map_err(|e| PyValueError::new_err(format!("{e:#}")))?;
-    if let Some(r) = roots.iter().find(|r| std::fs::metadata(r).is_err()) {
-        return Err(PyFileNotFoundError::new_err(format!(
-            "no such file or directory: {}",
-            r.display()
-        )));
+    instant::overrides(&first, &f).map_err(|e| PyValueError::new_err(format!("{e:#}")))?;
+    if let instant::Paths::Walk(roots) = &f.paths {
+        if let Some(r) = roots.iter().find(|r| std::fs::metadata(r).is_err()) {
+            return Err(PyFileNotFoundError::new_err(format!(
+                "no such file or directory: {}",
+                r.display()
+            )));
+        }
     }
     let cancel = Arc::new(AtomicBool::new(false));
-    let (tx, rx) = mpsc::sync_channel::<Vec<instant::Hit>>(64); // bounded: a slow consumer throttles the search
+    let (tx, rx) = mpsc::sync_channel::<Vec<Match>>(64); // bounded: a slow consumer throttles the search
     let c2 = Arc::clone(&cancel);
     let handle = std::thread::Builder::new()
         .name("scrutate-grep".into())
         .spawn(move || {
-            let mut batch: Vec<instant::Hit> = Vec::with_capacity(256);
+            let mut batch: Vec<Match> = Vec::with_capacity(256);
             let tx2 = tx.clone();
             let c3 = Arc::clone(&c2);
-            let st = instant::search(&roots, &o, Arc::clone(&c2), |h| {
-                batch.push(h);
-                if !sort && batch.len() >= 256 && tx2.send(std::mem::take(&mut batch)).is_err() {
-                    c3.store(true, Ordering::Relaxed); // consumer gone
-                }
-            });
+            let st = instant::search(
+                &q,
+                &f,
+                Arc::clone(&c2),
+                Output::Records(&mut |r| {
+                    batch.extend(Match::of(r));
+                    if !sort && batch.len() >= 256 && tx2.send(std::mem::take(&mut batch)).is_err()
+                    {
+                        c3.store(true, Ordering::Relaxed); // consumer gone
+                    }
+                }),
+            );
             if sort {
                 batch.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
                 let mut it = batch.into_iter().peekable();

@@ -374,16 +374,14 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
             Answer::Hits { hits, words: qs.iter().flat_map(|q| query_words(q)).collect(), snippet: true, stopped: None }
         }
         Op::Grep { pattern, max_results } => {
-            let o = crate::instant::Options {
-                pattern: pattern.clone(),
-                mode: crate::instant::Mode::Regex,
-                case: crate::instant::Case::Sensitive,
+            let q = crate::instant::Query {
+                pattern: crate::instant::Pattern { text: pattern.clone(), ..Default::default() },
                 max_results: Some(*max_results),
                 // a capped answer is the same on every call, so paging does not repeat or skip lines
                 first_in_path_order: true,
-                ..crate::instant::Options::default()
+                ..Default::default()
             };
-            let (groups, stopped) = crate::intel::grouped_grep(s, &o)?;
+            let (groups, stopped) = crate::intel::grouped_grep(s, &q)?;
             Answer::Grep { groups, stopped_at: stopped.then_some(*max_results) }
         }
         Op::Symbol { name, limit } => {

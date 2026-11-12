@@ -8,7 +8,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use scrutate::index::Index;
-use scrutate::instant::{self, Mode, Options};
+use scrutate::instant::{self, Files, Mode, Output, Pattern, Query, Record};
 use scrutate::parse::parse_source;
 
 struct Repo {
@@ -40,15 +40,18 @@ impl Drop for Repo {
     }
 }
 
-fn grep(root: &Path, pattern: &str, mode: Mode) -> (Vec<instant::Hit>, instant::Stats) {
-    let o = Options { pattern: pattern.to_string(), mode, ..Options::default() };
+fn query(pattern: &str, mode: Mode) -> Query {
+    Query { pattern: Pattern { text: pattern.to_string(), mode, ..Pattern::default() }, ..Query::default() }
+}
+
+fn grep(root: &Path, pattern: &str, mode: Mode) -> (Vec<instant::Line>, instant::Stats) {
     let mut hits = Vec::new();
-    let mut sink = |h: instant::Hit| {
-        if !h.context {
+    let mut sink = |r: Record| {
+        if let Record::Match(h) = r {
             hits.push(h)
         }
     };
-    let st = instant::search(&[root.to_path_buf()], &o, Arc::new(AtomicBool::new(false)), &mut sink).expect("search");
+    let st = instant::search(&query(pattern, mode), &Files::walk(vec![root.to_path_buf()]), Arc::default(), Output::Records(&mut sink)).expect("search");
     (hits, st)
 }
 
@@ -254,14 +257,14 @@ fn symlinks_ignores_and_nested_repos() {
     assert_eq!(st.errors, 0);
     assert!(!hits.iter().any(|h| h.path.contains("escape")));
     assert!(!hits.iter().any(|h| h.path.contains("ignored")));
-    let o = Options { pattern: "outside_secret".into(), mode: Mode::Literal, follow_links: true, ..Options::default() };
+    let f = Files { follow_links: true, ..Files::walk(vec![r.root.clone()]) };
     let mut n = 0;
-    let mut sink = |h: instant::Hit| {
-        if !h.context {
+    let mut sink = |h: Record| {
+        if let Record::Match(_) = h {
             n += 1
         }
     };
-    let st = instant::search(std::slice::from_ref(&r.root), &o, Arc::new(AtomicBool::new(false)), &mut sink).unwrap();
+    let st = instant::search(&query("outside_secret", Mode::Literal), &f, Arc::default(), Output::Records(&mut sink)).unwrap();
     assert!(!st.cancelled && n == 1, "following links reaches the escape target exactly once (loop detected): n={n}");
     let _ = fs::remove_dir_all(&outside);
 }
@@ -493,13 +496,12 @@ fn regex_limits_and_errors_are_clean() {
     let (hits, _) = grep(&r.root, "(a|aa)+$", Mode::Regex);
     assert_eq!(hits.len(), 1);
     // an oversized regex is rejected with an error, not a crash or a hang
-    let o = Options { pattern: "(a{1000}){1000}".into(), mode: Mode::Regex, ..Options::default() };
-    let mut sink = |_h: instant::Hit| {};
-    let res = instant::search(std::slice::from_ref(&r.root), &o, Arc::new(AtomicBool::new(false)), &mut sink);
+    let f = Files::walk(vec![r.root.clone()]);
+    let mut sink = |_h: Record| {};
+    let res = instant::search(&query("(a{1000}){1000}", Mode::Regex), &f, Arc::default(), Output::Records(&mut sink));
     assert!(res.is_err(), "regex over the size limit must be an error");
     // invalid regex: error
-    let o = Options { pattern: "(unclosed".into(), mode: Mode::Regex, ..Options::default() };
-    let res = instant::search(std::slice::from_ref(&r.root), &o, Arc::new(AtomicBool::new(false)), &mut sink);
+    let res = instant::search(&query("(unclosed", Mode::Regex), &f, Arc::default(), Output::Records(&mut sink));
     assert!(res.is_err());
     // fuzzy limits
     assert!(instant::FuzzyMatcher::new("", 1, false).is_err());
@@ -511,15 +513,23 @@ fn regex_limits_and_errors_are_clean() {
     r.write("big.txt", big.as_bytes());
     let cancel = Arc::new(AtomicBool::new(false));
     let c2 = Arc::clone(&cancel);
-    let o = Options { pattern: "needle".into(), mode: Mode::Literal, ..Options::default() };
     let mut n = 0u64;
-    let mut sink = |_h: instant::Hit| {
+    let mut sink = |_h: Record| {
         n += 1;
         if n == 10 {
             c2.store(true, std::sync::atomic::Ordering::Relaxed);
         }
     };
-    let st = instant::search(std::slice::from_ref(&r.root), &o, cancel, &mut sink).unwrap();
+    let st = instant::search(&query("needle", Mode::Literal), &f, cancel, Output::Records(&mut sink)).unwrap();
     assert!(st.cancelled);
     assert!(n < 300_000, "stopped early after cancellation: {n}");
+    // a search that stops at max_results stops itself: the caller's flag, shared with other work
+    // of one call, stays as the caller left it
+    let cancel = Arc::new(AtomicBool::new(false));
+    for first_in_path_order in [false, true] {
+        let q = Query { max_results: Some(5), first_in_path_order, ..query("needle", Mode::Literal) };
+        let st = instant::search(&q, &f, Arc::clone(&cancel), Output::Records(&mut |_| {})).unwrap();
+        assert!(st.cancelled && st.matches == 5, "{st:?}");
+        assert!(!cancel.load(std::sync::atomic::Ordering::Relaxed), "first_in_path_order={first_in_path_order}");
+    }
 }

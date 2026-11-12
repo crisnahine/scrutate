@@ -181,6 +181,10 @@ First release.
 - `references` and `refs` search the files `grep_code` searches: hidden files included, the
   directories the index skips (`node_modules` and the like) left out. They searched Engine A's
   default walk, so a name defined in `.github/` was missed and one in `node_modules/` was not.
+- Engine A has one way in, `instant::search`: a query, a file set (a walk or a list of files) and
+  a cancel flag it reads and never sets; its records carry their kind (match, context, count,
+  file, note). The Python bindings' `grep` no longer yields a binary-file note as a `Match` with
+  line 18446744073709551615.
 
 ### Engine B: code intelligence
 - The vector model, the ranker and the feature list are one model set (`models.rs`), loaded on

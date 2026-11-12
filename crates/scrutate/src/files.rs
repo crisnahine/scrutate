@@ -1,6 +1,7 @@
 //! Which files belong to the repository, for each index. Engine A's default walk (which the text
 //! index reuses) is `instant::build_walker`; the code index's set is `list_files`, walked by
-//! `CodeWalk`; `Membership` asks that walk about one path.
+//! `CodeWalk`; an Engine A search of the repository reads that walk's files
+//! (`repository_files`); `Membership` asks that walk about one path.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -126,9 +127,9 @@ pub fn skipped_dirs(root: &Path) -> Vec<String> {
     skip_dirs(root)
 }
 
-/// Engine A's options narrowed to the files a search of the repository covers, walked by the
-/// code index's rules: the ignore files, hidden files included, none of the skipped directories.
-pub fn repository_search(root: &Path, o: &crate::instant::Options) -> crate::instant::Options {
+/// The files an Engine A search of the repository covers, walked by the code index's rules: the
+/// ignore files, hidden files included, none of the skipped directories.
+pub fn repository_files(root: &Path) -> crate::instant::Files {
     // a name, never a pattern: `*` in a repository's exclude_dirs must not hide every file
     let globs = skip_dirs(root).into_iter().map(|d| {
         d.chars().fold("!".to_string(), |mut g, c| {
@@ -140,7 +141,7 @@ pub fn repository_search(root: &Path, o: &crate::instant::Options) -> crate::ins
             g
         })
     });
-    crate::instant::Options { hidden: true, globs: o.globs.iter().cloned().chain(globs).collect(), ..o.clone() }
+    crate::instant::Files { hidden: true, globs: globs.collect(), ..crate::instant::Files::walk(vec![root.to_path_buf()]) }
 }
 
 /// Relative paths ('/' separated, sorted) of the files worth indexing: the same rules as ripgrep's

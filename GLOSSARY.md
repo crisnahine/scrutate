@@ -13,7 +13,20 @@ The words this codebase uses for its own concepts. One meaning each; code, docs 
 the same way.
 
 **Engine A**: instant search of files with no index (`instant.rs`). Walks the repository files and
-matches each one. `scrutate grep`.
+matches each one. `scrutate grep`. Its one way in is `instant::search`: a **query** (what to match
+and how to report it), a **file set** (a walk with its rules, or a list of files) and a cancel flag
+it reads and never sets.
+
+**Query**: what an Engine A search asks for (`instant::Query`): the **pattern** (`instant::Pattern`:
+the text, its mode, case, whole words, multi-line), whether lines that do not match are the matches,
+the report (lines, counts or files), context lines and limits.
+
+**File set**: which files an Engine A search reads (`instant::Files`): the roots of a walk with its
+rules (hidden files, ignore files, globs, types, depth, size), or a list of files under a root, and
+the threads that read them.
+
+**Record**: one Engine A result, of one kind (`instant::Record`): a match, a context line, a count,
+a file, or a note on a file (its search stopped at a NUL byte).
 
 **Engine B**: the index and everything answered from it (`index.rs`, `search.rs`, `intel.rs`,
 `resolve.rs`): ranked search, symbols, callers, callees, references, structural queries.
@@ -24,8 +37,8 @@ which files can match, so `grep --index` opens only those.
 **Chunk**: a piece of a file the index stores as one unit, usually a function, class or method.
 **Symbol** is the name for a chunk when the question is "what encloses this line".
 
-**Hit**: one result. An Engine A hit is a matching line (`instant::Hit`); an Engine B hit is a chunk
-(`search::Hit`).
+**Hit**: one result. An Engine A hit is a matching line (`instant::Record::Match`); an Engine B hit
+is a chunk (`search::Hit`).
 
 **Occurrence**: an Engine A hit for a name, before it is known what the name refers to.
 **Reference** is an occurrence together with the definition it resolves to.
@@ -63,15 +76,16 @@ that stay open (the MCP server, the Python bindings, `watch`) hold one.
 (`models::ModelSet`), each loaded on its first use. The index stores the vector model's
 signature; another model makes the vectors anew and keeps the rest of the index.
 
-**Translation**: what a query's options ask every matcher of them to find
-(`Options::translate`): the pattern in the form its mode means, and whether case is folded. Engine
-A's matcher and the text index's trigram condition are both built from it.
+**Translation**: what a pattern asks every matcher of it to find (`Pattern::translate`): the
+pattern in the form its mode means, and whether case is folded. Engine A's matcher and the text
+index's trigram condition are both built from it.
 
-**Run**: one Engine A search in progress (`instant::Run`): the matcher, options, counters, cancel
-flag and output target that every file search of it shares.
+**Run**: one Engine A search in progress (`instant::Run`): the matcher, query, file set, counters,
+stop flag and output target that every file search of it shares. The stop flag is set by the
+caller's cancel flag or by the search itself (enough matches, a closed pipe).
 
 **Repository files**: which files belong to the repository for each index (`files.rs`): the code
 index's list (hidden files included, cache and dependency directories skipped), Engine A's walk
 (hidden files skipped, the same ignore files), the files a search of the repository covers
-(`files::repository_search`: the code index's walk, for `grep_code` and references), and **membership**, the test of one changed path
-that the watcher asks.
+(`files::repository_files`: the code index's walk, for `grep_code` and references), and
+**membership**, the test of one changed path that the watcher asks.

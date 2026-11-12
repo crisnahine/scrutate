@@ -3875,22 +3875,24 @@ impl Resolved {
 /// The Engine A search for the whole-word occurrences of `bare`, the first `max_results` in path
 /// order, in its composed and its decomposed spelling: names compare in NFC, and a file may hold
 /// either.
-pub fn name_search(bare: &str, max_results: u64) -> crate::instant::Options {
+pub fn name_search(bare: &str, max_results: u64) -> crate::instant::Query {
     use unicode_normalization::UnicodeNormalization;
     let (nfc, nfd): (String, String) = (bare.nfc().collect(), bare.nfd().collect());
-    let (pattern, mode) = if nfc == nfd {
+    let (text, mode) = if nfc == nfd {
         (bare.to_string(), crate::instant::Mode::Literal)
     } else {
         (format!("(?:{}|{})", regex::escape(&nfc), regex::escape(&nfd)), crate::instant::Mode::Regex)
     };
-    crate::instant::Options { pattern, mode, word: true, max_results: Some(max_results), first_in_path_order: true, ..crate::instant::Options::default() }
+    let pattern = crate::instant::Pattern { text, mode, word: true, ..Default::default() };
+    crate::instant::Query { pattern, max_results: Some(max_results), first_in_path_order: true, ..Default::default() }
 }
 
 /// Every whole-word occurrence of `name` (Engine A), each resolved to the definition it refers to.
 pub fn resolved_references(s: &Searcher, name: &str, max_results: u64) -> Result<Resolved> {
     let bare = &crate::intel::bare_name(s, name)?;
-    let o = crate::instant::Options { want_spans: true, ..name_search(bare, max_results) };
-    let (hits, mut truncated) = crate::intel::occurrences(&s.ix.root, &o, &s.cancel)?;
+    let q = crate::instant::Query { want_spans: true, ..name_search(bare, max_results) };
+    let (found, mut truncated) = crate::intel::occurrences(&s.ix.root, &q, &s.cancel)?;
+    let hits: Vec<crate::instant::Line> = found.into_iter().filter_map(|r| if let crate::instant::Record::Match(l) = r { Some(l) } else { None }).collect();
     let mut rv = Resolver::new(&s.ix)?;
     let mut occurrences = Vec::new();
     // Engine A stops at `max_results` lines; one long line can hold more uses than that

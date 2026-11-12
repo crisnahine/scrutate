@@ -22,7 +22,7 @@ use memmap2::Mmap;
 use rayon::prelude::*;
 use regex_syntax::hir::{Class, Hir, HirKind};
 
-use crate::instant::{self, Mode, Options};
+use crate::instant::{self, Files, Mode, Query};
 use crate::npy::{self, Npy};
 
 pub const FORMAT: u32 = 3;
@@ -294,14 +294,14 @@ fn analyze(h: &Hir) -> Info {
     }
 }
 
-/// The trigram condition for Engine A's options (`Options::translate`, as `instant::build_matcher`
+/// The trigram condition for Engine A's query (`Pattern::translate`, as `instant::build_matcher`
 /// uses it). Inverted searches can match any file.
-pub fn query_for(o: &Options) -> Result<Q> {
+pub fn query_for(o: &Query) -> Result<Q> {
     if o.invert {
         return Ok(Q::All);
     }
-    let t = o.translate();
-    match o.mode {
+    let t = o.pattern.translate();
+    match o.pattern.mode {
         // k edits leave one of k+1 pieces verbatim (the fuzzy matcher's own prefilter)
         Mode::Fuzzy { max_edits } => {
             // the pieces the matcher itself looks for, so the index never rejects a file it matches
@@ -322,7 +322,7 @@ pub fn query_for(o: &Options) -> Result<Q> {
         .utf8(false)
         .build()
         .parse(&t.pattern)
-        .with_context(|| format!("invalid pattern {:?}", o.pattern))?;
+        .with_context(|| format!("invalid pattern {:?}", o.pattern.text))?;
     Ok(analyze(&hir).query())
 }
 
@@ -996,7 +996,7 @@ fn stamp(md: &std::fs::Metadata) -> (u64, i64, i64) {
 /// change time.
 fn walk(root: &Path) -> Result<Vec<(String, u64, i64, i64)>> {
     let roots = [root.to_path_buf()];
-    let walker = instant::build_walker(&roots, &Options::default())?;
+    let walker = instant::build_walker(&roots, &Files::default())?;
     let out = Mutex::new(Vec::new());
     walker.run(|| {
         let (out, roots) = (&out, &roots);
@@ -1021,7 +1021,7 @@ fn walk(root: &Path) -> Result<Vec<(String, u64, i64, i64)>> {
 /// What the walk of `walk` yields under `start` (a directory that walk of the root enters, whose
 /// ignore files above it apply), `depth` levels down: the directories, and the files.
 pub(crate) fn walk_entries(start: &Path, depth: Option<usize>) -> (Vec<PathBuf>, Vec<PathBuf>) {
-    let o = Options { max_depth: depth, threads: if depth.is_some() { 1 } else { 0 }, ..Options::default() };
+    let o = Files { max_depth: depth, threads: if depth.is_some() { 1 } else { 0 }, ..Files::default() };
     let Ok(walker) = instant::build_walker(&[start.to_path_buf()], &o) else { return Default::default() };
     let out = Mutex::new((Vec::new(), Vec::new()));
     walker.run(|| {
@@ -1270,10 +1270,10 @@ fn gc(dir: &Path, keep: &[String], live: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::instant::Case;
+    use crate::instant::{Case, Pattern};
 
     fn q(pat: &str, mode: Mode, case: Case) -> Q {
-        query_for(&Options { pattern: pat.to_string(), mode, case, ..Options::default() }).unwrap()
+        query_for(&Query { pattern: Pattern { text: pat.to_string(), mode, case, ..Pattern::default() }, ..Query::default() }).unwrap()
     }
 
     fn trigrams(text: &[u8]) -> Vec<(u32, u16)> {
@@ -1515,8 +1515,8 @@ mod tests {
             for mode in modes {
                 for case in [Case::Sensitive, Case::Insensitive, Case::Smart] {
                     for (word, multiline) in [(false, false), (true, false), (false, true)] {
-                        let o = Options { pattern: pat.to_string(), mode, case, word, multiline, ..Options::default() };
-                        let Ok(m) = instant::build_matcher(&o) else { continue };
+                        let o = Query { pattern: Pattern { text: pat.to_string(), mode, case, word, multiline, ..Pattern::default() }, ..Query::default() };
+                        let Ok(m) = instant::build_matcher(&o.pattern) else { continue };
                         let cond = query_for(&o).unwrap();
                         let is_match = |h: &str| match &m {
                             instant::AnyMatcher::Literal(m) => m.is_match(h.as_bytes()).unwrap(),
@@ -1559,7 +1559,7 @@ mod tests {
         let st = update_paths(&root, &["a.txt".into(), "c.txt".into(), "d.txt".into(), "never.txt".into()]).unwrap();
         assert_eq!((st.files, st.files_changed, st.files_removed), (3, 2, 1));
         let ix = TextIndex::open(&root).unwrap().unwrap();
-        let two = query_for(&Options { pattern: "two two".into(), ..Options::default() }).unwrap();
+        let two = query_for(&Query { pattern: Pattern { text: "two two".into(), ..Pattern::default() }, ..Query::default() }).unwrap();
         assert_eq!(ix.candidates(&two, false).unwrap(), ["a.txt"], "b.txt was not named");
         drop(ix);
         assert_eq!(update(&root, false, false).unwrap().files_changed, 1);

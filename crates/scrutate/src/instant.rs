@@ -7,7 +7,9 @@
 //! * identifier mode: one spelling finds every casing style (`refreshToken` = `refresh_token` = `REFRESH_TOKEN`);
 //! * fuzzy mode: matches within an edit distance (Myers' bit-parallel algorithm, O(n) per file).
 //!
-//! Results stream to a sink as they are found; a cancellation flag stops the walk between files.
+//! One way in, `search`: a `Query` (what to match, how to report it), a `Files` (a walk with its
+//! rules, or a list) and a cancel flag the search reads and never sets. Results stream out as they
+//! are found: `Record`s, each of one kind, or plain lines written by the search threads.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -51,145 +53,255 @@ pub enum Case {
     Smart,
 }
 
+/// What to match.
 #[derive(Clone, Debug)]
-pub struct Options {
-    pub pattern: String,
+pub struct Pattern {
+    pub text: String,
     pub mode: Mode,
     pub case: Case,
     pub word: bool,
     pub multiline: bool,
+    /// regex size limits (resource exhaustion protection)
+    pub regex_size_limit: usize,
+    pub dfa_size_limit: usize,
+}
+
+impl Default for Pattern {
+    fn default() -> Self {
+        Pattern {
+            text: String::new(),
+            mode: Mode::Regex,
+            case: Case::Sensitive,
+            word: false,
+            multiline: false,
+            regex_size_limit: 20 * (1 << 20),
+            dfa_size_limit: 10 * (1 << 20),
+        }
+    }
+}
+
+/// What a search reports for each file.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Report {
+    /// its matching lines (and context lines): `Record::Match`, `Record::Context`, `Record::Note`
+    #[default]
+    Lines,
+    /// how many lines match: one `Record::Count`; no line text leaves the worker threads
+    Counts,
+    /// that it matches: one `Record::File`, after its first match
+    Files,
+}
+
+/// What a search asks for: what to match and how to report it.
+#[derive(Clone, Debug)]
+pub struct Query {
+    pub pattern: Pattern,
+    /// the lines that do not match are the matches
     pub invert: bool,
-    pub hidden: bool,
-    pub no_ignore: bool,
-    pub follow_links: bool,
-    pub globs: Vec<String>,
-    /// globs matched from one directory, whatever path is searched (a configuration file's)
-    pub scoped_globs: Option<Arc<ScopedGlobs>>,
-    /// language ids / type names from the registry (`py`, `rust`, ...); negative with a leading `!`
-    pub types: Vec<String>,
-    pub max_filesize: Option<u64>,
-    pub max_depth: Option<usize>,
+    pub report: Report,
+    /// context lines before and after each match
+    pub before: usize,
+    pub after: usize,
+    /// matches of one file at most
     pub max_count: Option<u64>,
+    /// matches of the search at most: it stops there
     pub max_results: Option<u64>,
-    /// the hits arrive in the order of `rg --sort path`: the roots as given, each one's files by
+    /// the records arrive in the order of `rg --sort path`: the roots as given, each one's files by
     /// their path compared part by part (`a/b` before `a-b`), then by line; with `max_results`
     /// they are exactly the first `max_results` matches in that order, the same on every run
     /// (files are listed and sorted first, and searched in that order until enough matches are
-    /// in). Off, a capped search keeps whichever matches it finds first. Needs a hit sink:
-    /// `search_plain` refuses it
+    /// in). Off, a capped search keeps whichever matches it finds first. Needs `Output::Records`
     pub first_in_path_order: bool,
-    pub before: usize,
-    pub after: usize,
-    pub threads: usize,
-    /// only report per-file counts / matching files: no line text leaves the worker threads
-    pub count_only: bool,
-    pub files_only: bool,
     /// collect bytes searched (one stat per file; only when statistics are wanted)
     pub want_bytes: bool,
     /// compute the byte ranges of the matches inside each line (colour / JSON output); off, the
     /// line is reported without a second pass of the matcher over it
     pub want_spans: bool,
-    /// the ranges and `Hit::column` count bytes of `Hit::text` (invalid UTF-8 shown as U+FFFD,
+    /// the ranges and `Line::column` count bytes of `Line::text` (invalid UTF-8 shown as U+FFFD,
     /// no line end) instead of bytes of the line as read
     pub text_spans: bool,
-    /// search the members of zip/tar archives and the contents of compressed files (`-z`)
-    pub search_zip: bool,
     /// archive member names are reported as they are (for JSON, which escapes them); off, with
     /// control characters shown as escapes (`fmt::shown`), so a name cannot forge an output line
     pub raw_member_names: bool,
-    /// report each path as the walk reached it from the root it was given (`dir/a.rs`, `./a.rs`),
-    /// as grep does; otherwise relative to the root. Also as ripgrep: a root that is a file is
-    /// searched whatever its bytes (a NUL byte ends a line, and line output stops at the first
-    /// match after one with a `NOTE_LINE` hit), and the root `-` is standard input
-    pub paths_as_given: bool,
     /// plain output starts each line with the file's path (`-H`); off, `line:text` as for one file
     pub with_filename: bool,
-    /// plain output has line numbers (`-N` turns them off; hits always carry them)
+    /// plain output has line numbers (`-N` turns them off; records always carry them)
     pub line_numbers: bool,
-    /// files under these paths are read until a read returns nothing (procfs and sysfs return a
-    /// page or less per read); set by the search from its roots, on Linux (the walk adds those it
-    /// finds below them)
-    pub read_to_end_under: Vec<PathBuf>,
-    /// regex size limits (resource exhaustion protection)
-    pub regex_size_limit: usize,
-    pub dfa_size_limit: usize,
-    /// files at least this large are searched as several ranges of whole lines at once (an eighth of
-    /// it each): one huge file would otherwise keep a single core busy while the others idle
-    pub split_file_bytes: u64,
-    /// files the one-thread walk takes before the parallel walk does the rest (0 skips it); `None`
-    /// chooses from the roots (`small_tree_files`)
-    pub small_tree: Option<usize>,
-    /// the process's current directory as `std::env::current_dir` gave it, when the caller has it:
-    /// the walk then does not look it up again (0.17 M instructions on macOS)
-    pub cwd: Option<PathBuf>,
 }
 
-impl Default for Options {
+impl Default for Query {
     fn default() -> Self {
-        Options {
-            pattern: String::new(),
-            mode: Mode::Regex,
-            case: Case::Sensitive,
-            word: false,
-            multiline: false,
+        Query {
+            pattern: Pattern::default(),
             invert: false,
-            hidden: false,
-            no_ignore: false,
-            follow_links: false,
-            globs: Vec::new(),
-            scoped_globs: None,
-            types: Vec::new(),
-            max_filesize: None,
-            max_depth: None,
+            report: Report::Lines,
+            before: 0,
+            after: 0,
             max_count: None,
             max_results: None,
             first_in_path_order: false,
-            before: 0,
-            after: 0,
-            threads: 0,
-            count_only: false,
-            files_only: false,
             want_bytes: false,
             want_spans: false,
             text_spans: false,
-            search_zip: false,
             raw_member_names: false,
-            paths_as_given: false,
             with_filename: true,
             line_numbers: true,
-            read_to_end_under: Vec::new(),
-            regex_size_limit: 20 * (1 << 20),
-            dfa_size_limit: 10 * (1 << 20),
-            split_file_bytes: 64 << 20,
-            small_tree: None,
-            cwd: None,
         }
     }
 }
 
-/// One result record. `line` is 1-based; `column` is the 1-based byte offset of the first match in
-/// the line (0 when not applicable, e.g. inverted matches), in `text` with `Options::text_spans`. A `line` of `NOTE_LINE` is a note on
-/// the file, its text in `text`: a named file with a NUL byte matched (`Options::paths_as_given`),
-/// or the search of a walked file that matched stopped at a NUL byte.
-#[derive(Clone, Debug, serde::Serialize)]
-pub struct Hit {
-    /// shared by every hit of one file (a refcount per line instead of a string copy)
+/// Where the files of a search come from.
+#[derive(Clone, Debug)]
+pub enum Paths {
+    /// the files under these roots that the walk rules of `Files` let through
+    Walk(Vec<PathBuf>),
+    /// these files, relative to `root` (as an index lists them); the globs and types of `Files`
+    /// still apply, its walk rules do not
+    List { root: PathBuf, files: Vec<String> },
+}
+
+/// Which files a search reads, and how many threads read them.
+#[derive(Clone, Debug)]
+pub struct Files {
+    pub paths: Paths,
+    pub hidden: bool,
+    pub no_ignore: bool,
+    pub follow_links: bool,
+    pub max_filesize: Option<u64>,
+    pub max_depth: Option<usize>,
+    pub globs: Vec<String>,
+    /// globs matched from one directory, whatever path is searched (a configuration file's)
+    pub scoped_globs: Option<Arc<ScopedGlobs>>,
+    /// language ids / type names from the registry (`py`, `rust`, ...); negative with a leading `!`
+    pub types: Vec<String>,
+    /// search the members of zip/tar archives and the contents of compressed files (`-z`)
+    pub search_zip: bool,
+    /// report each path as the walk reached it from the root it was given (`dir/a.rs`, `./a.rs`),
+    /// as grep does; otherwise relative to the root. Also as ripgrep: a root that is a file is
+    /// searched whatever its bytes (a NUL byte ends a line, and line output stops at the first
+    /// match after one, with a `Record::Note`), and the root `-` is standard input
+    pub paths_as_given: bool,
+    /// the process's current directory as `std::env::current_dir` gave it, when the caller has it:
+    /// the walk then does not look it up again (0.17 M instructions on macOS)
+    pub cwd: Option<PathBuf>,
+    pub threads: usize,
+    /// files the one-thread walk takes before the parallel walk does the rest (0 skips it); `None`
+    /// chooses from the roots (`small_tree_files`)
+    pub small_tree: Option<usize>,
+    /// files at least this large are searched as several ranges of whole lines at once (an eighth of
+    /// it each): one huge file would otherwise keep a single core busy while the others idle
+    pub split_file_bytes: u64,
+}
+
+impl Default for Files {
+    fn default() -> Self {
+        Files {
+            paths: Paths::Walk(Vec::new()),
+            hidden: false,
+            no_ignore: false,
+            follow_links: false,
+            max_filesize: None,
+            max_depth: None,
+            globs: Vec::new(),
+            scoped_globs: None,
+            types: Vec::new(),
+            search_zip: false,
+            paths_as_given: false,
+            cwd: None,
+            threads: 0,
+            small_tree: None,
+            split_file_bytes: 64 << 20,
+        }
+    }
+}
+
+impl Files {
+    /// The files under `roots`, by the default walk rules.
+    pub fn walk(roots: Vec<PathBuf>) -> Files {
+        Files { paths: Paths::Walk(roots), ..Files::default() }
+    }
+
+    /// These files, relative to `root`.
+    pub fn list(root: PathBuf, files: Vec<String>) -> Files {
+        Files { paths: Paths::List { root, files }, ..Files::default() }
+    }
+}
+
+/// One line of a file. `line` is 1-based; `column` is the 1-based byte offset of the first match
+/// in the line (0 when not applicable, e.g. inverted matches), in `text` with `Query::text_spans`.
+#[derive(Clone, Debug)]
+pub struct Line {
+    /// shared by every record of one file (a refcount per line instead of a string copy)
     pub path: Arc<str>,
+    /// the bytes of `path` when it is not UTF-8 (on Unix; `path` then shows U+FFFD in their place)
+    pub path_bytes: Option<Arc<[u8]>>,
     pub line: u64,
     pub column: u64,
     pub text: String,
-    /// byte ranges of the matches: within `text` with `Options::text_spans`, else within the line
+    /// byte ranges of the matches: within `text` with `Query::text_spans`, else within the line
     /// as read (they differ where it holds invalid UTF-8, and a match may end in its line break)
     pub spans: Vec<(usize, usize)>,
-    /// true for context lines (-A/-B), false for matching lines
-    pub context: bool,
-    /// the bytes of `path` when it is not UTF-8 (on Unix; `path` then shows U+FFFD in their place)
-    #[serde(skip)]
-    pub path_bytes: Option<Arc<[u8]>>,
 }
 
-/// The `line` of a `Hit` that is a note on its file, not one of its lines (sorts after them).
-pub const NOTE_LINE: u64 = u64::MAX;
+/// One result of a search; `Query::report` decides which kinds it gives.
+#[derive(Clone, Debug)]
+pub enum Record {
+    Match(Line),
+    /// a line around a match (`Query::before`, `Query::after`)
+    Context(Line),
+    /// the matching lines of one file
+    Count {
+        path: Arc<str>,
+        path_bytes: Option<Arc<[u8]>>,
+        count: u64,
+    },
+    /// a file with a match
+    File {
+        path: Arc<str>,
+        path_bytes: Option<Arc<[u8]>>,
+    },
+    /// a note on a file, after its lines: a named file with a NUL byte matched
+    /// (`Files::paths_as_given`), or the search of a walked file that matched stopped at a NUL byte
+    Note {
+        path: Arc<str>,
+        path_bytes: Option<Arc<[u8]>>,
+        text: String,
+    },
+}
+
+impl Record {
+    pub fn path(&self) -> &Arc<str> {
+        match self {
+            Record::Match(l) | Record::Context(l) => &l.path,
+            Record::Count { path, .. } | Record::File { path, .. } | Record::Note { path, .. } => path,
+        }
+    }
+
+    pub fn path_bytes(&self) -> Option<&[u8]> {
+        match self {
+            Record::Match(l) | Record::Context(l) => l.path_bytes.as_deref(),
+            Record::Count { path_bytes, .. } | Record::File { path_bytes, .. } | Record::Note { path_bytes, .. } => path_bytes.as_deref(),
+        }
+    }
+
+    /// Where the record sorts among those of its file: lines by number, a note after them.
+    pub fn order(&self) -> u64 {
+        match self {
+            Record::Match(l) | Record::Context(l) => l.line,
+            Record::Note { .. } => u64::MAX,
+            Record::Count { .. } | Record::File { .. } => 0,
+        }
+    }
+}
+
+/// Where the results of a search go.
+pub enum Output<'a> {
+    /// every record, to this function on the calling thread, as found (in path order with
+    /// `Query::first_in_path_order`)
+    Records(&'a mut dyn FnMut(Record)),
+    /// plain `path:line:text` output, written by the search threads: no record is made
+    Plain(Arc<PlainSink>),
+}
 
 /// The path a search reports for standard input.
 pub const STDIN_LABEL: &str = "<stdin>";
@@ -631,8 +743,8 @@ impl Matcher for FuzzyMatcher {
 pub struct Literal(memchr::memmem::Finder<'static>);
 
 impl Literal {
-    fn of(o: &Options, insensitive: bool) -> Option<Literal> {
-        let p = o.pattern.as_bytes();
+    fn of(o: &Pattern, insensitive: bool) -> Option<Literal> {
+        let p = o.text.as_bytes();
         let plain = o.mode == Mode::Literal && !insensitive && !o.word && !o.multiline;
         // the length bound keeps it to patterns the regex engine's size limit lets through
         (plain && !p.is_empty() && p.len() <= 1024 && !p.contains(&b'\n')).then(|| Literal(memchr::memmem::Finder::new(p).into_owned()))
@@ -955,22 +1067,24 @@ pub struct Translated<'a> {
     pub pattern: std::borrow::Cow<'a, str>,
 }
 
-impl Options {
+impl Pattern {
     pub fn translate(&self) -> Translated<'_> {
         let insensitive = match self.case {
             Case::Sensitive => false,
             Case::Insensitive => true,
-            Case::Smart => smart_folds(&self.pattern, matches!(self.mode, Mode::Regex | Mode::Pcre2 | Mode::FuzzyRegex { .. })),
+            Case::Smart => smart_folds(&self.text, matches!(self.mode, Mode::Regex | Mode::Pcre2 | Mode::FuzzyRegex { .. })),
         };
         match self.mode {
-            Mode::Literal => Translated { insensitive, pattern: regex::escape(&self.pattern).into() },
+            Mode::Literal => Translated { insensitive, pattern: regex::escape(&self.text).into() },
             // the identifier regex carries its own (?i)
-            Mode::Identifier => Translated { insensitive: false, pattern: identifier_regex(&self.pattern).into() },
-            _ => Translated { insensitive, pattern: self.pattern.as_str().into() },
+            Mode::Identifier => Translated { insensitive: false, pattern: identifier_regex(&self.text).into() },
+            _ => Translated { insensitive, pattern: self.text.as_str().into() },
         }
     }
+}
 
-    /// Rejects options the text index cannot answer for: it holds only the files of the default walk.
+impl Files {
+    /// Rejects walk rules the text index cannot answer for: it holds only the files of the default walk.
     pub fn check_indexable(&self) -> Result<()> {
         if self.search_zip {
             bail!("--index does not cover archive members; search with -z and without --index");
@@ -1078,34 +1192,34 @@ fn uppercase_literal(pattern: &str, regex: bool) -> bool {
     false
 }
 
-pub fn build_matcher(o: &Options) -> Result<AnyMatcher> {
-    if matches!(o.mode, Mode::Fuzzy { .. } | Mode::FuzzyRegex { .. }) {
+pub fn build_matcher(p: &Pattern) -> Result<AnyMatcher> {
+    if matches!(p.mode, Mode::Fuzzy { .. } | Mode::FuzzyRegex { .. }) {
         // neither matcher looks beyond a line or at word boundaries: saying so beats finding nothing
-        if o.word {
+        if p.word {
             bail!("whole-word matching (-w) is not available with --fuzzy or --fuzzy-regex");
         }
-        if o.multiline {
+        if p.multiline {
             bail!("multiline matching (-U) is not available with --fuzzy or --fuzzy-regex");
         }
     }
-    let Translated { insensitive, pattern: pat } = o.translate();
-    if let Some(m) = Literal::of(o, insensitive) {
+    let Translated { insensitive, pattern: pat } = p.translate();
+    if let Some(m) = Literal::of(p, insensitive) {
         return Ok(AnyMatcher::Literal(m));
     }
-    match o.mode {
+    match p.mode {
         Mode::Fuzzy { max_edits } => Ok(AnyMatcher::Fuzzy(Box::new(FuzzyMatcher::new(&pat, max_edits, insensitive)?))),
         Mode::FuzzyRegex { max_edits } => Ok(AnyMatcher::FuzzyRegex(Box::new(crate::fuzzyre::FuzzyRegex::new(&pat, max_edits, insensitive)?))),
         Mode::Pcre2 => {
             let m = grep_pcre2::RegexMatcherBuilder::new()
                 .caseless(insensitive)
-                .word(o.word)
+                .word(p.word)
                 .multi_line(true)
                 .dotall(false)
                 .utf(true)
                 .ucp(true)
                 .jit_if_available(true)
                 .build(&pat)
-                .with_context(|| format!("invalid PCRE2 pattern {:?}", o.pattern))?;
+                .with_context(|| format!("invalid PCRE2 pattern {:?}", p.text))?;
             Ok(AnyMatcher::Pcre2(m))
         }
         _ => {
@@ -1113,14 +1227,14 @@ pub fn build_matcher(o: &Options) -> Result<AnyMatcher> {
             // ^ and $ are line anchors in every mode, as in ripgrep; without it the searcher has to
             // run the regex one line at a time
             b.case_insensitive(insensitive)
-                .word(o.word)
+                .word(p.word)
                 .multi_line(true)
                 .dot_matches_new_line(false)
-                .size_limit(o.regex_size_limit)
-                .dfa_size_limit(o.dfa_size_limit)
-                .line_terminator(if o.multiline { None } else { Some(b'\n') });
-            let m = b.build(&pat).with_context(|| format!("invalid pattern {:?}", o.pattern))?;
-            let suffix_ok = !o.word && o.mode != Mode::Literal;
+                .size_limit(p.regex_size_limit)
+                .dfa_size_limit(p.dfa_size_limit)
+                .line_terminator(if p.multiline { None } else { Some(b'\n') });
+            let m = b.build(&pat).with_context(|| format!("invalid pattern {:?}", p.text))?;
+            let suffix_ok = !p.word && p.mode != Mode::Literal;
             let mut m = if suffix_ok { LineRegex::new(m, &pat, insensitive) } else { LineRegex::plain(m) };
             if insensitive && m.line_terminator().is_some() {
                 m.fold = foldfind::FoldFinder::new(&pat);
@@ -1163,7 +1277,7 @@ pub fn type_list() -> Vec<(String, Vec<String>)> {
 /// Plain `path:line:text` output written by the search threads themselves: each file's lines are
 /// formatted into a buffer and handed over in one call, so no per-line allocation or channel message.
 /// Used for the common piped case (no colour, no JSON, no sorting); the bytes are the same as the
-/// CLI's own formatting of `Hit`s.
+/// CLI's own formatting of records.
 ///
 /// Output that follows other output within `HOLD_NS` waits in a buffer, so the lines of many files
 /// leave in one write: a write per matching file wakes the reader of a pipe every time (88,000
@@ -1203,7 +1317,7 @@ impl PlainSink {
 
     /// Runs `f` on the writer as one unit (no other thread's output inside it), then lets the held
     /// output go if it has waited long enough.
-    fn with(&self, cancel: &AtomicBool, f: impl FnOnce(&mut dyn Write) -> std::io::Result<()>) {
+    fn with(&self, stop: &Stop, f: impl FnOnce(&mut dyn Write) -> std::io::Result<()>) {
         if self.broken.load(Ordering::Relaxed) {
             return;
         }
@@ -1220,23 +1334,23 @@ impl PlainSink {
         };
         if res.is_err() {
             self.broken.store(true, Ordering::Relaxed);
-            cancel.store(true, Ordering::Relaxed);
+            stop.set();
         }
     }
 
     /// `first`: the first output of a file searched with context, which another file's output
     /// before it separates with `--`.
-    fn write(&self, buf: &[u8], first: bool, cancel: &AtomicBool) {
+    fn write(&self, buf: &[u8], first: bool, stop: &Stop) {
         if !buf.is_empty() {
-            self.with(cancel, |w| self.separate(w, first).and_then(|_| w.write_all(buf)));
+            self.with(stop, |w| self.separate(w, first).and_then(|_| w.write_all(buf)));
         }
     }
 
     /// `before`, `head`, `text` with invalid UTF-8 replaced, and a line break, as one unit. Err when
     /// reading a text in a file failed: the line then ends where the read stopped.
-    fn write_line(&self, before: &[u8], head: &[u8], text: Text, first: bool, cancel: &AtomicBool) -> std::io::Result<()> {
+    fn write_line(&self, before: &[u8], head: &[u8], text: Text, first: bool, stop: &Stop) -> std::io::Result<()> {
         let mut read = Ok(());
-        self.with(cancel, |w| {
+        self.with(stop, |w| {
             self.separate(w, first)?;
             w.write_all(before)?;
             w.write_all(head)?;
@@ -1258,9 +1372,9 @@ impl PlainSink {
 
     /// Lets held output go once it has waited. Threads call this between files, so output waits
     /// no longer than `HOLD_NS` or the longest file being searched.
-    fn tick(&self, cancel: &AtomicBool) {
+    fn tick(&self, stop: &Stop) {
         if self.holding.load(Ordering::Relaxed) && self.waited().is_some() {
-            self.with(cancel, |_| Ok(()));
+            self.with(stop, |_| Ok(()));
         }
     }
 
@@ -1385,13 +1499,13 @@ pub fn format_plain(out: &mut Vec<u8>, path: &[u8], line: u64, text: &[u8], cont
 
 struct Collector<'a> {
     path: Arc<str>,
-    /// `Hit::path_bytes`
+    /// `Line::path_bytes`
     raw: Option<Arc<[u8]>>,
-    /// None: the hits stay in `batch` for the caller to take
-    tx: Option<&'a mpsc::SyncSender<Vec<Hit>>>,
+    /// None: the records stay in `batch` for the caller to take
+    tx: Option<&'a mpsc::SyncSender<Vec<Record>>>,
     counters: &'a Counters,
-    /// hits of the current file, sent in batches (one channel operation per file or 512 lines)
-    batch: Vec<Hit>,
+    /// records of the current file, sent in batches (one channel operation per file or 512 lines)
+    batch: Vec<Record>,
     plain: Option<&'a PlainSink>,
     out: Vec<u8>,
     want_spans: bool,
@@ -1399,11 +1513,10 @@ struct Collector<'a> {
     stats_matches: &'a AtomicU64,
     max_results: Option<u64>,
     matched: bool,
-    cancel: &'a AtomicBool,
+    stop: &'a Stop,
     matcher: &'a AnyMatcher,
     invert: bool,
-    count_only: bool,
-    files_only: bool,
+    report: Report,
     file_count: u64,
     /// added to every line number (a range of a split file starts mid-file)
     line_base: u64,
@@ -1411,7 +1524,7 @@ struct Collector<'a> {
     hold: bool,
     /// the searcher reported binary data
     binary: bool,
-    /// a named file, searched as ripgrep does (`Options::paths_as_given`): NUL bytes end lines
+    /// a named file, searched as ripgrep does (`Files::paths_as_given`): NUL bytes end lines
     convert: bool,
     /// where the searcher first saw a NUL byte
     binary_at: Option<u64>,
@@ -1526,22 +1639,21 @@ impl<'a> Sink for Collector<'a> {
             return Ok(true);
         }
         let text = lossy(line).into_owned();
-        self.push(Hit {
+        self.push(Record::Context(Line {
             path: Arc::clone(&self.path),
+            path_bytes: self.raw.clone(),
             line: ctx.line_number().unwrap_or(0) + self.line_base,
             column: 0,
             text,
             spans: Vec::new(),
-            context: true,
-            path_bytes: self.raw.clone(),
-        });
+        }));
         Ok(true)
     }
 
     fn context_break(&mut self, _s: &Searcher) -> Result<bool, std::io::Error> {
         if let Some(p) = self.plain.filter(|_| self.whole_groups && !self.hold && self.out.len() >= 1 << 16) {
             // the next group is a first output: the sink writes the `--` before it
-            p.write(&self.out, std::mem::take(&mut self.first), self.cancel);
+            p.write(&self.out, std::mem::take(&mut self.first), self.stop);
             self.out.clear();
             self.first = true;
         } else if self.plain.is_some() {
@@ -1557,7 +1669,7 @@ impl<'a> Sink for Collector<'a> {
 
     fn finish(&mut self, _s: &Searcher, f: &grep_searcher::SinkFinish) -> Result<(), std::io::Error> {
         self.binary = f.binary_byte_offset().is_some();
-        if let (true, false, Some(at)) = (self.matched, self.files_only || self.count_only, self.binary_at) {
+        if let (true, Report::Lines, Some(at)) = (self.matched, self.report, self.binary_at) {
             // as ripgrep: a named file's line output ends here; a walked file stopped being searched
             let note = if self.convert {
                 format!("binary file matches (found \"\\0\" byte around offset {at})")
@@ -1572,8 +1684,7 @@ impl<'a> Sink for Collector<'a> {
                 self.out.extend_from_slice(note.as_bytes());
                 self.out.push(b'\n');
             } else {
-                let path_bytes = self.raw.clone();
-                self.push(Hit { path: Arc::clone(&self.path), line: NOTE_LINE, column: 0, text: note, spans: Vec::new(), context: false, path_bytes });
+                self.push(Record::Note { path: Arc::clone(&self.path), path_bytes: self.raw.clone(), text: note });
             }
         }
         self.flush();
@@ -1585,11 +1696,11 @@ impl Collector<'_> {
     /// A matching line: `bytes` as the searcher gave it, `text` without its line end, `number`
     /// the searcher's line number.
     fn take_match(&mut self, bytes: &[u8], text: Text, number: Option<u64>) -> Result<bool, std::io::Error> {
-        if self.cancel.load(Ordering::Relaxed) {
+        if self.stop.is_set() {
             return Ok(false);
         }
-        if self.files_only || self.count_only {
-            if self.files_only && self.matched {
+        if self.report != Report::Lines {
+            if self.report == Report::Files && self.matched {
                 return Ok(true);
             }
             let n = self.stats_matches.fetch_add(1, Ordering::Relaxed) + 1;
@@ -1609,12 +1720,12 @@ impl Collector<'_> {
                 1
             };
             if self.max_results.is_some_and(|max| n >= max) {
-                self.cancel.store(true, Ordering::Relaxed);
+                self.stop.set();
                 return Ok(false);
             }
             // one match is enough to list the file; with -v ripgrep reads on and drops a file
             // with a NUL byte
-            return Ok(!self.files_only || (self.invert && !self.convert));
+            return Ok(self.report != Report::Files || (self.invert && !self.convert));
         }
         if self.convert && self.binary_at.is_some() {
             // as ripgrep: a match past a NUL byte ends the output, `finish` writes the note
@@ -1639,18 +1750,18 @@ impl Collector<'_> {
                     let mut head = Vec::with_capacity(name.len() + 24);
                     format_plain(&mut head, name, number, b"", false);
                     head.pop(); // the newline: the text goes between
-                    let read = p.write_line(&self.out, &head, text, std::mem::take(&mut self.first), self.cancel);
+                    let read = p.write_line(&self.out, &head, text, std::mem::take(&mut self.first), self.stop);
                     self.out.clear();
                     read?;
                 }
             }
             if self.out.len() >= 1 << 16 && !self.hold && !self.whole_groups {
-                p.write(&self.out, std::mem::take(&mut self.first), self.cancel);
+                p.write(&self.out, std::mem::take(&mut self.first), self.stop);
                 self.out.clear();
             }
             if let Some(max) = self.max_results {
                 if n >= max {
-                    self.cancel.store(true, Ordering::Relaxed);
+                    self.stop.set();
                     return Ok(false);
                 }
             }
@@ -1670,10 +1781,10 @@ impl Collector<'_> {
         let column = spans.first().map(|s| s.0 as u64 + 1).unwrap_or(0);
         self.matched = true;
         let path_bytes = self.raw.clone();
-        self.push(Hit { path: Arc::clone(&self.path), line: number.unwrap_or(0) + self.line_base, column, text, spans, context: false, path_bytes });
+        self.push(Record::Match(Line { path: Arc::clone(&self.path), path_bytes, line: number.unwrap_or(0) + self.line_base, column, text, spans }));
         if let Some(max) = self.max_results {
             if n >= max {
-                self.cancel.store(true, Ordering::Relaxed);
+                self.stop.set();
                 return Ok(false);
             }
         }
@@ -1686,12 +1797,12 @@ impl Collector<'_> {
         let over = self.max_results.is_some_and(|max| n > max);
         if over {
             self.stats_matches.fetch_sub(1, Ordering::Relaxed);
-            self.cancel.store(true, Ordering::Relaxed);
+            self.stop.set();
         }
         over
     }
 
-    fn push(&mut self, h: Hit) {
+    fn push(&mut self, h: Record) {
         self.batch.push(h);
         if self.batch.len() >= 512 {
             self.flush();
@@ -1699,7 +1810,7 @@ impl Collector<'_> {
     }
     fn flush(&mut self) {
         if let (Some(p), false, false) = (self.plain, self.hold, self.out.is_empty()) {
-            p.write(&self.out, std::mem::take(&mut self.first), self.cancel);
+            p.write(&self.out, std::mem::take(&mut self.first), self.stop);
             self.out.clear();
         }
         if let Some(tx) = self.tx.filter(|_| !self.batch.is_empty()) {
@@ -1712,21 +1823,21 @@ impl Collector<'_> {
 /// on the directory walk and the output channel); on macOS the performance cores, because threads
 /// opening and reading files at once mostly wait on each other in the kernel there (the Linux tree:
 /// 977 ms on 11 threads, 843 ms on 6, 850 ms on 4; LLVM: 1649 ms on 11, 1377 ms on 4).
-pub fn default_threads(o: &Options) -> usize {
+pub fn default_threads(f: &Files) -> usize {
     static N: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    if o.threads != 0 {
-        return asked_threads(o);
+    if f.threads != 0 {
+        return asked_threads(f);
     }
     *N.get_or_init(|| performance_cores().map_or_else(cores, |p| p.clamp(2, cores())))
 }
 
-/// Most threads a search starts for `Options::threads`: past a few hundred, starting them costs
+/// Most threads a search starts for `Files::threads`: past a few hundred, starting them costs
 /// more than any search gains (`-j 4000` took 1.8 s on 11 files, `-j 100000` failed to start them).
 pub const MAX_THREADS: usize = 256;
 
-/// `Options::threads` as a number of threads (0, the default, is not one).
-fn asked_threads(o: &Options) -> usize {
-    o.threads.min(MAX_THREADS)
+/// `Files::threads` as a number of threads (0, the default, is not one).
+fn asked_threads(f: &Files) -> usize {
+    f.threads.min(MAX_THREADS)
 }
 
 /// An open and read of a small file taking this long came from the disk, not the page cache:
@@ -1760,9 +1871,9 @@ fn cold_threads() -> usize {
 const COLD_READS_PER_THREAD: u64 = 16;
 
 /// Threads the reads so far call for, on top of `default_threads`.
-fn cold_extra(o: &Options, c: &Counters) -> usize {
-    if o.threads == 0 && reads_from_disk(c) {
-        let most = cold_threads().saturating_sub(default_threads(o));
+fn cold_extra(f: &Files, c: &Counters) -> usize {
+    if f.threads == 0 && reads_from_disk(c) {
+        let most = cold_threads().saturating_sub(default_threads(f));
         ((c.slow_reads.load(Ordering::Relaxed) / COLD_READS_PER_THREAD) as usize).min(most)
     } else {
         0
@@ -1771,9 +1882,9 @@ fn cold_extra(o: &Options, c: &Counters) -> usize {
 
 /// Threads for one large file searched as ranges: every core (at most 12), since that work is
 /// matching rather than opening files.
-fn range_threads(o: &Options) -> usize {
-    if o.threads != 0 {
-        asked_threads(o)
+fn range_threads(f: &Files) -> usize {
+    if f.threads != 0 {
+        asked_threads(f)
     } else {
         cores()
     }
@@ -1805,14 +1916,14 @@ fn performance_cores() -> Option<usize> {
 /// ripgrep's own ignore file: read before `.ignore` and `.gitignore`, switched off with them.
 pub const RGIGNORE: &str = ".rgignore";
 
-/// The glob and file-type filters of `o`, plus the index directory, which is never searched.
-pub fn overrides(root: &Path, o: &Options) -> Result<ignore::overrides::Override> {
+/// The glob and file-type filters of `f`, plus the index directory, which is never searched.
+pub fn overrides(root: &Path, f: &Files) -> Result<ignore::overrides::Override> {
     let mut ob = OverrideBuilder::new(root);
     ob.add(&format!("!{}/", crate::files::INDEX_DIR))?;
-    for g in &o.globs {
+    for g in &f.globs {
         ob.add(g).with_context(|| format!("invalid glob {g:?}"))?;
     }
-    for t in &o.types {
+    for t in &f.types {
         let (neg, name) = match t.strip_prefix('!') {
             Some(n) => (true, n),
             None => (false, t.as_str()),
@@ -1899,35 +2010,35 @@ impl ScopedGlobs {
     }
 }
 
-pub fn build_walker(roots: &[PathBuf], o: &Options) -> Result<ignore::WalkParallel> {
-    Ok(walk_builder(roots, o)?.build_parallel())
+pub fn build_walker(roots: &[PathBuf], f: &Files) -> Result<ignore::WalkParallel> {
+    Ok(walk_builder(roots, f)?.build_parallel())
 }
 
-fn walk_builder(roots: &[PathBuf], o: &Options) -> Result<WalkBuilder> {
+fn walk_builder(roots: &[PathBuf], f: &Files) -> Result<WalkBuilder> {
     let mut wb = WalkBuilder::new(&roots[0]);
     for r in &roots[1..] {
         wb.add(r);
     }
-    wb.hidden(!o.hidden)
-        .ignore(!o.no_ignore)
-        .git_ignore(!o.no_ignore)
-        .git_global(!o.no_ignore)
-        .git_exclude(!o.no_ignore)
-        .parents(!o.no_ignore)
-        .follow_links(o.follow_links)
-        .max_depth(o.max_depth)
-        .max_filesize(o.max_filesize)
-        .threads(default_threads(o));
-    if !o.no_ignore {
+    wb.hidden(!f.hidden)
+        .ignore(!f.no_ignore)
+        .git_ignore(!f.no_ignore)
+        .git_global(!f.no_ignore)
+        .git_exclude(!f.no_ignore)
+        .parents(!f.no_ignore)
+        .follow_links(f.follow_links)
+        .max_depth(f.max_depth)
+        .max_filesize(f.max_filesize)
+        .threads(default_threads(f));
+    if !f.no_ignore {
         wb.add_custom_ignore_filename(RGIGNORE);
     }
-    if let Some(cwd) = &o.cwd {
+    if let Some(cwd) = &f.cwd {
         wb.process_current_dir(cwd);
     }
     // anchored at a root that is a file, the filters would miss the files of the other roots
     let anchor = if roots[0].is_dir() { roots[0].as_path() } else { roots[0].parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new(".")) };
-    wb.overrides(overrides(anchor, o)?);
-    if let Some(sg) = o.scoped_globs.clone() {
+    wb.overrides(overrides(anchor, f)?);
+    if let Some(sg) = f.scoped_globs.clone() {
         let scopes: Vec<(PathBuf, Scope)> = roots.iter().map(|r| (r.clone(), sg.scope(r))).collect();
         wb.filter_entry(move |e| {
             let path = e.path();
@@ -1944,20 +2055,20 @@ fn walk_builder(roots: &[PathBuf], o: &Options) -> Result<WalkBuilder> {
 /// 0 skips it. Roots holding only files get 256: starting the parallel walk costs more there than
 /// the search itself (three large files: 40.6 ms against 41.9). Any directory to enter gets 0: one
 /// thread reading every directory then holds up the searches (the ripgrep repository, 60
-/// directories: 5.6 ms in parallel against 6.0). `Options::small_tree` sets the number for any tree
+/// directories: 5.6 ms in parallel against 6.0). `Files::small_tree` sets the number for any tree
 /// (the tests use both walks).
-fn small_tree_files(roots: &[PathBuf], o: &Options) -> usize {
-    o.small_tree.unwrap_or_else(|| if has_dirs(roots, o) { 0 } else { 256 })
+fn small_tree_files(roots: &[PathBuf], f: &Files) -> usize {
+    f.small_tree.unwrap_or_else(|| if has_dirs(roots, f) { 0 } else { 256 })
 }
 
 /// Whether a root holds a directory the walk would enter (a hidden one only with `--hidden`).
-fn has_dirs(roots: &[PathBuf], o: &Options) -> bool {
+fn has_dirs(roots: &[PathBuf], f: &Files) -> bool {
     roots.iter().any(|r| {
         std::fs::read_dir(r).is_ok_and(|mut entries| {
             entries.any(|e| {
                 e.is_ok_and(|e| {
-                    let dir = if o.follow_links { e.path().is_dir() } else { e.file_type().is_ok_and(|t| t.is_dir()) };
-                    dir && (o.hidden || !e.file_name().as_encoded_bytes().starts_with(b"."))
+                    let dir = if f.follow_links { e.path().is_dir() } else { e.file_type().is_ok_and(|t| t.is_dir()) };
+                    dir && (f.hidden || !e.file_name().as_encoded_bytes().starts_with(b"."))
                 })
             })
         })
@@ -1988,40 +2099,41 @@ enum Small {
 fn small_first(
     roots: &[PathBuf],
     labels: &[PathBuf],
-    o: &Options,
+    q: &Query,
+    f: &Files,
     matcher: &AnyMatcher,
     c: &Counters,
-    cancel: &AtomicBool,
+    stop: &Stop,
     plain: Option<&PlainSink>,
-    on_hit: &mut impl FnMut(Hit),
+    on_hit: &mut dyn FnMut(Record),
 ) -> Small {
-    let limit = small_tree_files(roots, o);
+    let limit = small_tree_files(roots, f);
     if limit == 0 {
         return Small::Big(Default::default());
     }
-    let Ok(wb) = walk_builder(roots, o) else { return Small::Big(Default::default()) };
+    let Ok(wb) = walk_builder(roots, f) else { return Small::Big(Default::default()) };
     type Job = (PathBuf, Arc<str>, Option<u64>, bool);
     let (work_tx, work_rx) = mpsc::channel::<Job>();
     let work_rx = Mutex::new(work_rx);
     let (tx, rx) = hit_channel();
-    let workers = default_threads(o).min(3);
+    let workers = default_threads(f).min(3);
     let (seen, errors, big) = std::thread::scope(|s| {
         let work_rx = &work_rx;
-        let worker = |tx: mpsc::SyncSender<Vec<Hit>>| {
+        let worker = |tx: mpsc::SyncSender<Vec<Record>>| {
             #[cfg(test)]
             tests::SMALL_WORKERS.with(|n| n.set(n.get() + 1));
             // a clone per thread: each gets its own regex cache pool instead of contending for one
             let matcher = matcher.clone();
             s.spawn(move || {
-                let mut fw = file_worker(o);
+                let mut fw = file_worker(q);
                 loop {
                     let job = match work_rx.lock() {
                         Ok(r) => r.recv(),
                         Err(_) => break,
                     };
                     let Ok((path, rel, size, named)) = job else { break };
-                    if !cancel.load(Ordering::Relaxed) {
-                        search_one(&mut fw, &Run { matcher: &matcher, o, c, cancel, tx: &tx, plain, labels, raw: None }, &path, rel, size, named);
+                    if !stop.is_set() {
+                        search_one(&mut fw, &Run { matcher: &matcher, q, f, c, stop, tx: &tx, plain, labels, raw: None }, &path, rel, size, named);
                     }
                 }
             });
@@ -2033,7 +2145,7 @@ fn small_first(
         let mut errors = Vec::new();
         let mut big = false;
         for entry in wb.build() {
-            if cancel.load(Ordering::Relaxed) {
+            if stop.is_set() {
                 break;
             }
             let entry = match entry {
@@ -2052,9 +2164,9 @@ fn small_first(
                 break;
             }
             taken += 1;
-            let size = if o.want_bytes { entry.metadata().ok().map(|m| m.len()) } else { None };
-            let rel = label(entry.path(), labels, o);
-            let named = o.paths_as_given && entry.depth() == 0;
+            let size = if q.want_bytes { entry.metadata().ok().map(|m| m.len()) } else { None };
+            let rel = label(entry.path(), labels, f);
+            let named = f.paths_as_given && entry.depth() == 0;
             let path = entry.into_path();
             *seen.entry(path.clone()).or_default().get_mut() += 1;
             let job = (path, rel, size, named);
@@ -2074,7 +2186,7 @@ fn small_first(
             if work_tx.send(job).is_err() {
                 break;
             }
-            while added < cold_extra(o, c) {
+            while added < cold_extra(f, c) {
                 worker(tx.clone());
                 added += 1;
             }
@@ -2085,10 +2197,10 @@ fn small_first(
             }
         }
         drop(work_tx);
-        if let Some((path, rel, size, named)) = held.filter(|_| !cancel.load(Ordering::Relaxed)) {
+        if let Some((path, rel, size, named)) = held.filter(|_| !stop.is_set()) {
             c.alone.store(true, Ordering::Relaxed);
             let tx = tx.clone();
-            let one = move || search_one(&mut file_worker(o), &Run { matcher, o, c, cancel, tx: &tx, plain, labels, raw: None }, &path, rel, size, named);
+            let one = move || search_one(&mut file_worker(q), &Run { matcher, q, f, c, stop, tx: &tx, plain, labels, raw: None }, &path, rel, size, named);
             // plain output sends no hits; other output is drained here while the file is searched
             if plain.is_some() {
                 one();
@@ -2101,7 +2213,7 @@ fn small_first(
         c.alone.store(false, Ordering::Relaxed);
         (seen, errors, big)
     });
-    if big && !cancel.load(Ordering::Relaxed) {
+    if big && !stop.is_set() {
         return Small::Big(seen);
     }
     for e in errors {
@@ -2149,10 +2261,17 @@ impl Counters {
         }
     }
 
+    /// Roots on a pseudo filesystem (`pseudo_roots`): their files are read to the end too.
+    fn pseudo_roots(&self, roots: Vec<PathBuf>) {
+        if !roots.is_empty() {
+            self.pseudo_dirs.lock().unwrap_or_else(|p| p.into_inner()).extend(roots);
+            self.has_pseudo_dirs.store(true, Ordering::Release);
+        }
+    }
+
     /// `path` is read until a read returns nothing (it is on a pseudo filesystem).
-    fn read_to_end(&self, o: &Options, path: &Path) -> bool {
-        (!o.read_to_end_under.is_empty() && o.read_to_end_under.iter().any(|p| path.starts_with(p)))
-            || (self.has_pseudo_dirs.load(Ordering::Acquire) && self.pseudo_dirs.lock().unwrap_or_else(|p| p.into_inner()).iter().any(|p| path.starts_with(p)))
+    fn read_to_end(&self, path: &Path) -> bool {
+        self.has_pseudo_dirs.load(Ordering::Acquire) && self.pseudo_dirs.lock().unwrap_or_else(|p| p.into_inner()).iter().any(|p| path.starts_with(p))
     }
 
     fn failed(&self, what: String) {
@@ -2176,47 +2295,70 @@ struct FileWorker {
     out: Vec<u8>,
 }
 
-fn file_worker(o: &Options) -> FileWorker {
-    FileWorker { searcher: make_searcher(o, BinaryDetection::quit(0)), named: None, small: Vec::new(), out: Vec::new() }
+fn file_worker(q: &Query) -> FileWorker {
+    FileWorker { searcher: make_searcher(q, BinaryDetection::quit(0)), named: None, small: Vec::new(), out: Vec::new() }
 }
 
-fn make_searcher(o: &Options, binary: BinaryDetection) -> Searcher {
-    make_searcher_limited(o, binary, None)
+fn make_searcher(q: &Query, binary: BinaryDetection) -> Searcher {
+    make_searcher_limited(q, binary, None)
 }
 
 /// `heap`: the most bytes the searcher may hold, a line and its context (all of the input with -U).
-fn make_searcher_limited(o: &Options, binary: BinaryDetection, heap: Option<usize>) -> Searcher {
+fn make_searcher_limited(q: &Query, binary: BinaryDetection, heap: Option<usize>) -> Searcher {
     SearcherBuilder::new()
         .binary_detection(binary)
         .heap_limit(heap)
-        .line_number(!(o.count_only || o.files_only)) // line numbers cost a pass over the buffer
-        .multi_line(o.multiline)
-        .before_context(o.before)
-        .after_context(o.after)
-        .invert_match(o.invert)
-        .max_matches(o.max_count)
+        .line_number(q.report == Report::Lines) // line numbers cost a pass over the buffer
+        .multi_line(q.pattern.multiline)
+        .before_context(q.before)
+        .after_context(q.after)
+        .invert_match(q.invert)
+        .max_matches(q.max_count)
         .build()
 }
 
-/// What every file of one search shares: the matcher, the options, the counters, the cancel flag and
-/// where the results go.
+/// When a search stops early: the caller's cancel signal, which it only reads, or a reason of its
+/// own (enough matches, the reader of plain output went away).
+struct Stop {
+    cancel: Arc<AtomicBool>,
+    own: AtomicBool,
+}
+
+impl Stop {
+    fn new(cancel: Arc<AtomicBool>) -> Stop {
+        Stop { cancel, own: AtomicBool::new(false) }
+    }
+
+    #[inline]
+    fn is_set(&self) -> bool {
+        self.own.load(Ordering::Relaxed) || self.cancel.load(Ordering::Relaxed)
+    }
+
+    fn set(&self) {
+        self.own.store(true, Ordering::Relaxed);
+    }
+}
+
+/// What every file of one search shares: the matcher, the query, the file set, the counters, the
+/// stop flag and where the results go.
 #[derive(Clone, Copy)]
 struct Run<'a> {
     matcher: &'a AnyMatcher,
-    o: &'a Options,
+    q: &'a Query,
+    f: &'a Files,
     c: &'a Counters,
-    cancel: &'a AtomicBool,
-    tx: &'a mpsc::SyncSender<Vec<Hit>>,
+    stop: &'a Stop,
+    tx: &'a mpsc::SyncSender<Vec<Record>>,
     plain: Option<&'a PlainSink>,
     /// the paths the files are reported under (`label`)
     labels: &'a [PathBuf],
-    /// the file being searched: `Hit::path_bytes`
+    /// the file being searched: `Line::path_bytes`
     raw: Option<&'a Arc<[u8]>>,
 }
 
 impl<'a> Run<'a> {
     fn collector(&self, path: Arc<str>) -> Collector<'a> {
-        let o = self.o;
+        let (o, f) = (self.q, self.f);
         Collector {
             path,
             raw: self.raw.cloned(),
@@ -2230,41 +2372,40 @@ impl<'a> Run<'a> {
             stats_matches: &self.c.matches,
             max_results: o.max_results,
             matched: false,
-            cancel: self.cancel,
+            stop: self.stop,
             matcher: self.matcher,
             invert: o.invert,
-            count_only: o.count_only,
-            files_only: o.files_only,
+            report: o.report,
             file_count: 0,
             line_base: 0,
             hold: false,
             binary: false,
             convert: false,
             binary_at: None,
-            multiline: o.multiline,
+            multiline: o.pattern.multiline,
             first: o.before > 0 || o.after > 0,
-            whole_groups: (o.before > 0 || o.after > 0) && default_threads(o) > 1 && !self.c.alone.load(Ordering::Relaxed),
+            whole_groups: (o.before > 0 || o.after > 0) && default_threads(f) > 1 && !self.c.alone.load(Ordering::Relaxed),
             named: o.with_filename,
             numbered: o.line_numbers,
-            count_each: o.multiline && o.count_only && !o.invert && self.matcher.spans_lines(),
+            count_each: o.pattern.multiline && o.report == Report::Counts && !o.invert && self.matcher.spans_lines(),
         }
     }
 }
 
-/// Search one file and send its hits to `tx`. `named`: a root that is a file, or `-` for standard
-/// input (`Options::paths_as_given`).
+/// Search one file and send its records to `tx`. `named`: a root that is a file, or `-` for
+/// standard input (`Files::paths_as_given`).
 fn search_one(w: &mut FileWorker, r: &Run, path: &Path, rel: Arc<str>, size: Option<u64>, named: bool) {
-    let raw = label_bytes(path, r.labels, r.o);
+    let raw = label_bytes(path, r.labels, r.f);
     let r = &Run { raw: raw.as_ref(), ..*r };
-    let (o, c) = (r.o, r.c);
+    let (o, f, c) = (r.q, r.f, r.c);
     if let Some(p) = r.plain {
-        p.tick(r.cancel);
+        p.tick(r.stop);
     }
     c.files_searched.fetch_add(1, Ordering::Relaxed);
     if let Some(n) = size {
         c.bytes.fetch_add(n, Ordering::Relaxed);
     }
-    if o.search_zip {
+    if f.search_zip {
         if let Some(kind) = crate::archive::Kind::of(&rel) {
             search_archive(r, path, &rel, kind);
             return;
@@ -2291,7 +2432,7 @@ fn search_one(w: &mut FileWorker, r: &Run, path: &Path, rel: Arc<str>, size: Opt
     };
     let mut owned = None;
     let mut small = None;
-    if splittable(o) && !c.read_to_end(o, path) {
+    if splittable(o) && !c.read_to_end(path) {
         // most files are small: one read of up to SMALL_FILE + 1 bytes takes such a file whole and
         // tells a larger one apart, with no call for the size (a `statx` per file otherwise: 96,000
         // of them on the Linux tree)
@@ -2307,14 +2448,14 @@ fn search_one(w: &mut FileWorker, r: &Run, path: &Path, rel: Arc<str>, size: Opt
             split::First::Other => {}
             split::First::Larger => {
                 let len = size.or_else(|| file.metadata().ok().map(|m| m.len())).unwrap_or(0);
-                let min = o.split_file_bytes;
+                let min = f.split_file_bytes;
                 if len >= min {
                     match split::search(r, &file, len, (min / 8).max(1), &rel) {
                         split::Outcome::Done => return,
                         split::Outcome::Stream => {}
                         split::Outcome::Buffer(b) => owned = Some(b),
                     }
-                } else if len <= MID_FILE && range_threads(o) > 1 {
+                } else if len <= MID_FILE && range_threads(f) > 1 {
                     // a searcher of its own, so the thread's keeps the buffer size it had: where a
                     // NUL byte after the first fill stops the output depends on that size. One
                     // thread meets the files in a fixed order and keeps its one searcher
@@ -2346,14 +2487,13 @@ fn search_one(w: &mut FileWorker, r: &Run, path: &Path, rel: Arc<str>, size: Opt
 /// cancellation still reports it). As ripgrep, a file the walk found that holds a NUL byte has
 /// no count and is not listed. Returns the emptied output buffer, for the next file.
 fn report(r: &Run, mut sink: Collector, rel: Arc<str>, named: bool) -> Vec<u8> {
-    let o = r.o;
     sink.flush();
-    if sink.matched && (named || !sink.binary || !(o.count_only || o.files_only)) {
+    if sink.matched && (named || !sink.binary || r.q.report == Report::Lines) {
         r.c.files_matched.fetch_add(1, Ordering::Relaxed);
-        if o.count_only || o.files_only {
-            // one record per file carries the count in `line`
-            let path_bytes = sink.raw.clone();
-            send(r.c, r.tx, vec![Hit { path: rel, line: sink.file_count, column: 0, text: String::new(), spans: Vec::new(), context: false, path_bytes }]);
+        match r.q.report {
+            Report::Lines => {}
+            Report::Counts => send(r.c, r.tx, vec![Record::Count { path: rel, path_bytes: sink.raw.clone(), count: sink.file_count }]),
+            Report::Files => send(r.c, r.tx, vec![Record::File { path: rel, path_bytes: sink.raw.clone() }]),
         }
     }
     let mut out = std::mem::take(&mut sink.out);
@@ -2368,13 +2508,13 @@ fn report(r: &Run, mut sink: Collector, rel: Arc<str>, named: bool) -> Vec<u8> {
 /// `-z`: every member of an archive, or the decompressed file, as a file of its own, reported as
 /// `archive.zip{member}` (the decompressed file keeps its own name).
 fn search_archive(run: &Run, path: &Path, rel: &Arc<str>, kind: crate::archive::Kind) {
-    let (c, cancel) = (run.c, run.cancel);
+    let (c, stop) = (run.c, run.stop);
     // the searcher holds a whole line, and a small compressed file can expand to one line of
     // gigabytes; -U holds the whole member, so a limit would refuse large members that are fine
-    let limit = (!run.o.multiline).then_some(crate::archive::MAX_LINE);
-    let searcher = &mut make_searcher_limited(run.o, BinaryDetection::quit(0), limit);
+    let limit = (!run.q.pattern.multiline).then_some(crate::archive::MAX_LINE);
+    let searcher = &mut make_searcher_limited(run.q, BinaryDetection::quit(0), limit);
     let mut each = |member: Option<&str>, r: &mut dyn std::io::Read| -> bool {
-        let m = member.map(|m| if run.o.raw_member_names { std::borrow::Cow::Borrowed(m) } else { crate::fmt::shown(m) });
+        let m = member.map(|m| if run.q.raw_member_names { std::borrow::Cow::Borrowed(m) } else { crate::fmt::shown(m) });
         let label: Arc<str> = match &m {
             Some(m) => Arc::from(format!("{rel}{{{m}}}")),
             None => Arc::clone(rel),
@@ -2394,7 +2534,7 @@ fn search_archive(run: &Run, path: &Path, rel: &Arc<str>, kind: crate::archive::
             Ok(()) => {}
         }
         report(run, sink, label, false);
-        !cancel.load(Ordering::Relaxed)
+        !stop.is_set()
     };
     let mut failed = |what: String| c.failed(format!("{rel}: {what}"));
     if let Err(e) = crate::archive::walk(path, kind, &mut each, &mut failed) {
@@ -2414,8 +2554,8 @@ const MID_FILE: u64 = 1 << 20;
 /// Line-at-a-time searches whose results do not depend on neighbouring lines or on a running count.
 /// `-l` stays sequential: it stops at the first match. On one thread a file is never split, but a
 /// file of one long line is still read into a buffer of its size (`split::search`).
-fn splittable(o: &Options) -> bool {
-    !o.multiline && o.before == 0 && o.after == 0 && o.max_count.is_none() && o.max_results.is_none() && !o.files_only
+fn splittable(o: &Query) -> bool {
+    !o.pattern.multiline && o.before == 0 && o.after == 0 && o.max_count.is_none() && o.max_results.is_none() && o.report != Report::Files
 }
 
 mod split {
@@ -2579,16 +2719,16 @@ mod split {
     /// matching line is read again as it is written. None when that does not apply; Stream when
     /// the file is not of one line after all, with nothing reported.
     fn one_line(r: &Run, file: &File, size: u64, rel: &Arc<str>) -> Option<Outcome> {
-        let (o, AnyMatcher::Literal(lit)) = (r.o, r.matcher) else { return None };
+        let (o, AnyMatcher::Literal(lit)) = (r.q, r.matcher) else { return None };
         // a shorter line goes to the collector's buffer, which needs it in memory
-        if o.invert || !(r.plain.is_some() || o.count_only) || size < (1 << 16) + 2 {
+        if o.invert || !(r.plain.is_some() || o.report == Report::Counts) || size < (1 << 16) + 2 {
             return None;
         }
         #[cfg(test)]
         if tests::NO_ONE_LINE.with(|c| c.get()) {
             return None;
         }
-        let Some(found) = literal_in(file, size, &lit.0, default_threads(o)) else { return Some(Outcome::Stream) };
+        let Some(found) = literal_in(file, size, &lit.0, default_threads(r.f)) else { return Some(Outcome::Stream) };
         #[cfg(test)]
         tests::ONE_LINE.with(|n| n.set(n.get() + 1));
         if found {
@@ -2650,7 +2790,7 @@ mod split {
 
     struct Part {
         out: Vec<u8>,
-        hits: Vec<Hit>,
+        hits: Vec<Record>,
         matched: bool,
         count: u64,
         /// the search reached the end of the range
@@ -2663,7 +2803,7 @@ mod split {
     /// must be searched sequentially after all: it starts with a byte-order mark (transcoded as one
     /// stream), holds a NUL byte (binary detection), a read failed, or it has no line breaks to split at.
     pub(super) fn search(r: &Run, file: &File, size: u64, chunk: u64, rel: &Arc<str>) -> Outcome {
-        let Run { o, c, cancel, tx, plain, .. } = *r;
+        let Run { q: o, f, c, stop, tx, plain, .. } = *r;
         let mut head = [0u8; 3];
         match read_at(file, &mut head, 0) {
             Ok(n) if n >= 2 && (head[..2] == [0xFF, 0xFE] || head[..2] == [0xFE, 0xFF] || (n == 3 && head == [0xEF, 0xBB, 0xBF])) => return Outcome::Stream,
@@ -2672,7 +2812,7 @@ mod split {
         }
         // one thread only asks whether the file has a line break to split at: the stream holds 3^k
         // times 64 KiB for a long line (141.6 MB peak resident for one 100 MB line, 103.9 whole)
-        let one = range_threads(o) == 1;
+        let one = range_threads(f) == 1;
         let mut bounds = vec![0u64];
         let mut probe = vec![0u8; 64 << 10];
         let mut x = chunk;
@@ -2691,16 +2831,16 @@ mod split {
             if let Some(done) = one_line(r, file, size, rel) {
                 return done;
             }
-            return whole(file, size, default_threads(o)).map_or(Outcome::Stream, Outcome::Buffer);
+            return whole(file, size, default_threads(f)).map_or(Outcome::Stream, Outcome::Buffer);
         }
         if one {
             return Outcome::Stream;
         }
         let ranges: Vec<(u64, u64)> = bounds.windows(2).map(|w| (w[0], w[1])).collect();
-        let threads = range_threads(o).min(ranges.len());
+        let threads = range_threads(f).min(ranges.len());
 
         let next = AtomicUsize::new(0);
-        let stop = AtomicBool::new(false);
+        let failed = AtomicBool::new(false);
         let counted: Vec<Option<Vec<(usize, u64)>>> = std::thread::scope(|s| {
             let hs: Vec<_> = (0..threads)
                 .map(|_| {
@@ -2712,7 +2852,7 @@ mod split {
                         loop {
                             let i = next.fetch_add(1, Ordering::Relaxed);
                             let Some(&(a, b)) = ranges.get(i) else { return Some(mine) };
-                            mine.push((i, newlines(file, a, b, &mut buf, &stop)?));
+                            mine.push((i, newlines(file, a, b, &mut buf, &failed)?));
                         }
                     })
                 })
@@ -2746,7 +2886,7 @@ mod split {
                 matched |= part.matched;
                 count += part.count;
                 if let Some(p) = plain {
-                    p.write(&part.out, false, cancel);
+                    p.write(&part.out, false, stop);
                 } else {
                     let mut hits = part.hits.into_iter().peekable();
                     while hits.peek().is_some() {
@@ -2760,37 +2900,39 @@ mod split {
                 }
             }
             if let Some(p) = plain {
-                p.tick(cancel);
+                p.tick(stop);
             }
-            if cancel.load(Ordering::Relaxed) {
+            if stop.is_set() {
                 break;
             }
         }
         if matched {
             c.files_matched.fetch_add(1, Ordering::Relaxed);
-            if o.count_only {
-                let path_bytes = r.raw.cloned();
-                send(c, tx, vec![Hit { path: Arc::clone(rel), line: count, column: 0, text: String::new(), spans: Vec::new(), context: false, path_bytes }]);
+            if o.report == Report::Counts {
+                send(c, tx, vec![Record::Count { path: Arc::clone(rel), path_bytes: r.raw.cloned(), count }]);
             }
         }
         Outcome::Done
     }
 
     fn search_range(r: &Run, file: &File, a: u64, b: u64, base: u64, rel: &Arc<str>) -> Part {
-        let (o, cancel) = (r.o, r.cancel);
+        let (o, stop) = (r.q, r.stop);
         // its own matcher (its own regex cache pool) and its own searcher, without transcoding: the
         // middle of a file is not the start of a stream
         let matcher = r.matcher.clone();
-        let mut searcher =
-            SearcherBuilder::new().binary_detection(BinaryDetection::quit(0)).bom_sniffing(false).line_number(!o.count_only).invert_match(o.invert).build();
+        let mut searcher = SearcherBuilder::new()
+            .binary_detection(BinaryDetection::quit(0))
+            .bom_sniffing(false)
+            .line_number(o.report != Report::Counts)
+            .invert_match(o.invert)
+            .build();
         // with `hold` the plain text is formatted into `out` and never written to this sink
         let sink_plain = PlainSink::new(Box::new(std::io::sink()));
         let range_run = Run { matcher: &matcher, plain: if r.plain.is_some() { Some(&sink_plain) } else { None }, ..*r };
-        // the hits wait in `batch` for the range's turn: a bounded channel would wait for a reader
+        // the records wait in `batch` for the range's turn: a bounded channel would wait for a reader
         let mut sink = Collector {
             tx: None,
             max_results: None,
-            files_only: false,
             line_base: base,
             hold: true,
             multiline: false, // never split in multiline mode
@@ -2799,7 +2941,7 @@ mod split {
         let mut range = Range { file, pos: a, end: b };
         let res = matcher.search_reader(&mut searcher, &mut range, &mut sink);
         sink.flush();
-        let ok = res.is_ok() && !sink.binary && (range.pos >= b || cancel.load(Ordering::Relaxed));
+        let ok = res.is_ok() && !sink.binary && (range.pos >= b || stop.is_set());
         Part { out: std::mem::take(&mut sink.out), hits: std::mem::take(&mut sink.batch), matched: sink.matched, count: sink.file_count, ok }
     }
 }
@@ -2808,12 +2950,12 @@ mod split {
 /// with more matches than the caller writes holds no more of them.
 const HIT_BATCHES: usize = 64;
 
-fn hit_channel() -> (mpsc::SyncSender<Vec<Hit>>, mpsc::Receiver<Vec<Hit>>) {
+fn hit_channel() -> (mpsc::SyncSender<Vec<Record>>, mpsc::Receiver<Vec<Record>>) {
     mpsc::sync_channel(HIT_BATCHES)
 }
 
 /// Waits while `HIT_BATCHES` batches wait for the caller.
-fn send(c: &Counters, tx: &mpsc::SyncSender<Vec<Hit>>, batch: Vec<Hit>) {
+fn send(c: &Counters, tx: &mpsc::SyncSender<Vec<Record>>, batch: Vec<Record>) {
     #[cfg(test)]
     c.most_queued.fetch_max(c.queued.fetch_add(1, Ordering::Relaxed) + 1, Ordering::Relaxed);
     #[cfg(not(test))]
@@ -2821,8 +2963,8 @@ fn send(c: &Counters, tx: &mpsc::SyncSender<Vec<Hit>>, batch: Vec<Hit>) {
     let _ = tx.send(batch);
 }
 
-/// Hand the hits to the caller in arrival order, until every sender is gone.
-fn drain(rx: mpsc::Receiver<Vec<Hit>>, c: &Counters, mut on_hit: impl FnMut(Hit)) {
+/// Hand the records to the caller in arrival order, until every sender is gone.
+fn drain(rx: mpsc::Receiver<Vec<Record>>, c: &Counters, mut on_hit: impl FnMut(Record)) {
     for batch in rx {
         #[cfg(test)]
         c.queued.fetch_sub(1, Ordering::Relaxed);
@@ -2834,7 +2976,7 @@ fn drain(rx: mpsc::Receiver<Vec<Hit>>, c: &Counters, mut on_hit: impl FnMut(Hit)
     let _ = c;
 }
 
-fn stats(c: &Counters, t0: Instant, cancel: &AtomicBool) -> Stats {
+fn stats(c: &Counters, t0: Instant, stop: &Stop) -> Stats {
     Stats {
         files_searched: c.files_searched.load(Ordering::Relaxed),
         files_matched: c.files_matched.load(Ordering::Relaxed),
@@ -2842,32 +2984,36 @@ fn stats(c: &Counters, t0: Instant, cancel: &AtomicBool) -> Stats {
         bytes_searched: c.bytes.load(Ordering::Relaxed),
         errors: c.errors.load(Ordering::Relaxed),
         elapsed_ms: t0.elapsed().as_secs_f64() * 1000.0,
-        cancelled: cancel.load(Ordering::Relaxed),
+        cancelled: stop.is_set(),
         failures: c.failures.lock().map(|v| v.clone()).unwrap_or_default(),
     }
 }
 
-/// Search `roots`, sending every hit to `on_hit` as it is found (from the calling thread). Returns
-/// statistics; `cancel` may be set from another thread (or by `max_results`) to stop early.
-pub fn search(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, on_hit: impl FnMut(Hit)) -> Result<Stats> {
-    run_walk(roots, o, cancel, None, on_hit)
+/// Search `files` for `query`, the one way into Engine A. The results go to `out` as they are
+/// found. The search stops early once `cancel` is set (from another thread), which it reads and
+/// never sets. Returns statistics.
+pub fn search(query: &Query, files: &Files, cancel: Arc<AtomicBool>, out: Output) -> Result<Stats> {
+    let stop = Arc::new(Stop::new(cancel));
+    let mut none = |_: Record| {};
+    let (plain, on_record): (Option<Arc<PlainSink>>, &mut dyn FnMut(Record)) = match out {
+        Output::Records(f) => (None, f),
+        Output::Plain(p) => (Some(p), &mut none),
+    };
+    match &files.paths {
+        Paths::Walk(roots) => run_walk(roots, query, files, stop, plain, on_record),
+        Paths::List { root, files: list } => run_files(root, list, query, files, stop, plain, on_record),
+    }
 }
 
-/// `search` with plain output written straight to `out` by the search threads (no `Hit`s).
-/// Only for plain match output: not with counts, file lists, `max_count` or JSON.
-pub fn search_plain(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, out: Arc<PlainSink>) -> Result<Stats> {
-    run_walk(roots, o, cancel, Some(out), |_| {})
-}
-
-fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Option<Arc<PlainSink>>, mut on_hit: impl FnMut(Hit)) -> Result<Stats> {
+fn run_walk(roots: &[PathBuf], q: &Query, f: &Files, stop: Arc<Stop>, plain: Option<Arc<PlainSink>>, on_hit: &mut dyn FnMut(Record)) -> Result<Stats> {
     let t0 = Instant::now();
     if roots.is_empty() {
         bail!("no paths to search");
     }
-    let matcher = Arc::new(build_matcher(o)?);
+    let matcher = Arc::new(build_matcher(&q.pattern)?);
     let counters = Arc::new(Counters::default());
     let rest: Vec<PathBuf>;
-    let stdin_too = o.paths_as_given && roots.iter().any(|r| r.as_os_str() == "-");
+    let stdin_too = f.paths_as_given && roots.iter().any(|r| r.as_os_str() == "-");
     let given = roots;
     let roots = if stdin_too {
         rest = roots.iter().filter(|r| r.as_os_str() != "-").cloned().collect();
@@ -2875,17 +3021,10 @@ fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Opti
     } else {
         roots
     };
-    let pseudo = pseudo_roots(roots);
-    let with_pseudo;
-    let o = if pseudo.is_empty() {
-        o
-    } else {
-        with_pseudo = Options { read_to_end_under: pseudo, ..o.clone() };
-        &with_pseudo
-    };
-    if o.first_in_path_order {
+    counters.pseudo_roots(pseudo_roots(roots));
+    if q.first_in_path_order {
         if plain.is_some() {
-            bail!("first_in_path_order needs a hit sink, not plain output");
+            bail!("first_in_path_order needs records, not plain output");
         }
         // as `rg --sort path`: the roots in the order given, each walked in path order
         let mut files = Vec::new();
@@ -2895,38 +3034,38 @@ fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Opti
                 continue;
             }
             let at = files.len();
-            files.extend(list_files(std::slice::from_ref(root), roots, o, &counters)?);
+            files.extend(list_files(std::slice::from_ref(root), roots, f, &counters)?);
             files[at..].sort_by(|a, b| Path::new(&*a.1).cmp(Path::new(&*b.1)));
         }
-        return Ok(first_in_path_order(files, roots, o.max_results, &matcher, o, &counters, &cancel, on_hit, t0));
+        return Ok(first_in_path_order(files, roots, &matcher, q, f, &counters, &stop, on_hit, t0));
     }
     if stdin_too {
-        search_stdin(o, &matcher, &counters, &cancel, plain.as_deref(), &mut on_hit);
+        search_stdin(q, f, &matcher, &counters, &stop, plain.as_deref(), on_hit);
     }
     if roots.is_empty() {
-        return Ok(stats(&counters, t0, &cancel));
+        return Ok(stats(&counters, t0, &stop));
     }
     // the overrides are anchored at one root: a glob naming a directory needs a walk per root
-    if roots.len() > 1 && o.globs.iter().any(|g| g.contains('/')) {
+    if roots.len() > 1 && f.globs.iter().any(|g| g.contains('/')) {
         for root in roots.chunks(1) {
-            if !cancel.load(Ordering::Relaxed) {
-                walk(root, roots, o, &matcher, &counters, &cancel, plain.clone(), &mut on_hit)?;
+            if !stop.is_set() {
+                walk(root, roots, q, f, &matcher, &counters, &stop, plain.clone(), on_hit)?;
             }
         }
     } else {
-        walk(roots, roots, o, &matcher, &counters, &cancel, plain, &mut on_hit)?;
+        walk(roots, roots, q, f, &matcher, &counters, &stop, plain, on_hit)?;
     }
-    Ok(stats(&counters, t0, &cancel))
+    Ok(stats(&counters, t0, &stop))
 }
 
 /// Search standard input, reported as `STDIN_LABEL`.
-fn search_stdin(o: &Options, matcher: &AnyMatcher, c: &Counters, cancel: &AtomicBool, plain: Option<&PlainSink>, on_hit: &mut impl FnMut(Hit)) {
+fn search_stdin(q: &Query, f: &Files, matcher: &AnyMatcher, c: &Counters, stop: &Stop, plain: Option<&PlainSink>, on_hit: &mut dyn FnMut(Record)) {
     let (tx, rx) = hit_channel();
     c.alone.store(true, Ordering::Relaxed);
     std::thread::scope(|s| {
         s.spawn(move || {
-            let mut fw = file_worker(o);
-            search_one(&mut fw, &Run { matcher, o, c, cancel, tx: &tx, plain, labels: &[], raw: None }, Path::new("-"), Arc::from(STDIN_LABEL), None, true);
+            let mut fw = file_worker(q);
+            search_one(&mut fw, &Run { matcher, q, f, c, stop, tx: &tx, plain, labels: &[], raw: None }, Path::new("-"), Arc::from(STDIN_LABEL), None, true);
         });
         drain(rx, c, &mut *on_hit);
     });
@@ -2962,20 +3101,21 @@ fn show_share(shown: &AtomicUsize, running: Option<usize>, threads: usize) {
 fn walk(
     roots: &[PathBuf],
     labels: &[PathBuf],
-    o: &Options,
+    q: &Query,
+    f: &Files,
     matcher: &Arc<AnyMatcher>,
     counters: &Arc<Counters>,
-    cancel: &Arc<AtomicBool>,
+    stop: &Arc<Stop>,
     plain: Option<Arc<PlainSink>>,
-    on_hit: &mut impl FnMut(Hit),
+    on_hit: &mut dyn FnMut(Record),
 ) -> Result<()> {
-    let searched = match small_first(roots, labels, o, matcher, counters, cancel, plain.as_deref(), on_hit) {
+    let searched = match small_first(roots, labels, q, f, matcher, counters, stop, plain.as_deref(), on_hit) {
         Small::Done => return Ok(()),
         Small::Big(seen) => Arc::new(seen),
     };
-    let threads = default_threads(o);
+    let threads = default_threads(f);
     // counted only without -j: a number asked for is kept
-    let counted = (o.threads == 0).then(|| Arc::new(std::sync::OnceLock::<Option<crate::running::Counted>>::new()));
+    let counted = (f.threads == 0).then(|| Arc::new(std::sync::OnceLock::<Option<crate::running::Counted>>::new()));
     let shown = Arc::new(AtomicUsize::new(0));
     let first = match &counted {
         Some(counted) => {
@@ -2989,29 +3129,29 @@ fn walk(
     let share = Arc::new(AtomicUsize::new(first));
     let early = Arc::new(AtomicBool::new(false));
     // raised as reads turn out to come from the disk: the walk grows by that many threads
-    let cold = Arc::new(AtomicUsize::new(cold_extra(o, counters)));
+    let cold = Arc::new(AtomicUsize::new(cold_extra(f, counters)));
     // the threads the walk runs: the share plus the cold ones
     let want = Arc::new(AtomicUsize::new(first + cold.load(Ordering::Relaxed)));
-    let mut wb = walk_builder(roots, o)?;
+    let mut wb = walk_builder(roots, f)?;
     // the share starts, and the rest when the count falls or the reads turn out cold
     wb.threads(first);
-    if o.threads == 0 {
+    if f.threads == 0 {
         wb.grow_threads(cold_threads().max(threads).saturating_sub(first), Arc::clone(&want));
     }
     let walker = wb.build_parallel();
     let (tx, rx) = hit_channel();
     let labels_owned: Arc<[PathBuf]> = labels.into();
     let matcher = Arc::clone(matcher);
-    let opts = Arc::new(o.clone());
-    let (c2, cancel2) = (Arc::clone(counters), Arc::clone(cancel));
+    let (q, f) = (Arc::new(q.clone()), Arc::new(f.clone()));
+    let (c2, stop2) = (Arc::clone(counters), Arc::clone(stop));
     let worker = std::thread::spawn(move || {
         walker.run(|| {
             let tx = tx.clone();
             // a clone per thread: each gets its own regex cache pool instead of contending for one
             let matcher = AnyMatcher::clone(&matcher);
-            let cancel = Arc::clone(&cancel2);
+            let stop = Arc::clone(&stop2);
             let c = Arc::clone(&c2);
-            let opts = Arc::clone(&opts);
+            let (q, f) = (Arc::clone(&q), Arc::clone(&f));
             let labels = Arc::clone(&labels_owned);
             let plain = plain.clone();
             let searched = Arc::clone(&searched);
@@ -3022,7 +3162,7 @@ fn walk(
             // made on the first file: the threads kept for a cold walk mostly never run
             let mut fw = None;
             Box::new(move |entry| {
-                if cancel.load(Ordering::Relaxed) {
+                if stop.is_set() {
                     return WalkState::Quit;
                 }
                 let entry = match entry {
@@ -3045,13 +3185,13 @@ fn walk(
                         }
                     }
                 }
-                let size = if opts.want_bytes { entry.metadata().ok().map(|m| m.len()) } else { None };
-                let rel = label(entry.path(), &labels, &opts);
-                let fw = fw.get_or_insert_with(|| file_worker(&opts));
-                let named = opts.paths_as_given && entry.depth() == 0;
-                let run = Run { matcher: &matcher, o: &opts, c: &c, cancel: &cancel, tx: &tx, plain: plain.as_deref(), labels: &labels, raw: None };
+                let size = if q.want_bytes { entry.metadata().ok().map(|m| m.len()) } else { None };
+                let rel = label(entry.path(), &labels, &f);
+                let fw = fw.get_or_insert_with(|| file_worker(&q));
+                let named = f.paths_as_given && entry.depth() == 0;
+                let run = Run { matcher: &matcher, q: &q, f: &f, c: &c, stop: &stop, tx: &tx, plain: plain.as_deref(), labels: &labels, raw: None };
                 search_one(fw, &run, entry.path(), rel, size, named);
-                let extra = cold_extra(&opts, &c);
+                let extra = cold_extra(&f, &c);
                 let mut changed = extra > cold.load(Ordering::Relaxed);
                 if changed {
                     cold.fetch_max(extra, Ordering::Relaxed);
@@ -3071,7 +3211,7 @@ fn walk(
                 if changed {
                     want.store(share.load(Ordering::Relaxed) + cold.load(Ordering::Relaxed), Ordering::Relaxed);
                 }
-                if cancel.load(Ordering::Relaxed) {
+                if stop.is_set() {
                     WalkState::Quit
                 } else {
                     WalkState::Continue
@@ -3085,49 +3225,47 @@ fn walk(
 }
 
 /// Search the given files (paths relative to `root`, as an index lists them) with exactly the
-/// per-file logic of `search`; glob and type filters of `o` apply to these paths. Used by the
-/// indexed path, which has already chosen the files that can match.
-pub fn search_files(root: &Path, files: Vec<String>, o: &Options, cancel: Arc<AtomicBool>, on_hit: impl FnMut(Hit)) -> Result<Stats> {
-    run_files(root, files, o, cancel, None, on_hit)
-}
-
-/// `search_files` with plain output (see `search_plain`).
-pub fn search_files_plain(root: &Path, files: Vec<String>, o: &Options, cancel: Arc<AtomicBool>, out: Arc<PlainSink>) -> Result<Stats> {
-    run_files(root, files, o, cancel, Some(out), |_| {})
-}
-
-fn run_files(root: &Path, files: Vec<String>, o: &Options, cancel: Arc<AtomicBool>, plain: Option<Arc<PlainSink>>, on_hit: impl FnMut(Hit)) -> Result<Stats> {
+/// per-file logic of a walk; the glob and type filters of `f` apply to these paths.
+fn run_files(
+    root: &Path,
+    list: &[String],
+    q: &Query,
+    f: &Files,
+    stop: Arc<Stop>,
+    plain: Option<Arc<PlainSink>>,
+    on_hit: &mut dyn FnMut(Record),
+) -> Result<Stats> {
     let t0 = Instant::now();
-    let matcher = build_matcher(o)?;
-    let ov = overrides(root, o)?;
-    let scoped = o.scoped_globs.as_ref().map(|sg| (sg, sg.scope(root)));
-    let mut files: Vec<(PathBuf, Arc<str>, bool)> = files
-        .into_iter()
+    let matcher = build_matcher(&q.pattern)?;
+    let ov = overrides(root, f)?;
+    let scoped = f.scoped_globs.as_ref().map(|sg| (sg, sg.scope(root)));
+    let mut files: Vec<(PathBuf, Arc<str>, bool)> = list
+        .iter()
         .filter(|rel| !filtered_out(&ov, rel) && !scoped.as_ref().is_some_and(|(sg, s)| sg.excludes_file(s, rel)))
-        .map(|rel| (root.join(&rel), Arc::from(rel), false))
+        .map(|rel| (root.join(rel), Arc::from(rel.as_str()), false))
         .collect();
     let counters = Counters::default();
-    if o.first_in_path_order {
+    if q.first_in_path_order {
         if plain.is_some() {
-            bail!("first_in_path_order needs a hit sink, not plain output");
+            bail!("first_in_path_order needs records, not plain output");
         }
         files.sort_by(|a, b| Path::new(&*a.1).cmp(Path::new(&*b.1)));
-        return Ok(first_in_path_order(files, &[root.to_path_buf()], o.max_results, &matcher, o, &counters, &cancel, on_hit, t0));
+        return Ok(first_in_path_order(files, &[root.to_path_buf()], &matcher, q, f, &counters, &stop, on_hit, t0));
     }
-    let threads = default_threads(o).min(files.len().max(1));
-    search_list(&files, &[root.to_path_buf()], threads, None, &matcher, o, &counters, &cancel, plain.as_deref(), on_hit);
-    Ok(stats(&counters, t0, &cancel))
+    let threads = default_threads(f).min(files.len().max(1));
+    search_list(&files, &[root.to_path_buf()], threads, None, &matcher, q, f, &counters, &stop, plain.as_deref(), on_hit);
+    Ok(stats(&counters, t0, &stop))
 }
 
 /// The files under `roots` the search would reach (path, path as reported, named on the command
 /// line), for `first_in_path_order`.
-fn list_files(roots: &[PathBuf], labels: &[PathBuf], o: &Options, c: &Counters) -> Result<Vec<(PathBuf, Arc<str>, bool)>> {
+fn list_files(roots: &[PathBuf], labels: &[PathBuf], f: &Files, c: &Counters) -> Result<Vec<(PathBuf, Arc<str>, bool)>> {
     let found = Mutex::new(Vec::new());
-    walk_builder(roots, o)?.build_parallel().run(|| {
+    walk_builder(roots, f)?.build_parallel().run(|| {
         Box::new(|entry| {
             match entry {
                 Ok(e) if searchable(&e) => {
-                    let item = (e.path().to_path_buf(), label(e.path(), labels, o), o.paths_as_given && e.depth() == 0);
+                    let item = (e.path().to_path_buf(), label(e.path(), labels, f), f.paths_as_given && e.depth() == 0);
                     found.lock().unwrap_or_else(|p| p.into_inner()).push(item);
                 }
                 Ok(e) => c.met_dir(&e),
@@ -3139,28 +3277,29 @@ fn list_files(roots: &[PathBuf], labels: &[PathBuf], o: &Options, c: &Counters) 
     Ok(found.into_inner().unwrap_or_else(|p| p.into_inner()))
 }
 
-/// `Options::first_in_path_order`: search `files` in their order until `n` matches are in, let the
-/// files started meanwhile finish, then hand over the first `n` matches (all without `n`) in file
-/// and line order.
+/// `Query::first_in_path_order`: search `files` in their order until `max_results` matches are
+/// in, let the files started meanwhile finish, then hand over the first `max_results` matches
+/// (all without it) in file and line order.
 #[allow(clippy::too_many_arguments)]
 fn first_in_path_order(
     files: Vec<(PathBuf, Arc<str>, bool)>,
     labels: &[PathBuf],
-    n: Option<u64>,
     matcher: &AnyMatcher,
-    o: &Options,
+    q: &Query,
+    f: &Files,
     c: &Counters,
-    cancel: &AtomicBool,
-    mut on_hit: impl FnMut(Hit),
+    stop: &Stop,
+    on_hit: &mut dyn FnMut(Record),
     t0: Instant,
 ) -> Stats {
+    let n = q.max_results;
     // no file holds more than `n` of the first `n`; the cut below stops the rest
-    let o = Options { max_results: None, max_count: n.map(|n| o.max_count.map_or(n, |m| m.min(n))).or(o.max_count), ..o.clone() };
-    let mut hits = Vec::new();
-    let threads = default_threads(&o).min(files.len().max(1));
-    search_list(&files, labels, threads, n, matcher, &o, c, cancel, None, |h| hits.push(h));
+    let q = Query { max_results: None, max_count: n.map(|n| q.max_count.map_or(n, |m| m.min(n))).or(q.max_count), ..q.clone() };
+    let mut records = Vec::new();
+    let threads = default_threads(f).min(files.len().max(1));
+    search_list(&files, labels, threads, n, matcher, &q, f, c, stop, None, |r| records.push(r));
     // a file that several roots reach is listed once per root under one label: the k-th copy of a
-    // hit belongs to its k-th listing
+    // record belongs to its k-th listing
     let mut listed: std::collections::HashMap<&str, Vec<usize>> = Default::default();
     for (i, f) in files.iter().enumerate() {
         listed.entry(&*f.1).or_default().push(i);
@@ -3177,39 +3316,45 @@ fn first_in_path_order(
     };
     let at: Vec<usize> = {
         let mut copies: std::collections::HashMap<(&str, u64, u64), usize> = Default::default();
-        hits.iter()
-            .map(|h| {
-                let copy = copies.entry((&h.path, h.line, h.column)).or_insert(0);
+        records
+            .iter()
+            .map(|r| {
+                let column = if let Record::Match(l) | Record::Context(l) = r { l.column } else { 0 };
+                let copy = copies.entry((r.path(), r.order(), column)).or_insert(0);
                 *copy += 1;
-                listing(&h.path).map_or(usize::MAX, |v| v[(*copy - 1).min(v.len() - 1)])
+                listing(r.path()).map_or(usize::MAX, |v| v[(*copy - 1).min(v.len() - 1)])
             })
             .collect()
     };
-    let mut keyed: Vec<(usize, Hit)> = at.into_iter().zip(hits).collect();
-    keyed.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.path.cmp(&b.1.path)).then(a.1.line.cmp(&b.1.line)));
+    let mut keyed: Vec<(usize, Record)> = at.into_iter().zip(records).collect();
+    keyed.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.path().cmp(b.1.path())).then(a.1.order().cmp(&b.1.order())));
     let cap = n.unwrap_or(u64::MAX);
     let (mut left, mut files_matched, mut last) = (cap, 0u64, None::<Arc<str>>);
-    for (_, mut h) in keyed {
+    for (_, mut r) in keyed {
         if left == 0 {
             break;
         }
-        if !h.context && h.line != NOTE_LINE {
-            let take = if o.count_only { h.line.min(left) } else { 1 };
-            if o.count_only {
-                h.line = take;
+        let take = match &mut r {
+            Record::Match(_) | Record::File { .. } => 1,
+            Record::Count { count, .. } => {
+                *count = (*count).min(left);
+                *count
             }
+            Record::Context(_) | Record::Note { .. } => 0,
+        };
+        if take > 0 {
             left -= take;
-            if last.as_ref() != Some(&h.path) {
+            if last.as_ref() != Some(r.path()) {
                 files_matched += 1;
-                last = Some(Arc::clone(&h.path));
+                last = Some(Arc::clone(r.path()));
             }
         }
-        on_hit(h);
+        on_hit(r);
     }
     let total = c.matches.load(Ordering::Relaxed);
     match n {
-        Some(n) => Stats { matches: n - left, files_matched, cancelled: cancel.load(Ordering::Relaxed) || total >= n, ..stats(c, t0, cancel) },
-        None => stats(c, t0, cancel),
+        Some(n) => Stats { matches: n - left, files_matched, cancelled: stop.is_set() || total >= n, ..stats(c, t0, stop) },
+        None => stats(c, t0, stop),
     }
 }
 
@@ -3222,11 +3367,12 @@ fn search_list(
     threads: usize,
     stop_at: Option<u64>,
     matcher: &AnyMatcher,
-    o: &Options,
+    q: &Query,
+    f: &Files,
     counters: &Counters,
-    cancel: &AtomicBool,
+    stop: &Stop,
     plain: Option<&PlainSink>,
-    on_hit: impl FnMut(Hit),
+    on_hit: impl FnMut(Record),
 ) {
     let (tx, rx) = hit_channel();
     let next = std::sync::atomic::AtomicUsize::new(0);
@@ -3238,16 +3384,16 @@ fn search_list(
             let matcher = matcher.clone();
             s.spawn(move || {
                 let matcher = &matcher;
-                let mut fw = file_worker(o);
+                let mut fw = file_worker(q);
                 loop {
                     // checked before a file is taken, so the files searched are always the first ones
-                    if cancel.load(Ordering::Relaxed) || stop_at.is_some_and(|n| counters.matches.load(Ordering::Relaxed) >= n) {
+                    if stop.is_set() || stop_at.is_some_and(|n| counters.matches.load(Ordering::Relaxed) >= n) {
                         break;
                     }
                     let i = next.fetch_add(1, Ordering::Relaxed);
                     let Some((path, rel, named)) = files.get(i) else { break };
-                    let size = if o.want_bytes { std::fs::metadata(path).ok().map(|m| m.len()) } else { None };
-                    search_one(&mut fw, &Run { matcher, o, c: counters, cancel, tx: &tx, plain, labels, raw: None }, path, Arc::clone(rel), size, *named);
+                    let size = if q.want_bytes { std::fs::metadata(path).ok().map(|m| m.len()) } else { None };
+                    search_one(&mut fw, &Run { matcher, q, f, c: counters, stop, tx: &tx, plain, labels, raw: None }, path, Arc::clone(rel), size, *named);
                 }
             });
         }
@@ -3306,9 +3452,9 @@ fn on_pseudo_fs(p: &Path) -> bool {
     matches!(f_type, 0x9fa0 | 0x6265_6572 | 0x6462_6720 | 0x7472_6163 | 0x7363_6673 | 0x6265_6570 | 0x0027_e0eb | 0x6367_7270)
 }
 
-/// How a file found under `roots` is reported (see `Options::paths_as_given`).
-fn label(path: &Path, roots: &[PathBuf], o: &Options) -> Arc<str> {
-    if !o.paths_as_given {
+/// How a file found under `roots` is reported (see `Files::paths_as_given`).
+fn label(path: &Path, roots: &[PathBuf], f: &Files) -> Arc<str> {
+    if !f.paths_as_given {
         return Arc::from(relative(path, roots));
     }
     let s = path.to_string_lossy();
@@ -3319,10 +3465,10 @@ fn label(path: &Path, roots: &[PathBuf], o: &Options) -> Arc<str> {
     }
 }
 
-/// The bytes of `label(path, roots, o)` when `path` is not UTF-8, for output that must name the file
+/// The bytes of `label(path, roots, f)` when `path` is not UTF-8, for output that must name the file
 /// exactly. Windows has no bytes to give: its names stay as `label` writes them.
 #[cfg(unix)]
-fn label_bytes(path: &Path, roots: &[PathBuf], o: &Options) -> Option<Arc<[u8]>> {
+fn label_bytes(path: &Path, roots: &[PathBuf], f: &Files) -> Option<Arc<[u8]>> {
     use std::os::unix::ffi::OsStrExt;
     if path.to_str().is_some() {
         return None;
@@ -3330,7 +3476,7 @@ fn label_bytes(path: &Path, roots: &[PathBuf], o: &Options) -> Option<Arc<[u8]>>
     fn bytes(p: &Path) -> &[u8] {
         p.as_os_str().as_bytes()
     }
-    let under = if o.paths_as_given { None } else { roots.iter().find_map(|r| Some((r, path.strip_prefix(r).ok()?))) };
+    let under = if f.paths_as_given { None } else { roots.iter().find_map(|r| Some((r, path.strip_prefix(r).ok()?))) };
     Some(match under {
         Some((r, rel)) if rel.as_os_str().is_empty() => bytes(r).into(),
         Some((_, rel)) if roots.len() == 1 => bytes(rel).into(),
@@ -3346,7 +3492,7 @@ fn label_bytes(path: &Path, roots: &[PathBuf], o: &Options) -> Option<Arc<[u8]>>
 }
 
 #[cfg(not(unix))]
-fn label_bytes(_path: &Path, _roots: &[PathBuf], _o: &Options) -> Option<Arc<[u8]>> {
+fn label_bytes(_path: &Path, _roots: &[PathBuf], _f: &Files) -> Option<Arc<[u8]>> {
     None
 }
 
@@ -3402,15 +3548,31 @@ mod tests {
         pub(super) static MOST_QUEUED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     }
 
+    fn query(text: &str, mode: Mode) -> Query {
+        Query { pattern: Pattern { text: text.into(), mode, ..Pattern::default() }, ..Query::default() }
+    }
+
+    fn no_stop() -> Stop {
+        Stop::new(Arc::default())
+    }
+
+    /// The line of a match or context record.
+    fn line(r: Record) -> Line {
+        match r {
+            Record::Match(l) | Record::Context(l) => l,
+            other => panic!("not a line: {other:?}"),
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_path_that_is_not_utf8_is_reported_with_its_bytes() {
         use std::os::unix::ffi::OsStrExt;
         let os = |b: &[u8]| PathBuf::from(std::ffi::OsStr::from_bytes(b));
-        let walked = Options::default();
-        let given = Options { paths_as_given: true, ..Options::default() };
+        let walked = Files::default();
+        let given = Files { paths_as_given: true, ..Files::default() };
         let file = os(b"/r/d\xff/a\xfe.c");
-        let bytes = |roots: &[PathBuf], o: &Options| label_bytes(&file, roots, o).map(|b| b.to_vec());
+        let bytes = |roots: &[PathBuf], o: &Files| label_bytes(&file, roots, o).map(|b| b.to_vec());
         assert_eq!(label_bytes(&os(b"/r/d/a.c"), &[os(b"/r")], &walked), None);
         assert_eq!(bytes(&[os(b"/r")], &walked).unwrap(), b"d\xff/a\xfe.c");
         assert_eq!(bytes(&[os(b"/r//"), os(b"/x")], &walked).unwrap(), b"/r/d\xff/a\xfe.c");
@@ -3434,11 +3596,11 @@ mod tests {
         let plain = PlainSink::new(Box::new(written.clone()));
         let raw: Arc<[u8]> = Arc::from(&b"d\xff/a\xfe.c"[..]);
         let (tx, rx) = mpsc::sync_channel(16);
-        for (to_plain, count_only) in [(true, false), (false, false), (false, true)] {
-            let o = Options { pattern: "x".into(), mode: Mode::Literal, count_only, ..Options::default() };
-            let matcher = build_matcher(&o).unwrap();
-            let (c, cancel) = (Counters::default(), AtomicBool::new(false));
-            let r = Run { matcher: &matcher, o: &o, c: &c, cancel: &cancel, tx: &tx, plain: to_plain.then_some(&plain), labels: &[], raw: Some(&raw) };
+        for (to_plain, kind) in [(true, Report::Lines), (false, Report::Lines), (false, Report::Counts)] {
+            let o = Query { report: kind, ..query("x", Mode::Literal) };
+            let matcher = build_matcher(&o.pattern).unwrap();
+            let (c, stop) = (Counters::default(), no_stop());
+            let r = Run { matcher: &matcher, q: &o, f: &walked, c: &c, stop: &stop, tx: &tx, plain: to_plain.then_some(&plain), labels: &[], raw: Some(&raw) };
             let rel: Arc<str> = label(&file, &[os(b"/r")], &walked);
             let mut sink = r.collector(Arc::clone(&rel));
             matcher.search_slice(&mut make_searcher(&o, BinaryDetection::quit(0)), b"a x\n", &mut sink).unwrap();
@@ -3447,9 +3609,17 @@ mod tests {
         plain.flush().unwrap();
         assert_eq!(*written.0.lock().unwrap(), b"d\xff/a\xfe.c:1:a x\n");
         drop(tx);
-        let hits: Vec<Hit> = rx.into_iter().flatten().collect();
-        assert_eq!(hits.len(), 2);
-        assert!(hits.iter().all(|h| h.path_bytes.as_deref() == Some(&raw[..]) && &*h.path == "d\u{FFFD}/a\u{FFFD}.c"));
+        let records: Vec<Record> = rx.into_iter().flatten().collect();
+        assert!(matches!(records[..], [Record::Match(_), Record::Count { count: 1, .. }]), "{records:?}");
+        assert!(records.iter().all(|r| r.path_bytes() == Some(&raw[..]) && &**r.path() == "d\u{FFFD}/a\u{FFFD}.c"));
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn a_record_costs_no_more_than_the_line_it_carries_and_a_word() {
+        // 104 bytes: what one result took when a flag and a sentinel line number told its kind
+        assert_eq!(std::mem::size_of::<Line>(), 96);
+        assert_eq!(std::mem::size_of::<Record>(), 104);
     }
 
     #[test]
@@ -3482,21 +3652,22 @@ mod tests {
         let shapes: [(&str, Option<usize>, u64); 4] =
             [("one", None, 64 << 20), ("many", Some(256), 64 << 20), ("many", None, 64 << 20), ("one", None, 1 << 16)];
         for (dir, small_tree, split_file_bytes) in shapes {
-            let o = Options { pattern: "e".into(), mode: Mode::Literal, threads: 3, want_spans: true, small_tree, split_file_bytes, ..Options::default() };
+            let o = Query { want_spans: true, ..query("e", Mode::Literal) };
+            let f = Files { threads: 3, small_tree, split_file_bytes, ..Files::walk(vec![root.join(dir)]) };
             MOST_QUEUED.with(|m| m.set(0));
             let mut n = 0u64;
-            let stats = search(&[root.join(dir)], &o, Arc::new(AtomicBool::new(false)), |_| {
+            let mut take = |_| {
                 if n == 0 {
                     std::thread::sleep(std::time::Duration::from_millis(300));
                 }
                 n += 1;
-            })
-            .unwrap();
+            };
+            let stats = search(&o, &f, Arc::default(), Output::Records(&mut take)).unwrap();
             assert_eq!(n, stats.matches, "{dir}");
             assert_eq!(n, if dir == "one" { 100_000 } else { 600_000 });
             let most = MOST_QUEUED.with(|m| m.get());
             // a sender counts itself before it waits
-            assert!(most <= HIT_BATCHES + 1 + o.threads, "{dir} {small_tree:?} {split_file_bytes}: {most} batches waited");
+            assert!(most <= HIT_BATCHES + 1 + f.threads, "{dir} {small_tree:?} {split_file_bytes}: {most} batches waited");
         }
         std::fs::remove_dir_all(&root).unwrap();
     }
@@ -3507,15 +3678,16 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("big.txt");
         std::fs::write(&path, format!("needle first\n{}needle last\n", "x\n".repeat(150_000))).unwrap();
-        let o = Options { pattern: "needle".into(), mode: Mode::Literal, threads: 2, ..Options::default() };
-        let matcher = build_matcher(&o).unwrap();
-        let (c, cancel) = (Counters::default(), AtomicBool::new(false));
+        let o = query("needle", Mode::Literal);
+        let f = Files { threads: 2, ..Files::default() };
+        let matcher = build_matcher(&o.pattern).unwrap();
+        let (c, stop) = (Counters::default(), no_stop());
         let (tx, rx) = mpsc::sync_channel(1024);
         let mut fw = file_worker(&o);
         for size in [None, Some(std::fs::metadata(&path).unwrap().len())] {
             search_one(
                 &mut fw,
-                &Run { matcher: &matcher, o: &o, c: &c, cancel: &cancel, tx: &tx, plain: None, labels: &[], raw: None },
+                &Run { matcher: &matcher, q: &o, f: &f, c: &c, stop: &stop, tx: &tx, plain: None, labels: &[], raw: None },
                 &path,
                 Arc::from("big.txt"),
                 size,
@@ -3523,7 +3695,7 @@ mod tests {
             );
         }
         drop(tx);
-        let lines: Vec<u64> = rx.into_iter().flatten().map(|h| h.line).collect();
+        let lines: Vec<u64> = rx.into_iter().flatten().map(|r| line(r).line).collect();
         assert_eq!(lines, [1, 150_002, 1, 150_002]);
         assert!(fw.small.capacity() <= SMALL_FILE as usize + 1, "{}", fw.small.capacity());
         std::fs::remove_dir_all(&root).unwrap();
@@ -3537,11 +3709,12 @@ mod tests {
         // longer than the 1 MiB pieces `whole` reads
         let line = "x".repeat(3 << 19);
         for threads in [1, 3] {
-            let o = Options { pattern: "needle".into(), mode: Mode::Literal, threads, ..Options::default() };
-            let matcher = build_matcher(&o).unwrap();
-            let (c, cancel) = (Counters::default(), AtomicBool::new(false));
+            let o = query("needle", Mode::Literal);
+            let f = Files { threads, ..Files::default() };
+            let matcher = build_matcher(&o.pattern).unwrap();
+            let (c, stop) = (Counters::default(), no_stop());
             let (tx, _rx) = mpsc::sync_channel(1024);
-            let run = Run { matcher: &matcher, o: &o, c: &c, cancel: &cancel, tx: &tx, plain: None, labels: &[], raw: None };
+            let run = Run { matcher: &matcher, q: &o, f: &f, c: &c, stop: &stop, tx: &tx, plain: None, labels: &[], raw: None };
             for (text, whole) in [(format!("{line}\n").repeat(4), false), (format!("{line}\n"), true), (line.clone(), true)] {
                 std::fs::write(&path, &text).unwrap();
                 let file = std::fs::File::open(&path).unwrap();
@@ -3605,38 +3778,43 @@ mod tests {
             (lf(at(&x, &[(5000, b"needle"), (n - 1, b"\xC3")]), b"\n"), true),
             (at(&x, &[(0, b"\xEF\xBB\xBF"), (5000, b"needle")]), false),
         ];
-        let plain = |with_filename, line_numbers| Options { with_filename, line_numbers, ..Options::default() };
+        let plain = |with_filename, line_numbers| Query { with_filename, line_numbers, ..Query::default() };
+        let given = Files { paths_as_given: true, ..Files::default() };
+        let walked = Files::default();
+        let pattern = |case, word| Pattern { case, word, ..Pattern::default() };
         let shapes = [
-            (plain(true, true), true),
-            (plain(false, false), true),
-            (Options { paths_as_given: true, ..plain(true, false) }, true),
-            (Options { count_only: true, ..Options::default() }, true),
-            (Options { want_spans: true, ..Options::default() }, false),
-            (Options { invert: true, ..plain(true, true) }, false),
-            (Options { case: Case::Insensitive, ..plain(true, true) }, false),
-            (Options { word: true, ..plain(true, true) }, false),
+            (plain(true, true), &walked, true),
+            (plain(false, false), &walked, true),
+            (plain(true, false), &given, true),
+            (Query { report: Report::Counts, ..Query::default() }, &walked, true),
+            (Query { want_spans: true, ..Query::default() }, &walked, false),
+            (Query { invert: true, ..plain(true, true) }, &walked, false),
+            (Query { pattern: pattern(Case::Insensitive, false), ..plain(true, true) }, &walked, false),
+            (Query { pattern: pattern(Case::Sensitive, true), ..plain(true, true) }, &walked, false),
         ];
         for (k, (text, applies)) in cases.iter().enumerate() {
             std::fs::write(&path, text).unwrap();
             let size = text.len() as u64;
-            for (shape, (base, shape_applies)) in shapes.iter().enumerate() {
+            for (shape, (base, files, shape_applies)) in shapes.iter().enumerate() {
                 for (pattern, literal) in [("needle", true), ("e\r", true), ("", false)] {
                     for threads in [1, 3] {
-                        let o = Options { pattern: pattern.into(), mode: Mode::Literal, threads, split_file_bytes: size, ..base.clone() };
-                        let to_plain = !o.count_only && !o.want_spans;
-                        let matcher = build_matcher(&o).unwrap();
+                        let o = Query { pattern: Pattern { text: pattern.into(), mode: Mode::Literal, ..base.pattern.clone() }, ..base.clone() };
+                        let f = Files { threads, split_file_bytes: size, ..(*files).clone() };
+                        let to_plain = o.report == Report::Lines && !o.want_spans;
+                        let matcher = build_matcher(&o.pattern).unwrap();
                         let run = |off: bool| {
                             NO_ONE_LINE.with(|c| c.set(off));
                             ONE_LINE.with(|c| c.set(0));
-                            let (c, cancel) = (Counters::default(), AtomicBool::new(false));
+                            let (c, stop) = (Counters::default(), no_stop());
                             let out = Shared(Arc::new(Mutex::new(Vec::new())));
                             let sink = PlainSink::new(Box::new(out.clone()));
                             let (tx, rx) = mpsc::sync_channel(1024);
-                            let r = Run { matcher: &matcher, o: &o, c: &c, cancel: &cancel, tx: &tx, plain: to_plain.then_some(&sink), labels: &[], raw: None };
-                            search_one(&mut file_worker(&o), &r, &path, Arc::from("a.txt"), Some(size), o.paths_as_given);
+                            let r =
+                                Run { matcher: &matcher, q: &o, f: &f, c: &c, stop: &stop, tx: &tx, plain: to_plain.then_some(&sink), labels: &[], raw: None };
+                            search_one(&mut file_worker(&o), &r, &path, Arc::from("a.txt"), Some(size), f.paths_as_given);
                             drop(tx);
                             sink.flush().unwrap();
-                            let hits: Vec<_> = rx.into_iter().flatten().map(|h| (h.line, h.column, h.text, h.spans)).collect();
+                            let hits: Vec<String> = rx.into_iter().flatten().map(|r| format!("{r:?}")).collect();
                             let stats = (c.files_matched.into_inner(), c.matches.into_inner(), c.errors.into_inner());
                             let got = (out.0.lock().unwrap().clone(), hits, stats);
                             (got, ONE_LINE.with(|c| c.get()))
@@ -3709,19 +3887,20 @@ mod tests {
         let root = std::env::temp_dir().join(format!("scrutate_small_threads_{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("a.txt"), "hello\n").unwrap();
-        let o = Options { pattern: "hello".into(), mode: Mode::Literal, threads: 2, ..Options::default() };
-        let found = |o: &Options| {
+        let o = query("hello", Mode::Literal);
+        let f = Files { threads: 2, ..Files::walk(vec![root.clone()]) };
+        let found = |f: &Files| {
             SMALL_WORKERS.with(|n| n.set(0));
             let mut lines = Vec::new();
-            search(std::slice::from_ref(&root), o, Arc::new(AtomicBool::new(false)), |h| lines.push(h.text)).unwrap();
+            search(&o, f, Arc::default(), Output::Records(&mut |r| lines.push(line(r).text))).unwrap();
             lines.sort();
             (lines, SMALL_WORKERS.with(|n| n.get()))
         };
-        assert_eq!(found(&o), (vec!["hello".to_string()], 0));
+        assert_eq!(found(&f), (vec!["hello".to_string()], 0));
         std::fs::write(root.join("b.txt"), "hello again\n").unwrap();
-        assert_eq!(found(&o), (vec!["hello".to_string(), "hello again".to_string()], 2));
+        assert_eq!(found(&f), (vec!["hello".to_string(), "hello again".to_string()], 2));
         // a walk cut after the first file still searches it, and the parallel walk the rest
-        let cut = Options { small_tree: Some(1), ..o.clone() };
+        let cut = Files { small_tree: Some(1), ..f.clone() };
         assert_eq!(found(&cut), (vec!["hello".to_string(), "hello again".to_string()], 0));
         std::fs::remove_dir_all(&root).unwrap();
     }
@@ -3813,7 +3992,7 @@ mod tests {
             (r"\S*_resume\($", Case::Sensitive),
             (r"PM_RESUME", Case::Insensitive),
         ] {
-            let o = Options { pattern: pat.to_string(), case, ..Options::default() };
+            let o = Pattern { text: pat.to_string(), case, ..Pattern::default() };
             let fast = build_matcher(&o).unwrap();
             let AnyMatcher::Regex(ref f) = fast else { unreachable!() };
             engaged += f.suffixes.is_some() as usize;
@@ -3826,7 +4005,7 @@ mod tests {
         }
         // the rest have a short suffix, a literal prefix, or too many case variants (s folds to ſ too)
         assert_eq!(engaged, 5);
-        let o = Options { pattern: "PM_RESUME".into(), ..Options::default() };
+        let o = Pattern { text: "PM_RESUME".into(), ..Pattern::default() };
         let AnyMatcher::Regex(m) = build_matcher(&o).unwrap() else { unreachable!() };
         assert!(m.suffixes.is_none(), "a literal prefix is the engine's job");
     }
@@ -3874,7 +4053,7 @@ mod tests {
             (r"^(?:a|ab)(?:\n|b)", Case::Sensitive),
             (r"^a[^x]", Case::Sensitive),
         ] {
-            let o = Options { pattern: pat.to_string(), case, ..Options::default() };
+            let o = Pattern { text: pat.to_string(), case, ..Pattern::default() };
             let fast = build_matcher(&o).unwrap();
             let AnyMatcher::Regex(ref f) = fast else { unreachable!() };
             engaged += f.line_start.is_some() as usize;
@@ -4103,9 +4282,9 @@ mod tests {
         ] {
             assert_eq!(uppercase_literal(pattern, regex), upper, "{pattern:?} regex={regex}");
         }
-        let o = Options { pattern: "fooz".into(), mode: Mode::Fuzzy { max_edits: 1 }, word: true, ..Options::default() };
+        let o = Pattern { text: "fooz".into(), mode: Mode::Fuzzy { max_edits: 1 }, word: true, ..Pattern::default() };
         assert!(build_matcher(&o).err().unwrap().to_string().contains("-w) is not available with --fuzzy"));
-        let o = Options { pattern: "fooz".into(), mode: Mode::FuzzyRegex { max_edits: 1 }, multiline: true, ..Options::default() };
+        let o = Pattern { text: "fooz".into(), mode: Mode::FuzzyRegex { max_edits: 1 }, multiline: true, ..Pattern::default() };
         assert!(build_matcher(&o).err().unwrap().to_string().contains("-U) is not available with --fuzzy"));
     }
 
@@ -4143,16 +4322,16 @@ mod tests {
         assert_eq!((p.as_str(), m), (r"(?:(?i)\bfoo[_\-]?Bar\b)|(?:(?i)\bx\b)", Mode::Regex));
         let e = join_patterns(&ps(&["a", "b"]), Mode::Fuzzy { max_edits: 1 }, false).unwrap_err();
         assert_eq!(e.to_string(), "--fuzzy takes one pattern");
-        let zip = Options { search_zip: true, hidden: true, ..Options::default() };
+        let zip = Files { search_zip: true, hidden: true, ..Files::default() };
         assert!(zip.check_indexable().unwrap_err().to_string().starts_with("--index does not cover archive members"));
-        assert!(Options { max_depth: Some(1), ..Options::default() }.check_indexable().unwrap_err().to_string().starts_with("--index searches the files"));
-        assert!(Options::default().check_indexable().is_ok());
+        assert!(Files { max_depth: Some(1), ..Files::default() }.check_indexable().unwrap_err().to_string().starts_with("--index searches the files"));
+        assert!(Files::default().check_indexable().is_ok());
     }
 
     #[test]
     fn held_output_leaves_in_fewer_writes_and_never_waits_on_a_quiet_sink() {
-        struct Record(Arc<Mutex<Vec<Vec<u8>>>>);
-        impl Write for Record {
+        struct Writes(Arc<Mutex<Vec<Vec<u8>>>>);
+        impl Write for Writes {
             fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
                 self.0.lock().unwrap().push(b.to_vec());
                 Ok(b.len())
@@ -4162,35 +4341,35 @@ mod tests {
             }
         }
         let writes = Arc::new(Mutex::new(Vec::new()));
-        let sink = PlainSink::new(Box::new(Record(Arc::clone(&writes))));
-        let cancel = AtomicBool::new(false);
+        let sink = PlainSink::new(Box::new(Writes(Arc::clone(&writes))));
+        let stop = no_stop();
         let written = || writes.lock().unwrap().concat();
         let quiet = || std::thread::sleep(std::time::Duration::from_millis(5));
         let mut all = Vec::new();
         for i in 0..1000 {
             let line = format!("file{i}:1:text\n");
-            sink.write(line.as_bytes(), false, &cancel);
+            sink.write(line.as_bytes(), false, &stop);
             all.extend_from_slice(line.as_bytes());
         }
         assert!(writes.lock().unwrap().len() < 500, "a burst leaves in few writes");
         quiet();
-        sink.tick(&cancel);
+        sink.tick(&stop);
         assert_eq!(written(), all, "held output leaves once it has waited");
         quiet();
-        sink.write(b"late:1:text\n", false, &cancel);
+        sink.write(b"late:1:text\n", false, &stop);
         all.extend_from_slice(b"late:1:text\n");
         assert_eq!(written(), all, "output after a quiet spell leaves at once");
-        sink.write(b"last:1:text\n", false, &cancel);
-        sink.write_line(b"", b"long:1:", Text::Here(b"x\xFFy"), false, &cancel).unwrap();
+        sink.write(b"last:1:text\n", false, &stop);
+        sink.write_line(b"", b"long:1:", Text::Here(b"x\xFFy"), false, &stop).unwrap();
         sink.flush().unwrap();
         all.extend_from_slice("last:1:text\nlong:1:x\u{FFFD}y\n".as_bytes());
         assert_eq!(written(), all);
-        assert!(!sink.broken.load(Ordering::Relaxed) && !cancel.load(Ordering::Relaxed));
+        assert!(!sink.broken.load(Ordering::Relaxed) && !stop.is_set());
     }
 
     #[test]
     fn a_cold_tree_earns_threads_by_its_slow_reads() {
-        let o = Options::default();
+        let o = Files::default();
         let most = cold_threads().saturating_sub(default_threads(&o));
         let reads = |all: u64, slow: u64| {
             let c = Counters::default();
@@ -4206,7 +4385,7 @@ mod tests {
         let c = Counters::default();
         c.small_reads.store(100, Ordering::Relaxed);
         c.slow_reads.store(100, Ordering::Relaxed);
-        assert_eq!(cold_extra(&Options { threads: 4, ..Options::default() }, &c), 0, "-j is kept");
+        assert_eq!(cold_extra(&Files { threads: 4, ..Files::default() }, &c), 0, "-j is kept");
     }
 
     proptest::proptest! {
@@ -4250,7 +4429,7 @@ mod tests {
             }
             let mode = if regex { Mode::Regex } else { Mode::Literal };
             let pattern = if regex { regex::escape(&pattern) } else { pattern };
-            let o = Options { pattern, mode, case: Case::Insensitive, word, ..Options::default() };
+            let o = Pattern { text: pattern, mode, case: Case::Insensitive, word, ..Pattern::default() };
             let AnyMatcher::Regex(m) = build_matcher(&o).unwrap() else { panic!("not a regex matcher") };
             let mut start = 0;
             for line in hay.split(|&b| b == b'\n') {
@@ -4261,7 +4440,7 @@ mod tests {
                         Some(grep_matcher::LineMatchKind::Candidate(i) | grep_matcher::LineMatchKind::Confirmed(i)) => start + i,
                         None => usize::MAX,
                     };
-                    proptest::prop_assert!(at <= end, "{:?} in {:?}: line {start}..{end}, candidate {at}", o.pattern, String::from_utf8_lossy(&hay));
+                    proptest::prop_assert!(at <= end, "{:?} in {:?}: line {start}..{end}, candidate {at}", o.text, String::from_utf8_lossy(&hay));
                 }
                 start = end + 1;
             }
@@ -4273,7 +4452,7 @@ mod tests {
         // lines one byte shorter than the needle: almost every position fits the two scanned bytes
         let time = |n: usize| {
             let hay = format!("{}\n", "=".repeat(n - 1)).repeat((256 << 10) / n);
-            let o = Options { pattern: "=".repeat(n), mode: Mode::Literal, case: Case::Insensitive, ..Options::default() };
+            let o = Pattern { text: "=".repeat(n), mode: Mode::Literal, case: Case::Insensitive, ..Pattern::default() };
             let AnyMatcher::Regex(m) = build_matcher(&o).unwrap() else { panic!("not a regex matcher") };
             assert!(m.fold.is_some());
             let search = || {
@@ -4295,7 +4474,7 @@ mod tests {
 
     #[test]
     fn a_case_insensitive_literal_has_its_own_finder_only_when_it_can() {
-        let fold = |pattern: &str, mode, case| match build_matcher(&Options { pattern: pattern.into(), mode, case, ..Options::default() }).unwrap() {
+        let fold = |pattern: &str, mode, case| match build_matcher(&Pattern { text: pattern.into(), mode, case, ..Pattern::default() }).unwrap() {
             AnyMatcher::Regex(m) => m.fold.is_some(),
             _ => false,
         };

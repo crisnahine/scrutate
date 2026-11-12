@@ -670,7 +670,7 @@ pub fn tsquery(lang: &str, query: &str, roots: &[PathBuf], limit: usize, cache_r
 pub struct RefGroup {
     pub symbol: Option<ChunkRow>,
     pub path: String,
-    pub lines: Vec<crate::instant::Hit>,
+    pub lines: Vec<crate::instant::Line>,
     /// a note on the file after its last group: a NUL byte stopped its search
     pub note: Option<String>,
 }
@@ -692,37 +692,43 @@ impl References {
 }
 
 /// Engine A matches and notes in the files a search of the repository covers
-/// (`files::repository_search`), in path and line order, without context lines. It stops when
-/// `cancel` is set; the flag returned says the search stopped early.
+/// (`files::repository_files`), in path and line order. It stops when `cancel` is set; the flag
+/// returned says the search stopped early.
 pub fn occurrences(
     root: &std::path::Path,
-    o: &crate::instant::Options,
+    q: &crate::instant::Query,
     cancel: &std::sync::Arc<std::sync::atomic::AtomicBool>,
-) -> Result<(Vec<crate::instant::Hit>, bool)> {
-    let mut hits: Vec<crate::instant::Hit> = Vec::new();
-    let mut sink = |h: crate::instant::Hit| {
-        if !h.context {
-            hits.push(h)
+) -> Result<(Vec<crate::instant::Record>, bool)> {
+    use crate::instant::Record;
+    let mut found: Vec<Record> = Vec::new();
+    let mut sink = |r: Record| {
+        if matches!(r, Record::Match(_) | Record::Note { .. }) {
+            found.push(r)
         }
     };
-    let o = crate::files::repository_search(root, o);
-    let stats = crate::instant::search(std::slice::from_ref(&root.to_path_buf()), &o, std::sync::Arc::clone(cancel), &mut sink)?;
-    hits.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
-    Ok((hits, stats.cancelled))
+    let files = crate::files::repository_files(root);
+    let stats = crate::instant::search(q, &files, std::sync::Arc::clone(cancel), crate::instant::Output::Records(&mut sink))?;
+    found.sort_by(|a, b| a.path().cmp(b.path()).then(a.order().cmp(&b.order())));
+    Ok((found, stats.cancelled))
 }
 
 /// Matching lines (in path and line order) grouped by the symbol that encloses them; lines outside
 /// any symbol form one group per file. A note on a file goes with its last group.
-pub fn group_by_symbol(ix: &Index, hits: Vec<crate::instant::Hit>) -> Result<Vec<RefGroup>> {
+pub fn group_by_symbol(ix: &Index, records: Vec<crate::instant::Record>) -> Result<Vec<RefGroup>> {
+    use crate::instant::Record;
     let mut groups: Vec<RefGroup> = Vec::new();
-    for h in hits {
-        if h.line == crate::instant::NOTE_LINE {
-            match groups.last_mut() {
-                Some(g) if *g.path == *h.path => g.note = Some(h.text),
-                _ => groups.push(RefGroup { symbol: None, path: h.path.to_string(), lines: Vec::new(), note: Some(h.text) }),
+    for r in records {
+        let h = match r {
+            Record::Match(h) => h,
+            Record::Note { path, text, .. } => {
+                match groups.last_mut() {
+                    Some(g) if *g.path == *path => g.note = Some(text),
+                    _ => groups.push(RefGroup { symbol: None, path: path.to_string(), lines: Vec::new(), note: Some(text) }),
+                }
+                continue;
             }
-            continue;
-        }
+            _ => continue,
+        };
         let row = ix.chunk_at(&h.path, h.line as i64)?.filter(|r| r.kind != "window");
         match groups.last_mut() {
             Some(g) if g.symbol.as_ref().map(|x| x.id) == row.as_ref().map(|x| x.id) && *g.path == *h.path => g.lines.push(h),
@@ -734,9 +740,9 @@ pub fn group_by_symbol(ix: &Index, hits: Vec<crate::instant::Hit>) -> Result<Vec
 
 /// An Engine A search of the repository with its matches grouped by enclosing symbol: the grep an
 /// agent asks for (MCP `grep_code`). It stops when the call is cancelled.
-pub fn grouped_grep(s: &Searcher, o: &crate::instant::Options) -> Result<(Vec<RefGroup>, bool)> {
-    let (hits, truncated) = occurrences(&s.ix.root, o, &s.cancel)?;
-    Ok((group_by_symbol(&s.ix, hits)?, truncated))
+pub fn grouped_grep(s: &Searcher, q: &crate::instant::Query) -> Result<(Vec<RefGroup>, bool)> {
+    let (found, truncated) = occurrences(&s.ix.root, q, &s.cancel)?;
+    Ok((group_by_symbol(&s.ix, found)?, truncated))
 }
 
 /// One line per group and one per matching line under it.

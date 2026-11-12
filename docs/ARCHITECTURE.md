@@ -203,8 +203,14 @@ capabilities those crates do not provide rather than re-implementing what they a
   securityfs, configfs and cgroup, and their files are read until the kernel has no more. On Linux, where opening a file is cheap, this and the matcher change above took the
   Linux-tree search from 144 ms to 120 ms in the test VM (ripgrep: 135 ms), with 316,000 system
   calls against ripgrep's 526,000.
-- **One run, one translation**: every file search of a run shares a `Run` (matcher, options,
-  counters, cancel flag, output target). The pattern is translated once (`Options::translate`:
+- **One way in**: `instant::search` takes a `Query` (the `Pattern`, invert, the report: lines,
+  counts or files, context, limits, the shape of records), a `Files` (the roots of a walk with its
+  rules, or a list of files under a root, and the threads) and the caller's cancel flag, which it
+  reads and never sets. Results leave as `Record`s, each of one kind (match, context, count, file,
+  note), or as plain lines the search threads write (`Output::Plain`), which makes no record. A
+  record is 104 bytes, the size one result had when a flag and a sentinel line number told its kind.
+- **One run, one translation**: every file search of a run shares a `Run` (matcher, query, file set,
+  counters, stop flag, output target). The pattern is translated once (`Pattern::translate`:
   the form its mode means, and whether case is folded), and both the matcher and the text index's
   trigram condition are built from that, so a file the index lets through is judged by the same
   pattern. Smart case counts only letters that stand for themselves (`\S` is not uppercase), as
@@ -225,8 +231,8 @@ capabilities those crates do not provide rather than re-implementing what they a
   regex engine scanned every byte for such patterns (ripgrep, built from the same crates, shows the
   same cost).
 - **Streaming**: matches are batched per file and sent over a channel to the caller's sink while
-  other threads keep searching; an `AtomicBool` cancels the walk between files (Ctrl-C → exit 130,
-  `--max-results`, broken pipe). Plain piped output skips the channel: each thread formats a
+  other threads keep searching; a stop flag ends the walk between files (Ctrl-C → exit 130,
+  `--max-results`, broken pipe): the caller's cancel flag, or the search's own. Plain piped output skips the channel: each thread formats a
   file's lines and hands them to one shared sink (`PlainSink`). Output that follows other output
   within a millisecond waits there in a 64 KB buffer, so the lines of many files leave in one
   write; a write per matching file wakes the reader of a pipe every time (88,000 writes for
