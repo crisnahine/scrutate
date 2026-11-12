@@ -97,8 +97,8 @@ lexical (BM25) or semantic (vectors). The candidates are the union of the source
 each candidate gets the 48 **features** by name (`search::FEATURES`). `batch --features` prints
 them: these are the **training rows** the ranker is fitted on.
 
-**Quality floor**: the lowest MRR@10 and hit@5 the ranking may reach on this repository's own
-code before CI fails (`bench/quality.py`, `bench/quality/floor.json`).
+**Quality floor**: the lowest MRR@10 and hit@5 the ranking may reach on a frozen copy of this
+repository's code before CI fails (`bench/quality.py`, `bench/quality/floor.json`).
 
 **Translation**: what a pattern asks every matcher of it to find (`Pattern::translate`): the
 pattern in the form its mode means, and whether case is folded. Engine A's matcher and the text

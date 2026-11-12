@@ -152,7 +152,9 @@ $V/bin/python tools/gen_test_results.py --repo $P --parity-code $C/code --differ
 
 Among them, `bench/quality.py` checks ranking quality against `bench/quality/floor.json` (docs/QUALITY.md).
 A new ranker or vector model that moves the measure records a new floor with
-`bench/quality.py target/release/scrutate --record` in the same commit.
+`bench/quality.py target/release/scrutate --record` in the same commit; `bench/quality.py --make`
+takes a newer copy of the code as the corpus and writes the queries for it, and is followed by
+`--record`.
 
 The wheel gate installs on 3.10 to 3.13, 3.14t, 3.15 and 3.15t. A final free-threaded 3.15 needs
 uv 0.13 or newer; with an older uv, install one elsewhere

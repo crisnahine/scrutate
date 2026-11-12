@@ -1,28 +1,28 @@
 {
  "floor": {
-  "mrr10": 0.5703,
-  "hit5": 0.645
+  "mrr10": 0.5673,
+  "hit5": 0.6436
  },
  "margin": 0.02,
  "measured": {
-  "mrr10": 0.5903,
-  "hit5": 0.665,
+  "mrr10": 0.5873,
+  "hit5": 0.6636,
   "by_type": {
-   "doc function": 0.3648,
-   "doc type": 0.1203,
+   "doc function": 0.3941,
+   "doc type": 0.1236,
    "id function": 1.0,
-   "id type": 0.937,
-   "kw function": 0.2046,
-   "kw type": 0.0865,
-   "name function": 0.8771,
-   "name type": 0.7265,
+   "id type": 0.9333,
+   "kw function": 0.202,
+   "kw type": 0.0769,
+   "name function": 0.8623,
+   "name type": 0.7375,
    "qid function": 1.0,
    "qid type": 1.0
   }
  },
- "queries": 1173,
+ "queries": 1183,
  "date": "2026-11-13",
- "commit": "c80d606",
+ "commit": "b236c4b",
  "model_signature": "blake2b:17861b39b366298cebb1640cdbb7784e",
  "ranker_sha256": "232b7df7e55ab8a10a36fa59175ac28a40a1d9207b9b88b7c7dba8b0c1248817"
 }

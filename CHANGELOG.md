@@ -678,10 +678,11 @@ First release.
   `mcp_server.py`, `agent.py`, `python -m scrutate_ref`, the `scrutate-ref` script and the `mcp`,
   `agent` and `all` extras): nothing in `bench/`, `tools/` or CI used them. The binary is the
   product.
-- Ranking quality has a guard of its own: `bench/quality.py` indexes this repository's code with
-  its doc comments removed, runs 1,173 committed queries made from them, and fails when MRR@10 or
-  hit@5 is below the floor recorded in `bench/quality/floor.json` (measured 0.5903 and 0.6650,
-  floor 0.02 lower). A CI step and the release gates run it, in about 8 s.
+- Ranking quality has a guard of its own: `bench/quality.py` indexes a frozen copy of this
+  repository's code with its doc comments removed, runs 1,183 committed queries made from them,
+  and fails when MRR@10 or hit@5 is below the floor recorded in `bench/quality/floor.json`
+  (measured 0.5873 and 0.6636, floor 0.02 lower). A CI step and the release gates run it, in
+  about 8 s.
 - `[index] exclude_dirs` is read from the `.scrutate.toml` at the root of the index (or
   `SCRUTATE_INDEX_EXCLUDE_DIRS`), so the command line, the servers and the bindings index the
   same files wherever they start; the reference engine reads it the same way. A name with a

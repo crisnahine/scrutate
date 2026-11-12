@@ -122,7 +122,7 @@ jobs:
           python bench/fuzz_incremental.py --bin target/release/scrutate --seconds 20 --seed 7
       - name: python/rust parity on the engine's own sources
         run: python bench/parity.py crates/scrutate/src target/release/scrutate --queries 50
-      # MRR@10 and hit@5 of 1,173 queries on this repository's own code, against bench/quality/floor.json
+      # MRR@10 and hit@5 of 1,183 queries on a frozen copy of this repository's code, against bench/quality/floor.json
       - name: ranking quality against its recorded floor
         run: python bench/quality.py target/release/scrutate
   musl:

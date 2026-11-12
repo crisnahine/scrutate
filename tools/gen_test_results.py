@@ -117,7 +117,7 @@ def main() -> int:
     gate("rust/python parity (bit-identical features, scores, rankings)", [sys.executable, "bench/parity.py", a.repo, "target/release/scrutate", "--queries", "300"], tail=8)
     gate("rust/python parity on real repositories of the six reference languages", ["bash", "bench/parity_repos.sh", "target/release/scrutate"],
          env={"PARITY_PYTHON": sys.executable, **({"PARITY_CODE": a.parity_code} if a.parity_code else {})}, tail=24)
-    gate("ranking quality against its recorded floor (MRR@10, hit@5 on this repository's code)", [sys.executable, "bench/quality.py", "target/release/scrutate"], tail=14)
+    gate("ranking quality against its recorded floor (MRR@10, hit@5 on a frozen copy of this repository's code)", [sys.executable, "bench/quality.py", "target/release/scrutate"], tail=14)
     gate("differential test against ripgrep, and grep --index against the walk", [sys.executable, "bench/differential.py", "--cases", str(a.differential_cases), "--seed", "11"], tail=4)
     gate("random grep runs against ripgrep (60 s)", [sys.executable, "bench/fuzz_grep.py", "--seconds", "60", "--seed", "11"], tail=2)
     gate("random edit sequences: the incremental index equals a fresh one (60 s)", [sys.executable, "bench/fuzz_incremental.py", "--seconds", "60", "--seed", "11"], tail=2)
