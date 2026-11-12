@@ -139,7 +139,11 @@ pub struct Resolver<'a> {
     /// by function around a use (its node id) and name: the byte ranges of the identifiers in it
     /// that may bind the name, found once so a use checks only these
     binders: HashMap<(usize, String), Vec<(usize, usize)>>,
+    /// the same for `variable_ty`: by scope node id, what was looked for and name, the byte ranges found
+    found: HashMap<(usize, &'static str, String), Spans>,
 }
+
+type Spans = Rc<Vec<(usize, usize)>>;
 
 /// Whether the tree has a node more than `MAX_DEPTH` levels below its root.
 fn too_deep(t: &Tree) -> bool {
@@ -423,23 +427,6 @@ enum Ty {
 
 /// Standard Rust types whose methods a call reaches through `Deref` to the type they hold.
 const RUST_DEREF: &[&str] = &["Box", "Rc", "Arc", "Ref", "RefMut", "Cow", "MutexGuard", "RwLockReadGuard", "RwLockWriteGuard", "Pin", "ManuallyDrop"];
-
-/// Whether `name` is a type parameter of an item around `n` (`fn f<T>`, `impl<T>`, `class C<T>`).
-fn type_parameter(n: Node, name: &str, src: &str) -> bool {
-    let mut a = Some(n);
-    while let Some(x) = a {
-        let mut cur = x.walk();
-        let found = x.named_children(&mut cur).any(|c| {
-            matches!(c.kind(), "type_parameters" | "type_parameter_list")
-                && text(c, src).split(|ch: char| !(ch.is_alphanumeric() || ch == '_')).any(|w| w == name)
-        });
-        if found {
-            return true;
-        }
-        a = x.parent();
-    }
-    false
-}
 
 /// The identifier that names the type in a type expression, past references, pointers and
 /// generic arguments; the last name of a path (`a.b.T`, `a::T`, `pkg.T`).
@@ -761,6 +748,7 @@ impl<'a> Resolver<'a> {
             java_bases: HashMap::new(),
             java_fields: HashMap::new(),
             binders: HashMap::new(),
+            found: HashMap::new(),
         })
     }
 
@@ -778,6 +766,38 @@ impl<'a> Resolver<'a> {
         self.cache.remove(path);
         // node ids name nodes of trees still loaded
         self.binders.clear();
+        self.found.clear();
+    }
+
+    /// `find()`, run once per scope, `what` and name.
+    fn found_in(&mut self, scope: Node, what: &'static str, name: &str, find: impl FnOnce() -> Vec<(usize, usize)>) -> Spans {
+        let key = (scope.id(), what, name.to_string());
+        if let Some(f) = self.found.get(&key) {
+            return Rc::clone(f);
+        }
+        let f = Rc::new(find());
+        self.found.insert(key, Rc::clone(&f));
+        f
+    }
+
+    /// Whether `name` is a type parameter of an item around `n` (`fn f<T>`, `impl<T>`, `class C<T>`).
+    fn type_parameter(&mut self, n: Node, name: &str, src: &str) -> bool {
+        let mut a = Some(n);
+        while let Some(x) = a {
+            // the children of a block around many uses are read once
+            let lists = self.found_in(x, "type parameters", "", || {
+                let mut cur = x.walk();
+                x.named_children(&mut cur)
+                    .filter(|c| matches!(c.kind(), "type_parameters" | "type_parameter_list"))
+                    .map(|c| (c.start_byte(), c.end_byte()))
+                    .collect()
+            });
+            if lists.iter().any(|&(s, e)| src.get(s..e).unwrap_or("").split(|ch: char| !(ch.is_alphanumeric() || ch == '_')).any(|w| w == name)) {
+                return true;
+            }
+            a = x.parent();
+        }
+        false
     }
 
     /// The identifiers in `scope` named `name` that bind it: a Java local or parameter, else
@@ -1381,33 +1401,40 @@ impl<'a> Resolver<'a> {
                 && text(n, src) == name
                 && (is_local_binder(n, src) || n.parent().is_some_and(|p| matches!(p.kind(), "static_item" | "const_item")))
         };
-        let (mut binder, mut stack) = (None::<Node>, vec![scope]);
-        while let Some(n) = stack.pop() {
-            if n.start_byte() >= at.start_byte() {
-                continue;
+        let in_scope = self.found_in(scope, "binder", name, || {
+            let (mut out, mut stack) = (Vec::new(), vec![scope]);
+            while let Some(n) = stack.pop() {
+                if binds(n) {
+                    out.push((n.start_byte(), n.end_byte()));
+                }
+                let mut cur = n.walk();
+                stack.extend(n.named_children(&mut cur));
             }
-            if binds(n) && binder.is_none_or(|b| b.start_byte() < n.start_byte()) {
-                binder = Some(n);
-            }
-            let mut cur = n.walk();
-            stack.extend(n.named_children(&mut cur));
-        }
+            out
+        });
+        let mut binder = in_scope.iter().filter(|b| b.0 < at.start_byte()).max_by_key(|b| b.0).copied();
         let root = fi.tree.as_ref()?.root_node();
         if binder.is_none() && scope.id() != root.id() {
             // a module-level or static variable, declared anywhere at the top of the file
-            let mut stack = vec![root];
-            while let Some(n) = stack.pop() {
-                if binds(n) {
-                    binder = Some(n);
-                    break;
-                }
-                if n.id() == root.id() || !(FUNCTION_NODES.contains(&n.kind()) || CLASS_NODES.contains(&n.kind())) {
-                    let mut cur = n.walk();
-                    stack.extend(n.named_children(&mut cur));
-                }
-            }
+            binder = self
+                .found_in(root, "top binder", name, || {
+                    let mut stack = vec![root];
+                    while let Some(n) = stack.pop() {
+                        if binds(n) {
+                            return vec![(n.start_byte(), n.end_byte())];
+                        }
+                        if n.id() == root.id() || !(FUNCTION_NODES.contains(&n.kind()) || CLASS_NODES.contains(&n.kind())) {
+                            let mut cur = n.walk();
+                            stack.extend(n.named_children(&mut cur));
+                        }
+                    }
+                    Vec::new()
+                })
+                .first()
+                .copied();
         }
-        let binder = binder?;
+        let (a, b) = binder?;
+        let binder = root.named_descendant_for_byte_range(a, b)?;
         let (ty, value) = declared(binder);
         if let Some(t) = ty {
             return self.built_ty(path, fi, lang, binder, value, at).or_else(|| self.ty_of_type(path, fi, lang, t));
@@ -1423,7 +1450,9 @@ impl<'a> Resolver<'a> {
             return None;
         }
         let scope = func.or_else(|| fi.tree.as_ref().map(|t| t.root_node()))?;
-        if assigned_between(scope, text(at, &fi.src), binder.end_byte(), at.start_byte(), &fi.src) {
+        let name = text(at, &fi.src);
+        let assigned = self.found_in(scope, "assignment", name, || assignments(scope, name, &fi.src));
+        if assigned.iter().any(|&(s, _)| binder.end_byte() <= s && s < at.start_byte()) {
             return None;
         }
         self.constructed(path, fi, lang, value?)
@@ -1542,7 +1571,7 @@ impl<'a> Resolver<'a> {
         if lang == Lang::Rust && name == "Self" {
             return self.container_at(fi, line);
         }
-        if type_parameter(leaf, name, src) {
+        if self.type_parameter(leaf, name, src) {
             return None;
         }
         let q = qualifier(leaf);
@@ -2732,26 +2761,23 @@ fn enclosing_function(node: Node) -> Option<Node> {
     None
 }
 
-/// Whether code of `scope` between bytes `from` and `to` assigns to the variable `name`.
-fn assigned_between(scope: Node, name: &str, from: usize, to: usize, src: &str) -> bool {
-    let mut stack = vec![scope];
+/// The byte ranges of the assignments to the variable `name` in `scope`.
+fn assignments(scope: Node, name: &str, src: &str) -> Vec<(usize, usize)> {
+    let (mut out, mut stack) = (Vec::new(), vec![scope]);
     while let Some(n) = stack.pop() {
-        if n.end_byte() <= from || n.start_byte() >= to {
-            continue;
-        }
-        if n.start_byte() >= from && matches!(n.kind(), "assignment_expression" | "assignment" | "assignment_statement") {
+        if matches!(n.kind(), "assignment_expression" | "assignment" | "assignment_statement") {
             if let Some(l) = n.child_by_field_name("left") {
                 let mut cur = l.walk();
                 let hit = if l.kind() == "expression_list" { l.named_children(&mut cur).any(|x| text(x, src) == name) } else { text(l, src) == name };
                 if hit {
-                    return true;
+                    out.push((n.start_byte(), n.end_byte()));
                 }
             }
         }
         let mut cur = n.walk();
         stack.extend(n.named_children(&mut cur));
     }
-    false
+    out
 }
 
 /// A binder declared with JavaScript `var`, which belongs to the whole function around it.
@@ -3368,7 +3394,7 @@ impl<'a> Resolver<'a> {
     /// (inherited ones included), a class of the file, an imported one, one of the package, one
     /// of a package imported with `*`.
     fn java_type(&mut self, fi: &FileInfo, at: Node, name: &str) -> std::result::Result<i64, &'static str> {
-        if type_parameter(at, name, &fi.src) {
+        if self.type_parameter(at, name, &fi.src) {
             return Err("type parameter");
         }
         let container = |s: &Self, id: i64| s.def_kind(id).is_some_and(|k| CONTAINER_KINDS.contains(&k.as_str()));

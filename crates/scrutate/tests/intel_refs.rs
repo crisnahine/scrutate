@@ -623,6 +623,53 @@ fn refs_in_one_big_function_takes_linear_time() {
 }
 
 #[test]
+fn refs_through_a_typed_variable_takes_linear_time() {
+    let n = 500;
+    let uses = |n: usize, line: &str| line.repeat(n);
+    let want = |n: usize| format!("({} references)", n + 1);
+    assert_refs_scale_linearly(
+        "big.py",
+        ("lib.py", "class A:\n    def m(self):\n        pass\n"),
+        "m",
+        n,
+        |n| format!("from lib import A\n\ndef f():\n    x = A()\n{}", uses(n, "    x.m()\n")),
+        want,
+    );
+    assert_refs_scale_linearly(
+        "big.js",
+        ("lib.js", "export class A {\n  m() {\n    return 1;\n  }\n}\n"),
+        "m",
+        n,
+        |n| format!("import {{ A }} from \"./lib\";\nfunction f() {{\n  const x = new A();\n{}}}\n", uses(n, "  x.m();\n")),
+        want,
+    );
+    assert_refs_scale_linearly(
+        "big.ts",
+        ("lib.ts", "export class A {\n  m(): number {\n    return 1;\n  }\n}\n"),
+        "m",
+        n,
+        |n| format!("import {{ A }} from \"./lib\";\nfunction f(): void {{\n  const x: A = new A();\n{}}}\n", uses(n, "  x.m();\n")),
+        want,
+    );
+    assert_refs_scale_linearly(
+        "src/lib.rs",
+        ("Cargo.toml", "[package]\nname = \"t\"\n"),
+        "m",
+        n,
+        |n| format!("pub struct A;\n\nimpl A {{\n    pub fn m(&self) {{}}\n}}\n\npub fn f() {{\n    let x = A {{}};\n{}}}\n", uses(n, "    x.m();\n")),
+        want,
+    );
+    assert_refs_scale_linearly(
+        "main.go",
+        ("go.mod", "module t\n"),
+        "M",
+        n,
+        |n| format!("package main\n\ntype A struct{{}}\n\nfunc (a A) M() {{}}\n\nfunc f() {{\n\tx := A{{}}\n{}}}\n", uses(n, "\tx.M()\n")),
+        want,
+    );
+}
+
+#[test]
 fn a_file_nested_too_deeply_is_reported_unread_and_one_nested_500_deep_resolves() {
     let class = ("b.py", "class A:\n    def m(self):\n        pass\n");
     let deep = |head: &str, n: usize| format!("from b import A\n\ndef f():\n    {head}{}A(){}\n    x.m()\n", "(".repeat(n), ")".repeat(n));
