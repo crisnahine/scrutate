@@ -7,7 +7,9 @@
 //! KELVIN SIGN (3 bytes) and `ß` matches U+1E9E (3 bytes), so a run ends before such a position.
 //! The two scanned bytes lie in one run, each at an offset where the forms hold one byte value or
 //! two that differ only in bit 0x20 (`a`/`A`, the last byte of `ö`/`Ö`); the candidate offset
-//! reported is the run's start, which lies inside any match.
+//! reported is the run's start, which lies inside any match. A candidate is checked against the
+//! first `CHECKED` bytes of the run only, so the scan stays linear on repetitive text; the
+//! searcher confirms the whole line anyway.
 
 use regex_syntax::hir::{Class, Hir, HirKind};
 
@@ -16,7 +18,7 @@ type Forms = Option<Vec<Vec<u8>>>;
 
 #[derive(Clone, Debug)]
 pub struct FoldFinder {
-    /// the forms of each position of the run, all of one length per position
+    /// the forms of each position of the run's first `CHECKED` bytes, all of one length per position
     run: Vec<Vec<Vec<u8>>>,
     len: usize,
     a: usize,
@@ -27,6 +29,9 @@ pub struct FoldFinder {
     mask_b: u8,
     target_b: u8,
 }
+
+/// How much of the run a candidate is checked against.
+const CHECKED: usize = 16;
 
 /// Bytes common in source code, the most common first; all others count as rare.
 const COMMON: &[u8] = b" etianosrlcdu_()hp,mf;=g*b.yvwx/-0>1\"{}[]2#q&j!z<3:+%";
@@ -81,7 +86,7 @@ impl FoldFinder {
         }
         let mut best: Option<(usize, FoldFinder)> = None;
         for run in pos.split(Option::is_none) {
-            let run: Vec<Vec<Vec<u8>>> = run.iter().flatten().cloned().collect();
+            let mut run: Vec<Vec<Vec<u8>>> = run.iter().flatten().cloned().collect();
             let mut at = 0;
             let mut cands = Vec::new();
             for forms in &run {
@@ -104,6 +109,15 @@ impl FoldFinder {
                 continue;
             }
             let (x, y) = if first.1 < second.1 { (first, second) } else { (second, first) };
+            let mut off = 0;
+            let checked = run
+                .iter()
+                .take_while(|f| {
+                    off += f[0].len();
+                    off - f[0].len() < CHECKED
+                })
+                .count();
+            run.truncate(checked);
             let f = FoldFinder { run, len: at, a: x.1, b: y.1, mask_a: x.2, target_a: x.3, mask_b: y.2, target_b: y.3 };
             best = Some((score, f));
         }
@@ -114,7 +128,7 @@ impl FoldFinder {
         (hay[i + self.a] | self.mask_a) == self.target_a && (hay[i + self.b] | self.mask_b) == self.target_b
     }
 
-    /// Whether the whole run matches at `i`; `i + len <= hay.len()`.
+    /// Whether the checked part of the run matches at `i`; `i + len <= hay.len()`.
     fn run_at(&self, hay: &[u8], i: usize) -> bool {
         let mut at = i;
         for forms in &self.run {

@@ -3955,11 +3955,15 @@ mod tests {
         #[test]
         fn a_case_insensitive_literal_finds_every_line_the_regex_matches(
             needle in proptest::collection::vec(0usize..FOLD_CHARS.len(), 1..8),
-            pieces in proptest::collection::vec((0u8..4, 0usize..80, proptest::collection::vec(0usize..64, 8)), 0..8),
+            long in proptest::option::of((0usize..FOLD_CHARS.len(), 14usize..40)),
+            pieces in proptest::collection::vec((0u8..5, 0usize..80, proptest::collection::vec(0usize..64, 8)), 0..8),
             regex in proptest::prelude::any::<bool>(),
             word in proptest::prelude::any::<bool>(),
         ) {
-            let chars: Vec<char> = needle.iter().map(|&i| FOLD_CHARS[i]).collect();
+            let chars: Vec<char> = match long {
+                Some((c, n)) => vec![FOLD_CHARS[c]; n],
+                None => needle.iter().map(|&i| FOLD_CHARS[i]).collect(),
+            };
             let pattern: String = chars.iter().collect();
             let mut hay = Vec::new();
             for (kind, pad, picks) in &pieces {
@@ -3975,6 +3979,13 @@ mod tests {
                         }
                     }
                     2 => hay.extend(picks.iter().map(|&p| [b'\n', b' ', 0xFF, 0xC3, b'A', b'a', b'_', b'0'][p % 8])),
+                    // a run of the first character one short of the needle, as long, or one longer
+                    4 => {
+                        let forms = fold_class(chars[0]);
+                        for n in 0..chars.len() + picks[0] % 3 - 1 {
+                            hay.extend(forms[picks[n % 8] % forms.len()].to_string().as_bytes());
+                        }
+                    }
                     _ => hay.push(b'\n'),
                 }
             }
@@ -3996,6 +4007,26 @@ mod tests {
                 start = end + 1;
             }
         }
+    }
+
+    #[test]
+    fn a_case_insensitive_literal_costs_no_more_on_longer_near_misses() {
+        // lines one byte shorter than the needle: almost every position fits the two scanned bytes
+        let time = |n: usize| {
+            let hay = format!("{}\n", "=".repeat(n - 1)).repeat((256 << 10) / n);
+            let o = Options { pattern: "=".repeat(n), mode: Mode::Literal, case: Case::Insensitive, ..Options::default() };
+            let AnyMatcher::Regex(m) = build_matcher(&o).unwrap() else { panic!("not a regex matcher") };
+            assert!(m.fold.is_some());
+            let search = || {
+                let t = Instant::now();
+                let sink = grep_searcher::sinks::Lossy(|_, _| -> std::io::Result<bool> { panic!("no line matches") });
+                SearcherBuilder::new().build().search_slice(&m, hay.as_bytes(), sink).unwrap();
+                t.elapsed()
+            };
+            (0..3).map(|_| search()).min().unwrap()
+        };
+        let (short, long) = (time(32), time(2048));
+        assert!(long < short * 4, "needle of 32: {short:?}, of 2048: {long:?}");
     }
 
     const FOLD_CHARS: &[char] = &[
