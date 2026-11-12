@@ -2438,7 +2438,9 @@ mod split {
             let hs: Vec<_> = (0..threads)
                 .map(|_| {
                     s.spawn(|| {
-                        let mut buf = vec![0u8; 1 << 20];
+                        // 1 MiB a thread held 15.2 MB peak resident on a 740 MB file (6.9 MB
+                        // now), for 0.4% fewer instructions
+                        let mut buf = vec![0u8; 256 << 10];
                         let mut mine = Vec::new();
                         loop {
                             let i = next.fetch_add(1, Ordering::Relaxed);
