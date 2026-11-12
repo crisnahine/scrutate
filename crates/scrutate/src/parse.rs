@@ -924,7 +924,8 @@ static CAPS_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^_*[A-Z][A-Z0-
 /// class field, a C/C++ `#define NAME value`, enumerator and file or namespace `const` with a value
 /// (GLSL and Objective-C too), a C++ `static const` or `constexpr` class member with a value, and a
 /// Ruby assignment to a capitalized name at file, module or class level.
-fn constant_of<'t>(lang: &str, node: Node<'t>, ancestors: &[(Node<'t>, Vec<Node<'t>>)], src: &[u8]) -> Option<(Vec<String>, Node<'t>)> {
+/// `scope` is the kind of the nearest ancestor that is no `#if` block or include guard.
+fn constant_of<'t>(lang: &str, node: Node<'t>, ancestors: &[(Node<'t>, Vec<Node<'t>>)], scope: Option<&str>, src: &[u8]) -> Option<(Vec<String>, Node<'t>)> {
     let up = |i: usize| ancestors.len().checked_sub(i).map(|j| ancestors[j].0);
     let kind_up = |i: usize| up(i).map_or("", |n| n.kind());
     let text_of = |n: Node| txt(src, n.start_byte(), n.end_byte());
@@ -994,8 +995,6 @@ fn constant_of<'t>(lang: &str, node: Node<'t>, ancestors: &[(Node<'t>, Vec<Node<
             (vec![name], node)
         }
         ("c" | "cpp" | "glsl" | "objc", "declaration") => {
-            // an include guard or `#if` block is no scope of its own
-            let scope = ancestors.iter().rev().map(|(p, _)| p.kind()).find(|k| !k.starts_with("preproc_"));
             if !matches!(scope, Some("translation_unit" | "declaration_list" | "linkage_specification")) {
                 return None;
             }
@@ -1141,7 +1140,8 @@ fn first_string<'t>(node: Node<'t>) -> Option<Node<'t>> {
         }
         let mut cur = n.walk();
         let kids: Vec<Node> = n.children(&mut cur).collect();
-        for k in kids.into_iter().rev() {
+        // a nested node of the same kind is read on its own visit: `include include ...` stays linear
+        for k in kids.into_iter().rev().filter(|k| k.kind() != node.kind()) {
             stack.push(k);
         }
     }
@@ -1677,9 +1677,14 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
     let mut stack: Vec<(Node, bool, bool, usize)> = vec![(tree.root_node(), false, false, 0)];
     let mut ancestors: Vec<(Node, Vec<Node>)> = Vec::new();
     let mut pos: Vec<usize> = Vec::new();
+    // indexes in `ancestors` of those that are no `#if` or include guard: no scope of their own
+    let mut scopes: Vec<usize> = Vec::new();
     while let Some((node, exiting, pushed, at)) = stack.pop() {
         if exiting {
             ancestors.pop();
+            if scopes.last() == Some(&ancestors.len()) {
+                scopes.pop();
+            }
             pos.pop();
             open_heads -= usize::from(heads.contains(&node.id()));
             if pushed {
@@ -1710,8 +1715,7 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
                 continue;
             }
             if !def.parents.is_empty() {
-                // an include guard or `#if` block is no scope of its own
-                let parent = ancestors.iter().rev().map(|(p, _)| p.kind()).find(|k| !spec.outer.contains(k) && !k.starts_with("preproc_"));
+                let parent = scopes.iter().rev().map(|&i| ancestors[i].0.kind()).find(|k| !spec.outer.contains(k));
                 if !parent.is_some_and(|k| def.parents.contains(&k)) {
                     continue;
                 }
@@ -1822,11 +1826,11 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
             def_stack.push(chunks.len() - 1);
             pushed_now = true;
             heads.extend(def_head(spec.id, node).map(|h| h.id()));
-        } else if let Some((names, shown)) = constant_of(spec.id, node, &ancestors, src) {
+        } else if let Some((names, shown)) = constant_of(spec.id, node, &ancestors, scopes.last().map(|&i| ancestors[i].0.kind()), src) {
             // not on def_stack: calls in the initializer stay with the enclosing definition
             let parent_q = def_stack.last().map(|&i| chunks[i].qualname.as_str()).unwrap_or_default();
             // the comment sits above the node the chunk shows: a Go `const` above its only spec
-            let up = ancestors.iter().rposition(|(a, _)| a.id() == shown.id()).unwrap_or(ancestors.len());
+            let up = if shown == node { ancestors.len() } else { ancestors.iter().rposition(|(a, _)| a.id() == shown.id()).unwrap_or(ancestors.len()) };
             let doc = leading_comment(spec.id, shown, &ancestors[..up], &pos[..=up], src, spec.wrappers, 0).0;
             let text = head_bytes(src, shown.start_byte(), shown.end_byte(), MAX_CHUNK_LINES);
             for name in names {
@@ -1875,6 +1879,9 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
         stack.push((node, true, pushed_now, at));
         let kids: Vec<Node> = node.children(&mut node.walk()).collect();
         stack.extend(kids.iter().enumerate().rev().map(|(i, &ch)| (ch, false, false, i)));
+        if !t.starts_with("preproc_") {
+            scopes.push(ancestors.len());
+        }
         ancestors.push((node, kids));
         open_heads += usize::from(heads.contains(&node.id()));
     }

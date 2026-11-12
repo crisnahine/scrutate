@@ -753,6 +753,30 @@ fn many_top_level_calls_parse_in_linear_time() {
 }
 
 #[test]
+fn nested_php_includes_and_c_includes_parse_in_linear_time() {
+    for word in ["include", "require_once"] {
+        let make = move |n: usize| format!("<?php\n{}'x.php';\n", format!("{word} ").repeat(n));
+        assert_parse_scales_linearly("a.php", 4000, make, |_, _| {});
+        let imports = scrutate::parse::parse_file("a.php", &make(3)).imports;
+        assert!(!imports.is_empty() && imports.iter().all(|(line, m)| *line == 2 && m == "x.php"), "{word}: {imports:?}");
+    }
+    let make = |n: usize| format!("{}#include \"x.h\"\n{}", "#if A\n".repeat(n), "#endif\n".repeat(n));
+    assert_parse_scales_linearly("a.c", 4000, make, |_, _| {});
+    assert_eq!(scrutate::parse::parse_file("a.c", &make(3)).imports, vec![(4, "x.h".to_string())]);
+}
+
+#[test]
+fn declarations_in_deeply_nested_preprocessor_blocks_parse_in_linear_time() {
+    for (path, decl) in [("a.c", "const int X = 1;"), ("a.cpp", "int f();")] {
+        let make = move |n: usize| format!("{}{}", format!("#if A\n{decl}\n").repeat(n), "#endif\n".repeat(n));
+        assert_parse_scales_linearly(path, 1500, make, move |n, chunks| {
+            let name = if path == "a.c" { "X" } else { "f" };
+            assert_eq!(chunks.iter().filter(|c| c.name == name).count(), n, "{path}");
+        });
+    }
+}
+
+#[test]
 fn windows_of_very_long_lines_keep_every_line() {
     // 60 lines of 2,000 bytes: 50 of them are 100 KB, three times what a chunk's text keeps
     let line = "x".repeat(1_990);
