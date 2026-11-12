@@ -1108,13 +1108,15 @@ impl Index {
                 }
             }
         };
+        // read under the write lock: after COMMIT another writer's version could be read instead
+        let committed = self.meta("data_version");
         retry_busy(|| self.db.execute_batch("COMMIT"))?;
         if changed {
             let mut patched = false;
             if in_sync {
                 let added: Vec<String> = seg_names.clone();
                 if self.lex.as_mut().unwrap().apply(&removed, &added).is_ok() {
-                    self.lex_ver = self.meta("data_version");
+                    self.lex_ver = committed;
                     patched = true;
                 }
             }
