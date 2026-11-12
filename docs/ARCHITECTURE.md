@@ -450,7 +450,8 @@ per scope, so a function of thousands of uses resolves in linear time. A variabl
 declaration is looked for in the function around the use and the functions around that, up to a
 Rust `fn` item; only declarations before the use count. An inherited method of a Python,
 JavaScript or TypeScript class is the first along the class's method resolution order, kept per
-class. The Java walks over base
+class. A Python base from outside stands in that order as a placeholder, and the search stops
+there. The Java walks over base
 types read a type reached by many paths once per depth, so a diamond of interfaces costs linear
 time. An
 occurrence goes to the innermost scope that defines the name, then the file's top level, then

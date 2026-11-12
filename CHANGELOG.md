@@ -242,10 +242,19 @@ First release.
     no longer answers not found.
   - A variable used inside a closure, lambda, arrow function, nested function or Go func literal
     has the type of its declaration in the functions around it, so `xs.map(x => p.norm())` is a
-    call of `Point.norm`; a Rust `fn` item still sees none of the locals around it.
+    call of `Point.norm`; a Rust `fn` item still sees none of the locals around it. A name
+    bound inside the closure hides the outer one: a bare arrow parameter (`p => ...`), a
+    destructured name, a function's own name, a nested function or class, a Python
+    comprehension variable. So `xs.map(p => p.norm())` is not a call of the outer `p`'s
+    method. A Python method does not see the variables of its class body.
+  - A Python base class from outside the repository keeps its place in the method resolution
+    order: `class T(unittest.TestCase, Helper)` no longer calls `Helper.setUp` for
+    `self.setUp()`, which stays undecided because `TestCase` may define it (`object` is not
+    counted).
   - tsconfig `paths` are read as TypeScript reads them: relative to the `baseUrl` the configs
     end with after `extends`, inherited or not, else to the folder of the config that sets
-    `paths`.
+    `paths`. `${configDir}` at the start of a `paths` place or of `baseUrl` stands for the
+    folder of the config nearest the importing file, as TypeScript 5.5 reads it.
   - `refs` and `callers` stay fast in a function where many blocks bind the same name (2,000
     blocks: 11 to 13 s before, 0.14 s) and through a wide diamond of Python or TypeScript base
     classes.

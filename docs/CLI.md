@@ -297,13 +297,14 @@ refers to. For Python, JavaScript, TypeScript, Rust and Go the rules are, in ord
    a module bound by an import (`import x`, `import * as x`, `use crate::a`, a Go import), a
    module path (`crate::`, `self::`, `super::`, a workspace crate, a Rust child module), or a
    class or type (`Class.N`, `Type::N`, then its Python and JavaScript base classes in method
-   resolution order, up to 8 levels). `self.N`,
+   resolution order, up to 8 levels; a Python base from outside the repository keeps its place
+   in the order, and a method it may define stays undecided). `self.N`,
    `this.N`, `cls.N` and `Self::N` look in the enclosing class or impl. A receiver that is a
    local variable or a parameter (`x.N`) is looked up in the type its declaration states: an
    annotation (`x: T`, `x T`, `x: &T`) or what it is built from (`T(...)`, `new T(...)`,
    `T::new(...)`, `T { .. }`, `&T{}`), the nearest declaration before the use that is in scope
    there, in the function around the use or the functions around that (a closure sees the
-   variables of the function it is written in; a Rust `fn` item does not): not one in a block that has ended, a closure or lambda, an `if let` or `match` arm, or
+   variables of the function it is written in, unless it binds the name itself; a Rust `fn` item does not, and a Python method does not see its class body): not one in a block that has ended, a closure or lambda, an `if let` or `match` arm, or
    the declaration's own value (a Python function is one scope, and a JavaScript `var` belongs
    to its whole function). A variable that
    gets its value from a function call takes the function's declared return type (through `?`
@@ -361,7 +362,8 @@ while `import logging` in a package that has its own `logging.py` stays the stan
 JavaScript relative paths with the usual extensions and
 `index` files (a `.js` import finds the `.ts` source), and the names a project gives its own
 folders in `tsconfig.json` or `jsconfig.json` (`paths`, `baseUrl`, also through a relative
-`extends`, a string or a list whose later entries win; `paths` are relative to the `baseUrl` the
+`extends`, a string or a list whose later entries win; `${configDir}` at the start of a `paths`
+place or of `baseUrl` stands for the folder of the config nearest the importing file; `paths` are relative to the `baseUrl` the
 configs end with, else to the folder of the config that sets them), then a workspace package by
 its `package.json` name: through `exports` (the conditions `types`, `import`, `default`, `require`
 and `node` in that order, then any other by name), `module`, `main` or an `index` file; a target
