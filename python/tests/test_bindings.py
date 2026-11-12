@@ -181,7 +181,7 @@ def test_the_largest_counts_do_not_wrap_around(tmp_path):
     assert r.duplicates(min_tokens=3)
     assert r.duplicates(min_tokens=2**64 - 1) == [] and r.duplicates(min_tokens=2**63) == []
     assert r.read("a.py", 1, max_lines=-(2**63)) == ""
-    assert r.read("a.py", 1, max_lines=2**63 - 1).startswith("def f_a(x):")
+    assert r.read("a.py", 1, max_lines=2**63 - 1).splitlines()[0].endswith("def f_a(x):")
 
 
 def test_exclude_dirs_of_the_root_s_file_applies_to_every_process(tmp_path, monkeypatch):
@@ -207,6 +207,14 @@ def test_exclude_dirs_of_the_root_s_file_applies_to_every_process(tmp_path, monk
         assert cli.returncode == 1, cli.stdout + cli.stderr
         assert subprocess.run([os.path.abspath(CLI), "symbol", "s_fn"], cwd=sub, capture_output=True, stdin=subprocess.DEVNULL).returncode == 0
     assert r.symbol("g_fn") == [] and r.symbol("s_fn")
+
+
+def test_spans_and_column_count_bytes_of_the_text(tmp_path):
+    (tmp_path / "bad.txt").write_bytes(b"\xff abc and \xfe abc\r\n")
+    (m,) = scrutate.grep("abc", [str(tmp_path)], mode="literal")
+    raw = m.text.encode()
+    assert [raw[a:b] for a, b in m.spans] == [b"abc", b"abc"]
+    assert raw[m.column - 1 : m.column + 2] == b"abc"
 
 
 def test_grep_argument_errors_at_call_time(repo):

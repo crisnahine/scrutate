@@ -298,6 +298,7 @@ fn grep(
         after,
         threads,
         want_spans: true,
+        text_spans: true,
         ..Options::default()
     };
     // errors surface at call time, not at the first `next()`
