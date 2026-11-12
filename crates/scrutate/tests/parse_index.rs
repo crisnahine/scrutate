@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use scrutate::parse::parse_source;
 use scrutate::search::prune_indices;
@@ -16,6 +16,30 @@ fn candidate_cut_keeps_the_lowest_indices_on_tied_scores() {
     assert_eq!(keep, vec![0, 1, 7]);
 }
 
+/// CPU time of the calling thread, which a busy machine does not stretch as it stretches wall time;
+/// wall time where that clock is not known.
+fn thread_cpu() -> Duration {
+    #[cfg(all(any(target_os = "macos", target_os = "linux"), target_pointer_width = "64"))]
+    {
+        #[repr(C)]
+        struct Timespec {
+            sec: i64,
+            nsec: i64,
+        }
+        extern "C" {
+            fn clock_gettime(clock: i32, ts: *mut Timespec) -> i32;
+        }
+        // CLOCK_THREAD_CPUTIME_ID
+        let clock = if cfg!(target_os = "macos") { 16 } else { 3 };
+        let mut ts = Timespec { sec: 0, nsec: 0 };
+        if unsafe { clock_gettime(clock, &mut ts) } == 0 {
+            return Duration::new(ts.sec as u64, ts.nsec as u32);
+        }
+    }
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    START.get_or_init(Instant::now).elapsed()
+}
+
 /// Parses `make(n)` and `make(4 * n)` (best of 3 runs each, so a loaded machine does not decide)
 /// and fails if the larger input costs 10x or more, where linear work gives 4x and quadratic 16x.
 /// The parse is the one the index runs: a chunk's text is cut later, one chunk at a time.
@@ -24,9 +48,9 @@ fn assert_parse_scales_linearly(path: &str, n: usize, make: impl Fn(usize) -> St
         let src = make(k);
         (0..3)
             .map(|_| {
-                let t = Instant::now();
+                let t = thread_cpu();
                 let chunks = scrutate::parse::parse_file_with(path, &src, None).0.chunks;
-                let took = t.elapsed();
+                let took = thread_cpu() - t;
                 check(k, &chunks);
                 took
             })
@@ -100,9 +124,9 @@ fn a_staircase_of_nested_definitions_without_a_grammar_parses_in_time_linear_in_
         let src: String = (0..m).map(|i| format!("{}sub f{i} {{\n", " ".repeat(i))).collect();
         (0..3)
             .map(|_| {
-                let t = Instant::now();
+                let t = thread_cpu();
                 let chunks = scrutate::parse::parse_file_with("a.pl", &src, None).0.chunks;
-                let took = t.elapsed();
+                let took = thread_cpu() - t;
                 assert_eq!(chunks.iter().filter(|c| c.kind == "function").count(), m);
                 took
             })
