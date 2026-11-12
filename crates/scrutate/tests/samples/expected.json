@@ -461,10 +461,6 @@
     [
       "function",
       "greet"
-    ],
-    [
-      "window",
-      "sample"
     ]
   ],
   "sample.erb": [

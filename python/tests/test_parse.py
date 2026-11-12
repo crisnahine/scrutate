@@ -417,6 +417,25 @@ def test_lines_no_chunk_keeps_are_windows_named_after_the_definition_that_holds_
     assert _windows("a.go", "package p\n\nfunc f() {}\n\nconst Max = 3\n") == [("a", 5, 5)]
 
 
+def test_a_definitions_documentation_is_in_no_window():
+    # each file: a first definition, then a documented one whose comment has lines without a comment mark
+    cases = [
+        ("a.js", "function a() {}\n\n/**\n Returns the total.\n */\nfunction total() {}\n"),
+        ("a.go", "package p\n\nfunc a() {}\n\n/*\nTotal returns it.\n*/\nfunc Total() {}\n"),
+        ("a.rs", "fn a() {}\n\n/*\nReturns the total.\n*/\nfn total() {}\n"),
+        ("a.rs", "fn a() {}\n\n/*\nA target.\n*/\n#[derive(Debug)]\nstruct T;\n"),
+        ("a.py", "def a():\n    pass\n\n# Cached.\n@cache\ndef f():\n    pass\n"),
+    ]
+    wrong = []
+    for path, src in cases:
+        last = max((c for c in parse_source(path, src) if c.kind not in ("module", "window")), key=lambda c: c.start, default=None)
+        if _windows(path, src) or last is None or not last.doc:
+            wrong.append((path, _windows(path, src)))
+    assert wrong == []
+    # a blank line between: the comment is no documentation, so a window holds it
+    assert _windows("a.go", "package p\n\nfunc a() {}\n\n/* stray\n   note */\n\nfunc b() {}\n") == [("a", 5, 6)]
+
+
 def _outside_calls(path, src):
     return [(c.kind, c.start, c.end, sorted(c.calls)) for c in parse_source(path, src) if c.kind in ("module", "window") and c.calls]
 

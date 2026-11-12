@@ -254,6 +254,19 @@ fn search_finds_a_rust_struct_by_the_doc_comment_above_its_derive() {
 }
 
 #[test]
+fn search_finds_a_documented_function_once_when_its_comment_lines_carry_no_mark() {
+    let r = Repo::new("block_doc");
+    r.write("a.vim", b"function! Open()\nendfunction\n\n\" Renews the zqvortex lease.\nfunction! Renew()\n  return 1\nendfunction\n");
+    r.write("a.c", b"int open(void) { return 1; }\n\n/* Totals the zqvortex ledger.\n   Second line.  */\nint total(void) { return 2; }\n");
+    let (code, out, err) = r.run(&["search", "zqvortex", "-k", "5", "--json"]);
+    assert_eq!(code, 0, "{err}");
+    let hits: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
+    let mut got: Vec<_> = hits.iter().map(|h| (h["path"].as_str().unwrap_or(""), h["name"].as_str().unwrap_or(""))).collect();
+    got.sort();
+    assert_eq!(got, [("a.c", "total"), ("a.vim", "Renew")], "{out}");
+}
+
+#[test]
 fn search_finds_a_line_past_what_a_long_function_keeps_as_one_hit_naming_it() {
     let r = Repo::new("long_fn");
     let mut src = String::from("def very_long(x):\n");

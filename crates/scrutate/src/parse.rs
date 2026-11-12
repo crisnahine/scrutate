@@ -31,6 +31,8 @@ pub struct Chunk {
     pub calls: BTreeSet<String>,
     /// where `text` and `body` are cut from the source when they are first needed
     pub(crate) lazy: Option<Lazy>,
+    /// the lines of the documentation above the definition (1-based, inclusive), not indexed
+    pub(crate) doc_lines: Option<(i64, i64)>,
 }
 
 /// Source ranges of a definition's text and body (start bytes, their shared end, the line cap).
@@ -400,11 +402,6 @@ fn attr_start(src: &[u8], mut at: usize, mark: &[u8]) -> (usize, usize) {
         at = prev + indent;
         above += 1;
     }
-}
-
-/// A comment line right above a definition that its documentation holds.
-fn is_doc_line(line: &str, doc: &str) -> bool {
-    !doc.is_empty() && is_comment_line(line) && doc.contains(&clean_comment(line))
 }
 
 /// Windows over every stretch of lines that no span keeps, named after the innermost definition
@@ -1255,7 +1252,16 @@ fn imports_of(node: Node, spec: &LangSpec, src: &[u8], out: &mut Vec<(i64, Strin
 /// position of `ancestors[i]` in its parent and `pos[len]` the node's (Node::parent and
 /// prev_sibling walk down from the root, which makes deep nesting quadratic). The `lead`
 /// siblings right above the node belong to the definition (a type signature).
-fn leading_comment(lang: &str, node: Node, ancestors: &[(Node, Vec<Node>)], pos: &[usize], src: &[u8], wrappers: &[&str], lead: usize) -> String {
+/// Also returns the documentation's lines (1-based) when it has text.
+fn leading_comment(
+    lang: &str,
+    node: Node,
+    ancestors: &[(Node, Vec<Node>)],
+    pos: &[usize],
+    src: &[u8],
+    wrappers: &[&str],
+    lead: usize,
+) -> (String, Option<(i64, i64)>) {
     let mut up = ancestors.len();
     let mut at = pos[up] - lead;
     let mut anchor = if lead > 0 { ancestors[up - 1].1[at] } else { node };
@@ -1291,6 +1297,7 @@ fn leading_comment(lang: &str, node: Node, ancestors: &[(Node, Vec<Node>)], pos:
         Some(siblings[at])
     };
     let mut parts: Vec<String> = Vec::new();
+    let mut last = -1;
     let mut want = anchor.start_position().row as i64;
     let mut prev = prev_sibling();
     while let Some(p) = prev {
@@ -1303,7 +1310,8 @@ fn leading_comment(lang: &str, node: Node, ancestors: &[(Node, Vec<Node>)], pos:
             if let Some(doc) = doc_form(lang, p, src) {
                 // an empty form (`@doc false`) says there is none, whatever comment follows it
                 if parts.is_empty() || doc.is_empty() {
-                    return doc;
+                    let rows = (!doc.is_empty()).then_some((p.start_position().row as i64 + 1, last_row(p) + 1));
+                    return (doc, rows);
                 }
                 break;
             }
@@ -1318,6 +1326,9 @@ fn leading_comment(lang: &str, node: Node, ancestors: &[(Node, Vec<Node>)], pos:
             if t.starts_with("#!") {
                 break; // a shebang is not documentation
             }
+            if parts.is_empty() {
+                last = last_row(p);
+            }
             parts.push(t);
             want = p.start_position().row as i64;
             prev = prev_sibling();
@@ -1326,10 +1337,12 @@ fn leading_comment(lang: &str, node: Node, ancestors: &[(Node, Vec<Node>)], pos:
         }
     }
     if parts.is_empty() {
-        return String::new();
+        return (String::new(), None);
     }
     parts.reverse();
-    clean_comment(&parts.join("\n"))
+    let doc = clean_comment(&parts.join("\n"));
+    let rows = (!doc.is_empty()).then_some((want + 1, last + 1));
+    (doc, rows)
 }
 
 /// The name of an Elixir module attribute (`spec` for `@spec ...`) and its call.
@@ -1485,11 +1498,7 @@ fn finish(path: &str, source: &str, mut chunks: Vec<Chunk>, module_doc: String, 
         };
         spans.push((c.start, c.end.min(c.start.saturating_add(kept.min(i64::MAX as usize) as i64 - 1))));
         // its documentation is searchable in its doc field
-        let mut k = (c.start.max(1) as usize - 1).min(lines.len());
-        while k > 0 && is_doc_line(lines[k - 1], &c.doc) {
-            k -= 1;
-        }
-        spans.push((k as i64 + 1, c.start - 1));
+        spans.extend(c.doc_lines);
     }
     let defs: Vec<(i64, i64, &str)> = chunks.iter().filter(|c| c.kind != "constant").map(|c| (c.start, c.end, c.qualname.as_str())).collect();
     let mut windows = uncovered_windows(source, &lines, &spans, &defs, stem_name);
@@ -1521,6 +1530,7 @@ fn finish(path: &str, source: &str, mut chunks: Vec<Chunk>, module_doc: String, 
                 body: head_txt,
                 calls: module_calls,
                 lazy: None,
+                doc_lines: None,
             },
         );
     }
@@ -1729,8 +1739,8 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
             let (text_start, above) = attr_start(src, outer.start_byte(), attr_mark(spec.id));
             let sig = txt(src, text_start, sig_end).trim().to_string();
             let mut body_start = sig_end;
-            let mut doc = match node.child_by_field_name("docstring").or_else(|| lisp_docstring(node)) {
-                Some(ds) if !spec.docstring => py_string_content(&txt(src, ds.start_byte(), ds.end_byte())),
+            let (mut doc, doc_lines) = match node.child_by_field_name("docstring").or_else(|| lisp_docstring(node)) {
+                Some(ds) if !spec.docstring => (py_string_content(&txt(src, ds.start_byte(), ds.end_byte())), None),
                 _ => leading_comment(spec.id, node, &ancestors, &pos, src, spec.wrappers, lead),
             };
             if doc.is_empty() && spec.id == "powershell" {
@@ -1760,6 +1770,7 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
                 sig,
                 doc,
                 lazy: Some(Lazy { text: text_start, body: body_start, end: node.end_byte(), lines: cap }),
+                doc_lines,
                 ..Default::default()
             });
             if let (true, Some((_, siblings))) = (spec.id == "asm" && t == "label", ancestors.last()) {
@@ -1778,7 +1789,7 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
             let parent_q = def_stack.last().map(|&i| chunks[i].qualname.as_str()).unwrap_or_default();
             // the comment sits above the node the chunk shows: a Go `const` above its only spec
             let up = ancestors.iter().rposition(|(a, _)| a.id() == shown.id()).unwrap_or(ancestors.len());
-            let doc = leading_comment(spec.id, shown, &ancestors[..up], &pos[..=up], src, spec.wrappers, 0);
+            let doc = leading_comment(spec.id, shown, &ancestors[..up], &pos[..=up], src, spec.wrappers, 0).0;
             let text = head_bytes(src, shown.start_byte(), shown.end_byte(), MAX_CHUNK_LINES);
             for name in names {
                 // `const int Config::kSize = 2;` is owned by `Config`
@@ -2075,6 +2086,7 @@ pub fn heuristic_chunks(source: &str) -> Vec<Chunk> {
             d -= 1;
         }
         let doc = if d < *start { clean_comment(&lines[d..*start].join("\n")) } else { String::new() };
+        let doc_lines = (!doc.is_empty()).then_some((d as i64 + 1, *start as i64));
         out.push(Chunk {
             name: name.clone(),
             qualname: name.clone(),
@@ -2087,6 +2099,7 @@ pub fn heuristic_chunks(source: &str) -> Vec<Chunk> {
             body,
             calls: BTreeSet::new(),
             lazy: None,
+            doc_lines,
         });
     }
     out

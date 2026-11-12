@@ -89,7 +89,7 @@ fn every_text_file_is_searchable_even_without_symbols() {
 #[test]
 fn every_line_of_a_sample_is_in_a_searchable_chunk() {
     let closer = |t: &str| matches!(t.trim_end_matches([';', ',']), "end" | "fi" | "done" | "esac") || t.chars().all(|c| "{}[]();,".contains(c));
-    let comment = ["#", "//", "--", ";", "%", "*", "/*", "\"\"\"", "'''", "<!--", "{-", "\""];
+    let comment = ["#", "//", "--", ";", "%", "*", "/*", "\"\"\"", "'''", "<!--", "{-", "\"", "{"];
     let mut dirs = vec!["tests/samples"];
     if cfg!(feature = "extra-langs") {
         dirs.push("tests/samples_extra");

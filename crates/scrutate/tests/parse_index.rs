@@ -540,6 +540,42 @@ fn lines_no_chunk_keeps_are_windows_named_after_the_definition_that_holds_them()
     assert_eq!(windows("a.go", "package p\n\nfunc f() {}\n\nconst Max = 3\n"), [("a".into(), 5, 5)]);
 }
 
+#[test]
+fn a_definitions_documentation_is_in_no_window() {
+    // each file: a first definition, then a documented one whose comment has lines without a comment mark
+    let cases: &[(&str, &str)] = &[
+        ("a.c", "int a(void) { return 1; }\n\n/* Return the total.\n   Second line.  */\nint total(void) { return 2; }\n"),
+        ("a.js", "function a() {}\n\n/**\n Returns the total.\n */\nfunction total() {}\n"),
+        ("a.go", "package p\n\nfunc a() {}\n\n/*\nTotal returns it.\n*/\nfunc Total() {}\n"),
+        ("a.rs", "fn a() {}\n\n/*\nReturns the total.\n*/\nfn total() {}\n"),
+        ("a.rs", "fn a() {}\n\n/*\nA target.\n*/\n#[derive(Debug)]\nstruct T;\n"),
+        ("a.php", "<?php\nfunction a() {}\n\n/*\nReturns the total.\n*/\nfunction total() {}\n"),
+        ("Main.elm", "module Main exposing (..)\n\n\nb : Int\nb =\n    1\n\n\n{-| Adds one.\nmore text\n-}\nadd : Int -> Int\nadd x =\n    x + 1\n"),
+        ("A.hs", "module A where\n\nb :: Int\nb = 1\n\n{- | Adds one.\nmore text\n-}\nadd :: Int -> Int\nadd x = x + 1\n"),
+        ("a.ps1", "function A { 1 }\n\n<#\n.SYNOPSIS\nAdds one.\n#>\nfunction Add-One { 1 }\n"),
+        ("a.lua", "function a() end\n\n--[[\nAdds one.\n]]\nfunction add(x) return x end\n"),
+        ("a.rb", "def a; end\n\n=begin\nAdds one.\n=end\ndef add(x); x; end\n"),
+        ("a.jl", "function a() end\n\n#=\nAdds one.\n=#\nfunction add(x) x end\n"),
+        ("a.jl", "function a() end\n\n\"\"\"\nAdds one.\n\"\"\"\nfunction add(x) x end\n"),
+        ("a.vim", "function! A()\nendfunction\n\n\" Adds one.\nfunction! Add(x)\n  return a:x\nendfunction\n"),
+        ("a.ex", "defmodule M do\n  def a, do: 1\n\n  @doc \"\"\"\n  Adds one.\n  \"\"\"\n  def f(x), do: x\nend\n"),
+        ("a.py", "def a():\n    pass\n\n# Cached.\n@cache\ndef f():\n    pass\n"),
+    ];
+    let mut wrong = Vec::new();
+    for &(path, src) in cases {
+        let w = windows(path, src);
+        let last = parse_source(path, src).into_iter().filter(|c| !matches!(c.kind, "module" | "window")).max_by_key(|c| c.start);
+        if !w.is_empty() || last.is_none_or(|c| c.doc.is_empty()) {
+            wrong.push(format!("{path}: {w:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    // a blank line between: the comment is no documentation, so a window holds it
+    assert_eq!(windows("a.c", "int a(void) { return 1; }\n\n/* stray\n   note */\n\nint total(void) { return 2; }\n"), [("a".into(), 3, 4)]);
+    // an attribute between the documentation and a definition that does not start at it stays searchable
+    assert_eq!(windows("a.erl", "-module(a).\n\ng() -> 1.\n\n%% Adds one.\n-spec f(integer()) -> integer().\nf(X) -> X + 1.\n"), [("a".into(), 6, 6)]);
+}
+
 /// (kind, start, end, calls) of the module chunk and the windows that hold calls.
 fn outside_calls(path: &str, src: &str) -> Vec<(String, i64, i64, Vec<String>)> {
     parse_source(path, src)

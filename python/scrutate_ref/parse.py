@@ -206,9 +206,6 @@ def _is_closer(line: str) -> bool:
     return t.rstrip(";,") in ("end", "fi", "done", "esac") or all(c in "{}[]();," for c in t)
 
 
-_COMMENT_STARTS = ("//", "#", "--", ";", "/*", "*", "%")
-
-
 # how an attribute line above a definition starts, where the language writes them outside the node
 _ATTR_MARK = {"rust": b"#[", "javascript": b"@", "typescript": b"@", "tsx": b"@", "python": b"@", "java": b"@"}
 
@@ -231,11 +228,6 @@ def _attr_start(src: bytes, at: int, mark: bytes) -> tuple[int, int]:
             return at, above
         at = i - len(t)
         above += 1
-
-
-def _is_doc_line(line: str, doc: str) -> bool:
-    """A comment line right above a definition that its documentation holds."""
-    return bool(doc) and line.lstrip().startswith(_COMMENT_STARTS) and _clean_comment(line) in doc
 
 
 def _uncovered_windows(lines: list[str], spans: list[tuple[int, int]], defs: list[Chunk], stem: str) -> list[Chunk]:
@@ -568,8 +560,8 @@ def _last_row(node) -> int:
     return row - 1 if col == 0 and row > node.start_point[0] else row
 
 
-def _leading_comment(node, src: bytes) -> str:
-    """Contiguous comment block directly above a definition."""
+def _leading_comment(node, src: bytes) -> tuple[str, tuple[int, int] | None]:
+    """Contiguous comment block directly above a definition, and its lines (1-based) when it has text."""
     anchor = node
     header_row = -1  # the definition's own header line: a comment there is not about a nested definition
     while (p := anchor.parent) is not None:
@@ -588,6 +580,7 @@ def _leading_comment(node, src: bytes) -> str:
             break
         anchor = p
     parts: list[str] = []
+    last = -1
     want = anchor.start_point[0]
     prev = anchor.prev_sibling
     while prev is not None:
@@ -604,10 +597,15 @@ def _leading_comment(node, src: bytes) -> str:
         text = src[prev.start_byte : prev.end_byte].decode("utf8", "replace")
         if text.startswith("#!"):
             break  # a shebang is not documentation
+        if not parts:
+            last = _last_row(prev)
         parts.append(text)
         want = prev.start_point[0]
         prev = prev.prev_sibling
-    return _clean_comment("\n".join(reversed(parts))) if parts else ""
+    if not parts:
+        return "", None
+    doc = _clean_comment("\n".join(reversed(parts)))
+    return doc, (want + 1, last + 1) if doc else None
 
 
 def _py_docstring_node(block):
@@ -720,7 +718,10 @@ def parse_source(path: str, source: str) -> list[Chunk]:
                 node.end_byte, node.start_byte + 200)
             text_start, above = _attr_start(src, outer.start_byte, _ATTR_MARK.get(lang, b""))
             sig = txt(text_start, sig_end).strip()
-            doc = _leading_comment(node, src)
+            doc, doc_lines = _leading_comment(node, src)
+            if doc_lines:
+                # its documentation is searchable in its doc field
+                spans.append(doc_lines)
             body_start = sig_end
             if is_py and body_node is not None:
                 s, stmt = _py_docstring_node(body_node)
@@ -746,7 +747,7 @@ def parse_source(path: str, source: str) -> list[Chunk]:
                     cname = cname[2:]
                 consts.append(Chunk(cname, _qualify(stack[-1][1] if stack else "", cname), "constant", shown.start_point[0] + 1,
                                     _last_row(shown) + 1, _head(txt(shown.start_byte, shown.end_byte), MAX_CHUNK_LINES),
-                                    doc=_leading_comment(shown, src)))
+                                    doc=_leading_comment(shown, src)[0]))
         elif t in calls:
             got = stack[-1][0].calls if stack else set()
             callee = _callee_name(lang, node, calls[t], src)
@@ -769,12 +770,6 @@ def parse_source(path: str, source: str) -> list[Chunk]:
     head_end = min((first_def - 1) if first_def else len(lines), 60)
     head = "\n".join(lines[:head_end])
     defs = list(chunks)
-    for c in defs:
-        # its documentation is searchable in its doc field
-        k = min(c.start - 1, len(lines))
-        while k > 0 and _is_doc_line(lines[k - 1], c.doc):
-            k -= 1
-        spans.append((k + 1, c.start - 1))
     spans.append((1, min(head_end, _kept(head, 1 << 62))))
     head = _capped(head)
     module = None
