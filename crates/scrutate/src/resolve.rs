@@ -127,6 +127,9 @@ pub struct Resolver<'a> {
     /// Java: by class, the types it extends and implements, and the fields it declares
     java_bases: HashMap<i64, Rc<Vec<std::result::Result<i64, &'static str>>>>,
     java_fields: HashMap<i64, Rc<HashSet<String>>>,
+    /// by function around a use (its node id) and name: the byte ranges of the identifiers in it
+    /// that may bind the name, found once so a use checks only these
+    binders: HashMap<(usize, String), Vec<(usize, usize)>>,
 }
 
 fn text<'s>(n: Node, src: &'s str) -> &'s str {
@@ -726,6 +729,7 @@ impl<'a> Resolver<'a> {
             java_paths: HashMap::new(),
             java_bases: HashMap::new(),
             java_fields: HashMap::new(),
+            binders: HashMap::new(),
         })
     }
 
@@ -741,6 +745,35 @@ impl<'a> Resolver<'a> {
     /// Drops the loaded copy of `path`; a later use loads it again.
     pub fn forget(&mut self, path: &str) {
         self.cache.remove(path);
+        // node ids name nodes of trees still loaded
+        self.binders.clear();
+    }
+
+    /// The identifiers in `scope` named `name` that bind it: a Java local or parameter, else
+    /// what `is_local_binder` takes.
+    fn binders_in(&mut self, scope: Node, name: &str, src: &str, java: bool) -> Vec<(usize, usize)> {
+        let key = (scope.id(), name.to_string());
+        if let Some(b) = self.binders.get(&key) {
+            return b.clone();
+        }
+        let mut out = Vec::new();
+        let mut stack = vec![scope];
+        while let Some(n) = stack.pop() {
+            let binder = if java {
+                n.kind() == "identifier" && text(n, src) == name && java_binder(n)
+            } else {
+                matches!(n.kind(), "identifier" | "shorthand_property_identifier_pattern" | "shorthand_field_identifier")
+                    && text(n, src) == name
+                    && is_local_binder(n, src)
+            };
+            if binder {
+                out.push((n.start_byte(), n.end_byte()));
+            }
+            let mut cur = n.walk();
+            stack.extend(n.named_children(&mut cur));
+        }
+        self.binders.insert(key, out.clone());
+        out
     }
 
     /// A match at bytes `a..b` of `line` as Engine A reads `path` -> the same span in the decoded
@@ -945,7 +978,7 @@ impl<'a> Resolver<'a> {
         let func = enclosing_function(node).map(|f| f.byte_range());
         let local_import = |b: &&Binding| b.local == name && func.as_ref().is_some_and(|r| b.sites.iter().any(|s| r.contains(s)));
         let local_import = fi.bindings.iter().find(local_import).cloned();
-        if local_import.is_none() && shadowed(lang, node, name, &fi.src) {
+        if local_import.is_none() && self.shadowed(lang, node, name, &fi.src) {
             return Err("local variable");
         }
         // `const app = require("./app")` is a constant and an import: the import says what it is
@@ -2578,46 +2611,62 @@ fn top_level<'f>(fi: &'f FileInfo, name: &str) -> Option<&'f Def> {
     it.clone().find(|d| d.kind != "impl").or_else(|| it.next())
 }
 
-/// A parameter or local variable named `name` in the functions around `node` (a closure sees the
-/// locals of the function it is written in) hides outer definitions; one bound in a nested
-/// function, block or comprehension that does not hold `node` does not.
-fn shadowed(lang: Lang, node: Node, name: &str, src: &str) -> bool {
-    let at = node.start_byte();
-    let holds = |n: Node| n.start_byte() <= at && at < n.end_byte();
-    let Some(mut func) = enclosing_function(node) else { return false };
-    // a Rust `fn` item does not see the locals of the function around it
-    while let Some(outer) = enclosing_function(func).filter(|_| func.kind() != "function_item") {
-        func = outer;
-    }
-    let block_scoped: &[&str] = match lang {
-        Lang::Python => &["list_comprehension", "set_comprehension", "dictionary_comprehension", "generator_expression"],
-        _ => &["statement_block", "block", "compound_statement", "for_statement", "for_in_statement", "for_expression"],
-    };
-    // (node, inside a block that does not hold the use): there only a JS `var` reaches the use
-    let mut stack = vec![(func, false)];
-    while let Some((n, aside)) = stack.pop() {
-        if matches!(n.kind(), "identifier" | "shorthand_property_identifier_pattern" | "shorthand_field_identifier")
-            && text(n, src) == name
-            && is_local_binder(n, src)
-            && (!aside || is_js_var(n))
-            && visible(n, at)
-        {
-            return true;
+impl Resolver<'_> {
+    /// A parameter or local variable named `name` in the functions around `node` (a closure sees
+    /// the locals of the function it is written in) hides outer definitions; one bound in a nested
+    /// function, block or comprehension that does not hold `node` does not.
+    fn shadowed(&mut self, lang: Lang, node: Node, name: &str, src: &str) -> bool {
+        let at = node.start_byte();
+        let holds = |n: Node| n.start_byte() <= at && at < n.end_byte();
+        let Some(mut func) = enclosing_function(node) else { return false };
+        // a Rust `fn` item does not see the locals of the function around it
+        while let Some(outer) = enclosing_function(func).filter(|_| func.kind() != "function_item") {
+            func = outer;
         }
-        let mut cur = n.walk();
-        for c in n.named_children(&mut cur) {
-            if holds(c) {
-                stack.push((c, aside));
-            } else if block_scoped.contains(&c.kind()) {
-                if lang == Lang::Js {
-                    stack.push((c, true));
+        let block_scoped: &[&str] = match lang {
+            Lang::Python => &["list_comprehension", "set_comprehension", "dictionary_comprehension", "generator_expression"],
+            _ => &["statement_block", "block", "compound_statement", "for_statement", "for_in_statement", "for_expression"],
+        };
+        let binders = self.binders_in(func, name, src, false);
+        binders.iter().any(|&(start, end)| {
+            let Some(b) = func.descendant_for_byte_range(start, end) else { return false };
+            let mut down: Vec<Node> = std::iter::successors(Some(b), |n| n.parent()).take_while(|n| n.id() != func.id()).collect();
+            down.reverse();
+            // a block that does not hold the use is seen into only for a JS `var`; a function never
+            let mut aside = false;
+            for c in down {
+                if holds(c) {
+                    continue;
                 }
-            } else if !FUNCTION_NODES.contains(&c.kind()) {
-                stack.push((c, aside));
+                if block_scoped.contains(&c.kind()) {
+                    if lang != Lang::Js {
+                        return false;
+                    }
+                    aside = true;
+                } else if FUNCTION_NODES.contains(&c.kind()) {
+                    return false;
+                }
             }
-        }
+            (!aside || is_js_var(b)) && visible(b, at)
+        })
     }
-    false
+
+    /// The nearest local variable or parameter named `name` that `node` sees, in the method around
+    /// it and the methods around that (an anonymous class or a lambda sees the locals around it).
+    fn java_local<'t>(&mut self, node: Node<'t>, name: &str, src: &str) -> Option<Node<'t>> {
+        const SCOPES: &[&str] =
+            &["method_declaration", "constructor_declaration", "compact_constructor_declaration", "lambda_expression", "static_initializer"];
+        let at = node.start_byte();
+        let top = std::iter::successors(node.parent(), |n| n.parent()).filter(|n| SCOPES.contains(&n.kind())).last()?;
+        let binders = self.binders_in(top, name, src, true);
+        let seen = |b: &Node| java_scope(*b).is_some_and(|s| s.start_byte() <= at && at < s.end_byte());
+        binders
+            .iter()
+            .filter(|&&(start, _)| start <= at)
+            .filter_map(|&(start, end)| top.descendant_for_byte_range(start, end))
+            .filter(seen)
+            .max_by_key(|b| b.start_byte())
+    }
 }
 
 /// The innermost function around `node`.
@@ -2868,31 +2917,6 @@ fn java_scope(b: Node) -> Option<Node> {
     }
 }
 
-/// The nearest local variable or parameter named `name` that `node` sees, in the method around
-/// it and the methods around that (an anonymous class or a lambda sees the locals around it).
-fn java_local<'t>(node: Node<'t>, name: &str, src: &str) -> Option<Node<'t>> {
-    const SCOPES: &[&str] = &["method_declaration", "constructor_declaration", "compact_constructor_declaration", "lambda_expression", "static_initializer"];
-    let at = node.start_byte();
-    let top = std::iter::successors(node.parent(), |n| n.parent()).filter(|n| SCOPES.contains(&n.kind())).last()?;
-    let (mut best, mut stack): (Option<Node>, Vec<Node>) = (None, vec![top]);
-    while let Some(n) = stack.pop() {
-        if n.start_byte() > at {
-            continue;
-        }
-        if n.kind() == "identifier"
-            && text(n, src) == name
-            && java_binder(n)
-            && java_scope(n).is_some_and(|s| s.start_byte() <= at && at < s.end_byte())
-            && best.is_none_or(|b| b.start_byte() < n.start_byte())
-        {
-            best = Some(n);
-        }
-        let mut cur = n.walk();
-        stack.extend(n.named_children(&mut cur));
-    }
-    best
-}
-
 /// What a Java local binder is declared with: (its type unless `var`, its value).
 fn java_declared<'t>(b: Node<'t>, src: &str) -> (Option<Node<'t>>, Option<Node<'t>>) {
     let Some(p) = b.parent() else { return (None, None) };
@@ -3018,7 +3042,7 @@ impl<'a> Resolver<'a> {
         let src = fi.src.as_str();
         let typed = node.kind() == "type_identifier" || p.is_some_and(|p| p.kind().ends_with("annotation"));
         if !typed {
-            if java_local(node, name, src).is_some() {
+            if self.java_local(node, name, src).is_some() {
                 return Err("local variable");
             }
             if self.java_is_field(fi, node, name) {
@@ -3141,7 +3165,7 @@ impl<'a> Resolver<'a> {
         }
         let (head, hname) = (segs[0], text(segs[0], src));
         // a variable hides a type, a type a package
-        if head.kind() == "identifier" && (java_local(head, hname, src).is_some() || self.java_is_field(fi, head, hname)) {
+        if head.kind() == "identifier" && (self.java_local(head, hname, src).is_some() || self.java_is_field(fi, head, hname)) {
             return self.type_of(path, fi, Lang::Java, q).ok_or("receiver");
         }
         let cur = match self.java_type(fi, head, hname) {
@@ -3352,7 +3376,7 @@ impl<'a> Resolver<'a> {
     fn java_variable_ty(&mut self, path: &str, fi: &FileInfo, e: Node) -> Option<Ty> {
         let src = fi.src.as_str();
         let name = text(e, src);
-        if let Some(b) = java_local(e, name, src) {
+        if let Some(b) = self.java_local(e, name, src) {
             let (ty, value) = java_declared(b, src);
             return match ty {
                 Some(t) => self.built_ty(path, fi, Lang::Java, b, value, e).or_else(|| self.ty_of_type(path, fi, Lang::Java, t)),

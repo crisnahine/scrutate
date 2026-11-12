@@ -565,6 +565,48 @@ fn every_use_on_one_long_line_is_counted_up_to_max_results() {
     assert!(run(&["refs", "g", "--max-results", "100"]).contains("stopped at max_results=100"));
 }
 
+/// `refs NAME` on `make(n)` and `make(4 * n)` (best of 3 runs each) fails if the larger costs 10x
+/// or more, where linear work gives 4x and quadratic 16x; `want(n)` is the count it must print.
+fn assert_refs_scale_linearly(file: &str, other: (&str, &str), name: &str, n: usize, make: impl Fn(usize) -> String, want: impl Fn(usize) -> String) {
+    let best = |k: usize| {
+        let r = Repo::new("refs_scale", &[other, (file, &make(k))]);
+        (0..3)
+            .map(|_| {
+                let t = Instant::now();
+                let out = Command::new(BIN).args(["refs", name, "--max-results", "50000"]).current_dir(&r.root).output().unwrap();
+                let took = t.elapsed();
+                let out = String::from_utf8_lossy(&out.stdout).into_owned();
+                assert!(out.contains(&want(k)), "{}", out.lines().next().unwrap_or(""));
+                took
+            })
+            .min()
+            .unwrap()
+    };
+    let (small, large) = (best(n), best(4 * n));
+    let ratio = large.as_secs_f64() / small.as_secs_f64().max(0.005);
+    assert!(ratio < 10.0, "{file}: {n} uses took {small:?}, {} took {large:?}", 4 * n);
+}
+
+#[test]
+fn refs_in_one_big_function_takes_linear_time() {
+    assert_refs_scale_linearly(
+        "bundle.js",
+        ("lib.js", "export function g() { return 1 }\n"),
+        "g",
+        500,
+        |n| format!("import {{g}} from \"./lib\";\nfunction f(){{var a=0;\n{}}}\n", "g();\n".repeat(n)),
+        |n| format!("({} references)", n + 2),
+    );
+    assert_refs_scale_linearly(
+        "A.java",
+        ("B.java", "class B {}\n"),
+        "x",
+        500,
+        |n| format!("class A {{\n  void f() {{\n    int x = 0;\n{}  }}\n}}\n", "    System.out.println(x);\n".repeat(n)),
+        |n| format!("unresolved ({}):", n + 1),
+    );
+}
+
 #[test]
 fn a_relative_import_that_climbs_above_the_root_names_no_file() {
     let r = Repo::new(
