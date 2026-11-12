@@ -884,6 +884,7 @@ pub fn run() -> Result<i32> {
                 want_bytes: stats || json,
                 want_spans: json || color_choice(no_color) != ColorChoice::Never,
                 search_zip,
+                raw_member_names: json,
                 paths_as_given: !paths.is_empty(),
                 // as ripgrep: one path that is not a directory is searched without its name
                 with_filename: with_filename || (!no_filename && !(paths.len() == 1 && !paths[0].is_dir())),

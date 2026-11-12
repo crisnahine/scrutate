@@ -1535,6 +1535,29 @@ fn search_zip_reads_archive_members_and_compressed_files() {
 }
 
 #[test]
+fn search_zip_shows_control_characters_of_member_names_as_escapes() {
+    use std::io::Write as _;
+    let r = Repo::new("zipnames");
+    let mut z = zip::ZipWriter::new(fs::File::create(r.root.join("n.zip")).unwrap());
+    for (name, data) in [("evil}\nfake.txt:1:needle forged\nx{y.txt", "needle two\n"), ("esc\x1b[2J\\.txt", "needle three\n")] {
+        z.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+        z.write_all(data.as_bytes()).unwrap();
+    }
+    z.finish().unwrap();
+    let (code, out, err) = r.run(&["grep", "--sort", "-z", "needle", "."]);
+    assert_eq!(
+        (code, out.as_str()),
+        (0, "./n.zip{esc\\x1b[2J\\\\.txt}:1:needle three\n./n.zip{evil}\\nfake.txt:1:needle forged\\nx{y.txt}:1:needle two\n"),
+        "{err}"
+    );
+    let (_, out, _) = r.run(&["grep", "-z", "-l", "three", "."]);
+    assert_eq!(out, "./n.zip{esc\\x1b[2J\\\\.txt}\n");
+    // JSON escapes the name itself
+    let (_, out, _) = r.run(&["grep", "-z", "--json", "three", "."]);
+    assert!(out.contains(r#""path":"./n.zip{esc\u001b[2J\\.txt}""#), "{out}");
+}
+
+#[test]
 fn search_zip_stops_a_member_whose_line_is_too_long_and_goes_on() {
     use std::io::Write as _;
     let r = Repo::new("ziplongline");

@@ -88,6 +88,9 @@ pub struct Options {
     pub want_spans: bool,
     /// search the members of zip/tar archives and the contents of compressed files (`-z`)
     pub search_zip: bool,
+    /// archive member names are reported as they are (for JSON, which escapes them); off, with
+    /// control characters shown as escapes (`fmt::shown`), so a name cannot forge an output line
+    pub raw_member_names: bool,
     /// report each path as the walk reached it from the root it was given (`dir/a.rs`, `./a.rs`),
     /// as grep does; otherwise relative to the root. Also as ripgrep: a root that is a file is
     /// searched whatever its bytes (a NUL byte ends a line, and line output stops at the first
@@ -143,6 +146,7 @@ impl Default for Options {
             want_bytes: false,
             want_spans: false,
             search_zip: false,
+            raw_member_names: false,
             paths_as_given: false,
             with_filename: true,
             line_numbers: true,
@@ -2137,7 +2141,8 @@ fn search_archive(run: &Run, path: &Path, rel: &Arc<str>, kind: crate::archive::
     let searcher = &mut make_searcher_limited(run.o, BinaryDetection::quit(0), limit);
     let mut each = |member: Option<&str>, r: &mut dyn std::io::Read| -> bool {
         let label: Arc<str> = match member {
-            Some(m) => Arc::from(format!("{rel}{{{m}}}")),
+            Some(m) if run.o.raw_member_names => Arc::from(format!("{rel}{{{m}}}")),
+            Some(m) => Arc::from(format!("{rel}{{{}}}", crate::fmt::shown(m))),
             None => Arc::clone(rel),
         };
         let mut sink = run.collector(Arc::clone(&label));
