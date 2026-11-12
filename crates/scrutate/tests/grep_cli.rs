@@ -96,6 +96,23 @@ fn arguments_that_are_not_utf8_are_errors_not_aborts() {
     }
 }
 
+#[test]
+fn a_pattern_that_starts_with_a_hyphen_is_given_with_e() {
+    let d = Dir::new("hyphen");
+    d.write("a.txt", b"a->b\nx = -1\n--foo\n");
+    for (args, line) in [
+        (vec!["grep", "-e", "->", "a.txt"], "1:a->b\n"),
+        (vec!["grep", "-F", "-e", "-1", "a.txt"], "2:x = -1\n"),
+        (vec!["grep", "--regexp", "--foo", "a.txt"], "3:--foo\n"),
+        (vec!["grep", "-e", "->", "-e", "-1", "a.txt"], "1:a->b\n2:x = -1\n"),
+        (vec!["grep", "--", "->", "a.txt"], "1:a->b\n"),
+    ] {
+        let os: Vec<&std::ffi::OsStr> = args.iter().map(|a| a.as_ref()).collect();
+        let (code, out, err) = run(&d.0, &os, &[]);
+        assert_eq!((code, out.as_str()), (0, line), "{args:?}: {err}");
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn with_e_a_first_path_that_is_not_utf8_is_a_path() {

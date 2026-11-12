@@ -114,6 +114,8 @@ as escapes (`\n`, `\x1b`, a backslash as two), so a name cannot forge an output 
 keeps the name as it is. Archives inside archives are not opened, and `--index` does not
 cover archive members. `-e PATTERN` (repeatable) gives several
 patterns; a line matching any of them matches, and the first positional argument is then a path.
+The argument after `-e` is the pattern whatever it starts with (`-e '->'`, `-F -e -1`), as in
+grep and ripgrep.
 Options mirror grep/ripgrep where the meaning is identical: `-i`, `-S` (smart case), `-w`, `-U`
 (multiline: each line of a multi-line match is printed with its own number), `-v`, `-l`, `-c`,
 `-A/-B/-C`, `-m`, `--max-results`, `-g GLOB` (`!` excludes), `-t TYPE` / `--type-list`, `--hidden`,

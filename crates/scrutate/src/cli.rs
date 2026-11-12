@@ -112,7 +112,7 @@ pub struct GrepArgs {
     /// a pipe or a file, otherwise the current directory)
     pub paths: Vec<PathBuf>,
     /// a pattern to search for; repeatable, a line matching any of them matches
-    #[arg(short = 'e', long = "regexp", value_name = "PATTERN")]
+    #[arg(short = 'e', long = "regexp", value_name = "PATTERN", allow_hyphen_values = true)]
     pub regexp: Vec<String>,
     /// use the text index (Engine B, built by `scrutate index`) to read only the files that can
     /// match; results are those of the indexed snapshot of --root
@@ -2109,8 +2109,10 @@ mod tests {
             if plain.is_some() {
                 prop_assert_eq!(plain, clap, "{:?}", args);
             } else {
-                // declined only where clap fails or a value is empty or starts with a dash
-                prop_assert!(clap.is_none() || args.iter().any(|a| a.is_empty()), "{:?}", args);
+                // declined only where clap fails, a value is empty, or a pattern given with -e
+                // starts with a dash (clap takes that one)
+                let dashed = args.windows(2).any(|w| matches!(w[0].as_str(), "-e" | "--regexp") && w[1].starts_with('-'));
+                prop_assert!(clap.is_none() || dashed || args.iter().any(|a| a.is_empty()), "{:?}", args);
             }
         }
     }

@@ -31,7 +31,15 @@ capabilities those crates do not provide rather than re-implementing what they a
   `REFRESH_TOKEN`; digits and acronyms are parts), **fuzzy/approximate** (Myers' bit-parallel
   edit-distance matcher, counted in characters: one 128-bit word for patterns up to 128, 64-bit
   blocks with carries up to 4096, with a pigeonhole prefilter so only candidate lines pay for the
-  DP; `-i` folds case as a regex does), multiline, inverted, whole-word, smart case.
+  DP; `-i` folds case as a regex does), multiline, inverted, whole-word, smart case. A
+  case-insensitive literal (`-i`, `-F -i`, `-S`) finds candidate lines without the regex engine:
+  it scans for two bytes of the needle, each in either case form, at a fixed distance inside a
+  stretch whose characters keep one byte length under case folding (`k` and `s` end such a
+  stretch, as KELVIN SIGN and LONG S are longer), checks that stretch, and the regex then
+  confirms each candidate line. The scan is safe slice code over 64-byte blocks that the compiler
+  turns into NEON or SSE2, compiled a second time for AVX2 and chosen at run time on x86_64. On
+  one thread over a 740 MB file that is 63 ms of user time for `pm_resume` where the regex
+  engine took 101, and 48 ms for `KÖNIG` where it took 96.
 - **Traversal**: the `ignore` parallel walker (work-stealing across threads, `.gitignore` /
   `.ignore` / global excludes, hidden files off by default, symlink loop detection, max depth and
   size filters, type globs derived from the language registry). The crate is vendored

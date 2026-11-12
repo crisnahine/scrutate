@@ -19,7 +19,10 @@ First release.
   cancellation; deterministic `--sort`; JSONL output (schema 1); exit codes 0/1/2/130.
 - Differentially tested against ripgrep on random corpora and patterns with zero disagreements.
 - `-e PATTERN` (repeatable) for several patterns; each line of a multi-line match is printed with its
-  own line number.
+  own line number. The argument after `-e` is the pattern whatever it starts with (`-e '->'`).
+- `grep -i` and `grep -F -i` with a literal pattern use 37 to 50% less CPU time on one thread
+  (a 740 MB file: 100.6 to 63.3 ms of user time for `pm_resume`, 96.2 to 48.4 ms for `KÖNIG`):
+  candidate lines come from a two-byte vector scan and the regex confirms each.
 - Plain output is formatted by the search threads into per-file buffers (no per-line allocation or
   channel message); lines over 64 KB are written without being copied, their UTF-8 checked a
   256 KB piece at a time as they are written; UTF-8 is validated with the fast checker before the
