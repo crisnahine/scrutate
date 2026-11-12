@@ -1931,6 +1931,11 @@ pub fn build_walker(roots: &[PathBuf], f: &Files) -> Result<ignore::WalkParallel
     Ok(walk_builder(roots, f, Policy::read(&System::default(), f.threads).threads())?.build_parallel())
 }
 
+/// The rules of the default walk of `root`, asked about one path from it at a time.
+pub fn default_rules(root: &Path) -> Result<ignore::IncrementalIgnore> {
+    walk_builder(&[root.to_path_buf()], &Files::default(), 1)?.build_matchers().pop().ok_or_else(|| anyhow!("no walk root"))
+}
+
 fn walk_builder(roots: &[PathBuf], f: &Files, threads: usize) -> Result<WalkBuilder> {
     let mut wb = WalkBuilder::new(&roots[0]);
     for r in &roots[1..] {

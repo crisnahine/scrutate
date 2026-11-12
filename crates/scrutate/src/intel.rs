@@ -494,7 +494,8 @@ pub fn occurrences(
 }
 
 /// `occurrences` in the file set `files` of the repository at `root`; a walk of paths as given
-/// (a directory of the repository) names its files from `root`, as the index does.
+/// (a directory of the repository), and a list of files of a directory of it, name their files
+/// from `root`, as the index does.
 pub fn occurrences_in(
     root: &std::path::Path,
     files: &crate::instant::Files,
@@ -508,11 +509,28 @@ pub fn occurrences_in(
             *p = crate::instant::slashed(rel.to_string_lossy()).into();
         }
     };
+    let under = match &files.paths {
+        crate::instant::Paths::List { root: at, .. } if at != root => {
+            at.strip_prefix(root).ok().map(|d| format!("{}/", crate::instant::slashed(d.to_string_lossy())))
+        }
+        _ => None,
+    };
+    let below = |p: &mut std::sync::Arc<str>| {
+        if let Some(d) = &under {
+            *p = format!("{d}{p}").into();
+        }
+    };
     let mut sink = |mut r: Record| {
-        if files.paths_as_given {
+        if files.paths_as_given || under.is_some() {
             match &mut r {
-                Record::Match(h) => from_root(&mut h.path),
-                Record::Note { path, .. } => from_root(path),
+                Record::Match(h) => {
+                    from_root(&mut h.path);
+                    below(&mut h.path)
+                }
+                Record::Note { path, .. } => {
+                    from_root(path);
+                    below(path)
+                }
                 _ => {}
             }
         }
@@ -553,8 +571,10 @@ pub fn group_by_symbol(ix: &Index, records: Vec<crate::instant::Record>) -> Resu
 
 /// An Engine A search of the repository with its matches grouped by enclosing symbol: the grep an
 /// agent asks for (MCP `grep_code`). It stops when the call is cancelled.
+/// The text index, when there is one, says which files can hold no match (`stores::grep_files`).
 pub fn grouped_grep(s: &Searcher, q: &crate::instant::Query, files: &crate::instant::Files) -> Result<(Vec<RefGroup>, bool)> {
-    let (found, truncated) = occurrences_in(&s.ix.root, files, q, &s.cancel)?;
+    let narrowed = crate::stores::grep_files(&s.ix, q, files);
+    let (found, truncated) = occurrences_in(&s.ix.root, narrowed.as_ref().unwrap_or(files), q, &s.cancel)?;
     Ok((group_by_symbol(&s.ix, found)?, truncated))
 }
 

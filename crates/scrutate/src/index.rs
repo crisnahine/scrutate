@@ -727,6 +727,19 @@ pub struct Index {
     trees_peak: usize,
     /// which file `db` has open, to notice another process deleting it and building a new one
     db_id: Option<(u64, u64)>,
+    /// what the last look at every file found, shared with the indexes `another` opened
+    pub seen: crate::files::Slot,
+}
+
+/// Which files an update looks at.
+#[derive(Clone, Copy)]
+enum Look<'a> {
+    /// every file: a walk of the tree
+    Walk,
+    /// every file, as a look at the tree already found them
+    Found(&'a [crate::files::Found]),
+    /// these files alone
+    Named(&'a [String]),
 }
 
 /// Device and inode of a file. None on Windows, where a file SQLite has open cannot be deleted.
@@ -813,6 +826,7 @@ impl Index {
             trees_peak: 0,
             cancel: Arc::default(),
             db_id: file_id(&db_path),
+            seen: Arc::default(),
         };
         if let Triage::Rebuild(why) = triage {
             // an index of another schema: drop its contents *inside* the database, so
@@ -873,6 +887,7 @@ impl Index {
             trees_peak: 0,
             cancel: Arc::default(),
             db_id: file_id(&db_path),
+            seen: Arc::clone(&self.seen),
         })
     }
 
@@ -1159,7 +1174,12 @@ impl Index {
     // ---- update
     /// Bring the index up to date with every file of the tree; waits for another writer.
     pub fn update(&mut self, force: bool) -> Result<UpdateStats> {
-        self.update_with(force, true, None)
+        self.update_with(force, true, Look::Walk)
+    }
+
+    /// `update` with the files a look at the tree found (`files::look`), instead of a walk.
+    pub fn update_found(&mut self, force: bool, found: &[crate::files::Found]) -> Result<UpdateStats> {
+        self.update_with(force, true, Look::Found(found))
     }
 
     /// Of `paths` (repository paths the index may hold), the ones whose file is gone or whose
@@ -1187,7 +1207,7 @@ impl Index {
     /// `update` of just these files, without a walk of the tree; without `wait` it fails at once
     /// when another process holds the write lock.
     pub fn update_paths(&mut self, paths: &[String], wait: bool) -> Result<UpdateStats> {
-        self.update_with(false, wait, Some(paths))
+        self.update_with(false, wait, Look::Named(paths))
     }
 
     fn has_ctime(&self) -> bool {
@@ -1195,8 +1215,11 @@ impl Index {
     }
 
     /// `update`; with `wait` false a write lock held by another process is an error at once.
-    /// `only`: look at these files alone, instead of every file of the tree.
-    fn update_with(&mut self, force: bool, wait: bool, only: Option<&[String]>) -> Result<UpdateStats> {
+    fn update_with(&mut self, force: bool, wait: bool, look: Look) -> Result<UpdateStats> {
+        let only = match look {
+            Look::Named(paths) => Some(paths),
+            _ => None,
+        };
         self.reopen_if_replaced()?;
         if !self.dir.join("index.db").is_file() {
             return Err(Damaged("index database deleted").into());
@@ -1239,7 +1262,7 @@ impl Index {
             && self.lex_ver.as_deref() == Some(cur_ver.as_str())
             && self.lex.as_ref().map(|l| l.names == self.segments()).unwrap_or(false);
         let run =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.update_inner(force, only, &mut st, &mut removed, &mut seg_names, &mut replaced)));
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.update_inner(force, look, &mut st, &mut removed, &mut seg_names, &mut replaced)));
         let changed = match run {
             Ok(Ok(c)) => c,
             failed => {
@@ -1310,7 +1333,7 @@ impl Index {
     fn update_inner(
         &mut self,
         force: bool,
-        only: Option<&[String]>,
+        look: Look,
         st: &mut UpdateStats,
         removed: &mut Vec<i64>,
         seg_names: &mut Vec<String>,
@@ -1325,49 +1348,62 @@ impl Index {
         }
         let mut changed = false;
         let rev = CONTENT_REVISION.to_string();
-        let reparse = only.is_none() && self.meta("content_rev").as_deref() != Some(rev.as_str());
+        let only = matches!(look, Look::Named(_));
+        let reparse = !only && self.meta("content_rev").as_deref() != Some(rev.as_str());
         let force = force || reparse;
         let scan_t0 = Instant::now();
         type Known = HashMap<String, (i64, i64, Option<i64>, String)>;
         let mut known: Known = HashMap::new();
         let row =
             |r: &rusqlite::Row| Ok((r.get::<_, String>(0)?, (r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, Option<i64>>(3)?, r.get::<_, String>(4)?)));
-        let files = match only {
-            None => {
+        let stat_of = |rel: &str| std::fs::metadata(self.root.join(rel)).ok().map(|m| Stat::of(&m));
+        let files: Vec<(String, Option<Stat>)> = match look {
+            Look::Walk | Look::Found(_) => {
                 let mut q = self.db.prepare("SELECT path,size,mtime_ns,ctime_ns,hash FROM files")?;
                 known = q.query_map([], row)?.collect::<rusqlite::Result<Known>>()?;
-                let files = crate::files::list_files(&self.root);
+                let walked;
+                let found = match look {
+                    Look::Found(f) => f,
+                    _ => {
+                        walked = crate::files::look(&self.root, false)?;
+                        &walked[..]
+                    }
+                };
+                crate::files::publish(&self.seen, Some(found));
+                // a name that is not UTF-8 is looked up by the part of it the index can name, as before
+                let files: Vec<(String, Option<Stat>)> =
+                    found.iter().filter(|f| f.code).map(|f| (f.path.clone(), if f.lossy { stat_of(&f.path) } else { f.stat })).collect();
                 st.files_total = files.len();
                 files
             }
-            Some(paths) => {
+            Look::Named(paths) => {
                 let mut q = self.db.prepare_cached("SELECT path,size,mtime_ns,ctime_ns,hash FROM files WHERE path=?1")?;
                 for p in paths {
                     if let Some((p, k)) = q.query_row([p], row).optional()? {
                         known.insert(p, k);
                     }
                 }
-                paths.iter().filter(|p| file_inside(&self.root, p).is_some()).cloned().collect()
+                paths.iter().filter(|p| file_inside(&self.root, p).is_some()).map(|p| (p.clone(), stat_of(p))).collect()
             }
         };
-        let fileset: HashSet<&String> = files.iter().collect();
+        let fileset: HashSet<&String> = files.iter().map(|f| &f.0).collect();
         let mut gone: Vec<String> = known.keys().filter(|p| !fileset.contains(p)).cloned().collect();
         gone.sort();
         let mut todo: Vec<(String, Option<String>)> = Vec::new();
-        for rel in &files {
-            let Ok(md) = std::fs::metadata(self.root.join(rel)) else {
+        for (rel, stat) in &files {
+            let Some(stat) = stat else {
                 continue;
             };
             if !force {
                 if let Some(k) = known.get(rel) {
-                    if Stat::of(&md).matches(k.0, k.1, k.2) {
+                    if stat.matches(k.0, k.1, k.2) {
                         continue; // stat unchanged: no read, no hash
                     }
                 }
             }
             todo.push((rel.clone(), if force { None } else { known.get(rel).map(|k| k.3.clone()) }));
         }
-        if only.is_none() {
+        if !only {
             self.scan_cost = scan_t0.elapsed().as_secs_f64();
         }
         let switching = self.meta("model_sig").as_deref() != Some(self.sig.as_str());
@@ -1626,7 +1662,7 @@ impl Index {
             n.note();
             return Ok(None);
         }
-        let st = self.update_with(false, wait, None);
+        let st = self.update_with(false, wait, Look::Walk);
         // a failing update is not retried on every call either; a busy lock costs nothing to try
         if !st.as_ref().is_err_and(|e| e.is::<Busy>()) {
             self.last_refresh = Some(Instant::now());

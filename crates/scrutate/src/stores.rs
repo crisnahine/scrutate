@@ -43,6 +43,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use anyhow::Result;
 
+use crate::files::{self, Found, Slot};
 use crate::index::{self, UpdateStats};
 use crate::models::ModelSet;
 use crate::ops;
@@ -121,13 +122,15 @@ pub fn update(root: &Path, w: Writer, force: bool) -> Result<Updated> {
         return repo.update_stores(w, &Changes::All, force);
     }
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    Ok(Updated { code: None, text: Some(update_text(&root, &Changes::All, force, w.progress())?) })
+    Ok(Updated { code: None, text: Some(update_text(&root, &Changes::All, force, w.progress(), None)?) })
 }
 
-/// The text index brought up to date; a damaged one is built again.
-fn update_text(root: &Path, changes: &Changes, force: bool, progress: bool) -> Result<TextStats> {
-    let r = match changes {
-        Changes::Named(n) if !force => textindex::update_paths(root, &n.text),
+/// The text index brought up to date, from what a look found when one did; a damaged one is
+/// built again.
+fn update_text(root: &Path, changes: &Changes, force: bool, progress: bool, found: Option<&[Found]>) -> Result<TextStats> {
+    let r = match (changes, found) {
+        (Changes::Named(n), _) if !force => textindex::update_paths(root, &n.text),
+        (_, Some(found)) => textindex::update_found(root, force, progress, found),
         _ => textindex::update(root, force, progress),
     };
     match r {
@@ -152,6 +155,8 @@ pub struct Repo {
     models: Arc<ModelSet>,
     /// held by every write this repository makes; shared with the ones `another` opened
     writer: Arc<Mutex<()>>,
+    /// what the last look at every file found; shared with the ones `another` opened
+    seen: Slot,
 }
 
 /// The writer lock, also after a panic in a write that held it: the stores commit whole or not at all.
@@ -163,12 +168,14 @@ impl Repo {
     /// Open (or create) the index of `root`, without updating it.
     pub fn open(root: &Path) -> Result<Repo> {
         let searcher = crate::open(root)?;
-        Ok(Repo::around(searcher, Arc::default()))
+        let seen = Arc::clone(&searcher.ix.seen);
+        Ok(Repo::around(searcher, Arc::default(), seen))
     }
 
-    fn around(searcher: Searcher, writer: Arc<Mutex<()>>) -> Repo {
+    fn around(mut searcher: Searcher, writer: Arc<Mutex<()>>, seen: Slot) -> Repo {
         let (root, models) = (searcher.ix.root.clone(), Arc::clone(&searcher.ix.models));
-        Repo { root, searcher: Some(searcher), stale: false, updated: false, models, writer }
+        searcher.ix.seen = Arc::clone(&seen);
+        Repo { root, searcher: Some(searcher), stale: false, updated: false, models, writer, seen }
     }
 
     /// Another open repository on the same index, to read beside this one: a connection of its
@@ -178,7 +185,7 @@ impl Repo {
             Some(s) => s.ix.another()?,
             None => index::Index::open(&self.root, Arc::clone(&self.models))?,
         };
-        Ok(Repo::around(Searcher::new(ix), Arc::clone(&self.writer)))
+        Ok(Repo::around(Searcher::new(ix), Arc::clone(&self.writer), Arc::clone(&self.seen)))
     }
 
     /// `open` for an update; with `force`, an index of a newer scrutate that this one cannot read
@@ -243,17 +250,27 @@ impl Repo {
     /// Bring the code index up to date with every file, as a read that waits for another writer
     /// does (`serve` and `lsp` start).
     pub fn update(&mut self, force: bool) -> Result<UpdateStats> {
-        self.update_code(&Changes::All, force, false)
+        self.update_code(&Changes::All, force, false, false).map(|(st, _)| st)
     }
 
-    /// The code index brought up to date with `changes`; a damaged one is built again.
-    fn update_code(&mut self, changes: &Changes, force: bool, progress: bool) -> Result<UpdateStats> {
+    /// The code index brought up to date with `changes`; a damaged one is built again. With
+    /// `text`, a look at every file finds the text index's files too, and comes back with them.
+    fn update_code(&mut self, changes: &Changes, force: bool, progress: bool, text: bool) -> Result<(UpdateStats, Option<Vec<Found>>)> {
         let writer = Arc::clone(&self.writer);
         let _w = hold(&writer);
         self.reopened()?;
         self.ix.progress |= progress;
+        let mut found = None;
         let r = match changes {
-            Changes::Named(n) if !force => self.ix.update_paths(&n.code, true),
+            Changes::Named(n) if !force => {
+                // the files a search of the repository covers may have changed: the next look says
+                files::publish(&self.seen, None);
+                self.ix.update_paths(&n.code, true)
+            }
+            _ if text => {
+                let f = found.insert(files::look(&self.root, true)?);
+                self.ix.update_found(force, f)
+            }
             _ => self.ix.update(force),
         };
         let r = match r {
@@ -261,14 +278,19 @@ impl Repo {
             other => other,
         };
         self.updated |= r.is_ok();
-        r
+        r.map(|st| (st, found))
     }
 
     /// Bring the stores `w` keeps up to date with `changes`: the code index first, then the text
-    /// index, each under its own writer lock.
+    /// index, each under its own writer lock. When both look at every file, one walk and one
+    /// `stat` per file serve both.
     pub fn update_stores(&mut self, w: Writer, changes: &Changes, force: bool) -> Result<Updated> {
-        let code = if w.code() { Some(self.update_code(changes, force, w.progress())?) } else { None };
-        let text = if w.text(&self.root) { Some(update_text(&self.root, changes, force, w.progress())?) } else { None };
+        let text = w.text(&self.root);
+        let (code, found) = match w.code() {
+            true => self.update_code(changes, force, w.progress(), text).map(|(st, f)| (Some(st), f))?,
+            false => (None, None),
+        };
+        let text = if text { Some(update_text(&self.root, changes, force, w.progress(), found.as_deref())?) } else { None };
         Ok(Updated { code, text })
     }
 
@@ -421,6 +443,7 @@ impl Repo {
     fn reopen(&mut self, progress: bool) -> Result<UpdateStats> {
         let mut s = Searcher::new(index::Index::open(&self.root, Arc::clone(&self.models))?);
         s.ix.progress = progress;
+        s.ix.seen = Arc::clone(&self.seen);
         let st = s.ix.update(true);
         self.searcher = Some(s);
         st
@@ -440,6 +463,47 @@ impl std::ops::DerefMut for Repo {
     }
 }
 
+/// The files a search of the repository at `root` reads in place of the walk `walk` (one
+/// `files::repository_files` gave, perhaps under a directory and with globs that exclude), when
+/// the text index can say which of them hold no match: of the files the last look found there,
+/// those the text index holds as they are now and that can match, and every other one. None
+/// when the walk must run: no look yet, no text index, a pattern its trigrams do not narrow, a
+/// glob that brings files in, a scope that is no directory of the tree.
+pub fn grep_files(ix: &index::Index, q: &crate::instant::Query, walk: &crate::instant::Files) -> Option<crate::instant::Files> {
+    use crate::instant::Paths;
+    let seen = files::seen(&ix.seen).filter(|s| !s.lossy)?;
+    let Paths::Walk(roots) = &walk.paths else { return None };
+    let plain = walk.hidden && !walk.no_ignore && !walk.follow_links && walk.max_filesize.is_none() && walk.max_depth.is_none();
+    let plain = plain && walk.types.is_empty() && walk.scoped_globs.is_none() && !walk.search_zip && walk.globs.iter().all(|g| g.starts_with('!'));
+    let ([at], true) = (&roots[..], plain) else { return None };
+    let under = match walk.paths_as_given {
+        false if *at == ix.root => String::new(),
+        // a directory named as it is, so the walk's names and these agree
+        true => {
+            let rel = at.strip_prefix(&ix.root).ok()?;
+            let normal = rel.components().all(|c| matches!(c, std::path::Component::Normal(_)) && c.as_os_str().to_str().is_some());
+            if !normal || rel.as_os_str().is_empty() || std::fs::canonicalize(at).ok()? != *at {
+                return None;
+            }
+            format!("{}/", slashed_rel(rel))
+        }
+        false => return None,
+    };
+    let cond = textindex::query_for(q).ok().filter(|c| *c != textindex::Q::All)?;
+    let ti = textindex::TextIndex::open(&ix.root).ok()??;
+    let mut there = seen.files.iter().filter(|(p, _)| p.starts_with(under.as_str())).map(|(p, st)| (p.as_str(), *st)).peekable();
+    // a directory the look did not enter is searched as the walk searches it
+    there.peek()?;
+    let read = ti.to_read(&cond, q.pattern.multiline, there).ok()?;
+    // named from the directory searched, as its walk names them
+    let files = read.into_iter().map(|p| p[under.len()..].to_string()).collect();
+    Some(crate::instant::Files { paths: Paths::List { root: at.clone(), files }, paths_as_given: false, ..walk.clone() })
+}
+
+fn slashed_rel(rel: &Path) -> String {
+    rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/")
+}
+
 /// The code index's record of each file it holds, for the `tsquery` cache: the stat and content
 /// hash by path from the root. Empty when there is no code index: this never creates one.
 pub fn recorded(root: &Path) -> std::collections::HashMap<String, (index::Stat, String)> {
@@ -454,7 +518,15 @@ mod tests {
     fn a_rebuild_that_could_not_reopen_the_index_is_an_error_until_it_can() {
         let root = std::env::temp_dir().join(format!("scrutate_reopen_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        let mut repo = Repo { searcher: None, root: root.clone(), stale: false, updated: false, models: ModelSet::from_env(), writer: Arc::default() };
+        let mut repo = Repo {
+            searcher: None,
+            root: root.clone(),
+            stale: false,
+            updated: false,
+            models: ModelSet::from_env(),
+            writer: Arc::default(),
+            seen: Arc::default(),
+        };
         let op = ops::Op::Symbol { name: "f".into(), limit: 5 };
         repo.set_cancel(Arc::default());
         assert!(repo.update(false).is_err());
@@ -464,6 +536,98 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("a.py"), "def f():\n    return 1\n").unwrap();
         assert!(matches!(repo.run_as_is(&op), Ok(ops::Answer::Hits { ref hits, .. }) if hits.len() == 1));
+        drop(repo);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The grep Operation's answer through `repo` (which reads the text index once a look is
+    /// kept) and through a walk, as text and JSON.
+    fn both_ways(repo: &mut Repo, op: &ops::Op) -> (String, String) {
+        let shown = |a: Result<ops::Answer>| a.map(|a| (a.text(), a.json().to_string())).unwrap_or_else(|e| (format!("{e:#}"), String::new()));
+        let a = shown(repo.run(op, 0.0));
+        let seen = files::seen(&repo.seen);
+        files::publish(&repo.seen, None);
+        let walked = shown(repo.run_as_is(op));
+        *repo.seen.lock().unwrap() = seen;
+        assert_eq!(a, walked);
+        a
+    }
+
+    #[test]
+    fn the_grep_operation_reads_the_text_index_for_the_files_it_holds_as_they_are_and_answers_as_the_walk() {
+        use crate::instant::{Case, Mode, Pattern};
+        let root = std::env::temp_dir().join(format!("scrutate_grep_ti_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let put = |p: &str, t: &str| {
+            std::fs::create_dir_all(root.join(p).parent().unwrap()).unwrap();
+            std::fs::write(root.join(p), t).unwrap();
+        };
+        put(".git/HEAD", "ref: refs/heads/main\n");
+        put(".gitignore", "*.log\n");
+        for i in 0..40 {
+            put(&format!("src/m{i:02}.py"), &format!("def fn_{i}():\n    return {i}\n"));
+        }
+        put("src/rare.py", "def needle_token():\n    return 1\n\nclass Holder:\n    def go(self):\n        return needle_token()\n");
+        put("lib/other.rs", "fn needle_token() {}\nfn main() { needle_token(); }\n");
+        put(".github/ci.yml", "run: needle_token\n");
+        put("node_modules/x/i.js", "needle_token\n");
+        put("data.bin", "needle_token\0\x01\x02needle_token\n");
+        put("notes.log", "needle_token\n");
+        update(&root, Writer::Index, false).unwrap();
+        let mut repo = Repo::open(&root).unwrap();
+        let grep = |text: &str, mode: Mode, case: Case, word: bool, path: Option<&str>, globs: &[&str]| ops::Op::Grep {
+            pattern: Pattern { text: text.into(), mode, case, word, ..Pattern::default() },
+            scope: ops::Scope { path: path.map(String::from), globs: globs.iter().map(|g| g.to_string()).collect() },
+            max_results: 1000,
+        };
+        let cases = |repo: &mut Repo| {
+            let mut out = Vec::new();
+            for (text, mode) in [
+                ("needle_token", Mode::Literal),
+                ("needle_[a-z]+", Mode::Regex),
+                ("needleToken", Mode::Identifier),
+                ("needle_tokan", Mode::Fuzzy { max_edits: 1 }),
+                ("fn_3", Mode::Regex),
+                ("ab", Mode::Literal),
+            ] {
+                for case in [Case::Sensitive, Case::Insensitive, Case::Smart] {
+                    for (path, globs) in [
+                        (None, &[][..]),
+                        (Some("src"), &[][..]),
+                        (Some("src/"), &["!rare.py"][..]),
+                        (None, &["!*.rs"][..]),
+                        (None, &["*.rs"][..]),
+                        (Some("lib/other.rs"), &[][..]),
+                    ] {
+                        out.push(both_ways(repo, &grep(text, mode, case, false, path, globs)));
+                    }
+                    out.push(both_ways(repo, &grep(text, mode, case, true, None, &[])));
+                }
+            }
+            out
+        };
+        let fresh = cases(&mut repo);
+        assert!(fresh[0].0.contains("src/rare.py") && fresh[0].0.contains(".github/ci.yml") && !fresh[0].0.contains("node_modules"), "{}", fresh[0].0);
+        let q = crate::instant::Query { pattern: Pattern { text: "needle_token".into(), ..Pattern::default() }, ..Default::default() };
+        let narrowed = grep_files(&repo.ix, &q, &crate::files::repository_files(&repo.root)).expect("the text index narrows a rare word");
+        let crate::instant::Paths::List { files: read, .. } = narrowed.paths else { panic!("a list") };
+        // the hidden files are not in the text index: they are read directly
+        assert_eq!(read, [".github/ci.yml", ".gitignore", "data.bin", "lib/other.rs", "src/rare.py"]);
+        // a new file, an edit, an edit that keeps size and time, a removal and a rename since the last build
+        put("src/added.py", "x = needle_token\n");
+        put("src/m01.py", "def fn_1():\n    return needle_token\n");
+        let t = std::fs::metadata(root.join("src/m02.py")).unwrap().modified().unwrap();
+        let old = std::fs::read(root.join("src/m02.py")).unwrap().len();
+        put("src/m02.py", &format!("{:<w$}\n", "needle_token", w = old - 1));
+        std::fs::File::options().write(true).open(root.join("src/m02.py")).unwrap().set_modified(t).unwrap();
+        std::fs::remove_file(root.join("src/m03.py")).unwrap();
+        std::fs::rename(root.join("src/m04.py"), root.join("src/m44.py")).unwrap();
+        let stale = cases(&mut repo);
+        assert!(stale[0].0.contains("src/added.py") && stale[0].0.contains("src/m01.py"), "{}", stale[0].0);
+        assert_ne!(fresh, stale);
+        std::fs::remove_dir_all(textindex::dir_of(&root)).unwrap();
+        assert_eq!(cases(&mut repo), stale, "without a text index the walk answers");
+        assert!(!textindex::exists(&root), "and no text index is built");
         drop(repo);
         let _ = std::fs::remove_dir_all(&root);
     }

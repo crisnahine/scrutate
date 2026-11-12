@@ -519,7 +519,9 @@ use off. Of two servers on one root, the first offers the socket.
   form keeps them as they are. A path or a location written that way is read back, so what an
   answer prints can be passed to the next call.
 - `grep_code` is an Engine A search of the files the index holds: hidden files such as `.github/`
-  are searched; ignored files, `.git/` and the directories the index skips by name
+  are searched (with a text index, its trigrams say which of the files it holds as they are now
+  can match, and the other files are read; the answer is the same); ignored files, `.git/` and
+  the directories the index skips by name
   (`node_modules` and the like) are not (`scrutate grep` skips hidden files unless `--hidden`,
   and reads those directories unless an ignore file excludes them). The pattern is a regex unless
   `mode` names another matching mode (`literal`, `identifier`, `fuzzy` and `fuzzy_regex` within

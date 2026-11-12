@@ -989,6 +989,33 @@ impl TextIndex {
         Ok(out)
     }
 
+    /// Of `files` (paths from the root, each with its `stat` now when the caller has it), the ones
+    /// a search for `q` must read: each one this index holds as it is now that can match, and each
+    /// one it does not hold as it is now (new, changed since, left out, unreadable when indexed).
+    pub fn to_read<'a>(&self, q: &Q, multiline: bool, files: impl Iterator<Item = (&'a str, Option<crate::index::Stat>)>) -> Result<Vec<&'a str>> {
+        let mut held: std::collections::HashMap<&str, (bool, &[i64])> = std::collections::HashMap::new();
+        for s in &self.segs {
+            let bits = s.eval(q).with_context(|| format!("text index segment {} is damaged; rebuild it with `scrutate index --text --force`", s.name))?;
+            for d in (0..s.ndocs).filter(|&d| s.is_live(d)) {
+                let f = s.flags(d);
+                let hit = bits.as_ref().is_none_or(|b| b[d / 64] & (1 << (d % 64)) != 0) || f & ALWAYS != 0 || (multiline && f & BINARY != 0);
+                // a path held twice is read
+                held.entry(s.path(d)).and_modify(|e| e.0 = true).or_insert((hit, &s.docs()[d * COLS..(d + 1) * COLS]));
+            }
+        }
+        Ok(files
+            .filter(|&(p, stat)| match held.get(p) {
+                None => true,
+                Some(&(hit, m)) => {
+                    let stat = stat.or_else(|| std::fs::symlink_metadata(self.root.join(p)).ok().map(|m| crate::index::Stat::of(&m)));
+                    let now = stat.is_some_and(|s| m[0] == s.size && m[1] == s.mtime && m[2] & RETRY == 0 && m[3] == s.ctime);
+                    hit || !now
+                }
+            })
+            .map(|(p, _)| p)
+            .collect())
+    }
+
     /// Deep validation of every segment (`scrutate check`).
     pub fn check(&self) -> Vec<String> {
         self.segs.iter().filter_map(|s| s.validate(true).err().map(|e| format!("text index segment {}: {e:#}", s.name))).collect()
@@ -1012,7 +1039,7 @@ fn stamp(md: &std::fs::Metadata) -> (u64, i64, i64) {
 
 /// The files Engine A's default search visits, relative to `root`, with size, mtime and status
 /// change time.
-fn walk(root: &Path) -> Result<Vec<(String, u64, i64, i64)>> {
+pub(crate) fn walk(root: &Path) -> Result<Vec<(String, u64, i64, i64)>> {
     let roots = [root.to_path_buf()];
     let walker = instant::build_walker(&roots, &Files::default())?;
     let out = Mutex::new(Vec::new());
@@ -1092,16 +1119,22 @@ fn lock_exclusive(f: &File) -> Result<()> {
 /// time) are kept, changed and new files are read into new segments, removed files are marked
 /// dead, and the segments are merged when there are too many or too many dead documents.
 pub fn update(root: &Path, force: bool, progress: bool) -> Result<TextStats> {
-    update_with(root, force, progress, None)
+    update_with(root, force, progress, None, None)
+}
+
+/// `update` with the files a look at the tree found (`files::look` with the text index's walk),
+/// instead of a walk.
+pub fn update_found(root: &Path, force: bool, progress: bool, found: &[crate::files::Found]) -> Result<TextStats> {
+    update_with(root, force, progress, None, Some(found))
 }
 
 /// `update` of just these files (relative to `root`; each one a file the walk lists, or gone),
 /// without a walk of the tree. With no usable index yet it is a full `update`.
 pub fn update_paths(root: &Path, paths: &[String]) -> Result<TextStats> {
-    update_with(root, false, false, Some(paths))
+    update_with(root, false, false, Some(paths), None)
 }
 
-fn update_with(root: &Path, force: bool, progress: bool, only: Option<&[String]>) -> Result<TextStats> {
+fn update_with(root: &Path, force: bool, progress: bool, only: Option<&[String]>, found: Option<&[crate::files::Found]>) -> Result<TextStats> {
     let t0 = Instant::now();
     crate::files::index_dir(root)?;
     let dir = dir_of(root);
@@ -1123,9 +1156,13 @@ fn update_with(root: &Path, force: bool, progress: bool, only: Option<&[String]>
     let only = only.filter(|_| old.is_some());
     let generation = old.as_ref().map(|m| m.generation).unwrap_or(0) + 1;
     let live_name = format!("live-{generation:08}.bin");
-    let files = match only {
-        None => walk(root)?,
-        Some(paths) => {
+    let files = match (only, found) {
+        (None, None) => walk(root)?,
+        // a stat the look could not take is recorded as the walk records it
+        (None, Some(found)) => {
+            found.iter().filter(|f| f.text).map(|f| f.stat.map_or((f.path.clone(), 0, 0, 0), |s| (f.path.clone(), s.size as u64, s.mtime, s.ctime))).collect()
+        }
+        (Some(paths), _) => {
             let mut v: Vec<(String, u64, i64, i64)> = paths
                 .iter()
                 .filter_map(|p| {

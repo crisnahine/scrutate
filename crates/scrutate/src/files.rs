@@ -6,6 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::index::Stat;
 use crate::parse::is_indexable;
 
 /// Where the indexes live under the repository root; no walk enters it.
@@ -153,6 +154,95 @@ pub fn list_files(root: &Path) -> Vec<String> {
     out
 }
 
+/// A file one look at the tree found.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Found {
+    /// from the root, '/' separated
+    pub path: String,
+    /// the file's `stat`, taken by the look when a store needs it (None when none does, or it failed)
+    pub stat: Option<Stat>,
+    /// a search of the repository covers it (`repository_files`)
+    pub repo: bool,
+    /// the code index holds it (`list_files`)
+    pub code: bool,
+    /// the text index's walk (Engine A's default walk) lists it
+    pub text: bool,
+    /// the name is not UTF-8, so `path` names it only in part
+    pub lossy: bool,
+}
+
+/// The files a search of the repository covers, as the last look at every file found them.
+#[derive(Debug, Default)]
+pub struct Seen {
+    /// path from the root and its `stat` (None when the look took none), sorted by path
+    pub files: Vec<(String, Option<Stat>)>,
+    /// a name is not UTF-8: no list of paths names every file
+    pub lossy: bool,
+}
+
+/// The last look's `Seen`, shared by the repositories of one root that read beside each other;
+/// None before a look, and after an update that looked at named files alone.
+pub type Slot = Arc<std::sync::Mutex<Option<Arc<Seen>>>>;
+
+/// Keep what a look found in `slot` (None: forget the last look).
+pub fn publish(slot: &Slot, found: Option<&[Found]>) {
+    let seen = found.map(|found| {
+        let repo = found.iter().filter(|f| f.repo);
+        Arc::new(Seen { lossy: repo.clone().any(|f| f.lossy), files: repo.map(|f| (f.path.clone(), f.stat)).collect() })
+    });
+    *slot.lock().unwrap_or_else(|p| p.into_inner()) = seen;
+}
+
+/// The last look's `Seen` in `slot`.
+pub fn seen(slot: &Slot) -> Option<Arc<Seen>> {
+    slot.lock().unwrap_or_else(|p| p.into_inner()).clone()
+}
+
+/// The files of the tree at `root`, from one walk and one `stat` per file a store needs, sorted by
+/// path: the files a search of the repository covers and the code index's set, and with `text`
+/// the text index's set too. The walk enters every directory one of those walks enters.
+pub fn look(root: &Path, text: bool) -> anyhow::Result<Vec<Found>> {
+    let walk = CodeWalk::new(root);
+    let rules = match text {
+        true => Some(Arc::new(std::sync::Mutex::new(crate::instant::default_rules(root)?))),
+        false => None,
+    };
+    let left_out = |rules: &std::sync::Mutex<ignore::IncrementalIgnore>, rel: &Path, is_dir: bool| {
+        maybe_hidden(rel) && rules.lock().unwrap_or_else(|p| p.into_inner()).matched(rel, is_dir).is_ignore()
+    };
+    let (skip, base, held) = (walk.skip.clone(), root.to_path_buf(), rules.clone());
+    let mut wb = CodeWalk::rules(root);
+    // a directory the code index skips is still entered when the text index's walk enters it
+    wb.filter_entry(move |e| {
+        let skipped = e.file_type().is_some_and(|t| t.is_dir()) && skip.iter().any(|s| *s == *e.file_name().to_string_lossy());
+        !skipped || held.as_ref().is_some_and(|r| !e.path().strip_prefix(&base).is_ok_and(|rel| left_out(r, rel, true)))
+    });
+    let mut out = Vec::new();
+    for e in wb.build().flatten() {
+        if !e.file_type().is_some_and(|t| t.is_file()) {
+            continue;
+        }
+        let Ok(rel) = e.path().strip_prefix(root) else { continue };
+        let path = slashed(rel);
+        let repo = !path.split('/').any(|n| walk.skip.iter().any(|s| s == n));
+        let code = repo && e.file_name() != ".git" && is_indexable(&path);
+        let text = rules.as_ref().is_some_and(|r| !left_out(r, rel, false));
+        if !(repo || text) {
+            continue;
+        }
+        let stat = if code || text { e.metadata().ok().map(|m| Stat::of(&m)) } else { None };
+        out.push(Found { lossy: rel.to_str().is_none(), path, stat, repo, code, text });
+    }
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(out)
+}
+
+/// Whether the default walk can leave out a path the code index's walk lists: a name on the way
+/// starts with a dot (on Windows, any name may carry the hidden attribute).
+fn maybe_hidden(rel: &Path) -> bool {
+    cfg!(windows) || rel.components().any(|c| c.as_os_str().as_encoded_bytes().starts_with(b"."))
+}
+
 /// The code index's walk of a root. Started at a directory the root's walk enters, it lists that
 /// directory as the root's walk does: the ignore files of every directory above it apply.
 pub struct CodeWalk {
@@ -166,9 +256,16 @@ impl CodeWalk {
     }
 
     pub fn builder(&self, start: &Path) -> ignore::WalkBuilder {
+        let skip = self.skip.clone();
+        let mut wb = Self::rules(start);
+        wb.filter_entry(move |e| !(e.file_type().is_some_and(|t| t.is_dir()) && skip.iter().any(|s| *s == *e.file_name().to_string_lossy())));
+        wb
+    }
+
+    /// The walk's ignore rules, without the skipped directories.
+    fn rules(start: &Path) -> ignore::WalkBuilder {
         // hidden files are indexed (.github/workflows/*.yml, .eslintrc.js, .env.example are code or
         // config people search for); SKIP_DIRS prunes VCS internals and caches
-        let skip = self.skip.clone();
         let mut wb = ignore::WalkBuilder::new(start);
         wb.hidden(false)
             .git_ignore(true)
@@ -177,8 +274,7 @@ impl CodeWalk {
             .ignore(true)
             .parents(true)
             .add_custom_ignore_filename(crate::instant::RGIGNORE)
-            .follow_links(false)
-            .filter_entry(move |e| !(e.file_type().is_some_and(|t| t.is_dir()) && skip.iter().any(|s| *s == *e.file_name().to_string_lossy())));
+            .follow_links(false);
         wb
     }
 
@@ -283,7 +379,99 @@ mod tests {
             let from_root: Vec<String> = walked.iter().filter(|p| root.join(p).parent() == Some(d.path())).cloned().collect();
             assert_eq!(here, from_root, "the walk started at {}", d.path().display());
         }
+        looks_agree(root);
         walked
+    }
+
+    /// One look gives each store, path for path and stat for stat, what its own walk gives: the
+    /// code index `list_files`, a search of the repository the walk of `repository_files`, the
+    /// text index Engine A's default walk; a look without the text index the same first two.
+    fn looks_agree(root: &Path) -> usize {
+        let both = look(root, true).unwrap();
+        let code: Vec<String> = both.iter().filter(|f| f.code).map(|f| f.path.clone()).collect();
+        assert_eq!(code, list_files(root), "the code index's files of {}", root.display());
+        let stat = |p: &str| std::fs::symlink_metadata(root.join(p)).ok().map(|m| Stat::of(&m));
+        assert!(both.iter().filter(|f| f.code || f.text).all(|f| f.stat == stat(&f.path)), "a stat of each file");
+        let text: Vec<(String, u64, i64, i64)> =
+            both.iter().filter(|f| f.text).map(|f| f.stat.map_or((f.path.clone(), 0, 0, 0), |s| (f.path.clone(), s.size as u64, s.mtime, s.ctime))).collect();
+        assert_eq!(text, crate::textindex::walk(root).unwrap(), "the text index's files of {}", root.display());
+        let found = std::sync::Mutex::new(Vec::new());
+        crate::instant::build_walker(&[root.to_path_buf()], &repository_files(root)).unwrap().run(|| {
+            Box::new(|e| {
+                if let Some(e) = e.ok().filter(|e| e.file_type().is_some_and(|t| t.is_file())) {
+                    found.lock().unwrap().push(slashed(e.path().strip_prefix(root).unwrap()));
+                }
+                ignore::WalkState::Continue
+            })
+        });
+        let mut repo = found.into_inner().unwrap();
+        repo.sort();
+        assert_eq!(both.iter().filter(|f| f.repo).map(|f| f.path.clone()).collect::<Vec<_>>(), repo, "a search's files of {}", root.display());
+        let alone = look(root, false).unwrap();
+        assert_eq!(alone.iter().filter(|f| f.code).map(|f| &f.path).collect::<Vec<_>>(), code.iter().collect::<Vec<_>>());
+        assert_eq!(alone.iter().filter(|f| f.repo).map(|f| f.path.clone()).collect::<Vec<_>>(), repo);
+        both.len()
+    }
+
+    #[test]
+    fn one_look_lists_for_each_store_what_its_own_walk_lists() {
+        let root = tree(
+            "look",
+            &[
+                (".git/HEAD", "ref: refs/heads/main\n"),
+                (".gitignore", "gen/\n*.log\n!.keep/\n!.env.example\n"),
+                (".github/workflows/ci.yml", "x\n"),
+                (".keep/a.py", "x\n"),
+                (".env.example", "x\n"),
+                (".env", "x\n"),
+                ("src/a.py", "x\n"),
+                ("src/.hidden.py", "x\n"),
+                ("src/logo.png", "x\n"),
+                ("src/run.log", "x\n"),
+                ("gen/out.py", "x\n"),
+                ("node_modules/pkg/index.js", "x\n"),
+                ("node_modules/.bin/tool", "x\n"),
+                ("node_modules/pkg/.cache/c.js", "x\n"),
+                ("build/out.py", "x\n"),
+                ("sub/target/t.rs", "x\n"),
+                ("sub/__pycache__/m.pyc", "x\n"),
+                (".scrutate/index.db", "x\n"),
+                ("deep/.scrutate", "x\n"),
+                ("deep/.scrutate.toml", "x\n"),
+                ("deep/node_modules", "x\n"),
+                ("nested/.git/HEAD", "ref: refs/heads/main\n"),
+                ("nested/.gitignore", "local.py\n"),
+                ("nested/local.py", "x\n"),
+                ("nested/kept.py", "x\n"),
+                ("wt/.git", "gitdir: elsewhere\n"),
+                ("wt/a.py", "x\n"),
+                ("empty/", ""),
+            ],
+        );
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(root.join("src/a.py"), root.join("src/link.py")).unwrap();
+            std::os::unix::fs::symlink(root.join("src"), root.join("linked_dir")).unwrap();
+        }
+        assert!(looks_agree(&root) > 10);
+        let both = look(&root, true).unwrap();
+        let has = |p: &str, f: fn(&Found) -> bool| both.iter().any(|x| x.path == p && f(x));
+        assert!(has("node_modules/pkg/index.js", |f| f.text && !f.repo), "the text index's walk enters node_modules");
+        assert!(has(".github/workflows/ci.yml", |f| f.repo && f.code && !f.text), "the code index takes hidden files");
+        assert!(has(".keep/a.py", |f| f.text && f.code), "an ignore file can bring a hidden directory in");
+        assert!(has("src/logo.png", |f| f.repo && !f.code && f.stat.is_some()));
+        assert!(!both.iter().any(|f| f.path.starts_with(".git/") || f.path.starts_with(".scrutate/") || f.path.starts_with("gen/")));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The trees named in `SCRUTATE_LOOK_ROOTS` (separated by `:`), each checked as the fixtures are.
+    #[test]
+    #[ignore]
+    fn one_look_lists_for_each_store_what_its_own_walk_lists_on_real_trees() {
+        for r in std::env::var("SCRUTATE_LOOK_ROOTS").unwrap_or_default().split(':').filter(|r| !r.is_empty()) {
+            let root = std::fs::canonicalize(r).unwrap();
+            eprintln!("{}: {} files agree", root.display(), looks_agree(&root));
+        }
     }
 
     #[test]

@@ -509,6 +509,12 @@ A new store is added there, with no edit in a caller.
 | `serve` and `lsp` start, an `lsp` save | every file; waits | code index |
 | `tsquery` | its own walk, one `stat` per file against the code index's record | `tsquery` cache |
 
+A look at every file is one walk and one `stat` per file (`files::look`), whichever stores it
+serves: the walk enters each directory the code index's walk or Engine A's default walk enters,
+and gives each store the files its own walk would list. A look at every file also keeps what it
+found (`files::Seen`, shared by the readers of one session) until the next look; an update of
+named files alone forgets it.
+
 Whether a text index is kept is decided in one place (`Writer::text`): `index` (unless
 `--no-text`) and `grep --index --update` build it, and every other writer keeps one that exists
 and never makes one. `tsquery` keys a file's cached captures by the content hash the code index
@@ -686,6 +692,12 @@ the resolution of the name under the cursor (`Names::at`) and the workspace symb
 (`Index::symbols_containing`) are its own, as no operation asks them. An Engine A search is an
 operation argument too: `Op::Grep` carries the `instant::Pattern` (mode, case, whole words) and
 an `ops::Scope` (a path under the root, globs), so `grep_code` reaches every matching mode.
+With a text index and a look at every file kept, `grep_code` and `references --textual` read the
+trigrams for the files the text index holds as they are now (same size, mtime and status change
+time as the look found) and read every other file of the look directly: new, changed, hidden or
+left out by the text index's walk (`stores::grep_files`). The walk runs instead when there is no
+text index or no look yet, when the pattern's trigrams narrow nothing, when a glob brings files
+in, or when the path is a file or a directory the look did not enter. No grep builds a text index.
 A plain `scrutate grep` is not an operation: its flags are read once into a `Query` and a
 `Files` and go to Engine A directly, with no record built (the start-up section above); with
 `--max-bytes` its lines are paged by the operations' budget rule (`ops::paged_counted`). An answer renders within a byte budget: whole items, then
