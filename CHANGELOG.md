@@ -184,7 +184,8 @@ First release.
 - An index built by a newer scrutate is no longer rebuilt by an older one. It is read as it is
   when only the parsing rules are newer, and refused with exit 2 and a clear message when its
   schema, model or text format is newer; `scrutate index --force` rebuilds it with the version
-  at hand.
+  at hand. A `serve` or `lsp` process that was running when the newer version took the index
+  over answers each request with that message until it is restarted.
 - A documentation comment whose lines carry no comment mark (a GNU style C block, a JSDoc line
   without a star, Elm `{-| -}`, Lua `--[[ ]]`, Ruby `=begin`, a Vim comment) is in its
   definition's documentation only, no longer in a window as well. Without a grammar, the

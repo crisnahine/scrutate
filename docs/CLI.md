@@ -555,7 +555,8 @@ so it is never committed. It is a cache: deleting it is always safe; `scrutate i
 --force` rebuilds it; a damaged index rebuilds itself. If a newer scrutate built `.scrutate/`,
 this version reads the index without updating it (one line on stderr says so), or refuses it
 with exit 2 when it cannot read it; `scrutate index --force` (`--text --force` for the text
-index) rebuilds it with this version. A command that reads the index never waits
+index) rebuilds it with this version. A `serve` or `lsp` process that is already running
+answers each request with that refusal as an error and stays up. A command that reads the index never waits
 for another process that is writing it: it answers from the last committed index and says so in
 one line on stderr. The one exception is a first build by another process, when there is nothing
 committed to answer from: the command fails with "the index is being built by another process"
