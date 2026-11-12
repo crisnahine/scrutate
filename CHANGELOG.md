@@ -187,6 +187,14 @@ First release.
   line 18446744073709551615.
 
 ### Engine B: code intelligence
+- Go to definition in the language server names the definition the resolver ties the name under
+  the cursor to, as find references does: on `item.total()` after `item = Order()` with a class
+  `Item` in the same file it answered `Item.total`, and now `Order.total`. A name the resolver
+  cannot place is still looked up by name.
+- One module decides what a name refers to (`names.rs`): `callers`, `callees`, `refs`, `deps`,
+  `rdeps`, the language server and the caller count ranking reads ask it, and no other module
+  builds a resolver. Answers are the same; a `callers` request reads each file once instead of
+  once per call site (450 call sites in one file: 33 ms CPU to 19 ms).
 - The vector model, the ranker and the feature list are one model set (`models.rs`), loaded on
   first use: `symbol` on this crate's index takes 6.8 ms CPU with the model, as without it
   (25.8 ms before), and a ranked search 20.5 ms (30.2 ms). The bundled model's signature is a

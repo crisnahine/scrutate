@@ -19,6 +19,7 @@ pub mod lex;
 pub mod lsp;
 pub mod mcp;
 pub mod models;
+pub mod names;
 pub mod npy;
 pub mod ops;
 pub mod parse;

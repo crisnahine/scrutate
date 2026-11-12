@@ -482,7 +482,16 @@ aliases and workspace packages by their `package.json` name, Rust `crate`/`self`
 `super` paths, module files and workspace crates from `Cargo.toml`, Go import paths through the
 module path in `go.mod`, by directory without one), following re-exports with a depth limit. It is a query-time step: no schema change,
 nothing for the Python reference to mirror, and `refs --textual` keeps the unresolved answer.
-The LSP references request uses it for the definition under the cursor.
+
+One module asks those rules (`names.rs`, `Names`): `callers`, `callees`, resolved `refs`, `deps`,
+`rdeps` and the language server's definition and references requests each open one `Names` per
+request and ask it what the occurrence at a place refers to; no other module builds a resolver.
+Within a request each file is read and parsed once, however many of its call sites are asked
+about. `callers` still asks about the 400 likeliest call sites and lists the rest as not checked:
+asking about every one costs about a second of CPU per thousand sites of a Java name in Guava
+(`callers size`, 1,970 sites: 2.4 s instead of 1.0 s). The caller count that ranking reads (`log_ncallers`) is also taken from `Names`: it counts
+every call edge of the name, namesakes included, because the Python reference computes that same
+number.
 
 `tsquery` keeps each file's captures in `.scrutate/tsquery/` (`tscache.rs`): one file per
 (version, language, query text, searched paths) mapping a 128-bit BLAKE2b content hash to the
@@ -536,7 +545,9 @@ engines with the GIL released and streaming results.
 `lsp.rs` is a language server for editors (`scrutate lsp`), hand-written like the MCP server: a
 `Content-Length` framed JSON-RPC loop on stdio that turns definition, references, workspace symbol
 and document symbol requests into the same index lookups as `symbol`, `refs` and `outline`, and
-converts between the index's lines and the protocol's UTF-16 columns. `initialize` finds the root
+converts between the index's lines and the protocol's UTF-16 columns. Definition and references
+ask `Names` about the name under the cursor first, so both name the same definition; a name it
+cannot place falls back to the lookup by name. `initialize` finds the root
 with the CLI's own rule (`cli::index_above`) from the editor's first folder, so the editor and a
 shell share the index at the repository top. The first index build holds
 the searcher's lock, so early requests wait for a complete index. A save updates the index on a

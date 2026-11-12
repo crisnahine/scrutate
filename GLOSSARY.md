@@ -43,6 +43,11 @@ is a chunk (`search::Hit`).
 **Occurrence**: an Engine A hit for a name, before it is known what the name refers to.
 **Reference** is an occurrence together with the definition it resolves to.
 
+**Names**: the one owner of what a name refers to (`names::Names`). Callers, callees, references,
+dependencies, dependents and the language server's definition ask it what the occurrence at a
+place refers to, and it answers with the definition and how that was found, or why none was. One
+request opens one, so each file is read and parsed once. The rules it applies live in `resolve.rs`.
+
 **Grouped grep**: an Engine A search whose matching lines are grouped by the symbol that encloses
 them (`intel::grouped_grep`). The MCP `grep_code` tool, `grep --symbols` and both kinds of
 references use it.

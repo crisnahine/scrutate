@@ -8,11 +8,11 @@ use serde_json::{json, Value};
 
 use crate::fmt::{hit_blocks, hits_json};
 use crate::index::{ChunkRow, UpdateStats};
-use crate::intel::{Capture, Dependency, DupGroup, RefGroup, References};
-use std::collections::HashSet;
+use crate::intel::{Capture, DupGroup, RefGroup, References};
+use crate::names::{Dependency, Names, CALLERS_RESOLVED};
 
 use crate::fmt::{echo, shown};
-use crate::resolve::{Resolved, Resolver};
+use crate::resolve::Resolved;
 use crate::search::{Hit, Searcher};
 use crate::text::query_words;
 
@@ -389,7 +389,7 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
             Answer::Hits { hits, words: Vec::new(), snippet: true, stopped }
         }
         Op::Callers { name, limit } => {
-            let (hits, mut undecided, mut unchecked) = callers(s, name, limit.saturating_add(1))?;
+            let (hits, mut undecided, mut unchecked) = Names::new(s)?.callers(name, limit.saturating_add(1))?;
             let (hits, stopped) = cut(hits, *limit, RAISE_LIMIT);
             // the unchecked ones come last and the undecided before them, so the one cut off was one of those
             if stopped.is_some() {
@@ -399,7 +399,7 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
             Answer::Callers { hits, undecided, unchecked, stopped }
         }
         Op::Callees { name, limit } => {
-            let (resolved, external, from) = callees(s, name, limit.saturating_add(1))?;
+            let (resolved, external, from) = Names::new(s)?.callees(name, limit.saturating_add(1))?;
             let (resolved, stopped) = cut(resolved, *limit, RAISE_LIMIT);
             Answer::Callees { resolved, external, from, stopped }
         }
@@ -446,11 +446,11 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
         }
         Op::Deps { path } => {
             let path = repo_path(s, path);
-            Answer::Deps { deps: crate::intel::deps(&s.ix, &path)?, path }
+            Answer::Deps { deps: Names::new(s)?.imports(&path)?, path }
         }
         Op::Rdeps { target } => {
             let target = repo_path(s, target);
-            let (rows, unresolved) = crate::intel::rdeps_counted(&s.ix, &target)?;
+            let (rows, unresolved) = Names::new(s)?.importers(&target)?;
             Answer::Rdeps { rows, target, unresolved }
         }
         Op::Refs { name, max_results, textual: true, .. } => {
@@ -459,7 +459,7 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
         }
         Op::Refs { name, max_results, def, .. } => {
             let name = &name.trim().to_string();
-            let refs = crate::resolve::resolved_references(s, name, *max_results)?;
+            let refs = Names::new(s)?.references(name, *max_results)?;
             let only = match def {
                 Some(spec) => Some(definition_at(s, &refs, name, spec)?),
                 None => None,
@@ -675,310 +675,6 @@ pub fn targets(s: &Searcher, name: &str, limit: usize, windows: bool) -> Result<
         Some(_) => bail!("no symbol at {}: these lines are outside every definition (callees and similar take such a location)", echo(name)),
         None => bail!("no symbol at {}", echo(name)),
     }
-}
-
-/// Languages whose code calls each other's definitions directly.
-fn family(id: &'static str) -> &'static str {
-    match id {
-        "javascript" | "typescript" | "tsx" => "js",
-        "c" | "cpp" | "cuda" | "objc" => "c",
-        "java" | "kotlin" | "scala" | "groovy" => "jvm",
-        "erlang" | "elixir" | "gleam" => "beam",
-        "ocaml" | "ocaml_interface" => "ocaml",
-        "csharp" | "fsharp" => "dotnet",
-        id => id,
-    }
-}
-
-/// The language of each file an answer asks about, by its text where the extension names two.
-struct Langs<'a> {
-    root: &'a std::path::Path,
-    seen: std::cell::RefCell<std::collections::HashMap<String, Option<&'static str>>>,
-}
-
-impl Langs<'_> {
-    fn id(&self, path: &str) -> Option<&'static str> {
-        if let Some(id) = self.seen.borrow().get(path) {
-            return *id;
-        }
-        let lower = path.to_lowercase();
-        let shared = crate::langs::BY_CONTENT.iter().any(|(e, _)| lower.ends_with(e));
-        let text = shared.then(|| crate::resolve::repo_text(self.root, path)).flatten();
-        let id = text.and_then(|t| crate::langs::sniff(path, &t)).or_else(|| crate::langs::spec_for(path)).map(|s| s.id);
-        self.seen.borrow_mut().insert(path.to_string(), id);
-        id
-    }
-
-    /// A file of no known language may call or be called by any.
-    fn same_family(&self, a: &str, b: &str) -> bool {
-        match (self.id(a), self.id(b)) {
-            (Some(x), Some(y)) => family(x) == family(y),
-            _ => true,
-        }
-    }
-}
-
-/// What the resolver makes of the occurrences of `name` in lines `start..=end` of `path`.
-struct Uses {
-    /// the definitions they resolve to
-    got: HashSet<i64>,
-    /// the ones of `got` a call reaches other than through `super`, where an override may run instead
-    dispatched: HashSet<i64>,
-    /// one stayed unresolved (or none was found)
-    unsure: bool,
-    /// one stayed unresolved that may call a free function: not `x.name(..)` where a method
-    /// call never reaches a free function
-    unsure_free: bool,
-    /// every unresolved one is a call without a receiver in a language the resolver does not
-    /// read: it runs the definition in its own file when there is one (`own`)
-    own_file: bool,
-}
-
-/// Whether the definition (`path`, `kind`, `qualname`) is what a call without a receiver in the
-/// caller (its path and qualified name) runs: a free function of the caller's file, or a method
-/// of the caller's own type.
-fn own((from, caller): (&str, &str), path: &str, kind: &str, qualname: &str) -> bool {
-    let owner = |q: &str| q.rsplit_once('.').map(|(o, _)| o.to_string());
-    path == from && (free(kind, qualname) || owner(qualname) == owner(caller))
-}
-
-/// Languages where `x.f()` calls a method, never a free function `f` (in Python `x` may be a
-/// module, and the resolver decides those through the import).
-fn methods_only(path: &str) -> bool {
-    crate::langs::spec_for(path).is_some_and(|s| matches!(s.id, "rust" | "javascript" | "typescript" | "tsx" | "go" | "java"))
-}
-
-fn resolve_in(rv: &mut Resolver, s: &Searcher, path: &str, (start, end): (i64, i64), name: &str) -> Uses {
-    let mut uses = Uses { got: HashSet::new(), dispatched: HashSet::new(), unsure: true, unsure_free: true, own_file: false };
-    let Some(src) = crate::resolve::repo_text(&s.ix.root, path) else { return uses };
-    let ident = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
-    let methods = methods_only(path);
-    let (mut unsure, mut unsure_free, mut seen, mut elsewhere) = (false, false, false, false);
-    for (i, line) in src.lines().enumerate().skip((start.max(1) - 1) as usize).take((end - start + 1).max(0) as usize) {
-        for (col, _) in line.match_indices(name) {
-            if ident(line[..col].chars().next_back()) || ident(line[col + name.len()..].chars().next()) {
-                continue;
-            }
-            match rv.resolve_at(path, i as u64 + 1, col, name) {
-                // the name of a definition is not a call of it
-                Ok((_, "definition")) => {}
-                Ok((id, why)) => {
-                    seen = true;
-                    let all = if why == "overload" { rv.overloads(id) } else { vec![id] };
-                    if why != "super" {
-                        uses.dispatched.extend(&all);
-                    }
-                    // a use the arguments do not tie to one overload stands for all of them
-                    uses.got.extend(all);
-                }
-                // an import from outside, a local, a field or a string is decided: not this definition
-                Err(why) => {
-                    seen = true;
-                    let unread = matches!(why, "no grammar" | crate::resolve::UNREAD | crate::resolve::TOO_DEEP);
-                    if unread || matches!(why, "receiver" | "not found") {
-                        unsure = true;
-                        unsure_free |= !(methods && line[..col].trim_end().ends_with('.'));
-                        let receiver = [".", "->", "::"].iter().any(|r| line[..col].trim_end().ends_with(r));
-                        elsewhere |= receiver || !unread;
-                    }
-                }
-            }
-        }
-    }
-    uses.unsure = unsure || !seen;
-    uses.unsure_free = unsure_free || !seen;
-    uses.own_file = unsure && !elsewhere;
-    uses
-}
-
-/// A definition outside any class or type: `x.f()` does not call it where `methods_only` holds.
-/// A method of an object literal has no owner in its name and is still called through one.
-fn free(kind: &str, qualname: &str) -> bool {
-    kind != "method" && !qualname.contains('.')
-}
-
-/// The directory a file's package starts at: what comes before its `src/`, else its top directory.
-fn package(path: &str) -> &str {
-    match path.strip_prefix("src/").map(|_| 0).or_else(|| path.find("/src/")) {
-        Some(i) => &path[..i],
-        None => path.split_once('/').map_or("", |(top, _)| top),
-    }
-}
-
-/// The definitions whose code calls what `name` stands for, and how many of them were kept only
-/// because the resolver could not tell which same-named definition they call. Those come after
-/// the decided ones, first the ones whose code names the target's type, then the ones in its package.
-/// Call sites the resolver is asked about in one `callers` answer, likeliest first.
-const CALLERS_RESOLVED: usize = 400;
-
-/// -> (callers: decided, then undecided, then unchecked; how many are undecided; how many unchecked)
-pub(crate) fn callers(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit>, usize, usize)> {
-    let langs = Langs { root: &s.ix.root, seen: Default::default() };
-    let mut targets = targets(s, name, 500, false)?;
-    // a call of a class runs its constructor: `Point(1)`, `new Widget()`, Ruby `Invoice.new`
-    let (classes, made_by_new) = constructed(s, &langs, &targets)?;
-    targets.extend(classes);
-    let ids: HashSet<i64> = targets.iter().map(|t| t.id).collect();
-    let mut names: std::collections::BTreeSet<&str> = targets.iter().map(|t| t.name.as_str()).collect();
-    if !made_by_new.is_empty() {
-        names.insert("new");
-    }
-    let owners: HashSet<&str> =
-        targets.iter().filter_map(|t| t.qualname.rsplit_once('.').map(|(o, _)| o.rsplit('.').next().unwrap_or(o))).filter(|o| !o.is_empty()).collect();
-    let packages: HashSet<&str> = targets.iter().map(|t| package(&t.path)).collect();
-    let fits = |path: &str| targets.iter().any(|t| langs.same_family(&t.path, path));
-    let cols = crate::index::CHUNK_COLS.split(',').map(|c| format!("c.{c}")).collect::<Vec<_>>().join(",");
-    let mut calls = s.ix.db.prepare(&format!("SELECT DISTINCT {cols} FROM refs r JOIN chunks c ON c.id=r.chunk_id WHERE r.callee=?1 ORDER BY c.is_test"))?;
-    let mut namesakes = s.ix.db.prepare("SELECT id, path, kind, qualname FROM chunks WHERE name=?1 AND kind != 'window'")?;
-    let (mut out, mut unsure_rows, mut unchecked_rows, mut seen) = (Vec::new(), Vec::new(), Vec::new(), HashSet::new());
-    let mut rv = Resolver::new(&s.ix)?;
-    // a call of a method a target overrides or implements may run the target
-    let overridden: HashSet<i64> = targets.iter().flat_map(|t| rv.overridden(t.id)).filter(|id| !ids.contains(id)).collect();
-    let names_owner = |text: &str| owners.iter().any(|o| has_word(text, o));
-    let likely = |r: &ChunkRow| (!names_owner(&r.text), !packages.contains(package(&r.path)), r.path.clone(), r.start);
-    let all_free = |n: &str| targets.iter().filter(|t| t.name == n).all(|t| free(&t.kind, &t.qualname));
-    let mut asked = 0;
-    for n in names {
-        let rows: Vec<(i64, String, String, String)> =
-            namesakes.query_map([n], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?.collect::<rusqlite::Result<_>>()?;
-        // with another definition of the name about, the likeliest call sites are asked first
-        let rivals = rows.iter().any(|(id, path, ..)| !ids.contains(id) && fits(path));
-        let mut sites: Vec<ChunkRow> = calls.query_map([n], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
-        sites.retain(|r| fits(&r.path) && seen.insert(r.id));
-        if n == "new" && !targets.iter().any(|t| t.name == "new") {
-            sites.retain(|r| made_by_new.iter().any(|class| has_word(&r.text, &format!("{class}.new"))));
-        }
-        if rivals {
-            sites.sort_by_cached_key(&likely);
-        }
-        for row in sites {
-            // a common name has thousands of call sites: the likeliest are resolved, the rest stay undecided
-            if asked >= CALLERS_RESOLVED {
-                unchecked_rows.push(row);
-                continue;
-            }
-            asked += 1;
-            let uses = resolve_in(&mut rv, s, &row.path, (row.start, row.end), n);
-            let unsure = (if all_free(n) { uses.unsure_free } else { uses.unsure }) || !uses.dispatched.is_disjoint(&overridden);
-            if uses.got.is_disjoint(&ids) {
-                // with no other definition of the name, a call the resolver cannot place is this one's
-                if unsure && rivals {
-                    let mine = |(_, p, k, q): &&(i64, String, String, String)| own((&row.path, &row.qualname), p, k, q);
-                    let mine: Vec<i64> = rows.iter().filter(|r| uses.own_file && mine(r)).map(|r| r.0).collect();
-                    if mine.is_empty() {
-                        unsure_rows.push(row);
-                        continue;
-                    }
-                    if mine.iter().all(|id| !ids.contains(id)) {
-                        continue;
-                    }
-                } else if !unsure {
-                    continue;
-                }
-            }
-            out.push(Hit::from_row(&row, true));
-            if out.len() >= limit {
-                return Ok((out, 0, 0));
-            }
-        }
-    }
-    unsure_rows.sort_by_cached_key(&likely);
-    let undecided = unsure_rows.len().min(limit - out.len());
-    out.extend(unsure_rows.iter().take(undecided).map(|r| Hit::from_row(r, true)));
-    let unchecked = unchecked_rows.len().min(limit - out.len());
-    out.extend(unchecked_rows.iter().take(unchecked).map(|r| Hit::from_row(r, true)));
-    Ok((out, undecided, unchecked))
-}
-
-/// The classes whose constructor is among `targets`, and the names of the Ruby ones, which a
-/// call of `new` on the class makes.
-fn constructed(s: &Searcher, langs: &Langs, targets: &[Hit]) -> Result<(Vec<Hit>, Vec<String>)> {
-    let mut class_at =
-        s.ix.db.prepare(&format!("SELECT {} FROM chunks WHERE path=?1 AND qualname=?2 AND kind IN ('class','struct') LIMIT 1", crate::index::CHUNK_COLS))?;
-    let (mut classes, mut made_by_new) = (Vec::<Hit>::new(), Vec::new());
-    for t in targets {
-        let Some((owner, name)) = t.qualname.rsplit_once('.') else { continue };
-        let lang = langs.id(&t.path).unwrap_or("");
-        let constructor = match lang {
-            "python" => name == "__init__",
-            "javascript" | "typescript" | "tsx" => name == "constructor",
-            "ruby" => name == "initialize",
-            "php" => name == "__construct",
-            "swift" => name == "init",
-            // Java, C#, C++, Dart: the method named as its class
-            _ => name == owner.rsplit('.').next().unwrap_or(owner),
-        };
-        if !constructor {
-            continue;
-        }
-        let class: Option<ChunkRow> = rusqlite::OptionalExtension::optional(class_at.query_row((&t.path, owner), ChunkRow::from_row))?;
-        let Some(class) = class.filter(|c| !targets.iter().chain(&classes).any(|x| x.id == c.id)) else { continue };
-        if lang == "ruby" {
-            made_by_new.push(class.name.clone());
-        }
-        classes.push(Hit::from_row(&class, true));
-    }
-    Ok((classes, made_by_new))
-}
-
-/// Whether `word` is in `text` where it is not part of a longer identifier.
-fn has_word(text: &str, word: &str) -> bool {
-    let ident = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
-    text.match_indices(word).any(|(i, _)| !ident(text[..i].chars().next_back()) && !ident(text[i + word.len()..].chars().next()))
-}
-
-/// What the code of the definitions `name` stands for calls: definitions of the repository in
-/// the same language family, and the names it calls that have none.
-pub(crate) fn callees(s: &Searcher, name: &str, limit: usize) -> Result<(Vec<Hit>, Vec<String>, Vec<String>)> {
-    let kinds = crate::search::CODE_KINDS.iter().map(|k| format!("'{k}'")).collect::<Vec<_>>().join(",");
-    let mut named =
-        s.ix.db.prepare(&format!("SELECT {} FROM chunks WHERE name=?1 AND kind IN ({kinds},'key','macro') ORDER BY is_test", crate::index::CHUNK_COLS))?;
-    let langs = Langs { root: &s.ix.root, seen: Default::default() };
-    // a key is what a call runs only in the caller's own language (Nix, whose functions are keys)
-    let callable = |from: &str, r: &ChunkRow| langs.same_family(from, &r.path) && (r.kind != "key" || langs.id(from) == langs.id(&r.path));
-    let mut calls = s.ix.db.prepare("SELECT DISTINCT callee FROM refs WHERE chunk_id=?1 ORDER BY callee")?;
-    let mut rv = Resolver::new(&s.ix)?;
-    let (mut resolved, mut external, mut seen) = (Vec::new(), Vec::new(), HashSet::new());
-    let defs = targets(s, name, 5, true)?;
-    let from = defs.iter().map(|d| d.path.clone()).collect();
-    for d in defs {
-        let names: Vec<String> = calls.query_map([d.id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
-        for n in names {
-            let rows: Vec<ChunkRow> =
-                named.query_map([&n], ChunkRow::from_row)?.filter(|r| r.as_ref().map_or(true, |r| callable(&d.path, r))).collect::<rusqlite::Result<_>>()?;
-            if rows.is_empty() {
-                if !external.contains(&n) {
-                    external.push(n);
-                }
-                continue;
-            }
-            let uses = resolve_in(&mut rv, s, &d.path, (d.start, d.end), &n);
-            let tied: Vec<&ChunkRow> = rows.iter().filter(|r| uses.got.contains(&r.id)).collect();
-            let picked: Vec<&ChunkRow> = if !tied.is_empty() {
-                tied
-            } else if uses.unsure {
-                let mut near: Vec<&ChunkRow> = rows.iter().filter(|r| uses.unsure_free || !free(&r.kind, &r.qualname)).collect();
-                let mine = |r: &&ChunkRow| own((&d.path, &d.qualname), &r.path, &r.kind, &r.qualname);
-                if uses.own_file && near.iter().any(mine) {
-                    near.retain(mine);
-                }
-                // the nearest three: the caller's file, then its directory
-                let dir = |p: &str| p.rsplit_once('/').map_or(String::new(), |(d, _)| d.to_string());
-                near.sort_by_key(|r| (r.path != d.path, dir(&r.path) != dir(&d.path)));
-                near.truncate(3);
-                near
-            } else {
-                Vec::new()
-            };
-            if picked.is_empty() && !external.contains(&n) {
-                external.push(n.clone());
-            }
-            resolved.extend(picked.into_iter().filter(|r| seen.insert(r.id)).map(|r| Hit::from_row(r, true)));
-        }
-    }
-    external.sort();
-    resolved.truncate(limit);
-    Ok((resolved, external, from))
 }
 
 /// The definition of `name` that `spec` (a path or a location) points at: the innermost one

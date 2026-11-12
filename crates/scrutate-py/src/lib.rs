@@ -571,7 +571,7 @@ impl Repo {
         let deps = py
             .detach(move || {
                 let s = self.fresh()?;
-                scrutate::intel::deps(&s.ix, &scrutate::ops::repo_path(&s, &p))
+                scrutate::names::Names::new(&s)?.imports(&scrutate::ops::repo_path(&s, &p))
             })
             .map_err(err)?;
         Ok(deps
@@ -585,7 +585,11 @@ impl Repo {
         let t = target.to_string();
         py.detach(move || {
             let s = self.fresh()?;
-            scrutate::intel::rdeps(&s.ix, &scrutate::ops::repo_path(&s, &t))
+            anyhow::Ok(
+                scrutate::names::Names::new(&s)?
+                    .importers(&scrutate::ops::repo_path(&s, &t))?
+                    .0,
+            )
         })
         .map_err(err)
     }

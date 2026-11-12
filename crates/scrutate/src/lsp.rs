@@ -12,6 +12,7 @@ use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 
 use crate::index::{ChunkRow, Index, CHUNK_COLS};
+use crate::names::Names;
 use crate::search::Searcher;
 use crate::text::name_key;
 
@@ -559,19 +560,20 @@ impl Server {
         Ok(self.word_in_line(s, p)?.map(|(text, a, b)| (text[a..b].to_string(), text[..a].to_string())))
     }
 
+    /// The definition the name under the cursor refers to, as references and definition both take it.
+    fn resolved_at(&self, names: &mut Names, p: &Value, ident: &str, before: &str) -> Option<i64> {
+        let rel = p["textDocument"]["uri"].as_str().and_then(|u| self.rel(u))?;
+        let line = p["position"]["line"].as_u64().unwrap_or(0);
+        names.at(&rel, line + 1, before.len(), ident).ok().map(|(id, _)| id)
+    }
+
     fn definition(&self, s: &Searcher, p: &Value) -> Result<Value> {
         let Some((text, a, b)) = self.word_in_line(s, p)? else { return Ok(Value::Null) };
         let (ident, before) = (&text[a..b], &text[..a]);
-        let here = p["textDocument"]["uri"].as_str().and_then(|u| self.rel(u));
-        // the definition the resolver ties the cursor to, as references takes it
-        if let Some(rel) = &here {
-            let line = p["position"]["line"].as_u64().unwrap_or(0);
-            if let Ok((id, _)) = crate::resolve::Resolver::new(&s.ix)?.resolve_at(rel, line + 1, before.len(), ident) {
-                if let Some(d) = s.ix.chunk(id)? {
-                    return Ok(json!([self.lines().location(&d.path, d.start, d.end, &d.name)]));
-                }
-            }
+        if let Some(d) = self.resolved_at(&mut Names::new(s)?, p, ident, before).map(|id| s.ix.chunk(id)).transpose()?.flatten() {
+            return Ok(json!([self.lines().location(&d.path, d.start, d.end, &d.name)]));
         }
+        let here = p["textDocument"]["uri"].as_str().and_then(|u| self.rel(u));
         // the run up to the word (`my-trim`, `Foo::Bar` in `Foo::Bar.new`), then the whole run as
         // one name (`get-user` from `get`) unless the word is the owner of what follows
         let (start, end) = run_around(&text, a, b);
@@ -596,28 +598,24 @@ impl Server {
         let Some((ident, before)) = self.ident_at(s, p)? else { return Ok(Value::Null) };
         let include_decl = p["context"]["includeDeclaration"].as_bool().unwrap_or(true);
         // the definition under the cursor; an unresolved cursor falls back to every textual occurrence
-        let here = p["textDocument"]["uri"].as_str().and_then(|u| self.rel(u));
-        let line = p["position"]["line"].as_u64().unwrap_or(0);
-        if let Some(rel) = here {
-            let mut rv = crate::resolve::Resolver::new(&s.ix)?;
-            if let Ok((def_id, _)) = rv.resolve_at(&rel, line + 1, before.len(), &ident) {
-                let r = crate::resolve::resolved_references(s, &ident, 5000)?;
-                let mut lines = self.lines();
-                let mut out = Vec::new();
-                if let (true, Some(d)) = (include_decl, r.definitions.iter().find(|d| d.id == def_id)) {
-                    let (l, a, b) = lines.name_pos(&d.path, d.start, d.end, &d.name);
-                    out.push(json!({"uri": path_to_uri(&self.root.join(&d.path)), "range": range(l, a, l, b)}));
-                }
-                let width = ident.encode_utf16().count() as u64;
-                for o in r.of(def_id) {
-                    if matches!(o.resolution, Ok((_, "definition"))) {
-                        continue;
-                    }
-                    let (l, a) = (o.line.saturating_sub(1), byte_to_utf16(&o.text, o.at));
-                    out.push(json!({"uri": path_to_uri(&self.root.join(&o.path)), "range": range(l, a, l, a + width)}));
-                }
-                return Ok(Value::Array(out));
+        let mut names = Names::new(s)?;
+        if let Some(def_id) = self.resolved_at(&mut names, p, &ident, &before) {
+            let r = names.references(&ident, 5000)?;
+            let mut lines = self.lines();
+            let mut out = Vec::new();
+            if let (true, Some(d)) = (include_decl, r.definitions.iter().find(|d| d.id == def_id)) {
+                let (l, a, b) = lines.name_pos(&d.path, d.start, d.end, &d.name);
+                out.push(json!({"uri": path_to_uri(&self.root.join(&d.path)), "range": range(l, a, l, b)}));
             }
+            let width = ident.encode_utf16().count() as u64;
+            for o in r.of(def_id) {
+                if matches!(o.resolution, Ok((_, "definition"))) {
+                    continue;
+                }
+                let (l, a) = (o.line.saturating_sub(1), byte_to_utf16(&o.text, o.at));
+                out.push(json!({"uri": path_to_uri(&self.root.join(&o.path)), "range": range(l, a, l, a + width)}));
+            }
+            return Ok(Value::Array(out));
         }
         let r = crate::intel::references(s, &ident, 5000)?;
         let mut lines = self.lines();

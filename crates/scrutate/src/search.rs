@@ -314,17 +314,9 @@ impl Searcher {
         let mut need: Vec<&String> = names.iter().filter(|n| !n.is_empty() && !self.callers_cache.contains_key(*n)).collect();
         need.sort();
         need.dedup();
-        for part in need.chunks(400) {
-            let ph = vec!["?"; part.len()].join(",");
-            let mut st = self.ix.db.prepare(&format!("SELECT callee, COUNT(*) FROM refs WHERE callee IN ({ph}) GROUP BY callee"))?;
-            let mut got: HashMap<String, i64> = HashMap::new();
-            for r in st.query_map(params_from_iter(part.iter()), |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))? {
-                let (n, c) = r?;
-                got.insert(n, c);
-            }
-            for n in part {
-                self.callers_cache.insert((*n).clone(), got.get(*n).copied().unwrap_or(0));
-            }
+        let got = crate::names::call_counts(&self.ix, &need)?;
+        for n in need {
+            self.callers_cache.insert(n.clone(), got.get(n).copied().unwrap_or(0));
         }
         Ok(())
     }
@@ -696,12 +688,12 @@ impl Searcher {
 
     /// The definitions that call what `name` stands for, as the `callers` tool answers.
     pub fn callers(&self, name: &str, limit: usize) -> Result<Vec<Hit>> {
-        Ok(crate::ops::callers(self, name, limit)?.0)
+        Ok(crate::names::Names::new(self)?.callers(name, limit)?.0)
     }
 
     /// -> (resolved definitions, unresolved external names), as the `callees` tool answers.
     pub fn callees(&self, name: &str, limit: usize) -> Result<(Vec<Hit>, Vec<String>)> {
-        crate::ops::callees(self, name, limit).map(|(resolved, external, _)| (resolved, external))
+        crate::names::Names::new(self)?.callees(name, limit).map(|(resolved, external, _)| (resolved, external))
     }
 }
 

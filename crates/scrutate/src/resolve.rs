@@ -14,7 +14,6 @@ use tree_sitter::{Node, Parser, Point, Tree};
 
 use crate::fmt::shown;
 use crate::index::{ChunkRow, Index};
-use crate::search::Searcher;
 use crate::text::name_key;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -78,9 +77,9 @@ pub const TOO_DEEP: &str = "nested too deeply to read";
 /// walks recurse.
 const MAX_DEPTH: usize = 2000;
 
-struct FileInfo {
+pub(crate) struct FileInfo {
     lang: Option<Lang>,
-    src: String,
+    pub(crate) src: String,
     /// the bytes on disk and where each line starts, when decoding `src` replaced invalid UTF-8:
     /// Engine A's columns count those bytes
     raw: Option<(Vec<u8>, Vec<usize>)>,
@@ -759,7 +758,8 @@ fn go_bindings(n: Node, src: &str, out: &mut Vec<Binding>) -> bool {
 
 // ------------------------------------------------------------------------- resolver
 impl<'a> Resolver<'a> {
-    pub fn new(ix: &'a Index) -> Result<Resolver<'a>> {
+    /// `names::Names` builds the one resolver of a request.
+    pub(crate) fn new(ix: &'a Index) -> Result<Resolver<'a>> {
         let mut st = ix.db.prepare_cached("SELECT path FROM files WHERE hash != 'SKIP'")?;
         let files = st.query_map([], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<_>>()?;
         Ok(Resolver {
@@ -786,7 +786,13 @@ impl<'a> Resolver<'a> {
         })
     }
 
-    fn file(&mut self, path: &str) -> Rc<FileInfo> {
+    /// The repository's files (`files` rows that were not skipped).
+    pub(crate) fn files(&self) -> &HashSet<String> {
+        &self.files
+    }
+
+    /// `path` as the resolver reads it: loaded once, then shared by every use of it.
+    pub(crate) fn file(&mut self, path: &str) -> Rc<FileInfo> {
         if let Some(f) = self.cache.get(path) {
             return Rc::clone(f);
         }
@@ -857,7 +863,7 @@ impl<'a> Resolver<'a> {
 
     /// A match at bytes `a..b` of `line` as Engine A reads `path` -> the same span in the decoded
     /// line Engine A prints, and the column `resolve_at` takes, which counts a BOM on line 1.
-    fn decoded_span(&mut self, path: &str, line: u64, (a, b): (usize, usize)) -> ((usize, usize), usize) {
+    pub(crate) fn decoded_span(&mut self, path: &str, line: u64, (a, b): (usize, usize)) -> ((usize, usize), usize) {
         if path_lang(path).is_none() {
             return ((a, b), a);
         }
@@ -3859,7 +3865,7 @@ pub struct Resolved {
     pub truncated: bool,
     /// by overloaded definition: the first of its overloads, which stands for them all where the
     /// arguments of a call do not pick one
-    first_overload: HashMap<i64, i64>,
+    pub(crate) first_overload: HashMap<i64, i64>,
 }
 
 impl Resolved {
@@ -3887,47 +3893,7 @@ pub fn name_search(bare: &str, max_results: u64) -> crate::instant::Query {
     crate::instant::Query { pattern, max_results: Some(max_results), first_in_path_order: true, ..Default::default() }
 }
 
-/// Every whole-word occurrence of `name` (Engine A), each resolved to the definition it refers to.
-pub fn resolved_references(s: &Searcher, name: &str, max_results: u64) -> Result<Resolved> {
-    let bare = &crate::intel::bare_name(s, name)?;
-    let q = crate::instant::Query { want_spans: true, ..name_search(bare, max_results) };
-    let (found, mut truncated) = crate::intel::occurrences(&s.ix.root, &q, &s.cancel)?;
-    let hits: Vec<crate::instant::Line> = found.into_iter().filter_map(|r| if let crate::instant::Record::Match(l) = r { Some(l) } else { None }).collect();
-    let mut rv = Resolver::new(&s.ix)?;
-    let mut occurrences = Vec::new();
-    // Engine A stops at `max_results` lines; one long line can hold more uses than that
-    let total: usize = hits.iter().map(|h| h.spans.len()).sum();
-    truncated |= total as u64 > max_results;
-    for h in hits {
-        let line_text: std::sync::Arc<str> = h.text.trim_end_matches(['\n', '\r']).into();
-        for &(a, b) in h.spans.iter().take(max_results.saturating_sub(occurrences.len() as u64) as usize) {
-            let ((da, db), col) = rv.decoded_span(&h.path, h.line, (a, b));
-            // the occurrence as this file spells it
-            let resolution = rv.resolve_at(&h.path, h.line, col, h.text.get(da..db).unwrap_or(bare));
-            occurrences.push(Occurrence { path: h.path.to_string(), line: h.line, column: a as u64 + 1, text: line_text.clone(), at: da, resolution });
-        }
-    }
-    let mut definitions: Vec<ChunkRow> = crate::intel::definitions(&s.ix, bare)?.into_iter().filter(|d| same_name(&d.name, bare)).collect();
-    let mut known: HashSet<i64> = definitions.iter().map(|d| d.id).collect();
-    for o in &occurrences {
-        if let Ok((id, _)) = o.resolution {
-            if known.insert(id) {
-                definitions.extend(s.ix.chunk(id)?);
-            }
-        }
-    }
-    let mut first_overload = HashMap::new();
-    if occurrences.iter().any(|o| matches!(o.resolution, Ok((_, "overload")))) {
-        for d in &definitions {
-            if let [first, _, ..] = rv.overloads(d.id)[..] {
-                first_overload.insert(d.id, first);
-            }
-        }
-    }
-    Ok(Resolved { definitions, occurrences, truncated, first_overload })
-}
-
-/// Plain-text rendering of `resolved_references`, optionally for the one definition `only`.
+/// Plain-text rendering of `Names::references`, optionally for the one definition `only`.
 pub fn resolved_text(r: &Resolved, only: Option<i64>) -> String {
     let mut out = String::new();
     for d in r.definitions.iter().filter(|d| only.is_none_or(|id| d.id == id)) {
@@ -3956,6 +3922,7 @@ pub fn resolved_text(r: &Resolved, only: Option<i64>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::search::Searcher;
 
     fn parse(lang: Lang, id: &str, src: &str) -> Vec<Binding> {
         let spec = crate::langs::by_id(id).unwrap();
@@ -4182,10 +4149,10 @@ mod tests {
                 ),
             ],
         );
-        let deps = crate::intel::deps(&s.ix, "src/app/main.ts").unwrap();
+        let deps = crate::names::Names::new(&s).unwrap().imports("src/app/main.ts").unwrap();
         let resolved: Vec<(&str, Option<&str>)> = deps.iter().map(|d| (d.module.as_str(), d.resolved.as_deref())).collect();
         assert_eq!(resolved, [("@lib/math", Some("src/lib/math.ts")), ("left-pad", None)]);
-        let importers = crate::intel::rdeps(&s.ix, "src/lib/math.ts").unwrap();
+        let importers = crate::names::Names::new(&s).unwrap().importers("src/lib/math.ts").unwrap().0;
         assert_eq!(importers, [("src/app/main.ts".to_string(), 1, "@lib/math".to_string())]);
         drop(s);
         let _ = std::fs::remove_dir_all(&root);
