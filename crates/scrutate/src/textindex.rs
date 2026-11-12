@@ -6,9 +6,10 @@
 //! holds `keys.npy` (sorted u32 trigrams), `ptr.npy` (u64 offsets into `post.bin`), `post.bin`
 //! (per document holding the trigram: its number, delta + LEB128, then two mask bytes, a bit for
 //! the low three bits of each byte that follows the trigram and a bit for each position of the
-//! trigram modulo 8), `docs.npy` (size, mtime, flags per document), `paths.bin` +
-//! `poff.npy` (paths), and `live-<generation>.bin` (which documents are current). Segments are
-//! immutable; an update writes new segments and new liveness files, then swaps the manifest.
+//! trigram modulo 8), `docs.npy` (size, mtime, flags and status change time per document),
+//! `paths.bin` + `poff.npy` (paths), and `live-<generation>.bin` (which documents are current).
+//! Segments are immutable; an update writes new segments and new liveness files, then swaps the
+//! manifest.
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -24,7 +25,9 @@ use regex_syntax::hir::{Class, Hir, HirKind};
 use crate::instant::{self, Mode, Options};
 use crate::npy::{self, Npy};
 
-pub const FORMAT: u32 = 2;
+pub const FORMAT: u32 = 3;
+/// Numbers per document in `docs.npy`: size, mtime, flags, status change time.
+const COLS: usize = 4;
 const MAX_SEGMENTS: usize = 4;
 /// Postings held in memory before a batch is written as a segment (about 200 MB at the peak).
 const BATCH_POSTINGS: usize = 16 << 20;
@@ -463,6 +466,7 @@ struct DocIn {
     rel: String,
     size: u64,
     mtime: i64,
+    ctime: i64,
     flags: i64,
     tris: Vec<(u32, u16)>,
 }
@@ -471,7 +475,7 @@ struct DocIn {
 /// one shortens the file under the read.
 const WHOLE: u64 = 64 << 20;
 
-fn read_doc(root: &Path, rel: String, size: u64, mtime: i64) -> DocIn {
+fn read_doc(root: &Path, rel: String, size: u64, mtime: i64, ctime: i64) -> DocIn {
     let path = root.join(&rel);
     let read = if size > WHOLE {
         File::open(&path).and_then(|f| stream_masks(f, 1 << 20))
@@ -485,8 +489,8 @@ fn read_doc(root: &Path, rel: String, size: u64, mtime: i64) -> DocIn {
         })
     };
     match read {
-        Ok((flags, tris)) => DocIn { rel, size, mtime, flags, tris },
-        Err(_) => DocIn { rel, size, mtime, flags: ALWAYS | RETRY, tris: Vec::new() },
+        Ok((flags, tris)) => DocIn { rel, size, mtime, ctime, flags, tris },
+        Err(_) => DocIn { rel, size, mtime, ctime, flags: ALWAYS | RETRY, tris: Vec::new() },
     }
 }
 
@@ -574,7 +578,7 @@ impl Segment {
         let post = map_file(&d.join("post.bin"))?;
         let paths = map_file(&d.join("paths.bin"))?;
         let live = std::fs::read(d.join(live)).with_context(|| format!("read {}/{live}", d.display()))?;
-        let ndocs = docs.len() / 3;
+        let ndocs = docs.len() / COLS;
         let s = Segment { name: name.to_string(), keys, ptr, post, docs, poff, paths, live, ndocs };
         s.validate(false).with_context(|| format!("text index segment {name}"))?;
         Ok(s)
@@ -600,7 +604,7 @@ impl Segment {
         let docs: &[i64] = self.docs.view()?;
         let poff: &[u64] = self.poff.view()?;
         let post = bytes(&self.post);
-        if !docs.len().is_multiple_of(3) || ptr.len() != keys.len() + 1 || poff.len() != self.ndocs + 1 {
+        if !docs.len().is_multiple_of(COLS) || ptr.len() != keys.len() + 1 || poff.len() != self.ndocs + 1 {
             bail!("array lengths disagree");
         }
         if ptr[0] != 0 || ptr[keys.len()] as usize != post.len() || poff[0] != 0 || poff[self.ndocs] as usize != bytes(&self.paths).len() {
@@ -634,7 +638,7 @@ impl Segment {
         self.live[d / 8] & (1 << (d % 8)) != 0
     }
     fn flags(&self, d: usize) -> i64 {
-        self.docs()[d * 3 + 2]
+        self.docs()[d * COLS + 2]
     }
 
     fn posting(&self, t: u32) -> Option<&[u8]> {
@@ -778,22 +782,22 @@ fn write_segment(dir: &Path, docs: &[DocIn]) -> Result<()> {
     std::fs::write(dir.join("post.bin"), &enc)?;
     npy::save(&dir.join("keys.npy"), &keys, &[keys.len()])?;
     npy::save(&dir.join("ptr.npy"), &ptr, &[ptr.len()])?;
-    write_docs(dir, docs.iter().map(|d| (d.rel.as_str(), d.size, d.mtime, d.flags)))
+    write_docs(dir, docs.iter().map(|d| (d.rel.as_str(), d.size, d.mtime, d.flags, d.ctime)))
 }
 
-fn write_docs<'a>(dir: &Path, docs: impl Iterator<Item = (&'a str, u64, i64, i64)>) -> Result<()> {
+fn write_docs<'a>(dir: &Path, docs: impl Iterator<Item = (&'a str, u64, i64, i64, i64)>) -> Result<()> {
     let mut meta: Vec<i64> = Vec::new();
     let mut paths: Vec<u8> = Vec::new();
     let mut poff: Vec<u64> = vec![0];
-    for (rel, size, mtime, flags) in docs {
-        meta.extend([size as i64, mtime, flags]);
+    for (rel, size, mtime, flags, ctime) in docs {
+        meta.extend([size as i64, mtime, flags, ctime]);
         paths.extend_from_slice(rel.as_bytes());
         poff.push(paths.len() as u64);
     }
     let n = poff.len() - 1;
     std::fs::write(dir.join("paths.bin"), &paths)?;
     npy::save(&dir.join("poff.npy"), &poff, &[poff.len()])?;
-    npy::save(&dir.join("docs.npy"), &meta, &[n, 3])?;
+    npy::save(&dir.join("docs.npy"), &meta, &[n, COLS])?;
     Ok(())
 }
 
@@ -820,7 +824,7 @@ fn merge_segments(dir: &Path, segs: &[&Segment]) -> Result<()> {
         dir,
         segs.iter().flat_map(|s| {
             let docs = s.docs();
-            (0..s.ndocs).filter(|&d| s.is_live(d)).map(move |d| (s.path(d), docs[d * 3] as u64, docs[d * 3 + 1], docs[d * 3 + 2]))
+            (0..s.ndocs).filter(|&d| s.is_live(d)).map(move |d| (s.path(d), docs[d * COLS] as u64, docs[d * COLS + 1], docs[d * COLS + 2], docs[d * COLS + 3]))
         }),
     )?;
     let mut w = BufWriter::with_capacity(1 << 20, File::create(dir.join("post.bin"))?);
@@ -986,8 +990,14 @@ fn mtime_ns(md: &std::fs::Metadata) -> i64 {
     md.modified().ok().and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok()).map(|d| d.as_nanos() as i64).unwrap_or(0)
 }
 
-/// The files Engine A's default search visits, relative to `root`, with size and mtime.
-fn walk(root: &Path) -> Result<Vec<(String, u64, i64)>> {
+/// Size, mtime and status change time: an edit that keeps the first two moves the third.
+fn stamp(md: &std::fs::Metadata) -> (u64, i64, i64) {
+    (md.len(), mtime_ns(md), crate::index::Stat::of(md).ctime)
+}
+
+/// The files Engine A's default search visits, relative to `root`, with size, mtime and status
+/// change time.
+fn walk(root: &Path) -> Result<Vec<(String, u64, i64, i64)>> {
     let roots = [root.to_path_buf()];
     let walker = instant::build_walker(&roots, &Options::default())?;
     let out = Mutex::new(Vec::new());
@@ -997,9 +1007,9 @@ fn walk(root: &Path) -> Result<Vec<(String, u64, i64)>> {
             if let Ok(e) = entry {
                 if e.file_type().map(|t| t.is_file()).unwrap_or(false) {
                     let rel = instant::relative(e.path(), roots);
-                    let (size, mtime) = e.metadata().map(|m| (m.len(), mtime_ns(&m))).unwrap_or((0, 0));
+                    let (size, mtime, ctime) = e.metadata().map(|m| stamp(&m)).unwrap_or((0, 0, 0));
                     if let Ok(mut v) = out.lock() {
-                        v.push((rel, size, mtime));
+                        v.push((rel, size, mtime, ctime));
                     }
                 }
             }
@@ -1063,9 +1073,9 @@ fn lock_exclusive(f: &File) -> Result<()> {
     }
 }
 
-/// Bring the text index of `root` up to date: unchanged files (same size and mtime) are kept,
-/// changed and new files are read into new segments, removed files are marked dead, and the
-/// segments are merged when there are too many or too many dead documents.
+/// Bring the text index of `root` up to date: unchanged files (same size, mtime and status change
+/// time) are kept, changed and new files are read into new segments, removed files are marked
+/// dead, and the segments are merged when there are too many or too many dead documents.
 pub fn update(root: &Path, force: bool, progress: bool) -> Result<TextStats> {
     update_with(root, force, progress, None)
 }
@@ -1110,9 +1120,13 @@ fn update_with(root: &Path, force: bool, progress: bool, only: Option<&[String]>
     let files = match only {
         None => walk(root)?,
         Some(paths) => {
-            let mut v: Vec<(String, u64, i64)> = paths
+            let mut v: Vec<(String, u64, i64, i64)> = paths
                 .iter()
-                .filter_map(|p| std::fs::symlink_metadata(root.join(p)).ok().filter(|m| m.is_file()).map(|m| (p.clone(), m.len(), mtime_ns(&m))))
+                .filter_map(|p| {
+                    let m = std::fs::symlink_metadata(root.join(p)).ok().filter(|m| m.is_file())?;
+                    let (size, mtime, ctime) = stamp(&m);
+                    Some((p.clone(), size, mtime, ctime))
+                })
                 .collect();
             v.sort();
             v.dedup();
@@ -1128,18 +1142,18 @@ fn update_with(root: &Path, force: bool, progress: bool, only: Option<&[String]>
             }
         }
     }
-    let mut changed: Vec<(String, u64, i64)> = Vec::new();
-    for (rel, size, mtime) in &files {
+    let mut changed: Vec<(String, u64, i64, i64)> = Vec::new();
+    for (rel, size, mtime, ctime) in &files {
         match known.remove(rel) {
             Some((i, d)) => {
-                let m = segs[i].docs();
-                if m[d * 3] as u64 == *size && m[d * 3 + 1] == *mtime && m[d * 3 + 2] & RETRY == 0 {
+                let m = &segs[i].docs()[d * COLS..(d + 1) * COLS];
+                if m[0] as u64 == *size && m[1] == *mtime && m[2] & RETRY == 0 && m[3] == *ctime {
                     continue;
                 }
                 segs[i].live[d / 8] &= !(1 << (d % 8));
-                changed.push((rel.clone(), *size, *mtime));
+                changed.push((rel.clone(), *size, *mtime, *ctime));
             }
-            None => changed.push((rel.clone(), *size, *mtime)),
+            None => changed.push((rel.clone(), *size, *mtime, *ctime)),
         }
     }
     // what is left in `known` is no longer on disk
@@ -1165,7 +1179,7 @@ fn update_with(root: &Path, force: bool, progress: bool, only: Option<&[String]>
         Ok(())
     };
     for chunk in changed.chunks(1024) {
-        let docs: Vec<DocIn> = chunk.par_iter().map(|(rel, size, mtime)| read_doc(root, rel.clone(), *size, *mtime)).collect();
+        let docs: Vec<DocIn> = chunk.par_iter().map(|(rel, size, mtime, ctime)| read_doc(root, rel.clone(), *size, *mtime, *ctime)).collect();
         for d in docs {
             batch_postings += d.tris.len();
             batch.push(d);
@@ -1395,7 +1409,7 @@ mod tests {
         let texts: Vec<Vec<u8>> = (0..300).map(|_| (0..rnd(40)).map(|_| words[rnd(words.len())]).collect::<String>().into_bytes()).collect();
         let tmp = std::env::temp_dir().join(format!("scrutate-seg-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
-        let doc = |i: usize, t: &[u8]| DocIn { rel: format!("f{i}"), size: t.len() as u64, mtime: 0, flags: 0, tris: trigram_masks(t) };
+        let doc = |i: usize, t: &[u8]| DocIn { rel: format!("f{i}"), size: t.len() as u64, mtime: 0, ctime: 0, flags: 0, tris: trigram_masks(t) };
         let (a, b) = texts.split_at(170);
         write_segment(&tmp.join("a"), &a.iter().enumerate().map(|(i, t)| doc(i, t)).collect::<Vec<_>>()).unwrap();
         write_segment(&tmp.join("b"), &b.iter().enumerate().map(|(i, t)| doc(i, t)).collect::<Vec<_>>()).unwrap();

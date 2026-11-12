@@ -149,3 +149,50 @@ fn a_posting_pointer_past_the_data_is_rebuilt_by_the_merge_of_the_next_update() 
     assert_eq!(counts(&t.0, "hello"), ["a.txt:1"]);
     assert_eq!(counts(&t.0, "words"), ["b.txt:1"]);
 }
+
+// the write moves the change time, which no one can set back; Windows has none to compare
+#[cfg(unix)]
+#[test]
+fn an_edit_that_keeps_size_and_mtime_is_seen() {
+    let t = Tmp::new("samestat");
+    let f = t.0.join("a.txt");
+    fs::write(&f, "hello world\n").unwrap();
+    let mtime = fs::metadata(&f).unwrap().modified().unwrap();
+    assert_eq!(run(&t.0, &["index", "--text"]).0, 0);
+    fs::write(&f, "jello world\n").unwrap();
+    fs::File::options().write(true).open(&f).unwrap().set_modified(mtime).unwrap();
+    let (code, out, err) = run(&t.0, &["grep", "--index", "--update", "jello"]);
+    assert_eq!((code, out.as_str()), (0, "a.txt:1:jello world\n"), "{err}");
+}
+
+fn set_format(root: &Path, format: u64) {
+    let p = root.join(".scrutate/text/manifest.json");
+    let mut m: serde_json::Value = serde_json::from_slice(&fs::read(&p).unwrap()).unwrap();
+    m["format"] = format.into();
+    fs::write(&p, serde_json::to_vec(&m).unwrap()).unwrap();
+}
+
+#[test]
+fn an_index_of_the_previous_format_is_rebuilt_by_the_next_update_and_a_newer_one_is_refused() {
+    let t = Tmp::new("format");
+    fs::write(t.0.join("a.txt"), "hello world\n").unwrap();
+    assert_eq!(run(&t.0, &["index", "--text"]).0, 0);
+    set_format(&t.0, 2);
+    // a search cannot write the index: it says what to run
+    let (code, _, err) = run(&t.0, &["grep", "--index", "hello"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("index --text"), "{err}");
+    let (code, out, err) = run(&t.0, &["index", "--text"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("1 changed"), "{out}{err}");
+    assert_eq!(counts(&t.0, "hello"), ["a.txt:1"]);
+    set_format(&t.0, 2);
+    let (code, out, err) = run(&t.0, &["grep", "--index", "--update", "hello"]);
+    assert_eq!((code, out.as_str()), (0, "a.txt:1:hello world\n"), "{err}");
+    set_format(&t.0, 4);
+    for args in [&["grep", "--index", "hello"][..], &["index", "--text"]] {
+        let (code, _, err) = run(&t.0, args);
+        assert_eq!(code, 2, "{args:?}: {err}");
+        assert!(err.contains("newer scrutate"), "{args:?}: {err}");
+    }
+}
