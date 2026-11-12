@@ -1,21 +1,13 @@
 [project]
 name = "scrutate-ref"
 dynamic = ["version"]
-description = "Reference implementation and trainer for the Scrutate code-intelligence engine (not the product: the product is the Rust crate)"
+description = "Training code for the models of the Scrutate code-intelligence engine (not the product: the product is the Rust crate)"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
 license-files = ["LICENSE-APACHE", "LICENSE-MIT"]
 requires-python = ">=3.10"
 dependencies = [
   "numpy>=1.26",
-  "snowballstemmer>=2.2,<3",  # 3.x changed the English stemmer; the Rust engine uses 2.x stems
-  "tree-sitter>=0.23",
-  "tree-sitter-python",
-  "tree-sitter-javascript",
-  "tree-sitter-typescript",
-  "tree-sitter-go",
-  "tree-sitter-rust",
-  "tree-sitter-java",
 ]
 
 [project.optional-dependencies]

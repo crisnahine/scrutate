@@ -2,12 +2,13 @@
 """Run every quality gate and record the actual output in docs/TEST_RESULTS.md.
 
 Gates: cargo fmt --check, cargo clippy -D warnings (both crates), cargo test (core), cargo audit,
-Python reference tests, bindings tests (if the wheel is installed), Rust/Python parity,
-differential test against ripgrep, reproducible-build check (optional, slow), core test without
+Python tests of the training code and the benchmark builders, bindings tests (if the wheel is
+installed), ranking quality against its floor, differential test against ripgrep,
+reproducible-build check (optional, slow), core test without
 Python on PATH. Nothing is summarised by hand: the exit status and the tail of each command's
 output are written as they were produced.
 
-usage: gen_test_results.py [--repo DIR_FOR_PARITY] [--differential-cases N] [--reproducible]
+usage: gen_test_results.py [--differential-cases N] [--reproducible] [--wheels DIR]
 """
 from __future__ import annotations
 
@@ -70,8 +71,6 @@ def fuzz_gates(gate, nightly: str) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--repo", default="/tmp/pmid", help="repository for the parity harness")
-    ap.add_argument("--parity-code", help="the clones `bench/make_bench_code.py fetch` makes, for bench/parity_repos.sh (default: PARITY_CODE, else $SCRUTATE_WORK/code)")
     ap.add_argument("--differential-cases", type=int, default=200)
     ap.add_argument("--reproducible", action="store_true", help="also run tools/reproducible_check.sh (two clean release builds)")
     ap.add_argument("--wheels", help="directory of built wheels to install and test (tools/wheel_matrix.py)")
@@ -111,12 +110,10 @@ def main() -> int:
     gate("cargo test with Python removed from PATH" + (" (the OS still provides /usr/bin/python3)" if has_py else ""),
          ["cargo", "test", "--release", "-p", "scrutate", "--", "--quiet"], env={"PATH": stripped}, tail=12)
     gate("cargo audit", ["cargo", "audit"], tail=8)
-    gate("python reference tests", [sys.executable, "-m", "pytest", "-q", "--ignore=tests/test_bindings.py"], cwd=os.path.join(ROOT, "python"), tail=6)
+    gate("python tests (training code, benchmark builders)", [sys.executable, "-m", "pytest", "-q", "--ignore=tests/test_bindings.py"], cwd=os.path.join(ROOT, "python"),
+         env={"SCRUTATE_BIN": os.path.join(ROOT, "target", "release", "scrutate")}, tail=6)
     gate("python bindings tests (wheel must be installed)", [sys.executable, "-m", "pytest", "-q", "tests/test_bindings.py"], cwd=os.path.join(ROOT, "python"),
          env={"SCRUTATE_BIN": os.path.join(ROOT, "target", "release", "scrutate")}, tail=6)
-    gate("rust/python parity (bit-identical features, scores, rankings)", [sys.executable, "bench/parity.py", a.repo, "target/release/scrutate", "--queries", "300"], tail=8)
-    gate("rust/python parity on real repositories of the six reference languages", ["bash", "bench/parity_repos.sh", "target/release/scrutate"],
-         env={"PARITY_PYTHON": sys.executable, **({"PARITY_CODE": a.parity_code} if a.parity_code else {})}, tail=24)
     gate("ranking quality against its recorded floor (MRR@10, hit@5 on a frozen copy of this repository's code)", [sys.executable, "bench/quality.py", "target/release/scrutate"], tail=14)
     gate("differential test against ripgrep, and grep --index against the walk", [sys.executable, "bench/differential.py", "--cases", str(a.differential_cases), "--seed", "11"], tail=4)
     gate("random grep runs against ripgrep (60 s)", [sys.executable, "bench/fuzz_grep.py", "--seconds", "60", "--seed", "11"], tail=2)

@@ -1,7 +1,7 @@
 # Continuous integration: quality gates for every push and pull request, and once a week so a new
 # advisory, runner image or editor release shows up without a code change.
-# The core crate only needs Rust; the Python job covers the reference engine, the bindings, the
-# differential and parity harnesses and the ranking quality floor. Every action is pinned to a
+# The core crate only needs Rust; the Python job covers the training code, the bindings, the
+# differential harnesses and the ranking quality floor. Every action is pinned to a
 # commit; .github/dependabot.yml moves the pins. The Rust version, rustfmt and clippy come from
 # rust-toolchain.toml.
 name: ci
@@ -84,7 +84,7 @@ jobs:
           persist-credentials: false
       - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
   python:
-    name: python reference, bindings, parity, differential
+    name: python training code, bindings, differential, ranking quality
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -102,7 +102,7 @@ jobs:
       - run: |
           for f in LICENSE-APACHE LICENSE-MIT; do cmp "$f" "crates/scrutate-py/$f" && cmp "$f" "python/$f"; done
           python3 -c "import sys; v = open('integrations/vscode/LICENSE').read(); sys.exit(not all(open(f).read().strip() in v for f in ('LICENSE-MIT', 'LICENSE-APACHE')))"
-      # the versions parity was last checked with: a new grammar release can move a parse tree
+      # the versions the Python tests were last run with
       - run: pip install -e "python[test]" maturin -c python/constraints.txt
       - run: cargo build --release -p scrutate --locked
       - name: bindings wheel (abi3) and tests
@@ -120,8 +120,6 @@ jobs:
         run: |
           python bench/fuzz_grep.py --bin target/release/scrutate --seconds 20 --seed 7
           python bench/fuzz_incremental.py --bin target/release/scrutate --seconds 20 --seed 7
-      - name: python/rust parity on the engine's own sources
-        run: python bench/parity.py crates/scrutate/src target/release/scrutate --queries 50
       # MRR@10 and hit@5 of 1,183 queries on a frozen copy of this repository's code, against bench/quality/floor.json
       - name: ranking quality against its recorded floor
         run: python bench/quality.py target/release/scrutate

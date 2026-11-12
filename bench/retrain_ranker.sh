@@ -5,8 +5,7 @@
 #
 # Expects
 #   SCRUTATE_WORK  scratch directory for the benchmark, the clones and the features (several GB)
-#   SCRUTATE_VENV  Python 3.9+ virtual environment with numpy, lightgbm, scikit-learn, the reference engine's
-#                  dependencies (tree-sitter and its grammars, snowballstemmer), the TEST packages
+#   SCRUTATE_VENV  Python 3.9+ virtual environment with numpy, lightgbm, scikit-learn, the TEST packages
 #                  networkx 3.4.2, mcp 1.30.0, rich 15.0.0 and the DEV packages pydantic,
 #                  python-pptx, python-docx, werkzeug, seaborn, openpyxl, joblib
 #   git, and network access the first time (make_bench_code.py fetch clones about 1.2 GB)

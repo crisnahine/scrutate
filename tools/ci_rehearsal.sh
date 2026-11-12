@@ -54,7 +54,7 @@ python -c "import scrutate; print(scrutate.__version__)"
 python bench/differential.py --cases 200 --seed 3 2>&1 | tail -2
 python bench/fuzz_grep.py --bin target/release/scrutate --seconds 20 --seed 7 2>&1 | tail -2
 python bench/fuzz_incremental.py --bin target/release/scrutate --seconds 20 --seed 7 2>&1 | tail -2
-python bench/parity.py crates/scrutate/src target/release/scrutate --queries 50 2>&1 | tail -1
+python bench/quality.py target/release/scrutate 2>&1 | tail -1
 
 step "compat job"
 cargo test --release -p scrutate --features extra-langs --locked 2>&1 | grep -E "^test result|FAILED|panicked" | awk '/^test result/ {p+=$4; f+=$6; next} {print} END {print "tests passed:", p, "failed:", f}'

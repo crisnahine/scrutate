@@ -589,7 +589,7 @@ def diagram_query():
         s.arrow([(sx + sw + 2, c), (fx - 4, c)], flow=1.4)
     y2 = total + 1 + 56
     rk = "A LightGBM LambdaRank ensemble, exported to plain arrays and evaluated in Rust."
-    res = "Ties broken by id. The Python reference returns the same features, scores and rankings."
+    res = "Ties broken by id. A test pins the features and scores of a small tree, bit for bit."
     h2 = max(Svg.need(fw, "Ranker", rk), Svg.need(sw, "Ranked results", res))
     s.card(fx, y2, fw, "Ranker", rk, h=h2)
     s.card(sx, y2, sw, "Ranked results", res, cls="out", h=h2)

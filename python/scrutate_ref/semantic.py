@@ -1,20 +1,20 @@
-"""Code-word semantic model (cross-view SVD), trained offline on real code.
+"""Code-word semantic model: the tables bench/train_semantic.py learns, and the file it writes.
 
 Two views of every function:
   A (descriptive)      name words x3, enclosing-class words, signature words, docstring words
   B (implementation)   identifiers / words appearing in the body
 
-Partial-least-squares SVD of the A x B co-occurrence matrix gives a shared latent space where a
-natural-language phrase (view A) lands near code whose *implementation* uses the matching
-vocabulary ("remove" ~ delete/pop/unlink, "liveness" ~ ping/heartbeat/health). It is a small
-static model (a few MB): no GPU, no downloads, incremental indexing never needs a refit.
+Both views map into one latent space where a natural-language phrase (view A) lands near code
+whose *implementation* uses the matching vocabulary ("remove" ~ delete/pop/unlink, "liveness" ~
+ping/heartbeat/health). It is a small static model (a few MB): no GPU, no downloads, incremental
+indexing never needs a refit. The engine embeds the file; the encoders here score the trainer's
+held-out queries the way the engine pools a chunk's words.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import math
-import os
 import zipfile
 from collections import Counter
 
@@ -91,8 +91,7 @@ class SemanticModel:
 
     # ------------------------------------------------------------------ encode
     def _proj(self, counts, vocab, idf, rows):
-        """Weighted sum of word vectors, accumulated in float64 (the Rust engine does the same, so
-        both produce bit-identical float32 vectors)."""
+        """Weighted sum of word vectors, accumulated in float64 as the engine does."""
         idx, w = [], []
         for t, c in counts.items():
             i = vocab.get(t)
@@ -160,52 +159,3 @@ class SemanticModel:
             m.file_sig = "blake2b:" + hashlib.blake2b(f.read(), digest_size=16).hexdigest()  # as SemanticModel::signature
         return m
 
-
-def default_model_path() -> str:
-    return os.path.join(os.path.dirname(__file__), "..", "..", "models", "semantic.npz")
-
-
-_default: SemanticModel | None | bool = False
-
-
-def default_model() -> SemanticModel | None:
-    """The bundled model, loaded once (None when absent)."""
-    global _default
-    if _default is False:
-        p = os.environ.get("SCRUTATE_SEMANTIC", default_model_path())
-        _default = SemanticModel.load(p) if os.path.exists(p) else None
-    return _default  # type: ignore[return-value]
-
-
-# --------------------------------------------------------------------- training
-def pls_svd(XA, XB, k: int, n_iter: int = 3, oversample: int = 24, center: bool = True,
-            seed: int = 0):
-    """Randomized SVD of the (optionally centered) cross-covariance XA^T XB, never formed."""
-    n = XA.shape[0]
-    muA = np.asarray(XA.mean(0)).ravel().astype(np.float32)
-    muB = np.asarray(XB.mean(0)).ravel().astype(np.float32)
-
-    def C_mul(Q):  # (VB, r) -> (VA, r)
-        Y = XA.T @ (XB @ Q)
-        if center:
-            Y = Y - n * np.outer(muA, muB @ Q)
-        return Y.astype(np.float32)
-
-    def Ct_mul(P):  # (VA, r) -> (VB, r)
-        Y = XB.T @ (XA @ P)
-        if center:
-            Y = Y - n * np.outer(muB, muA @ P)
-        return Y.astype(np.float32)
-
-    rng = np.random.default_rng(seed)
-    r = k + oversample
-    Q = rng.standard_normal((XB.shape[1], r)).astype(np.float32)
-    Y = C_mul(Q)
-    for _ in range(n_iter):
-        Y, _ = np.linalg.qr(Y)
-        Z, _ = np.linalg.qr(Ct_mul(Y))
-        Y = C_mul(Z)
-    Qa, _ = np.linalg.qr(Y)
-    B = Ct_mul(Qa).T  # (r, VB) = Qa^T C
-    Ub, S, Vt = np.linalg.svd(B, full_matrices=False)
-    return (Qa @ Ub[:, :k]).astype(np.float32), S[:k].astype(np.float32), Vt[:k].T.astype(np.float32)

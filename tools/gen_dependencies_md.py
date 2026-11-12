@@ -29,7 +29,7 @@ ROOT = os.path.join(HERE, "..")
 PURPOSE = {
     "aho-corasick": "multi-pattern prefilter for fuzzy search",
     "anyhow": "error type",
-    "blake2": "token hashing (63-bit keys, same as the reference)",
+    "blake2": "token hashing (63-bit keys)",
     "clap": "command-line parsing",
     "clap_complete": "shell completions",
     "flate2": "zlib for chunk text and .npz (pure Rust backend)",
@@ -85,7 +85,7 @@ def main() -> int:
            "## Toolchain\n",
            f"- Built and tested with `{rustc}` (pinned in `rust-toolchain.toml`); minimum supported `rust-version` = {core['rust_version']}.",
            "- Edition 2021. Release profile: `opt-level=3`, fat LTO, `codegen-units=1`, no debug info, stripped.",
-           "- Python ≥ 3.9 is needed only for the optional bindings, the reference implementation and the benchmark/test harnesses.\n",
+           "- Python ≥ 3.9 is needed only for the optional bindings, the training code of the models and the benchmark/test harnesses.\n",
            "## Direct dependencies of the `scrutate` crate\n",
            "| Crate | Version (locked) | Licence | Purpose | Optional |", "|---|---|---|---|---|"]
     # one row per crate: a crate declared twice (per target, with other features) is one dependency
