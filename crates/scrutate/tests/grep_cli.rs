@@ -377,6 +377,22 @@ fn tsquery_shows_control_characters_in_paths_as_escapes() {
 }
 
 #[test]
+fn a_control_character_in_a_file_name_is_printed_raw_for_programs_and_escaped_by_symbols() {
+    let d = Dir::new("ctlname");
+    if fs::write(d.0.join("a\nb\x1b.py"), b"def holder():\n    needle = 1\n").is_err() {
+        return; // the filesystem refuses such names
+    }
+    // piped output names the file as it is, as grep and ripgrep do, so a program can open it
+    assert_eq!(d.run(&["grep", "-l", "needle"]).1, "a\nb\x1b.py\n");
+    assert_eq!(d.run(&["grep", "needle"]).1, "a\nb\x1b.py:2:    needle = 1\n");
+    assert!(d.run(&["grep", "--json", "-l", "needle"]).1.contains(r#""path":"a\nb\u001b.py""#));
+    assert_eq!(d.run(&["index"]).0, 0);
+    let (code, out, err) = d.run(&["grep", "--symbols", "needle"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out, "a\\nb\\x1b.py:1-2  [function] holder\n    2:     needle = 1\n");
+}
+
+#[test]
 fn symbols_are_found_for_matches_under_a_path_argument() {
     let d = Dir::new("symbols_sub");
     d.write("sub/c.py", b"def holder():\n    needle = 1\n    return needle\n");

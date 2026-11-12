@@ -183,6 +183,9 @@ pub struct Hit {
     pub spans: Vec<(usize, usize)>,
     /// true for context lines (-A/-B), false for matching lines
     pub context: bool,
+    /// the bytes of `path` when it is not UTF-8 (on Unix; `path` then shows U+FFFD in their place)
+    #[serde(skip)]
+    pub path_bytes: Option<Arc<[u8]>>,
 }
 
 /// The `line` of a `Hit` that is a note on its file, not one of its lines (sorts after them).
@@ -1353,11 +1356,11 @@ fn write_lossy_from(w: &mut dyn Write, file: &std::fs::File, len: u64) -> std::i
 /// `path:line:text\n` (`-` separators for context lines), the CLI's plain format; an empty `path`
 /// leaves out the name and its separator, a `line` of 0 the numbers. A multi-line match prints
 /// each of its lines with its own number, as grep-class tools do.
-pub fn format_plain(out: &mut Vec<u8>, path: &str, line: u64, text: &[u8], context: bool) {
+pub fn format_plain(out: &mut Vec<u8>, path: &[u8], line: u64, text: &[u8], context: bool) {
     let sep = if context { b'-' } else { b':' };
     for (k, part) in text.split(|&b| b == b'\n').enumerate() {
         if !path.is_empty() {
-            out.extend_from_slice(path.as_bytes());
+            out.extend_from_slice(path);
             out.push(sep);
         }
         if line != 0 {
@@ -1382,6 +1385,8 @@ pub fn format_plain(out: &mut Vec<u8>, path: &str, line: u64, text: &[u8], conte
 
 struct Collector<'a> {
     path: Arc<str>,
+    /// `Hit::path_bytes`
+    raw: Option<Arc<[u8]>>,
     /// None: the hits stay in `batch` for the caller to take
     tx: Option<&'a mpsc::SyncSender<Vec<Hit>>>,
     counters: &'a Counters,
@@ -1515,7 +1520,7 @@ impl<'a> Sink for Collector<'a> {
         let bytes = ctx.bytes();
         let line = bytes.strip_suffix(b"\n").map(|b| b.strip_suffix(b"\r").unwrap_or(b)).unwrap_or(bytes);
         if self.plain.is_some() {
-            let name = if self.named { &self.path } else { "" };
+            let name = if self.named { self.raw.as_deref().unwrap_or(self.path.as_bytes()) } else { b"" };
             let number = if self.numbered { ctx.line_number().unwrap_or(0) + self.line_base } else { 0 };
             format_plain(&mut self.out, name, number, lossy(line).as_bytes(), true);
             return Ok(true);
@@ -1528,6 +1533,7 @@ impl<'a> Sink for Collector<'a> {
             text,
             spans: Vec::new(),
             context: true,
+            path_bytes: self.raw.clone(),
         });
         Ok(true)
     }
@@ -1560,13 +1566,14 @@ impl<'a> Sink for Collector<'a> {
             };
             if self.plain.is_some() {
                 if self.named {
-                    self.out.extend_from_slice(self.path.as_bytes());
+                    self.out.extend_from_slice(self.raw.as_deref().unwrap_or(self.path.as_bytes()));
                     self.out.extend_from_slice(b": ");
                 }
                 self.out.extend_from_slice(note.as_bytes());
                 self.out.push(b'\n');
             } else {
-                self.push(Hit { path: Arc::clone(&self.path), line: NOTE_LINE, column: 0, text: note, spans: Vec::new(), context: false });
+                let path_bytes = self.raw.clone();
+                self.push(Hit { path: Arc::clone(&self.path), line: NOTE_LINE, column: 0, text: note, spans: Vec::new(), context: false, path_bytes });
             }
         }
         self.flush();
@@ -1622,14 +1629,15 @@ impl Collector<'_> {
             }
             self.matched = true;
             let number = if self.numbered { number.unwrap_or(0) + self.line_base } else { 0 };
+            let name = if self.named { self.raw.as_deref().unwrap_or(self.path.as_bytes()) } else { b"" };
             match text {
                 Text::Here(line) if line.len() < 1 << 16 || self.hold || self.whole_groups || (self.multiline && memchr::memchr(b'\n', line).is_some()) => {
-                    format_plain(&mut self.out, if self.named { &self.path } else { "" }, number, lossy(line).as_bytes(), false);
+                    format_plain(&mut self.out, name, number, lossy(line).as_bytes(), false);
                 }
                 _ => {
                     // a very long line is written from where it is instead of being copied into the buffer
-                    let mut head = Vec::with_capacity(self.path.len() + 24);
-                    format_plain(&mut head, if self.named { &self.path } else { "" }, number, b"", false);
+                    let mut head = Vec::with_capacity(name.len() + 24);
+                    format_plain(&mut head, name, number, b"", false);
                     head.pop(); // the newline: the text goes between
                     let read = p.write_line(&self.out, &head, text, std::mem::take(&mut self.first), self.cancel);
                     self.out.clear();
@@ -1661,7 +1669,8 @@ impl Collector<'_> {
         let text = text.into_owned();
         let column = spans.first().map(|s| s.0 as u64 + 1).unwrap_or(0);
         self.matched = true;
-        self.push(Hit { path: Arc::clone(&self.path), line: number.unwrap_or(0) + self.line_base, column, text, spans, context: false });
+        let path_bytes = self.raw.clone();
+        self.push(Hit { path: Arc::clone(&self.path), line: number.unwrap_or(0) + self.line_base, column, text, spans, context: false, path_bytes });
         if let Some(max) = self.max_results {
             if n >= max {
                 self.cancel.store(true, Ordering::Relaxed);
@@ -2012,7 +2021,7 @@ fn small_first(
                     };
                     let Ok((path, rel, size, named)) = job else { break };
                     if !cancel.load(Ordering::Relaxed) {
-                        search_one(&mut fw, &Run { matcher: &matcher, o, c, cancel, tx: &tx, plain }, &path, rel, size, named);
+                        search_one(&mut fw, &Run { matcher: &matcher, o, c, cancel, tx: &tx, plain, labels, raw: None }, &path, rel, size, named);
                     }
                 }
             });
@@ -2079,7 +2088,7 @@ fn small_first(
         if let Some((path, rel, size, named)) = held.filter(|_| !cancel.load(Ordering::Relaxed)) {
             c.alone.store(true, Ordering::Relaxed);
             let tx = tx.clone();
-            let one = move || search_one(&mut file_worker(o), &Run { matcher, o, c, cancel, tx: &tx, plain }, &path, rel, size, named);
+            let one = move || search_one(&mut file_worker(o), &Run { matcher, o, c, cancel, tx: &tx, plain, labels, raw: None }, &path, rel, size, named);
             // plain output sends no hits; other output is drained here while the file is searched
             if plain.is_some() {
                 one();
@@ -2199,6 +2208,10 @@ struct Run<'a> {
     cancel: &'a AtomicBool,
     tx: &'a mpsc::SyncSender<Vec<Hit>>,
     plain: Option<&'a PlainSink>,
+    /// the paths the files are reported under (`label`)
+    labels: &'a [PathBuf],
+    /// the file being searched: `Hit::path_bytes`
+    raw: Option<&'a Arc<[u8]>>,
 }
 
 impl<'a> Run<'a> {
@@ -2206,6 +2219,7 @@ impl<'a> Run<'a> {
         let o = self.o;
         Collector {
             path,
+            raw: self.raw.cloned(),
             tx: Some(self.tx),
             counters: self.c,
             batch: Vec::new(),
@@ -2240,6 +2254,8 @@ impl<'a> Run<'a> {
 /// Search one file and send its hits to `tx`. `named`: a root that is a file, or `-` for standard
 /// input (`Options::paths_as_given`).
 fn search_one(w: &mut FileWorker, r: &Run, path: &Path, rel: Arc<str>, size: Option<u64>, named: bool) {
+    let raw = label_bytes(path, r.labels, r.o);
+    let r = &Run { raw: raw.as_ref(), ..*r };
     let (o, c) = (r.o, r.c);
     if let Some(p) = r.plain {
         p.tick(r.cancel);
@@ -2336,7 +2352,8 @@ fn report(r: &Run, mut sink: Collector, rel: Arc<str>, named: bool) -> Vec<u8> {
         r.c.files_matched.fetch_add(1, Ordering::Relaxed);
         if o.count_only || o.files_only {
             // one record per file carries the count in `line`
-            send(r.c, r.tx, vec![Hit { path: rel, line: sink.file_count, column: 0, text: String::new(), spans: Vec::new(), context: false }]);
+            let path_bytes = sink.raw.clone();
+            send(r.c, r.tx, vec![Hit { path: rel, line: sink.file_count, column: 0, text: String::new(), spans: Vec::new(), context: false, path_bytes }]);
         }
     }
     let mut out = std::mem::take(&mut sink.out);
@@ -2357,12 +2374,16 @@ fn search_archive(run: &Run, path: &Path, rel: &Arc<str>, kind: crate::archive::
     let limit = (!run.o.multiline).then_some(crate::archive::MAX_LINE);
     let searcher = &mut make_searcher_limited(run.o, BinaryDetection::quit(0), limit);
     let mut each = |member: Option<&str>, r: &mut dyn std::io::Read| -> bool {
-        let label: Arc<str> = match member {
-            Some(m) if run.o.raw_member_names => Arc::from(format!("{rel}{{{m}}}")),
-            Some(m) => Arc::from(format!("{rel}{{{}}}", crate::fmt::shown(m))),
+        let m = member.map(|m| if run.o.raw_member_names { std::borrow::Cow::Borrowed(m) } else { crate::fmt::shown(m) });
+        let label: Arc<str> = match &m {
+            Some(m) => Arc::from(format!("{rel}{{{m}}}")),
             None => Arc::clone(rel),
         };
-        let mut sink = run.collector(Arc::clone(&label));
+        let raw = match (run.raw, &m) {
+            (Some(b), Some(m)) => Some(Arc::from([&b[..], b"{", m.as_bytes(), b"}"].concat())),
+            (b, _) => b.cloned(),
+        };
+        let mut sink = Collector { raw, ..run.collector(Arc::clone(&label)) };
         let res = run.matcher.search_reader(searcher, r, &mut sink);
         match res {
             // grep-searcher's own words for the limit name no line
@@ -2748,7 +2769,8 @@ mod split {
         if matched {
             c.files_matched.fetch_add(1, Ordering::Relaxed);
             if o.count_only {
-                send(c, tx, vec![Hit { path: Arc::clone(rel), line: count, column: 0, text: String::new(), spans: Vec::new(), context: false }]);
+                let path_bytes = r.raw.cloned();
+                send(c, tx, vec![Hit { path: Arc::clone(rel), line: count, column: 0, text: String::new(), spans: Vec::new(), context: false, path_bytes }]);
             }
         }
         Outcome::Done
@@ -2876,7 +2898,7 @@ fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Opti
             files.extend(list_files(std::slice::from_ref(root), roots, o, &counters)?);
             files[at..].sort_by(|a, b| Path::new(&*a.1).cmp(Path::new(&*b.1)));
         }
-        return Ok(first_in_path_order(files, o.max_results, &matcher, o, &counters, &cancel, on_hit, t0));
+        return Ok(first_in_path_order(files, roots, o.max_results, &matcher, o, &counters, &cancel, on_hit, t0));
     }
     if stdin_too {
         search_stdin(o, &matcher, &counters, &cancel, plain.as_deref(), &mut on_hit);
@@ -2904,7 +2926,7 @@ fn search_stdin(o: &Options, matcher: &AnyMatcher, c: &Counters, cancel: &Atomic
     std::thread::scope(|s| {
         s.spawn(move || {
             let mut fw = file_worker(o);
-            search_one(&mut fw, &Run { matcher, o, c, cancel, tx: &tx, plain }, Path::new("-"), Arc::from(STDIN_LABEL), None, true);
+            search_one(&mut fw, &Run { matcher, o, c, cancel, tx: &tx, plain, labels: &[], raw: None }, Path::new("-"), Arc::from(STDIN_LABEL), None, true);
         });
         drain(rx, c, &mut *on_hit);
     });
@@ -3027,7 +3049,8 @@ fn walk(
                 let rel = label(entry.path(), &labels, &opts);
                 let fw = fw.get_or_insert_with(|| file_worker(&opts));
                 let named = opts.paths_as_given && entry.depth() == 0;
-                search_one(fw, &Run { matcher: &matcher, o: &opts, c: &c, cancel: &cancel, tx: &tx, plain: plain.as_deref() }, entry.path(), rel, size, named);
+                let run = Run { matcher: &matcher, o: &opts, c: &c, cancel: &cancel, tx: &tx, plain: plain.as_deref(), labels: &labels, raw: None };
+                search_one(fw, &run, entry.path(), rel, size, named);
                 let extra = cold_extra(&opts, &c);
                 let mut changed = extra > cold.load(Ordering::Relaxed);
                 if changed {
@@ -3089,10 +3112,10 @@ fn run_files(root: &Path, files: Vec<String>, o: &Options, cancel: Arc<AtomicBoo
             bail!("first_in_path_order needs a hit sink, not plain output");
         }
         files.sort_by(|a, b| Path::new(&*a.1).cmp(Path::new(&*b.1)));
-        return Ok(first_in_path_order(files, o.max_results, &matcher, o, &counters, &cancel, on_hit, t0));
+        return Ok(first_in_path_order(files, &[root.to_path_buf()], o.max_results, &matcher, o, &counters, &cancel, on_hit, t0));
     }
     let threads = default_threads(o).min(files.len().max(1));
-    search_list(&files, threads, None, &matcher, o, &counters, &cancel, plain.as_deref(), on_hit);
+    search_list(&files, &[root.to_path_buf()], threads, None, &matcher, o, &counters, &cancel, plain.as_deref(), on_hit);
     Ok(stats(&counters, t0, &cancel))
 }
 
@@ -3122,6 +3145,7 @@ fn list_files(roots: &[PathBuf], labels: &[PathBuf], o: &Options, c: &Counters) 
 #[allow(clippy::too_many_arguments)]
 fn first_in_path_order(
     files: Vec<(PathBuf, Arc<str>, bool)>,
+    labels: &[PathBuf],
     n: Option<u64>,
     matcher: &AnyMatcher,
     o: &Options,
@@ -3134,7 +3158,7 @@ fn first_in_path_order(
     let o = Options { max_results: None, max_count: n.map(|n| o.max_count.map_or(n, |m| m.min(n))).or(o.max_count), ..o.clone() };
     let mut hits = Vec::new();
     let threads = default_threads(&o).min(files.len().max(1));
-    search_list(&files, threads, n, matcher, &o, c, cancel, None, |h| hits.push(h));
+    search_list(&files, labels, threads, n, matcher, &o, c, cancel, None, |h| hits.push(h));
     // a file that several roots reach is listed once per root under one label: the k-th copy of a
     // hit belongs to its k-th listing
     let mut listed: std::collections::HashMap<&str, Vec<usize>> = Default::default();
@@ -3194,6 +3218,7 @@ fn first_in_path_order(
 #[allow(clippy::too_many_arguments)]
 fn search_list(
     files: &[(PathBuf, Arc<str>, bool)],
+    labels: &[PathBuf],
     threads: usize,
     stop_at: Option<u64>,
     matcher: &AnyMatcher,
@@ -3222,7 +3247,7 @@ fn search_list(
                     let i = next.fetch_add(1, Ordering::Relaxed);
                     let Some((path, rel, named)) = files.get(i) else { break };
                     let size = if o.want_bytes { std::fs::metadata(path).ok().map(|m| m.len()) } else { None };
-                    search_one(&mut fw, &Run { matcher, o, c: counters, cancel, tx: &tx, plain }, path, Arc::clone(rel), size, *named);
+                    search_one(&mut fw, &Run { matcher, o, c: counters, cancel, tx: &tx, plain, labels, raw: None }, path, Arc::clone(rel), size, *named);
                 }
             });
         }
@@ -3294,6 +3319,37 @@ fn label(path: &Path, roots: &[PathBuf], o: &Options) -> Arc<str> {
     }
 }
 
+/// The bytes of `label(path, roots, o)` when `path` is not UTF-8, for output that must name the file
+/// exactly. Windows has no bytes to give: its names stay as `label` writes them.
+#[cfg(unix)]
+fn label_bytes(path: &Path, roots: &[PathBuf], o: &Options) -> Option<Arc<[u8]>> {
+    use std::os::unix::ffi::OsStrExt;
+    if path.to_str().is_some() {
+        return None;
+    }
+    fn bytes(p: &Path) -> &[u8] {
+        p.as_os_str().as_bytes()
+    }
+    let under = if o.paths_as_given { None } else { roots.iter().find_map(|r| Some((r, path.strip_prefix(r).ok()?))) };
+    Some(match under {
+        Some((r, rel)) if rel.as_os_str().is_empty() => bytes(r).into(),
+        Some((_, rel)) if roots.len() == 1 => bytes(rel).into(),
+        Some((r, rel)) => {
+            let mut root = bytes(r);
+            while let [rest @ .., b'/'] = root {
+                root = rest;
+            }
+            [root, b"/", bytes(rel)].concat().into()
+        }
+        None => bytes(path).into(),
+    })
+}
+
+#[cfg(not(unix))]
+fn label_bytes(_path: &Path, _roots: &[PathBuf], _o: &Options) -> Option<Arc<[u8]>> {
+    None
+}
+
 /// A path as reported: `/` between its parts. Only Windows has `\` as a separator; elsewhere it is
 /// a character of the name.
 pub fn slashed(s: std::borrow::Cow<'_, str>) -> String {
@@ -3344,6 +3400,56 @@ mod tests {
         pub(super) static NO_ONE_LINE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
         /// the most batches of hits that waited for this thread's searches
         pub(super) static MOST_QUEUED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_path_that_is_not_utf8_is_reported_with_its_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+        let os = |b: &[u8]| PathBuf::from(std::ffi::OsStr::from_bytes(b));
+        let walked = Options::default();
+        let given = Options { paths_as_given: true, ..Options::default() };
+        let file = os(b"/r/d\xff/a\xfe.c");
+        let bytes = |roots: &[PathBuf], o: &Options| label_bytes(&file, roots, o).map(|b| b.to_vec());
+        assert_eq!(label_bytes(&os(b"/r/d/a.c"), &[os(b"/r")], &walked), None);
+        assert_eq!(bytes(&[os(b"/r")], &walked).unwrap(), b"d\xff/a\xfe.c");
+        assert_eq!(bytes(&[os(b"/r//"), os(b"/x")], &walked).unwrap(), b"/r/d\xff/a\xfe.c");
+        assert_eq!(bytes(std::slice::from_ref(&file), &walked).unwrap(), b"/r/d\xff/a\xfe.c");
+        assert_eq!(bytes(&[os(b"/r")], &given).unwrap(), b"/r/d\xff/a\xfe.c");
+        assert_eq!(&*label(&file, &[os(b"/r")], &walked), "d\u{FFFD}/a\u{FFFD}.c");
+
+        // the plain writer writes the bytes; a hit and a count carry them
+        #[derive(Clone)]
+        struct Shared(Arc<Mutex<Vec<u8>>>);
+        impl Write for Shared {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let written = Shared(Arc::default());
+        let plain = PlainSink::new(Box::new(written.clone()));
+        let raw: Arc<[u8]> = Arc::from(&b"d\xff/a\xfe.c"[..]);
+        let (tx, rx) = mpsc::sync_channel(16);
+        for (to_plain, count_only) in [(true, false), (false, false), (false, true)] {
+            let o = Options { pattern: "x".into(), mode: Mode::Literal, count_only, ..Options::default() };
+            let matcher = build_matcher(&o).unwrap();
+            let (c, cancel) = (Counters::default(), AtomicBool::new(false));
+            let r = Run { matcher: &matcher, o: &o, c: &c, cancel: &cancel, tx: &tx, plain: to_plain.then_some(&plain), labels: &[], raw: Some(&raw) };
+            let rel: Arc<str> = label(&file, &[os(b"/r")], &walked);
+            let mut sink = r.collector(Arc::clone(&rel));
+            matcher.search_slice(&mut make_searcher(&o, BinaryDetection::quit(0)), b"a x\n", &mut sink).unwrap();
+            report(&r, sink, rel, false);
+        }
+        plain.flush().unwrap();
+        assert_eq!(*written.0.lock().unwrap(), b"d\xff/a\xfe.c:1:a x\n");
+        drop(tx);
+        let hits: Vec<Hit> = rx.into_iter().flatten().collect();
+        assert_eq!(hits.len(), 2);
+        assert!(hits.iter().all(|h| h.path_bytes.as_deref() == Some(&raw[..]) && &*h.path == "d\u{FFFD}/a\u{FFFD}.c"));
     }
 
     #[test]
@@ -3407,7 +3513,14 @@ mod tests {
         let (tx, rx) = mpsc::sync_channel(1024);
         let mut fw = file_worker(&o);
         for size in [None, Some(std::fs::metadata(&path).unwrap().len())] {
-            search_one(&mut fw, &Run { matcher: &matcher, o: &o, c: &c, cancel: &cancel, tx: &tx, plain: None }, &path, Arc::from("big.txt"), size, false);
+            search_one(
+                &mut fw,
+                &Run { matcher: &matcher, o: &o, c: &c, cancel: &cancel, tx: &tx, plain: None, labels: &[], raw: None },
+                &path,
+                Arc::from("big.txt"),
+                size,
+                false,
+            );
         }
         drop(tx);
         let lines: Vec<u64> = rx.into_iter().flatten().map(|h| h.line).collect();
@@ -3428,7 +3541,7 @@ mod tests {
             let matcher = build_matcher(&o).unwrap();
             let (c, cancel) = (Counters::default(), AtomicBool::new(false));
             let (tx, _rx) = mpsc::sync_channel(1024);
-            let run = Run { matcher: &matcher, o: &o, c: &c, cancel: &cancel, tx: &tx, plain: None };
+            let run = Run { matcher: &matcher, o: &o, c: &c, cancel: &cancel, tx: &tx, plain: None, labels: &[], raw: None };
             for (text, whole) in [(format!("{line}\n").repeat(4), false), (format!("{line}\n"), true), (line.clone(), true)] {
                 std::fs::write(&path, &text).unwrap();
                 let file = std::fs::File::open(&path).unwrap();
@@ -3519,7 +3632,7 @@ mod tests {
                             let out = Shared(Arc::new(Mutex::new(Vec::new())));
                             let sink = PlainSink::new(Box::new(out.clone()));
                             let (tx, rx) = mpsc::sync_channel(1024);
-                            let r = Run { matcher: &matcher, o: &o, c: &c, cancel: &cancel, tx: &tx, plain: to_plain.then_some(&sink) };
+                            let r = Run { matcher: &matcher, o: &o, c: &c, cancel: &cancel, tx: &tx, plain: to_plain.then_some(&sink), labels: &[], raw: None };
                             search_one(&mut file_worker(&o), &r, &path, Arc::from("a.txt"), Some(size), o.paths_as_given);
                             drop(tx);
                             sink.flush().unwrap();

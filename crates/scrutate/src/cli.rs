@@ -1610,7 +1610,7 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
     let mut w = termcolor::BufferedStandardStream::stdout(color_choice(out.no_color));
     let mut collected: Vec<instant::Hit> = Vec::new();
     let mut pipe_closed = false; // the reader went away (`| head`): stop quietly, like ripgrep (exit 0)
-    let mut counts: Vec<(Arc<str>, u64)> = Vec::new();
+    let mut counts: Vec<instant::Hit> = Vec::new();
     let defer = out.sort || out.count || out.files_with_matches || out.symbols;
     let mut found = false;
     let mut linebuf: Vec<u8> = Vec::with_capacity(512);
@@ -1619,9 +1619,11 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
     let mut emit = |h: &instant::Hit, w: &mut termcolor::BufferedStandardStream| -> Result<()> {
         if h.line == instant::NOTE_LINE {
             if out.json {
-                writeln!(w, "{}", serde_json::json!({"type": "binary", "schema": SCHEMA, "path": h.path, "text": h.text}))?;
+                let rec = serde_json::json!({"type": "binary", "schema": SCHEMA, "path": h.path, "text": h.text});
+                writeln!(w, "{}", with_path_bytes(rec, h.path_bytes.as_deref()))?;
             } else if o.with_filename {
-                writeln!(w, "{}: {}", h.path, h.text)?;
+                w.write_all(&grep_path(&h.path, h.path_bytes.as_deref(), colour))?;
+                writeln!(w, ": {}", h.text)?;
             } else {
                 writeln!(w, "{}", h.text)?;
             }
@@ -1630,7 +1632,7 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
         if out.json {
             let rec = serde_json::json!({"type": if h.context { "context" } else { "match" }, "schema": SCHEMA, "path": h.path, "line": h.line,
                 "column": h.column, "text": h.text, "spans": h.spans.iter().map(|(a, b)| serde_json::json!({"start": a, "end": b})).collect::<Vec<_>>()});
-            writeln!(w, "{rec}")?;
+            writeln!(w, "{}", with_path_bytes(rec, h.path_bytes.as_deref()))?;
             return Ok(());
         }
         if groups {
@@ -1646,7 +1648,7 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
             linebuf.clear();
             instant::format_plain(
                 &mut linebuf,
-                if o.with_filename { &h.path } else { "" },
+                if o.with_filename { h.path_bytes.as_deref().unwrap_or(h.path.as_bytes()) } else { b"" },
                 if o.line_numbers { h.line } else { 0 },
                 h.text.as_bytes(),
                 h.context,
@@ -1663,7 +1665,7 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
                 found = true;
                 if o.count_only || o.files_only {
                     // per-file record: `line` carries the count
-                    counts.push((h.path, h.line));
+                    counts.push(h);
                     return;
                 }
             }
@@ -1690,26 +1692,28 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
     // a record per file searched: a file two paths reach is counted and listed twice, as ripgrep does
     // with --sort the search hands them over in ripgrep's order
     if !out.sort {
-        counts.sort_by(|a, b| a.0.cmp(&b.0));
+        counts.sort_by(|a, b| a.path.cmp(&b.path));
     }
     // a reader that went away (`| head`) ends the output quietly, as on the line path
     let written = (|| -> Result<()> {
         if out.count {
-            for (p, c) in &counts {
+            for instant::Hit { path: p, path_bytes: b, line: c, .. } in &counts {
                 if out.json {
-                    writeln!(w, "{}", serde_json::json!({"type": "count", "schema": SCHEMA, "path": p, "count": c}))?;
+                    writeln!(w, "{}", with_path_bytes(serde_json::json!({"type": "count", "schema": SCHEMA, "path": p, "count": c}), b.as_deref()))?;
                 } else if o.with_filename {
-                    writeln!(w, "{p}:{c}")?;
+                    w.write_all(&grep_path(p, b.as_deref(), colour))?;
+                    writeln!(w, ":{c}")?;
                 } else {
                     writeln!(w, "{c}")?;
                 }
             }
         } else if out.files_with_matches {
-            for (p, _) in &counts {
+            for instant::Hit { path: p, path_bytes: b, .. } in &counts {
                 if out.json {
-                    writeln!(w, "{}", serde_json::json!({"type": "file", "schema": SCHEMA, "path": p}))?;
+                    writeln!(w, "{}", with_path_bytes(serde_json::json!({"type": "file", "schema": SCHEMA, "path": p}), b.as_deref()))?;
                 } else {
-                    writeln!(w, "{p}")?;
+                    w.write_all(&grep_path(p, b.as_deref(), colour))?;
+                    writeln!(w)?;
                 }
             }
         } else if out.symbols {
@@ -1762,6 +1766,25 @@ fn grep_command(roots: Vec<PathBuf>, o: Options, out: GrepOutput) -> Result<i32>
     })
 }
 
+/// A path as `grep` writes it: on a terminal for a person, control characters as escapes; else
+/// for a program that reads paths, the file's own bytes.
+fn grep_path<'p>(path: &'p str, bytes: Option<&'p [u8]>, terminal: bool) -> std::borrow::Cow<'p, [u8]> {
+    use std::borrow::Cow;
+    match (terminal, crate::fmt::shown(path)) {
+        (true, Cow::Owned(s)) => Cow::Owned(s.into_bytes()),
+        (true, Cow::Borrowed(s)) => Cow::Borrowed(s.as_bytes()),
+        (false, _) => Cow::Borrowed(bytes.unwrap_or(path.as_bytes())),
+    }
+}
+
+/// A JSON record of `grep` that names a file whose path is not UTF-8: its bytes beside the text.
+fn with_path_bytes(mut rec: serde_json::Value, bytes: Option<&[u8]>) -> serde_json::Value {
+    if let Some(b) = bytes {
+        rec["path_bytes"] = b.into();
+    }
+    rec
+}
+
 /// One hit in colour: its path and line number when asked for, and its matches highlighted. Each
 /// line of a multi-line match gets its own, as in plain output, and a highlight stops at its end.
 fn write_colour(w: &mut impl WriteColor, h: &instant::Hit, path: bool, number: bool) -> std::io::Result<()> {
@@ -1772,7 +1795,7 @@ fn write_colour(w: &mut impl WriteColor, h: &instant::Hit, path: bool, number: b
         let end = start + part.len();
         if path {
             w.set_color(ColorSpec::new().set_fg(Some(Color::Magenta)))?;
-            write!(w, "{}", h.path)?;
+            write!(w, "{}", crate::fmt::shown(&h.path))?;
             w.reset()?;
             write!(w, "{sep}")?;
         }
@@ -1877,8 +1900,12 @@ fn grouped_by_symbol(root: &Path, hits: &mut Vec<instant::Hit>, w: &mut termcolo
     }
     lines.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
     for g in crate::intel::group_by_symbol(&s.ix, lines)? {
-        let name =
-            g.symbol.as_ref().map(|r| format!("{}:{}-{}  [{}] {}", r.path, r.start, r.end, r.kind, if r.qualname.is_empty() { &r.name } else { &r.qualname }));
+        // the text form is for a person or an agent: names escaped, as the index commands print them
+        let shown = |s: &str| if json { std::borrow::Cow::Borrowed(s) } else { crate::fmt::shown(s) }.into_owned();
+        let name = g
+            .symbol
+            .as_ref()
+            .map(|r| format!("{}:{}-{}  [{}] {}", shown(&r.path), r.start, r.end, r.kind, shown(if r.qualname.is_empty() { &r.name } else { &r.qualname })));
         if json {
             writeln!(
                 w,
@@ -1887,7 +1914,7 @@ fn grouped_by_symbol(root: &Path, hits: &mut Vec<instant::Hit>, w: &mut termcolo
                 "matches": g.lines.iter().map(|h| serde_json::json!({"line": h.line, "text": h.text})).collect::<Vec<_>>()})
             )?;
         } else {
-            writeln!(w, "{}", name.unwrap_or_else(|| format!("{}  (no symbol)", g.path)))?;
+            writeln!(w, "{}", name.unwrap_or_else(|| format!("{}  (no symbol)", shown(&g.path))))?;
             for h in &g.lines {
                 writeln!(w, "    {}: {}", h.line, h.text.trim_end())?;
             }
@@ -2124,6 +2151,33 @@ mod tests {
         // a highlight that crosses a line break is cut at it
         assert_eq!(highlighted(&out), ["foo", "bar", "baz"], "{out:?}");
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn grep_names_a_file_exactly_for_a_program_and_escaped_on_a_terminal() {
+        let raw = b"x\xff\n.c";
+        assert_eq!(&*super::grep_path("x\u{FFFD}\n.c", Some(raw), false), raw);
+        assert_eq!(&*super::grep_path("x\u{FFFD}\n.c", Some(raw), true), "x\u{FFFD}\\n.c".as_bytes());
+        assert_eq!(&*super::grep_path("a\nb\x1b.c", None, false), b"a\nb\x1b.c");
+        assert_eq!(&*super::grep_path("a\nb\x1b.c", None, true), br"a\nb\x1b.c");
+        let rec = super::with_path_bytes(serde_json::json!({"path": "x\u{FFFD}\n.c"}), Some(raw));
+        assert_eq!(rec["path_bytes"], serde_json::json!([120, 255, 10, 46, 99]));
+        assert!(super::with_path_bytes(serde_json::json!({"path": "a.c"}), None).get("path_bytes").is_none());
+        // colour output is for a person: a line break in a name cannot start a line of its own
+        let h = crate::instant::Hit {
+            path: "x\nfake.txt:1:needle".into(),
+            line: 3,
+            column: 1,
+            text: "needle".into(),
+            spans: vec![(0, 6)],
+            context: false,
+            path_bytes: None,
+        };
+        let mut w = termcolor::Buffer::ansi();
+        super::write_colour(&mut w, &h, true, true).unwrap();
+        let out = String::from_utf8(w.into_inner()).unwrap();
+        let plain = regex::Regex::new("\x1b\\[[0-9;]*m").unwrap().replace_all(&out, "").into_owned();
+        assert_eq!(plain, "x\\nfake.txt:1:needle:3:needle\n");
     }
 
     #[test]
