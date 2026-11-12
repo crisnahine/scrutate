@@ -90,6 +90,13 @@ capabilities those crates do not provide rather than re-implementing what they a
   held the whole file. The time is the kernel copying pages, which spreads as far as opening files does (100 MB
   on an M3 Pro: 12.6 ms on one thread, 4.0 ms on the five performance cores, 6.7 ms on all
   eleven).
+  A plain `-F` literal, when only plain output or a count is wanted, does not read such a file
+  whole: a first pass reads it in 256 KiB pieces, a buffer per thread on up to 8 threads, to find
+  the literal and to make sure the file holds no NUL byte and no inner line break, and a
+  matching line is read from the file again as it is written. On a 100 MB line that is 3 to
+  5 MB of peak memory where the buffer held 103 MB, and less CPU time: a read into a small
+  buffer that stays in the cache costs 7 ms of system time for 100 MB where fresh memory costs
+  12 ms on one thread and more on several, which fault on it at once.
   On one thread a file is never split, but one with no line break at its probe points is still
   read into a buffer of its size: the stream reader grows its buffer to 3^k times 64 KiB, which
   held 141 MB for one 100 MB line where the exact buffer holds 103 MB. The newline count of a

@@ -100,8 +100,11 @@ docs/RELEASING.md, public, tag `v0.1.0`.
   tree, 8.3 against 6.4 on LLVM (macOS). On a large tree what is left is mostly memory the
   system allocator has freed and keeps (its per-CPU magazines: `MallocMaxMagazines=1` in the
   environment takes 1.1 MB off the Linux tree, and a process cannot set it for itself), the
-  ignore matchers (1.2 MB on the Linux tree) and whole directories read at once. On a file of
-  one long line the line itself is held (103 MB for 100 MB), where ugrep streams it. The
+  ignore matchers (1.2 MB on the Linux tree) and whole directories read at once. A file of
+  one long line is held whole (103 MB for 100 MB) for a regex, `-i`, `-w`, `--json` or color; a
+  plain `-F` literal with plain output or `-c` reads it in two passes and holds 3 to 5 MB. A
+  one-line file under the 64 MiB where a file is split still goes through the stream reader,
+  whose buffer grows to hold the line: the two passes could serve it too. The
   default mode holds ordered output on one large file with many matches (23 MB); ranges of
   2 MB in place of 8 MB halve that for 2.4 to 3.5% more instructions, which was not taken.
 - Linux has no function order. Of 5.8 MB resident at the start of a small search there, 3.5 MB

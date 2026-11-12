@@ -238,6 +238,9 @@ First release.
   every member after it was lost with a checksum warning.
 - A large file whose lines are too long for the line probes to see is streamed: 100 MB of 4 MB
   lines peaked at 103 MB and peak at 15 to 18 MB.
+- A large file of one line searched for a plain `-F` literal is read through small buffers in
+  two passes: on a 100 MB line peak memory falls from 103 MB to under 6 MB, and CPU time by a
+  third with output and by half with `-c`.
 - With `-e`, a first path that is not UTF-8 is searched as a path.
 - A home directory kept in git is no longer indexed from a folder below it when `HOME` is a
   symbolic link.
