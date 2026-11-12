@@ -335,7 +335,7 @@ The indexed counterpart of Engine A, for repeated grep-style queries on large tr
 and livegrep do). It covers exactly the files Engine A's default walk visits (same walker, same
 ignore rules) and stores, per file, the set of byte trigrams (ASCII case folded), as immutable
 segments: sorted trigram keys, delta + LEB128 posting lists of document numbers, and per-document
-path, size, mtime and flags. Each posting carries two mask bytes: a bit for the low three bits of
+path, size, mtime, flags and status change time. Each posting carries two mask bytes: a bit for the low three bits of
 each byte that follows the trigram in that file, and a bit for each position of the trigram modulo
 8. A query is turned into a boolean trigram condition by walking the pattern's regex-syntax HIR
 (literals, small classes and alternations expand to exact string sets; concatenations combine them;
@@ -349,11 +349,13 @@ indexed snapshot; a property test and a coverage-guided fuzz target check that a
 matches always satisfies the pattern's condition, including Unicode case folding (the Kelvin sign
 matches `k` under `-i`). Files with a NUL byte index only the bytes before it (line-mode search
 stops there) and are always searched by multi-line queries; UTF-16 files and files unreadable at
-index time are always searched. Updates are incremental (size + mtime), write new segments and a new
+index time are always searched. Updates are incremental (size, mtime and status change time, so
+an edit that keeps size and mtime is seen, as `cp -p` and `rsync -t` make them), write new segments and a new
 liveness file per generation, then swap `manifest.json` atomically, so readers never see a half
 state; more than four segments merges all but the largest by a streaming k-way merge, so the
 small segments a watch adds do not write the whole index again, and more than 30% dead documents
-merges all of them. A file over 64 MB is read in pieces of 1 MB, never mapped: a mapped file that
+merges all of them; a merge checks the segments it reads first, and a damaged one rebuilds the
+index. A file over 64 MB is read in pieces of 1 MB, never mapped: a mapped file that
 another process shortens ends the reader with SIGBUS. A manifest that is not valid JSON (a crash
 can leave it empty) is rebuilt by the next update like a damaged segment, and the liveness file
 of a generation is written again when an update that stopped early left one. Writers serialise on a lock file (polled with `try_lock`: SMB mounts answer a blocking lock
@@ -377,7 +379,8 @@ tree's own, and a failure there does not make every burst walk; on Windows they 
 next to the recursive watch on the root. An event naming one of them walks the tree. A
 burst ends after 200 ms of quiet, and each burst runs the existing incremental updates
 (`Index::update`, `textindex::update` when a text index exists). The watch ends with an error
-when its root is gone. No new write path: the
+when its root is gone; an update that panics is reported on stderr and the next change updates
+again. No new write path: the
 watcher is one more writer behind the same SQLite transaction and text index lock file, so a crash
 mid-update leaves the previous snapshot. Reads by the update itself are not events, so updates do
 not trigger themselves. Not a daemon: it runs only while the command (or server) runs.

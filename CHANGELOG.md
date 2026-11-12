@@ -251,7 +251,14 @@ First release.
   ends the process (it was mapped; it is read in pieces now), a manifest cut short by a crash is
   rebuilt by the next update, a liveness file left by an update that stopped early no longer
   makes a file match twice, and many small updates no longer write a large index again (the
-  largest segment stays out of a merge that only the number of segments asks for).
+  largest segment stays out of a merge that only the number of segments asks for). It sees an
+  edit that keeps a file's size and modification time (`cp -p`, `rsync -t`, `touch -r`); its
+  format is 3, and the next `index --text` or `grep --index --update` rebuilds an older one.
+- A full index build of a C, Go or Java tree no longer keeps every file's syntax tree in memory:
+  40 MB of C in 600 files took 2.1 GB and takes 0.56 GB.
+- A damaged segment found while segments are merged rebuilds the index where the update ended
+  with an internal error; `serve --watch` and `watch` report an update that panics and keep
+  watching.
 - The language server reads a document from disk only under the root; a document outside it is
   answered from the text the editor sent, or not at all.
 - A path in a tool call that leaves the repository by its own parts is refused before anything
