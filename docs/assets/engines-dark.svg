@@ -1,0 +1,149 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 384" width="880" height="384" role="img" aria-labelledby="t d" fill="none">
+<!-- written by tools/gen_assets.py; edit that, not this file -->
+<title id="t">Two engines, one binary</title>
+<desc id="d">What you ask (the CLI, Python, an MCP client for agents, an LSP client for editors) goes to two engines in one binary. Engine A searches with no index: walk, ignore rules, match, stream, and returns matches. Engine B is the index: parse, symbols, call edges, a text index and a ranker; it returns ranked results, definitions and callers, and references.</desc>
+<style>
+.s{font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif} .m{font-family:ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace}
+.f0{animation: fl0 8.0s cubic-bezier(.2,.7,.2,1) infinite, fo0 8.0s linear infinite}
+@keyframes fl0 {
+  0.00% { stroke-dashoffset: 10; }
+  0.00% { stroke-dashoffset: 10; }
+  20.00% { stroke-dashoffset: -100; }
+  100.00% { stroke-dashoffset: -100; }
+}
+@keyframes fo0 {
+  0.00% { opacity: 0; }
+  0.00% { opacity: 0; }
+  0.62% { opacity: 1; }
+  19.38% { opacity: 1; }
+  20.00% { opacity: 0; }
+  100.00% { opacity: 0; }
+}
+.f1{animation: fl1 8.0s cubic-bezier(.2,.7,.2,1) infinite, fo1 8.0s linear infinite}
+@keyframes fl1 {
+  0.00% { stroke-dashoffset: 10; }
+  3.75% { stroke-dashoffset: 10; }
+  23.75% { stroke-dashoffset: -100; }
+  100.00% { stroke-dashoffset: -100; }
+}
+@keyframes fo1 {
+  0.00% { opacity: 0; }
+  3.75% { opacity: 0; }
+  4.38% { opacity: 1; }
+  23.12% { opacity: 1; }
+  23.75% { opacity: 0; }
+  100.00% { opacity: 0; }
+}
+.f2{animation: fl2 8.0s cubic-bezier(.2,.7,.2,1) infinite, fo2 8.0s linear infinite}
+@keyframes fl2 {
+  0.00% { stroke-dashoffset: 10; }
+  15.00% { stroke-dashoffset: 10; }
+  35.00% { stroke-dashoffset: -100; }
+  100.00% { stroke-dashoffset: -100; }
+}
+@keyframes fo2 {
+  0.00% { opacity: 0; }
+  15.00% { opacity: 0; }
+  15.62% { opacity: 1; }
+  34.38% { opacity: 1; }
+  35.00% { opacity: 0; }
+  100.00% { opacity: 0; }
+}
+.f3{animation: fl3 8.0s cubic-bezier(.2,.7,.2,1) infinite, fo3 8.0s linear infinite}
+@keyframes fl3 {
+  0.00% { stroke-dashoffset: 10; }
+  18.12% { stroke-dashoffset: 10; }
+  38.12% { stroke-dashoffset: -100; }
+  100.00% { stroke-dashoffset: -100; }
+}
+@keyframes fo3 {
+  0.00% { opacity: 0; }
+  18.12% { opacity: 0; }
+  18.75% { opacity: 1; }
+  37.50% { opacity: 1; }
+  38.12% { opacity: 0; }
+  100.00% { opacity: 0; }
+}
+.f4{animation: fl4 8.0s cubic-bezier(.2,.7,.2,1) infinite, fo4 8.0s linear infinite}
+@keyframes fl4 {
+  0.00% { stroke-dashoffset: 10; }
+  21.25% { stroke-dashoffset: 10; }
+  41.25% { stroke-dashoffset: -100; }
+  100.00% { stroke-dashoffset: -100; }
+}
+@keyframes fo4 {
+  0.00% { opacity: 0; }
+  21.25% { opacity: 0; }
+  21.88% { opacity: 1; }
+  40.62% { opacity: 1; }
+  41.25% { opacity: 0; }
+  100.00% { opacity: 0; }
+}
+.f5{animation: fl5 8.0s cubic-bezier(.2,.7,.2,1) infinite, fo5 8.0s linear infinite}
+@keyframes fl5 {
+  0.00% { stroke-dashoffset: 10; }
+  24.38% { stroke-dashoffset: 10; }
+  44.38% { stroke-dashoffset: -100; }
+  100.00% { stroke-dashoffset: -100; }
+}
+@keyframes fo5 {
+  0.00% { opacity: 0; }
+  24.38% { opacity: 0; }
+  25.00% { opacity: 1; }
+  43.75% { opacity: 1; }
+  44.38% { opacity: 0; }
+  100.00% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+</style>
+<defs><marker id="ah" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1 L7 4 L1 7" stroke="#8b949e" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<text x="96" y="22" class="s" font-size="15" font-weight="600" fill="#8b949e" text-anchor="middle">You ask</text>
+<text x="442" y="22" class="s" font-size="15" font-weight="600" fill="#8b949e" text-anchor="middle">Two engines, one binary</text>
+<text x="782" y="22" class="s" font-size="15" font-weight="600" fill="#8b949e" text-anchor="middle">You get</text>
+<rect x="16" y="48" width="160" height="62" rx="12" fill="#161b22" stroke="#30363d"/>
+<text x="34" y="75" class="s" font-size="16" font-weight="600" fill="#e6edf3">CLI</text>
+<text x="34" y="96" class="m" font-size="14" fill="#8b949e">scrutate ...</text>
+<path d="M176 79 H200" stroke="#8b949e" stroke-width="1.5"/>
+<rect x="16" y="128" width="160" height="62" rx="12" fill="#161b22" stroke="#30363d"/>
+<text x="34" y="155" class="s" font-size="16" font-weight="600" fill="#e6edf3">Python</text>
+<text x="34" y="176" class="m" font-size="14" fill="#8b949e">import scrutate</text>
+<path d="M176 159 H200" stroke="#8b949e" stroke-width="1.5"/>
+<rect x="16" y="208" width="160" height="62" rx="12" fill="#161b22" stroke="#30363d"/>
+<text x="34" y="235" class="s" font-size="16" font-weight="600" fill="#e6edf3">MCP</text>
+<text x="34" y="256" class="s" font-size="14" fill="#8b949e">for agents</text>
+<path d="M176 239 H200" stroke="#8b949e" stroke-width="1.5"/>
+<rect x="16" y="288" width="160" height="62" rx="12" fill="#161b22" stroke="#30363d"/>
+<text x="34" y="315" class="s" font-size="16" font-weight="600" fill="#e6edf3">LSP</text>
+<text x="34" y="336" class="s" font-size="14" fill="#8b949e">for editors</text>
+<path d="M176 319 H200" stroke="#8b949e" stroke-width="1.5"/>
+<path d="M200 79 V319" stroke="#8b949e" stroke-width="1.5"/>
+<path d="M200 104.0 H231" stroke="#8b949e" stroke-width="1.5" marker-end="url(#ah)"/><path class="f0" d="M200 104.0 H231" stroke="#5eead4" stroke-width="2.5" stroke-linecap="round" pathLength="100" stroke-dasharray="10 100" opacity="0"/>
+<path d="M200 276.0 H231" stroke="#8b949e" stroke-width="1.5" marker-end="url(#ah)"/><path class="f1" d="M200 276.0 H231" stroke="#a78bfa" stroke-width="2.5" stroke-linecap="round" pathLength="100" stroke-dasharray="10 100" opacity="0"/>
+<rect x="234" y="44" width="420" height="120" rx="12" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+<rect x="234" y="58" width="3" height="40" rx="1.5" fill="#5eead4"/>
+<text x="254" y="76" class="s" font-size="18" font-weight="600" fill="#e6edf3">Engine A</text>
+<text x="254" y="98" class="s" font-size="15" fill="#8b949e">no index, no parsers, no background process</text>
+<rect x="254" y="116" width="55" height="32" rx="8" fill="rgba(94,234,212,.16)" stroke="#5eead4" stroke-opacity=".55"/><text x="282" y="137" class="s" font-size="15" fill="#e6edf3" text-anchor="middle">walk</text><path d="M312 132 H324" stroke="#8b949e" stroke-width="1.5" marker-end="url(#ah)"/><rect x="329" y="116" width="118" height="32" rx="8" fill="rgba(94,234,212,.16)" stroke="#5eead4" stroke-opacity=".55"/><text x="388" y="137" class="s" font-size="15" fill="#e6edf3" text-anchor="middle">ignore rules</text><path d="M450 132 H462" stroke="#8b949e" stroke-width="1.5" marker-end="url(#ah)"/><rect x="467" y="116" width="63" height="32" rx="8" fill="rgba(94,234,212,.16)" stroke="#5eead4" stroke-opacity=".55"/><text x="498" y="137" class="s" font-size="15" fill="#e6edf3" text-anchor="middle">match</text><path d="M533 132 H545" stroke="#8b949e" stroke-width="1.5" marker-end="url(#ah)"/><rect x="550" y="116" width="71" height="32" rx="8" fill="rgba(94,234,212,.16)" stroke="#5eead4" stroke-opacity=".55"/><text x="585" y="137" class="s" font-size="15" fill="#e6edf3" text-anchor="middle">stream</text>
+<rect x="234" y="188" width="420" height="176" rx="12" fill="#161b22" stroke="#30363d"/>
+<rect x="234" y="202" width="3" height="40" rx="1.5" fill="#a78bfa"/>
+<text x="254" y="220" class="s" font-size="18" font-weight="600" fill="#e6edf3">Engine B</text>
+<text x="254" y="242" class="s" font-size="15" fill="#8b949e">the index: persistent, incremental, on disk</text>
+<rect x="254" y="260" width="63" height="32" rx="8" fill="rgba(167,139,250,.16)" stroke="#a78bfa" stroke-opacity=".55"/><text x="286" y="281" class="s" font-size="15" fill="#e6edf3" text-anchor="middle">parse</text><path d="M320 276 H332" stroke="#8b949e" stroke-width="1.5" marker-end="url(#ah)"/><rect x="337" y="260" width="79" height="32" rx="8" fill="rgba(167,139,250,.16)" stroke="#a78bfa" stroke-opacity=".55"/><text x="376" y="281" class="s" font-size="15" fill="#e6edf3" text-anchor="middle">symbols</text><path d="M419 276 H431" stroke="#8b949e" stroke-width="1.5" marker-end="url(#ah)"/><rect x="436" y="260" width="102" height="32" rx="8" fill="rgba(167,139,250,.16)" stroke="#a78bfa" stroke-opacity=".55"/><text x="487" y="281" class="s" font-size="15" fill="#e6edf3" text-anchor="middle">call edges</text>
+<rect x="254" y="308" width="102" height="32" rx="8" fill="rgba(167,139,250,.16)" stroke="#a78bfa" stroke-opacity=".55"/><text x="305" y="329" class="s" font-size="15" fill="#e6edf3" text-anchor="middle">text index</text><path d="M359 324 H371" stroke="#8b949e" stroke-width="1.5" marker-end="url(#ah)"/><rect x="376" y="308" width="71" height="32" rx="8" fill="rgba(167,139,250,.16)" stroke="#a78bfa" stroke-opacity=".55"/><text x="411" y="329" class="s" font-size="15" fill="#e6edf3" text-anchor="middle">ranker</text>
+<rect x="700" y="78.0" width="164" height="52" rx="12" fill="#161b22" stroke="#30363d"/>
+<text x="716" y="100.0" class="s" font-size="15" font-weight="600" fill="#e6edf3">matches</text>
+<text x="716" y="120.0" class="m" font-size="14" fill="#8b949e">grep, streamed</text>
+<path d="M654 104.0 C680 104.0 670 104.0 697 104.0" stroke="#8b949e" stroke-width="1.5" marker-end="url(#ah)"/><path class="f2" d="M654 104.0 C680 104.0 670 104.0 697 104.0" stroke="#5eead4" stroke-width="2.5" stroke-linecap="round" pathLength="100" stroke-dasharray="10 100" opacity="0"/>
+<rect x="700" y="192" width="164" height="52" rx="12" fill="#161b22" stroke="#30363d"/>
+<text x="716" y="214" class="s" font-size="15" font-weight="600" fill="#e6edf3">ranked results</text>
+<text x="716" y="234" class="m" font-size="14" fill="#8b949e">search</text>
+<path d="M654 236.0 C680 236.0 670 218 697 218" stroke="#8b949e" stroke-width="1.5" marker-end="url(#ah)"/><path class="f3" d="M654 236.0 C680 236.0 670 218 697 218" stroke="#a78bfa" stroke-width="2.5" stroke-linecap="round" pathLength="100" stroke-dasharray="10 100" opacity="0"/>
+<rect x="700" y="250" width="164" height="52" rx="12" fill="#161b22" stroke="#30363d"/>
+<text x="716" y="272" class="s" font-size="15" font-weight="600" fill="#e6edf3">definitions, callers</text>
+<text x="716" y="292" class="m" font-size="14" fill="#8b949e">symbol, callers</text>
+<path d="M654 276.0 C680 276.0 670 276 697 276" stroke="#8b949e" stroke-width="1.5" marker-end="url(#ah)"/><path class="f4" d="M654 276.0 C680 276.0 670 276 697 276" stroke="#a78bfa" stroke-width="2.5" stroke-linecap="round" pathLength="100" stroke-dasharray="10 100" opacity="0"/>
+<rect x="700" y="308" width="164" height="52" rx="12" fill="#161b22" stroke="#30363d"/>
+<text x="716" y="330" class="s" font-size="15" font-weight="600" fill="#e6edf3">references</text>
+<text x="716" y="350" class="m" font-size="14" fill="#8b949e">refs</text>
+<path d="M654 316.0 C680 316.0 670 334 697 334" stroke="#8b949e" stroke-width="1.5" marker-end="url(#ah)"/><path class="f5" d="M654 316.0 C680 316.0 670 334 697 334" stroke="#a78bfa" stroke-width="2.5" stroke-linecap="round" pathLength="100" stroke-dasharray="10 100" opacity="0"/>
+</svg>

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" aria-labelledby="t d" fill="none">
+<!-- written by tools/gen_assets.py; edit that, not this file -->
+<title id="t">Identifier search in all casings</title>
+<desc id="d">Icon: identifier search in all casings.</desc>
+<style>
+.s{font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif} .m{font-family:ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace}
+
+</style>
+<g stroke="#8b949e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M7 4.5c-1.7 0-2.5.8-2.5 2.5v3c0 1.2-.6 2-1.8 2 1.2 0 1.8.8 1.8 2v3c0 1.7.8 2.5 2.5 2.5"/><path d="M10 7h10M10 12h7M10 17h9"/></g>
+</svg>

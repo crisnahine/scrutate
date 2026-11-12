@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" aria-labelledby="t d" fill="none">
+<!-- written by tools/gen_assets.py; edit that, not this file -->
+<title id="t">Cross-repository search</title>
+<desc id="d">Icon: cross-repository search.</desc>
+<style>
+.s{font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif} .m{font-family:ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace}
+
+</style>
+<g stroke="#8b949e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M3 7.5V18c0 .8.7 1.5 1.5 1.5h7"/><path d="M7 4h4l1.5 2H19c.8 0 1.5.7 1.5 1.5V14c0 .8-.7 1.5-1.5 1.5H8.5C7.7 15.5 7 14.8 7 14V4Z"/></g>
+</svg>

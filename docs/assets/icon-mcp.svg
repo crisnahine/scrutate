@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" aria-labelledby="t d" fill="none">
+<!-- written by tools/gen_assets.py; edit that, not this file -->
+<title id="t">Mcp server</title>
+<desc id="d">Icon: MCP server.</desc>
+<style>
+.s{font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif} .m{font-family:ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace}
+
+</style>
+<g stroke="#8b949e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" fill="none"><rect x="4" y="4" width="16" height="7" rx="2"/><rect x="4" y="13" width="16" height="7" rx="2"/><path d="M8 7.5h.01M8 16.5h.01M12 7.5h4M12 16.5h4"/></g>
+</svg>

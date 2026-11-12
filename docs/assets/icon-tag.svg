@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" aria-labelledby="t d" fill="none">
+<!-- written by tools/gen_assets.py; edit that, not this file -->
+<title id="t">Name</title>
+<desc id="d">Icon: name.</desc>
+<style>
+.s{font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif} .m{font-family:ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace}
+
+</style>
+<g stroke="#8b949e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M3.5 12.6V5c0-.8.7-1.5 1.5-1.5h7.6l8 8a1.5 1.5 0 0 1 0 2.1l-7.5 7.5a1.5 1.5 0 0 1-2.1 0Z"/><path d="M8 8h.01"/></g>
+</svg>
