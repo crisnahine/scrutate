@@ -12,8 +12,10 @@ rust-version = "1.91"
 
 [profile.release]
 opt-level = 3
-lto = "thin"
-codegen-units = 4
+# one object, so the macOS order file can place every function a small search runs (ThinLTO
+# leaves most of them where they fall): a one-file search touched 25 fewer pages
+lto = "fat"
+codegen-units = 1
 debug = 0
 strip = true
 

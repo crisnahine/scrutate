@@ -5,18 +5,23 @@ The file lists the functions a small `scrutate grep` runs, so the linker puts th
 other and a search touches fewer pages of the 12 MB of code. ld64 places what it finds and
 passes over a name it does not find, so a stale file costs pages, never the build.
 
-usage: order_file.py [--dirs DIR...]  regenerate (macOS on Apple silicon, about 10 minutes: one
-                                      instrumented build, then two release links with a link map)
+usage: order_file.py [--dirs DIR...]  regenerate (macOS on Apple silicon, about 15 minutes: two
+                                      release links with a link map, each run under lldb)
        order_file.py --check          the share of the listed names the release links still have
 
-Names carry a hash of how their crate was built, which differs between `cargo build --release`
-and `cargo build --release --target aarch64-apple-darwin` (the release workflow): the file holds
-the names of both. Needs `rustup component add llvm-tools` and Xcode's c++filt.
+The functions are found by running each release link under lldb with a breakpoint on every
+function of its link map, so the names are those of that very link, the standard library's
+included. Names carry a hash of how their crate was built, which differs between `cargo build
+--release` and `cargo build --release --target aarch64-apple-darwin` (the release workflow): the
+file holds the names of both. The release profile links one object (fat LTO, one codegen unit),
+so ld64 can place every function; with ThinLTO it passes over the promoted `.llvm.N` functions
+and the local ones several objects hold. Needs lldb (Xcode's command line tools). On one machine
+processes started under lldb came to hang in dyld's open of their own executable; the tool gives
+up after a minute a search.
 """
 import argparse
+import json
 import os
-import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -53,48 +58,110 @@ def cargo_env(target_dir):
     return env
 
 
-def llvm_profdata():
-    sysroot = subprocess.run(["rustc", "--print", "sysroot"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
-    host = re.search(r"host: (\S+)", subprocess.run(["rustc", "-vV"], cwd=ROOT, capture_output=True, text=True, check=True).stdout).group(1)
-    path = os.path.join(sysroot, "lib", "rustlib", host, "bin", "llvm-profdata")
-    if not os.path.exists(path):
-        sys.exit("llvm-profdata is missing: rustup component add llvm-tools")
-    return path
+def link_map(target):
+    """The executable of a release link and {mangled name: [addresses]} of its __text symbols."""
+    tag = target or "host"
+    path = os.path.join(WORK, f"{tag}.map")
+    cmd = ["cargo", "rustc", "--release", "-p", "scrutate", "--bin", "scrutate", "--locked"] + (["--target", target] if target else [])
+    run(cmd + ["--", "-C", f"link-arg=-Wl,-map,{path}"], cwd=ROOT, env=cargo_env(os.path.join(ROOT, "target")))
+    exe = os.path.join(ROOT, "target", *([target] if target else []), "release", "scrutate")
+    symbols, text, mode = {}, None, None
+    for line in open(path, errors="replace"):
+        if line.startswith("# Sections"):
+            mode = "sec"
+        elif line.startswith("# Symbols"):
+            mode = "sym"
+        elif line.startswith("# Dead Stripped"):
+            break
+        elif line.startswith("#"):
+            continue
+        elif mode == "sec":
+            p = line.split("\t")
+            if len(p) >= 4 and p[3].strip() == "__text":
+                text = (int(p[0], 16), int(p[0], 16) + int(p[1], 16))
+        elif mode == "sym" and line.startswith("0x"):
+            p = line.rstrip("\n").split("\t")
+            if text and text[0] <= int(p[0], 16) < text[1]:
+                # several objects can hold a local function of one name
+                symbols.setdefault(p[2].split("]", 1)[1].strip(), []).append(int(p[0], 16))
+    return exe, symbols
 
 
-def demangle(names):
-    out = subprocess.run(["c++filt"], input="\n".join(names), capture_output=True, text=True, check=True).stdout.split("\n")
-    return out[: len(names)]
+def traced(exe, symbols, dirs):
+    """The functions of `symbols` that `exe` runs in the searches, first runs first."""
+    with tempfile.TemporaryDirectory() as tmp:
+        job = os.path.join(tmp, "job.json")
+        out = os.path.join(tmp, "out.json")
+        runs = [(["grep"] + args, where) for args in SEARCHES for where in dirs]
+        with open(job, "w") as f:
+            json.dump({"exe": exe, "out": out, "runs": runs, "addrs": symbols}, f)
+        # a fresh executable's first start is the one the system scans; under lldb it can hang there
+        subprocess.run([exe, "--version"], stdout=subprocess.DEVNULL, check=True)
+        try:
+            run(["lldb", "--batch", "--no-lldbinit", "-o", f"command script import {os.path.abspath(__file__)}"], env=dict(os.environ, ORDER_FILE_JOB=job), timeout=60 * len(runs))
+        except subprocess.TimeoutExpired:
+            sys.exit(f"lldb took over a minute a search on {exe}; is the process stuck before main?")
+        return json.load(open(out))
 
 
-def functions_run(dirs):
-    """The functions with a counter above zero in an instrumented build's runs, first runs first."""
-    target_dir = os.path.join(WORK, "instrumented")
-    prof = os.path.join(WORK, "profiles")
-    shutil.rmtree(prof, ignore_errors=True)
-    os.makedirs(prof)
-    env = cargo_env(target_dir)
-    env["RUSTFLAGS"] = f"-Cprofile-generate={prof}"
-    run(["cargo", "build", "--release", "-p", "scrutate", "--locked"], cwd=ROOT, env=env)
-    exe = os.path.join(target_dir, "release", "scrutate")
-    profdata = llvm_profdata()
-    names, seen = [], set()
+def __lldb_init_module(debugger, _dict):
+    """Inside lldb: run each search with a breakpoint on every function, noting the first hit."""
+    import lldb
 
-    def searches(dirs):
-        for i, args in enumerate(SEARCHES):
-            for k, where in enumerate(dirs):
-                raw = os.path.join(prof, f"{i}-{k}.profraw")
-                subprocess.run([exe, "grep"] + args, cwd=where, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                               env=dict(os.environ, LLVM_PROFILE_FILE=raw), check=False)
-                text = subprocess.run([profdata, "merge", "--text", "-o", "-", raw], capture_output=True, text=True, check=True).stdout
-                for name in ran(text):
-                    if name not in seen:
-                        seen.add(name)
-                        names.append(name)
+    job = json.load(open(os.environ["ORDER_FILE_JOB"]))
+    names = {addrs[0]: n for n, addrs in job["addrs"].items()}
+    debugger.SetAsync(False)
+    order, seen = [], set()
+    for args, where in job["runs"]:
+        target = debugger.CreateTarget(job["exe"])
+        info = target.GetLaunchInfo()
+        info.SetArguments(args, False)
+        info.SetWorkingDirectory(where)
+        info.AddOpenFileAction(0, "/dev/null", True, False)
+        info.AddOpenFileAction(1, "/dev/null", False, True)
+        info.SetLaunchFlags(info.GetLaunchFlags() | lldb.eLaunchFlagDisableASLR | lldb.eLaunchFlagStopAtEntry)
+        err = lldb.SBError()
+        process = target.Launch(info, err)
+        if not err.Success():
+            raise SystemExit(f"lldb could not start {job['exe']}: {err}")
+        slide = target.GetModuleAtIndex(0).GetObjectFileHeaderAddress().GetLoadAddress(target) - 0x100000000
+        at = {}
+        for a in names:
+            if a not in seen:
+                at[target.BreakpointCreateByAddress(a + slide).GetID()] = a
+        process.Continue()
+        while process.GetState() == lldb.eStateStopped:
+            for thread in process:
+                if thread.GetStopReason() == lldb.eStopReasonBreakpoint:
+                    bid = thread.GetStopReasonDataAtIndex(0)
+                    if bid in at:
+                        target.FindBreakpointByID(bid).SetEnabled(False)
+                        if at[bid] not in seen:
+                            seen.add(at[bid])
+                            order.append(names[at[bid]])
+            process.Continue()
+        debugger.DeleteTarget(target)
+    json.dump(order, open(job["out"], "w"))
+
+
+def generate(dirs):
+    os.makedirs(WORK, exist_ok=True)
+
+    def searched(dirs):
+        lines = [HEADER]
+        for target in (None, TARGET):
+            exe, symbols = link_map(target)
+            names = traced(exe, symbols, dirs)
+            # names ld64 would pass over if the profile went back to ThinLTO
+            kept = [n for n in names if ".llvm." not in n and len(symbols[n]) == 1]
+            print(f"{target or 'host'}: {len(names)} functions ran, {len(kept)} placeable", file=sys.stderr)
+            lines += [f"{n}\n" for n in kept]
+        with open(ORDER, "w") as f:
+            f.writelines(dict.fromkeys(lines))
+        print(f"{ORDER} has {len(dict.fromkeys(lines)) - 1} lines")
 
     if dirs:
-        searches(dirs)
-        return names
+        return searched([os.path.abspath(d) for d in dirs])
     # outside any repository, as the benchmark's directories are: a repository's ignore files
     # would bring in their own code
     with tempfile.TemporaryDirectory() as tree:
@@ -104,94 +171,13 @@ def functions_run(dirs):
         for i, d in enumerate(["src", "src/sub"]):
             with open(os.path.join(tree, d, f"{i}.rs"), "w") as f:
                 f.write("fn main() { println!(\"hello\"); }\n")
-        searches([tree, os.path.join(tree, "src")])
-    return names
-
-
-def ran(text):
-    lines = text.split("\n")
-    i = 0
-    while i < len(lines):
-        if not lines[i] or lines[i][0] in "#:":
-            i += 1
-            continue
-        name, n = lines[i], int(lines[i + 4])
-        counts = lines[i + 6 : i + 6 + n]
-        i += 6 + n
-        while i < len(lines) and lines[i]:
-            i += 1
-        if any(c != "0" for c in counts):
-            yield name.split(";", 1)[-1]  # a local function's name follows its file's
-
-
-def link_map(target):
-    """{mangled name: [object file leaf names]} of the __text symbols of a release link."""
-    tag = target or "host"
-    path = os.path.join(WORK, f"{tag}.map")
-    cmd = ["cargo", "rustc", "--release", "-p", "scrutate", "--bin", "scrutate", "--locked"] + (["--target", target] if target else [])
-    run(cmd + ["--", "-C", f"link-arg=-Wl,-map,{path}"], cwd=ROOT, env=cargo_env(os.path.join(ROOT, "target")))
-    objects, symbols, text, mode = {}, {}, None, None
-    for line in open(path, errors="replace"):
-        if line.startswith("# Object files"):
-            mode = "obj"
-        elif line.startswith("# Sections"):
-            mode = "sec"
-        elif line.startswith("# Symbols"):
-            mode = "sym"
-        elif line.startswith("#"):
-            continue
-        elif mode == "obj" and line.startswith("["):
-            idx, file = line.split("]", 1)
-            objects[idx.strip("[ ")] = os.path.basename(file.strip())
-        elif mode == "sec":
-            p = line.split("\t")
-            if len(p) >= 4 and p[3].strip() == "__text":
-                text = (int(p[0], 16), int(p[0], 16) + int(p[1], 16))
-        elif mode == "sym" and line.startswith("0x"):
-            p = line.rstrip("\n").split("\t")
-            if text and text[0] <= int(p[0], 16) < text[1]:
-                idx, name = p[2].split("]", 1)
-                symbols.setdefault(name.strip(), []).append(objects.get(idx.strip("[ "), ""))
-    return symbols
-
-
-def by_meaning(symbols):
-    """{demangled name without the LTO suffix: [mangled names]}."""
-    mangled = list(symbols)
-    plain = demangle([re.sub(r"\.llvm\.\d+$", "", m)[1:] for m in mangled])
-    out = {}
-    for m, d in zip(mangled, plain):
-        out.setdefault(d, []).append(m)
-    return out
-
-
-def generate(dirs):
-    os.makedirs(WORK, exist_ok=True)
-    names = functions_run(dirs)
-    wanted = demangle(names)
-    lines, kept = [HEADER], 0
-    maps = [link_map(None), link_map(TARGET)]
-    meanings = [by_meaning(m) for m in maps]
-    for d in dict.fromkeys(wanted):
-        found = False
-        for symbols, meaning in zip(maps, meanings):
-            for m in meaning.get(d, []):
-                found = True
-                files = symbols[m]
-                # ld64 does not place a local function that several objects hold, even named
-                # with its object (`file.o:name`)
-                if len(files) == 1:
-                    lines.append(f"{m}\n")
-        kept += found
-    with open(ORDER, "w") as f:
-        f.writelines(dict.fromkeys(lines))
-    print(f"{len(names)} functions ran, {kept} of them are in the links; {ORDER} has {len(set(lines)) - 1} lines")
+        return searched([tree, os.path.join(tree, "src")])
 
 
 def check():
     os.makedirs(WORK, exist_ok=True)
     listed = [l.rstrip("\n").split(":")[-1] for l in open(ORDER) if l.strip() and not l.startswith("#")]
-    have = set(link_map(None)) | set(link_map(TARGET))
+    have = set(link_map(None)[1]) | set(link_map(TARGET)[1])
     found = sum(n in have for n in dict.fromkeys(listed))
     total = len(dict.fromkeys(listed))
     print(f"{found} of {total} names of {os.path.relpath(ORDER, ROOT)} are in the release links ({100 * found / total:.0f}%)")
