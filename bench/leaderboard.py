@@ -889,13 +889,17 @@ def main() -> int:
             print(f"{r['id']}: {r['status']}", file=sys.stderr)
         json.dump(data, open(a.out, "w"), indent=1)
         return 0
+    env, was = environment(), data.get("environment", {})
+    same = all(env.get(k) == was.get(k) for k in ("scrutate_sha256", "scrutate_base_sha256"))
     if a.redo_unstable:
         # the same run, continued: its environment and settings stand, so the binaries must be the same
-        env, was = environment(), data.get("environment", {})
-        if any(env.get(k) != was.get(k) for k in ("scrutate_sha256", "scrutate_base_sha256")):
+        if not same:
             raise SystemExit("--redo-unstable: the scrutate binary, or its base, is not the one this run measured")
     else:
-        data["environment"] = environment()
+        # rows kept from an earlier run would get this binary's hash over another binary's timings
+        if data["benchmarks"] and not same and not (a.force and not a.only):
+            raise SystemExit(f"{a.out} holds rows that another scrutate binary, or base, measured: move the file away, or measure every row again with --force")
+        data["environment"] = env
         data["corpora"] = json.load(open(os.path.join(a.corpora, "manifest.json")))
         data["settings"] = {"runs": a.runs, "cache": a.cache, "cold_prepare": a.cold_prepare, "max_load": a.max_load, "warmup": 1,
                             "contender": a.contender, "blocks": a.blocks, "short_metric_runs": a.short_metric_runs}
