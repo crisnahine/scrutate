@@ -181,6 +181,15 @@ First release.
   file they are part of, and a definition with its windows is one result. A definition starts
   at the attribute lines right above it (Rust `#[...]`, decorators and annotations), so
   `#[get("/users")]` above a handler is found with it.
+- An index built by a newer scrutate is no longer rebuilt by an older one. It is read as it is
+  when only the parsing rules are newer, and refused with exit 2 and a clear message when its
+  schema, model or text format is newer; `scrutate index --force` rebuilds it with the version
+  at hand.
+- A documentation comment whose lines carry no comment mark (a GNU style C block, a JSDoc line
+  without a star, Elm `{-| -}`, Lua `--[[ ]]`, Ruby `=begin`, a Vim comment) is in its
+  definition's documentation only, no longer in a window as well. Without a grammar, the
+  comment above a definition is its documentation in the comment marks of its language (OCaml
+  `(* *)`, Fortran `!`, Pascal `{ }`, Haskell `{- -}`, PowerShell `<# #>` and more).
 - The language server no longer goes to the plain namesake when a call has a receiver:
   `o.valid?()` goes to `valid?`, `self.save!` to `save!`, `M.ok?(x)` to `ok?`,
   `Main.update!(x)` to `update!`, `step' y` to `step'` (at its equation, below the type

@@ -99,13 +99,13 @@ def _extract(path_root):
 def extract(cache: str, pkg_list: str | None) -> None:
     """pkg_list: file with one package directory name per line (the shipped model's 140 packages are
     listed in MODEL_CARD.md); without it, every local package that is not a DEV/TEST package."""
-    from groups import TEST
+    from groups import SEALED, TEST
 
     if pkg_list:
         pkgs = [p for p in open(pkg_list).read().split() if os.path.isdir(os.path.join(SP, p))]
     else:
         pkgs = [p for p in os.listdir(SP) if os.path.isdir(os.path.join(SP, p)) and not p.endswith(".dist-info")]
-    banned = set(DEV) | set(TEST) | {"pip", "setuptools", "pkg_resources", "_distutils_hack"}  # pip vendors rich
+    banned = set(DEV) | set(TEST) | set(SEALED) | {"pip", "setuptools", "pkg_resources", "_distutils_hack"}  # pip vendors rich
     assert not (set(pkgs) & banned), sorted(set(pkgs) & banned)
     dirs = [os.path.join(SP, p) for p in sorted(pkgs) if p not in banned and (not p.startswith("_") or p in PRETRAIN)]
     files = []

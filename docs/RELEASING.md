@@ -30,7 +30,11 @@ the parsing rules an index was built with, and the index keeps it in `meta` as `
 After a release, a change to `langs.rs`, `parse.rs`, `text.rs`, `parse.py` or `text.py` raises
 it by one in both files, so an index of the older rules reads every file again on its next
 update. 0.1.0 ships with 2: builds with the first rules were in use before the release, and
-their indexes must not keep chunks cut by those rules.
+their indexes must not keep chunks cut by those rules. Raise `SCHEMA_VERSION` when the database
+layout changes, `MODEL_REVISION` when the embedded semantic model changes, and the text index
+`FORMAT` when its files change. Each of the four only ever goes up: a binary leaves an index of
+a higher number alone (it reads a newer content revision as it is and refuses the other
+three), so two versions on one checkout never rebuild the index in turn.
 
 ## 2. Benchmarks on the release binary
 

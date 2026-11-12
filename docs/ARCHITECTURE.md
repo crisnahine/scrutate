@@ -176,7 +176,9 @@ windows. Each definition becomes a *chunk* with fields name / qualified name / s
 documentation / body / path, plus call edges and imports. A definition's documentation is the
 comment block right above it, with no blank line between; attributes, decorators, annotations
 and type specs (Rust `#[...]`, `@Get(...)`, `@override`, Elixir `@spec`, Erlang `-spec`) may
-stand between them. Elixir's `@doc` and `@moduledoc`, a Julia docstring and Haskell haddock
+stand between them. The documentation is the lines of those comment nodes, whatever marks its
+lines carry (a GNU style C block, an Elm `{-| -}`, a Lua `--[[ ]]`), and no window repeats
+them; a comment a blank line above a definition is in a window. Elixir's `@doc` and `@moduledoc`, a Julia docstring and Haskell haddock
 comments count as documentation, and in Python and Starlark the docstring after that comment
 does too. A Haskell or Elm function starts at its type signature, and the
 comment above the signature is its documentation. Adding a language is a registry entry
@@ -252,9 +254,15 @@ folded, so two spellings of one accented name are one name.
   are read) with automatic **rebuild**, **cancellation** (an update checks a cancel flag between
   batches of 256 files and rolls back; a panic inside an update rolls back at once, and the next
   update clears a transaction left open), a **content revision** (`content_rev` in `meta`: an
-  index built with other parsing rules reads every file again on its next full update),
-  **schema and model versioning** (a different schema or model clears and re-indexes inside the
-  database so concurrent processes stay consistent), and multi-process safety (busy-timeout +
+  index built with older parsing rules reads every file again on its next full update),
+  **schema and model versioning** (an older schema or another model of an index without a model
+  revision clears and re-indexes inside the database so concurrent processes stay consistent),
+  **an order between versions** (an index records the schema version, content revision and
+  model revision of the scrutate that built it, and a binary rebuilds or re-reads only an index
+  older than itself: a newer content revision is read as it is and never updated, a newer
+  schema version, model revision or text index format is refused with exit 2 until
+  `scrutate index --force` rebuilds it, so an old `serve` and a new command line on one
+  checkout do not rebuild the index in turn), and multi-process safety (busy-timeout +
   retry on `SQLITE_BUSY`, never deleting a live database; a read never waits for another
   process's writer and answers from the last committed index). A `.scrutate` that is a
   symbolic link, or that holds one, is refused, and files of fixed names are written with remove
