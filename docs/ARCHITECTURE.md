@@ -205,7 +205,8 @@ capabilities those crates do not provide rather than re-implementing what they a
   calls against ripgrep's 526,000.
 - **One way in**: `instant::search` takes a `Query` (the `Pattern`, invert, the report: lines,
   counts or files, context, limits, the shape of records), a `Files` (the roots of a walk with its
-  rules, or a list of files under a root, and the threads) and the caller's cancel flag, which it
+  rules, a list of files under a root, or text held in memory with a name for each, and the
+  threads) and the caller's cancel flag, which it
   reads and never sets. Results leave as `Record`s, each of one kind (match, context, count, file,
   note), or as plain lines the search threads write (`Output::Plain`), which makes no record. A
   record is 104 bytes, the size one result had when a flag and a sentinel line number told its kind.
@@ -215,6 +216,15 @@ capabilities those crates do not provide rather than re-implementing what they a
   trigram condition are built from that, so a file the index lets through is judged by the same
   pattern. Smart case counts only letters that stand for themselves (`\S` is not uppercase), as
   ripgrep does.
+- **Byte sources** (`source.rs`): one module holds every rule of how a source is read: the first
+  read, the byte-order mark, the NUL byte, the size thresholds, the split of a large file, the
+  long line and the searcher's setup, each written once. A source gives its size when it knows
+  it, positioned reads when it has them, and one sequential read. A file on disk gives all
+  three; standard input and an archive member give only the read (a member also asks for the
+  line limit, and the members of one archive share a searcher); text held in memory gives all
+  three without a system call. The rules are generic over the source, so the file path is
+  compiled for files alone, as it was. A test searches the same bytes as a file and as text in
+  memory, over every threshold and option shape, and gets the same records and output.
 - **Files without line breaks**: a large file whose ranges cannot be cut at a newline is read once
   into a buffer of its exact size (checked for NUL bytes as it is read, so binary handling is
   unchanged) and searched as a slice; the stream reader would grow its buffer by doubling.

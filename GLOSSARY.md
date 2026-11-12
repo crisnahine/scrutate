@@ -22,8 +22,8 @@ the text, its mode, case, whole words, multi-line), whether lines that do not ma
 the report (lines, counts or files), context lines and limits.
 
 **File set**: which files an Engine A search reads (`instant::Files`): the roots of a walk with its
-rules (hidden files, ignore files, globs, types, depth, size), or a list of files under a root, and
-the threads that read them.
+rules (hidden files, ignore files, globs, types, depth, size), a list of files under a root, or
+text held in memory with a name for each, and the threads that read them.
 
 **Record**: one Engine A result, of one kind (`instant::Record`): a match, a context line, a count,
 a file, or a note on a file (its search stopped at a NUL byte).
@@ -93,6 +93,11 @@ index's trigram condition are both built from it.
 **Run**: one Engine A search in progress (`instant::Run`): the matcher, query, file set, counters,
 stop flag and output target that every file search of it shares. The stop flag is set by the
 caller's cancel flag or by the search itself (enough matches, a closed pipe).
+
+**Byte source**: what one Engine A file search reads (`source.rs`): a file on disk, standard
+input, an archive member or text held in memory. It gives its size when it knows it, positioned
+reads when it has them, and one sequential read; the read rules (first read, byte-order mark, NUL
+byte, size thresholds, split, long line, searcher setup) are written once on top of that.
 
 **Repository files**: which files belong to the repository for each index (`files.rs`): the code
 index's list (hidden files included, cache and dependency directories skipped), Engine A's walk

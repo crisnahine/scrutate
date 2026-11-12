@@ -1607,7 +1607,7 @@ fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
     interrupt::install(Arc::clone(&cancel));
     let roots = match &f.paths {
         Paths::Walk(roots) => roots.clone(),
-        Paths::List { .. } => Vec::new(),
+        Paths::List { .. } | Paths::Memory(_) => Vec::new(),
     };
     let colour = color_choice(out.no_color) != ColorChoice::Never;
     let plain = !out.json && !colour && !out.sort && !out.symbols && q.report == Report::Lines;

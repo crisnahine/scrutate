@@ -18,6 +18,10 @@ First release.
   depth and size limits, type globs); per-file batched streaming; Ctrl-C and broken-pipe
   cancellation; deterministic `--sort`; JSONL output (schema 1); exit codes 0/1/2/130.
 - Differentially tested against ripgrep on random corpora and patterns with zero disagreements.
+- Text that is not on disk can be searched: `Paths::Memory` holds texts with a name each, and a
+  search of them gives the records and output the same bytes in a file give. Every rule of how a
+  source is read lives in one module (`source.rs`) over a file, standard input, an archive member
+  or text in memory.
 - `-e PATTERN` (repeatable) for several patterns; each line of a multi-line match is printed with its
   own line number. The argument after `-e` is the pattern whatever it starts with (`-e '->'`).
 - `grep -i` and `grep -F -i` with a literal pattern use 37 to 50% less CPU time on one thread
