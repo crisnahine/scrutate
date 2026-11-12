@@ -2365,28 +2365,46 @@ mod split {
     }
 
     /// The whole file when it holds no NUL byte (a slice search checks only its start for binary
-    /// data) and is still `size` bytes long. Each thread fills its own part of the buffer: the time
-    /// goes to the kernel copying pages into fresh memory, and that work spreads as far as opening
-    /// files does (100 MB on macOS: 12.6 ms on one thread, 4.0 ms on 5, 6.7 ms on 11).
+    /// data), no line break but its last byte (lines too long for the probes to see go to the
+    /// stream, which holds a few times the longest line) and is still `size` bytes long. The threads
+    /// take 1 MiB pieces in file order, so a line break stops them about one line plus a piece each
+    /// into the file. The time goes to the kernel copying pages into fresh memory, and that work
+    /// spreads as far as opening files does (100 MB on macOS: 12.6 ms on one thread, 4.0 ms on 5,
+    /// 6.7 ms on 11).
     fn whole(file: &File, size: u64, threads: usize) -> Option<Vec<u8>> {
+        const PIECE: usize = 1 << 20;
         let mut buf = vec![0u8; usize::try_from(size).ok()?];
-        let part = buf.len().div_ceil(threads.max(1)).max(1 << 20);
-        let filled = std::thread::scope(|s| {
-            let hs: Vec<_> = buf.chunks_mut(part).enumerate().map(|(i, b)| s.spawn(move || fill(file, b, (i * part) as u64))).collect();
-            // the scope waits for the threads this stops joining at the first failure
-            hs.into_iter().all(|h| h.join().unwrap_or(false))
-        });
-        filled.then_some(buf)
+        let stop = AtomicBool::new(false);
+        {
+            let pieces = std::sync::Mutex::new(buf.chunks_mut(PIECE).enumerate());
+            let work = || {
+                while !stop.load(Ordering::Relaxed) {
+                    let Some((i, b)) = pieces.lock().ok().and_then(|mut p| p.next()) else { return };
+                    if !fill(file, b, (i * PIECE) as u64, size) {
+                        stop.store(true, Ordering::Relaxed);
+                    }
+                }
+            };
+            std::thread::scope(|s| {
+                for _ in 1..threads.clamp(1, size.div_ceil(PIECE as u64) as usize) {
+                    s.spawn(work);
+                }
+                work();
+            });
+        }
+        (!stop.into_inner()).then_some(buf)
     }
 
-    /// Fills `buf` from `at` in the file; false on a NUL byte, a failed read or a shorter file.
-    fn fill(file: &File, buf: &mut [u8], at: u64) -> bool {
+    /// Fills `buf` from `at` in the file; false on a NUL byte, a line break before the file's last
+    /// byte, a failed read or a shorter file.
+    fn fill(file: &File, buf: &mut [u8], at: u64, size: u64) -> bool {
         let mut done = 0;
         while done < buf.len() {
-            // a piece at a time, so the NUL check reads it while it is still in cache
-            let end = buf.len().min(done + (1 << 20));
-            match read_at(file, &mut buf[done..end], at + done as u64) {
-                Ok(n) if n > 0 && memchr::memchr(0, &buf[done..done + n]).is_none() => done += n,
+            match read_at(file, &mut buf[done..], at + done as u64) {
+                Ok(n) if n > 0 => match memchr::memchr2(0, b'\n', &buf[done..done + n]) {
+                    Some(i) if buf[done + i] == 0 || at + (done + i) as u64 + 1 != size => return false,
+                    _ => done += n,
+                },
                 _ => return false,
             }
         }
@@ -3097,6 +3115,30 @@ mod tests {
         let lines: Vec<u64> = rx.into_iter().flatten().map(|h| h.line).collect();
         assert_eq!(lines, [1, 150_002, 1, 150_002]);
         assert!(fw.small.capacity() <= SMALL_FILE as usize + 1, "{}", fw.small.capacity());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn only_a_file_of_one_line_is_read_whole_between_probes() {
+        let root = std::env::temp_dir().join(format!("scrutate_whole_read_{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("a.txt");
+        // longer than the 1 MiB pieces `whole` reads
+        let line = "x".repeat(3 << 19);
+        for threads in [1, 3] {
+            let o = Options { pattern: "needle".into(), mode: Mode::Literal, threads, ..Options::default() };
+            let matcher = build_matcher(&o).unwrap();
+            let (c, cancel) = (Counters::default(), AtomicBool::new(false));
+            let (tx, _rx) = mpsc::channel();
+            let run = Run { matcher: &matcher, o: &o, c: &c, cancel: &cancel, tx: &tx, plain: None };
+            for (text, whole) in [(format!("{line}\n").repeat(4), false), (format!("{line}\n"), true), (line.clone(), true)] {
+                std::fs::write(&path, &text).unwrap();
+                let file = std::fs::File::open(&path).unwrap();
+                // probes every 64 MiB, so none falls inside this file
+                let got = split::search(&run, &file, text.len() as u64, 64 << 20, &Arc::from("a.txt"));
+                assert_eq!(matches!(got, split::Outcome::Buffer(_)), whole, "{threads} threads, {} bytes", text.len());
+            }
+        }
         std::fs::remove_dir_all(&root).unwrap();
     }
 
