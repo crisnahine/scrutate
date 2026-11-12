@@ -116,6 +116,35 @@ fn json_lines_schema_and_modes() {
     assert!(out.lines().all(|l| l.contains("make_widget_3")) && out.lines().count() >= 2, "{out}");
 }
 
+#[cfg(unix)]
+#[test]
+fn a_repository_s_own_config_file_cannot_make_grep_follow_links() {
+    let r = python_repo("config_follow");
+    let outside = r.root.parent().unwrap().join(format!("{}_outside", r.root.file_name().unwrap().to_string_lossy()));
+    let _ = std::fs::remove_dir_all(&outside);
+    std::fs::create_dir_all(outside.join("keys")).unwrap();
+    std::fs::write(outside.join("keys/creds.env"), "SECRET_TOKEN=hunter2\n").unwrap();
+    std::os::unix::fs::symlink(&outside, r.root.join("vendor_link")).unwrap();
+    r.write(".scrutate.toml", b"[grep]\nfollow = true\n");
+    let (code, out, err) = r.run(&["grep", "SECRET_TOKEN", "."]);
+    assert_eq!((code, out.as_str()), (1, ""), "{err}");
+    assert!(err.contains("follow") && err.contains("ignored"), "{err}");
+    // the user's own word still follows: the flag, the environment, a file named by SCRUTATE_CONFIG
+    let (_, out, _) = r.run(&["grep", "-L", "SECRET_TOKEN", "."]);
+    assert!(out.contains("creds.env"), "{out}");
+    let (_, out, _) = run_in(&r.root, &["grep", "SECRET_TOKEN", "."], &[("SCRUTATE_GREP_FOLLOW", "true")]);
+    assert!(out.contains("creds.env"), "{out}");
+    let own = outside.join("own.toml");
+    std::fs::write(&own, "[grep]\nfollow = true\n").unwrap();
+    let (_, out, err) = run_in(&r.root, &["grep", "SECRET_TOKEN", "."], &[("SCRUTATE_CONFIG", own.to_str().unwrap())]);
+    assert!(out.contains("creds.env") && !err.contains("ignored"), "{out} {err}");
+    // `follow = false` in the repository's file is its right
+    r.write(".scrutate.toml", b"[grep]\nfollow = false\n");
+    let (_, _, err) = r.run(&["grep", "SECRET_TOKEN", "."]);
+    assert!(!err.contains("ignored"), "{err}");
+    let _ = std::fs::remove_dir_all(&outside);
+}
+
 #[test]
 fn config_file_sets_defaults_but_command_line_wins() {
     let r = python_repo("config");

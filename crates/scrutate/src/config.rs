@@ -73,6 +73,18 @@ pub fn locate(root: &Path) -> Option<PathBuf> {
     base.map(|b| b.join("scrutate").join("config.toml")).filter(|p| p.is_file())
 }
 
+/// Takes out of a repository's own file what only the user may decide. `follow` would let a
+/// search of a cloned repository leave it through a link; the file's other settings stay inside
+/// the tree. Says so once on stderr.
+pub fn confine(cfg: &mut Config) {
+    if cfg.grep.follow == Some(true) {
+        cfg.grep.follow = None;
+        eprintln!(
+            "[scrutate] follow = true in this repository's .scrutate.toml is ignored: only you can make a search follow links (-L, SCRUTATE_GREP_FOLLOW, or your own configuration file)"
+        );
+    }
+}
+
 pub fn load(path: &Path) -> Result<Config> {
     let text = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     toml::from_str(&text).with_context(|| format!("parse {}", path.display()))

@@ -181,6 +181,14 @@ First release.
   file they are part of, and a definition with its windows is one result. A definition starts
   at the attribute lines right above it (Rust `#[...]`, decorators and annotations), so
   `#[get("/users")]` above a handler is found with it.
+- `follow = true` in a repository's own `.scrutate.toml` is ignored with a warning, so a cloned
+  repository cannot make `scrutate grep` leave it through a symbolic link; `-L`, the environment
+  and your own configuration file still follow.
+- A name typed with its punctuation is found by that name and comes first: `search 'valid?'`,
+  `search Get-Greeting`, `search 'list->vector'`, `search 'Rec.valid?'`. A test file is told by
+  its name in more languages (`button.test.jsx`, `parser_test.rs`, `parser_spec.rb`,
+  `WidgetTest.kt`, a directory `MyApp.Tests`). `similar` takes the location of a window, and
+  `symbol`, `callers` and `refs --def` say that such a location is outside every definition.
 - `callers` lists calls written outside every definition (a script's main block, the last line
   of a shell script, top-level JavaScript), under the module chunk or the window that holds the
   line, and `callees FILE:LINE` answers for such a line.

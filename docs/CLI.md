@@ -41,7 +41,10 @@
   file in that directory is used. The globs of a `.scrutate.toml` match each path from the file's
   directory, whatever path is searched and wherever the command runs. A path outside that
   directory and a path named on the command line are not filtered by them, and `-g` or
-  `SCRUTATE_GREP_GLOBS` replaces them. `scrutate config` names the file and shows what is in
+  `SCRUTATE_GREP_GLOBS` replaces them. `follow = true` in a repository's own `.scrutate.toml`
+  is ignored with a warning: a search follows links only on your word (`-L`,
+  `SCRUTATE_GREP_FOLLOW`, the file `$SCRUTATE_CONFIG` names, or your own
+  `config.toml`). `scrutate config` names the file and shows what is in
   effect, with the directory the globs match from. A file with an unknown field stops every command that reads it (exit 2, naming the
   file and the field); `--help`, `--version`, `config` and `completions` still run. Precedence: command line >
   environment variable > configuration file > built-in default. Every configurable option names its

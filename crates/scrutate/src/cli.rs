@@ -705,6 +705,7 @@ pub fn run() -> Result<i32> {
             .map(|mut cfg| {
                 if local {
                     cfg_globs = std::mem::take(&mut cfg.grep.globs);
+                    crate::config::confine(&mut cfg);
                 }
                 crate::config::apply_as_env(&cfg)
             })
