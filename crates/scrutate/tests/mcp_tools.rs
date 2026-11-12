@@ -665,6 +665,27 @@ fn the_repository_s_own_exclude_dirs_applies_whatever_directory_the_server_runs_
 }
 
 #[test]
+fn an_exclude_dirs_name_with_a_backslash_excludes_nothing() {
+    let mut files = vec![
+        (".scrutate.toml", "[index]\nexclude_dirs = [\"a\\\\b\", \"x\\\\\"]\n"),
+        ("ab/b.py", "def ab_fn():\n    return 1\n"),
+        ("src/s.py", "def s_fn():\n    return 2\n"),
+    ];
+    if cfg!(unix) {
+        files.push(("a\\b/c.py", "def back_fn():\n    return 3\n"));
+    }
+    let mut r = Repo::new("exclude_backslash", &files);
+    let grep = r.ok("grep_code", json!({"pattern": "_fn"}));
+    assert!(grep.contains("ab/b.py") && grep.contains("src/s.py"), "{grep}");
+    assert!(r.ok("find_symbol", json!({"name": "ab_fn"})).starts_with("ab/b.py:1-2"));
+    if cfg!(unix) {
+        assert!(grep.contains("b/c.py"), "{grep}");
+        let found = r.ok("find_symbol", json!({"name": "back_fn"}));
+        assert!(found.contains("b/c.py:1-2"), "{found}");
+    }
+}
+
+#[test]
 fn similar_code_reads_a_location_as_the_other_tools_read_it() {
     let body = "def area(w, h):\n    scaled = compute_scale(w) * adjust_height(h)\n    return finalize_area(scaled, w, h)\n";
     let mut r = Repo::new("similar_spellings", &[("src/geo.py", body), ("src/geo_copy.py", body)]);

@@ -130,7 +130,7 @@ def list_files(root: str) -> list[str]:
     skip = (SKIP_DIRS - SKIP_UNLESS_GIT) if _in_git(root) else set(SKIP_DIRS)
     # the variable, when set (empty too), replaces the list of the root's own .scrutate.toml
     named = split_names(os.environ["SCRUTATE_INDEX_EXCLUDE_DIRS"]) if "SCRUTATE_INDEX_EXCLUDE_DIRS" in os.environ else config_excludes(root)
-    skip |= {n for n in named if n not in (".", "..") and "/" not in n and os.sep not in n}
+    skip |= {n for n in named if n not in (".", "..") and "/" not in n and "\\" not in n and os.sep not in n}
     if not files:
         for dp, dns, fns in os.walk(root):
             dns[:] = [d for d in dns if d not in skip]

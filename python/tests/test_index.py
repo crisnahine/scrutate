@@ -251,6 +251,21 @@ def test_an_escaped_comma_is_part_of_an_excluded_directory_name(tmp_path, monkey
     assert list_files(str(tmp_path)) == ["a.py", "dir/i.py", "gen/h.py"]
 
 
+def test_an_excluded_name_with_a_backslash_excludes_nothing(tmp_path, monkeypatch):
+    from scrutate_ref.index import list_files
+
+    files = {"ab/a.py": "x = 1\n", "src/a.py": "x = 1\n"}
+    if os.sep == "/":
+        files["a\\b/a.py"] = "x = 1\n"
+    write_repo(str(tmp_path), files)
+    monkeypatch.delenv("SCRUTATE_INDEX_EXCLUDE_DIRS", raising=False)
+    (tmp_path / ".scrutate.toml").write_text('[index]\nexclude_dirs = ["a\\\\b", "x\\\\"]\n')
+    want = sorted([".scrutate.toml", *files])
+    assert list_files(str(tmp_path)) == want
+    monkeypatch.setenv("SCRUTATE_INDEX_EXCLUDE_DIRS", r"a\b,x\ ")
+    assert list_files(str(tmp_path)) == want
+
+
 ENGINE = os.environ.get("SCRUTATE_BIN", os.path.join(os.path.dirname(__file__), "..", "..", "target", "release", "scrutate"))
 
 

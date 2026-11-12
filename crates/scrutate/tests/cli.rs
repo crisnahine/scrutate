@@ -1221,6 +1221,28 @@ fn exclude_dirs_follows_the_index_wherever_a_command_starts() {
 }
 
 #[test]
+fn an_exclude_dirs_name_with_a_backslash_excludes_nothing_in_batch() {
+    let r = Repo::new("excludebackslash");
+    r.write(".git/HEAD", b"ref: refs/heads/main\n");
+    r.write(".scrutate.toml", b"[index]\nexclude_dirs = [\"a\\\\b\", \"x\\\\\"]\n");
+    r.write("ab/b.py", b"def ab_fn():\n    return 1\n");
+    r.write("src/s.py", b"def s_fn():\n    return 2\n");
+    if cfg!(unix) {
+        r.write("a\\b/c.py", b"def back_fn():\n    return 3\n");
+    }
+    r.write("q.jsonl", b"{\"op\": \"grep_code\", \"pattern\": \"_fn\"}\n{\"op\": \"find_symbol\", \"name\": \"back_fn\"}\n");
+    // in the variable, `\,` is a comma inside a name and any other backslash is kept, so these are `a\b` and `x\`
+    for env in [&[][..], &[("SCRUTATE_INDEX_EXCLUDE_DIRS", "a\\b, x\\")]] {
+        let (code, out, err) = run_in(&r.root, &["batch", "q.jsonl"], env);
+        assert_eq!(code, 0, "{env:?}: {err}");
+        assert!(!out.contains("error") && out.contains("ab/b.py") && out.contains("src/s.py"), "{env:?}: {out}");
+        if cfg!(unix) {
+            assert!(out.lines().all(|l| l.contains("a\\\\b/c.py")), "{env:?}: {out}");
+        }
+    }
+}
+
+#[test]
 fn serve_and_watch_in_a_subdirectory_use_the_index_above() {
     use std::io::BufRead;
     let r = nested_repo("subserve");

@@ -70,8 +70,8 @@ const MAX_CONFIG_EXCLUDES: usize = 1000;
 
 /// Directory names the code index of `root` never enters: `SKIP_DIRS` (less `SKIP_UNLESS_GIT`
 /// inside a git repository) plus those in `SCRUTATE_INDEX_EXCLUDE_DIRS`, or when it is not set,
-/// in `[index] exclude_dirs` of `<root>/.scrutate.toml`. A name with a path separator, `.` and
-/// `..` name no directory and are dropped.
+/// in `[index] exclude_dirs` of `<root>/.scrutate.toml`. A name with a path separator or a
+/// backslash, `.` and `..` name no directory and are dropped.
 fn skip_dirs(root: &Path) -> Vec<String> {
     let git = in_git(root);
     let mut skip: Vec<String> = SKIP_DIRS.iter().filter(|d| !(git && SKIP_UNLESS_GIT.contains(d))).map(|s| s.to_string()).collect();
@@ -79,7 +79,8 @@ fn skip_dirs(root: &Path) -> Vec<String> {
         Ok(v) => split_names(&v),
         Err(_) => config_excludes(root),
     };
-    skip.extend(named.into_iter().filter(|n| n != "." && n != ".." && !n.chars().any(std::path::is_separator)));
+    // a backslash is a separator on Windows and an escape in the `!name` glob of `grep_code`
+    skip.extend(named.into_iter().filter(|n| n != "." && n != ".." && !n.chars().any(|c| std::path::is_separator(c) || c == '\\')));
     skip
 }
 
