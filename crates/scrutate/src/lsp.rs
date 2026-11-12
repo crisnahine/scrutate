@@ -563,6 +563,15 @@ impl Server {
         let Some((text, a, b)) = self.word_in_line(s, p)? else { return Ok(Value::Null) };
         let (ident, before) = (&text[a..b], &text[..a]);
         let here = p["textDocument"]["uri"].as_str().and_then(|u| self.rel(u));
+        // the definition the resolver ties the cursor to, as references takes it
+        if let Some(rel) = &here {
+            let line = p["position"]["line"].as_u64().unwrap_or(0);
+            if let Ok((id, _)) = crate::resolve::Resolver::new(&s.ix)?.resolve_at(rel, line + 1, before.len(), ident) {
+                if let Some(d) = s.ix.chunk(id)? {
+                    return Ok(json!([self.lines().location(&d.path, d.start, d.end, &d.name)]));
+                }
+            }
+        }
         // the run up to the word (`my-trim`, `Foo::Bar` in `Foo::Bar.new`), then the whole run as
         // one name (`get-user` from `get`) unless the word is the owner of what follows
         let (start, end) = run_around(&text, a, b);

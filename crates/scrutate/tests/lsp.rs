@@ -373,6 +373,28 @@ fn definition_takes_the_name_with_dashes_arrows_and_colons_around_the_cursor() {
     child.wait().unwrap();
 }
 
+#[test]
+fn definition_and_references_name_the_same_method_of_a_variable_s_class() {
+    let r = Repo::new("same_def");
+    let shop = "class Order:\n    def total(self):\n        return 1\n\n\nclass Item:\n    def total(self):\n        return 2\n\n\ndef main():\n    item = Order()\n    return item.total()\n";
+    r.write("shop.py", shop);
+    let mut child = Command::new(BIN).arg("lsp").current_dir(&r.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
+    c.request("initialize", json!({"processId": null, "rootUri": uri(&r.root), "capabilities": {}}));
+    c.notify("initialized", json!({}));
+    let pos = json!({"textDocument": {"uri": uri(&r.root.join("shop.py"))}, "position": {"line": 12, "character": 16}});
+    let def = c.request("textDocument/definition", pos.clone());
+    assert_eq!(places(&def["result"]), [("shop.py".to_string(), 1, 8)], "{def}");
+    let mut refs = pos.clone();
+    refs["context"] = json!({"includeDeclaration": true});
+    let refs = c.request("textDocument/references", refs);
+    assert_eq!(places(&refs["result"]).first(), Some(&("shop.py".to_string(), 1, 8)), "{refs}");
+    c.request("shutdown", Value::Null);
+    c.notify("exit", Value::Null);
+    drop(c);
+    child.wait().unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn a_backslash_in_a_unix_file_name_stays_in_the_uri() {
