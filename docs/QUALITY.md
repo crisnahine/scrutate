@@ -39,7 +39,8 @@ gave the same benchmark files, rows and ranker, byte for byte. Two guards watch 
 
 `crates/scrutate/tests/ranking_pins.rs`, in `cargo test` on every platform CI runs, pins every
 candidate, feature and score of six queries on a small tree with the bundled models, bit for bit
-(docs/ARCHITECTURE.md says why the bits are the same on every platform). It sees a feature that
+(docs/ARCHITECTURE.md says why the bits are the same on every platform, and on which they
+were run). It sees a feature that
 moves in its last digit; it does not say whether ranking got better or worse, and it covers five
 small files, not every language or every path of the scan (the clustered vector scan of large
 segments is not on it).

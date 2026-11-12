@@ -410,7 +410,9 @@ ratios of counts. Where its result is rounded to float32 at once (count features
 within one unit in the last place gives the same float32: checked for every count up to 200,000
 and every idf of an index of up to 1,000 chunks. In the vector weights the result stays float64,
 and the fixture keeps those counts at 7 or less, whose logarithms every libm rounds alike. So the
-pins are exact on every platform CI runs. A Python reference
+pins are meant to be exact on every platform CI runs: they were run on macOS arm64 and on Linux
+arm64 with glibc and gave the same bits; x86_64, musl and Windows rest on the argument above
+until CI runs there. A Python reference
 engine used to mirror this arithmetic bit for bit, and `bench/parity.py` compared the two; that
 mirror ended, because it covered 7 of the 73 grammars and every change was written twice.
 Vector dot products are summed in
