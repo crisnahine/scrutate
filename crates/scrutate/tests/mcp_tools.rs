@@ -160,17 +160,39 @@ fn read_code_answers_the_same_for_an_outside_path_whether_or_not_it_exists() {
 #[test]
 fn a_path_that_leaves_the_root_by_its_parts_is_refused_without_a_look() {
     let mut r = Repo::new("lexical", &[("a.py", "def f():\n    return 1\n")]);
-    // the same file through a spelling that is not under the root as the index knows it: on
-    // macOS the temporary directory is reached through a link
-    let alias = std::env::temp_dir().join(r.root.file_name().unwrap()).join("a.py");
-    if !alias.starts_with(&r.root) && alias.is_file() {
-        let text = r.err("read_code", json!({"path": alias.to_string_lossy()}));
+    // the same file through a spelling that is not under the root as the index knows it
+    #[cfg(unix)]
+    {
+        let alias = r.root.with_file_name(format!("{}_alias", r.root.file_name().unwrap().to_string_lossy()));
+        let _ = fs::remove_file(&alias);
+        std::os::unix::fs::symlink(&r.root, &alias).unwrap();
+        let path = alias.join("a.py");
+        assert!(path.is_file());
+        let text = r.err("read_code", json!({"path": path.to_string_lossy()}));
         assert!(text.contains("outside"), "{text}");
         // a location or an outline of it names no file of the repository either
-        let (_, text) = r.call("outline", json!({"path": alias.to_string_lossy()}));
+        let (_, text) = r.call("outline", json!({"path": path.to_string_lossy()}));
         assert!(text.contains("no symbols"), "{text}");
+        let _ = fs::remove_file(&alias);
     }
+    // on Windows the root is the verbatim spelling: the plain one names the same file
+    #[cfg(windows)]
+    {
+        let root = r.root.to_string_lossy().into_owned();
+        let plain = root.strip_prefix(r"\\?\").unwrap_or(&root);
+        assert!(r.ok("read_code", json!({"path": format!(r"{plain}\a.py")})).contains("def f()"));
+        assert!(r.ok("read_code", json!({"path": format!("{}/a.py", plain.replace('\\', "/"))})).contains("def f()"));
+        assert!(r.ok("outline", json!({"path": format!(r"{plain}\a.py")})).contains(" f"));
+    }
+    // an absolute path elsewhere is not the repository's file of that name
+    let (_, text) = r.call("outline", json!({"path": "/a.py"}));
+    assert!(text.contains("no symbols"), "{text}");
+    let (_, text) = r.call("find_symbol", json!({"name": "/a.py:1"}));
+    assert!(!text.contains("a.py:1-2"), "{text}");
+    assert!(r.err("read_code", json!({"path": "/a.py"})).contains("outside"));
     assert!(r.ok("read_code", json!({"path": "./a.py"})).contains("def f()"));
+    let text = r.ok("outline", json!({"path": "./a.py"}));
+    assert!(text.contains("function") && text.trim_end().ends_with(" f"), "{text}");
 }
 
 #[test]

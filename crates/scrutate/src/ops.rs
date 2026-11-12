@@ -435,7 +435,7 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
             // a path copied from an answer has its control characters written as escapes
             let read_back = crate::fmt::unshown(path);
             // a path that leaves the repository by its own parts is not looked at
-            let exists = |p: &str| within(&s.ix.root, p).starts_with(&s.ix.root) && s.ix.root.join(p).exists();
+            let exists = |p: &str| inside(&s.ix.root, p) && s.ix.root.join(p).exists();
             let printed = read_back != path && crate::fmt::shown(&read_back) == path && exists(&read_back);
             let path = if printed || (read_back != path && !exists(path)) { read_back.as_ref() } else { path };
             let start = (*start).max(1);
@@ -482,9 +482,9 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
     })
 }
 
-/// `root` joined with `path` by their parts alone: `.` dropped and `..` taking a part away, with
-/// no file looked at.
-fn within(root: &std::path::Path, path: &str) -> std::path::PathBuf {
+/// Whether `root` joined with `path` stays under `root` by their parts alone (`.` dropped and
+/// `..` taking a part away), with no file looked at.
+fn inside(root: &std::path::Path, path: &str) -> bool {
     let mut out = std::path::PathBuf::new();
     for c in root.join(path).components() {
         match c {
@@ -495,7 +495,27 @@ fn within(root: &std::path::Path, path: &str) -> std::path::PathBuf {
             c => out.push(c),
         }
     }
-    out
+    if cfg!(windows) {
+        under(&out.to_string_lossy(), &root.to_string_lossy())
+    } else {
+        out.starts_with(root)
+    }
+}
+
+/// On Windows one folder has several spellings (`\\?\C:\x` from `canonicalize`, `C:\x`, `c:/X`)
+/// and the prefix parts of two paths compare by kind, so the two are compared as text.
+fn under(path: &str, root: &str) -> bool {
+    fn plain(p: &str) -> String {
+        let s = p.replace('\\', "/");
+        let s = match s.strip_prefix("//?/") {
+            Some(rest) if rest.get(..4).is_some_and(|h| h.eq_ignore_ascii_case("UNC/")) => format!("//{}", &rest[4..]),
+            Some(rest) => rest.to_string(),
+            None => s,
+        };
+        s.to_lowercase()
+    }
+    let (path, root) = (plain(path), plain(root));
+    path.strip_prefix(root.trim_end_matches('/')).is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
 /// Lines `start..=end` of a repository file, numbered, read only as far as they go and at most
@@ -508,7 +528,7 @@ pub fn read_range(s: &Searcher, path: &str, start: i64, end: i64) -> Result<(Vec
     // that leaves by its own parts is outside, with nothing looked at (on Windows a share on
     // another machine would be connected to, and offered the user's login), and a link that
     // leaves reads as a missing file
-    if !within(&s.ix.root, path).starts_with(&s.ix.root) {
+    if !inside(&s.ix.root, path) {
         bail!("path outside repo");
     }
     let canon = match std::fs::canonicalize(s.ix.root.join(path)) {
@@ -602,6 +622,10 @@ pub fn capture_line(c: &Capture) -> String {
 /// `path` as the index spells it, when it names a repository file in a spelling `read_code`
 /// accepts (`./a.py`, `pkg/../a.py`, another case on a case-insensitive file system); else as given.
 pub fn repo_path(s: &Searcher, path: &str) -> String {
+    // a path that leaves the repository names no file of it (`/a.py` is not `a.py`), and is not looked at
+    if !inside(&s.ix.root, path) {
+        return path.to_string();
+    }
     let mut parts: Vec<&str> = Vec::new();
     for seg in path.split('/') {
         match seg {
@@ -627,10 +651,7 @@ pub fn repo_path(s: &Searcher, path: &str) -> String {
     if escaped && indexed(&read_back) {
         return read_back.into_owned();
     }
-    // another spelling of a file of the repository; a path that leaves it is not looked at
-    if !within(&s.ix.root, path).starts_with(&s.ix.root) {
-        return plain;
-    }
+    // another spelling of a file of the repository
     std::fs::canonicalize(s.ix.root.join(path))
         .ok()
         .filter(|p| p.is_file())
@@ -1419,6 +1440,29 @@ impl Answer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn on_windows_a_plain_path_is_under_the_root_canonicalize_gave() {
+        let root = r"\\?\C:\proj";
+        for (path, is_under) in [
+            (r"C:\proj\a.py", true),
+            ("c:/PROJ/sub/a.py", true),
+            (r"\\?\C:\proj\a.py", true),
+            (r"C:\proj", true),
+            (r"C:\proj2\a.py", false),
+            (r"C:\a.py", false),
+            (r"D:\proj\a.py", false),
+            (r"\\server\share\proj\a.py", false),
+        ] {
+            assert_eq!(under(path, root), is_under, "{path}");
+        }
+        let share = r"\\?\UNC\server\share\repo";
+        assert!(under(r"\\server\share\repo\a.py", share));
+        assert!(under(r"\\?\UNC\server\share\repo\a.py", share));
+        assert!(!under(r"\\other\share\repo\a.py", share));
+        // a repository at the root of a drive
+        assert!(under(r"C:\a.py", r"\\?\C:\"));
+    }
 
     #[test]
     fn a_tool_call_without_optional_arguments_gets_the_defaults() {
