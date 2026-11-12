@@ -3362,6 +3362,7 @@ impl<'a> Resolver<'a> {
         let cur = match self.java_type(fi, head, hname) {
             Ok(id) => id,
             Err("type parameter") => return Err("receiver"),
+            Err("external") if segs.len() == 1 && self.java_package_files(hname).is_some() => return Err("package"),
             Err(e) if segs.len() == 1 => return if e == "external" { Ok(Ty::Foreign(hname.to_string(), Vec::new())) } else { Err(e) },
             Err(_) => {
                 let full = segs.iter().map(|s| text(*s, src)).collect::<Vec<_>>().join(".");

@@ -424,3 +424,17 @@ fn a_diamond_of_interfaces_is_walked_once_per_type() {
     assert!(timed(&["refs", "gone"]).contains("(external)"));
     assert!(timed(&["callers", "Other.foo"]).contains("C.run"));
 }
+
+#[test]
+fn a_class_named_through_a_one_part_package_of_the_repository_resolves() {
+    let files: Vec<(String, &str)> = vec![
+        ("p/Util.java".to_string(), "package p;\n\npublic class Util {\n    public static int foo() {\n        return 1;\n    }\n}\n"),
+        ("q/Main.java".to_string(), "package q;\n\npublic class Main {\n    int run() {\n        return p.Util.foo() + z.Far.foo();\n    }\n}\n"),
+    ];
+    let r = Repo::with("onepart", &files);
+    assert_eq!(r.refs_of("Util", "p/Util.java:3"), ["Main.java:5", "Util.java:3"]);
+    assert_eq!(r.refs_of("foo", "p/Util.java:4"), ["Main.java:5", "Util.java:4"]);
+    assert_eq!(r.reasons("p", "q/Main.java"), ["5 package"]);
+    // a package the repository does not hold is from outside
+    assert_eq!(r.reasons("Far", "q/Main.java"), ["5 external"]);
+}
