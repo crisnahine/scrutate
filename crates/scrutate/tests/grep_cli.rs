@@ -825,6 +825,39 @@ fn a_reader_that_closes_early_ends_the_output_quietly() {
 }
 
 #[test]
+fn a_reader_that_stops_reading_and_then_goes_away_ends_a_json_search() {
+    use std::io::Read;
+    let d = Dir::new("pipestall");
+    let lines = "abc e\n".repeat(300_000);
+    d.write("one/a.txt", lines.as_bytes());
+    for i in 0..4 {
+        d.write(&format!("tree/sub/{i}.txt"), lines.as_bytes());
+    }
+    for (args, dir) in [(&["grep", "--json", "e"][..], "one"), (&["grep", "--json", "e"], "tree"), (&["grep", "--json", "-j1", "e"], "tree")] {
+        let mut child =
+            Command::new(BIN).args(args).current_dir(d.0.join(dir)).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+        let mut stdout = child.stdout.take().unwrap();
+        let mut first = [0u8; 4096];
+        stdout.read_exact(&mut first).unwrap();
+        // the pipe and the queue of hits fill and the search threads wait
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        drop(stdout);
+        let t0 = std::time::Instant::now();
+        let status = loop {
+            if let Some(s) = child.try_wait().unwrap() {
+                break s;
+            }
+            if t0.elapsed() > std::time::Duration::from_secs(30) {
+                let _ = child.kill();
+                panic!("{args:?} in {dir}: still running 30 s after its reader went away");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        assert_eq!(status.code(), Some(0), "{args:?} in {dir}");
+    }
+}
+
+#[test]
 fn a_walked_file_whose_search_stops_at_a_nul_byte_says_so_after_its_matches() {
     let d = Dir::new("walkstop");
     for f in ["d/a.bin", "d/b.bin", "d/c.bin", "d/e.bin"] {

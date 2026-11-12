@@ -1377,7 +1377,9 @@ pub fn format_plain(out: &mut Vec<u8>, path: &str, line: u64, text: &[u8], conte
 
 struct Collector<'a> {
     path: Arc<str>,
-    tx: &'a mpsc::Sender<Vec<Hit>>,
+    /// None: the hits stay in `batch` for the caller to take
+    tx: Option<&'a mpsc::SyncSender<Vec<Hit>>>,
+    counters: &'a Counters,
     /// hits of the current file, sent in batches (one channel operation per file or 512 lines)
     batch: Vec<Hit>,
     plain: Option<&'a PlainSink>,
@@ -1638,8 +1640,8 @@ impl Collector<'_> {
             p.write(&self.out, std::mem::take(&mut self.first), self.cancel);
             self.out.clear();
         }
-        if !self.batch.is_empty() {
-            let _ = self.tx.send(std::mem::take(&mut self.batch));
+        if let Some(tx) = self.tx.filter(|_| !self.batch.is_empty()) {
+            send(self.counters, tx, std::mem::take(&mut self.batch));
         }
     }
 }
@@ -1939,11 +1941,11 @@ fn small_first(
     type Job = (PathBuf, Arc<str>, Option<u64>, bool);
     let (work_tx, work_rx) = mpsc::channel::<Job>();
     let work_rx = Mutex::new(work_rx);
-    let (tx, rx) = mpsc::channel::<Vec<Hit>>();
+    let (tx, rx) = hit_channel();
     let workers = default_threads(o).min(3);
     let (seen, errors, big) = std::thread::scope(|s| {
         let work_rx = &work_rx;
-        let worker = |tx: mpsc::Sender<Vec<Hit>>| {
+        let worker = |tx: mpsc::SyncSender<Vec<Hit>>| {
             #[cfg(test)]
             tests::SMALL_WORKERS.with(|n| n.set(n.get() + 1));
             // a clone per thread: each gets its own regex cache pool instead of contending for one
@@ -2015,17 +2017,26 @@ fn small_first(
                 added += 1;
             }
             while let Ok(batch) = rx.try_recv() {
+                #[cfg(test)]
+                c.queued.fetch_sub(1, Ordering::Relaxed);
                 batch.into_iter().for_each(&mut *on_hit);
             }
         }
         drop(work_tx);
         if let Some((path, rel, size, named)) = held.filter(|_| !cancel.load(Ordering::Relaxed)) {
             c.alone.store(true, Ordering::Relaxed);
-            search_one(&mut file_worker(o), &Run { matcher, o, c, cancel, tx: &tx, plain }, &path, rel, size, named);
-            c.alone.store(false, Ordering::Relaxed);
+            let tx = tx.clone();
+            let one = move || search_one(&mut file_worker(o), &Run { matcher, o, c, cancel, tx: &tx, plain }, &path, rel, size, named);
+            // plain output sends no hits; other output is drained here while the file is searched
+            if plain.is_some() {
+                one();
+            } else {
+                s.spawn(one);
+            }
         }
         drop(tx);
-        drain(rx, &mut *on_hit);
+        drain(rx, c, &mut *on_hit);
+        c.alone.store(false, Ordering::Relaxed);
         (seen, errors, big)
     });
     if big && !cancel.load(Ordering::Relaxed) {
@@ -2056,6 +2067,11 @@ struct Counters {
     /// one file is searched and no other at the same time: its output need not wait for the end
     /// of a context group
     alone: AtomicBool,
+    /// batches sent and not yet drained, and the most there were
+    #[cfg(test)]
+    queued: AtomicUsize,
+    #[cfg(test)]
+    most_queued: AtomicUsize,
 }
 
 impl Counters {
@@ -2128,7 +2144,7 @@ struct Run<'a> {
     o: &'a Options,
     c: &'a Counters,
     cancel: &'a AtomicBool,
-    tx: &'a mpsc::Sender<Vec<Hit>>,
+    tx: &'a mpsc::SyncSender<Vec<Hit>>,
     plain: Option<&'a PlainSink>,
 }
 
@@ -2137,7 +2153,8 @@ impl<'a> Run<'a> {
         let o = self.o;
         Collector {
             path,
-            tx: self.tx,
+            tx: Some(self.tx),
+            counters: self.c,
             batch: Vec::new(),
             plain: self.plain,
             out: Vec::new(),
@@ -2265,7 +2282,7 @@ fn report(r: &Run, mut sink: Collector, rel: Arc<str>, named: bool) -> Vec<u8> {
         r.c.files_matched.fetch_add(1, Ordering::Relaxed);
         if o.count_only || o.files_only {
             // one record per file carries the count in `line`
-            let _ = r.tx.send(vec![Hit { path: rel, line: sink.file_count, column: 0, text: String::new(), spans: Vec::new(), context: false }]);
+            send(r.c, r.tx, vec![Hit { path: rel, line: sink.file_count, column: 0, text: String::new(), spans: Vec::new(), context: false }]);
         }
     }
     let mut out = std::mem::take(&mut sink.out);
@@ -2655,8 +2672,11 @@ mod split {
                 count += part.count;
                 if let Some(p) = plain {
                     p.write(&part.out, false, cancel);
-                } else if !part.hits.is_empty() {
-                    let _ = tx.send(part.hits);
+                } else {
+                    let mut hits = part.hits.into_iter().peekable();
+                    while hits.peek().is_some() {
+                        send(c, tx, hits.by_ref().take(512).collect());
+                    }
                 }
                 if !part.ok {
                     // the file changed after the first pass, or a read failed: what was found so far stands
@@ -2674,7 +2694,7 @@ mod split {
         if matched {
             c.files_matched.fetch_add(1, Ordering::Relaxed);
             if o.count_only {
-                let _ = tx.send(vec![Hit { path: Arc::clone(rel), line: count, column: 0, text: String::new(), spans: Vec::new(), context: false }]);
+                send(c, tx, vec![Hit { path: Arc::clone(rel), line: count, column: 0, text: String::new(), spans: Vec::new(), context: false }]);
             }
         }
         Outcome::Done
@@ -2687,11 +2707,12 @@ mod split {
         let matcher = r.matcher.clone();
         let mut searcher =
             SearcherBuilder::new().binary_detection(BinaryDetection::quit(0)).bom_sniffing(false).line_number(!o.count_only).invert_match(o.invert).build();
-        let (ptx, prx) = mpsc::channel::<Vec<Hit>>();
         // with `hold` the plain text is formatted into `out` and never written to this sink
         let sink_plain = PlainSink::new(Box::new(std::io::sink()));
-        let range_run = Run { matcher: &matcher, tx: &ptx, plain: if r.plain.is_some() { Some(&sink_plain) } else { None }, ..*r };
+        let range_run = Run { matcher: &matcher, plain: if r.plain.is_some() { Some(&sink_plain) } else { None }, ..*r };
+        // the hits wait in `batch` for the range's turn: a bounded channel would wait for a reader
         let mut sink = Collector {
+            tx: None,
             max_results: None,
             files_only: false,
             line_base: base,
@@ -2703,18 +2724,38 @@ mod split {
         let res = matcher.search_reader(&mut searcher, &mut range, &mut sink);
         sink.flush();
         let ok = res.is_ok() && !sink.binary && (range.pos >= b || cancel.load(Ordering::Relaxed));
-        let (out, matched, count) = (std::mem::take(&mut sink.out), sink.matched, sink.file_count);
-        drop(sink);
-        drop(ptx);
-        Part { out, hits: prx.into_iter().flatten().collect(), matched, count, ok }
+        Part { out: std::mem::take(&mut sink.out), hits: std::mem::take(&mut sink.batch), matched: sink.matched, count: sink.file_count, ok }
     }
 }
 
-/// Hand the hits to the caller in arrival order.
-fn drain(rx: mpsc::Receiver<Vec<Hit>>, mut on_hit: impl FnMut(Hit)) {
+/// Batches of hits waiting for the caller at most: past it the search threads wait, so a search
+/// with more matches than the caller writes holds no more of them.
+const HIT_BATCHES: usize = 64;
+
+fn hit_channel() -> (mpsc::SyncSender<Vec<Hit>>, mpsc::Receiver<Vec<Hit>>) {
+    mpsc::sync_channel(HIT_BATCHES)
+}
+
+/// Waits while `HIT_BATCHES` batches wait for the caller.
+fn send(c: &Counters, tx: &mpsc::SyncSender<Vec<Hit>>, batch: Vec<Hit>) {
+    #[cfg(test)]
+    c.most_queued.fetch_max(c.queued.fetch_add(1, Ordering::Relaxed) + 1, Ordering::Relaxed);
+    #[cfg(not(test))]
+    let _ = c;
+    let _ = tx.send(batch);
+}
+
+/// Hand the hits to the caller in arrival order, until every sender is gone.
+fn drain(rx: mpsc::Receiver<Vec<Hit>>, c: &Counters, mut on_hit: impl FnMut(Hit)) {
     for batch in rx {
+        #[cfg(test)]
+        c.queued.fetch_sub(1, Ordering::Relaxed);
         batch.into_iter().for_each(&mut on_hit);
     }
+    #[cfg(test)]
+    tests::MOST_QUEUED.with(|m| m.set(m.get().max(c.most_queued.load(Ordering::Relaxed))));
+    #[cfg(not(test))]
+    let _ = c;
 }
 
 fn stats(c: &Counters, t0: Instant, cancel: &AtomicBool) -> Stats {
@@ -2804,14 +2845,14 @@ fn run_walk(roots: &[PathBuf], o: &Options, cancel: Arc<AtomicBool>, plain: Opti
 
 /// Search standard input, reported as `STDIN_LABEL`.
 fn search_stdin(o: &Options, matcher: &AnyMatcher, c: &Counters, cancel: &AtomicBool, plain: Option<&PlainSink>, on_hit: &mut impl FnMut(Hit)) {
-    let (tx, rx) = mpsc::channel::<Vec<Hit>>();
+    let (tx, rx) = hit_channel();
     c.alone.store(true, Ordering::Relaxed);
     std::thread::scope(|s| {
         s.spawn(move || {
             let mut fw = file_worker(o);
             search_one(&mut fw, &Run { matcher, o, c, cancel, tx: &tx, plain }, Path::new("-"), Arc::from(STDIN_LABEL), None, true);
         });
-        drain(rx, &mut *on_hit);
+        drain(rx, c, &mut *on_hit);
     });
     c.alone.store(false, Ordering::Relaxed);
 }
@@ -2882,7 +2923,7 @@ fn walk(
         wb.grow_threads(cold_threads().max(threads).saturating_sub(first), Arc::clone(&want));
     }
     let walker = wb.build_parallel();
-    let (tx, rx) = mpsc::channel::<Vec<Hit>>();
+    let (tx, rx) = hit_channel();
     let labels_owned: Arc<[PathBuf]> = labels.into();
     let matcher = Arc::clone(matcher);
     let opts = Arc::new(o.clone());
@@ -2961,7 +3002,7 @@ fn walk(
             })
         });
     });
-    drain(rx, &mut *on_hit);
+    drain(rx, counters, &mut *on_hit);
     worker.join().map_err(|_| anyhow!("search worker panicked"))?;
     Ok(())
 }
@@ -3108,7 +3149,7 @@ fn search_list(
     plain: Option<&PlainSink>,
     on_hit: impl FnMut(Hit),
 ) {
-    let (tx, rx) = mpsc::channel::<Vec<Hit>>();
+    let (tx, rx) = hit_channel();
     let next = std::sync::atomic::AtomicUsize::new(0);
     std::thread::scope(|s| {
         for _ in 0..threads {
@@ -3132,7 +3173,7 @@ fn search_list(
             });
         }
         drop(tx);
-        drain(rx, on_hit);
+        drain(rx, counters, on_hit);
     });
 }
 
@@ -3247,6 +3288,42 @@ mod tests {
         pub(super) static ONE_LINE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
         /// this thread searches such files as one buffer instead
         pub(super) static NO_ONE_LINE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        /// the most batches of hits that waited for this thread's searches
+        pub(super) static MOST_QUEUED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    #[test]
+    fn hits_found_faster_than_the_caller_takes_them_wait_in_the_search_threads() {
+        let root = std::env::temp_dir().join(format!("scrutate_bounded_hits_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("many/sub")).unwrap();
+        std::fs::create_dir_all(root.join("one")).unwrap();
+        let lines = "abc e\n".repeat(100_000);
+        std::fs::write(root.join("one/a.txt"), &lines).unwrap();
+        for i in 0..6 {
+            std::fs::write(root.join(format!("many/sub/{i}.txt")), &lines).unwrap();
+        }
+        // one file on the calling thread; several on the small walk, the parallel walk and in ranges
+        let shapes: [(&str, Option<usize>, u64); 4] =
+            [("one", None, 64 << 20), ("many", Some(256), 64 << 20), ("many", None, 64 << 20), ("one", None, 1 << 16)];
+        for (dir, small_tree, split_file_bytes) in shapes {
+            let o = Options { pattern: "e".into(), mode: Mode::Literal, threads: 3, want_spans: true, small_tree, split_file_bytes, ..Options::default() };
+            MOST_QUEUED.with(|m| m.set(0));
+            let mut n = 0u64;
+            let stats = search(&[root.join(dir)], &o, Arc::new(AtomicBool::new(false)), |_| {
+                if n == 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                }
+                n += 1;
+            })
+            .unwrap();
+            assert_eq!(n, stats.matches, "{dir}");
+            assert_eq!(n, if dir == "one" { 100_000 } else { 600_000 });
+            let most = MOST_QUEUED.with(|m| m.get());
+            // a sender counts itself before it waits
+            assert!(most <= HIT_BATCHES + 1 + o.threads, "{dir} {small_tree:?} {split_file_bytes}: {most} batches waited");
+        }
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -3258,7 +3335,7 @@ mod tests {
         let o = Options { pattern: "needle".into(), mode: Mode::Literal, threads: 2, ..Options::default() };
         let matcher = build_matcher(&o).unwrap();
         let (c, cancel) = (Counters::default(), AtomicBool::new(false));
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(1024);
         let mut fw = file_worker(&o);
         for size in [None, Some(std::fs::metadata(&path).unwrap().len())] {
             search_one(&mut fw, &Run { matcher: &matcher, o: &o, c: &c, cancel: &cancel, tx: &tx, plain: None }, &path, Arc::from("big.txt"), size, false);
@@ -3281,7 +3358,7 @@ mod tests {
             let o = Options { pattern: "needle".into(), mode: Mode::Literal, threads, ..Options::default() };
             let matcher = build_matcher(&o).unwrap();
             let (c, cancel) = (Counters::default(), AtomicBool::new(false));
-            let (tx, _rx) = mpsc::channel();
+            let (tx, _rx) = mpsc::sync_channel(1024);
             let run = Run { matcher: &matcher, o: &o, c: &c, cancel: &cancel, tx: &tx, plain: None };
             for (text, whole) in [(format!("{line}\n").repeat(4), false), (format!("{line}\n"), true), (line.clone(), true)] {
                 std::fs::write(&path, &text).unwrap();
@@ -3372,7 +3449,7 @@ mod tests {
                             let (c, cancel) = (Counters::default(), AtomicBool::new(false));
                             let out = Shared(Arc::new(Mutex::new(Vec::new())));
                             let sink = PlainSink::new(Box::new(out.clone()));
-                            let (tx, rx) = mpsc::channel();
+                            let (tx, rx) = mpsc::sync_channel(1024);
                             let r = Run { matcher: &matcher, o: &o, c: &c, cancel: &cancel, tx: &tx, plain: to_plain.then_some(&sink) };
                             search_one(&mut file_worker(&o), &r, &path, Arc::from("a.txt"), Some(size), o.paths_as_given);
                             drop(tx);
