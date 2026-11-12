@@ -96,6 +96,41 @@ fn arguments_that_are_not_utf8_are_errors_not_aborts() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn a_link_named_on_the_command_line_is_searched_as_ripgrep_does() {
+    let d = Dir::new("rootlinks");
+    d.write("real/a.txt", b"foo\n");
+    d.write("deep/sub/b.txt", b"foo\n");
+    d.write("file.txt", b"foo\n");
+    for (link, to) in [("link", "real"), ("dlink", "deep"), ("flink", "file.txt"), ("broken", "nowhere")] {
+        std::os::unix::fs::symlink(to, d.0.join(link)).unwrap();
+    }
+    let summary = |out: &str| out.lines().last().unwrap_or("").split(",\"files_matched").next().unwrap_or("").split("\"errors\"").nth(1).map(String::from);
+    // the walk of one thread (a root with no subdirectory) and the parallel one
+    for small in ["256", "0"] {
+        for (args, want_out, want_err) in [
+            (&["foo", "link"][..], "link/a.txt:1:foo\n", ""),
+            (&["-L", "foo", "link"], "link/a.txt:1:foo\n", ""),
+            (&["foo", "dlink"], "dlink/sub/b.txt:1:foo\n", ""),
+            (&["foo", "flink"], "1:foo\n", ""),
+            (&["foo", "broken"], "", "No such file or directory (os error 2)\n"),
+        ] {
+            let code = if want_out.is_empty() { 2 } else { 0 };
+            let env = [("SCRUTATE_SMALL_TREE", small)];
+            let (got_code, out, err) = d.run_env(&[&["grep"][..], args].concat(), &env);
+            assert_eq!((got_code, out.as_str()), (code, want_out), "{small} {args:?}");
+            // the one-thread walk words a broken link as ripgrep does, "IO error for operation on broken: ..."
+            assert!(
+                if want_err.is_empty() { err.is_empty() } else { err.starts_with("scrutate: warning: broken: ") && err.ends_with(want_err) },
+                "{small} {args:?}: {err}"
+            );
+            let (_, out, _) = d.run_env(&[&["grep", "--json"][..], args].concat(), &env);
+            assert_eq!(summary(&out).as_deref(), Some(if code == 0 { ":0" } else { ":1" }), "{small} {args:?}: {out}");
+        }
+    }
+}
+
 fn three_foo_files(d: &Dir, n: usize) {
     for i in 0..n {
         d.write(&format!("d1/f{i}.txt"), b"foo 1\nx\nfoo 3\ny\nfoo 5\nz\n");

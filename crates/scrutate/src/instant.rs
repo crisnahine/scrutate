@@ -1832,9 +1832,10 @@ fn has_dirs(roots: &[PathBuf], o: &Options) -> bool {
 }
 
 /// A regular file, or anything but a directory named on the command line (a named pipe,
-/// `/dev/stdin`), as ripgrep does; a pipe met in a directory could wait for a writer forever.
+/// `/dev/stdin`), as ripgrep does; a pipe met in a directory could wait for a writer forever. A
+/// root can be a link to a directory, which the walk enters.
 fn searchable(e: &ignore::DirEntry) -> bool {
-    e.file_type().is_some_and(|t| t.is_file() || (e.depth() == 0 && !t.is_dir()))
+    e.file_type().is_some_and(|t| t.is_file() || (e.depth() == 0 && !t.is_dir() && !e.path().is_dir()))
 }
 
 enum Small {
