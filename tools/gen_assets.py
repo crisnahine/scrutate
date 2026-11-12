@@ -6,9 +6,12 @@ usage:
   python3 tools/gen_assets.py --check    exit 1 when a committed image differs from what this writes, when an
                                          SVG breaks a rule below, or when a link or image in README.md is missing
   python3 tools/gen_assets.py demo       write only demo.svg from docs/assets/demo.json
-  python3 tools/gen_assets.py heroes DIR write the three hero directions to DIR, to compare them
+  python3 tools/gen_assets.py beats      print the hero's timeline, beat by beat
   python3 tools/gen_assets.py capture --bin PATH/TO/scrutate --repo DIR
                                          run the demo's commands for real in DIR and write demo.json
+  python3 tools/gen_assets.py capture-hero --bin PATH/TO/scrutate --repo crates/scrutate
+                                         run the hero's searches (docs/assets/hero.json) with --json in DIR and
+                                         keep the exact spans on its block of lines; edit the list there to change them
   python3 tools/gen_assets.py font --otf PATH/TO/GeistMono-Black.otf
                                          write tools/fonts/geist-mono-black.json, the outlines headlines are drawn with
 
@@ -17,6 +20,12 @@ the winning bar, the one word that matters. Every panel carries its own backgrou
 GitHub's light and dark pages. Rules each SVG keeps, checked by --check: flat colour only (no gradient, no
 filter), no script and nothing loaded from outside, a title and a desc, valid XML, under 150 KB, and complete
 with motion off (the still state is the finished state).
+
+Motion is CSS inside each SVG (GitHub shows them through <img>: no script). Each animated image runs on one
+master clock (Clock below): every element's keyframes are percentages of one loop, so it repeats for ever
+without a seam. Only transform, opacity and stroke-dashoffset are animated. An element's attributes are its
+finished state; its class says whether its motion travels (`mv`, stopped under reduced motion) or only fades
+(`fd`, kept), and --check refuses an animated element that has neither.
 
 Headlines are outlines of Geist Mono Black (SIL Open Font License 1.1, tools/fonts/OFL.txt), read from
 tools/fonts/geist-mono-black.json, so they look the same whatever fonts a reader has.
@@ -53,8 +62,13 @@ ON = {  # what sits on each panel colour
 W, RADIUS, INSET, PAD = 880, 14, 10, 40        # panel width, corner, frame inset, content margin
 SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif'
 MONO = 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace'
-EASE = "cubic-bezier(.2,.7,.2,1)"
-REDUCED = "@media (prefers-reduced-motion: reduce) { * { animation: none !important; } }"
+EASE = "cubic-bezier(.2,.7,.2,1)"          # out: fast start, long settle (a pen stroke, a bar)
+EASE_IN_OUT = "cubic-bezier(.6,0,.25,1)"   # a reticle travelling to its target
+# Motion that travels, scales, types or counts carries the class `mv`; a cross-fade or a cursor blink carries `fd`.
+# A reader who asks for reduced motion gets every `mv` element in its finished state and keeps the fades, each in
+# its calm version (--calm: slower cross-fades where the motion version cuts).
+REDUCED = ("@media (prefers-reduced-motion: reduce) {\n  .mv { animation: none !important; }\n"
+           "  .fd { animation-name: var(--calm) !important; }\n}")
 BANNER = "<!-- written by tools/gen_assets.py; edit that, not this file -->"
 MAX_BYTES = 150 * 1024
 
@@ -98,6 +112,115 @@ def kf(name: str, total: float, points, prop="opacity") -> str:
         out.append(f"  {100 * t / total:.2f}% {{ {prop}: {v};{tf} }}")
     out.append("}")
     return "\n".join(out)
+
+
+class Clock:
+    """One master clock per image. A beat is a name, a start and a length in seconds; each animated element gets
+    keyframes as (seconds, value[, timing function of the segment that follows]) and they are written as
+    percentages of the one loop, so nothing drifts and the loop has no seam: the value at 0 and at the end is the
+    element's `rest`. An element's SVG attributes are its finished state, which is what reduced motion shows."""
+
+    def __init__(self, total=None):
+        self.total, self.beats, self.tracks = total, [], []
+
+    def beat(self, name, start, length):
+        self.beats.append((name, round(start, 3), round(length, 3)))
+        return start + length
+
+    def anim(self, points, prop="transform", rest=None, fade=False, calm=None):
+        """The class string for an element animated through `points`; a value may be a dict of properties.
+        A fade (opacity only) runs under reduced motion too, as `calm` if given (slower cross-fades), else as is."""
+        self.tracks.append((list(points), prop, rest, fade))
+        n = len(self.tracks)
+        if calm is not None:
+            assert fade, "only a fade has a calm version"
+            self.tracks.append((list(calm), prop, rest, "calm"))
+        return ("fd" if fade else "mv") + f" k{n}"
+
+    def more(self, cls, points):
+        """Add keyframes to the element whose class string `anim` returned."""
+        self.tracks[int(cls.rsplit("k", 1)[1]) - 1][0].extend(points)
+
+    def sheet(self):
+        """The beats as text: what `python3 tools/gen_assets.py beats` prints."""
+        return "\n".join(f"{s:7.2f} s  {s + n:7.2f} s  {name}" for name, s, n in self.beats) + f"\nloop {self.total:.2f} s"
+
+    def css(self):
+        T = self.total
+        out = []
+        for i, (points, prop, rest, fade) in enumerate(self.tracks, 1):
+            pts = sorted(points, key=lambda p: p[0])
+            if pts[0][0] > 0:
+                assert rest is not None, f"k{i}: a track that starts after 0 needs its rest value"
+                pts.insert(0, (0, rest))
+            if pts[-1][0] < T:
+                # holding the last value to the end is implicit; drifting back to rest is not
+                assert rest is None or pts[-1][1] == rest, f"k{i}: ends at {pts[-1][1]}, not at its rest {rest}"
+                pts.append((T, pts[-1][1]))
+            assert pts[-1][0] <= T + 1e-6, f"k{i} runs past the loop ({pts[-1][0]:.2f} s of {T:.2f} s)"
+            assert pts[0][1] == pts[-1][1], f"k{i}: the value at 0 and at the end differ, so the loop would jump"
+            assert all(b[0] > a[0] for a, b in zip(pts, pts[1:])), f"k{i}: two keyframes at one time"
+            if fade == "calm":
+                pass   # the reduced-motion version of the fade before it: keyframes only
+            elif fade and i < len(self.tracks) and self.tracks[i][3] == "calm":
+                out.append(f".k{i}{{animation:k{i} {T:.2f}s linear infinite;--calm:k{i + 1}}}")
+            elif fade:
+                out.append(f".k{i}{{animation:k{i} {T:.2f}s linear infinite;--calm:k{i}}}")
+            else:
+                out.append(f".k{i}{{animation:k{i} {T:.2f}s linear infinite}}")
+            frames = []
+            for j, p in enumerate(pts):
+                v = p[1] if isinstance(p[1], dict) else {prop: p[1]}
+                tf = f" animation-timing-function: {p[2]};" if len(p) > 2 else ""
+                # a hold is a jump at its end: Chrome repaints an image every frame while a smooth segment runs,
+                # even one between two equal values, and not at all during a step
+                if j + 1 < len(pts) and pts[j + 1][1] == p[1]:
+                    tf = " animation-timing-function: steps(1, end);"
+                frames.append(f"{100 * p[0] / T:.3f}% {{ " + " ".join(f"{k}: {x};" for k, x in v.items()) + tf + " }")
+            out.append(f"@keyframes k{i} {{ " + " ".join(frames) + " }")
+        return "\n".join(out)
+
+
+def window(a, b, T, d=1.0):
+    """Opacity points of something that fades in over [a, a+d], stays, and fades out over [b, b+d], on a loop of
+    T seconds; either fade may run across the loop's end."""
+    a %= T
+    b = b % T + (T if b % T < a else 0)
+
+    def f(t):
+        return max(min(1.0, (u - a) / d, (b + d - u) / d) if a <= u <= b + d else 0.0 for u in (t - T, t, t + T))
+    cuts = sorted({0.0, T} | {round(x % T, 4) for x in (a, a + d, b, b + d)})
+    return [(t, round(f(t), 3)) for t in cuts]
+
+
+def wipe(t, d=0.32, over=1.03):
+    """A marker stroke landing: it decelerates and overshoots by a hair. Keyframe points for scaleX."""
+    return [(t, "scaleX(0)", EASE), (t + d * 0.78, f"scaleX({over})", "ease-in-out"), (t + d, "scaleX(1)")]
+
+
+def blink(clk, t0, t1, period=1.06):
+    """A cursor blinking from t0 to t1 on the clock: visible, hidden, visible ... (a fade-class track)."""
+    pts, t, on = [], t0, True
+    while t < t1 - 1e-6:
+        pts.append((t, 1 if on else 0, "steps(1, end)"))
+        t, on = t + period / 2, not on
+    pts.append((t1, 1))
+    return clk.anim(pts, "opacity", rest=1, fade=True)
+
+
+def typing(t0, text, cps=26.0):
+    """When each character of `text` appears, typed in bursts of a word with a short pause at each space.
+    Returns [(t, characters shown, timing function)] and the end time."""
+    pace = [1.0, 0.82, 1.18, 0.9, 1.06, 0.95]
+    pts, t, n, end = [], t0, 0, t0
+    for i, w in enumerate(re.findall(r"\S+\s*", text)):
+        pts.append((t, n, f"steps({len(w)}, start)"))
+        n += len(w)
+        t += len(w) / cps * pace[i % len(pace)]
+        pts.append((t, n))
+        end = t
+        t += 0.07 if i % 3 else 0.14
+    return pts, end
 
 
 # ---------------------------------------------------------------- headline type: outlines from the font JSON
@@ -187,13 +310,6 @@ def marker(x, y, w, h, cls="", style="", colour=MARK):
     return f'<path{c}{st} d="M{x + j:.1f} {y:.1f} H{x + w + j:.1f} L{x + w:.1f} {y + h:.1f} H{x:.1f} Z" fill="{colour}"/>'
 
 
-def wipe_style(dur=0.5):
-    """`.wipe` slabs draw from the left, each after its own animation-delay; with motion off they are simply there."""
-    return (f".wipe{{transform-box:fill-box;transform-origin:left center;animation:wipe {dur}s {EASE} both}}\n"
-            "@keyframes wipe { from { transform: scaleX(0); } }\n"
-            f".hit{{animation:hit {dur}s steps(1, end) both}}\n@keyframes hit {{ from {{ fill: currentColor; }} }}")
-
-
 def crosshair(cx, cy, r, colour, cls=""):
     c = f' class="{cls}"' if cls else ""
     return (f'<g{c} stroke="{colour}" fill="none" stroke-width="1.5"><circle cx="{cx}" cy="{cy}" r="{r}"/>'
@@ -226,14 +342,16 @@ def cut(x, y, w, h, fill, k=12):
     return f'<path d="M{x} {y} H{x + w - k} L{x + w} {y + k} V{y + h} H{x} Z" fill="{fill}"/>'
 
 
-def statement(x, y, line1, line2, cap, on, wipe_at=None):
+def statement(x, y, line1, line2, cap, on, slab_cls=""):
     """Two heavy lines; the second sits on a highlighter slab."""
     c = ON[on]
     lh = cap * 1.55
     w2 = type_w(line2, cap) + cap * 0.7
-    slab = marker(x - cap * 0.3, y + lh - cap * 1.32, w2, cap * 1.62,
-                  "wipe" if wipe_at is not None else "", f"animation-delay:{wipe_at}s" if wipe_at is not None else "")
+    slab = marker(x - cap * 0.3, y + lh - cap * 1.32, w2, cap * 1.62, slab_cls)
     return words(line1, x, y, cap, c["fg"]) + slab + words(line2, x, y + lh, cap, INK)
+
+
+WIPE_CSS = ".wipe{transform-box:fill-box;transform-origin:left center}"
 
 
 # ---------------------------------------------------------------- the wordmark and the logo
@@ -242,9 +360,11 @@ WORD = "SCRUTATE"
 WORD_TRACK = -0.03
 
 
-def wordmark(x, y, cap, fill, bg, on_slab=MARK, cursor=True, knock=None, cls_cursor=""):
+def wordmark(x, y, cap, fill, bg, on_slab=MARK, cursor=True, knock=None, cls_cursor="", cls_letters=None, cls_bar="",
+             cls_blink=""):
     """SCRUTATE in Geist Mono Black; the bar of the A is a highlighter stroke, and a block cursor follows.
-    `bg` (or `knock`) is a band round the letters, so they read over whatever lies behind.
+    `bg` (or `knock`) is a band round the letters, so they read over whatever lies behind. `cls_letters` (one class
+    string per letter) puts each letter in its own group, to animate; the knock band is then left out.
     Returns (svg, width including the cursor)."""
     f = font()
     k = cap / f["cap"]
@@ -252,22 +372,27 @@ def wordmark(x, y, cap, fill, bg, on_slab=MARK, cursor=True, knock=None, cls_cur
     step = (f["advance"] + WORD_TRACK * f["upm"]) * k
     ax = x + WORD.index("A") * step
     # the A's counter runs to the baseline; a stroke across both legs takes the place of its bar
-    bar = marker(ax + 40 * k, y - 360 * k, 500 * k, 170 * k, colour=on_slab)
+    bar = marker(ax + 40 * k, y - 360 * k, 500 * k, 170 * k, cls_bar, colour=on_slab)
 
-    def letters(paint):
-        out = []
-        for i, ch in enumerate(WORD):
-            d = A_OPEN if ch == "A" else f["glyphs"][ch]
-            out.append(f'<path transform="translate({x + i * step:.1f} {y:.1f}) scale({k:.5f} {-k:.5f})" d="{d}"/>')
-        return f'<g {paint}>' + "".join(out) + "</g>"
+    def glyph(i, ch):
+        d = A_OPEN if ch == "A" else f["glyphs"][ch]
+        return f'<path transform="translate({x + i * step:.1f} {y:.1f}) scale({k:.5f} {-k:.5f})" d="{d}"/>'
 
-    body = [letters(f'fill="{knock[0]}" stroke="{knock[0]}" stroke-width="{knock[1]:g}" stroke-linejoin="round" '
-                    'vector-effect="non-scaling-stroke"'), letters(f'fill="{fill}"'), bar]
+    if cls_letters:
+        body = [f'<g fill="{fill}">' + "".join(f'<g class="{c}">{glyph(i, ch)}</g>' for i, (ch, c) in enumerate(zip(WORD, cls_letters)))
+                + "</g>", bar]
+    else:
+        body = [f'<g fill="{knock[0]}" stroke="{knock[0]}" stroke-width="{knock[1]:g}" stroke-linejoin="round" '
+                'vector-effect="non-scaling-stroke">' + "".join(glyph(i, ch) for i, ch in enumerate(WORD)) + "</g>",
+                f'<g fill="{fill}">' + "".join(glyph(i, ch) for i, ch in enumerate(WORD)) + "</g>", bar]
     width = len(WORD) * step
     if cursor:
         cw = step * 0.62
         cl = f' class="{cls_cursor}"' if cls_cursor else ""
-        body.append(f'<rect{cl} x="{x + width + step * 0.12:.1f}" y="{y - cap:.1f}" width="{cw:.1f}" height="{cap:.1f}" fill="{on_slab}"/>')
+        rect = f'<rect x="{x + width + step * 0.12:.1f}" y="{y - cap:.1f}" width="{cw:.1f}" height="{cap:.1f}" fill="{on_slab}"/>'
+        if cls_blink:
+            rect = rect.replace("<rect ", f'<rect class="{cls_blink}" ', 1)
+        body.append(f"<g{cl}>{rect}</g>" if cl else rect)
         width += step * 0.12 + cw
     return "".join(body), width
 
@@ -297,13 +422,13 @@ def logo() -> str:
                "whose A has a highlighter stroke for its bar, on ink.", body)
 
 
-# ---------------------------------------------------------------- the hero: three directions, one chosen
+# ---------------------------------------------------------------- the hero: four real searches over one block of code
 
-HERO = "listing"   # the direction README.md shows; the others stay here to compare (`heroes DIR`)
 HERO_LINE = ("INSTANT CODE SEARCH", "CODE INTELLIGENCE")
 HERO_SMALL = "ONE RUST BINARY"
 HERO_DESC = "the line 'Instant code search, code intelligence, one Rust binary'"
 DEMO_JSON = os.path.join(ASSETS, "demo.json")
+HERO_JSON = os.path.join(ASSETS, "hero.json")
 
 
 def demo_spec():
@@ -311,114 +436,261 @@ def demo_spec():
         return json.load(f)
 
 
-def marked_line(x, y, s, rx, size, fg, pfx, delay=None, mark_cls="", hit_cls=""):
-    """One line of real output in system mono: the path prefix in `pfx`, the rest in `fg`, each match of `rx`
-    on a highlighter slab with ink text. With `delay` the slabs wipe in one after another (`wipe_style`);
-    else they take `mark_cls` and the matched text `hit_cls`. Returns (svg, slabs)."""
-    cw = size * 0.6
-    m = LOC.match(s)
-    head = m.group(1) if m else ""
-    rest = s[len(head):]
-    slabs, spans = [], []
-    if head:
-        spans.append(f'<tspan fill="{pfx}">{esc(head)}</tspan>')
-    last = 0
-    for mm in rx.finditer(rest) if rx else []:
-        spans.append(esc(rest[last:mm.start()]))
-        st = f"animation-delay:{delay + 0.12 * len(slabs):.2f}s" if delay is not None else ""
-        hc = "hit" if delay is not None else hit_cls
-        # the matched text keeps the line's colour until its slab lands (`color` is what the animation starts from)
-        attrs = (f' class="{hc}" color="{fg}"' if hc else "") + (f' style="{st}"' if st else "")
-        spans.append(f'<tspan fill="{INK}"{attrs}>{esc(mm.group(0))}</tspan>')
-        a = len(head) + mm.start()
-        slabs.append(marker(x + a * cw - 3, y - size * 0.95, len(mm.group(0)) * cw + 4, size * 1.3,
-                            "wipe" if delay is not None else mark_cls, st))
-        last = mm.end()
-    spans.append(esc(rest[last:]))
-    return "".join(slabs) + f'<text x="{x}" y="{y}" class="m pre" font-size="{size}" fill="{fg}">{"".join(spans)}</text>', len(slabs)
+def hero_spec():
+    with open(HERO_JSON, encoding="utf-8") as f:
+        return json.load(f)
 
 
-def hero_listing():
-    """Direction 1: real output fills the panel like a printed listing; the wordmark lies over it and the
-    highlighter lands on every match, top to bottom."""
-    spec = demo_spec()
-    cmd = next(c for c in spec["commands"] if c["argv"][1:3] == ["grep", "--ident"])
-    rx = re.compile(cmd["highlight"])
-    H, c = 500, ON["ink"]
-    b = [panel(H, "ink", frame=False), f'<defs><clipPath id="in"><rect x="{INSET}" y="{INSET}" width="{W - 2 * INSET - 40}" '
-         f'height="{H - 2 * INSET}"/></clipPath></defs>', '<g clip-path="url(#in)">']
-    b.append(mono(PAD, 46, "$ " + shell_join(cmd["argv"]), 14, c["fg"]))
-    t0 = 0.4
-    for i, ln in enumerate(cmd["output"]):
-        s, n = marked_line(PAD, 82 + i * 23.5, ln, rx, 14, c["dim"], c["rule"], delay=t0 + i * 0.16)
-        b.append(s)
-    b.append("</g>")
-    b.append(f'<rect x="{INSET + .5}" y="{INSET + .5}" width="{W - 2 * INSET - 1}" height="{H - 2 * INSET - 1}" rx="{RADIUS - 6}" fill="none" stroke="{c["rule"]}"/>')
-    wm, ww = wordmark(0, 0, 112, PAPER, INK, knock=(INK, 22), cls_cursor="blink")
-    x0 = (W - ww) / 2
-    b.append(f'<g transform="translate({x0:.1f} 268)">{wm}</g>')
-    # the statement sits on its own ink block, cut at the corner
-    sx, sy = PAD, 352
-    b.append(cut(sx - 16, sy - 40, 520, 130, INK, 18))
-    b.append(statement(sx, sy, HERO_LINE[0], HERO_LINE[1], 30, "ink", wipe_at=t0 + 17 * 0.16 + 0.2))
-    b.append(side(f"SCRUTATE {spec['version'].split()[-1]} // APACHE-2.0 // {HERO_SMALL}", W - 26, 40, c["dim"]))
-    style = [wipe_style(), ".blink{animation:blink 1.1s steps(1) 4.2s 6 both}",
-             "@keyframes blink { 50% { opacity: 0; } }"]
-    desc = (f"The wordmark SCRUTATE over the real output of `{shell_join(cmd['argv'])}` run by {spec['version']} in "
-            f"{spec['repo']}: seventeen lines, every match marked with a highlighter, and {HERO_DESC}.")
-    return svg(W, H, "Scrutate: instant code search and code intelligence", desc, "\n".join(b), "\n".join(style), animated=True)
+def capture_hero(binary: str, repo: str) -> int:
+    """Run the hero's searches in `repo` with --json and keep the spans that fall on the block of lines shown."""
+    spec = hero_spec()
+    first, last = spec["first"], spec["last"]
+    with open(os.path.join(repo, spec["file"]), encoding="utf-8") as f:
+        spec["lines"] = f.read().split("\n")[first - 1:last]
+    env = dict(os.environ, NO_COLOR="1")
+    for q in spec["queries"]:
+        argv = [binary, q["argv"][1], "--json"] + q["argv"][2:]
+        p = subprocess.run(argv, cwd=repo, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
+        rows = [json.loads(ln) for ln in p.stdout.splitlines()]
+        spans = []
+        for r in rows:
+            if r["type"] == "match" and r["path"] == spec["file"] and first <= r["line"] <= last:
+                assert r["text"] == spec["lines"][r["line"] - first], r
+                b = r["text"].encode()
+                spans += [[r["line"], len(b[:s["start"]].decode()), len(b[:s["end"]].decode())] for s in r["spans"]]
+        s = rows[-1]
+        assert s["type"] == "summary", s
+        q.update(spans=spans, lines_matched=s["matches"], files_matched=s["files_matched"], files_searched=s["files_searched"])
+    spec["version"] = subprocess.run([binary, "--version"], capture_output=True, text=True).stdout.strip()
+    spec["source"] = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
+    with open(HERO_JSON, "w", encoding="utf-8") as f:
+        json.dump(spec, f, indent=2)
+        f.write("\n")
+    print(f"wrote {HERO_JSON}", file=sys.stderr)
+    return 0
 
 
-def hero_cropped():
-    """Direction 2: the wordmark enormous and cropped, one marked line of code running through it."""
-    spec = demo_spec()
-    cmd = next(c for c in spec["commands"] if c["argv"][1:3] == ["grep", "--ident"])
-    rx = re.compile(cmd["highlight"])
-    line = next(ln for ln in cmd["output"] if "pub fn index_dir" in ln)
-    H, c = 560, ON["paper"]
-    b = [panel(H, "paper", frame=False), f'<defs><clipPath id="in"><rect width="{W}" height="{H}" rx="{RADIUS}"/></clipPath></defs>',
-         '<g clip-path="url(#in)">']
-    cap = 212
-    b.append(words("SCRU", 30, 30 + cap, cap, INK, track=-0.02))
-    b.append(words("TATE", 30, H - 26, cap, INK, track=-0.02))
-    by = 30 + cap + 18
-    bh = H - 26 - cap - 18 - by
-    b.append(f'<rect x="0" y="{by}" width="{W}" height="{bh}" fill="{INK}"/>')
-    s, _ = marked_line(PAD, by + bh / 2 + 7, line, rx, 19, PAPER, ON["ink"]["dim"], delay=0.6)
-    b.append(s)
-    hit = rx.search(line[len(LOC.match(line).group(1)):])
-    hx = PAD + (len(LOC.match(line).group(1)) + hit.start() + len(hit.group(0)) / 2) * 19 * 0.6
-    b.append(crosshair(round(hx), round(by + bh / 2), 26, MARK))
-    b.append("</g>")
-    b.append(side(f"SCRUTATE // {spec['version'].split()[-1]} // APACHE-2.0", W - 22, 40, c["dim"]))
-    b.append(mono(W - PAD, H - 18, HERO_LINE[0] + " // " + HERO_LINE[1], 11, c["dim"], 0.14, "end"))
-    desc = f"SCRUTATE in two enormous rows, and between them one real line of output with its match marked."
-    return svg(W, H, "Scrutate", desc, "\n".join(b), wipe_style(), animated=True)
+def code_text(x, y, s, size, fill, cw, cls=""):
+    """One line of code in system mono, each character exactly `cw` apart whatever mono font the reader has,
+    so a highlighter slab drawn at a computed column sits on the right letters."""
+    lead = len(s) - len(s.lstrip(" "))
+    s = s.strip(" ")
+    if not s:
+        return ""
+    return (f'<text class="m {cls}" x="{x + lead * cw:.1f}" y="{y:.1f}" font-size="{size}" fill="{fill}" '
+            f'textLength="{len(s) * cw:.1f}" lengthAdjust="spacing" xml:space="preserve">{esc(s)}</text>').replace('"m "', '"m"')
 
 
-def hero_split():
-    """Direction 3: ink half GREP with no index, paper half KNOW with the index, the wordmark across the join."""
-    H = 500
-    b = [f'<defs><clipPath id="l"><rect width="{W / 2}" height="{H}"/></clipPath>'
-         f'<clipPath id="r"><rect x="{W / 2}" width="{W / 2}" height="{H}"/></clipPath></defs>',
-         f'<rect width="{W}" height="{H}" rx="{RADIUS}" fill="{PAPER}"/>',
-         f'<path d="M{RADIUS} 0 H{W / 2} V{H} H{RADIUS} A{RADIUS} {RADIUS} 0 0 1 0 {H - RADIUS} V{RADIUS} A{RADIUS} {RADIUS} 0 0 1 {RADIUS} 0 Z" fill="{INK}"/>']
-    b.append(label(PAD, 46, "A", "Engine A // no index", "ink", W / 2 - 20))
-    b.append(label(W / 2 + 30, 46, "B", "Engine B // the index", "paper", W - PAD))
-    b.append(words("GREP", PAD, 190, 104, PAPER, track=-0.02))
-    b.append(words("KNOW", W / 2 + 30, 190, 104, INK, track=-0.02))
-    wm, ww = wordmark(0, 0, 78, PAPER, INK, cursor=False)
-    wm2, _ = wordmark(0, 0, 78, INK, PAPER, cursor=False)
-    x0 = (W - ww) / 2
-    b.append(f'<g clip-path="url(#l)"><g transform="translate({x0:.1f} 330)">{wm}</g></g>')
-    b.append(f'<g clip-path="url(#r)"><g transform="translate({x0:.1f} 330)">{wm2}</g></g>')
-    b.append(marker(PAD - 10, 392, W - 2 * PAD + 20, 48, "wipe", "animation-delay:.6s"))
-    b.append(words("INSTANT CODE SEARCH + CODE INTELLIGENCE", W / 2, 426, 21, INK, anchor="middle"))
-    desc = "Split poster: GREP on ink for Engine A with no index, KNOW on paper for Engine B the index, the wordmark across the join."
-    return svg(W, H, "Scrutate", desc, "\n".join(b), wipe_style(), animated=True)
+def count_up(final: str):
+    """The values a counter shows on its way to `final` (a number as written, such as 17, 12.3 or 1,234)."""
+    dec = len(final.split(".")[1]) if "." in final else 0
+    v = float(final.replace(",", ""))
+    out = []
+    for f in (0.1, 0.27, 0.46, 0.63, 0.78, 0.9, 0.97):
+        s = f"{v * f:,.{dec}f}"
+        if s not in out and s != final and float(s.replace(",", "")) > 0:
+            out.append(s)
+    return out + [final]
 
 
-HEROES = {"listing": hero_listing, "cropped": hero_cropped, "split": hero_split}
+def counter(clk, x, y, n, t0, t1, t_clear, size, fill, bold=True, suffix=""):
+    """A number that runs up from blank to `n` between t0 and t1 and is blank again from t_clear, right-aligned
+    at x, with `suffix` after each value: a strip of values behind a one-row window. Its finished state, what
+    reduced motion shows, is `n`."""
+    rows = [""] + [v + suffix for v in count_up(str(n))]
+    wide = len(str(n) + suffix) * size * 0.62 + size
+    dy = size * 1.5
+    top = (len(rows) - 1) * dy
+    cls = clk.anim([(t0, "translateY(0px)", f"steps({len(rows) - 1}, end)"), (t1, f"translateY({-top:.1f}px)"),
+                    (t_clear, f"translateY({-top:.1f}px)", "steps(1, end)"), (t_clear + 0.01, "translateY(0px)")],
+                   rest="translateY(0px)")
+    tspans = "".join(f'<tspan x="{x:.1f}" y="{y + i * dy:.1f}" xml:space="preserve">{esc(v)}</tspan>' for i, v in enumerate(rows) if v)
+    wt = ' font-weight="700"' if bold else ""
+    window = (f'<clipPath id="n{cls.split("k")[-1]}"><rect x="{x - wide:.1f}" y="{y - size:.1f}" width="{wide + 2:.1f}" '
+              f'height="{size * 1.3:.1f}"/></clipPath>')
+    return (f'<defs>{window}</defs><g clip-path="url(#n{cls.split("k")[-1]})"><text class="m {cls}" transform="translate(0 {-top:.1f})" '
+            f'font-size="{size}" fill="{fill}" text-anchor="end"{wt}>{tspans}</text></g>')
+
+
+def reticle(cls, colour, r=11):
+    return (f'<g class="{cls}" opacity="0"><g stroke="{colour}" fill="none" stroke-width="1.5"><circle r="{r}"/>'
+            f'<path d="M{-r * 1.8:g} 0 H{-r * .5:g} M{r * .5:g} 0 H{r * 1.8:g} M0 {-r * 1.8:g} V{-r * .5:g} M0 {r * .5:g} V{r * 1.8:g}"/>'
+            "</g></g>")
+
+
+def hero():
+    """The poster: a block of real code, four real searches run over it one after another (typed, each match
+    found by a reticle and struck by the highlighter, the count run up), and the wordmark below.
+    Its beats: `python3 tools/gen_assets.py beats`."""
+    return _hero()[0]
+
+
+def _hero():
+    spec = hero_spec()
+    c = ON["ink"]
+    H = 586
+    fs, cw, lh = 11.2, 6.72, 21         # the code: 117 columns fit between the gutter and the frame
+    cx0, cy0 = 54, 122
+    ps, pw = 15, 9.0                    # the prompt
+    px, py = PAD, 54
+    clk = Clock()
+    b = [panel(H, "ink")]
+    first, last = spec["first"], spec["last"]
+    b.append(mono(px, py, "$", ps, MARK))
+    b.append(mono(W - PAD, 82, f"{spec['file']}, lines {first} to {last}".upper(), 10.5, c["dim"], 0.14, "end"))
+    b.append(f'<path d="M{PAD} 96 H{W - PAD}" stroke="{c["rule"]}"/>')
+    under = len(b)   # the searches' slabs go here, under the code, so a lifting slab uncovers the letters
+    for i, ln in enumerate(spec["lines"]):
+        y = cy0 + i * lh
+        b.append(mono(cx0 - 12, y, str(first + i), 10, c["rule"], anchor="end"))
+        b.append(code_text(cx0, y, ln, fs, c["dim"], cw))
+    code_end = cy0 + (len(spec["lines"]) - 1) * lh + 22
+    b.append(f'<path d="M{PAD} {code_end} H{W - PAD}" stroke="{c["rule"]}"/>')
+    # the counters' labels: the numbers are each search's own
+    lx = W - PAD
+    b.append(mono(lx - 44, py, "FILES", 10.5, c["dim"], 0.14, "end"))
+    b.append(mono(lx - 150, py, "LINES", 10.5, c["dim"], 0.14, "end"))
+
+    # the wordmark: the letters cut in, the A's highlighter bar is drawn last, the cursor lands, then it stands
+    wy, cap = code_end + 122, 104
+    lift = cap * 0.22
+    letters = []
+    for i in range(len(WORD)):
+        t = 0.1 + 0.075 * i
+        letters.append(clk.anim([(t, {"transform": f"translateY({lift:.0f}px)", "opacity": 0}, "steps(1, start)"),
+                                 (t + 0.01, {"transform": f"translateY({lift:.0f}px)", "opacity": 1}, EASE),
+                                 (t + 0.34, {"transform": "translateY(0px)", "opacity": 1})],
+                                rest={"transform": f"translateY({lift:.0f}px)", "opacity": 0}))
+    clk.beat("wordmark: the letters cut in", 0.1, 0.075 * 7 + 0.34)
+    t_bar = clk.beat("wordmark: the A's bar is drawn", 0.78, 0.34) - 0.34
+    t_cur = clk.beat("wordmark: the cursor lands", 1.1, 0.3) - 0.3
+    bar_cls = "wipe " + clk.anim(wipe(t_bar, 0.34), rest="scaleX(0)")
+    cur_cls = clk.anim([(t_cur, {"transform": f"translateY({-cap * 0.6:.0f}px)", "opacity": 0}, EASE),
+                        (t_cur + 0.3, {"transform": "translateY(0px)", "opacity": 1})],
+                       rest={"transform": f"translateY({-cap * 0.6:.0f}px)", "opacity": 0})
+    slab_cls = "wipe " + clk.anim(wipe(1.3, 0.42), rest="scaleX(0)")
+    clk.beat("statement: CODE INTELLIGENCE is marked", 1.3, 0.42)
+
+    # the searches: `scrutate grep ` stays at the prompt, the rest of each command is typed
+    head = "scrutate grep "
+    b.append(code_text(px + 2 * pw, py, head.strip(), ps, PAPER, pw))
+    x0 = px + (2 + len(head)) * pw
+    t = 1.3
+    queries = []
+    for qi, q in enumerate(spec["queries"]):
+        assert q["argv"][:2] == ["scrutate", "grep"], q["argv"]
+        cmd = shell_join(q["argv"][2:])
+        pts, t_typed = typing(t, cmd, 24)
+        clk.beat(f"search {qi + 1}: `{cmd}` is typed", t, t_typed - t)
+        t_run = t_typed + 0.25
+        marks = [(ln, s0, s1, t_run + 0.1 + 0.42 * j) for j, (ln, s0, s1) in enumerate(sorted(q["spans"]))]
+        t_landed = marks[-1][3] + 0.5
+        clk.beat(f"search {qi + 1}: the reticle finds the {len(marks)} match{'es' * (len(marks) > 1)} on these lines, "
+                 "the highlighter strikes each, the counts run up", t_run + 0.1, t_landed - t_run - 0.1)
+        t_lift = t_landed + 2.1
+        clk.beat(f"search {qi + 1}: hold", t_landed, t_lift - t_landed)
+        queries.append((q, cmd, pts, t, t_typed, t_run, marks, t_landed, t_lift))
+        clk.beat(f"search {qi + 1}: the marks lift, the line is cleared", t_lift, 0.3)
+        t = t_lift + 0.45
+    t_end = queries[-1][8] + 1.0
+    clk.total = t_end
+    t_exit = queries[-1][8] + 0.1
+    clk.beat("wordmark leaves; the loop starts again", t_exit, t_end - t_exit)
+
+    # the letters, the bar and the cursor leave at the end of the loop, so the next one starts clean
+    for i, cls in enumerate(letters):
+        te = t_exit + 0.03 * i
+        clk.more(cls, [(te, {"transform": "translateY(0px)", "opacity": 1}, "ease-in"),
+                       (te + 0.22, {"transform": f"translateY({-lift / 2:.0f}px)", "opacity": 0}),
+                       (te + 0.23, {"transform": f"translateY({lift:.0f}px)", "opacity": 0})])
+    for cls in (bar_cls, slab_cls):
+        clk.more(cls, [(t_exit, "scaleX(1)", "ease-in"), (t_exit + 0.25, "scaleX(0)")])
+    clk.more(cur_cls, [(t_exit + 0.25, {"transform": "translateY(0px)", "opacity": 1}, "ease-in"),
+                       (t_exit + 0.45, {"transform": "translateY(0px)", "opacity": 0}),
+                       (t_exit + 0.46, {"transform": f"translateY({-cap * 0.6:.0f}px)", "opacity": 0})])
+    blink_cls = blink(clk, t_cur + 0.3, t_exit + 0.2)
+    wm, ww = wordmark(PAD, wy, cap, PAPER, INK, cls_letters=letters, cls_bar=bar_cls, cls_cursor=cur_cls, cls_blink=blink_cls)
+    b.append(wm)
+    sy = wy + 62
+    b.append(statement(PAD, sy, HERO_LINE[0], HERO_LINE[1], 26, "ink", slab_cls=slab_cls))
+    b.append(mono(W - PAD, sy, HERO_SMALL, 10.5, c["dim"], 0.14, "end"))
+    b.append(mono(W - PAD, sy + 40, f"APACHE-2.0 // {spec['version'].upper()}", 10.5, c["dim"], 0.14, "end"))
+
+    # each search is a group: its label, its command, its marks and its counts; the groups cross-fade
+    cur_pts, ret_pts = [], []
+    prev = None
+    n = len(queries)
+    for qi, (q, cmd, pts, t0, t_typed, t_run, marks, t_landed, t_lift) in enumerate(queries):
+        # with motion, a search's group is cut in and out while its line is empty and its marks are gone;
+        # with reduced motion the groups cross-fade, a second each way
+        cut_out = [(t_lift + 0.3, 1, "steps(1, end)"), (t_lift + 0.31, 0)]
+        p = queries[qi - 1][8]   # the lift of the search before (for the first, the last one's)
+        calm = window(p + 0.4, t_lift - 0.5, t_end)
+        if qi:
+            g_cls = clk.anim([(p + 0.3, 0, "steps(1, end)"), (p + 0.31, 1)] + cut_out, "opacity", rest=0, fade=True, calm=calm)
+        else:
+            g_cls = clk.anim(cut_out + [(p + 0.3, 0, "steps(1, end)"), (p + 0.31, 1)], "opacity", rest=1, fade=True, calm=calm)
+        g_open = f'<g class="{g_cls}"' + (' opacity="0"' if qi else "") + ">"
+        slabs = [g_open]
+        b.append(g_open)
+        b.append(mono(PAD, 82, f"// {qi + 1:02d}  {q['label']}", 10.5, c["fg"], 0.14))
+        b.append(code_text(x0, py, cmd, ps, PAPER, pw))
+        # typing: a cover over the command shrinks toward its right end, a letter at a time; at the lift it
+        # grows back from the right, as if the line were deleted
+        L = len(cmd) * pw + 2
+        cov = [(tt, f"scaleX({1 - k * pw / L:.4f})", *rest) for tt, k, *rest in pts]
+        cov_cls = clk.anim(cov + [(t_lift, "scaleX(0)", f"steps({len(cmd)}, end)"), (t_lift + 0.25, "scaleX(1)")], rest="scaleX(1)")
+        b.append(f'<rect class="{cov_cls} cover" x="{x0 - 1:.1f}" y="{py - ps:.1f}" width="{L:.1f}" height="{ps + 6}" fill="{INK}" '
+                 f'transform="scale(0 1)"/>')
+        cur_pts += [(t0 - 0.31, {"transform": f"translateX({x0:.1f}px)", "opacity": 0}, "steps(1, end)"),
+                    (t0 - 0.3, {"transform": f"translateX({x0:.1f}px)", "opacity": 1})]
+        cur_pts += [(tt, {"transform": f"translateX({x0 + k * pw:.1f}px)", "opacity": 1}, *rest) for tt, k, *rest in pts]
+        cur_pts += [(t_run, {"transform": f"translateX({x0 + len(cmd) * pw:.1f}px)", "opacity": 1}, "steps(1, end)"),
+                    (t_run + 0.01, {"transform": f"translateX({x0 + len(cmd) * pw:.1f}px)", "opacity": 0})]
+        # the counts run up while the marks land
+        t_c1 = max(t_landed, t_run + 0.9)
+        b.append(counter(clk, lx, py + 1, q["files_matched"], t_run + 0.2, t_c1, t_lift + 0.32, 18, PAPER))
+        b.append(counter(clk, lx - 106, py + 1, q["lines_matched"], t_run + 0.2, t_c1, t_lift + 0.32, 18, PAPER))
+        # the marks: a slab wipes in under each match, the matched letters turn ink on it, then they lift
+        for (ln, s0, s1, tm) in marks:
+            y = cy0 + (ln - first) * lh
+            mx, mw = cx0 + s0 * cw - 2, (s1 - s0) * cw + 3
+            slab = wipe(tm + 0.22, 0.28) + [(t_lift, "scaleX(1)", "ease-in"), (t_lift + 0.3, "scaleX(0)")]
+            slabs.append(marker(mx, y - fs * 0.98, mw, fs * 1.34, "wipe " + clk.anim(slab, rest="scaleX(0)")))
+            ink = [(tm + 0.41, 0, "steps(1, end)"), (tm + 0.42, 1), (t_lift, 1, "steps(1, end)"), (t_lift + 0.01, 0)]
+            word = spec["lines"][ln - first][s0:s1]
+            b.append(code_text(cx0 + s0 * cw, y, word, fs, INK, cw, clk.anim(ink, "opacity", rest=0)))
+            tx, ty = cx0 + (s0 + s1) / 2 * cw, y - fs * 0.36
+            start = prev or (x0 + len(cmd) * pw, py - 5)
+
+            def at(p, s, o=1):
+                return {"transform": f"translate({p[0]:.1f}px, {p[1]:.1f}px) scale({s})", "opacity": o}
+            if prev is None:   # it appears at the end of the command and sets off
+                ret_pts += [(tm - 0.12, at(start, 1.8, 0), EASE), (tm, at(start, 1.3), EASE_IN_OUT)]
+            else:
+                ret_pts.append((tm, at(start, 1), EASE_IN_OUT))
+            ret_pts += [(tm + 0.22, at((tx, ty), 1.35), EASE), (tm + 0.34, at((tx, ty), 1))]
+            prev = (tx, ty)
+        if prev:
+            ret_pts.append((t_lift, {"transform": f"translate({prev[0]:.1f}px, {prev[1]:.1f}px) scale(1)", "opacity": 1}, "ease-in"))
+            ret_pts.append((t_lift + 0.25, {"transform": f"translate({prev[0]:.1f}px, {prev[1]:.1f}px) scale(1.6)", "opacity": 0}))
+            prev = None
+        b.append("</g>")
+        b.insert(under, "".join(slabs) + "</g>")
+        under += 1
+    # the prompt's cursor and the reticle are hidden between searches; they rest where they were last seen
+    b.append(f'<g class="{clk.anim(cur_pts, rest=cur_pts[-1][1])}" opacity="0"><rect y="{py - ps + 1:.1f}" width="{pw:.1f}" '
+             f'height="{ps + 3}" fill="{MARK}"/></g>')
+    b.append(reticle(clk.anim(ret_pts, rest=ret_pts[-1][1]), PAPER))
+    style = [WIPE_CSS, ".cover{transform-box:fill-box;transform-origin:right center}", clk.css()]
+    qs = "; ".join(f"`{cmd}` marks {len(q['spans'])} on these lines and reports {q['lines_matched']} matching lines in "
+                   f"{q['files_matched']} of {q['files_searched']} files" for q, cmd, *_ in queries)
+    desc = (f"Lines {first} to {last} of {spec['file']} (scrutate's own source, crates/scrutate at {spec['source']}), and four "
+            f"searches run over them with {spec['version']}, one after another: {qs}. Each search is typed, a reticle finds each "
+            f"match the binary reported, a highlighter marks it and the counts run up to the real numbers. Below: the "
+            f"wordmark SCRUTATE, whose A has a highlighter stroke for its bar, and {HERO_DESC}. With reduced motion the "
+            "searches cross-fade with every match marked.")
+    return svg(W, H, "Scrutate: instant code search and code intelligence", desc, "\n".join(b), "\n".join(style), animated=True), clk
 
 
 # ---------------------------------------------------------------- terminal demo
@@ -464,34 +736,86 @@ def shell_join(argv) -> str:
     return " ".join(a if re.fullmatch(r"[\w./=:-]+", a) else '"' + a + '"' for a in argv)
 
 
+def term_parts(s, hl, ink):
+    """A line of output as (text, attributes) runs: the location dim, a [kind] dim and the name bold (search,
+    callers), and the matches of `hl` (grep) as their own runs; also the columns of those matches."""
+    k = ON["ink"]
+    m = LOC.match(s)
+    head = m.group(1) if m else ""
+    rest = s[len(head):]
+    runs = [(head, f'fill="{k["dim"]}"')] if head else []
+    cols = []
+    kind = re.match(r"^(\s+\[\w+\]\s)(.*)$", rest)
+    if s.strip() == "...":
+        runs = [(s, f'fill="{k["dim"]}"')]
+    elif kind:
+        runs += [(kind.group(1), f'fill="{k["dim"]}"'), (kind.group(2), 'font-weight="700"')]
+    elif hl:
+        last = 0
+        for mm in hl.finditer(rest):
+            runs.append((rest[last:mm.start()], ""))
+            cols.append((len(head) + mm.start(), len(head) + mm.end()))
+            runs.append((mm.group(0), ""))
+            last = mm.end()
+        runs.append((rest[last:], ""))
+    else:
+        runs.append((rest, ""))
+    return [r for r in runs if r[0]], cols
+
+
+def runs_text(x, y, runs, size, fill, cw, cls=""):
+    """Runs of one line in system mono, each character `cw` apart (see code_text)."""
+    s = "".join(t for t, _ in runs)
+    lead = len(s) - len(s.lstrip(" "))
+    out, skip = [], lead
+    for t, attrs in runs:
+        cut, skip = min(skip, len(t)), max(0, skip - len(t))
+        if t[cut:]:
+            out.append(f"<tspan {attrs}>{esc(t[cut:])}</tspan>" if attrs else esc(t[cut:]))
+    n = len(s.strip(" "))
+    if not n:
+        return ""
+    s_end = len(s.rstrip(" "))
+    return (f'<text class="{f"m {cls}".strip()}" x="{x + lead * cw:.1f}" y="{y:.1f}" font-size="{size}" fill="{fill}" '
+            f'textLength="{(s_end - lead) * cw:.1f}" lengthAdjust="spacing" xml:space="preserve">{"".join(out).rstrip()}</text>')
+
+
+def marked_line(x, y, s, rx, size, fg, pfx):
+    """One line of real output, still (the social card): the location in `pfx`, each match of `rx` on a
+    highlighter slab in ink. Returns (svg, slabs)."""
+    cw = size * 0.6
+    m = LOC.match(s)
+    head = m.group(1) if m else ""
+    rest = s[len(head):]
+    slabs, spans = [], [f'<tspan fill="{pfx}">{esc(head)}</tspan>'] if head else []
+    last = 0
+    for mm in rx.finditer(rest):
+        spans += [esc(rest[last:mm.start()]), f'<tspan fill="{INK}">{esc(mm.group(0))}</tspan>']
+        slabs.append(marker(x + (len(head) + mm.start()) * cw - 3, y - size * 0.95, len(mm.group(0)) * cw + 4, size * 1.3))
+        last = mm.end()
+    spans.append(esc(rest[last:]))
+    return "".join(slabs) + f'<text x="{x}" y="{y}" class="m pre" font-size="{size}" fill="{fg}">{"".join(spans)}</text>', len(slabs)
+
+
 def demo() -> str:
+    """A terminal session that loops for ever: each command is typed, its output arrives in bursts, the matches
+    of a grep are marked, the next prompt waits, the screen clears and the next command is typed."""
     spec = demo_spec()
-    fs, lh = 14, 19.0
-    cw = fs * 0.6
+    k = ON["ink"]
     tx, ty, top = 24, 64, 40                 # the terminal window inside the paper panel
-    x0 = tx + 22
-    rows = []
-    for i, c in enumerate(spec["commands"]):
-        if i:
-            rows.append(("gap", None))
-        rows.append(("cmd", c))
-        for ln in trim(c["output"], c.get("keep"), c.get("only")):
-            rows.append(("out", (ln, c)))
-    rows.append(("gap", None))
-    rows.append(("prompt", None))
-    th = int(top + 18 + lh * sum(0.5 if k == "gap" else 1 for k, _ in rows) + 12)
-    H = ty + th + 28
-    # timeline: type, Enter, the output at once and its matches marked, a pause; rest, fade and start again
-    t, cps, T = 0.5, 40.0, 15.0
-    times = []
-    for c in spec["commands"]:
-        n = len(shell_join(c["argv"]))
-        times.append((t, t + n / cps, t + n / cps + 0.35))
-        t += n / cps + 0.35 + 1.5
-    rest_end = T - 0.9
-    assert times[-1][2] + 2.0 <= rest_end, "the demo needs a rest of 2 s; show fewer or shorter commands"
-    p, k = ON["paper"], ON["ink"]
     tw = W - 2 * tx
+    x0 = tx + 22
+    screens = []
+    for c in spec["commands"]:
+        screens.append((c, shell_join(c["argv"]), trim(c["output"], c.get("keep"), c.get("only"))))
+    widest = max(len(ln) for _, cmd, out in screens for ln in out + ["$ " + cmd])
+    fs = min(14.0, round((tw - 44) / (widest * 0.6), 1))
+    cw, lh = fs * 0.6, round(fs * 1.4, 1)
+    rows = max(len(out) for _, _, out in screens) + 2       # the command, its output, the next prompt
+    th = int(top + 18 + lh * rows + 10)
+    H = ty + th + 28
+    y0 = ty + top + 18 + fs * 0.8
+    clk = Clock()
     b = [panel(H, "paper"), label(PAD, 42, "", f"scrutate in a terminal // real output, {spec['version']}", "paper", W - PAD),
          f'<defs><clipPath id="win"><rect x="{tx}" y="{ty}" width="{tw}" height="{th}" rx="8"/></clipPath></defs>',
          f'<rect x="{tx}" y="{ty}" width="{tw}" height="{th}" rx="8" fill="{INK}"/>']
@@ -499,83 +823,90 @@ def demo() -> str:
         b.append(f'<rect x="{tx + 18 + i * 16}" y="{ty + 15}" width="8" height="8" fill="{k["rule"]}"/>')
     b.append(mono(tx + tw - 18, ty + 23, spec["title"].upper(), 11, k["dim"], 0.14, "end"))
     b.append(f'<path d="M{tx} {ty + top} H{tx + tw}" stroke="{k["rule"]}"/>')
-    b.append('<g clip-path="url(#win)"><g class="screen">')
-    style = [f".screen{{animation: screen {T}s linear infinite}}", kf("screen", T, [(0, 1), (rest_end, 1), (rest_end + 0.5, 0), (T, 0)]),
-             f".wipe{{transform-box:fill-box;transform-origin:left center}}",
-             "@keyframes wipe { from { transform: scaleX(0); } }"]
-    y = ty + top + 18 + fs * 0.8
-    ci = -1
-    for ri, (kind, pl) in enumerate(rows):
-        if kind == "gap":
-            y += lh * 0.5
-            continue
-        if kind == "cmd":
-            ci += 1
-            c = pl
-            s = shell_join(c["argv"])
-            t0, t1, t2 = times[ci]
-            w = text_w(s, fs, mono=True) + 6
-            xs = x0 + 2 * cw
-            nch = len(s)
-            b.append(f'<text x="{x0}" y="{y:.1f}" class="m pre{f" o{ci - 1}" if ci else ""}" font-size="{fs}" fill="{PAPER}">'
-                     f'<tspan fill="{MARK}">$ </tspan>{esc(s)}</text>')
-            # a cover slides off the command letter by letter (typing); a block cursor rides its edge
-            b.append(f'<rect class="cv{ci}" x="{xs - 1:.1f}" y="{y - fs:.1f}" width="{w + 12:.1f}" height="{lh + 2}" fill="{INK}"/>')
-            b.append(f'<rect class="cu{ci}" x="{xs:.1f}" y="{y - fs + 1:.1f}" width="{cw:.1f}" height="{fs + 3}" fill="{MARK}" opacity="0"/>')
-            style.append(f".cv{ci}{{transform: translateX({w + 14:.1f}px); animation: cv{ci} {T}s linear infinite}}")
-            style.append(kf(f"cv{ci}", T, [(0, "translateX(0px)"), (t0, "translateX(0px)", f"steps({nch}, end)"),
-                                            (t1, f"translateX({nch * cw:.1f}px)", "linear"), (t1 + 0.01, f"translateX({w + 14:.1f}px)"),
-                                            (T, f"translateX({w + 14:.1f}px)")], "transform"))
-            style.append(f".cu{ci}{{animation: cu{ci} {T}s linear infinite, cm{ci} {T}s linear infinite}}")
-            style.append(kf(f"cu{ci}", T, [(0, 0), (t0 - 0.3, 0), (t0 - 0.29, 1), (t2, 1), (t2 + 0.01, 0), (T, 0)]))
-            style.append(kf(f"cm{ci}", T, [(0, "translateX(0px)"), (t0, "translateX(0px)", f"steps({nch}, end)"),
-                                            (t1, f"translateX({nch * cw:.1f}px)"), (T, f"translateX({nch * cw:.1f}px)")], "transform"))
-            b.append(f'<g class="o{ci}">')
-            hl = re.compile(c["highlight"]) if c.get("highlight") else None
-        elif kind == "out":
-            ln, c = pl
-            if ln.strip() == "...":
-                b.append(mono(x0, y, ln, fs, k["dim"]))
-            elif hl:
-                b.append(marked_line(x0, y, ln, hl, fs, PAPER, k["dim"], mark_cls=f"wipe k{ci}", hit_cls=f"h{ci}")[0])
-            else:
-                b.append(demo_line(x0, y, ln, fs))
-        elif kind == "prompt":
-            b.append(mono(x0, y, "$ ", fs, MARK, cls=f"o{ci}"))
-            b.append(f'<rect class="pc" x="{x0 + 2 * cw:.1f}" y="{y - fs + 1:.1f}" width="{cw:.1f}" height="{fs + 3}" fill="{MARK}"/>')
-            style.append(f".pc{{animation: pc {T}s linear infinite}}")
-            style.append(kf("pc", T, [(0, 0), (times[-1][2] + 0.4, 0), (times[-1][2] + 0.41, 1), (T, 1)]))
-        y += lh
-        if kind in ("out", "cmd") and rows[ri + 1][0] == "gap":
+    b.append('<g clip-path="url(#win)">')
+    b.append(mono(x0, y0, "$", fs, MARK))
+
+    # the timeline: type, Enter, the output in two bursts, the marks, the next prompt, a pause, clear
+    t = 0.6
+    plan = []
+    for i, (c, cmd, out) in enumerate(screens):
+        pts, t_typed = typing(t, cmd, 21)
+        t_enter = t_typed + 0.4
+        bursts = [t_enter + 0.1, t_enter + 0.3]
+        hl = re.compile(c["highlight"]) if c.get("highlight") else None
+        n_marks = sum(len(term_parts(ln, hl, INK)[1]) for ln in out) if hl else 0
+        t_marks = bursts[1] + 0.25
+        t_done = t_marks + 0.13 * n_marks + 0.3
+        t_clear = t_done + 2.4
+        clk.beat(f"command {i + 1}: `{cmd}` is typed", t, t_typed - t)
+        clk.beat(f"command {i + 1}: Enter; the output arrives in two bursts", t_enter, bursts[1] - t_enter)
+        if n_marks:
+            clk.beat(f"command {i + 1}: {n_marks} matches are marked, one after another", t_marks, t_done - t_marks)
+        clk.beat(f"command {i + 1}: the next prompt waits; hold", t_done, t_clear - t_done)
+        clk.beat(f"command {i + 1}: the screen clears", t_clear, 0.4)
+        plan.append((c, cmd, out, hl, pts, t, t_typed, t_enter, bursts, t_marks, t_done, t_clear))
+        t = t_clear + 0.4
+    T = clk.total = t
+    cur = []
+    for i, (c, cmd, out, hl, pts, t0, t_typed, t_enter, bursts, t_marks, t_done, t_clear) in enumerate(plan):
+        prev_clear = plan[i - 1][11]
+        cut = [(t_clear, 1, "steps(1, end)"), (t_clear + 0.01, 0)]
+        calm = window(prev_clear + 0.2, t_clear - 0.6, T)
+        if i:
+            g = clk.anim([(prev_clear + 0.01, 0, "steps(1, end)"), (prev_clear + 0.02, 1)] + cut, "opacity", rest=0, fade=True, calm=calm)
+        else:
+            g = clk.anim(cut + [(T - 0.02, 0, "steps(1, end)"), (T - 0.01, 1)], "opacity", rest=1, fade=True, calm=calm)
+        b.append(f'<g class="{g}"' + (' opacity="0"' if i else "") + ">")
+        xs = x0 + 2 * cw
+        b.append(code_text(xs, y0, cmd, fs, PAPER, cw))
+        L = len(cmd) * cw + 2
+        cov = [(tt, f"scaleX({1 - n * cw / L:.4f})", *rest) for tt, n, *rest in pts]
+        b.append(f'<rect class="cover {clk.anim(cov + [(t_clear, "scaleX(0)", "steps(1, end)"), (t_clear + 0.01, "scaleX(1)")], rest="scaleX(1)")}" '
+                 f'x="{xs - 1:.1f}" y="{y0 - fs:.1f}" width="{L:.1f}" height="{lh + 2}" fill="{INK}" transform="scale(0 1)"/>')
+        cur += [(t0 - 0.31, {"transform": f"translateX({xs:.1f}px)", "opacity": 0}, "steps(1, end)"),
+                (t0 - 0.3, {"transform": f"translateX({xs:.1f}px)", "opacity": 1})]
+        cur += [(tt, {"transform": f"translateX({xs + n * cw:.1f}px)", "opacity": 1}, *rest) for tt, n, *rest in pts]
+        cur += [(t_enter, {"transform": f"translateX({xs + len(cmd) * cw:.1f}px)", "opacity": 1}, "steps(1, end)"),
+                (t_enter + 0.01, {"transform": f"translateX({xs + len(cmd) * cw:.1f}px)", "opacity": 0})]
+        # the output: a first burst of two lines, then the rest, as a tool writes its buffer
+        split = min(2, len(out))
+        marks = []
+        for part, (lo, hi) in enumerate(((0, split), (split, len(out)))):
+            if lo == hi:
+                continue
+            ob = clk.anim([(bursts[part], 0, "steps(1, end)"), (bursts[part] + 0.01, 1), (t_clear, 1, "steps(1, end)"),
+                           (t_clear + 0.01, 0)], "opacity", rest=0)
+            b.append(f'<g class="{ob}">')
+            for j in range(lo, hi):
+                y = y0 + (j + 1) * lh
+                runs, cols = term_parts(out[j], hl, INK)
+                for a, e in cols:
+                    tm = t_marks + 0.13 * len(marks)
+                    slab = wipe(tm, 0.28) + [(t_clear, "scaleX(1)", "steps(1, end)"), (t_clear + 0.01, "scaleX(0)")]
+                    b.append(marker(x0 + a * cw - 2, y - fs * 0.95, (e - a) * cw + 3, fs * 1.3, "wipe " + clk.anim(slab, rest="scaleX(0)")))
+                    marks.append((out[j][a:e], a, y, tm))
+                b.append(runs_text(x0, y, runs, fs, PAPER, cw))
             b.append("</g>")
-    b.append("</g></g>")
-    for i, (t0, t1, t2) in enumerate(times):
-        style.append(f".o{i}{{animation: o{i} {T}s linear infinite}}")
-        style.append(kf(f"o{i}", T, [(0, 0), (t2, 0), (t2 + 0.01, 1), (T, 1)]))
-        # the matches are marked just after the output lands
-        style.append(f".k{i}{{animation: k{i} {T}s linear infinite}}")
-        style.append(kf(f"k{i}", T, [(0, "scaleX(0)"), (t2 + 0.25, "scaleX(0)", EASE), (t2 + 0.75, "scaleX(1)"), (T, "scaleX(1)")], "transform"))
-        style.append(f".h{i}{{animation: h{i} {T}s linear infinite}}")
-        style.append(kf(f"h{i}", T, [(0, "currentColor"), (t2 + 0.6, "currentColor"), (t2 + 0.61, INK), (T, INK)], "fill"))
-    cmds = "; ".join(shell_join(c["argv"]) for c in spec["commands"])
-    desc = (f"A terminal running {spec['version']} in {spec['repo']}: {cmds}. Every line is the binary's own output, "
-            "captured by tools/gen_assets.py capture; the matches of each grep are marked with a highlighter, and a line "
-            "'...' marks output left out.")
+        for word, a, y, tm in marks:
+            ink = [(tm + 0.18, 0, "steps(1, end)"), (tm + 0.19, 1), (t_clear, 1, "steps(1, end)"), (t_clear + 0.01, 0)]
+            b.append(code_text(x0 + a * cw, y, word, fs, INK, cw, clk.anim(ink, "opacity", rest=0)))
+        # the next prompt, and its cursor blinking while the output is read
+        yp = y0 + (len(out) + 1) * lh
+        nxt = clk.anim([(t_done, 0, "steps(1, end)"), (t_done + 0.01, 1), (t_clear, 1, "steps(1, end)"), (t_clear + 0.01, 0)],
+                       "opacity", rest=0)
+        b.append(f'<g class="{nxt}">' + mono(x0, yp, "$", fs, MARK)
+                 + f'<rect class="{blink(clk, t_done, t_clear)}" x="{x0 + 2 * cw:.1f}" y="{yp - fs + 1:.1f}" width="{cw:.1f}" '
+                 f'height="{fs + 3}" fill="{MARK}"/></g>')
+        b.append("</g>")
+    b.append(f'<g class="{clk.anim(cur, rest=cur[-1][1])}" opacity="0"><rect y="{y0 - fs + 1:.1f}" width="{cw:.1f}" '
+             f'height="{fs + 3}" fill="{MARK}"/></g>')
+    b.append("</g>")
+    style = [WIPE_CSS, ".cover{transform-box:fill-box;transform-origin:right center}", clk.css()]
+    cmds = "; ".join(cmd for _, cmd, _ in screens)
+    desc = (f"A terminal running {spec['version']} in {spec['repo']}, one command at a time: {cmds}. Each command is typed, "
+            "its output (the binary's own, captured by tools/gen_assets.py capture) arrives, the matches of each grep are "
+            "marked with a highlighter, and the screen clears for the next; a line '...' marks output left out.")
     return svg(W, H, "Scrutate in a terminal", desc, "\n".join(b), "\n".join(style), animated=True)
-
-
-def demo_line(x, y, s, fs):
-    """search and callers output: the location dim, a [kind] dim, the name bold."""
-    k = ON["ink"]
-    m = LOC.match(s)
-    head, rest = (m.group(1), s[len(m.group(1)):]) if m else ("", s)
-    parts = [f'<tspan fill="{k["dim"]}">{esc(head)}</tspan>'] if head else []
-    kind = re.match(r"^(\s+\[\w+\]\s)(.*)$", rest)
-    if kind:
-        parts.append(f'<tspan fill="{k["dim"]}">{esc(kind.group(1))}</tspan><tspan font-weight="700">{esc(kind.group(2))}</tspan>')
-    else:
-        parts.append(esc(rest))
-    return f'<text x="{x}" y="{y:.1f}" class="m pre" font-size="{fs}" fill="{PAPER}">{"".join(parts)}</text>'
 
 
 # ---------------------------------------------------------------- two engines
@@ -589,23 +920,44 @@ ENGINES = {
 }
 
 
+def dash_run(clk, t0, t1, ease=EASE_IN_OUT, dash=6.0):
+    """A short block of highlighter running along a path drawn with pathLength=100, from before its start to past
+    its end, between t0 and t1; hidden the rest of the loop. Returns the class and the dash array."""
+    return clk.anim([(t0, f"{dash:.1f}", ease), (t1, "-100", "steps(1, end)"), (t1 + 0.01, f"{dash:.1f}")], "stroke-dashoffset",
+                    rest=f"{dash:.1f}"), f"{dash:.1f} 300"
+
+
+def dash_path(d, cls, dash, width=3.5, colour=MARK):
+    return (f'<path class="{cls}" d="{d}" pathLength="100" fill="none" stroke="{colour}" stroke-width="{width}" '
+            f'stroke-dasharray="{dash}" stroke-dashoffset="{dash.split()[0]}"/>')
+
+
+def path_len(pts):
+    return sum(abs(x1 - x0) + abs(y1 - y0) for (x0, y0), (x1, y1) in zip(pts, pts[1:]))
+
+
 def engines() -> str:
+    """What you ask goes to one engine or the other: a packet leaves one of the four front ends, runs along the
+    wires into Engine A or Engine B, each stage is marked as it passes, and what comes back is marked. Four runs
+    in turn (the CLI to A, MCP to B, Python to A, LSP to B), then again."""
     c = ON["ink"]
     H = 480
+    clk = Clock()
     b = [panel(H, "ink", dots=True), label(PAD, 46, "01", "Two engines, one binary", "ink", W - PAD)]
-    # what you ask: four tags down the left
     b.append(mono(PAD, 92, "YOU ASK", 11, c["dim"], 0.16))
+    asks = {}
     for i, (t, sub) in enumerate(ENGINES["asks"]):
         y = 108 + i * 64
         b.append(f'<rect x="{PAD + .5}" y="{y + .5}" width="139" height="49" fill="{INK}" stroke="{c["rule"]}"/>')
         b.append(words(t, PAD + 12, y + 24, 13, PAPER))
         b.append(mono(PAD + 12, y + 40, sub, 11, c["dim"]))
+        asks[t] = y
     b.append(f'<path d="M{PAD + 140} {108 + 25} H{PAD + 160} M{PAD + 140} {172 + 25} H{PAD + 160} M{PAD + 140} {236 + 25} H{PAD + 160} '
              f'M{PAD + 140} {300 + 25} H{PAD + 160} M{PAD + 160} 133 V325" stroke="{c["dim"]}" stroke-width="1.5" fill="none"/>')
     ex, ew = 224, 360
     gx = ex + ew + 22
     b.append(mono(gx, 92, "YOU GET", 11, c["dim"], 0.16))
-    t = 0.5
+    cards = {}
     for key, ey, eh in (("a", 108, 136), ("b", 262, 190)):
         letter, big, line, steps, gets = ENGINES[key]
         b.append(f'<path d="M{PAD + 160} {ey + 46} H{ex - 4}" stroke="{c["dim"]}" stroke-width="1.5"/>'
@@ -614,31 +966,90 @@ def engines() -> str:
         b.append(words(letter, ex + 18, ey + 66, 50, INK))
         b.append(words(big, ex + 72, ey + 40, 26, INK))
         b.append(f'<text x="{ex + 72}" y="{ey + 62}" class="s" font-size="13" fill="{ON["paper"]["dim"]}">{esc(line)}</text>')
-        # the steps, as tags in rows that fit the card
         x, y = ex + 18, ey + 92
         tw = [text_w(st.upper(), 10.5, True, 0.1) + 14 for st in steps]
+        boxes = []
         for i, st in enumerate(steps):
             if x + tw[i] > ex + ew - 14:
                 x, y = ex + 18, y + 34
-            elif i:   # a connector only between two steps on the same row
+            elif i:
                 b.append(f'<path d="M{x - 15:.1f} {y + 13} H{x - 3:.1f}" stroke="{INK}" stroke-width="1.5"/>')
-            b.append(f'<rect x="{x + .5:.1f}" y="{y + .5}" width="{tw[i]:.0f}" height="25" fill="none" stroke="{INK}"/>')
-            b.append(mono(x + 7, y + 17, st.upper(), 10.5, INK, 0.1))
+            boxes.append((x, y, tw[i], st))
             x += tw[i] + 18
+        outs = []
         for j, (g, sub) in enumerate(gets):
             gy = ey + 6 + j * 62
-            yc = gy + 28
-            b.append(f'<path d="M{ex + ew + 2} {yc} H{gx - 6}" stroke="{c["dim"]}" stroke-width="1.5"/>')
-            b.append(marker(gx, gy, type_w(g, 13) + 20, 30, "wipe", f"animation-delay:{t:.2f}s"))
-            b.append(words(g, gx + 10, gy + 21, 13, INK, cls="hit", extra=f' color="{PAPER}" style="animation-delay:{t:.2f}s"'))
+            b.append(f'<path d="M{ex + ew + 2} {gy + 28} H{gx - 6}" stroke="{c["dim"]}" stroke-width="1.5"/>')
             b.append(mono(gx + 2, gy + 52, sub, 12, c["dim"]))
-            t += 0.35
+            outs.append((g, gy))
+        cards[key] = (ey, boxes, outs)
+
+    # the runs: (front end, engine, which outputs it asks for)
+    runs = [("CLI", "a", [0]), ("MCP", "b", [0]), ("PYTHON", "a", [0]), ("LSP", "b", [1, 2])]
+    step_marks = {(k, i): [] for k in cards for i in range(len(cards[k][1]))}
+    out_marks = {(k, j): [] for k in cards for j in range(len(cards[k][2]))}
+    ask_on = {t: [] for t in asks}
+    packets = []
+    t = 0.4
+    for front, key, which in runs:
+        ey, boxes, outs = cards[key]
+        t_in = t + 0.15
+        t_at = t_in + 0.6
+        t_out = t_at + 0.15 * len(boxes) + 0.1
+        t_lift = t_out + 0.5 + 1.7
+        clk.beat(f"{front}: the packet runs to Engine {key.upper()}", t_in, 0.6)
+        clk.beat(f"{front}: each stage of Engine {key.upper()} is marked as it passes", t_at, t_out - t_at)
+        clk.beat(f"{front}: what comes back is marked", t_out, 0.5)
+        clk.beat(f"{front}: hold, then the marks lift", t_out + 0.5, t_lift + 0.3 - t_out - 0.5)
+        for i in range(len(boxes)):
+            step_marks[(key, i)].append((t_at + 0.15 * i, t_lift))
+        for n, j in enumerate(which):
+            out_marks[(key, j)].append((t_out + 0.18 + 0.12 * n, t_lift))
+        ask_on[front].append((t, t_lift))
+        yi = asks[front] + 25
+        packets.append(([(PAD + 141, yi), (PAD + 160, yi), (PAD + 160, ey + 46), (ex - 4, ey + 46)], t_in, t_at))
+        for j in which:
+            gy = outs[j][1] + 28
+            packets.append(([(ex + ew + 2, gy), (gx, gy)], t_out, t_out + 0.2))
+        t = t_lift + 0.55
+    clk.total = t
+
+    def lit(times):
+        """scaleX points of a slab marked at each (t, lift) of `times`."""
+        pts = []
+        for tm, tl in times:
+            pts += wipe(tm, 0.22) + [(tl, "scaleX(1)", "ease-in"), (tl + 0.3, "scaleX(0)")]
+        return pts
+    for (key, i), times in step_marks.items():
+        x, y, w, st = cards[key][1][i]
+        b.append(marker(x - 1, y - 1, w + 3, 27, "wipe " + clk.anim(lit(times), rest="scaleX(0)")).replace("<path ", '<path transform="scale(0 1)" ', 1))
+        b.append(f'<rect x="{x + .5:.1f}" y="{y + .5}" width="{w:.0f}" height="25" fill="none" stroke="{INK}"/>')
+        b.append(mono(x + 7, y + 17, st.upper(), 10.5, INK, 0.1))
+    for (key, j), times in out_marks.items():
+        g, gy = cards[key][2][j]
+        b.append(marker(gx, gy, type_w(g, 13) + 20, 30, "wipe " + clk.anim(lit(times), rest="scaleX(0)")))
+        b.append(words(g, gx + 10, gy + 21, 13, PAPER))
+        ink = []
+        for tm, tl in times:
+            ink += [(tm + 0.12, 0, "steps(1, end)"), (tm + 0.13, 1), (tl, 1, "steps(1, end)"), (tl + 0.01, 0)]
+        b.append(words(g, gx + 10, gy + 21, 13, INK, cls=clk.anim(ink, "opacity", rest=0) if ink else ""))
+    for front, spans in ask_on.items():
+        pts = []
+        for t0, t1 in spans:
+            pts += [(t0, 0, "steps(1, end)"), (t0 + 0.01, 1), (t1, 1, "steps(1, end)"), (t1 + 0.01, 0)]
+        y = asks[front]
+        b.append(f'<rect class="{clk.anim(pts, "opacity", rest=0)}" opacity="0" x="{PAD + .5}" y="{y + .5}" width="139" '
+                 f'height="49" fill="none" stroke="{PAPER}" stroke-width="1.5"/>')
+    for pts, t0, t1 in packets:
+        cls, dash = dash_run(clk, t0, t1, dash=14 / path_len(pts) * 100)
+        b.append(dash_path("M" + " L".join(f"{x:g} {y:g}" for x, y in pts), cls, dash))
     desc = ("What you ask (the CLI, Python, an MCP client for agents, an LSP client for editors) goes to two engines in one "
             "binary. Engine A, no index: no index, no parsers, no background process; walk, ignore rules, match, stream; it "
             "returns matches, grep, streamed. Engine B, the index: persistent, incremental, on disk; parse, symbols, call "
             "edges, text index, ranker; it returns ranked results (search), definitions and callers (symbol, callers) and "
-            "references (refs). What comes back is marked with a highlighter.")
-    return svg(W, H, "Two engines, one binary", desc, "\n".join(b), wipe_style(), animated=True)
+            "references (refs). In a loop, a request runs from the CLI to Engine A, from MCP to Engine B, from Python to "
+            "Engine A and from LSP to Engine B; each stage is marked as it passes, and what comes back is marked with a highlighter.")
+    return svg(W, H, "Two engines, one binary", desc, "\n".join(b), WIPE_CSS + "\n" + clk.css(), animated=True)
 
 
 # ---------------------------------------------------------------- section strips
@@ -657,7 +1068,26 @@ STRIPS = [
 ]
 
 
-def strip(on, n, s):
+def seek(clk, x0, x1, y, cx, r, colour, t0=0.6, on="ink"):
+    """The strips' quiet life: a block runs along the hairline to the crosshair, the crosshair settles on its
+    target and a mark lands in its centre, holds, and goes. Its finished state is that mark. On paper the
+    block is ink and the mark has an ink edge, since the highlighter alone does not read on paper."""
+    cls, dash = dash_run(clk, t0, t0 + 0.95, dash=22 / (x1 - x0) * 100)
+    t_hit = t0 + 0.9
+    ring = clk.anim([(t_hit, "scale(1)", EASE), (t_hit + 0.12, "scale(1.5)", EASE), (t_hit + 0.5, "scale(1)")], rest="scale(1)")
+    dot = clk.anim([(t_hit + 0.15, "scale(0)", EASE), (t_hit + 0.45, "scale(1)"), (clk.total - 0.8, "scale(1)", "ease-in"),
+                    (clk.total - 0.45, "scale(0)")], rest="scale(0)")
+    clk.beat("a block runs along the hairline to the crosshair", t0, 0.95)
+    clk.beat("the crosshair settles and its mark lands", t_hit, 0.5)
+    clk.beat("hold, then the mark goes", t_hit + 0.5, clk.total - t_hit - 0.5)
+    paper = on == "paper"
+    edge = f' stroke="{INK}" stroke-width="1.25"' if paper else ""
+    return (dash_path(f"M{x0:.1f} {y} H{x1:.1f}", cls, dash, 3, INK if paper else MARK)
+            + f'<g transform="translate({cx} {y})"><g class="{ring} spot">{crosshair(0, 0, r, colour)}</g>'
+            + f'<rect class="{dot} spot" x="{-r * 0.5:.1f}" y="{-r * 0.5:.1f}" width="{r:.1f}" height="{r:.1f}" fill="{MARK}"{edge}/></g>')
+
+
+def strip(on, n, s, i=0):
     c = ON[on]
     H = 92
     b = [panel(H, on, frame=False)]
@@ -667,8 +1097,13 @@ def strip(on, n, s):
     b.append(words(s, x, 58, 20, c["fg"]))
     end = x + type_w(s, 20) + 22
     b.append(f'<path d="M{end:.1f} 48 H{W - PAD - 34}" stroke="{c["rule"]}"/>')
-    b.append(crosshair(W - PAD - 12, 48, 8, c["dim"]))
-    return svg(W, H, f"{n}: {s.capitalize()}", f"Section {n} of the README: {s.lower()}.", "\n".join(b))
+    clk = Clock(4.8)
+    b.append(seek(clk, end, W - PAD - 24, 48, W - PAD - 12, 8, c["dim"], t0=0.3 + 0.3 * (i % 3), on=on))
+    return svg(W, H, f"{n}: {s.capitalize()}", f"Section {n} of the README: {s.lower()}.", "\n".join(b),
+               SPOT_CSS + "\n" + clk.css(), animated=True)
+
+
+SPOT_CSS = ".spot{transform-box:fill-box;transform-origin:center}"
 
 
 # ---------------------------------------------------------------- icons, badges, social preview
@@ -988,16 +1423,68 @@ def outputs(only=None):
     if only is None:
         out["logo-mark.svg"] = logo_mark()
         out["logo.svg"] = logo()
-        out["hero.svg"] = HEROES[HERO]()
+        out["hero.svg"] = hero()
         out["engines.svg"] = engines()
-        for name, on, n, s in STRIPS:
-            out[f"{name}.svg"] = strip(on, n, s)
+        for i, (name, on, n, s) in enumerate(STRIPS):
+            out[f"{name}.svg"] = strip(on, n, s, i)
         out["social-preview.svg"] = social()
         for n in ICONS:
             out[f"icon-{n}.svg"] = icon(n)
         for k in BADGES:
             out[f"badge-{k}.svg"] = badge(k)
     return out
+
+
+MOVED = {"transform", "opacity", "stroke-dashoffset"}
+MAX_ANIMATED = 80
+
+
+def motion_problems(text: str):
+    """An animated image keeps the reduced-motion rule word for word; runs on one clock (one duration, no
+    delays); animates only transform, opacity and stroke-dashoffset; each animated element is `mv` or `fd`;
+    a fade (and its calm version) changes only opacity; and it has at most MAX_ANIMATED animated elements."""
+    if "@keyframes" not in text and "animation" not in text:
+        return []
+    bad = []
+    if REDUCED not in text:
+        bad.append("animated but without the reduced-motion rule")
+    css = "".join(re.findall(r"<style>(.*?)</style>", text, re.S)).replace(REDUCED, "")
+    if "animation-delay" in css:
+        bad.append("uses animation-delay: every element runs on the one clock")
+    frames = {m.group(1): m.group(2) for m in re.finditer(r"@keyframes\s+([\w-]+)\s*\{((?:[^{}]|\{[^{}]*\})*)\}", css)}
+    for name, body in frames.items():
+        props = {p.strip() for p in re.findall(r"([\w-]+)\s*:", body)} - {"animation-timing-function"}
+        if props - MOVED:
+            bad.append(f"@keyframes {name} animates {', '.join(sorted(props - MOVED))}")
+    rules = re.findall(r"\.([\w-]+)\s*\{([^{}]*\banimation\s*:[^{}]*)\}", css)
+    if len({re.search(r"animation\s*:\s*[\w-]+\s+([\d.]+)s", r).group(1) for _, r in rules}) > 1:
+        bad.append("more than one loop length: one master clock per image")
+    animated = {cls: r for cls, r in rules}
+    used = 0
+    for m in re.finditer(r'class="([^"]*)"', text):
+        names = m.group(1).split()
+        hit = [n for n in names if n in animated]
+        if not hit:
+            continue
+        used += 1
+        kind = {"mv", "fd"} & set(names)
+        if len(kind) != 1:
+            bad.append(f"animated element of class {m.group(1)!r} is neither mv nor fd (or both)")
+        if "fd" in kind:
+            for n in hit:
+                calm = re.search(r"--calm\s*:\s*([\w-]+)", animated[n])
+                own = re.search(r"animation\s*:\s*([\w-]+)", animated[n]).group(1)
+                if not calm:
+                    bad.append(f".{n} is a fade without --calm")
+                for k in {own, calm.group(1) if calm else own}:
+                    props = {p.strip() for p in re.findall(r"([\w-]+)\s*:", frames.get(k, ""))} - {"animation-timing-function"}
+                    if props - {"opacity"}:
+                        bad.append(f".{n} is a fade but @keyframes {k} changes {', '.join(sorted(props - {'opacity'}))}")
+    if any(not re.fullmatch(r"k\d+", c) for c in animated):
+        bad.append("an animation rule on a class the clock did not write")
+    if used > MAX_ANIMATED:
+        bad.append(f"{used} animated elements, over {MAX_ANIMATED}")
+    return bad
 
 
 def svg_problems(name: str, text: str):
@@ -1017,8 +1504,7 @@ def svg_problems(name: str, text: str):
     if re.search(r"""(?:href|src)\s*=\s*["'](?!#)""", text) or re.search(r"url\((?!#)", text) or \
             "http" in text.replace('xmlns="http://www.w3.org/2000/svg"', ""):
         bad.append("refers to something outside the file")
-    if "@keyframes" in text and "prefers-reduced-motion" not in text:
-        bad.append("animated but has no reduced-motion rule")
+    bad += motion_problems(text)
     return [f"{name}: {p}" for p in bad]
 
 
@@ -1054,25 +1540,23 @@ def write_or_check(files: dict, directory: str, check: bool) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("what", nargs="?", choices=["demo", "capture", "font", "heroes"])
-    ap.add_argument("dir", nargs="?")
+    ap.add_argument("what", nargs="?", choices=["demo", "capture", "capture-hero", "font", "beats"])
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--bin")
     ap.add_argument("--repo")
     ap.add_argument("--otf")
     a = ap.parse_args()
-    if a.what == "capture":
+    if a.what in ("capture", "capture-hero"):
         if not (a.bin and a.repo):
-            ap.error("capture needs --bin and --repo")
-        return capture(a.bin, a.repo)
+            ap.error(f"{a.what} needs --bin and --repo")
+        return (capture if a.what == "capture" else capture_hero)(a.bin, a.repo)
     if a.what == "font":
         if not a.otf:
             ap.error("font needs --otf")
         return font_json(a.otf)
-    if a.what == "heroes":
-        if not a.dir:
-            ap.error("heroes needs a directory")
-        return write_or_check({f"hero-{k}.svg": f() for k, f in HEROES.items()}, a.dir, False)
+    if a.what == "beats":
+        print(_hero()[1].sheet())
+        return 0
     bad = write_or_check(outputs(a.what), ASSETS, a.check)
     if a.check and a.what is None:
         for p in readme_problems():

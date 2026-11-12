@@ -18,14 +18,38 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 .arrow { fill: none; stroke: #8f8f98; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .gate { fill: #0c0c0e; stroke: #8f8f98; stroke-width: 1.25; stroke-dasharray: 6 5; }
 
-.blk { fill: none; stroke: #d9ff3d; stroke-width: 9; stroke-dashoffset: 30; animation: blk 9s ease-in-out 3 both; }
-@keyframes blk { 0% { stroke-dashoffset: 30; } 18%, 100% { stroke-dashoffset: -100; } }
-
-.wipe{transform-box:fill-box;transform-origin:left center;animation:wipe 0.5s cubic-bezier(.2,.7,.2,1) both}
-@keyframes wipe { from { transform: scaleX(0); } }
-.hit{animation:hit 0.5s steps(1, end) both}
-@keyframes hit { from { fill: currentColor; } }
-@media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+.wipe{transform-box:fill-box;transform-origin:left center}
+.spot{transform-box:fill-box;transform-origin:center}
+.k1{animation:k1 9.35s linear infinite}
+@keyframes k1 { 0.000% { stroke-dashoffset: 25.0; animation-timing-function: cubic-bezier(.6,0,.25,1); } 11.765% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 11.872% { stroke-dashoffset: 25.0; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 25.0; } }
+.k2{animation:k2 9.35s linear infinite}
+@keyframes k2 { 0.000% { stroke-dashoffset: 25.0; animation-timing-function: steps(1, end); } 12.834% { stroke-dashoffset: 25.0; animation-timing-function: cubic-bezier(.6,0,.25,1); } 24.599% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 24.706% { stroke-dashoffset: 25.0; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 25.0; } }
+.k3{animation:k3 9.35s linear infinite}
+@keyframes k3 { 0.000% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 25.668% { stroke-dashoffset: 30.0; animation-timing-function: cubic-bezier(.6,0,.25,1); } 37.433% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 37.540% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 30.0; } }
+.k4{animation:k4 9.35s linear infinite}
+@keyframes k4 { 0.000% { stroke-dashoffset: 18.5; animation-timing-function: steps(1, end); } 36.364% { stroke-dashoffset: 18.5; animation-timing-function: cubic-bezier(.6,0,.25,1); } 48.128% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 48.235% { stroke-dashoffset: 18.5; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 18.5; } }
+.k5{animation:k5 9.35s linear infinite}
+@keyframes k5 { 0.000% { stroke-dashoffset: 18.5; animation-timing-function: steps(1, end); } 36.364% { stroke-dashoffset: 18.5; animation-timing-function: cubic-bezier(.6,0,.25,1); } 48.128% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 48.235% { stroke-dashoffset: 18.5; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 18.5; } }
+.k6{animation:k6 9.35s linear infinite}
+@keyframes k6 { 0.000% { stroke-dashoffset: 18.5; animation-timing-function: steps(1, end); } 36.364% { stroke-dashoffset: 18.5; animation-timing-function: cubic-bezier(.6,0,.25,1); } 48.128% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 48.235% { stroke-dashoffset: 18.5; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 18.5; } }
+.k7{animation:k7 9.35s linear infinite}
+@keyframes k7 { 0.000% { stroke-dashoffset: 18.5; animation-timing-function: steps(1, end); } 36.364% { stroke-dashoffset: 18.5; animation-timing-function: cubic-bezier(.6,0,.25,1); } 48.128% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 48.235% { stroke-dashoffset: 18.5; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 18.5; } }
+.k8{animation:k8 9.35s linear infinite}
+@keyframes k8 { 0.000% { stroke-dashoffset: 22.7; animation-timing-function: steps(1, end); } 49.198% { stroke-dashoffset: 22.7; animation-timing-function: cubic-bezier(.6,0,.25,1); } 60.963% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 61.070% { stroke-dashoffset: 22.7; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 22.7; } }
+.k9{animation:k9 9.35s linear infinite}
+@keyframes k9 { 0.000% { stroke-dashoffset: 22.7; animation-timing-function: steps(1, end); } 49.198% { stroke-dashoffset: 22.7; animation-timing-function: cubic-bezier(.6,0,.25,1); } 60.963% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 61.070% { stroke-dashoffset: 22.7; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 22.7; } }
+.k10{animation:k10 9.35s linear infinite}
+@keyframes k10 { 0.000% { stroke-dashoffset: 22.7; animation-timing-function: steps(1, end); } 49.198% { stroke-dashoffset: 22.7; animation-timing-function: cubic-bezier(.6,0,.25,1); } 60.963% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 61.070% { stroke-dashoffset: 22.7; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 22.7; } }
+.k11{animation:k11 9.35s linear infinite}
+@keyframes k11 { 0.000% { stroke-dashoffset: 22.7; animation-timing-function: steps(1, end); } 49.198% { stroke-dashoffset: 22.7; animation-timing-function: cubic-bezier(.6,0,.25,1); } 60.963% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 61.070% { stroke-dashoffset: 22.7; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 22.7; } }
+.k12{animation:k12 9.35s linear infinite}
+@keyframes k12 { 0.000% { transform: scaleX(0); animation-timing-function: steps(1, end); } 60.963% { transform: scaleX(0); animation-timing-function: cubic-bezier(.2,.7,.2,1); } 63.632% { transform: scaleX(1.03); animation-timing-function: ease-in-out; } 64.385% { transform: scaleX(1); animation-timing-function: steps(1, end); } 93.583% { transform: scaleX(1); animation-timing-function: ease-in; } 96.791% { transform: scaleX(0); animation-timing-function: steps(1, end); } 100.000% { transform: scaleX(0); } }
+.k13{animation:k13 9.35s linear infinite}
+@keyframes k13 { 0.000% { opacity: 0; animation-timing-function: steps(1, end); } 63.102% { opacity: 0; animation-timing-function: steps(1, end); } 63.209% { opacity: 1; animation-timing-function: steps(1, end); } 93.583% { opacity: 1; animation-timing-function: steps(1, end); } 93.690% { opacity: 0; animation-timing-function: steps(1, end); } 100.000% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .mv { animation: none !important; }
+  .fd { animation-name: var(--calm) !important; }
+}
 </style>
 <defs><pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse"><rect x="10" y="10" width="2" height="2" fill="#2a2a2f"/></pattern></defs><rect width="880" height="717" rx="14" fill="#0c0c0e"/><rect x="10" y="10" width="860" height="697" rx="8" fill="url(#dots)"/><rect x="10.5" y="10.5" width="859" height="696" rx="8" fill="none" stroke="#2a2a2f"/>
 <text x="40.0" y="46.0" class="m pre " font-size="12" fill="#f2eee3" letter-spacing="1.92">// ENGINE A: FROM THE COMMAND LINE TO OUTPUT</text><path d="M465.8 42.0 H840" stroke="#2a2a2f"/>
@@ -55,9 +79,9 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <text x="633" y="89" class="b">sends the file to the</text>
 <text x="633" y="109" class="b">stream reader.</text>
 <path d="M265 112 L305 112" class="arrow" marker-end="url(#ah)"/>
-<path d="M265 112 L305 112" class="blk" pathLength="100" style="stroke-dasharray: 25.0 200; animation-delay: 0s"/>
+<path class="mv k1" d="M265 112 L305 112" pathLength="100" fill="none" stroke="#d9ff3d" stroke-width="9" stroke-dasharray="25.0 300" stroke-dashoffset="25.0"/>
 <path d="M573 112 L613 112" class="arrow" marker-end="url(#ah)"/>
-<path d="M573 112 L613 112" class="blk" pathLength="100" style="stroke-dasharray: 25.0 200; animation-delay: 1.2s"/>
+<path class="mv k2" d="M573 112 L613 112" pathLength="100" fill="none" stroke="#d9ff3d" stroke-width="9" stroke-dasharray="25.0 300" stroke-dashoffset="25.0"/>
 <rect x="1" y="307" width="206" height="202" rx="4" class="card"/>
 <g transform="translate(17.0 334.0) scale(0.01549 -0.01549)" fill="#f2eee3"><path d="M302 -16C468 -16 560 68 560 206C560 314 510 384 358 424C262 449 232 472 232 514C232 551 256 572 293 572C337 572 367 539 375 473L555 480C547 645 457 726 302 726C140 726 52 640 52 502C52 376 124 325 262 290C348 268 380 241 380 196C380 158 353 138 313 138C261 138 230 174 218 257L40 249C51 79 133 -16 302 -16Z"/><path transform="translate(600 0)" d="M254 110L346 110L400 345L400 0L560 0L560 710L380 710L300 416L220 710L40 710L40 0L200 0L200 345Z"/><path transform="translate(1200 0)" d="M14 0L192 0L219 117L381 117L408 0L586 0L406 710L194 710ZM300 476L347 268L253 268Z"/><path transform="translate(1800 0)" d="M90 0L550 0L550 158L270 158L270 710L90 710Z"/><path transform="translate(2400 0)" d="M90 0L550 0L550 158L270 158L270 710L90 710Z"/><path transform="translate(3600 0)" d="M90 0L270 0L270 271L532 271L532 425L270 425L270 552L550 552L550 710L90 710Z"/><path transform="translate(4200 0)" d="M70 0L530 0L530 158L390 158L390 552L530 552L530 710L70 710L70 552L210 552L210 158L70 158Z"/><path transform="translate(4800 0)" d="M90 0L550 0L550 158L270 158L270 710L90 710Z"/><path transform="translate(5400 0)" d="M80 0L540 0L540 158L260 158L260 279L520 279L520 433L260 433L260 552L532 552L532 710L80 710Z"/></g>
 <text x="17" y="355" class="b">A short first read is</text>
@@ -89,29 +113,30 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <path d="M457 301 V295 H871 V301" fill="none" stroke="#2a2a2f" stroke-width="1.5"/>
 <text x="664" y="287" class="lbl" text-anchor="middle">64 MB OR MORE</text>
 <path d="M748 225 L748 249" class="arrow"/>
-<path d="M748 225 L748 249" class="blk" pathLength="100" style="stroke-dasharray: 30.0 200; animation-delay: 2.4s"/>
+<path class="mv k3" d="M748 225 L748 249" pathLength="100" fill="none" stroke="#d9ff3d" stroke-width="9" stroke-dasharray="30.0 300" stroke-dashoffset="30.0"/>
 <path d="M104.0 249 H776.0" class="arrow"/>
 <path d="M104 249 L104 303" class="arrow" marker-end="url(#ah)"/>
-<path d="M104 249 L104 303" class="blk" pathLength="100" style="stroke-dasharray: 18.5 200; animation-delay: 3.4s"/>
+<path class="mv k4" d="M104 249 L104 303" pathLength="100" fill="none" stroke="#d9ff3d" stroke-width="9" stroke-dasharray="18.5 300" stroke-dashoffset="18.5"/>
 <path d="M328 249 L328 303" class="arrow" marker-end="url(#ah)"/>
-<path d="M328 249 L328 303" class="blk" pathLength="100" style="stroke-dasharray: 18.5 200; animation-delay: 3.4s"/>
+<path class="mv k5" d="M328 249 L328 303" pathLength="100" fill="none" stroke="#d9ff3d" stroke-width="9" stroke-dasharray="18.5 300" stroke-dashoffset="18.5"/>
 <path d="M552 249 L552 303" class="arrow" marker-end="url(#ah)"/>
-<path d="M552 249 L552 303" class="blk" pathLength="100" style="stroke-dasharray: 18.5 200; animation-delay: 3.4s"/>
+<path class="mv k6" d="M552 249 L552 303" pathLength="100" fill="none" stroke="#d9ff3d" stroke-width="9" stroke-dasharray="18.5 300" stroke-dashoffset="18.5"/>
 <path d="M776 249 L776 303" class="arrow" marker-end="url(#ah)"/>
-<path d="M776 249 L776 303" class="blk" pathLength="100" style="stroke-dasharray: 18.5 200; animation-delay: 3.4s"/>
+<path class="mv k7" d="M776 249 L776 303" pathLength="100" fill="none" stroke="#d9ff3d" stroke-width="9" stroke-dasharray="18.5 300" stroke-dashoffset="18.5"/>
 <rect x="1" y="559" width="878" height="102" rx="4" class="out"/>
-<path class="wipe" style="animation-delay:6.10s" d="M13.2 569.0 H83.0 L79.8 592.0 H10.0 Z" fill="#d9ff3d"/>
-<g class="hit" transform="translate(17.0 586.0) scale(0.01549 -0.01549)" fill="#0c0c0e" color="#f2eee3" style="animation-delay:6.10s"><path d="M300 -16C474 -16 572 116 572 354C572 592 474 726 300 726C126 726 28 592 28 354C28 116 126 -16 300 -16ZM300 138C241 138 212 196 212 354C212 512 241 572 300 572C359 572 388 512 388 354C388 196 359 138 300 138Z"/><path transform="translate(600 0)" d="M300 -16C460 -16 550 70 550 244L550 711L370 711L370 224C370 170 345 138 300 138C255 138 230 170 230 224L230 711L50 711L50 244C50 70 140 -16 300 -16Z"/><path transform="translate(1200 0)" d="M210 0L390 0L390 552L560 552L560 710L40 710L40 552L210 552Z"/><path transform="translate(1800 0)" d="M70 0L250 0L250 240L308 240C454 240 560 336 560 474C560 612 454 710 308 710L70 710ZM250 398L250 552L290 552C347 552 376 526 376 474C376 423 347 398 290 398Z"/><path transform="translate(2400 0)" d="M300 -16C460 -16 550 70 550 244L550 711L370 711L370 224C370 170 345 138 300 138C255 138 230 170 230 224L230 711L50 711L50 244C50 70 140 -16 300 -16Z"/><path transform="translate(3000 0)" d="M210 0L390 0L390 552L560 552L560 710L40 710L40 552L210 552Z"/></g>
+<path class="wipe mv k12" d="M13.2 569.0 H83.0 L79.8 592.0 H10.0 Z" fill="#d9ff3d"/>
+<g transform="translate(17.0 586.0) scale(0.01549 -0.01549)" fill="#f2eee3"><path d="M300 -16C474 -16 572 116 572 354C572 592 474 726 300 726C126 726 28 592 28 354C28 116 126 -16 300 -16ZM300 138C241 138 212 196 212 354C212 512 241 572 300 572C359 572 388 512 388 354C388 196 359 138 300 138Z"/><path transform="translate(600 0)" d="M300 -16C460 -16 550 70 550 244L550 711L370 711L370 224C370 170 345 138 300 138C255 138 230 170 230 224L230 711L50 711L50 244C50 70 140 -16 300 -16Z"/><path transform="translate(1200 0)" d="M210 0L390 0L390 552L560 552L560 710L40 710L40 552L210 552Z"/><path transform="translate(1800 0)" d="M70 0L250 0L250 240L308 240C454 240 560 336 560 474C560 612 454 710 308 710L70 710ZM250 398L250 552L290 552C347 552 376 526 376 474C376 423 347 398 290 398Z"/><path transform="translate(2400 0)" d="M300 -16C460 -16 550 70 550 244L550 711L370 711L370 224C370 170 345 138 300 138C255 138 230 170 230 224L230 711L50 711L50 244C50 70 140 -16 300 -16Z"/><path transform="translate(3000 0)" d="M210 0L390 0L390 552L560 552L560 710L40 710L40 552L210 552Z"/></g>
+<g class="mv k13" transform="translate(17.0 586.0) scale(0.01549 -0.01549)" fill="#0c0c0e"><path d="M300 -16C474 -16 572 116 572 354C572 592 474 726 300 726C126 726 28 592 28 354C28 116 126 -16 300 -16ZM300 138C241 138 212 196 212 354C212 512 241 572 300 572C359 572 388 512 388 354C388 196 359 138 300 138Z"/><path transform="translate(600 0)" d="M300 -16C460 -16 550 70 550 244L550 711L370 711L370 224C370 170 345 138 300 138C255 138 230 170 230 224L230 711L50 711L50 244C50 70 140 -16 300 -16Z"/><path transform="translate(1200 0)" d="M210 0L390 0L390 552L560 552L560 710L40 710L40 552L210 552Z"/><path transform="translate(1800 0)" d="M70 0L250 0L250 240L308 240C454 240 560 336 560 474C560 612 454 710 308 710L70 710ZM250 398L250 552L290 552C347 552 376 526 376 474C376 423 347 398 290 398Z"/><path transform="translate(2400 0)" d="M300 -16C460 -16 550 70 550 244L550 711L370 711L370 224C370 170 345 138 300 138C255 138 230 170 230 224L230 711L50 711L50 244C50 70 140 -16 300 -16Z"/><path transform="translate(3000 0)" d="M210 0L390 0L390 552L560 552L560 710L40 710L40 552L210 552Z"/></g>
 <text x="17" y="607" class="b">Matches are batched per file and sent to the caller's sink while other threads keep searching; plain</text>
 <text x="17" y="627" class="b">piped output shares one 64 KB buffer, so the lines of many files leave in one write.</text>
 <text x="17" y="647" class="b">Ctrl-C, <tspan class="m">--max-results</tspan> or a closed pipe cancels the walk between files. <tspan class="m">--sort</tspan> gives path order.</text>
 <path d="M104 511 L104 555" class="arrow" marker-end="url(#ah)"/>
-<path d="M104 511 L104 555" class="blk" pathLength="100" style="stroke-dasharray: 22.7 200; animation-delay: 4.6s"/>
+<path class="mv k8" d="M104 511 L104 555" pathLength="100" fill="none" stroke="#d9ff3d" stroke-width="9" stroke-dasharray="22.7 300" stroke-dashoffset="22.7"/>
 <path d="M328 511 L328 555" class="arrow" marker-end="url(#ah)"/>
-<path d="M328 511 L328 555" class="blk" pathLength="100" style="stroke-dasharray: 22.7 200; animation-delay: 4.6s"/>
+<path class="mv k9" d="M328 511 L328 555" pathLength="100" fill="none" stroke="#d9ff3d" stroke-width="9" stroke-dasharray="22.7 300" stroke-dashoffset="22.7"/>
 <path d="M552 511 L552 555" class="arrow" marker-end="url(#ah)"/>
-<path d="M552 511 L552 555" class="blk" pathLength="100" style="stroke-dasharray: 22.7 200; animation-delay: 4.6s"/>
+<path class="mv k10" d="M552 511 L552 555" pathLength="100" fill="none" stroke="#d9ff3d" stroke-width="9" stroke-dasharray="22.7 300" stroke-dashoffset="22.7"/>
 <path d="M776 511 L776 555" class="arrow" marker-end="url(#ah)"/>
-<path d="M776 511 L776 555" class="blk" pathLength="100" style="stroke-dasharray: 22.7 200; animation-delay: 4.6s"/>
+<path class="mv k11" d="M776 511 L776 555" pathLength="100" fill="none" stroke="#d9ff3d" stroke-width="9" stroke-dasharray="22.7 300" stroke-dashoffset="22.7"/>
 </g>
 </svg>

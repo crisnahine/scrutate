@@ -1,0 +1,135 @@
+{
+  "file": "src/files.rs",
+  "first": 10,
+  "last": 19,
+  "queries": [
+    {
+      "argv": [
+        "scrutate",
+        "grep",
+        "-F",
+        "index_dir",
+        "src"
+      ],
+      "label": "LITERAL",
+      "spans": [
+        [
+          15,
+          7,
+          16
+        ]
+      ],
+      "lines_matched": 6,
+      "files_matched": 4,
+      "files_searched": 29
+    },
+    {
+      "argv": [
+        "scrutate",
+        "grep",
+        "--ident",
+        "indexDir",
+        "src"
+      ],
+      "label": "ANY CASING",
+      "spans": [
+        [
+          11,
+          10,
+          19
+        ],
+        [
+          15,
+          7,
+          16
+        ],
+        [
+          19,
+          24,
+          33
+        ]
+      ],
+      "lines_matched": 17,
+      "files_matched": 8,
+      "files_searched": 29
+    },
+    {
+      "argv": [
+        "scrutate",
+        "grep",
+        "--fuzzy=1",
+        "dirctory",
+        "src"
+      ],
+      "label": "WITHIN ONE EDIT",
+      "spans": [
+        [
+          13,
+          49,
+          58
+        ],
+        [
+          17,
+          74,
+          83
+        ],
+        [
+          17,
+          103,
+          112
+        ]
+      ],
+      "lines_matched": 124,
+      "files_matched": 15,
+      "files_searched": 29
+    },
+    {
+      "argv": [
+        "scrutate",
+        "grep",
+        "root\\.\\w+",
+        "src"
+      ],
+      "label": "REGEX",
+      "spans": [
+        [
+          16,
+          8,
+          19
+        ],
+        [
+          17,
+          32,
+          44
+        ],
+        [
+          17,
+          51,
+          62
+        ],
+        [
+          19,
+          14,
+          23
+        ]
+      ],
+      "lines_matched": 192,
+      "files_matched": 15,
+      "files_searched": 29
+    }
+  ],
+  "lines": [
+    "/// Where the indexes live under the repository root; no walk enters it.",
+    "pub const INDEX_DIR: &str = \".scrutate\";",
+    "",
+    "/// `root/.scrutate`, once `root` is an existing directory and nothing the indexes write into is",
+    "/// a symbolic link (which would put the index, and its deletions, outside the repository).",
+    "pub fn index_dir(root: &Path) -> anyhow::Result<PathBuf> {",
+    "    if !root.is_dir() {",
+    "        anyhow::bail!(\"{}: {}\", root.display(), if root.exists() { \"not a directory\" } else { \"no such directory\" });",
+    "    }",
+    "    let dir = root.join(INDEX_DIR);"
+  ],
+  "version": "scrutate 0.1.0",
+  "source": "eb7f1b8"
+}

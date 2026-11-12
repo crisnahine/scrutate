@@ -17,13 +17,24 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 .out { fill: #f2eee3; stroke: #0c0c0e; stroke-width: 1.5; }
 .arrow { fill: none; stroke: #6f6a5e; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .gate { fill: #f2eee3; stroke: #6f6a5e; stroke-width: 1.25; stroke-dasharray: 6 5; }
+
+.wipe{transform-box:fill-box;transform-origin:left center}
+.spot{transform-box:fill-box;transform-origin:center}
+.k1{animation:k1 4.75s linear infinite}
+@keyframes k1 { 0.000% { transform: scaleX(0); animation-timing-function: steps(1, end); } 15.789% { transform: scaleX(0); animation-timing-function: cubic-bezier(.2,.7,.2,1); } 20.716% { transform: scaleX(1.03); animation-timing-function: ease-in-out; } 22.105% { transform: scaleX(1); animation-timing-function: steps(1, end); } 87.368% { transform: scaleX(1); animation-timing-function: ease-in; } 93.684% { transform: scaleX(0); animation-timing-function: steps(1, end); } 100.000% { transform: scaleX(0); } }
+.k2{animation:k2 4.75s linear infinite}
+@keyframes k2 { 0.000% { transform: translate(27.2958px, 30px) scale(1.4); opacity: 0; } 3.158% { transform: translate(27.2958px, 30px) scale(1.7); opacity: 0; animation-timing-function: cubic-bezier(.2,.7,.2,1); } 11.579% { transform: translate(27.2958px, 30px) scale(1); opacity: 1; animation-timing-function: steps(1, end); } 87.368% { transform: translate(27.2958px, 30px) scale(1); opacity: 1; animation-timing-function: ease-in; } 93.684% { transform: translate(27.2958px, 30px) scale(1.4); opacity: 0; animation-timing-function: steps(1, end); } 100.000% { transform: translate(27.2958px, 30px) scale(1.4); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .mv { animation: none !important; }
+  .fd { animation-name: var(--calm) !important; }
+}
 </style>
 <rect width="880" height="252" rx="14" fill="#f2eee3"/><rect x="10.5" y="10.5" width="859" height="231" rx="8" fill="none" stroke="#cfc9ba"/>
 <text x="40.0" y="46.0" class="m pre " font-size="12" fill="#0c0c0e" letter-spacing="1.92">// EXIT CODES</text><path d="M175.7 42.0 H840" stroke="#cfc9ba"/>
 <defs><marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M1.5 1.5 8.5 5 1.5 8.5" fill="none" stroke="#6f6a5e" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
 <g transform="translate(32 72) scale(0.92727)">
 <rect x="1" y="1" width="208" height="160" rx="4" class="card"/>
-<path d="M12.0 13.0 H50.6 L46.6 47.0 H8.0 Z" fill="#d9ff3d"/>
+<path class="wipe mv k1" d="M12.0 13.0 H50.6 L46.6 47.0 H8.0 Z" fill="#d9ff3d"/>
 <g transform="translate(17.0 40.0) scale(0.03099 -0.03099)" fill="#0c0c0e"><path d="M300 -16C464 -16 560 124 560 354C560 584 464 726 300 726C136 726 40 584 40 354C40 124 136 -16 300 -16ZM225 300C224 317 224 335 224 354C224 510 251 572 300 572C321 572 338 561 351 535L226 294ZM300 138C279 138 262 149 249 175L374 416L375 411C376 394 376 375 376 354C376 199 349 138 300 138Z"/></g>
 <text x="17" y="62" class="h">results found</text>
 <rect x="224.67" y="1" width="208" height="160" rx="4" class="card"/>
@@ -42,5 +53,6 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <text x="688.01" y="106" class="b">early for a reason</text>
 <text x="688.01" y="126" class="b">other than</text>
 <text x="688.01" y="146" class="b"><tspan class="m">--max-results</tspan>.</text>
+<g class="mv k2" opacity="0"><path d="M-27.295774647887324 -12.0 V-22.0 H-17.295774647887324 M17.295774647887324 -22.0 H27.295774647887324 V-12.0 M27.295774647887324 12.0 V22.0 H17.295774647887324 M-17.295774647887324 22.0 H-27.295774647887324 V12.0" stroke="#0c0c0e" stroke-width="1.5" fill="none"/></g>
 </g>
 </svg>

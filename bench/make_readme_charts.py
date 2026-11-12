@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -48,21 +49,57 @@ def default(platform: str, name: str, published: str) -> str:
     return cur if os.path.exists(cur) else os.path.join(RESULTS, platform, "superseded", published)
 
 
-def bar(x, y, w, h, win, on, name, label, k):
-    """One bar, drawn like a pen stroke: the winner's is the highlighter with its name in ink, the other a dim
-    outline; the value follows in mono."""
+class Show:
+    """The charts' loop on one clock: the bars are drawn like pen strokes one row after another while their
+    values count up, then the faster bar of each row gets its highlighter, the chart holds to be read, and it
+    is cleared and drawn again. At rest (and under reduced motion) it is the finished chart."""
+
+    ROW, DRAW, MARK_GAP, HOLD = 0.32, 0.55, 0.16, 4.2
+
+    def __init__(self, rows):
+        self.clk = G.Clock()
+        t_marks = 0.4 + self.ROW * (rows - 1) + self.DRAW + 0.2
+        self.t_marks = t_marks
+        self.t_reset = t_marks + self.MARK_GAP * rows + 0.3 + self.HOLD
+        self.clk.total = self.t_reset + 0.7
+        self.clk.beat("the bars are drawn, a row at a time, the values count up", 0.4, t_marks - 0.4)
+        self.clk.beat("the faster bar of each row is marked, row by row", t_marks, self.MARK_GAP * rows + 0.3)
+        self.clk.beat("hold", self.t_reset - self.HOLD, self.HOLD)
+        self.clk.beat("the chart clears", self.t_reset, 0.4)
+
+    def stroke(self, row, i):
+        t = 0.4 + self.ROW * row + 0.08 * i
+        return "wipe " + self.clk.anim(G.wipe(t, self.DRAW, 1.015) + [(self.t_reset, "scaleX(1)", "ease-in"),
+                                                                      (self.t_reset + 0.35, "scaleX(0)")], rest="scaleX(0)")
+
+    def marker(self, row):
+        t = self.t_marks + self.MARK_GAP * row
+        return "wipe " + self.clk.anim(G.wipe(t, 0.3) + [(self.t_reset, "scaleX(1)", "ease-in"),
+                                                         (self.t_reset + 0.35, "scaleX(0)")], rest="scaleX(0)")
+
+    def count(self, x, y, final, suffix, row, i, size, fill, bold):
+        t = 0.4 + self.ROW * row + 0.08 * i
+        return G.counter(self.clk, x, y, final, t, t + self.DRAW, self.t_reset + 0.3, size, fill, bold, suffix)
+
+    def css(self):
+        return G.WIPE_CSS + "\n" + self.clk.css()
+
+
+def bar(x, y, w, h, win, on, name, label, show, row, i):
+    """One bar: a dim outline drawn like a pen stroke; the faster one also gets the highlighter, with its name in
+    ink. The value follows in mono and counts up to the number of the results file."""
     c = G.ON[on]
-    delay = f"animation-delay:{0.3 + 0.1 * k:.2f}s"
+    j = min(4.0, h * 0.14) if win else 0   # inside the marker's slanted ends, so the outline never shows past it
+    out = [f'<rect class="{show.stroke(row, i)}" x="{x + j + .75:.1f}" y="{y + .75:.1f}" width="{max(w - j - 1.5, 1):.1f}" '
+           f'height="{h - 1.5:.1f}" fill="none" stroke="{c["dim"]}" stroke-width="1.5"/>']
     if win:
-        out = [G.marker(x, y, w, h, "wipe", delay)]
-    else:
-        out = [f'<rect class="wipe" style="{delay}" x="{x + .75:.1f}" y="{y + .75:.1f}" width="{max(w - 1.5, 1):.1f}" '
-               f'height="{h - 1.5:.1f}" fill="none" stroke="{c["dim"]}" stroke-width="1.5"/>']
+        out.append(G.marker(x, y, w, h, show.marker(row)))
     inside = G.text_w(name, 12, True) + 16 <= w
     out.append(G.mono(x + 8 if inside else x + w + 10, y + h / 2 + 4.5, name, 12,
                       G.INK if inside and win else c["fg"] if inside or win else c["dim"], weight="700" if win else ""))
     vx = x + w + 10 + (0 if inside else G.text_w(name, 12, True) + 10)
-    out.append(G.mono(vx, y + h / 2 + 4.5, label, 13, c["fg"], weight="700" if win else ""))
+    num, rest = re.match(r"^([\d,]*\.?\d+)(.*)$", label).groups()
+    out.append(show.count(vx + len(label) * 13 * 0.6, y + h / 2 + 4.5, num, rest, row, i, 13, c["fg"], win))
     return "".join(out)
 
 
@@ -105,6 +142,7 @@ def walltime(warm: dict, compare: dict, W=G.W) -> str:
          G.mono(pad, 116, "MARKED: THE FASTER OF THE TWO", 11, c["dim"], 0.14)]
     y = 126 if wide else 132
     k = 0
+    show = Show(len(WALL_ROWS) + 1)
 
     def row(title, detail, pairs):
         nonlocal y, k
@@ -116,8 +154,8 @@ def walltime(warm: dict, compare: dict, W=G.W) -> str:
         vmax = max(v for _, v, _ in pairs)
         vmin = min(v for _, v, _ in pairs)
         for i, (tool, v, label) in enumerate(pairs):
-            b.append(bar(bx, top + i * (bh + gap), round(max(3.0, bw * v / vmax), 1), bh, v == vmin, on, tool, label, k))
-            k += 1
+            b.append(bar(bx, top + i * (bh + gap), round(max(3.0, bw * v / vmax), 1), bh, v == vmin, on, tool, label, show, k, i))
+        k += 1
         y += row_h
 
     for bid, title in WALL_ROWS:
@@ -155,7 +193,7 @@ def walltime(warm: dict, compare: dict, W=G.W) -> str:
             f"Start-up in {'a directory with one file' if one else 'an empty directory'}: scrutate {st['scrutate']:.1f} ms, "
             f"{other} {st[other]:.1f} ms.")
     return G.svg(W, H, "Wall time against the fastest other tool", desc, G.panel(H, on, w=W) + "\n".join(b),
-                 G.wipe_style(0.7), animated=True)
+                 show.css(), animated=True)
 
 
 def indexed(data: dict, W=G.W) -> str:
@@ -174,7 +212,7 @@ def indexed(data: dict, W=G.W) -> str:
          G.mono(pad, 116, f"AGAINST ZOEKT AND LIVEGREP // {q} QUERIES", 11, c["dim"], 0.14)]
     pw, y0 = (252, 132) if wide else (W - 2 * pad, 138)
     ph = 44 + len(tools) * 34 + 12
-    k = 0
+    show = Show(len(panels))
     for i, (title, val, label) in enumerate(panels):
         x, yp = (pad + i * (pw + 22), y0) if wide else (pad, y0 + i * ph)
         b.append(f'<path d="M{x} {yp} H{x + pw}" stroke="{c["rule"]}"/>')
@@ -183,8 +221,7 @@ def indexed(data: dict, W=G.W) -> str:
         vmax, vmin = max(vals.values()), min(vals.values())
         for j, t in enumerate(tools):
             b.append(bar(x, yp + 44 + j * 34, round(max(3.0, (140 if wide else 220) * vals[t] / vmax), 1), 24, vals[t] == vmin,
-                         on, t, label(data["tools"][t]), k))
-            k += 1
+                         on, t, label(data["tools"][t]), show, i, j))
     y = y0 + (ph if wide else 3 * ph)
     st = data["settings"]
     b.append(f'<path d="M{pad} {y} H{W - pad}" stroke="{c["rule"]}"/>')
@@ -196,7 +233,7 @@ def indexed(data: dict, W=G.W) -> str:
                      f"median query {ms(data['tools'][t]['latency']['p50'])} ms" for t in tools)
     return G.svg(W, H, "The text index against zoekt and livegrep", "Three bar charts, lower is better; the smallest bar "
                  "of each is marked with a highlighter. " + desc + ".", G.panel(H, on, w=W) + "\n".join(b),
-                 G.wipe_style(0.7), animated=True)
+                 show.css(), animated=True)
 
 
 def main() -> int:

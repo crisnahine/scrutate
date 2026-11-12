@@ -18,14 +18,28 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 .arrow { fill: none; stroke: #8f8f98; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .gate { fill: #0c0c0e; stroke: #8f8f98; stroke-width: 1.25; stroke-dasharray: 6 5; }
 
-.blk { fill: none; stroke: #d9ff3d; stroke-width: 9; stroke-dashoffset: 30; animation: blk 9s ease-in-out 3 both; }
-@keyframes blk { 0% { stroke-dashoffset: 30; } 18%, 100% { stroke-dashoffset: -100; } }
-
-.wipe{transform-box:fill-box;transform-origin:left center;animation:wipe 0.5s cubic-bezier(.2,.7,.2,1) both}
-@keyframes wipe { from { transform: scaleX(0); } }
-.hit{animation:hit 0.5s steps(1, end) both}
-@keyframes hit { from { fill: currentColor; } }
-@media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+.wipe{transform-box:fill-box;transform-origin:left center}
+.spot{transform-box:fill-box;transform-origin:center}
+.k1{animation:k1 7.15s linear infinite}
+@keyframes k1 { 0.000% { stroke-dashoffset: 3.9; animation-timing-function: cubic-bezier(.6,0,.25,1); } 15.385% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 15.524% { stroke-dashoffset: 3.9; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 3.9; } }
+.k2{animation:k2 7.15s linear infinite}
+@keyframes k2 { 0.000% { stroke-dashoffset: 6.6; animation-timing-function: steps(1, end); } 5.594% { stroke-dashoffset: 6.6; animation-timing-function: cubic-bezier(.6,0,.25,1); } 20.979% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 21.119% { stroke-dashoffset: 6.6; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 6.6; } }
+.k3{animation:k3 7.15s linear infinite}
+@keyframes k3 { 0.000% { stroke-dashoffset: 17.1; animation-timing-function: steps(1, end); } 11.189% { stroke-dashoffset: 17.1; animation-timing-function: cubic-bezier(.6,0,.25,1); } 26.573% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 26.713% { stroke-dashoffset: 17.1; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 17.1; } }
+.k4{animation:k4 7.15s linear infinite}
+@keyframes k4 { 0.000% { stroke-dashoffset: 7.0; animation-timing-function: steps(1, end); } 16.783% { stroke-dashoffset: 7.0; animation-timing-function: cubic-bezier(.6,0,.25,1); } 32.168% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 32.308% { stroke-dashoffset: 7.0; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 7.0; } }
+.k5{animation:k5 7.15s linear infinite}
+@keyframes k5 { 0.000% { stroke-dashoffset: 3.9; animation-timing-function: steps(1, end); } 22.378% { stroke-dashoffset: 3.9; animation-timing-function: cubic-bezier(.6,0,.25,1); } 37.762% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 37.902% { stroke-dashoffset: 3.9; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 3.9; } }
+.k6{animation:k6 7.15s linear infinite}
+@keyframes k6 { 0.000% { stroke-dashoffset: 25.0; animation-timing-function: steps(1, end); } 33.566% { stroke-dashoffset: 25.0; animation-timing-function: cubic-bezier(.6,0,.25,1); } 48.951% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 49.091% { stroke-dashoffset: 25.0; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 25.0; } }
+.k7{animation:k7 7.15s linear infinite}
+@keyframes k7 { 0.000% { transform: scaleX(0); animation-timing-function: steps(1, end); } 48.951% { transform: scaleX(0); animation-timing-function: cubic-bezier(.2,.7,.2,1); } 52.442% { transform: scaleX(1.03); animation-timing-function: ease-in-out; } 53.427% { transform: scaleX(1); animation-timing-function: steps(1, end); } 91.608% { transform: scaleX(1); animation-timing-function: ease-in; } 95.804% { transform: scaleX(0); animation-timing-function: steps(1, end); } 100.000% { transform: scaleX(0); } }
+.k8{animation:k8 7.15s linear infinite}
+@keyframes k8 { 0.000% { opacity: 0; animation-timing-function: steps(1, end); } 51.748% { opacity: 0; animation-timing-function: steps(1, end); } 51.888% { opacity: 1; animation-timing-function: steps(1, end); } 91.608% { opacity: 1; animation-timing-function: steps(1, end); } 91.748% { opacity: 0; animation-timing-function: steps(1, end); } 100.000% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .mv { animation: none !important; }
+  .fd { animation-name: var(--calm) !important; }
+}
 </style>
 <defs><pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse"><rect x="10" y="10" width="2" height="2" fill="#2a2a2f"/></pattern></defs><rect width="880" height="585" rx="14" fill="#0c0c0e"/><rect x="10" y="10" width="860" height="565" rx="8" fill="url(#dots)"/><rect x="10.5" y="10.5" width="859" height="564" rx="8" fill="none" stroke="#2a2a2f"/>
 <text x="40.0" y="46.0" class="m pre " font-size="12" fill="#f2eee3" letter-spacing="1.92">// FRONT ENDS SHARE ONE INDEX DIRECTORY</text><path d="M419.0 42.0 H840" stroke="#2a2a2f"/>
@@ -65,18 +79,19 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <text x="312" y="326.5" class="b">and rebuilds a corrupt</text>
 <text x="312" y="346.5" class="b">one.</text>
 <path d="M243 52 L268 52 L268 259.5 L292 259.5" class="arrow" marker-end="url(#ah)"/>
-<path d="M243 52 L268 52 L268 259.5 L292 259.5" class="blk" pathLength="100" style="stroke-dasharray: 3.9 200; animation-delay: 0s"/>
+<path class="mv k1" d="M243 52 L268 52 L268 259.5 L292 259.5" pathLength="100" fill="none" stroke="#d9ff3d" stroke-width="9" stroke-dasharray="3.9 300" stroke-dashoffset="3.9"/>
 <path d="M243 156 L268 156 L268 259.5 L292 259.5" class="arrow" marker-end="url(#ah)"/>
-<path d="M243 156 L268 156 L268 259.5 L292 259.5" class="blk" pathLength="100" style="stroke-dasharray: 6.6 200; animation-delay: 0.4s"/>
+<path class="mv k2" d="M243 156 L268 156 L268 259.5 L292 259.5" pathLength="100" fill="none" stroke="#d9ff3d" stroke-width="9" stroke-dasharray="6.6 300" stroke-dashoffset="6.6"/>
 <path d="M243 250 L268 250 L268 259.5 L292 259.5" class="arrow" marker-end="url(#ah)"/>
-<path d="M243 250 L268 250 L268 259.5 L292 259.5" class="blk" pathLength="100" style="stroke-dasharray: 17.1 200; animation-delay: 0.8s"/>
+<path class="mv k3" d="M243 250 L268 250 L268 259.5 L292 259.5" pathLength="100" fill="none" stroke="#d9ff3d" stroke-width="9" stroke-dasharray="17.1 300" stroke-dashoffset="17.1"/>
 <path d="M243 354 L268 354 L268 259.5 L292 259.5" class="arrow" marker-end="url(#ah)"/>
-<path d="M243 354 L268 354 L268 259.5 L292 259.5" class="blk" pathLength="100" style="stroke-dasharray: 7.0 200; animation-delay: 1.2s"/>
+<path class="mv k4" d="M243 354 L268 354 L268 259.5 L292 259.5" pathLength="100" fill="none" stroke="#d9ff3d" stroke-width="9" stroke-dasharray="7.0 300" stroke-dashoffset="7.0"/>
 <path d="M243 468 L268 468 L268 259.5 L292 259.5" class="arrow" marker-end="url(#ah)"/>
-<path d="M243 468 L268 468 L268 259.5 L292 259.5" class="blk" pathLength="100" style="stroke-dasharray: 3.9 200; animation-delay: 1.6s"/>
+<path class="mv k5" d="M243 468 L268 468 L268 259.5 L292 259.5" pathLength="100" fill="none" stroke="#d9ff3d" stroke-width="9" stroke-dasharray="3.9 300" stroke-dashoffset="3.9"/>
 <path d="M566 1 H867 L879 13 V519 H566 Z" class="store"/>
-<path class="wipe" style="animation-delay:3.90s" d="M578.1 11.0 H677.2 L674.1 33.0 H575.0 Z" fill="#d9ff3d"/>
-<text color="#f2eee3" style="animation-delay:3.90s" x="582" y="27" class="hm hit"><tspan class="m">.scrutate/</tspan></text>
+<path class="wipe mv k7" d="M578.1 11.0 H677.2 L674.1 33.0 H575.0 Z" fill="#d9ff3d"/>
+<text x="582" y="27" class="h"><tspan class="m">.scrutate/</tspan></text>
+<text x="582" y="27" class="hm mv k8"><tspan class="m">.scrutate/</tspan></text>
 <rect x="578" y="42" width="289" height="34" rx="2" class="inset"/>
 <text x="592" y="64" class="bi"><tspan class="m">index.db</tspan></text>
 <text x="688" y="64" class="b">SQLite, WAL</text>
@@ -96,6 +111,6 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <text x="582" y="324" class="b">it answers from the last committed</text>
 <text x="582" y="344" class="b">index.</text>
 <path d="M522 259.5 L562 259.5" class="arrow" marker-end="url(#ah)"/>
-<path d="M522 259.5 L562 259.5" class="blk" pathLength="100" style="stroke-dasharray: 25.0 200; animation-delay: 2.4s"/>
+<path class="mv k6" d="M522 259.5 L562 259.5" pathLength="100" fill="none" stroke="#d9ff3d" stroke-width="9" stroke-dasharray="25.0 300" stroke-dashoffset="25.0"/>
 </g>
 </svg>

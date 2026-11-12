@@ -194,11 +194,9 @@ text {{ font-family: {SANS}; }}
 .gate {{ fill: @bg@; stroke: @dim@; stroke-width: 1.25; stroke-dasharray: 6 5; }}
 """
 
-# A block of the highlighter runs along each arrow of the path, in order, three times, then the diagram is still.
-BLOCK_STYLE = f"""
-.blk {{ fill: none; stroke: @mark@; stroke-width: 9; stroke-dashoffset: 30; animation: blk 9s ease-in-out 3 both; }}
-@keyframes blk {{ 0% {{ stroke-dashoffset: 30; }} 18%, 100% {{ stroke-dashoffset: -100; }} }}
-"""
+# A diagram's loop: a block of the highlighter runs along each arrow in the order data flows, the card the
+# flow ends in is marked when the last block arrives, it holds, the mark lifts and the flow starts again.
+TRAVEL, HOLD = 1.1, 2.6
 
 R_CARD = 4          # corner of a card inside a diagram
 MARGIN, TOP = 32, 72  # where a diagram's drawing sits inside its panel, under its label
@@ -237,31 +235,39 @@ def lbl(x, y, text, anchor=None):
 class Svg:
     def __init__(self, w, h, title, desc, on="ink"):
         self.w, self.h, self.title, self.desc, self.on = w, h, title, desc, on
-        self.body, self.style, self.defs, self.flows, self.last = [], [STYLE], [], 0, 0.0
+        self.body, self.style, self.defs, self.flows, self.moves = [], [STYLE], [], [], {}
+        self.lead = 0.6   # when the flow has arrived, for a diagram whose own motion takes longer
 
     def add(self, s):
         self.body.append(s)
 
+    def move(self, name, fn):
+        """An element of its own motion: its class is `@m:name@`, filled by fn(clock, the time the flow
+        arrives, the loop's length) once the loop is known."""
+        self.moves[name] = fn
+        return f"@m:{name}@"
+
     def heading(self, x, y, text, marked=False, mono_title=False, room=None):
         """A card's title at baseline y: outlined capitals, or bold system text when it holds code.
-        `marked` puts it on a highlighter slab that wipes in after the last block has run."""
+        `marked` puts it on a highlighter slab that wipes in when the last block arrives."""
         cap = 11 if room is None else min(11, room / G.type_w(text.upper(), 1))   # a long title is set a little smaller
         plain = not mono_title and outlined(text) and cap >= 9.5
         t = f"`{text}`" if mono_title else text
-        at = "animation-delay:@at@s"   # filled in by svg(), once every arrow is known
         if plain:
             w, top, h = G.type_w(text.upper(), cap), y - cap - 6, cap + 12
         else:
             w, top, h = text_width(t, 15) * 0.93, y - 16, 22
         if marked:
-            self.add(G.marker(x - 7, top, w + 14, h, "wipe", at))
+            self.add(G.marker(x - 7, top, w + 14, h, "wipe @cls:slab@"))
+        # a marked title is drawn twice: in the panel's colour, and in ink over it while the slab is there
         if plain:
-            extra = f' color="@fg@" style="{at}"' if marked else ""
-            self.add(G.words(text.upper(), x, y, cap, INK if marked else "@fg@", cls="hit" if marked else "", extra=extra))
-        elif marked:
-            self.add(rich(x, y, t, "hm hit").replace("<text ", f'<text color="@fg@" style="{at}" ', 1))
+            self.add(G.words(text.upper(), x, y, cap, "@fg@"))
+            if marked:
+                self.add(G.words(text.upper(), x, y, cap, INK, cls="@cls:ink@"))
         else:
             self.add(rich(x, y, t, "h"))
+            if marked:
+                self.add(rich(x, y, t, "hm @cls:ink@"))
 
     def box(self, x, y, w, h, cls):
         if cls == "store":   # a store has its top right corner cut, like the README's cards
@@ -302,19 +308,33 @@ class Svg:
         marks = (' marker-end="url(#ah)"' if head else "") + (' marker-start="url(#ah)"' if both else "")
         self.add(f'<path d="{d}" class="arrow"{marks}/>')
         if flow is not None:
-            self.flows += 1
-            self.last = max(self.last, flow)
             length = sum(abs(x1 - x0) + abs(y1 - y0) for (x0, y0), (x1, y1) in zip(pts, pts[1:]))
             dash = min(30.0, 10 / length * 100)  # a 10 px block, whatever the arrow's length
-            self.add(f'<path d="{d}" class="blk" pathLength="100" '
-                     f'style="stroke-dasharray: {dash:.1f} 200; animation-delay: {flow:g}s"/>')
+            self.flows.append((flow, dash))
+            self.add(G.dash_path(d, f"@flow{len(self.flows)}@", f"{dash:.1f} 300", 9).replace(MARK, "@mark@"))
 
     def svg(self):
-        """The drawing, scaled into a panel under a `// TITLE` label."""
+        """The drawing, scaled into a panel under a `// TITLE` label, with its loop."""
+        clk = G.Clock()
+        arrive = max([f + TRAVEL for f, _ in self.flows] + [self.lead])
+        clk.total = round(arrive + 0.35 + HOLD + 0.7, 2)
+        T = clk.total
+        inner = "\n".join(self.body)
+        for n, (flow, dash) in enumerate(self.flows, 1):
+            inner = inner.replace(f"@flow{n}@", G.dash_run(clk, flow, flow + TRAVEL, dash=dash)[0])
         if self.flows:
-            self.style.append(BLOCK_STYLE)
-        if any("wipe" in b for b in self.body):
-            self.style.append("\n" + G.wipe_style() + "\n")
+            clk.beat("a block of highlighter runs along each arrow, in the order data flows", 0, arrive)
+        if "@cls:slab@" in inner:
+            inner = inner.replace("@cls:slab@", clk.anim(G.wipe(arrive, 0.32) + [(T - 0.6, "scaleX(1)", "ease-in"), (T - 0.3, "scaleX(0)")],
+                                                   rest="scaleX(0)"))
+            inner = inner.replace("@cls:ink@", clk.anim([(arrive + 0.2, 0, "steps(1, end)"), (arrive + 0.21, 1),
+                                                   (T - 0.6, 1, "steps(1, end)"), (T - 0.59, 0)], "opacity", rest=0))
+            clk.beat("the card the flow ends in is marked", arrive, 0.35)
+        for name, fn in self.moves.items():
+            inner = inner.replace(f"@m:{name}@", fn(clk, arrive, T))
+        clk.beat("hold, then the marks lift", arrive + 0.35, T - arrive - 0.35)
+        if clk.tracks:
+            self.style.append("\n" + G.WIPE_CSS + "\n" + G.SPOT_CSS + "\n" + clk.css() + "\n")
         sc = (W - 2 * MARGIN) / self.w
         H = round(TOP + self.h * sc + 30)
         head = ('<marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" '
@@ -325,11 +345,36 @@ class Svg:
             G.label(MARGIN + 8, 46, "", self.title, self.on, W - MARGIN - 8),
             "<defs>" + head + "".join(self.defs) + "</defs>",
             f'<g transform="translate({MARGIN} {TOP}) scale({sc:.5f})">',
-            *self.body,
+            inner,
             "</g>",
         ])
         src = document(W, H, self.title, self.desc, body, "".join(self.style))
-        return fill(src.replace("@at@", f"{self.last + 1.5 if self.flows else 0.4:.2f}"), self.on)
+        return fill(src, self.on)
+
+
+def marked_at(t):
+    """A slab of a diagram's own that wipes in at t and lifts with the loop's other marks."""
+    return lambda clk, arrive, T: "wipe " + clk.anim(G.wipe(t, 0.3) + [(T - 0.6, "scaleX(1)", "ease-in"), (T - 0.3, "scaleX(0)")],
+                                                     rest="scaleX(0)")
+
+
+def hops(stops, t0, step):
+    """A reticle that appears on the first of `stops`, settles on each in turn, rests on the last and goes."""
+    def fn(clk, arrive, T):
+        def at(p, s, o=1):
+            return {"transform": f"translate({p[0]:g}px, {p[1]:g}px) scale({s})", "opacity": o}
+        pts = [(t0 - 0.2, at(stops[0], 1.7, 0), G.EASE), (t0 + 0.2, at(stops[0], 1))]
+        for k, p in enumerate(stops[1:], 1):
+            t = t0 + step * k
+            pts += [(t - 0.28, at(stops[k - 1], 1), G.EASE_IN_OUT), (t, at(p, 1.25), G.EASE), (t + 0.14, at(p, 1))]
+        pts += [(T - 0.6, at(stops[-1], 1), "ease-in"), (T - 0.3, at(stops[-1], 1.4, 0))]
+        return clk.anim(pts, rest=at(stops[-1], 1.4, 0))
+    return fn
+
+
+def reticle_box(cls, w, h, colour="@fg@"):
+    """Corner ticks round a w by h box centred on 0 0; hidden until its motion shows it."""
+    return f'<g class="{cls}" opacity="0">' + G.ticks(-w / 2, -h / 2, w, h, colour, n=min(10, w / 3)) + "</g>"
 
 
 def icon_paths(name, stroke, width=1.75):
@@ -364,20 +409,27 @@ def banner(key, title, line, icon, group=None):
     base = 114 if hub_banner else 98
     b.append(G.words(t, PAD, base, cap, c["fg"]))
     cx = PAD + G.type_w(t, cap) + cap * 0.2
-    # the cursor after the title: on paper an ink edge keeps the highlighter visible
-    edge = f' stroke="{INK}" stroke-width="1.5"' if on == "paper" else ""
-    b.append(f'<rect class="blink" x="{cx:.1f}" y="{base - cap:.1f}" width="{cap * 0.58:.1f}" height="{cap:.1f}" fill="{MARK}"{edge}/>')
+    # the loop: the reticle round the icon closes on it and settles, holds, and lets go; the cursor blinks
+    clk = G.Clock(5.2)
+    edge = f' stroke="{INK}" stroke-width="1.5"' if on == "paper" else ""   # on paper an ink edge keeps the highlighter visible
+    b.append(f'<rect class="{G.blink(clk, 0, clk.total, clk.total / 5)}" x="{cx:.1f}" y="{base - cap:.1f}" '
+             f'width="{cap * 0.58:.1f}" height="{cap:.1f}" fill="{MARK}"{edge}/>')
     if text_width(line, 15) > room:
         raise SystemExit(f"banner line too long: {key}")
     b.append(rich(PAD, base + 31, line, "q"))
     s = 60
     ix, iy = W - PAD - s, (H - s) / 2 + 12
-    b.append(G.ticks(ix, iy, s, s, c["dim"]))
+    settle = clk.anim([(0.4, {"transform": "scale(1.45)", "opacity": 0}, G.EASE), (0.95, {"transform": "scale(1)", "opacity": 1}),
+                       (4.5, {"transform": "scale(1)", "opacity": 1}, "ease-in"), (4.9, {"transform": "scale(1.2)", "opacity": 0})],
+                      rest={"transform": "scale(1.2)", "opacity": 0})
+    clk.beat("the reticle closes on the icon and settles", 0.4, 0.55)
+    clk.beat("it holds, then lets go; the cursor blinks throughout", 0.95, 3.95)
+    b.append(f'<g class="{settle} spot">' + G.ticks(ix, iy, s, s, c["dim"]) + "</g>")
     k = 1.9
     b.append(f'<g transform="translate({ix + (s - 24 * k) / 2:.1f} {iy + (s - 24 * k) / 2:.1f}) scale({k})">{icon_paths(icon, c["fg"])}</g>')
     style = (f"\n.m {{ font-family: {MONO}; }} .pre {{ white-space: pre; }}\n"
              f"text {{ font-family: {SANS}; }} .q {{ font-size: 15px; fill: {c['dim']}; }}\n"
-             ".blink { animation: blink 1.1s steps(1) .8s 4 both; }\n@keyframes blink { 50% { opacity: 0; } }\n")
+             + G.SPOT_CSS + "\n" + clk.css() + "\n")
     return document(W, H, f"{title}: scrutate documentation", f"Banner for the {title} page. {line}", "\n".join(b), style)
 
 
@@ -391,8 +443,9 @@ def group_strip(g, name):
     b.append(G.words(name.upper(), x, 53, 19, c["fg"]))
     end = x + G.type_w(name.upper(), 19) + 22
     b.append(f'<path d="M{end:.1f} 44 H{W - PAD - 34}" stroke="{c["rule"]}"/>')
-    b.append(G.crosshair(W - PAD - 12, 44, 8, c["dim"]))
-    style = "\n"
+    clk = G.Clock(4.8)
+    b.append(G.seek(clk, end, W - PAD - 24, 44, W - PAD - 12, 8, c["dim"], t0=0.3 + 0.3 * (int(n) % 3), on=on))
+    style = "\n" + G.SPOT_CSS + "\n" + clk.css() + "\n"
     return document(W, H, f"{n}: {name}", f"Group {n} of the documentation hub: {name.lower()}.", "\n".join(b), style)
 
 
@@ -695,7 +748,7 @@ def diagram_cli_map():
             out.append((cmd, wrap(what, w - 32 - ncol, 14)))
         return out
 
-    y = 1
+    y, stops = 1, []
     for row in rows:
         h = max(48 + sum(8 + 20 * len(ls) for _, ls in laid(i)) + 6 for i in row)
         for i in row:
@@ -703,6 +756,9 @@ def diagram_cli_map():
             x, w = boxes[i]
             s.add(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="{R_CARD}" class="card"/>')
             s.add(f'<rect x="{x + 16}" y="{y + 16}" width="11" height="11" fill="@{col}@"/>')
+            s.add(f'<rect class="{s.move(f"fam{i}", marked_at(0.55 + 0.5 * i))}" x="{x + 16}" y="{y + 16}" width="11" height="11" '
+                  'fill="@mark@" transform="scale(0 1)"/>')
+            stops.append((x + 21.5, y + 21.5))
             s.heading(x + 36, y + 27, name)
             cy = y + 56
             for cmd, ls in laid(i):
@@ -712,6 +768,8 @@ def diagram_cli_map():
                     cy += 20
                 cy += 8
         y += h + 16
+    s.add(reticle_box(s.move("seek", hops(sorted(stops, key=lambda p: (p[1], p[0])), 0.4, 0.5)), 30, 30))
+    s.lead = 0.4 + 0.5 * (len(stops) - 1) + 0.5
     s.h = int(y - 16 + 2)
     return s
 
@@ -732,13 +790,17 @@ def diagram_exit_codes():
         x = 1 + i * (w + 15.67)
         s.add(f'<rect x="{x:g}" y="1" width="{w}" height="{h}" rx="{R_CARD}" class="card"/>')
         if col == "mark":   # the one code that means something was found
-            s.add(G.marker(x + 7, 13, G.type_w(code, 22) + 20, 34))
+            mw = G.type_w(code, 22) + 20
+            s.add(G.marker(x + 7, 13, mw, 34, s.move("zero", marked_at(0.75))))
+            ret = reticle_box(s.move("seek", hops([(x + 7 + mw / 2, 30)], 0.35, 0)), mw + 16, 44)
         s.add(G.words(code, x + 16, 40, 22, "@ink@" if col == "mark" else f"@{col}@"))
         s.add(rich(x + 16, 62, label, "h"))
         yy = 86
         for ln in (wrap(text, w - 32, 14) if text else []):
             s.add(rich(x + 16, yy, ln, "b"))
             yy += 20
+    s.add(ret)
+    s.lead = 1.1
     s.h = int(h + 2)
     return s
 
@@ -789,12 +851,13 @@ def diagram_security():
                 ty += 20
             ty += 8
         mid = y + h / 2
-        if title == "`.scrutate/`":
-            s.arrow([(ex - 4, mid), (cx + cw + 4, mid)], both=True)
-            s.arrow([(cx - 4, mid), (sw + 5, mid)], both=True)
+        t = 0.6 * len(spans_y)
+        if title == "`.scrutate/`":   # scrutate writes it, and reads it back through the same checks
+            s.arrow([(ex - 4, mid), (cx + cw + 4, mid)], both=True, flow=t)
+            s.arrow([(cx - 4, mid), (sw + 5, mid)], both=True, flow=t + 0.5)
         else:
-            s.arrow([(sw + 5, mid), (cx - 4, mid)])
-            s.arrow([(cx + cw + 4, mid), (ex - 4, mid)])
+            s.arrow([(sw + 5, mid), (cx - 4, mid)], flow=t)
+            s.arrow([(cx + cw + 4, mid), (ex - 4, mid)], flow=t + 0.5)
         spans_y.append((y, h))
         y += h + 16
     top, bottom = spans_y[0][0], y - 16
@@ -849,7 +912,7 @@ def diagram_platforms():
             by += 20
         s.add(rich(556, ty, wheels, "b" if ok else "b"))
         if ok:
-            s.add(G.marker(712, y + h / 2 - 13, 112, 26))
+            s.add(G.marker(712, y + h / 2 - 13, 112, 26, s.move(f"ok{y}", marked_at(0.4 + 0.3 * len(s.moves)))))
             s.add(f'<path d="M724 {y + h / 2} l4 4 7-8" fill="none" stroke="@ink@" stroke-width="1.9" stroke-linecap="square"/>')
             s.add(rich(742, y + h / 2 + 5, "supported", "bi").replace('class="bi"', 'class="bi" style="fill: @ink@"'))
         else:
@@ -858,6 +921,7 @@ def diagram_platforms():
         y += h
         if y < 36 + total:
             s.add(f'<line x1="2" y1="{y}" x2="878" y2="{y}" stroke="@rule@"/>')
+    s.lead = 0.4 + 0.3 * len(s.moves)
     s.h = int(y + 2)
     return s
 
