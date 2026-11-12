@@ -10,7 +10,7 @@ out=bench/results/platforms/repro
 mkdir -p "$out"
 rm -f "$out"/*.txt
 build='
-  set -e
+  set -eo pipefail
   export CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup PATH=/usr/local/cargo/bin:$PATH
   if ! command -v rustup > /dev/null; then
     curl -sSf https://sh.rustup.rs | sh -s -- -y -q --profile minimal --default-toolchain none > /dev/null

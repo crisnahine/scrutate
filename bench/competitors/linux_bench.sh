@@ -24,8 +24,9 @@ apt-get install -y -qq make g++ pkg-config file perl python3 python3-venv silver
   libbrotli-dev unzip xz-utils curl git autoconf automake > /dev/null
 
 fetch() { [ -f "$B/src/$2" ] || curl -fsSL -o "$B/src/$2" "$1"; }
-# fetch URL NAME SHA256: the same, and the archive must have that hash (a cached one too)
-fetch_sum() { fetch "$1" "$2" && echo "$3  $B/src/$2" | sha256sum -c -; }
+# check NAME SHA256: the file must have that hash (a cached one too); a wrong one is not kept
+check() { echo "$2  $B/src/$1" | sha256sum -c - || { rm -f "$B/src/$1"; return 1; }; }
+fetch_sum() { fetch "$1" "$2" && check "$2" "$3"; }
 if [ ! -x $B/bin/rg ]; then
   step "ripgrep 15.2.0 (release binary)"
   # its x86_64 Linux release is the musl build; aarch64 has a glibc one
@@ -48,17 +49,21 @@ if [ ! -x $B/bin/hyperfine ]; then
 fi
 if [ ! -x $B/bin/ast-grep ]; then
   step "ast-grep 0.51.1 (release binary)"
-  fetch https://github.com/ast-grep/ast-grep/releases/download/0.51.1/app-$arch-unknown-linux-gnu.zip sg.zip
+  case "$arch" in
+    x86_64) sum=42514f77ae0c8a25d7d32154d31d3e7e16f3ab894f8ce76ce417de234ee49157 ;;
+    aarch64) sum=db02fae2d8eace5fc40c55242068882452dd03eab38a1d950d5fd981cf112926 ;;
+  esac
+  fetch_sum https://github.com/ast-grep/ast-grep/releases/download/0.51.1/app-$arch-unknown-linux-gnu.zip sg.zip "$sum"
   unzip -o -q $B/src/sg.zip -d $B/src/sg && cp $B/src/sg/ast-grep $B/bin/
 fi
 if [ ! -x $B/bin/ugrep ]; then
   step "ugrep 7.8.5 (source, ./build.sh as its README says)"
-  fetch https://github.com/Genivia/ugrep/archive/refs/tags/v7.8.5.tar.gz ugrep.tgz
+  fetch_sum https://github.com/Genivia/ugrep/archive/refs/tags/v7.8.5.tar.gz ugrep.tgz f080ab6cd9d96a5357570cb60a99e09ebe5eef11cf322c35373dbe815378a1f2
   tar -C $B/src -xzf $B/src/ugrep.tgz && (cd $B/src/ugrep-7.8.5 && ./build.sh > /dev/null 2>&1 && cp bin/ugrep $B/bin/)
 fi
 if [ ! -x $B/bin/grep ]; then
   step "GNU grep 3.12 (source)"
-  fetch https://ftp.gnu.org/gnu/grep/grep-3.12.tar.xz grep.txz
+  fetch_sum https://ftp.gnu.org/gnu/grep/grep-3.12.tar.xz grep.txz 2649b27c0e90e632eadcd757be06c6e9a4f48d941de51e7c0f83ff76408a07b9
   tar -C $B/src -xJf $B/src/grep.txz && (cd $B/src/grep-3.12 && ./configure -q --prefix=$B > /dev/null && make -s -j"$(nproc)" > /dev/null && cp src/grep $B/bin/)
 fi
 if [ ! -x $B/bin/ack ]; then
@@ -66,21 +71,30 @@ if [ ! -x $B/bin/ack ]; then
   # the hash is the one Homebrew's formula pins for this file, so the file is checked whatever the
   # state of the site's certificate (it expired on 2026-11-06 and curl then refuses the site)
   fetch https://beyondgrep.com/ack-v3.10.0 ack || curl -fsSLk -o $B/src/ack https://beyondgrep.com/ack-v3.10.0
-  echo "28a740de59bdb52000a281aa89dc9d44a24a1f144cdfe4bc24b7d0582b40e90e  $B/src/ack" | sha256sum -c -
+  check ack 28a740de59bdb52000a281aa89dc9d44a24a1f144cdfe4bc24b7d0582b40e90e
   cp $B/src/ack $B/bin/ack && chmod +x $B/bin/ack
 fi
 if [ ! -x $B/go/bin/zoekt ]; then
   step "Go and Zoekt (go install, as its README says)"
   goarch=${arch/aarch64/arm64}
-  fetch "https://go.dev/dl/go1.25.4.linux-${goarch/x86_64/amd64}.tar.gz" go.tgz
+  case "$arch" in
+    x86_64) sum=9fa5ffeda4170de60f67f3aa0f824e426421ba724c21e133c1e35d6159ca1bec ;;
+    aarch64) sum=a68e86d4b72c2c2fecf7dfed667680b6c2a071221bbdb6913cf83ce3f80d9ff0 ;;
+  esac
+  fetch_sum "https://go.dev/dl/go1.25.4.linux-${goarch/x86_64/amd64}.tar.gz" go.tgz "$sum"
   tar -C $B -xzf $B/src/go.tgz
   GOPATH=$B/go GOFLAGS=-mod=mod $B/go/bin/go install github.com/sourcegraph/zoekt/cmd/zoekt-index@a5a933bc043e github.com/sourcegraph/zoekt/cmd/zoekt@a5a933bc043e
   mv $B/go/bin/zoekt $B/go/bin/zoekt-index $B/bin/ 2>/dev/null || true
 fi
 ln -sf $B/bin/zoekt $B/bin/zoekt-index $B/go/bin/ 2>/dev/null || true
 if ! command -v uv > /dev/null; then
-  step "uv (the structural benchmark's reference runs tree-sitter's Python bindings under it)"
-  curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=$B/bin sh > /dev/null
+  step "uv 0.13.7 (release binary; the structural benchmark's reference runs tree-sitter's Python bindings under it)"
+  case "$arch" in
+    x86_64) sum=c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83 ;;
+    aarch64) sum=71279f8d3c67241e807b9d8db872d1bf541579fb9f08b7d1eb1682196d1e57dc ;;
+  esac
+  fetch_sum https://github.com/astral-sh/uv/releases/download/0.13.7/uv-$arch-unknown-linux-gnu.tar.gz uv.tgz "$sum"
+  tar -C $B/src -xzf $B/src/uv.tgz && cp $B/src/uv-$arch-unknown-linux-gnu/uv $B/src/uv-$arch-unknown-linux-gnu/uvx $B/bin/
 fi
 
 step "scrutate (release build)"

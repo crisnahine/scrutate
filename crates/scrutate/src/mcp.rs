@@ -256,7 +256,12 @@ fn run_call(send: &Wire, repo: &Mutex<Repo>, building: &AtomicBool, build_failed
         // a panic inside one tool call must not take the server down: it becomes a tool error
         (!gone()).then(|| {
             repo.set_cancel(Arc::clone(&cancelled));
-            let c = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| call_tool(&mut repo, &name, &args, settings))).unwrap_or_else(|_| {
+            let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| call_tool(&mut repo, &name, &args, settings)));
+            if run.is_ok() {
+                // this call refreshed the index itself, so a later failure is not the first build's
+                build_failed.store(false, Ordering::Release);
+            }
+            let c = run.unwrap_or_else(|_| {
                 let text = if build_failed.load(Ordering::Acquire) {
                     "error: the index could not be built: internal failure while indexing (a bug: please report it, with the server's stderr); `scrutate index --force` in the repository may clear it, and the server keeps running".to_string()
                 } else {
@@ -536,6 +541,17 @@ mod tests {
         let called = call_tool(&mut repo, "find_symbol", &json!({"name": "make_point"}), &settings);
         release.join().unwrap();
         assert!(called.text.contains("src/geo.py"), "{}", called.text);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_call_that_answers_clears_the_failed_first_build() {
+        let (root, repo, sent) = fixture("build_failed_reset");
+        let (building, build_failed, calls) = (AtomicBool::new(false), AtomicBool::new(true), Calls::default());
+        let send = |m: Value| sent.lock().unwrap().push(m);
+        run_call(&send, &repo, &building, &build_failed, &calls, &Settings::new(None, Some(0.0)), call(&calls, 7, Value::Null));
+        assert_eq!(sent.lock().unwrap()[0]["result"]["isError"], false);
+        assert!(!build_failed.load(Ordering::Acquire));
         let _ = std::fs::remove_dir_all(&root);
     }
 
