@@ -806,8 +806,10 @@ fn cpp_operator_or_destructor(seps: &mut Seps, s: usize, e: usize) -> Option<Str
     let src = seps.src;
     let word = |c: char| c.is_alphanumeric() || c == '_';
     if let Some(i) = seps.last_in("operator", s, e).filter(|&i| !src[s..i].ends_with(word)) {
-        let op: String = src[i + "operator".len()..e].split_whitespace().collect();
-        if !op.is_empty() && op.chars().all(|c| c.is_ascii_punctuation()) {
+        // the longest operators (`->*`, `<=>`) have three marks: in `a.operator()()()` only the first call is one
+        let rest = &src[i + "operator".len()..e];
+        let op: String = if rest.len() <= 64 { rest.split_whitespace().collect() } else { String::new() };
+        if (1..=3).contains(&op.len()) && op.chars().all(|c| c.is_ascii_punctuation()) {
             return Some(format!("operator{op}"));
         }
     }
@@ -2571,6 +2573,7 @@ mod tests {
             ("a.go", format!("package a\nfunc f() {{ {}; {}; fmt.Println(1); a.b.c() }}\n", chain("a", "()"), chain("x", ".a()"))),
             ("A.java", format!("class A {{ void f() {{ {}; new B(); a.b.c(); this.<T>m(); }} }}\n", chain("x", ".a()"))),
             ("a.cpp", format!("void f() {{ {}; {}; a.operator+(b); p->~Shape(); x.operator()(1); operator<<(o, x); a::b::c(); p->q->r(); A::~A(); x.operator==(y); std::operator<<(o, x); a::operator new(1); x.template f<T>(); }}\n", chain("a", "()"), chain("x", ".a()"))),
+            ("b.cpp", "void f() { a.operator()()()(); p->operator->*(q); x.operator<=>(y); x.operator  () (1); a.operator[](1)(2); }\n".to_string()),
             ("a.c", format!("void f() {{ {}; p->q(); s.f(); }}\n", chain("a", "()"))),
             ("a.d", "void f() { auto p = new Point(1, 2); a.b(); }\n".to_string()),
             ("a.sol", "contract C { function f() public { new D(1); a.b(); } }\n".to_string()),
@@ -2598,6 +2601,11 @@ mod tests {
             diffs.extend(d);
         }
         assert!(same > 9_000, "{same} names compared");
-        assert!(diffs.is_empty(), "{diffs:#?}");
+        // a C++ operator name has at most three marks: text after `operator` with more is no operator's name
+        let (window, others): (Vec<Difference>, Vec<Difference>) = diffs.into_iter().partition(|(_, old, new)| {
+            old.as_deref().and_then(|o| o.strip_prefix("operator")).is_some_and(|op| op.len() > 3) && new.as_deref() == Some("operator")
+        });
+        assert!(others.is_empty(), "{others:#?}");
+        assert!(!window.is_empty());
     }
 }

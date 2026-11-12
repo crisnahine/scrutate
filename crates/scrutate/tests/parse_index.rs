@@ -772,6 +772,12 @@ fn chains_of_calls_parse_in_linear_time() {
             assert!(chunks.iter().any(|c| c.calls.contains(name)), "{path} {head}{link}");
         });
     }
+    // only the first call of `a.operator()()()` calls an operator: the others are no names as long as the chain
+    let make = |n: usize| format!("void f() {{ a.operator{}; }}\n", "()".repeat(n));
+    assert_parse_scales_linearly("a.cpp", 4000, make, |_, chunks| {
+        let names: Vec<&String> = chunks.iter().flat_map(|c| &c.calls).collect();
+        assert!(names.contains(&&"operator()".to_string()) && names.iter().all(|n| n.len() <= 16), "{names:?}");
+    });
     let make = |n: usize| format!("x := {}{}\n", "$(call f,".repeat(n), ")".repeat(n));
     assert_parse_scales_linearly("Makefile", 16000, make, |_, chunks| assert!(chunks.iter().any(|c| c.calls.contains("f"))));
 }
