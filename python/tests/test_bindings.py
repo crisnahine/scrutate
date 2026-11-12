@@ -300,3 +300,37 @@ def test_gil_is_released_during_rust_work(repo):
     if cpus < 2 or load > cpus * 0.5:
         pytest.skip(f"needs idle cores to measure concurrency (cpus={cpus}, load={load:.1f}); sequential {seq:.3f}s parallel {par:.3f}s")
     assert par < seq * 0.9, f"threads did not run concurrently: sequential {seq:.3f}s parallel {par:.3f}s"
+
+
+def test_the_operations_reach_python(repo):
+    r = scrutate.Repo(str(repo))
+    r.index()
+    refs = r.references("make_widget_3")
+    assert [d["path"] for d in refs["definitions"]] == ["pkg/m3.py"]
+    assert [o["line"] for o in refs["definitions"][0]["references"] if o["via"] != "definition"] == [12]
+    assert r.references("make_widget_3", textual=True)["references"]
+    callers = r.callers("make_widget_3")
+    assert callers.undecided == 0 and callers.unchecked == 0
+    # any operation by its MCP tool name, with the same arguments, text and paging
+    a = r.call("grep_code", {"pattern": "MAKE_WIDGET_3", "mode": "identifier", "path": "pkg"})
+    assert a["schema"] == 2 and "pkg/m3.py" in a["text"]
+    assert {g["path"] for g in a["result"]["groups"]} == {"pkg/m3.py"}
+    assert r.call("grep_code", {"pattern": "make_widget_3", "globs": ["*.md"]})["result"]["groups"] == []
+    whole = r.call("find_symbol", {"name": "use_3"})
+    assert whole["result"][0]["path"] == "pkg/m3.py" and whole["text"].startswith("pkg/m3.py:")
+    page = r.call("dependents", {"target": "os"}, max_bytes=200)
+    assert len(page["text"].encode()) <= 200 and "offset=" in page["text"]
+    assert r.call("dependents", {"target": "os"}, offset=3)["text"].count("\n") + 1 == 17
+    with pytest.raises(ValueError):
+        r.call("no_such_tool")
+    with pytest.raises(ValueError):
+        r.call("grep_code", {"pattern": "x", "mode": "nope"})
+
+
+def test_a_note_on_a_file_reaches_the_stats(tmp_path):
+    filler = "".join(f"x = {i}  # filler line to push the NUL past the first read\n" for i in range(3000))
+    (tmp_path / "nul.py").write_text("needle = 1\n" + filler + "\x00\nneedle()\n")
+    it = scrutate.grep("needle", [str(tmp_path)], mode="literal")
+    assert [m.line for m in it] == [1]
+    notes = it.stats()["notes"]
+    assert len(notes) == 1 and notes[0][0].endswith("nul.py") and "binary" in notes[0][1], notes

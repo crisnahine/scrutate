@@ -18,7 +18,8 @@ use pyo3::exceptions::{PyFileNotFoundError, PyOSError, PyRuntimeError, PyValueEr
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyType};
 
-use scrutate::instant::{self, Case, Files, Mode, Output, Pattern, Query, Record};
+use scrutate::instant::{self, Files, Output, Pattern, Query, Record};
+use scrutate::ops::{Answer, Op};
 
 fn err<E: std::fmt::Display>(e: E) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
@@ -119,25 +120,17 @@ impl From<scrutate::search::Hit> for Hit {
     }
 }
 
-fn parse_mode(mode: &str, fuzzy_edits: u8) -> PyResult<Mode> {
-    Ok(match mode {
-        "regex" => Mode::Regex,
-        "literal" => Mode::Literal,
-        "identifier" => Mode::Identifier,
-        "pcre2" => Mode::Pcre2,
-        "fuzzy_regex" => Mode::FuzzyRegex {
-            max_edits: fuzzy_edits,
-        },
-        "fuzzy" => Mode::Fuzzy {
-            max_edits: fuzzy_edits,
-        },
-        other => {
-            return Err(PyValueError::new_err(format!(
-                "unknown mode {other:?}: regex, literal, identifier, pcre2, fuzzy or fuzzy_regex"
-            )))
-        }
-    })
+fn value_err(e: anyhow::Error) -> PyErr {
+    PyValueError::new_err(e.to_string())
 }
+
+/// A JSON value as the Python object `json.loads` makes of it.
+fn to_py<'py>(py: Python<'py>, v: &serde_json::Value) -> PyResult<Bound<'py, PyAny>> {
+    py.import("json")?.call_method1("loads", (v.to_string(),))
+}
+
+/// (path, text) of each file whose search a NUL byte stopped after a match.
+type Notes = Vec<(String, String)>;
 
 /// Streaming result of `grep`: a Python iterator over `Match` objects fed by a background search
 /// thread. Dropping it (or calling `cancel()`) stops the search.
@@ -148,8 +141,10 @@ pub struct GrepIter {
     rx: Option<Mutex<mpsc::Receiver<Vec<Match>>>>,
     buf: VecDeque<Match>,
     cancel: Arc<AtomicBool>,
-    handle: Option<std::thread::JoinHandle<anyhow::Result<instant::Stats>>>,
+    handle: Option<std::thread::JoinHandle<anyhow::Result<(instant::Stats, Notes)>>>,
     stats: Option<instant::Stats>,
+    /// files whose search a NUL byte stopped after a match: (path, what happened)
+    notes: Vec<(String, String)>,
     error: Option<String>,
 }
 
@@ -157,7 +152,10 @@ impl GrepIter {
     fn finish(&mut self) {
         if let Some(h) = self.handle.take() {
             match h.join() {
-                Ok(Ok(st)) => self.stats = Some(st),
+                Ok(Ok((st, notes))) => {
+                    self.stats = Some(st);
+                    self.notes = notes;
+                }
                 Ok(Err(e)) => self.error = Some(e.to_string()),
                 Err(_) => self.error = Some("search thread panicked".into()),
             }
@@ -208,7 +206,8 @@ impl GrepIter {
         self.finish();
     }
 
-    /// Statistics of a finished search (files searched/matched, matches, bytes, elapsed ms, cancelled).
+    /// Statistics of a finished search (files searched/matched, matches, bytes, elapsed ms,
+    /// cancelled), and `notes`: (path, text) of each file whose search a NUL byte stopped.
     fn stats<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
         if self.rx.is_some() {
             return Ok(None); // still running
@@ -225,6 +224,7 @@ impl GrepIter {
                 d.set_item("errors", st.errors)?;
                 d.set_item("elapsed_ms", st.elapsed_ms)?;
                 d.set_item("cancelled", st.cancelled)?;
+                d.set_item("notes", self.notes.clone())?;
                 Ok(Some(d))
             }
         }
@@ -278,17 +278,8 @@ fn grep(
     let q = Query {
         pattern: Pattern {
             text: pattern,
-            mode: parse_mode(mode, fuzzy_edits)?,
-            case: match case {
-                "sensitive" => Case::Sensitive,
-                "insensitive" => Case::Insensitive,
-                "smart" => Case::Smart,
-                other => {
-                    return Err(PyValueError::new_err(format!(
-                        "unknown case {other:?}: sensitive, insensitive or smart"
-                    )))
-                }
-            },
+            mode: scrutate::ops::mode_named(mode, fuzzy_edits).map_err(value_err)?,
+            case: scrutate::ops::case_named(case).map_err(value_err)?,
             word,
             multiline,
             ..Pattern::default()
@@ -335,6 +326,7 @@ fn grep(
         .name("scrutate-grep".into())
         .spawn(move || {
             let mut batch: Vec<Match> = Vec::with_capacity(256);
+            let mut notes = Vec::new();
             let tx2 = tx.clone();
             let c3 = Arc::clone(&c2);
             let st = instant::search(
@@ -342,6 +334,9 @@ fn grep(
                 &f,
                 Arc::clone(&c2),
                 Output::Records(&mut |r| {
+                    if let Record::Note { path, text, .. } = &r {
+                        notes.push((path.to_string(), text.clone()));
+                    }
                     batch.extend(Match::of(r));
                     if !sort && batch.len() >= 256 && tx2.send(std::mem::take(&mut batch)).is_err()
                     {
@@ -360,7 +355,7 @@ fn grep(
             } else if !batch.is_empty() {
                 let _ = tx.send(batch);
             }
-            st
+            st.map(|st| (st, notes))
         })
         .map_err(err)?;
     Ok(GrepIter {
@@ -369,6 +364,7 @@ fn grep(
         cancel,
         handle: Some(handle),
         stats: None,
+        notes: Vec::new(),
         error: None,
     })
 }
@@ -385,15 +381,14 @@ fn hits_py(hits: Vec<scrutate::search::Hit>) -> Vec<Hit> {
     hits.into_iter().map(Into::into).collect()
 }
 
-/// `items` cut to `limit` as a `Results` list whose `stopped_at` is the limit when there were
-/// more (ask the engine for `limit + 1`), as the CLI and the MCP tools report it.
+/// `items` as a `Results` list whose `stopped_at` is the limit the answer stopped at when there
+/// were more, as the CLI and the MCP tools report it.
 fn results<'py, T: IntoPyObject<'py>>(
     py: Python<'py>,
-    mut items: Vec<T>,
-    limit: usize,
+    items: Vec<T>,
+    stopped: Option<scrutate::ops::Stop>,
 ) -> PyResult<Bound<'py, PyAny>> {
-    let stopped_at = (items.len() > limit).then_some(limit);
-    items.truncate(limit);
+    let stopped_at = stopped.map(|s| s.at);
     let out = py
         .import("scrutate._native")?
         .getattr("Results")?
@@ -403,17 +398,17 @@ fn results<'py, T: IntoPyObject<'py>>(
 }
 
 impl Repo {
-    /// `f` on the engine with its index brought up to date (checked at most once a second), as
-    /// the CLI and the MCP server see it before every operation; a damaged index is built again
-    /// and `f` runs once more.
-    fn fresh<T>(
-        &self,
-        f: impl FnMut(&mut scrutate::search::Searcher) -> anyhow::Result<T>,
-    ) -> anyhow::Result<T> {
-        let mut s = lock(&self.inner);
-        s.refresh(1.0)?;
-        s.recovering(f)
+    /// Run one operation with the GIL released, on an index brought up to date at most once a
+    /// second, as the MCP server runs a tool call (`scrutate::Repo::run`).
+    fn run(&self, py: Python<'_>, op: Op) -> PyResult<Answer> {
+        py.detach(move || lock(&self.inner).run(&op, 1.0))
+            .map_err(err)
     }
+}
+
+/// An answer of another kind than its operation gives: a bug.
+fn unexpected() -> PyErr {
+    PyRuntimeError::new_err("internal failure: an operation gave an answer of another kind")
 }
 
 #[pymethods]
@@ -479,20 +474,16 @@ impl Repo {
         alt: Option<Vec<String>>,
         with_text: bool,
     ) -> PyResult<Vec<Hit>> {
-        let q = query.to_string();
-        let hits = py
-            .detach(move || {
-                self.fresh(|s| match &alt {
-                    Some(a) if !a.is_empty() => {
-                        let mut qs = vec![q.clone()];
-                        qs.extend(a.iter().cloned());
-                        s.search_many(&qs, k, with_text)
-                    }
-                    _ => s.search(&q, k, with_text),
-                })
-            })
-            .map_err(err)?;
-        Ok(hits_py(hits))
+        let op = Op::Search {
+            query: query.to_string(),
+            alt: alt.unwrap_or_default(),
+            k,
+            snippets: with_text,
+        };
+        match self.run(py, op)? {
+            Answer::Hits { hits, .. } => Ok(hits_py(hits)),
+            _ => Err(unexpected()),
+        }
     }
 
     /// Where is this function/class/method defined? (`Class.method` works.) A `Results` list:
@@ -504,17 +495,20 @@ impl Repo {
         name: &str,
         limit: usize,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let n = name.to_string();
         // a location (`path:start-end`) and a path spelling are read as the MCP tools read them
-        let hits = py
-            .detach(move || {
-                self.fresh(|s| scrutate::ops::targets(s, &n, limit.saturating_add(1), false))
-            })
-            .map_err(err)?;
-        results(py, hits_py(hits), limit)
+        let op = Op::Symbol {
+            name: name.to_string(),
+            limit,
+        };
+        match self.run(py, op)? {
+            Answer::Hits { hits, stopped, .. } => results(py, hits_py(hits), stopped),
+            _ => Err(unexpected()),
+        }
     }
 
-    /// Functions that call `name`. A `Results` list: `stopped_at` is `limit` when there were more.
+    /// Functions that call `name`. A `Results` list: `stopped_at` is `limit` when there were more,
+    /// `undecided` counts the callers the resolver kept without knowing whether they call this
+    /// definition or another of the same name, `unchecked` the ones it was not asked about.
     #[pyo3(signature = (name, limit=scrutate::ops::CALLERS_LIMIT))]
     fn callers<'py>(
         &self,
@@ -522,11 +516,24 @@ impl Repo {
         name: &str,
         limit: usize,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let n = name.to_string();
-        let hits = py
-            .detach(move || self.fresh(|s| s.callers(&n, limit.saturating_add(1))))
-            .map_err(err)?;
-        results(py, hits_py(hits), limit)
+        let op = Op::Callers {
+            name: name.to_string(),
+            limit,
+        };
+        match self.run(py, op)? {
+            Answer::Callers {
+                hits,
+                undecided,
+                unchecked,
+                stopped,
+            } => {
+                let out = results(py, hits_py(hits), stopped)?;
+                out.setattr("undecided", undecided)?;
+                out.setattr("unchecked", unchecked)?;
+                Ok(out)
+            }
+            _ => Err(unexpected()),
+        }
     }
 
     /// Functions `name` calls: (resolved hits, unresolved external names). The hits are a
@@ -538,19 +545,32 @@ impl Repo {
         name: &str,
         limit: usize,
     ) -> PyResult<(Bound<'py, PyAny>, Vec<String>)> {
-        let n = name.to_string();
-        let (hits, ext) = py
-            .detach(move || self.fresh(|s| s.callees(&n, limit.saturating_add(1))))
-            .map_err(err)?;
-        Ok((results(py, hits_py(hits), limit)?, ext))
+        let op = Op::Callees {
+            name: name.to_string(),
+            limit,
+        };
+        match self.run(py, op)? {
+            Answer::Callees {
+                resolved,
+                external,
+                stopped,
+                ..
+            } => Ok((results(py, hits_py(resolved), stopped)?, external)),
+            _ => Err(unexpected()),
+        }
     }
 
     /// Symbols of a file in source order, as dicts (kind, name, qualname, start, end).
     fn outline<'py>(&self, py: Python<'py>, path: &str) -> PyResult<Vec<Bound<'py, PyDict>>> {
-        let p = path.to_string();
-        let rows = py
-            .detach(move || self.fresh(|s| s.ix.outline(&scrutate::ops::repo_path(s, &p))))
-            .map_err(err)?;
+        let Answer::Outline { rows, .. } = self.run(
+            py,
+            Op::Outline {
+                path: path.to_string(),
+            },
+        )?
+        else {
+            return Err(unexpected());
+        };
         rows.iter()
             .map(|r| {
                 let d = PyDict::new(py);
@@ -570,14 +590,15 @@ impl Repo {
         py: Python<'_>,
         path: &str,
     ) -> PyResult<Vec<(i64, String, Option<String>)>> {
-        let p = path.to_string();
-        let deps = py
-            .detach(move || {
-                self.fresh(|s| {
-                    scrutate::names::Names::new(s)?.imports(&scrutate::ops::repo_path(s, &p))
-                })
-            })
-            .map_err(err)?;
+        let Answer::Deps { deps, .. } = self.run(
+            py,
+            Op::Deps {
+                path: path.to_string(),
+            },
+        )?
+        else {
+            return Err(unexpected());
+        };
         Ok(deps
             .into_iter()
             .map(|d| (d.line, d.module, d.resolved))
@@ -586,25 +607,28 @@ impl Repo {
 
     /// Files importing a module or repository file: list of (path, line, module as written).
     fn dependents(&self, py: Python<'_>, target: &str) -> PyResult<Vec<(String, i64, String)>> {
-        let t = target.to_string();
-        py.detach(move || {
-            self.fresh(|s| {
-                Ok(scrutate::names::Names::new(s)?
-                    .importers(&scrutate::ops::repo_path(s, &t))?
-                    .0)
-            })
-        })
-        .map_err(err)
+        match self.run(
+            py,
+            Op::Rdeps {
+                target: target.to_string(),
+            },
+        )? {
+            Answer::Rdeps { rows, .. } => Ok(rows),
+            _ => Err(unexpected()),
+        }
     }
 
     /// Code similar to a symbol or `path:line`: list of (hit, cosine, jaccard).
     #[pyo3(signature = (target, k=scrutate::ops::SIMILAR_K))]
     fn similar(&self, py: Python<'_>, target: &str, k: usize) -> PyResult<Vec<(Hit, f32, f32)>> {
-        let t = target.to_string();
-        let out = py
-            .detach(move || self.fresh(|s| scrutate::intel::similar(s, &t, k)))
-            .map_err(err)?;
-        Ok(out.into_iter().map(|(h, c, j)| (h.into(), c, j)).collect())
+        let op = Op::Similar {
+            target: target.to_string(),
+            k,
+        };
+        match self.run(py, op)? {
+            Answer::Similar(out) => Ok(out.into_iter().map(|(h, c, j)| (h.into(), c, j)).collect()),
+            _ => Err(unexpected()),
+        }
     }
 
     /// Duplicate and near-duplicate functions, as a `Results` list of JSON-compatible dicts:
@@ -617,13 +641,14 @@ impl Repo {
         threshold: f32,
         limit: usize,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let groups = py
-            .detach(move || {
-                self.fresh(|s| {
-                    scrutate::intel::dupes(&s.ix, min_tokens, threshold, limit.saturating_add(1))
-                })
-            })
-            .map_err(err)?;
+        let op = Op::Dupes {
+            min_tokens,
+            threshold,
+            limit,
+        };
+        let Answer::Dupes(groups, stopped) = self.run(py, op)? else {
+            return Err(unexpected());
+        };
         let dicts = groups
             .iter()
             .map(|g| {
@@ -635,7 +660,59 @@ impl Repo {
                 Ok(d)
             })
             .collect::<PyResult<Vec<_>>>()?;
-        results(py, dicts, limit)
+        results(py, dicts, stopped)
+    }
+
+    /// Every use of `name`, each resolved to the definition it refers to, as the `references`
+    /// tool and `scrutate refs --json` give it (a dict: `definitions` with their `references`,
+    /// `unresolved`, `truncated`). `textual`: every occurrence grouped by enclosing symbol
+    /// instead; `definition` (`path` or `path:line`) keeps one definition.
+    #[pyo3(signature = (name, max_results=scrutate::ops::REFS_MAX, textual=false, definition=None))]
+    fn references<'py>(
+        &self,
+        py: Python<'py>,
+        name: &str,
+        max_results: u64,
+        textual: bool,
+        definition: Option<String>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let op = Op::Refs {
+            name: name.to_string(),
+            max_results,
+            textual,
+            def: definition,
+        };
+        let answer = self.run(py, op)?;
+        to_py(py, &answer.json())
+    }
+
+    /// Any operation by its MCP tool name (`grep_code`, `find_symbol`, `references`, ...) with
+    /// that tool's arguments as a dict, answered as the tool answers: a dict with `schema`,
+    /// `result` (the JSON form), `stopped_at` when the answer stopped at its limit, and `text`, the
+    /// text form from item `offset` on within `max_bytes` (whole without it).
+    #[pyo3(signature = (tool, args=None, *, max_bytes=None, offset=0))]
+    fn call<'py>(
+        &self,
+        py: Python<'py>,
+        tool: &str,
+        args: Option<Bound<'py, PyDict>>,
+        max_bytes: Option<usize>,
+        offset: usize,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let args: serde_json::Value = match args {
+            Some(a) => {
+                let text: String = py.import("json")?.call_method1("dumps", (a,))?.extract()?;
+                serde_json::from_str(&text).map_err(|e| PyValueError::new_err(e.to_string()))?
+            }
+            None => serde_json::json!({}),
+        };
+        let op = Op::from_tool(tool, &args).map_err(value_err)?;
+        let answer = self.run(py, op)?;
+        let mut v = answer.envelope();
+        v["text"] = answer
+            .text_within(max_bytes.unwrap_or(usize::MAX), offset)
+            .into();
+        to_py(py, &v)
     }
 
     /// Index statistics as a dict. GIL released while it waits for the engine.
@@ -669,12 +746,16 @@ impl Repo {
         let end = end
             .unwrap_or(i64::MAX)
             .min(start.saturating_add(max_lines.saturating_sub(1)));
-        let r = py.detach(|| {
-            let s = lock(&self.inner);
-            scrutate::ops::read_range(&s, path, start.max(1), end)
-        });
+        let op = Op::Read {
+            path: Some(path.to_string()),
+            symbol: None,
+            start,
+            end: Some(end),
+        };
+        let r = py.detach(|| lock(&self.inner).run(&op, 1.0));
         let e = match r {
-            Ok((lines, _)) => return Ok(lines.join("\n")),
+            Ok(Answer::Read { lines, .. }) => return Ok(lines.join("\n")),
+            Ok(_) => return Err(unexpected()),
             Err(e) => e.to_string(),
         };
         // the engine's message already says which: no file is looked at here
@@ -715,6 +796,8 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ns.set_item("__module__", "scrutate._native")?;
     ns.set_item("__doc__", "A list of results; `stopped_at` is the limit the answer stopped at when there were more, else None.")?;
     ns.set_item("stopped_at", py.None())?;
+    ns.set_item("undecided", py.None())?;
+    ns.set_item("unchecked", py.None())?;
     m.add(
         "Results",
         py.get_type::<PyType>()

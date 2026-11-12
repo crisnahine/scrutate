@@ -166,7 +166,8 @@ Options mirror grep/ripgrep where the meaning is identical: `-i`, `-S` (smart ca
 or none; the later wins, and `--json` keeps them), `-j THREADS` (at most 256, as are
 `SCRUTATE_THREADS` and the configuration file's `threads`; default: the cores, at most 12; on
 macOS the performance cores; more when the files come from the disk, a cold cache: up to 64 on
-Linux, elsewhere twice the cores, at most 24), `--sort`,
+Linux, elsewhere twice the cores, at most 24), `--sort`, `--max-bytes BYTES` and `--offset N`
+(a bounded answer in path order, see "Answers from the index" below),
 `--json`, `--stats` (with `-l` each file is searched only to its first match, so it prints
 `N of M files match` and the JSON summary gives `"matches": null`), `--symbols` (group lines by
 the enclosing function using the index, when one exists; a file whose search a NUL byte stopped

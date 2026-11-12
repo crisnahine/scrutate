@@ -57,26 +57,37 @@ request opens one, so each file is read and parsed once. The rules it applies li
 them (`intel::grouped_grep`). The MCP `grep_code` tool, `grep --symbols` and both kinds of
 references use it.
 
-**Front end**: one of the four ways in: the CLI, the MCP server, the LSP server, the Python
-bindings.
+**Front end**: one of the ways in: the CLI (`batch` among its commands), the MCP server, the
+LSP server, the Python bindings and the watcher. Each parses its input into operations and
+renders their answers, except a plain `scrutate grep`, which goes to Engine A with its `Query`
+and `Files` directly, and `watch`, which only writes the stores.
 
 **Operation**: one question a front end can ask of the index (`ops::Op`): ranked search, grep,
 symbol, callers, callees, read, outline, dependencies, dependents, references, similar,
 duplicates, structural search, reindex. An operation owns its arguments, their defaults and
-limits, and the rule for refreshing the index first. Front ends parse into operations; they hold
-no defaults of their own.
+limits, and the rule for refreshing the index first (`Op::reads_index`). Its grep carries an
+Engine A pattern (`instant::Pattern`: text, mode, case, whole words) and a **scope**
+(`ops::Scope`: a file or directory of the repository and globs). Front ends parse into
+operations (`Op::from_tool` for a tool's JSON arguments) and run them on a `Repo`; they
+hold no defaults of their own.
 
 **Answer**: the typed result of an operation (`ops::Answer`), with one text form and one JSON
 form. Every front end renders the same answer; the MCP server sends the text, and with
 `serve --structured` the JSON form too, as the **structured** result, when it fits the budget
 (`Answer::structured`).
 
+**Envelope**: the one JSON shape an answer leaves in (`Answer::envelope`): `schema`
+(`ops::ANSWER_SCHEMA`), `result` (the answer's JSON form) and `stopped_at` when it stopped at its
+limit. The CLI's `--json` of an index command, a `batch` record (with `op`) and the structured
+result (with `complete`) are this envelope.
+
 **Location**: where a symbol is, written `path:start-end` (or `path:line`). Every answer begins
 each result with one, and every operation that takes a symbol accepts one in place of a name, to
 mean that definition and no other of the same name (`intel::location`).
 
 **Budget**: the size limit of an answer as text (`Answer::text_within`). A cut answer keeps whole
-items and ends with how many are left and the `offset` that continues it.
+items and ends with how many are left and the `offset` that continues it. `grep --max-bytes`
+pages its lines by the same rule (`ops::paged_counted`).
 
 **Repo**: an open repository (`scrutate::Repo`, in `stores.rs`): the searcher on its index plus
 the stores kept current around it. Front ends that stay open (the MCP server, the language server,

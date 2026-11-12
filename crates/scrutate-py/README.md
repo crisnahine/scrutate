@@ -33,3 +33,16 @@ interrupted update stops at its next batch of files and leaves the index as it w
 `Repo.symbol`, `Repo.callers`, `Repo.duplicates` and the hits of `Repo.callees` come as a
 `scrutate.Results` list. It is a `list` with one more field: `stopped_at` is the limit when more
 results were left, else `None`.
+`Repo.callers` also says how sure the resolver was: `undecided` counts the callers it kept
+without knowing whether they call this definition or another of the same name, `unchecked` the
+ones after them it was not asked about.
+
+Every `Repo` method runs the operation the CLI and the MCP tools run, with the same defaults,
+the same check of the files an answer cites, and the same recovery from a damaged index.
+`Repo.references(name, max_results=200, textual=False, definition=None)` gives the `references`
+answer as a dict (`scrutate refs --json`'s `result`). `Repo.call(tool, args, max_bytes=None,
+offset=0)` runs any MCP tool by its name and arguments, `grep_code` with a `mode`, a `path` and
+`globs` included, and returns the tool's envelope as a dict: `schema`, `result`, `stopped_at`
+when the answer stopped at its limit, and `text`, the text form from item `offset` on within
+`max_bytes`. `GrepIter.stats()` lists in `notes` the (path, text) of each file whose search a
+NUL byte stopped after a match: a match after that byte is not in the results.

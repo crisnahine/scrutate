@@ -581,10 +581,23 @@ independently usable (`grep`, `index`/`search`) and independently tested.
 
 Every question a front end can ask of the index is an **operation** (`ops::Op`): its arguments,
 their defaults and limits live there, and it returns a typed **answer** (`ops::Answer`) with one
-text form and one JSON form. The CLI's index commands, the MCP server's fourteen tools, `batch`
-and the Python bindings parse into operations and render answers; none of them has a default or an
-output format of its own (they had drifted: three different limits for `callers`, references
-textual in one and resolved in another). An answer renders within a byte budget: whole items, then
+text form and one JSON form. The CLI's index commands (`read` among them) and the ranked search
+of `search` and `find`, the MCP server's fourteen tools, `batch` and the Python bindings parse
+into operations, run them through `Repo` (`Repo::run`, or `Repo::run_as_is` after a scan of
+their own), and render answers; none of them has a default or an output format of its own (they
+had drifted: three different limits for `callers`, references textual in one and resolved in
+another). The JSON form leaves in one envelope (`Answer::envelope`: `schema`, `result`,
+`stopped_at`), which `--json`, a `batch` record and the MCP structured result print. A tool's
+JSON arguments are parsed in one place (`Op::from_tool`), which the MCP server, `batch`, the
+CLI's `read` and the bindings' `Repo.call` use. The language server asks the same operations
+for references, document symbols and the definitions of a name, and answers in LSP's shapes;
+the resolution of the name under the cursor (`Names::at`) and the workspace symbol search
+(`Index::symbols_containing`) are its own, as no operation asks them. An Engine A search is an
+operation argument too: `Op::Grep` carries the `instant::Pattern` (mode, case, whole words) and
+an `ops::Scope` (a path under the root, globs), so `grep_code` reaches every matching mode.
+A plain `scrutate grep` is not an operation: its flags are read once into a `Query` and a
+`Files` and go to Engine A directly, with no record built (the start-up section above); with
+`--max-bytes` its lines are paged by the operations' budget rule (`ops::paged_counted`). An answer renders within a byte budget: whole items, then
 a line with how many are left and the offset that continues it, because an agent's harness cuts a
 long tool result where it likes (Codex at 10,000 tokens, from the middle).
 
@@ -592,8 +605,8 @@ long tool result where it likes (Codex at 10,000 tokens, from the middle).
 around it (see "Keeping the stores current" above). After an operation it checks the files the answer cites, and the files its
 arguments name, against the index with one `stat` each; when one changed or is gone, those
 files alone are updated and the operation runs again, once. `read_code` by path streams the file
-through a 64 KB buffer and stops after the last line it shows. The MCP server, the Python bindings
-and `watch` hold one; the MCP server builds the first index in the background and answers
+through a 64 KB buffer and stops after the last line it shows. The MCP server, the Python bindings,
+the language server and `watch` hold one; the MCP server builds the first index in the background and answers
 "still building" after a 20 second wait, and waits as long for another process that builds it.
 A cancelled call sets the flag the index update checks between batches, so a `reindex` or the
 scan before a read rolls back there.

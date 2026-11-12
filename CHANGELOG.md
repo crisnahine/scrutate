@@ -672,10 +672,10 @@ First release.
   either index is recovered by one rule, the language server's included.
 - `tsquery` keys its cache by the content hash the code index records, so a warm run reads no
   file whose stat the index holds as current. Files an earlier build cached are parsed once more.
-- The CLI's index commands, `search` and `find` run their operations through `Repo`, so they
-  check the files an answer cites and recover from a damaged index as the MCP server does, and
-  the language server asks the operations for references, document symbols and the definitions
-  of a name.
+- Every front end runs the same operations through `Repo`: the CLI's index commands, `search`
+  and `find` check the files an answer cites and recover from a damaged index as the MCP server
+  does, the Python bindings call no engine internals, and the language server asks the
+  operations for references, document symbols and the definitions of a name.
 - Breaking, the JSON of the index commands (schema 2): `symbol`, `callers`, `callees`, `refs`,
   `outline`, `deps`, `rdeps`, `similar`, `dupes`, `read`, `search` and the ranked `find` print
   `{"schema": 2, "result": ...}` with `stopped_at` when the answer stopped at its limit, where
@@ -698,6 +698,9 @@ First release.
   `--max-bytes 4000`, 4,000 bytes or fewer).
 - `find` lists the lines of its Engine A search in path order, as it said; they came in the
   order the threads finished.
+- The Python bindings gain `Repo.references`, `Repo.call` (any MCP tool by name, with paging),
+  `undecided` and `unchecked` on the callers list, and the files a NUL byte stopped in
+  `GrepIter.stats()["notes"]`.
 
 ### Product
 - The reference package lost its command line, MCP server and agent (`scrutate_ref/cli.py`,
