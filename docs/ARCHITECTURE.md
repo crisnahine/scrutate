@@ -83,10 +83,13 @@ capabilities those crates do not provide rather than re-implementing what they a
   which sends the file back to the single pass so binary handling is unchanged. The second pass
   searches one window of ranges per thread at a time and writes the windows' output in file order,
   so the output held in memory stays bounded. Context lines, `--max-count`, `--max-results`, `-l`,
-  multiline and a byte-order mark keep the single pass. A file with no line break to split at
-  goes into one buffer of its exact size, each thread filling its own part, and is searched there:
-  the time is the kernel copying pages, which spreads as far as opening files does (100 MB on an
-  M3 Pro: 12.6 ms on one thread, 4.0 ms on the five performance cores, 6.7 ms on all eleven).
+  multiline and a byte-order mark keep the single pass. A file with no line break before its
+  last byte goes into one buffer of its exact size and is searched there: the threads fill it in
+  1 MiB pieces in file order, and the first line break or NUL byte sends the file to the stream,
+  so lines too long for the probes to see (100 MB of 4 MB lines) hold 15 to 18 MB, not the
+  file. The time is the kernel copying pages, which spreads as far as opening files does (100 MB
+  on an M3 Pro: 12.6 ms on one thread, 4.0 ms on the five performance cores, 6.7 ms on all
+  eleven).
   On one thread a file is never split, but one with no line break at its probe points is still
   read into a buffer of its size: the stream reader grows its buffer to 3^k times 64 KiB, which
   held 141 MB for one 100 MB line where the exact buffer holds 103 MB. The newline count of a

@@ -126,7 +126,8 @@ First release.
   given. Smart case folds only a pattern that has a literal and no uppercase letter.
 - `-c` with `-U` counts a match that spans lines as ripgrep counts it. Context lines of CRLF
   files drop the `\r`.
-- An argument that is not UTF-8 is an error, and `--max-filesize` refuses a size past 64 bits.
+- A pattern or option value that is not UTF-8 is an error (a path may be any bytes), and
+  `--max-filesize` refuses a size past 64 bits.
 - `ignore` 0.4.34 is vendored (`vendor/ignore`) with two changes: the global git excludes path is
   read from `~/.gitconfig` without compiling a regex (about 0.4 ms of every search in a git
   repository), and an idle walker thread waits 10 µs at first instead of 1 ms before it looks for
@@ -224,7 +225,13 @@ First release.
   a 300 MiB name took 1.27 GB and takes 5.6 MB.
 - Context output (`-A`, `-B`, `-C`) on several threads no longer runs one file's lines into
   another's without a `--`: a file's lines leave a group at a time.
-- A named pipe, `<(...)` or `/dev/stdin` given as a path is searched, as ripgrep does.
+- A named pipe, `<(...)` or `/dev/stdin` given as a path is searched, as ripgrep does. A link
+  to a directory given as a path is walked without an `Is a directory` warning and error count.
+- `grep -z` finds the members after an old-GNU sparse member (`tar --sparse`) of a tar archive:
+  every member after it was lost with a checksum warning.
+- A large file whose lines are too long for the line probes to see is streamed: 100 MB of 4 MB
+  lines peaked at 103 MB and peak at 15 to 18 MB.
+- With `-e`, a first path that is not UTF-8 is searched as a path.
 - A home directory kept in git is no longer indexed from a folder below it when `HOME` is a
   symbolic link.
 - `--stats` and the JSON summary of a search stopped by `--max-results` count only the matches

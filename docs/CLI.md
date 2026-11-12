@@ -106,7 +106,8 @@ empty string is refused. `-z` also searches inside zip and tar archives (members
 expanded or a million members, and a member or compressed file stops with a warning at a line
 longer than 64 MiB (not with `-U`, which holds the whole member). A tar member whose GNU long
 name or PAX path is longer than 64 KiB is skipped with a warning; other PAX records are read
-past without being kept. An archive named alone is
+past without being kept. An old-GNU sparse member (`tar --sparse`) is skipped and the members
+after it are searched. An archive named alone is
 searched as a directory of its members, so each line names its member, also when it is the only
 one; a compressed file named alone prints no name. Control characters in a member name are shown
 as escapes (`\n`, `\x1b`, a backslash as two), so a name cannot forge an output line; `--json`
