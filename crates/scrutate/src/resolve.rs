@@ -3482,7 +3482,8 @@ pub struct Occurrence {
     pub line: u64,
     /// 1-based byte column
     pub column: u64,
-    pub text: String,
+    /// the line, shared by every use on it
+    pub text: std::sync::Arc<str>,
     pub resolution: Resolution,
 }
 
@@ -3524,12 +3525,15 @@ pub fn name_search(bare: &str, max_results: u64) -> crate::instant::Options {
 pub fn resolved_references(s: &Searcher, name: &str, max_results: u64) -> Result<Resolved> {
     let bare = &crate::intel::bare_name(s, name)?;
     let o = crate::instant::Options { want_spans: true, ..name_search(bare, max_results) };
-    let (hits, truncated) = crate::intel::occurrences(&s.ix.root, &o)?;
+    let (hits, mut truncated) = crate::intel::occurrences(&s.ix.root, &o)?;
     let mut rv = Resolver::new(&s.ix)?;
     let mut occurrences = Vec::new();
+    // Engine A stops at `max_results` lines; one long line can hold more uses than that
+    let total: usize = hits.iter().map(|h| h.spans.len()).sum();
+    truncated |= total as u64 > max_results;
     for h in hits {
-        let line_text = h.text.trim_end_matches(['\n', '\r']).to_string();
-        for &(a, b) in &h.spans {
+        let line_text: std::sync::Arc<str> = h.text.trim_end_matches(['\n', '\r']).into();
+        for &(a, b) in h.spans.iter().take(max_results.saturating_sub(occurrences.len() as u64) as usize) {
             let ((da, db), col) = rv.decoded_span(&h.path, h.line, (a, b));
             // the occurrence as this file spells it
             let resolution = rv.resolve_at(&h.path, h.line, col, h.text.get(da..db).unwrap_or(bare));

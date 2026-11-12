@@ -1363,7 +1363,7 @@ fn spans_in(matcher: &AnyMatcher, line: &[u8]) -> Vec<(usize, usize)> {
     let mut out = Vec::new();
     each_match(matcher, line, |a, b| {
         out.push((a, b));
-        out.len() < 64
+        true
     });
     out
 }

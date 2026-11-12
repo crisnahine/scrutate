@@ -551,6 +551,21 @@ fn a_use_after_a_bom_or_a_bad_byte_on_its_line_is_resolved() {
 }
 
 #[test]
+fn every_use_on_one_long_line_is_counted_up_to_max_results() {
+    let line = format!("import {{g}} from \"./lib\";{}\n", "g();".repeat(2000));
+    let r = Repo::new("one_line", &[("lib.js", "export function g() { return 1 }\n"), ("min.js", &line)]);
+    // every reference repeats the long line: more output than a pipe holds, so read it as it comes
+    let run = |args: &[&str]| String::from_utf8(Command::new(BIN).args(args).current_dir(&r.root).output().unwrap().stdout).unwrap();
+    let count = |v: &Value| v["definitions"][0]["references"].as_array().unwrap().iter().filter(|o| o["path"] == "min.js").count();
+    let v: Value = serde_json::from_str(&run(&["refs", "g", "--json", "--max-results", "5000"])).unwrap();
+    assert_eq!((count(&v), &v["truncated"]), (2001, &json!(false)));
+    let v: Value = serde_json::from_str(&run(&["refs", "g", "--json", "--max-results", "100"])).unwrap();
+    assert_eq!(&v["truncated"], &json!(true));
+    assert!(count(&v) < 100, "{}", count(&v));
+    assert!(run(&["refs", "g", "--max-results", "100"]).contains("stopped at max_results=100"));
+}
+
+#[test]
 fn a_relative_import_that_climbs_above_the_root_names_no_file() {
     let r = Repo::new(
         "above_root",
