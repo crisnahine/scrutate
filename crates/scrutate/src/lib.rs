@@ -90,6 +90,18 @@ impl Repo {
         Ok(Repo { root: searcher.ix.root.clone(), searcher: Some(searcher), stale: false })
     }
 
+    /// `open` for an update; with `force`, an index of a newer scrutate that this one cannot read
+    /// is deleted, to be built again by this one.
+    pub fn open_to_update(root: &Path, force: bool) -> Result<Repo> {
+        match Repo::open(root) {
+            Err(e) if force && e.is::<index::Newer>() => {
+                index::wipe_index(root);
+                Repo::open(root)
+            }
+            r => r,
+        }
+    }
+
     pub fn into_searcher(self) -> search::Searcher {
         self.searcher.expect("the index was not reopened after a rebuild")
     }
@@ -109,9 +121,18 @@ impl Repo {
     }
 
     /// An index a failed rebuild left closed is opened and built again before anything reads it.
+    /// An index a newer scrutate took over since it was opened, in a form this one cannot read,
+    /// is an error for every operation until the process is restarted with that scrutate.
     fn reopened(&mut self) -> Result<()> {
-        if self.searcher.is_none() {
-            self.reopen(false)?;
+        match &self.searcher {
+            None => {
+                self.reopen(false)?;
+            }
+            Some(s) => {
+                if let Some(n) = s.ix.newer().filter(|n| !n.readable) {
+                    return Err(n.into());
+                }
+            }
         }
         Ok(())
     }
@@ -148,6 +169,7 @@ impl Repo {
         match self.ix.refresh_or_fail(min_interval) {
             Err(e) if index::error_is_corruption(&e) => self.rebuild(&e).map(Some),
             Err(e) if e.is::<index::Busy>() && !self.ix.has_files()? => Err(index::BeingBuilt.into()),
+            Err(e) if e.is::<index::Newer>() => Err(e),
             Err(e) => {
                 if !self.stale {
                     eprintln!("[scrutate] index not updated ({e:#}); answering from it as it is");

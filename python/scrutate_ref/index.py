@@ -37,7 +37,7 @@ def unpack_text(blob) -> str:
 SCHEMA_VERSION = 13
 # What the parser and tokenizer make of a file; the engine's index.rs holds the same value. Bump it
 # with every change of the rules in parse.py or text.py (and langs.rs, parse.rs, text.rs): an index
-# of another revision reads every file again on its next update.
+# of an older revision reads every file again on its next update; a newer one is not updated.
 CONTENT_REVISION = 2
 MAX_SEGMENTS = 6          # more live segments than this triggers a merge of the small ones
 SMALL_INDEX_ROWS = 8000   # an index this small is kept as ONE segment (a rewrite costs a few ms)
@@ -337,6 +337,9 @@ class Index:
     def update(self, force: bool = False, workers: int | None = None) -> UpdateStats:
         t0 = time.time()
         st = UpdateStats(semantic=self.model is not None)
+        rev = self.meta("content_rev") or ""
+        if not force and rev.isdigit() and int(rev) > CONTENT_REVISION:
+            return st  # a newer engine's parsing rules: read the index as it is, never update it
         changed = False
         builder = SegmentBuilder()
         seg_name = None

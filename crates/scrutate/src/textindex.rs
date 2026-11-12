@@ -840,8 +840,14 @@ fn read_manifest(dir: &Path) -> Result<Option<Manifest>> {
     match std::fs::read(&p) {
         Ok(b) => {
             let m: Manifest = serde_json::from_slice(&b).with_context(|| format!("{} is not a text index manifest", p.display()))?;
+            if m.format > FORMAT {
+                bail!(
+                    "text index built by a newer scrutate (format {}, this version has {FORMAT}): this version cannot read it; use the newer scrutate, or `scrutate index --text --force` to rebuild it with this one",
+                    m.format
+                );
+            }
             if m.format != FORMAT {
-                return Ok(None); // another format: rebuilt by the next update
+                return Ok(None); // an older format: rebuilt by the next update
             }
             Ok(Some(m))
         }

@@ -912,7 +912,7 @@ pub fn run() -> Result<i32> {
         Cmd::Index { force, text, no_text } => {
             let progress = std::io::stderr().is_terminal();
             if !text {
-                let mut repo = crate::Repo::open(&cli.root)?;
+                let mut repo = crate::Repo::open_to_update(&cli.root, force)?;
                 repo.ix.progress = true;
                 let st = repo.update(force)?;
                 println!("{} files, {} changed, {} chunks, semantic={}, {:.1}s", st.files_total, st.files_changed, st.chunks, st.semantic, st.seconds);

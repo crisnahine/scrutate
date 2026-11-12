@@ -20,8 +20,14 @@ use crate::text::{is_test_path, name_key, tokenize2, BODY_CAP};
 pub const SCHEMA_VERSION: u32 = 13;
 /// What the parser and tokenizer make of a file. Bump it with every change of the rules in
 /// `langs.rs`, `parse.rs` or `text.rs` (and the same in the reference's `parse.py` and `text.py`):
-/// an index of another revision reads every file again on its next update.
+/// an index of an older revision reads every file again on its next update, and one of a newer
+/// revision is read as it is and never updated.
 pub const CONTENT_REVISION: u32 = 2;
+/// The semantic model the stored vectors are made with. Bump it with every change of the embedded
+/// model (its signature changes then too): an index of a lower revision (or none) and another
+/// signature is rebuilt, and one of a higher revision is refused, since its vectors do not match
+/// the queries this binary encodes.
+pub const MODEL_REVISION: u32 = 1;
 pub const MAX_SEGMENTS: usize = 6; // more live segments than this triggers a merge of the small ones
 pub const SMALL_INDEX_ROWS: usize = 8000; // an index this small is kept as ONE segment
 /// Rows per segment flushed during one update: bounds the memory of building the inverted index
@@ -496,6 +502,50 @@ impl std::fmt::Display for BeingBuilt {
 
 impl std::error::Error for BeingBuilt {}
 
+/// The index was built by a newer scrutate. A newer content revision alone is `readable`: it is
+/// answered from as it is and never updated. A newer schema or model revision is refused.
+#[derive(Debug)]
+pub struct Newer {
+    pub readable: bool,
+    message: String,
+}
+
+impl std::fmt::Display for Newer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for Newer {}
+
+impl Newer {
+    /// Of the meta values `get` reads, the first one higher than this binary's.
+    fn of(get: impl Fn(&str) -> Option<String>) -> Option<Newer> {
+        let checks = [
+            ("schema_version", "schema version", SCHEMA_VERSION),
+            ("model_rev", "model revision", MODEL_REVISION),
+            ("content_rev", "content revision", CONTENT_REVISION),
+        ];
+        checks.into_iter().find_map(|(key, what, ours)| {
+            let stored = get(key)?.parse::<u32>().ok().filter(|&v| v > ours)?;
+            let readable = key == "content_rev";
+            let does = if readable { "reads it and does not update it" } else { "cannot read it" };
+            let message = format!(
+                "index built by a newer scrutate ({what} {stored}, this version has {ours}): this version {does}; use the newer scrutate, or `scrutate index --force` to rebuild it with this one"
+            );
+            Some(Newer { readable, message })
+        })
+    }
+
+    /// Say it on stderr, once per process.
+    fn note(&self) {
+        static SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !SAID.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            eprintln!("[scrutate] {self}");
+        }
+    }
+}
+
 /// True when an error anywhere in `e`'s chain is SQLite corruption or other damage to the index
 /// files (a chunk text that does not inflate, `Damaged`).
 pub fn error_is_corruption(e: &anyhow::Error) -> bool {
@@ -541,6 +591,8 @@ enum Triage {
     Rebuild(&'static str),
     /// not a usable database: delete the files
     Garbage(&'static str),
+    /// built by a newer scrutate that this one cannot read: leave it alone
+    Newer(Newer),
 }
 
 pub struct Index {
@@ -574,6 +626,9 @@ impl Index {
         let sem_sig = model.as_ref().map(|m| m.signature()).unwrap_or_else(|| "none".into());
         let wrong_type = db_path.is_dir() || std::fs::symlink_metadata(&seg_dir).is_ok_and(|m| !m.is_dir());
         let triage = if wrong_type { Triage::Garbage("index files of the wrong type") } else { Self::triage(&db_path, &sem_sig) };
+        if let Triage::Newer(n) = triage {
+            return Err(n.into());
+        }
         if let Triage::Garbage(why) = triage {
             // nobody can be using a database that does not open: deleting the files is safe
             eprintln!("[scrutate] index database unusable ({why}); rebuilding");
@@ -631,15 +686,19 @@ impl Index {
             ix.clear()?;
             ix.set_meta("schema_version", &SCHEMA_VERSION.to_string())?;
             ix.set_meta("model_sig", &sem_sig)?;
+            ix.set_meta("model_rev", &MODEL_REVISION.to_string())?;
             ix.set_meta("content_rev", &CONTENT_REVISION.to_string())?;
         } else {
             // a reader must not need the write lock: another process may hold it for minutes
-            for (k, v) in [("schema_version", SCHEMA_VERSION.to_string()), ("model_sig", sem_sig)] {
-                if ix.meta(k).as_deref() != Some(v.as_str()) {
-                    ix.set_meta(k, &v)?;
-                }
+            if ix.meta("schema_version").as_deref() != Some(SCHEMA_VERSION.to_string().as_str()) {
+                ix.set_meta("schema_version", &SCHEMA_VERSION.to_string())?;
             }
-            if ix.meta("content_rev").as_deref() != Some(CONTENT_REVISION.to_string().as_str()) {
+            // an index from before the model revision keeps none until it is rebuilt
+            if ix.meta("model_sig").as_deref() != Some(sem_sig.as_str()) {
+                ix.set_meta("model_sig", &sem_sig)?;
+                ix.set_meta("model_rev", &MODEL_REVISION.to_string())?;
+            }
+            if ix.newer().is_none() && ix.meta("content_rev").as_deref() != Some(CONTENT_REVISION.to_string().as_str()) {
                 if ix.has_files()? {
                     eprintln!("[scrutate] index built with other parsing rules; every file is read again on the next update");
                 } else {
@@ -662,6 +721,9 @@ impl Index {
         let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI;
         let db = Connection::open_with_flags(format!("file:{path}?immutable=1"), flags)?;
         let get = |k: &str| db.query_row("SELECT value FROM meta WHERE key=?1", [k], |r| r.get::<_, String>(0)).optional();
+        if let Some(n) = Newer::of(|k| get(k).ok().flatten()).filter(|n| !n.readable) {
+            return Err(n.into());
+        }
         if get("schema_version")?.as_deref() != Some(SCHEMA_VERSION.to_string().as_str()) || get("model_sig")?.as_deref() != Some(sem_sig) {
             anyhow::bail!("{}: read-only, and built by another version or model", db_path.display());
         }
@@ -714,6 +776,9 @@ impl Index {
         }
         let get =
             |k: &str| -> Option<String> { con.query_row("SELECT value FROM meta WHERE key=?1", [k], |r| r.get::<_, String>(0)).optional().ok().flatten() };
+        if let Some(n) = Newer::of(get).filter(|n| !n.readable) {
+            return Triage::Newer(n);
+        }
         if get("schema_version").as_deref() != Some(SCHEMA_VERSION.to_string().as_str()) {
             return Triage::Rebuild("index schema changed");
         }
@@ -756,6 +821,11 @@ impl Index {
     pub fn set_meta(&self, key: &str, value: &str) -> Result<()> {
         retry_busy(|| self.db.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?1,?2)", params![key, value]))?;
         Ok(())
+    }
+
+    /// Whether a newer scrutate built this index (or took it over since it was opened).
+    pub fn newer(&self) -> Option<Newer> {
+        Newer::of(|k| self.meta(k))
     }
 
     pub fn segments(&self) -> Vec<String> {
@@ -905,6 +975,13 @@ impl Index {
     fn update_with(&mut self, force: bool, wait: bool, only: Option<&[String]>) -> Result<UpdateStats> {
         if !self.dir.join("index.db").is_file() {
             return Err(Damaged("index database deleted").into());
+        }
+        // only a forced update replaces a newer index, and only one this version can read
+        if let Some(n) = self.newer().filter(|n| !(force && n.readable)) {
+            if only.is_some() && n.readable {
+                n.note();
+            }
+            return Err(n.into());
         }
         let t0 = Instant::now();
         let mut st = UpdateStats { semantic: self.model.is_some(), ..Default::default() };
@@ -1188,6 +1265,10 @@ impl Index {
                 return Ok(None);
             }
         }
+        if let Some(n) = self.newer().filter(|n| n.readable) {
+            n.note();
+            return Ok(None);
+        }
         let st = self.update_with(false, wait, None);
         // a failing update is not retried on every call either; a busy lock costs nothing to try
         if !st.as_ref().is_err_and(|e| e.is::<Busy>()) {
@@ -1353,6 +1434,9 @@ impl Index {
     /// Verify the index. Never repairs anything: `update()` / `rebuild()` do that.
     pub fn check(&mut self, files: bool) -> Result<CheckReport> {
         let mut r = CheckReport::default();
+        if let Some(n) = self.newer() {
+            n.note();
+        }
         let integrity: String = self.db.query_row("PRAGMA integrity_check", [], |row| row.get(0)).unwrap_or_else(|e| format!("error: {e}"));
         r.database_ok = integrity == "ok";
         if !r.database_ok {

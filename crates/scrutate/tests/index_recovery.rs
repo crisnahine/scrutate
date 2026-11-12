@@ -586,3 +586,135 @@ fn an_index_built_with_older_parsing_rules_is_read_again_once() {
     drop(ix);
     assert_eq!(Index::open(&t.0, None).unwrap().update(false).unwrap().files_changed, 0);
 }
+
+fn meta_of(root: &Path, key: &str) -> Option<String> {
+    use rusqlite::OptionalExtension;
+    let db = rusqlite::Connection::open(root.join(".scrutate/index.db")).unwrap();
+    db.query_row("SELECT value FROM meta WHERE key=?1", [key], |r| r.get(0)).optional().unwrap()
+}
+
+fn set_meta_of(root: &Path, key: &str, value: &str) {
+    let db = rusqlite::Connection::open(root.join(".scrutate/index.db")).unwrap();
+    db.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?1,?2)", [key, value]).unwrap();
+}
+
+fn indexed_tree(name: &str) -> Tmp {
+    let t = Tmp::new(name);
+    fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+    assert_eq!(run(&t.0, &["index"]).0, 0);
+    t
+}
+
+#[test]
+fn an_index_of_a_newer_content_revision_is_read_as_it_is_and_not_updated() {
+    let t = indexed_tree("newer_rev");
+    let newer = (scrutate::index::CONTENT_REVISION + 1).to_string();
+    set_meta_of(&t.0, "content_rev", &newer);
+    fs::write(t.0.join("b.py"), "def beta():\n    return 2\n").unwrap();
+    let (code, err) = run(&t.0, &["search", "alpha"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(err.matches("built by a newer scrutate").count(), 1, "{err}");
+    assert!(err.contains(&format!("content revision {newer}")) && err.contains("index --force"), "{err}");
+    assert_eq!(meta_of(&t.0, "content_rev").as_deref(), Some(newer.as_str()));
+    let db = rusqlite::Connection::open(t.0.join(".scrutate/index.db")).unwrap();
+    let files: i64 = db.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0)).unwrap();
+    assert_eq!(files, 1, "a newer index is not updated");
+    drop(db);
+    let (code, err) = run(&t.0, &["check"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(err.contains("built by a newer scrutate"), "{err}");
+    let (code, err) = run(&t.0, &["index", "--no-text"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("built by a newer scrutate"), "{err}");
+    assert_eq!(meta_of(&t.0, "content_rev").as_deref(), Some(newer.as_str()));
+    assert_eq!(run(&t.0, &["index", "--force"]).0, 0);
+    assert_eq!(meta_of(&t.0, "content_rev"), Some(scrutate::index::CONTENT_REVISION.to_string()));
+}
+
+#[test]
+fn an_index_of_a_newer_schema_or_model_is_refused_and_left_as_it_is() {
+    for (key, value) in [("schema_version", scrutate::index::SCHEMA_VERSION + 1), ("model_rev", scrutate::index::MODEL_REVISION + 1)] {
+        let t = indexed_tree(key);
+        set_meta_of(&t.0, key, &value.to_string());
+        let db = t.0.join(".scrutate/index.db");
+        let before = fs::read(&db).unwrap();
+        let (code, err) = run(&t.0, &["search", "alpha"]);
+        assert_eq!(code, 2, "{err}");
+        assert!(err.contains("built by a newer scrutate") && err.contains("cannot read it"), "{err}");
+        assert!(!err.contains("rebuilding"), "{err}");
+        assert!(fs::read(&db).unwrap() == before, "{key}: the database changed");
+        assert_eq!(run(&t.0, &["check"]).0, 2);
+        assert_eq!(run(&t.0, &["index", "--no-text"]).0, 2);
+        assert!(fs::read(&db).unwrap() == before, "{key}: the database changed");
+        let (code, err) = run(&t.0, &["index", "--force", "--no-text"]);
+        assert_eq!(code, 0, "{err}");
+        assert_eq!(meta_of(&t.0, "schema_version"), Some(scrutate::index::SCHEMA_VERSION.to_string()));
+        assert_eq!(meta_of(&t.0, "model_rev"), Some(scrutate::index::MODEL_REVISION.to_string()));
+    }
+}
+
+#[test]
+fn an_index_without_a_model_revision_is_not_rebuilt() {
+    let t = indexed_tree("no_model_rev");
+    let db = rusqlite::Connection::open(t.0.join(".scrutate/index.db")).unwrap();
+    db.execute("DELETE FROM meta WHERE key='model_rev'", []).unwrap();
+    drop(db);
+    let (code, err) = run(&t.0, &["search", "alpha"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(!err.contains("rebuilding") && !err.contains("newer"), "{err}");
+    assert_eq!(meta_of(&t.0, "model_rev"), None, "a reader does not write it");
+}
+
+#[test]
+fn a_running_process_stops_updating_when_a_newer_scrutate_takes_over_the_index() {
+    let t = Tmp::new("newer_live");
+    fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+    let mut ix = Index::open(&t.0, None).unwrap();
+    ix.update(false).unwrap();
+    let rev = (scrutate::index::CONTENT_REVISION + 1).to_string();
+    ix.set_meta("content_rev", &rev).unwrap();
+    fs::write(t.0.join("b.py"), "def beta():\n    return 2\n").unwrap();
+    assert!(ix.refresh(0.0).unwrap().is_none());
+    assert!(ix.update(false).unwrap_err().is::<scrutate::index::Newer>());
+    assert!(ix.update_paths(&["b.py".into()]).is_err());
+    assert_eq!(ix.meta("content_rev"), Some(rev));
+    ix.set_meta("schema_version", &(scrutate::index::SCHEMA_VERSION + 1).to_string()).unwrap();
+    assert!(ix.refresh(0.0).unwrap_err().is::<scrutate::index::Newer>());
+    drop(ix);
+    assert!(Index::open(&t.0, None).err().is_some_and(|e| e.is::<scrutate::index::Newer>()));
+    // a long-lived process answers every operation with the error, without touching the index
+    let t = indexed_tree("newer_repo");
+    let mut repo = scrutate::Repo::open(&t.0).unwrap();
+    let op = scrutate::ops::Op::Symbol { name: "alpha".into(), limit: 5 };
+    assert!(repo.run(&op, 0.0).is_ok());
+    repo.ix.set_meta("schema_version", &(scrutate::index::SCHEMA_VERSION + 1).to_string()).unwrap();
+    for _ in 0..2 {
+        assert!(repo.run(&op, 0.0).err().is_some_and(|e| e.is::<scrutate::index::Newer>()));
+        assert!(repo.run_as_is(&op).err().is_some_and(|e| e.is::<scrutate::index::Newer>()));
+        assert!(repo.update(true).unwrap_err().is::<scrutate::index::Newer>());
+    }
+    assert_eq!(repo.ix.meta("schema_version"), Some((scrutate::index::SCHEMA_VERSION + 1).to_string()));
+}
+
+#[test]
+fn a_text_index_of_a_newer_format_is_refused_and_left_as_it_is() {
+    let t = Tmp::new("newer_text");
+    fs::write(t.0.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+    assert_eq!(run(&t.0, &["index", "--text"]).0, 0);
+    let manifest = t.0.join(".scrutate/text/manifest.json");
+    let text = fs::read_to_string(&manifest).unwrap();
+    let ours = format!("\"format\":{}", scrutate::textindex::FORMAT);
+    let newer = scrutate::textindex::FORMAT + 1;
+    assert!(text.contains(&ours), "{text}");
+    fs::write(&manifest, text.replace(&ours, &format!("\"format\":{newer}"))).unwrap();
+    let before = fs::read(&manifest).unwrap();
+    let (code, err) = run(&t.0, &["index", "--text"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("built by a newer scrutate") && err.contains(&format!("format {newer}")), "{err}");
+    assert!(fs::read(&manifest).unwrap() == before);
+    let (code, err) = run(&t.0, &["grep", "--index", "alpha"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(fs::read(&manifest).unwrap() == before);
+    assert_eq!(run(&t.0, &["index", "--text", "--force"]).0, 0);
+    assert!(fs::read_to_string(&manifest).unwrap().contains(&ours));
+}
