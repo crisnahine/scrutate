@@ -59,14 +59,14 @@ Engine A (instant search) needs none of this: it searches every readable file of
 | jsonnet | `.jsonnet .libsonnet` | function, key | yes | no | no | `tests/samples/sample.jsonnet` |
 | julia | `.jl` | function, macro, struct, type | yes | yes | no | `tests/samples/sample.jl` |
 | kotlin | `.kt .kts` | class, function, interface, method | yes | yes | no | `tests/samples/sample.kt` |
-| llvm (extra-langs) | `.ll` | function | yes | no | no | `tests/samples_extra/sample.ll` |
+| llvm (extra-langs) | `.ll` | function, type | yes | no | no | `tests/samples_extra/sample.ll` |
 | lua | `.lua` | function | yes | yes | no | `tests/samples/sample.lua` |
 | make | `.mk .mak Makefile makefile GNUmakefile` | function, key, macro | yes | no | no | `tests/samples/Makefile` |
 | markdown | `.md .markdown .mdx README` | section | no | no | no | `tests/samples/sample.md` |
 | matlab | `.m` by its content | function | yes | no | no | `tests/samples/matrix.m` |
 | nix | `.nix` | key | yes | yes | no | `tests/samples/sample.nix` |
 | objc | `.mm` and `.m` `.h` by its content | class, function, method | yes | yes | no | `tests/samples/sample.mm` |
-| ocaml (extra-langs) | `.ml` | function, type | yes | no | no | `tests/samples_extra/sample.ml` |
+| ocaml (extra-langs) | `.ml` | class, function, type | yes | no | no | `tests/samples_extra/sample.ml` |
 | ocaml_interface (extra-langs) | `.mli` | function, interface, type | no | no | no | `tests/samples_extra/sample.mli` |
 | odin (extra-langs) | `.odin` | function, struct | yes | no | no | `tests/samples_extra/sample.odin` |
 | pascal | `.pas .dpr .lpr` and `.pp` by its content | function, type | yes | no | no | `tests/samples/sample.pas` |
@@ -133,8 +133,8 @@ Off by default because of their size. Each has a sample in `crates/scrutate/test
 | `sample.d` | struct `Point`, function `distance`, class `Circle`, method `Circle.area` |
 | `sample.f90` | function `physics.kinetic_energy`, function `physics.report` |
 | `sample.fs` | type `Point`, function `distance`, function `scale`, function `origin` |
-| `sample.ll` | function `add`, function `main` |
-| `sample.ml` | type `point`, function `distance`, function `distance.dx`, function `distance.dy`, function `Shape.area_of_square`, function `main` |
+| `sample.ll` | type `Point`, function `add`, function `main` |
+| `sample.ml` | type `point`, function `distance`, function `distance.dx`, function `distance.dy`, function `Shape.area_of_square`, class `counter`, function `main` |
 | `sample.mli` | type `t`, type `error`, interface `ORDERED`, type `ORDERED.key`, function `ORDERED.compare`, type `Priority.q`, function `Priority.push`, function `create`, function `push`, function `pop` |
 | `sample.odin` | struct `Point`, function `distance`, function `main` |
 | `sample.qml` | class `Rectangle`, method `Rectangle.toggleColor`, class `Rectangle.MouseArea` |
