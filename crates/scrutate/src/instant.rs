@@ -1212,15 +1212,21 @@ impl PlainSink {
         }
     }
 
-    /// `before`, `head`, `text` with invalid UTF-8 replaced, and a line break, as one unit.
-    fn write_line(&self, before: &[u8], head: &[u8], text: &[u8], first: bool, cancel: &AtomicBool) {
+    /// `before`, `head`, `text` with invalid UTF-8 replaced, and a line break, as one unit. Err when
+    /// reading a text in a file failed: the line then ends where the read stopped.
+    fn write_line(&self, before: &[u8], head: &[u8], text: Text, first: bool, cancel: &AtomicBool) -> std::io::Result<()> {
+        let mut read = Ok(());
         self.with(cancel, |w| {
-            self.separate(w, first)
-                .and_then(|_| w.write_all(before))
-                .and_then(|_| w.write_all(head))
-                .and_then(|_| write_lossy(w, text, 1 << 18))
-                .and_then(|_| w.write_all(b"\n"))
+            self.separate(w, first)?;
+            w.write_all(before)?;
+            w.write_all(head)?;
+            match text {
+                Text::Here(b) => write_lossy(w, b, 1 << 18)?,
+                Text::InFile(file, len) => read = write_lossy_from(w, file, len)?,
+            }
+            w.write_all(b"\n")
         });
+        read
     }
 
     fn separate(&self, w: &mut dyn Write, first: bool) -> std::io::Result<()> {
@@ -1261,10 +1267,20 @@ fn write_lossy(w: &mut dyn Write, b: &[u8], piece: usize) -> std::io::Result<()>
     let mut at = 0;
     while at < b.len() {
         let end = b.len().min(at + piece.max(4));
-        match std::str::from_utf8(&b[at..end]) {
+        at = end - write_lossy_part(w, &b[at..end], end < b.len())?;
+    }
+    Ok(())
+}
+
+/// `b` written as `lossy(b)` would be; with `more`, a character cut by its end is left for the
+/// next part and its length returned.
+fn write_lossy_part(w: &mut dyn Write, b: &[u8], more: bool) -> std::io::Result<usize> {
+    let mut at = 0;
+    while at < b.len() {
+        match std::str::from_utf8(&b[at..]) {
             Ok(_) => {
-                w.write_all(&b[at..end])?;
-                at = end;
+                w.write_all(&b[at..])?;
+                at = b.len();
             }
             Err(e) => {
                 let ok = at + e.valid_up_to();
@@ -1274,8 +1290,7 @@ fn write_lossy(w: &mut dyn Write, b: &[u8], piece: usize) -> std::io::Result<()>
                         w.write_all("\u{FFFD}".as_bytes())?;
                         at = ok + bad;
                     }
-                    // a character cut by the end of the piece: the next piece starts with it
-                    None if end < b.len() => at = ok,
+                    None if more => return Ok(b.len() - ok),
                     None => {
                         w.write_all("\u{FFFD}".as_bytes())?;
                         at = b.len();
@@ -1284,7 +1299,38 @@ fn write_lossy(w: &mut dyn Write, b: &[u8], piece: usize) -> std::io::Result<()>
             }
         }
     }
-    Ok(())
+    Ok(0)
+}
+
+/// The text of a matching line: here, or the first `len` bytes of a file, read again in pieces
+/// instead of being held whole.
+#[derive(Clone, Copy)]
+enum Text<'t> {
+    Here(&'t [u8]),
+    InFile(&'t std::fs::File, u64),
+}
+
+/// The first `len` bytes of `file` written as `write_lossy` writes them. The outer Err is a failed
+/// write, the inner one a failed or short read (the output then stops where the read did).
+fn write_lossy_from(w: &mut dyn Write, file: &std::fs::File, len: u64) -> std::io::Result<std::io::Result<()>> {
+    const PIECE: usize = 1 << 18;
+    let mut buf = vec![0u8; PIECE + 3];
+    let (mut pos, mut kept) = (0u64, 0usize);
+    while pos < len {
+        let want = (PIECE as u64).min(len - pos) as usize;
+        let got = match split::read_at(file, &mut buf[kept..kept + want], pos) {
+            Ok(0) => return Ok(Err(std::io::Error::other("changed while it was searched, or a read failed"))),
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Ok(Err(e)),
+        };
+        pos += got as u64;
+        let end = kept + got;
+        let left = write_lossy_part(w, &buf[..end], pos < len)?;
+        buf.copy_within(end - left..end, 0);
+        kept = left;
+    }
+    Ok(Ok(()))
 }
 
 /// `path:line:text\n` (`-` separators for context lines), the CLI's plain format; an empty `path`
@@ -1397,90 +1443,9 @@ impl<'a> Sink for Collector<'a> {
     type Error = std::io::Error;
 
     fn matched(&mut self, _s: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, std::io::Error> {
-        if self.cancel.load(Ordering::Relaxed) {
-            return Ok(false);
-        }
-        if self.files_only || self.count_only {
-            if self.files_only && self.matched {
-                return Ok(true);
-            }
-            let n = self.stats_matches.fetch_add(1, Ordering::Relaxed) + 1;
-            if self.over_limit(n) {
-                return Ok(false);
-            }
-            self.matched = true;
-            // as ripgrep: merged matches that span lines count one by one
-            self.file_count += if self.count_each {
-                let mut n = 0;
-                each_match(self.matcher, mat.bytes(), |_, _| {
-                    n += 1;
-                    true
-                });
-                n.max(1)
-            } else {
-                1
-            };
-            if self.max_results.is_some_and(|max| n >= max) {
-                self.cancel.store(true, Ordering::Relaxed);
-                return Ok(false);
-            }
-            // one match is enough to list the file; with -v ripgrep reads on and drops a file
-            // with a NUL byte
-            return Ok(!self.files_only || (self.invert && !self.convert));
-        }
-        if self.convert && self.binary_at.is_some() {
-            // as ripgrep: a match past a NUL byte ends the output, `finish` writes the note
-            let n = self.stats_matches.fetch_add(1, Ordering::Relaxed) + 1;
-            self.matched |= !self.over_limit(n);
-            return Ok(false);
-        }
         let bytes = mat.bytes();
         let line = bytes.strip_suffix(b"\n").map(|b| b.strip_suffix(b"\r").unwrap_or(b)).unwrap_or(bytes);
-        if let Some(p) = self.plain {
-            let n = self.stats_matches.fetch_add(1, Ordering::Relaxed) + 1;
-            if self.over_limit(n) {
-                return Ok(false);
-            }
-            self.matched = true;
-            let number = if self.numbered { mat.line_number().unwrap_or(0) + self.line_base } else { 0 };
-            if line.len() >= 1 << 16 && !self.hold && !self.whole_groups && !(self.multiline && memchr::memchr(b'\n', line).is_some()) {
-                // a very long line is written from where it is instead of being copied into the buffer
-                let mut head = Vec::with_capacity(self.path.len() + 24);
-                format_plain(&mut head, if self.named { &self.path } else { "" }, number, b"", false);
-                head.pop(); // the newline: the text goes between
-                p.write_line(&self.out, &head, line, std::mem::take(&mut self.first), self.cancel);
-                self.out.clear();
-            } else {
-                format_plain(&mut self.out, if self.named { &self.path } else { "" }, number, lossy(line).as_bytes(), false);
-            }
-            if self.out.len() >= 1 << 16 && !self.hold && !self.whole_groups {
-                p.write(&self.out, std::mem::take(&mut self.first), self.cancel);
-                self.out.clear();
-            }
-            if let Some(max) = self.max_results {
-                if n >= max {
-                    self.cancel.store(true, Ordering::Relaxed);
-                    return Ok(false);
-                }
-            }
-            return Ok(true);
-        }
-        let n = self.stats_matches.fetch_add(1, Ordering::Relaxed) + 1;
-        if self.over_limit(n) {
-            return Ok(false);
-        }
-        let text = lossy(line).into_owned();
-        let spans = if self.invert || !self.want_spans { Vec::new() } else { spans_in(self.matcher, bytes) };
-        let column = spans.first().map(|s| s.0 as u64 + 1).unwrap_or(0);
-        self.matched = true;
-        self.push(Hit { path: Arc::clone(&self.path), line: mat.line_number().unwrap_or(0) + self.line_base, column, text, spans, context: false });
-        if let Some(max) = self.max_results {
-            if n >= max {
-                self.cancel.store(true, Ordering::Relaxed);
-                return Ok(false);
-            }
-        }
-        Ok(true)
+        self.take_match(bytes, Text::Here(line), mat.line_number())
     }
 
     fn context(&mut self, _s: &Searcher, ctx: &SinkContext<'_>) -> Result<bool, std::io::Error> {
@@ -1547,6 +1512,98 @@ impl<'a> Sink for Collector<'a> {
 }
 
 impl Collector<'_> {
+    /// A matching line: `bytes` as the searcher gave it, `text` without its line end, `number`
+    /// the searcher's line number.
+    fn take_match(&mut self, bytes: &[u8], text: Text, number: Option<u64>) -> Result<bool, std::io::Error> {
+        if self.cancel.load(Ordering::Relaxed) {
+            return Ok(false);
+        }
+        if self.files_only || self.count_only {
+            if self.files_only && self.matched {
+                return Ok(true);
+            }
+            let n = self.stats_matches.fetch_add(1, Ordering::Relaxed) + 1;
+            if self.over_limit(n) {
+                return Ok(false);
+            }
+            self.matched = true;
+            // as ripgrep: merged matches that span lines count one by one
+            self.file_count += if self.count_each {
+                let mut n = 0;
+                each_match(self.matcher, bytes, |_, _| {
+                    n += 1;
+                    true
+                });
+                n.max(1)
+            } else {
+                1
+            };
+            if self.max_results.is_some_and(|max| n >= max) {
+                self.cancel.store(true, Ordering::Relaxed);
+                return Ok(false);
+            }
+            // one match is enough to list the file; with -v ripgrep reads on and drops a file
+            // with a NUL byte
+            return Ok(!self.files_only || (self.invert && !self.convert));
+        }
+        if self.convert && self.binary_at.is_some() {
+            // as ripgrep: a match past a NUL byte ends the output, `finish` writes the note
+            let n = self.stats_matches.fetch_add(1, Ordering::Relaxed) + 1;
+            self.matched |= !self.over_limit(n);
+            return Ok(false);
+        }
+        if let Some(p) = self.plain {
+            let n = self.stats_matches.fetch_add(1, Ordering::Relaxed) + 1;
+            if self.over_limit(n) {
+                return Ok(false);
+            }
+            self.matched = true;
+            let number = if self.numbered { number.unwrap_or(0) + self.line_base } else { 0 };
+            match text {
+                Text::Here(line) if line.len() < 1 << 16 || self.hold || self.whole_groups || (self.multiline && memchr::memchr(b'\n', line).is_some()) => {
+                    format_plain(&mut self.out, if self.named { &self.path } else { "" }, number, lossy(line).as_bytes(), false);
+                }
+                _ => {
+                    // a very long line is written from where it is instead of being copied into the buffer
+                    let mut head = Vec::with_capacity(self.path.len() + 24);
+                    format_plain(&mut head, if self.named { &self.path } else { "" }, number, b"", false);
+                    head.pop(); // the newline: the text goes between
+                    let read = p.write_line(&self.out, &head, text, std::mem::take(&mut self.first), self.cancel);
+                    self.out.clear();
+                    read?;
+                }
+            }
+            if self.out.len() >= 1 << 16 && !self.hold && !self.whole_groups {
+                p.write(&self.out, std::mem::take(&mut self.first), self.cancel);
+                self.out.clear();
+            }
+            if let Some(max) = self.max_results {
+                if n >= max {
+                    self.cancel.store(true, Ordering::Relaxed);
+                    return Ok(false);
+                }
+            }
+            return Ok(true);
+        }
+        let Text::Here(line) = text else { return Err(std::io::Error::other("a line not in memory has no hit")) };
+        let n = self.stats_matches.fetch_add(1, Ordering::Relaxed) + 1;
+        if self.over_limit(n) {
+            return Ok(false);
+        }
+        let text = lossy(line).into_owned();
+        let spans = if self.invert || !self.want_spans { Vec::new() } else { spans_in(self.matcher, bytes) };
+        let column = spans.first().map(|s| s.0 as u64 + 1).unwrap_or(0);
+        self.matched = true;
+        self.push(Hit { path: Arc::clone(&self.path), line: number.unwrap_or(0) + self.line_base, column, text, spans, context: false });
+        if let Some(max) = self.max_results {
+            if n >= max {
+                self.cancel.store(true, Ordering::Relaxed);
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     /// Match number `n` (counted over all threads) is past `max_results`: another thread got there
     /// first, so this one is not reported, nor counted.
     fn over_limit(&self, n: u64) -> bool {
@@ -2264,15 +2321,15 @@ mod split {
     use std::sync::atomic::AtomicUsize;
 
     #[cfg(unix)]
-    fn read_at(f: &File, buf: &mut [u8], off: u64) -> std::io::Result<usize> {
+    pub(super) fn read_at(f: &File, buf: &mut [u8], off: u64) -> std::io::Result<usize> {
         std::os::unix::fs::FileExt::read_at(f, buf, off)
     }
     #[cfg(windows)]
-    fn read_at(f: &File, buf: &mut [u8], off: u64) -> std::io::Result<usize> {
+    pub(super) fn read_at(f: &File, buf: &mut [u8], off: u64) -> std::io::Result<usize> {
         std::os::windows::fs::FileExt::seek_read(f, buf, off)
     }
     #[cfg(not(any(unix, windows)))]
-    fn read_at(_f: &File, _buf: &mut [u8], _off: u64) -> std::io::Result<usize> {
+    pub(super) fn read_at(_f: &File, _buf: &mut [u8], _off: u64) -> std::io::Result<usize> {
         Err(std::io::Error::other("positional reads unavailable"))
     }
 
@@ -2412,6 +2469,80 @@ mod split {
         true
     }
 
+    /// `whole`'s file searched for a plain literal when all the output needs is whether the line
+    /// matches and its text: a first pass reads the file through a small buffer per thread, and a
+    /// matching line is read again as it is written. None when that does not apply; Stream when
+    /// the file is not of one line after all, with nothing reported.
+    fn one_line(r: &Run, file: &File, size: u64, rel: &Arc<str>) -> Option<Outcome> {
+        let (o, AnyMatcher::Literal(lit)) = (r.o, r.matcher) else { return None };
+        // a shorter line goes to the collector's buffer, which needs it in memory
+        if o.invert || !(r.plain.is_some() || o.count_only) || size < (1 << 16) + 2 {
+            return None;
+        }
+        #[cfg(test)]
+        if tests::NO_ONE_LINE.with(|c| c.get()) {
+            return None;
+        }
+        let Some(found) = literal_in(file, size, &lit.0, default_threads(o)) else { return Some(Outcome::Stream) };
+        #[cfg(test)]
+        tests::ONE_LINE.with(|n| n.set(n.get() + 1));
+        if found {
+            let mut end = [0u8; 2];
+            let len = match read_at(file, &mut end, size - 2) {
+                Ok(2) => match end {
+                    [b'\r', b'\n'] => size - 2,
+                    [_, b'\n'] => size - 1,
+                    _ => size,
+                },
+                _ => return Some(Outcome::Stream),
+            };
+            let mut sink = r.collector(Arc::clone(rel));
+            if let Err(e) = sink.take_match(b"", Text::InFile(file, len), Some(1)) {
+                r.c.failed(format!("{rel}: {e}"));
+            }
+            report(r, sink, Arc::clone(rel), false);
+        }
+        Some(Outcome::Done)
+    }
+
+    /// Whether `finder`'s needle is in a file that holds no NUL byte, no line break but its last
+    /// byte and is still `size` bytes long; None when it is not such a file or a read failed. The
+    /// threads take pieces in file order, each read with the needle's length less one bytes of the
+    /// next, so a needle across two pieces is found. 100 MB on macOS, 5 threads: 256 KiB pieces
+    /// took 5.1 ms and 12.8 ms of CPU, 1 MiB pieces 8.0 and 20.0 (one fresh buffer: 14.5 and 32.2).
+    /// At most 8 threads: more read no faster, and `-j 64` held 22 MB.
+    fn literal_in(file: &File, size: u64, finder: &memchr::memmem::Finder, threads: usize) -> Option<bool> {
+        literal_in_pieces(file, size, finder, threads.min(8), 256 << 10)
+    }
+
+    pub(super) fn literal_in_pieces(file: &File, size: u64, finder: &memchr::memmem::Finder, threads: usize, piece: usize) -> Option<bool> {
+        let over = finder.needle().len() - 1;
+        let pieces = size.div_ceil(piece as u64);
+        let (next, stop, found) = (AtomicU64::new(0), AtomicBool::new(false), AtomicBool::new(false));
+        let work = || {
+            let mut buf = vec![0u8; piece + over];
+            while !stop.load(Ordering::Relaxed) {
+                let at = next.fetch_add(1, Ordering::Relaxed) * piece as u64;
+                if at >= size {
+                    return;
+                }
+                let b = &mut buf[..(size - at).min((piece + over) as u64) as usize];
+                if !fill(file, b, at, size) {
+                    stop.store(true, Ordering::Relaxed);
+                } else if !found.load(Ordering::Relaxed) && finder.find(b).is_some() {
+                    found.store(true, Ordering::Relaxed);
+                }
+            }
+        };
+        std::thread::scope(|s| {
+            for _ in 1..threads.clamp(1, pieces as usize) {
+                s.spawn(work);
+            }
+            work();
+        });
+        (!stop.into_inner()).then(|| found.into_inner())
+    }
+
     struct Part {
         out: Vec<u8>,
         hits: Vec<Hit>,
@@ -2452,6 +2583,9 @@ mod split {
         }
         bounds.push(size);
         if bounds.len() < 3 {
+            if let Some(done) = one_line(r, file, size, rel) {
+                return done;
+            }
             return whole(file, size, default_threads(o)).map_or(Outcome::Stream, Outcome::Buffer);
         }
         if one {
@@ -3096,6 +3230,10 @@ mod tests {
     thread_local! {
         /// the threads `small_first` started on this thread
         pub(super) static SMALL_WORKERS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        /// files of one line this thread searched in two passes through small buffers
+        pub(super) static ONE_LINE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        /// this thread searches such files as one buffer instead
+        pub(super) static NO_ONE_LINE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     }
 
     #[test]
@@ -3140,6 +3278,142 @@ mod tests {
                 assert_eq!(matches!(got, split::Outcome::Buffer(_)), whole, "{threads} threads, {} bytes", text.len());
             }
         }
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_file_of_one_line_searched_in_two_passes_reports_what_one_buffer_does() {
+        #[derive(Clone)]
+        struct Shared(Arc<Mutex<Vec<u8>>>);
+        impl Write for Shared {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let root = std::env::temp_dir().join(format!("scrutate_one_line_{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("a.txt");
+        const P: usize = 256 << 10;
+        let n = 3 * P + 1000;
+        let at = |text: &[u8], put: &[(usize, &[u8])]| {
+            let mut b = text.to_vec();
+            for (i, s) in put {
+                b[*i..*i + s.len()].copy_from_slice(s);
+            }
+            b
+        };
+        let x = vec![b'x'; n];
+        let lf = |b: Vec<u8>, end: &[u8]| [b, end.to_vec()].concat();
+        // (file, whether the two passes apply)
+        let cases: Vec<(Vec<u8>, bool)> = vec![
+            (at(&x, &[(5000, b"needle")]), true),
+            (lf(at(&x, &[(5000, b"needle")]), b"\n"), true),
+            (lf(at(&x, &[(5000, b"needle")]), b"\r\n"), true),
+            (lf(at(&x, &[(n - 1, b"e")]), b"\r\n"), true),
+            (x.clone(), true),
+            (lf(x.clone(), b"\n"), true),
+            (at(&x, &[(P - 3, b"needle"), (2 * P - 1, b"needle"), (3 * P - 5, b"needle")]), true),
+            (at(&x, &[(P - 5, b"needle")]), true),
+            (at(&x, &[(P - 1, b"needle")]), true),
+            (at(&x, &[(0, b"needle"), (100, b"needle")]), true),
+            (at(&x, &[(n - 6, b"needle")]), true),
+            (lf(at(&x, &[(n - 6, b"needle")]), b"\n"), true),
+            (at(&x, &[(100, b"\0"), (5000, b"needle")]), false),
+            (at(&x, &[(5000, b"needle"), (2 * P, b"\0")]), false),
+            (at(&x, &[(5000, b"needle"), (n - 1, b"\0")]), false),
+            // past the first probe's window and before the second's
+            (at(&x, &[(5000, b"needle"), (n / 8 + (64 << 10) + 100, b"\n")]), false),
+            (at(&x, &[(5000, b"needle"), (n - 2, b"\n")]), false),
+            (at(&x, &[(5000, b"needle"), (7, b"\xFF\xFE"), (P - 1, "\u{1F600}".as_bytes()), (2 * P - 2, "日".as_bytes()), (3 * P - 1, "é".as_bytes())]), true),
+            (at(&x, &[(5000, b"needle"), (P - 2, b"\xF0\x9F\x98"), (n - 2, b"\xE6\x97")]), true),
+            (lf(at(&x, &[(5000, b"needle"), (n - 1, b"\xC3")]), b"\n"), true),
+            (at(&x, &[(0, b"\xEF\xBB\xBF"), (5000, b"needle")]), false),
+        ];
+        let plain = |with_filename, line_numbers| Options { with_filename, line_numbers, ..Options::default() };
+        let shapes = [
+            (plain(true, true), true),
+            (plain(false, false), true),
+            (Options { paths_as_given: true, ..plain(true, false) }, true),
+            (Options { count_only: true, ..Options::default() }, true),
+            (Options { want_spans: true, ..Options::default() }, false),
+            (Options { invert: true, ..plain(true, true) }, false),
+            (Options { case: Case::Insensitive, ..plain(true, true) }, false),
+            (Options { word: true, ..plain(true, true) }, false),
+        ];
+        for (k, (text, applies)) in cases.iter().enumerate() {
+            std::fs::write(&path, text).unwrap();
+            let size = text.len() as u64;
+            for (shape, (base, shape_applies)) in shapes.iter().enumerate() {
+                for (pattern, literal) in [("needle", true), ("e\r", true), ("", false)] {
+                    for threads in [1, 3] {
+                        let o = Options { pattern: pattern.into(), mode: Mode::Literal, threads, split_file_bytes: size, ..base.clone() };
+                        let to_plain = !o.count_only && !o.want_spans;
+                        let matcher = build_matcher(&o).unwrap();
+                        let run = |off: bool| {
+                            NO_ONE_LINE.with(|c| c.set(off));
+                            ONE_LINE.with(|c| c.set(0));
+                            let (c, cancel) = (Counters::default(), AtomicBool::new(false));
+                            let out = Shared(Arc::new(Mutex::new(Vec::new())));
+                            let sink = PlainSink::new(Box::new(out.clone()));
+                            let (tx, rx) = mpsc::channel();
+                            let r = Run { matcher: &matcher, o: &o, c: &c, cancel: &cancel, tx: &tx, plain: to_plain.then_some(&sink) };
+                            search_one(&mut file_worker(&o), &r, &path, Arc::from("a.txt"), Some(size), o.paths_as_given);
+                            drop(tx);
+                            sink.flush().unwrap();
+                            let hits: Vec<_> = rx.into_iter().flatten().map(|h| (h.line, h.column, h.text, h.spans)).collect();
+                            let stats = (c.files_matched.into_inner(), c.matches.into_inner(), c.errors.into_inner());
+                            let got = (out.0.lock().unwrap().clone(), hits, stats);
+                            (got, ONE_LINE.with(|c| c.get()))
+                        };
+                        let (two, ran) = run(false);
+                        let (one, _) = run(true);
+                        let what = format!("case {k}, shape {shape}, pattern {pattern:?}, {threads} threads");
+                        assert!(two == one, "{what}");
+                        assert_eq!(ran, usize::from(*applies && *shape_applies && literal), "{what}");
+                    }
+                }
+            }
+        }
+        NO_ONE_LINE.with(|c| c.set(false));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_literal_across_pieces_is_found_on_any_thread_count() {
+        let root = std::env::temp_dir().join(format!("scrutate_pieces_{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("a.txt");
+        let finder = memchr::memmem::Finder::new(b"abcd");
+        for at in 0..=36 {
+            let mut text = vec![b'x'; 40];
+            text[at..at + 4].copy_from_slice(b"abcd");
+            std::fs::write(&path, &text).unwrap();
+            let file = std::fs::File::open(&path).unwrap();
+            for threads in [1, 2, 5] {
+                for piece in [1, 3, 4, 7] {
+                    assert_eq!(split::literal_in_pieces(&file, 40, &finder, threads, piece), Some(true), "at {at}, piece {piece}");
+                }
+            }
+            text[at] = b'\n';
+            std::fs::write(&path, &text).unwrap();
+            assert_eq!(split::literal_in_pieces(&file, 40, &finder, 2, 4), None, "a line break at {at}");
+        }
+        std::fs::write(&path, b"xxabcd\n").unwrap();
+        assert_eq!(split::literal_in_pieces(&std::fs::File::open(&path).unwrap(), 7, &finder, 2, 2), Some(true));
+        std::fs::write(&path, b"xxabcd").unwrap();
+        // shorter than the size the first pass was told: a read comes back short
+        assert_eq!(split::literal_in_pieces(&std::fs::File::open(&path).unwrap(), 7, &finder, 1, 8), None);
+        std::fs::write(&path, b"ab\xC3\xA9cd").unwrap();
+        let (mut out, file) = (Vec::new(), std::fs::File::open(&path).unwrap());
+        assert!(write_lossy_from(&mut out, &file, 6).unwrap().is_ok());
+        assert_eq!(out, "ab\u{e9}cd".as_bytes());
+        out.clear();
+        assert!(write_lossy_from(&mut out, &file, 9).unwrap().is_err(), "a short read");
+        assert_eq!(out, "ab\u{e9}cd".as_bytes());
         std::fs::remove_dir_all(&root).unwrap();
     }
 
@@ -3620,7 +3894,7 @@ mod tests {
         all.extend_from_slice(b"late:1:text\n");
         assert_eq!(written(), all, "output after a quiet spell leaves at once");
         sink.write(b"last:1:text\n", false, &cancel);
-        sink.write_line(b"", b"long:1:", b"x\xFFy", false, &cancel);
+        sink.write_line(b"", b"long:1:", Text::Here(b"x\xFFy"), false, &cancel).unwrap();
         sink.flush().unwrap();
         all.extend_from_slice("last:1:text\nlong:1:x\u{FFFD}y\n".as_bytes());
         assert_eq!(written(), all);
