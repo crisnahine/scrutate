@@ -1,7 +1,7 @@
 # Fuzz targets
 
-Coverage-guided fuzzing with libFuzzer through `cargo fuzz`, which needs a nightly toolchain. This
-directory is a workspace of its own, so the product never builds with nightly.
+Coverage-guided fuzzing with libFuzzer through `cargo fuzz`, which needs nightly. This directory
+is its own workspace, so the product never builds with nightly.
 
 | Target | What it checks |
 |---|---|
