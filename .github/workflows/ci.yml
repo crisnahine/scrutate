@@ -1,7 +1,8 @@
 # Continuous integration: quality gates for every push and pull request, and once a week so a new
 # advisory, runner image or editor release shows up without a code change.
 # The core crate only needs Rust; the Python job covers the training code, the bindings, the
-# differential harnesses and the ranking quality floor. Every action is pinned to a
+# differential harnesses and the ranking quality floor; the wheel job builds, installs and tests
+# the bindings on every runner. Every action is pinned to a
 # commit; .github/dependabot.yml moves the pins. The Rust version, rustfmt and clippy come from
 # rust-toolchain.toml.
 name: ci
@@ -137,6 +138,39 @@ jobs:
       # MRR@10 and hit@5 of 1,183 queries on a frozen copy of this repository's code, against bench/quality/floor.json
       - name: ranking quality against its recorded floor
         run: python bench/quality.py target/release/scrutate
+  # a platform is supported only once its wheel is built, installed and tested there (docs/INSTALL.md)
+  wheels:
+    name: wheel (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "13.0" # as .cargo/config.toml; maturin reads it for the wheel tag
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest, windows-11-arm]
+        # the cp39-abi3 wheel on standard CPython, the cp314t wheel on free-threaded 3.14
+        python: ["3.13", "3.14t"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install --no-self-update
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install maturin pytest -c python/constraints.txt
+      - run: cargo build --release -p scrutate --locked
+      - name: build, install and test the wheel
+        run: |
+          maturin build --release --strip -m crates/scrutate-py/Cargo.toml -o target/wheels -i python
+          python -m pip install --no-deps target/wheels/scrutate-*.whl
+          # the bindings tests skip when the module does not load, so a broken wheel fails here
+          python -c "import scrutate, sys; print(scrutate.__version__, 'gil enabled:', getattr(sys, '_is_gil_enabled', lambda: True)())"
+          bin="$GITHUB_WORKSPACE/target/release/scrutate"
+          if [ "$RUNNER_OS" = Windows ]; then bin="$bin.exe"; fi
+          cd python && SCRUTATE_BIN="$bin" python -m pytest -q tests/test_bindings.py
   musl:
     name: fully static linux binary (musl)
     runs-on: ubuntu-latest
