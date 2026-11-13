@@ -21,3 +21,17 @@ def test_a_regression_shows_through_a_machine_whose_load_drifts():
     assert compare([("slower", base, slower)], 0.10, paired=True) == (1, 1)
     # runs pooled over the blocks cannot tell a 15% regression from that drift
     assert compare([("slower", base, slower)], 0.10, paired=False) == (0, 1)
+
+
+def test_the_instruction_gate_counts_one_thread_and_fails_past_one_percent():
+    from instructions import command, verdict
+    from leaderboard import suite
+
+    b = {x["id"]: x for x in suite()}
+    cmd, env = command(b["ripgrep/literal"], "/n/scrutate", "/c")
+    assert cmd[:3] == ["/n/scrutate", "grep", "-j1"] and env == {}
+    cmd, env = command(b["ripgrep/structural"], "/n/scrutate", "/c")
+    assert cmd[:2] == ["/n/scrutate", "tsquery"] and env == {"RAYON_NUM_THREADS": "1"}
+    cmd, _ = command(b["ripgrep/4 at once (literal)"], "/n/scrutate", "/c")
+    assert cmd[:2] == ["/bin/sh", "-c"] and cmd[2].count("/n/scrutate grep -j1") == 4
+    assert [verdict(n, 1000, 0.01)[1] for n in (1011, 1010, 1000, 989)] == ["REGRESSION", "same", "same", "faster"]
