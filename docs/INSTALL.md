@@ -53,13 +53,25 @@ The attestation check passes only for a file that `release.yml` of `scrutate/scr
 from the tag `v$v` on a GitHub-hosted runner, and it names the commit. With `--owner scrutate`
 alone, a file built by any workflow of the organization would pass, a dry run's included. It says
 where and how the file was built, not that its code is safe. Every file on a release (archives,
-wheels, the `.vsix`, `SHA256SUMS`) carries such an attestation, and `--predicate-type
+`.deb`, `.rpm`, wheels, the `.vsix`, `SHA256SUMS`) carries such an attestation, and `--predicate-type
 https://cyclonedx.org/bom` checks the SBOM attestation of an archive.
 
 The `-linux-gnu` archives need glibc 2.34 or newer (Debian 12, Ubuntu 22.04, RHEL 9 and later);
 the `-linux-musl` archives are static and run on any Linux.
 
 Windows: unzip, put `scrutate.exe` on `PATH`, `scrutate completions powershell | Out-String | Invoke-Expression`.
+
+Debian, Ubuntu, Fedora and RHEL (x86_64 and aarch64, glibc 2.34 or newer): the release has a
+`.deb` and an `.rpm` per architecture, listed in `SHA256SUMS`. They come from no package
+repository, so they do not update themselves: install the next release's file the same way.
+
+```sh
+sudo apt install ./scrutate_0.1.0-1_amd64.deb      # remove: sudo apt remove scrutate
+sudo rpm -i --nosignature scrutate-0.1.0-1.x86_64.rpm   # remove: sudo rpm -e scrutate
+```
+
+The `.rpm` carries no GPG signature, which `dnf` refuses by default; the attestation and
+`SHA256SUMS` are its integrity check.
 
 ### Unsigned binaries on macOS and Windows
 

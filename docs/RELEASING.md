@@ -271,7 +271,7 @@ Before the first tag, set in the repository settings:
 
 The release job makes a draft, attaches every file, then publishes, the order immutable releases
 need. Its notes are the version's section of `CHANGELOG.md`. The files are the archives, the
-wheels, the VS Code extension (`scrutate-<version>.vsix`, packaged with `@vscode/vsce` 4.1.1),
+`.deb` and `.rpm` of the two `-linux-gnu` jobs (`packaging/linux/build-packages.sh`), the wheels, the VS Code extension (`scrutate-<version>.vsix`, packaged with `@vscode/vsce` 4.1.1),
 the SBOM and `SHA256SUMS`.
 
 Four publishing jobs follow the release job. Each does nothing until its setup exists, so a

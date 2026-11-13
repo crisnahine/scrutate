@@ -10,7 +10,7 @@ release URLs below do not exist. Every test's log is in `bench/results/platforms
 | `scoop/scrutate.json` | Scoop manifest for the Windows x86_64 and ARM64 release zips, with `checkver` and `autoupdate` (hashes from `SHA256SUMS`). |
 | `scoop/bucket/` | The files of the bucket repository `scrutate/scoop-bucket`, from `ScoopInstaller/BucketTemplate` (commit `dd0ce8a`, 2026-08-24): Excavator (`excavator.yml`, every 4 hours, updates the manifest from `checkver` and `autoupdate`), the bucket tests (`ci.yml`), the `bin/` scripts with `auto-pr.ps1` pointed at `scrutate/scoop-bucket:main`, and a README. Left out: the issue and pull request handlers and the template's CRLF `.gitattributes`. |
 | `winget/manifests/c/crisnahine/Scrutate/0.1.0/` | winget manifests (version, installer, default locale; schema 1.12.0). Portable install from the same zips. |
-| `linux/build-packages.sh` | Builds the `.deb` (cargo-deb) and `.rpm` (cargo-generate-rpm) in a `rust:1-slim-bookworm` container. The package metadata is in `crates/scrutate/Cargo.toml` under `[package.metadata.deb]` and `[package.metadata.generate-rpm]`. |
+| `linux/build-packages.sh` | Builds the `.deb` (cargo-deb 3.8.0) and `.rpm` (cargo-generate-rpm 0.21.1) in a `rust:1-slim-bookworm` container, or with `TARGET` set from a binary already built for that target, as `release.yml` runs it. The package metadata is in `crates/scrutate/Cargo.toml` under `[package.metadata.deb]` and `[package.metadata.generate-rpm]`. |
 | `linux/test-packages.sh` | Installs a package in a clean container, runs `scrutate --version` and a `scrutate grep`, removes it. |
 | `validate_manifests.py` | Parses the Scoop and winget files, checks them against the published schemas and fails on an all-zero sha256 in any manifest. Until a release exists the hashes are placeholders, so use `--draft`: `uvx --with jsonschema --with pyyaml python packaging/validate_manifests.py --draft`. |
 
@@ -77,9 +77,11 @@ own name. Nothing was published.
 4. winget: set both `InstallerSha256` values from `SHA256SUMS`, run
    `winget validate --manifest packaging/winget/manifests/c/crisnahine/Scrutate/0.1.0` on Windows, then
    open a PR to microsoft/winget-pkgs (`wingetcreate submit` does both).
-5. Debian and RPM: run `linux/build-packages.sh` on each target (x86_64 and aarch64) and attach the
-   packages, signed (`rpm --addsign`) so Fedora accepts the RPM, to the release. Add this to
-   `release.yml` so every tag does it.
+5. Debian and RPM: `release.yml` runs `linux/build-packages.sh` with `TARGET` set in the two
+   `-linux-gnu` binary jobs (x86_64 and aarch64, Ubuntu 22.04 runners), on the binary those jobs
+   built and tested, and attaches the four packages to the release, listed in `SHA256SUMS` and
+   attested. The RPM is unsigned, so INSTALL.md installs it with `rpm -i --nosignature`; signing
+   it (`rpmsign --addsign` in the release job) needs a GPG key held as an environment secret.
 6. crates.io: not possible (see above) until the models are smaller or fetched separately and the
    `ignore` fork is published.
 

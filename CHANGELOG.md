@@ -59,6 +59,8 @@ incompatible index by itself, and that is never breaking.
   and uploads the wheels to TestPyPI and PyPI and the extension to the VS Code Marketplace and
   Open VSX, each by trusted publishing or token and each only once the owner sets it up
   ([Releasing](docs/RELEASING.md#7-what-a-published-release-adds)).
+- A release carries a `.deb` and an `.rpm` for x86_64 and aarch64 Linux, built from the tested
+  release binary, listed in `SHA256SUMS` and attested ([Install](docs/INSTALL.md#from-a-release-archive)).
 - `packaging/homebrew/tap/` and `packaging/scoop/bucket/` hold the files of the Homebrew tap and
   the Scoop bucket repositories, with their test, bottle, autobump and Excavator workflows;
   INSTALL.md shows `brew trust --tap scrutate/tap`, which Homebrew 7 needs
