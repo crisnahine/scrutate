@@ -12,7 +12,9 @@
 Fail a commit when the repository holds exact duplicate functions, and list them. `--min-tokens`
 is the smallest function that counts, in word tokens of its body; a `--threshold` below 1 also
 catches near duplicates. The hook runs the `scrutate` on `PATH`, which pre-commit does not
-install.
+install. The `pre-commit` job in `.github/workflows/ci.yml` runs the hook of each commit
+with pre-commit 4.7.0 (`tools/test_precommit.sh`): it passes on a repository without duplicate
+functions and fails, naming both copies, once a commit adds one.
 
 From this repository (pre-commit 4.4 or newer):
 

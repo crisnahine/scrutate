@@ -462,6 +462,28 @@ jobs:
           tar xzf gcl.tar.gz
           ./gitlab-ci-local --version
           bash "$GITHUB_WORKSPACE/tools/test_ci_templates.sh" gitlab "$GITHUB_WORKSPACE/bin/scrutate" "$RUNNER_TEMP/gitlab-ci-local"
+  pre-commit:
+    name: pre-commit hook in pre-commit 4.7.0
+    needs: musl
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: scrutate-musl
+          path: bin
+      # pre-commit 4.7.0 needs Python 3.11 or newer
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: the hook from this commit passes without duplicates and fails with one
+        run: |
+          python -m pip install pre-commit==4.7.0
+          chmod +x bin/scrutate
+          PATH="$GITHUB_WORKSPACE/bin:$PATH" bash tools/test_precommit.sh "$GITHUB_WORKSPACE"
   bitbucket-template:
     name: Bitbucket template in pipeline-runner
     needs: musl
