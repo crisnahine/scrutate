@@ -727,8 +727,6 @@ pub struct Index {
     trees_peak: usize,
     /// which file `db` has open, to notice another process deleting it and building a new one
     db_id: Option<(u64, u64)>,
-    /// what the last look at every file found, shared with the indexes `another` opened
-    pub seen: crate::files::Slot,
 }
 
 /// Which files an update looks at.
@@ -826,7 +824,6 @@ impl Index {
             trees_peak: 0,
             cancel: Arc::default(),
             db_id: file_id(&db_path),
-            seen: Arc::default(),
         };
         if let Triage::Rebuild(why) = triage {
             // an index of another schema: drop its contents *inside* the database, so
@@ -887,7 +884,6 @@ impl Index {
             trees_peak: 0,
             cancel: Arc::default(),
             db_id: file_id(&db_path),
-            seen: Arc::clone(&self.seen),
         })
     }
 
@@ -1369,7 +1365,6 @@ impl Index {
                         &walked[..]
                     }
                 };
-                crate::files::publish(&self.seen, Some(found));
                 // a name that is not UTF-8 is looked up by the part of it the index can name, as before
                 let files: Vec<(String, Option<Stat>)> =
                     found.iter().filter(|f| f.code).map(|f| (f.path.clone(), if f.lossy { stat_of(&f.path) } else { f.stat })).collect();

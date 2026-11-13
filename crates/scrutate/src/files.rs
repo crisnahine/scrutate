@@ -171,33 +171,6 @@ pub struct Found {
     pub lossy: bool,
 }
 
-/// The files a search of the repository covers, as the last look at every file found them.
-#[derive(Debug, Default)]
-pub struct Seen {
-    /// path from the root and its `stat` (None when the look took none), sorted by path
-    pub files: Vec<(String, Option<Stat>)>,
-    /// a name is not UTF-8: no list of paths names every file
-    pub lossy: bool,
-}
-
-/// The last look's `Seen`, shared by the repositories of one root that read beside each other;
-/// None before a look, and after an update that looked at named files alone.
-pub type Slot = Arc<std::sync::Mutex<Option<Arc<Seen>>>>;
-
-/// Keep what a look found in `slot` (None: forget the last look).
-pub fn publish(slot: &Slot, found: Option<&[Found]>) {
-    let seen = found.map(|found| {
-        let repo = found.iter().filter(|f| f.repo);
-        Arc::new(Seen { lossy: repo.clone().any(|f| f.lossy), files: repo.map(|f| (f.path.clone(), f.stat)).collect() })
-    });
-    *slot.lock().unwrap_or_else(|p| p.into_inner()) = seen;
-}
-
-/// The last look's `Seen` in `slot`.
-pub fn seen(slot: &Slot) -> Option<Arc<Seen>> {
-    slot.lock().unwrap_or_else(|p| p.into_inner()).clone()
-}
-
 /// The files of the tree at `root`, from one walk and one `stat` per file a store needs, sorted by
 /// path: the files a search of the repository covers and the code index's set, and with `text`
 /// the text index's set too. The walk enters every directory one of those walks enters.

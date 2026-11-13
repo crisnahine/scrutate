@@ -43,7 +43,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use anyhow::Result;
 
-use crate::files::{self, Found, Slot};
+use crate::files::{self, Found};
 use crate::index::{self, UpdateStats};
 use crate::models::ModelSet;
 use crate::ops;
@@ -155,8 +155,6 @@ pub struct Repo {
     models: Arc<ModelSet>,
     /// held by every write this repository makes; shared with the ones `another` opened
     writer: Arc<Mutex<()>>,
-    /// what the last look at every file found; shared with the ones `another` opened
-    seen: Slot,
 }
 
 /// The writer lock, also after a panic in a write that held it: the stores commit whole or not at all.
@@ -167,15 +165,12 @@ fn hold(writer: &Mutex<()>) -> MutexGuard<'_, ()> {
 impl Repo {
     /// Open (or create) the index of `root`, without updating it.
     pub fn open(root: &Path) -> Result<Repo> {
-        let searcher = crate::open(root)?;
-        let seen = Arc::clone(&searcher.ix.seen);
-        Ok(Repo::around(searcher, Arc::default(), seen))
+        Ok(Repo::around(crate::open(root)?, Arc::default()))
     }
 
-    fn around(mut searcher: Searcher, writer: Arc<Mutex<()>>, seen: Slot) -> Repo {
+    fn around(searcher: Searcher, writer: Arc<Mutex<()>>) -> Repo {
         let (root, models) = (searcher.ix.root.clone(), Arc::clone(&searcher.ix.models));
-        searcher.ix.seen = Arc::clone(&seen);
-        Repo { root, searcher: Some(searcher), stale: false, updated: false, models, writer, seen }
+        Repo { root, searcher: Some(searcher), stale: false, updated: false, models, writer }
     }
 
     /// Another open repository on the same index, to read beside this one: a connection of its
@@ -185,7 +180,7 @@ impl Repo {
             Some(s) => s.ix.another()?,
             None => index::Index::open(&self.root, Arc::clone(&self.models))?,
         };
-        Ok(Repo::around(Searcher::new(ix), Arc::clone(&self.writer), Arc::clone(&self.seen)))
+        Ok(Repo::around(Searcher::new(ix), Arc::clone(&self.writer)))
     }
 
     /// `open` for an update; with `force`, an index of a newer scrutate that this one cannot read
@@ -262,11 +257,7 @@ impl Repo {
         self.ix.progress |= progress;
         let mut found = None;
         let r = match changes {
-            Changes::Named(n) if !force => {
-                // the files a search of the repository covers may have changed: the next look says
-                files::publish(&self.seen, None);
-                self.ix.update_paths(&n.code, true)
-            }
+            Changes::Named(n) if !force => self.ix.update_paths(&n.code, true),
             _ if text => {
                 let f = found.insert(files::look(&self.root, true)?);
                 self.ix.update_found(force, f)
@@ -443,7 +434,6 @@ impl Repo {
     fn reopen(&mut self, progress: bool) -> Result<UpdateStats> {
         let mut s = Searcher::new(index::Index::open(&self.root, Arc::clone(&self.models))?);
         s.ix.progress = progress;
-        s.ix.seen = Arc::clone(&self.seen);
         let st = s.ix.update(true);
         self.searcher = Some(s);
         st
@@ -465,13 +455,12 @@ impl std::ops::DerefMut for Repo {
 
 /// The files a search of the repository at `root` reads in place of the walk `walk` (one
 /// `files::repository_files` gave, perhaps under a directory and with globs that exclude), when
-/// the text index can say which of them hold no match: of the files the last look found there,
+/// the text index can say which of them hold no match: of the files a look made now finds there,
 /// those the text index holds as they are now and that can match, and every other one. None
-/// when the walk must run: no look yet, no text index, a pattern its trigrams do not narrow, a
-/// glob that brings files in, a scope that is no directory of the tree.
+/// when the walk must run: no text index, a pattern its trigrams do not narrow, a glob that brings
+/// files in, a scope that is no directory of the tree, a name that is not UTF-8.
 pub fn grep_files(ix: &index::Index, q: &crate::instant::Query, walk: &crate::instant::Files) -> Option<crate::instant::Files> {
     use crate::instant::Paths;
-    let seen = files::seen(&ix.seen).filter(|s| !s.lossy)?;
     let Paths::Walk(roots) = &walk.paths else { return None };
     let plain = walk.hidden && !walk.no_ignore && !walk.follow_links && walk.max_filesize.is_none() && walk.max_depth.is_none();
     let plain = plain && walk.types.is_empty() && walk.scoped_globs.is_none() && !walk.search_zip && walk.globs.iter().all(|g| g.starts_with('!'));
@@ -491,7 +480,12 @@ pub fn grep_files(ix: &index::Index, q: &crate::instant::Query, walk: &crate::in
     };
     let cond = textindex::query_for(q).ok().filter(|c| *c != textindex::Q::All)?;
     let ti = textindex::TextIndex::open(&ix.root).ok()??;
-    let mut there = seen.files.iter().filter(|(p, _)| p.starts_with(under.as_str())).map(|(p, st)| (p.as_str(), *st)).peekable();
+    // a look of this call's own, so a file written just before it is read (a kept look missed it)
+    let found = files::look(&ix.root, false).ok()?;
+    if found.iter().any(|f| f.repo && f.lossy) {
+        return None;
+    }
+    let mut there = found.iter().filter(|f| f.repo && f.path.starts_with(under.as_str())).map(|f| (f.path.as_str(), f.stat)).peekable();
     // a directory the look did not enter is searched as the walk searches it
     there.peek()?;
     let read = ti.to_read(&cond, q.pattern.multiline, there).ok()?;
@@ -518,15 +512,7 @@ mod tests {
     fn a_rebuild_that_could_not_reopen_the_index_is_an_error_until_it_can() {
         let root = std::env::temp_dir().join(format!("scrutate_reopen_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        let mut repo = Repo {
-            searcher: None,
-            root: root.clone(),
-            stale: false,
-            updated: false,
-            models: ModelSet::from_env(),
-            writer: Arc::default(),
-            seen: Arc::default(),
-        };
+        let mut repo = Repo { searcher: None, root: root.clone(), stale: false, updated: false, models: ModelSet::from_env(), writer: Arc::default() };
         let op = ops::Op::Symbol { name: "f".into(), limit: 5 };
         repo.set_cancel(Arc::default());
         assert!(repo.update(false).is_err());
@@ -540,15 +526,20 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// The grep Operation's answer through `repo` (which reads the text index once a look is
-    /// kept) and through a walk, as text and JSON.
+    /// The grep Operation's answer through `repo` (which reads the text index when there is one)
+    /// and through a walk (the text index set aside), as text and JSON.
     fn both_ways(repo: &mut Repo, op: &ops::Op) -> (String, String) {
         let shown = |a: Result<ops::Answer>| a.map(|a| (a.text(), a.json().to_string())).unwrap_or_else(|e| (format!("{e:#}"), String::new()));
         let a = shown(repo.run(op, 0.0));
-        let seen = files::seen(&repo.seen);
-        files::publish(&repo.seen, None);
+        let (dir, aside) = (textindex::dir_of(&repo.root), repo.root.join(".scrutate/text.aside"));
+        let had = dir.exists();
+        if had {
+            std::fs::rename(&dir, &aside).unwrap();
+        }
         let walked = shown(repo.run_as_is(op));
-        *repo.seen.lock().unwrap() = seen;
+        if had {
+            std::fs::rename(&aside, &dir).unwrap();
+        }
         assert_eq!(a, walked);
         a
     }

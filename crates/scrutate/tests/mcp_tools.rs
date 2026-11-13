@@ -501,6 +501,33 @@ fn resolved_references_say_when_a_file_s_search_stopped_at_a_nul_byte() {
 }
 
 #[test]
+fn a_file_written_just_before_a_call_is_searched_inside_the_refresh_interval() {
+    let mut files: Vec<(String, String)> = (0..40).map(|i| (format!("m{i:03}.py"), format!("def fn_{i:03}(x):\n    return x + {i}\n"))).collect();
+    files.push(("use.py".into(), "from m001 import fn_001\n".into()));
+    let refs: Vec<(&str, &str)> = files.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();
+    let r = Repo::new("fresh_grep", &refs);
+    scrutate::stores::update(&r.root, scrutate::stores::Writer::Index, false).unwrap();
+    assert!(scrutate::textindex::exists(&r.root));
+    // a server that looks for changes once a minute, after its first look
+    let s = session(&r.root, 60.0);
+    let ok = |tool: &str, args: Value| {
+        let c = call_tool(&s, tool, &args);
+        assert!(!c.is_error, "{}", c.text);
+        c.text
+    };
+    ok("grep_code", json!({"pattern": "zz_written_late"}));
+    fs::write(r.root.join("new_file.py"), "x = 'zz_written_late'\n").unwrap();
+    fs::write(r.root.join("m010.py"), "def fn_010(x):\n    return x + 10  # zz_written_late\n").unwrap();
+    fs::write(r.root.join("use.py"), "from m001 import fn_001\n\n\ndef later():\n    return fn_001(2)\n").unwrap();
+    let grep = ok("grep_code", json!({"pattern": "zz_written_late"}));
+    assert!(grep.contains("new_file.py") && grep.contains("m010.py"), "{grep}");
+    let textual = ok("references", json!({"name": "zz_written_late", "textual": true}));
+    assert!(textual.contains("new_file.py") && textual.contains("m010.py"), "{textual}");
+    let resolved = ok("references", json!({"name": "fn_001"}));
+    assert!(resolved.contains("use.py:5"), "{resolved}");
+}
+
+#[test]
 fn resolved_references_answer_alike_with_and_without_the_text_index() {
     let mut files: Vec<(String, String)> = (0..60).map(|i| (format!("pkg/m{i:02}.py"), format!("def fn_{i}(x):\n    return x + {i}\n"))).collect();
     files.push(("pkg/rare.py".into(), "def needle_rare():\n    return 7\n".into()));

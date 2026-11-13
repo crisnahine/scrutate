@@ -155,5 +155,5 @@ index's list (hidden files included, cache and dependency directories skipped), 
 (hidden files skipped, the same ignore files), the files a search of the repository covers
 (`files::repository_files`: the code index's walk, for `grep_code` and references), and
 **membership**, the test of one changed path that the watcher asks. A **look** (`files::look`) is
-one walk of the tree and one `stat` per file that gives each of those sets its own files; what the
-last look found is kept as **seen** (`files::Seen`) for the grep of the repository.
+one walk of the tree and one `stat` per file that gives each of those sets its own files. Nothing
+keeps a look between calls: a scan makes one, and the grep of the repository makes its own.
