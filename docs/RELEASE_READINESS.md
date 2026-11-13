@@ -10,9 +10,9 @@
 <!-- End of head. -->
 
 **Verdict: 0.1.0 is a verified first release for developer use on the platforms INSTALL.md
-declares (macOS arm64, Linux aarch64, Linux x86_64). It is not declared production-ready for mission-critical
-environments**, because the criteria the mission sets for that claim are not all met (listed
-below). Every PASS refers to a test, benchmark or audit output in this repository.
+declares (macOS arm64, Linux aarch64, Linux x86_64). It is not declared production-ready for
+mission-critical environments**, because not all of the mission's criteria for that claim are met
+(listed below). Every PASS refers to a test, benchmark or audit output in this repository.
 
 ## What the release gates say (mission section 10)
 
@@ -36,19 +36,19 @@ below). Every PASS refers to a test, benchmark or audit output in this repositor
 
 1. **Platform coverage.** The repository is public on GitHub. CI run 43382848665 (commit
    `08cd9fa`) passed every job that runs on a push: the Rust tests on macOS arm64, Intel macOS,
-   Linux x86_64, Linux arm64, Windows x64 and Windows arm64, and the editor integrations. What is
-   still missing for Windows and Intel macOS: a release archive built by the release workflow
-   and installed on a machine, and a benchmark run (docs/ROADMAP.md, known limits).
+   Linux x86_64, Linux arm64, Windows x64 and Windows arm64, and the editor integrations. Windows
+   and Intel macOS still lack a release archive built by the release workflow and installed on a
+   machine, and a benchmark run (docs/ROADMAP.md, known limits).
 2. **No independent security review**; fuzzing ran in ten-minute rounds on one machine.
-3. **Release pipeline unexercised**: signed releases, attestations and package-manager packages exist
-   only as workflow definitions.
+3. **Release pipeline unexercised**: signed releases, attestations and package-manager packages
+   exist only as workflow definitions.
 4. **Benchmark leadership is not proven on dedicated hardware** (section 14 requires it for #1
    claims). On the development laptop and its Linux VM every benchmark of the suite is won with
    significance (docs/LEADERBOARD.md); Linux x86_64 has no benchmark run.
 
 ## Remaining defects and incomplete requirements
 
-Status words as in docs/TRACEABILITY.md. "Resolution" says what closes the item.
+Status words as in docs/TRACEABILITY.md. The last column says what closes the item.
 
 | ID | What is missing | Status | What closes it |
 |---|---|---|---|
@@ -63,54 +63,59 @@ Status words as in docs/TRACEABILITY.md. "Resolution" says what closes the item.
 
 ## Defects found and fixed while preparing this release
 
-Recorded so the value of the testing is visible: four defects found by fuzzing (chunk line numbers
-shifted after form feeds; a panic on truncated `.npy` string arrays; an element count that wrapped
-in release builds and could have produced an over-long slice; a multi-terabyte allocation request
-for zero-width strings); a blocking file lock that fails at once on SMB shares (EAGAIN); broken
-symbol rules for D, LLVM IR, AutoHotkey, VHDL architectures and OCaml modules (found by writing
-their samples); a test that silently depended on a `git` binary; about 1.5 ms of start-up spent
-loading Foundation and libobjc through the `ctrlc` crate; a file given directly as the search root
-printed with an empty path (`:1:text`, or `one.txt/` next to a second root); a test that needed a
-`kill` binary, which minimal Linux images do not have; and a GIL-release test that could not show
-what it claimed, because every line matched and the time went into building Python objects (it
-failed on x86_64 and was skipped elsewhere; it now searches one large file for one match, and four
-threads take a third of the sequential time); `--max-results N` reporting one or two matches more
-than N when several threads found matches at once (caught by the bindings test, now covered by a
-CLI test that repeats the search sixty times); and a bundled SQLite with a published CVE
-(RUSTSEC-2026-0459, found by `cargo audit` on the release candidate; upgraded). In the benchmark
-harness itself: an ast-grep pattern that ast-grep parses as a C type macro, so the Linux structural
-benchmark compared Scrutate with a tool that could match nothing; a reference that let
-git's case-insensitive ignore matching hide 1,343 files (every tool agreed against it, which is how
-it was caught); a reference that used Python's backtracking regex engine on the backtracking-trap
-benchmark and never finished; and a musl/glibc comparison that compared the run time recorded in
-the JSON summary, and unordered output.
+- Fuzzing found four: chunk line numbers shifted after form feeds; a panic on truncated `.npy`
+  string arrays; an element count that wrapped in release builds and could have produced an
+  over-long slice; a multi-terabyte allocation request for zero-width strings.
+- A blocking file lock that fails at once on SMB shares (EAGAIN).
+- Broken symbol rules for D, LLVM IR, AutoHotkey, VHDL architectures and OCaml modules (found by
+  writing their samples).
+- Tests that silently needed a `git` binary, or a `kill` binary, which minimal Linux images lack.
+- About 1.5 ms of start-up spent loading Foundation and libobjc through the `ctrlc` crate. A file given directly as the search root printed with an empty path (`:1:text`, or `one.txt/`
+  next to a second root).
+- A GIL-release test that could not show its claim: every line matched, so the time went into
+  building Python objects (it failed on x86_64 and was skipped elsewhere). It now searches one
+  large file for one match, and four threads take a third of the sequential time.
+- `--max-results N` reported one or two matches more than N when several threads found matches at
+  once (caught by the bindings test, now covered by a CLI test that repeats the search sixty
+  times).
+- A bundled SQLite with a published CVE (RUSTSEC-2026-0459, found by `cargo audit` on the release
+  candidate; upgraded).
+- In the benchmark harness: an ast-grep pattern that ast-grep parses as a C type macro, so the
+  Linux structural benchmark compared Scrutate with a tool that could match nothing; a reference
+  that let git's case-insensitive ignore matching hide 1,343 files (every tool agreed against it,
+  which is how it was caught); a reference that used Python's backtracking regex engine on the
+  backtracking-trap benchmark and never finished; a musl/glibc comparison that compared the run
+  time recorded in the JSON summary, and unordered output.
 
 Found after the first full benchmark run, while closing the rows it lost: smart case took the
 class `\S` for an uppercase letter; `-c` with `--max-count` printed the full count; `-w` and `-U`
 were silently ignored with the fuzzy modes (now an error); the file watcher panicked on a
 repository with patterns in `.git/info/exclude`; the MCP server reported a refused path in
 `read_code` as a success and said nothing about an invalid regex in `grep_code`; the test for a
-disk read never fired on Linux, so a cold tree was read there on one thread per core; and the fuzz
+disk read never fired on Linux, so a cold tree was read there on one thread per core; the fuzz
 workspace stopped building once `ignore` was vendored, because a workspace of its own does not
 inherit the patch (caught by the fuzz-regression gate on the release code). In the harness: a
 read-files ceiling whose threads shared a directory and read a cold tree at a third of the disk's
 speed, and warm runs that were not warm once other applications had taken the memory the page
 cache needs.
 
-Found on 2026-11-11 by running every install and usage path before the repository goes to
-GitHub. None of these was in the search engines; all of them would have met the first user or
-the first CI run. In the workflows, which had never run: the musl jobs added their target to
-the runner's default toolchain, not the pinned one; the audit job lacked a permission its action
-needs; one job ran `pip install` on a system Python that refuses it; the musl comparison had no
-`--sort` and compared a run time; a check written with `!` could not fail; the benchmark gate
-compared with a baseline from another machine and skipped itself when the file was missing;
-`compare_tools.py --out` with a bare file name crashed. The declared `rust-version` (1.89) did
-not build: a locked dependency needs 1.91. The GitLab and Bitbucket templates failed on a
-repository with no duplicates (exit status 1 means "nothing found") and unpacked the tool
-inside the checkout, where it indexed its own files. The pre-commit entry was not valid YAML and
-passed when the tool failed. The MCP page gave one configuration for clients that read three
-different ones. The wheel put its third-party notices at the top of `site-packages`. The Python
-reference lacked four definition kinds the engine has, so parity failed on Rust sources.
+Found on 2026-11-11 by running every install and usage path before the repository went to GitHub;
+none was in the search engines, each would have met the first user or the first CI run.
+
+- The workflows, which had never run: the musl jobs added their target to the runner's default
+  toolchain, not the pinned one; the audit job lacked a permission its action needs; one job ran
+  `pip install` on a system Python that refuses it; the musl comparison had no `--sort` and
+  compared a run time; a check written with `!` could not fail; the benchmark gate compared with a
+  baseline from another machine and skipped itself when the file was missing;
+  `compare_tools.py --out` with a bare file name crashed.
+- The declared `rust-version` (1.89) did not build: a locked dependency needs 1.91.
+- The GitLab and Bitbucket templates failed on a repository with no duplicates (exit status 1
+  means "nothing found") and unpacked the tool inside the checkout, where it indexed its own files.
+- The pre-commit entry was not valid YAML and passed when the tool failed. The MCP page gave one
+  configuration for clients that read three different ones. The wheel put its third-party notices
+  at the top of `site-packages`.
+- The Python reference lacked four definition kinds the engine has, so parity failed on Rust
+  sources.
 
 ## Recommendation
 
