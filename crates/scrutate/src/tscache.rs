@@ -1,6 +1,6 @@
 //! Per-file results of `tsquery`, so files whose content did not change are not parsed again.
 //!
-//! One file per (scrutate version, language, query text, searched paths) under
+//! One file per (scrutate version, language, query text, searched paths from the root) under
 //! `.scrutate/tsquery/`, mapping a file's content hash and name (`key`) to that file's captures
 //! (paths are filled in on use). The content hash is the one the code index records, so a file
 //! whose stat the code index says is current is not read at all on a hit. A complete run keeps
@@ -55,11 +55,12 @@ fn hex(k: &Key) -> String {
 
 impl Cache {
     /// The cache of one query under `root/.scrutate/`, empty when there is none or it is unreadable.
-    /// The searched paths are part of the name, so runs over different subtrees do not evict each
-    /// other's entries.
-    pub fn open(root: &Path, lang: &str, query: &str, paths: &[PathBuf]) -> Cache {
+    /// The searched paths (`scopes`, from the root, so that a copy of the tree at another place
+    /// finds the same file) are part of the name, so runs over different subtrees do not evict
+    /// each other's entries.
+    pub fn open(root: &Path, lang: &str, query: &str, scopes: &[String]) -> Cache {
         let dir = root.join(".scrutate").join("tsquery");
-        let paths: Vec<String> = paths.iter().map(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.clone()).to_string_lossy().into_owned()).collect();
+        let paths = scopes;
         let mut header = MAGIC.to_vec();
         for s in [crate::VERSION, lang, query, &paths.join("\n")] {
             header.extend((s.len() as u32).to_le_bytes());

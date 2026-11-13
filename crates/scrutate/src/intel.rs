@@ -256,6 +256,13 @@ pub struct Capture {
 /// With `as_given`, paths are printed as `grep PATH...` prints them (the root as given, then the
 /// path below it), except under `.`; without, from the root that holds them.
 /// Returns the number of captures delivered (stops at `limit`).
+/// Each searched path from `top` ("" for `top` itself), or as given when it lies outside.
+fn scopes(top: &Path, roots: &[PathBuf]) -> Vec<String> {
+    let top = std::fs::canonicalize(top).ok();
+    let from_top = |r: &PathBuf| Some(crate::instant::slashed(std::fs::canonicalize(r).ok()?.strip_prefix(top.as_ref()?).ok()?.to_string_lossy()));
+    roots.iter().map(|r| from_top(r).unwrap_or_else(|| r.to_string_lossy().into_owned())).collect()
+}
+
 pub fn tsquery_each(
     lang: &str,
     query: &str,
@@ -316,7 +323,7 @@ pub fn tsquery_each(
             }
         }
     }
-    let cache = cache_root.map(|r| crate::tscache::Cache::open(r, lang, query, roots));
+    let cache = cache_root.map(|r| crate::tscache::Cache::open(r, lang, query, &scopes(r, roots)));
     // parse in parallel, deliver in path order: workers send (file index, content hash, captures,
     // complete) through a bounded channel; the consumer reorders with a small buffer, so memory
     // stays flat and no thread waits at chunk barriers

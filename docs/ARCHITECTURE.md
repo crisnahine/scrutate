@@ -661,7 +661,8 @@ asking about every one costs about a second of CPU per thousand sites of a Java 
 every call edge of the name, namesakes included, the number the ranker was fitted on.
 
 `tsquery` keeps each file's captures in `.scrutate/tsquery/` (`tscache.rs`): one file per
-(version, language, query text, searched paths) mapping a 128-bit BLAKE2b content hash to the
+(version, language, query text, searched paths from the root, so a copy of the tree at another
+path finds the same file) mapping a 128-bit BLAKE2b content hash to the
 captures, without paths, so files whose content was seen before are read and hashed but not parsed. A file cut off
 by `--limit` is never stored, so a cached list is always the complete one and the global limit
 gives the same prefix. Files are written to a temporary name and renamed; an unreadable one

@@ -198,6 +198,9 @@ First release.
   line 18446744073709551615.
 
 ### Engine B: code intelligence
+- The `tsquery` cache names its files by the searched paths from the root, where it named them
+  by their absolute paths, so a copy of a tree with its `.scrutate/` answers from the cache the
+  first tree made. Caches made before are not found and are evicted as old.
 - A look for changes walks the tree once and takes one `stat` per file for both indexes, where
   `index` walked twice. `grep_code` and `references`, textual and resolved, read the text index,
   when there is one, for the files it holds as they are now, and read the other files directly,

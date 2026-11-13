@@ -682,7 +682,9 @@ index as of its last commit.
 
 ### `tsquery` cache
 Each file's captures are kept in `--root`/.scrutate/tsquery/, one file per (scrutate version,
-language, query text, searched paths), keyed by a hash of the file's content and its name. The
+language, query text, searched paths from `--root`), keyed by a hash of the file's content and
+its name. No absolute path is part of a name, so a copy of the tree with its `.scrutate/` uses the
+same cache. The
 hash is the one the code index records, so with an index in `--root` a file whose size,
 modification time and change time the index holds as current is not read when its captures are
 cached. A file whose content

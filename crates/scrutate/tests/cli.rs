@@ -2261,6 +2261,43 @@ fn tsquery_takes_the_content_hash_the_code_index_records_for_a_current_file() {
     assert_eq!(r.run(&["tsquery", "python", q, "--no-cache"]).1, "a.py:1:5  @n (identifier)  two\n");
 }
 
+/// A copy of a tree at another place, its `.scrutate/` with it, answers from the cache the first
+/// tree made: the cache's names hold no absolute path.
+#[test]
+fn a_tsquery_cache_made_in_one_tree_answers_in_a_copy_at_another_path() {
+    let a = Repo::new("tscache_copy_a");
+    a.write("a.py", b"def one():\n    return 1\n");
+    a.write("sub/b.py", b"def two():\n    return 2\n");
+    assert_eq!(a.run(&["index", "--no-text"]).0, 0);
+    let q = "(function_definition name: (identifier) @n)";
+    let whole = a.run(&["tsquery", "python", q]).1;
+    assert_eq!(a.run(&["tsquery", "python", q, "sub"]).1, "sub/b.py:1:5  @n (identifier)  two\n");
+    let b = Repo::new("tscache_copy_b");
+    let cp = std::process::Command::new("cp").arg("-R").arg(a.root.join(".")).arg(&b.root).status().unwrap();
+    assert!(cp.success());
+    let caches = |r: &Repo| {
+        let mut v: Vec<(String, Vec<u8>)> = fs::read_dir(r.root.join(".scrutate/tsquery"))
+            .unwrap()
+            .flatten()
+            .map(|e| (e.file_name().to_string_lossy().into_owned(), fs::read(e.path()).unwrap()))
+            .collect();
+        v.sort();
+        v
+    };
+    let made = caches(&a);
+    assert_eq!(made.len(), 2);
+    // the copy's a.py holds other bytes under the stat its index records: only a cache hit answers `one`
+    b.write("a.py", b"def won():\n    return 1\n");
+    let md = fs::metadata(b.root.join("a.py")).unwrap();
+    let ix = scrutate::index::Index::open(&fs::canonicalize(&b.root).unwrap(), scrutate::models::ModelSet::none()).unwrap();
+    let s = scrutate::index::Stat::of(&md);
+    ix.damage_for_tests(&format!("UPDATE files SET size={}, mtime_ns={}, ctime_ns={} WHERE path='a.py'", s.size, s.mtime, s.ctime)).unwrap();
+    drop(ix);
+    assert_eq!(b.run(&["tsquery", "python", q]).1, whole);
+    assert_eq!(b.run(&["tsquery", "python", q, "sub"]).1, "sub/b.py:1:5  @n (identifier)  two\n");
+    assert_eq!(caches(&b), made, "the copy found the first tree's cache files and did not write new ones");
+}
+
 #[test]
 fn tsquery_on_a_single_file() {
     let r = python_repo("tsqfile");
