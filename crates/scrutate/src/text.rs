@@ -133,7 +133,7 @@ fn unspaced(c: char) -> bool {
     matches!(c as u32, 0x0E00..=0x109F | 0x1780..=0x17FF | 0x1950..=0x19DF | 0x1A20..=0x1AAF | 0x1B00..=0x1B7F | 0xA980..=0xA9FF | 0xAA60..=0xAADF | 0x3005..=0x3007 | 0x3040..=0x30FF | 0x31F0..=0x31FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF | 0xFF66..=0xFF9F | 0x20000..=0x323AF)
 }
 
-/// Traditional Han character -> simplified form, from Unihan `kSimplifiedVariant` (tools/gen_han_fold.py).
+/// Traditional Han or Japanese shinjitai -> one key, from Unihan `kSimplifiedVariant` and OpenCC (tools/gen_han_fold.py).
 static HAN_FOLD: LazyLock<HashMap<char, char>> = LazyLock::new(|| {
     let pairs: Vec<char> = include_str!("../data/han_fold.txt").lines().filter(|l| !l.starts_with('#')).flat_map(str::chars).collect();
     pairs.as_chunks::<2>().0.iter().map(|&[t, s]| (t, s)).collect()

@@ -6,7 +6,7 @@ include this file next to LICENSE-APACHE and LICENSE-MIT. The crate set is the o
 `tools/sbom.py` lists (normal and build dependencies of the package, from the locked
 `cargo metadata` graph). A crate that ships no licence file is listed with its declared licence
 expression, so the gap is visible. Data files
-from outside the project (`data_files`, the Unihan-derived Han fold) come first, with their licence.
+from outside the project (`data_files`: Unihan and OpenCC, the sources of the Han fold) come first, with their licence.
 
 usage: third_party_notices.py [--out FILE] [--package scrutate]
 """
@@ -17,6 +17,8 @@ import json
 import os
 import subprocess
 import sys
+
+from gen_han_fold import OPENCC, OPENCC_SHA256, OPENCC_URL
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 NAMES = ("license", "licence", "copying", "notice", "unlicense", "copyright")
@@ -103,9 +105,16 @@ def data_files() -> list[dict]:
     path = os.path.join(HERE, "..", "crates", "scrutate", "data", "han_fold.txt")
     with open(path, encoding="utf-8") as f:
         version = f.readline().split()[2]
-    return [{"name": "unihan-kSimplifiedVariant", "version": version, "license": "Unicode-3.0", "licence_text": UNICODE_V3,
-             "url": "https://www.unicode.org/Public/UCD/latest/ucd/Unihan.zip", "file": "crates/scrutate/data/han_fold.txt",
-             "purpose": "traditional-to-simplified Han fold of ranked search, from the Unihan field kSimplifiedVariant (tools/gen_han_fold.py)"}]
+    fold = "crates/scrutate/data/han_fold.txt"
+    return [{"name": "unihan-kSimplifiedVariant", "version": version, "release": f"Unicode {version}", "license": "Unicode-3.0",
+             "licence_text": UNICODE_V3, "url": "https://www.unicode.org/Public/UCD/latest/ucd/Unihan.zip", "file": fold,
+             "purpose": "traditional-to-simplified Han fold of ranked search, from the Unihan field kSimplifiedVariant (tools/gen_han_fold.py)"},
+            {"name": "opencc-JPShinjitaiCharacters", "version": OPENCC, "release": f"OpenCC {OPENCC}",
+             "license": "Apache-2.0", "sha256": OPENCC_SHA256, "url": OPENCC_URL, "file": fold,
+             "licence_text": f"Copyright the OpenCC authors (https://github.com/BYVoid/OpenCC/blob/{OPENCC}/AUTHORS).\n"
+                             "Licensed under the Apache License, Version 2.0; the full text is at the end of this file.\n"
+                             f"Read as input, unmodified; SHA-256 of the file: {OPENCC_SHA256}.",
+             "purpose": "Japanese shinjitai joined to the Han fold of ranked search, from OpenCC's JPShinjitaiCharacters.txt (tools/gen_han_fold.py)"}]
 
 
 def header_licence(path: str) -> str:
@@ -136,7 +145,7 @@ def main() -> int:
     a = ap.parse_args()
     pkgs = shipped(a.package)
     data = data_files()
-    out = [f"Third-party software in {a.package}: {len(pkgs)} crates and {len(data)} data file(s), with their licence and notice files.",
+    out = [f"Third-party software in {a.package}: {len(pkgs)} crates and {len(data)} data sources, with their licence and notice files.",
            "Scrutate's own code is under MIT OR Apache-2.0, at your option (LICENSE-MIT, LICENSE-APACHE); this file",
            "covers only what it compiles in from others.", ""]
     for d in data:
@@ -173,7 +182,7 @@ def main() -> int:
             out.append(header_licence(src) if os.path.exists(src) else f"({rel} not found; see the {lib} project)")
         out.append("")
     out.append("=" * 78)
-    out.append("Standard licence texts, for the crates above that ship no licence file")
+    out.append("Standard licence texts, for the crates above that ship no licence file, and for OpenCC")
     out.append("-" * 78)
     out.append("MIT License")
     out.append("")
@@ -186,7 +195,7 @@ def main() -> int:
     if a.out:
         with open(a.out, "w") as f:
             f.write(text)
-        print(f"wrote {a.out}: {len(pkgs)} crates, {missing} without a licence file, {len(data)} data file(s)", file=sys.stderr)
+        print(f"wrote {a.out}: {len(pkgs)} crates, {missing} without a licence file, {len(data)} data sources", file=sys.stderr)
     else:
         sys.stdout.write(text)
     return 0

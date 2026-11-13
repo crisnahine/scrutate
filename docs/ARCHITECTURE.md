@@ -306,10 +306,16 @@ form. Another word is normalised to NFC first: runs of a script written without 
 Thai, Lao, Tibetan, Myanmar, Khmer, the Tai scripts, Balinese and Javanese) give overlapping
 character bigrams (a lone character itself), and any other script one lowercased token per word,
 final sigma folded. A Tibetan run ends at the tsheg closing each syllable. Before the bigrams are
-cut, in index and query, every Han character with a simplified form is replaced by it (Unihan
-`kSimplifiedVariant`, the table `crates/scrutate/data/han_fold.txt` both engines read), Japanese
-included; names and stored text keep their own characters. An all-ASCII text gives the tokens it
-gave before Unicode words were added. Names compare through a key that ignores case and `_`, in
+cut, in index and query, every Han character with a simplified form is replaced by it, and a
+Japanese shinjitai by the key of its traditional form, so 関, 關 and 关 give one token; names and
+stored text keep their own characters. The table `crates/scrutate/data/han_fold.txt`, which both
+engines read, comes from `tools/gen_han_fold.py`: Unihan `kSimplifiedVariant`, then OpenCC's
+`JPShinjitaiCharacters.txt` at a pinned release whose SHA-256 the script checks. The script leaves
+out a shinjitai line whose values fold to several keys (連 for 連 or 聯) and a shinjitai that is a
+common Chinese character with another reading (芸, 沪, 予, 欠, 缶, 萌, by the Unihan fields
+`kTGHZ2013` and the Mandarin readings), and checks that folding twice gives what folding once
+does. Through the simplified key, 発 and 髪 meet as 發 and 髮 do in Chinese. An all-ASCII text
+gives the tokens it gave before Unicode words were added. Names compare through a key that ignores case and `_`, in
 NFC with final sigma folded.
 
 ### Storage (`index.rs`, `lex.rs`)

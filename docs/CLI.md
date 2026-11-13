@@ -307,8 +307,9 @@ Ranked search reads words of every script. Scripts written without spaces (Han, 
 Tibetan, Myanmar, Khmer, the Tai scripts, Balinese and Javanese) become overlapping character
 pairs, so `天気` finds `東京の天気`; other scripts give one lowercased token per word. Han
 characters fold to their simplified form for matching, in index and query, so `资料库` finds
-`資料庫` and the reverse, Japanese text included. Names, `symbol`, `grep` and the text shown in
-results keep the characters as written. Only ASCII words are split at case changes and stemmed.
+`資料庫` and the reverse, and Japanese shinjitai fold with them: `関係` finds `關係` and `关系`.
+Names, `symbol`, `grep` and the text shown in results keep the characters as written. Only ASCII
+words are split at case changes and stemmed.
 Names compare in Unicode NFC, so a name typed with a combining accent finds the precomposed
 spelling. A definition name longer than 200 bytes is still a symbol when it holds no whitespace.
 

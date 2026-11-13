@@ -117,8 +117,8 @@ fn unspaced_scripts_are_bigrams_and_spaced_scripts_are_words() {
     assert_eq!(tokenize2("Вычисляет ОБЩУЮ", None).0, vec!["вычисляет", "общую"]);
     // an ASCII part of a mixed word is stemmed like any ASCII word; the rest is not
     assert_eq!(tokenize2("parsing_выручки", None).0, vec!["pars", "выручки"]);
-    // Unihan gives the Japanese 関 a simplified form too (U+2CBA6)
-    assert_eq!(tokenize2("x関数y", None).0, vec!["\u{2CBA6}数"]);
+    // the Japanese 関 folds with its traditional form 關 to the simplified 关
+    assert_eq!(tokenize2("x関数y", None).0, vec!["关数"]);
     assert_eq!(query_terms("合計 合計"), vec!["合计"]);
     // Thai, Lao, Myanmar, Khmer, Javanese: no spaces between words either
     for run in ["ภาษาไทย", "ພາສາລາວ", "မြန်မာစာ", "ភាសាខ្មែរ", "ꦧꦱꦗꦮ"] {
@@ -135,9 +135,10 @@ const HAN_FOLD: &str = include_str!("../data/han_fold.txt");
 #[test]
 fn traditional_and_simplified_han_give_the_same_tokens() {
     // a regenerated table must update these numbers
-    assert_eq!(HAN_FOLD.len(), 46094);
+    assert_eq!(HAN_FOLD.len(), 47496);
     assert!(HAN_FOLD.starts_with("# Unihan 18.0.0 kSimplifiedVariant"));
-    assert_eq!(HAN_FOLD.lines().nth(1).unwrap().chars().count(), 2 * 6776);
+    assert!(HAN_FOLD.lines().next().unwrap().contains("OpenCC ver.1.4.2 JPShinjitaiCharacters.txt"));
+    assert_eq!(HAN_FOLD.lines().nth(1).unwrap().chars().count(), 2 * 6993);
     assert_eq!(tokenize2("資料庫", None), tokenize2("资料库", None));
     assert_eq!(tokenize2("資料庫", None).0, vec!["资料", "料库"]);
     assert_eq!(tokenize2("庫", None).0, vec!["库"]);
@@ -177,6 +178,61 @@ fn a_query_in_either_han_form_finds_text_in_the_other() {
         if !first.ends_with(&format!("] {want}")) {
             missed.push(format!("{q} -> {first:?}"));
         }
+    }
+    assert!(missed.is_empty(), "{missed:#?}");
+}
+
+#[test]
+fn japanese_shinjitai_give_the_tokens_of_traditional_and_simplified_han() {
+    // shinjitai, traditional, simplified
+    for forms in [["関", "關", "关"], ["図", "圖", "图"], ["経", "經", "经"], ["読", "讀", "读"], ["総", "總", "总"], ["発", "發", "发"]] {
+        let tokens: Vec<_> = forms.iter().map(|f| tokenize2(f, None).0).collect();
+        assert!(tokens.iter().all(|t| *t == tokens[0]), "{forms:?} -> {tokens:?}");
+    }
+    // a traditional form with no simplified one, and an old form that meets the shinjitai's Chinese key
+    assert_eq!(tokenize2("乗", None), tokenize2("乘", None));
+    assert_eq!(tokenize2("緖", None).0, vec!["绪"]);
+    // Unihan's own simplified form of 関 still meets it
+    assert_eq!(tokenize2("\u{2CBA6}", None), tokenize2("関", None));
+    assert_eq!(tokenize2("開発", None), tokenize2("开发", None));
+    // other characters, and shinjitai that are other words in Chinese, keep their own tokens
+    for (a, b) in [("関", "閑"), ("関", "開"), ("芸", "藝"), ("沪", "濾"), ("予", "豫"), ("欠", "缺")] {
+        assert_ne!(tokenize2(a, None), tokenize2(b, None), "{a} {b}");
+    }
+}
+
+const SHINJITAI: &str = r#"def relations_cn(user):
+    """更新用户关系表"""
+    return user
+
+
+def relations_tw(user):
+    """更新使用者關係表"""
+    return user
+
+
+def relations_jp(user):
+    """ユーザーの関係を更新する"""
+    return user
+
+
+def parse_config(path):
+    """Read the configuration file."""
+    return path
+"#;
+
+#[test]
+fn a_query_in_shinjitai_traditional_or_simplified_finds_the_other_two() {
+    let r = Repo::new("shinjitai", &[("m.py", SHINJITAI.to_string())]);
+    let mut missed = Vec::new();
+    for q in ["関係", "關係", "关系"] {
+        let out = r.top("search", q);
+        for want in ["relations_cn", "relations_tw", "relations_jp"] {
+            if !out.lines().any(|l| l.ends_with(&format!("] {want}"))) {
+                missed.push(format!("{q} misses {want}"));
+            }
+        }
+        assert!(!out.contains("parse_config"), "{q}: {out}");
     }
     assert!(missed.is_empty(), "{missed:#?}");
 }

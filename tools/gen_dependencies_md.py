@@ -110,7 +110,7 @@ def main() -> int:
     out.append("| Data | Version | Licence | Source | Purpose |")
     out.append("|---|---|---|---|---|")
     for d in data_files():
-        out.append(f"| `{d['file']}` | Unicode {d['version']} | {d['license']} | {d['url']} | {d['purpose']} |")
+        out.append(f"| `{d['file']}` | {d['release']} | {d['license']} | {d['url']} | {d['purpose']} |")
     out.append(f"\n## Transitive graph\n\n{shipped} crates are compiled into the release binary (normal + build dependencies, no dev dependencies); "
                "the SBOM from `tools/sbom.py` (CycloneDX 1.5) lists them with licences and purls. `cargo audit` result: docs/TEST_RESULTS.md.\n")
     out.append("## Policy\n")

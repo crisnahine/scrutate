@@ -182,8 +182,6 @@ docs/RELEASING.md, public (done), tag `v0.1.0`.
   `SCRUTATE_SEMANTIC=none`) and 3.1 to 3.5 s (release build, macOS arm64): each of the 8,000
   chunks keeps its own text (up to 32 KiB), so the index holds 40 MB of compressed chunk text for
   the file, plus their postings.
-- Ranked search joins traditional and simplified Han through the Unihan simplified forms. Japanese
-  関 has its own entry there, the rare 𬮦, so it does not meet Chinese 关 or traditional 關.
 - Windows and Intel macOS are tested on GitHub's runners only ([Install](INSTALL.md) has the
   runners and the five Unix-only tests): no release archive is built for them, installed on a
   machine or benchmarked there.

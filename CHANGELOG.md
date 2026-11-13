@@ -86,6 +86,10 @@ incompatible index by itself, and that is never breaking.
   `CITATION.cff` name the new one.
 - With reduced motion on, the README and document images stop only what travels or grows; before,
   they showed only slow cross-fades.
+- Ranked search folds Japanese shinjitai with traditional and simplified Han, so `関係` finds
+  `關係` and `关系` and the reverse (OpenCC ver.1.4.2 `JPShinjitaiCharacters.txt`, Apache-2.0).
+  The content revision is 3, so an older index reads every file again
+  ([ARCHITECTURE](docs/ARCHITECTURE.md#tokens-textrs)).
 
 ### Fixed
 - The Grep hook reads the `managed-settings.d` drop-ins and lets Grep run wherever managed policy

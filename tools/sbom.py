@@ -69,6 +69,8 @@ def main() -> int:
             "externalReferences": [{"type": "distribution", "url": d["url"]}],
             "pedigree": {"notes": f"derived file, compiled in from {d['file']}"},
         })
+        if d.get("sha256"):
+            comps[-1]["externalReferences"][0]["hashes"] = [{"alg": "SHA-256", "content": d["sha256"]}]
     root = by_id[root_id]
     bom = {
         "bomFormat": "CycloneDX",
