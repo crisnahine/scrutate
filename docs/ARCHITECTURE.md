@@ -37,235 +37,204 @@ Scrutate is one binary with two independent engines and a thin unifying layer.
 <br><sub>Engine A's path for one search. A file's first read picks how it is searched; the bullets below give each path's limits and measurements.</sub>
 </p>
 
-Built on the `grep-searcher`, `grep-regex`, `grep-matcher` and `ignore` crates, the published
-components ripgrep itself is assembled from (their crates.io pages describe them as ripgrep's
-searching, regex, matcher-trait and ignore-aware directory-walking libraries). Scrutate adds the
-capabilities those crates do not provide rather than re-implementing what they already do:
+Built on the `grep-searcher`, `grep-regex`, `grep-matcher` and `ignore` crates, the parts
+ripgrep is built from (searching, regex, matcher trait and ignore-aware walking, per their
+crates.io pages). Scrutate adds what they lack:
 
 - **Matching modes**: regex (Rust `regex`: linear time, no backtracking, size-limited), literal,
   **identifier** (one spelling matches every casing: `refreshToken` ≡ `refresh_token` ≡
   `REFRESH_TOKEN`; digits and acronyms are parts), **fuzzy/approximate** (Myers' bit-parallel
-  edit-distance matcher, counted in characters: one 128-bit word for patterns up to 128, 64-bit
-  blocks with carries up to 4096, with a pigeonhole prefilter so only candidate lines pay for the
-  DP; `-i` folds case as a regex does), multiline, inverted, whole-word, smart case. A
-  case-insensitive literal (`-i`, `-F -i`, `-S`) finds candidate lines without the regex engine:
-  it scans for two bytes of the needle, each in either case form, at a fixed distance inside a
-  stretch whose characters keep one byte length under case folding (`k` and `s` end such a
-  stretch, as KELVIN SIGN and LONG S are longer), checks that stretch, and the regex then
-  confirms each candidate line. The scan is safe slice code over 64-byte blocks that the compiler
-  turns into NEON or SSE2, compiled a second time for AVX2 and chosen at run time on x86_64. On
-  one thread over a 740 MB file that is 63 ms of user time for `pm_resume` where the regex
-  engine took 101, and 48 ms for `KÖNIG` where it took 96.
-- **Traversal**: the `ignore` parallel walker (work-stealing across threads, `.gitignore` /
-  `.ignore` / global excludes, hidden files off by default, symlink loop detection, max depth and
-  size filters, type globs derived from the language registry). The crate is vendored
-  (`vendor/ignore`) with nine changes, all listed in the workspace `Cargo.toml`; four of them
-  shape a walk's speed. The global git excludes path is read from `~/.gitconfig` by
-  a small parser instead of a regex compiled for each run (0.4 ms of a 6 ms search). An idle walker
-  thread first waits 10 µs, doubling up to the original 1 ms, before it looks for work again; with a
-  fixed 1 ms, a walk of a few hundred files spent whole milliseconds asleep (598 files: 12.3 ms to
-  9.3 ms). Gitignore lines of three shapes (`**/` and a name with `*` or `?`, `**/` and a literal
-  path, `/` and a name with `*` or `?`) are matched by a byte loop instead of a `GlobSet` regex,
-  whose build cost 100 to 400 µs per file, more than the whole walk of a small repository; a
-  randomized test checks it against `GlobSet`. Trying each such glob on every path is slow for a
-  file with many of them used on many paths (the Linux tree's root `.gitignore`: over 100 globs,
-  95,000 paths, 7.8% of the search's CPU), so a matcher compiles all its globs into one `GlobSet`
-  once the tries have cost about what the build costs; a small repository never reaches that. And
-  a parallel walk can start more threads while it runs (`grow_threads`); their visitors are built
-  at the start and stay idle until then.
-- **Thread count**: the cores (at most 12), except on macOS, where a walk uses as many threads as
-  performance cores: there, more threads opening and reading files at once wait on each other in
-  the kernel (the Linux tree on an M3 Pro: 977 ms on 11 threads, about 845 ms on 5). The open and
-  read time of small files tells the page cache from the disk (macOS: about 25 µs a file against
-  160 µs or more; Linux: under 15 µs against 30 µs or more). When it is the disk, a walk or a
-  list of files adds a thread for every 16 slow reads, because the disk serves many reads in flight: up to 64
-  threads on Linux (the Linux tree cold on 5 CPUs: 1.22 s on 5 threads, 0.37 s this way),
-  elsewhere up to twice the cores, at most 24 (macOS: 2.7 s on 5 threads, 1.3 s on 22; 48 gained
-  5% there on one tree and lost 4% on another). Threads come one at a time because starting one
-  costs about a slow read, which a small tree never earns back (231 files cold on Linux: 5.8 ms
-  this way, 8.3 ms with a thread per slow read). `-j` overrides all of it.
-- **Searches at the same time (macOS)**: the kernel there serves about four file-reading threads
-  at full speed across all processes, so four searches on five threads each are slower than four
-  on one (py-big: 244 ms against 189 ms). A walk of directories, or a list of more than 256 files
-  (`--sort`, `grep --index`, `grep_code`, references), adds 1 to a System V semaphore
-  kept per user when it starts (`running.rs`), with `SEM_UNDO` so the kernel takes it back
-  however the process dies. Its share is the default thread count divided by the searches
-  running: it starts that many threads, looks at the value again once after its first four
-  files (searches started together each saw fewer of the others than there are) and, past
-  1,000 files, every 64 files; the threads over the share pause between directories (`pause` in
-  the vendored walker) until the share rises again; a list's threads over the share end, and
-  it starts more as the share rises. A paused thread sleeps a thirty-second of
-  the time it has been paused, at most 1 ms: the walk cannot end before it wakes, and a sleep
-  of 1 ms cost a 13 ms search more than a millisecond. Two at once on py-big: 113 ms to 91 ms;
-  four: 244 ms to 185 ms; eight: 482 ms to 413 ms. Four at once on the ripgrep sources, 250
-  files: 14.7 ms to 13.3 ms, where GNU grep takes 14.5 ms and `-j1` 13.1 ms. One alone makes
-  three system calls for it; a search of one directory without subdirectories makes none, nor
-  does a list of 256 files or fewer. A process leaves the count while a write to a pipe or a
-  terminal may block and while it is stopped from its terminal: the SIGTSTP handler, installed
-  only while a search is counted and only when nothing else handles the signal, takes the process
-  out, stops it with the default action, and puts it back when it continues. On Linux the cores
-  are the limit and splitting them never won (py-big on 5 CPUs, four at once: 53 ms on 5 threads
-  each, 60 ms on 1), so nothing is counted there.
-- **One scheduler, one set of thread rules** (`instant::schedule`, `policy.rs`): every walk,
-  every list of files and standard input go through one scheduler, which builds each thread's
-  `Run`, starts the threads, and asks the thread rules how many to start, when to add one and
-  what share of the machine the search gets. The rules are decisions over readings: the cores,
-  the performance cores, the count of searches running, how many small reads were slow, and a
-  table of the numbers measured on each system (macOS, Linux; Windows and other systems take the
-  macOS read time and cold threads, measured nowhere, and count nothing). The operating system
-  gives the readings once per search and once per look at the count, never per file; a test gives
-  its own, so the share and the cold-disk rule are tested without the hardware.
+  edit distance in characters: one 128-bit word up to 128, 64-bit blocks with carries up to 4096,
+  a pigeonhole prefilter so only candidate lines pay for the DP; `-i` folds case as a regex does),
+  multiline, inverted, whole-word, smart case. A case-insensitive literal (`-i`, `-F -i`, `-S`)
+  skips the regex engine to find candidates: it scans for two needle bytes, each in either case,
+  at a fixed distance inside a stretch whose characters keep their byte length under case folding
+  (`k` and `s` end a stretch: KELVIN SIGN and LONG S are longer), checks the stretch, and the
+  regex confirms each candidate line. The scan is safe slice code over 64-byte blocks that
+  compiles to NEON or SSE2, plus an AVX2 copy picked at run time on x86_64. One thread, a 740 MB
+  file: 63 ms of user time for `pm_resume` (regex engine 101), 48 ms for `KÖNIG` (regex 96).
+- **Traversal**: the `ignore` parallel walker (work stealing, `.gitignore` / `.ignore` / global
+  excludes, hidden files off, symlink loop detection, depth and size filters, type globs from the
+  language registry), vendored (`vendor/ignore`) with nine changes listed in the workspace
+  `Cargo.toml`. Four shape speed. The global git excludes path comes from `~/.gitconfig` through
+  a small parser, not a regex per run (0.4 ms of a 6 ms search). An idle thread waits 10 µs,
+  doubling up to the original 1 ms, before looking for work; a fixed 1 ms slept whole
+  milliseconds of a small walk (598 files: 12.3 ms to 9.3 ms). Gitignore lines of three shapes
+  (`**/` and a name with `*` or `?`, `**/` and a literal path, `/` and a name with `*` or `?`)
+  match by a byte loop, not a `GlobSet` regex whose build cost 100 to 400 µs per file, more than
+  a small repository's whole walk (a randomized test checks it against `GlobSet`). Many such
+  globs on many paths are slow (the Linux tree's root `.gitignore`: over 100 globs, 95,000 paths,
+  7.8% of the CPU), so a matcher builds one `GlobSet` once its tries cost about the build, which
+  a small repository never reaches. And a parallel walk can add threads as it runs
+  (`grow_threads`), their visitors built at the start.
+- **Thread count**: the cores (at most 12); on macOS the performance cores, since more threads
+  opening files at once wait on each other in the kernel (the Linux tree on an M3 Pro: 977 ms on
+  11 threads, about 845 ms on 5). Small-file read time tells page cache from disk (macOS: about
+  25 µs against 160 µs or more; Linux: under 15 µs against 30 µs or more). From disk, a walk or a
+  file list adds a thread per 16 slow reads, as the disk serves reads in flight: up to 64 threads
+  on Linux (the Linux tree cold on 5 CPUs: 1.22 s on 5 threads, 0.37 s this way), elsewhere twice
+  the cores, at most 24 (macOS: 2.7 s on 5 threads, 1.3 s on 22; 48 gained 5% on one tree, lost
+  4% on another). One at a time, because a thread costs about a slow read, which a small tree
+  never earns back (231 files cold on Linux: 5.8 ms, 8.3 ms with a thread per slow read). `-j`
+  overrides all of it.
+- **Searches at the same time (macOS)**: the kernel serves about four file-reading threads at full
+  speed across all processes, so four searches on five threads each lose to four on one (py-big:
+  244 ms against 189 ms). A walk of directories, or a list of more than 256 files (`--sort`,
+  `grep --index`, `grep_code`, references), adds 1 to a per-user System V semaphore at start
+  (`running.rs`), with `SEM_UNDO` so the kernel takes it back however the process dies. Its share
+  is the default thread count over the searches running. It reads the count after its first four
+  files (searches started together undercount each other) and, past 1,000 files, every 64 files.
+  Walk threads over the share pause between directories (`pause` in the vendored walker) until
+  it rises; a list's extra threads end, and it starts more as the share rises. A paused thread
+  sleeps a thirty-second of its paused time, at most 1 ms: the walk cannot end before it wakes,
+  and a 1 ms sleep cost a 13 ms search over a millisecond. On py-big two at once: 113 ms to 91 ms;
+  four: 244 ms to 185 ms; eight: 482 ms to 413 ms. Four at once on the ripgrep sources, 250 files:
+  14.7 ms to 13.3 ms (GNU grep 14.5 ms, `-j1` 13.1 ms). A lone search makes three system calls
+  for this; one directory without subdirectories makes none, nor does a list of 256 files or
+  fewer. A process leaves the count while a pipe or terminal write may block and while stopped
+  from its terminal: the SIGTSTP handler (installed only while counted and only if nothing else
+  handles the signal) takes it out, stops it with the default action, and puts it back on
+  continue. On Linux the cores are the limit and splitting never won (py-big on 5 CPUs, four at
+  once: 53 ms on 5 threads each, 60 ms on 1), so nothing is counted.
+- **One scheduler, one set of thread rules** (`instant::schedule`, `policy.rs`): every walk, file
+  list and standard input goes through one scheduler, which builds each thread's `Run`, starts the
+  threads, and asks the rules how many to start, when to add one and the search's share. The
+  rules decide over readings: cores, performance cores, searches running, slow small reads, and
+  a table of numbers measured per system (macOS, Linux; Windows and others take the macOS read
+  time and cold threads, measured nowhere, and count nothing). Readings come once per search and
+  per look at the count, never per file; a test supplies its own, so the share and the cold-disk
+  rule are tested without the hardware.
 - **One large file, every core**: a file of 64 MB or more is cut into ranges of whole lines (8 MB
-  each). A first pass counts each range's newlines for the line numbers and stops at a NUL byte,
-  which sends the file back to the single pass so binary handling is unchanged. The second pass
-  searches one window of ranges per thread at a time and writes the windows' output in file order,
-  so the output held in memory stays bounded. Context lines, `--max-count`, `--max-results`, `-l`,
-  multiline and a byte-order mark keep the single pass. A file with no line break before its
-  last byte goes into one buffer of its exact size and is searched there: the threads fill it in
-  1 MiB pieces in file order, and the first line break or NUL byte sends the file to the stream,
-  so lines too long for the probes to see (100 MB of 4 MB lines) hold 15 to 18 MB where they
-  held the whole file. The time is the kernel copying pages, which spreads as far as opening files does (100 MB
-  on an M3 Pro: 12.6 ms on one thread, 4.0 ms on the five performance cores, 6.7 ms on all
-  eleven).
-  A plain `-F` literal, when only plain output or a count is wanted, does not read such a file
-  whole: a first pass reads it in 256 KiB pieces, a buffer per thread on up to 8 threads, to find
-  the literal and to make sure the file holds no NUL byte and no inner line break, and a
-  matching line is read from the file again as it is written. On a 100 MB line that is 3 to
-  5 MB of peak memory where the buffer held 103 MB, and less CPU time: a read into a small
-  buffer that stays in the cache costs 7 ms of system time for 100 MB where fresh memory costs
-  12 ms on one thread and more on several, which fault on it at once.
-  On one thread a file is never split, but one with no line break at its probe points is still
-  read into a buffer of its size: the stream reader grows its buffer to 3^k times 64 KiB, which
-  held 141 MB for one 100 MB line where the exact buffer holds 103 MB. The newline count of a
-  split file reads 256 KiB at a time per thread (1 MiB each held 14.3 MB on a 740 MB file,
-  6.1 MB now).
-- **Memory of a walk**: a search thread keeps its output buffer from one file to the next, a
-  queued walk entry is 96 bytes where it was 144 (its rare ignore error is boxed), and a walk on
-  one thread queues its entries in a plain vector (LLVM with `-j1`: 9.4 to 8.3 MB of peak
-  memory). What `-j1` still holds over GNU grep on a large tree, 1 to 3 MB, is mostly memory the
-  system allocator has freed and not given back (its per-CPU magazines, as the walk thread moves
-  between cores), the ignore matchers, and whole directories read at once. Output that is not
-  plain (colour, `--json`, a caller's iterator) goes through a queue of at most 64 batches: a
-  search thread that fills it waits for the thread that formats, so the hits held do not grow
-  with the matches. A file searched in ranges keeps a window of ranges at a time, as before.
-- **Roots without directories**: when no root holds a directory the walk would enter, a sequential
-  walk with the same rules runs first on the calling thread, and three threads search the files
-  as it finds them; when those files turn out to come from the disk, it adds threads. The first
-  file waits for a second before any thread starts, so a tree of one file is searched with no
-  thread at all (four threads cost about 1 M instructions, a third of a one-file search past
-  process start). Past 256 files the walk stops, and the parallel walk takes over, skipping the
-  files already searched. For three large files this beats
-  the parallel walk (40.6 ms against 41.9). Any directory to enter sends the search straight to the
-  parallel walk: one thread reading every directory held up the searches (the ripgrep repository,
-  60 directories: 5.6 ms in parallel against 6.0).
-- **Start-up** (`lazy_bind.rs`, `cli.rs`): a search of a few hundred files is mostly process
-  start. Two costs were ours. dyld binds every imported symbol before `main`, about 3.3 µs each for
-  symbols that come through libSystem (a C program importing 121 more of them starts 0.4 ms
-  later); the executable imported 210, and a search calls about 75. On macOS arm64 the other 133
-  are defined in the executable as private stubs that look the function up with `dlsym` on the
-  first call and jump to it, keeping every argument register and the stack; `fork` binds all of
-  them first, so a child never does a lookup. And clap builds every subcommand's argument
-  definitions before parsing, so `scrutate grep` uses a definition of that subcommand alone.
-  Start-up went from 2.4 ms to 1.9 ms (a Rust hello-world: 1.5 ms). Counted in instructions, a
-  search of a one-file directory then cost 21.1 M against GNU grep's 20.8 M in the C locale (a
-  Rust hello-world: 14.8 M), and on macOS each `open` or `getcwd` is 150 to 200 thousand of them.
-  So the global git excludes file is read the first time a walk meets a repository (reading git's
-  configuration and compiling the file cost 0.5 M in every walk outside one), the walk takes the
-  current directory the command line already has for `.`, a search without the index does not
-  resolve the repository root, and a tree of one file starts no thread: 19.2 M. Then the pages:
-  that search took 459 page reclaims against 307 for GNU grep and 291 for a Rust hello-world,
-  most of them pages of the executable's own code. `scrutate grep` reads arguments of the plain
-  shapes by hand and gives anything else to clap (a property test holds the two to the same
-  answer; a configuration file, or a variable clap reads for grep, also sends them to clap),
-  `-F` with one literal is a substring search that builds no regex engine, 14 more
-  system functions bind on first use, and on macOS the linker drops the unused libiconv and
-  puts the functions a small search runs side by side from `crates/scrutate/startup.order`
-  (`tools/order_file.py` runs the release links under lldb with a breakpoint on every function
-  of the link map, so the standard library's functions are listed too, and checks how many of
-  the names a release link still has; a name the link no longer has is passed over). With
-  ThinLTO, ld64 passes over most of those functions: the `.llvm.N` ones it promoted and the
-  local ones several objects hold. So the release profile links one object (fat LTO, one
-  codegen unit). A search of a one-file directory touches 36 pages of the executable's
-  `__TEXT` where it touched 75: 17 M instructions, 328 page reclaims and 2.6 MB of peak memory
-  where it was 19.3 M, 459 and 4.8 MB (GNU grep: 308 and 2.05 MB), and the CPU time of GNU
-  grep. A release build takes 3 to 5 minutes from scratch where it took under 2. The order
-  file is for macOS on Apple silicon; the other targets link as before. Measured and left
-  alone: the
-  binary's 37,000 pointer fix-ups (applied lazily by the kernel, no cost), its code-signature page
-  size (no difference), and its 85 MB size (0.05 to 0.2 ms).
-- **What bounds a search on macOS**: opening a file. On APFS `open` costs 8 to 11 µs for a file
-  that was opened recently and about 19 µs when the tree is large enough that the kernel's data for
-  it left the CPU caches; `close` costs 0.5 µs, a read of the whole file 1.3 µs, `stat` 1 to 2 µs.
-  Opens scale to the performance cores and no further (the Linux tree, open and read only: 1.95 s
-  on one thread, 0.56 s on five, 0.71 s on six, 0.95 s on eleven; the same for processes as for
-  threads), which is why the default thread count is the performance cores. A search of that tree
-  takes 0.66 s, so about 0.1 s of it is ours.
+  each). Pass one counts each range's newlines, reading 256 KiB at a time per thread (1 MiB held
+  14.3 MB on a 740 MB file, 6.1 MB now), and stops at a NUL byte, which sends the file back to the
+  single pass so binary handling is unchanged. Pass two searches a window of ranges per thread
+  and writes output in file order, so memory stays bounded. Context lines, `--max-count`,
+  `--max-results`, `-l`, multiline and a byte-order mark keep the single pass.
+- **Files without line breaks**: a large file with no line break before its last byte goes into
+  one buffer of its exact size, checked for NUL bytes as read, and is searched as a slice.
+  Threads fill it in 1 MiB pieces in order; the first line break or NUL byte sends the file to
+  the stream, so lines too long for the probes (100 MB of 4 MB lines) hold 15 to 18 MB, not the
+  whole file. The cost is the kernel copying pages, which spreads like opens do (100 MB on an M3
+  Pro: 12.6 ms on one thread, 4.0 ms on the five performance cores, 6.7 ms on all eleven). A
+  plain `-F` literal wanting plain output or a count reads such a file in 256 KiB pieces instead,
+  a buffer per thread on up to 8 threads, to find the literal and rule out NUL bytes and inner
+  line breaks, then reads each matching line again to write it. On a 100 MB line: 3 to 5 MB of
+  peak memory where the buffer held 103 MB, and less CPU (a cached small buffer costs 7 ms of
+  system time per 100 MB, fresh memory 12 ms on one thread and more on several, which fault at
+  once). One thread never splits a file, but one with no line break at its probe points still
+  gets an exact buffer: the stream reader grows to 3^k times 64 KiB, 141 MB for one 100 MB line
+  against 103 MB.
+- **Memory of a walk**: a thread keeps its output buffer across files, a queued walk entry is
+  96 bytes, down from 144 (its rare ignore error is boxed), and a one-thread walk queues entries
+  in a plain vector (LLVM with `-j1`: 9.4 to 8.3 MB peak). What `-j1` still holds over GNU grep on
+  a large tree, 1 to 3 MB, is mostly memory the allocator freed and kept (per-CPU magazines, as
+  the walk thread moves between cores), the ignore matchers, and directories read whole. Output
+  that is not plain (colour, `--json`, a caller's iterator) goes through a queue of at most 64
+  batches; a thread that fills it waits for the formatter, so held hits do not grow with matches.
+- **Roots without directories**: when no root holds a directory to enter, a sequential walk with
+  the same rules runs on the calling thread and three threads search what it finds, more when the
+  files come from disk. No thread starts before a second file, so a one-file tree needs no thread
+  (four threads cost about 1 M instructions, a third of a one-file search past process start).
+  Past 256 files the parallel walk takes over, skipping files already searched. Three large
+  files: 40.6 ms against 41.9 for the parallel walk. Any directory to enter goes straight to the
+  parallel walk, since one thread reading every directory held searches up (the ripgrep
+  repository, 60 directories: 5.6 ms in parallel against 6.0).
+- **Start-up** (`lazy_bind.rs`, `cli.rs`): process start dominates a search of a few hundred
+  files. Two costs were ours. dyld binds every imported symbol before `main`, about 3.3 µs each
+  for libSystem symbols (a C program importing 121 more starts 0.4 ms later); the executable
+  imported 210 and a search calls about 75. On macOS arm64 the other 133 are private stubs that
+  look the function up with `dlsym` on first call and jump to it, keeping every argument register
+  and the stack; `fork` binds them all first, so a child never looks one up. And clap builds every
+  subcommand's definitions before parsing, so `scrutate grep` uses only its own. Start-up: 2.4 ms
+  to 1.9 ms (a Rust hello-world: 1.5 ms).
+
+  In instructions a one-file directory search then cost 21.1 M against GNU grep's 20.8 M in the C
+  locale (hello-world 14.8 M), and on macOS each `open` or `getcwd` costs 150 to 200 thousand. So
+  the global git excludes file is read when a walk first meets a repository (git's configuration
+  and that file cost 0.5 M in every walk outside one), the walk reuses the command line's current
+  directory for `.`, a search without the index skips resolving the repository root, and a
+  one-file tree starts no thread: 19.2 M.
+
+  Then pages: that search took 459 page reclaims against 307 for GNU grep and 291 for
+  hello-world, mostly the executable's own code. `scrutate grep` parses plain argument shapes by
+  hand and hands the rest to clap (a property test holds both to one answer; a configuration
+  file, or a variable clap reads for grep, also goes to clap), `-F` with one literal is a
+  substring search with no regex engine, 14 more system functions bind on first use, and on macOS
+  the linker drops the unused libiconv and lays out side by side the functions a small search
+  runs, from `crates/scrutate/startup.order`. `tools/order_file.py` writes it: it runs the release
+  links under lldb with a breakpoint on every function of the link map (standard library ones
+  included) and checks how many names a release link still has; a missing name is skipped. With
+  ThinLTO, ld64 skips most of them (the `.llvm.N` ones it promoted, local ones several objects
+  hold), so the release profile links one object (fat LTO, one codegen unit). A one-file
+  directory search now touches 36 pages of `__TEXT`, not 75: 17 M instructions, 328 page
+  reclaims, 2.6 MB peak memory, where it was 19.3 M, 459 and 4.8 MB (GNU grep: 308 and 2.05 MB),
+  and GNU grep's CPU time. A release build takes 3 to 5 minutes from scratch, up from under 2.
+  The order file is for macOS on Apple silicon; other targets link as before. Measured and left
+  alone: 37,000 pointer fix-ups (applied lazily by the kernel, no cost), the code-signature page
+  size (no difference), the 85 MB binary size (0.05 to 0.2 ms).
+- **What bounds a search on macOS**: opening files. On APFS `open` costs 8 to 11 µs for a file
+  opened recently, about 19 µs once a large tree's kernel data has left the CPU caches; `close`
+  0.5 µs, a whole-file read 1.3 µs, `stat` 1 to 2 µs. Opens scale to the performance cores and
+  no further (the Linux tree, open and read only: 1.95 s on one thread, 0.56 s on five, 0.71 s on
+  six, 0.95 s on eleven; processes behave the same), hence the default thread count. A search of
+  that tree takes 0.66 s, so about 0.1 s is ours.
 - **Reading a file**: the first read asks for 64 KB and one byte. A short read is the whole file,
-  searched in the thread's buffer with no call for its size (a `statx` per file otherwise: 96,000
-  on the Linux tree). A larger file goes to the stream reader, up to 1 MB with a searcher made
-  for that file, so the thread's own searcher keeps its buffer size (where a NUL byte after the
-  first fill stops the output depends on that size). Reading such files whole had every thread
-  keep a buffer as large as the largest one it met: 12.6 MB peak resident memory on py-big with
-  five threads against 8.2 MB streamed (ripgrep: 8.5 MB), for 0.2% to 1.5% fewer instructions on
-  macOS and 1% to 3% less CPU time on the Linux tree in a Linux VM. A NUL byte or a byte-order
-  mark in the first read sends the file to the stream reader too, whose binary and encoding
-  handling is unchanged. Files of the kernel's pseudo filesystems give their size as 0 and answer a first
-  read short (4 KB of the 7.3 MB `/proc/kallsyms`), so on Linux one `statfs` per root, and per
-  directory named `proc` or `sys` the walk meets, finds procfs, sysfs, debugfs, tracefs,
-  securityfs, configfs and cgroup, and their files are read until the kernel has no more. On Linux, where opening a file is cheap, this and the matcher change above took the
-  Linux-tree search from 144 ms to 120 ms in the test VM (ripgrep: 135 ms), with 316,000 system
-  calls against ripgrep's 526,000.
-- **One way in**: `instant::search` takes a `Query` (the `Pattern`, invert, the report: lines,
-  counts or files, context, limits, the shape of records), a `Files` (the roots of a walk with its
-  rules, a list of files under a root, or text held in memory with a name for each, and the
-  threads) and the caller's cancel flag, which it
-  reads and never sets. Results leave as `Record`s, each of one kind (match, context, count, file,
-  note), or as plain lines the search threads write (`Output::Plain`), which makes no record. A
-  record is 104 bytes, the size one result had when a flag and a sentinel line number told its kind.
-- **One run, one translation**: every file search of a run shares a `Run` (matcher, query, file set,
-  counters, stop flag, output target). The pattern is translated once (`Pattern::translate`:
-  the form its mode means, and whether case is folded), and both the matcher and the text index's
-  trigram condition are built from that, so a file the index lets through is judged by the same
-  pattern. Smart case counts only letters that stand for themselves (`\S` is not uppercase), as
-  ripgrep does.
-- **Byte sources** (`source.rs`): one module holds every rule of how a source is read: the first
-  read, the byte-order mark, the NUL byte, the size thresholds, the split of a large file, the
-  long line and the searcher's setup, each written once. A source gives its size when it knows
-  it, positioned reads when it has them, and one sequential read. A file on disk gives all
-  three; standard input and an archive member give only the read (a member also asks for the
-  line limit, and the members of one archive share a searcher); text held in memory gives all
-  three without a system call. The rules are generic over the source, so the file path is
-  compiled for files alone, as it was. A test searches the same bytes as a file and as text in
-  memory, over every threshold and option shape, and gets the same records and output.
-- **Files without line breaks**: a large file whose ranges cannot be cut at a newline is read once
-  into a buffer of its exact size (checked for NUL bytes as it is read, so binary handling is
-  unchanged) and searched as a slice; the stream reader would grow its buffer by doubling.
-- **Line anchors**: the regex is always built in multi-line mode, so `^` and `$` mean line start and
-  end and the searcher can scan a whole buffer at once; without it, patterns using them were run
-  one line at a time.
-- **Line-start literals**: when every match of a regex starts a line and begins with one of at most
-  64 literals (`^(a|aa)+$`, `^#include`), the candidate lines are the line starts followed by one
-  of them, and each is decided by a search anchored there. A match that would cross a line break
-  is passed to grep-regex's matcher, which cannot match one.
-- **Suffix literals**: when a regex has no literal prefix but every match ends in one of at most 64
-  literals of 3 bytes or more (`\w+_(suspend|resume)\(`), candidate lines are found with an
-  Aho-Corasick search for those literals and the regex runs only on those lines. Without it the
-  regex engine scanned every byte for such patterns (ripgrep, built from the same crates, shows the
-  same cost).
+  searched in the thread's buffer with no size call (else a `statx` per file: 96,000 on the Linux
+  tree). A larger file goes to the stream reader, up to 1 MB with a searcher made for it, so the
+  thread's own searcher keeps its buffer size (which decides where a NUL byte after the first
+  fill stops output). Reading those whole made every thread keep a buffer as large as the largest
+  it met: 12.6 MB peak resident on py-big with five threads against 8.2 MB streamed (ripgrep:
+  8.5 MB), for 0.2% to 1.5% fewer instructions on macOS and 1% to 3% less CPU on the Linux tree in
+  a Linux VM. A NUL byte or byte-order mark in the first read also goes to the stream reader,
+  whose binary and encoding handling is unchanged. Pseudo filesystem files report size 0 and
+  answer a first read short (4 KB of the 7.3 MB `/proc/kallsyms`), so on Linux one `statfs` per
+  root, and per `proc` or `sys` directory the walk meets, finds procfs, sysfs, debugfs, tracefs,
+  securityfs, configfs and cgroup, whose files are read until the kernel has no more. On Linux,
+  where opens are cheap, this and the matcher change took the Linux-tree search from 144 ms to
+  120 ms in the test VM (ripgrep: 135 ms), with 316,000 system calls against ripgrep's 526,000.
+- **One way in**: `instant::search` takes a `Query` (the `Pattern`, invert, report: lines, counts
+  or files, context, limits, record shape), a `Files` (a walk's roots and rules, a file list under
+  a root, or named texts in memory, plus threads) and the caller's cancel flag, which it reads and
+  never sets. Results leave as `Record`s of one kind (match, context, count, file, note), or as
+  plain lines the threads write (`Output::Plain`) with no record. A record is 104 bytes, the size
+  of one result back when a flag and a sentinel line number told its kind.
+- **One run, one translation**: every file search of a run shares a `Run` (matcher, query, file
+  set, counters, stop flag, output target). The pattern is translated once (`Pattern::translate`:
+  the form its mode means, and whether case folds); the matcher and the text index's trigram
+  condition both come from it, so a file the index lets through meets the same pattern. Smart
+  case counts only letters that stand for themselves (`\S` is not uppercase), as in ripgrep.
+- **Byte sources** (`source.rs`): every rule of reading a source, written once: first read,
+  byte-order mark, NUL byte, size thresholds, large-file split, long lines, searcher setup. A
+  source gives its size if known, positioned reads if it has them, and one sequential read. A
+  disk file gives all three; standard input and archive members only the read (a member also
+  asks for the line limit, and one archive's members share a searcher); text in memory all three
+  with no system call. The rules are generic over the source, so the file path still compiles for
+  files alone. A test searches the same bytes as a file and as memory text over every threshold
+  and option shape and gets the same records and output.
+- **Line anchors**: the regex is always multi-line, so `^` and `$` mean line start and end and the
+  searcher scans whole buffers; without it such patterns ran a line at a time.
+- **Line-start literals**: when every match starts a line with one of at most 64 literals
+  (`^(a|aa)+$`, `^#include`), candidates are line starts followed by one, each decided by an
+  anchored search. A match that would cross a line break goes to grep-regex's matcher, which
+  cannot match one.
+- **Suffix literals**: when a regex has no literal prefix but every match ends in one of at most
+  64 literals of 3 bytes or more (`\w+_(suspend|resume)\(`), Aho-Corasick finds candidate lines
+  and the regex runs only there. Before, the regex engine scanned every byte (as ripgrep, built
+  from the same crates, still does).
 - **Streaming**: matches are batched per file and sent over a channel to the caller's sink while
-  other threads keep searching; a stop flag ends the walk between files (Ctrl-C → exit 130,
-  `--max-results`, broken pipe): the caller's cancel flag, or the search's own. Plain piped output skips the channel: each thread formats a
-  file's lines and hands them to one shared sink (`PlainSink`). Output that follows other output
-  within a millisecond waits there in a 64 KB buffer, so the lines of many files leave in one
-  write; a write per matching file wakes the reader of a pipe every time (88,000 writes for
-  `return` in the Linux tree; on Linux 302 ms to 190 ms). Output after a quiet spell leaves at
-  once, and threads let held output go between files, so nothing waits longer than a millisecond
-  or the longest file being searched.
+  other threads search. A stop flag (the caller's cancel flag or the search's own) ends the walk
+  between files (Ctrl-C → exit 130, `--max-results`, broken pipe). Plain piped output skips the
+  channel: each thread formats a file's lines into one shared sink (`PlainSink`). Output within a
+  millisecond of other output waits there in a 64 KB buffer, so many files leave in one write; a
+  write per matching file wakes a pipe's reader each time (88,000 writes for `return` in the
+  Linux tree; on Linux 302 ms to 190 ms). Output after a quiet spell leaves at once and threads
+  release held output between files, so nothing waits longer than a millisecond or the longest
+  file being searched.
 - **Output**: path:line:text, `-c`, `-l`, context, colour, deterministic `--sort`, and JSONL
   (`--json`, schema version 1: `match`, `context`, `count`, `file`, `binary`, `summary`,
-  `symbol_group`).
-- **No dependency on Engine B**: `grep` never opens the index. `grep --symbols` is the one
-  opt-in bridge (group matches by the enclosing function using the index if one exists).
+  `symbol_group`). Flags: [CLI reference](CLI.md#engine-a-grep-alias-g).
+- **No dependency on Engine B**: `grep` never opens the index. `grep --symbols` is the one opt-in
+  bridge (it groups matches by enclosing function, using the index if one exists).
 
 ## Engine B: code intelligence (`index.rs`, `lex.rs`, `parse.rs`, `langs.rs`, `search.rs`, `intel.rs`)
 
