@@ -116,6 +116,8 @@ fn tool_table() -> Value {
              "depth": {"type": "integer", "default": crate::impact::DEPTH, "description": "steps of callers to follow (at most 10)"}}}},
         {"name": "find_files", "description": "Find a file by part of its name or path, misspelt or with letters left out (`srch.rs` finds search.rs): an exact basename first, then basename matches, then path matches; among equals the files read lately through read_code first. A query that is exactly one path counts as choosing that file. Needs no index.",
          "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "default": crate::finder::LIMIT}}, "required": ["query"]}},
+        {"name": "dead_code", "description": "Functions, methods, classes and types nothing in the repository uses: no line outside one names it. Entry points (main, tests, exports, public items of a library, decorated or attribute-registered ones) are left out. Ones whose name some line holds that the resolver ties to nothing (a string, a comment, a use it cannot place) are listed as undecided, with why. `path` keeps the definitions under one directory or file.",
+         "inputSchema": {"type": "object", "properties": {"path": {"type": ["string", "null"], "default": null, "description": "a directory or file of the repository"}}}},
         {"name": "reindex", "description": "Re-scan for changed files (searches already do this automatically). `force` reads every file again, also one whose size, modification time and change time did not change.",
          "inputSchema": {"type": "object", "properties": {"force": {"type": "boolean", "default": false}}}}
     ])

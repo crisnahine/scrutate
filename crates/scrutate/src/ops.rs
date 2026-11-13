@@ -130,6 +130,10 @@ pub enum Op {
         to: String,
         depth: usize,
     },
+    /// Definitions nothing in the repository uses, those under `path` (a directory or file) alone.
+    Dead {
+        path: Option<String>,
+    },
     /// `force`: read every file again, also one whose size, modification and change times are unchanged.
     Reindex {
         force: bool,
@@ -236,6 +240,7 @@ impl Op {
             "structural_search" => Op::Tsquery { lang: text("lang")?, query: text("query")?, limit: count("limit", TSQUERY_LIMIT as u64, 5000)? as usize },
             "repo_map" => Op::Map { path: opt_text("path")? },
             "call_path" => Op::Path { from: text("from")?, to: text("to")?, depth: count("depth", PATH_DEPTH as u64, 100)? as usize },
+            "dead_code" => Op::Dead { path: opt_text("path")? },
             "reindex" => Op::Reindex { force: flag("force")? },
             "impact" => Op::Impact {
                 base: opt_text("base")?,
@@ -431,6 +436,11 @@ pub fn output_schema(tool: &str) -> Value {
                 &["from", "to", "found", "depth", "stopped", "steps"],
             )
         }
+        "dead_code" => {
+            let mut why = span("qualname");
+            why["properties"]["reason"] = ty("string");
+            obj(json!({"dead": list(span("qualname")), "undecided": list(why)}), &["dead", "undecided"])
+        }
         _ => {
             obj(json!({"files_changed": ty("integer"), "files_removed": ty("integer"), "chunks": ty("integer")}), &["files_changed", "files_removed", "chunks"])
         }
@@ -539,6 +549,7 @@ pub enum Answer {
     Captures(Vec<Capture>, Option<Stop>),
     Map(Vec<crate::repomap::MapFile>),
     Path(Box<crate::names::CallPath>),
+    Dead(crate::dead::Dead),
     Reindexed(UpdateStats),
     Impact(crate::impact::Impact),
     Files(Vec<crate::finder::FileHit>, Option<Stop>),
@@ -671,6 +682,15 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
         }
         Op::Map { path } => Answer::Map(crate::repomap::map(s, path.as_deref().map(|p| repo_path(s, p)).as_deref())?),
         Op::Path { from, to, depth } => Answer::Path(Box::new(Names::new(s)?.path(from, to, *depth)?)),
+        Op::Dead { path } => {
+            let path = path.as_deref().map(|p| repo_path(s, p)).filter(|p| !p.is_empty() && p != ".");
+            if let Some(p) = &path {
+                if !inside(&s.ix.root, p) || !s.ix.root.join(p).exists() {
+                    bail!("no such file or directory in the repository: {}", echo(p));
+                }
+            }
+            Answer::Dead(Names::new(s)?.dead(path.as_deref())?)
+        }
         Op::Reindex { .. } => bail!("reindex keeps every store current: run it through Repo"),
         Op::Impact { base, staged, depth } => Answer::Impact(crate::impact::impact(s, base.as_deref(), *staged, *depth)?),
         Op::Files { query, limit } => files(&s.ix.root, query, *limit)?,
@@ -932,6 +952,14 @@ fn symbol_name(c: &ChunkRow) -> &str {
     }
 }
 
+fn dead_name(s: &crate::index::Symbol) -> &str {
+    if s.qualname.is_empty() {
+        &s.name
+    } else {
+        &s.qualname
+    }
+}
+
 fn chunk_json(c: &ChunkRow) -> Value {
     json!({"id": format!("{}:{}-{}", c.path, c.start, c.end), "path": c.path, "start": c.start, "end": c.end, "kind": c.kind, "qualname": c.qualname})
 }
@@ -1049,6 +1077,7 @@ impl Answer {
             Answer::Impact(i) => i.cited(),
             Answer::Map(files) => files.iter().map(|f| f.path.as_str()).collect(),
             Answer::Path(p) => [&p.from, &p.to].into_iter().chain(p.steps.iter().map(|s| &s.to)).map(|h| h.path.as_str()).collect(),
+            Answer::Dead(d) => d.dead.iter().chain(d.undecided.iter().map(|u| &u.0)).map(|s| s.path.as_str()).collect(),
             Answer::Read { .. } | Answer::Captures(..) | Answer::Reindexed(_) | Answer::Files(..) => Vec::new(),
         }
     }
@@ -1074,6 +1103,7 @@ impl Answer {
             Answer::Captures(v, _) => v.is_empty(),
             Answer::Map(files) => files.is_empty(),
             Answer::Path(p) => !p.found,
+            Answer::Dead(d) => d.dead.is_empty() && d.undecided.is_empty(),
             Answer::Reindexed(_) => false,
             Answer::Impact(i) => i.is_empty(),
             Answer::Files(v, _) => v.is_empty(),
@@ -1282,6 +1312,16 @@ impl Answer {
                 noun: "steps",
                 ..Parts::default()
             },
+            Answer::Dead(_) if self.is_empty() => nothing("(no dead code found)".to_string()),
+            Answer::Dead(d) => {
+                let line = |s: &crate::index::Symbol| format!("{}:{}-{}  [{}] {}", shown(&s.path), s.start, s.end, s.kind, shown(dead_name(s)));
+                Parts {
+                    items: d.dead.iter().map(line).chain(d.undecided.iter().map(|(s, why)| format!("{}  (undecided: {why})", line(s)))).collect(),
+                    tail: format!("({} dead, {} undecided)", d.dead.len(), d.undecided.len()),
+                    noun: "definitions",
+                    ..Parts::default()
+                }
+            }
             Answer::Reindexed(st) => nothing(format!("{} files changed, {} removed, {} chunks", st.files_changed, st.files_removed, st.chunks)),
             Answer::Impact(i) if i.is_empty() => nothing(format!("no changes: {}", i.head())),
             Answer::Impact(i) => Parts { head: i.head(), items: i.lines(), tail: i.stop_line(), noun: "lines", ..Parts::default() },
@@ -1426,6 +1466,19 @@ impl Answer {
                 json!({
                     "from": hit(&p.from), "to": hit(&p.to), "found": p.found, "depth": p.depth, "stopped": p.stopped,
                     "steps": p.steps.iter().map(|s| json!({"path": s.path, "line": s.line, "definition": hit(&s.to), "tied": s.tied})).collect::<Vec<_>>(),
+                })
+            }
+            Answer::Dead(d) => {
+                let one = |s: &crate::index::Symbol| {
+                    json!({"id": format!("{}:{}-{}", s.path, s.start, s.end), "path": s.path, "start": s.start, "end": s.end, "kind": s.kind, "name": s.name, "qualname": dead_name(s)})
+                };
+                json!({
+                    "dead": d.dead.iter().map(one).collect::<Vec<_>>(),
+                    "undecided": d.undecided.iter().map(|(s, why)| {
+                        let mut v = one(s);
+                        v["reason"] = json!(why);
+                        v
+                    }).collect::<Vec<_>>(),
                 })
             }
             Answer::Reindexed(st) => json!({"files_changed": st.files_changed, "files_removed": st.files_removed, "chunks": st.chunks}),

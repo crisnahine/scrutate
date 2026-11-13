@@ -658,7 +658,7 @@ def diagram_front_ends():
     fe = [
         ("CLI", "Index commands and `batch`. `grep` never opens the index."),
         ("Python bindings", "Both engines, the GIL released."),
-        ("MCP server", "`scrutate serve`: eighteen tools on stdio."),
+        ("MCP server", "`scrutate serve`: nineteen tools on stdio."),
         ("Language server", "`scrutate lsp`: a save updates the index on a second connection."),
         ("Watch", "`scrutate watch`, `serve --watch`: one more writer."),
     ]

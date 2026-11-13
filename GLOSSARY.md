@@ -68,7 +68,14 @@ dependencies, dependents and the language server's definition ask it what the oc
 place refers to, and it answers with the definition and how that was found, or why none was. One
 request opens one, so each file is read and parsed once. The rules it applies live in `resolve/`.
 
-**Kept answers**: what `callers` and `callees` learned of each call site, stored per request
+**Dead** and **undecided**: what `dead` (`dead.rs`, `Names::dead`) calls a function, method,
+class or type that is no entry point of its language (`main`, a test, an export, a public item of
+a library, one an attribute or decorator registers). Dead: no line of the repository outside its
+own names it. Undecided: some line names it, but the resolver ties none of them to it (a string, a
+comment, another definition of the name, a use it cannot place), or none does and its type
+extends another whose code may call it. A use that cannot be decided never makes one dead.
+
+**Kept answers**: what `callers`, `callees` and `dead` learned of each call site, stored per request
 (`answers.rs`, `.scrutate/answers/`) with what the run read: the index database and its data
 version, the executable, the root and the `stat` of every file the resolver read. A later run of
 the same request uses them only while all of that is the same, so it gives the answer the stored
@@ -117,7 +124,7 @@ and `Files` directly, and `watch`, which only writes the stores.
 
 **Operation**: one question a front end can ask of the index (`ops::Op`): ranked search, grep,
 symbol, callers, callees, read, outline, dependencies, dependents, references, similar,
-duplicates, structural search, impact, files, reindex. An operation owns its arguments, their defaults and
+duplicates, structural search, impact, files, dead code, reindex. An operation owns its arguments, their defaults and
 limits, and the rule for refreshing the index first (`Op::reads_index`). Its grep carries an
 Engine A pattern (`instant::Pattern`: text, mode, case, whole words) and a **scope**
 (`ops::Scope`: a file or directory of the repository and globs). Front ends parse into

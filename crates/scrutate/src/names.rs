@@ -340,6 +340,63 @@ impl<'a> Names<'a> {
         Ok(out)
     }
 
+    /// The definitions under `under` (a directory or file, or all) that nothing in the repository
+    /// uses: no line outside one names it (`dead`). One that some line names, none of which the
+    /// resolver ties to it, is undecided, with why: a string, a comment, another definition of the
+    /// name or a use the resolver cannot place may each still be a use. Entry points are neither.
+    pub fn dead(&mut self, under: Option<&str>) -> Result<crate::dead::Dead> {
+        self.stored = Some(Stored::open(self.s, "dead", under.unwrap_or(""), 0));
+        let r = self.dead_kept(under);
+        if let (Some(st), Ok(_)) = (self.stored.take(), &r) {
+            st.save(self.s, 0, true);
+        }
+        r
+    }
+
+    fn dead_kept(&mut self, under: Option<&str>) -> Result<crate::dead::Dead> {
+        let (candidates, too_large) = crate::dead::candidates(&self.s.ix, under)?;
+        let mut out = crate::dead::Dead::default();
+        for c in candidates {
+            if c.named == 0 {
+                match (c.base, too_large.first()) {
+                    (Some(why), _) => out.undecided.push((c.sym, why)),
+                    (None, Some(f)) => out.undecided.push((c.sym, format!("nothing else names it, but {f} is too large to read"))),
+                    (None, None) => out.dead.push(c.sym),
+                }
+                continue;
+            }
+            let (mut used, mut other, mut unplaced) = (false, 0, 0);
+            for (path, line) in &c.lines {
+                let u = self.uses(path, (*line, *line), &c.sym.name);
+                if u.got.contains(&c.sym.id) {
+                    used = true;
+                    break;
+                }
+                if u.unsure {
+                    unplaced += 1;
+                } else {
+                    other += 1;
+                }
+            }
+            if used {
+                continue;
+            }
+            let n = c.named;
+            let parts: Vec<String> = [
+                (other, "tied to something else (another definition, a local, a comment or a string)"),
+                (unplaced, "the resolver cannot place"),
+                (c.unread, "in files the resolver does not read"),
+                (n - c.unread - c.lines.len(), "not asked"),
+            ]
+            .iter()
+            .filter(|(k, _)| *k > 0)
+            .map(|(k, what)| format!("{k} {what}"))
+            .collect();
+            out.undecided.push((c.sym, format!("named on {n} other line{}: {}", if n == 1 { "" } else { "s" }, parts.join(", "))));
+        }
+        Ok(out)
+    }
+
     /// The shortest chain of calls from the definition `from` names to the one `to` names, each
     /// call one that `callees` gives, at most `depth` calls long: over the calls the resolver ties
     /// first, and only when they give none, over every call `callees` lists. Ties go to the

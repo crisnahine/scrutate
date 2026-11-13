@@ -255,6 +255,11 @@ fn path_lang(path: &str) -> Option<Lang> {
     lang_of(crate::langs::detect(path, None)?.id)
 }
 
+/// Whether the resolver reads the language of `path`.
+pub(crate) fn reads(path: &str) -> bool {
+    path_lang(path).is_some()
+}
+
 /// Whether `x.f()` in `path` calls a method, never a free function `f`.
 pub(crate) fn methods_only(path: &str) -> bool {
     path_lang(path).is_some_and(|l| rules!(l, R => R::METHODS_ONLY))

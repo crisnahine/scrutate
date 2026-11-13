@@ -538,7 +538,7 @@ not trigger themselves. Not a daemon: it runs only while the command (or server)
 
 ### Keeping the stores current (`stores.rs`)
 `.scrutate/` holds four stores: the code index, the text index, the `tsquery` cache and the
-answers `callers` and `callees` keep (`answers.rs`, under Intelligence). One
+answers `callers`, `callees` and `dead` keep (`answers.rs`, under Intelligence). One
 module keeps them current. A caller names what it does (`stores::Writer`, or a read through
 `Repo`) and what changed (`stores::Changes`: every file, or the files a watch burst names), never a
 store; the module decides which stores that touches, when it looks, and what happens on damage.
@@ -634,7 +634,7 @@ A command line call may use the session that `serve` runs on its root. The sessi
 Unix socket at `.scrutate/session.sock` (mode 0600, the peer's user checked before a byte is
 read; no network port), from the server's start to its exit; the command line never starts one,
 and no process outlives its command. An index command (`symbol`, `callers`, `callees`, `refs`,
-`outline`, `deps`, `rdeps`, `read`, `similar`, `dupes`, `search`, the ranked part of `find`) sends
+`outline`, `deps`, `rdeps`, `read`, `similar`, `dupes`, `dead`, `search`, the ranked part of `find`) sends
 its operation (`ops::Op`, as JSON) with its printing options (`--json`, the byte limit and offset,
 a search's `--why`); the session scans every file, runs it and prints the answer with the
 command line's own function, and the command line writes those bytes and exits with that code.
@@ -788,6 +788,17 @@ days when read, at most 1,000 files kept, written whole and renamed into place. 
 `read_code` operation feed it (`finder::visited`), so `read`, the MCP tool, `batch` and the
 Python bindings all count; an error there never fails the read.
 
+`dead` (`dead.rs`, through `Names::dead`) reads the text first: one parallel pass over every
+regular file the code index's walk reaches splits each into whole words and keeps, for every name
+of a function, method, class or type of the index, the lines that hold it. The same pass reads
+each definition's own lines for the rules that make it an entry point of its language (`main`,
+tests, exports, public items of a library, registering attributes and decorators). A definition
+that is no entry point and that no line outside it names is dead, with no resolver asked. For
+the others `Names` asks the resolver about up to 16 lines each in files of the languages it reads, through the same per-line answers
+`callers` keeps, and stops at the first line it ties to the definition; one without such a line
+is undecided, with the counts of what the resolver made of the lines. A textual use the resolver
+cannot tie to anything thus keeps a definition out of dead, never in it.
+
 The caller count that ranking reads (`log_ncallers`) comes from the index (`Index::call_counts`): it counts
 every call edge of the name, namesakes included, the number the ranker was fitted on.
 
@@ -823,7 +834,7 @@ independently usable (`grep`, `index`/`search`) and independently tested.
 Every question a front end can ask of the index is an **operation** (`ops::Op`): its arguments,
 their defaults and limits live there, and it returns a typed **answer** (`ops::Answer`) with one
 text form and one JSON form. The CLI's index commands (`read` among them) and the ranked search
-of `search` and `find`, the MCP server's eighteen tools, `batch` and the Python bindings parse
+of `search` and `find`, the MCP server's nineteen tools, `batch` and the Python bindings parse
 into operations, run them through `Repo` (`Repo::run`, or `Repo::run_as_is` after a scan of
 their own), and render answers; none of them has a default or an output format of its own (they
 had drifted: three different limits for `callers`, references textual in one and resolved in

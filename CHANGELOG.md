@@ -253,6 +253,14 @@ First release.
   `--max-bytes`. `scrutate path FROM TO [--depth N]` and the MCP tool `call_path`: the shortest
   chain of calls between two definitions over the calls `callees` resolves, each step a call site
   and the definition it reaches; no chain exits 1, and a name with several definitions lists them.
+- `scrutate dead [PATH]` and the MCP tool `dead_code` list the functions, methods, classes and
+  types nothing in the repository uses: no line outside one names it, in any file. Entry points of
+  each language are left out (`main`, tests, Rust `pub` items of a library crate and trait impls,
+  `#[no_mangle]` and other registering attributes and decorators, Python `__all__` and `__x__`
+  names, JavaScript and TypeScript exports, Go `init` and exported names of a library package,
+  Java and C# public members). A definition whose name some line holds that the resolver ties to
+  nothing (a string such as `getattr(obj, "name")`, a comment, a use it cannot place) is listed as
+  undecided, with the reason.
 - GDScript (`.gd`) has a grammar in the default build (`tree-sitter-gdscript` 6.1.0, MIT, 0.27 MB
   of the binary): functions, `class_name` and inner classes, signals (kind `signal`), named enums,
   `const` (kind `constant`) and `var` (kind `key`) at file level or in an inner class body are
@@ -270,15 +278,13 @@ First release.
   call its name where no other definition answers the call, marked `(calls a deleted
   definition)` (`calls_deleted` in JSON), and their callers and tests follow. Text and JSON in the envelope of the other index commands, paged by
   `--max-bytes`; a directory outside git, a bad revision and a missing merge base are errors with
-  exit code 2, and a revision is never passed to git as an option. The MCP server has fifteen
-  tools.
+  exit code 2, and a revision is never passed to git as an option.
 - `scrutate files QUERY [--limit N]` and the MCP tool `find_files`: the paths of the repository
   ranked for a query that may be misspelt (`srch.rs` finds `search.rs`; a letter wrong, added or
   left out, two letters swapped), an exact basename first, then basename matches before path
   matches, then frecency, then shorter paths; no index needed, about 8 ms on this repository.
   Frecency counts each file read through `read` and `read_code` (and a `files` query that is
-  exactly a path), halved every 7 days, in `$XDG_STATE_HOME/scrutate/frecency.json`. The MCP
-  server has sixteen tools.
+  exactly a path), halved every 7 days, in `$XDG_STATE_HOME/scrutate/frecency.json`.
 - Windows: a damaged index is built again while another handle holds its files (a session's
   other readers, another process): the database that cannot be deleted is emptied where it is
   and a segment directory that cannot be removed keeps its name. Before, the rebuild could go on
@@ -936,7 +942,7 @@ First release.
   and `.rpm`, the release archives and `THIRD_PARTY_NOTICES.txt` say so. `vendor/ignore` keeps
   `Unlicense OR MIT`. The README has a "Sponsor and hire" section: paid terms, support,
   sponsored features and work for hire, asked for through GitHub.
-- Unified `find`, MCP server (18 tools), configuration files with environment-variable precedence,
+- Unified `find`, MCP server (19 tools), configuration files with environment-variable precedence,
   shell completions, progress reporting; errors as JSON records with `--json` or
   `SCRUTATE_DIAGNOSTICS=json`.
 - On/off environment variables are off for `0`, `false`, `no`, `off` or empty and on for any other

@@ -647,6 +647,13 @@ pub enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// definitions nothing in the repository uses (entry points left out), and the undecided ones with why
+    Dead {
+        /// keep the definitions under this directory or file
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// structural search with a tree-sitter query, e.g. `scrutate tsquery python '(function_definition name: (identifier) @n)'`
     Tsquery {
         lang: String,
@@ -1503,6 +1510,7 @@ pub fn run() -> Result<i32> {
                 0
             })
         }
+        Cmd::Dead { path, json } => run_op(&cli.root, Op::Dead { path: path.map(|p| here.path(&p)) }, json, page, outside.as_deref()),
         Cmd::Tsquery { lang, query, paths, limit, json, no_cache, .. } => {
             // streamed: one JSON object or one text line per capture, in path order
             let stdout = std::io::stdout();

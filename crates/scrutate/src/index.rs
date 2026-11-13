@@ -2240,6 +2240,16 @@ impl Index {
         Ok(rows)
     }
 
+    /// Every chunk of these kinds without its text, by path, then outer before inner.
+    pub fn symbols_of_kinds(&self, kinds: &[&str]) -> Result<Vec<Symbol>> {
+        let mut st = self.db.prepare(&format!(
+            "SELECT id, path, kind, name, qualname, start, end FROM chunks WHERE kind IN ({}) ORDER BY path, start, end DESC, id",
+            quoted(kinds)
+        ))?;
+        let rows = st.query_map([], Symbol::from_row)?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
     /// The chunk of this id without its text.
     pub fn symbol(&self, id: i64) -> Result<Option<Symbol>> {
         let mut st = self.db.prepare_cached("SELECT id, path, kind, name, qualname, start, end FROM chunks WHERE id=?1")?;
