@@ -308,9 +308,10 @@ mode writing nothing).
 prints; it never posts.
 The GitHub Action posts its Markdown when `comment: true` is set, with the token of its
 `github-token` input (`github.token` by default), which needs one permission, `pull-requests:
-write`, to list, post and edit the pull request's comments. It edits only a comment a bot wrote
-whose body starts with the marker `<!-- scrutate-review -->`, so a person's comment that quotes
-the marker is left alone. No input reaches a shell: the pull request number, the base commit and
+write`, to list, post and edit the pull request's comments. It edits only a comment whose body starts
+with the marker `<!-- scrutate-review -->` and that a bot wrote, or, when `github-token` is a
+person's token, that person (the login `gh api user` gives; GITHUB_TOKEN cannot ask, so then only
+the bot's counts): another person's comment that quotes the marker is left alone. No input reaches a shell: the pull request number, the base commit and
 the repository name reach `comment.sh` through the step's environment, each is checked against
 its shape (digits, a 40 or 64 digit hexadecimal commit id, `owner/name`) before anything runs, and
 each is used only in double quotes; the body goes to `gh api` as a file (`-F body=@FILE`), never

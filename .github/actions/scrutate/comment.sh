@@ -24,8 +24,20 @@ scrutate review --base "$BASE_SHA" --link "${SERVER_URL:-https://github.com}/$RE
 [ "$code" -le 1 ] || skip "scrutate review failed with exit code $code"
 
 comments=$(gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments?per_page=100") || skip "cannot list the pull request's comments"
-id=$(printf '%s' "$comments" | jq -r --arg m "$marker" '.[] | select(.user.type == "Bot" and (.body | startswith($m))) | .id' | awk 'NR == 1') ||
+# the earlier comment: the bot's (GITHUB_TOKEN), or the token owner's when github-token is a person's
+# shellcheck disable=SC2016 # $m and $me are jq's variables
+ours='.[] | select((.body | startswith($m)) and (.user.type == "Bot" or ($me != "" and .user.login == $me))) | .id'
+id=$(printf '%s' "$comments" | jq -r --arg m "$marker" --arg me "" "$ours" | awk 'NR == 1') ||
   skip "cannot read the pull request's comments"
+if [ -z "$id" ] && [ -n "$(printf '%s' "$comments" | jq -r --arg m "$marker" '.[] | select(.user.type != "Bot" and (.body | startswith($m))) | .id')" ]; then
+  # GITHUB_TOKEN cannot read the user endpoint (403): then only the bot's comment counts
+  me=$(gh api user -q .login 2> /dev/null) || me=""
+  [[ "$me" =~ ^[A-Za-z0-9-]+$ ]] || me=""
+  if [ -n "$me" ]; then
+    id=$(printf '%s' "$comments" | jq -r --arg m "$marker" --arg me "$me" "$ours" | awk 'NR == 1') ||
+      skip "cannot read the pull request's comments"
+  fi
+fi
 [[ "$id" =~ ^[0-9]*$ ]] || skip "a comment id is not a number"
 
 if [ -n "$id" ]; then

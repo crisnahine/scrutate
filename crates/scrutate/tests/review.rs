@@ -273,7 +273,7 @@ mod comment_script {
     use std::os::unix::fs::PermissionsExt;
 
     const SCRIPT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../.github/actions/scrutate/comment.sh");
-    const FAKE_GH: &str = "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$FAKE_LOG\"\n[ -z \"$FAKE_FAIL\" ] || exit 1\ncase \"$*\" in\n  *--paginate*) cat \"$FAKE_COMMENTS\" ;;\n  *) for a; do case $a in body=@*) cp \"${a#body=@}\" \"$FAKE_BODY\" ;; esac; done; echo '{}' ;;\nesac\n";
+    const FAKE_GH: &str = "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$FAKE_LOG\"\n[ -z \"$FAKE_FAIL\" ] || exit 1\ncase \"$*\" in\n  *--paginate*) cat \"$FAKE_COMMENTS\" ;;\n  \"api user -q .login\") [ -n \"$FAKE_LOGIN\" ] || exit 1; echo \"$FAKE_LOGIN\" ;;\n  *) for a; do case $a in body=@*) cp \"${a#body=@}\" \"$FAKE_BODY\" ;; esac; done; echo '{}' ;;\nesac\n";
 
     struct Run {
         code: i32,
@@ -319,7 +319,7 @@ mod comment_script {
     }
 
     fn comment(id: u64, kind: &str, body: &str) -> Value {
-        serde_json::json!({"id": id, "user": {"type": kind}, "body": body})
+        serde_json::json!({"id": id, "user": {"type": kind, "login": if kind == "Bot" { "github-actions[bot]" } else { "someone" }}, "body": body})
     }
 
     #[test]
@@ -360,6 +360,25 @@ mod comment_script {
         );
         assert_eq!(second.log.lines().count(), 2);
         assert!(second.out.contains("edited comment 7"), "{}", second.out);
+    }
+
+    #[test]
+    fn with_a_persons_token_the_comment_of_that_person_is_edited() {
+        let (t, base_sha) = base("scriptuser");
+        head(&t);
+        t.write(".gitignore", ".fake/\n");
+        t.commit("ignore");
+        let theirs = serde_json::json!({"id": 11, "user": {"type": "User", "login": "the-owner"}, "body": "<!-- scrutate-review -->\nearlier"});
+        let other = serde_json::json!({"id": 12, "user": {"type": "User", "login": "someone"}, "body": "<!-- scrutate-review -->\nquoted"});
+        let comments = Value::Array(vec![other, theirs]).to_string();
+        let pr = [("PR_NUMBER", "5"), ("BASE_SHA", base_sha.as_str()), ("FAKE_LOGIN", "the-owner")];
+        let run1 = run(&t, &comments, &pr);
+        assert_eq!(run1.code, 0, "{}", run1.out);
+        assert!(run1.log.contains("api -X PATCH repos/o/r/issues/comments/11"), "{}", run1.log);
+        // GITHUB_TOKEN cannot ask who it is: a person's comment is never taken for the bot's
+        let run2 = run(&t, &comments, &[("PR_NUMBER", "5"), ("BASE_SHA", base_sha.as_str()), ("FAKE_LOGIN", "")]);
+        assert_eq!(run2.code, 0, "{}", run2.out);
+        assert!(run2.log.contains("api -X POST repos/o/r/issues/5/comments"), "{}", run2.log);
     }
 
     #[test]

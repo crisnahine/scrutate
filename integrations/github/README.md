@@ -82,8 +82,8 @@ jobs:
 
 The comment step runs `.github/actions/scrutate/comment.sh`. It compares the checked-out commit
 with the pull request's base commit, then lists the pull request's comments with `gh api` and
-edits the first one a bot wrote that starts with the marker `<!-- scrutate-review -->`, or posts a
-new one. It never fails the job: outside a pull request, without the base commit, when `review`
+edits the first one that starts with the marker `<!-- scrutate-review -->` and that a bot wrote (or,
+with a person's token in `github-token`, that person), or posts a new one. It never fails the job: outside a pull request, without the base commit, when `review`
 fails or when GitHub refuses the call (a pull request from a fork gets a read-only token), it
 prints a warning and the step passes. Each value it uses (the pull request number, the base
 commit, the repository name) comes through the step's environment, is checked against its shape
