@@ -167,9 +167,12 @@ fn shown_command(argv: &[String]) -> String {
     argv.iter().map(|a| shell_word(a)).collect::<Vec<_>>().join(" ")
 }
 
-/// `s` as one word of a POSIX shell.
+/// `s` as one word of the shell that runs a hook command: a POSIX shell, or on Windows cmd,
+/// PowerShell or Git Bash, where double quotes hold a path in all three.
 fn shell_word(s: &str) -> String {
-    if !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"/._-:=+,@%".contains(&b)) {
+    if cfg!(windows) {
+        format!("\"{s}\"")
+    } else if !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"/._-:=+,@%".contains(&b)) {
         s.to_string()
     } else {
         format!("'{}'", s.replace('\'', r"'\''"))

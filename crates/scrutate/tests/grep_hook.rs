@@ -343,8 +343,11 @@ fn calls_it_cannot_answer_exactly_let_grep_run() {
     t.write(".claude/settings.json", r#"{"permissions": {"deny": ["Read(./.env)"]}}"#);
     assert_eq!(t.reason(json!({"pattern": "needle"})), None);
     t.write(".claude/settings.json", r#"{"permissions": {"allow": ["Bash(ls)"]}}"#);
-    assert!(t.reason(json!({"pattern": "needle"})).is_some());
-    assert_eq!(t.stats()["total"]["calls"], 1, "only answered calls count");
+    // on Windows the hook lets every Grep run, so nothing is answered there
+    if cfg!(not(windows)) {
+        assert!(t.reason(json!({"pattern": "needle"})).is_some());
+        assert_eq!(t.stats()["total"]["calls"], 1, "only answered calls count");
+    }
 }
 
 // the hook lets Grep run on Windows by design: its answers are checked elsewhere

@@ -101,8 +101,9 @@ impl Drop for Scratch {
     }
 }
 
+/// The binary's path as setup writes it: canonical, without Windows' verbatim prefix.
 fn bin() -> String {
-    fs::canonicalize(BIN).unwrap().to_str().unwrap().to_string()
+    fs::canonicalize(BIN).unwrap().to_str().unwrap().trim_start_matches(r"\\?\").to_string()
 }
 
 /// The command line a file of `agent` holds for the scrutate server.
@@ -238,7 +239,7 @@ fn a_file_that_does_not_parse_is_left_alone_and_a_dry_run_writes_nothing() {
 fn project_files_name_the_repository_and_codex_has_none() {
     let s = Scratch::new("project");
     let sub = s.repo.join("sub");
-    let root = s.repo.to_str().unwrap().to_string();
+    let root = s.repo.to_str().unwrap().trim_start_matches(r"\\?\").to_string();
     for (agent, rel) in [("claude", ".mcp.json"), ("opencode", "opencode.json"), ("cursor", ".cursor/mcp.json"), ("gemini", ".gemini/settings.json")] {
         let (code, _, err) = s.setup_in(&sub, &[agent, "--project"], "/usr/bin:/bin");
         assert_eq!(code, 0, "{agent}: {err}");
@@ -271,7 +272,8 @@ fn the_hook_and_the_instructions_come_only_when_asked_and_go_with_uninstall() {
     let ours = &v["hooks"]["PreToolUse"][1];
     assert_eq!(ours["matcher"], "Grep");
     assert_eq!(ours["hooks"][0]["type"], "command");
-    assert_eq!(ours["hooks"][0]["command"], format!("{} hook grep", bin()));
+    let quoted = if cfg!(windows) { format!("\"{}\"", bin()) } else { bin() };
+    assert_eq!(ours["hooks"][0]["command"], format!("{quoted} hook grep"));
     assert_eq!(ours["hooks"][0]["timeout"], 10);
     let md = fs::read_to_string(&claude_md).unwrap();
     assert!(md.starts_with(before_md) && md.contains("<!-- scrutate:begin -->") && md.contains("grep_code"), "{md}");
