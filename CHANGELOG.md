@@ -234,6 +234,13 @@ First release.
   `--max-bytes`; a directory outside git, a bad revision and a missing merge base are errors with
   exit code 2, and a revision is never passed to git as an option. The MCP server has fifteen
   tools.
+- `scrutate files QUERY [--limit N]` and the MCP tool `find_files`: the paths of the repository
+  ranked for a query that may be misspelt (`srch.rs` finds `search.rs`; a letter wrong, added or
+  left out, two letters swapped), an exact basename first, then basename matches before path
+  matches, then frecency, then shorter paths; no index needed, about 15 ms on this repository.
+  Frecency counts each file read through `read` and `read_code` (and a `files` query that is
+  exactly a path), halved every 7 days, in `$XDG_STATE_HOME/scrutate/frecency.json`. The MCP
+  server has sixteen tools.
 - Windows: a damaged index is built again while another handle holds its files (a session's
   other readers, another process): the database that cannot be deleted is emptied where it is
   and a segment directory that cannot be removed keeps its name. Before, the rebuild could go on

@@ -128,6 +128,11 @@ pub enum Op {
         staged: bool,
         depth: usize,
     },
+    /// The paths of the repository ranked for a short, possibly misspelt `query` (`finder::find`).
+    Files {
+        query: String,
+        limit: usize,
+    },
 }
 
 impl Op {
@@ -222,6 +227,7 @@ impl Op {
                 staged: flag("staged")?,
                 depth: natural("depth")?.map_or(crate::impact::DEPTH, |d| d.min(crate::impact::MAX_DEPTH as u64) as usize),
             },
+            "find_files" => Op::Files { query: text("query")?, limit: count("limit", crate::finder::LIMIT as u64, crate::finder::MAX_LIMIT)? as usize },
             _ => bail!("unknown tool {}", echo(name)),
         })
     }
@@ -231,7 +237,7 @@ impl Op {
     /// Whether the index is brought up to date before this operation: a line range of a file
     /// reads the file alone, and a reindex is the update.
     pub fn reads_index(&self) -> bool {
-        !matches!(self, Op::Read { symbol: None, .. } | Op::Reindex { .. })
+        !matches!(self, Op::Read { symbol: None, .. } | Op::Reindex { .. } | Op::Files { .. })
     }
 
     /// Repository files the arguments name (a path, or the file of a location), whose index
@@ -383,6 +389,10 @@ pub fn output_schema(tool: &str) -> Value {
                 &["against", "base", "staged", "depth", "changed", "callers", "tests", "notes", "stopped"],
             )
         }
+        "find_files" => list(obj(
+            json!({"path": ty("string"), "match": {"type": "string", "enum": ["exact", "basename", "path"]}, "edits": ty("integer"), "frecency": ty("number")}),
+            &["path", "match", "edits", "frecency"],
+        )),
         "structural_search" => list(obj(
             json!({"path": ty("string"), "line": ty("integer"), "column": ty("integer"), "capture": ty("string"), "kind": ty("string"), "text": ty("string")}),
             &["path", "line", "column", "capture", "kind", "text"],
@@ -495,6 +505,13 @@ pub enum Answer {
     Captures(Vec<Capture>, Option<Stop>),
     Reindexed(UpdateStats),
     Impact(crate::impact::Impact),
+    Files(Vec<crate::finder::FileHit>, Option<Stop>),
+}
+
+/// The `files` answer, which reads no index: a front end runs it without opening one.
+pub fn files(root: &std::path::Path, query: &str, limit: usize) -> Result<Answer> {
+    let (hits, more) = crate::finder::find(root, query, limit)?;
+    Ok(Answer::Files(hits, more.then_some(Stop { at: limit, how: RAISE_LIMIT })))
 }
 
 /// Run one operation on the index as it is; `Repo::run` brings the index up to date first.
@@ -559,7 +576,12 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
                 Ok((r, text))
             };
             let (rows, stopped) = cut(rows, READ_DEFINITIONS, "pass path to keep the ones of one file, or a location (path:start-end) for one");
-            Answer::Definitions(rows.into_iter().map(read).collect::<Result<_>>()?, stopped)
+            let read = rows.into_iter().map(read).collect::<Result<Vec<_>>>()?;
+            crate::finder::visited(
+                &s.ix.root,
+                &read.iter().map(|(r, _)| r.path.as_str()).collect::<std::collections::BTreeSet<_>>().into_iter().collect::<Vec<_>>(),
+            );
+            Answer::Definitions(read, stopped)
         }
         Op::Read { path, start, end, .. } => {
             let path = path.as_deref().unwrap_or("");
@@ -571,7 +593,9 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
             let path = if printed || (read_back != path && !exists(path)) { read_back.as_ref() } else { path };
             let start = (*start).max(1);
             let (lines, total) = read_range(s, path, start, end.unwrap_or(start.saturating_add(READ_LINES - 1)))?;
-            Answer::Read { path: path.trim_start_matches("./").to_string(), lines, start, total }
+            let path = path.trim_start_matches("./").to_string();
+            crate::finder::visited(&s.ix.root, &[&path]);
+            Answer::Read { path, lines, start, total }
         }
         Op::Outline { path } => {
             let path = repo_path(s, path);
@@ -611,6 +635,7 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
         }
         Op::Reindex { .. } => bail!("reindex keeps every store current: run it through Repo"),
         Op::Impact { base, staged, depth } => Answer::Impact(crate::impact::impact(s, base.as_deref(), *staged, *depth)?),
+        Op::Files { query, limit } => files(&s.ix.root, query, *limit)?,
     })
 }
 
@@ -979,7 +1004,7 @@ impl Answer {
             Answer::Similar(v) => v.iter().map(|h| h.0.path.as_str()).collect(),
             Answer::Dupes(groups, _) => groups.iter().flat_map(|g| g.members.iter().map(|m| m.0.as_str())).collect(),
             Answer::Impact(i) => i.cited(),
-            Answer::Read { .. } | Answer::Captures(..) | Answer::Reindexed(_) => Vec::new(),
+            Answer::Read { .. } | Answer::Captures(..) | Answer::Reindexed(_) | Answer::Files(..) => Vec::new(),
         }
     }
 
@@ -1004,6 +1029,7 @@ impl Answer {
             Answer::Captures(v, _) => v.is_empty(),
             Answer::Reindexed(_) => false,
             Answer::Impact(i) => i.is_empty(),
+            Answer::Files(v, _) => v.is_empty(),
         }
     }
 
@@ -1172,6 +1198,10 @@ impl Answer {
             Answer::Reindexed(st) => nothing(format!("{} files changed, {} removed, {} chunks", st.files_changed, st.files_removed, st.chunks)),
             Answer::Impact(i) if i.is_empty() => nothing(format!("no changes: {}", i.head())),
             Answer::Impact(i) => Parts { head: i.head(), items: i.lines(), tail: i.stop_line(), noun: "lines", ..Parts::default() },
+            Answer::Files(v, _) if v.is_empty() => nothing("no file matches".to_string()),
+            Answer::Files(v, stopped) => {
+                Parts { items: v.iter().map(|h| shown(&h.path).into_owned()).collect(), tail: stop_line(*stopped, "files"), noun: "files", ..Parts::default() }
+            }
         }
     }
 
@@ -1198,7 +1228,7 @@ impl Answer {
     pub fn stopped(&self) -> Option<Stop> {
         match self {
             Answer::Hits { stopped, .. } | Answer::Callers { stopped, .. } | Answer::Callees { stopped, .. } => *stopped,
-            Answer::Definitions(_, stopped) | Answer::Captures(_, stopped) | Answer::Dupes(_, stopped) => *stopped,
+            Answer::Definitions(_, stopped) | Answer::Captures(_, stopped) | Answer::Dupes(_, stopped) | Answer::Files(_, stopped) => *stopped,
             Answer::Impact(i) if i.stopped => Some(Stop { at: crate::impact::MAX_CALLERS, how: "pass a smaller depth" }),
             _ => None,
         }
@@ -1292,6 +1322,7 @@ impl Answer {
             Answer::Captures(caps, _) => serde_json::to_value(caps).unwrap_or_default(),
             Answer::Reindexed(st) => json!({"files_changed": st.files_changed, "files_removed": st.files_removed, "chunks": st.chunks}),
             Answer::Impact(i) => i.json(),
+            Answer::Files(v, _) => serde_json::to_value(v).unwrap_or_default(),
         }
     }
 }
@@ -1350,6 +1381,8 @@ mod tests {
         assert!(matches!(op("structural_search", json!({"lang": "rust", "query": "(x)"})), Op::Tsquery { limit: TSQUERY_LIMIT, .. }));
         assert!(matches!(op("reindex", json!({})), Op::Reindex { force: false }));
         assert!(matches!(op("impact", json!({})), Op::Impact { base: None, staged: false, depth: crate::impact::DEPTH }));
+        assert!(matches!(op("find_files", json!({"query": "x"})), Op::Files { limit: crate::finder::LIMIT, .. }));
+        assert!(matches!(op("find_files", json!({"query": "x", "limit": 99999})), Op::Files { limit: 1000, .. }));
         assert!(matches!(
             op("impact", json!({"base": "main...", "staged": true, "depth": 99})),
             Op::Impact { staged: true, depth: crate::impact::MAX_DEPTH, .. }

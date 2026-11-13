@@ -83,6 +83,7 @@ scrutate refs Graph --def networkx/classes/graph.py   # references resolved thro
 scrutate dupes                                  #   exact and near-duplicate functions
 scrutate tsquery python '(class_definition name: (identifier) @c)'   # structural search (tree-sitter)
 scrutate impact --base main...                  #   what my diff changes, who calls it, which tests to run
+scrutate files srch.rs                          #   a file by a misspelt name, files read lately first
 ```
 
 ### Serve agents and editors

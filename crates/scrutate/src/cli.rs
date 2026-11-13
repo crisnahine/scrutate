@@ -621,6 +621,14 @@ pub enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// paths of the repository ranked for a short query that may be misspelt (`srch.rs` finds `search.rs`), files read lately first among equals
+    Files {
+        query: String,
+        #[arg(long, default_value_t = crate::finder::LIMIT as u64, value_parser = clap::value_parser!(u64).range(1..=crate::finder::MAX_LIMIT))]
+        limit: u64,
+        #[arg(long)]
+        json: bool,
+    },
     /// structural search with a tree-sitter query, e.g. `scrutate tsquery python '(function_definition name: (identifier) @n)'`
     Tsquery {
         lang: String,
@@ -1413,6 +1421,7 @@ pub fn run() -> Result<i32> {
         }
         Cmd::Dupes { min_tokens, threshold, limit, json } => run_op(&cli.root, Op::Dupes { min_tokens, threshold, limit }, json, page, outside.as_deref()),
         Cmd::Impact { base, staged, depth, json } => run_op(&cli.root, Op::Impact { base, staged, depth: depth as usize }, json, page, None),
+        Cmd::Files { query, limit, json } => run_op(&cli.root, Op::Files { query, limit: limit as usize }, json, page, None),
         Cmd::Tsquery { lang, query, paths, limit, json, no_cache } => {
             // streamed: one JSON object or one text line per capture, in path order
             let stdout = std::io::stdout();
@@ -1669,7 +1678,7 @@ fn run_request(root: &Path, request: crate::session::Request) -> Result<i32> {
     let outside = request.outside.as_deref();
     // a session `serve` runs on this root does the same work with the index already open
     // git runs in the environment of the process that asked
-    let session = crate::session::wanted() && !matches!(request.op, Op::Impact { .. });
+    let session = crate::session::wanted() && !matches!(request.op, Op::Impact { .. } | Op::Files { .. });
     let asked = match session.then(|| std::fs::canonicalize(root).ok()).flatten() {
         Some(r) => crate::session::ask(&r, &request)?,
         None => None,
@@ -1681,8 +1690,11 @@ fn run_request(root: &Path, request: crate::session::Request) -> Result<i32> {
         }
         None => {
             let op = &request.op;
-            let mut s = if op.reads_index() { open_fresh(root)? } else { crate::Repo::open(root)? };
-            let answer = match (s.run_as_is(op), outside) {
+            let run = || match op {
+                Op::Files { query, limit } => crate::ops::files(root, query, *limit),
+                _ => (if op.reads_index() { open_fresh(root)? } else { crate::Repo::open(root)? }).run_as_is(op),
+            };
+            let answer = match (run(), outside) {
                 (Err(e), Some(why)) => anyhow::bail!("{e:#} ({why})"),
                 (answer, _) => answer?,
             };
@@ -1701,7 +1713,8 @@ fn printed(answer: crate::ops::Answer, r: &crate::session::Request) -> Result<cr
     use std::fmt::Write as _;
     let mut p = crate::session::Printed::default();
     // these print nothing on standard output when empty, so a pipeline sees no lines
-    let quiet = matches!(answer, Answer::Outline { .. } | Answer::Deps { .. } | Answer::Rdeps { .. } | Answer::Similar(_) | Answer::Dupes(..));
+    let quiet =
+        matches!(answer, Answer::Outline { .. } | Answer::Deps { .. } | Answer::Rdeps { .. } | Answer::Similar(_) | Answer::Dupes(..) | Answer::Files(..));
     let why = r.outside.as_deref().filter(|_| answer.is_empty());
     if r.json {
         writeln!(p.out, "{}", serde_json::to_string_pretty(&answer.envelope())?)?;

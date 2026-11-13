@@ -18,7 +18,14 @@ named below; it is **not** an independent audit or penetration test.
 ## Threat model
 
 Scrutate reads source trees chosen by the user and writes one cache directory (`.scrutate/`) inside
-each indexed repository. In a linked git work tree it also reads the index of the repository's
+each indexed repository, and one small state file outside it: `frecency.json` under
+`$XDG_STATE_HOME/scrutate/` (else `~/.local/state/scrutate/`; on Windows `%LOCALAPPDATA%\scrutate\`),
+where `read`, `read_code` and `files` count the reads of each file for `files` to rank by. It holds
+the canonical root of each repository and the paths of files read in it, with a count and a time,
+at most 1,000 files; it is written whole to a new file in that directory and renamed into place,
+and a file there that does not parse is ignored and replaced. Nothing in it is ever run or used as
+a path to open: a path in it only ranks a file the walk of the repository already found. Delete it
+at any time to forget the counts. In a linked git work tree it also reads the index of the repository's
 main checkout (below). The assets are (1) the confidentiality of the source code, (2) the
 integrity of the machine running the tool, (3) availability (no hangs or resource exhaustion on
 hostile inputs). Attackers considered: a **hostile repository** (crafted files, names, symlinks,
@@ -54,7 +61,7 @@ files, and the Grep hook it installs appends to a counter file (below).
 | Coverage-guided fuzzing | Four libFuzzer targets (`fuzz/`, nightly toolchain, AddressSanitizer): the `.npy` reader on arbitrary bytes; the text-index soundness property (a text a pattern matches must satisfy the pattern's trigram condition); the edit-distance matcher; every parser tier on arbitrary text under 60 file extensions. It found four real defects, each fixed with a regression test and its crash input kept in `fuzz/regressions/`: chunk line numbers shifted after form feeds (Python-style line splitting); a truncated string array panicked the `.npy` reader; a shape whose element count overflowed wrapped in release builds and could have produced an over-long slice view (undefined behaviour, now a saturating count and checked sizes); a zero-width string array with a huge shape requested a multi-terabyte allocation. | `bench/results/fuzz/` (run logs), `fuzz/regressions/`, unit tests `npy::header_tests::damaged_headers_are_errors_not_panics`, `parse::tests::form_feeds_and_lone_cr_do_not_shift_line_numbers`. |
 | Network file systems | A repository on an SMB share (Samba 4.23 server, macOS `smbfs` client): Engine A output identical to the local copy; Engine B indexes, answers, survives three concurrent `index` processes with readers, and passes `check --files`. Found and fixed: a blocking file lock fails at once on SMB (EAGAIN), so the text index polls `try_lock`. One host only: several machines sharing one index over a network file system is not supported (SQLite's documentation warns that its locking is unreliable there). | `tools/netfs_check.sh`, `bench/results/platforms/netfs-smb-macos.txt`. |
 | Untrusted `.scrutate.toml` | The configuration file sets option defaults only (booleans, numbers, globs); it cannot name programs or paths to execute. Unknown keys are rejected. `follow = true` in a repository's own file is ignored with a warning, so a cloned repository cannot make a search leave it through a symbolic link; the flag, the environment and the user's own file still can. | `config.rs` tests; `tests/cli.rs` (a link out of the repository). |
-| MCP server | Only reads the repository and writes `.scrutate/`; path arguments are confined; the server takes requests on stdio, and on Unix offers its open index to command line calls of the same user through `.scrutate/session.sock` (no network port; see [The session socket](#the-session-socket)). Malformed input gets the JSON-RPC error the specification names, and the server keeps reading: a line that is not JSON or not UTF-8 gets -32700; a message that is not an object, an empty batch and a request without `method` get -32600; an unknown method gets -32601; an unknown tool and a missing tool name get -32602; an argument of the wrong type, or a negative number, is a tool error that names the argument. Notifications are never answered, and a client's own responses are ignored. An error quotes at most 200 characters of an argument. Each tool call has a thread of its own, at most 32 at once (further calls run on the reading thread), and at most 8 read the index at once. | `mcp.rs`; manual protocol smoke test in docs/TEST_RESULTS.md. |
+| MCP server | Only reads the repository and writes `.scrutate/` and the frecency file above; path arguments are confined; the server takes requests on stdio, and on Unix offers its open index to command line calls of the same user through `.scrutate/session.sock` (no network port; see [The session socket](#the-session-socket)). Malformed input gets the JSON-RPC error the specification names, and the server keeps reading: a line that is not JSON or not UTF-8 gets -32700; a message that is not an object, an empty batch and a request without `method` get -32600; an unknown method gets -32601; an unknown tool and a missing tool name get -32602; an argument of the wrong type, or a negative number, is a tool error that names the argument. Notifications are never answered, and a client's own responses are ignored. An error quotes at most 200 characters of an argument. Each tool call has a thread of its own, at most 32 at once (further calls run on the reading thread), and at most 8 read the index at once. | `mcp.rs`; manual protocol smoke test in docs/TEST_RESULTS.md. |
 | Python bindings | Engine behind a session (calls side by side, writes one at a time, a panic kept inside its call); `GrepIter` borrow-checked by PyO3; free-threaded declaration (`gil_used = false`) made after this review; stable ABI build. | `python/tests/test_bindings.py`. |
 
 ## Running git
@@ -112,7 +119,7 @@ included, with how to print it: `--json`, the byte limit and offset, `--why`; de
 through the same `Repo` path, with the same path confinement: a path that leaves the root is
 refused as in a tool call); the answer is text that process could have computed by running
 `scrutate` in the same directory. The socket reads only the repository the server was started on
-and writes only its `.scrutate/`, both of which that user can already read and write. It can
+and writes only its `.scrutate/` and that user's frecency file, all of which that user can already read and write. It can
 keep the server busy, as it could keep any process of its own busy; the limits above bound what
 one connection holds.
 

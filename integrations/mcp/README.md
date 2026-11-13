@@ -13,7 +13,7 @@
 revisions 2024-11-05 / 2025-03-26 / 2025-06-18 / 2025-11-25, and revision 2026-07-28, which has
 no handshake (`server/discover`, a protocol version in every request's `_meta`). Tools: `search_code`, `grep_code`,
 `find_symbol`, `callers`, `callees`, `read_code`, `outline`, `dependencies`, `dependents`,
-`references`, `similar_code`, `duplicates`, `structural_search`, `impact`, `reindex`. The index refreshes
+`references`, `similar_code`, `duplicates`, `structural_search`, `impact`, `find_files`, `reindex`. The index refreshes
 itself before a call: by default the wait between scans is at most a second, shorter when a scan
 is cheap; with `--refresh-interval S`, no scan comes sooner than S seconds after the last one.
 Inside that window an answer checks the files it cites and the files its arguments name, and
@@ -101,5 +101,5 @@ mcp list`: Connected in a trusted folder). VS Code (`code --add-mcp` writes the 
 above) was checked through its own command; Zed follows its documentation as of November 2026 and
 was not started here.
 
-The server never leaves the machine: it reads the repository, writes only `.scrutate/` inside it,
-opens no network connections and executes no repository code.
+The server never leaves the machine: it reads the repository, writes only `.scrutate/` inside it
+and the frecency file of `find_files` under `$XDG_STATE_HOME/scrutate/`, opens no network connections and executes no repository code.

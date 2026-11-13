@@ -640,7 +640,7 @@ wait (a write running, every reader busy, another process holding the write lock
 line does the work itself, as without a session, and says nothing unless
 `SCRUTATE_SESSION_DEBUG=1`. `SCRUTATE_NO_SESSION=1` turns the use off. `grep`, `batch`, a
 `search` with `--also` another root (one session holds one repository), `impact` (git runs in
-the command's own environment) and the grep part of `find` do not use it. A socket path too long for a socket address is reached from its directory;
+the command's own environment), `files` (it reads no index) and the grep part of `find` do not use it. A socket path too long for a socket address is reached from its directory;
 the command line goes back by a descriptor of the directory it left, and stops with an error if
 even that fails. Windows has no session use. The language server offers no socket:
 one meeting point per root keeps the "two sessions on one root" case to `serve` alone.
@@ -754,6 +754,20 @@ test flag (`text::is_test_path`) among the changed definitions, the callers and 
 files. A command line `impact` is not sent to a session, so git runs in the environment of the
 command that asked.
 
+`files` (`finder.rs`, the MCP `find_files`) is an operation that reads no index: the command line
+runs it without opening one, and the MCP server through `Repo` as any other. It walks the files
+of `files::repository_files` (the set `grep_code` searches) and opens none of them. Each path is
+scored by a matcher of its own, not the Myers matcher of `grep --fuzzy`, because the ranking
+needs to know how a path matched and not only whether: a substring of the basename (or the
+path), the query's letters in order, or Sellers' approximate substring search with the optimal
+string alignment distance (a swap of neighbours is one edit), one edit per four characters of the
+query and at most three. On this repository a warm call takes about 15 ms. The frecency is one
+small JSON file outside the repository (`$XDG_STATE_HOME/scrutate/frecency.json`), keyed by the
+canonical root: per file a count and the time it was last set, decayed with a half-life of 7
+days when read, at most 1,000 files kept, written whole and renamed into place. The reads of the
+`read_code` operation feed it (`finder::visited`), so `read`, the MCP tool, `batch` and the
+Python bindings all count; an error there never fails the read.
+
 The caller count that ranking reads (`log_ncallers`) comes from the index (`Index::call_counts`): it counts
 every call edge of the name, namesakes included, the number the ranker was fitted on.
 
@@ -779,7 +793,7 @@ independently usable (`grep`, `index`/`search`) and independently tested.
 Every question a front end can ask of the index is an **operation** (`ops::Op`): its arguments,
 their defaults and limits live there, and it returns a typed **answer** (`ops::Answer`) with one
 text form and one JSON form. The CLI's index commands (`read` among them) and the ranked search
-of `search` and `find`, the MCP server's fifteen tools, `batch` and the Python bindings parse
+of `search` and `find`, the MCP server's sixteen tools, `batch` and the Python bindings parse
 into operations, run them through `Repo` (`Repo::run`, or `Repo::run_as_is` after a scan of
 their own), and render answers; none of them has a default or an output format of its own (they
 had drifted: three different limits for `callers`, references textual in one and resolved in
@@ -895,6 +909,7 @@ by the quality floor of `bench/quality.py` (docs/QUALITY.md).
   an array file; the vector model is an `npz`; the store is a directory of immutable arrays.
 - No network, no execution of repository code, no background daemons: the engines are libraries
   that a CLI, an MCP server and Python call directly. `impact` runs the `git` program found on
-  `PATH`, which reads the repository; nothing in the repository names a program to run. A command line call may use a session a
+  `PATH`, which reads the repository; nothing in the repository names a program to run. The one
+  file written outside `.scrutate/` is the frecency state of `files`, under `XDG_STATE_HOME`. A command line call may use a session a
   running `serve` offers on a local socket, and never starts one.
 - Everything that can be measured is measured by a script in `bench/` that anyone can rerun.

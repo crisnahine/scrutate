@@ -248,6 +248,7 @@ often while files change.
 | `similar TARGET [-k N]` | Code similar to a symbol or `path:line` (vector cosine + token Jaccard). A constant has no vector: `similar` on one is an error that says so. |
 | `dupes [--min-tokens N] [--threshold J] [--limit N]` | Exact and near-duplicate functions. `exact` means the same body text once runs of whitespace are squeezed; a pair with the same words written differently is `near` with similarity 1.00. `--threshold 1` prints the exact groups only. At most 50 groups, or `--limit`. |
 | `impact [--base REV] [--staged] [--depth N]` | What a change touches: the definitions the git diff changes, the callers that reach them up to `N` steps away (default 3) with their distances, and the test files to run (see below). |
+| `files QUERY [--limit N]` | Paths of the repository ranked for a short query that may be misspelt (`srch.rs` finds `search.rs`), files read lately first among equals; no index needed (see below). |
 | `tsquery LANG QUERY [PATHS] [--limit N] [--no-cache]` | Tree-sitter structural query over every file of a language up to 1 MB (no index; per-file results are cached, see below). An empty query, a query without a `@capture` and an unknown predicate are errors. A path that does not exist from the current directory is read under `--root`; one that exists in neither place is named in a warning, the other paths are still searched, and the exit code is 2. Paths print as `grep PATH...` prints them, in plain output and in `--json`: the path as given, then the path below it (`src/a.py` for `src`, `./src/a.py` for `./src`, nothing in front for `.` or no path), so a printed path can be passed to the other commands. |
 | `check [--files] [--json]` | Verify database integrity, segment consistency and (with `--files`) that indexed files are unchanged. Exit 1 on problems. The line `chunks: N ranked in the database, M alive in segments, K constants (no postings)` counts the chunks that have segment rows, which leaves out constants, and then the constants; `--json` gives them as `constants`. `--json` counts the indexed files also without `--files` (`files_changed` and `files_missing` are then 0: not checked). |
 | `stats` | Index statistics as one JSON object (files, chunks, symbols, call edges, imports, segments, and the text index's files, segments and bytes). |
@@ -492,6 +493,42 @@ git runs, so it can never be read as an option. The command line does not send `
 running `serve`: git runs in the command's own environment. The MCP tool `impact` takes `base`,
 `staged` and `depth` and gives the same answer.
 
+### `files`
+```
+scrutate files QUERY [--limit N] [--json]
+```
+The paths of the files a search of the repository covers (the files `grep_code` sees), ranked
+for `QUERY`, one per line, at most 20 or `--limit N` (1 to 1000) with a closing line when more
+matched. No file is opened (the walk reads only the ignore files) and no index is needed. Case
+is ignored, and `\` in the query is `/`. A path matches when the query is a part of it, when the query's letters appear in it in order
+(`srch.rs` finds `search.rs`), or when the query is within a few edits of a part of it (a letter
+wrong, added or left out, or two neighbours swapped: `saerch.rs`), one edit for each four
+characters of the query and at most three. The order:
+
+1. a basename equal to the query, with or without its extension (`search` and `search.rs` both
+   name `src/search.rs` exactly);
+2. then a match in the basename, then a match in the rest of the path (a query with `/` in it
+   matches the whole path only);
+3. then a part before letters in order before fewer edits;
+4. then frecency, higher first;
+5. then the shorter path, then the path.
+
+The answer is the same on every run for the same files and the same frecency. Frecency is the
+number of reads of a file, each counting half as much after 7 days. `read` and the MCP
+`read_code` count one read of each file they read; `files` counts one for a query that is
+exactly a path it lists, so a caller that shows the list and opens the chosen path says which
+it chose by asking for that path. The counts live in `frecency.json` under
+`$XDG_STATE_HOME/scrutate/` (else `~/.local/state/scrutate/`; on Windows
+`%LOCALAPPDATA%\scrutate\`), keyed by the repository's root: at most 1,000 files over every
+repository, the lowest counts dropped first, written whole to a new file that is renamed over
+the old. A file that does not parse is ignored and replaced at the next write; one that cannot
+be written leaves the read as it was. Calls of one process wait for each other; two processes
+writing at the same moment can lose one count. `--json` gives the envelope with each `path`, its
+`match` (`exact`, `basename` or `path`), `edits` and `frecency`, and `stopped_at` when the limit
+cut it. No match is exit code 1 with nothing on standard output; an empty query is an error
+(exit 2). The command line does not send `files` to a running `serve`. The MCP tool
+`find_files` takes `query` and `limit` and gives the same answer.
+
 ### Answers from the index: one definition for every front end
 
 `symbol`, `callers`, `callees`, `refs`, `read`, `outline`, `deps`, `rdeps`, `similar`, `dupes`,
@@ -527,9 +564,10 @@ budget the answer is whole, and a plain piped `grep` takes the same path it took
 
 ### `serve` (MCP)
 
-Fifteen tools over stdio, each one an operation above (`search_code`, `grep_code`,
+Sixteen tools over stdio, each one an operation above (`search_code`, `grep_code`,
 `find_symbol`, `callers`, `callees`, `read_code`, `outline`, `dependencies`, `dependents`,
-`references`, `similar_code`, `duplicates`, `structural_search`, `impact`, `reindex`).
+`references`, `similar_code`, `duplicates`, `structural_search`, `impact`, `find_files`,
+`reindex`).
 
 Before a call the server checks the repository for changed files and updates the index. Without
 `--refresh-interval` the wait between scans is at most a second, and shorter when a scan is
@@ -546,7 +584,7 @@ answers the calls in flight, lets a running index build finish, and exits.
 While it runs, the server offers its open index to command line calls of the same user on the
 same root: `symbol`, `callers`, `callees`, `refs`, `outline`, `deps`, `rdeps`, `read`, `similar`,
 `dupes`, `search` (of this repository alone: with `--also` another root it does its own work) and
-the ranked part of `find` run there (`impact` does not: git runs in the command's own environment), with every file looked at first as always, and print the same bytes and
+the ranked part of `find` run there (`impact` does not: git runs in the command's own environment; nor does `files`, which needs no index), with every file looked at first as always, and print the same bytes and
 exit code a fresh process gives (about 12 ms in place of 28 ms on a copy of this repository). The meeting
 point is a socket file, `.scrutate/session.sock` (owner only; Unix; no network port), removed
 when the server exits. A command never starts a server. When anything about the server is not
@@ -616,6 +654,8 @@ its last group with a `note:` line (`"note"` in JSON). An invalid pattern is an 
   predicate, as `tsquery` does.
 - `impact` takes `base` (a revision, `main...` for a merge base), `staged` (boolean) and `depth`
   (default 3, at most 10), and answers as `scrutate impact` does (see `impact` above).
+- `find_files` takes `query` and `limit` (default 20, at most 1000) and answers as `scrutate
+  files` does (see `files` above). A `read_code` call counts one read of each file it reads.
 - `reindex` takes `force` (boolean): every file is read again, also one whose size and
   modification time did not change, and a damaged index is rebuilt. It brings the text index
   up to date too when there is one, so `grep --index` sees what it indexed; it never makes one.
@@ -759,7 +799,7 @@ for a model, next to nothing for `none`),
 `SCRUTATE_RANKER` (path or `none`; a ranker whose features differ from this version's makes
 `search` fail), `SCRUTATE_PROFILE` (print indexing phase
 timings), `SCRUTATE_DIAGNOSTICS` (`json`: errors as JSON records), `NO_COLOR` (any non-empty
-value). On/off variables follow the rule under Conventions.
+value), `XDG_STATE_HOME` (where `files` keeps its frecency, see `files` above). On/off variables follow the rule under Conventions.
 
 ### The index directory
 `.scrutate/index.db` (SQLite, WAL), `.scrutate/seg/*/` (memory-mapped arrays) and

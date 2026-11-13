@@ -108,6 +108,8 @@ fn tool_table() -> Value {
              "base": {"type": ["string", "null"], "default": null, "description": "revision to compare with (default HEAD)"},
              "staged": {"type": "boolean", "default": false},
              "depth": {"type": "integer", "default": crate::impact::DEPTH, "description": "steps of callers to follow (at most 10)"}}}},
+        {"name": "find_files", "description": "Find a file by part of its name or path, misspelt or with letters left out (`srch.rs` finds search.rs): an exact basename first, then basename matches, then path matches; among equals the files read lately through read_code first. A query that is exactly one path counts as choosing that file. Needs no index.",
+         "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "default": crate::finder::LIMIT}}, "required": ["query"]}},
         {"name": "reindex", "description": "Re-scan for changed files (searches already do this automatically). `force` reads every file again, also one whose size, modification time and change time did not change.",
          "inputSchema": {"type": "object", "properties": {"force": {"type": "boolean", "default": false}}}}
     ])

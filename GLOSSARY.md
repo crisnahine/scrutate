@@ -81,6 +81,11 @@ of a file's language at each step where languages differ.
 changes, their callers through `Names` with the distance of each, and the test files to run. The
 diff is read by running `git`; the base side of a file is parsed from git's copy.
 
+**Frecency**: how often and how lately a file was read, which `scrutate files` (`finder.rs`, the
+MCP `find_files`) ranks by among equal matches: one count per read through `read` or `read_code`
+(or a `files` query that is exactly the path), each counting half as much after 7 days. Kept in
+`$XDG_STATE_HOME/scrutate/frecency.json`, outside the repository.
+
 **Grouped grep**: an Engine A search whose matching lines are grouped by the symbol that encloses
 them (`intel::grouped_grep`). The MCP `grep_code` tool, `grep --symbols` and both kinds of
 references use it.
@@ -92,7 +97,7 @@ and `Files` directly, and `watch`, which only writes the stores.
 
 **Operation**: one question a front end can ask of the index (`ops::Op`): ranked search, grep,
 symbol, callers, callees, read, outline, dependencies, dependents, references, similar,
-duplicates, structural search, impact, reindex. An operation owns its arguments, their defaults and
+duplicates, structural search, impact, files, reindex. An operation owns its arguments, their defaults and
 limits, and the rule for refreshing the index first (`Op::reads_index`). Its grep carries an
 Engine A pattern (`instant::Pattern`: text, mode, case, whole words) and a **scope**
 (`ops::Scope`: a file or directory of the repository and globs). Front ends parse into

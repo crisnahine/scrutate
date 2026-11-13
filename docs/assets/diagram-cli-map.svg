@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 819" width="880" height="819" role="img" aria-labelledby="t d">
 <!-- written by tools/gen_doc_assets.py; edit that, not this file -->
 <title id="t">Command map: scrutate's commands by family</title>
-<desc id="d">Search without an index (grep, tsquery), search the index (search, find, grep --index, batch), code intelligence (symbol, callers, callees, refs, outline, deps, rdeps, similar, dupes, impact), maintenance (index, check, stats, languages, config, completions) and servers (serve, lsp, watch, setup, hook).</desc>
+<desc id="d">Search without an index (grep, tsquery, files), search the index (search, find, grep --index, batch), code intelligence (symbol, callers, callees, refs, outline, deps, rdeps, similar, dupes, impact), maintenance (index, check, stats, languages, config, completions) and servers (serve, lsp, watch, setup, hook).</desc>
 <style>
 text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif; }
 .m { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
@@ -50,6 +50,9 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <text x="147" y="77" class="b">identifier, fuzzy</text>
 <text x="17" y="105" class="bi"><tspan class="m">tsquery</tspan></text>
 <text x="147" y="105" class="b">tree-sitter structural query</text>
+<text x="17" y="133" class="bi"><tspan class="m">files</tspan></text>
+<text x="147" y="133" class="b">a file by a misspelt name or</text>
+<text x="147" y="153" class="b">path</text>
 <rect x="447" y="1" width="432" height="226" rx="4" class="card"/>
 <rect x="463" y="17" width="11" height="11" fill="#f2eee3"/>
 <rect class="wipe mv k2" x="463" y="17" width="11" height="11" fill="#d9ff3d" transform="scale(0 1)"/>

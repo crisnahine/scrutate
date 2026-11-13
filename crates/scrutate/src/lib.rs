@@ -11,6 +11,7 @@ pub mod artifacts;
 pub mod cli;
 pub mod config;
 pub mod files;
+pub mod finder;
 pub mod fmt;
 pub mod fuzzyre;
 pub mod hook;

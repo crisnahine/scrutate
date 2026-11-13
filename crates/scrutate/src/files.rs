@@ -316,7 +316,7 @@ impl CodeWalk {
     }
 }
 
-fn slashed(rel: &Path) -> String {
+pub(crate) fn slashed(rel: &Path) -> String {
     rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect::<Vec<_>>().join("/")
 }
 
