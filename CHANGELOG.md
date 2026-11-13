@@ -67,7 +67,9 @@ incompatible index by itself, and that is never breaking.
 
 ## [0.1.0] - 2026-11-11
 
-First release.
+First release. How each part works is in [ARCHITECTURE](docs/ARCHITECTURE.md), the flags and
+outputs in [CLI](docs/CLI.md), the measurements in [BENCHMARKS](docs/BENCHMARKS.md) and
+[LEADERBOARD](docs/LEADERBOARD.md).
 
 ### Engine A: universal instant search
 - Literal, regex (linear time, size-limited), identifier (all casings, digit/acronym aware),
@@ -77,176 +79,113 @@ First release.
   depth and size limits, type globs); per-file batched streaming; Ctrl-C and broken-pipe
   cancellation; deterministic `--sort`; JSONL output (schema 1); exit codes 0/1/2/130.
 - Differentially tested against ripgrep on random corpora and patterns: zero disagreements.
-- Text not on disk can be searched: `Paths::Memory` holds named texts, and searching them gives
-  the records and output the same bytes in a file give. One module (`source.rs`) holds every
-  rule of how a source is read: a file, standard input, an archive member or text in memory.
-- One scheduler runs every walk and file list, asking one module of thread rules over readings
-  of the machine (cores, searches running, slow reads) that a test can supply. A search whose
-  roots hold directories starts the parallel walk at once. A list of more than 256 files
-  (`--sort`, `grep --index`, `grep_code`, references) takes its share of the searches running on
-  macOS, as a walk does, and any walk or list adds threads when its reads come from the disk.
-  Alone, every search starts the threads it did.
-- `-e PATTERN` (repeatable) for several patterns, the next argument taken whatever it starts with
-  (`-e '->'`). Each line of a multi-line match gets its own line number, and in colour its path
-  too, as plain output does.
+- Text not on disk can be searched (`Paths::Memory`), with the output a file of the same bytes
+  gives; one module (`source.rs`) reads every kind of source.
+- One scheduler with one module of thread rules runs every walk and file list; a list of more
+  than 256 files takes its share of the searches running on macOS, and any search adds threads
+  when its reads come from the disk.
+- `-e PATTERN` (repeatable) for several patterns (`-e '->'` works); each line of a multi-line
+  match gets its own line number, and in colour its path.
 - `grep -i` and `grep -F -i` with a literal use 37 to 50% less CPU on one thread (a 740 MB file:
-  100.6 to 63.3 ms of user time for `pm_resume`, 96.2 to 48.4 ms for `KÖNIG`): a two-byte vector
-  scan finds candidate lines and the regex confirms each.
-- Search threads format plain output into per-file buffers (no per-line allocation or channel
-  message); lines over 64 KB are written uncopied, their UTF-8 checked 256 KB at a time by the
-  fast checker before the replacing decoder.
-- Ctrl-C is handled through `signal()` / `SetConsoleCtrlHandler` directly: the `ctrlc` crate
-  linked Foundation and libobjc into every macOS process (about 1.5 ms of start-up).
-- Gitignore lines of three common shapes (`*.log`, `**/a/b`, `/build*`) match without a regex;
-  building one cost 100 to 400 µs per `.gitignore` (global excludes included), more than the
-  whole walk of a small repository.
-- Plain output that follows other output within a millisecond waits in a 64 KB buffer, so many
-  files' lines leave in one write; output after a quiet spell leaves at once. A write per
-  matching file woke a pipe's reader every time: `return` in the Linux tree (1.3 million lines in
-  88,000 files) went from 302 ms to 190 ms on Linux (ripgrep 319 ms), 675 ms to 650 ms on macOS.
-- macOS on Apple silicon: 133 system functions a search never calls (SQLite's file calls,
-  process spawning, the unwinder) are bound on first call, not at launch; dyld spends about
-  3.3 µs per imported symbol. With the grep-only argument parser (clap otherwise builds all 24
-  subcommands), start-up is 1.9 ms, against 1.5 ms for a Rust hello-world.
+  100.6 to 63.3 ms of user time for `pm_resume`, 96.2 to 48.4 ms for `KÖNIG`).
+- Search threads format plain output into per-file buffers; lines over 64 KB are written
+  uncopied, their UTF-8 checked 256 KB at a time.
+- Ctrl-C is handled through `signal()` / `SetConsoleCtrlHandler` directly, saving the `ctrlc`
+  crate's start-up cost on macOS.
+- Gitignore lines of three common shapes (`*.log`, `**/a/b`, `/build*`) match without building a
+  regex, which cost more than a small repository's whole walk.
+- Plain output arriving within a millisecond of other output waits in a 64 KB buffer and leaves
+  in one write: `return` in the Linux tree (88,000 files) went from 302 ms to 190 ms on Linux
+  (ripgrep 319 ms), 675 ms to 650 ms on macOS.
+- Start-up on macOS on Apple silicon is 1.9 ms (a Rust hello-world 1.5 ms): system functions a
+  search never calls are bound lazily, and a grep-only argument parser skips clap.
 - Faster start: a one-file `scrutate grep` uses 2 M fewer instructions, 131 fewer page reclaims
-  and 2.2 MB less memory (328 reclaims and 2.6 MB; GNU grep 308 and 2.05 MB). Plain argument
-  shapes skip clap, `-F` with one literal skips the regex engine, and the Apple silicon
-  executable is linked with an order file (`crates/scrutate/startup.order`, written and checked
-  by `tools/order_file.py`, which traces the release links under lldb). The release profile
-  links one object (fat LTO, one codegen unit) so the linker can place every function the file
-  names.
-- macOS builds need macOS 13 or newer: the binary gets chained fixups, which the kernel applies
-  as pages are first touched.
-- A `.gitignore` used on many paths compiles its globs into one set after a while (the Linux
-  tree's root file has over 100), and a file's size is no longer asked before reading it: the
-  Linux tree in a Linux VM, 144 ms to 120 ms (ripgrep: 135 ms).
+  and 2.2 MB less memory; `-F` with one literal skips the regex engine, and the Apple silicon
+  executable is linked with an order file (`crates/scrutate/startup.order`, from
+  `tools/order_file.py`).
+- macOS builds need macOS 13 or newer (chained fixups).
+- A `.gitignore` used on many paths compiles its globs into one set: the Linux tree in a Linux VM,
+  144 ms to 120 ms (ripgrep: 135 ms).
 - Smart case counts only letters that stand for themselves (`-S '\Sfoo'` is case-insensitive, as
-  in ripgrep) and folds only a pattern with a literal and no uppercase letter. Of `-i` and `-S`
-  the later wins; `SCRUTATE_GREP_SMART_CASE` applies only when neither is given. `-c` with
-  `--max-count` stops counting at the limit. `-w` with `--fuzzy` or `--fuzzy-regex` is an error
-  (it was ignored).
+  in ripgrep) and folds only a pattern with a literal and no uppercase letter; of `-i` and `-S`
+  the later wins, and `SCRUTATE_GREP_SMART_CASE` applies when neither is given. `-c` with
+  `--max-count` stops at the limit; `-w` with `--fuzzy` or `--fuzzy-regex` is an error.
 - A file of 64 MB or more is searched on every search thread as ranges of whole lines, output in
-  file order. Binary data, a byte-order mark, context lines, `--max-count`, `--max-results`, `-l`
-  and multiline searches keep the single pass.
-- A regex with no literal prefix whose matches all end in one of a few literals
-  (`\w+_(suspend|resume)\(`) finds candidate lines by searching for those literals.
-- Roots with no directory to enter are walked on the calling thread while three threads search
-  what it finds; past 256 files the parallel walk takes over. A one-file tree starts no thread,
-  the global git excludes file is read only when a walk meets a repository, and the current
-  directory is looked up once: a one-file directory search went from 21.1 M to 19.2 M
-  instructions (GNU grep in the C locale: 20.8 M).
-- A large file with no line breaks to split at is read into one buffer of its exact size (the
-  stream reader grew by doubling), each search thread filling its own part: 100 MB in one line
-  read in 12.6 ms on one thread, 4.0 ms on five. `^(a|aa)+$` over that line and two more files:
-  15.3 ms to 11.0 ms (ugrep 16.5 ms).
+  file order.
+- A regex whose matches all end in one of a few literals (`\w+_(suspend|resume)\(`) finds
+  candidate lines by those literals.
+- Small roots are walked on the calling thread and a one-file search starts no thread: 21.1 M to
+  19.2 M instructions (GNU grep in the C locale: 20.8 M).
+- A large file with no line breaks is read into one buffer, each search thread filling its own
+  part: 100 MB in one line in 4.0 ms on five threads, 12.6 ms on one; `^(a|aa)+$` over it and two
+  more files, 15.3 ms to 11.0 ms (ugrep 16.5 ms).
 - `-P` / `--pcre2`: PCRE2 syntax (look-around, backreferences), stopped by PCRE2's match limit
-  on exponential patterns with a warning naming the file.
-- `-z` / `--search-zip`: zip and tar members (`archive.zip{member}`) and compressed files. A
-  compressed file that expands to one long line stops at 64 MiB with a warning instead of filling
-  memory, control characters in a member name print as escapes so a name cannot forge an output
-  line, and an archive named alone names the member of each line.
-- `--fuzzy` patterns up to 4096 characters (64-bit blocks beyond 128); an edit is one character
-  (`naïve` is one edit from `naive`), and `-i` and `-S` fold case as for a regex. `grep --index
-  --fuzzy` agrees with the walk. `--fuzzy-regex[=N]`: a regex within N edits (bit-parallel
-  Glushkov automaton, up to 64 character positions), one character per edit, Unicode classes,
-  case folded by `-i` and `-S` as for a regex; a pattern within N edits of the empty string is
-  refused.
+  on exponential patterns.
+- `-z` / `--search-zip`: zip and tar members (`archive.zip{member}`) and compressed files, with a
+  64 MiB cap on one expanded line and escaped member names ([SECURITY](docs/SECURITY.md)).
+- `--fuzzy` patterns up to 4096 characters, an edit being one character (`naïve` is one edit from
+  `naive`); `grep --index --fuzzy` agrees with the walk. `--fuzzy-regex[=N]`: a regex within N
+  edits.
 - `grep --index --update`: refresh the text index (changed files only), then search it.
 - Files that could not be searched, or not to the end, are named in warnings.
-- Regexes are built with `^` and `$` as line anchors in every mode, as ripgrep does; before, a
-  pattern with either was matched a line at a time: `^(a|aa)+$` over ten million one-byte lines
-  took 198 ms, now 8 ms.
-- A regex whose every match starts a line with one of a few literals looks only at the line
-  starts that begin with them, each decided by an anchored search: `^(a|aa)+$` over a 100 MB
-  line, ten million short lines and 2 MB of near misses, 52 ms to 18 ms.
-- On macOS a many-file search runs on as many threads as there are performance cores: more
-  threads opening and reading files wait on each other in the kernel (the Linux tree on an M3
-  Pro: 977 ms on 11 threads, about 845 ms on 5). One large file split into ranges still uses
-  every core, and when a tree's files take as long as a disk read (not in the page cache) the
-  walk adds a thread per 16 slow reads, up to twice the cores, at most 24: the Linux tree with a
-  cold cache, 2.9 s on 5 threads, 1.4 s this way, ripgrep 1.8 s.
-- `scrutate grep` uses less memory on big trees: a search thread drops its 1 MB read buffer
-  once it has met a file over 64 KB (peak resident memory: the ripgrep tree 9.9 MB to 5.9 MB,
-  py-big 12.6 MB to 8.2 MB, the Linux tree 14.3 MB to 9.6 MB; ripgrep: 7.1, 8.5 and 14.2 MB).
-- On macOS, concurrent searches of one user split the threads and take them back as the others
-  end, since the kernel there serves about four file-reading threads at full speed across all
-  processes: two at once on py-big went from 113 ms to 91 ms each, four from 244 ms to 185 ms,
-  eight from 482 ms to 413 ms. A search that walks directories joins the count when it starts,
-  a small repository's too: four searches of the ripgrep sources started together took 14.7 ms
-  and take 13.3 ms (GNU grep 14.5 ms). A search given `-j`, one waiting on its reader and one
-  stopped with Ctrl-Z are not counted; `SCRUTATE_GREP_DEBUG=1` shows the count.
-- On Linux a tree read from the disk gets up to 64 threads, whatever the cores: the Linux tree
-  with a cold cache in a 5-CPU VM, 1.22 s on 5 threads, 0.37 s this way (git grep 1.23 s, ugrep
-  0.64 s). A small tree stops before many threads start (231 files cold: 5.8 ms, ripgrep 7.5 ms).
-- Paths print as given, as in grep and ripgrep: `./a.txt` for `.`, `dir/a.txt` for `dir/`, an
-  absolute path for an absolute root. With one file as the only path, lines and counts leave its
-  name out, as in ripgrep; `-H` (`--with-filename`) and `-I` (`--no-filename`) choose, the later
-  wins, and `-l` and `--json` always carry the path.
-- On Unix a backslash in a file name stays in the printed path; only Windows turns `\` into `/`,
-  and prints a verbatim drive path (`\\?\C:\x`) as `C:/x`, a form that can be passed back.
-- On Linux, files on `/proc`, `/sys` and the other kernel pseudo filesystems are read to the end
-  (the first read of `/proc/kallsyms` returns about 4 KB of 7.3 MB, and its size reads as 0), and
-  so is a `proc` or `sys` directory on a pseudo filesystem below any search root.
+- `^` and `$` are line anchors in every mode, as in ripgrep: `^(a|aa)+$` over ten million one-byte
+  lines took 198 ms, now 8 ms.
+- A regex whose every match starts a line with one of a few literals looks only at those line
+  starts: 52 ms to 18 ms.
+- On macOS a many-file search runs one thread per performance core, and a walk whose reads come
+  from the disk adds threads up to 24: the Linux tree with a cold cache, 2.9 s on 5 threads,
+  1.4 s this way, ripgrep 1.8 s.
+- `scrutate grep` uses less memory on big trees (peak resident memory: the ripgrep tree 9.9 MB to
+  5.9 MB, py-big 12.6 MB to 8.2 MB, the Linux tree 14.3 MB to 9.6 MB; ripgrep: 7.1, 8.5 and
+  14.2 MB).
+- On macOS, concurrent searches of one user share the threads, since the kernel serves about four
+  file-reading threads at full speed; `SCRUTATE_GREP_DEBUG=1` shows the count.
+- On Linux a tree read from the disk gets up to 64 threads: the Linux tree cold in a 5-CPU VM,
+  1.22 s on 5 threads, 0.37 s this way (git grep 1.23 s, ugrep 0.64 s); 231 files cold: 5.8 ms
+  (ripgrep 7.5 ms).
+- Paths print as given, as in grep and ripgrep (`./a.txt` for `.`); with one file as the only
+  path, lines leave its name out; `-H` and `-I` choose.
+- On Unix a backslash in a file name stays in the printed path; only Windows turns `\` into `/`
+  and prints `\\?\C:\x` as `C:/x`.
+- On Linux, files and directories on `/proc`, `/sys` and the other kernel pseudo filesystems are
+  read to the end.
 - A `-g` glob is taken whole, commas included (`-g '*.{txt,log}'`); `SCRUTATE_GREP_GLOBS` and
-  the configuration file's `globs` split at commas outside braces. A `-g` glob with a slash
-  applies under every searched path.
-- With `-A`, `-B` or `-C`, a line `--` separates non-adjacent groups and different files, as in
-  ripgrep (not in `--json`).
-- `-c` with `-U` counts a match spanning lines as ripgrep does. Context lines of CRLF files drop
-  the `\r`.
-- A pattern or option value that is not UTF-8 is an error (a path may be any bytes), and
-  `--max-filesize` refuses a size past 64 bits.
+  the configuration file's `globs` split at commas outside braces.
+- With `-A`, `-B` or `-C`, a line `--` separates groups, as in ripgrep.
+- `-c` with `-U` counts as ripgrep does; context lines of CRLF files drop the `\r`.
+- A pattern or option value that is not UTF-8 is an error (a path may be any bytes).
 - `ignore` 0.4.34 is vendored (`vendor/ignore`) with nine changes, listed in the workspace
-  `Cargo.toml`. Among them: the global git excludes path is read from `~/.gitconfig` without
-  compiling a regex (about 0.4 ms of every search in a git repository), and an idle walker thread
-  first waits 10 µs instead of 1 ms before looking for work again (a 598-file package: 10.7 ms
-  to 8.1 ms).
-- `--max-results N` stops at exactly N matching lines, also with several threads matching at once
-  and with `-c` and `-l`; `-m N` is a per-file limit, with trailing context.
+  `Cargo.toml`; an idle walker thread first waits 10 µs instead of 1 ms (a 598-file package:
+  10.7 ms to 8.1 ms).
+- `--max-results N` stops at exactly N matching lines; `-m N` is a per-file limit.
 - A search path that does not exist is a warning and exit code 2; the other paths are searched.
 - With no path, a pipe or file on standard input is searched (`-` names it; label `<stdin>`).
-- A file named on the command line that holds a NUL byte is searched as ripgrep does: counts and
-  lists include it, and line output prints `binary file matches (found "\0" byte around offset
-  N)` (a `binary` record with `--json`). A walked file with a NUL byte is left out of `-c` and
-  `-l`, so `-v -l`, `-v` and `-v -c` agree; when its search stops at a NUL byte after a match,
-  also past the first 64 KB, a last line says so, as ripgrep's does.
-- `-c` and `-l` give one record per path given, as ripgrep does, also for a file two paths reach.
-- `--sort` prints in the order of `rg --sort path` (it ordered all results by the whole path): the
-  paths as given, and under each its files by their paths compared part by part
-  (`sub/deep/a.txt` before `sub/deep-x/b.txt`, `foo/mod.rs` before `foo.rs`). With
-  `--max-results N` it prints the first N matches in that order, the same every run.
-- `-n` is accepted and `-N` drops line numbers. `-j`, `SCRUTATE_THREADS` and the configuration
-  file's `threads` stop at 256, and a failed thread start says to lower `-j`.
+- A file with a NUL byte is searched as ripgrep does: named on the command line, line output
+  prints `binary file matches (found "\0" byte around offset N)` (a `binary` record with
+  `--json`). A walked file with a NUL byte is left out of `-c` and `-l`.
+- `-c` and `-l` give one record per path given, as ripgrep does.
+- `--sort` prints in the order of `rg --sort path`, also with `--max-results N`.
+- `-n` is accepted and `-N` drops line numbers; `-j`, `SCRUTATE_THREADS` and `threads` stop at
+  256.
 - `grep`, the code index, `watch` and `tsquery` read `.rgignore` files, as ripgrep does.
-- `--type-list` and `--version` need no pattern. A bad `.scrutate.toml` no longer stops `--help`,
-  `--version`, `config` and `completions`.
-- On Windows a file that falls back to the stream reader (a NUL byte, a byte order mark, a read
-  error) is searched from its first line, not from where the range search stopped.
-- Hits wait in a bounded queue for the formatting thread, so colour or `--json` output of a file
-  with millions of matches holds megabytes, not hundreds (one 20 MB file with 2 million matches:
-  341 MB, now 12 MB); plain piped output never used the queue.
-- In `--json`, `spans` and `column` count bytes of the printed `text`, also in a line with
-  invalid UTF-8 and at a CRLF line end; colour highlights the same places. The Python bindings'
-  `Match.spans` and `Match.column` count the same way.
-- On Unix a non-UTF-8 file name prints as its own bytes in piped output, `-l` and `-c` (it was
-  printed with U+FFFD, a name no file has), and `--json` adds `path_bytes` for it. In colour on a
-  terminal and in the text of `--symbols`, a control character in a file name prints as an
-  escape, so a name cannot forge an output line.
-- With `-l`, `--stats` says `N of M files match` and the JSON summary gives `"matches": null`:
-  each file is searched only to its first match, so the count was of files.
-- The MCP `grep_code` tool shows a file whose search a NUL byte stopped after a match with a
-  `note:` line ending its last group; it printed the note as line 18446744073709551615.
-  `grep --symbols` shows that note the same way (it dropped it). `refs` and the MCP `references`
-  tool end with a `note:` line for such a file (`notes` in JSON); they said nothing.
-- A cancelled `grep_code` or `references` call stops its Engine A search between files; the
-  search ran to the end and its answer was dropped.
-- `references` and `refs` search the files `grep_code` searches: hidden files included, the
-  directories the index skips (`node_modules` and the like) left out. They searched Engine A's
-  default walk, so a name defined in `.github/` was missed and one in `node_modules/` was not.
-- Engine A has one way in, `instant::search`: a query, a file set (a walk or a file list) and a
-  cancel flag it reads and never sets; its records carry their kind (match, context, count, file,
-  note). The Python bindings' `grep` no longer yields a binary-file note as a `Match` with line
-  18446744073709551615.
+- `--type-list` and `--version` need no pattern; a bad `.scrutate.toml` no longer stops
+  `--help`, `--version`, `config` and `completions`.
+- On Windows a file that falls back to the stream reader is searched from its first line.
+- Colour or `--json` output of a file with millions of matches holds megabytes (one 20 MB file
+  with 2 million matches: 341 MB, now 12 MB).
+- In `--json`, `spans` and `column` count bytes of the printed `text`, as do the Python bindings'
+  `Match.spans` and `Match.column`.
+- On Unix a non-UTF-8 file name prints as its own bytes in piped output, and `--json` adds
+  `path_bytes`; control characters in names print as escapes ([SECURITY](docs/SECURITY.md)).
+- With `-l`, `--stats` says `N of M files match` and the JSON summary gives `"matches": null`.
+- The MCP `grep_code` tool and `grep --symbols` end a file whose search a NUL byte stopped with a
+  `note:` line (it was printed as line 18446744073709551615, or dropped), and `refs` and
+  `references` say so too (`notes` in JSON).
+- A cancelled `grep_code` or `references` call stops its Engine A search between files.
+- `references` and `refs` search the files `grep_code` searches: hidden files included,
+  `node_modules` and the like left out.
+- Engine A has one way in, `instant::search`; the Python bindings' `grep` no longer yields a
+  binary-file note as a `Match`.
 
 ### Engine B: code intelligence
 - `scrutate map [PATH]` and the MCP tool `repo_map`: the files that define code, ranked by
