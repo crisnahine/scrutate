@@ -690,7 +690,8 @@ written from their std 1.99.1 signatures (`std_method`), whose answer keeps the 
 it knows (`Option<Report>`, an iterator of `Report`), and else from two rules: a method of an
 outside type that is no standard holder and holds no repository type, and a function of the std
 modules whose functions return types of their own, give an outside type of no known name. A
-caller-picked method or a closure argument gives none. `type_of` keeps each type it finds by
+caller-picked method or a closure argument gives none. A type built by `Type::new()` and its kin
+carries one unknown type argument, so it never counts as holding no repository type. `type_of` keeps each type it finds by
 syntax node, so a chain such as `a.b().c().d()` types each receiver once though resolving a method
 and typing its call both ask for it. A plain name in the arguments of a macro that is not a
 standard expression macro answers `macro argument` where the walk would tie it to a definition;

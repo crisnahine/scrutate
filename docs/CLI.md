@@ -360,14 +360,16 @@ refers to. For Python, JavaScript, TypeScript, Rust and Go the rules are, in ord
    slices, `HashMap`, `BTreeMap`, `HashSet`, `BTreeSet`, `String` and `str`, iterators), so
    `v.first().unwrap().ok()` with `v: Vec<Report>` is `Report.ok`. A method the table does not
    list, of an outside type that is not a standard holder (`Option`, `Vec`, `Box`, `Mutex` and
-   their kin) and whose written type arguments hold no repository type, returns an outside type:
+   their kin) and whose whole type is known to hold no repository type (a type written with all
+   its arguments, or what the table or such a method returns), returns an outside type:
    `file.metadata().ok()` is external. So is what a function of `std::env`, `std::fs`, `std::io`,
    `std::path` or `std::process` returns (`std::fs::metadata(p).ok()`). A method whose type the
    caller picks (`into`, `parse`, `collect`, `get`, `as_ref` and their kin) or that takes a
-   closure gives no type, so a call on its result stays undecided; so does a value of an outside
-   type written without its type arguments that holds a repository type
-   (`let c = Cache::new()`), which the rule cannot see. A variable whose type none of these gives
-   is unresolved.
+   closure gives no type, so a call on its result stays undecided. A value built by `new`,
+   `default`, `with_capacity` or `from` has type arguments the resolver does not know
+   (`let m = HashMap::new()`), so what a method returns from it, and a call on that, stay
+   undecided: `m.get(&k).unwrap().ok()` may call a repository `ok`. A variable whose type none of
+   these gives is unresolved.
 3. A plain occurrence is, in order:
    - a definition nested in an enclosing function (or directly in an enclosing class body). A
      parameter or local of that name hides everything else within its own scope (a lambda's

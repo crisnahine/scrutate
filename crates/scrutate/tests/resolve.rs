@@ -326,17 +326,20 @@ fn a_std_method_on_a_call_result_is_external_and_a_macro_argument_is_undecided()
         &[
             ("Cargo.toml", "[package]\nname = \"rep\"\nversion = \"0.1.0\"\n"),
             ("src/lib.rs", "pub mod report;\npub mod meta;\npub mod user;\n"),
-            ("src/report.rs", "pub struct Report;\n\nimpl Report {\n    pub fn ok(&self) -> bool {\n        true\n    }\n}\n\npub fn text() -> u8 {\n    1\n}\n"),
+            ("src/report.rs", "pub struct Report;\n\nimpl Report {\n    pub fn ok(&self) -> bool {\n        true\n    }\n}\n\npub fn text() -> u8 {\n    1\n}\n\npub struct Other;\n\nimpl Other {\n    pub fn ok(&self) -> bool {\n        false\n    }\n}\n"),
             ("src/meta.rs", "pub fn meta(file: &std::fs::File) -> bool {\n    file.metadata().ok().is_some()\n}\n"),
             (
                 "src/user.rs",
-                "use crate::report::{text, Report};\n\npub fn user(v: Vec<Report>) -> bool {\n    v.first().unwrap().ok()\n}\n\npub fn args() {\n    mymac!(text, 3);\n    println!(\"{}\", text);\n}\n",
+                "use crate::report::{text, Report};\n\npub fn user(v: Vec<Report>) -> bool {\n    v.first().unwrap().ok()\n}\n\npub fn args() {\n    mymac!(text, 3);\n    println!(\"{}\", text);\n}\n\npub fn maps(k: u8) -> bool {\n    let mut m = std::collections::HashMap::new();\n    m.insert(k, Report);\n    m.get(&k).unwrap().ok()\n}\n",
             ),
         ],
     );
     let v = r.json(&["callers", "Report.ok", "--json"]);
     let names: Vec<&str> = v.as_array().unwrap().iter().map(|h| h["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["user"], "{v}");
+    // the map's values are not written, so its call of `ok` is undecided, not external
+    assert_eq!(names, ["user", "maps"], "{v}");
+    let (_, text) = r.run(&["callers", "Report.ok"]);
+    assert!(text.contains("(1 of these call a definition of that name the resolver could not identify"), "{text}");
     let v = r.json(&["refs", "text", "--json"]);
     let why: Vec<(u64, &str)> = v["unresolved"].as_array().unwrap().iter().map(|u| (u["line"].as_u64().unwrap(), u["reason"].as_str().unwrap())).collect();
     assert_eq!(why, [(8, "macro argument")], "{v}");

@@ -156,9 +156,9 @@ docs/RELEASING.md, public (done), tag `v0.1.0`.
   Rust through a table of standard methods ([CLI](CLI.md#refs)). It stays undecided when the
   callee declares no type, returns a type parameter, takes a closure or lets the caller pick its
   type (`collect`, `into`), or is a method of an outside type the table does not list that holds
-  a repository type; and in every language but Rust, when the callee is a method of an outside
-  type. A value of an outside type written without the type arguments that hold a repository
-  type (`let c = Cache::new()`) is taken to hold none. A precise answer needs a type checker.
+  a repository type or whose type arguments are not written (`let m = HashMap::new()`, then
+  `m.get(&k).unwrap().ok()`); and in every language but Rust, when the callee is a method of an
+  outside type. A precise answer needs a type checker.
 - In `refs`, a plain name in the arguments of a Rust macro other than the standard expression
   macros is `macro argument`, undecided: only expanding the macro says what `text` in
   `mymac!(text, 3)` is.

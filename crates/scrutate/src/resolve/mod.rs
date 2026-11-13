@@ -698,7 +698,8 @@ const OUTSIDE: &str = "?";
 enum Ty {
     /// a class, struct or other concrete type defined in the repository
     Local(i64),
-    /// a concrete type defined outside it (`Vec`, `str`, `list`), with its type arguments
+    /// a concrete type defined outside it (`Vec`, `str`, `list`), with its type arguments; one
+    /// unknown argument when they are not written (`HashMap::new()`)
     Foreign(String, Vec<Option<Ty>>),
 }
 
@@ -1251,9 +1252,12 @@ impl<'a> Resolver<'a> {
                 };
                 match found {
                     Ok((id, _)) => self.def_ty(id),
-                    // `Type::new()` of a type from outside builds that type
+                    // `Type::new()` of a type from outside builds that type, its type arguments not known
                     Err(_) if f.kind() == "scoped_identifier" && matches!(text(leaf, src), "new" | "default" | "with_capacity" | "from") => {
-                        self.named_ty(path, fi, lang, f.child_by_field_name("path")?)
+                        match self.named_ty(path, fi, lang, f.child_by_field_name("path")?)? {
+                            Ty::Foreign(n, args) if args.is_empty() => Some(Ty::Foreign(n, vec![None])),
+                            t => Some(t),
+                        }
                     }
                     Err("external") => rules!(lang, R => R::outside_call(self, path, fi, lang, e, f)),
                     Err(_) => None,
@@ -3101,7 +3105,7 @@ mod tests {
     #[test]
     fn a_call_is_typed_by_the_return_type_its_callee_declares() {
         let report = "pub struct Report;\n\nimpl Report {\n    pub fn load() -> Report {\n        Report\n    }\n    pub fn new() -> Self {\n        Report\n    }\n    pub fn ok(&self) -> bool {\n        true\n    }\n}\n\npub struct Builder;\n\nimpl Builder {\n    pub fn summary(&self) -> Report {\n        Report\n    }\n}\n\npub fn make() -> Builder {\n    Builder\n}\n\npub fn mystery(y: i32) -> Option<i32> {\n    Some(y)\n}\n\npub fn pick<T>(x: T) -> T {\n    x\n}\n\npub fn find() -> Option<Report> {\n    None\n}\n";
-        let user = "use crate::report::{find, make, mystery, pick, Report};\n\npub fn a(y: i32) -> bool {\n    mystery(y).ok().is_some()\n}\n\npub fn b() -> bool {\n    Report::load().ok() && Report::new().ok() && make().summary().ok()\n}\n\npub fn c(file: &std::fs::File, v: Vec<Report>) -> bool {\n    file.metadata().ok().is_some() && v.first().unwrap().ok() && pick(Report).ok() && find().unwrap().ok()\n}\n\npub fn d(v: &[Report], w: Vec<Report>, s: &str) -> bool {\n    std::fs::metadata(s).ok().is_some() && w.iter().map(|r| r).next().unwrap().ok() && w.iter().rev().next().unwrap().ok() && v.first().unwrap().ok() && s.trim().ok() && s.parse().unwrap().ok()\n}\n";
+        let user = "use crate::report::{find, make, mystery, pick, Report};\nuse cachelib::Cache;\n\npub fn a(y: i32) -> bool {\n    mystery(y).ok().is_some()\n}\n\npub fn b() -> bool {\n    Report::load().ok() && Report::new().ok() && make().summary().ok()\n}\n\npub fn c(file: &std::fs::File, v: Vec<Report>) -> bool {\n    file.metadata().ok().is_some() && v.first().unwrap().ok() && pick(Report).ok() && find().unwrap().ok()\n}\n\npub fn e(k: u8) -> bool {\n    let mut m = std::collections::HashMap::new();\n    m.insert(k, Report::new());\n    let c = Cache::new();\n    m.get(&k).unwrap().ok() && c.lookup(k).unwrap().ok() && m.remove(&k).unwrap().ok()\n}\n\npub fn d(v: &[Report], w: Vec<Report>, s: &str) -> bool {\n    std::fs::metadata(s).ok().is_some() && w.iter().map(|r| r).next().unwrap().ok() && w.iter().rev().next().unwrap().ok() && v.first().unwrap().ok() && s.trim().ok() && s.parse().unwrap().ok()\n}\n";
         let rs = [("lib.rs", "mod report;\nmod user;\n"), ("report.rs", report), ("user.rs", user)];
         let ok = "report.rs Report.ok";
         resolver_case(
@@ -3123,6 +3127,10 @@ mod tests {
                 // a closure or the caller picks the type: undecided
                 ("user.rs", "map(|r| r).next().unwrap().ok()", "ok", "receiver"),
                 ("user.rs", "s.parse().unwrap().ok()", "ok", "receiver"),
+                // the type arguments of a value built by `new` are not known
+                ("user.rs", "m.get(&k).unwrap().ok()", "ok", "receiver"),
+                ("user.rs", "(k).unwrap().ok() && m.remove", "ok", "receiver"),
+                ("user.rs", "m.remove(&k).unwrap().ok()", "ok", "receiver"),
                 ("user.rs", "pick(Report).ok()", "ok", "receiver"),
                 // a slice's elements are not known
                 ("user.rs", "&& v.first().unwrap().ok() && s", "ok", "receiver"),
