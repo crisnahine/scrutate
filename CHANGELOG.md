@@ -6,6 +6,22 @@ API are versioned interfaces; incompatible changes bump the major version once p
 listed here under "Breaking". The on-disk index is a cache with its own `schema_version`; a new
 version rebuilds incompatible indexes automatically and this is never considered breaking.
 
+## [Unreleased]
+
+### Added
+- `scrutate setup <claude|codex|opencode|cursor|gemini>` writes one MCP server entry that runs
+  this binary by its absolute path into the agent's user file, or with `--project` into the
+  repository's file, editing the text in place so every other key and comment stays; a file that
+  does not parse is left alone, and the file is replaced by rename. `--uninstall` gives the file
+  back byte for byte, `--dry-run` prints the change and writes nothing, `--instructions` adds a
+  marked block to `CLAUDE.md`, `AGENTS.md` or `GEMINI.md`. Claude Code's user file goes through
+  `claude mcp add-json` when `claude` is installed. Checked with each agent's own listing: Claude
+  Code 2.1.323, Codex 0.155.1, cursor-agent 2026.10.22, opencode 1.19.5 and 2.2.7, Gemini CLI 0.68.0.
+- `scrutate setup claude --hook` installs a `PreToolUse` hook that answers Claude Code's Grep with
+  Engine A's matches, the lines ripgrep gives for the same arguments, bounded as an MCP answer is;
+  a call it cannot answer exactly runs Grep as before. `scrutate hook stats` prints, per session
+  and in all, the bytes Grep would have returned against the bytes the hook sent.
+
 ## [0.1.0] - 2026-11-11
 
 First release.

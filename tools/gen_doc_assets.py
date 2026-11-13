@@ -701,7 +701,7 @@ def diagram_cli_map():
     s = Svg(880, 700, "Command map: scrutate's commands by family",
             "Search without an index (grep, tsquery), search the index (search, find, grep --index, batch), "
             "code intelligence (symbol, callers, callees, refs, outline, deps, rdeps, similar, dupes, impact), "
-            "maintenance (index, check, stats, languages, config, completions) and servers (serve, lsp, watch).")
+            "maintenance (index, check, stats, languages, config, completions) and servers (serve, lsp, watch, setup, hook).")
     fams = [
         ("Search, no index", "fg", 130, [
             ("grep", "alias `g`: regex, literal, identifier, fuzzy"),
@@ -735,6 +735,8 @@ def diagram_cli_map():
             ("serve", "MCP server on stdio"),
             ("lsp", "language server on stdio"),
             ("watch", "keep the index up to date"),
+            ("setup", "the MCP entry in an agent's configuration"),
+            ("hook", "Claude Code's Grep hook and its counter"),
         ]),
     ]
     boxes = [(1, 431), (447, 432), (1, 878), (1, 431), (447, 432)]

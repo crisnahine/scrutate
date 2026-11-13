@@ -7,7 +7,7 @@
 
 [Documentation](README.md) &nbsp;·&nbsp; Previous: [Test results](TEST_RESULTS.md) &nbsp;·&nbsp; Next: [Traceability](TRACEABILITY.md)
 
-**Contents**: [Threat model](#threat-model) &nbsp;·&nbsp; [Controls and evidence](#controls-and-evidence) &nbsp;·&nbsp; [Running git](#running-git) &nbsp;·&nbsp; [The session socket](#the-session-socket) &nbsp;·&nbsp; [The main checkout's index in a linked work tree](#the-main-checkouts-index-in-a-linked-work-tree) &nbsp;·&nbsp; [Known gaps and residual risks](#known-gaps-and-residual-risks) &nbsp;·&nbsp; [Reporting](#reporting)
+**Contents**: [Threat model](#threat-model) &nbsp;·&nbsp; [Controls and evidence](#controls-and-evidence) &nbsp;·&nbsp; [Running git](#running-git) &nbsp;·&nbsp; [The session socket](#the-session-socket) &nbsp;·&nbsp; [The main checkout's index in a linked work tree](#the-main-checkouts-index-in-a-linked-work-tree) &nbsp;·&nbsp; [Setup and the Grep hook](#setup-and-the-grep-hook) &nbsp;·&nbsp; [Known gaps and residual risks](#known-gaps-and-residual-risks) &nbsp;·&nbsp; [Reporting](#reporting)
 
 <!-- End of head. -->
 
@@ -24,7 +24,9 @@ integrity of the machine running the tool, (3) availability (no hangs or resourc
 hostile inputs). Attackers considered: a **hostile repository** (crafted files, names, symlinks,
 `.gitignore`, a corrupted or planted `.scrutate/` directory), a **hostile query** (patterns),
 a **hostile MCP client** (malformed JSON-RPC, path escapes), and **another local process** that
-reaches the socket a running `serve` offers to command line calls (below).
+reaches the socket a running `serve` offers to command line calls (below). Two commands write
+outside a repository, on the user's word only: `scrutate setup` writes an agent's configuration
+files, and the Grep hook it installs appends to a counter file (below).
 
 <p align="center">
 <img src="assets/diagram-trust-boundaries.svg" alt="Trust boundaries: repository content, patterns, MCP requests and the .scrutate directory, with the controls on each boundary; no network." width="880">
@@ -35,7 +37,7 @@ reaches the socket a running `serve` offers to command line calls (below).
 
 | Area | Control | Evidence |
 |---|---|---|
-| No code execution from repositories | Files are parsed as data (tree-sitter, regex); nothing is evaluated, imported, or run. No build systems, hooks, `.scrutate.toml` scripts or plugins exist. The binary starts another program in two cases: `grep -z` decompresses bzip2, xz, lzma, lz4, zstd, brotli and `.Z` files by running the system's `bzip2`, `xz`, `lz4`, `zstd`, `brotli` or `uncompress` from `PATH` on the file (through `grep-cli`, as ripgrep does), while gzip, zip and tar are read in process; and `impact` (the command and the MCP tool) runs `git` from `PATH` in the root to read the diff (see [Running git](#running-git)). Without `-z` or `impact`, no program is started. | Code review: the engine's process spawns are `grep_cli::DecompressionReaderBuilder` in `archive.rs` and `Git::command` in `impact.rs`; `tests/impact.rs` (a revision written as an option is refused, and no file is written). |
+| No code execution from repositories | Files are parsed as data (tree-sitter, regex); nothing is evaluated, imported, or run. No build systems, repository hooks, `.scrutate.toml` scripts or plugins exist. The binary starts another program in two cases: `grep -z` decompresses bzip2, xz, lzma, lz4, zstd, brotli and `.Z` files by running the system's `bzip2`, `xz`, `lz4`, `zstd`, `brotli` or `uncompress` from `PATH` on the file (through `grep-cli`, as ripgrep does), while gzip, zip and tar are read in process; and `impact` (the command and the MCP tool) runs `git` from `PATH` in the root to read the diff (see [Running git](#running-git)). Without `-z` or `impact`, no search starts a program. `scrutate setup claude` runs `claude mcp add-json` or `claude mcp remove` from `PATH` when it is there ([below](#setup-and-the-grep-hook)). | Code review: the engine's process spawns are `grep_cli::DecompressionReaderBuilder` in `archive.rs` and `Git::command` in `impact.rs`, and `setup.rs` runs `claude` as above; `tests/impact.rs` (a revision written as an option is refused, and no file is written). |
 | No network | The binary makes no network connections and has no HTTP/DNS dependency. | `cargo tree` (docs/DEPENDENCIES.md) contains no networking crate; offline build and run verified in a proxy-restricted environment. |
 | Filesystem confinement | `read_code` / `read()` reject paths that resolve outside the repository root, and `read_code` refuses a path that is not a regular file; the index is written only under `<root>/.scrutate/`, and another checkout's index is only read, in a linked git work tree, from its main checkout ([below](#the-main-checkouts-index-in-a-linked-work-tree)); segment files are written to a temp directory *inside* `.scrutate/seg/` and renamed into place (no `/tmp`, no predictable world-writable paths). A repository's `exclude_dirs` (`.scrutate.toml` at the root) can only leave directories out by name: the file is read as other repository files are (a regular file inside the root, at most 1 MB; through a link only when the resolved file is one), and its names are never read as patterns. A `.scrutate` that is a symbolic link, or that holds one (checked three levels deep, no link followed), is refused, and files of fixed names are written with remove and `create_new`, so nothing outside the repository is written or deleted through a link. A `--root` that does not exist or is not a directory is an error, and nothing is created. `tsconfig.json`, `jsconfig.json`, `Cargo.toml` and `go.mod` are read only when they are regular files inside the repository, of at most 1 MB. A path a tool call names, a file an answer cites and a file a watch event names are indexed only when the path resolves inside the repository root: a linked folder on the way that leads outside makes the file count as missing. A path in a tool call that leaves the root by its own parts (`..`, an absolute path elsewhere, a share on another machine) is refused with nothing looked at, so on Windows no connection is made to a machine a call names. The language server reads a document from disk only under the root, links on the way included, and resolves no path on another machine's share than the root's: for a document outside it (another folder, a URI that leaves through `..`) it uses the text the editor sent, or nothing. | `tests/robustness.rs::symlinks_ignores_and_nested_repos` (symlink escape not followed by default), bindings test `r.read("../etc/passwd")` → error, lsp `a_document_that_is_not_under_the_root_is_never_read_from_disk`, mcp_tools `a_path_through_a_linked_folder_reads_nothing_outside_the_repository`. |
 | Symlinks | Not followed by default (Engine A and B); `-L` follows with loop detection (the `ignore` walker). | robustness: loop + dangling + escaping symlinks. |
@@ -223,6 +225,39 @@ model; links not confirmed both ways, a main index directory that is or holds a 
 copy are not followed; an uncommitted write of the main checkout is not read; a build in the main
 checkout beside lookups in the work tree; damage to the store found and rebuilt).
 
+## Setup and the Grep hook
+
+`scrutate setup <agent>` writes only the files [docs/CLI.md](CLI.md#setup-and-the-grep-hook)
+names for that agent and scope (the user's file under the home directory, `$CODEX_HOME` or
+`$XDG_CONFIG_HOME`, or with `--project` the agent's file at the top of the repository the current
+directory is in), and only when it is run; no other command and no search touches them. In each
+file it puts or takes out one entry named `scrutate`, which runs this binary by its absolute path
+with `serve` (with `--project`, `--root <repository> serve`), and nothing else; with `--hook` one
+`PreToolUse` group in Claude Code's settings, and with `--instructions` one marked block in the
+agent's instruction file. A file that does not parse is left as it is. The new text is written to
+a temporary file beside the old one, which it then replaces by rename with the old file's
+permissions, so a crash leaves the old file or the new one, never half of one; a link is followed
+and stays a link. For Claude Code's user file, `setup` runs the `claude` program found on `PATH`
+(`claude mcp add-json` and `claude mcp remove`, with the arguments `--dry-run` prints), because
+running Claude Code sessions rewrite that file themselves. An entry in a project file
+(`.mcp.json`, `.cursor/mcp.json`) is a command line that the agent runs for anyone who opens the
+repository and accepts it; Claude Code asks before it starts one.
+
+`scrutate hook grep` runs for each Grep call of Claude Code. Its input is the call as Claude Code
+sends it on standard input: the pattern, the path, the flags, the session's directory and id.
+It reads files as Engine A always does (ignore rules followed, no link followed, nothing
+executed), and only below the project directory (`CLAUDE_PROJECT_DIR`, else the session's
+directory): a search elsewhere is one Claude Code would ask about first, so the hook lets Grep
+run and Claude Code ask. Claude Code filters Grep's results by the `Read` and `Grep` rules of its
+settings; the hook cannot apply those rules, so when any settings file it can read (the user's,
+the project's, the local one, the managed one) has a `deny` or `ask` rule for `Read` or `Grep`, or
+does not parse, the hook lets Grep run. It fails open in the same way on any argument it does not
+map, on an error, on a binary or unreadable file and after 3 seconds: it prints nothing, exits 0,
+and Grep runs. It never exits 2, which would block the call. It writes one file, the counter
+`$XDG_STATE_HOME/scrutate/hook-grep.jsonl` (default `~/.local/state/scrutate/`, on Windows
+`%LOCALAPPDATA%\scrutate\`): one line per answered call with the session id, two byte counts and
+the time, and no file name or text of the repository.
+
 ## Known gaps and residual risks
 
 - **Not independently audited.** No external review or penetration test has been done. The fuzzing
@@ -261,6 +296,10 @@ checkout beside lookups in the work tree; damage to the store found and rebuilt)
   the repository directory can read it, the same access they already have to the sources.
 - **Denial of service by index size**: a repository with millions of files will build a
   multi-gigabyte index; there is no quota. Engine A has no such state.
+- **Read rules the hook cannot see**: a `Read` or `Grep` rule given only on Claude Code's command
+  line (`--disallowedTools`, `--settings`) or by an SDK host is not in a file the hook reads, so the
+  hook answers a Grep that such a rule would have filtered. Put such rules in a settings file, or
+  leave the hook out (`scrutate setup claude --uninstall --hook`).
 - **Timing side channels, multi-tenant hosting, encryption at rest**: out of scope for a local
   developer tool.
 

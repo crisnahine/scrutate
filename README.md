@@ -185,6 +185,23 @@ repository with `--root`; `--watch` also updates the index from filesystem event
 scrutate --root /path/to/repo serve --watch
 ```
 
+### Set up your agent
+
+`scrutate setup` writes the server into an agent's own configuration, as one entry that runs this
+binary by its absolute path, and keeps every other line of the file:
+
+```sh
+scrutate setup claude          # also codex, opencode, cursor, gemini
+scrutate setup cursor --project   # the repository's .cursor/mcp.json instead of the user's file
+scrutate setup claude --hook   # also answer Claude Code's Grep with scrutate's search
+scrutate setup claude --uninstall --hook   # take back exactly what setup wrote
+```
+
+`--dry-run` prints each file and the change and writes nothing. No `CLAUDE.md`, `AGENTS.md` or
+`GEMINI.md` is touched unless you add `--instructions`. Which file each agent gets is in
+[docs/CLI.md](docs/CLI.md#setup-and-the-grep-hook); `scrutate hook stats` shows how many bytes the
+Grep hook sent against what Grep would have returned.
+
 `scrutate lsp` is a Language Server Protocol server on stdio: definitions, references and symbols
 from the index.
 

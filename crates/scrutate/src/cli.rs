@@ -696,6 +696,41 @@ pub enum Cmd {
     /// {"query"}, {"split"} or {"stopwords": true}): the input of training and of the benchmarks
     #[command(hide = true)]
     Views { file: PathBuf },
+    /// add the scrutate MCP server to an agent's configuration (or with --uninstall take it out)
+    Setup {
+        agent: crate::setup::Agent,
+        /// the agent's file in the repository of the current directory, not the user's
+        #[arg(long)]
+        project: bool,
+        /// remove exactly what setup added
+        #[arg(long)]
+        uninstall: bool,
+        /// print each file it would change and the change; write nothing
+        #[arg(long)]
+        dry_run: bool,
+        /// also the hook that answers Claude Code's Grep with scrutate's search
+        #[arg(long)]
+        hook: bool,
+        /// also a short block in the agent's instruction file (CLAUDE.md, AGENTS.md, GEMINI.md)
+        #[arg(long)]
+        instructions: bool,
+    },
+    /// Claude Code's Grep hook (`hook grep`) and its counter of bytes (`hook stats`)
+    Hook {
+        #[command(subcommand)]
+        cmd: HookCmd,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum HookCmd {
+    /// read a PreToolUse call of Grep on standard input and answer it, or print nothing so Grep runs
+    Grep,
+    /// the bytes Grep would have returned against the bytes the hook sent, per session and in all
+    Stats {
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn parse_size(s: &str) -> Result<u64> {
@@ -946,6 +981,10 @@ fn named_file(cmd: &Cmd) -> Option<&str> {
 pub fn run() -> Result<i32> {
     // configuration file -> environment -> clap (command line still wins)
     let args: Vec<String> = std::env::args_os().map(|a| a.to_string_lossy().into_owned()).collect();
+    // before the configuration file, which can stop a command: the hook must never fail
+    if args.len() == 3 && args[1] == "hook" && args[2] == "grep" {
+        return Ok(crate::hook::grep_main());
+    }
     let cwd = std::env::current_dir().ok();
     let root_given = std::env::var_os("SCRUTATE_ROOT").is_some() || args.iter().any(|a| a == "--root" || a.starts_with("--root="));
     let cfg_root = match &cwd {
@@ -1004,7 +1043,14 @@ pub fn run() -> Result<i32> {
     let uses_index = match &cli.cmd {
         Cmd::Grep(g) => g.index || g.symbols,
         // the language server applies the rule to the editor's folder
-        Cmd::Config { .. } | Cmd::Completions { .. } | Cmd::Languages { .. } | Cmd::Sexp { .. } | Cmd::Watch { path: Some(_) } | Cmd::Lsp => false,
+        Cmd::Config { .. }
+        | Cmd::Completions { .. }
+        | Cmd::Languages { .. }
+        | Cmd::Sexp { .. }
+        | Cmd::Watch { path: Some(_) }
+        | Cmd::Lsp
+        | Cmd::Setup { .. }
+        | Cmd::Hook { .. } => false,
         _ => true,
     };
     let mut found_index = None;
@@ -1530,6 +1576,11 @@ pub fn run() -> Result<i32> {
         }
         Cmd::Batch { file, features, timing } => batch_command(&cli.root, &file, features, timing),
         Cmd::Views { file } => views_command(&file),
+        Cmd::Setup { agent, project, uninstall, dry_run, hook, instructions } => {
+            crate::setup::run(agent, crate::setup::Options { project, uninstall, dry_run, hook, instructions })
+        }
+        Cmd::Hook { cmd: HookCmd::Grep } => Ok(crate::hook::grep_main()),
+        Cmd::Hook { cmd: HookCmd::Stats { json } } => crate::hook::stats(json),
     }
 }
 

@@ -844,6 +844,17 @@ the index is scanned before a request at most once a second (the session's inter
 updates the index through the session's writer in a background thread; requests keep reading
 while it writes.
 
+`setup.rs` writes an agent's configuration for `scrutate setup`. It makes the whole plan first (a
+file from its old text to its new one, the agent's own command, a note) and writes nothing when a
+file of it does not parse. JSON and JSONC files are edited on their text by byte span: one member
+or list item goes in or comes out, and the new text is parsed again and must read as the old value
+with that one change. Codex's `config.toml` gets one table appended or cut out, checked the same
+way, and the instruction block sits between two marker lines. `hook.rs` is Claude Code's Grep
+hook: it maps a Grep call onto an Engine A query and file set the way Grep calls ripgrep (a
+`type` through `Files::walk_types`, which matches after the ignore rules as ripgrep's `--type`
+does), words the records as Grep words ripgrep's lines, and bounds the result as an MCP answer is
+bounded; an argument it cannot map, or any error, lets Grep run.
+
 ## Models (`models/`, `models.rs`)
 `semantic.npz` (14.6 MB: code-word vocabulary tables and projections) and `ranker.npz` (87 KB)
 are embedded in the binary with `include_bytes!`; `SCRUTATE_SEMANTIC` / `SCRUTATE_RANKER` can

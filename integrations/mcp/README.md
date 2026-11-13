@@ -47,30 +47,40 @@ What a client gets (details in docs/CLI.md, `serve`):
 
 ## Client configuration
 
-Each client has its own file and its own key for the list of servers. Replace `/path/to/repo`;
-Cursor and VS Code fill in `${workspaceFolder}` themselves. Start `scrutate serve` with
-`--root DIR` (or `SCRUTATE_ROOT`), or from inside a repository: started with no root in the home
-directory or at a filesystem root that has no index, it stops with exit code 2 and indexes
-nothing.
+`scrutate setup` writes the entry into the agent's own file and keeps every other line of it:
 
-Claude Code (the command, or the same as `.mcp.json` in the repository):
 ```sh
-claude mcp add scrutate -- scrutate --root /path/to/repo serve
+scrutate setup claude      # ~/.claude.json, through `claude mcp add-json` when claude is installed
+scrutate setup codex       # $CODEX_HOME/config.toml: [mcp_servers.scrutate]
+scrutate setup opencode    # ~/.config/opencode/opencode.json (or .jsonc)
+scrutate setup cursor      # ~/.cursor/mcp.json
+scrutate setup gemini      # ~/.gemini/settings.json
+scrutate setup cursor --project            # the repository's .cursor/mcp.json (.mcp.json for Claude Code)
+scrutate setup claude --uninstall          # takes the entry out again, byte for byte
 ```
+
+The entry runs `scrutate` by its absolute path with `serve`, so the server serves the repository
+the agent starts in; a `--project` entry names its repository with `--root`. `--dry-run` shows the
+change, `--hook` also answers Claude Code's Grep with scrutate's search, and `--instructions` adds a
+short block to `CLAUDE.md`, `AGENTS.md` or `GEMINI.md`. The files, the shapes and the rules are in
+[docs/CLI.md](../../docs/CLI.md#setup-and-the-grep-hook). Gemini CLI starts a stdio server only in a
+folder you trust.
+
+By hand, the entries look like this (replace `/path/to/repo`; Cursor and VS Code fill in
+`${workspaceFolder}` themselves). Start `scrutate serve` with `--root DIR` (or `SCRUTATE_ROOT`),
+or from inside a repository: started with no root in the home directory or at a filesystem root
+that has no index, it stops with exit code 2 and indexes nothing.
+
+Claude Code (`.mcp.json` in the repository):
 ```json
 { "mcpServers": { "scrutate": { "command": "scrutate", "args": ["--root", "/path/to/repo", "serve"] } } }
 ```
 
-Codex CLI (`codex mcp add scrutate -- scrutate --root /path/to/repo serve`, or `~/.codex/config.toml`):
+Codex CLI (`~/.codex/config.toml`):
 ```toml
 [mcp_servers.scrutate]
 command = "scrutate"
 args = ["--root", "/path/to/repo", "serve"]
-```
-
-Cursor (`.cursor/mcp.json`):
-```json
-{ "mcpServers": { "scrutate": { "type": "stdio", "command": "scrutate", "args": ["--root", "${workspaceFolder}", "serve"] } } }
 ```
 
 VS Code (`.vscode/mcp.json`; the key is `servers`):
@@ -78,20 +88,18 @@ VS Code (`.vscode/mcp.json`; the key is `servers`):
 { "servers": { "scrutate": { "type": "stdio", "command": "scrutate", "args": ["--root", "${workspaceFolder}", "serve"] } } }
 ```
 
-Gemini CLI (`.gemini/settings.json`):
-```json
-{ "mcpServers": { "scrutate": { "command": "scrutate", "args": ["--root", "/path/to/repo", "serve"] } } }
-```
-
 Zed (`settings.json`; the key is `context_servers`):
 ```json
 { "context_servers": { "scrutate": { "command": "scrutate", "args": ["--root", "/path/to/repo", "serve"], "env": {} } } }
 ```
 
-Tested in a running session: Claude Code. Checked through the client's own command: Codex CLI
-(`codex mcp add` writes the table above, `codex mcp list` shows it enabled) and VS Code
-(`code --add-mcp` writes the `servers` entry above). Cursor, Gemini CLI and Zed follow their
-documentation as of November 2026 and were not started here.
+Tested in a running session: Claude Code. Checked through each client's own listing after
+`scrutate setup`, in a scratch home (2026-11-13): Claude Code 2.1.323 (`claude mcp list`:
+Connected), Codex CLI 0.155.1 (`codex mcp list`: enabled), cursor-agent 2026.10.22 (`mcp list`:
+ready), opencode 1.19.5 and 2.2.7 (`opencode mcp list`: connected) and Gemini CLI 0.68.0 (`gemini
+mcp list`: Connected in a trusted folder). VS Code (`code --add-mcp` writes the `servers` entry
+above) was checked through its own command; Zed follows its documentation as of November 2026 and
+was not started here.
 
 The server never leaves the machine: it reads the repository, writes only `.scrutate/` inside it,
 opens no network connections and executes no repository code.

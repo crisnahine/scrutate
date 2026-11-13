@@ -1,0 +1,606 @@
+//! `scrutate hook grep`: Claude Code's `PreToolUse` hook for its Grep tool. It answers the call
+//! with Engine A's matches, the lines ripgrep gives for the same arguments, and denies the call
+//! with that answer as the reason, which Claude Code hands to the model in place of Grep's
+//! result. Anything it cannot answer exactly (an argument it does not map, an error, a timeout)
+//! prints nothing and exits 0, so Grep runs as if there were no hook. `scrutate hook stats` sums
+//! the bytes Grep would have returned against the bytes sent.
+
+use std::io::{Read, Write};
+use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+
+use anyhow::{Context, Result};
+use serde_json::{json, Value};
+
+use crate::instant::{self, Case, Files, Mode, Output, Pattern, Query, Record, Report};
+
+/// A search that takes longer lets Grep run instead.
+const DEADLINE: Duration = Duration::from_secs(3);
+/// Grep's own default `head_limit`.
+const GREP_HEAD: usize = 250;
+/// Grep shows a longer line as a note, as `rg --max-columns 500` does.
+const GREP_COLUMNS: usize = 500;
+/// The directories Grep leaves out (`--glob !.git` and so on).
+const VCS: [&str; 6] = [".git", ".svn", ".hg", ".bzr", ".jj", ".sl"];
+/// The `type` names whose files are the same in ripgrep and in scrutate's registry (a test holds
+/// the list to `rg --type-list`).
+pub const SAME_TYPES: [&str; 23] = [
+    "asm", "cmake", "cs", "csharp", "dart", "elisp", "elm", "erlang", "fish", "gleam", "go", "julia", "kotlin", "lua", "nix", "py", "python", "racket", "rst",
+    "rust", "solidity", "swift", "yaml",
+];
+const KEYS: [&str; 15] = ["pattern", "path", "glob", "type", "output_mode", "-B", "-A", "-C", "context", "-n", "-i", "-o", "head_limit", "offset", "multiline"];
+pub const HEADER: &str = "Grep result from scrutate (the lines ripgrep gives; Grep did not run):";
+
+/// The answer to one Grep call.
+#[derive(Debug)]
+pub struct Answer {
+    /// what the model gets: the header, then the result as Grep words it, bounded
+    pub reason: String,
+    /// the bytes of the result Grep would have returned
+    pub grep_bytes: usize,
+}
+
+/// The hook: reads the call on standard input and prints the decision, or nothing. Always 0: an
+/// exit code 2 would block the call.
+pub fn grep_main() -> i32 {
+    let answered = std::panic::catch_unwind(|| {
+        let mut input = Vec::new();
+        std::io::stdin().take(4 << 20).read_to_end(&mut input).ok()?;
+        let input: Value = serde_json::from_slice(&input).ok()?;
+        let budget =
+            std::env::var("SCRUTATE_MAX_BYTES").ok().and_then(|v| v.parse::<usize>().ok()).map_or(crate::ops::AGENT_BYTES, |n| n.clamp(1_000, 1_000_000));
+        let a = answer(&input, budget)?;
+        Some((input.get("session_id").and_then(Value::as_str).unwrap_or("").to_string(), a))
+    });
+    if let Ok(Some((session, a))) = answered {
+        let decision = json!({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": a.reason}});
+        let mut so = std::io::stdout().lock();
+        if writeln!(so, "{decision}").and_then(|_| so.flush()).is_ok() {
+            let _ = count(&session, a.grep_bytes, a.reason.len());
+        }
+    }
+    0
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Shape {
+    Content,
+    Files,
+    Count,
+}
+
+/// What a Grep call asks, as ripgrep would read it.
+struct Ask {
+    pattern: String,
+    target: PathBuf,
+    cwd: PathBuf,
+    globs: Vec<String>,
+    walk_type: Option<String>,
+    shape: Shape,
+    before: usize,
+    after: usize,
+    breaks: bool,
+    numbers: bool,
+    insensitive: bool,
+    multiline: bool,
+    /// `None`: no limit
+    head: Option<usize>,
+    offset: usize,
+}
+
+/// The answer to `input` (Claude Code's hook input), or `None` when Grep must run.
+pub fn answer(input: &Value, budget: usize) -> Option<Answer> {
+    if cfg!(windows) {
+        return None;
+    }
+    let ask = read_ask(input)?;
+    let project = std::env::var_os("CLAUDE_PROJECT_DIR").map(PathBuf::from).unwrap_or_else(|| ask.cwd.clone());
+    // Grep asks before it reads outside the project, and Claude Code's read rules filter it: the
+    // hook answers neither case
+    if !ask.target.starts_with(&project) || rules_limit_reads(&project) {
+        return None;
+    }
+    let lines = search(&ask)?;
+    Some(render(&ask, lines, budget))
+}
+
+fn read_ask(input: &Value) -> Option<Ask> {
+    if input.get("hook_event_name")?.as_str()? != "PreToolUse" || input.get("tool_name")?.as_str()? != "Grep" {
+        return None;
+    }
+    let t = input.get("tool_input")?.as_object()?;
+    if t.keys().any(|k| !KEYS.contains(&k.as_str())) {
+        return None;
+    }
+    let num = |k: &str| -> Option<Option<usize>> {
+        match t.get(k) {
+            None | Some(Value::Null) => Some(None),
+            Some(v) => v.as_u64().and_then(|n| usize::try_from(n).ok()).map(Some),
+        }
+    };
+    let flag = |k: &str, default: bool| -> Option<bool> {
+        match t.get(k) {
+            None | Some(Value::Null) => Some(default),
+            Some(v) => v.as_bool(),
+        }
+    };
+    let text = |k: &str| -> Option<Option<&str>> {
+        match t.get(k) {
+            None | Some(Value::Null) => Some(None),
+            Some(v) => v.as_str().map(Some),
+        }
+    };
+    let pattern = text("pattern")?.filter(|p| !p.is_empty())?.to_string();
+    let shape = match text("output_mode")?.unwrap_or("files_with_matches") {
+        "content" => Shape::Content,
+        "files_with_matches" => Shape::Files,
+        "count" => Shape::Count,
+        _ => return None,
+    };
+    let (context, c, b, a) = (num("context")?, num("-C")?, num("-B")?, num("-A")?);
+    if shape == Shape::Content && flag("-o", false)? {
+        return None;
+    }
+    let (before, after) = match context.or(c) {
+        Some(n) => (n, n),
+        None => (b.unwrap_or(0), a.unwrap_or(0)),
+    };
+    let cwd = PathBuf::from(input.get("cwd")?.as_str()?);
+    if !cwd.is_absolute() {
+        return None;
+    }
+    let target = match text("path")? {
+        Some(p) if p.starts_with('~') => return None,
+        Some(p) => lexical(&cwd.join(p))?,
+        None => lexical(&cwd)?,
+    };
+    // a link on the way makes ripgrep's paths differ from the walk's
+    if std::fs::canonicalize(&target).ok()? != target {
+        return None;
+    }
+    let mut globs: Vec<String> = VCS.iter().map(|d| format!("!{d}")).collect();
+    for g in split_glob(text("glob")?.unwrap_or("")) {
+        // a glob with a slash matches from ripgrep's working directory, which the hook cannot see
+        let bare = g.strip_prefix('!').unwrap_or(&g);
+        if bare.strip_prefix("**/").unwrap_or(bare).contains('/') {
+            return None;
+        }
+        globs.push(g);
+    }
+    let walk_type = match text("type")?.filter(|t| !t.is_empty()) {
+        Some(t) if SAME_TYPES.contains(&t) => Some(t.to_string()),
+        Some(_) => return None,
+        None => None,
+    };
+    Some(Ask {
+        pattern,
+        target,
+        cwd,
+        globs,
+        walk_type,
+        shape,
+        before: if shape == Shape::Content { before } else { 0 },
+        after: if shape == Shape::Content { after } else { 0 },
+        breaks: [context, c, b, a].iter().any(|n| n.is_some_and(|n| n > 0)),
+        numbers: flag("-n", true)?,
+        insensitive: flag("-i", false)?,
+        multiline: flag("multiline", false)?,
+        head: match num("head_limit")? {
+            None => Some(GREP_HEAD),
+            Some(0) => None,
+            Some(n) => Some(n),
+        },
+        offset: num("offset")?.unwrap_or(0),
+    })
+}
+
+/// `p` with `.` and `..` resolved by name, as Node's `path.resolve` does.
+fn lexical(p: &Path) -> Option<PathBuf> {
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            c => out.push(c),
+        }
+    }
+    out.is_absolute().then_some(out)
+}
+
+/// Grep's `glob` argument as it splits it: at whitespace, and at commas outside a word with braces.
+fn split_glob(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for w in s.split_whitespace() {
+        if w.contains('{') && w.contains('}') {
+            out.push(w.to_string());
+        } else {
+            out.extend(w.split(',').filter(|g| !g.is_empty()).map(String::from));
+        }
+    }
+    out
+}
+
+/// Whether a settings file of Claude Code has a `deny` or `ask` rule for reads, which Grep's
+/// answer would have to follow. A settings file that does not parse counts as one.
+fn rules_limit_reads(project: &Path) -> bool {
+    let home = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".claude")));
+    let mut files = vec![project.join(".claude").join("settings.json"), project.join(".claude").join("settings.local.json")];
+    files.extend(home.map(|h| h.join("settings.json")));
+    files.push(PathBuf::from(if cfg!(target_os = "macos") {
+        "/Library/Application Support/ClaudeCode/managed-settings.json"
+    } else {
+        "/etc/claude-code/managed-settings.json"
+    }));
+    files.iter().any(|f| match std::fs::read(f) {
+        Err(_) => false,
+        Ok(b) => match serde_json::from_slice::<Value>(&b) {
+            Err(_) => true,
+            Ok(v) => ["deny", "ask"].iter().any(|k| {
+                v.pointer(&format!("/permissions/{k}"))
+                    .and_then(Value::as_array)
+                    .is_some_and(|rules| rules.iter().any(|r| r.as_str().is_none_or(|r| r.starts_with("Read") || r.starts_with("Grep"))))
+            }),
+        },
+    })
+}
+
+/// One line of Grep's result list, before the paging.
+struct Item {
+    text: String,
+    /// the matching lines of a `count` line
+    count: u64,
+}
+
+/// Engine A's answer as Grep's lines, in path order (by modification time, newest first, for
+/// `files_with_matches`, as Grep sorts them); `None` when it cannot stand for ripgrep's.
+fn search(ask: &Ask) -> Option<Vec<Item>> {
+    let q = Query {
+        pattern: Pattern {
+            text: if ask.multiline { format!("(?s){}", ask.pattern) } else { ask.pattern.clone() },
+            mode: Mode::Regex,
+            case: if ask.insensitive { Case::Insensitive } else { Case::Sensitive },
+            multiline: ask.multiline,
+            ..Pattern::default()
+        },
+        report: match ask.shape {
+            Shape::Content => Report::Lines,
+            Shape::Files => Report::Files,
+            Shape::Count => Report::Counts,
+        },
+        before: ask.before,
+        after: ask.after,
+        first_in_path_order: true,
+        ..Query::default()
+    };
+    let f = Files {
+        hidden: true,
+        globs: ask.globs.clone(),
+        walk_types: ask.walk_type.iter().cloned().collect(),
+        paths_as_given: true,
+        ..Files::walk(vec![ask.target.clone()])
+    };
+    let cancel = Arc::new(AtomicBool::new(false));
+    let timer = cancel.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(DEADLINE);
+        timer.store(true, Ordering::Relaxed);
+    });
+    let mut records = Vec::new();
+    let mut odd = false;
+    let stats = instant::search(
+        &q,
+        &f,
+        cancel,
+        Output::Records(&mut |r| {
+            odd |= r.path_bytes().is_some() || matches!(r, Record::Note { .. });
+            records.push(r);
+        }),
+    )
+    .ok()?;
+    if odd || stats.cancelled || stats.errors > 0 || records.is_empty() {
+        return None;
+    }
+    let dir = ask.target.is_dir();
+    let shown = |p: &str| match Path::new(p).strip_prefix(&ask.cwd) {
+        Ok(r) if !r.as_os_str().is_empty() => r.to_string_lossy().into_owned(),
+        _ => p.to_string(),
+    };
+    let mut items = Vec::new();
+    match ask.shape {
+        Shape::Content => {
+            let mut last: Option<(std::sync::Arc<str>, u64)> = None;
+            for r in &records {
+                let (l, sep) = match r {
+                    Record::Match(l) => (l, ':'),
+                    Record::Context(l) => (l, '-'),
+                    _ => return None,
+                };
+                if ask.breaks {
+                    if let Some((p, n)) = &last {
+                        if *p != l.path || l.line > n + 1 {
+                            items.push(Item { text: "--".into(), count: 0 });
+                        }
+                    }
+                }
+                // a multi-line match is one record; Grep shows each of its lines with its number
+                let parts: Vec<&str> = l.text.strip_suffix('\n').unwrap_or(&l.text).split('\n').collect();
+                last = Some((l.path.clone(), l.line + parts.len() as u64 - 1));
+                for (k, part) in parts.iter().enumerate() {
+                    let part = part.trim_end_matches('\r');
+                    let text = if part.encode_utf16().count() > GREP_COLUMNS {
+                        if sep == ':' {
+                            "[Omitted long matching line]"
+                        } else {
+                            "[Omitted long context line]"
+                        }
+                    } else {
+                        part
+                    };
+                    let mut line = if dir { format!("{}{sep}", shown(&l.path)) } else { String::new() };
+                    if ask.numbers {
+                        line.push_str(&format!("{}{sep}", l.line + k as u64));
+                    }
+                    line.push_str(text);
+                    items.push(Item { text: line, count: 0 });
+                }
+            }
+        }
+        Shape::Count => {
+            for r in &records {
+                let Record::Count { path, count, .. } = r else { return None };
+                if *count > 0 {
+                    items.push(Item { text: format!("{}:{count}", shown(path)), count: *count });
+                }
+            }
+        }
+        Shape::Files => {
+            let mut files: Vec<(f64, String)> = Vec::new();
+            for r in &records {
+                let Record::File { path, .. } = r else { return None };
+                let ms = std::fs::metadata(&**path)
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map_or(0.0, |d| d.as_secs_f64() * 1000.0);
+                files.push((ms, shown(path)));
+            }
+            files.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+            items.extend(files.into_iter().map(|(_, text)| Item { text, count: 0 }));
+        }
+    }
+    Some(items)
+}
+
+/// The window Grep shows of `len` items: from `offset`, `head` of them; and the limit it names
+/// when there are more.
+fn window(len: usize, head: Option<usize>, offset: usize) -> (usize, usize, Option<usize>) {
+    let start = offset.min(len);
+    match head {
+        None => (start, len, None),
+        Some(h) => (start, (offset.saturating_add(h)).min(len), (len.saturating_sub(offset) > h).then_some(h)),
+    }
+}
+
+/// Grep's words for its paging: `limit: 250, offset: 5`.
+fn pagination(limit: Option<usize>, offset: usize) -> String {
+    let mut parts = Vec::new();
+    if let Some(l) = limit {
+        parts.push(format!("limit: {l}"));
+    }
+    if offset > 0 {
+        parts.push(format!("offset: {offset}"));
+    }
+    parts.join(", ")
+}
+
+fn plural(n: u64, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
+/// Grep's result for these items, and the bounded answer the model gets.
+fn render(ask: &Ask, items: Vec<Item>, budget: usize) -> Answer {
+    let (start, end, limit) = window(items.len(), ask.head, ask.offset);
+    let pages = pagination(limit, ask.offset);
+    let page: Vec<&str> = items[start..end].iter().map(|i| i.text.as_str()).collect();
+    let (pre, empty, post, noun) = match ask.shape {
+        Shape::Content => {
+            let empty = if ask.offset > 0 && !items.is_empty() { "No entries at this offset" } else { "No matches found" };
+            (String::new(), empty.to_string(), if pages.is_empty() { String::new() } else { format!("\n[Showing results with pagination = {pages}]") }, "lines")
+        }
+        Shape::Count => {
+            let total: u64 = items.iter().map(|i| i.count).sum();
+            let empty = if total > 0 { "No entries at this offset" } else { "No matches found" };
+            let with = if pages.is_empty() { String::new() } else { format!(" with pagination = {pages}") };
+            (
+                String::new(),
+                empty.to_string(),
+                format!("\nFound {} across {}.{with}", plural(total, "total occurrence", "total occurrences"), plural(items.len() as u64, "file", "files")),
+                "files",
+            )
+        }
+        Shape::Files => {
+            let n = page.len() as u64;
+            let empty = if ask.offset > 0 && !items.is_empty() {
+                format!("No entries at this offset. [Showing results with pagination = {pages}]")
+            } else {
+                "No files found".into()
+            };
+            (
+                format!("Found {}{}\n", plural(n, "file", "files"), if pages.is_empty() { String::new() } else { format!(" {pages}") }),
+                empty,
+                String::new(),
+                "files",
+            )
+        }
+    };
+    let grep = if page.is_empty() {
+        if ask.shape == Shape::Count {
+            format!("{empty}{post}")
+        } else {
+            empty.clone()
+        }
+    } else {
+        format!("{pre}{}{post}", page.join("\n"))
+    };
+    let reason = if page.is_empty() {
+        format!("{HEADER}\n{grep}")
+    } else {
+        let room = budget.saturating_sub(HEADER.len() + 1 + pre.len() + post.len());
+        format!("{HEADER}\n{pre}{}{post}", bounded(&page, start, end, room, noun))
+    };
+    Answer { reason, grep_bytes: grep.len() }
+}
+
+/// The lines that fit `room` bytes, whole, then a line naming the `offset` that continues them.
+fn bounded(page: &[&str], start: usize, end: usize, room: usize, noun: &str) -> String {
+    let more = |next: usize| format!("\n({} more {noun} not shown: call Grep again with offset={next}, or narrow the request)", end - next);
+    // the widest closing line: its numbers have the most digits
+    let room_for_more = more(start).len().max(more(end).len());
+    let mut out = String::new();
+    for (i, l) in page.iter().enumerate() {
+        let tail = if i + 1 == page.len() { 0 } else { room_for_more };
+        if i > 0 && out.len() + 1 + l.len() + tail > room {
+            out.push_str(&more(start + i));
+            return out;
+        }
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(l);
+    }
+    out
+}
+
+/// The file the counter appends to.
+pub fn counter_path() -> Option<PathBuf> {
+    let var = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
+    let dir = if cfg!(windows) {
+        var("LOCALAPPDATA")?.join("scrutate")
+    } else {
+        var("XDG_STATE_HOME").filter(|p| p.is_absolute()).unwrap_or(var("HOME")?.join(".local").join("state")).join("scrutate")
+    };
+    Some(dir.join("hook-grep.jsonl"))
+}
+
+/// One line per answered call: one write, so lines of hooks running at once do not mix.
+fn count(session: &str, grep_bytes: usize, sent_bytes: usize) -> Result<()> {
+    let path = counter_path().context("no state directory")?;
+    std::fs::create_dir_all(path.parent().expect("a file in a directory"))?;
+    let time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let line = format!("{}\n", json!({"session": session, "grep_bytes": grep_bytes, "sent_bytes": sent_bytes, "time": time}));
+    std::fs::OpenOptions::new().create(true).append(true).open(&path)?.write_all(line.as_bytes())?;
+    Ok(())
+}
+
+#[derive(Default)]
+struct Tally {
+    calls: u64,
+    grep: u64,
+    sent: u64,
+}
+
+impl Tally {
+    fn json(&self) -> Value {
+        json!({"calls": self.calls, "grep_bytes": self.grep, "sent_bytes": self.sent, "saved_bytes": self.grep as i64 - self.sent as i64})
+    }
+
+    fn text(&self) -> String {
+        format!(
+            "{} calls, Grep would have returned {} bytes, scrutate sent {} ({} saved)",
+            self.calls,
+            self.grep,
+            self.sent,
+            self.grep as i64 - self.sent as i64
+        )
+    }
+}
+
+/// `scrutate hook stats`: the counter per session, in the order the sessions began, and in all.
+pub fn stats(json_out: bool) -> Result<i32> {
+    let path = counter_path().context("no state directory: set HOME or XDG_STATE_HOME")?;
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e).with_context(|| format!("read {}", path.display())),
+    };
+    let mut sessions: Vec<(String, Tally)> = Vec::new();
+    let mut all = Tally::default();
+    for v in text.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()) {
+        let (Some(g), Some(s)) = (v.get("grep_bytes").and_then(Value::as_u64), v.get("sent_bytes").and_then(Value::as_u64)) else { continue };
+        let id = v.get("session").and_then(Value::as_str).unwrap_or("").to_string();
+        let i = sessions.iter().position(|(k, _)| *k == id).unwrap_or_else(|| {
+            sessions.push((id, Tally::default()));
+            sessions.len() - 1
+        });
+        for t in [&mut sessions[i].1, &mut all] {
+            t.calls += 1;
+            t.grep += g;
+            t.sent += s;
+        }
+    }
+    let mut so = std::io::stdout().lock();
+    if json_out {
+        let list: Vec<Value> = sessions
+            .iter()
+            .map(|(id, t)| {
+                json!({"session": id})
+                    .as_object()
+                    .cloned()
+                    .map(|mut o| {
+                        o.extend(t.json().as_object().cloned().unwrap_or_default());
+                        Value::Object(o)
+                    })
+                    .unwrap_or_default()
+            })
+            .collect();
+        writeln!(so, "{}", json!({"counter": path.to_string_lossy(), "sessions": list, "total": all.json()}))?;
+    } else if all.calls == 0 {
+        eprintln!("no Grep call was answered yet (counter: {})", path.display());
+    } else {
+        for (id, t) in &sessions {
+            writeln!(so, "session {}: {}", if id.is_empty() { "(none)" } else { id }, t.text())?;
+        }
+        writeln!(so, "all sessions: {}", all.text())?;
+    }
+    Ok(if all.calls == 0 { 1 } else { 0 })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grep_splits_its_glob_argument_at_spaces_and_commas() {
+        assert_eq!(split_glob("*.rs, *.toml"), ["*.rs", "*.toml"]);
+        assert_eq!(split_glob("*.{ts,tsx} !x"), ["*.{ts,tsx}", "!x"]);
+        assert_eq!(split_glob(""), Vec::<String>::new());
+    }
+
+    #[test]
+    fn the_window_and_its_words_are_greps() {
+        assert_eq!(window(300, Some(250), 0), (0, 250, Some(250)));
+        assert_eq!(window(300, Some(250), 100), (100, 300, None));
+        assert_eq!(window(10, None, 3), (3, 10, None));
+        assert_eq!(window(2, Some(250), 5), (2, 2, None));
+        assert_eq!(pagination(Some(250), 5), "limit: 250, offset: 5");
+    }
+
+    #[test]
+    fn a_bounded_page_keeps_whole_lines_and_names_the_offset() {
+        let page = ["aaaa", "bbbb", "cccc"];
+        assert_eq!(bounded(&page, 0, 3, 100, "lines"), "aaaa\nbbbb\ncccc");
+        let more = "\n(2 more lines not shown: call Grep again with offset=11, or narrow the request)";
+        let room = 4 + more.len() + 2;
+        assert_eq!(bounded(&page, 10, 13, room, "lines"), format!("aaaa{more}"));
+    }
+
+    #[test]
+    fn lexical_paths_resolve_dots_by_name() {
+        assert_eq!(lexical(Path::new("/a/./b/../c")), Some(PathBuf::from("/a/c")));
+        assert_eq!(lexical(Path::new("x")), None);
+    }
+}

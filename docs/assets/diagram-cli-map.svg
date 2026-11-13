@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 808" width="880" height="808" role="img" aria-labelledby="t d">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 819" width="880" height="819" role="img" aria-labelledby="t d">
 <!-- written by tools/gen_doc_assets.py; edit that, not this file -->
 <title id="t">Command map: scrutate's commands by family</title>
-<desc id="d">Search without an index (grep, tsquery), search the index (search, find, grep --index, batch), code intelligence (symbol, callers, callees, refs, outline, deps, rdeps, similar, dupes, impact), maintenance (index, check, stats, languages, config, completions) and servers (serve, lsp, watch).</desc>
+<desc id="d">Search without an index (grep, tsquery), search the index (search, find, grep --index, batch), code intelligence (symbol, callers, callees, refs, outline, deps, rdeps, similar, dupes, impact), maintenance (index, check, stats, languages, config, completions) and servers (serve, lsp, watch, setup, hook).</desc>
 <style>
 text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif; }
 .m { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
@@ -37,7 +37,7 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
   .fd { animation-name: var(--calm) !important; }
 }
 </style>
-<defs><pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse"><rect x="10" y="10" width="2" height="2" fill="#2a2a2f"/></pattern></defs><rect width="880" height="808" rx="14" fill="#0c0c0e"/><rect x="10" y="10" width="860" height="788" rx="8" fill="url(#dots)"/><rect x="10.5" y="10.5" width="859" height="787" rx="8" fill="none" stroke="#2a2a2f"/>
+<defs><pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse"><rect x="10" y="10" width="2" height="2" fill="#2a2a2f"/></pattern></defs><rect width="880" height="819" rx="14" fill="#0c0c0e"/><rect x="10" y="10" width="860" height="799" rx="8" fill="url(#dots)"/><rect x="10.5" y="10.5" width="859" height="798" rx="8" fill="none" stroke="#2a2a2f"/>
 <text x="40.0" y="46.0" class="m pre " font-size="12" fill="#f2eee3" letter-spacing="1.92">// COMMAND MAP: SCRUTATE'S COMMANDS BY FAMILY</text><path d="M475.2 42.0 H840" stroke="#2a2a2f"/>
 <defs><marker id="ah" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M1.5 1.5 8.5 5 1.5 8.5" fill="none" stroke="#8f8f98" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
 <g transform="translate(32 72) scale(0.92727)">
@@ -85,7 +85,7 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <text x="217" y="467" class="b">exact and near-duplicate functions</text>
 <text x="17" y="495" class="bi"><tspan class="m">impact</tspan></text>
 <text x="217" y="495" class="b">what a git diff changes, its callers and the tests to run</text>
-<rect x="1" y="537" width="431" height="222" rx="4" class="card"/>
+<rect x="1" y="537" width="431" height="234" rx="4" class="card"/>
 <rect x="17" y="553" width="11" height="11" fill="#f2eee3"/>
 <rect class="wipe mv k4" x="17" y="553" width="11" height="11" fill="#d9ff3d" transform="scale(0 1)"/>
 <g transform="translate(37.0 564.0) scale(0.01549 -0.01549)" fill="#f2eee3"><path d="M254 110L346 110L400 345L400 0L560 0L560 710L380 710L300 416L220 710L40 710L40 0L200 0L200 345Z"/><path transform="translate(600 0)" d="M14 0L192 0L219 117L381 117L408 0L586 0L406 710L194 710ZM300 476L347 268L253 268Z"/><path transform="translate(1200 0)" d="M70 0L530 0L530 158L390 158L390 552L530 552L530 710L70 710L70 552L210 552L210 158L70 158Z"/><path transform="translate(1800 0)" d="M60 0L230 0L230 357L390 0L540 0L540 710L370 710L370 353L210 710L60 710Z"/><path transform="translate(2400 0)" d="M210 0L390 0L390 552L560 552L560 710L40 710L40 552L210 552Z"/><path transform="translate(3000 0)" d="M80 0L540 0L540 158L260 158L260 279L520 279L520 433L260 433L260 552L532 552L532 710L80 710Z"/><path transform="translate(3600 0)" d="M60 0L230 0L230 357L390 0L540 0L540 710L370 710L370 353L210 710L60 710Z"/><path transform="translate(4200 0)" d="M14 0L192 0L219 117L381 117L408 0L586 0L406 710L194 710ZM300 476L347 268L253 268Z"/><path transform="translate(4800 0)" d="M60 0L230 0L230 357L390 0L540 0L540 710L370 710L370 353L210 710L60 710Z"/><path transform="translate(5400 0)" d="M306 -16C452 -16 546 88 568 273L387 280C377 189 345 138 306 138C246 138 212 215 212 354C212 494 246 572 306 572C348 572 378 523 387 436L568 443C546 625 452 726 306 726C130 726 28 584 28 354C28 124 130 -16 306 -16Z"/><path transform="translate(6000 0)" d="M80 0L540 0L540 158L260 158L260 279L520 279L520 433L260 433L260 552L532 552L532 710L80 710Z"/></g>
@@ -101,7 +101,7 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <text x="147" y="705" class="b">the configuration file in effect</text>
 <text x="17" y="733" class="bi"><tspan class="m">completions</tspan></text>
 <text x="147" y="733" class="b">shell completion scripts</text>
-<rect x="447" y="537" width="432" height="222" rx="4" class="card"/>
+<rect x="447" y="537" width="432" height="234" rx="4" class="card"/>
 <rect x="463" y="553" width="11" height="11" fill="#f2eee3"/>
 <rect class="wipe mv k5" x="463" y="553" width="11" height="11" fill="#d9ff3d" transform="scale(0 1)"/>
 <g transform="translate(483.0 564.0) scale(0.01549 -0.01549)" fill="#f2eee3"><path d="M302 -16C468 -16 560 68 560 206C560 314 510 384 358 424C262 449 232 472 232 514C232 551 256 572 293 572C337 572 367 539 375 473L555 480C547 645 457 726 302 726C140 726 52 640 52 502C52 376 124 325 262 290C348 268 380 241 380 196C380 158 353 138 313 138C261 138 230 174 218 257L40 249C51 79 133 -16 302 -16Z"/><path transform="translate(600 0)" d="M80 0L540 0L540 158L260 158L260 279L520 279L520 433L260 433L260 552L532 552L532 710L80 710Z"/><path transform="translate(1200 0)" d="M56 0L236 0L236 239L266 239C332 239 356 227 362 138L372 0L554 0L538 194C531 270 495 311 420 324C493 347 540 407 540 496C540 627 450 710 294 710L56 710ZM236 397L236 552L286 552C331 552 356 524 356 475C356 425 331 397 286 397Z"/><path transform="translate(1800 0)" d="M216 0L384 0L586 710L396 710L300 321L204 710L14 710Z"/><path transform="translate(2400 0)" d="M80 0L540 0L540 158L260 158L260 279L520 279L520 433L260 433L260 552L532 552L532 710L80 710Z"/><path transform="translate(3000 0)" d="M56 0L236 0L236 239L266 239C332 239 356 227 362 138L372 0L554 0L538 194C531 270 495 311 420 324C493 347 540 407 540 496C540 627 450 710 294 710L56 710ZM236 397L236 552L286 552C331 552 356 524 356 475C356 425 331 397 286 397Z"/><path transform="translate(3600 0)" d="M302 -16C468 -16 560 68 560 206C560 314 510 384 358 424C262 449 232 472 232 514C232 551 256 572 293 572C337 572 367 539 375 473L555 480C547 645 457 726 302 726C140 726 52 640 52 502C52 376 124 325 262 290C348 268 380 241 380 196C380 158 353 138 313 138C261 138 230 174 218 257L40 249C51 79 133 -16 302 -16Z"/></g>
@@ -111,6 +111,12 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <text x="593" y="621" class="b">language server on stdio</text>
 <text x="463" y="649" class="bi"><tspan class="m">watch</tspan></text>
 <text x="593" y="649" class="b">keep the index up to date</text>
+<text x="463" y="677" class="bi"><tspan class="m">setup</tspan></text>
+<text x="593" y="677" class="b">the MCP entry in an agent's</text>
+<text x="593" y="697" class="b">configuration</text>
+<text x="463" y="725" class="bi"><tspan class="m">hook</tspan></text>
+<text x="593" y="725" class="b">Claude Code's Grep hook and its</text>
+<text x="593" y="745" class="b">counter</text>
 <g class="mv k6" opacity="0"><path d="M-15.0 -5.0 V-15.0 H-5.0 M5.0 -15.0 H15.0 V-5.0 M15.0 5.0 V15.0 H5.0 M-5.0 15.0 H-15.0 V5.0" stroke="#f2eee3" stroke-width="1.5" fill="none"/></g>
 </g>
 </svg>

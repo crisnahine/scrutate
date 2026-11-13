@@ -22,7 +22,8 @@ the text, its mode, case, whole words, multi-line), whether lines that do not ma
 the report (lines, counts or files), context lines and limits.
 
 **File set**: which files an Engine A search reads (`instant::Files`): the roots of a walk with its
-rules (hidden files, ignore files, globs, types, depth, size), a list of files under a root, or
+rules (hidden files, ignore files, globs, types, depth, size; a type matched before the ignore
+rules as a glob is, or after them as ripgrep's `--type` is), a list of files under a root, or
 text held in memory with a name for each, and the threads that read them.
 
 **Record**: one Engine A result, of one kind (`instant::Record`): a match, a context line, a count,
@@ -176,3 +177,14 @@ index's list (hidden files included, cache and dependency directories skipped), 
 **membership**, the test of one changed path that the watcher asks. A **look** (`files::look`) is
 one walk of the tree and one `stat` per file that gives each of those sets its own files. Nothing
 keeps a look between calls: a scan makes one, and the grep of the repository makes its own.
+
+**Setup**: what `scrutate setup <agent>` writes (`setup.rs`): one MCP server entry named
+`scrutate` in an agent's configuration, and on request the Grep hook and an instruction block,
+each put in and taken out as text, so every other byte of the file stays and `--uninstall` gives
+the file back as it was. Each agent has its files, its shape of entry and its scope (the user's
+file or, with `--project`, the repository's).
+
+**Grep hook**: Claude Code's `PreToolUse` hook for its Grep tool (`hook.rs`, `scrutate hook
+grep`). It answers a Grep call with Engine A's matches, worded as Grep words ripgrep's, or lets
+Grep run when it cannot answer exactly (it **fails open**). Its **counter** keeps, per answered
+call, the bytes Grep would have returned against the bytes sent (`scrutate hook stats`).
