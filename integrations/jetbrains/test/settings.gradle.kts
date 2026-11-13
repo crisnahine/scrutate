@@ -1,3 +1,5 @@
+import org.jetbrains.intellij.platform.gradle.extensions.intellijPlatform
+
 // The same plugin and repositories as JetBrains' intellij-platform-plugin-template, whose tests pass on this pair.
 rootProject.name = "scrutate-lsp4ij-test"
 
