@@ -89,6 +89,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#refs)). An index made before reads every file again.
 
 ### Changed
+- The macOS benchmark chain waits for the new binary to start at its settled speed
+  (`bench/wait_aged.py`, at most an hour) in place of a fixed hour
+  ([RELEASING](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
 - `bench/leaderboard.py --stop-early` stops a row at 20 runs once every verdict holds at alpha
   0.001 (Haybittle-Peto boundary); replayed over every recorded run it changed no verdict. Off by
   default ([RELEASING](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).

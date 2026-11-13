@@ -61,10 +61,10 @@ first new one; `bench/compare_tools.py --only` refuses such a file too). Each go
 `bench/results/<platform>/superseded/`, named with the first four hex digits of its binary, with a
 row in that directory's `README.md` and an entry in `HISTORY` in `bench/make_dashboard.py`.
 
-macOS, about 4.5 hours:
+macOS, about 3.5 hours plus the wait for the binary to settle (at most an hour):
 
 ```sh
-cargo build --release -p scrutate --locked && sleep 3600 && bash bench/run_macos.sh
+cargo build --release -p scrutate --locked && bash bench/run_macos.sh
 ```
 
 - Before the build, on Apple silicon: `python3 tools/order_file.py --check` reports the share of
@@ -74,7 +74,11 @@ cargo build --release -p scrutate --locked && sleep 3600 && bash bench/run_macos
   minutes: two release links, each run under lldb from Xcode's command line tools) and commit it.
   On some machines a process started under lldb hangs; the tool gives up on a search after a
   minute and says so: run it again. A stale file only costs pages at start, never the build.
-- A just-built executable starts about 0.2 ms slower than the same file an hour later. Wait.
+- A just-built executable starts about 0.2 ms slower than the same file an hour later. The chain
+  waits for that first: `bench/wait_aged.py` times `scrutate --version` every 2 minutes against a
+  fresh copy of the binary (a new file, so slow) and goes on once the binary starts faster than
+  the copy in two rounds in a row with a steady median, or after an hour. The chain log records
+  each round.
 - `bench/leaderboard.py --stop-early` stops a row after its second block, at 20 runs, when its
   wall-time verdict and its four CPU and memory verdicts (default and `-j1`) are all PASS, FAIL
   or n/a at alpha 0.001 and no tool's block medians differ by more than 25%. Every other row

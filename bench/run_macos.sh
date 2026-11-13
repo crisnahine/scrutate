@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # The macOS runs behind docs/LEADERBOARD.md and docs/BENCHMARKS.md, in order: the Engine A
 # leaderboard with a warm and a cold cache, the tool comparison, the indexed comparison. About
-# 4 hours on an M3 Pro; leave the machine idle. Build the binary first and do not run
-# `cargo test` in between (it replaces target/release/scrutate). Then wait an hour: macOS starts a
+# 3.5 hours on an M3 Pro after the wait below; leave the machine idle. Build the binary first and
+# do not run `cargo test` in between (it replaces target/release/scrutate). macOS starts a
 # just-built executable about 0.2 ms slower than the same file later (identical copies, the same
-# instructions executed), which is 5% of a small-tree search, and every competitor's binary is old.
-#   cargo build --release -p scrutate --locked && sleep 3600 && bash bench/run_macos.sh
+# instructions executed), which is 5% of a small-tree search, and every competitor's binary is
+# old: bench/wait_aged.py first waits until the binary starts faster than a fresh copy of itself,
+# at most an hour.
+#   cargo build --release -p scrutate --locked && bash bench/run_macos.sh
 set -uo pipefail
 cd "$(dirname "$0")/.."
 corpora=${CORPORA:-$HOME/.cache/scrutate-bench/corpora}
@@ -16,6 +18,8 @@ log() { echo "=== $* $(date '+%Y-%m-%d %H:%M:%S')" | tee -a "$out/chain.log"; }
 bin=$(shasum -a 256 target/release/scrutate | cut -c1-16)
 : > "$out/chain.log"
 log "start $bin, built $(( ($(date +%s) - $(stat -f %m target/release/scrutate)) / 60 )) minutes ago"
+python3 bench/wait_aged.py target/release/scrutate >> "$out/chain.log" 2>&1
+log "binary aged"
 warm=(--corpora "$corpora" --out "$out/leaderboard-warm.json" --max-load 40 --contender 1.15)
 cold=(--corpora "$corpora" --out "$out/leaderboard-cold.json" --cache cold --cold-prepare "$PWD/target/evict {list}" --runs 30 --max-load 40 --contender 1.15
   --only linux/literal linux/case-insensitive llvm/literal ripgrep/literal smallfiles/literal)
