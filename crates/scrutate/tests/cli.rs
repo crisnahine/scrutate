@@ -2366,7 +2366,7 @@ fn tsquery_takes_the_content_hash_the_code_index_records_for_a_current_file() {
     r.write("a.py", b"def two():\n    return 2\n");
     let md = fs::metadata(r.root.join("a.py")).unwrap();
     let ix = scrutate::index::Index::open(&fs::canonicalize(&r.root).unwrap(), scrutate::models::ModelSet::none()).unwrap();
-    let s = scrutate::index::Stat::of(&md);
+    let s = scrutate::index::Stat::of(&r.root.join("a.py"), &md);
     ix.damage_for_tests(&format!("UPDATE files SET size={}, mtime_ns={}, ctime_ns={} WHERE path='a.py'", s.size, s.mtime, s.ctime)).unwrap();
     drop(ix);
     assert_eq!(r.run(&["tsquery", "python", q]).1, "a.py:1:5  @n (identifier)  one\n", "the file was read");
@@ -2402,7 +2402,7 @@ fn a_tsquery_cache_made_in_one_tree_answers_in_a_copy_at_another_path() {
     b.write("a.py", b"def won():\n    return 1\n");
     let md = fs::metadata(b.root.join("a.py")).unwrap();
     let ix = scrutate::index::Index::open(&fs::canonicalize(&b.root).unwrap(), scrutate::models::ModelSet::none()).unwrap();
-    let s = scrutate::index::Stat::of(&md);
+    let s = scrutate::index::Stat::of(&b.root.join("a.py"), &md);
     ix.damage_for_tests(&format!("UPDATE files SET size={}, mtime_ns={}, ctime_ns={} WHERE path='a.py'", s.size, s.mtime, s.ctime)).unwrap();
     drop(ix);
     assert_eq!(b.run(&["tsquery", "python", q]).1, whole);

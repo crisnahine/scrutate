@@ -356,14 +356,21 @@ pub struct Stat {
 }
 
 impl Stat {
-    pub fn of(md: &std::fs::Metadata) -> Stat {
+    /// The stat of the file at `path`, whose metadata (of the link itself or of its target) is `md`.
+    pub fn of(path: &Path, md: &std::fs::Metadata) -> Stat {
         #[cfg(unix)]
         let ctime = {
             use std::os::unix::fs::MetadataExt;
+            let _ = path;
             md.ctime().saturating_mul(1_000_000_000).saturating_add(md.ctime_nsec())
         };
-        #[cfg(not(unix))]
-        let ctime = 0;
+        #[cfg(windows)]
+        let ctime = change_time::of(path, md.file_type().is_symlink());
+        #[cfg(not(any(unix, windows)))]
+        let ctime = {
+            let _ = path;
+            0
+        };
         Stat { size: md.len() as i64, mtime: mtime_ns(md), ctime }
     }
 
@@ -374,12 +381,145 @@ impl Stat {
     }
 }
 
+/// The stats of the files one walk lists. On Windows a directory entry carries no change time, so
+/// each directory is listed once more, by handle, for the change times of all its entries.
+#[derive(Default)]
+pub struct Listed {
+    #[cfg(windows)]
+    dirs: HashMap<PathBuf, HashMap<std::ffi::OsString, i64>>,
+}
+
+impl Listed {
+    /// `Stat::of` for a file the walk listed, with `md` from its directory entry.
+    pub fn stat(&mut self, path: &Path, md: &std::fs::Metadata) -> Stat {
+        #[cfg(windows)]
+        if let (Some(dir), Some(name)) = (path.parent(), path.file_name()) {
+            if !self.dirs.contains_key(dir) {
+                self.dirs.insert(dir.to_path_buf(), change_time::listing(dir));
+            }
+            if let Some(ctime) = self.dirs.get_mut(dir).and_then(|names| names.remove(name)) {
+                return Stat { size: md.len() as i64, mtime: mtime_ns(md), ctime };
+            }
+        }
+        Stat::of(path, md)
+    }
+}
+
+/// Status change times on Windows, read as CPython's `os.stat` reads them.
+#[cfg(windows)]
+mod change_time {
+    use std::collections::HashMap;
+    use std::ffi::{c_void, OsString};
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    use std::path::Path;
+    use std::sync::OnceLock;
+
+    const FILE_LIST_DIRECTORY: u32 = 0x1;
+    const FILE_READ_ATTRIBUTES: u32 = 0x80;
+    const FILE_SHARE_ALL: u32 = 0x7;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    // FILE_INFO_BY_HANDLE_CLASS and FILE_INFO_BY_NAME_CLASS values
+    const FILE_BASIC_INFO: i32 = 0;
+    const FILE_ID_BOTH_DIRECTORY_INFO: i32 = 10;
+    const FILE_STAT_BASIC_BY_NAME_INFO: i32 = 3;
+
+    type ByName = unsafe extern "system" fn(name: *const u16, class: i32, out: *mut c_void, size: u32) -> i32;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetFileInformationByHandleEx(file: *mut c_void, class: i32, out: *mut c_void, size: u32) -> i32;
+        fn LoadLibraryW(name: *const u16) -> *mut c_void;
+        fn GetProcAddress(module: *mut c_void, name: *const u8) -> *mut c_void;
+    }
+
+    /// 100 ns ticks since 1601 as nanoseconds since 1970.
+    fn ns(ticks: i64) -> i64 {
+        ticks.saturating_sub(116_444_736_000_000_000).saturating_mul(100)
+    }
+
+    /// `GetFileInformationByName`, which Windows 11 24H2 and later have.
+    fn by_name() -> Option<ByName> {
+        static FOUND: OnceLock<Option<ByName>> = OnceLock::new();
+        *FOUND.get_or_init(|| {
+            let dll: Vec<u16> = "api-ms-win-core-file-l2-1-4".encode_utf16().chain([0]).collect();
+            // SAFETY: nul-terminated names; the module stays loaded, and a non-null address is the
+            // function winbase.h declares with this signature
+            unsafe {
+                let module = LoadLibraryW(dll.as_ptr());
+                let f = if module.is_null() { std::ptr::null_mut() } else { GetProcAddress(module, c"GetFileInformationByName".as_ptr().cast()) };
+                (!f.is_null()).then(|| std::mem::transmute::<*mut c_void, ByName>(f))
+            }
+        })
+    }
+
+    /// The change time of the file at `path` (0 when it cannot be read); `link` reads a symbolic
+    /// link itself, else a link is followed.
+    pub fn of(path: &Path, link: bool) -> i64 {
+        let name: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+        if let (Some(f), false) = (by_name(), name[..name.len() - 1].contains(&0)) {
+            // FILE_STAT_BASIC_INFORMATION: 104 bytes, ChangeTime at 32, FileAttributes at 56
+            let mut info = [0u64; 13];
+            // SAFETY: a nul-terminated path and a buffer of the size passed
+            if unsafe { f(name.as_ptr(), FILE_STAT_BASIC_BY_NAME_INFO, info.as_mut_ptr().cast(), 104) } != 0 {
+                // a reparse point by name is the point itself: one to follow takes the handle
+                if link || (info[7] as u32) & FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+                    return ns(info[4] as i64);
+                }
+            }
+        }
+        let flags = FILE_FLAG_BACKUP_SEMANTICS | if link { FILE_FLAG_OPEN_REPARSE_POINT } else { 0 };
+        let Ok(file) = std::fs::OpenOptions::new().access_mode(FILE_READ_ATTRIBUTES).share_mode(FILE_SHARE_ALL).custom_flags(flags).open(path) else {
+            return 0;
+        };
+        // FILE_BASIC_INFO: 40 bytes, ChangeTime at 24
+        let mut info = [0u64; 5];
+        // SAFETY: an open handle and a buffer of the size passed
+        match unsafe { GetFileInformationByHandleEx(file.as_raw_handle(), FILE_BASIC_INFO, info.as_mut_ptr().cast(), 40) } {
+            0 => 0,
+            _ => ns(info[3] as i64),
+        }
+    }
+
+    /// The change time of each entry of the directory `dir`, by name (empty when it cannot be listed).
+    pub fn listing(dir: &Path) -> HashMap<OsString, i64> {
+        let mut out = HashMap::new();
+        let opened = std::fs::OpenOptions::new().access_mode(FILE_LIST_DIRECTORY).share_mode(FILE_SHARE_ALL).custom_flags(FILE_FLAG_BACKUP_SEMANTICS).open(dir);
+        let Ok(d) = opened else {
+            return out;
+        };
+        // the entries must start on 8-byte boundaries
+        let mut buf = vec![0u64; 8192];
+        // SAFETY: an open directory handle and a buffer of the size passed
+        while unsafe { GetFileInformationByHandleEx(d.as_raw_handle(), FILE_ID_BOTH_DIRECTORY_INFO, buf.as_mut_ptr().cast(), (buf.len() * 8) as u32) } != 0 {
+            let bytes: Vec<u8> = buf.iter().flat_map(|w| w.to_le_bytes()).collect();
+            let u32_at = |o: usize| u32::from_le_bytes([bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3]]) as usize;
+            // FILE_ID_BOTH_DIR_INFO: NextEntryOffset at 0, ChangeTime at 32, FileNameLength at 60, FileName at 104
+            let mut at = 0;
+            while at + 104 <= bytes.len() {
+                let change = i64::from_le_bytes(bytes[at + 32..at + 40].try_into().unwrap_or_default());
+                let Some(name) = bytes.get(at + 104..at + 104 + u32_at(at + 60)) else { break };
+                let name: Vec<u16> = name.as_chunks::<2>().0.iter().map(|&c| u16::from_le_bytes(c)).collect();
+                out.insert(OsString::from_wide(&name), ns(change));
+                match u32_at(at) {
+                    0 => break,
+                    next => at += next,
+                }
+            }
+        }
+        out
+    }
+}
+
 fn read_file(root: &Path, rel: &str, known_hash: Option<&str>) -> Read {
     let full = root.join(rel);
     let Ok(md) = std::fs::metadata(&full) else {
         return Read::Gone;
     };
-    let stat = Stat::of(&md);
+    let stat = Stat::of(&full, &md);
     if md.len() > MAX_FILE_BYTES {
         return Read::Skip(stat);
     }
@@ -1427,7 +1567,8 @@ impl Index {
             let Some((size, mtime, ct)) = q.query_row([p], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, Option<i64>>(2)?))).optional()? else {
                 continue;
             };
-            let fresh = std::fs::metadata(self.root.join(p)).ok().filter(|m| m.is_file()).map(|m| Stat::of(&m));
+            let full = self.root.join(p);
+            let fresh = std::fs::metadata(&full).ok().filter(|m| m.is_file()).map(|m| Stat::of(&full, &m));
             // a row without a ctime is judged by size and mtime here; the next scan reads it again
             if fresh.is_none_or(|s| !s.matches(size, mtime, ct.or(Some(s.ctime)))) {
                 out.push(p.to_string());
@@ -1622,7 +1763,10 @@ impl Index {
         let mut known: Known = HashMap::new();
         let row =
             |r: &rusqlite::Row| Ok((r.get::<_, String>(0)?, (r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, Option<i64>>(3)?, r.get::<_, String>(4)?)));
-        let stat_of = |rel: &str| std::fs::metadata(self.root.join(rel)).ok().map(|m| Stat::of(&m));
+        let stat_of = |rel: &str| {
+            let full = self.root.join(rel);
+            std::fs::metadata(&full).ok().map(|m| Stat::of(&full, &m))
+        };
         let files: Vec<(String, Option<Stat>)> = match look {
             Look::Walk | Look::Found(_) => {
                 let mut q = self.db.prepare("SELECT path,size,mtime_ns,ctime_ns,hash FROM files")?;
@@ -2677,6 +2821,37 @@ impl Index {
 
 #[cfg(test)]
 mod tests {
+    /// A write that keeps size and mtime moves the change time, and the walk's listing of a
+    /// directory gives each file the change time its own stat gives.
+    #[test]
+    fn the_change_time_moves_on_a_write_and_a_listing_agrees_with_a_stat() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_ctime_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("d")).unwrap();
+        let f = root.join("d/a.txt");
+        std::fs::write(&f, "hello\n").unwrap();
+        std::fs::write(root.join("d/b.txt"), "other\n").unwrap();
+        let stat = || super::Stat::of(&f, &std::fs::metadata(&f).unwrap());
+        let (before, mtime) = (stat(), std::fs::metadata(&f).unwrap().modified().unwrap());
+        if cfg!(any(unix, windows)) {
+            assert_ne!(before.ctime, 0);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&f, "jello\n").unwrap();
+        std::fs::File::options().write(true).open(&f).unwrap().set_modified(mtime).unwrap();
+        let after = stat();
+        assert_eq!((after.size, after.mtime), (before.size, before.mtime));
+        if cfg!(any(unix, windows)) {
+            assert_ne!(after.ctime, before.ctime);
+        }
+        let mut listed = super::Listed::default();
+        for e in std::fs::read_dir(root.join("d")).unwrap().flatten() {
+            let md = e.metadata().unwrap();
+            assert_eq!(listed.stat(&e.path(), &md), super::Stat::of(&e.path(), &std::fs::symlink_metadata(e.path()).unwrap()), "{}", e.path().display());
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn an_index_another_process_already_cleared_for_this_version_is_left_alone() {
         let root = std::env::temp_dir().join(format!("scrutate_ix_clear_race_{}", std::process::id()));

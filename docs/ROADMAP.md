@@ -148,10 +148,6 @@ docs/RELEASING.md, public (done), tag `v0.1.0`.
 
 ### Known limits that stay in 0.1.0
 
-- On Windows the index has no status-change time: a file made unreadable with no change of size
-  or modification time keeps its chunks until `index --force` or `reindex` with `force` (Unix
-  compares that time too). `MetadataExt::change_time` is unstable in Rust 1.99.1 (feature
-  `windows_change_time`); another way needs an open handle per file on every scan.
 - A method call on a call's result resolves through the callee's declared return type, and in
   Rust through a table of standard methods ([CLI](CLI.md#refs)). It stays undecided when the
   callee declares no type, returns a type parameter, takes a closure or lets the caller pick its

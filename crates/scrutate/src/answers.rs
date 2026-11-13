@@ -46,7 +46,7 @@ struct Reads {
 }
 
 fn seen(p: &Path) -> Seen {
-    std::fs::symlink_metadata(p).ok().filter(|m| m.is_file()).map(|m| Stat::of(&m))
+    std::fs::symlink_metadata(p).ok().filter(|m| m.is_file()).map(|m| Stat::of(p, &m))
 }
 
 /// Called before the resolver reads `rel`: its stat joins what the open requests read.
@@ -209,8 +209,7 @@ impl Stored {
 fn build() -> String {
     std::env::current_exe()
         .ok()
-        .and_then(|p| std::fs::metadata(p).ok())
-        .map(|m| format!("{} {} {}", identity(&m), m.len(), Stat::of(&m).mtime))
+        .and_then(|p| std::fs::metadata(&p).ok().map(|m| format!("{} {} {}", identity(&m), m.len(), Stat::of(&p, &m).mtime)))
         .unwrap_or_default()
 }
 

@@ -630,17 +630,14 @@ mod tests {
         // a new file, an edit, an edit that keeps size and time, a removal and a rename since the last build
         put("src/added.py", "x = needle_token\n");
         put("src/m01.py", "def fn_1():\n    return needle_token\n");
-        // only where a write moves the status change time: Windows has none to see it by
-        if cfg!(unix) {
-            let t = std::fs::metadata(root.join("src/m02.py")).unwrap().modified().unwrap();
-            let old = std::fs::read(root.join("src/m02.py")).unwrap().len();
-            put("src/m02.py", &format!("{:<w$}\n", "needle_token", w = old - 1));
-            std::fs::File::options().write(true).open(root.join("src/m02.py")).unwrap().set_modified(t).unwrap();
-        }
+        let t = std::fs::metadata(root.join("src/m02.py")).unwrap().modified().unwrap();
+        let old = std::fs::read(root.join("src/m02.py")).unwrap().len();
+        put("src/m02.py", &format!("{:<w$}\n", "needle_token", w = old - 1));
+        std::fs::File::options().write(true).open(root.join("src/m02.py")).unwrap().set_modified(t).unwrap();
         std::fs::remove_file(root.join("src/m03.py")).unwrap();
         std::fs::rename(root.join("src/m04.py"), root.join("src/m44.py")).unwrap();
         let stale = cases(&mut repo);
-        assert!(stale[0].0.contains("src/added.py") && stale[0].0.contains("src/m01.py"), "{}", stale[0].0);
+        assert!(stale[0].0.contains("src/added.py") && stale[0].0.contains("src/m01.py") && stale[0].0.contains("src/m02.py"), "{}", stale[0].0);
         assert_ne!(fresh, stale);
         std::fs::remove_dir_all(textindex::dir_of(&root)).unwrap();
         assert_eq!(cases(&mut repo), stale, "without a text index the walk answers");

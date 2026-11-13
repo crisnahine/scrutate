@@ -763,7 +763,7 @@ Per tool:
 | `structural_search` | Refuses an empty query, a query without a `@capture` and an unknown predicate, as `tsquery` does. |
 | `impact` | Takes `base` (a revision, `main...` for a merge base), `staged` (boolean) and `depth` (default 3, at most 10), and answers as `scrutate impact` does (see `impact` above). |
 | `find_files` | Takes `query` and `limit` (default 20, at most 1000) and answers as `scrutate files` does (see `files` above). A `read_code` call counts one read of each file it reads. |
-| `reindex` | Takes `force` (boolean): every file is read again, also one whose size and modification time did not change, and a damaged index is rebuilt. It also updates the text index when there is one, so `grep --index` sees what it indexed; it never makes one. |
+| `reindex` | Takes `force` (boolean): every file is read again, also one whose size, modification time and change time did not change, and a damaged index is rebuilt. It also updates the text index when there is one, so `grep --index` sees what it indexed; it never makes one. |
 
 - Every answer begins each result with its location (`path:start-end`). A location can be passed
   wherever a tool takes a symbol, to mean exactly that definition among namesakes:

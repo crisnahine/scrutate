@@ -466,7 +466,7 @@ impl Identity {
     fn here(root: &Path) -> Option<Identity> {
         let file_id = |p: &Path| -> Option<String> {
             let m = std::fs::metadata(p).ok()?;
-            let s = index::Stat::of(&m);
+            let s = index::Stat::of(p, &m);
             use std::os::unix::fs::MetadataExt;
             let (dev, ino) = (m.dev(), m.ino());
             Some(format!("{dev} {ino} {} {} {}", s.size, s.mtime, s.ctime))

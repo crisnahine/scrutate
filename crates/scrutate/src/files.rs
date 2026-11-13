@@ -307,7 +307,7 @@ pub fn look(root: &Path, text: bool) -> anyhow::Result<Vec<Found>> {
         let skipped = e.file_type().is_some_and(|t| t.is_dir()) && skip.iter().any(|s| *s == *e.file_name().to_string_lossy());
         !skipped || held.as_ref().is_some_and(|r| !e.path().strip_prefix(&base).is_ok_and(|rel| left_out(r, rel, true)))
     });
-    let mut out = Vec::new();
+    let (mut out, mut listed) = (Vec::new(), crate::index::Listed::default());
     for e in wb.build().flatten() {
         if !e.file_type().is_some_and(|t| t.is_file()) {
             continue;
@@ -320,7 +320,7 @@ pub fn look(root: &Path, text: bool) -> anyhow::Result<Vec<Found>> {
         if !(repo || text) {
             continue;
         }
-        let stat = if code || text { e.metadata().ok().map(|m| Stat::of(&m)) } else { None };
+        let stat = if code || text { e.metadata().ok().map(|m| listed.stat(e.path(), &m)) } else { None };
         out.push(Found { lossy: rel.to_str().is_none(), path, stat, repo, code, text });
     }
     out.sort_by(|a, b| a.path.cmp(&b.path));
@@ -500,7 +500,7 @@ mod tests {
         let both = look(root, true).unwrap();
         let code: Vec<String> = both.iter().filter(|f| f.code).map(|f| f.path.clone()).collect();
         assert_eq!(code, list_files(root), "the code index's files of {}", root.display());
-        let stat = |p: &str| std::fs::symlink_metadata(root.join(p)).ok().map(|m| Stat::of(&m));
+        let stat = |p: &str| std::fs::symlink_metadata(root.join(p)).ok().map(|m| Stat::of(&root.join(p), &m));
         assert!(both.iter().filter(|f| f.code || f.text).all(|f| f.stat == stat(&f.path)), "a stat of each file");
         let text: Vec<(String, u64, i64, i64)> =
             both.iter().filter(|f| f.text).map(|f| f.stat.map_or((f.path.clone(), 0, 0, 0), |s| (f.path.clone(), s.size as u64, s.mtime, s.ctime))).collect();

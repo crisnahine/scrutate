@@ -150,8 +150,7 @@ fn a_posting_pointer_past_the_data_is_rebuilt_by_the_merge_of_the_next_update() 
     assert_eq!(counts(&t.0, "words"), ["b.txt:1"]);
 }
 
-// the write moves the change time, which no one can set back; Windows has none to compare
-#[cfg(unix)]
+// the write moves the change time, which no one can set back
 #[test]
 fn an_edit_that_keeps_size_and_mtime_is_seen() {
     let t = Tmp::new("samestat");

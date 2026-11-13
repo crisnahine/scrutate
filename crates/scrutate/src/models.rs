@@ -185,10 +185,9 @@ pub fn file_signature(bytes: &[u8]) -> String {
 }
 
 /// The signature of the model file at `path`, from `cache` when its path, size and times match.
-/// shortcut: on a system without a status change time (Windows), a file rewritten with its old size and modification time keeps its old signature
 fn cached_signature(path: &Path, cache: &Path) -> Result<String> {
     let full = std::fs::canonicalize(path).map_err(|e| anyhow!("load semantic model {}: {e}", path.display()))?;
-    let stat = crate::index::Stat::of(&std::fs::metadata(&full)?);
+    let stat = crate::index::Stat::of(&full, &std::fs::metadata(&full)?);
     let key = format!("{}\t{}\t{}\t{}", full.display(), stat.size, stat.mtime, stat.ctime);
     if let Some(sig) = std::fs::read_to_string(cache).ok().and_then(|t| t.strip_prefix(&format!("{key}\t")).map(|s| s.trim_end().to_string())) {
         return Ok(sig);

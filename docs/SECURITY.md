@@ -304,6 +304,13 @@ marker is not).
     whose handler only stores to an atomic flag;
   - `hook.rs` (Windows): `RegOpenKeyExW` and `RegCloseKey` to see whether a policy key exists,
     with a nul-terminated name and the key closed;
+  - `index.rs` (Windows): the status change time of a file, from `GetFileInformationByName`
+    (looked up once with `LoadLibraryW` of the API set `api-ms-win-core-file-l2-1-4` and
+    `GetProcAddress`, then transmuted to the signature winbase.h declares, as CPython does) with a
+    nul-terminated path, or `GetFileInformationByHandleEx` on a handle `std` opened for attributes
+    only; and of a directory's entries, from `GetFileInformationByHandleEx` with
+    `FileIdBothDirectoryInfo` into an 8-byte aligned buffer whose size it passes, each entry read
+    from a byte copy with bounds-checked slicing;
   - `policy.rs`: one `sysctlbyname("hw.perflevel0.physicalcpu")` call on macOS, writing an `i32`
     whose size it passes;
   - `instant.rs`: on Linux one `statfs` per search root, and per directory named `proc` or `sys`
@@ -349,6 +356,7 @@ marker is not).
   | `crates/scrutate/src/config.rs` | 1 |
   | `crates/scrutate/src/foldfind.rs` | 2 |
   | `crates/scrutate/src/hook.rs` | 2 |
+  | `crates/scrutate/src/index.rs` | 5 |
   | `crates/scrutate/src/instant.rs` | 2 |
   | `crates/scrutate/src/lazy_bind.rs` | 7 |
   | `crates/scrutate/src/lex.rs` | 1 |

@@ -122,6 +122,10 @@ incompatible index by itself, and that is never breaking.
 - The `notify` crate is 9.0.0-rc.8, pinned (it needs Rust 1.91, the existing minimum).
 
 ### Fixed
+- On Windows the indexes keep each file's status change time, as on Unix: a file edited back to
+  its old size and modification time is read again by the next update
+  instead of answering from its old chunks until `index --force`. The walk reads the change times
+  with one more listing per directory ([ARCHITECTURE](docs/ARCHITECTURE.md)).
 - `watch` on Windows walks the tree when a burst overflows the watch buffer, now 64 KiB: before,
   its files waited for a later change 30 s after the last walk ([CLI](docs/CLI.md#watch)).
 - `watch` on Linux checks the directories that got no inotify watch on a timer, so a change there

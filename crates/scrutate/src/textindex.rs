@@ -1006,7 +1006,8 @@ impl TextIndex {
             .filter(|&(p, stat)| match held.get(p) {
                 None => true,
                 Some(&(hit, m)) => {
-                    let stat = stat.or_else(|| std::fs::symlink_metadata(self.root.join(p)).ok().map(|m| crate::index::Stat::of(&m)));
+                    let full = self.root.join(p);
+                    let stat = stat.or_else(|| std::fs::symlink_metadata(&full).ok().map(|m| crate::index::Stat::of(&full, &m)));
                     let now = stat.is_some_and(|s| m[0] == s.size && m[1] == s.mtime && m[2] & RETRY == 0 && m[3] == s.ctime);
                     hit || !now
                 }
@@ -1031,9 +1032,8 @@ impl TextIndex {
 }
 
 /// Size, mtime and status change time: an edit that keeps the first two moves the third.
-fn stamp(md: &std::fs::Metadata) -> (u64, i64, i64) {
-    let st = crate::index::Stat::of(md);
-    (md.len(), st.mtime, st.ctime)
+fn stamp(st: crate::index::Stat) -> (u64, i64, i64) {
+    (st.size as u64, st.mtime, st.ctime)
 }
 
 /// The files Engine A's default search visits, relative to `root`, with size, mtime and status
@@ -1044,11 +1044,12 @@ pub(crate) fn walk(root: &Path) -> Result<Vec<(String, u64, i64, i64)>> {
     let out = Mutex::new(Vec::new());
     walker.run(|| {
         let (out, roots) = (&out, &roots);
+        let mut listed = crate::index::Listed::default();
         Box::new(move |entry| {
             if let Ok(e) = entry {
                 if e.file_type().map(|t| t.is_file()).unwrap_or(false) {
                     let rel = instant::relative(e.path(), roots);
-                    let (size, mtime, ctime) = e.metadata().map(|m| stamp(&m)).unwrap_or((0, 0, 0));
+                    let (size, mtime, ctime) = e.metadata().map(|m| stamp(listed.stat(e.path(), &m))).unwrap_or((0, 0, 0));
                     if let Ok(mut v) = out.lock() {
                         v.push((rel, size, mtime, ctime));
                     }
@@ -1167,8 +1168,9 @@ fn update_with(root: &Path, force: bool, progress: bool, only: Option<&[String]>
             let mut v: Vec<(String, u64, i64, i64)> = paths
                 .iter()
                 .filter_map(|p| {
-                    let m = std::fs::symlink_metadata(root.join(p)).ok().filter(|m| m.is_file())?;
-                    let (size, mtime, ctime) = stamp(&m);
+                    let full = root.join(p);
+                    let m = std::fs::symlink_metadata(&full).ok().filter(|m| m.is_file())?;
+                    let (size, mtime, ctime) = stamp(crate::index::Stat::of(&full, &m));
                     Some((p.clone(), size, mtime, ctime))
                 })
                 .collect();

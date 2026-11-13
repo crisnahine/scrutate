@@ -394,8 +394,13 @@ NFC with final sigma folded.
   store, then the main checkout's, read-only in one snapshot per update. Nothing of the other
   checkout is written (review in docs/SECURITY.md). Two plain clones do not find each other.
 - **Lifecycle**:
-  - content hashing: a fast path when size, mtime and, on Unix, `ctime_ns` match, so a `chmod`
-    alone costs a read and a hash; a row without `ctime_ns`, from an older index, is read once;
+  - content hashing: a fast path when size, mtime and `ctime_ns` match, so a `chmod`
+    alone costs a read and a hash; a row without `ctime_ns`, from an older index, is read once.
+    On Windows a directory entry has no change time: the walk lists each directory once more by
+    handle (`GetFileInformationByHandleEx` with `FileIdBothDirectoryInfo`) and takes every
+    entry's `ChangeTime` from that listing, and a single file's stat reads it by name
+    (`GetFileInformationByName`, Windows 11 24H2 and later) or else by a handle opened for its
+    attributes only, as CPython's `os.stat` does (`index::Listed`, `index::change_time`);
     SHA-1 verification;
   - one `BEGIN IMMEDIATE` transaction per update; new segments written to a temp directory and
     renamed (the name is taken inside that transaction, so a directory already under it was left
@@ -840,9 +845,7 @@ With a text index, `grep_code` and `references` (textual, and the name search of
 references) make a look of their own (one walk and one `stat` per file, no index update), read the
 trigrams for the files the text index holds as they are now (the size, mtime and status change
 time that look found) and read every other file of the look directly: new, changed, hidden or left
-out by the text index's walk (`stores::grep_files`). Windows has no status change time, so there,
-as for the code index, a file rewritten with its old size and modification time is read from what
-the text index recorded until the next update. The walk runs instead when there is no text index,
+out by the text index's walk (`stores::grep_files`). The walk runs instead when there is no text index,
 when the pattern's trigrams narrow nothing, when a glob brings files in, when a name is not UTF-8,
 or when the path is a file or a directory the look did not enter. No grep builds a text index. A
 look costs about what a walk costs without the search (on 12,001 small files, 90 ms of CPU for the
@@ -941,8 +944,7 @@ it; commands that do not rank never read it.
 The index records the vector model's signature, a blake2b hash of the model file. The bundled
 model's is a constant in `models.rs`, checked against the file by a test; a model named at run
 time is hashed on first need and the hash kept in `.scrutate/model.sig` beside the file's size,
-modification time and status change time (where the system has none, a file rewritten with its
-old size and modification time keeps its old signature). Another vector model makes the vectors
+modification time and status change time. Another vector model makes the vectors
 anew in the next update, inside its write transaction: each segment is written again with its
 postings and the new vectors, or none for `none`, and no database row is rewritten. The vectors
 come from the word counts of each file's artifact (`Artifact::vectors`), which a build with `none`

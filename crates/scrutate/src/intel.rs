@@ -435,7 +435,7 @@ pub fn tsquery_each(
         .map(|f| {
             let known = under[f.root].as_ref().and_then(|u| {
                 let (stat, hash) = recorded.get(&if u.is_empty() { f.rel.clone() } else { format!("{u}/{}", f.rel) })?;
-                (crate::index::Stat::of(&f.md) == *stat).then(|| hash.clone())
+                (crate::index::Stat::of(&f.path, &f.md) == *stat).then(|| hash.clone())
             });
             (f.path, f.rel, f.shown, known)
         })

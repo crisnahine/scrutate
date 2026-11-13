@@ -112,8 +112,7 @@ fn an_edit_that_keeps_size_and_mtime_is_seen() {
     fs::write(&f, "def omega():\n    return 1\n").unwrap();
     fs::File::options().write(true).open(&f).unwrap().set_modified(mtime).unwrap();
     // the write moved the change time, which no one can set back
-    let expect = if cfg!(unix) { 1 } else { 0 };
-    assert_eq!(ix.update(false).unwrap().files_changed, expect);
+    assert_eq!(ix.update(false).unwrap().files_changed, 1);
     assert_eq!(ix.update(true).unwrap().files_changed, 1);
     assert_eq!(ix.named("omega").unwrap().len(), 1);
 }
