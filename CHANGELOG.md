@@ -1,93 +1,93 @@
 # Changelog
 
 All notable changes to Scrutate. The format follows Keep a Changelog; versions follow SemVer.
-Compatibility policy: the CLI surface, the JSONL `schema` number, the MCP tool names and the Python
-API are versioned interfaces; incompatible changes bump the major version once past 1.0 and are
-listed here under "Breaking". The on-disk index is a cache with its own `schema_version`; a new
-version rebuilds incompatible indexes automatically and this is never considered breaking.
+Versioned interfaces: the CLI, the JSONL `schema` number, the MCP tool names and the Python API.
+Past 1.0, an incompatible change to one bumps the major version and is listed under "Breaking".
+The on-disk index is a cache with its own `schema_version`: a new version rebuilds an
+incompatible index by itself, and that is never breaking.
 
 ## [Unreleased]
 
 ### Added
 - `scrutate review --base REV [--head REV]` reports a pull request: `impact` between the two
-  commits (changed definitions, callers with distances, test files to run, and the changed
-  definitions no test reaches) and the duplicates the head adds, a group the base already had
-  left out even when one member is edited or moved. `--format markdown` is a PR comment of at
-  most 65,536 characters that starts with the marker `<!-- scrutate-review -->`, `--format json`
-  the answer's envelope, `--format gitlab` a GitLab Code Quality report, which the GitLab
-  template now saves as the job's `codequality` report.
-- The GitHub Action's `comment: true` posts that report as one comment on a pull request and
-  edits it on the next push, with only the `pull-requests: write` permission; its own errors are
-  warnings, so it never fails the job. `args` is now optional.
-- Every MCP tool takes `response_format`: `detailed`, the default and the answer as before, or
-  `concise`, which keeps every location and name and drops code, snippets, kinds, scores, the
-  containers of names and explanations, writes each directory once and a location in the file of
-  the one before it as `:start-end`, and pages the same items. On this repository a concise answer
-  is 5% to 44% of the detailed one where that passes 1 KB. The Python `Repo.call` reads it too; `batch` checks it.
+  commits (changed definitions, callers with distances, test files to run, changed definitions
+  no test reaches) and the duplicates the head adds, leaving out a group the base already had
+  even when a member is edited or moved. `--format markdown` is a PR comment of at most 65,536
+  characters starting with the marker `<!-- scrutate-review -->`, `--format json` the answer's
+  envelope, `--format gitlab` a GitLab Code Quality report, which the GitLab template saves as
+  the job's `codequality` report.
+- The GitHub Action's `comment: true` posts that report as one pull request comment and edits it
+  on the next push, with only the `pull-requests: write` permission; its own errors are warnings
+  and never fail the job. `args` is now optional.
+- Every MCP tool takes `response_format`: `detailed` (the default, the answer as before) or
+  `concise`, which keeps every location and name, drops code, snippets, kinds, scores, the
+  containers of names and explanations, writes each directory once and a location in the same
+  file as the one before as `:start-end`, and pages the same items. On this repository a concise
+  answer is 5% to 44% of the detailed one where that passes 1 KB. The Python `Repo.call` reads
+  it too; `batch` checks it.
 - `serve --short-tools` (or `SCRUTATE_MCP_SHORT_TOOLS=1`) sends a tool list with a few words per
-  tool and no argument descriptions, and names the three arguments every tool shares once in the
+  tool, no argument descriptions, and the three arguments every tool shares named once in the
   server's instructions: 5,614 bytes against 16,647 (13,968 before `response_format`), with the
   same tool names, arguments, types, defaults and checks.
 - `scrutate setup <claude|codex|opencode|cursor|gemini>` writes one MCP server entry that runs
-  this binary by its absolute path into the agent's user file, or with `--project` into the
-  repository's file, editing the text in place so every other key and comment stays; a file that
-  does not parse is left alone, and the file is replaced by rename. `--uninstall` gives the file
-  back byte for byte, `--dry-run` prints the change and writes nothing, `--instructions` adds a
+  this binary by its absolute path into the agent's user file (with `--project`, the
+  repository's file). It edits the text in place so every other key and comment stays, leaves a
+  file that does not parse alone, and replaces the file by rename. `--uninstall` restores the
+  file byte for byte, `--dry-run` prints the change and writes nothing, `--instructions` adds a
   marked block to `CLAUDE.md`, `AGENTS.md` or `GEMINI.md`. Claude Code's user file goes through
   `claude mcp add-json` when `claude` is installed. Checked with each agent's own listing: Claude
   Code 2.1.323, Codex 0.155.1, cursor-agent 2026.10.22, opencode 1.19.5 and 2.2.7, Gemini CLI 0.68.0.
 - `scrutate setup claude --hook` installs a `PreToolUse` hook that answers Claude Code's Grep with
-  Engine A's matches, the lines ripgrep gives for the same arguments, bounded as an MCP answer is;
-  a call it cannot answer exactly runs Grep as before. `scrutate hook stats` prints, per session
-  and in all, the bytes Grep would have returned against the bytes the hook sent. An answer the
-  bound does not cut costs 13 bytes more than Grep's own result, the line `Grep result:` before it.
-  A plain `--uninstall` takes the hook and the instruction block out with the server entry, so a
-  removed binary leaves no hook behind. On Windows the hook answers too, with the paths as Grep
-  prints them there (`src\a.rs`), and `setup` writes a command that Git Bash and PowerShell, the
-  two shells Claude Code runs hooks in there, both run.
+  Engine A's matches (the lines ripgrep gives for the same arguments), bounded as an MCP answer
+  is; a call it cannot answer exactly runs Grep as before. `scrutate hook stats` prints, per
+  session and in all, the bytes Grep would have returned against the bytes the hook sent. An
+  uncut answer costs 13 bytes more than Grep's own, the line `Grep result:` before it. A plain
+  `--uninstall` removes the hook and the instruction block with the server entry, so a removed
+  binary leaves no hook. On Windows the hook prints paths as Grep does there (`src\a.rs`), and
+  `setup` writes a command that both shells Claude Code runs hooks in there (Git Bash and
+  PowerShell) run.
 - `scrutate tsquery LANG QUERY [PATHS] --rewrite TEMPLATE` replaces each match (its `@match`
   capture, else its widest) with a template of the captures (`$NAME`, `${NAME}`, `$$`) and prints
   a unified diff; `--write` writes each file whole by rename, only while its bytes are those read.
   Of overlapping matches the outer one is rewritten and the inner one named; a file whose text
   does not parse where it would change, before or after, is left alone and named. No MCP tool.
-- A `[[language]]` table in the root's `.scrutate.toml` or in your configuration file adds a
-  language without a build: its name, extensions, `line_comment`, `block_comment`, and
+- A `[[language]]` table in the root's `.scrutate.toml` or your configuration file adds a
+  language without a build: name, extensions, `line_comment`, `block_comment`, and
   `definitions`, one regular expression per kind whose first group is the name. Its files get
   symbols, outlines, documentation from the comments above definitions and ranked hits;
-  `grep --type` and `languages` know it (`custom: .scrutate.toml`). A changed table reads again
-  only the files of the extensions it changed. A bad table (TOML that does not parse, an unknown
-  key, a pattern that does not compile or has no group, a built-in name or extension) is one error
-  naming the file and the line, and exit 2.
+  `grep --type` and `languages` know it (`custom: .scrutate.toml`). A changed table rereads only
+  the files of the extensions it changed. A bad table (TOML that does not parse, an unknown key,
+  a pattern that does not compile or has no group, a built-in name or extension) is one error
+  naming the file and line, exit 2.
 - A configuration file that does not parse is one line naming the file and the line.
-- docs/FAQ.md answers the first questions about scrutate, each with a link to its evidence, and
+- docs/FAQ.md answers the first questions about scrutate, each with a link to its evidence;
   `CITATION.cff` gives GitHub's "Cite this repository".
 - The website https://scrutate.github.io (repository `scrutate/scrutate.github.io`) says what
   scrutate does and how to start; the README's top links and `CITATION.cff`'s `url` point to it.
-- `.github/FUNDING.yml` shows GitHub's Sponsor button on the repository, with GitHub Sponsors and
-  Buy Me a Coffee, and the README's "Sponsor and hire" section links both.
+- `.github/FUNDING.yml` shows GitHub's Sponsor button (GitHub Sponsors and Buy Me a Coffee), and
+  the README's "Sponsor and hire" section links both.
 
 ### Changed
-- The repository lives at github.com/scrutate/scrutate, under the `scrutate` organization; the
-  old address redirects. The install commands, the GitHub Action, the CI templates, the package
+- The repository is now github.com/scrutate/scrutate, under the `scrutate` organization; the old
+  address redirects. The install commands, the GitHub Action, the CI templates, the package
   definitions and `CITATION.cff` name the new one.
 - With reduced motion on, the README and document images keep their typing, counts, marks and
-  cuts running and stop only what travels or grows: the reticle, the wordmark's letters and
-  cursor, a block running along an arrow, a pulse. Before, they showed only slow cross-fades.
+  cuts and stop only what travels or grows: the reticle, the wordmark's letters and cursor, a
+  block running along an arrow, a pulse. Before, they showed only slow cross-fades.
 
 ### Fixed
-- The Grep hook reads every `*.json` of `managed-settings.d` beside Claude Code's managed settings, and
-  lets Grep run wherever managed policy it does not read exists (a macOS configuration profile, the
-  Windows registry key `SOFTWARE\Policies\ClaudeCode`), so an administrator's read rule placed
-  only there is never bypassed.
+- The Grep hook reads every `*.json` of `managed-settings.d` beside Claude Code's managed
+  settings, and lets Grep run wherever managed policy it does not read exists (a macOS
+  configuration profile, the Windows registry key `SOFTWARE\Policies\ClaudeCode`), so an
+  administrator's read rule placed only there is never bypassed.
 - `path` takes a function named like its file (`def main` in `main.py`) over the file's module
   chunk of the same name, as `callers` and `callees` do; two real definitions still list both.
-- A `tsquery` predicate written outside every pattern's parentheses is an error: tree-sitter
-  applied it to nothing, so the pattern matched every node, and `--rewrite --write` would have
-  rewritten all of them.
+- A `tsquery` predicate outside every pattern's parentheses is an error: tree-sitter applied it
+  to nothing, so the pattern matched every node and `--rewrite --write` would have rewritten all.
 - `grep -t TYPE` (and `-t !TYPE`, `SCRUTATE_GREP_TYPES`, the configuration file's `types`)
   matches after the ignore rules, as ripgrep's `--type` does: a gitignored file of the type is no
-  longer searched, and a glob that matches a file decides before the type (`-g '*.txt' -t py`
-  searches the `.txt` files, as ripgrep does, where before it searched both).
+  longer searched, and a matching glob decides before the type (`-g '*.txt' -t py` searches the
+  `.txt` files, as ripgrep does; before, it searched both).
 
 ## [0.1.0] - 2026-11-11
 
@@ -618,6 +618,7 @@ First release.
   `Main.update!(x)` to `update!`, `step' y` to `step'` (at its equation, below the type
   signature), and the cursor on `is` in R `is.ready(x)` finds `is.ready`. References of `valid`
   no longer list `valid?`.
+
 - `follow = true` in a repository's own `.scrutate.toml` is ignored with a warning, so a cloned
   repository cannot make `scrutate grep` leave it through a symbolic link; `-L`, the environment
   and your own configuration file still follow.
