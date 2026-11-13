@@ -87,6 +87,10 @@ incompatible index by itself, and that is never breaking.
   constants are constants: `refs` ties a field read, `this.f`, `obj.f`, `C.F`, a static import
   and a record accessor `p.x()` to them, where it listed `field or key`
   ([CLI](docs/CLI.md#refs)). An index made before reads every file again.
+- `bench/agent_eval.py` runs Claude Code on 20 tasks over three pinned corpora with and without
+  the MCP server, and records per run whether the answer checks out, tokens, cost, tool calls and
+  tool errors. Each run is paid, so it starts only with `--yes-spend`; no round has run yet
+  ([Quality](docs/QUALITY.md#agent-eval)).
 
 ### Changed
 - The macOS benchmark chain waits for the new binary to start at its settled speed

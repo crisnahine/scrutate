@@ -37,7 +37,8 @@ crates/scrutate-py/     optional PyO3 bindings (not built by default)
 python/scrutate_ref/    the models' training code (ranker export, vector model tables)
 python/tests/           tests of the training code, the benchmark builders and the bindings
 models/                 semantic.npz, ranker.npz (embedded into the binary)
-bench/                  benchmark harness, differential tests, ranking quality, training scripts
+bench/                  benchmark harness, differential tests, ranking quality, training scripts,
+                        the agent eval (agent_eval.py: paid Claude Code runs, never in CI)
 tools/                  name research, SBOM, docs generators, reproducibility check
 integrations/           VS Code, Neovim, JetBrains, GitHub, GitLab, Bitbucket, MCP, pre-commit
 docs/                   architecture, security, benchmarks, traceability, ...

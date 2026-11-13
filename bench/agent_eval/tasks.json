@@ -1,0 +1,253 @@
+{
+  "corpora": {
+    "scrutate": {
+      "source": "git-archive",
+      "commit": "b638d18369d742392a0ed787db362dbb19457e3e",
+      "tree_sha256": "f02bcb2c9b2f8d86aa6b06d41515c2fccce37d47fcfd4bd9078803fa766c232e",
+      "files": 655
+    },
+    "ripgrep": {
+      "source": "corpora",
+      "dir": "ripgrep",
+      "note": "ripgrep 15.2.0 as bench/corpora.py fetches it (manifest.json head ac018d43)",
+      "tree_sha256": "592f6d5a45068fca0bef0935f6deb4e4fb90bcd379ecf1073b4bfce0f3594f28",
+      "files": 220
+    },
+    "networkx": {
+      "source": "corpora",
+      "dir": "py-small",
+      "note": "the py-small corpus of bench/run_macos.sh: networkx 3.7 (networkx/__init__.py)",
+      "tree_sha256": "019beb540087774a31423cfef6a4e5d8941a6b1ae61531e691f3862ef27d4db1",
+      "files": 598
+    }
+  },
+  "tasks": [
+    {
+      "id": "scrutate-inside-callers",
+      "corpus": "scrutate",
+      "split": "tune",
+      "kind": "definition and callers",
+      "question": "crates/scrutate/src/ops.rs has a function that decides whether a path stays under the repository root by its parts alone, without looking at the file system. Where is it defined, and which functions call that function (not a namesake elsewhere)?",
+      "answer_shape": {"definition": "path:line", "callers": ["function name"]},
+      "check": {
+        "definition": {"type": "location", "path": "crates/scrutate/src/ops.rs", "lines": [717, 735]},
+        "callers": {"type": "names", "expected": ["files", "run", "read_range", "repo_path"]}
+      },
+      "how_checked": "scrutate symbol inside (two definitions: ops.rs:719 and watch.rs:37) and callers crates/scrutate/src/ops.rs:722; grep 'inside(' in ops.rs gives lines 323, 645, 705, 763, 858, each read and placed in Scope.files, run (two calls), read_range and repo_path. watch.rs:150 and :221 call the watch.rs namesake."
+    },
+    {
+      "id": "scrutate-first-relevant-rank-callers",
+      "corpus": "scrutate",
+      "split": "tune",
+      "kind": "what breaks if I change Y",
+      "question": "If the signature of first_relevant_rank in bench/evalcore.py changes, which functions break? List the functions that call it.",
+      "answer_shape": {"callers": ["function name"]},
+      "check": {"callers": {"type": "names", "expected": ["measure", "evaluate"]}},
+      "how_checked": "scrutate callers first_relevant_rank; grep first_relevant_rank over bench, tools and python finds calls at bench/quality.py:146 (in measure, 113-153) and bench/train_semantic.py:277 (in evaluate, 253-278); the other hits are imports, the definition and bench/quality/queries.json."
+    },
+    {
+      "id": "scrutate-evalcore-importers",
+      "corpus": "scrutate",
+      "split": "tune",
+      "kind": "dependents",
+      "question": "Which files in this repository import the Python module evalcore (an import statement, not a mention in text)?",
+      "answer_shape": {"files": ["path"]},
+      "check": {"files": {"type": "paths", "expected": ["bench/gen_features.py", "bench/make_bench.py", "bench/make_bench_code.py", "bench/quality.py", "bench/train_ranker.py", "bench/train_semantic.py", "python/tests/test_bench_targets.py"]}},
+      "how_checked": "grep evalcore over bench, tools and python, each hit read: seven 'from evalcore import' lines; the quality.py docstring hit is text. scrutate rdeps bench/evalcore.py lists six and says one import is unresolved (python/tests/test_bench_targets.py, which adds bench/ to sys.path)."
+    },
+    {
+      "id": "scrutate-typo-distance",
+      "corpus": "scrutate",
+      "split": "heldout",
+      "kind": "find by meaning",
+      "question": "The fuzzy file finder tolerates typos: some function counts how many single-character changes (including swapping two neighbouring characters) separate a short query from part of a path. Where is that function defined, and which function calls it?",
+      "answer_shape": {"definition": "path:line", "callers": ["function name"]},
+      "check": {
+        "definition": {"type": "location", "path": "crates/scrutate/src/finder.rs", "lines": [147, 166]},
+        "callers": {"type": "names", "expected": ["quality"]}
+      },
+      "how_checked": "Read crates/scrutate/src/finder.rs: edits (149-166, doc comment from 147) is Sellers' algorithm with the optimal string alignment distance; grep 'edits(' in the file: one call, line 143, in quality (134-145)."
+    },
+    {
+      "id": "scrutate-dead-code-tests",
+      "corpus": "scrutate",
+      "split": "tune",
+      "kind": "which tests cover W",
+      "question": "Which test functions under crates/scrutate/tests/ call the MCP tool dead_code, directly or through a list of tool calls they run? Give the test functions, not helpers.",
+      "answer_shape": {"tests": ["test function name"]},
+      "check": {"tests": {"type": "names", "expected": ["the_dead_code_tool_gives_the_text_of_the_command", "a_concise_answer_lists_the_same_locations_in_at_most_half_the_bytes", "a_large_answer_pages_its_structured_items_to_the_end_in_both_forms"]}},
+      "how_checked": "grep dead_code in crates/scrutate/tests without allow(dead_code): dead.rs:238 and :246, concise.rs:119, mcp_tools.rs:993 and :1043. scrutate symbol at each line: dead.rs the_dead_code_tool_gives_the_text_of_the_command, concise.rs a_concise_answer_lists_the_same_locations_in_at_most_half_the_bytes, mcp_tools.rs:1043 a_large_answer_pages_its_structured_items_to_the_end_in_both_forms; mcp_tools.rs:993 is the helper items, whose one caller is that same test."
+    },
+    {
+      "id": "scrutate-mode-named",
+      "corpus": "scrutate",
+      "split": "heldout",
+      "kind": "definition and callers",
+      "question": "One function turns a grep mode name (regex, literal, identifier, fuzzy, ...) into the engine's matching mode. Where is it defined, and which functions in the repository call it?",
+      "answer_shape": {"definition": "path:line", "callers": ["function name"]},
+      "check": {
+        "definition": {"type": "location", "path": "crates/scrutate/src/ops.rs", "lines": [281, 293]},
+        "callers": {"type": "names", "expected": ["from_tool", "grep"]}
+      },
+      "how_checked": "scrutate symbol mode_named (ops.rs:283-293) and callers mode_named; grep mode_named over crates and python: ops.rs:191 in Op.from_tool and crates/scrutate-py/src/lib.rs:282 in grep (255-373)."
+    },
+    {
+      "id": "scrutate-read-code-chain",
+      "corpus": "scrutate",
+      "split": "tune",
+      "kind": "call path",
+      "question": "Trace how an MCP read_code call by path reaches the code that reads the lines: list, in order, the chain of function calls from run_call in crates/scrutate/src/mcp.rs to read_range in crates/scrutate/src/ops.rs.",
+      "answer_shape": {"chain": ["function name, first to last"]},
+      "check": {"chain": {"type": "chain", "expected": ["run_call", "call_counted", "run_counted", "run_as_is", "run", "read_range"]}},
+      "how_checked": "scrutate path run_call crates/scrutate/src/ops.rs:756, then each step read: mcp.rs:350 calls call_counted, mcp.rs:201 session.run_counted, session.rs:228 repo.run_as_is (inside closures), stores.rs:360 ops::run, ops.rs:649 read_range. Wrappers listed between them (waiting_for_others, call, recovering) still pass: the check wants these in order, first and last fixed."
+    },
+    {
+      "id": "ripgrep-hidden-windows",
+      "corpus": "ripgrep",
+      "split": "tune",
+      "kind": "definition and callers",
+      "question": "How does the ignore crate decide that a directory entry is hidden on Windows? Give the location of the function that does it on Windows, and the functions in the ignore crate that call it.",
+      "answer_shape": {"definition": "path:line", "callers": ["function name"]},
+      "check": {
+        "definition": {"type": "location", "path": "crates/ignore/src/pathutil.rs", "lines": [27, 45]},
+        "callers": {"type": "names", "expected": ["matched_dir_entry"]}
+      },
+      "how_checked": "scrutate symbol is_hidden: three cfg variants in crates/ignore/src/pathutil.rs (unix 10-19, windows 27-45, other 50-57); grep 'is_hidden(' over crates: dir.rs:490 in Ignore.matched_dir_entry (485-494); pathutil.rs:36 calls winapi_util's file::is_hidden."
+    },
+    {
+      "id": "ripgrep-preceding-callers",
+      "corpus": "ripgrep",
+      "split": "tune",
+      "kind": "what breaks if I change Y",
+      "question": "In the grep-searcher crate, what breaks if the signature of lines::preceding changes? List the functions outside tests that call it.",
+      "answer_shape": {"callers": ["function name"]},
+      "check": {"callers": {"type": "names", "expected": ["roll", "before_context_by_line"]}},
+      "how_checked": "scrutate callers preceding; grep 'preceding(' over crates: crates/searcher/src/searcher/core.rs:198 in Core.roll (185-213) and :253 in Core.before_context_by_line (240-274); the other hits are the definition, its doc comment and the tests module of lines.rs."
+    },
+    {
+      "id": "ripgrep-stdin-decision",
+      "corpus": "ripgrep",
+      "split": "heldout",
+      "kind": "find by meaning",
+      "question": "When rg is run with no path, it chooses between searching standard input and the current directory. Give the location of the function that tests standard input, and the name of the function that makes the choice with it.",
+      "answer_shape": {"definition": "path:line", "callers": ["function name"]},
+      "check": {
+        "definition": {"type": "location", "path": "crates/cli/src/lib.rs", "lines": [150, 250]},
+        "callers": {"type": "names", "expected": ["from_low_args"]}
+      },
+      "how_checked": "scrutate symbol is_readable_stdin (crates/cli/src/lib.rs:170-250, its doc comment starts above); grep is_readable_stdin over crates: one call, crates/core/flags/hiargs.rs:1113 in Paths.from_low_args (1071-1134), read: use_cwd = !is_readable_stdin || ..."
+    },
+    {
+      "id": "ripgrep-matcher-dependents",
+      "corpus": "ripgrep",
+      "split": "tune",
+      "kind": "dependents",
+      "question": "Which crates of this workspace depend on grep-matcher? Give the Cargo.toml of each.",
+      "answer_shape": {"files": ["path of Cargo.toml"]},
+      "check": {"files": {"type": "paths", "expected": ["crates/grep/Cargo.toml", "crates/printer/Cargo.toml", "crates/pcre2/Cargo.toml", "crates/searcher/Cargo.toml", "crates/regex/Cargo.toml"]}},
+      "how_checked": "grep -n grep-matcher over Cargo.toml and crates/*/Cargo.toml: a 'grep-matcher = { version = \"0.1.8\", path = \"../matcher\" }' line in pcre2, grep, printer, regex and searcher; crates/matcher/Cargo.toml is the crate itself; the root Cargo.toml does not name it."
+    },
+    {
+      "id": "ripgrep-max-columns-preview-tests",
+      "corpus": "ripgrep",
+      "split": "heldout",
+      "kind": "which tests cover W",
+      "question": "Which integration tests under tests/ run rg with the --max-columns-preview flag? Give the test names.",
+      "answer_shape": {"tests": ["test name"]},
+      "check": {"tests": {"type": "names", "expected": ["f917_trim_max_columns_normal", "f917_trim_max_columns_matches", "f917_trim_max_columns_multi_standard", "f917_trim_max_columns_multi_only_matching", "f917_trim_max_columns_multi_per_match", "f1078_max_columns_preview1", "f1078_max_columns_preview2"]}},
+      "how_checked": "grep -rn max-columns-preview tests: seven lines, all in tests/feature.rs (684, 699, 719, 742, 762, 792, 807); each read and placed in the rgtest! that holds it. The unit test test_max_columns_preview in crates/core/flags/defs.rs is not under tests/."
+    },
+    {
+      "id": "ripgrep-run-dispatch",
+      "corpus": "ripgrep",
+      "split": "tune",
+      "kind": "definition and callees",
+      "question": "Which function in rg's binary picks between a single-threaded and a multi-threaded search of file contents? Give its location and the names of the two functions it calls for those searches.",
+      "answer_shape": {"definition": "path:line", "callees": ["function name"]},
+      "check": {
+        "definition": {"type": "location", "path": "crates/core/main.rs", "lines": [77, 101]},
+        "callees": {"type": "names", "expected": ["search", "search_parallel"]}
+      },
+      "how_checked": "Read crates/core/main.rs run (77-101): Mode::Search(mode) if args.threads() == 1 => search(...), Mode::Search(mode) => search_parallel(...); files and files_parallel are the --files mode."
+    },
+    {
+      "id": "ripgrep-trim-prefix-callers",
+      "corpus": "ripgrep",
+      "split": "heldout",
+      "kind": "definition and callers",
+      "question": "grep-printer has a free function trim_ascii_prefix in crates/printer/src/util.rs. Which functions call that free function directly?",
+      "answer_shape": {"callers": ["function name"]},
+      "check": {"callers": {"type": "names", "expected": ["write_line", "trim_ascii_prefix"]}},
+      "how_checked": "grep trim_ascii_prefix over crates: the free function is util.rs:452; standard.rs:1198 calls it in StandardImpl.write_line (1191-1217) and standard.rs:1587 in the method StandardImpl.trim_ascii_prefix (1582-1588); the other calls (1053, 1075, 1137, 1231) are of the method. scrutate symbol trim_ascii_prefix lists only the method, and callers trim_ascii_prefix lists the method's callers."
+    },
+    {
+      "id": "networkx-multisource-callers",
+      "corpus": "networkx",
+      "split": "tune",
+      "kind": "definition and callers",
+      "question": "Where is _dijkstra_multisource defined, and which functions call it directly?",
+      "answer_shape": {"definition": "path:line", "callers": ["function name"]},
+      "check": {
+        "definition": {"type": "location", "path": "networkx/algorithms/shortest_paths/weighted.py", "lines": [784, 907]},
+        "callers": {"type": "names", "expected": ["multi_source_dijkstra_path_length", "multi_source_dijkstra", "_dijkstra"]}
+      },
+      "how_checked": "scrutate symbol and callers _dijkstra_multisource; grep _dijkstra_multisource over networkx: calls at weighted.py:647 (multi_source_dijkstra_path_length), :759 (multi_source_dijkstra) and :779 (_dijkstra); :774 is a docstring."
+    },
+    {
+      "id": "networkx-dijkstra-wrapper",
+      "corpus": "networkx",
+      "split": "heldout",
+      "kind": "what breaks if I change Y",
+      "question": "_dijkstra_multisource has a thin wrapper for a single source. Name the wrapper, and list every function that calls the wrapper.",
+      "answer_shape": {"wrapper": "function name", "callers": ["function name"]},
+      "check": {
+        "wrapper": {"type": "names", "expected": ["_dijkstra"]},
+        "callers": {"type": "names", "expected": ["dijkstra_path_length", "dijkstra_predecessor_and_distance", ["dist_path", "johnson"]]}
+      },
+      "how_checked": "Read weighted.py _dijkstra (770-781): one call of _dijkstra_multisource with [source]. grep '[^_a-z]_dijkstra(' over networkx: :248 in dijkstra_path_length, :980 in dijkstra_predecessor_and_distance, :2539 in dist_path, a function nested in johnson (either name passes)."
+    },
+    {
+      "id": "networkx-bidirectional-tests",
+      "corpus": "networkx",
+      "split": "tune",
+      "kind": "which tests cover W",
+      "question": "Which test functions exercise bidirectional_dijkstra from networkx/algorithms/shortest_paths/weighted.py by naming it (a call, or the function passed as an argument)? Leave out tests of other functions with a similar name.",
+      "answer_shape": {"tests": ["test function name"]},
+      "check": {"tests": {"type": "names", "expected": ["test_bidirectional_dijkstra", "test_weight_functions", "test_bidirectional_dijkstra_no_path", "test_bidirectional_dijkstra_multigraph", "test_negative_edge_cycle", "test_zero_cycle_smoke", "test_sentinel_trick_all_algorithms"]}},
+      "how_checked": "grep bidirectional_dijkstra over networkx; outside weighted.py, simple_paths.py and generic.py the hits are tests/test_weighted.py, tests/test_generic.py and algorithms/tests/test_simple_paths.py, which imports the private _bidirectional_dijkstra of simple_paths.py (a different function). The enclosing test of each nx.bidirectional_dijkstra line, by Python's ast: test_bidirectional_dijkstra, test_weight_functions (229, 239), test_bidirectional_dijkstra_no_path, test_bidirectional_dijkstra_multigraph, test_negative_edge_cycle (343), test_zero_cycle_smoke (889) and test_generic.py test_sentinel_trick_all_algorithms (73)."
+    },
+    {
+      "id": "networkx-nearest-center",
+      "corpus": "networkx",
+      "split": "heldout",
+      "kind": "find by meaning",
+      "question": "Find the function that, given some center nodes, groups every node of a graph with the center it is nearest to by shortest-path distance. Give its location, and the networkx functions (not Python built-ins or methods) it calls.",
+      "answer_shape": {"definition": "path:line", "callees": ["function name"]},
+      "check": {
+        "definition": {"type": "location", "path": "networkx/algorithms/voronoi.py", "lines": [9, 86]},
+        "callees": {"type": "names", "expected": ["multi_source_dijkstra_path", "groups"]}
+      },
+      "how_checked": "Read networkx/algorithms/voronoi.py voronoi_cells (9-86, decorator first): it calls nx.multi_source_dijkstra_path and groups (from networkx.utils), then set() and dict methods."
+    },
+    {
+      "id": "networkx-weighted-importers",
+      "corpus": "networkx",
+      "split": "tune",
+      "kind": "dependents",
+      "question": "Which files import from the module networkx.algorithms.shortest_paths.weighted with an import statement that names that module?",
+      "answer_shape": {"files": ["path"]},
+      "check": {"files": {"type": "paths", "expected": ["networkx/algorithms/simple_paths.py", "networkx/algorithms/centrality/betweenness.py", "networkx/algorithms/shortest_paths/dense.py", "networkx/algorithms/shortest_paths/astar.py", "networkx/algorithms/shortest_paths/__init__.py"]}},
+      "how_checked": "grep 'shortest_paths.weighted' over networkx: five import lines, the same five as scrutate rdeps networkx/algorithms/shortest_paths/weighted.py. bridges.py reaches it as nx.weighted._weight_function, an attribute, not an import."
+    },
+    {
+      "id": "networkx-path-length-chain",
+      "corpus": "networkx",
+      "split": "tune",
+      "kind": "call path",
+      "question": "List, in order, the chain of function calls from dijkstra_path_length to the function that runs the priority-queue loop (heappush and heappop) for it.",
+      "answer_shape": {"chain": ["function name, first to last"]},
+      "check": {"chain": {"type": "chain", "expected": ["dijkstra_path_length", "_dijkstra", "_dijkstra_multisource"]}},
+      "how_checked": "Read weighted.py: dijkstra_path_length calls _dijkstra at :248, _dijkstra calls _dijkstra_multisource at :779, and heappush and heappop are called at :853, :856 and :879, inside _dijkstra_multisource (784-907)."
+    }
+  ]
+}

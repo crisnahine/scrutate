@@ -7,7 +7,7 @@
 
 [Documentation](README.md) &nbsp;·&nbsp; Previous: [Benchmarks](BENCHMARKS.md) &nbsp;·&nbsp; Next: [Test results](TEST_RESULTS.md)
 
-**Contents**: [Protocol](#protocol) &nbsp;·&nbsp; [Python, variant A: every docstring removed (MRR@10)](#python-variant-a-every-docstring-removed-mrr10) &nbsp;·&nbsp; [Python, variant B: first docstring sentence removed](#python-variant-b-first-docstring-sentence-removed) &nbsp;·&nbsp; [Other languages](#other-languages) &nbsp;·&nbsp; [What weighing type answers cost](#what-weighing-type-answers-cost) &nbsp;·&nbsp; [The sealed group](#the-sealed-group) &nbsp;·&nbsp; [What these numbers say and do not say](#what-these-numbers-say-and-do-not-say) &nbsp;·&nbsp; [int8 vectors (schema 13)](#int8-vectors-schema-13) &nbsp;·&nbsp; [Semantic model and ranker](#semantic-model-and-ranker) &nbsp;·&nbsp; [Reproduce](#reproduce)
+**Contents**: [Protocol](#protocol) &nbsp;·&nbsp; [Python, variant A: every docstring removed (MRR@10)](#python-variant-a-every-docstring-removed-mrr10) &nbsp;·&nbsp; [Python, variant B: first docstring sentence removed](#python-variant-b-first-docstring-sentence-removed) &nbsp;·&nbsp; [Other languages](#other-languages) &nbsp;·&nbsp; [What weighing type answers cost](#what-weighing-type-answers-cost) &nbsp;·&nbsp; [The sealed group](#the-sealed-group) &nbsp;·&nbsp; [What these numbers say and do not say](#what-these-numbers-say-and-do-not-say) &nbsp;·&nbsp; [int8 vectors (schema 13)](#int8-vectors-schema-13) &nbsp;·&nbsp; [Semantic model and ranker](#semantic-model-and-ranker) &nbsp;·&nbsp; [Agent eval](#agent-eval) &nbsp;·&nbsp; [Reproduce](#reproduce)
 
 <!-- End of head. -->
 
@@ -334,6 +334,19 @@ samples) and a dictionary to version in the index.
   falls below BM25 beyond its interval and no variant's mean over every query is below the
   previous ranker's. Top features by gain: lexical ratio, rank and z-score, name coverage, A-view
   semantic z-score, query length, name ratio, the name spelled as typed.
+
+## Agent eval
+
+The measures above score ranked answers, not an agent at work. `bench/agent_eval.py` runs Claude
+Code (`claude -p`) on 20 multi-step tasks over three pinned corpora (this repository at a fixed
+commit, ripgrep 15.2.0, networkx 3.7), each task twice: with scrutate's MCP server and with the
+built-in tools alone, same model and prompt, a fresh session in a fresh copy each time. A check
+derived from the code scores each answer, and each run records tokens, cost, tool calls, tool
+errors, turns and wall time; seven tasks are held out from any tuning. Its header says how to
+run the smoke test and a full round, and what a run is estimated to cost.
+
+No round has run yet, so there are no results: nothing here says whether the server helps an
+agent or saves tokens.
 
 ## Reproduce
 
