@@ -16,10 +16,10 @@ better than the current code-word semantic model (`models/semantic.npz`), and at
 
 ## Setup
 
-- Data and protocol: the same as [QUALITY.md](QUALITY.md). Corpora and queries were rebuilt with
-  `bench/make_bench.py` (seed 1234) from the latest PyPI releases of the packages in
-  `bench/groups.py` (networkx 3.7, mcp 2.3.0, rich 15.0.0 for TEST). Query counts match QUALITY.md
-  except `kw` (1 585 instead of 1 604, from newer package versions).
+- Data and protocol as in [QUALITY.md](QUALITY.md). `bench/make_bench.py` (seed 1234) rebuilt the
+  corpora and queries from the latest PyPI releases of the packages in `bench/groups.py`
+  (networkx 3.7, mcp 2.3.0, rich 15.0.0 for TEST). Query counts match QUALITY.md except `kw`
+  (1 585 instead of 1 604, from newer package versions).
 - Models compared:
 
   | Model | Params | Dim | Licence (model card) | Weights on disk |
@@ -29,19 +29,19 @@ better than the current code-word semantic model (`models/semantic.npz`), and at
   | `BAAI/bge-small-en-v1.5` | 33 M | 384 | MIT | 133 MB (fp32) |
   | `ibm-granite/granite-embedding-small-english-r2` (model card reports code retrieval scores, CoIR) | 47 M | 384 | Apache-2.0 | 95 MB (bf16), 190 MB as fp32 |
 
-- How a transformer is plugged in (`bench/eval_transformers.py`): it fills the same two vector
-  slots per chunk as the current model (view A: qualified name, signature and docstring; view B:
-  body), and embeds the raw query text (bge gets its documented query prefix). Inputs are truncated
-  to 256 tokens and vectors normalised. Everything else is unchanged: candidate pool (BM25 +
-  exact name + 100 semantic neighbours), the 47 features of the time (48 now) and `bench/train_ranker.py`.
-- Fair ranker comparison: for every model, including the current one, the ranker was retrained
-  with `train_ranker.py fit` on that model's DEV features and evaluated once on TEST. The retrained
-  ranker on the current model is within 0.005 MRR of the shipped `models/ranker.npz` on every query
-  type, so it is a sound baseline.
+- `bench/eval_transformers.py` plugs a transformer into the same two vector slots per chunk as
+  the current model (view A: qualified name, signature and docstring; view B: body) and embeds the
+  raw query text (bge gets its documented query prefix). Inputs are cut to 256 tokens and vectors
+  normalised. Nothing else changes: the candidate pool (BM25 + exact name + 100 semantic
+  neighbours), the 47 features of the time (48 now) and `bench/train_ranker.py`.
+- For every model, the current one included, the ranker was retrained with `train_ranker.py fit`
+  on that model's DEV features and evaluated once on TEST. On the current model the retrained
+  ranker is within 0.005 MRR of the shipped `models/ranker.npz` on every query type, so it is a
+  sound baseline.
 - *semantic only* ranks the candidate pool by vector similarity alone, as in QUALITY.md.
 - Intervals: 95 % paired bootstrap over queries (1 000 resamples, seed 0), from `evalcore.py`.
-- Bulk embedding for the quality runs used the Apple GPU (MPS) to keep CPU load low; timings below
-  are CPU only. granite ran at its stored bf16 precision for the quality runs.
+- Bulk embedding for the quality runs used the Apple GPU (MPS) to keep CPU load low, with granite
+  at its stored bf16 precision; the timings below are CPU only.
 
 ## Results, variant A (every docstring removed)
 
@@ -76,11 +76,12 @@ Learned ranker, MRR difference against the current model [95 % CI]:
 | qid | +0.003 [-0.004, +0.009] | +0.002 [-0.005, +0.008] | +0.006 [-0.002, +0.013] | -0.004 [-0.012, +0.003] | +0.002 [-0.005, +0.008] |
 
 Variant B (first docstring sentence removed), learned ranker MRR for doc: current 0.674, MiniLM
-0.712, bge 0.742, granite 0.730. Full output per type and variant: run the `compare` command below.
+0.712, bge 0.742, granite 0.730. The `compare` command below prints the full output per type and
+variant.
 
 ## Costs
 
-Machine: Apple M3 Pro (11 cores), 18 GB RAM, macOS. 4 threads. Sample: 1 000 random function and
+Machine: Apple M3 Pro (11 cores), 18 GB RAM, macOS, 4 threads. Sample: 1 000 random function and
 class chunks from the TEST packages, two views each (2 000 texts), sorted by length, batch 64.
 
 | Model | Embed 1 000 chunks (PyTorch, CPU) | Embed 1 000 chunks (candle + Accelerate, CPU) | One query | Peak RSS (PyTorch) |
@@ -91,21 +92,21 @@ class chunks from the TEST packages, two views each (2 000 texts), sorted by len
 | granite-small (fp32) | 20.3 s | not measured | 11.4 ms | 1.4 GB |
 
 - Indexing compute grows 46 to 107 times over the Python reference of the current model (the Rust
-  engine is faster still). For a 100 000-chunk repository on 4 threads: about 15 min (MiniLM) or
+  engine is faster still). A 100 000-chunk repository on 4 threads takes about 15 min (MiniLM) or
   28 min (bge) with PyTorch, more with candle, against seconds today.
-- Every query pays one extra forward pass: 5 to 11 ms on CPU.
-- Binary size today: 84 MB (release, macOS arm64). Shipping a transformer adds:
-  - runtime: candle-core + candle-nn + candle-transformers + tokenizers measured at about 4.3 MB
-    in a stripped release build (a probe binary with the same profile, 4.6 MB, against 0.4 MB for
-    an empty one); or ONNX Runtime, whose macOS arm64 library is 33 MB (version 1.31.1);
+- Every query pays one more forward pass: 5 to 11 ms on CPU.
+- The binary is 84 MB today (release, macOS arm64). A transformer adds:
+  - runtime: candle-core + candle-nn + candle-transformers + tokenizers, about 4.3 MB in a
+    stripped release build (a probe binary with the same profile, 4.6 MB, against 0.4 MB for an
+    empty one); or ONNX Runtime, whose macOS arm64 library is 33 MB (version 1.31.1);
   - weights: 91 MB (MiniLM) or 133 MB (bge) as fp32, about half as fp16; the tokenizer file adds
-    0.5 to 0.7 MB. So +95 to +140 MB with candle, which more than doubles the binary.
-- The candle probe was 3.6 to 4 times slower than PyTorch on this machine and peaked at 2.2 GB
-  RSS with batch 64; smaller batches would cut memory at some speed cost.
-- When this was measured, the Python reference and the Rust engine were specified to the bit
-  (`bench/parity.py`); that mirror has since ended. The engine's features are still pinned bit
-  for bit on every platform (`tests/ranking_pins.rs`). Transformer inference through another
-  backend would not give the same bits everywhere, so those pins would have to allow a tolerance.
+    0.5 to 0.7 MB. So +95 to +140 MB with candle, more than doubling the binary.
+- The candle probe was 3.6 to 4 times slower than PyTorch here and peaked at 2.2 GB RSS with
+  batch 64; smaller batches would cut memory at some cost in speed.
+- At the time, the Python reference and the Rust engine agreed to the bit (`bench/parity.py`);
+  that mirror has since ended. The engine's features are still pinned bit for bit on every
+  platform (`tests/ranking_pins.rs`). Transformer inference through another backend would not give
+  the same bits everywhere, so those pins would need a tolerance.
 
 ## Recommendation
 
@@ -119,27 +120,27 @@ bit-level agreement (then between the reference and the engine, now across platf
 
 What would change the answer:
 
-1. Distillation (cheapest next step): use bge-small as a teacher to train the code-word model
-   (`bench/train_semantic.py`), keeping today's runtime cost. If it closes half of the +0.070 doc
-   gap, that beats shipping the transformer.
+1. Distillation, the cheapest next step: train the code-word model (`bench/train_semantic.py`)
+   with bge-small as a teacher, keeping today's runtime cost. Closing half of the +0.070 doc gap
+   would beat shipping the transformer.
 2. An opt-in model file: keep the current model as default and accept a separately installed
    transformer for users who index once and query often, the way `SCRUTATE_SEMANTIC` already
    points at another file.
-3. A measured int8 or fp16 model that keeps the gain at under 40 MB and under 5 s per 1 000 chunks.
-   Not measured here.
+3. A measured int8 or fp16 model that keeps the gain at under 40 MB and under 5 s per 1 000
+   chunks. Not measured here.
 
 ## Not measured
 
 - JavaScript or other languages: only the Python TEST set was run.
 - ONNX Runtime speed and int8 quantisation: only the library size was measured.
 - granite in candle: it uses ModernBERT, which the probe did not load.
-- Larger code-specific models (CodeRankEmbed, jina code) were skipped: they need remote model code
-  or are well above 100 M parameters.
+- Larger code-specific models (CodeRankEmbed, jina code): skipped, since they need remote model
+  code or are well above 100 M parameters.
 
 ## Reproduce
 
 `bench/eval_transformers.py` ran on the Python reference engine and was removed with it. Commit
-`8a4f4b4` is the last that has it: check that commit out to run the commands below.
+`8a4f4b4` is the last that has it; check it out to run the commands below.
 
 ```sh
 # in a fresh virtual environment with numpy, scipy, scikit-learn, lightgbm, the scrutate_ref
