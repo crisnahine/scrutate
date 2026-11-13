@@ -11,8 +11,8 @@
 
 <!-- End of head. -->
 
-What was planned after 0.1.0, what this release already did, what needs the published repository,
-and what is next. Each item names the gap it closes in docs/TRACEABILITY.md.
+The plan after 0.1.0: done in this release, blocked on publishing, and next. Each item names the
+gap it closes in docs/TRACEABILITY.md.
 
 ## Done in this release
 
@@ -60,145 +60,131 @@ and what is next. Each item names the gap it closes in docs/TRACEABILITY.md.
 ## Blocked: needs the repository published
 
 Publishing was declined on 2026-11-08 and asked for on 2026-11-11, on one condition: every way to
-install and use the tool works first. The repository is on GitHub and public
-(`github.com/scrutate/scrutate`, branch `main` only). docs/RELEASE_READINESS.md lists what ran here
-and what ran on GitHub. The order: one green run of `ci.yml` (done), the settings in
+install and use the tool works first. The repository is public on GitHub
+(`github.com/scrutate/scrutate`, `main` only); docs/RELEASE_READINESS.md lists what ran
+here and what ran on GitHub. The order: one green run of `ci.yml` (done), the settings in
 docs/RELEASING.md, public (done), tag `v0.1.0`.
 
-- The release workflow. The CI matrix has a green run: in run 43013926055 (on `9384c18`) all 12
-  jobs that run on a push passed: the Rust tests on macOS arm64, Intel macOS, Linux x86_64, Linux
-  arm64, Windows x64 and Windows arm64, the musl build, the extra-langs job on the oldest supported
-  Rust, the fuzz regressions, the Python job, the advisories and the editor integrations. The
-  dependency review runs only on pull requests. Three earlier runs failed on Windows; the changelog
-  has what they found.
+- The release workflow. `ci.yml` is green since run 43013926055
+  ([Releasing](RELEASING.md#7-what-a-published-release-adds)); the changelog has what the three
+  failed Windows runs before it found.
 - Signed releases with Sigstore attestations (`release.yml` has the steps; they need the
-  repository's OIDC identity) and the free-threaded wheels built in CI (built and tested locally).
-- Publish the packages: tap, bucket and winget pull requests with the release checksums
-  (packaging/README.md lists the steps).
-- `cargo install scrutate`: crates.io refuses crates over 10 MB, and the semantic model is 14.6 MB.
-  It needs a smaller model (int8 weights would halve it) or a download on first use. A published
-  crate also cannot carry the `[patch]` that points at `vendor/ignore`: the four changes there must
-  first go upstream or out as a fork.
+  repository's OIDC identity), and the free-threaded wheels built in CI (built and tested locally).
+- The packages: tap, bucket and winget pull requests with the release checksums (steps in
+  packaging/README.md).
+- `cargo install scrutate`: crates.io refuses crates over 10 MB, and the semantic model is 14.6 MB,
+  so it needs a smaller model (next: int8 weights, which would halve it, checked as QUALITY.md
+  does) or a download on first use. A
+  published crate also cannot carry the `[patch]` for `vendor/ignore`: its four changes must first
+  go upstream or out as a fork.
 - A comment on GitLab merge requests (R-12.12; on GitHub the Action's `comment: true` posts
   `scrutate review` on a pull request, and the GitLab template saves it as a Code Quality report),
   and weekly benchmark runs for the dashboard (R-4.5).
-- After the first green run of `ci.yml`, one job or one setting each
-  (docs/research/github-ci-2026-11.md): wheels to PyPI through trusted publishing, CodeQL default
-  setup for Rust, OpenSSF Scorecard, `zizmor` and `cargo deny` as jobs, and an instruction-count
-  benchmark on pull requests. For the integrations (docs/research/integrations-setup-2026-11.md):
-  an LSP4IJ template so JetBrains needs one import.
+- Now that `ci.yml` is green, one job or setting each (docs/research/github-ci-2026-11.md): wheels
+  to PyPI by trusted publishing, CodeQL default setup for Rust, OpenSSF Scorecard, `zizmor` and
+  `cargo deny` as jobs, an instruction-count benchmark on pull requests. For the integrations
+  (docs/research/integrations-setup-2026-11.md): an LSP4IJ template so JetBrains needs one import.
 
 ## Next
 
-- Small trees and start-up, what is left. A search of a one-file directory runs fewer
-  instructions than GNU grep (17 M against 19 M) in the same CPU time and still touches 20 more
-  pages: 328 page reclaims and 2.6 MB of peak memory against 308 and 2.05 MB (a Rust hello-world:
-  291 and 1.9 MB). Those pages are constants the linker cannot order by name (anonymous tables, 12
-  pages), relocated data (6 pages) and the 64 KB line buffer the searcher zeroes. Its wall time
-  against GNU grep depends on the machine's load (1.87 ms against 1.97 ms in steady runs; behind
-  in interleaved blocks while other work runs), so a benchmark on an idle machine settles it.
-  Ruled out by measurement: code-signature page size, the binary's pointer fix-ups, its size
-  (0.07 ms at 85 MB in interleaved blocks; a file written minutes ago costs 0.2 ms more), and
-  waking idle walker threads through a condition variable in place of short sleeps (slower: 3.9 ms
-  against 3.7). A linker order file did nothing under ThinLTO (585 page faults against 586),
-  because ld64 cannot place the functions ThinLTO promotes; with one object it took 131 page
-  reclaims out. Profile-guided optimisation measured 2 to 3.5% on the 220-file tree; not adopted,
-  since it needs a 13 MB profile in the repository and in every release build.
+- Small trees and start-up, what is left (the measured state is in
+  [Architecture](ARCHITECTURE.md#engine-a-universal-instant-search-cratesscrutatesrcinstantrs)).
+  A one-file directory search runs fewer instructions than GNU grep (17 M against 19 M) in the
+  same CPU time but touches 20 more pages (a Rust hello-world: 291 page reclaims, 1.9 MB):
+  anonymous constant tables the linker cannot order by name (12 pages), relocated data (6) and
+  the 64 KB line buffer the searcher zeroes. Wall time against GNU grep depends on load (1.87 ms
+  against 1.97 ms in steady runs, behind in interleaved blocks under other work); an idle-machine
+  benchmark settles it. Ruled out: binary size (0.07 ms at 85 MB; a file written minutes ago
+  costs 0.2 ms more) and a condition variable in place of the idle walker threads' short sleeps
+  (3.9 ms against 3.7). A linker order file did nothing under ThinLTO (585 page faults against
+  586), since ld64 cannot place the functions ThinLTO promotes; with one object it took 131 page
+  reclaims out. Profile-guided optimisation gained 2 to 3.5% on the 220-file tree, not adopted:
+  it needs a 13 MB profile in the repository and every release build.
 - Peak memory against GNU grep. `-j1` holds less than ugrep and ripgrep on every tree and more
-  than GNU grep, a C program of 235 KB: 2.5 MB against 1.95 MB in a one-file directory, 3.3
-  against 2.3 on the ripgrep sources, 4.6 against 2.8 on py-big, 6.5 against 3.4 on the Linux
-  tree, 8.3 against 6.4 on LLVM (macOS). On a large tree the rest is mostly memory the system
-  allocator has freed and keeps (its per-CPU magazines: `MallocMaxMagazines=1` in the environment
-  takes 1.1 MB off the Linux tree, and a process cannot set it for itself), the ignore matchers
-  (1.2 MB on the Linux tree) and whole directories read at once. A file of one long line is held
-  whole (103 MB for 100 MB) for a regex, `-i`, `-w`, `--json` or color; a plain `-F` literal with
-  plain output or `-c` reads it in two passes and holds 3 to 5 MB. A one-line file under the
-  64 MiB where a file is split still goes through the stream reader, whose buffer grows to hold
-  the line: the two passes could serve it too. The default mode holds ordered output on one large
-  file with many matches (23 MB); ranges of 2 MB in place of 8 MB halve that for 2.4 to 3.5% more
-  instructions, which was not taken.
-- Linux has no function order. Of 5.8 MB resident at the start of a small search there, 3.5 MB is
-  the executable's text, spread over 85 MB with the kernel mapping 64 KB around every fault, and
-  0.5 MB is data relocated at load. GNU ld in the build image cannot order functions; lld can, and
-  a linker script can list sections. Either needs the release workflow to build with it, and that
-  workflow has not run.
-- Large trees on macOS are bound by `open` (docs/ARCHITECTURE.md): the Linux tree takes 0.52 s to
-  open and read on the five performance cores with no search at all, and a search takes 0.58 s.
-  The benchmark corpora `linux` and `linux-nodot` shared files through hard links, which doubles
-  the cost of every open on macOS for every tool; `bench/corpora.py` now makes copies (APFS
-  clones). What is left above the floor is the search itself. Opening a file through its
-  directory's descriptor (`openat`) does not lower the floor: 13.3 µs a file against 12.4 µs by
+  than GNU grep, a 235 KB C program (macOS):
+
+  | Tree | `-j1` | GNU grep |
+  |---|---|---|
+  | a one-file directory | 2.5 MB | 1.95 MB |
+  | the ripgrep sources | 3.3 MB | 2.3 MB |
+  | py-big | 4.6 MB | 2.8 MB |
+  | the Linux tree | 6.5 MB | 3.4 MB |
+  | LLVM | 8.3 MB | 6.4 MB |
+
+  On a large tree the rest is mostly allocator memory freed and kept (per-CPU magazines:
+  `MallocMaxMagazines=1` in the environment takes 1.1 MB off the Linux tree; a process cannot set
+  it for itself), the ignore matchers (1.2 MB there) and whole directories read at once. A
+  one-line file is held whole (103 MB for 100 MB) for a regex, `-i`, `-w`, `--json` or color; a
+  plain `-F` literal with plain output or `-c` reads it in two passes and holds 3 to 5 MB. Under
+  the 64 MiB split size such a file still goes through the stream reader, whose buffer grows to
+  the line; the two passes could serve it. The default mode holds ordered output on one large file
+  with many matches (23 MB); 2 MB ranges in place of 8 MB halve that for 2.4 to 3.5% more
+  instructions, not taken.
+- Linux has no function order. Of 5.8 MB resident at the start of a small search, 3.5 MB is the
+  executable's text, spread over 85 MB with the kernel mapping 64 KB around each fault; 0.5 MB
+  is data relocated at load. GNU ld in the build image cannot order functions; lld or a linker
+  script can, once the unrun release workflow builds with it.
+- Large trees on macOS are bound by `open` (docs/ARCHITECTURE.md): the Linux tree takes 0.52 s just to
+  open and read on the five performance cores, a search 0.58 s; the rest above that floor is the
+  search. The corpora `linux` and `linux-nodot` shared files by hard links, doubling every open's
+  cost on macOS for every tool; `bench/corpora.py` now copies them (APFS clones). `openat`
+  through the directory's descriptor does not lower the floor: 13.3 µs a file against 12.4 µs by
   path.
-- Agents, next: results an agent can page in the structured form too (today a large answer pages
-  as text, and its `structuredContent` carries that text and a `null` result); the count of files
-  indexed so far in progress reports. (`response_format: concise` and `serve --short-tools` are
-  done; see docs/CLI.md.) Sources and client support are in
-  docs/research/agent-facing-search-2026-11.md.
-- Linux on dedicated hardware: every Linux number here comes from a 5-CPU VM on the development
-  Mac, whose disk is a virtual one on the Mac's SSD. Two values fitted there need a check on an
-  NVMe disk and on a network disk: the read time that counts as a disk read (30 µs) and the most
-  threads for a cold tree (64). A cold tree also costs memory there: about 90 MB on 64 threads
-  against 16 MB warm (`-j` bounds both).
-- Windows: nothing is measured. Its thread count (the cores, at most 12), its cold thread count
-  (twice the cores, at most 24) and its disk-read time (75 µs) are the macOS values, in the
-  `OTHER` row of the table in `crates/scrutate/src/policy.rs`; a measured row goes there.
-- References: resolution for more languages (C#, C/C++ includes); today `refs` resolves Python,
-  JavaScript/TypeScript, Rust, Go, Java and PHP. A language is one more rule set under `resolve/`.
-- `cargo install`: int8 weights for the semantic model, with the quality check QUALITY.md uses.
-- Benchmark leadership on dedicated idle hardware (R-14.11): every number here comes from a
-  developer laptop shared with other work, and Linux x86_64 has no benchmark run at all. In the
-  last macOS run six of 37 warm rows had to be measured twice for that reason. An x86_64 run under
-  emulation on this laptop was set up and dropped: gcc crashes there building GNU grep, and
-  ripgrep's allocator reports that it falls back to a slower path, so the times would measure the
-  emulator. `bench/competitors/linux_bench.sh` takes an x86_64 host as it is.
+- Agents: large answers paged in the structured form too (today they page as text, with that
+  text and a `null` result in `structuredContent`); files indexed so far in progress reports. `response_format: concise` and `serve --short-tools` are done (docs/CLI.md). Sources
+  and client support: docs/research/agent-facing-search-2026-11.md.
+- Linux on dedicated hardware: every Linux number comes from a 5-CPU VM on the development Mac,
+  on a virtual disk on its SSD. Two values fitted there need checking on NVMe and network
+  disks: the read time that counts as a disk read (30 µs) and the most threads for a cold tree
+  (64). A cold tree there also costs about 90 MB on 64 threads against 16 MB warm (`-j` bounds
+  both).
+- Windows: nothing is measured. It takes the macOS values (threads: the cores, at most 12; cold:
+  twice the cores, at most 24; a disk read: 75 µs) from the `OTHER` row in
+  `crates/scrutate/src/policy.rs`, where a measured row goes.
+- References for C# and C/C++ includes; `refs` resolves Python, JavaScript/TypeScript, Rust, Go,
+  Java and PHP today. A language is one more rule set under `resolve/`.
+- Benchmark leadership on dedicated idle hardware (R-14.11): every number comes from a developer
+  laptop shared with other work, and Linux x86_64 has no run; in the last macOS run six of 37 warm
+  rows were measured twice for that reason. An x86_64 run emulated on this laptop was dropped:
+  gcc crashes building GNU grep there and ripgrep's allocator takes a slower path, so it would
+  time the emulator. A run of `bench/run_macos.sh` and
+  `bench/competitors/linux_bench.sh` (which takes an x86_64 host as it is) on dedicated machines
+  closes it (docs/research/known-limits-2026-11.md prices the hardware).
 
 ### Known limits that stay in 0.1.0
 
-- On Windows the index has no status-change time, so a file made unreadable without a change of
-  size or modification time keeps its chunks until `index --force` or `reindex` with `force`. Unix
-  compares the status-change time too. The standard library's `MetadataExt::change_time` is still
-  unstable in Rust 1.99.1 (feature `windows_change_time`), and reading the time another way needs
-  an open handle per file on every scan.
-- A method call on the result of a call is resolved through the type the callee declares it
-  returns. It stays undecided when the callee declares no type, returns a type parameter or an
-  outside type that holds a repository type, or is itself a method of an outside type
-  (`file.metadata().ok()`).
-- In `refs`, a plain name inside the arguments of a Rust macro, one the token rules do not read as
-  a field, a field name or a local, is tied by name to a definition: the `text` in
-  `mymac!(text, 3)` counts as a reference to a function `text`, whatever the macro does with it.
-- Java: `refs` ties no occurrence to a field, an enum constant or a record accessor. They are
-  listed as unresolved (`field or key`), a `static final` field included, which `symbol` finds as
-  a constant.
-- On Windows the `notify` crate drops a burst of changes too large for the watch buffer (8.2.2,
-  read in its source: an empty read is not reported). `watch` indexes those changes with the first
-  change to an indexed file once 30 s have passed since its last walk of the tree; a command run
-  meanwhile scans the tree and finds them.
-- On Linux each directory gets one inotify watch, the root first, then shallow directories before
-  deep ones. Past the system limit (`fs.inotify.max_user_watches`) the deepest directories get
-  none, and stderr says how many. While any directory has no watch, every burst that changes an
-  indexed file walks the tree, so a change in an unwatched directory is indexed with the next
-  change to an indexed file anywhere.
-- On macOS `watch` checks the tree on a timer, every second or ten times as long as the last check
-  took (at most 30 s), so on a tree of 20,000 directories a saved file is indexed after 11 to 14 s
-  (debug build); the FSEvents backend would add about 1 ms to the start of every command. Linux
-  and Windows update the saved file alone.
-- A few call forms the grammars do not tell apart: a Verilog task call without parentheses (`h;`)
-  or on a member (`obj.m(1);`) records no call edge, a VHDL indexed signal `a(i)` is recorded as a
-  call, and an assembly call under a local label counts for that label and for the global label
-  above it.
+- On Windows the index has no status-change time: a file made unreadable with no change of size
+  or modification time keeps its chunks until `index --force` or `reindex` with `force` (Unix
+  compares that time too). `MetadataExt::change_time` is unstable in Rust 1.99.1 (feature
+  `windows_change_time`); another way needs an open handle per file on every scan.
+- A method call on a call's result resolves through the callee's declared return type. It stays
+  undecided when the callee declares none, returns a type parameter or an outside type holding a
+  repository type, or is a method of an outside type (`file.metadata().ok()`).
+- In `refs`, a plain name in a Rust macro's arguments that the token rules do not read as a field,
+  field name or local is tied by name to a definition: the `text` in `mymac!(text, 3)` counts as a
+  reference to a function `text`, whatever the macro does.
+- Java: `refs` lists fields, enum constants and record accessors as unresolved (`field or key`,
+  [CLI](CLI.md#refs)), a `static final` field too, which `symbol` finds as a constant.
+- On Windows the `notify` crate (8.2.2; read in its source, it reports no empty read) drops a
+  burst too large for the watch buffer. `watch` indexes it with the first change to an indexed
+  file 30 s or more after its last walk; a command run meanwhile scans the tree and finds it.
+- On Linux, past `fs.inotify.max_user_watches` the deepest directories get no watch
+  ([CLI](CLI.md#watch)). While any directory has none, every burst that changes an indexed file
+  walks the tree, so a change in an unwatched directory is indexed with the next change to an
+  indexed file anywhere.
+- On macOS `watch` checks the tree on a timer ([CLI](CLI.md#watch)), so on a tree of 20,000
+  directories a saved file is indexed after 11 to 14 s (debug build). Linux and Windows update the
+  saved file alone.
+- Call forms the grammars do not tell apart: a Verilog task call without parentheses (`h;`) or on
+  a member (`obj.m(1);`) records no call edge, a VHDL indexed signal `a(i)` is recorded as a call,
+  and an assembly call under a local label counts for that label and for the global label above.
 - A one-line file with 8,000 nested functions takes 542 MB of memory to index (462 MB with
-  `SCRUTATE_SEMANTIC=none`) and 3.1 to 3.5 s (release build, macOS arm64). Each of the 8,000
-  chunks keeps its own text of up to 32 KiB, so the index holds 40 MB of compressed chunk text for
-  that file, and the postings of those chunks.
-- Traditional and simplified Han meet in ranked search through the Unihan simplified forms. The
-  Japanese form 関 has its own entry there, the rare 𬮦, so it does not meet Chinese 关 or
-  traditional 關.
-- Windows and Intel macOS are tested on GitHub's runners only (CI run 43013926055 passed on
-  `windows-latest`, `windows-11-arm` and `macos-15-intel`): the release workflow has built no
-  release archive for them, none is installed on a machine, and no benchmark has run there. Five
-  tests run on Unix only, because they need what Windows does not allow (removing a file that is
-  open, a control character in a file name).
-- No benchmark has run on x86_64 Linux or on dedicated, otherwise idle hardware: every number comes
-  from the development Mac, shared with other work, and a 5-CPU Linux VM on it. A run of
-  `bench/run_macos.sh` and `bench/competitors/linux_bench.sh` on dedicated machines closes it
-  (docs/research/known-limits-2026-11.md prices the hardware).
+  `SCRUTATE_SEMANTIC=none`) and 3.1 to 3.5 s (release build, macOS arm64): each of the 8,000
+  chunks keeps its own text (up to 32 KiB), so the index holds 40 MB of compressed chunk text for
+  the file, plus their postings.
+- Ranked search joins traditional and simplified Han through the Unihan simplified forms. Japanese
+  関 has its own entry there, the rare 𬮦, so it does not meet Chinese 关 or traditional 關.
+- Windows and Intel macOS are tested on GitHub's runners only ([Install](INSTALL.md) has the
+  runners and the five Unix-only tests): no release archive is built for them, installed on a
+  machine or benchmarked there.
+- No benchmark has run on x86_64 Linux or on dedicated idle hardware (R-14.11 above).
