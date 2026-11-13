@@ -2031,6 +2031,9 @@ struct Counters {
     /// threads started for a list or a walking thread
     #[cfg(test)]
     started: AtomicUsize,
+    /// the most of those threads that ran at once
+    #[cfg(test)]
+    peak: AtomicUsize,
 }
 
 impl Counters {
@@ -2450,6 +2453,11 @@ enum Items<'a> {
 }
 
 impl Items<'_> {
+    /// Every file of a list was taken (a walk's channel cannot say).
+    fn used_up(&self) -> bool {
+        matches!(self, Items::List { files, next, .. } if next.load(Ordering::Relaxed) >= files.len())
+    }
+
     fn next(&self, s: &Common) -> Option<Item<'_>> {
         match self {
             Items::Found(rx) => {
@@ -2544,12 +2552,19 @@ impl<'a> Threads<'a> {
     // `try_update`, the new name of `fetch_update`, is newer than the oldest Rust this builds with
     #[allow(deprecated)]
     fn grow<'s>(&'s self, sc: &'s std::thread::Scope<'s, '_>, items: &'s Items<'s>, tx: &mpsc::SyncSender<Vec<Record>>, force: bool) -> bool {
-        let want = self.want.load(Ordering::Relaxed);
-        if self.running.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| (force || n < want).then_some(n + 1)).is_err() {
+        // a thread started once the list is taken would find nothing to do
+        if !force && items.used_up() {
             return false;
         }
+        let want = self.want.load(Ordering::Relaxed);
+        let Ok(_was) = self.running.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| (force || n < want).then_some(n + 1)) else {
+            return false;
+        };
         #[cfg(test)]
-        self.s.c.started.fetch_add(1, Ordering::Relaxed);
+        {
+            self.s.c.started.fetch_add(1, Ordering::Relaxed);
+            self.s.c.peak.fetch_max(_was + 1, Ordering::Relaxed);
+        }
         let tx = tx.clone();
         sc.spawn(move || self.work(sc, items, tx));
         true
@@ -3502,8 +3517,8 @@ mod tests {
         assert_eq!(names(&sorted), ["a.txt:1", "a.txt:2"]);
     }
 
-    /// The lines `schedule` finds in `feed` with the thread rules reading `m`, sorted, and the
-    /// threads it started for a list or a walking thread.
+    /// The lines `schedule` finds in `feed` with the thread rules reading `m`, sorted, and the most
+    /// threads of a list or a walking thread that ran at once.
     fn scheduled(m: &dyn Machine, q: &Query, f: &Files, feed: Feed) -> (Vec<String>, usize) {
         let (matcher, c, stop, p) = (build_matcher(&q.pattern).unwrap(), Counters::default(), no_stop(), Policy::read(m, f.threads));
         let labels = match &f.paths {
@@ -3518,7 +3533,7 @@ mod tests {
         })
         .unwrap();
         lines.sort();
-        (lines, c.started.load(Ordering::Relaxed))
+        (lines, c.peak.load(Ordering::Relaxed))
     }
 
     fn rules(f: &Files) -> Policy {
