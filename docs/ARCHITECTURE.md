@@ -635,7 +635,7 @@ command line's own function, and the command line writes those bytes and exits w
 The command line checks first: the socket file is a socket this user owns, the peer is this
 user, and the session's greeting names the same executable (device, inode, size and time), the
 same index schema and content revisions, the same models, the same `SCRUTATE_*` settings and the
-same root. Any difference, any error, a greeting slower than 20 ms, a session that would have to
+same root. Any difference, any error, a greeting slower than 20 ms (or `SCRUTATE_SESSION_WAIT_MS`), a session that would have to
 wait (a write running, every reader busy, another process holding the write lock): the command
 line does the work itself, as without a session, and says nothing unless
 `SCRUTATE_SESSION_DEBUG=1`. `SCRUTATE_NO_SESSION=1` turns the use off. `grep`, `batch`, a
@@ -776,7 +776,9 @@ With a text index, `grep_code` and `references` (textual, and the name search of
 references) make a look of their own (one walk and one `stat` per file, no index update), read the
 trigrams for the files the text index holds as they are now (the same size, mtime and status
 change time as that look found) and read every other file of the look directly: new, changed,
-hidden or left out by the text index's walk (`stores::grep_files`). The walk runs instead when
+hidden or left out by the text index's walk (`stores::grep_files`). Windows has no status change
+time, so there, as for the code index, a file rewritten with its old size and modification time
+is read from what the text index recorded until the next update. The walk runs instead when
 there is no text index, when the pattern's trigrams narrow nothing, when a glob brings files in,
 when a name is not UTF-8, or when the path is a file or a directory the look did not enter. No
 grep builds a text index. A look costs about what a walk costs without the search (on 12,001

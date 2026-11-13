@@ -91,11 +91,22 @@ impl Search {
         assert!(self.try_signal(sig));
     }
 
-    /// `false` when the search has ended.
+    /// `false` when the search has ended. Sent with kill(2) at once: a shell started to send it
+    /// takes long enough on a fast machine for the search to end before it arrives.
     fn try_signal(&self, sig: &str) -> bool {
-        // the shell's own `kill`: some systems have no kill program
-        let cmd = format!("kill {sig} {} 2>/dev/null", self.child.id());
-        Command::new("sh").args(["-c", &cmd]).status().unwrap().success()
+        extern "C" {
+            fn kill(pid: i32, sig: i32) -> i32;
+        }
+        // macOS numbers
+        let n = match sig {
+            "-KILL" => 9,
+            "-STOP" => 17,
+            "-TSTP" => 18,
+            "-CONT" => 19,
+            _ => panic!("no number for {sig}"),
+        };
+        // SAFETY: plain integers; the pid is our child's, not yet waited for
+        unsafe { kill(self.child.id() as i32, n) == 0 }
     }
 
     fn finish(mut self) -> Vec<(usize, usize)> {

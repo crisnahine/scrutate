@@ -81,7 +81,7 @@ Checks, at both ends:
   `SCRUTATE_*` setting that can change an answer, and its root. The command line compares it with
   its own and uses the server only when all are the same.
 - A request is one line of at most 1 MB, read within 2 seconds; at most 16 connections are served
-  at once and a further one is closed. A greeting slower than 20 ms, an answer slower than 60 s,
+  at once and a further one is closed. A greeting slower than 20 ms (`SCRUTATE_SESSION_WAIT_MS` sets another wait), an answer slower than 60 s,
   a closed connection or any error makes the command line do the work itself.
 
 What a process of the same user can do through it that it could not do before: nothing. A

@@ -362,11 +362,18 @@ mod tests {
         assert_eq!((kept(10), kept(11)), (1, 1), "a run that went through every site stands for any limit");
         assert_eq!(callers().0[0].qualname, first.0[0].qualname);
         // the index is not told: the resolver reads the file as it is now, so the kept answer goes
-        // a virus scanner on a Windows runner can hold a file just written for a moment
+        // a virus scanner on a Windows runner can hold a file just written for a moment; a handle
+        // the open index keeps would be a defect: it would stop an editor saving the file
+        let edit = || std::fs::write(root.join("b.py"), "from a import helper as h\n\n\ndef run():\n    return h()\n");
         let mut tries = 0;
-        while let Err(e) = std::fs::write(root.join("b.py"), "from a import helper as h\n\n\ndef run():\n    return h()\n") {
+        while let Err(e) = edit() {
             tries += 1;
-            assert!(tries < 200 && e.raw_os_error() == Some(32), "{e}");
+            if tries == 200 {
+                drop(s);
+                let after = edit();
+                panic!("b.py stayed busy for 5 s ({e}); with the open index closed the write gives {after:?}");
+            }
+            assert_eq!(e.raw_os_error(), Some(32), "{e}");
             std::thread::sleep(std::time::Duration::from_millis(25));
         }
         assert_eq!(kept(10), 0);

@@ -52,6 +52,8 @@ impl Repo {
     fn through(&self, args: &[&str], env: &[(&str, &str)]) -> ((i32, String, String), String) {
         let mut env = env.to_vec();
         env.push(("SCRUTATE_SESSION_DEBUG", "1"));
+        // a CI runner can be too busy to greet in 20 ms; what is tested is the answer, not the wait
+        env.push(("SCRUTATE_SESSION_WAIT_MS", "5000"));
         for attempt in 1.. {
             let (code, out, err) = self.cli(args, &env);
             let (said, rest): (Vec<&str>, Vec<&str>) = err.lines().partition(|l| l.starts_with("[scrutate] session: "));

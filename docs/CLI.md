@@ -504,7 +504,9 @@ when the server exits. A command never starts a server. When anything about the 
 as the command would do the work (another build of scrutate, another `SCRUTATE_*` setting,
 another root, a stale socket, a write running), the command does the work itself and says
 nothing; `SCRUTATE_SESSION_DEBUG=1` says why on stderr, and `SCRUTATE_NO_SESSION=1` turns the
-use off. Of two servers on one root, the first offers the socket.
+use off. A command waits 20 ms for the server's greeting (a server stopped in a terminal costs no
+more than that); `SCRUTATE_SESSION_WAIT_MS` sets another wait for a machine too busy to greet in
+time. Of two servers on one root, the first offers the socket.
 
 - Every tool but `reindex` is marked read-only (`readOnlyHint`), and all are marked as staying on
   this machine (`openWorldHint: false`), so clients that ask before a write do not ask for these.
@@ -699,7 +701,7 @@ is safe to delete at any time.
 `SCRUTATE_ROOT`, `SCRUTATE_THREADS`, `SCRUTATE_GREP_{HIDDEN,NO_IGNORE,FOLLOW,SMART_CASE,MAX_FILESIZE,MAX_DEPTH,MAX_BYTES,GLOBS,TYPES}`,
 `SCRUTATE_INDEX_EXCLUDE_DIRS`, `SCRUTATE_REFRESH_INTERVAL`, `SCRUTATE_MAX_BYTES`,
 `SCRUTATE_MCP_STRUCTURED`, `SCRUTATE_CONFIG`, `SCRUTATE_WATCH_DEBUG`, `SCRUTATE_GREP_DEBUG`,
-`SCRUTATE_NO_SESSION`, `SCRUTATE_SESSION_DEBUG` (see `serve` above), `SCRUTATE_SEMANTIC`
+`SCRUTATE_NO_SESSION`, `SCRUTATE_SESSION_DEBUG`, `SCRUTATE_SESSION_WAIT_MS` (see `serve` above), `SCRUTATE_SEMANTIC`
 (path or `none`; another model makes the stored vectors anew on the next update, from the word
 counts the index keeps and without reading a source file: a third of a fresh build's CPU or less
 for a model, next to nothing for `none`),

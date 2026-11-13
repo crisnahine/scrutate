@@ -439,7 +439,8 @@ struct Identity {
 #[cfg(unix)]
 /// Variables that do not change an answer through a session: the root is compared on its own, the
 /// size of an answer travels with each request, and these switches are the command line's own.
-const NOT_ANSWERS: &[&str] = &["SCRUTATE_ROOT", "SCRUTATE_NO_SESSION", "SCRUTATE_SESSION_DEBUG", "SCRUTATE_MAX_BYTES", "SCRUTATE_REFRESH_INTERVAL"];
+const NOT_ANSWERS: &[&str] =
+    &["SCRUTATE_ROOT", "SCRUTATE_NO_SESSION", "SCRUTATE_SESSION_DEBUG", "SCRUTATE_SESSION_WAIT_MS", "SCRUTATE_MAX_BYTES", "SCRUTATE_REFRESH_INTERVAL"];
 
 #[cfg(unix)]
 impl Identity {
@@ -505,6 +506,11 @@ mod unix {
 
     /// How long the command line waits for a session's greeting.
     const HELLO: Duration = Duration::from_millis(20);
+
+    /// `HELLO`, or `SCRUTATE_SESSION_WAIT_MS` for a machine too busy to greet that fast.
+    fn hello() -> Duration {
+        std::env::var("SCRUTATE_SESSION_WAIT_MS").ok().and_then(|v| v.parse().ok()).map_or(HELLO, Duration::from_millis)
+    }
     /// How long the command line waits for an answer before it does the work itself.
     const ANSWER: Duration = Duration::from_secs(60);
     /// How long a session waits for a request after its greeting.
@@ -720,7 +726,7 @@ mod unix {
         if !same_user(&conn) {
             return Err("the session runs as another user".into());
         }
-        conn.set_read_timeout(Some(HELLO)).map_err(|e| e.to_string())?;
+        conn.set_read_timeout(Some(hello())).map_err(|e| e.to_string())?;
         let mut r = BufReader::new(&conn);
         let mut line = String::new();
         r.read_line(&mut line).map_err(|e| format!("no greeting: {e}"))?;

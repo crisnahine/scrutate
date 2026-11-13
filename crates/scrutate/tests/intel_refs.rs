@@ -167,9 +167,9 @@ fn lsp_definition_of_a_qualified_call_among_many_namesakes() {
     let r = many_runs();
     fs::write(r.root.join("use.py"), "from many import C69\n\ndef go():\n    return C69.run(None)\n").unwrap();
     r.index();
-    let uri = format!("file://{}", r.root.join("use.py").display());
+    let uri = scrutate::lsp::path_to_uri(&r.root.join("use.py"));
     let msgs = [
-        json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"rootUri": format!("file://{}", r.root.display()), "capabilities": {}}}),
+        json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"rootUri": scrutate::lsp::path_to_uri(&r.root), "capabilities": {}}}),
         json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
         json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/definition", "params": {"textDocument": {"uri": uri}, "position": {"line": 3, "character": 16}}}),
         json!({"jsonrpc": "2.0", "id": 3, "method": "shutdown"}),
@@ -547,9 +547,9 @@ fn a_bare_python_import_of_the_module_next_door_binds_it() {
     assert_eq!(importers(&r, "tests/helpers.py"), ["tests/test_cart.py"]);
 
     // the language server's references of `log_line` at its definition
-    let uri = format!("file://{}", r.root.join("scripts/common.py").display());
+    let uri = scrutate::lsp::path_to_uri(&r.root.join("scripts/common.py"));
     let msgs = [
-        json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"rootUri": format!("file://{}", r.root.display()), "capabilities": {}}}),
+        json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"rootUri": scrutate::lsp::path_to_uri(&r.root), "capabilities": {}}}),
         json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
         json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/references", "params": {"textDocument": {"uri": uri}, "position": {"line": 0, "character": 5}, "context": {"includeDeclaration": false}}}),
         json!({"jsonrpc": "2.0", "id": 3, "method": "shutdown"}),
@@ -1234,9 +1234,9 @@ fn tsconfig_paths_are_relative_to_the_final_base_url_after_extends() {
 
 /// The answer of the language server to one request on `rel` at (0-based) `line` and `character`.
 fn lsp_answer(r: &Repo, method: &str, rel: &str, line: u32, character: u32) -> String {
-    let uri = format!("file://{}", r.root.join(rel).display());
+    let uri = scrutate::lsp::path_to_uri(&r.root.join(rel));
     let msgs = [
-        json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"rootUri": format!("file://{}", r.root.display()), "capabilities": {}}}),
+        json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"rootUri": scrutate::lsp::path_to_uri(&r.root), "capabilities": {}}}),
         json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
         json!({"jsonrpc": "2.0", "id": 2, "method": method, "params": {"textDocument": {"uri": uri}, "position": {"line": line, "character": character}, "context": {"includeDeclaration": false}}}),
         json!({"jsonrpc": "2.0", "id": 3, "method": "shutdown"}),
