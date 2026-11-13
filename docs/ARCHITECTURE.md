@@ -916,7 +916,9 @@ index's walk and every other caller of `build_walker` work unchanged. rayon's gl
 back to the calling thread by itself, which is what the index build's `par_iter` uses. What has to
 run beside the caller is not in that build: `serve`, `lsp` and `tsquery` fail with a message that
 says so, `watch` too (wasi has no file events, so `notify` is not a dependency there), and the Grep hook lets Grep answer, since it has no thread to keep its deadline. The
-session socket is Unix only and was already absent there.
+session socket is Unix only and was already absent there. `memmap2` maps nothing on wasi, so
+`npy::map` reads a segment file whole into memory when a map fails with `Unsupported`; every
+other error is reported as before, and native builds keep mapping.
 
 ## Models (`models/`, `models.rs`)
 `semantic.npz` (14.6 MB: code-word vocabulary tables and projections) and `ranker.npz` (87 KB)

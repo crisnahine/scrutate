@@ -360,9 +360,13 @@ comment with the marker is not).
     register and the stack left as the caller set them; `fork` binds all of them first, so a child
     process never calls `dlsym`; `tests/lazy_bind.rs` runs variadic, floating-point, callback,
     panic and `fork` calls through them;
-  - `textindex.rs`: `Mmap::map` of segment and large source files (bounds-checked slicing only).
+  - `textindex.rs`: segment files through `npy::map` (bounds-checked slicing only).
 
   tree-sitter grammars and SQLite are C code built from crates.io sources.
+- **Where the system cannot map a file** (`Mmap::map` fails with `Unsupported`, as it does on
+  wasi), `npy::map` reads the whole file into memory instead, so an index's arrays and text index
+  segments are held in memory there and a change on disk after the read is not seen. Any other
+  mapping error is an error, as before.
 - **Memory-mapped files can change underneath a reader** if another process rewrites a segment in
   place. Segments are never modified in place (temp dir + rename; deletion only after the manifest
   no longer references them), so this needs an external actor; on Windows a mapped file cannot be

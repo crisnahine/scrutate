@@ -18,9 +18,32 @@ const ALIGN: usize = 64;
 #[cfg(not(target_endian = "little"))]
 compile_error!("the on-disk format is little-endian; big-endian targets are not supported");
 
-enum Backing {
+pub(crate) enum Backing {
     Mmap(Mmap),
     Owned(Vec<u8>),
+}
+
+impl std::ops::Deref for Backing {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        match self {
+            Backing::Mmap(m) => m,
+            Backing::Owned(v) => v,
+        }
+    }
+}
+
+/// `file` mapped, or read into memory where the system cannot map files (wasi).
+pub(crate) fn map(file: &File, path: &Path) -> Result<Backing> {
+    match unsafe { Mmap::map(file) } {
+        Ok(m) => Ok(Backing::Mmap(m)),
+        Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {
+            let mut v = Vec::new();
+            (&*file).read_to_end(&mut v).with_context(|| format!("read {}", path.display()))?;
+            Ok(Backing::Owned(v))
+        }
+        Err(e) => Err(e).with_context(|| format!("mmap {}", path.display())),
+    }
 }
 
 pub struct Npy {
@@ -128,12 +151,12 @@ fn extract(header: &str, key: &str) -> Option<String> {
 impl Npy {
     pub fn open(path: &Path) -> Result<Npy> {
         let file = File::open(path).with_context(|| format!("open {}", path.display()))?;
-        let mmap = unsafe { Mmap::map(&file) }.with_context(|| format!("mmap {}", path.display()))?;
-        let (descr, shape, fortran, offset) = parse_header(&mmap)?;
+        let backing = map(&file, path)?;
+        let (descr, shape, fortran, offset) = parse_header(&backing)?;
         if fortran {
             bail!("fortran-ordered arrays cannot be memory-mapped: {}", path.display());
         }
-        Ok(Npy { descr, shape, fortran, offset, backing: Backing::Mmap(mmap) })
+        Ok(Npy { descr, shape, fortran, offset, backing })
     }
 
     pub fn from_bytes(bytes: Vec<u8>) -> Result<Npy> {

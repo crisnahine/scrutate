@@ -18,12 +18,11 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use anyhow::{anyhow, bail, Context, Result};
-use memmap2::Mmap;
 use rayon::prelude::*;
 use regex_syntax::hir::{Class, Hir, HirKind};
 
 use crate::instant::{self, Files, Mode, Query};
-use crate::npy::{self, Npy};
+use crate::npy::{self, Backing, Npy};
 
 pub const FORMAT: u32 = 3;
 /// Numbers per document in `docs.npy`: size, mtime, flags, status change time.
@@ -544,27 +543,27 @@ fn decode_into(bytes: &[u8], ndocs: usize, mut each: impl FnMut(usize, u16)) -> 
     Ok(())
 }
 
-fn map_file(path: &Path) -> Result<Option<Mmap>> {
+fn map_file(path: &Path) -> Result<Option<Backing>> {
     let f = File::open(path).with_context(|| format!("open {}", path.display()))?;
     if f.metadata()?.len() == 0 {
         return Ok(None);
     }
-    Ok(Some(unsafe { Mmap::map(&f) }.with_context(|| format!("mmap {}", path.display()))?))
+    Ok(Some(npy::map(&f, path)?))
 }
 
 struct Segment {
     name: String,
     keys: Npy,
     ptr: Npy,
-    post: Option<Mmap>,
+    post: Option<Backing>,
     docs: Npy,
     poff: Npy,
-    paths: Option<Mmap>,
+    paths: Option<Backing>,
     live: Vec<u8>,
     ndocs: usize,
 }
 
-fn bytes(m: &Option<Mmap>) -> &[u8] {
+fn bytes(m: &Option<Backing>) -> &[u8] {
     m.as_ref().map(|m| &m[..]).unwrap_or(&[])
 }
 
