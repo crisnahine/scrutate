@@ -372,18 +372,14 @@ impl DirEntryRaw {
         })
     }
 
-    // Placeholder implementation to allow compiling on non-standard platforms
-    // (e.g. wasm32).
+    // wasi and other platforms with no inode or cached metadata
     #[cfg(not(any(windows, unix)))]
     fn from_entry_os(
         depth: usize,
         ent: &fs::DirEntry,
         ty: fs::FileType,
     ) -> Result<DirEntryRaw, Error> {
-        Err(Error::Io(io::Error::new(
-            io::ErrorKind::Other,
-            "unsupported platform",
-        )))
+        Ok(DirEntryRaw { path: ent.path(), ty, follow_link: false, depth })
     }
 
     #[cfg(windows)]
@@ -422,18 +418,15 @@ impl DirEntryRaw {
         })
     }
 
-    // Placeholder implementation to allow compiling on non-standard platforms
-    // (e.g. wasm32).
     #[cfg(not(any(windows, unix)))]
     fn from_path(
         depth: usize,
         pb: PathBuf,
         link: bool,
     ) -> Result<DirEntryRaw, Error> {
-        Err(Error::Io(io::Error::new(
-            io::ErrorKind::Other,
-            "unsupported platform",
-        )))
+        let md = fs::metadata(&pb)
+            .map_err(|err| Error::Io(err).with_depth(depth).with_path(&pb))?;
+        Ok(DirEntryRaw { path: pb, ty: md.file_type(), follow_link: link, depth })
     }
 }
 

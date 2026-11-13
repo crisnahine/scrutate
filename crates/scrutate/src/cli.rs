@@ -25,12 +25,16 @@ pub use crate::ops::SCHEMA;
 /// calls: the `ctrlc` crate links Foundation and libobjc into every macOS process, about 1 ms of
 /// start-up on each invocation.
 mod interrupt {
+    #[cfg_attr(not(any(unix, windows)), allow(unused_imports))]
     use std::sync::atomic::{AtomicBool, Ordering};
+    #[cfg_attr(not(any(unix, windows)), allow(unused_imports))]
     use std::sync::{Arc, OnceLock};
 
+    #[cfg(any(unix, windows))]
     static FLAG: OnceLock<Arc<AtomicBool>> = OnceLock::new();
 
     // async-signal-safe: an atomic load of the cell and an atomic store
+    #[cfg(any(unix, windows))]
     fn fire() {
         if let Some(f) = FLAG.get() {
             f.store(true, Ordering::Relaxed);

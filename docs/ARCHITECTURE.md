@@ -55,7 +55,7 @@ crates.io pages). Scrutate adds what they lack:
   file: 63 ms of user time for `pm_resume` (regex engine 101), 48 ms for `KÖNIG` (regex 96).
 - **Traversal**: the `ignore` parallel walker (work stealing, `.gitignore` / `.ignore` / global
   excludes, hidden files off, symlink loop detection, depth and size filters, type globs from the
-  language registry), vendored (`vendor/ignore`) with nine changes listed in the workspace
+  language registry), vendored (`vendor/ignore`) with eleven changes listed in the workspace
   `Cargo.toml`. Four shape speed. The global git excludes path comes from `~/.gitconfig` through
   a small parser, not a regex per run (0.4 ms of a 6 ms search). An idle thread waits 10 µs,
   doubling up to the original 1 ms, before looking for work; a fixed 1 ms slept whole
