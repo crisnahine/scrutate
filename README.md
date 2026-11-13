@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="#install"><b>Install</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#quick-start"><b>Quick start</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#benchmarks"><b>Benchmarks</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#documentation"><b>Documentation</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="docs/FAQ.md"><b>Questions</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="https://scrutate.github.io"><b>Website</b></a>
+  <a href="#install"><b>Install</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#quick-start"><b>Quick start</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#benchmarks"><b>Benchmarks</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#documentation"><b>Documentation</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="docs/FAQ.md"><b>Questions</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="https://scrutate.github.io/playground/"><b>Playground</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="https://scrutate.github.io"><b>Website</b></a>
 </p>
 
 <p align="center">
@@ -56,8 +56,9 @@ questions in [What it does](#what-it-does), and what a git diff touches.
 
 ## Quick start
 
-Build the binary first ([Install](#install)). Every command, option and exit code:
-[docs/CLI.md](docs/CLI.md).
+Build the binary first ([Install](#install)), or try both engines first in the
+[playground](https://scrutate.github.io/playground/), which runs scrutate in your browser. Every
+command, option and exit code: [docs/CLI.md](docs/CLI.md).
 
 ### Search any folder, no index (Engine A)
 

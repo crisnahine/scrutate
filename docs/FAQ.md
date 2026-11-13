@@ -18,6 +18,13 @@ binary. Engine A searches any folder at once with no index, like grep or ripgrep
 a repository for ranked search by meaning or name, definitions, callers, references, and the
 tests a git diff touches ([Architecture](ARCHITECTURE.md)).
 
+## Can I try it without installing it?
+
+Yes. The [playground](https://scrutate.github.io/playground/) runs scrutate, compiled to
+WebAssembly, in your browser: grep, ranked search, definitions, callers and references, on
+scrutate's own source, a public GitHub repository or a folder you open, which is never uploaded.
+It runs the newest version of scrutate.
+
 ## How is it different from ripgrep?
 
 Engine A is built on ripgrep's `grep-*` and `ignore` crates and agrees with ripgrep on 2,000

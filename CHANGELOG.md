@@ -41,8 +41,9 @@ incompatible index by itself, and that is never breaking.
 - A configuration file that does not parse is one line naming the file and the line.
 - docs/FAQ.md answers the first questions about scrutate, with links to the evidence;
   `CITATION.cff` gives GitHub's "Cite this repository".
-- The website https://scrutate.github.io (repository `scrutate/scrutate.github.io`); the README's
-  top links and `CITATION.cff`'s `url` point to it.
+- The website https://scrutate.github.io (repository `scrutate/scrutate.github.io`), with a
+  playground that runs scrutate compiled to WebAssembly in the browser; the README's top links
+  and `CITATION.cff`'s `url` point to it.
 - `.github/FUNDING.yml` shows GitHub's Sponsor button (GitHub Sponsors and Buy Me a Coffee), and
   the README's "Sponsor and hire" section links both.
 - A security workflow runs `cargo deny check` (`deny.toml`: advisories, the licence list,
