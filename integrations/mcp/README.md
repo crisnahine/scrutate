@@ -27,6 +27,12 @@ What a client gets (details in docs/CLI.md, `serve`):
 - server instructions that say which tool to start with;
 - answers of at most 24,000 bytes by default (`max_bytes`, or `serve --max-bytes` for another
   default), closing line included, cut at whole items, with the `offset` that continues them;
+- `response_format: "concise"` on every tool: every location and name without code, snippets,
+  kinds, scores or explanations, each directory written once, the same items per page as the
+  default `detailed` form;
+- with `serve --short-tools` (`SCRUTATE_MCP_SHORT_TOOLS=1`), a tool list with descriptions of a
+  few words and none for the arguments, for a client that sends the list to its model in every
+  session; the tools, arguments, types and defaults are the same;
 - `grep_code` at the speed of `scrutate grep`, with matches grouped by enclosing symbol; it
   searches the files the index holds: hidden ones such as `.github/`, not ignored files, `.git/`
   or `node_modules/`; a capped answer holds the first matches in path order, so the next page
@@ -38,7 +44,7 @@ What a client gets (details in docs/CLI.md, `serve`):
 - `read_code path=...` reads only as far as the last line asked for, at most 1 MB of line text,
   and refuses a file with a NUL byte in its first 8 KB;
 - with `serve --structured`, `structuredContent` and an `outputSchema` on every tool: the answer
-  as the JSON that `--json` prints. Leave it off for Claude Code, which then shows its model the
+  as the JSON that `--json` prints, the same in both forms. Leave it off for Claude Code, which then shows its model the
   JSON in place of the text with the snippets; turn it on for a client whose scripts read tool
   results (Codex in Code Mode);
 - cancellation (`notifications/cancelled`), which also stops an index update the call runs

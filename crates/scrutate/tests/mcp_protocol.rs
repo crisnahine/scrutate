@@ -291,3 +291,67 @@ fn serve_refuses_an_offset_it_would_not_use() {
     let out = spawn(&r, &["--offset", "2", "serve"], &[]).wait_with_output().unwrap();
     assert_eq!(out.status.code(), Some(2));
 }
+
+/// `schema` without the `description` of anything in it.
+fn undescribed(mut schema: Value) -> Value {
+    fn strip(v: &mut Value) {
+        match v {
+            Value::Object(m) => {
+                if m.get("description").is_some_and(Value::is_string) {
+                    m.remove("description");
+                }
+                m.values_mut().for_each(strip);
+            }
+            Value::Array(a) => a.iter_mut().for_each(strip),
+            _ => {}
+        }
+    }
+    strip(&mut schema);
+    schema
+}
+
+#[test]
+fn the_short_tool_list_keeps_every_tool_argument_type_default_and_check() {
+    let r = Repo::new("short", 1);
+    let list =
+        |args: &[&str], env: &[(&str, &str)]| Session::start(&r, args, env).ask(json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))["result"].clone();
+    let (full, short) = (list(&["serve"], &[]), list(&["serve", "--short-tools"], &[]));
+    assert_eq!(short, list(&["serve"], &[("SCRUTATE_MCP_SHORT_TOOLS", "1")]));
+    assert_eq!(full, list(&["serve"], &[("SCRUTATE_MCP_SHORT_TOOLS", "0")]));
+    let (full_tools, short_tools) = (full["tools"].as_array().unwrap(), short["tools"].as_array().unwrap());
+    assert_eq!(full_tools.len(), 19);
+    for (f, s) in full_tools.iter().zip(short_tools) {
+        assert_eq!(f["name"], s["name"]);
+        assert_eq!(undescribed(f["inputSchema"].clone()), s["inputSchema"], "{}", f["name"]);
+        assert_eq!(f["annotations"]["readOnlyHint"], s["annotations"]["readOnlyHint"]);
+        assert_eq!(f["annotations"]["openWorldHint"], s["annotations"]["openWorldHint"]);
+        assert_eq!(f["inputSchema"]["properties"]["response_format"]["default"], "detailed");
+        assert!(s["description"].as_str().unwrap().len() < f["description"].as_str().unwrap().len(), "{}", f["name"]);
+    }
+    let bytes = |v: &Value| v.to_string().len();
+    assert!(bytes(&short) * 100 <= bytes(&full) * 55, "{} bytes short, {} detailed", bytes(&short), bytes(&full));
+    // the same calls fail with the same errors
+    let calls = [
+        ("find_symbol", json!({"name": 7})),
+        ("search_code", json!({})),
+        ("grep_code", json!({"pattern": "x", "mode": "glob"})),
+        ("read_code", json!({})),
+        ("callers", json!({"name": "x", "limit": -1})),
+        ("find_symbol", json!({"name": "x", "response_format": "short"})),
+        ("no_such_tool", json!({})),
+    ];
+    let mut answers = Vec::new();
+    for args in [&["serve"][..], &["serve", "--short-tools"][..]] {
+        let mut s = Session::start(&r, args, &[]);
+        let ask = |(i, (name, a)): (usize, &(&str, Value))| {
+            s.ask(json!({"jsonrpc": "2.0", "id": i, "method": "tools/call", "params": {"name": name, "arguments": a}}))
+        };
+        answers.push(calls.iter().enumerate().map(ask).collect::<Vec<_>>());
+    }
+    assert_eq!(answers[0], answers[1]);
+    for a in &answers[0][..6] {
+        assert_eq!(a["result"]["isError"], true, "{a}");
+    }
+    assert_eq!(answers[0][5]["result"]["content"][0]["text"], "error: response_format must be \"detailed\" or \"concise\"");
+    assert_eq!(answers[0][6]["error"]["code"], -32602);
+}

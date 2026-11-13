@@ -719,6 +719,10 @@ pub enum Cmd {
         /// place of the text loses the text's snippets
         #[arg(long, env = "SCRUTATE_MCP_STRUCTURED", value_parser = clap::builder::FalseyValueParser::new())]
         structured: bool,
+        /// send short tool descriptions and no argument descriptions in the tool list, for fewer
+        /// tokens in every session; the tools, their arguments and defaults stay the same
+        #[arg(long, env = "SCRUTATE_MCP_SHORT_TOOLS", value_parser = clap::builder::FalseyValueParser::new())]
+        short_tools: bool,
     },
     /// run a Language Server Protocol server on stdio (definitions, references, symbols from the index)
     Lsp,
@@ -1613,7 +1617,7 @@ pub fn run() -> Result<i32> {
                 0
             })
         }
-        Cmd::Serve { refresh_interval, watch, structured } => {
+        Cmd::Serve { refresh_interval, watch, structured, short_tools } => {
             if cli.offset != 0 {
                 anyhow::bail!("--offset does nothing with serve: a tool call takes its own offset");
             }
@@ -1639,7 +1643,7 @@ pub fn run() -> Result<i32> {
                     }
                 })?;
             }
-            crate::mcp::serve(s, crate::mcp::Settings::new(cli.max_bytes), crate::VERSION, structured)?;
+            crate::mcp::serve(s, crate::mcp::Settings::new(cli.max_bytes), crate::VERSION, structured, short_tools)?;
             Ok(0)
         }
         Cmd::Lsp => crate::lsp::serve(&cli.root, root_given),

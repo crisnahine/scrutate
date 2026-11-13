@@ -168,6 +168,7 @@ impl Op {
         // read by the server, not here, but checked with the rest
         natural("max_bytes")?;
         natural("offset")?;
+        Form::from_tool(args)?;
         Ok(match name {
             "search_code" => Op::Search {
                 query: text("query")?,
@@ -510,14 +511,16 @@ pub enum Answer {
     },
     /// Numbered lines of `path` from line `start` on, and how many lines the file has (None
     /// for a large file read only up to the lines asked for: more lines follow).
+    /// `defs`: the definitions the index has in the file, which the concise form lists.
     Read {
         path: String,
         lines: Vec<String>,
         start: i64,
         total: Option<i64>,
+        defs: Vec<crate::index::Symbol>,
     },
-    /// Whole definitions, each with its numbered lines.
-    Definitions(Vec<(ChunkRow, String)>, Option<Stop>),
+    /// Whole definitions, each with its numbered lines and the definitions inside it.
+    Definitions(Vec<(ChunkRow, String, Vec<crate::index::Symbol>)>, Option<Stop>),
     Outline {
         path: String,
         rows: Vec<ChunkRow>,
@@ -615,18 +618,20 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
             if rows.is_empty() {
                 bail!("no definition matches {}", echo(symbol));
             }
-            let read = |r: ChunkRow| -> Result<(ChunkRow, String)> {
+            let read = |r: ChunkRow| -> Result<(ChunkRow, String, Vec<crate::index::Symbol>)> {
                 let mut text = read_range(s, &r.path, r.start, r.end.min(r.start.saturating_add(READ_LINES - 1)))?.0.join("\n");
                 if r.end - r.start + 1 > READ_LINES {
                     text.push_str(&format!("\n(the definition goes on to line {}: read_code path={} start={})", r.end, r.path, r.start + READ_LINES));
                 }
-                Ok((r, text))
+                let mut inner = s.ix.symbols_in(&r.path).unwrap_or_default();
+                inner.retain(|m| m.id != r.id && r.start <= m.start && m.end <= r.end);
+                Ok((r, text, inner))
             };
             let (rows, stopped) = cut(rows, READ_DEFINITIONS, "pass path to keep the ones of one file, or a location (path:start-end) for one");
             let read = rows.into_iter().map(read).collect::<Result<Vec<_>>>()?;
             crate::finder::visited(
                 &s.ix.root,
-                &read.iter().map(|(r, _)| r.path.as_str()).collect::<std::collections::BTreeSet<_>>().into_iter().collect::<Vec<_>>(),
+                &read.iter().map(|(r, ..)| r.path.as_str()).collect::<std::collections::BTreeSet<_>>().into_iter().collect::<Vec<_>>(),
             );
             Answer::Definitions(read, stopped)
         }
@@ -642,7 +647,10 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
             let (lines, total) = read_range(s, path, start, end.unwrap_or(start.saturating_add(READ_LINES - 1)))?;
             let path = path.trim_start_matches("./").to_string();
             crate::finder::visited(&s.ix.root, &[&path]);
-            Answer::Read { path, lines, start, total }
+            let last = start + lines.len() as i64 - 1;
+            let mut defs = s.ix.symbols_in(&path).unwrap_or_default();
+            defs.retain(|d| start <= d.start && d.start <= last);
+            Answer::Read { path, lines, start, total, defs }
         }
         Op::Outline { path } => {
             let path = repo_path(s, path);
@@ -952,7 +960,7 @@ fn symbol_name(c: &ChunkRow) -> &str {
     }
 }
 
-fn dead_name(s: &crate::index::Symbol) -> &str {
+fn sym_name(s: &crate::index::Symbol) -> &str {
     if s.qualname.is_empty() {
         &s.name
     } else {
@@ -960,8 +968,243 @@ fn dead_name(s: &crate::index::Symbol) -> &str {
     }
 }
 
+fn hit_name(h: &Hit) -> &str {
+    if h.qualname.is_empty() {
+        &h.name
+    } else {
+        &h.qualname
+    }
+}
+
+/// A definition's own name, without the names it is inside (`Answer.text` is `text`), as text shows it.
+fn named(qualname: &str) -> std::borrow::Cow<'_, str> {
+    shown(qualname.rsplit('.').next().filter(|n| !n.is_empty()).unwrap_or(qualname))
+}
+
+/// The code of a numbered line of `read_range`, without its number and indentation.
+fn code_of(line: &str) -> &str {
+    line.trim_start().split_once("  ").map_or("", |(_, code)| code).trim()
+}
+
+/// A group of matching lines in concise form: where its symbol is and the numbers of the lines.
+fn group_brief(g: &RefGroup, indent: &str) -> Vec<Brief> {
+    let lines = g.lines.iter().map(|h| h.line.to_string()).collect::<Vec<_>>().join(" ");
+    let mut out = vec![match &g.symbol {
+        Some(c) => Brief::text(indent).then_at(&c.path, c.start, c.end).then(format!(" {}: {lines}", named(symbol_name(c)))),
+        None => Brief::text(indent).then_path(&g.path).then(format!(": {lines}")),
+    }];
+    out.extend(g.note.as_ref().map(|note| Brief::text(format!("{indent}  note: {note}"))));
+    out
+}
+
+/// The concise lines of `intel::references_render`, one entry per line of it.
+fn refs_brief(r: &References) -> Vec<Vec<Brief>> {
+    let mut out = Vec::new();
+    let mut section = |title: &str, defs: Vec<Brief>| {
+        if !defs.is_empty() {
+            out.push(vec![Brief::text(title)]);
+            out.extend(defs.into_iter().map(|d| vec![d]));
+        }
+    };
+    let at = |path: &str, start: i64, end: i64, name: &str| Brief::text("  ").then_at(path, start, end).then(format!(" {}", named(name)));
+    section("definitions:", r.definitions.iter().map(|d| at(&d.path, d.start, d.end, &d.qualname)).collect());
+    section("callers:", r.callers.iter().map(|h| at(&h.path, h.start, h.end, &h.qualname)).collect());
+    out.push(vec![Brief::text(format!("references ({} lines in {} symbols):", r.total_lines(), r.groups.len()))]);
+    for g in &r.groups {
+        let mut lines = group_brief(g, "  ").into_iter();
+        out.push(lines.next().into_iter().collect());
+        out.extend(g.lines.iter().map(|_| Vec::new()));
+        out.extend(lines.map(|note| vec![note]));
+    }
+    out
+}
+
+/// The concise lines of `resolve::resolved_text`, one entry per line of it.
+fn resolved_brief(r: &Resolved, only: Option<i64>) -> Vec<Vec<Brief>> {
+    let occurrence = |o: &crate::resolve::Occurrence| vec![Brief::text("  ").then_line(&o.path, format!(":{}:{}", o.line, o.column))];
+    let mut out = Vec::new();
+    for d in r.definitions.iter().filter(|d| only.is_none_or(|id| d.id == id)) {
+        let occ: Vec<_> = r.of(d.id).collect();
+        out.push(vec![Brief::at(&d.path, d.start, d.end, &format!("{} ({} references)", named(&d.qualname), occ.len()))]);
+        out.extend(occ.into_iter().map(occurrence));
+    }
+    let unresolved: Vec<_> = r.unresolved().collect();
+    match only {
+        Some(id) => {
+            let elsewhere = r.occurrences.len() - unresolved.len() - r.of(id).count();
+            out.push(vec![Brief::text(format!("({elsewhere} other occurrences resolve to other definitions, {} are unresolved)", unresolved.len()))]);
+        }
+        None => {
+            out.push(vec![Brief::text(format!("unresolved ({}):", unresolved.len()))]);
+            out.extend(unresolved.into_iter().map(occurrence));
+        }
+    }
+    out.extend(r.notes.iter().map(|(path, note)| vec![Brief::text("note: ").then_path(path).then(format!(": {note}"))]));
+    out
+}
+
+/// The concise lines of `Impact::lines`, one entry per line of it.
+fn impact_brief(i: &crate::impact::Impact) -> Vec<Vec<Brief>> {
+    let symbol = |h: &Hit, mark: &str| {
+        if h.kind == "file" {
+            Brief::path(&h.path).then(format!(" [file]{mark}"))
+        } else {
+            Brief::at(&h.path, h.start, h.end, &format!("{}{mark}", named(hit_name(h))))
+        }
+    };
+    let mut out = vec![vec![Brief::text(format!("changed: {}", i.changed.len()))]];
+    out.extend(i.changed.iter().map(|c| vec![symbol(&c.hit, &format!(" ({})", c.status))]));
+    out.push(vec![Brief::text(format!("callers: {} (depth {})", i.callers.len(), i.depth))]);
+    out.extend(i.callers.iter().map(|c| {
+        let mark = if c.calls_deleted {
+            " (calls deleted)"
+        } else if c.undecided {
+            "?"
+        } else {
+            ""
+        };
+        vec![Brief::text(format!("{} ", c.distance)).and(symbol(&c.hit, mark))]
+    }));
+    out.push(vec![Brief::text(format!("tests: {}", i.tests.len()))]);
+    out.extend(i.tests.iter().map(|t| {
+        vec![match &t.via {
+            // the definition that reaches the change names the test file when it is in it
+            Some(h) if h.path == t.path && h.kind != "file" => symbol(h, &format!(" (test, {})", t.distance)),
+            Some(h) => Brief::path(&t.path).then(format!(" ({} via ", t.distance)).and(symbol(h, ")")),
+            None => Brief::path(&t.path).then(" (changed)"),
+        }]
+    }));
+    if !i.notes.is_empty() {
+        out.push(vec![Brief::text(format!("notes: {}", i.notes.len()))]);
+        out.extend(i.notes.iter().map(|(p, n)| vec![Brief::path(p).then(format!(" {n}"))]));
+    }
+    out
+}
+
 fn chunk_json(c: &ChunkRow) -> Value {
     json!({"id": format!("{}:{}-{}", c.path, c.start, c.end), "path": c.path, "start": c.start, "end": c.end, "kind": c.kind, "qualname": c.qualname})
+}
+
+/// How an answer's text is written. `Concise` keeps every location and name and drops what an
+/// agent can ask for again: code, snippets, scores, kinds and explanations.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Form {
+    #[default]
+    Detailed,
+    Concise,
+}
+
+impl Form {
+    /// The `response_format` argument of a tool call; left out or null is `detailed`.
+    pub fn from_tool(args: &Value) -> Result<Form> {
+        match args.get("response_format").filter(|v| !v.is_null()) {
+            None => Ok(Form::Detailed),
+            Some(v) => match v.as_str() {
+                Some("detailed") => Ok(Form::Detailed),
+                Some("concise") => Ok(Form::Concise),
+                _ => bail!("response_format must be \"detailed\" or \"concise\""),
+            },
+        }
+    }
+}
+
+/// One line of a concise answer: text, paths and locations. A line that ends with `/` names a
+/// directory, and a path without `/` after it is in that directory (`./` is the root); a
+/// location without a path (`:start-end`, `:line`, `:line:column`) is in the file of the location
+/// before it. A directory
+/// line comes before a line whose first path is in another directory; another path of that line
+/// in another directory is written whole, and a file at the root as `./name`.
+#[derive(Default)]
+struct Brief(Vec<Piece>);
+
+enum Piece {
+    Text(String),
+    Path(String),
+    /// a path and what follows it: `:start-end`, `:line` or `:line:column`
+    At(String, String),
+}
+
+/// The directory of the last directory line and the file of the last location of a page.
+#[derive(Default)]
+struct Written {
+    dir: String,
+    file: String,
+}
+
+impl Brief {
+    fn text(text: impl Into<String>) -> Brief {
+        Brief(vec![Piece::Text(text.into())])
+    }
+    fn path(path: &str) -> Brief {
+        Brief::default().then_path(path)
+    }
+    fn then(mut self, text: impl Into<String>) -> Brief {
+        self.0.push(Piece::Text(text.into()));
+        self
+    }
+    fn and(mut self, more: Brief) -> Brief {
+        self.0.extend(more.0);
+        self
+    }
+    fn then_path(mut self, path: &str) -> Brief {
+        self.0.push(Piece::Path(shown(path).into_owned()));
+        self
+    }
+    fn then_at(self, path: &str, start: i64, end: i64) -> Brief {
+        self.then_line(path, format!(":{start}-{end}"))
+    }
+    fn then_line(mut self, path: &str, place: String) -> Brief {
+        self.0.push(Piece::At(shown(path).into_owned(), place));
+        self
+    }
+    /// `path:start-end rest`
+    fn at(path: &str, start: i64, end: i64, rest: &str) -> Brief {
+        Brief::default().then_at(path, start, end).then(format!(" {rest}"))
+    }
+    /// The directory of the first path of the line.
+    fn dir(&self) -> Option<&str> {
+        self.0.iter().find_map(|p| match p {
+            Piece::Path(path) | Piece::At(path, _) => Some(split_dir(path).0),
+            Piece::Text(_) => None,
+        })
+    }
+    /// The line after `out`, below a directory line when its first path is not in the last one.
+    fn write(&self, page: &mut Written, out: &mut String) {
+        let first = self.0.iter().find_map(|p| match p {
+            Piece::Path(path) => Some(path),
+            Piece::At(path, ..) if *path != page.file => Some(path),
+            _ => None,
+        });
+        if let Some((d, _)) = first.map(|f| split_dir(f)).filter(|(d, _)| *d != page.dir) {
+            push_line(out, &if d.is_empty() { "./".to_string() } else { format!("{d}/") });
+            page.dir = d.to_string();
+        }
+        let mut line = String::new();
+        let path = |line: &mut String, page: &Written, path: &str| match split_dir(path) {
+            (d, name) if d == page.dir => line.push_str(name),
+            ("", _) => line.push_str(&format!("./{path}")),
+            _ => line.push_str(path),
+        };
+        for piece in &self.0 {
+            match piece {
+                Piece::Text(text) => line.push_str(text),
+                Piece::Path(p) => path(&mut line, page, p),
+                Piece::At(p, place) => {
+                    if *p != page.file {
+                        path(&mut line, page, p);
+                        page.file = p.clone();
+                    }
+                    line.push_str(place);
+                }
+            }
+        }
+        push_line(out, &line);
+    }
+}
+
+/// A path's directory (empty at the root) and file name.
+fn split_dir(path: &str) -> (&str, &str) {
+    path.rsplit_once('/').unwrap_or(("", path))
 }
 
 /// An answer as text: a first line, the items that can be counted and cut, and a last line.
@@ -976,6 +1219,12 @@ struct Parts {
     /// the items are lines of a file: its path, the number of the first, and the file's length
     /// (None: unknown, more lines follow)
     file: Option<(String, i64, Option<i64>)>,
+    /// the concise form: the lines of each item (none hides it), and a last line in place of
+    /// `tail`; without it the concise text is the detailed one
+    brief: Option<Vec<Vec<Brief>>>,
+    brief_tail: Option<String>,
+    /// the concise page lists its lines by directory, in the order each directory first appears
+    by_directory: bool,
 }
 
 const CUT_ITEM: &str = "(this item is cut: pass a larger max_bytes to see all of it)";
@@ -987,18 +1236,83 @@ pub fn paged(items: Vec<String>, noun: &'static str, max_bytes: usize, offset: u
 
 /// `paged` for a caller that kept the items up to what can be shown and counted the `rest`.
 pub fn paged_counted(items: Vec<String>, rest: usize, noun: &'static str, max_bytes: usize, offset: usize) -> String {
-    Parts { items, rest, noun, ..Parts::default() }.within(max_bytes, offset)
+    Parts { items, rest, noun, ..Parts::default() }.within(max_bytes, offset, Form::Detailed)
 }
 
 impl Parts {
-    fn within(&self, max_bytes: usize, offset: usize) -> String {
+    /// The page from item `offset` on that fits `max_bytes`. A concise page holds the items the
+    /// detailed one holds, so an offset means the same items in both forms.
+    fn within(&self, max_bytes: usize, offset: usize, form: Form) -> String {
         let mut room = max_bytes;
         loop {
             let (out, shown, cut) = self.render(max_bytes, room, offset);
             if out.len() <= max_bytes || room == 0 || (shown <= 1 && !cut) {
-                return out;
+                return match &self.brief {
+                    Some(brief) if form == Form::Concise => self.render_brief(brief, max_bytes, offset, shown),
+                    _ => out,
+                };
             }
             room = room.saturating_sub(out.len() - max_bytes);
+        }
+    }
+
+    fn render_brief(&self, brief: &[Vec<Brief>], max_bytes: usize, offset: usize, count: usize) -> String {
+        let mut out = self.head.clone();
+        let mut page = Written::default();
+        let mut lines: Vec<&Brief> = brief.iter().skip(offset).take(count).flatten().collect();
+        if self.by_directory {
+            let mut dirs: Vec<&str> = Vec::new();
+            for b in &lines {
+                let d = b.dir().unwrap_or("");
+                if !dirs.contains(&d) {
+                    dirs.push(d);
+                }
+            }
+            lines.sort_by_key(|b| dirs.iter().position(|d| *d == b.dir().unwrap_or("")));
+        }
+        let any = !lines.is_empty();
+        for line in lines {
+            line.write(&mut page, &mut out);
+        }
+        if let (false, Some((_, first, _))) = (any, &self.file) {
+            let last = first + (offset + count) as i64 - 1;
+            push_line(&mut out, &format!("(no definition starts in lines {}-{last}: response_format detailed shows them)", first + offset as i64));
+        }
+        if out.len() > max_bytes {
+            let mut at = max_bytes.saturating_sub(CUT_ITEM.len() + 1);
+            while !out.is_char_boundary(at) {
+                at -= 1;
+            }
+            out.truncate(at);
+            push_line(&mut out, CUT_ITEM);
+            return out;
+        }
+        self.close(&mut out, offset, count, self.brief_tail.as_deref().unwrap_or(&self.tail));
+        out
+    }
+
+    /// The closing lines of a page of `count` items from `offset`: how to see more, or the last line.
+    fn close(&self, out: &mut String, offset: usize, count: usize, tail: &str) {
+        let all = self.items.len() + self.rest;
+        let next = offset.min(all) + count;
+        if let Some((path, first, total)) = &self.file {
+            let last = first + next as i64 - 1;
+            if count > 0 && total.is_none_or(|t| last < t) {
+                let path = shown(path);
+                let of = match total {
+                    Some(t) => format!("of {t} in {path}"),
+                    None => format!("of {path}, more lines follow"),
+                };
+                push_line(out, &format!("(lines {}-{last} {of}: read_code path={path} start={} for more)", first + offset as i64, last + 1));
+            }
+        } else if next < all {
+            push_line(out, &format!("({} more {} not shown: call again with offset={next}, or narrow the request)", all - next, self.noun));
+        }
+        if next >= all {
+            if offset > 0 && count == 0 {
+                push_line(out, &format!("(no more {}: {all} in all)", self.noun));
+            }
+            push_line(out, tail);
         }
     }
 
@@ -1006,12 +1320,7 @@ impl Parts {
     /// than `max_bytes` is cut to fit `room`), how many were shown, and whether one was cut.
     fn render(&self, max_bytes: usize, room: usize, offset: usize) -> (String, usize, bool) {
         let mut out = self.head.clone();
-        let push = |out: &mut String, part: &str| {
-            if !out.is_empty() && !part.is_empty() {
-                out.push('\n');
-            }
-            out.push_str(part);
-        };
+        let push = push_line;
         let (mut count, mut cut) = (0, false);
         for item in self.items.iter().skip(offset) {
             if count > 0 && out.len() + item.len() + 1 > room {
@@ -1031,29 +1340,17 @@ impl Parts {
                 break;
             }
         }
-        let all = self.items.len() + self.rest;
-        let next = offset.min(all) + count;
-        if let Some((path, first, total)) = &self.file {
-            let last = first + next as i64 - 1;
-            if count > 0 && total.is_none_or(|t| last < t) {
-                let path = shown(path);
-                let of = match total {
-                    Some(t) => format!("of {t} in {path}"),
-                    None => format!("of {path}, more lines follow"),
-                };
-                push(&mut out, &format!("(lines {}-{last} {of}: read_code path={path} start={} for more)", first + offset as i64, last + 1));
-            }
-        } else if next < all {
-            push(&mut out, &format!("({} more {} not shown: call again with offset={next}, or narrow the request)", all - next, self.noun));
-        }
-        if next >= all {
-            if offset > 0 && count == 0 {
-                push(&mut out, &format!("(no more {}: {all} in all)", self.noun));
-            }
-            push(&mut out, &self.tail);
-        }
+        self.close(&mut out, offset, count, &self.tail);
         (out, count, cut)
     }
+}
+
+/// `part` on a line of its own after `out`; an empty part adds nothing.
+fn push_line(out: &mut String, part: &str) {
+    if !out.is_empty() && !part.is_empty() {
+        out.push('\n');
+    }
+    out.push_str(part);
 }
 
 impl Answer {
@@ -1067,7 +1364,7 @@ impl Answer {
             Answer::Hits { hits, .. } | Answer::Callers { hits, .. } => hits.iter().map(|h| h.path.as_str()).collect(),
             Answer::Callees { resolved, from, .. } => resolved.iter().map(|h| h.path.as_str()).chain(from.iter().map(String::as_str)).collect(),
             Answer::Grep { groups, .. } => groups.iter().map(|g| g.path.as_str()).collect(),
-            Answer::Definitions(defs, _) => defs.iter().map(|(c, _)| c.path.as_str()).collect(),
+            Answer::Definitions(defs, _) => defs.iter().map(|(c, ..)| c.path.as_str()).collect(),
             Answer::Outline { path, .. } | Answer::Deps { path, .. } => vec![path.as_str()],
             Answer::Rdeps { rows, .. } => rows.iter().map(|r| r.0.as_str()).collect(),
             Answer::Refs { refs, .. } => rows(&refs.definitions).into_iter().chain(refs.groups.iter().map(|g| g.path.as_str())).collect(),
@@ -1121,19 +1418,37 @@ impl Answer {
     /// and tells the agent what to do next. Only a budget smaller than one item and that line
     /// together is exceeded.
     pub fn text_within(&self, max_bytes: usize, offset: usize) -> String {
-        self.parts().within(max_bytes, offset)
+        self.text_as(max_bytes, offset, Form::Detailed)
+    }
+
+    /// `text_within` in either form.
+    pub fn text_as(&self, max_bytes: usize, offset: usize, form: Form) -> String {
+        let mut parts = self.parts();
+        let briefs = parts.brief.as_ref().map(Vec::len);
+        // a concise form that does not line up with the items would page other items
+        debug_assert!(briefs.is_none_or(|n| n == parts.items.len()), "the concise form has another number of items");
+        if briefs.is_some_and(|n| n != parts.items.len()) {
+            parts.brief = None;
+        }
+        parts.within(max_bytes, offset, form)
     }
 
     fn parts(&self) -> Parts {
         let lines = |text: String, noun: &'static str| Parts { items: text.lines().map(str::to_string).collect(), noun, ..Parts::default() };
         let nothing = |sentence: String| Parts { head: sentence, ..Parts::default() };
+        let hits_brief = |hits: &[Hit]| Some(hits.iter().map(|h| vec![Brief::at(&h.path, h.start, h.end, &named(hit_name(h)))]).collect());
         match self {
             Answer::Hits { hits, .. } if hits.is_empty() => nothing("(no results)".to_string()),
-            Answer::Hits { hits, words, snippet, stopped } => {
-                Parts { items: hit_blocks(hits, words, *snippet, false), tail: stop_line(*stopped, "results"), noun: "results", ..Parts::default() }
-            }
+            Answer::Hits { hits, words, snippet, stopped } => Parts {
+                items: hit_blocks(hits, words, *snippet, false),
+                tail: stop_line(*stopped, "results"),
+                noun: "results",
+                brief: hits_brief(hits),
+                ..Parts::default()
+            },
             Answer::Callers { hits, .. } if hits.is_empty() => nothing("(no results)".to_string()),
             Answer::Callers { hits, undecided, stopped } => Parts {
+                brief: hits_brief(hits),
                 items: hit_blocks(hits, &[], false, false),
                 tail: joined(
                     match *undecided {
@@ -1150,6 +1465,14 @@ impl Answer {
             },
             Answer::Callees { resolved, external, stopped, .. } => Parts {
                 head: if resolved.is_empty() { "(no results)".to_string() } else { String::new() },
+                brief: hits_brief(resolved),
+                brief_tail: Some(joined(
+                    match external.len() {
+                        0 => String::new(),
+                        n => format!("({n} external {}: response_format detailed names them)", if n == 1 { "callee" } else { "callees" }),
+                    },
+                    stop_line(*stopped, "callees"),
+                )),
                 items: hit_blocks(resolved, &[], false, false),
                 tail: joined(
                     if external.is_empty() {
@@ -1171,24 +1494,50 @@ impl Answer {
                     head: format!("{lines} matching lines in {} symbols{stopped}", groups.len()),
                     items: groups.iter().map(crate::intel::group_text).collect(),
                     noun: "symbols",
+                    brief: Some(groups.iter().map(|g| group_brief(g, "")).collect()),
                     ..Parts::default()
                 }
             }
             Answer::Read { path, total: Some(0), .. } => nothing(format!("{} is empty", shown(path))),
-            Answer::Read { path, lines, start, total: Some(total) } if lines.is_empty() => {
+            Answer::Read { path, lines, start, total: Some(total), .. } if lines.is_empty() => {
                 nothing(format!("{} has {total} lines: start={start} is past the end", shown(path)))
             }
-            Answer::Read { path, lines, start, total: None } if lines.is_empty() => nothing(format!("{}: no lines from start={start}", shown(path))),
-            Answer::Read { path, lines, start, total } => {
-                Parts { items: lines.clone(), noun: "lines", file: Some((path.clone(), *start, *total)), ..Parts::default() }
-            }
+            Answer::Read { path, lines, start, total: None, .. } if lines.is_empty() => nothing(format!("{}: no lines from start={start}", shown(path))),
+            Answer::Read { path, lines, start, total, defs } => Parts {
+                items: lines.clone(),
+                noun: "lines",
+                file: Some((path.clone(), *start, *total)),
+                brief: Some(
+                    (*start..)
+                        .zip(lines)
+                        .map(|(n, line)| {
+                            defs.iter().find(|d| d.start == n).map(|d| Brief::text(format!("{}-{}  {}", d.start, d.end, code_of(line)))).into_iter().collect()
+                        })
+                        .collect(),
+                ),
+                ..Parts::default()
+            },
             Answer::Definitions(defs, stopped) => Parts {
                 items: defs
                     .iter()
-                    .map(|(c, text)| format!("{}:{}-{}  [{}] {}\n{text}", shown(&c.path), c.start, c.end, c.kind, shown(symbol_name(c))))
+                    .map(|(c, text, _)| format!("{}:{}-{}  [{}] {}\n{text}", shown(&c.path), c.start, c.end, c.kind, shown(symbol_name(c))))
                     .collect(),
                 tail: stop_line(*stopped, "definitions"),
                 noun: "definitions",
+                brief: Some(
+                    defs.iter()
+                        .map(|(c, text, members)| {
+                            let line = |n: i64| text.lines().nth((n - c.start) as usize).filter(|_| n >= c.start).map(code_of);
+                            let mut out = vec![Brief::at(&c.path, c.start, c.end, &named(symbol_name(c)))];
+                            out.extend(line(c.start).map(|l| Brief::text(format!("  {l}"))));
+                            out.extend(members.iter().map(|m| {
+                                let code = line(m.start).map_or_else(|| named(sym_name(m)).into_owned(), str::to_string);
+                                Brief::text(format!("  {}-{}  {code}", m.start, m.end))
+                            }));
+                            out
+                        })
+                        .collect(),
+                ),
                 ..Parts::default()
             },
             Answer::Outline { path, rows } if rows.is_empty() => nothing(format!("no symbols in {} (not indexed or no definitions)", echo(path))),
@@ -1198,6 +1547,15 @@ impl Answer {
                     .map(|r| format!("{:>5}-{:<5} {}{:<9} {}", r.start, r.end, "  ".repeat(r.qualname.matches('.').count()), r.kind, shown(&r.qualname)))
                     .collect(),
                 noun: "symbols",
+                brief: Some(
+                    rows.iter()
+                        .map(|r| {
+                            let depth = r.qualname.matches('.').count();
+                            let name = r.qualname.rsplit('.').next().filter(|n| !n.is_empty()).unwrap_or(&r.name);
+                            vec![Brief::text(format!("{}{} {}", " ".repeat(depth), r.start, shown(name)))]
+                        })
+                        .collect(),
+                ),
                 ..Parts::default()
             },
             Answer::Deps { path, deps } if deps.is_empty() => nothing(format!("no imports recorded for {}", echo(path))),
@@ -1215,6 +1573,18 @@ impl Answer {
                     })
                     .collect(),
                 noun: "imports",
+                brief: {
+                    let mut seen = std::collections::HashSet::new();
+                    Some(
+                        deps.iter()
+                            .map(|d| match &d.resolved {
+                                Some(r) if seen.insert(r.as_str()) => vec![Brief::path(r)],
+                                None if seen.insert(d.module.as_str()) => vec![Brief::text(shown(&d.module))],
+                                _ => Vec::new(),
+                            })
+                            .collect(),
+                    )
+                },
                 ..Parts::default()
             },
             Answer::Rdeps { target, rows, unresolved: 0 } if rows.is_empty() => nothing(format!("nothing imports {}", echo(target))),
@@ -1230,19 +1600,29 @@ impl Answer {
                     n => format!("({n} more {} could not be resolved and may name it)", if *n == 1 { "import" } else { "imports" }),
                 },
                 noun: "importers",
+                brief: {
+                    let mut seen = std::collections::HashSet::new();
+                    Some(rows.iter().map(|(p, ..)| if seen.insert(p.as_str()) { vec![Brief::path(p)] } else { Vec::new() }).collect())
+                },
                 ..Parts::default()
             },
             Answer::Refs { refs, max_results, .. } => {
                 if refs.is_empty() {
                     nothing("(no results)".to_string())
                 } else {
-                    Parts { tail: stopped_at(refs.truncated, *max_results), ..lines(crate::intel::references_render(refs), "lines") }
+                    Parts {
+                        tail: stopped_at(refs.truncated, *max_results),
+                        brief: Some(refs_brief(refs)),
+                        ..lines(crate::intel::references_render(refs), "lines")
+                    }
                 }
             }
             Answer::Resolved { .. } if self.is_empty() => nothing("(no results)".to_string()),
-            Answer::Resolved { refs, only, max_results, .. } => {
-                Parts { tail: stopped_at(refs.truncated, *max_results), ..lines(crate::resolve::resolved_text(refs, *only), "lines") }
-            }
+            Answer::Resolved { refs, only, max_results, .. } => Parts {
+                tail: stopped_at(refs.truncated, *max_results),
+                brief: Some(resolved_brief(refs, *only)),
+                ..lines(crate::resolve::resolved_text(refs, *only), "lines")
+            },
             Answer::Similar(v) if v.is_empty() => nothing("(no results)".to_string()),
             Answer::Similar(v) => Parts {
                 items: v
@@ -1250,6 +1630,7 @@ impl Answer {
                     .map(|(h, cos, jac)| format!("{:.3} cos  {:.2} jaccard  {}  [{}] {}", cos, jac, crate::fmt::loc(h), h.kind, shown(&h.qualname)))
                     .collect(),
                 noun: "results",
+                brief: Some(v.iter().map(|(h, ..)| vec![Brief::at(&h.path, h.start, h.end, &named(hit_name(h)))]).collect()),
                 ..Parts::default()
             },
             Answer::Dupes(groups, _) if groups.is_empty() => nothing("no duplicates found".to_string()),
@@ -1266,12 +1647,42 @@ impl Answer {
                     .collect(),
                 tail: stop_line(*stopped, "groups"),
                 noun: "groups",
+                brief: Some(
+                    groups
+                        .iter()
+                        .map(|g| {
+                            // one name for members that all have it
+                            let one = g.members.windows(2).all(|w| w[0].1 == w[1].1);
+                            let mut line = Brief::text(format!("{:.2}", g.similarity));
+                            for (p, q, a, b) in &g.members {
+                                line = line.then(" ").then_at(p, *a, *b);
+                                if !one {
+                                    line = line.then(format!(" {}", named(q)));
+                                }
+                            }
+                            if let Some((_, q, ..)) = g.members.first().filter(|_| one) {
+                                line = line.then(format!(" {}", named(q)));
+                            }
+                            vec![line]
+                        })
+                        .collect(),
+                ),
                 ..Parts::default()
             },
             Answer::Captures(caps, _) if caps.is_empty() => nothing("no matches".to_string()),
-            Answer::Captures(caps, stopped) => {
-                Parts { tail: stop_line(*stopped, "matches"), items: caps.iter().map(capture_line).collect(), noun: "matches", ..Parts::default() }
-            }
+            Answer::Captures(caps, stopped) => Parts {
+                tail: stop_line(*stopped, "matches"),
+                items: caps.iter().map(capture_line).collect(),
+                noun: "matches",
+                brief: Some(
+                    caps.iter()
+                        .map(|c| {
+                            vec![Brief::default().then_line(&c.path, format!(":{}:{}", c.line, c.column)).then(format!(" @{} {}", c.capture, shown(&c.text)))]
+                        })
+                        .collect(),
+                ),
+                ..Parts::default()
+            },
             Answer::Map(files) if files.is_empty() => nothing("(no file with a definition)".to_string()),
             Answer::Map(files) => Parts {
                 items: files
@@ -1292,6 +1703,16 @@ impl Answer {
                     })
                     .collect(),
                 noun: "files",
+                brief: Some(
+                    files
+                        .iter()
+                        .map(|f| {
+                            let mut out = vec![Brief::path(&f.path)];
+                            out.extend(f.definitions.iter().map(|(d, _)| Brief::text(format!("  {}-{} {}", d.start, d.end, named(sym_name(d))))));
+                            out
+                        })
+                        .collect(),
+                ),
                 ..Parts::default()
             },
             Answer::Path(p) if !p.found => {
@@ -1310,25 +1731,47 @@ impl Answer {
                     }))
                     .collect(),
                 noun: "steps",
+                brief: Some(
+                    std::iter::once(vec![Brief::at(&p.from.path, p.from.start, p.from.end, &named(hit_name(&p.from)))])
+                        .chain(p.steps.iter().map(|s| {
+                            let to = &s.to;
+                            let guess = if s.tied { "" } else { " (by name)" };
+                            vec![Brief::text("  ")
+                                .then_line(&s.path, format!(":{}", s.line))
+                                .then(" -> ")
+                                .then_at(&to.path, to.start, to.end)
+                                .then(format!(" {}{guess}", named(hit_name(to))))]
+                        }))
+                        .collect(),
+                ),
                 ..Parts::default()
             },
             Answer::Dead(_) if self.is_empty() => nothing("(no dead code found)".to_string()),
             Answer::Dead(d) => {
-                let line = |s: &crate::index::Symbol| format!("{}:{}-{}  [{}] {}", shown(&s.path), s.start, s.end, s.kind, shown(dead_name(s)));
+                let line = |s: &crate::index::Symbol| format!("{}:{}-{}  [{}] {}", shown(&s.path), s.start, s.end, s.kind, shown(sym_name(s)));
+                let brief = |s: &crate::index::Symbol, mark: &str| vec![Brief::at(&s.path, s.start, s.end, &format!("{}{mark}", named(sym_name(s))))];
                 Parts {
                     items: d.dead.iter().map(line).chain(d.undecided.iter().map(|(s, why)| format!("{}  (undecided: {why})", line(s)))).collect(),
                     tail: format!("({} dead, {} undecided)", d.dead.len(), d.undecided.len()),
                     noun: "definitions",
+                    brief: Some(d.dead.iter().map(|s| brief(s, "")).chain(d.undecided.iter().map(|(s, _)| brief(s, "?"))).collect()),
                     ..Parts::default()
                 }
             }
             Answer::Reindexed(st) => nothing(format!("{} files changed, {} removed, {} chunks", st.files_changed, st.files_removed, st.chunks)),
             Answer::Impact(i) if i.is_empty() => nothing(format!("no changes: {}", i.head())),
-            Answer::Impact(i) => Parts { head: i.head(), items: i.lines(), tail: i.stop_line(), noun: "lines", ..Parts::default() },
-            Answer::Files(v, _) if v.is_empty() => nothing("no file matches".to_string()),
-            Answer::Files(v, stopped) => {
-                Parts { items: v.iter().map(|h| shown(&h.path).into_owned()).collect(), tail: stop_line(*stopped, "files"), noun: "files", ..Parts::default() }
+            Answer::Impact(i) => {
+                Parts { head: i.head(), items: i.lines(), tail: i.stop_line(), noun: "lines", brief: Some(impact_brief(i)), ..Parts::default() }
             }
+            Answer::Files(v, _) if v.is_empty() => nothing("no file matches".to_string()),
+            Answer::Files(v, stopped) => Parts {
+                items: v.iter().map(|h| shown(&h.path).into_owned()).collect(),
+                tail: stop_line(*stopped, "files"),
+                noun: "files",
+                brief: Some(v.iter().map(|h| vec![Brief::path(&h.path)]).collect()),
+                by_directory: true,
+                ..Parts::default()
+            },
         }
     }
 
@@ -1388,7 +1831,7 @@ impl Answer {
                 json!({"text": lines.join("\n"), "start": start, "end": start + lines.len() as i64 - 1, "file_lines": total})
             }
             Answer::Definitions(defs, _) => json!({
-                "definitions": defs.iter().map(|(c, text)| {
+                "definitions": defs.iter().map(|(c, text, _)| {
                     let mut v = chunk_json(c);
                     v["text"] = json!(text);
                     v
@@ -1470,7 +1913,7 @@ impl Answer {
             }
             Answer::Dead(d) => {
                 let one = |s: &crate::index::Symbol| {
-                    json!({"id": format!("{}:{}-{}", s.path, s.start, s.end), "path": s.path, "start": s.start, "end": s.end, "kind": s.kind, "name": s.name, "qualname": dead_name(s)})
+                    json!({"id": format!("{}:{}-{}", s.path, s.start, s.end), "path": s.path, "start": s.start, "end": s.end, "kind": s.kind, "name": s.name, "qualname": sym_name(s)})
                 };
                 json!({
                     "dead": d.dead.iter().map(one).collect::<Vec<_>>(),
@@ -1584,7 +2027,7 @@ mod tests {
         assert!(rest.starts_with("src/f2.rs"));
         assert_eq!(answer.text_within(140, 5), "(no more results: 5 in all)");
         // an item larger than the budget keeps its start
-        let one = Answer::Read { path: "a.txt".into(), lines: vec!["x".repeat(500)], start: 1, total: Some(1) };
+        let one = Answer::Read { path: "a.txt".into(), lines: vec!["x".repeat(500)], start: 1, total: Some(1), defs: vec![] };
         let cut = one.text_within(100, 0);
         assert!(cut.len() <= 100 && cut.starts_with(&"x".repeat(30)) && cut.ends_with(CUT_ITEM), "{cut}");
     }

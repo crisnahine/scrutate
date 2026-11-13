@@ -19,6 +19,14 @@ version rebuilds incompatible indexes automatically and this is never considered
 - The GitHub Action's `comment: true` posts that report as one comment on a pull request and
   edits it on the next push, with only the `pull-requests: write` permission; its own errors are
   warnings, so it never fails the job. `args` is now optional.
+- Every MCP tool takes `response_format`: `detailed`, the default and the answer as before, or
+  `concise`, which keeps every location and name and drops code, snippets, kinds, scores, the
+  containers of names and explanations, writes each directory once and a location in the file of
+  the one before it as `:start-end`, and pages the same items. On this repository a concise answer
+  is 5% to 44% of the detailed one where that passes 1 KB. The Python `Repo.call` reads it too; `batch` checks it.
+- `serve --short-tools` (or `SCRUTATE_MCP_SHORT_TOOLS=1`) sends a tool list with a few words per
+  tool and no argument descriptions: 8,833 bytes against 16,647, with the same tool names,
+  arguments, types, defaults and checks.
 - `scrutate setup <claude|codex|opencode|cursor|gemini>` writes one MCP server entry that runs
   this binary by its absolute path into the agent's user file, or with `--project` into the
   repository's file, editing the text in place so every other key and comment stays; a file that

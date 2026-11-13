@@ -873,7 +873,13 @@ A plain `scrutate grep` is not an operation: its flags are read once into a `Que
 `Files` and go to Engine A directly, with no record built (the start-up section above); with
 `--max-bytes` its lines are paged by the operations' budget rule (`ops::paged_counted`). An answer renders within a byte budget: whole items, then
 a line with how many are left and the offset that continues it, because an agent's harness cuts a
-long tool result where it likes (Codex at 10,000 tokens, from the middle).
+long tool result where it likes (Codex at 10,000 tokens, from the middle). It renders in one of
+two forms (`ops::Form`, the tools' `response_format`): `Answer::parts` builds each answer kind's
+items once with a concise line set beside each item, and the page is cut by the detailed items in
+both forms, so an offset means the same items. The concise lines are pieces (text, a path, a
+location) that the page writes with each directory once and a location in the file before it as
+`:start-end`; it keeps every location and name and leaves out what a call can ask for again,
+5% to 44% of the detailed bytes on this repository where those pass 1 KB (`tests/concise.rs`).
 
 `Repo` (`stores.rs`) is an open repository: the searcher on its index and the stores kept current
 around it (see "Keeping the stores current" above). After an operation it checks the files the answer cites, and the files its
@@ -886,7 +892,9 @@ A cancelled call sets the flag the index update checks between batches, so a `re
 scan before a read rolls back there.
 
 The MCP server (`mcp.rs`) is an adapter: the tool table with its hints for clients (`readOnlyHint`,
-`openWorldHint`) and output schemas, server instructions, and the protocol loop. The loop serves
+`openWorldHint`) and output schemas, a short description per tool for `serve --short-tools`
+(which also drops every argument description, not a name, type or default), server instructions,
+and the protocol loop. The loop serves
 two eras on one pipe: the `initialize` handshake of the revisions up to 2025-11-25, and revision
 2026-07-28, where each request names its version in `_meta` and nothing is remembered between
 requests. Each tool call runs on a thread of its own, so the loop keeps reading and a

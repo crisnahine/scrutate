@@ -692,7 +692,8 @@ impl Repo {
     /// Any operation by its MCP tool name (`grep_code`, `find_symbol`, `references`, ...) with
     /// that tool's arguments as a dict, answered as the tool answers: a dict with `schema`,
     /// `result` (the JSON form), `stopped_at` when the answer stopped at its limit, and `text`, the
-    /// text form from item `offset` on within `max_bytes` (whole without it).
+    /// text form from item `offset` on within `max_bytes` (whole without it), concise when the
+    /// arguments say `response_format: concise`.
     #[pyo3(signature = (tool, args=None, *, max_bytes=None, offset=0))]
     fn call<'py>(
         &self,
@@ -710,10 +711,11 @@ impl Repo {
             None => serde_json::json!({}),
         };
         let op = Op::from_tool(tool, &args).map_err(value_err)?;
+        let form = scrutate::ops::Form::from_tool(&args).map_err(value_err)?;
         let answer = self.run(py, op)?;
         let mut v = answer.envelope();
         v["text"] = answer
-            .text_within(max_bytes.unwrap_or(usize::MAX), offset)
+            .text_as(max_bytes.unwrap_or(usize::MAX), offset, form)
             .into();
         to_py(py, &v)
     }

@@ -134,8 +134,9 @@ docs/RELEASING.md, public, tag `v0.1.0`.
   path.
 - Agents, next: results an agent can page in the structured form too (today a large answer
   pages as text, and its `structuredContent` carries that text and a `null` result); the count of files
-  indexed so far in progress reports; a `response_format` switch for shorter answers. Sources
-  and client support are in docs/research/agent-facing-search-2026-11.md.
+  indexed so far in progress reports. (`response_format: concise` and `serve --short-tools` are
+  done; see docs/CLI.md.) Sources and client support are in
+  docs/research/agent-facing-search-2026-11.md.
 - Linux on dedicated hardware: every Linux number here comes from a 5-CPU VM on the development
   Mac, whose disk is a virtual one on the Mac's SSD. Two values were fitted there and need a
   check on an NVMe disk and on a network disk: the read time that counts as a disk read (30 µs)

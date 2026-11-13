@@ -265,10 +265,10 @@ often while files change.
 | `stats` | Index statistics as one JSON object (files, chunks, symbols, call edges, imports, segments, and the text index's files, segments and bytes). |
 | `languages [--json]` | The verified capability registry. The JSON form gives each language's extensions, the extensions it shares with another language and takes by the file's text (`extensions_by_content`), its file names, and every kind of definition the index gives it (`definition_kinds`: `method` for a function in a class and `constant` included). A custom language follows the built-in ones: its line ends `custom: .scrutate.toml` (or `custom:` and the path of your configuration file), and its JSON has `"tier": "custom"` and `"source"`. |
 | `watch [PATH]` | Keep the index (and the text index, if there is one) up to date from filesystem events (see below). |
-| `serve [--refresh-interval S] [--max-bytes N] [--watch] [--structured]` | MCP server on stdio (see below); `--watch` also runs the watcher in a background thread; `--structured` also sends each answer as JSON. |
+| `serve [--refresh-interval S] [--max-bytes N] [--watch] [--structured] [--short-tools]` | MCP server on stdio (see below); `--watch` also runs the watcher in a background thread; `--structured` also sends each answer as JSON; `--short-tools` sends the short tool list. |
 | `lsp` | Language Server Protocol server on stdio (see below). |
 | `config [--json]` | Show the configuration file in effect. `--json` prints `{"root": ..., "configuration_file": ...}`: the root an index command run here uses, and the configuration file (`null` when none). It builds no index; the editor plugins read it to find the root. |
-| `batch FILE [--features] [--timing]` | Run requests from a JSON-lines file with one index open. A line `{"query": ..., "k": ...}` is a ranked search; a line `{"op": TOOL, ...}` runs any operation, named and given arguments as the MCP tool is (`{"op": "callers", "name": "parse"}`), and prints the answer's envelope with the operation's name (`{"op", "schema", "result"}`, and `stopped_at` when it stopped at its limit) or `{"op", "error"}`. A line that is not JSON prints `{"error": "line 3, column 2: not JSON (...)"}` and the other lines still run. `--features` adds to a search every candidate (`id`, `path`, `name`, `qualname`, `kind`, `score` and its features `x`), the feature names once per line (`feature_names`, the order of `x`) and the ids each source found (`exact_ids`, `lex_ids`, `sem_ids`): the rows the ranker is trained on. |
+| `batch FILE [--features] [--timing]` | Run requests from a JSON-lines file with one index open. A line `{"query": ..., "k": ...}` is a ranked search; a line `{"op": TOOL, ...}` runs any operation, named and given arguments as the MCP tool is (`{"op": "callers", "name": "parse"}`), and prints the answer's envelope with the operation's name (`{"op", "schema", "result"}`, and `stopped_at` when it stopped at its limit) or `{"op", "error"}`; a `response_format` other than `detailed` or `concise` is such an error, and either form prints the same envelope. A line that is not JSON prints `{"error": "line 3, column 2: not JSON (...)"}` and the other lines still run. `--features` adds to a search every candidate (`id`, `path`, `name`, `qualname`, `kind`, `score` and its features `x`), the feature names once per line (`feature_names`, the order of `x`) and the ids each source found (`exact_ids`, `lex_ids`, `sem_ids`): the rows the ranker is trained on. |
 
 The code index holds every file the ignore rules let through, hidden files included, except
 binary files, files over 1 MB, `.git/`, `.scrutate/`, the directories named in
@@ -657,12 +657,49 @@ time. Of two servers on one root, the first offers the socket.
 
 - Every tool but `reindex` is marked read-only (`readOnlyHint`), and all are marked as staying on
   this machine (`openWorldHint: false`), so clients that ask before a write do not ask for these.
-- The server returns `instructions`: which tool to start with and that answers are capped.
+- The server returns `instructions`: which tool to start with, that answers are capped, and how
+  a concise answer writes its paths.
 - Every read-only tool takes `max_bytes` and `offset`, as `--max-bytes` and `--offset` above;
   the whole answer, closing line included, fits `max_bytes`. The default is 24,000 bytes (about
   6,000 tokens); `serve --max-bytes N` (or `SCRUTATE_MAX_BYTES`) sets another default, and
   `tools/list` shows it. Both a call's `max_bytes` and the server's default are held between
   1,000 and 1,000,000, and a call's own value wins. `serve` refuses `--offset`: every tool call takes its own.
+- Every tool takes `response_format`: `detailed` (the default, the text described here) or
+  `concise`, which keeps every location and every name and drops what a call can ask for again:
+  code, snippets, kinds, scores, the containers of a name (`Answer.text` is `text`) and the notes
+  that explain an item. Closing lines (how to continue, where an answer stopped) and errors stay.
+  A concise page holds the same items as the detailed page of the same `max_bytes` and `offset`,
+  so an offset means the same in both forms. Paths are written once per directory: a line that
+  ends with `/` names a directory (`./` the root), and a path without `/` below it is in that
+  directory (a path in another directory on the same line is written whole, a file at the root
+  `./name`); a location written `:start-end` (or `:line`, `:line:column`) is in the file of the
+  location before it. With `serve --structured` the JSON is the detailed one in both forms. Any
+  other value is an error (`response_format must be "detailed" or "concise"`). Per tool, concise gives:
+  `search_code`, `find_symbol`, `callers`, `callees`, `similar_code`: one line per result,
+  location and name (`callees` counts the external names in place of listing them);
+  `grep_code`: the first line, then per symbol its location, name and the numbers of its
+  matching lines without their text (a file with no enclosing symbol: its path and the numbers);
+  `read_code` by path: the lines read that begin a definition the index knows,
+  `start-end  first line`, and the closing line (a page with none says so); `read_code` by
+  symbol: each definition's location and name, its first line, and the definitions inside it,
+  `start-end  first line`; `outline`: each symbol's first line number and name, one space of
+  indent per level; `dependencies`: each file the imports resolve to and each module that
+  resolves to none, once; `dependents`: each importing file once; `references`: per definition
+  its location, name and count, then each use as `path:line:column`, and the unresolved uses the
+  same way, without line text or reasons (`textual`: the definitions and callers as locations,
+  the matching lines as `grep_code` gives them); `duplicates`: one line per group, the similarity
+  and the members' locations, with one name when they share it; `structural_search`:
+  `path:line:column @capture text`, without the node kind; `repo_map`: each file and its
+  definitions' `start-end name`, without rank, score, kind or calls; `call_path`:
+  `path:line -> location name` per step, `(by name)` for a call the resolver did not tie;
+  `impact`: the same sections, a changed definition as `location name (status)`, a caller as
+  `distance location name`, `?` after the name of an undecided one; a test as `location name
+  (test, distance)` when the definition that reaches the change is in it, else `path (distance
+  via location name)`; `dead_code`: `location name`, `?` after an undecided one; `find_files`:
+  the paths grouped by directory, each directory where its best match ranks; `reindex`: the same
+  line. On this repository a concise answer over 1 KB of detailed text is 5% to 44% of it
+  (`tests/concise.rs`); one made mostly of names, such as the outline of a test file whose
+  function names are sentences, keeps them and saves less. The command line has no concise form.
 - Arguments: a wrong type or a negative number is a tool error that names the argument (`k must be a
   non-negative integer`), and JSON `null` is the same as leaving an argument out. An error quotes
   at most 200 characters of an argument. Every path argument may be written `./x` or `pkg/../x`.
@@ -719,6 +756,12 @@ its last group with a `note:` line (`"note"` in JSON). An invalid pattern is an 
 - `reindex` takes `force` (boolean): every file is read again, also one whose size and
   modification time did not change, and a damaged index is rebuilt. It brings the text index
   up to date too when there is one, so `grep --index` sees what it indexed; it never makes one.
+- `serve --short-tools` (`SCRUTATE_MCP_SHORT_TOOLS=1`) sends a short `tools/list`: a
+  description of a few words per tool, no description of any argument, and for a tool that only
+  reads only `readOnlyHint` and `openWorldHint` (the other two hints mean something only for a
+  tool that writes). The tool names, the argument names, types, enums, defaults and `required`
+  are those of the full list, and a call is checked as it is without the option. On this repository's server the full list
+  is 16,647 bytes and the short one 8,833 (the list before `response_format` was 13,968).
 - `serve --structured` (`SCRUTATE_MCP_STRUCTURED=1`) adds an `outputSchema` to every tool and
   `structuredContent` to every result, beside its text: the answer's envelope with `complete`
   (`{"schema": 2, "complete": true, "result": ...}`), as the matching CLI command prints it with
@@ -946,7 +989,7 @@ the resolved file is inside the root.
 ### Environment variables
 `SCRUTATE_ROOT`, `SCRUTATE_THREADS`, `SCRUTATE_GREP_{HIDDEN,NO_IGNORE,FOLLOW,SMART_CASE,MAX_FILESIZE,MAX_DEPTH,MAX_BYTES,GLOBS,TYPES}`,
 `SCRUTATE_INDEX_EXCLUDE_DIRS`, `SCRUTATE_REFRESH_INTERVAL`, `SCRUTATE_MAX_BYTES`,
-`SCRUTATE_MCP_STRUCTURED`, `SCRUTATE_CONFIG`, `SCRUTATE_WATCH_DEBUG`, `SCRUTATE_GREP_DEBUG`,
+`SCRUTATE_MCP_STRUCTURED`, `SCRUTATE_MCP_SHORT_TOOLS`, `SCRUTATE_CONFIG`, `SCRUTATE_WATCH_DEBUG`, `SCRUTATE_GREP_DEBUG`,
 `SCRUTATE_NO_SESSION`, `SCRUTATE_SESSION_DEBUG`, `SCRUTATE_SESSION_WAIT_MS` (see `serve` above), `SCRUTATE_SEMANTIC`
 (path or `none`; another model makes the stored vectors anew on the next update, from the word
 counts the index keeps and without reading a source file: a third of a fresh build's CPU or less

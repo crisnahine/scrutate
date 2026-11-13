@@ -39,38 +39,70 @@ Results are capped; a tool says when it stopped early and which argument raises 
 Each result begins with its location (path:start-end). Pass that location wherever a tool takes a symbol name \
 to mean that one definition: read_code symbol, find_symbol, callers, callees, call_path, similar_code, references def. \
 A result of kind window is a stretch of lines outside every definition: callees and similar_code take its location, \
-and read_code reads it by path and lines; find_symbol, callers and references def answer that no symbol is there.";
+and read_code reads it by path and lines; find_symbol, callers and references def answer that no symbol is there. \
+response_format concise gives the locations and names without code: there a line that ends with / names the directory \
+of the paths below it written without one, and a location written :start-end is in the file of the one before it.";
 
 /// The tools, each with the hints clients use to decide whether a call needs approval and, with
-/// `structured`, the schema of the JSON its results carry.
-pub fn tools(structured: bool, max_bytes: usize) -> Value {
+/// `structured`, the schema of the JSON its results carry. `short`: the short descriptions and
+/// no argument descriptions, for clients that send the list to their model in every session;
+/// names, argument types, defaults and what is required stay the same.
+pub fn tools(structured: bool, max_bytes: usize, short: bool) -> Value {
     let mut tools = tool_table();
     for tool in tools.as_array_mut().into_iter().flatten() {
         let name = tool["name"].as_str().unwrap_or("").to_string();
         let read_only = ops::read_only(&name);
-        tool["annotations"] = json!({"readOnlyHint": read_only, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false});
+        let brief = tool.as_object_mut().and_then(|t| t.remove("short")).unwrap_or(Value::Null);
+        tool["annotations"] = if short && read_only {
+            // the other two hints mean something only for a tool that writes
+            json!({"readOnlyHint": true, "openWorldHint": false})
+        } else {
+            json!({"readOnlyHint": read_only, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false})
+        };
         if structured {
             tool["outputSchema"] = ops::output_schema(&name);
         }
+        let properties = &mut tool["inputSchema"]["properties"];
         if read_only {
-            let properties = &mut tool["inputSchema"]["properties"];
             properties["max_bytes"] = json!({"type": "integer", "default": max_bytes, "description": "size limit of the answer"});
             properties["offset"] =
                 json!({"type": "integer", "default": 0, "description": "items to skip, to continue an answer that said more were not shown"});
+        }
+        properties["response_format"] = json!({"type": "string", "enum": ["detailed", "concise"], "default": "detailed",
+            "description": "concise: locations and names, no code"});
+        if short {
+            tool["description"] = brief;
+            for schema in ["inputSchema", "outputSchema"] {
+                tool.get_mut(schema).into_iter().for_each(drop_descriptions);
+            }
         }
     }
     tools
 }
 
+/// `schema` without the `description` of any property.
+fn drop_descriptions(schema: &mut Value) {
+    match schema {
+        Value::Object(map) => {
+            if map.get("description").is_some_and(Value::is_string) {
+                map.remove("description");
+            }
+            map.values_mut().for_each(drop_descriptions);
+        }
+        Value::Array(items) => items.iter_mut().for_each(drop_descriptions),
+        _ => {}
+    }
+}
+
 fn tool_table() -> Value {
     json!([
-        {"name": "search_code",
+        {"name": "search_code", "short": "Search code by meaning or name.",
          "description": "Search the codebase by meaning or by name. Returns the best matching functions/classes with file:line and a snippet. `query` may be natural language (\"where do we refresh expired tokens\") or identifiers (`ClientSession.call_tool`). To improve recall put synonyms and likely identifier names in `alt_queries` (e.g. [\"renew credentials\", \"refresh_token\"], at most 10); results of all phrasings are fused.",
          "inputSchema": {"type": "object", "properties": {
              "query": {"type": "string"},
              "alt_queries": {"type": ["array", "null"], "items": {"type": "string"}, "default": null},
              "k": {"type": "integer", "default": ops::SEARCH_K}}, "required": ["query"]}},
-        {"name": "grep_code", "description": "Exact search of the files the index holds: hidden ones such as .github/ included; ignored files, .git/ and dependency or cache directories such as node_modules/ not. Matching lines are grouped by the enclosing function/class. `mode` identifier finds every casing of a name (refreshToken, refresh_token, REFRESH_TOKEN); fuzzy allows `max_edits` typos; `path` keeps one file or directory and `globs` keep files by name (`!` excludes).",
+        {"name": "grep_code", "short": "Exact or regex search, lines grouped by symbol.", "description": "Exact search of the files the index holds: hidden ones such as .github/ included; ignored files, .git/ and dependency or cache directories such as node_modules/ not. Matching lines are grouped by the enclosing function/class. `mode` identifier finds every casing of a name (refreshToken, refresh_token, REFRESH_TOKEN); fuzzy allows `max_edits` typos; `path` keeps one file or directory and `globs` keep files by name (`!` excludes).",
          "inputSchema": {"type": "object", "properties": {
              "pattern": {"type": "string"},
              "mode": {"type": "string", "enum": ["regex", "literal", "identifier", "fuzzy", "fuzzy_regex", "pcre2"], "default": "regex"},
@@ -80,45 +112,45 @@ fn tool_table() -> Value {
              "path": {"type": ["string", "null"], "default": null, "description": "a file or directory of the repository to search under"},
              "globs": {"type": ["array", "null"], "items": {"type": "string"}, "default": null, "description": "keep the files these globs match, as grep -g (`!` excludes)"},
              "max_results": {"type": "integer", "default": ops::GREP_MAX}}, "required": ["pattern"]}},
-        {"name": "find_symbol", "description": "Where is this function/class/method defined? (`Class.method` works, as do `Class::method`, `Class#method` and a location from another answer).",
+        {"name": "find_symbol", "short": "Where a name is defined.", "description": "Where is this function/class/method defined? (`Class.method` works, as do `Class::method`, `Class#method` and a location from another answer).",
          "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "limit": {"type": "integer", "default": ops::SYMBOL_LIMIT}}, "required": ["name"]}},
-        {"name": "callers", "description": "Which functions call this function?",
+        {"name": "callers", "short": "Who calls a function.", "description": "Which functions call this function?",
          "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "limit": {"type": "integer", "default": ops::CALLERS_LIMIT}}, "required": ["name"]}},
-        {"name": "callees", "description": "Which functions does this function call?",
+        {"name": "callees", "short": "What a function calls.", "description": "Which functions does this function call?",
          "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "limit": {"type": "integer", "default": ops::CALLEES_LIMIT}}, "required": ["name"]}},
-        {"name": "call_path", "description": "How does `from` reach `to`? The shortest chain of calls between two functions (names, `Class.method` or locations), each step a call site and the function it calls; a name with several definitions lists them to pick one by location.",
+        {"name": "call_path", "short": "The call chain from one function to another.", "description": "How does `from` reach `to`? The shortest chain of calls between two functions (names, `Class.method` or locations), each step a call site and the function it calls; a name with several definitions lists them to pick one by location.",
          "inputSchema": {"type": "object", "properties": {"from": {"type": "string"}, "to": {"type": "string"}, "depth": {"type": "integer", "default": ops::PATH_DEPTH, "description": "calls to follow at most"}}, "required": ["from", "to"]}},
-        {"name": "repo_map", "description": "The important files of the repository first: files ranked by how much the others call and import them (PageRank), each with its most called definitions. A first call in a repository you do not know.",
+        {"name": "repo_map", "short": "The most used files and their top definitions.", "description": "The important files of the repository first: files ranked by how much the others call and import them (PageRank), each with its most called definitions. A first call in a repository you do not know.",
          "inputSchema": {"type": "object", "properties": {"path": {"type": ["string", "null"], "default": null, "description": "keep the files under this directory"}}}},
-        {"name": "read_code", "description": "Read a line range of a file (`path`, `start`, `end`), or one whole definition: `symbol` is a name, `Class.method`, or a location from another answer (`src/a.py:12-40`). A name with several definitions returns each; `path` then keeps the ones in that file.",
+        {"name": "read_code", "short": "Read lines of a file or a whole definition.", "description": "Read a line range of a file (`path`, `start`, `end`), or one whole definition: `symbol` is a name, `Class.method`, or a location from another answer (`src/a.py:12-40`). A name with several definitions returns each; `path` then keeps the ones in that file.",
          "inputSchema": {"type": "object", "properties": {
              "path": {"type": ["string", "null"], "default": null}, "symbol": {"type": ["string", "null"], "default": null},
              "start": {"type": "integer", "default": 1}, "end": {"type": ["integer", "null"], "default": null}}}},
-        {"name": "outline", "description": "Symbols of a file in source order (kind, name, line range).",
+        {"name": "outline", "short": "Symbols of a file.", "description": "Symbols of a file in source order (kind, name, line range).",
          "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}},
-        {"name": "dependencies", "description": "Modules a file imports, resolved to repository files where possible.",
+        {"name": "dependencies", "short": "Imports of a file.", "description": "Modules a file imports, resolved to repository files where possible.",
          "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}},
-        {"name": "dependents", "description": "Files that import a module or repository file (reverse dependencies).",
+        {"name": "dependents", "short": "Files that import a module or file.", "description": "Files that import a module or repository file (reverse dependencies).",
          "inputSchema": {"type": "object", "properties": {"target": {"type": "string", "description": "module name as imported, or a repository file path"}}, "required": ["target"]}},
-        {"name": "references", "description": "Every use of a name, each resolved to the definition it refers to (same-named definitions in other modules are kept apart). `def` (`path` or `path:line`) keeps one definition; `textual` lists every occurrence of the name grouped by the enclosing function/class instead.",
+        {"name": "references", "short": "Every use of a name.", "description": "Every use of a name, each resolved to the definition it refers to (same-named definitions in other modules are kept apart). `def` (`path` or `path:line`) keeps one definition; `textual` lists every occurrence of the name grouped by the enclosing function/class instead.",
          "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "max_results": {"type": "integer", "default": ops::REFS_MAX},
              "def": {"type": ["string", "null"], "default": null}, "textual": {"type": "boolean", "default": false}}, "required": ["name"]}},
-        {"name": "similar_code", "description": "Functions similar to a given symbol or location (`name`, `Class.method` or `path:line`): find duplicated logic or existing implementations.",
+        {"name": "similar_code", "short": "Functions like this one.", "description": "Functions similar to a given symbol or location (`name`, `Class.method` or `path:line`): find duplicated logic or existing implementations.",
          "inputSchema": {"type": "object", "properties": {"target": {"type": "string"}, "k": {"type": "integer", "default": ops::SIMILAR_K}}, "required": ["target"]}},
-        {"name": "duplicates", "description": "Duplicate and near-duplicate functions across the repository.",
+        {"name": "duplicates", "short": "Duplicated functions.", "description": "Duplicate and near-duplicate functions across the repository.",
          "inputSchema": {"type": "object", "properties": {"min_tokens": {"type": "integer", "default": ops::DUPES_MIN_TOKENS}, "threshold": {"type": "number", "default": ops::DUPES_THRESHOLD}, "limit": {"type": "integer", "default": ops::DUPES_LIMIT}}}},
-        {"name": "structural_search", "description": "Run a tree-sitter query (S-expression pattern with @captures) over all files of one language, e.g. lang=python query=\"(class_definition name: (identifier) @cls)\".",
+        {"name": "structural_search", "short": "A tree-sitter query over one language.", "description": "Run a tree-sitter query (S-expression pattern with @captures) over all files of one language, e.g. lang=python query=\"(class_definition name: (identifier) @cls)\".",
          "inputSchema": {"type": "object", "properties": {"lang": {"type": "string"}, "query": {"type": "string"}, "limit": {"type": "integer", "default": ops::TSQUERY_LIMIT}}, "required": ["lang", "query"]}},
-        {"name": "impact", "description": "What does my change touch? From the git diff (the working tree and untracked files against HEAD; `base` a revision, `main...` for the merge base with main; `staged` the staged changes) to the changed definitions, their callers with distances up to `depth` steps, and the test files to run.",
+        {"name": "impact", "short": "Definitions, callers and tests a git diff touches.", "description": "What does my change touch? From the git diff (the working tree and untracked files against HEAD; `base` a revision, `main...` for the merge base with main; `staged` the staged changes) to the changed definitions, their callers with distances up to `depth` steps, and the test files to run.",
          "inputSchema": {"type": "object", "properties": {
              "base": {"type": ["string", "null"], "default": null, "description": "revision to compare with (default HEAD)"},
              "staged": {"type": "boolean", "default": false},
              "depth": {"type": "integer", "default": crate::impact::DEPTH, "description": "steps of callers to follow (at most 10)"}}}},
-        {"name": "find_files", "description": "Find a file by part of its name or path, misspelt or with letters left out (`srch.rs` finds search.rs): an exact basename first, then basename matches, then path matches; among equals the files read lately through read_code first. A query that is exactly one path counts as choosing that file. Needs no index.",
+        {"name": "find_files", "short": "Find a file by part of its name.", "description": "Find a file by part of its name or path, misspelt or with letters left out (`srch.rs` finds search.rs): an exact basename first, then basename matches, then path matches; among equals the files read lately through read_code first. A query that is exactly one path counts as choosing that file. Needs no index.",
          "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "default": crate::finder::LIMIT}}, "required": ["query"]}},
-        {"name": "dead_code", "description": "Functions, methods, classes and types nothing in the repository uses: no line outside one names it. Entry points (main, tests, exports, public items of a library, decorated or attribute-registered ones) are left out. Ones whose name some line holds that the resolver ties to nothing (a string, a comment, a use it cannot place) are listed as undecided, with why. `path` keeps the definitions under one directory or file.",
+        {"name": "dead_code", "short": "Definitions nothing uses.", "description": "Functions, methods, classes and types nothing in the repository uses: no line outside one names it. Entry points (main, tests, exports, public items of a library, decorated or attribute-registered ones) are left out. Ones whose name some line holds that the resolver ties to nothing (a string, a comment, a use it cannot place) are listed as undecided, with why. `path` keeps the definitions under one directory or file.",
          "inputSchema": {"type": "object", "properties": {"path": {"type": ["string", "null"], "default": null, "description": "a directory or file of the repository"}}}},
-        {"name": "reindex", "description": "Re-scan for changed files (searches already do this automatically). `force` reads every file again, also one whose size, modification time and change time did not change.",
+        {"name": "reindex", "short": "Rescan changed files.", "description": "Re-scan for changed files (searches already do this automatically). `force` reads every file again, also one whose size, modification time and change time did not change.",
          "inputSchema": {"type": "object", "properties": {"force": {"type": "boolean", "default": false}}}}
     ])
 }
@@ -143,9 +175,11 @@ impl Called {
 pub fn call_tool(session: &Session, name: &str, args: &Value, settings: &Settings, cancel: &Arc<AtomicBool>) -> Called {
     let max_bytes = args.get("max_bytes").and_then(Value::as_u64).map_or(settings.max_bytes, |n| clamp_bytes(n as usize));
     let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
+    // a wrong value is refused with the other arguments
+    let form = ops::Form::from_tool(args).unwrap_or_default();
     match ops::Op::from_tool(name, args).and_then(|op| session.run(&op, cancel)) {
         Ok(answer) => {
-            let text = answer.text_within(max_bytes, offset);
+            let text = answer.text_as(max_bytes, offset, form);
             let mut structured = answer.structured(text.len(), max_bytes, offset);
             if structured["result"].is_null() {
                 // a client that shows only the structured form still gets the part that fits
@@ -273,8 +307,9 @@ fn run_call(send: &Wire, session: &Session, calls: &Calls, settings: &Settings, 
 ///
 /// `structured`: every tool declares an `outputSchema` and every result carries the answer as
 /// JSON beside its text. Off unless asked for: Claude Code (2.1.322) shows its model that JSON in
-/// place of the text, which has the snippets and says how to page.
-pub fn serve(session: Arc<Session>, settings: Settings, version: &str, structured: bool) -> Result<()> {
+/// place of the text, which has the snippets and says how to page. `short`: `tools/list` sends
+/// the short form of `tools`.
+pub fn serve(session: Arc<Session>, settings: Settings, version: &str, structured: bool, short: bool) -> Result<()> {
     session.building();
     {
         let session = Arc::clone(&session);
@@ -285,7 +320,7 @@ pub fn serve(session: Arc<Session>, settings: Settings, version: &str, structure
         })?;
     }
     let calls = Calls::default();
-    let server = Server { session: &session, calls: &calls, settings: &settings, version, structured };
+    let server = Server { session: &session, calls: &calls, settings: &settings, version, structured, short };
     let (server, send) = (&server, &to_stdout as &Wire);
     std::thread::scope(|scope| -> Result<()> {
         let mut stdin = std::io::stdin().lock();
@@ -354,6 +389,7 @@ struct Server<'a> {
     settings: &'a Settings,
     version: &'a str,
     structured: bool,
+    short: bool,
 }
 
 impl Server<'_> {
@@ -415,7 +451,7 @@ impl Server<'_> {
                 );
             }
             "ping" => respond(send, &id, stateless, json!({})),
-            "tools/list" => list(json!({"tools": tools(self.structured, self.settings.max_bytes)})),
+            "tools/list" => list(json!({"tools": tools(self.structured, self.settings.max_bytes, self.short)})),
             "resources/list" => list(json!({"resources": []})),
             "resources/templates/list" => list(json!({"resourceTemplates": []})),
             "prompts/list" => list(json!({"prompts": []})),

@@ -155,6 +155,11 @@ mean that definition and no other of the same name (`intel::location`).
 items and ends with how many are left and the `offset` that continues it. `grep --max-bytes`
 pages its lines by the same rule (`ops::paged_counted`).
 
+**Form**: how an answer's text is written (`ops::Form`, the MCP argument `response_format`):
+**detailed**, the full text, or **concise**, every location and name without what a call can ask
+for again (code, snippets, kinds, scores, notes), each directory written once. Both page the same
+items (`Answer::text_as`).
+
 **Repo**: an open repository (`scrutate::Repo`, in `stores.rs`): the searcher on its index plus
 the stores kept current around it. Front ends that stay open reach one through a session.
 
