@@ -23,12 +23,18 @@ Commands (Command Palette): **Scrutate: Search**, **Grep**, **Go to symbol defin
 the location.
 
 Build: `npm install` here (`npm run check` type-checks `extension.js`), then
-`npx @vscode/vsce package` and *Extensions → Install from VSIX*.
+`npx @vscode/vsce package --no-rewrite-relative-links` and *Extensions → Install from VSIX*. vsce
+refuses the SVG banner at the top of this README once it rewrites relative links, hence the flag.
 
 Test: `SCRUTATE_BIN=/path/to/scrutate npm test` starts a real VS Code with the extension on a
 small repository (`test/run.js`, with `@vscode/test-electron`) and checks the definition,
 references, workspace symbol and outline providers and every command (`test/suite.js`), once on
 the repository and once on its `src` folder; `test/root.test.js` first checks the root lookup in
 plain Node. Without a display: `xvfb-run -a npm test`. It last passed in VS Code 1.145.3 on Linux
-arm64 (2026-11-11), before the `src` folder run was added. The server is also tested end to end
-in `crates/scrutate/tests/lsp.rs`.
+arm64 (2026-11-11), before the `src` folder run was added. `VSCODE_VERSION=1.85.0` picks the VS
+Code to download (default `stable`). `SCRUTATE_VSIX=/path/to/scrutate.vsix node test/run.js`
+installs the package with `--install-extension` and runs the same checks on the installed copy;
+the suite asserts which copy ran. The `vscode` job in `.github/workflows/ci.yml` runs both passes,
+and checks the package's file list, on Linux, macOS and Windows with VS Code 1.85.0 (the
+`engines` floor) and stable. The server is also tested end to end in
+`crates/scrutate/tests/lsp.rs`.

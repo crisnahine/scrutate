@@ -2,7 +2,9 @@
 # advisory, runner image or editor release shows up without a code change.
 # The core crate only needs Rust; the Python job covers the training code, the bindings, the
 # differential harnesses and the ranking quality floor; the wheel job builds, installs and tests
-# the bindings on every runner. Every action is pinned to a
+# the bindings on every runner. The editor jobs run the CI binary in the hosts the integrations
+# claim: VS Code (the folder and the packaged .vsix) and Neovim on Linux, macOS and Windows, at each
+# version floor and the current release. Every action is pinned to a
 # commit; .github/dependabot.yml moves the pins. The Rust version, rustfmt and clippy come from
 # rust-toolchain.toml.
 name: ci
@@ -271,31 +273,102 @@ jobs:
           for f in fuzz/regressions/*/*; do
             cargo "+$NIGHTLY" fuzz run -O "$(basename "$(dirname "$f")")" "$f"
           done
-  editors:
-    name: editor integrations (VS Code, Neovim)
+  vscode:
+    name: VS Code ${{ matrix.vscode }} (${{ matrix.os }})
     needs: rust
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        # the engines.vscode floor in package.json, and the current release
+        vscode: [1.85.0, stable]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: scrutate-ubuntu-latest
+          name: scrutate-${{ matrix.os }}
           path: bin
-      - run: chmod +x bin/scrutate
-      - name: the extension in a real VS Code
+      # @vscode/test-electron 3.1.0 and @vscode/vsce 4.1.1 declare node >= 22
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.2
+      - name: the extension folder, then the packaged .vsix installed with --install-extension
         working-directory: integrations/vscode
+        env:
+          VSCODE_VERSION: ${{ matrix.vscode }}
         run: |
+          bin=$GITHUB_WORKSPACE/bin/scrutate
+          if [ "$RUNNER_OS" = Windows ]; then bin=$bin.exe; else chmod +x "$bin"; fi
+          export SCRUTATE_BIN=$bin
+          # Linux runners have no display; macOS and Windows start VS Code directly
+          run() { if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a "$@"; else "$@"; fi; }
           npm ci
-          SCRUTATE_BIN=$GITHUB_WORKSPACE/bin/scrutate xvfb-run -a npm test
+          run npm test
+          # the README's banner is an SVG, which vsce refuses once it rewrites relative links
+          npm exec --yes --package=@vscode/vsce@4.1.1 -- vsce package --no-rewrite-relative-links --out scrutate.vsix
+          unzip -Z1 scrutate.vsix | sort > "$RUNNER_TEMP/vsix-files.txt"
+          cat "$RUNNER_TEMP/vsix-files.txt"
+          for f in extension/package.json extension/extension.js extension/root.js extension/node_modules/vscode-languageclient/package.json; do
+            grep -qx "$f" "$RUNNER_TEMP/vsix-files.txt" || { echo "the package lacks $f"; exit 1; }
+          done
+          if grep -E '^extension/(test/|\.vscode-test/|tsconfig\.json|node_modules/(@vscode/test-electron|typescript)/)' "$RUNNER_TEMP/vsix-files.txt"; then
+            echo "the package holds test or build files"
+            exit 1
+          fi
+          SCRUTATE_VSIX=$PWD/scrutate.vsix run node test/run.js
+  neovim:
+    name: Neovim ${{ matrix.nvim }} (${{ matrix.os }})
+    needs: rust
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        # the plugin's floor, the language server's floor, the current release
+        nvim: [v0.10.4, v0.11.7, v0.12.6]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: scrutate-${{ matrix.os }}
+          path: bin
       - name: the plugin in a headless Neovim
+        env:
+          NVIM: ${{ matrix.nvim }}
         run: |
+          case "$RUNNER_OS" in
+            Linux) a="nvim-linux-x86_64.tar.gz" ;;
+            macOS) a="nvim-macos-arm64.tar.gz" ;;
+            Windows) a="nvim-win64.zip" ;;
+          esac
+          # v0.10.4 from its .sha256sum files; v0.11.7 and v0.12.6 publish none, so the release assets' digests
+          case "$NVIM/$a" in
+            v0.10.4/nvim-linux-x86_64.tar.gz) sum=95aaa8e89473f5421114f2787c13ae0ec6e11ebbd1a13a1bd6fcf63420f8073f ;;
+            v0.10.4/nvim-macos-arm64.tar.gz) sum=3d7b07ec9b491d2a3d55167bc1db1cfa96773a1a37e74ea384cb15ab0189223b ;;
+            v0.10.4/nvim-win64.zip) sum=dceeb8301f64e244e3e2dffaedbb153bd01c0c6ecb5024a90e3172dc8e65555c ;;
+            v0.11.7/nvim-linux-x86_64.tar.gz) sum=38a7c6317f94503841096c00e8fde05ef04b9472fc9d7d62b6e033cecd6f7991 ;;
+            v0.11.7/nvim-macos-arm64.tar.gz) sum=9c84686ce84bbab725ff3d88ca3ac1d6da5a72128b68d9dd8094e34d4049a126 ;;
+            v0.11.7/nvim-win64.zip) sum=7b10e6e08b14bf256422b72cfe706ef0452fd9c0a40e138426e1af09803d697f ;;
+            v0.12.6/nvim-linux-x86_64.tar.gz) sum=474430d53e6264f6d6dd18db42d6dc9df3a1b56ca9e88a325bbf860e1a811d87 ;;
+            v0.12.6/nvim-macos-arm64.tar.gz) sum=1dbd148222b051ba6c307c4d17a318ed083df018a4f6a5a0ce46955ffc9ab87b ;;
+            v0.12.6/nvim-win64.zip) sum=4e12b7103b601ffc8f25954b4da100f339faa73dccb69a5b135e897fa3d893ed ;;
+          esac
+          bin=$GITHUB_WORKSPACE/bin/scrutate
+          if [ "$RUNNER_OS" = Windows ]; then bin=$bin.exe; exe=.exe; else chmod +x "$bin"; exe=; fi
           cd "$RUNNER_TEMP"
-          curl -sSfL -o nvim.tar.gz https://github.com/neovim/neovim/releases/download/v0.12.6/nvim-linux-x86_64.tar.gz
-          echo "474430d53e6264f6d6dd18db42d6dc9df3a1b56ca9e88a325bbf860e1a811d87  nvim.tar.gz" | sha256sum -c -
-          tar xzf nvim.tar.gz
+          curl -sSfL --retry 5 -o "$a" "https://github.com/neovim/neovim/releases/download/$NVIM/$a"
+          if command -v sha256sum > /dev/null; then echo "$sum  $a" | sha256sum -c -; else echo "$sum  $a" | shasum -a 256 -c -; fi
+          mkdir nvim
+          if [ "$RUNNER_OS" = Windows ]; then unzip -q "$a" -d nvim; else tar xzf "$a" -C nvim; fi
+          nvim=$(echo "$PWD"/nvim/*/bin/nvim$exe)
+          "$nvim" --version | head -1
           bash "$GITHUB_WORKSPACE/integrations/fixture.sh" repo
           cd repo
-          ../nvim-linux-x86_64/bin/nvim --headless -u NONE -l "$GITHUB_WORKSPACE/integrations/neovim/test/run.lua" "$GITHUB_WORKSPACE/bin/scrutate"
+          "$nvim" --headless -u NONE -l "$GITHUB_WORKSPACE/integrations/neovim/test/run.lua" "$bin"

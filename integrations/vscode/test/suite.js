@@ -18,6 +18,17 @@ async function until(what, f) {
 }
 
 exports.run = async function () {
+  // which copy runs: this folder, or the package installed from the .vsix
+  const ext = vscode.extensions.getExtension("scrutate.scrutate");
+  assert.ok(ext, "the extension is loaded");
+  const real = (p) => {
+    const r = fs.realpathSync.native(p);
+    return process.platform === "win32" ? r.toLowerCase() : r;
+  };
+  const under = process.env.SCRUTATE_TEST_EXTENSION_UNDER;
+  if (under) assert.ok(real(ext.extensionPath).startsWith(real(under)), `${ext.extensionPath} is not under ${under}`);
+  console.log(`extension path: ${ext.extensionPath}`);
+
   const folder = vscode.workspace.workspaceFolders[0].uri;
   const top = process.env.SCRUTATE_TEST_TOP || folder.fsPath;
   const root = vscode.Uri.file(top);
