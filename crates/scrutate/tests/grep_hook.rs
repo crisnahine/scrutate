@@ -11,6 +11,14 @@ use serde_json::{json, Value};
 
 const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
 const HEADER: &str = "Grep result:";
+/// The separator Grep prints between the parts of a path.
+const SEP: &str = if cfg!(windows) { "\\" } else { "/" };
+
+/// `p` as Claude Code has it: on Windows without the `\\?\` that `canonicalize` puts in front.
+fn real(p: PathBuf) -> PathBuf {
+    let p = fs::canonicalize(p).unwrap();
+    PathBuf::from(p.to_str().unwrap().trim_start_matches(r"\\?\"))
+}
 
 /// A fixture tree and a scratch home under the build's own temporary directory.
 struct Tree {
@@ -25,7 +33,7 @@ impl Tree {
         let root = base.join("repo");
         fs::create_dir_all(root.join(".git")).unwrap();
         fs::create_dir_all(base.join("home")).unwrap();
-        let t = Tree { root: fs::canonicalize(&root).unwrap(), base: fs::canonicalize(&base).unwrap() };
+        let t = Tree { root: real(root), base: real(base) };
         t.write(".git/config", "needle in git\n");
         t.write(".gitignore", "ignored/\n*.log\n");
         t.write("ignored/i.txt", "needle ignored\n");
@@ -92,7 +100,13 @@ impl Tree {
 
     fn stats(&self) -> Value {
         let home = self.base.join("home");
-        let out = Command::new(BIN).args(["hook", "stats", "--json"]).env("HOME", &home).env("XDG_STATE_HOME", home.join("state")).output().unwrap();
+        let out = Command::new(BIN)
+            .args(["hook", "stats", "--json"])
+            .env("HOME", &home)
+            .env("XDG_STATE_HOME", home.join("state"))
+            .env("LOCALAPPDATA", home.join("state"))
+            .output()
+            .unwrap();
         serde_json::from_slice(&out.stdout).unwrap()
     }
 }
@@ -133,13 +147,14 @@ fn a_type_keeps_ignored_files_out_where_a_glob_brings_them_in() {
 
 fn have_rg() -> bool {
     let ok = Command::new("rg").arg("--version").stdout(Stdio::null()).status().is_ok_and(|s| s.success());
+    // CI sets it where it installs ripgrep, so a missing rg fails there instead of skipping
+    assert!(ok || std::env::var_os("SCRUTATE_TEST_NEEDS_RG").is_none(), "rg is not installed");
     if !ok {
         eprintln!("skipped: rg is not installed");
     }
     ok
 }
 
-#[cfg(not(windows))]
 /// What Grep makes of ripgrep's output for `input`: ripgrep run with the arguments Grep gives it,
 /// then Grep's own handling of the lines (long lines, context breaks, paths from the session's
 /// directory). `rg --sort path` keeps the order fixed; Grep's own runs in any order.
@@ -187,11 +202,11 @@ fn grep_lines(t: &Tree, input: &Value) -> Vec<String> {
         }
     }
     // Grep resolves the path by name before it gives it to ripgrep
-    let target = i["path"].as_str().map_or(t.root.clone(), |p| fs::canonicalize(t.root.join(p)).unwrap());
+    let target = i["path"].as_str().map_or(t.root.clone(), |p| real(t.root.join(p)));
     a.push(target.to_str().unwrap().into());
     let out = Command::new("rg").args(&a).current_dir(&t.root).output().unwrap();
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
-    let rel = |p: &str| p.strip_prefix(&format!("{}/", t.root.display())).unwrap_or(p).to_string();
+    let rel = |p: &str| p.strip_prefix(&format!("{}{SEP}", t.root.display())).unwrap_or(p).to_string();
     match mode {
         "files_with_matches" => text.split('\0').filter(|s| !s.trim().is_empty()).map(|s| rel(s.trim_start_matches('\n'))).collect(),
         "count" => text.lines().map(|l| l.split_once('\0').map(|(p, n)| format!("{}:{n}", rel(p))).unwrap()).filter(|l| !l.ends_with(":0")).collect(),
@@ -243,7 +258,6 @@ fn grep_lines(t: &Tree, input: &Value) -> Vec<String> {
     }
 }
 
-#[cfg(not(windows))]
 /// The hook's lines: the reason without Grep's own first and last lines.
 fn hook_lines(reason: &str, mode: &str) -> Vec<String> {
     let mut lines: Vec<String> = reason.lines().map(String::from).collect();
@@ -260,8 +274,6 @@ fn hook_lines(reason: &str, mode: &str) -> Vec<String> {
     lines
 }
 
-// the hook lets Grep run on Windows by design: its answers are checked elsewhere
-#[cfg(not(windows))]
 #[test]
 fn the_hook_answers_with_ripgreps_lines_for_greps_arguments() {
     if !have_rg() {
@@ -339,6 +351,10 @@ fn calls_it_cannot_answer_exactly_let_grep_run() {
     for ask in unanswered {
         assert_eq!(t.reason(ask.clone()), None, "for {ask}");
     }
+    // a separator on Windows, where Grep's ripgrep matches the glob from its working directory
+    if cfg!(windows) {
+        assert_eq!(t.reason(json!({"pattern": "needle", "glob": "src\\*.rs"})), None);
+    }
     let (code, out) =
         t.hook(&json!({"hook_event_name": "PreToolUse", "tool_name": "Read", "cwd": t.root.to_str().unwrap(), "tool_input": {"file_path": "x"}}), &[]);
     assert_eq!((code, out.as_str()), (0, ""));
@@ -348,15 +364,10 @@ fn calls_it_cannot_answer_exactly_let_grep_run() {
     t.write(".claude/settings.json", r#"{"permissions": {"deny": ["Read(./.env)"]}}"#);
     assert_eq!(t.reason(json!({"pattern": "needle"})), None);
     t.write(".claude/settings.json", r#"{"permissions": {"allow": ["Bash(ls)"]}}"#);
-    // on Windows the hook lets every Grep run, so nothing is answered there
-    if cfg!(not(windows)) {
-        assert!(t.reason(json!({"pattern": "needle"})).is_some());
-        assert_eq!(t.stats()["total"]["calls"], 1, "only answered calls count");
-    }
+    assert!(t.reason(json!({"pattern": "needle"})).is_some());
+    assert_eq!(t.stats()["total"]["calls"], 1, "only answered calls count");
 }
 
-// the hook lets Grep run on Windows by design: its answers are checked elsewhere
-#[cfg(not(windows))]
 #[test]
 fn greps_paging_and_the_byte_limit_bound_the_answer() {
     let t = Tree::new("page");
@@ -366,10 +377,10 @@ fn greps_paging_and_the_byte_limit_bound_the_answer() {
     let reason = t.reason(json!({"pattern": "needle", "output_mode": "content", "path": "many"})).unwrap();
     let lines: Vec<&str> = reason.lines().collect();
     assert_eq!(lines.len(), 251, "Grep's 250 lines, then its paging line");
-    assert_eq!(lines[0], "many/f000.txt:1:needle");
+    assert_eq!(lines[0], format!("many{SEP}f000.txt:1:needle"));
     assert_eq!(lines[250], "[Showing results with pagination = limit: 250]");
     let second = t.reason(json!({"pattern": "needle", "output_mode": "content", "path": "many", "offset": 250})).unwrap();
-    assert_eq!(second.lines().next(), Some("many/f250.txt:1:needle"));
+    assert_eq!(second.lines().next(), Some(format!("many{SEP}f250.txt:1:needle").as_str()));
     assert!(second.ends_with("[Showing results with pagination = offset: 250]"), "{second}");
 
     let (code, out) =
@@ -384,8 +395,6 @@ fn greps_paging_and_the_byte_limit_bound_the_answer() {
     assert!(last.contains(&format!("offset={shown},")), "{last}");
 }
 
-// the hook lets Grep run on Windows by design: its answers are checked elsewhere
-#[cfg(not(windows))]
 #[test]
 fn the_counter_moves_by_the_measured_bytes() {
     let t = Tree::new("count");
@@ -407,7 +416,9 @@ fn the_counter_moves_by_the_measured_bytes() {
     assert_eq!(grep, (0..400).map(|i| format!("many/f{i:03}.txt:1:needle {}", "y".repeat(100)).len() as u64 + 1).sum::<u64>() - 1);
     assert!(sent <= 2000 && sent > 1000, "{sent}");
     assert!(s2["total"]["saved_bytes"].as_i64().unwrap() > 0);
-    let text = Command::new(BIN).args(["hook", "stats"]).env("HOME", t.base.join("home")).env("XDG_STATE_HOME", t.base.join("home/state")).output().unwrap();
+    let state = t.base.join("home").join("state");
+    let text =
+        Command::new(BIN).args(["hook", "stats"]).env("HOME", t.base.join("home")).env("XDG_STATE_HOME", &state).env("LOCALAPPDATA", &state).output().unwrap();
     let text = String::from_utf8(text.stdout).unwrap();
     assert!(text.starts_with("session test-session: 2 calls"), "{text}");
     assert!(text.contains("all sessions: 2 calls"), "{text}");

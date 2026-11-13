@@ -275,10 +275,11 @@ executed), and only below the project directory (`CLAUDE_PROJECT_DIR`, else the 
 directory): a search elsewhere is one Claude Code would ask about first, so the hook lets Grep
 run and Claude Code ask. Claude Code filters Grep's results by the `Read` and `Grep` rules of its
 settings; the hook cannot apply those rules, so when any settings file it can read (the user's,
-the project's, the local one, the managed one) has a `deny` or `ask` rule for `Read` or `Grep`, or
+the project's, the local one, the managed file) has a `deny` or `ask` rule for `Read` or `Grep`, or
 does not parse, the hook lets Grep run. It fails open in the same way on any argument it does not
 map, on an error, on a binary or unreadable file and after 3 seconds: it prints nothing, exits 0,
-and Grep runs. It never exits 2, which would block the call. It writes one file, the counter
+and Grep runs. It answers on Windows as elsewhere, with Windows' `\` in the paths as Grep prints
+them, and lets Grep run for a path not on a drive letter. It never exits 2, which would block the call. It writes one file, the counter
 `$XDG_STATE_HOME/scrutate/hook-grep.jsonl` (default `~/.local/state/scrutate/`, on Windows
 `%LOCALAPPDATA%\scrutate\`): one line per answered call with the session id, two byte counts and
 the time, and no file name or text of the repository.

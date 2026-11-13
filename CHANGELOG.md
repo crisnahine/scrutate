@@ -23,7 +23,9 @@ version rebuilds incompatible indexes automatically and this is never considered
   and in all, the bytes Grep would have returned against the bytes the hook sent. An answer the
   bound does not cut costs 13 bytes more than Grep's own result, the line `Grep result:` before it.
   A plain `--uninstall` takes the hook and the instruction block out with the server entry, so a
-  removed binary leaves no hook behind.
+  removed binary leaves no hook behind. On Windows the hook answers too, with the paths as Grep
+  prints them there (`src\a.rs`), and `setup` writes a command that Git Bash and PowerShell, the
+  two shells Claude Code runs hooks in there, both run.
 - `scrutate tsquery LANG QUERY [PATHS] --rewrite TEMPLATE` replaces each match (its `@match`
   capture, else its widest) with a template of the captures (`$NAME`, `${NAME}`, `$$`) and prints
   a unified diff; `--write` writes each file whole by rename, only while its bytes are those read.

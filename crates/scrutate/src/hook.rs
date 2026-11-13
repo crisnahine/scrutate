@@ -94,9 +94,6 @@ struct Ask {
 
 /// The answer to `input` (Claude Code's hook input), or `None` when Grep must run.
 pub fn answer(input: &Value, budget: usize) -> Option<Answer> {
-    if cfg!(windows) {
-        return None;
-    }
     let ask = read_ask(input)?;
     let project = std::env::var_os("CLAUDE_PROJECT_DIR").map(PathBuf::from).unwrap_or_else(|| ask.cwd.clone());
     // Grep asks before it reads outside the project, and Claude Code's read rules filter it: the
@@ -158,15 +155,12 @@ fn read_ask(input: &Value) -> Option<Ask> {
         Some(p) => lexical(&cwd.join(p))?,
         None => lexical(&cwd)?,
     };
-    // a link on the way makes ripgrep's paths differ from the walk's
-    if std::fs::canonicalize(&target).ok()? != target {
-        return None;
-    }
+    let target = PathBuf::from(real_path(&std::fs::canonicalize(&target).ok()?.to_string_lossy(), target.to_str()?, cfg!(windows))?);
     let mut globs: Vec<String> = VCS.iter().map(|d| format!("!{d}")).collect();
     for g in split_glob(text("glob")?.unwrap_or("")) {
         // a glob with a slash matches from ripgrep's working directory, which the hook cannot see
         let bare = g.strip_prefix('!').unwrap_or(&g);
-        if bare.strip_prefix("**/").unwrap_or(bare).contains('/') {
+        if bare.strip_prefix("**/").unwrap_or(bare).contains('/') || (cfg!(windows) && g.contains('\\')) {
             return None;
         }
         globs.push(g);
@@ -213,6 +207,47 @@ fn lexical(p: &Path) -> Option<PathBuf> {
     out.is_absolute().then_some(out)
 }
 
+/// The path Grep searches for `p`, from `real`, what `canonicalize` gave: Claude Code takes the
+/// real path, and on Windows that may differ from `p` in the case of its letters only. Anything
+/// else is a link on the way, which makes ripgrep's paths differ from the walk's, or a path not on
+/// a drive letter, which Claude Code searches by another way (`fr(e)&&!Qd(e)||Ga(e)`).
+fn real_path(real: &str, p: &str, windows: bool) -> Option<String> {
+    if !windows {
+        return (real == p).then(|| p.to_string());
+    }
+    let real = real.strip_prefix(r"\\?\").unwrap_or(real);
+    let b = real.as_bytes();
+    let drive = b.len() >= 3 && b[0].is_ascii_alphabetic() && &b[1..3] == b":\\";
+    (drive && real.to_lowercase() == p.to_lowercase()).then(|| real.to_string())
+}
+
+/// What follows `base` in `p` when `p` is `base` or under it, as Node's `path.relative` finds it:
+/// without case on Windows.
+fn under<'a>(p: &'a str, base: &str, windows: bool) -> Option<&'a str> {
+    let sep = if windows { '\\' } else { '/' };
+    let base = base.trim_end_matches(sep);
+    let head = p.get(..base.len())?;
+    if head != base && !(windows && head.to_lowercase() == base.to_lowercase()) {
+        return None;
+    }
+    let rest = &p[base.len()..];
+    if rest.is_empty() {
+        Some(rest)
+    } else {
+        rest.strip_prefix(sep)
+    }
+}
+
+/// A path of Engine A's (`/` between its parts) as Grep prints it: `rat` of Claude Code, the
+/// path from the session's directory when under it, else as ripgrep gave it, with `\` on Windows.
+fn shown(path: &str, cwd: &str, windows: bool) -> String {
+    let (p, cwd) = if windows { (path.replace('/', "\\"), cwd.replace('/', "\\")) } else { (path.to_string(), cwd.to_string()) };
+    match under(&p, &cwd, windows) {
+        Some(r) if !r.is_empty() => r.to_string(),
+        _ => p,
+    }
+}
+
 /// Grep's `glob` argument as it splits it: at whitespace, and at commas outside a word with braces.
 fn split_glob(s: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -229,11 +264,15 @@ fn split_glob(s: &str) -> Vec<String> {
 /// Whether a settings file of Claude Code has a `deny` or `ask` rule for reads, which Grep's
 /// answer would have to follow. A settings file that does not parse counts as one.
 fn rules_limit_reads(project: &Path) -> bool {
-    let home = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".claude")));
+    let home = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(|h| PathBuf::from(h).join(".claude")));
     let mut files = vec![project.join(".claude").join("settings.json"), project.join(".claude").join("settings.local.json")];
     files.extend(home.map(|h| h.join("settings.json")));
     files.push(PathBuf::from(if cfg!(target_os = "macos") {
         "/Library/Application Support/ClaudeCode/managed-settings.json"
+    } else if cfg!(windows) {
+        r"C:\Program Files\ClaudeCode\managed-settings.json"
     } else {
         "/etc/claude-code/managed-settings.json"
     }));
@@ -307,10 +346,8 @@ fn search(ask: &Ask) -> Option<Vec<Item>> {
         return None;
     }
     let dir = ask.target.is_dir();
-    let shown = |p: &str| match Path::new(p).strip_prefix(&ask.cwd) {
-        Ok(r) if !r.as_os_str().is_empty() => r.to_string_lossy().into_owned(),
-        _ => p.to_string(),
-    };
+    let cwd = ask.cwd.to_string_lossy();
+    let shown = |p: &str| shown(p, &cwd, cfg!(windows));
     let mut items = Vec::new();
     match ask.shape {
         Shape::Content => {
@@ -598,6 +635,31 @@ mod tests {
         let more = "\n(2 more lines not shown: call Grep again with offset=11, or narrow the request)";
         let room = 4 + more.len() + 2;
         assert_eq!(bounded(&page, 10, 13, room, "lines"), format!("aaaa{more}"));
+    }
+
+    #[test]
+    fn paths_are_shown_as_claude_codes_path_relative_gives_them() {
+        assert_eq!(shown("/r/src/a.rs", "/r", false), "src/a.rs");
+        assert_eq!(shown("/r2/a.rs", "/r", false), "/r2/a.rs");
+        assert_eq!(shown("/R/a.rs", "/r", false), "/R/a.rs");
+        assert_eq!(shown("/a.rs", "/", false), "a.rs");
+        // Windows: `\` between the parts, and the session's directory matched without case
+        assert_eq!(shown("C:/Users/X/repo/src/a.rs", r"C:\Users\X\repo", true), r"src\a.rs");
+        assert_eq!(shown("C:/Users/X/repo/src/a.rs", r"c:\users\x\REPO", true), r"src\a.rs");
+        assert_eq!(shown("C:/Users/X/repo/src/a.rs", "C:/Users/X/repo/", true), r"src\a.rs");
+        assert_eq!(shown("C:/Users/X/repo2/a.rs", r"C:\Users\X\repo", true), r"C:\Users\X\repo2\a.rs");
+        assert_eq!(shown("D:/repo/a.rs", r"C:\repo", true), r"D:\repo\a.rs");
+        assert_eq!(shown("C:/a.rs", r"C:\", true), "a.rs");
+    }
+
+    #[test]
+    fn the_searched_path_is_the_real_one_and_differs_only_in_case_on_windows() {
+        assert_eq!(real_path("/r/a", "/r/a", false).as_deref(), Some("/r/a"));
+        assert_eq!(real_path("/r/A", "/r/a", false), None);
+        assert_eq!(real_path(r"\\?\C:\Users\X\repo", r"c:\users\x\repo", true).as_deref(), Some(r"C:\Users\X\repo"));
+        assert_eq!(real_path(r"C:\Users\X\repo", r"C:\Users\X\repo", true).as_deref(), Some(r"C:\Users\X\repo"));
+        assert_eq!(real_path(r"\\?\C:\elsewhere", r"C:\Users\X\link", true), None);
+        assert_eq!(real_path(r"\\?\UNC\server\share\x", r"\\server\share\x", true), None);
     }
 
     #[cfg(unix)]

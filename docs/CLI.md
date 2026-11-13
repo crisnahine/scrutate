@@ -987,6 +987,10 @@ stdio server only in a folder it trusts (`gemini trust`, or `~/.gemini/trustedFo
 `--hook` (Claude Code) adds a `PreToolUse` group to Claude Code's settings, `~/.claude/settings.json`
 (`$CLAUDE_CONFIG_DIR/settings.json`), or `.claude/settings.json` with `--project`:
 `{"matcher": "Grep", "hooks": [{"type": "command", "command": "<binary> hook grep", "timeout": 10}]}`.
+On Windows Claude Code runs a hook command in Git Bash, or in PowerShell when it finds no Git
+Bash, so the command is the binary's path with `/` (`C:/Users/me/.cargo/bin/scrutate.exe hook
+grep`), which both run as written; a path with a space or another character either shell reads
+goes as `"command": "<binary>", "args": ["hook", "grep"]`, which Claude Code starts with no shell.
 The other agents get a note and no hook: Codex has `PreToolUse` hooks but searches by running `rg`
 in its shell, with no search tool of its own; cursor-agent has a `preToolUse` hook and Gemini CLI
 a `BeforeTool` hook, but their search tools take other arguments and answer in another form;
@@ -1009,7 +1013,8 @@ with Engine A's matches: the lines ripgrep gives for the arguments Grep passes i
 --multiline-dotall` for `multiline`, `-i`, `-A`, `-B`, `-C` or `context`, the `glob` argument
 split at whitespace and at commas outside braces, `type`). They are worded as Grep words them:
 `path:N:text` for a match and `path-N-text` for a context line, the path from the session's
-directory, `--` between groups when context was asked, no number for `-n: false`, no path when the
+directory (with `\` on Windows, where the session's directory is matched without case, as Node's
+`path.relative` does, and the path is the file's real one with its letters' case on disk), `--` between groups when context was asked, no number for `-n: false`, no path when the
 path searched is a file, `[Omitted long matching line]` for a line longer than 500 characters;
 `Found N files` and the paths for `files_with_matches`, newest first as Grep sorts them; the
 counts and `Found N total occurrences across M files.` for `count`. Matches come in path order.
@@ -1027,14 +1032,16 @@ reason of another hook is cut at 2,000 characters.
 
 It fails open: it prints nothing and exits 0, so Grep runs as if there were no hook, for any other
 tool or event, an argument it does not know, `-o`, a `glob` with a `/` other than a leading
-`**/` (ripgrep matches it from its own working directory), a `type` whose files differ between
+`**/` (ripgrep matches it from its own working directory), a `glob` with a `\` on Windows (a
+separator there), a `type` whose files differ between
 ripgrep and scrutate's registry (it takes `asm`, `cmake`, `cs`, `csharp`, `dart`, `elisp`, `elm`,
 `erlang`, `fish`, `gleam`, `go`, `julia`, `kotlin`, `lua`, `nix`, `py`, `python`, `racket`,
 `rst`, `rust`, `solidity`, `swift` and `yaml`), a path that starts with `~`, goes through a
-symbolic link or lies outside the project (`$CLAUDE_PROJECT_DIR`, else `cwd`), a `deny` or `ask`
+symbolic link, is not on a drive letter on Windows (a `\\server\share` path, which Claude Code
+searches another way) or lies outside the project (`$CLAUDE_PROJECT_DIR`, else `cwd`), a `deny` or `ask`
 rule for `Read` or `Grep` in a Claude Code settings file (the user's, the project's, the local one
-and the managed one), an invalid pattern, no match, a file name that is not UTF-8, a binary file
-that matched, a file it could not read, a search longer than 3 seconds, and on Windows. It never
+and the managed one, on Windows `C:\Program Files\ClaudeCode\managed-settings.json`), an invalid pattern, no match, a file name that is not UTF-8, a binary file
+that matched, a file it could not read, a search longer than 3 seconds. It never
 exits with another code (exit code 2 would block the call), and it reads no `.scrutate.toml` or
 other scrutate configuration file.
 

@@ -167,8 +167,8 @@ fn shown_command(argv: &[String]) -> String {
     argv.iter().map(|a| shell_word(a)).collect::<Vec<_>>().join(" ")
 }
 
-/// `s` as one word of the shell that runs a hook command: a POSIX shell, or on Windows cmd,
-/// PowerShell or Git Bash, where double quotes hold a path in all three.
+/// `s` as one word of a shell: a POSIX shell, or on Windows cmd, PowerShell or Git Bash, where
+/// double quotes hold a path in all three.
 fn shell_word(s: &str) -> String {
     if cfg!(windows) {
         format!("\"{s}\"")
@@ -400,11 +400,10 @@ fn json_entry(path: &Path, keys: &[&str], entry: &J, o: Options) -> Result<Vec<S
 
 /// The hook entry of Claude Code's settings: a `PreToolUse` group with matcher `Grep`.
 fn claude_hook(path: &Path, bin: &str, o: Options) -> Result<Vec<Step>> {
-    let command = format!("{} hook grep", shell_word(bin));
-    let group = obj(vec![
-        ("matcher", J::S("Grep".into())),
-        ("hooks", J::A(vec![obj(vec![("type", J::S("command".into())), ("command", J::S(command)), ("timeout", J::N(HOOK_TIMEOUT_S))])])),
-    ]);
+    let mut hook = vec![("type", J::S("command".into()))];
+    hook.extend(hook_run(bin, cfg!(windows)));
+    hook.push(("timeout", J::N(HOOK_TIMEOUT_S)));
+    let group = obj(vec![("matcher", J::S("Grep".into())), ("hooks", J::A(vec![obj(hook)]))]);
     let before = read(path)?;
     let refused = |e: anyhow::Error| anyhow!("{} does not parse ({e:#}): left as it is", path.display());
     let keys = ["hooks", "PreToolUse"];
@@ -425,11 +424,30 @@ fn claude_hook(path: &Path, bin: &str, o: Options) -> Result<Vec<Step>> {
     })
 }
 
+/// How Claude Code runs the hook. On Windows it runs a command in Git Bash, or in PowerShell
+/// when there is no Git Bash (`Sn=e.shell??ij()`): a path with `/` and no character either shell
+/// reads runs the same in both; another path goes as the program and its arguments, which
+/// Claude Code starts with no shell (`B$e(wo[0],wo[1],...)`).
+fn hook_run(bin: &str, windows: bool) -> Vec<(&'static str, J)> {
+    if !windows {
+        return vec![("command", J::S(format!("{} hook grep", shell_word(bin))))];
+    }
+    if bin.chars().all(|c| c.is_alphanumeric() || r"\/._-:".contains(c)) {
+        vec![("command", J::S(format!("{} hook grep", bin.replace('\\', "/"))))]
+    } else {
+        vec![("command", J::S(bin.into())), ("args", strings(&["hook".into(), "grep".into()]))]
+    }
+}
+
 fn is_our_hook(v: &Value) -> bool {
-    v.get("matcher").and_then(Value::as_str) == Some("Grep")
-        && v.get("hooks")
-            .and_then(Value::as_array)
-            .is_some_and(|h| h.len() == 1 && h[0].get("command").and_then(Value::as_str).is_some_and(|c| c.ends_with(" hook grep") && c.contains("scrutate")))
+    let ours = |h: &Value| {
+        let command = h.get("command").and_then(Value::as_str).unwrap_or("");
+        match h.get("args") {
+            None => command.ends_with(" hook grep") && command.contains("scrutate"),
+            Some(a) => command.contains("scrutate") && *a == serde_json::json!(["hook", "grep"]),
+        }
+    };
+    v.get("matcher").and_then(Value::as_str) == Some("Grep") && v.get("hooks").and_then(Value::as_array).is_some_and(|h| h.len() == 1 && ours(&h[0]))
 }
 
 /// `[mcp_servers.scrutate]` of Codex's `config.toml`, appended as one table, or removed.
@@ -1019,6 +1037,23 @@ fn pull(text: &str, keys: &[&str], ours: fn(&Value) -> bool) -> Result<Option<Op
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn run(bin: &str) -> Value {
+        obj(hook_run(bin, true)).value()
+    }
+
+    #[test]
+    fn on_windows_the_hook_runs_in_git_bash_and_powershell_alike() {
+        let plain = run(r"C:\Users\cris\.cargo\bin\scrutate.exe");
+        assert_eq!(plain, serde_json::json!({"command": "C:/Users/cris/.cargo/bin/scrutate.exe hook grep"}));
+        let spaced = run(r"C:\Program Files\scrutate\scrutate.exe");
+        assert_eq!(spaced, serde_json::json!({"command": r"C:\Program Files\scrutate\scrutate.exe", "args": ["hook", "grep"]}));
+        for h in [plain, spaced] {
+            assert!(is_our_hook(&serde_json::json!({"matcher": "Grep", "hooks": [h]})));
+        }
+        assert!(is_our_hook(&serde_json::json!({"matcher": "Grep", "hooks": [{"command": r#""C:\x\scrutate.exe" hook grep"#}]})));
+        assert!(!is_our_hook(&serde_json::json!({"matcher": "Grep", "hooks": [{"command": "scrutate.exe", "args": ["serve"]}]})));
+    }
 
     fn entry() -> J {
         obj(vec![("command", J::S("/bin/scrutate".into())), ("args", J::A(vec![J::S("serve".into())]))])

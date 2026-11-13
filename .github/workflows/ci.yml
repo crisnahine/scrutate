@@ -41,6 +41,20 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --exclude scrutate-py -- -D warnings
+      # the Grep hook's tests compare its answers with ripgrep's; SCRUTATE_TEST_NEEDS_RG fails them if rg is missing
+      - name: ripgrep for the Grep hook's tests (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          case "$RUNNER_ARCH" in
+            X64) t=x86_64-pc-windows-msvc; sum=71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5 ;;
+            ARM64) t=aarch64-pc-windows-msvc; sum=e4abca10c3a64ebea742667dd7009449d49403db5460dd6873e389fa2945360f ;;
+          esac
+          cd "$RUNNER_TEMP"
+          curl -sSfL -o rg.zip "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-$t.zip"
+          echo "$sum  rg.zip" | sha256sum -c -
+          unzip -q rg.zip
+          echo "$RUNNER_TEMP/ripgrep-15.2.0-$t" >> "$GITHUB_PATH"
+          echo "SCRUTATE_TEST_NEEDS_RG=1" >> "$GITHUB_ENV"
       # the core must build and pass its tests with no Python involved (the bindings crate is excluded)
       # every test file runs, so one failure does not hide the next
       - run: cargo test --release -p scrutate --locked --no-fail-fast

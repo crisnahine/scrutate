@@ -272,8 +272,9 @@ fn the_hook_and_the_instructions_come_only_when_asked_and_go_with_uninstall() {
     let ours = &v["hooks"]["PreToolUse"][1];
     assert_eq!(ours["matcher"], "Grep");
     assert_eq!(ours["hooks"][0]["type"], "command");
-    let quoted = if cfg!(windows) { format!("\"{}\"", bin()) } else { bin() };
-    assert_eq!(ours["hooks"][0]["command"], format!("{quoted} hook grep"));
+    // on Windows a path both Git Bash and PowerShell run as written (the runners' has no space)
+    let run = if cfg!(windows) { bin().replace('\\', "/") } else { bin() };
+    assert_eq!(ours["hooks"][0]["command"], format!("{run} hook grep"));
     assert_eq!(ours["hooks"][0]["timeout"], 10);
     let md = fs::read_to_string(&claude_md).unwrap();
     assert!(md.starts_with(before_md) && md.contains("<!-- scrutate:begin -->") && md.contains("grep_code"), "{md}");
