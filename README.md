@@ -1,4 +1,4 @@
-<p align="center"><b>Universal instant code search and persistent code intelligence, in one Rust binary.</b></p>
+<h3 align="center">Universal instant code search and persistent code intelligence, in one Rust binary.</h3>
 
 <p align="center">
   <a href="#licence"><img src="docs/assets/badge-licence.svg" alt="licence: MIT OR Apache-2.0" height="24"></a>
