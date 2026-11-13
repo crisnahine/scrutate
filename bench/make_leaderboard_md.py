@@ -64,7 +64,7 @@ STRUCTURAL_CACHED = ("scrutate's `tsquery` ran with its capture cache (`.scrutat
                      "runs read and hashed every file and parsed none, while ast-grep, with no cache, parses every file each run. "
                      "This measurement has no parse-for-parse run (`--no-cache`).")
 
-STOP_NOTE = ("- Stop rule (`leaderboard.py --stop-early`, the Haybittle-Peto boundary: Haybittle 1971, Peto et al. 1976): a row whose wall-time verdict and four CPU "
+STOP_NOTE = ("- Stop rule (`leaderboard.py`, on by default; the Haybittle-Peto boundary: Haybittle 1971, Peto et al. 1976): a row whose wall-time verdict and four CPU "
              "and memory verdicts are all PASS, FAIL or n/a at alpha 0.001 after its second block, with no tool's block medians 25% "
              "apart, stops there with 20 runs and shows its 99.9% interval. Every other row takes all its runs and is judged at "
              "alpha 0.049, a 95.1% interval. The alphas sum to 0.05 (Bonferroni), so either interval clearing 1 meets the 95% claim "

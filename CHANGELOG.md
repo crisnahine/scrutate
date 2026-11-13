@@ -96,9 +96,10 @@ incompatible index by itself, and that is never breaking.
 - The macOS benchmark chain waits for the new binary to start at its settled speed
   (`bench/wait_aged.py`, at most an hour) in place of a fixed hour
   ([RELEASING](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
-- `bench/leaderboard.py --stop-early` stops a row at 20 runs once every verdict holds at alpha
-  0.001 (Haybittle-Peto boundary); replayed over every recorded run it changed no verdict. Off by
-  default ([RELEASING](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
+- `bench/leaderboard.py` stops a row at 20 runs once every verdict holds at alpha 0.001
+  (Haybittle-Peto boundary); replayed over every recorded run it changed no verdict. On by
+  default, off with `--no-stop-early`; R-14.10 now defines a #1 over at least 20 runs per tool
+  ([RELEASING](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
 - The release binaries for glibc Linux (x86_64 and aarch64) lay out the functions a small search
   runs side by side, as the macOS one does: a second link with rust-lld and the order file under
   that build's own names ([Releasing](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
