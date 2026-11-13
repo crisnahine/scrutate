@@ -92,3 +92,9 @@ workflow needs: actions pinned by commit (as this repository pins its own), a jo
 `concurrency` group.
 
 The action lives in a subdirectory, so it is not on the Marketplace.
+
+The `action` job in `.github/workflows/ci.yml` runs the action of each commit on all six runners
+(Linux, macOS and Windows; x86_64 and arm64). Before a release exists, `tools/fake_release.sh` packs
+the CI binary as `release.yml` packs a release and makes `curl` serve it from the release URLs, so
+the checksum check, the unpack, `PATH` and the `exit-code` output all run for real. The review
+comment is tested against a stand-in `gh` in `crates/scrutate/tests/review.rs`.

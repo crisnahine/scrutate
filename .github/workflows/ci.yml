@@ -4,8 +4,9 @@
 # differential harnesses and the ranking quality floor; the wheel job builds, installs and tests
 # the bindings on every runner. The editor jobs run the CI binary in the hosts the integrations
 # claim: VS Code (the folder and the packaged .vsix) and Neovim on Linux, macOS and Windows, at each
-# version floor and the current release. Every action is pinned to a
-# commit; .github/dependabot.yml moves the pins. The Rust version, rustfmt and clippy come from
+# version floor and the current release. The action job installs a CI binary through the action
+# of this commit on all six runners, with curl answering the release URLs. Every action is pinned
+# to a commit; .github/dependabot.yml moves the pins. The Rust version, rustfmt and clippy come from
 # rust-toolchain.toml.
 name: ci
 on:
@@ -372,3 +373,48 @@ jobs:
           bash "$GITHUB_WORKSPACE/integrations/fixture.sh" repo
           cd repo
           "$nvim" --headless -u NONE -l "$GITHUB_WORKSPACE/integrations/neovim/test/run.lua" "$bin"
+  action:
+    name: GitHub action from this commit (${{ matrix.os }})
+    needs: [rust, musl]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest, windows-11-arm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # the action installs the musl build on Linux; no aarch64 musl build runs in CI, so on Linux
+      # arm64 the glibc binary stands in under that name, on the runner that built it
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ matrix.os == 'ubuntu-latest' && 'scrutate-musl' || format('scrutate-{0}', matrix.os) }}
+          path: bin
+      - name: the CI binary packed as release v0.1.0, which curl then serves
+        run: |
+          bin=bin/scrutate
+          if [ "$RUNNER_OS" = Windows ]; then bin=$bin.exe; fi
+          bash tools/fake_release.sh "$bin" 0.1.0
+      - id: found
+        uses: ./.github/actions/scrutate # zizmor: ignore[self-repository] the action of this commit, as release.yml calls ci.yml
+        with:
+          version: v0.1.0
+          args: grep --sort -F "fn main" crates/scrutate/src
+      - id: none
+        uses: ./.github/actions/scrutate # zizmor: ignore[self-repository] the action of this commit, as release.yml calls ci.yml
+        with:
+          version: v0.1.0
+          args: grep -F "zzzz_no_such_text_qqqq" crates/scrutate/src
+      - name: exit codes in the output, and the installed binary on PATH
+        env:
+          FOUND: ${{ steps.found.outputs.exit-code }}
+          NONE: ${{ steps.none.outputs.exit-code }}
+        run: |
+          echo "found: $FOUND, none: $NONE"
+          [ "$FOUND" = 0 ] && [ "$NONE" = 1 ]
+          where=$(command -v scrutate)
+          echo "$where"
+          case "$where" in *scrutate-0.1.0-*) ;; *) echo "scrutate on PATH is not the installed release"; exit 1 ;; esac
+          scrutate --version
