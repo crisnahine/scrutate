@@ -721,21 +721,34 @@ Per tool:
 - `serve --structured` (`SCRUTATE_MCP_STRUCTURED=1`) adds an `outputSchema` to every tool and
   `structuredContent` to every result, beside its text: the envelope with `complete`
   (`{"schema": 2, "complete": true, "result": ...}`), as the matching CLI command prints with
-  `--json`. When text and JSON together pass one and a half times `max_bytes`, `result` is
-  `null`, `complete` is `false` and `text` holds the page that fits; a larger `max_bytes` gets the
-  whole answer as JSON. It is off by default because clients differ in what they show their
-  model: Claude Code 2.1.322 shows the JSON in place of the text, and the text is the form with
-  the snippets (measured with that client on 2026-11-11). Turn it on for a client whose scripts
-  read tool results, such as Codex in Code Mode.
+  `--json`. When text and JSON together pass one and a half times `max_bytes`, or `offset` is
+  above 0, the result is a page: `complete` is `false`, `result` has the shape of the whole
+  answer with only the items the text page shows (the same items in `detailed` and `concise`),
+  `offset` is the first of them, `next_offset` the `offset` of the next page (`null` on the
+  last) and `total` the number of items. An item is what the text pages by: a result, a
+  `grep_code` group, a line of `read_code`, `references` or `impact`; a definition or group whose
+  lines a page boundary cuts is on both pages, each with its own lines, and `callees` names its
+  external callees on the last page. A failed call has a `null` result and the error in `text`.
+  It is off by default because clients differ in what they show their model: Claude Code
+  2.1.322 shows the JSON in place of the text, and the text is the form with the snippets
+  (measured with that client on 2026-11-11). Turn it on for a client whose scripts read tool
+  results, such as Codex in Code Mode.
 - Each call runs on its own thread, so `notifications/cancelled` reaches it, and calls run side
   by side, each on its own reader (up to the number of cores, at least 2 and at most 8; one more
   waits for a reader). On cancel, a call waiting for the index or a reader stops, an index update
-  it runs (`reindex`, or the scan before a read) stops and rolls back at its next batch, and the
-  answer of one already computing is dropped. Nothing more is sent for a cancelled request.
+  it runs (`reindex`, or the scan before a read) stops and rolls back at its next batch, a
+  `structural_search` stops reading files, and the answer of one already computing is dropped.
+  Nothing more is sent for a cancelled request.
 - While a repository's first index is being built, by this server or another process, a call
   waits up to 20 seconds and then answers that the index is still being built. A call carrying a
-  `progressToken` waits for the index instead, with a `notifications/progress` every two
-  seconds, and gets its answer.
+  `progressToken` waits for the index instead and gets its answer.
+- A call carrying a `progressToken` gets `notifications/progress` while the first index is built
+  and while it runs, at most one every half second and only when the count moved: `progress` is
+  the files read so far and `total` the files to read, both counted by an index update (the
+  first build, `reindex`, the scan before a read) and by `structural_search`; `message` says
+  which. `progress` rises with every report, also from the build to the call. No report comes
+  after the answer, and none after the call has seen its `notifications/cancelled`. The text index that `reindex` also
+  updates is not counted, and a call that reads no files sends none.
 - Protocol: a client that opens with `initialize` is served revisions 2024-11-05, 2025-03-26,
   2025-06-18 and 2025-11-25. A request naming its version in `_meta`
   (`io.modelcontextprotocol/protocolVersion`) is served by revision 2026-07-28, which has no

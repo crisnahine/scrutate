@@ -7,6 +7,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+#[path = "support/conforms.rs"]
+mod schema;
+use schema::conforms;
+
 const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
 
 struct Repo {
@@ -685,47 +689,6 @@ fn mcp_protocol_round_trip() {
     assert!(lines.iter().any(|v| v["error"]["code"] == -32700), "parse error for non-JSON input");
 }
 
-/// A value against the subset of JSON Schema the tool definitions use.
-fn conforms(schema: &serde_json::Value, v: &serde_json::Value) -> Result<(), String> {
-    use serde_json::Value;
-    if let Some(options) = schema.get("anyOf").and_then(Value::as_array) {
-        return if options.iter().any(|o| conforms(o, v).is_ok()) { Ok(()) } else { Err(format!("{v} fits none of {schema}")) };
-    }
-    let kind = match v {
-        Value::Null => "null",
-        Value::Bool(_) => "boolean",
-        Value::Number(n) if n.is_i64() || n.is_u64() => "integer",
-        Value::Number(_) => "number",
-        Value::String(_) => "string",
-        Value::Array(_) => "array",
-        Value::Object(_) => "object",
-    };
-    let allowed: Vec<&str> = match &schema["type"] {
-        Value::String(t) => vec![t.as_str()],
-        Value::Array(ts) => ts.iter().filter_map(Value::as_str).collect(),
-        _ => vec![kind],
-    };
-    if !allowed.contains(&kind) && !(kind == "integer" && allowed.contains(&"number")) {
-        return Err(format!("{v} is a {kind}, not one of {allowed:?}"));
-    }
-    for name in schema["required"].as_array().into_iter().flatten().filter_map(Value::as_str) {
-        if v.get(name).is_none() {
-            return Err(format!("{v} has no {name}"));
-        }
-    }
-    for (name, sub) in schema["properties"].as_object().into_iter().flatten() {
-        if let Some(field) = v.get(name) {
-            conforms(sub, field).map_err(|e| format!("{name}: {e}"))?;
-        }
-    }
-    if let (Some(items), Some(list)) = (schema.get("items"), v.as_array()) {
-        for item in list {
-            conforms(items, item)?;
-        }
-    }
-    Ok(())
-}
-
 /// The revision without a handshake, structured results that fit their schemas, whole definitions
 /// by name or by a location from another answer, and the same call under both eras.
 #[test]
@@ -818,11 +781,18 @@ fn mcp_stateless_revision_and_structured_results() {
     assert!(sc(16)["definitions"][0]["text"].as_str().unwrap().contains("def make_widget_7"));
     assert_eq!(sc(15)["text"].as_str().unwrap().lines().count(), 3);
     assert_eq!(text(29), text(12), "a location names the symbol at it");
-    // an answer too large for its budget pages as text and says so in the structured form
+    // an answer too large for its budget pages in both forms: the structured page holds the
+    // groups the text page shows, and says where the next page starts
     let big = &by_id(27)["result"];
-    assert_eq!((&big["structuredContent"]["complete"], &big["structuredContent"]["result"]), (&serde_json::json!(false), &serde_json::Value::Null));
-    assert_eq!(big["structuredContent"]["text"], big["content"][0]["text"], "a client that reads only the structured form gets the page too");
-    assert!(big["content"][0]["text"].as_str().unwrap().contains("not shown: call again with offset="), "{big}");
+    let page = &big["structuredContent"];
+    let grep = &tools.iter().find(|t| t["name"] == "grep_code").unwrap()["outputSchema"];
+    conforms(grep, page).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!((&page["complete"], &page["offset"]), (&serde_json::json!(false), &serde_json::json!(0)), "{page}");
+    let shown = big["content"][0]["text"].as_str().unwrap();
+    let next = page["next_offset"].as_u64().unwrap();
+    assert!(shown.contains(&format!("not shown: call again with offset={next}")), "{big}");
+    assert_eq!(page["result"]["groups"].as_array().unwrap().len() as u64, next);
+    assert!(page["total"].as_u64().unwrap() > next && page.get("text").is_none(), "{page}");
     for id in [28, 30] {
         assert_eq!(by_id(id)["result"]["isError"], true);
         assert_eq!(by_id(id)["result"]["structuredContent"]["result"], serde_json::Value::Null);

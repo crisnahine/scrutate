@@ -1576,7 +1576,9 @@ pub fn run() -> Result<i32> {
             let mut lines: Vec<String> = Vec::new();
             // one more than the limit, to tell whether it cut the answer
             let mut seen = 0usize;
-            let n = crate::intel::tsquery_each(&lang, &query, &paths, true, limit.saturating_add(1), cache_root, &mut |c| {
+            let (count, cancel) = (crate::index::FileCount::default(), std::sync::atomic::AtomicBool::new(false));
+            let watch = crate::intel::Watch { count: &count, cancel: &cancel };
+            let n = crate::intel::tsquery_each(&lang, &query, &paths, true, limit.saturating_add(1), cache_root, watch, &mut |c| {
                 seen += 1;
                 if err.is_some() || seen > limit {
                     return;

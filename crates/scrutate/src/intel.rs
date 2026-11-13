@@ -405,6 +405,7 @@ pub(crate) fn query_files(spec: &crate::langs::LangSpec, roots: &[PathBuf], as_g
     files
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn tsquery_each(
     lang: &str,
     query: &str,
@@ -412,6 +413,7 @@ pub fn tsquery_each(
     as_given: bool,
     limit: usize,
     cache_root: Option<&Path>,
+    watch: Watch,
     on_capture: &mut dyn FnMut(Capture),
 ) -> Result<usize> {
     use rayon::prelude::*;
@@ -439,6 +441,7 @@ pub fn tsquery_each(
         })
         .collect();
     let cache = cache_root.map(|r| crate::tscache::Cache::open(r, lang, query, &scopes(r, roots)));
+    watch.count.total.fetch_add(files.len(), std::sync::atomic::Ordering::Relaxed);
     // parse in parallel, deliver in path order: workers send (file index, content hash, captures,
     // complete) through a bounded channel; the consumer reorders with a small buffer, so memory
     // stays flat and no thread waits at chunk barriers
@@ -461,9 +464,10 @@ pub fn tsquery_each(
                     (parser, ok, tx.clone())
                 },
                 |(parser, ok, tx), (i, (path, rel, shown, known))| {
-                    if stop_ref.load(std::sync::atomic::Ordering::Relaxed) {
+                    if stop_ref.load(std::sync::atomic::Ordering::Relaxed) || watch.cancel.load(std::sync::atomic::Ordering::Relaxed) {
                         return;
                     }
+                    watch.count.done.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let mut out = Vec::new();
                     let mut key = None;
                     let mut complete = true;
@@ -551,6 +555,9 @@ pub fn tsquery_each(
         finished = finished && next == files_ref.len();
         delivered
     });
+    if watch.cancel.load(std::sync::atomic::Ordering::Relaxed) {
+        bail!("cancelled");
+    }
     if let Some(mut cache) = cache {
         if fresh_bytes > crate::tscache::MAX_BYTES {
             return Ok(delivered); // too large to cache: the stored entries stay as they were
@@ -571,10 +578,17 @@ pub fn tsquery_each(
     Ok(delivered)
 }
 
+/// What a long search reports to and is stopped by: the files it read, and the call's cancel flag.
+#[derive(Clone, Copy)]
+pub struct Watch<'a> {
+    pub count: &'a crate::index::FileCount,
+    pub cancel: &'a std::sync::atomic::AtomicBool,
+}
+
 /// `tsquery_each` collected into a vector (MCP and bindings; the CLI streams).
-pub fn tsquery(lang: &str, query: &str, roots: &[PathBuf], limit: usize, cache_root: Option<&Path>) -> Result<Vec<Capture>> {
+pub fn tsquery(lang: &str, query: &str, roots: &[PathBuf], limit: usize, cache_root: Option<&Path>, watch: Watch) -> Result<Vec<Capture>> {
     let mut out = Vec::new();
-    tsquery_each(lang, query, roots, false, limit, cache_root, &mut |c| out.push(c))?;
+    tsquery_each(lang, query, roots, false, limit, cache_root, watch, &mut |c| out.push(c))?;
     Ok(out)
 }
 

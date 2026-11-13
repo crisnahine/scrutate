@@ -228,6 +228,13 @@ impl Repo {
         }
     }
 
+    /// Where the next operation counts the files it reads (`index::FileCount`).
+    pub fn set_count(&mut self, count: Arc<index::FileCount>) {
+        if let Some(s) = &mut self.searcher {
+            s.ix.count = count;
+        }
+    }
+
     /// An index a failed rebuild left closed is opened and built again before anything reads it.
     /// An index a newer scrutate took over since it was opened, in a form this one cannot read,
     /// is an error for every operation until the process is restarted with that scrutate, or
@@ -431,6 +438,7 @@ impl Repo {
     fn rebuild(&mut self, why: &anyhow::Error) -> Result<UpdateStats> {
         eprintln!("[scrutate] index damaged ({why:#}); rebuilding");
         let progress = self.searcher.as_ref().is_some_and(|s| s.ix.progress);
+        let count = self.searcher.as_ref().map(|s| Arc::clone(&s.ix.count)).unwrap_or_default();
         self.searcher = None; // the database is closed before its files are deleted
         let gone = index::wipe_index(&self.root);
         let mut s = Searcher::new(index::Index::open(&self.root, Arc::clone(&self.models))?);
@@ -440,6 +448,7 @@ impl Repo {
             s.ix.clear_in_place()?;
         }
         s.ix.progress = progress;
+        s.ix.count = count;
         let st = s.ix.update(true);
         self.searcher = Some(s);
         st

@@ -369,3 +369,81 @@ fn the_short_tool_list_keeps_every_tool_argument_type_default_and_check() {
     assert_eq!(answers[0][5]["result"]["content"][0]["text"], "error: response_format must be \"detailed\" or \"concise\"");
     assert_eq!(answers[0][6]["error"]["code"], -32602);
 }
+
+impl Session {
+    fn send(&mut self, msg: Value) {
+        writeln!(self.stdin, "{msg}").unwrap();
+    }
+    fn next(&mut self) -> Value {
+        let mut line = String::new();
+        assert!(self.stdout.read_line(&mut line).unwrap() > 0, "the server closed stdout");
+        serde_json::from_str(&line).unwrap()
+    }
+}
+
+fn with_token(id: i64, name: &str, args: Value) -> Value {
+    json!({"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": {"name": name, "arguments": args, "_meta": {"progressToken": format!("t{id}")}}})
+}
+
+/// The progress of a call: each report counts more files than the one before, against a total,
+/// and none comes after the answer.
+#[test]
+fn a_long_call_with_a_progress_token_reports_files_read_until_its_answer() {
+    let r = Repo::new("progress", 4000);
+    let mut s = Session::start(&r, &["serve"], &[]);
+    s.text(1, "find_symbol", json!({"name": "make_widget_7"}));
+    for (id, name, args) in [
+        (2, "reindex", json!({"force": true})),
+        (3, "structural_search", json!({"lang": "python", "query": "(function_definition name: (identifier) @f)", "limit": 100000, "max_bytes": 1000})),
+    ] {
+        s.send(with_token(id, name, args));
+        let mut before = 0;
+        let answer = loop {
+            let m = s.next();
+            if m["id"] == id {
+                break m;
+            }
+            assert_eq!((&m["method"], &m["params"]["progressToken"]), (&json!("notifications/progress"), &json!(format!("t{id}"))), "{m}");
+            let (done, total) = (m["params"]["progress"].as_u64().unwrap(), m["params"]["total"].as_u64().unwrap());
+            assert!(done > before && done <= total && total >= 4000, "{m}");
+            before = done;
+        };
+        assert_eq!(answer["result"]["isError"], false, "{answer}");
+        if name == "reindex" {
+            assert!(before > 0, "a forced reindex of 4,000 files reports at least once");
+        }
+        // nothing more for that call: the next message answers the next request
+        s.send(json!({"jsonrpc": "2.0", "id": 90 + id, "method": "ping"}));
+        assert_eq!(s.next()["id"], 90 + id);
+    }
+}
+
+#[test]
+fn a_call_cancelled_after_its_first_progress_report_stops_and_sends_nothing_more() {
+    let r = Repo::new("progress_cancel", 4000);
+    let mut s = Session::start(&r, &["serve"], &[]);
+    s.text(1, "find_symbol", json!({"name": "make_widget_7"}));
+    s.send(with_token(2, "reindex", json!({"force": true})));
+    let first = s.next();
+    assert_eq!(first["method"], "notifications/progress", "{first}");
+    let (done, total) = (first["params"]["progress"].as_u64().unwrap(), first["params"]["total"].as_u64().unwrap());
+    assert!(done < total, "cancelled mid-way: {first}");
+    s.send(json!({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 2}}));
+    // a request after the notice is answered; the cancelled one never is
+    s.send(json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "find_symbol", "arguments": {"name": "make_widget_3999"}}}));
+    s.send(json!({"jsonrpc": "2.0", "id": 4, "method": "ping"}));
+    let mut answered = Vec::new();
+    while answered.len() < 2 {
+        let m = s.next();
+        assert_ne!(m["id"], 2, "a cancelled call is not answered: {m}");
+        match m["id"].as_i64() {
+            Some(3) => assert!(m["result"]["content"][0]["text"].as_str().unwrap().starts_with("pkg/m3999.py:4-5"), "{m}"),
+            Some(4) => {}
+            _ => {
+                assert_eq!(m["method"], "notifications/progress", "{m}");
+                continue;
+            }
+        }
+        answered.push(m);
+    }
+}

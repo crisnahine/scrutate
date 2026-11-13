@@ -67,6 +67,13 @@ incompatible index by itself, and that is never breaking.
   ([packaging](packaging/README.md)).
 
 ### Changed
+- With `serve --structured`, a large answer pages in `structuredContent` too: each page carries
+  the JSON of the items its text page shows, with `offset`, `next_offset` and `total`, in place
+  of a `null` result ([CLI](docs/CLI.md#serve-mcp)).
+- An MCP call with a `progressToken` hears the files read so far against the total, while the
+  first index is built and while `reindex`, a large scan or `structural_search` runs, at most
+  twice a second; it no longer hears the seconds waited. A cancelled `structural_search` stops
+  reading files ([CLI](docs/CLI.md#serve-mcp)).
 - The crate builds and runs on `wasm32-wasip1`, which starts no thread: the thread rules take
   one thread, and Engine A, a parallel walk of the vendored `ignore`, `index`, `search`, `symbol`
   and `callers` run on the calling thread. `serve`, `lsp` and `tsquery` fail there with a message

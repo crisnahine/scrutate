@@ -124,8 +124,8 @@ limits, and whether to refresh the index first (`Op::reads_index`). Its grep car
 (`Op::from_tool` for a tool's JSON arguments) and hold no defaults of their own.
 
 **Answer**: the typed result of an operation (`ops::Answer`), with one text form and one JSON form.
-With `serve --structured` the MCP server also sends the JSON form as the **structured** result when
-it fits the budget (`Answer::structured`).
+With `serve --structured` the MCP server also sends the JSON form as the **structured** result,
+whole when it fits the budget and else cut to the items of the text page (`Answer::structured`).
 
 **Envelope**: the one JSON shape an answer leaves in (`Answer::envelope`): `schema`
 (`ops::ANSWER_SCHEMA`), `result` and `stopped_at`. The CLI's `--json` of an index command, a

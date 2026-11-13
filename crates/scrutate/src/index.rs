@@ -877,6 +877,22 @@ enum Triage {
     Newer(Newer),
 }
 
+/// Files a long call has read and has to read, added to as it goes: an update adds the files it
+/// reads, so a call that runs two counts both.
+#[derive(Default, Debug)]
+pub struct FileCount {
+    pub done: std::sync::atomic::AtomicUsize,
+    pub total: std::sync::atomic::AtomicUsize,
+}
+
+impl FileCount {
+    /// (done, total) as they are now.
+    pub fn get(&self) -> (usize, usize) {
+        use std::sync::atomic::Ordering::Relaxed;
+        (self.done.load(Relaxed), self.total.load(Relaxed))
+    }
+}
+
 pub struct Index {
     pub root: PathBuf,
     pub dir: PathBuf,
@@ -889,6 +905,8 @@ pub struct Index {
     pub progress: bool,
     /// set to stop an update between batches of files; the update is rolled back
     pub cancel: Arc<std::sync::atomic::AtomicBool>,
+    /// the files updates read, for the progress a front end reports
+    pub count: Arc<FileCount>,
     lex: Option<LexStore>,
     lex_ver: Option<String>,
     last_refresh: Option<Instant>,
@@ -1007,6 +1025,7 @@ impl Index {
             #[cfg(test)]
             trees_peak: 0,
             cancel: Arc::default(),
+            count: Arc::default(),
             db_id: file_id(&db_path),
             parsed: 0,
             kept_min: KEPT_MIN_BYTES,
@@ -1069,6 +1088,7 @@ impl Index {
             #[cfg(test)]
             trees_peak: 0,
             cancel: Arc::default(),
+            count: Arc::default(),
             db_id: file_id(&db_path),
             parsed: 0,
             kept_min: self.kept_min,
@@ -1315,6 +1335,7 @@ impl Index {
         let mut fresh = Index::open(&self.root, Arc::clone(&self.models))?;
         fresh.progress = self.progress;
         fresh.cancel = Arc::clone(&self.cancel);
+        fresh.count = Arc::clone(&self.count);
         *self = fresh;
         Ok(())
     }
@@ -1657,6 +1678,7 @@ impl Index {
         // the trees parsed first fill the cache, and the others are dropped at once, so the peak stays bounded
         let room = std::sync::atomic::AtomicIsize::new(TREE_CACHE_BYTES as isize);
         let (mut own, mut other) = (None, None);
+        self.count.total.fetch_add(todo.len(), std::sync::atomic::Ordering::Relaxed);
         for batch in todo.chunks(256) {
             if self.cancel.load(std::sync::atomic::Ordering::Relaxed) {
                 anyhow::bail!("cancelled");
@@ -1701,6 +1723,7 @@ impl Index {
                 })
                 .collect();
             done += batch.len();
+            self.count.done.fetch_add(batch.len(), std::sync::atomic::Ordering::Relaxed);
             if progress && (last_tick.elapsed().as_millis() >= 200 || done == todo.len()) {
                 eprint!("\r[scrutate] indexing {done}/{} files...", todo.len());
                 last_tick = Instant::now();

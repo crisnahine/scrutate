@@ -340,7 +340,7 @@ pub fn read_only(tool: &str) -> bool {
 }
 
 /// The JSON Schema of what `Answer::structured` returns for one tool: the answer's JSON form in
-/// `result`, or `null` there when the answer is too large to send whole.
+/// `result`, whole or cut to one page in the same shape, or `null` there for a call that failed.
 pub fn output_schema(tool: &str) -> Value {
     let ty = |t: &str| json!({"type": t});
     let obj = |properties: Value, required: &[&str]| json!({"type": "object", "properties": properties, "required": required});
@@ -447,10 +447,12 @@ pub fn output_schema(tool: &str) -> Value {
         }
     };
     let stopped = json!({"type": "integer", "description": "present when the answer stopped at this limit and more exist: the text's last line says which argument raises it"});
-    let complete =
-        json!({"type": "boolean", "description": "false when the answer is larger than max_bytes: result is then null and text holds the part that fits"});
+    let complete = json!({"type": "boolean", "description": "false when the answer is larger than max_bytes: result then holds the items of this page (null when the call failed)"});
+    let page = |d: &str| json!({"type": "integer", "minimum": 0, "description": d});
+    let next = json!({"type": ["integer", "null"], "minimum": 0, "description": "the offset to call again with for the next page; null on the last"});
     obj(
-        json!({"schema": ty("integer"), "complete": complete, "result": {"anyOf": [result, ty("null")]}, "text": ty("string"), "stopped_at": stopped}),
+        json!({"schema": ty("integer"), "complete": complete, "result": {"anyOf": [result, ty("null")]}, "text": ty("string"), "stopped_at": stopped,
+            "offset": page("the first item of this page"), "next_offset": next, "total": page("the items of the whole answer")}),
         &["schema", "complete", "result"],
     )
 }
@@ -684,7 +686,14 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
             Answer::Dupes(groups, stopped)
         }
         Op::Tsquery { lang, query, limit } => {
-            let caps = crate::intel::tsquery(lang, query, std::slice::from_ref(&s.ix.root), limit.saturating_add(1), Some(&s.ix.root))?;
+            let caps = crate::intel::tsquery(
+                lang,
+                query,
+                std::slice::from_ref(&s.ix.root),
+                limit.saturating_add(1),
+                Some(&s.ix.root),
+                crate::intel::Watch { count: &s.ix.count, cancel: &s.cancel },
+            )?;
             let (caps, stopped) = cut(caps, *limit, RAISE_LIMIT);
             Answer::Captures(caps, stopped)
         }
@@ -1227,21 +1236,23 @@ pub fn paged(items: Vec<String>, noun: &'static str, max_bytes: usize, offset: u
 
 /// `paged` for a caller that kept the items up to what can be shown and counted the `rest`.
 pub fn paged_counted(items: Vec<String>, rest: usize, noun: &'static str, max_bytes: usize, offset: usize) -> String {
-    Parts { items, rest, noun, ..Parts::default() }.within(max_bytes, offset, Form::Detailed)
+    Parts { items, rest, noun, ..Parts::default() }.within(max_bytes, offset, Form::Detailed).0
 }
 
 impl Parts {
-    /// The page from item `offset` on that fits `max_bytes`. A concise page holds the items the
-    /// detailed one holds, so an offset means the same items in both forms.
-    fn within(&self, max_bytes: usize, offset: usize, form: Form) -> String {
+    /// The page from item `offset` on that fits `max_bytes`, and how many items it shows. A
+    /// concise page holds the items the detailed one holds, so an offset means the same items in
+    /// both forms.
+    fn within(&self, max_bytes: usize, offset: usize, form: Form) -> (String, usize) {
         let mut room = max_bytes;
         loop {
             let (out, shown, cut) = self.render(max_bytes, room, offset);
             if out.len() <= max_bytes || room == 0 || (shown <= 1 && !cut) {
-                return match &self.brief {
+                let text = match &self.brief {
                     Some(brief) if form == Form::Concise => self.render_brief(brief, max_bytes, offset, shown),
                     _ => out,
                 };
+                return (text, shown);
             }
             room = room.saturating_sub(out.len() - max_bytes);
         }
@@ -1326,6 +1337,30 @@ impl Parts {
     }
 }
 
+/// The items of an answer's text in order: `take(n)` takes the next `n` and gives the ones among
+/// them that are on `page`, counted from the first of them.
+struct Walk {
+    at: usize,
+    page: std::ops::Range<usize>,
+}
+
+impl Walk {
+    fn take(&mut self, n: usize) -> std::ops::Range<usize> {
+        let first = self.at;
+        self.at += n;
+        let lo = self.page.start.clamp(first, self.at) - first;
+        lo..(self.page.end.clamp(first, self.at) - first).max(lo)
+    }
+}
+
+/// `v`, an array, cut to the elements in `r`.
+fn keep(v: &mut Value, r: std::ops::Range<usize>) {
+    if let Value::Array(a) = v {
+        a.truncate(r.end);
+        a.drain(..r.start.min(a.len()));
+    }
+}
+
 /// `part` on a line of its own after `out`; an empty part adds nothing.
 fn push_line(out: &mut String, part: &str) {
     if !out.is_empty() && !part.is_empty() {
@@ -1404,6 +1439,11 @@ impl Answer {
 
     /// `text_within` in either form.
     pub fn text_as(&self, max_bytes: usize, offset: usize, form: Form) -> String {
+        self.text_page(max_bytes, offset, form).0
+    }
+
+    /// `text_as`, with how many items the page shows and how many the answer has.
+    pub fn text_page(&self, max_bytes: usize, offset: usize, form: Form) -> (String, usize, usize) {
         let mut parts = self.parts();
         let briefs = parts.brief.as_ref().map(Vec::len);
         // a concise form that does not line up with the items would page other items
@@ -1411,7 +1451,8 @@ impl Answer {
         if briefs.is_some_and(|n| n != parts.items.len()) {
             parts.brief = None;
         }
-        parts.within(max_bytes, offset, form)
+        let (text, shown) = parts.within(max_bytes, offset, form);
+        (text, shown, parts.items.len() + parts.rest)
     }
 
     fn parts(&self) -> Parts {
@@ -1756,16 +1797,117 @@ impl Answer {
         }
     }
 
-    /// The answer for a client that reads structured results, sent beside a text of `text_len`
-    /// bytes that starts at item `offset`: the whole JSON form when both together fit one and a
-    /// half times `max_bytes`, else `null` (the text then pages through the answer).
-    pub fn structured(&self, text_len: usize, max_bytes: usize, offset: usize) -> Value {
+    /// The answer for a client that reads structured results, sent beside a text page of
+    /// `text_len` bytes that shows `shown` of `total` items from item `offset`: the whole JSON
+    /// form when both together fit one and a half times `max_bytes`, else the JSON of the items
+    /// that page shows, with where it starts, where the next one starts and how many there are.
+    pub fn structured(&self, text_len: usize, max_bytes: usize, offset: usize, shown: usize, total: usize) -> Value {
         let mut v = self.envelope();
-        let complete = offset == 0 && text_len + v["result"].to_string().len() <= max_bytes.saturating_add(max_bytes / 2);
-        v["complete"] = json!(complete);
-        if !complete {
-            v["result"] = Value::Null;
+        if offset == 0 && text_len + v["result"].to_string().len() <= max_bytes.saturating_add(max_bytes / 2) {
+            v["complete"] = json!(true);
+            return v;
         }
+        let from = offset.min(total);
+        let to = (from + shown).min(total);
+        v["complete"] = json!(false);
+        v["result"] = self.page_json(from..to, total);
+        v["offset"] = json!(from);
+        v["next_offset"] = if to < total { json!(to) } else { Value::Null };
+        v["total"] = json!(total);
+        v
+    }
+
+    /// The JSON form cut to the text items in `page`, in the shape of the whole one: each list
+    /// keeps the elements whose lines are on the page, in the order the text has them.
+    fn page_json(&self, page: std::ops::Range<usize>, total: usize) -> Value {
+        let mut v = self.json();
+        if total == 0 {
+            return v;
+        }
+        let mut w = Walk { at: 0, page: page.clone() };
+        let len = |v: &Value| v.as_array().map_or(0, Vec::len);
+        let list = |w: &mut Walk, v: &mut Value| {
+            let r = w.take(len(v));
+            keep(v, r);
+        };
+        match self {
+            Answer::Callees { .. } => {
+                list(&mut w, &mut v["resolved"]);
+                // the text names the external callees after the last item
+                if page.end < total {
+                    v["external"] = json!([]);
+                }
+            }
+            Answer::Grep { .. } => list(&mut w, &mut v["groups"]),
+            Answer::Definitions(..) => list(&mut w, &mut v["definitions"]),
+            Answer::Dead(_) => {
+                list(&mut w, &mut v["dead"]);
+                list(&mut w, &mut v["undecided"]);
+            }
+            Answer::Path(_) => {
+                w.take(1);
+                list(&mut w, &mut v["steps"]);
+            }
+            Answer::Read { lines, start, total: file_lines, .. } => {
+                let r = w.take(lines.len());
+                v = json!({"text": lines[r.clone()].join("\n"), "start": start + r.start as i64, "end": start + r.end as i64 - 1, "file_lines": file_lines});
+            }
+            Answer::Impact(_) => {
+                for key in ["changed", "callers", "tests", "notes"] {
+                    if key != "notes" || len(&v[key]) > 0 {
+                        w.take(1);
+                    }
+                    list(&mut w, &mut v[key]);
+                }
+            }
+            Answer::Resolved { only, .. } => {
+                if let Some(defs) = v["definitions"].as_array_mut() {
+                    defs.retain_mut(|d| {
+                        let head = w.take(1);
+                        let r = w.take(len(&d["references"]));
+                        let on = !head.is_empty() || !r.is_empty();
+                        keep(&mut d["references"], r);
+                        on
+                    });
+                }
+                w.take(1);
+                if only.is_none() {
+                    list(&mut w, &mut v["unresolved"]);
+                }
+                if v.get("notes").is_some() {
+                    list(&mut w, &mut v["notes"]);
+                    if len(&v["notes"]) == 0 {
+                        v.as_object_mut().map(|o| o.remove("notes"));
+                    }
+                }
+            }
+            Answer::Refs { .. } => {
+                for key in ["definitions", "callers"] {
+                    if len(&v[key]) > 0 {
+                        w.take(1);
+                        list(&mut w, &mut v[key]);
+                    }
+                }
+                w.take(1);
+                if let Some(groups) = v["references"].as_array_mut() {
+                    // a group is its symbol's line, a line per match and its note's line
+                    groups.retain_mut(|g| {
+                        let n = len(&g["lines"]);
+                        let note = g.get("note").is_some();
+                        let r = w.take(1 + n + usize::from(note));
+                        let lo = r.start.max(1) - 1;
+                        keep(&mut g["lines"], lo..(r.end.min(n + 1).saturating_sub(1)).max(lo));
+                        if note && !r.contains(&(n + 1)) {
+                            g.as_object_mut().map(|o| o.remove("note"));
+                        }
+                        !r.is_empty()
+                    });
+                }
+            }
+            Answer::Reindexed(_) => {}
+            _ => list(&mut w, &mut v),
+        }
+        debug_assert_eq!(w.at, total, "the JSON form does not line up with the text's items");
         v
     }
 

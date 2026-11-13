@@ -11,10 +11,12 @@ use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use serde_json::{json, Value};
 
+use crate::index::FileCount;
 use crate::ops;
 use crate::session::{Panicked, Session, BUILD_WAIT};
 
@@ -187,14 +189,19 @@ impl Called {
 
 /// Run one tool; errors become text for the model.
 pub fn call_tool(session: &Session, name: &str, args: &Value, settings: &Settings, cancel: &Arc<AtomicBool>) -> Called {
+    call_counted(session, name, args, settings, cancel, &Arc::default())
+}
+
+/// `call_tool`, counting the files the call reads in `count` as it goes.
+fn call_counted(session: &Session, name: &str, args: &Value, settings: &Settings, cancel: &Arc<AtomicBool>, count: &Arc<FileCount>) -> Called {
     let max_bytes = args.get("max_bytes").and_then(Value::as_u64).map_or(settings.max_bytes, |n| clamp_bytes(n as usize));
     let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
     // a wrong value is refused with the other arguments
     let form = ops::Form::from_tool(args).unwrap_or_default();
-    match ops::Op::from_tool(name, args).and_then(|op| session.run(&op, cancel)) {
+    match ops::Op::from_tool(name, args).and_then(|op| session.run_counted(&op, cancel, count)) {
         Ok(answer) => {
-            let text = answer.text_as(max_bytes, offset, form);
-            let mut structured = answer.structured(text.len(), max_bytes, offset);
+            let (text, shown, total) = answer.text_page(max_bytes, offset, form);
+            let mut structured = answer.structured(text.len(), max_bytes, offset, shown, total);
             if structured["result"].is_null() {
                 // a client that shows only the structured form still gets the part that fits
                 structured["text"] = json!(text);
@@ -277,33 +284,76 @@ struct Call {
 }
 
 /// A tool call waits up to `BUILD_WAIT` for an index that is still being built before it answers
-/// that it is. A client that sent a progress token hears every `PROGRESS_SECONDS` that the build
-/// goes on, and gets the real answer.
-const PROGRESS_SECONDS: u64 = 2;
+/// that it is. A client that sent a progress token waits for the index and gets the real answer,
+/// with the files read so far against the files to read in `notifications/progress`, while the
+/// index is built and while the call runs, at most once per `PROGRESS_EVERY`.
+const PROGRESS_EVERY: Duration = Duration::from_millis(500);
+/// How often a running call's count is looked at.
+const PROGRESS_LOOK: Duration = Duration::from_millis(50);
 /// Calls beyond this many in flight run on the thread that reads requests.
 const MAX_CALLS: usize = 32;
 
+/// The progress of one call: a count that rises with every report, as the protocol asks.
+struct Reporter<'a> {
+    send: &'a Wire<'a>,
+    token: Value,
+    sent: usize,
+    /// what an earlier count had reached: a later one adds to it
+    base: usize,
+    last: Option<Instant>,
+}
+
+impl Reporter<'_> {
+    fn report(&mut self, (done, total): (usize, usize), message: &str) {
+        let progress = self.base + done;
+        if self.token.is_null() || progress <= self.sent || self.last.is_some_and(|t| t.elapsed() < PROGRESS_EVERY) {
+            return;
+        }
+        let mut params = json!({"progressToken": self.token, "progress": progress, "message": message});
+        if total > 0 {
+            params["total"] = json!(self.base + total.max(done));
+        }
+        (self.send)(json!({"jsonrpc": "2.0", "method": "notifications/progress", "params": params}));
+        self.sent = progress;
+        self.last = Some(Instant::now());
+    }
+}
+
 /// One tool call from its first wait to its answer. A cancelled call sends nothing more: it
-/// stops waiting for the index or for its turn, and an answer already being computed is dropped.
+/// stops waiting for the index or for its turn, an index update or a structural search it runs
+/// stops, and an answer already being computed is dropped.
 fn run_call(send: &Wire, session: &Session, calls: &Calls, settings: &Settings, call: Call) {
     let Call { id, name, args, stateless, structured, progress, cancelled } = call;
-    let mut reported = 0;
     let gone = || cancelled.load(Ordering::Relaxed);
     let limit = progress.is_null().then_some(BUILD_WAIT);
-    let built = session.wait_built(&cancelled, limit, |waited| {
-        let seconds = waited.as_secs();
-        if !progress.is_null() && seconds >= reported + PROGRESS_SECONDS {
-            reported = seconds;
-            let params = json!({"progressToken": progress, "progress": seconds, "message": "building the index of this repository"});
-            send(json!({"jsonrpc": "2.0", "method": "notifications/progress", "params": params}));
-        }
-    });
+    let mut reporter = Reporter { send, token: progress, sent: 0, base: 0, last: None };
+    let built = session.wait_built(&cancelled, limit, |_| reporter.report(session.build_count(), "building the index of this repository"));
     let called = if gone() {
         None
     } else if !built {
         Some(Called::note(STILL_BUILDING.to_string(), false))
     } else {
-        Some(call_tool(session, &name, &args, settings, &cancelled))
+        reporter.base = reporter.sent;
+        let count = Arc::new(FileCount::default());
+        let finished = AtomicBool::new(false);
+        let message = format!("{name}: files read");
+        Some(std::thread::scope(|s| {
+            let ticker = (!reporter.token.is_null()).then(|| {
+                s.spawn(|| loop {
+                    std::thread::park_timeout(PROGRESS_LOOK);
+                    if finished.load(Ordering::Acquire) || gone() {
+                        break;
+                    }
+                    reporter.report(count.get(), &message);
+                })
+            });
+            let c = call_counted(session, &name, &args, settings, &cancelled, &count);
+            finished.store(true, Ordering::Release);
+            if let Some(t) = &ticker {
+                t.thread().unpark();
+            }
+            c
+        }))
     };
     calls.map().remove(&id.to_string());
     if let Some(c) = called.filter(|_| !gone()) {
@@ -558,24 +608,32 @@ mod tests {
     }
 
     #[test]
-    fn a_call_with_a_progress_token_reports_while_the_index_is_built_and_then_answers() {
-        let (root, session, sent) = fixture("progress");
+    fn a_call_with_a_progress_token_reports_files_while_the_index_is_built_and_then_answers() {
+        let (root, first, sent) = fixture("progress");
+        drop(first);
+        for i in 0..700 {
+            std::fs::write(root.join(format!("src/m{i}.py")), format!("def f{i}():\n    return {i}\n")).unwrap();
+        }
+        let session = Session::open(&root, Every::given(Some(0.0))).unwrap();
         let calls = Calls::default();
         let send = |m: Value| sent.lock().unwrap().push(m);
         session.building();
         std::thread::scope(|s| {
             let job = s.spawn(|| run_call(&send, &session, &calls, &Settings::new(None), call(&calls, 7, json!("tok"))));
-            std::thread::sleep(Duration::from_millis(2300));
-            assert!(!job.is_finished(), "the call waits for the index as long as it reports progress");
+            std::thread::sleep(Duration::from_millis(100));
+            assert!(!job.is_finished(), "the call waits for the index");
             session.build().unwrap();
         });
         let sent = sent.lock().unwrap().clone();
         let (last, progress) = sent.split_last().unwrap();
         assert!(!progress.is_empty(), "{sent:?}");
+        let mut before = 0;
         for p in progress {
             assert_eq!(p["method"], "notifications/progress");
             assert_eq!(p["params"]["progressToken"], "tok");
-            assert!(p["params"]["progress"].as_u64().unwrap() >= PROGRESS_SECONDS);
+            let (done, total) = (p["params"]["progress"].as_u64().unwrap(), p["params"]["total"].as_u64().unwrap());
+            assert!(done > before && done <= total && total >= 700, "{p}");
+            before = done;
         }
         assert_eq!(last["id"], 7);
         assert_eq!(last["result"]["resultType"], "complete");
@@ -583,6 +641,34 @@ mod tests {
         assert_eq!(last["result"]["structuredContent"]["result"][0]["id"], "src/geo.py:1-2");
         assert!(calls.map().is_empty());
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn progress_rises_with_every_report_and_comes_at_most_once_per_interval() {
+        let sent = Mutex::new(Vec::new());
+        let send = |m: Value| sent.lock().unwrap().push(m["params"].clone());
+        let mut r = Reporter { send: &send, token: json!(3), sent: 0, base: 0, last: None };
+        r.report((0, 0), "m");
+        r.report((5, 0), "m");
+        r.report((9, 20), "m");
+        r.last = r.last.map(|t| t - PROGRESS_EVERY);
+        r.report((5, 20), "m");
+        r.report((12, 20), "m");
+        // a second count goes on from where the first one was reported
+        r.base = r.sent;
+        r.last = r.last.map(|t| t - PROGRESS_EVERY);
+        r.report((4, 10), "m");
+        let sent = sent.into_inner().unwrap();
+        assert_eq!(
+            sent,
+            [
+                json!({"progressToken": 3, "progress": 5, "message": "m"}),
+                json!({"progressToken": 3, "progress": 12, "total": 20, "message": "m"}),
+                json!({"progressToken": 3, "progress": 16, "total": 22, "message": "m"})
+            ]
+        );
+        let mut silent = Reporter { send: &|_| panic!("no token, no report"), token: Value::Null, sent: 0, base: 0, last: None };
+        silent.report((5, 9), "m");
     }
 
     #[test]

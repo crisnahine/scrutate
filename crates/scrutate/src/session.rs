@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
-use crate::index::{self, UpdateStats};
+use crate::index::{self, FileCount, UpdateStats};
 use crate::ops::{Answer, Op};
 use crate::search::Searcher;
 use crate::Repo;
@@ -97,6 +97,8 @@ pub struct Session {
     /// one scan decision at a time: a call that waited for another's scan does not scan again
     scanning: Mutex<()>,
     writing: AtomicUsize,
+    /// the files the writes of `seed` read, the first build's among them
+    written: Arc<FileCount>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -110,7 +112,9 @@ fn caught<T>(f: impl FnOnce() -> Result<T>) -> Result<T> {
 impl Session {
     /// Open (or create) the index of `root`, without updating it.
     pub fn open(root: &Path, every: Every) -> Result<Session> {
-        let seed = Repo::open(root)?;
+        let mut seed = Repo::open(root)?;
+        let written = Arc::new(FileCount::default());
+        seed.set_count(Arc::clone(&written));
         let max_readers = std::thread::available_parallelism().map_or(4, |n| n.get()).clamp(2, 8);
         Ok(Session {
             root: seed.ix.root.clone(),
@@ -125,6 +129,7 @@ impl Session {
             clock: Mutex::default(),
             scanning: Mutex::new(()),
             writing: AtomicUsize::new(0),
+            written,
         })
     }
 
@@ -169,6 +174,11 @@ impl Session {
         *lock(&self.build) == Build::Building
     }
 
+    /// Files the first build (and any other write of the session's own) has read, and has to read.
+    pub fn build_count(&self) -> (usize, usize) {
+        self.written.get()
+    }
+
     /// Whether the first build panicked and no update went through since.
     pub fn build_failed(&self) -> bool {
         *lock(&self.build) == Build::Failed
@@ -205,8 +215,13 @@ impl Session {
     /// not read the index is not scanned for), waiting up to `BUILD_WAIT` for another process's
     /// first build. A panic is the error `Panicked`.
     pub fn run(&self, op: &Op, cancel: &Arc<AtomicBool>) -> Result<Answer> {
+        self.run_counted(op, cancel, &Arc::default())
+    }
+
+    /// `run`, counting the files the operation reads in `count` as it goes.
+    pub fn run_counted(&self, op: &Op, cancel: &Arc<AtomicBool>, count: &Arc<FileCount>) -> Result<Answer> {
         self.waiting_for_others(cancel, || {
-            self.call(cancel, None, |repo| {
+            self.call(cancel, Some(count), None, |repo| {
                 if op.reads_index() {
                     self.scan_if_due(repo)?;
                 }
@@ -219,7 +234,7 @@ impl Session {
     /// as for an operation; a damaged index is built again and `f` run once more.
     pub fn read<T>(&self, cancel: &Arc<AtomicBool>, refresh: bool, mut f: impl FnMut(&mut Searcher) -> Result<T>) -> Result<T> {
         self.waiting_for_others(cancel, || {
-            self.call(cancel, None, |repo| {
+            self.call(cancel, None, None, |repo| {
                 if refresh {
                     self.scan_if_due(repo)?;
                 }
@@ -237,7 +252,7 @@ impl Session {
             return None;
         }
         let cancel = Arc::default();
-        let r = self.call(&cancel, Some(WAIT), |repo| {
+        let r = self.call(&cancel, None, Some(WAIT), |repo| {
             let mut st = UpdateStats::default();
             if op.reads_index() {
                 let t0 = Instant::now();
@@ -275,15 +290,19 @@ impl Session {
         }
     }
 
-    /// Run `f` on a reader of its own with `cancel` as its cancel flag. A reader whose call
-    /// panicked is closed, not used again. `wait`: how long to wait for a reader when all are
-    /// busy (None: as long as it takes, unless `cancel` is set).
-    fn call<T>(&self, cancel: &Arc<AtomicBool>, wait: Option<Duration>, f: impl FnOnce(&mut Repo) -> Result<T>) -> Result<T> {
+    /// Run `f` on a reader of its own with `cancel` as its cancel flag, counting the files it
+    /// reads in `count`. A reader whose call panicked is closed, not used again. `wait`: how long
+    /// to wait for a reader when all are busy (None: as long as it takes, unless `cancel` is set).
+    fn call<T>(&self, cancel: &Arc<AtomicBool>, count: Option<&Arc<FileCount>>, wait: Option<Duration>, f: impl FnOnce(&mut Repo) -> Result<T>) -> Result<T> {
         let Some(mut repo) = self.reader(cancel, wait)? else { return Err(anyhow::anyhow!("every reader is busy")) };
         repo.set_cancel(Arc::clone(cancel));
+        if let Some(count) = count {
+            repo.set_count(Arc::clone(count));
+        }
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&mut repo))) {
             Ok(r) => {
                 repo.set_cancel(Arc::default());
+                repo.set_count(Arc::default());
                 let updated = repo.take_updated();
                 self.give_back(Some(repo));
                 self.note_update(updated);

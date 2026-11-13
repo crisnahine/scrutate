@@ -7,6 +7,9 @@ use std::path::PathBuf;
 use scrutate::session::{Every, Session};
 use serde_json::{json, Value};
 
+#[path = "support/conforms.rs"]
+mod schema;
+
 struct Repo {
     root: PathBuf,
     repo: scrutate::Repo,
@@ -974,4 +977,102 @@ fn a_root_reached_through_a_link_indexes_a_new_file_an_argument_names() {
     assert!(!c.is_error && c.text.contains("second_fn"), "{}", c.text);
     drop(s);
     let _ = fs::remove_file(&via);
+}
+
+/// The items of a structured result, flat: a definition or group a page boundary cuts has its
+/// head on each page it is on, which `flat` counts once.
+fn items(tool: &str, textual: bool, r: &Value) -> Vec<Value> {
+    let list = |v: &Value, tag: &str| v.as_array().unwrap().iter().map(|x| json!([tag, x])).collect::<Vec<_>>();
+    let without = |v: &Value, keys: &[&str]| {
+        let mut v = v.clone();
+        keys.iter().for_each(|k| drop(v.as_object_mut().unwrap().remove(*k)));
+        v
+    };
+    match tool {
+        "grep_code" => list(&r["groups"], "group"),
+        "dead_code" => [list(&r["dead"], "dead"), list(&r["undecided"], "undecided")].concat(),
+        "read_code" => r["text"].as_str().unwrap().lines().map(|l| json!(l)).collect(),
+        "references" if textual => {
+            let mut out = [list(&r["definitions"], "def"), list(&r["callers"], "caller")].concat();
+            for g in r["references"].as_array().unwrap() {
+                out.push(json!(["head", without(g, &["lines", "note"])]));
+                out.extend(list(&g["lines"], "line"));
+                out.extend(g.get("note").map(|n| json!(["note", n])));
+            }
+            out
+        }
+        "references" => {
+            let mut out = Vec::new();
+            for d in r["definitions"].as_array().unwrap() {
+                out.push(json!(["head", without(d, &["references"])]));
+                out.extend(list(&d["references"], "ref"));
+            }
+            out.extend(list(&r["unresolved"], "unresolved"));
+            out.extend(r.get("notes").map(|n| list(n, "note")).unwrap_or_default());
+            out
+        }
+        _ => list(r, "item"),
+    }
+}
+
+/// `items` of every page in order, each head once.
+fn flat(pages: Vec<Vec<Value>>) -> Vec<Value> {
+    let mut heads = std::collections::HashSet::new();
+    pages.into_iter().flatten().filter(|x| x[0] != "head" || heads.insert(x.to_string())).collect()
+}
+
+#[test]
+fn a_large_answer_pages_its_structured_items_to_the_end_in_both_forms() {
+    let mut files: Vec<(String, String)> = vec![("util.py".into(), "def shared_helper(x):\n    return x\n".into())];
+    for i in 0..60 {
+        let body = format!(
+            "from util import shared_helper\n\n\ndef user_{i}():\n    return shared_helper({i})\n\n\ndef other_{i}():\n    return shared_helper(-{i})\n"
+        );
+        files.push((format!("pkg/a{i}.py"), body));
+    }
+    files.push(("big.py".into(), (0..120).map(|i| format!("def lone_{i}():\n    return {i}\n\n\n")).collect()));
+    let files: Vec<(&str, &str)> = files.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+    let r = Repo::new("pages", &files);
+    let cases = [
+        ("grep_code", json!({"pattern": "shared_helper", "max_results": 1000})),
+        ("references", json!({"name": "shared_helper", "max_results": 1000})),
+        ("references", json!({"name": "shared_helper", "max_results": 1000, "textual": true})),
+        ("callers", json!({"name": "shared_helper", "limit": 500})),
+        ("outline", json!({"path": "big.py"})),
+        ("read_code", json!({"path": "big.py"})),
+        ("dead_code", json!({})),
+    ];
+    for (tool, args) in cases {
+        let textual = args["textual"] == true;
+        let schema = scrutate::ops::output_schema(tool);
+        let at = |offset: u64, max_bytes: u64, form: &str| {
+            let mut a = args.clone();
+            a["offset"] = json!(offset);
+            a["max_bytes"] = json!(max_bytes);
+            a["response_format"] = json!(form);
+            let c = call_tool(&r.session, tool, &a);
+            assert!(!c.is_error, "{tool} {a}: {}", c.text);
+            schema::conforms(&schema, &c.structured).unwrap_or_else(|e| panic!("{tool}: {e}"));
+            c
+        };
+        let whole = at(0, 1_000_000, "detailed").structured;
+        assert_eq!(whole["complete"], true, "{tool}");
+        let (mut offset, mut pages, mut total) = (0, Vec::new(), None);
+        loop {
+            let page = at(offset, 1_000, "detailed");
+            let s = &page.structured;
+            assert_eq!((&s["complete"], &s["offset"]), (&json!(false), &json!(offset)), "{tool}: {s}");
+            assert_eq!(*total.get_or_insert(s["total"].clone()), s["total"], "{tool}");
+            assert_eq!(at(offset, 1_000, "concise").structured, *s, "{tool}: a concise page holds the same items");
+            pages.push(items(tool, textual, &s["result"]));
+            let Some(next) = s["next_offset"].as_u64() else { break };
+            assert!(next > offset, "{tool}");
+            if tool != "read_code" {
+                assert!(page.text.contains(&format!("offset={next}")), "{tool}: {}", page.text);
+            }
+            offset = next;
+        }
+        assert!(pages.len() > 2, "{tool}: {} pages", pages.len());
+        assert_eq!(flat(pages), items(tool, textual, &whole["result"]), "{tool}");
+    }
 }

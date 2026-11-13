@@ -26,9 +26,13 @@ reads every file again. Two switches matter to a client:
 
 - `serve --short-tools` (`SCRUTATE_MCP_SHORT_TOOLS=1`): tool descriptions of a few words, for a
   client that sends the tool list to its model every session.
-- `serve --structured`: `structuredContent` and an `outputSchema` on every tool. Leave it off for
-  Claude Code, which would show its model the JSON in place of the text with the snippets; turn
-  it on for a client whose scripts read tool results (Codex in Code Mode).
+- `serve --structured`: `structuredContent` and an `outputSchema` on every tool; a large answer
+  pages there too, with the items of the text page and `next_offset`. Leave it off for Claude
+  Code, which would show its model the JSON in place of the text with the snippets; turn it on
+  for a client whose scripts read tool results (Codex in Code Mode).
+
+A call that sends a `progressToken` hears the files read so far against the total while the
+index is built, `reindex` runs or `structural_search` reads a large tree.
 
 Every tool, argument, limit and protocol detail is in the
 [CLI reference](../../docs/CLI.md#serve-mcp).

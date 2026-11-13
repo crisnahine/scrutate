@@ -574,8 +574,8 @@ what its protocol needs (newline framing and progress notifications in `mcp.rs`,
 | `Session` | What it does |
 |---|---|
 | `open(root, Every)` | opens the index; `Every` is the refresh interval (`serve --refresh-interval`, else one second, shorter when a scan is cheap) |
-| `build()`, `building()`, `wait_built(cancel, limit, tick)`, `build_failed()` | the first build: every file, waiting for another writer; calls wait for it; a panic in it is reported until an update goes through |
-| `run(op, cancel)` | an operation on an index scanned at most once per interval, waiting up to 20 s for another process's first build |
+| `build()`, `building()`, `wait_built(cancel, limit, tick)`, `build_failed()`, `build_count()` | the first build: every file, waiting for another writer; calls wait for it; a panic in it is reported until an update goes through; the files it has read and has to read |
+| `run(op, cancel)`, `run_counted(op, cancel, count)` | an operation on an index scanned at most once per interval, waiting up to 20 s for another process's first build; `run_counted` adds the files it reads to `count` |
 | `read(cancel, refresh, f)` | a function of the searcher (the language server's lookups), damage rebuilt and `f` run again |
 | `write(f)` | an update (a watch burst, a save, bindings `index()`) |
 | `run_scanned(op)` | a command line call: every file first, then the operation; nothing when it would have to wait |
@@ -779,8 +779,8 @@ server's nineteen tools, `batch` and the Python bindings parse into operations, 
 a default or output format of its own (they had drifted: three different limits for `callers`,
 references textual in one and resolved in another). The JSON form leaves in one envelope
 (`Answer::envelope`: `schema`, `result`, `stopped_at`), which `--json`, a `batch` record and the
-MCP structured result print (the MCP result adds `complete`, and `text` when the result does not
-fit). A tool's JSON arguments are parsed in one place (`Op::from_tool`), used by the MCP server,
+MCP structured result print (the MCP result adds `complete`, and on a page `offset`,
+`next_offset` and `total`). A tool's JSON arguments are parsed in one place (`Op::from_tool`), used by the MCP server,
 `batch`, the CLI's `read` and the bindings' `Repo.call`. The language server asks the same
 operations for references, document symbols and the definitions of a name, and answers in LSP's
 shapes; resolving the name under the cursor (`Names::at`) and the workspace symbol search
@@ -827,8 +827,14 @@ instructions, and the protocol loop, which serves two eras on one pipe: the `ini
 of the revisions up to 2025-11-25, and revision 2026-07-28, where each request names its version in
 `_meta` and nothing is remembered between requests. Each tool call runs on its own thread, so the
 loop keeps reading and a `notifications/cancelled` finds the call it names. A result is text cut
-to the byte budget; with `serve --structured` it also carries the envelope in `structuredContent`
-(`complete: false`, a null `result` and the text when both forms do not fit).
+to the byte budget; with `serve --structured` it also carries the envelope in `structuredContent`.
+When both forms do not fit, that is a page: `Answer::text_page` says how many items the text
+page shows, and `Answer::page_json` cuts the JSON form to the same items in the same shape,
+walking the text's items in order (`ops::Walk`), so one `offset` continues both. A call with a
+progress token runs beside a thread that looks at the call's `index::FileCount` every 50 ms and
+reports it at most every half second; the session gives each call its count (`run_counted`),
+the index update and `structural_search` add to it, and the first build counts into the
+session's own (`Session::build_count`).
 That is a switch because clients differ in which form they show their model, and the text is the
 one written for a model. Flags and protocol details: [CLI reference](CLI.md#serve-mcp). The
 Python bindings expose both engines with the GIL released and streaming results.
