@@ -1750,6 +1750,11 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
     // indexes in `ancestors` of those that are no `#if` or include guard: no scope of their own
     let mut scopes: Vec<usize> = Vec::new();
     let mut seps = Seps::new(source);
+    // a GDScript file that declares `class_name X` is the class X, and its top-level definitions are X's members
+    let file_class = (spec.id == "gdscript").then(|| tree.root_node()).and_then(|r| {
+        let decl = r.named_children(&mut r.walk()).find(|c| c.kind() == "class_name_statement")?;
+        decl.child_by_field_name("name").map(|n| txt(src, n.start_byte(), n.end_byte()))
+    });
     while let Some((node, exiting, pushed, at)) = stack.pop() {
         if exiting {
             ancestors.pop();
@@ -1813,16 +1818,19 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
             matched = None; // deeply nested keys of data files are searchable text, not symbols
         }
         if let Some((mut kind, name)) = matched {
+            let file_owner = file_class.as_deref().filter(|_| def_stack.is_empty() && t != "class_name_statement");
             if kind == "function" {
                 if let Some(&top) = def_stack.last() {
                     // a C++ struct body is a class body
                     if chunks[top].kind == "class" || spec.id == "cpp" && chunks[top].kind == "struct" {
                         kind = "method";
                     }
+                } else if file_owner.is_some() {
+                    kind = "method";
                 }
             }
             let (prefix, name) = split_owner(spec.id, node, name, src);
-            let mut parent_q = def_stack.last().map(|&i| chunks[i].qualname.as_str()).unwrap_or_default();
+            let mut parent_q = def_stack.last().map(|&i| chunks[i].qualname.as_str()).or(file_owner).unwrap_or_default();
             if this_member && def_stack.last().is_some_and(|&i| chunks[i].kind == "method") {
                 // `this` in a method or a constructor is the method's owner
                 parent_q = parent_q.rsplit_once('.').map_or("", |(owner, _)| owner);
@@ -1902,7 +1910,7 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
             heads.extend(def_head(spec.id, node).map(|h| h.id()));
         } else if let Some((names, shown)) = constant_of(spec.id, node, &ancestors, scopes.last().map(|&i| ancestors[i].0.kind()), src) {
             // not on def_stack: calls in the initializer stay with the enclosing definition
-            let parent_q = def_stack.last().map(|&i| chunks[i].qualname.as_str()).unwrap_or_default();
+            let parent_q = def_stack.last().map(|&i| chunks[i].qualname.as_str()).or(file_class.as_deref()).unwrap_or_default();
             // the comment sits above the node the chunk shows: a Go `const` above its only spec
             let up = if shown == node { ancestors.len() } else { ancestors.iter().rposition(|(a, _)| a.id() == shown.id()).unwrap_or(ancestors.len()) };
             let doc = leading_comment(spec.id, shown, &ancestors[..up], &pos[..=up], src, spec.wrappers, 0).0;

@@ -202,7 +202,9 @@ First release.
   of the binary): functions, `class_name` and inner classes, signals (kind `signal`), named enums,
   `const` (kind `constant`) and `var` (kind `key`) at file level or in an inner class body are
   definitions, a `##` comment above a definition is its documentation, and the comment block
-  below a `class_name` and its `extends` line documents the class. Calls (`f()`, `obj.f()`,
+  below a `class_name` and its `extends` line documents the class. A file that declares
+  `class_name Player` is that class: its top-level definitions are its members (`Player.move`, a
+  method, still found by `symbol move`), each its own chunk. Calls (`f()`, `obj.f()`,
   `super.f()`) are recorded for `callers` and `callees`; `refs` says it does not resolve the
   language. `grep --type gdscript` searches `.gd` files.
 - `scrutate impact [--base REV] [--staged] [--depth N]` and the MCP tool `impact`: from the git

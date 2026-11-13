@@ -525,8 +525,8 @@
   ],
   "sample.gd": [
     [
-      "class",
-      "Player"
+      "module",
+      "sample"
     ],
     [
       "signal",

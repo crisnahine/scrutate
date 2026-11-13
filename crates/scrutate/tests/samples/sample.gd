@@ -1,4 +1,3 @@
-class_name Player
 extends CharacterBody2D
 ## A player that moves and scores.
 

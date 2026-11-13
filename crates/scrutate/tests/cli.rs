@@ -324,34 +324,53 @@ fn gdscript_definitions_calls_and_docs_answer_through_the_index_commands() {
     let r = gdscript_repo("gdscript");
     let (code, out, err) = r.run(&["outline", "game/player.gd", "--json"]);
     assert_eq!(code, 0, "{err}");
-    let got: Vec<(String, String)> =
-        answer(&out).as_array().unwrap().iter().map(|h| (h["kind"].as_str().unwrap().to_string(), h["qualname"].as_str().unwrap().to_string())).collect();
+    let outline = |out: &str| -> Vec<(String, String)> {
+        answer(out).as_array().unwrap().iter().map(|h| (h["kind"].as_str().unwrap().to_string(), h["qualname"].as_str().unwrap().to_string())).collect()
+    };
+    // the file that declares `class_name Player` is the class, and its top-level definitions are its members
     let want = [
         ("class", "Player"),
-        ("signal", "health_changed"),
-        ("signal", "died"),
-        ("enum", "Mood"),
-        ("constant", "MAX_HEALTH"),
-        ("key", "health"),
-        ("function", "take_damage"),
-        ("class", "Backpack"),
-        ("key", "Backpack.slots"),
-        ("method", "Backpack.stash"),
+        ("signal", "Player.health_changed"),
+        ("signal", "Player.died"),
+        ("enum", "Player.Mood"),
+        ("constant", "Player.MAX_HEALTH"),
+        ("key", "Player.health"),
+        ("method", "Player.take_damage"),
+        ("class", "Player.Backpack"),
+        ("key", "Player.Backpack.slots"),
+        ("method", "Player.Backpack.stash"),
     ];
-    assert_eq!(got, want.map(|(k, q)| (k.to_string(), q.to_string())), "{out}");
-    for (name, path, kind) in [("Backpack.stash", "game/player.gd", "method"), ("died", "game/player.gd", "signal"), ("Scoring", "game/scoring.gd", "class")] {
+    assert_eq!(outline(&out), want.map(|(k, q)| (k.to_string(), q.to_string())), "{out}");
+    let (_, out, _) = r.run(&["outline", "game/level.gd", "--json"]);
+    assert_eq!(outline(&out), [("module", "level"), ("key", "player"), ("function", "_ready")].map(|(k, q)| (k.to_string(), q.to_string())), "{out}");
+    for (name, path, kind) in [
+        ("Player.take_damage", "game/player.gd", "method"),
+        ("take_damage", "game/player.gd", "method"),
+        ("Player.Backpack.stash", "game/player.gd", "method"),
+        ("died", "game/player.gd", "signal"),
+        ("Scoring.clamp_health", "game/scoring.gd", "method"),
+        ("_ready", "game/level.gd", "function"),
+    ] {
         let (code, out, _) = r.run(&["symbol", name, "--json"]);
         let hits = answer(&out);
         assert!(code == 0 && hits[0]["path"] == path && hits[0]["kind"] == kind, "{name}: {out}");
     }
+    let (code, out, _) = r.run(&["callers", "Player.take_damage", "--json"]);
+    let callers: Vec<String> =
+        answer(&out).as_array().unwrap().iter().map(|h| format!("{}:{}", h["path"].as_str().unwrap(), h["name"].as_str().unwrap())).collect();
+    assert_eq!((code, callers), (0, vec!["game/level.gd:_ready".to_string()]), "{out}");
     let (code, out, _) = r.run(&["callers", "clamp_health", "--json"]);
     assert_eq!(code, 0, "{out}");
     let mut callers: Vec<String> =
         answer(&out).as_array().unwrap().iter().map(|h| format!("{}:{}", h["path"].as_str().unwrap(), h["name"].as_str().unwrap())).collect();
     callers.sort();
-    assert_eq!(callers, ["game/level.gd:_ready", "game/player.gd:take_damage"], "{out}");
-    // the words of the doc comment alone find the function, and the class's comment below its header finds the class
-    for (query, path, name) in [("quartz lantern", "game/scoring.gd", "clamp_health"), ("hero the user steers", "game/player.gd", "Player")] {
+    assert_eq!(callers, ["game/level.gd:_ready", "game/player.gd:Player.take_damage"], "{out}");
+    // the words of a doc comment alone find its member, each its own hit, and the comment below the class header finds the class
+    for (query, path, name) in [
+        ("quartz lantern", "game/scoring.gd", "Scoring.clamp_health"),
+        ("damage listeners", "game/player.gd", "Player.take_damage"),
+        ("hero the user steers", "game/player.gd", "Player"),
+    ] {
         let (code, out, _) = r.run(&["search", query, "-k", "3", "--json"]);
         let hits = answer(&out);
         assert!(code == 0 && hits[0]["path"] == path && hits[0]["name"] == name, "{query}: {out}");
