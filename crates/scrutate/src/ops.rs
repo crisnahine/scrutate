@@ -1161,13 +1161,6 @@ impl Brief {
     fn at(path: &str, start: i64, end: i64, rest: &str) -> Brief {
         Brief::default().then_at(path, start, end).then(format!(" {rest}"))
     }
-    /// The directory of the first path of the line.
-    fn dir(&self) -> Option<&str> {
-        self.0.iter().find_map(|p| match p {
-            Piece::Path(path) | Piece::At(path, _) => Some(split_dir(path).0),
-            Piece::Text(_) => None,
-        })
-    }
     /// The line after `out`, below a directory line when its first path is not in the last one.
     fn write(&self, page: &mut Written, out: &mut String) {
         let first = self.0.iter().find_map(|p| match p {
@@ -1223,8 +1216,6 @@ struct Parts {
     /// `tail`; without it the concise text is the detailed one
     brief: Option<Vec<Vec<Brief>>>,
     brief_tail: Option<String>,
-    /// the concise page lists its lines by directory, in the order each directory first appears
-    by_directory: bool,
 }
 
 const CUT_ITEM: &str = "(this item is cut: pass a larger max_bytes to see all of it)";
@@ -1259,17 +1250,7 @@ impl Parts {
     fn render_brief(&self, brief: &[Vec<Brief>], max_bytes: usize, offset: usize, count: usize) -> String {
         let mut out = self.head.clone();
         let mut page = Written::default();
-        let mut lines: Vec<&Brief> = brief.iter().skip(offset).take(count).flatten().collect();
-        if self.by_directory {
-            let mut dirs: Vec<&str> = Vec::new();
-            for b in &lines {
-                let d = b.dir().unwrap_or("");
-                if !dirs.contains(&d) {
-                    dirs.push(d);
-                }
-            }
-            lines.sort_by_key(|b| dirs.iter().position(|d| *d == b.dir().unwrap_or("")));
-        }
+        let lines: Vec<&Brief> = brief.iter().skip(offset).take(count).flatten().collect();
         let any = !lines.is_empty();
         for line in lines {
             line.write(&mut page, &mut out);
@@ -1768,8 +1749,8 @@ impl Answer {
                 items: v.iter().map(|h| shown(&h.path).into_owned()).collect(),
                 tail: stop_line(*stopped, "files"),
                 noun: "files",
+                // in rank order: a directory line each time the directory changes
                 brief: Some(v.iter().map(|h| vec![Brief::path(&h.path)]).collect()),
-                by_directory: true,
                 ..Parts::default()
             },
         }

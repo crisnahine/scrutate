@@ -696,7 +696,7 @@ time. Of two servers on one root, the first offers the socket.
   `distance location name`, `?` after the name of an undecided one; a test as `location name
   (test, distance)` when the definition that reaches the change is in it, else `path (distance
   via location name)`; `dead_code`: `location name`, `?` after an undecided one; `find_files`:
-  the paths grouped by directory, each directory where its best match ranks; `reindex`: the same
+  the paths in rank order, with a directory line each time the directory changes; `reindex`: the same
   line. On this repository a concise answer over 1 KB of detailed text is 5% to 44% of it
   (`tests/concise.rs`); one made mostly of names, such as the outline of a test file whose
   function names are sentences, keeps them and saves less. The command line has no concise form.

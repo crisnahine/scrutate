@@ -1316,7 +1316,9 @@ fn a_type_matches_after_the_ignore_rules_as_ripgrep_does() {
                 }
             }
             let out = Command::new("rg").args(&rg).current_dir(&d.0).stdin(Stdio::null()).output().unwrap();
-            assert_eq!(sorted(&String::from_utf8_lossy(&out.stdout)), want(w), "rg {rg:?}");
+            // rg writes Windows' `\`, which scrutate prints as `/`
+            let text = String::from_utf8_lossy(&out.stdout).replace('\\', "/");
+            assert_eq!(sorted(&text), want(w), "rg {rg:?}");
         }
     }
     let (code, out, _) = d.run_env(&["grep", "-n", "needle"], &[("SCRUTATE_GREP_TYPES", "py")]);
