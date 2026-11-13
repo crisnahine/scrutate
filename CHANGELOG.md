@@ -28,6 +28,11 @@ version rebuilds incompatible indexes automatically and this is never considered
   `llms.txt`, written by `tools/gen_doc_assets.py`, lists every Markdown document with the question it
   answers for language models; `CITATION.cff` gives GitHub's "Cite this repository".
 
+### Changed
+- The repository lives at github.com/scrutate/scrutate, under the `scrutate` organization; the
+  old address redirects. The install commands, the GitHub Action, the CI templates, the package
+  definitions, `CITATION.cff` and `llms.txt` name the new one.
+
 ### Fixed
 - `grep -t TYPE` (and `-t !TYPE`, `SCRUTATE_GREP_TYPES`, the configuration file's `types`)
   matches after the ignore rules, as ripgrep's `--type` does: a gitignored file of the type is no

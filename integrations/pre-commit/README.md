@@ -18,7 +18,7 @@ From this repository (pre-commit 4.4 or newer):
 ```yaml
 # .pre-commit-config.yaml
 repos:
-  - repo: https://github.com/crisnahine/scrutate
+  - repo: https://github.com/scrutate/scrutate
     rev: v0.1.0
     hooks:
       - id: scrutate-dupes

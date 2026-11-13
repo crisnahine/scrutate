@@ -129,7 +129,7 @@ GENERATORS = {
 }
 HUB = "docs/README.md"
 LLMS = "llms.txt"
-RAW = "https://raw.githubusercontent.com/crisnahine/scrutate/main/"
+RAW = "https://raw.githubusercontent.com/scrutate/scrutate/main/"
 SUMMARY = ("Universal instant code search and persistent code intelligence, in one Rust binary. Engine A searches any "
            "folder with no index; Engine B indexes a repository for ranked search by meaning or name, definitions, "
            "callers, references and the tests a git diff touches. A CLI, an MCP server for AI coding agents, a "

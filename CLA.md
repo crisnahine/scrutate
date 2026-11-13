@@ -6,7 +6,7 @@ This agreement says what rights you give when you send a contribution to Scrutat
 keep. It is short on purpose. Read all of it before you agree.
 
 "The Owner" is Cris Nahine, the copyright holder and maintainer of Scrutate
-(https://github.com/crisnahine/scrutate), and anyone the Owner's rights in Scrutate pass to.
+(https://github.com/scrutate/scrutate), and anyone the Owner's rights in Scrutate pass to.
 "You" is the person or legal entity that owns the copyright in a contribution. "Contribution" is
 any work, including a change or an addition to existing work, that you send to the Owner on
 purpose for inclusion in Scrutate: code, documentation, images, tests, data, by pull request,

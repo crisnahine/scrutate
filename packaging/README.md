@@ -58,8 +58,8 @@ under its own name first. Nothing was published.
 
 1. Tag `v0.1.0` and let `.github/workflows/release.yml` publish the archives and `SHA256SUMS`.
 2. Homebrew: set `sha256` in `homebrew/scrutate.rb` to `shasum -a 256` of
-   `https://github.com/crisnahine/scrutate/archive/refs/tags/v0.1.0.tar.gz`, then commit it to a tap
-   (`crisnahine/homebrew-tap`). Run `brew audit --strict --online scrutate` first. homebrew-core
+   `https://github.com/scrutate/scrutate/archive/refs/tags/v0.1.0.tar.gz`, then commit it to a tap
+   (`scrutate/homebrew-tap`). Run `brew audit --strict --online scrutate` first. homebrew-core
    does not take a repository younger than 30 days, or one below 90 forks, 90 watchers or 225 stars
    when its own author submits it.
 3. Scoop: set both `hash` values in `scoop/scrutate.json` from `SHA256SUMS`, then open a PR to a

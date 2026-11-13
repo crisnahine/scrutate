@@ -38,10 +38,10 @@ workflow has not run. Once releases exist, the steps are:
 
 ```sh
 v=0.1.0; t=x86_64-unknown-linux-gnu
-curl -sSfLO "https://github.com/crisnahine/scrutate/releases/download/v$v/scrutate-$v-$t.tar.gz"
-curl -sSfLO "https://github.com/crisnahine/scrutate/releases/download/v$v/scrutate-$v-$t.sha256"
+curl -sSfLO "https://github.com/scrutate/scrutate/releases/download/v$v/scrutate-$v-$t.tar.gz"
+curl -sSfLO "https://github.com/scrutate/scrutate/releases/download/v$v/scrutate-$v-$t.sha256"
 sha256sum -c "scrutate-$v-$t.sha256"        # checksum
-gh attestation verify "scrutate-$v-$t.tar.gz" --owner crisnahine   # Sigstore provenance (optional)
+gh attestation verify "scrutate-$v-$t.tar.gz" --owner scrutate   # Sigstore provenance (optional)
 tar xzf "scrutate-$v-$t.tar.gz"
 install -m 0755 "scrutate-$v-$t/scrutate" ~/.local/bin/scrutate
 scrutate completions bash > ~/.local/share/bash-completion/completions/scrutate   # or zsh/fish/powershell
@@ -57,7 +57,7 @@ Windows: unzip, put `scrutate.exe` on `PATH`, `scrutate completions powershell |
 From a copy of the source tree (the clone URL works for everyone once the repository is public):
 
 ```sh
-git clone https://github.com/crisnahine/scrutate && cd scrutate
+git clone https://github.com/scrutate/scrutate && cd scrutate
 cargo build --release -p scrutate --locked          # a few minutes; binary at target/release/scrutate
 cargo test --release -p scrutate                     # the Rust test suite
 ```

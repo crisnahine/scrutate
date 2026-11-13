@@ -11,7 +11,7 @@ scrutate:
   before_script:
     - apt-get update -qq && apt-get install -y -qq curl ca-certificates > /dev/null
     - name="scrutate-${SCRUTATE_VERSION}-x86_64-unknown-linux-musl"
-    - url="https://github.com/crisnahine/scrutate/releases/download/v${SCRUTATE_VERSION}"
+    - url="https://github.com/scrutate/scrutate/releases/download/v${SCRUTATE_VERSION}"
     # in /tmp, so the tool does not index its own files
     - curl -sSfL -o "/tmp/$name.tar.gz" "$url/$name.tar.gz"
     - curl -sSfL -o "/tmp/$name.sha256" "$url/$name.sha256"

@@ -344,7 +344,7 @@ work around it:
 - work for hire on code search and code intelligence
 
 To ask, reach the maintainer through the [GitHub profile](https://github.com/crisnahine), or
-[open an issue](https://github.com/crisnahine/scrutate/issues/new?title=Commercial%20inquiry)
+[open an issue](https://github.com/scrutate/scrutate/issues/new?title=Commercial%20inquiry)
 titled "Commercial inquiry". Leave the details out of the issue: the maintainer answers with a
 private channel.
 

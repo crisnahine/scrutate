@@ -62,7 +62,7 @@ docs/TRACEABILITY.md.
 
 Publishing was declined on 2026-11-08 and asked for on 2026-11-11, on one condition: every way
 to install and use the tool works first. The repository now exists on GitHub, private
-(`github.com/crisnahine/scrutate`, branch `main` only). docs/RELEASE_READINESS.md lists what ran
+(`github.com/scrutate/scrutate`, branch `main` only). docs/RELEASE_READINESS.md lists what ran
 here and what ran on GitHub. The order from there: one green run of `ci.yml`, the settings in
 docs/RELEASING.md, public, tag `v0.1.0`.
 

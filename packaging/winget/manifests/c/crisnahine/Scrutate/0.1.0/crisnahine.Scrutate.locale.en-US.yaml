@@ -5,9 +5,9 @@ PackageLocale: en-US
 Publisher: Cris Nahine
 PublisherUrl: https://github.com/crisnahine
 PackageName: Scrutate
-PackageUrl: https://github.com/crisnahine/scrutate
+PackageUrl: https://github.com/scrutate/scrutate
 License: MIT OR Apache-2.0
-LicenseUrl: https://github.com/crisnahine/scrutate#licence
+LicenseUrl: https://github.com/scrutate/scrutate#licence
 ShortDescription: Instant code search and a persistent code-intelligence index
 Description: Scrutate searches any repository without an index, and builds a persistent index for ranked search, symbols, callers and imports. One CLI and an MCP server.
 Moniker: scrutate

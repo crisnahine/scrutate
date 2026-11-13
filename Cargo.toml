@@ -7,7 +7,7 @@ exclude = ["vendor/ignore"]
 [workspace.package]
 edition = "2021"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/crisnahine/scrutate"
+repository = "https://github.com/scrutate/scrutate"
 rust-version = "1.91"
 
 [profile.release]

@@ -10,8 +10,8 @@ abstract: >-
 authors:
   - given-names: Cris
     family-names: Nahine
-repository-code: "https://github.com/crisnahine/scrutate"
-url: "https://github.com/crisnahine/scrutate"
+repository-code: "https://github.com/scrutate/scrutate"
+url: "https://github.com/scrutate/scrutate"
 license:
   - MIT
   - Apache-2.0

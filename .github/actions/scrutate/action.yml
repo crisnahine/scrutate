@@ -32,7 +32,7 @@ runs:
         esac
         name=scrutate-${VERSION#v}-$t
         if [ "$RUNNER_OS" = Windows ]; then ext=zip; else ext=tar.gz; fi
-        url=https://github.com/crisnahine/scrutate/releases/download/$VERSION
+        url=https://github.com/scrutate/scrutate/releases/download/$VERSION
         # outside the checkout, so the tool does not search its own files
         cd "$RUNNER_TEMP"
         curl -sSfL -o "$name.$ext" "$url/$name.$ext"

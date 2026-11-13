@@ -7,13 +7,13 @@ Commands:
   - scrutate
 Installers:
   - Architecture: x64
-    InstallerUrl: https://github.com/crisnahine/scrutate/releases/download/v0.1.0/scrutate-0.1.0-x86_64-pc-windows-msvc.zip
+    InstallerUrl: https://github.com/scrutate/scrutate/releases/download/v0.1.0/scrutate-0.1.0-x86_64-pc-windows-msvc.zip
     InstallerSha256: "0000000000000000000000000000000000000000000000000000000000000000"
     NestedInstallerFiles:
       - RelativeFilePath: scrutate-0.1.0-x86_64-pc-windows-msvc\scrutate.exe
         PortableCommandAlias: scrutate
   - Architecture: arm64
-    InstallerUrl: https://github.com/crisnahine/scrutate/releases/download/v0.1.0/scrutate-0.1.0-aarch64-pc-windows-msvc.zip
+    InstallerUrl: https://github.com/scrutate/scrutate/releases/download/v0.1.0/scrutate-0.1.0-aarch64-pc-windows-msvc.zip
     InstallerSha256: "0000000000000000000000000000000000000000000000000000000000000000"
     NestedInstallerFiles:
       - RelativeFilePath: scrutate-0.1.0-aarch64-pc-windows-msvc\scrutate.exe

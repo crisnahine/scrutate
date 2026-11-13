@@ -19,12 +19,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: crisnahine/scrutate/.github/actions/scrutate@v0.1.0
+      - uses: scrutate/scrutate/.github/actions/scrutate@v0.1.0
         with:
           version: v0.1.0
           args: index
       - id: dupes
-        uses: crisnahine/scrutate/.github/actions/scrutate@v0.1.0
+        uses: scrutate/scrutate/.github/actions/scrutate@v0.1.0
         with:
           version: v0.1.0
           args: dupes --min-tokens 80 --threshold 1
