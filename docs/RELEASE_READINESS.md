@@ -34,8 +34,8 @@ Every PASS refers to a test, benchmark or audit output here.
 
 ## Why not "production-ready" yet
 
-1. **Platform coverage.** CI run 43382848665 (commit `08cd9fa`) passed every push job on all six
-   platforms ([README](../README.md#status-010)). Windows and Intel macOS still lack a benchmark
+1. **Platform coverage.** CI run 43408907893 (commit `8f60af9`) passed every push job on all six
+   platforms, a wheel built, installed and tested on each included ([README](../README.md#status-010)). Windows and Intel macOS still lack a benchmark
    run and a release archive built by the release workflow and installed on a machine
    (docs/ROADMAP.md, known limits).
 2. **No independent security review** ([SECURITY](SECURITY.md#known-gaps-and-residual-risks)).
@@ -52,7 +52,6 @@ Status words as in docs/TRACEABILITY.md.
 |---|---|---|---|
 | R-4.6, R-14.16 | #1 on every benchmark, metric and declared platform: every row measured is won with significance (macOS arm64: 37 warm, 5 cold, 8 indexed; Linux aarch64 VM: 14 warm, 4 cold, 8 indexed), but Linux x86_64 has no benchmark run and nothing was measured on dedicated hardware | PARTIAL | a run of `bench/run_macos.sh` and `bench/competitors/linux_bench.sh` on a dedicated Mac and on dedicated aarch64 and x86_64 Linux machines |
 | R-14.11 | Results from dedicated, otherwise idle hardware | BLOCKED | a dedicated Mac and Linux machine; the harness and corpora are ready |
-| R-13.9 | Windows and Intel macOS executed, not only cross-built | PARTIAL | CI run 43013926055 passed on Intel macOS, Windows x64 and Windows arm64 (Rust tests and a smoke test of the release binary); wheels and release archives built and installed there by `release.yml` |
 | R-6.12, R-14.15, R-12.18 | CI runs, benchmark regression tracking in CI | PARTIAL | `ci.yml` has a green run (43013926055, all 12 jobs of a push); `benchmarks.yml` and `release.yml` run on a runner |
 | R-12.17 | Signed releases and published packages | PARTIAL | the release workflow's Sigstore steps and the package pull requests, which need the published repository |
 | R-6.15, R-12.16 | GitHub App / GitLab integration exercised against a real platform | PARTIAL | the published repository |
@@ -114,4 +113,4 @@ search engines, each one the first user or CI run would hit:
 
 Use 0.1.0 for development on macOS arm64 and Linux, where both engines are verified and the
 results reproduce from this repository. It is production-ready once the four gaps above are
-closed (for Windows and Intel macOS, wheels too: R-13.9).
+closed.

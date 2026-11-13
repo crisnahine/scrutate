@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 497" width="880" height="497" role="img" aria-labelledby="t d">
 <!-- written by tools/gen_doc_assets.py; edit that, not this file -->
 <title id="t">Platforms: what is built, tested and supported</title>
-<desc id="d">macOS arm64, Linux aarch64 and Linux x86_64 are supported, with binaries and wheels built and tested. macOS x86_64, Windows x86_64 and Windows ARM64 pass the Rust tests on GitHub runners but have no wheel yet, so they are not supported yet.</desc>
+<desc id="d">All six are supported, with binaries and wheels built, installed and tested: macOS arm64, Linux aarch64 and Linux x86_64 here, macOS x86_64, Windows x86_64 and Windows ARM64 on GitHub runners.</desc>
 <style>
 text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif; }
 .m { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
@@ -20,12 +20,18 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 
 .wipe{transform-box:fill-box;transform-origin:left center}
 .spot{transform-box:fill-box;transform-origin:center}
-.k1{animation:k1 4.95s linear infinite}
-@keyframes k1 { 0.000% { transform: scaleX(0); animation-timing-function: steps(1, end); } 8.081% { transform: scaleX(0); animation-timing-function: cubic-bezier(.2,.7,.2,1); } 12.808% { transform: scaleX(1.03); animation-timing-function: ease-in-out; } 14.141% { transform: scaleX(1); animation-timing-function: steps(1, end); } 87.879% { transform: scaleX(1); animation-timing-function: ease-in; } 93.939% { transform: scaleX(0); animation-timing-function: steps(1, end); } 100.000% { transform: scaleX(0); } }
-.k2{animation:k2 4.95s linear infinite}
-@keyframes k2 { 0.000% { transform: scaleX(0); animation-timing-function: steps(1, end); } 14.141% { transform: scaleX(0); animation-timing-function: cubic-bezier(.2,.7,.2,1); } 18.869% { transform: scaleX(1.03); animation-timing-function: ease-in-out; } 20.202% { transform: scaleX(1); animation-timing-function: steps(1, end); } 87.879% { transform: scaleX(1); animation-timing-function: ease-in; } 93.939% { transform: scaleX(0); animation-timing-function: steps(1, end); } 100.000% { transform: scaleX(0); } }
-.k3{animation:k3 4.95s linear infinite}
-@keyframes k3 { 0.000% { transform: scaleX(0); animation-timing-function: steps(1, end); } 20.202% { transform: scaleX(0); animation-timing-function: cubic-bezier(.2,.7,.2,1); } 24.929% { transform: scaleX(1.03); animation-timing-function: ease-in-out; } 26.263% { transform: scaleX(1); animation-timing-function: steps(1, end); } 87.879% { transform: scaleX(1); animation-timing-function: ease-in; } 93.939% { transform: scaleX(0); animation-timing-function: steps(1, end); } 100.000% { transform: scaleX(0); } }
+.k1{animation:k1 5.85s linear infinite}
+@keyframes k1 { 0.000% { transform: scaleX(0); animation-timing-function: steps(1, end); } 6.838% { transform: scaleX(0); animation-timing-function: cubic-bezier(.2,.7,.2,1); } 10.838% { transform: scaleX(1.03); animation-timing-function: ease-in-out; } 11.966% { transform: scaleX(1); animation-timing-function: steps(1, end); } 89.744% { transform: scaleX(1); animation-timing-function: ease-in; } 94.872% { transform: scaleX(0); animation-timing-function: steps(1, end); } 100.000% { transform: scaleX(0); } }
+.k2{animation:k2 5.85s linear infinite}
+@keyframes k2 { 0.000% { transform: scaleX(0); animation-timing-function: steps(1, end); } 11.966% { transform: scaleX(0); animation-timing-function: cubic-bezier(.2,.7,.2,1); } 15.966% { transform: scaleX(1.03); animation-timing-function: ease-in-out; } 17.094% { transform: scaleX(1); animation-timing-function: steps(1, end); } 89.744% { transform: scaleX(1); animation-timing-function: ease-in; } 94.872% { transform: scaleX(0); animation-timing-function: steps(1, end); } 100.000% { transform: scaleX(0); } }
+.k3{animation:k3 5.85s linear infinite}
+@keyframes k3 { 0.000% { transform: scaleX(0); animation-timing-function: steps(1, end); } 17.094% { transform: scaleX(0); animation-timing-function: cubic-bezier(.2,.7,.2,1); } 21.094% { transform: scaleX(1.03); animation-timing-function: ease-in-out; } 22.222% { transform: scaleX(1); animation-timing-function: steps(1, end); } 89.744% { transform: scaleX(1); animation-timing-function: ease-in; } 94.872% { transform: scaleX(0); animation-timing-function: steps(1, end); } 100.000% { transform: scaleX(0); } }
+.k4{animation:k4 5.85s linear infinite}
+@keyframes k4 { 0.000% { transform: scaleX(0); animation-timing-function: steps(1, end); } 22.222% { transform: scaleX(0); animation-timing-function: cubic-bezier(.2,.7,.2,1); } 26.222% { transform: scaleX(1.03); animation-timing-function: ease-in-out; } 27.350% { transform: scaleX(1); animation-timing-function: steps(1, end); } 89.744% { transform: scaleX(1); animation-timing-function: ease-in; } 94.872% { transform: scaleX(0); animation-timing-function: steps(1, end); } 100.000% { transform: scaleX(0); } }
+.k5{animation:k5 5.85s linear infinite}
+@keyframes k5 { 0.000% { transform: scaleX(0); animation-timing-function: steps(1, end); } 27.350% { transform: scaleX(0); animation-timing-function: cubic-bezier(.2,.7,.2,1); } 31.350% { transform: scaleX(1.03); animation-timing-function: ease-in-out; } 32.479% { transform: scaleX(1); animation-timing-function: steps(1, end); } 89.744% { transform: scaleX(1); animation-timing-function: ease-in; } 94.872% { transform: scaleX(0); animation-timing-function: steps(1, end); } 100.000% { transform: scaleX(0); } }
+.k6{animation:k6 5.85s linear infinite}
+@keyframes k6 { 0.000% { transform: scaleX(0); animation-timing-function: steps(1, end); } 32.479% { transform: scaleX(0); animation-timing-function: cubic-bezier(.2,.7,.2,1); } 36.479% { transform: scaleX(1.03); animation-timing-function: ease-in-out; } 37.607% { transform: scaleX(1); animation-timing-function: steps(1, end); } 89.744% { transform: scaleX(1); animation-timing-function: ease-in; } 94.872% { transform: scaleX(0); animation-timing-function: steps(1, end); } 100.000% { transform: scaleX(0); } }
 @media (prefers-reduced-motion: reduce) {
   .mv { animation: none !important; }
 }
@@ -63,24 +69,27 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <text x="742" y="191" class="bi" style="fill: #0c0c0e">supported</text>
 <line x1="2" y1="220" x2="878" y2="220" stroke="#cfc9ba"/>
 <text x="18" y="248" class="h">macOS x86_64</text>
-<text x="176" y="248" class="b">Tests pass on GitHub's <tspan class="m">macos-15-intel</tspan></text>
-<text x="176" y="268" class="b">runner.</text>
-<text x="556" y="248" class="b">not built</text>
-<rect x="712" y="241.0" width="150" height="26" fill="none" stroke="#cfc9ba" stroke-width="1.25"/>
-<text x="726" y="259" class="b">not supported yet</text>
+<text x="176" y="248" class="b">Built and tested on GitHub's</text>
+<text x="176" y="268" class="b"><tspan class="m">macos-15-intel</tspan> runner.</text>
+<text x="556" y="248" class="b">cp39-abi3, cp314t</text>
+<path class="wipe sm k4" d="M715.6 241.0 H827.6 L824.0 267.0 H712.0 Z" fill="#d9ff3d"/>
+<path d="M724 254.0 l4 4 7-8" fill="none" stroke="#0c0c0e" stroke-width="1.9" stroke-linecap="square"/>
+<text x="742" y="259" class="bi" style="fill: #0c0c0e">supported</text>
 <line x1="2" y1="288" x2="878" y2="288" stroke="#cfc9ba"/>
 <text x="18" y="316" class="h">Windows x86_64</text>
-<text x="176" y="316" class="b">Tests pass on GitHub's <tspan class="m">windows-latest</tspan></text>
-<text x="176" y="336" class="b">runner.</text>
-<text x="556" y="316" class="b">not built</text>
-<rect x="712" y="309.0" width="150" height="26" fill="none" stroke="#cfc9ba" stroke-width="1.25"/>
-<text x="726" y="327" class="b">not supported yet</text>
+<text x="176" y="316" class="b">Built and tested on GitHub's</text>
+<text x="176" y="336" class="b"><tspan class="m">windows-latest</tspan> runner.</text>
+<text x="556" y="316" class="b">cp39-abi3, cp314t</text>
+<path class="wipe sm k5" d="M715.6 309.0 H827.6 L824.0 335.0 H712.0 Z" fill="#d9ff3d"/>
+<path d="M724 322.0 l4 4 7-8" fill="none" stroke="#0c0c0e" stroke-width="1.9" stroke-linecap="square"/>
+<text x="742" y="327" class="bi" style="fill: #0c0c0e">supported</text>
 <line x1="2" y1="356" x2="878" y2="356" stroke="#cfc9ba"/>
 <text x="18" y="384" class="h">Windows ARM64</text>
-<text x="176" y="384" class="b">Tests pass on GitHub's <tspan class="m">windows-11-arm</tspan></text>
-<text x="176" y="404" class="b">runner.</text>
-<text x="556" y="384" class="b">not built</text>
-<rect x="712" y="377.0" width="150" height="26" fill="none" stroke="#cfc9ba" stroke-width="1.25"/>
-<text x="726" y="395" class="b">not supported yet</text>
+<text x="176" y="384" class="b">Built and tested on GitHub's</text>
+<text x="176" y="404" class="b"><tspan class="m">windows-11-arm</tspan> runner.</text>
+<text x="556" y="384" class="b">cp39-abi3, cp314t</text>
+<path class="wipe sm k6" d="M715.6 377.0 H827.6 L824.0 403.0 H712.0 Z" fill="#d9ff3d"/>
+<path d="M724 390.0 l4 4 7-8" fill="none" stroke="#0c0c0e" stroke-width="1.9" stroke-linecap="square"/>
+<text x="742" y="395" class="bi" style="fill: #0c0c0e">supported</text>
 </g>
 </svg>

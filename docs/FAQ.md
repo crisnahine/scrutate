@@ -68,9 +68,9 @@ the index; VS Code and Neovim use it, and JetBrains IDEs run scrutate as externa
 
 ## Which platforms does it run on?
 
-Supported: macOS on Apple silicon, and Linux on x86_64 and aarch64 (static musl builds too). macOS
-on Intel and Windows on x86_64 and ARM64 pass the Rust tests on CI but have no wheel yet, so they
-are not declared supported ([Install](INSTALL.md)).
+All six are supported: macOS on Apple silicon and Intel, Linux on x86_64 and aarch64 (static musl
+builds too), and Windows on x86_64 and ARM64. The binary and the wheels are built, installed and
+tested on each; Intel macOS and Windows on GitHub's runners ([Install](INSTALL.md)).
 
 ## How do I install it?
 

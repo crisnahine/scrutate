@@ -241,10 +241,13 @@ print(repo.search("parse a date string", k=5))
 The first release, **not** declared production-ready:
 [docs/RELEASE_READINESS.md](docs/RELEASE_READINESS.md) says what is and is not verified.
 
-**Platforms.** macOS arm64, Linux aarch64 and Linux x86_64 are built and tested, with static musl
-binaries and wheels; macOS x86_64 and Windows x86_64 are cross-built here. On GitHub's runners (CI
-run 43382848665, commit `08cd9fa`) every job passed: the Rust tests on all six platforms, Windows
-ARM64 included, and the editor integrations ([docs/INSTALL.md](docs/INSTALL.md)).
+**Platforms.** All six are supported: macOS arm64 and x86_64, Linux aarch64 and x86_64 (static musl
+binaries too), Windows x86_64 and ARM64. macOS arm64 and Linux are built and tested here, and
+macOS x86_64 and Windows x86_64 are cross-built here. On GitHub's runners (CI run 43408907893, commit
+`8f60af9`) every job passed: the Rust tests, and a wheel built, installed and tested for CPython 3.13
+and free-threaded 3.14, on all six platforms, and the editor integrations
+([docs/INSTALL.md](docs/INSTALL.md)). CI run 43382848665 (commit `08cd9fa`) was the first such run
+of the Rust tests.
 
 **Tests.** The last recorded run ([docs/TEST_RESULTS.md](docs/TEST_RESULTS.md), 2026-11-11)
 passed 122 Rust tests (unit, 60-language snapshot, robustness, property, end-to-end CLI and MCP,

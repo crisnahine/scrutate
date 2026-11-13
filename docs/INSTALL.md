@@ -18,8 +18,8 @@ A platform is supported only once its binary and wheel were built, installed and
 The logs each row names are in `bench/results/platforms/`.
 
 <p align="center">
-<img src="assets/diagram-platforms.svg" alt="Platforms: macOS arm64, Linux aarch64 and Linux x86_64 supported; macOS x86_64, Windows x86_64 and Windows ARM64 tested on CI runners, no wheel, not supported yet." width="880">
-<br><sub>A summary of the table below: three platforms supported, three tested on GitHub runners with no wheel yet.</sub>
+<img src="assets/diagram-platforms.svg" alt="Platforms: all six supported. macOS arm64, Linux aarch64 and Linux x86_64 built and tested here; macOS x86_64, Windows x86_64 and Windows ARM64 built and tested, wheels included, on GitHub runners." width="880">
+<br><sub>A summary of the table below: all six platforms supported, three tested here and three on GitHub's runners.</sub>
 </p>
 
 | Platform | Binary | Wheels | Status | Evidence |
@@ -27,9 +27,9 @@ The logs each row names are in `bench/results/platforms/`.
 | macOS arm64 (Apple Silicon; macOS 13 or newer, tested on macOS 27) | built and tested natively | `cp39-abi3` on CPython 3.10, 3.11, 3.12, 3.13; `cp314t` on free-threaded 3.14 | **supported** | docs/TEST_RESULTS.md; `wheels-macos-arm64.json` |
 | Linux aarch64 (glibc and static musl) | built and tested in a clean `rust:1-slim-bookworm` container (no Python on the image); the static musl binary prints byte-identical output | `cp39-abi3` on CPython 3.10, 3.12, 3.13; `cp314t` on free-threaded 3.14 | **supported** | `linux-aarch64/verify.log`, `musl-identical.txt`, `wheels.json` |
 | Linux x86_64 (glibc and static musl) | the same script in a `linux/amd64` container under emulation on the Apple Silicon host (behaviour, not x86 speed). For the release commit gcc crashed under emulation, so the binary and every test binary were cross-built on arm64 and all 118 Linux tests run in an amd64 container (the other four of the 122 are for macOS on Apple silicon) | same as aarch64 (full run on an earlier commit) | **supported** | `linux-x86_64/cross-verify.log` (release commit); `verify.log`, `musl-identical.txt`, `wheels.json` (earlier full run) |
-| macOS x86_64 | GitHub's `macos-15-intel` runner: the Rust tests and a smoke test of the release binary pass (CI run 43013926055); cross-built here, where the test binaries compile and link (no Rosetta 2 on the build machine) | not built | **not supported yet**: no wheel built or installed | `macos-x86_64/verify.log`; CI run 43013926055 |
-| Windows x86_64 | GitHub's `windows-latest` runner: the Rust tests and a smoke test of the release binary pass (CI run 43013926055; five tests of files removed while open or of file names Windows forbids run on Unix only); cross-built here with MinGW-w64 | not built | **not supported yet**: no wheel built or installed | `windows-x86_64-cross/build.log`; CI run 43013926055 |
-| Windows ARM64 | GitHub's `windows-11-arm` runner: the Rust tests and a smoke test of the release binary pass (CI run 43013926055); not built here | not built | **not supported yet**: no wheel built or installed | CI run 43013926055 |
+| macOS x86_64 | GitHub's `macos-15-intel` runner: the Rust tests and a smoke test of the release binary pass (CI runs 43013926055 and 43408907893); cross-built here, where the test binaries compile and link (no Rosetta 2 on the build machine) | `cp39-abi3` on CPython 3.13; `cp314t` on free-threaded 3.14, built, installed and tested on the runner (CI run 43408907893) | **supported** | `macos-x86_64/verify.log`; CI runs 43013926055 and 43408907893 |
+| Windows x86_64 | GitHub's `windows-latest` runner: the Rust tests and a smoke test of the release binary pass (CI runs 43013926055 and 43408907893; five tests of files removed while open or of file names Windows forbids run on Unix only); cross-built here with MinGW-w64 | `cp39-abi3` on CPython 3.13; `cp314t` on free-threaded 3.14, built, installed and tested on the runner (CI run 43408907893) | **supported** | `windows-x86_64-cross/build.log`; CI runs 43013926055 and 43408907893 |
+| Windows ARM64 | GitHub's `windows-11-arm` runner: the Rust tests and a smoke test of the release binary pass (CI runs 43013926055 and 43408907893); not built here | `cp39-abi3` on CPython 3.13; `cp314t` on free-threaded 3.14, built, installed and tested on the runner (CI run 43408907893) | **supported** | CI runs 43013926055 and 43408907893 |
 
 ## From a release archive
 

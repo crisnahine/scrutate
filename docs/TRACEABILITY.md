@@ -23,7 +23,7 @@ Evidence: generated `docs/TEST_RESULTS.md` (tests, audits) and `docs/LEADERBOARD
 (section 14, from `bench/results/`), `docs/BENCHMARKS.md`, `docs/QUALITY.md`, `docs/SECURITY.md`,
 `docs/LANGUAGES.md`, `docs/NAMING.md`, `bench/results/platforms/` (per-platform logs). Tests are
 in `crates/scrutate/tests/*.rs`, `crates/scrutate/src/*.rs` and `python/tests/*.py`.
-Counts: PASS 125 · PARTIAL 10 · BLOCKED 1 · FAIL 0 over 136 rows (computed by `tools/traceability_tally.py`).
+Counts: PASS 126 · PARTIAL 9 · BLOCKED 1 · FAIL 0 over 136 rows (computed by `tools/traceability_tally.py`).
 
 ## 2A. Engine A: universal instant search
 
@@ -210,7 +210,7 @@ Counts: PASS 125 · PARTIAL 10 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 | R-13.6 | abi3 wheels for standard Python | `pyo3/abi3-py39`, maturin | `cp39-abi3` wheel installed and tested on CPython 3.10 to 3.13 on macOS arm64 and on 3.10, 3.12, 3.13 on Linux aarch64 and x86_64 (`wheels-macos-arm64.json`, `linux-*/wheels.json`) | PASS |
 | R-13.7 | Free-threaded `cp314t` wheel; `gil_used = false` after review | `#[pymodule(gil_used = false)]` with the review in `lib.rs` | `cp314t` wheel on free-threaded 3.14: the abi3 wheel is refused, the GIL stays disabled after import with warnings as errors, bindings tests pass (macOS arm64, Linux aarch64 and x86_64) | PASS |
 | R-13.8 | Linux static musl binaries, identical output, measured difference | `tools/linux_verify.sh` + `bench/musl_vs_glibc.py` | static musl binaries for aarch64 and x86_64; byte-identical JSON output on three queries; timing on aarch64 0.85x to 1.25x of glibc on 3 to 9 ms runs, inside the run-to-run noise measured with two copies of one binary (`linux-*/musl-*.txt`) | PASS |
-| R-13.9 | Wheels and binaries for Linux/macOS/Windows in CI; declare a platform only after testing there | `release.yml`; INSTALL.md declares only tested platforms | `release.yml` not run; platforms verified locally and on the six CI runners (R-6.1, CI run 43013926055); no wheel has been built or installed on Windows or Intel macOS | PARTIAL |
+| R-13.9 | Wheels and binaries for Linux/macOS/Windows in CI; declare a platform only after testing there | `release.yml`; INSTALL.md declares only tested platforms | `ci.yml` builds and tests the binary and builds, installs and tests the abi3 and cp314t wheels on all six runners (CI run 43408907893); platforms also verified locally (R-6.1, CI run 43013926055); `release.yml`, which builds the release archives, has not run | PASS |
 | R-13.10 | Never cite unverified external claims | external claims limited to primary sources and measured numbers | review | PASS |
 | R-13.11 | Hybrid requirements carry PASS/PARTIAL/FAIL/BLOCKED | this section | | PASS |
 
@@ -237,5 +237,5 @@ Counts: PASS 125 · PARTIAL 10 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 
 ## Tally
 
-PASS 125 · PARTIAL 10 · BLOCKED 1 · FAIL 0 over 136 rows. [RELEASE_READINESS](RELEASE_READINESS.md#remaining-defects-and-incomplete-requirements)
+PASS 126 · PARTIAL 9 · BLOCKED 1 · FAIL 0 over 136 rows. [RELEASE_READINESS](RELEASE_READINESS.md#remaining-defects-and-incomplete-requirements)
 lists the others with what closes each.

@@ -900,16 +900,15 @@ def diagram_security():
 
 def diagram_platforms():
     s = Svg(880, 420, "Platforms: what is built, tested and supported",
-            "macOS arm64, Linux aarch64 and Linux x86_64 are supported, with binaries and wheels built and tested. "
-            "macOS x86_64, Windows x86_64 and Windows ARM64 pass the Rust tests on GitHub runners but have no wheel yet, "
-            "so they are not supported yet.", on="paper")
+            "All six are supported, with binaries and wheels built, installed and tested: macOS arm64, Linux aarch64 "
+            "and Linux x86_64 here, macOS x86_64, Windows x86_64 and Windows ARM64 on GitHub runners.", on="paper")
     rows = [
         ("macOS arm64", "Built and tested natively.", "cp39-abi3, cp314t", True),
         ("Linux aarch64", "Built and tested in a clean container; glibc and static musl.", "cp39-abi3, cp314t", True),
         ("Linux x86_64", "Cross-built on arm64; the Linux tests run in an amd64 container.", "cp39-abi3, cp314t", True),
-        ("macOS x86_64", "Tests pass on GitHub's `macos-15-intel` runner.", "not built", False),
-        ("Windows x86_64", "Tests pass on GitHub's `windows-latest` runner.", "not built", False),
-        ("Windows ARM64", "Tests pass on GitHub's `windows-11-arm` runner.", "not built", False),
+        ("macOS x86_64", "Built and tested on GitHub's `macos-15-intel` runner.", "cp39-abi3, cp314t", True),
+        ("Windows x86_64", "Built and tested on GitHub's `windows-latest` runner.", "cp39-abi3, cp314t", True),
+        ("Windows ARM64", "Built and tested on GitHub's `windows-11-arm` runner.", "cp39-abi3, cp314t", True),
     ]
     cols = [(18, "Platform"), (176, "Binary"), (556, "Wheels"), (716, "Status")]
     for x, t in cols:
