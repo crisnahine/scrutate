@@ -125,8 +125,10 @@ docs/RELEASING.md, public (done), tag `v0.1.0`.
   before it, 3.5 MB was the executable's text, spread over 85 MB with the kernel mapping 64 KB
   around each fault; 0.5 MB is data relocated at load. The release build now links the macOS
   order with rust-lld (docs/RELEASING.md section 2); ci.yml's `rust` job prints the minor page
-  faults of `--version` and a one-file `grep` without and with it on x86_64 and aarch64. Record
-  them here from its first run. The musl builds keep GNU ld and no order.
+  faults of `--version` and a one-file `grep` without and with it. First run (CI run 43463286517,
+  median of 7): a one-file `grep` takes 334 to 321 faults on x86_64 and 322 to 297 on aarch64
+  (4% and 8% fewer); `--version` stays where it was (365 to 369, 371 to 372), since it touches
+  little code past the start. The musl builds keep GNU ld and no order.
 - Large trees on macOS are bound by `open` (docs/ARCHITECTURE.md): the Linux tree takes 0.52 s just to
   open and read on the five performance cores, a search 0.58 s; the rest above that floor is the
   search. The corpora `linux` and `linux-nodot` shared files by hard links, doubling every open's
