@@ -18,10 +18,6 @@ scrutate = { path = "../crates/scrutate" }
 [workspace]
 members = ["."]
 
-# a workspace of its own does not inherit the product's patch: its copy of `ignore`
-[patch.crates-io]
-ignore = { path = "../vendor/ignore" }
-
 [[bin]]
 name = "npy"
 path = "fuzz_targets/npy.rs"

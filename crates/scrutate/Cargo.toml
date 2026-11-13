@@ -47,7 +47,7 @@ grep-regex = "0.1"
 grep-pcre2 = { version = "0.1", optional = true }
 grep-searcher = "0.1"
 half = "2"
-ignore = "0.4"
+ignore = { package = "scrutate-ignore", version = "0.4.34", path = "../../vendor/ignore" }
 matrixmultiply = "0.3"
 memchr = "2"
 memmap2 = "0.9"

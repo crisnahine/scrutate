@@ -143,7 +143,9 @@ impl Simple {
             || rest.starts_with('/')
             || rest.ends_with('/')
             || rest.contains("//")
-            || rest.bytes().any(|b| matches!(b, b'[' | b']' | b'{' | b'}' | b'\\'))
+            || rest
+                .bytes()
+                .any(|b| matches!(b, b'[' | b']' | b'{' | b'}' | b'\\'))
         {
             return None;
         }
@@ -928,11 +930,15 @@ fn excludes_file_span(data: &[u8]) -> Option<std::ops::Range<usize>> {
     let mut start = 0;
     loop {
         let mut i = skip_ws(start);
-        if data.len() - i >= key.len() && data[i..i + key.len()].eq_ignore_ascii_case(key) {
+        if data.len() - i >= key.len()
+            && data[i..i + key.len()].eq_ignore_ascii_case(key)
+        {
             i = skip_ws(i + key.len());
             if i < data.len() && data[i] == b'=' {
                 i = skip_ws(i + 1);
-                let quoted = (i < data.len() && data[i] == b'"').then(|| token(skip_ws(i + 1))).flatten();
+                let quoted = (i < data.len() && data[i] == b'"')
+                    .then(|| token(skip_ws(i + 1)))
+                    .flatten();
                 if let Some(span) = quoted.or_else(|| token(i)) {
                     return Some(span);
                 }
@@ -1122,8 +1128,23 @@ mod tests {
             .build(r#"(?im-u)^\s*excludesfile\s*=\s*"?\s*(\S+?)\s*"?\s*$"#)
             .unwrap();
         let parts: &[&[u8]] = &[
-            b"excludesfile", b"ExcludesFile", b"excludesfil", b" ", b"\t", b"\n", b"\r", b"\x0b",
-            b"=", b"\"", b"/foo", b"~/bar", b"x", b"[core]", b"path", b"\xff", b"# c",
+            b"excludesfile",
+            b"ExcludesFile",
+            b"excludesfil",
+            b" ",
+            b"\t",
+            b"\n",
+            b"\r",
+            b"\x0b",
+            b"=",
+            b"\"",
+            b"/foo",
+            b"~/bar",
+            b"x",
+            b"[core]",
+            b"path",
+            b"\xff",
+            b"# c",
         ];
         let mut state = 0x9E37_79B9_7F4A_7C15u64;
         let mut next = move |n: usize| {
@@ -1148,7 +1169,12 @@ mod tests {
             re.captures(&data, &mut caps);
             let want = caps.get_group(1).map(|s| s.range());
             matched += want.is_some() as usize;
-            assert_eq!(super::excludes_file_span(&data), want, "{:?}", bstr::BStr::new(&data));
+            assert_eq!(
+                super::excludes_file_span(&data),
+                want,
+                "{:?}",
+                bstr::BStr::new(&data)
+            );
         }
         assert!(matched > 10_000, "{matched}");
     }
@@ -1158,9 +1184,12 @@ mod tests {
     #[test]
     fn simple_globs_equal_the_glob_set() {
         use globset::{Candidate, GlobBuilder, GlobSetBuilder};
-        let line_parts =
-            ["a", "b", "*", "?", ".", "x*y", "é", "a*", "*.b", "/", "[ab]", "**", "\\*", "{a,b}"];
-        let path_parts = ["a", "b", "ab", ".a", "x", "xay", "é", "a.b", "xy", "*", ""];
+        let line_parts = [
+            "a", "b", "*", "?", ".", "x*y", "é", "a*", "*.b", "/", "[ab]",
+            "**", "\\*", "{a,b}",
+        ];
+        let path_parts =
+            ["a", "b", "ab", ".a", "x", "xay", "é", "a.b", "xy", "*", ""];
         let mut state = 0x2545_F491_4F6C_DD1Du64;
         let mut next = move |n: usize| {
             state ^= state << 13;
@@ -1233,8 +1262,12 @@ mod tests {
                     .map(|g| (g.is_whitelist(), g.original().to_string()));
                 let got = match gi.matched(path, is_dir) {
                     super::Match::None => None,
-                    super::Match::Ignore(g) => Some((false, g.original().to_string())),
-                    super::Match::Whitelist(g) => Some((true, g.original().to_string())),
+                    super::Match::Ignore(g) => {
+                        Some((false, g.original().to_string()))
+                    }
+                    super::Match::Whitelist(g) => {
+                        Some((true, g.original().to_string()))
+                    }
                 };
                 hits += want.is_some() as usize;
                 assert_eq!(got, want, "path {path:?} dir {is_dir} in\n{text}");

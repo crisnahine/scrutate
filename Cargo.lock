@@ -302,6 +302,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam-channel"
+version = "0.5.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98b0cc327b5bc766e7fda9c9260cc0fa81b43a8e240440422dff70788e3f9ef1"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "crossbeam-deque"
 version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -587,20 +596,6 @@ name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
-
-[[package]]
-name = "ignore"
-version = "0.4.34"
-dependencies = [
- "crossbeam-deque",
- "globset",
- "log",
- "memchr",
- "regex-automata",
- "same-file",
- "walkdir",
- "winapi-util",
-]
 
 [[package]]
 name = "indexmap"
@@ -1152,7 +1147,6 @@ dependencies = [
  "grep-regex",
  "grep-searcher",
  "half",
- "ignore",
  "matrixmultiply",
  "memchr",
  "memmap2",
@@ -1164,6 +1158,7 @@ dependencies = [
  "regex-syntax",
  "rusqlite",
  "rust-stemmers",
+ "scrutate-ignore",
  "serde",
  "serde_json",
  "sha1",
@@ -1245,6 +1240,22 @@ dependencies = [
  "tree-sitter-zig",
  "unicode-normalization",
  "zip",
+]
+
+[[package]]
+name = "scrutate-ignore"
+version = "0.4.34"
+dependencies = [
+ "bstr",
+ "crossbeam-channel",
+ "crossbeam-deque",
+ "globset",
+ "log",
+ "memchr",
+ "regex-automata",
+ "same-file",
+ "walkdir",
+ "winapi-util",
 ]
 
 [[package]]

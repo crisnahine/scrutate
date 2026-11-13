@@ -54,9 +54,9 @@ def main() -> int:
             "externalReferences": [{"type": "distribution", "url": p["source"] or "path"}] + ([{"type": "website", "url": p["repository"]}] if p.get("repository") else []),
         })
         if not p["source"]:
-            # a crate vendored under vendor/ with local changes (see the workspace Cargo.toml)
+            # a crate vendored under vendor/ with local changes, listed in its README
             rel = os.path.relpath(os.path.dirname(p["manifest_path"]), os.path.join(HERE, ".."))
-            comps[-1]["pedigree"] = {"notes": f"modified copy of the crates.io release, in {rel}"}
+            comps[-1]["pedigree"] = {"notes": f"modified copy of an upstream crates.io release, published as {p['name']}; source and changes in {rel}"}
             comps[-1]["externalReferences"][0]["url"] = rel
     for d in data_files():
         comps.append({

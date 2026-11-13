@@ -93,6 +93,10 @@ incompatible index by itself, and that is never breaking.
   ([Quality](docs/QUALITY.md#agent-eval)).
 
 ### Changed
+- The vendored walker is its own crate, `scrutate-ignore` (a modified copy of `ignore` 0.4.34,
+  `Unlicense OR MIT`, its eleven changes listed in `vendor/ignore/README.md`), and the workspace
+  `[patch]` is gone, so a crate built from crates.io walks with the same code
+  ([ARCHITECTURE](docs/ARCHITECTURE.md)).
 - The macOS benchmark chain waits for the new binary to start at its settled speed
   (`bench/wait_aged.py`, at most an hour) in place of a fixed hour
   ([RELEASING](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).

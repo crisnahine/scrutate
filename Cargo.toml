@@ -1,8 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["crates/scrutate", "crates/scrutate-py"]
+# vendor/ignore is scrutate-ignore, a modified copy of `ignore` published under its own name; its
+# eleven changes are listed in its README
+members = ["crates/scrutate", "crates/scrutate-py", "vendor/ignore"]
 default-members = ["crates/scrutate"]
-exclude = ["vendor/ignore"]
 
 [workspace.package]
 edition = "2021"
@@ -18,19 +19,3 @@ lto = "fat"
 codegen-units = 1
 debug = 0
 strip = true
-
-# `ignore` with eleven changes (vendor/ignore): the global git excludes path is parsed without
-# compiling a regex (excludes_file_span); an idle walker thread waits 10 us at first, doubling up
-# to the original 1 ms, before looking for work again (Worker::get_work); gitignore lines of three
-# common shapes are matched without a regex (gitignore::Simple); a parallel walk can start more
-# threads while it runs (WalkBuilder::grow_threads); the global git excludes file is read only
-# when a walk meets a repository (IgnoreInner::git_global); a walk of `.` takes the current
-# directory it was given instead of looking it up again (WalkBuilder::process_current_dir); a
-# walker thread that is paused sleeps a thirty-second of the time it has been paused, 50 us to
-# 1 ms (pause); the rare error of a queued entry is boxed, so an entry is 96 bytes
-# (DirEntry.err); a walk on one thread queues its entries in a plain vector; on wasi, where no
-# thread starts, a parallel walk runs its one worker on the calling thread (WalkParallel::visit);
-# and on a platform that is neither Unix nor Windows, such as wasi, an entry is built from the
-# directory entry or the file's metadata where upstream returns an error (DirEntryRaw::from_path).
-[patch.crates-io]
-ignore = { path = "vendor/ignore" }

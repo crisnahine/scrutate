@@ -214,8 +214,8 @@ uv 0.13 or newer; with an older uv, install one elsewhere
 interpreter: `--pythons 3.10 3.11 3.12 3.13 3.14t 3.15 /some/scratch/.../bin/python3.15t`.
 
 It writes `docs/TEST_RESULTS.md`. Every gate must say PASS, the fuzz gates too (every target
-builds and every input that once crashed one runs; they build in their own workspace, with its own
-`[patch]` for `vendor/ignore`). The "reproducible build" hash must be the one docs/LEADERBOARD.md
+builds and every input that once crashed one runs; they build in their own workspace, which takes
+`scrutate-ignore` from `vendor/ignore` through `crates/scrutate`'s path dependency). The "reproducible build" hash must be the one docs/LEADERBOARD.md
 names for macOS.
 
 ## 6. Platform checks and artifacts

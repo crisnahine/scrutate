@@ -426,7 +426,12 @@ impl DirEntryRaw {
     ) -> Result<DirEntryRaw, Error> {
         let md = fs::metadata(&pb)
             .map_err(|err| Error::Io(err).with_depth(depth).with_path(&pb))?;
-        Ok(DirEntryRaw { path: pb, ty: md.file_type(), follow_link: link, depth })
+        Ok(DirEntryRaw {
+            path: pb,
+            ty: md.file_type(),
+            follow_link: link,
+            depth,
+        })
     }
 }
 
@@ -1724,9 +1729,10 @@ impl Stack {
         // breadth-first. We do depth-first because a breadth first traversal
         // on wide directories with a lot of gitignores is disastrous (for
         // example, searching a directory tree containing all of crates.io).
-        let deques: Vec<Deque<Message>> = std::iter::repeat_with(Deque::new_lifo)
-            .take(threads + spare)
-            .collect();
+        let deques: Vec<Deque<Message>> =
+            std::iter::repeat_with(Deque::new_lifo)
+                .take(threads + spare)
+                .collect();
         let stealers = Arc::<[Stealer<Message>]>::from(
             deques.iter().map(Deque::stealer).collect::<Vec<_>>(),
         );
@@ -2168,7 +2174,8 @@ impl<'s> Worker<'s> {
                         // general, this tends to only occur once the search is
                         // approaching termination.
                         std::thread::sleep(wait);
-                        wait = (wait * 2).min(std::time::Duration::from_millis(1));
+                        wait = (wait * 2)
+                            .min(std::time::Duration::from_millis(1));
                     }
                 }
             }
@@ -2493,7 +2500,8 @@ mod tests {
         for after in [0, 1, 50, 10_000] {
             let when = Arc::new(AtomicUsize::new(1));
             let seen = Arc::new(Mutex::new(vec![]));
-            let threads = Arc::new(Mutex::new(std::collections::HashSet::new()));
+            let threads =
+                Arc::new(Mutex::new(std::collections::HashSet::new()));
             WalkBuilder::new(td.path())
                 .threads(1)
                 .grow_threads(3, when.clone())
@@ -2509,8 +2517,13 @@ mod tests {
                             when.store(4, Ordering::Relaxed);
                         }
                         // slow visits, so the started threads get some work
-                        std::thread::sleep(std::time::Duration::from_micros(200));
-                        threads.lock().unwrap().insert(std::thread::current().id());
+                        std::thread::sleep(std::time::Duration::from_micros(
+                            200,
+                        ));
+                        threads
+                            .lock()
+                            .unwrap()
+                            .insert(std::thread::current().id());
                         WalkState::Continue
                     })
                 });

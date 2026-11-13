@@ -345,7 +345,8 @@ Scrutate is licensed under either of
 
 at your option (SPDX: `MIT OR Apache-2.0`). That covers the code, the models, the documents and
 images, the integrations and packaging, the benchmark harness and its results, and the tests. The
-vendored walker in `vendor/ignore` keeps its upstream terms, `Unlicense OR MIT`.
+vendored walker in `vendor/ignore` (the crate `scrutate-ignore`) keeps its upstream terms,
+`Unlicense OR MIT`.
 
 Every crate compiled into the binary has a licence compatible with both (MIT, Apache-2.0, BSD,
 ISC, Zlib, Unlicense, 0BSD, Unicode-3.0 or CC0-1.0). Their licence and notice files are in
