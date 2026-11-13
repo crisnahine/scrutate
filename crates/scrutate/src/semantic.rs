@@ -151,8 +151,14 @@ impl SemanticModel {
         for t in body {
             *b.entry(t.as_str()).or_insert(0) += 1;
         }
-        let za = self.proj(&Self::lookup(&a, &self.va), &self.idf_a, &self.u16, &self.u32);
-        let zb = self.proj(&Self::lookup(&b, &self.vb), &self.idf_b, &self.v16, &self.v32);
+        self.encode_counts(&a, &b)
+    }
+
+    /// `encode_chunk` from the word counts of its two views: view A counts a name word three
+    /// times and a qualifier, signature or doc word once, view B counts the body words.
+    pub fn encode_counts(&self, a: &HashMap<&str, u32>, b: &HashMap<&str, u32>) -> Option<Vec<f32>> {
+        let za = self.proj(&Self::lookup(a, &self.va), &self.idf_a, &self.u16, &self.u32);
+        let zb = self.proj(&Self::lookup(b, &self.vb), &self.idf_b, &self.v16, &self.v32);
         if za.is_none() && zb.is_none() {
             return None;
         }

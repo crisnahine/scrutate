@@ -3,10 +3,13 @@
 
 usage: fuzz_incremental.py [--bin SCRUTATE] [--seconds 60] [--seed 1]
 
-Each step applies 1 to 4 random edits (new file, edit, delete, rename, case-only rename, a
+Each step applies 1 to 4 random edits (new file, edit, delete, rename, case-only rename, a move
+to another directory under the same name, a copy, two files that swap their contents, a
 .gitignore written or removed, binary or Latin-1 content, an emptied file) in a tree with a
 `.git` directory, runs `scrutate index --no-text`, indexes a copy of the tree from scratch, and
-compares chunks, files, call edges and imports of the two databases. Every 15 steps it runs
+compares chunks (their texts and search fields too), files and the artifacts they name, call
+edges and imports of the two databases. The moves, copies and swaps bring content the artifact
+store holds to another path. Every 15 steps it runs
 `scrutate check`. Needs the sqlite3 command line tool; a failing sqlite3 counts as a problem.
 Exit status 1 on any mismatch, or when no step compared a database holding a file; the tree that
 differed is kept under the temporary directory printed at the end.
@@ -50,7 +53,7 @@ def files():
 
 def op():
     fs = [f for f in files() if not f.endswith((".gitignore", ".ignore"))]
-    kind = rnd.choice(["new", "new", "edit", "edit", "delete", "rename", "ignore", "binary", "case", "empty"])
+    kind = rnd.choice(["new", "new", "edit", "edit", "delete", "rename", "move", "copy", "swap", "ignore", "binary", "case", "empty"])
     if kind == "new" or not fs:
         d, ext = rnd.choice(DIRS), rnd.choice(EXTS)
         os.makedirs(os.path.join(T, d), exist_ok=True)
@@ -71,6 +74,25 @@ def op():
         to = os.path.join(d, rnd.choice(NAMES) + rnd.choice(EXTS))
         os.replace(full, os.path.join(T, to))
         return f"rename {f} -> {to}"
+    if kind == "move":
+        d = rnd.choice(DIRS)
+        os.makedirs(os.path.join(T, d), exist_ok=True)
+        to = os.path.join(d, os.path.basename(f))
+        os.replace(full, os.path.join(T, to))
+        return f"move {f} -> {to}"
+    if kind == "copy":
+        d = rnd.choice(DIRS)
+        os.makedirs(os.path.join(T, d), exist_ok=True)
+        to = os.path.join(d, rnd.choice([os.path.basename(f), rnd.choice(NAMES) + os.path.splitext(f)[1]]))
+        if os.path.normpath(to) != os.path.normpath(f):
+            shutil.copyfile(full, os.path.join(T, to))
+        return f"copy {f} -> {to}"
+    if kind == "swap":
+        g = os.path.join(T, rnd.choice(fs))
+        a, b = open(full, "rb").read(), open(g, "rb").read()
+        open(full, "wb").write(b)
+        open(g, "wb").write(a)
+        return f"swap {f} <-> {os.path.relpath(g, T)}"
     if kind == "ignore":
         d = rnd.choice(["", "src"])
         os.makedirs(os.path.join(T, d), exist_ok=True)
@@ -91,8 +113,8 @@ def op():
     open(full, "w").write("")
     return f"empty {f}"
 
-Q = ("select 'chunk', path, kind, name, qualname, start, end from chunks union all "
-     "select 'file', path, hash, '', '', 0, 0 from files union all "
+Q = ("select 'chunk', path, kind, name, qualname || ' ' || is_test || ' ' || ndoc || ' ' || nbody || ' ' || name_tok || ' ' || hex(text), start, end from chunks union all "
+     "select 'file', path, hash, hex(art), '', 0, 0 from files union all "
      "select 'ref', c.path, r.callee, c.qualname, '', c.start, 0 from refs r join chunks c on c.id = r.chunk_id union all "
      "select 'import', path, module, '', '', line, 0 from imports order by 1, 2, 6, 7, 3, 4, 5")
 

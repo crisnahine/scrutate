@@ -42,6 +42,14 @@ which files can match, so `grep --index` opens only those.
 it questions (the chunks of a file, of a name, at a line; the callers of a name) and never see
 its tables.
 
+**Artifact**: what parsing and tokenizing make of one file, kept in the **artifact store**
+(`artifacts.rs`, a table of the index) under a key of its content and the parts of its path the
+parser reads (the file name, and for an `index` file its directory's name), so the same bytes
+under another path, after a branch switch, or in the main checkout of a linked git work tree are
+not parsed again. The **path map** (the `art` column of the `files` table) names each file's
+artifact; `artifacts::derive` makes a path's rows and postings from an artifact. The artifacts
+no file names are bounded and collected by the update that dropped them.
+
 **Hit**: one result. An Engine A hit is a matching line (`instant::Record::Match`); an Engine B hit
 is a chunk (`search::Hit`).
 

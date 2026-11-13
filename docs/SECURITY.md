@@ -7,7 +7,7 @@
 
 [Documentation](README.md) &nbsp;·&nbsp; Previous: [Test results](TEST_RESULTS.md) &nbsp;·&nbsp; Next: [Traceability](TRACEABILITY.md)
 
-**Contents**: [Threat model](#threat-model) &nbsp;·&nbsp; [Controls and evidence](#controls-and-evidence) &nbsp;·&nbsp; [The session socket](#the-session-socket) &nbsp;·&nbsp; [Known gaps and residual risks](#known-gaps-and-residual-risks) &nbsp;·&nbsp; [Reporting](#reporting)
+**Contents**: [Threat model](#threat-model) &nbsp;·&nbsp; [Controls and evidence](#controls-and-evidence) &nbsp;·&nbsp; [The session socket](#the-session-socket) &nbsp;·&nbsp; [The main checkout's index in a linked work tree](#the-main-checkouts-index-in-a-linked-work-tree) &nbsp;·&nbsp; [Known gaps and residual risks](#known-gaps-and-residual-risks) &nbsp;·&nbsp; [Reporting](#reporting)
 
 <!-- End of head. -->
 
@@ -18,7 +18,8 @@ named below; it is **not** an independent audit or penetration test.
 ## Threat model
 
 Scrutate reads source trees chosen by the user and writes one cache directory (`.scrutate/`) inside
-each indexed repository. The assets are (1) the confidentiality of the source code, (2) the
+each indexed repository. In a linked git work tree it also reads the index of the repository's
+main checkout (below). The assets are (1) the confidentiality of the source code, (2) the
 integrity of the machine running the tool, (3) availability (no hangs or resource exhaustion on
 hostile inputs). Attackers considered: a **hostile repository** (crafted files, names, symlinks,
 `.gitignore`, a corrupted or planted `.scrutate/` directory), a **hostile query** (patterns),
@@ -36,13 +37,13 @@ reaches the socket a running `serve` offers to command line calls (below).
 |---|---|---|
 | No code execution from repositories | Files are parsed as data (tree-sitter, regex); nothing is evaluated, imported, or run. No build systems, hooks, `.scrutate.toml` scripts or plugins exist. The binary starts another program in one case: `grep -z` decompresses bzip2, xz, lzma, lz4, zstd, brotli and `.Z` files by running the system's `bzip2`, `xz`, `lz4`, `zstd`, `brotli` or `uncompress` from `PATH` on the file (through `grep-cli`, as ripgrep does); gzip, zip and tar are read in process. Without `-z`, no program is started. | Code review: the engine's only process spawn is `grep_cli::DecompressionReaderBuilder` in `archive.rs`; the Rust engine never invokes `git`. |
 | No network | The binary makes no network connections and has no HTTP/DNS dependency. | `cargo tree` (docs/DEPENDENCIES.md) contains no networking crate; offline build and run verified in a proxy-restricted environment. |
-| Filesystem confinement | `read_code` / `read()` reject paths that resolve outside the repository root, and `read_code` refuses a path that is not a regular file; the index is written only under `<root>/.scrutate/`; segment files are written to a temp directory *inside* `.scrutate/seg/` and renamed into place (no `/tmp`, no predictable world-writable paths). A repository's `exclude_dirs` (`.scrutate.toml` at the root) can only leave directories out by name: the file is read as other repository files are (a regular file inside the root, at most 1 MB; through a link only when the resolved file is one), and its names are never read as patterns. A `.scrutate` that is a symbolic link, or that holds one (checked three levels deep, no link followed), is refused, and files of fixed names are written with remove and `create_new`, so nothing outside the repository is written or deleted through a link. A `--root` that does not exist or is not a directory is an error, and nothing is created. `tsconfig.json`, `jsconfig.json`, `Cargo.toml` and `go.mod` are read only when they are regular files inside the repository, of at most 1 MB. A path a tool call names, a file an answer cites and a file a watch event names are indexed only when the path resolves inside the repository root: a linked folder on the way that leads outside makes the file count as missing. A path in a tool call that leaves the root by its own parts (`..`, an absolute path elsewhere, a share on another machine) is refused with nothing looked at, so on Windows no connection is made to a machine a call names. The language server reads a document from disk only under the root, links on the way included, and resolves no path on another machine's share than the root's: for a document outside it (another folder, a URI that leaves through `..`) it uses the text the editor sent, or nothing. | `tests/robustness.rs::symlinks_ignores_and_nested_repos` (symlink escape not followed by default), bindings test `r.read("../etc/passwd")` → error, lsp `a_document_that_is_not_under_the_root_is_never_read_from_disk`, mcp_tools `a_path_through_a_linked_folder_reads_nothing_outside_the_repository`. |
+| Filesystem confinement | `read_code` / `read()` reject paths that resolve outside the repository root, and `read_code` refuses a path that is not a regular file; the index is written only under `<root>/.scrutate/`, and another checkout's index is only read, in a linked git work tree, from its main checkout ([below](#the-main-checkouts-index-in-a-linked-work-tree)); segment files are written to a temp directory *inside* `.scrutate/seg/` and renamed into place (no `/tmp`, no predictable world-writable paths). A repository's `exclude_dirs` (`.scrutate.toml` at the root) can only leave directories out by name: the file is read as other repository files are (a regular file inside the root, at most 1 MB; through a link only when the resolved file is one), and its names are never read as patterns. A `.scrutate` that is a symbolic link, or that holds one (checked three levels deep, no link followed), is refused, and files of fixed names are written with remove and `create_new`, so nothing outside the repository is written or deleted through a link. A `--root` that does not exist or is not a directory is an error, and nothing is created. `tsconfig.json`, `jsconfig.json`, `Cargo.toml` and `go.mod` are read only when they are regular files inside the repository, of at most 1 MB. A path a tool call names, a file an answer cites and a file a watch event names are indexed only when the path resolves inside the repository root: a linked folder on the way that leads outside makes the file count as missing. A path in a tool call that leaves the root by its own parts (`..`, an absolute path elsewhere, a share on another machine) is refused with nothing looked at, so on Windows no connection is made to a machine a call names. The language server reads a document from disk only under the root, links on the way included, and resolves no path on another machine's share than the root's: for a document outside it (another folder, a URI that leaves through `..`) it uses the text the editor sent, or nothing. | `tests/robustness.rs::symlinks_ignores_and_nested_repos` (symlink escape not followed by default), bindings test `r.read("../etc/passwd")` → error, lsp `a_document_that_is_not_under_the_root_is_never_read_from_disk`, mcp_tools `a_path_through_a_linked_folder_reads_nothing_outside_the_repository`. |
 | Symlinks | Not followed by default (Engine A and B); `-L` follows with loop detection (the `ignore` walker). | robustness: loop + dangling + escaping symlinks. |
 | Permission-aware | Unreadable files are counted as errors (`--stats`) and skipped, never fatal. | robustness `unreadable_files_are_reported_not_fatal` (skipped when running as root, as in CI containers; the code path is exercised by the error counter). |
 | Resource exhaustion: regex | Rust `regex` (linear time, no backtracking) with compiled-size limits (20 MB regex, 10 MB DFA); oversized patterns are rejected with an error. | robustness `regex_limits_and_errors_are_clean`: `(a*)*b` on a 10 000-char line finishes; `(a{1000}){1000}` is an error. |
 | Resource exhaustion: files | Engine B skips files > 1 MB and binary files (NUL in the first 4 KB); chunk text and body are capped at 200 lines (40 for a container) and 32 KiB; tree-sitter parse per file; Engine A streams with bounded batches; `--max-filesize`, `--max-depth`, `--max-results`, `--max-count`. With `-z`, an archive or compressed file stops at 8 GiB expanded or a million members, a member at a line longer than 64 MiB, and a tar member's name from a long-name or PAX header is read up to 64 KiB, so a small archive cannot make `grep -z` hold gigabytes. Index time stays linear in nesting depth: a file of 60,000 nested Lisp calls, nested lists or 50,000 nested HTML elements indexes in under a second. The resolver does not read a file nested more than 2,000 levels deep, so such a file cannot overflow the stack of `refs`, the language server or the MCP server, or hold them for minutes. | robustness `hostile_text_shapes_never_panic` (5 MB line, 200k lines, 20 000-deep nesting); parse_index `deeply_nested_lisp_and_html_parse_in_linear_time` (Lisp and Scheme to 60,000 levels, bare lists to 80,000, HTML to 50,000). |
 | Hostile text | Invalid UTF-8 (lossy decode), BOM, CRLF/CR, UTF-16 with a byte-order mark (transcoded by both engines), multibyte boundaries, emoji identifiers, 255-byte names, spaces/unicode in paths. A real UTF-8 boundary panic was found by this suite and fixed (`text::prefix_bytes`). | same test; `parser_fuzz_smoke` (400 random inputs); proptest `parser_yields_well_formed_chunks`. |
-| Index corruption | `PRAGMA quick_check` on open; every segment array validated for dtype/shape/length on open; `scrutate check` runs `integrity_check` + deep validation (sorted ids, posting ranges, IVF permutation) and optional file re-hashing; damaged indexes are rebuilt automatically, also when a search first meets the damage in a segment array (a posting row, a pointer or a cluster table that points outside the segment); a planted non-database file is replaced; locked ≠ corrupt (never deletes a live database). | robustness `corrupted_index_is_detected_and_rebuilt` (5 corruption scenarios); cli `a_posting_row_outside_its_segment_triggers_a_rebuild`; `concurrent_indexers_and_readers_do_not_corrupt` (3 writers + 2 readers, 30× repeated, `integrity_check` ok). |
+| Index corruption | `PRAGMA quick_check` on open; every segment array validated for dtype/shape/length on open; `scrutate check` runs `integrity_check` + deep validation (sorted ids, posting ranges, IVF permutation) and optional file re-hashing; damaged indexes are rebuilt automatically, also when a search first meets the damage in a segment array (a posting row, a pointer or a cluster table that points outside the segment); a planted non-database file is replaced; locked ≠ corrupt (never deletes a live database). The artifact store is part of the index: an artifact that does not decode, kept texts that do not decode, a file that names an artifact the store does not hold, and rows that disagree with their artifact are found where an update reads them (and by `scrutate check`) and rebuilt by the same rule. | `tests/artifacts.rs::damage_to_the_store_is_found_and_the_index_built_again`; robustness `corrupted_index_is_detected_and_rebuilt` (5 corruption scenarios); cli `a_posting_row_outside_its_segment_triggers_a_rebuild`; `concurrent_indexers_and_readers_do_not_corrupt` (3 writers + 2 readers, 30× repeated, `integrity_check` ok). |
 | Panic containment | A panic in the CLI prints one diagnostic line and exits 2; a panic inside an MCP tool call is reported as a tool error and the server keeps running: the session closes the reader the call ran on and opens another. The Python bindings and the language server keep a panic inside its call the same way. An index update that panics rolls back at once, and the next update clears a write transaction left open. A panic in the MCP server's first index build is reported on stderr and in each tool call's answer; calls stop waiting for it, and `serve` still exits when its input closes. | `cli::main_exit`, `session.rs`; `session::tests::a_panic_inside_one_call_is_that_calls_error_and_the_session_goes_on`; mcp_protocol `a_first_build_that_panics_is_reported_and_the_server_still_answers_and_exits`. |
 | Supply chain | 210 crates in the dependency graph of the binary (every platform's), each with a permissive licence (MIT, Apache-2.0, BSD, ISC, Zlib, Unlicense, 0BSD, Unicode-3.0, CC0-1.0), plus one data file compiled in, a Han fold table derived from Unihan 18.0.0 (Unicode-3.0, `crates/scrutate/data/han_fold.txt`); `Cargo.lock` committed; `cargo audit` over the 255 locked crates: **0 vulnerabilities, 0 warnings** (RustSec advisory DB, 2026-11-11). The bundled SQLite was upgraded for RUSTSEC-2026-0459 (`rusqlite` 0.41, `libsqlite3-sys` 0.39). `ignore` is vendored with four documented changes (`vendor/ignore`; the SBOM marks it as a modified copy). `zip` 9, used only by `grep -z`, has no open advisory; `pyo3` was upgraded to 0.30 (2 advisories in 0.27). SBOM generated per release (`tools/sbom.py`, CycloneDX 1.5). | `cargo audit` output in docs/TEST_RESULTS.md; SBOM in release artifacts. |
 | Reproducible builds | Release profile pins codegen; `Cargo.lock` and a pinned toolchain (`rust-toolchain.toml`: 1.99.1). Two clean builds in two different build images (`rust:1-slim-bookworm` and `golang:1.26-bookworm` with rustup, both using the pinned 1.99.1 compiler, fresh containers) produced the same SHA-256 for the release commit (`261ed1a2...`, linux/arm64); the binary the Linux leaderboard measured, built in another directory, has that hash too. Reproducibility on other operating systems, or across source paths in general, is not claimed. | `tools/repro_docker.sh`, `bench/results/platforms/repro/`; `tools/reproducible_check.sh` (same machine). |
@@ -134,6 +135,70 @@ no socket, two servers, a moved root, a deep root, a deep root reached from anot
 arguments, the socket's mode) and the unit test of the return to a renamed working directory
 in `session.rs`. A peer of another user
 could not be faked without a second account and is checked by code review only.
+
+## The main checkout's index in a linked work tree
+
+In a linked git work tree (`git worktree add`), a new index starts as a copy of the index of the
+repository's main checkout, and an update looks for content it has not seen in the main
+checkout's artifact store before it parses the file. Both read files outside the root, so this is
+a boundary too; this section is its review.
+
+How the main checkout is found: from git's own files, with no program run. The root's `.git`
+must be a regular file of at most 4 KiB whose first line is `gitdir: <dir>`, and `<dir>` must be
+`<common dir>/worktrees/<name>`. git records the link back: `<dir>/gitdir` must name this `.git`
+file, and `<dir>/commondir` must name the common directory (paths compared after links are
+resolved). The common directory must be named `.git` and be the `.git` directory, no link, of its
+parent, which is the main checkout. Anything else (a `.git` file that merely points somewhere, a
+bare repository, a main checkout without an index) is not followed, and the index is built as it
+always was. The main checkout's `.scrutate` is checked as this checkout's own is: one that is a
+symbolic link, or holds one, is refused, and its `index.db` must be a regular file.
+
+Read, not write. Nothing under the main checkout's `.scrutate/` is written. Its database is
+opened read-only (SQLite marks its read lock in `index.db-shm`, as every reader of that database
+does), the copy is made with `VACUUM INTO` into this checkout's own `.scrutate/`, and the segments
+it lists are copied, not linked. Writing new artifacts into the main checkout's store would let a
+branch switch in one work tree save a parse in the others, but it would break the rule that
+scrutate writes only its own `.scrutate/`, and one work tree could damage another's index; it is
+not done.
+
+What a hostile repository can make it read: a work tree's `.git` file is no file git checks out,
+so it is not repository content; an attacker who can write it must also write the `gitdir` file
+it names, which must name it back, and then makes scrutate read one more `.scrutate/` that the
+same attacker wrote. That is the power of planting a `.scrutate/` in the repository itself, which
+the threat model covers: decoded as data, with bounds checks, never run. An artifact whose counts
+do not fit its bytes, a segment whose arrays do not validate, or a panic while reading the other
+index counts as a miss, and the file is parsed.
+
+What is verified and what is trusted: an artifact's key is a 128-bit BLAKE2b hash of the
+artifact format, the content revision, the SHA-1 of the file's bytes, its file name, and for an
+`index` file its directory's name, computed by this process from its own read of the file. So an
+artifact is only used for bytes that hash to its key, and only under a name that parses the same.
+It is not verified that the artifact holds what a parse of those bytes gives: the store that wrote
+it is trusted, as a checkout's own index is today. A planted store can make the answers about the
+content it names wrong in the work tree that reads it, until `scrutate index --force` (which parses
+every file and reads no store) or a rebuild after damage (the same). Whether an artifact exists for
+some content tells the reader nothing new: it is the same user, who can read that index already.
+
+Edge cases:
+
+- The main checkout deleted or moved: the link is no longer confirmed, and the index is built as
+  usual. A seeded index needs nothing of the main checkout afterwards: its database and segments
+  are its own.
+- On another file system: the copy is a copy (a clone on APFS).
+- Being written at that moment: the reads see the last commit and never half of one. `VACUUM INTO`
+  reads in one transaction, and the lookups of an update read in one snapshot that lasts the
+  update. A segment the snapshot lists that the main checkout's compaction removes meanwhile makes
+  the seed fail with nothing left behind, and the index is built as usual; an artifact whose
+  vectors were in such a segment gets vectors made from its word counts. The main checkout's
+  writer is never blocked: a reader of a WAL database does not stop a writer, it holds back the
+  checkpoint until the read ends.
+- Two plain clones of one repository (no git link between them) do not find each other, and a
+  second checkout that is no git work tree builds its index as before.
+
+Evidence: `tests/artifacts.rs` (a seeded work tree equals a fresh build, with and without a vector
+model; links not confirmed both ways, a main index directory that is or holds a link, and a plain
+copy are not followed; an uncommitted write of the main checkout is not read; a build in the main
+checkout beside lookups in the work tree; damage to the store found and rebuilt).
 
 ## Known gaps and residual risks
 

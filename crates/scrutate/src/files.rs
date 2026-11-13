@@ -41,6 +41,39 @@ pub fn index_dir(root: &Path) -> anyhow::Result<PathBuf> {
     Ok(dir)
 }
 
+/// The main checkout of the linked git work tree whose top is `root`, read from git's own files
+/// (no program is run): the `.git` file names `<common dir>/worktrees/<name>`, whose `gitdir`
+/// file names this `.git` file back and whose `commondir` names the common directory, which is
+/// the `.git` directory of the main checkout. None for anything else: a main checkout, a bare
+/// repository, a link that is not confirmed both ways.
+pub fn main_checkout(root: &Path) -> Option<PathBuf> {
+    let dot = root.join(".git");
+    let gitdir = PathBuf::from(small_file(&dot)?.strip_prefix("gitdir:")?.trim());
+    let gitdir = std::fs::canonicalize(root.join(gitdir)).ok()?;
+    let back = PathBuf::from(small_file(&gitdir.join("gitdir"))?);
+    if std::fs::canonicalize(gitdir.join(back)).ok()? != std::fs::canonicalize(&dot).ok()? {
+        return None;
+    }
+    let common = std::fs::canonicalize(gitdir.join(small_file(&gitdir.join("commondir"))?)).ok()?;
+    let worktrees = gitdir.parent()?;
+    if worktrees.file_name()? != "worktrees" || worktrees.parent()? != common || common.file_name()? != ".git" {
+        return None;
+    }
+    let main = common.parent()?.to_path_buf();
+    let is_dir = std::fs::symlink_metadata(main.join(".git")).ok()?.is_dir();
+    (is_dir && main != std::fs::canonicalize(root).ok()?).then_some(main)
+}
+
+/// The first line of a regular file of at most 4 KiB, trimmed.
+fn small_file(path: &Path) -> Option<String> {
+    let md = std::fs::symlink_metadata(path).ok()?;
+    if !md.is_file() || md.len() > 4096 {
+        return None;
+    }
+    let text = std::fs::read_to_string(path).ok()?;
+    Some(text.lines().next()?.trim().to_string())
+}
+
 const SKIP_DIRS: &[&str] = &[
     ".git",
     INDEX_DIR,

@@ -6,18 +6,19 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use rayon::prelude::*;
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use sha1::{Digest, Sha1};
 
-use crate::lex::{merge_segments, pack_bags, quantize, FileLex, LexStore, QVecs, SegmentBuilder};
+use crate::artifacts::{Artifact, Found, Key};
+use crate::lex::{merge_segments, quantize, FileLex, LexStore, QVecs, SegmentBuilder};
 use crate::models::ModelSet;
 use crate::parse::{parse_file_with, PrevParse};
 use crate::semantic::SemanticModel;
-use crate::text::{is_test_path, name_key, tokenize2, BODY_CAP};
+use crate::text::{name_key, tokenize2, BODY_CAP};
 
-pub const SCHEMA_VERSION: u32 = 13;
+pub const SCHEMA_VERSION: u32 = 14;
 /// What the parser and tokenizer make of a file. Bump it with every change of the rules in
 /// `langs.rs`, `parse.rs` or `text.rs`:
 /// an index of an older revision reads every file again on its next update, and one of a newer
@@ -44,7 +45,7 @@ pub const TF_CAP: u32 = 4; // a token counts at most this many times per field
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
-CREATE TABLE IF NOT EXISTS files(path TEXT PRIMARY KEY, size INTEGER, mtime_ns INTEGER, hash TEXT, ctime_ns INTEGER);
+CREATE TABLE IF NOT EXISTS files(path TEXT PRIMARY KEY, size INTEGER, mtime_ns INTEGER, hash TEXT, ctime_ns INTEGER, art BLOB);
 CREATE TABLE IF NOT EXISTS chunks(
   id INTEGER PRIMARY KEY, path TEXT NOT NULL, kind TEXT, name TEXT, qualname TEXT,
   name_key TEXT, qual_key TEXT, start INTEGER, end INTEGER, is_test INTEGER,
@@ -58,7 +59,13 @@ CREATE INDEX IF NOT EXISTS refs_chunk ON refs(chunk_id);
 CREATE TABLE IF NOT EXISTS imports(path TEXT NOT NULL, module TEXT NOT NULL, line INTEGER);
 CREATE INDEX IF NOT EXISTS imports_path ON imports(path);
 CREATE INDEX IF NOT EXISTS imports_module ON imports(module);
+CREATE TABLE IF NOT EXISTS artifacts(key BLOB PRIMARY KEY, body BLOB NOT NULL, kept BLOB, bytes INTEGER NOT NULL, used INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS artifacts_kept ON artifacts(used) WHERE kept IS NOT NULL;
 ";
+/// Made once the `files` table has the `art` column, which an index of an older schema lacks.
+const ART_INDEX: &str = "CREATE INDEX IF NOT EXISTS files_art ON files(art) WHERE art IS NOT NULL;";
+/// Artifacts no file names are kept up to a quarter of the database's size, and at least this.
+pub const KEPT_MIN_BYTES: i64 = 4 << 20;
 
 #[derive(Debug, Default, Clone, serde::Serialize)]
 pub struct UpdateStats {
@@ -235,21 +242,6 @@ fn symbol_order(typed: &str) -> String {
     )
 }
 
-fn bag(tokens: impl Iterator<Item = String>, cap: Option<u32>) -> HashMap<String, u32> {
-    let mut m: HashMap<String, u32> = HashMap::new();
-    for t in tokens {
-        *m.entry(t).or_insert(0) += 1;
-    }
-    if let Some(c) = cap {
-        for v in m.values_mut() {
-            if *v > c {
-                *v = c;
-            }
-        }
-    }
-    m
-}
-
 /// Parse + tokenize one file -> (rows with their callee names, FileLex, imports). Pure function.
 /// A chunk ready for insertion: the row, its callees, and the compressed text (packed here, in
 /// the parallel stage, so the single-writer insert loop only copies bytes).
@@ -265,6 +257,9 @@ pub mod prof {
     pub static PACK: AtomicU64 = AtomicU64::new(0);
     pub static INSERT: AtomicU64 = AtomicU64::new(0);
     pub static SEGMENT: AtomicU64 = AtomicU64::new(0);
+    pub static MODEL: AtomicU64 = AtomicU64::new(0);
+    pub static READ: AtomicU64 = AtomicU64::new(0);
+    pub static LOOKUP: AtomicU64 = AtomicU64::new(0);
     pub fn add(c: &AtomicU64, t0: std::time::Instant) {
         c.fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
     }
@@ -274,90 +269,58 @@ pub mod prof {
     pub fn report(wall: f64) {
         let g = |c: &AtomicU64| c.load(Ordering::Relaxed) as f64 / 1e9;
         eprintln!(
-            "[scrutate profile] wall {wall:.2}s | cpu: parse {:.2}s (tree-sitter {:.2}s) tokenize {:.2}s encode {:.2}s pack {:.2}s | serial: insert {:.2}s segment {:.2}s",
-            g(&PARSE), g(&TREESITTER), g(&TOKENIZE), g(&ENCODE), g(&PACK), g(&INSERT), g(&SEGMENT)
+            "[scrutate profile] wall {wall:.2}s | cpu: read {:.2}s parse {:.2}s (tree-sitter {:.2}s) tokenize {:.2}s encode {:.2}s pack {:.2}s | serial: model {:.2}s store {:.2}s insert {:.2}s segment {:.2}s",
+            g(&READ), g(&PARSE), g(&TREESITTER), g(&TOKENIZE), g(&ENCODE), g(&PACK), g(&MODEL), g(&LOOKUP), g(&INSERT), g(&SEGMENT)
         );
     }
 }
 
-pub type BuiltRows = (Vec<NewRow>, FileLex, Vec<(i64, String)>, Option<PrevParse>);
+/// Rows, postings, imports and syntax tree of a file, and its artifact as the store keeps it.
+pub type BuiltRows = (Vec<NewRow>, FileLex, Vec<(i64, String)>, Option<PrevParse>, Vec<u8>);
 
+/// Parse and tokenize a file into its artifact, then derive the rows of `rel` from it, as the rows
+/// of a file found in the store are derived.
 pub fn build_rows(rel: &str, source: &str, model: Option<&SemanticModel>, prev: Option<PrevParse>) -> BuiltRows {
-    let is_test = is_test_path(rel) as i64;
-    let path_text = rel.replace(['/', '.', '_'], " ");
-    let path_bag = bag(tokenize2(&path_text, None).0.into_iter(), None);
-    let mut rows = Vec::new();
-    let mut bags: Vec<Vec<HashMap<String, u32>>> = Vec::new();
-    let mut vecs = QVecs::default();
     let prof = prof::enabled();
     let t = Instant::now();
     let (parsed, tree) = parse_file_with(rel, source, prev);
     if prof {
         prof::add(&prof::PARSE, t);
     }
+    let mut chunks = Vec::with_capacity(parsed.chunks.len());
+    let mut texts = Vec::with_capacity(parsed.chunks.len());
     for mut c in parsed.chunks {
         let t = Instant::now();
         c.fill(source.as_bytes());
-        let qual = match c.qualname.rfind('.') {
-            Some(i) => c.qualname[..i].to_string(),
-            None => String::new(),
-        };
-        let (name_s, name_w) = tokenize2(&c.name, None);
-        let (qual_s, qual_w) = tokenize2(&qual, None);
-        let (sig_s, sig_w) = tokenize2(&c.sig, Some(80));
-        let (doc_s, doc_w) = tokenize2(&c.doc, Some(200));
-        let (body_s, body_w) = tokenize2(&c.body, Some(BODY_CAP));
-        // a constant is a symbol only: no postings, no vector, never a ranked candidate
-        let lexed = c.kind != "constant";
-        bags.extend(lexed.then(|| {
-            vec![
-                bag(name_s.iter().chain(&name_w).cloned(), None),
-                bag(qual_s.iter().chain(&qual_w).cloned(), None),
-                bag(sig_s.iter().chain(&sig_w).cloned(), Some(TF_CAP)),
-                bag(doc_s.iter().chain(&doc_w).cloned(), Some(TF_CAP)),
-                bag(body_s.iter().chain(&body_w).cloned(), Some(TF_CAP)),
-                path_bag.clone(),
-            ]
-        }));
+        let (fields, name_tok) = Artifact::tokenize(&c);
         if prof {
             prof::add(&prof::TOKENIZE, t);
         }
         let t = Instant::now();
-        if let Some(m) = model.filter(|_| lexed) {
-            push_vectors(m, c.kind, [&name_s, &qual_s, &sig_s, &doc_s, &body_s], &mut vecs);
-        }
-        if prof {
-            prof::add(&prof::ENCODE, t);
-        }
-        let t = Instant::now();
-        let mut seen = HashSet::new();
-        let name_tok: Vec<&str> = name_s.iter().map(|s| s.as_str()).filter(|s| seen.insert(*s)).collect();
-        rows.push((
-            ChunkRow {
-                id: 0,
-                path: rel.to_string(),
-                kind: c.kind.to_string(),
-                name: c.name.clone(),
-                qualname: c.qualname.clone(),
-                name_key: name_key(&c.name),
-                qual_key: name_key(&c.qualname),
-                start: c.start,
-                end: c.end,
-                is_test,
-                ndoc: doc_s.len() as i64,
-                nbody: body_s.len() as i64,
-                text: String::new(), // the text travels compressed (below); readers inflate it
-                name_tok: name_tok.join(" "),
-            },
-            c.calls.iter().cloned().collect(),
-            pack_text(&c.text),
-        ));
+        texts.push(pack_text(&c.text));
+        let calls = c.calls.into_iter().collect();
+        chunks.push(crate::artifacts::Chunk {
+            kind: c.kind.to_string(),
+            name: c.name,
+            qualname: c.qualname,
+            start: c.start,
+            end: c.end,
+            name_tok,
+            calls,
+            fields,
+        });
         if prof {
             prof::add(&prof::PACK, t);
         }
     }
-    let vec = if model.is_some() && !rows.is_empty() { Some(vecs) } else { None };
-    (rows, pack_bags(&bags, vec), parsed.imports, tree)
+    let art = Artifact { chunks, imports: parsed.imports };
+    let t = Instant::now();
+    let body = art.encode();
+    if prof {
+        prof::add(&prof::PACK, t);
+    }
+    let (rows, lex, imports) = crate::artifacts::derive(rel, Found { art, texts, vecs: None }, model);
+    (rows, lex, imports, tree, body)
 }
 
 /// The (A view, B view) vector of one chunk from its stemmed name, qualifier, signature, doc and
@@ -411,7 +374,18 @@ enum Processed {
     Gone,
     Skip(Stat),
     Same(Stat),
-    New(Stat, String, Vec<NewRow>, Box<FileLex>, Vec<(i64, String)>, Option<PrevParse>),
+    /// stat, content hash, artifact key, rows, postings, imports, syntax tree, the artifact to
+    /// store (None when this store holds it already), and whether the file was parsed
+    New(Stat, String, Key, Vec<NewRow>, Box<FileLex>, Vec<(i64, String)>, Option<PrevParse>, Option<Vec<u8>>, bool),
+}
+
+/// What reading a file found, before it is parsed or found in a store.
+enum Read {
+    Gone,
+    Skip(Stat),
+    Same(Stat),
+    /// stat, content hash, artifact key, bytes
+    Fresh(Stat, String, Key, Vec<u8>),
 }
 
 fn mtime_ns(md: &std::fs::Metadata) -> i64 {
@@ -446,33 +420,239 @@ impl Stat {
     }
 }
 
-fn process(root: &Path, rel: &str, known_hash: Option<&str>, model: Option<&SemanticModel>, prev: Option<PrevParse>) -> Processed {
+fn read_file(root: &Path, rel: &str, known_hash: Option<&str>) -> Read {
     let full = root.join(rel);
     let Ok(md) = std::fs::metadata(&full) else {
-        return Processed::Gone;
+        return Read::Gone;
     };
     let stat = Stat::of(&md);
     if md.len() > MAX_FILE_BYTES {
-        return Processed::Skip(stat);
+        return Read::Skip(stat);
     }
     let Ok(raw) = std::fs::read(&full) else {
-        return Processed::Gone; // unreadable now: its old chunks must not answer
+        return Read::Gone; // unreadable now: its old chunks must not answer
     };
-    let Some(source) = decode_source(&raw) else {
-        return Processed::Skip(stat);
-    };
+    if decode_source(&raw).is_none() {
+        return Read::Skip(stat);
+    }
     let h = content_hash(&raw);
     if Some(h.as_str()) == known_hash {
-        return Processed::Same(stat);
+        return Read::Same(stat);
     }
-    let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| build_rows(rel, &source, model, prev)));
+    let key = crate::artifacts::key(&h, rel);
+    Read::Fresh(stat, h, key, raw)
+}
+
+/// A file read as new content: its rows from the artifact a store found (with the body to store
+/// here when it came from another store), else from a parse.
+fn process(rel: &str, read: Read, found: Option<(Found, Option<Vec<u8>>)>, model: Option<&SemanticModel>, prev: Option<PrevParse>) -> Processed {
+    let (stat, h, key, raw) = match read {
+        Read::Gone => return Processed::Gone,
+        Read::Skip(s) => return Processed::Skip(s),
+        Read::Same(s) => return Processed::Same(s),
+        Read::Fresh(s, h, k, raw) => (s, h, k, raw),
+    };
+    let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match found {
+        Some((found, body)) => {
+            let (rows, lex, imports) = crate::artifacts::derive(rel, found, model);
+            (rows, lex, imports, None, body, false)
+        }
+        None => {
+            let source = decode_source(&raw).unwrap_or_default();
+            let (rows, lex, imports, tree, body) = build_rows(rel, &source, model, prev);
+            (rows, lex, imports, tree, Some(body), true)
+        }
+    }));
     match built {
-        Ok((rows, lex, imports, tree)) => Processed::New(stat, h, rows, Box::new(lex), imports, tree),
+        Ok((rows, lex, imports, tree, body, parsed)) => Processed::New(stat, h, key, rows, Box::new(lex), imports, tree, body, parsed),
         Err(_) => {
             eprintln!("[scrutate] skipped {rel}: parser failure");
             Processed::Skip(stat)
         }
     }
+}
+
+/// The segments of one index, opened when the vectors of an artifact are first wanted.
+struct Segs {
+    dir: PathBuf,
+    names: Vec<String>,
+    /// the vector model whose vectors they hold
+    sig: String,
+    open: Option<Vec<crate::lex::Segment>>,
+}
+
+impl Segs {
+    fn new(dir: PathBuf, names: Vec<String>, sig: String) -> Segs {
+        Segs { dir, names, sig, open: None }
+    }
+
+    /// The stored vectors of chunks `ids` in order, when each has a segment row with one `k` wide.
+    fn vectors(&mut self, ids: &[i64], k: usize) -> Option<QVecs> {
+        let (dir, names) = (&self.dir, &self.names);
+        let segs = self.open.get_or_insert_with(|| names.iter().filter_map(|n| crate::lex::Segment::open(&dir.join(n)).ok()).collect());
+        let mut v = QVecs { q: Vec::with_capacity(ids.len() * 2 * k), scale: Vec::with_capacity(ids.len() * 2) };
+        for &id in ids {
+            let (q, s) = segs.iter().find_map(|g| g.row_of(id).and_then(|r| g.vec_row(r)))?;
+            if q.len() != 2 * k || s.len() != 2 {
+                return None;
+            }
+            v.q.extend_from_slice(q);
+            v.scale.extend_from_slice(s);
+        }
+        Some(v)
+    }
+}
+
+/// The artifact of `key` in the index `db`, with its chunk texts, and with its vectors when
+/// `vectors` (the model's width and signature) is given and the segments hold that model's.
+/// Damage to the store is an error with `own` (this checkout's index, rebuilt by the one rule)
+/// and a miss without (another checkout's, which this one never writes). -> the artifact and
+/// its encoded body.
+fn find_artifact(db: &Connection, segs: &mut Segs, key: &Key, vectors: Option<(usize, &str)>, own: bool) -> Result<Option<(Found, Vec<u8>)>> {
+    let damaged = |why: &'static str| -> Result<Option<(Found, Vec<u8>)>> {
+        match own {
+            true => Err(Damaged(why).into()),
+            false => Ok(None),
+        }
+    };
+    let row: Option<(Vec<u8>, Option<Vec<u8>>)> =
+        db.prepare_cached("SELECT body, kept FROM artifacts WHERE key=?1")?.query_row([&key[..]], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
+    let Some((body, kept)) = row else { return Ok(None) };
+    let Ok(art) = Artifact::decode(&body) else { return damaged("an artifact does not decode") };
+    let (texts, ids) = match kept {
+        Some(k) => match crate::artifacts::decode_texts(&k) {
+            Ok(t) => (t, None),
+            Err(_) => return damaged("the texts of an artifact do not decode"),
+        },
+        None => {
+            // the rows of a path that names it hold its texts and vectors
+            let mut q = db.prepare_cached("SELECT id, text FROM chunks WHERE path=(SELECT path FROM files WHERE art=?1 LIMIT 1) ORDER BY id")?;
+            let rows: Vec<(i64, Vec<u8>)> = q.query_map([&key[..]], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+            let ids: Vec<i64> = rows.iter().zip(&art.chunks).filter(|(_, c)| c.kind != "constant").map(|(r, _)| r.0).collect();
+            (rows.into_iter().map(|r| r.1).collect(), Some(ids))
+        }
+    };
+    if texts.len() != art.chunks.len() {
+        return damaged("an artifact and the rows made from it disagree");
+    }
+    let vecs = match (vectors, ids) {
+        (Some((k, sig)), Some(ids)) if segs.sig == sig && ids.len() == art.lexed() => segs.vectors(&ids, k),
+        _ => None,
+    };
+    Ok(Some((Found { art, texts, vecs }, body)))
+}
+
+/// The code index of the main checkout of the linked git work tree at `root`. Each lookup reads
+/// in a snapshot of its own, so the other checkout's writer is held back by none longer than one
+/// lookup; its segments are those its manifest listed when this was opened.
+struct Other {
+    db: Connection,
+    segs: Segs,
+}
+
+/// `Other` for `root`, when it is a linked work tree whose main checkout has a code index of
+/// this schema that is no symbolic link and holds none. Opened read-only: nothing of the other
+/// checkout is written (SQLite's shared lock marks its `-shm` file, as every reader's does).
+fn open_other(root: &Path) -> Option<Other> {
+    let main = crate::files::main_checkout(root)?;
+    let dir = crate::files::index_dir(&main).ok()?;
+    let db_path = dir.join("index.db");
+    if !std::fs::symlink_metadata(&db_path).ok()?.is_file() {
+        return None;
+    }
+    let db = Connection::open_with_flags(&db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).ok()?;
+    db.busy_timeout(Duration::from_secs(1)).ok()?;
+    db.execute_batch("BEGIN").ok()?;
+    let get = |k: &str| db.query_row("SELECT value FROM meta WHERE key=?1", [k], |r| r.get::<_, String>(0)).optional().ok().flatten();
+    let (version, names, sig) = (get("schema_version"), get("segments"), get("model_sig"));
+    db.execute_batch("COMMIT").ok()?;
+    if version? != SCHEMA_VERSION.to_string() {
+        return None;
+    }
+    let names: Vec<String> = serde_json::from_str(&names.unwrap_or_else(|| "[]".into())).ok()?;
+    if !names.iter().all(|n| segment_name(n)) {
+        return None;
+    }
+    Some(Other { segs: Segs::new(dir.join("seg"), names, sig.unwrap_or_default()), db })
+}
+
+/// A segment name this program writes (`s000001`), so a copied manifest names no other place.
+fn segment_name(n: &str) -> bool {
+    n.len() > 1 && n.starts_with('s') && n[1..].bytes().all(|b| b.is_ascii_digit())
+}
+
+/// A new index of a linked git work tree starts as a copy of its main checkout's index of this
+/// schema, parsing rules and vector model: the database read in one snapshot (`VACUUM INTO`, which
+/// leaves the other one as it is) and the segments it lists copied. The first update then reads
+/// and hashes every file and parses only those whose content differs. When anything fails no file
+/// is left and the index is built as usual. -> whether it was seeded.
+fn seed(root: &Path, dir: &Path, sig: &str) -> bool {
+    let Some(main) = crate::files::main_checkout(root) else { return false };
+    let Ok(main_dir) = crate::files::index_dir(&main) else { return false };
+    let src = main_dir.join("index.db");
+    if !std::fs::symlink_metadata(&src).is_ok_and(|m| m.is_file()) {
+        return false;
+    }
+    let nanos = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let tag = format!("seed-{}-{nanos}", std::process::id());
+    let tmp = dir.join(format!("index.db.{tag}"));
+    let copied = (|| -> Result<()> {
+        let db = Connection::open_with_flags(&src, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        db.busy_timeout(Duration::from_secs(1))?;
+        let get = |k: &str| db.query_row("SELECT value FROM meta WHERE key=?1", [k], |r| r.get::<_, String>(0)).optional();
+        let same = [("schema_version", SCHEMA_VERSION.to_string()), ("content_rev", CONTENT_REVISION.to_string()), ("model_sig", sig.to_string())];
+        for (k, want) in same {
+            if get(k)?.as_deref() != Some(want.as_str()) {
+                bail!("built by another version or model");
+            }
+        }
+        db.execute("VACUUM INTO ?1", [tmp.to_string_lossy()])?;
+        drop(db);
+        let names: Vec<String> = {
+            let copy = Connection::open(&tmp)?;
+            let listed = copy.query_row("SELECT value FROM meta WHERE key='segments'", [], |r| r.get::<_, String>(0)).optional()?;
+            serde_json::from_str(&listed.unwrap_or_else(|| "[]".into()))?
+        };
+        let seg_dir = dir.join("seg");
+        std::fs::create_dir_all(&seg_dir)?;
+        for n in &names {
+            if !segment_name(n) {
+                bail!("a segment name this program does not write");
+            }
+            copy_segment(&main_dir.join("seg").join(n), &seg_dir, n, &tag)?;
+        }
+        // another process that made one first wins
+        std::fs::hard_link(&tmp, dir.join("index.db"))?;
+        Ok(())
+    })();
+    let _ = std::fs::remove_file(&tmp);
+    copied.is_ok()
+}
+
+/// The files of the segment directory `from` copied into `seg_dir/name` (a copy of the same
+/// name that is there already is the same segment: names are never reused).
+fn copy_segment(from: &Path, seg_dir: &Path, name: &str, tag: &str) -> Result<()> {
+    let dest = seg_dir.join(name);
+    if dest.exists() {
+        return Ok(());
+    }
+    let tmp = seg_dir.join(format!("{name}.{tag}"));
+    std::fs::create_dir(&tmp)?;
+    let copied = (|| -> Result<()> {
+        for e in std::fs::read_dir(from)? {
+            let e = e?;
+            if !e.file_type()?.is_file() {
+                bail!("a segment holds something that is not a file");
+            }
+            std::fs::copy(e.path(), tmp.join(e.file_name()))?;
+        }
+        std::fs::rename(&tmp, &dest)?;
+        Ok(())
+    })();
+    if copied.is_err() {
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+    copied.or_else(|e| if dest.is_dir() { Ok(()) } else { Err(e) })
 }
 
 /// The hash of a file's bytes the index records for it.
@@ -692,6 +872,20 @@ fn retry_busy<T>(mut f: impl FnMut() -> rusqlite::Result<T>) -> rusqlite::Result
     }
 }
 
+/// The `art` column and its index, on a `files` table an older schema made without it; another
+/// process adding it at the same time is no error.
+fn add_art(db: &Connection) -> rusqlite::Result<()> {
+    let has = |db: &Connection| db.prepare("SELECT 1 FROM pragma_table_info('files') WHERE name='art'").and_then(|mut q| q.exists([]));
+    if !has(db)? {
+        if let Err(e) = retry_busy(|| db.execute_batch("ALTER TABLE files ADD COLUMN art BLOB")) {
+            if !has(db)? {
+                return Err(e);
+            }
+        }
+    }
+    retry_busy(|| db.execute_batch(ART_INDEX))
+}
+
 enum Triage {
     /// use the files as they are
     Reuse,
@@ -727,6 +921,12 @@ pub struct Index {
     trees_peak: usize,
     /// which file `db` has open, to notice another process deleting it and building a new one
     db_id: Option<(u64, u64)>,
+    /// files this index parsed since it was opened, the others' rows made from a stored artifact
+    #[doc(hidden)]
+    pub parsed: usize,
+    /// the least the artifacts no file names may keep (`KEPT_MIN_BYTES`); a test sets it lower
+    #[doc(hidden)]
+    pub kept_min: i64,
 }
 
 /// Which files an update looks at.
@@ -764,6 +964,9 @@ impl Index {
         write_gitignore(&dir)?;
         let db_path = dir.join("index.db");
         let sem_sig = models.signature(&dir)?;
+        if !db_path.exists() {
+            seed(&root, &dir, &sem_sig);
+        }
         let wrong_type = db_path.is_dir() || std::fs::symlink_metadata(&seg_dir).is_ok_and(|m| !m.is_dir());
         let triage = if wrong_type { Triage::Garbage("index files of the wrong type") } else { Self::triage(&db_path) };
         if let Triage::Newer(n) = triage {
@@ -784,7 +987,7 @@ impl Index {
         };
         let db = Connection::open(&db_path).with_context(|| format!("open {}", db_path.display()))?;
         let db = match setup(&db) {
-            Ok(()) => retry_busy(|| db.execute_batch(SCHEMA)).map(|()| db),
+            Ok(()) => retry_busy(|| db.execute_batch(SCHEMA)).and_then(|()| add_art(&db)).map(|()| db),
             Err(rusqlite::Error::SqliteFailure(f, _)) if f.code == rusqlite::ffi::ErrorCode::ReadOnly && matches!(triage, Triage::Reuse) => {
                 drop(db);
                 Ok(Self::open_immutable(&db_path, &sem_sig)?)
@@ -801,6 +1004,7 @@ impl Index {
                 let db = Connection::open(&db_path).with_context(|| format!("open {}", db_path.display()))?;
                 setup(&db)?;
                 retry_busy(|| db.execute_batch(SCHEMA))?;
+                add_art(&db)?;
                 db
             }
         };
@@ -824,6 +1028,8 @@ impl Index {
             trees_peak: 0,
             cancel: Arc::default(),
             db_id: file_id(&db_path),
+            parsed: 0,
+            kept_min: KEPT_MIN_BYTES,
         };
         if let Triage::Rebuild(why) = triage {
             // an index of another schema: drop its contents *inside* the database, so
@@ -884,6 +1090,8 @@ impl Index {
             trees_peak: 0,
             cancel: Arc::default(),
             db_id: file_id(&db_path),
+            parsed: 0,
+            kept_min: self.kept_min,
         })
     }
 
@@ -942,7 +1150,7 @@ impl Index {
             return Ok(());
         }
         let old = self.segments();
-        self.db.execute_batch("DELETE FROM refs; DELETE FROM imports; DELETE FROM chunks; DELETE FROM files;")?;
+        self.db.execute_batch("DELETE FROM refs; DELETE FROM imports; DELETE FROM chunks; DELETE FROM files; DELETE FROM artifacts;")?;
         self.set_meta("segments", "[]")?;
         let ver = self.bump_version()?;
         self.set_meta("chunks_at", &format!("{ver} 0"))?;
@@ -1403,7 +1611,9 @@ impl Index {
         }
         let switching = self.meta("model_sig").as_deref() != Some(self.sig.as_str());
         let models = Arc::clone(&self.models);
+        let t = Instant::now();
         let model = if switching || !todo.is_empty() { models.semantic()? } else { None };
+        prof::add(&prof::MODEL, t);
         if switching {
             self.vectors_anew(model, &mut todo, &gone, seg_names, replaced)?;
             self.set_meta("model_sig", &self.sig)?;
@@ -1411,33 +1621,61 @@ impl Index {
             changed = true;
         }
         let mut next_id: i64 = self.meta("next_id").and_then(|v| v.parse().ok()).unwrap_or(1); // ids are never reused
+                                                                                               // what this update names or drops is stamped with the data version it commits
+        let stamp = self.meta("data_version").and_then(|v| v.parse::<i64>().ok()).unwrap_or(0) + 1;
+        let mut kept = 0usize;
         for g in &gone {
-            removed.extend(self.delete_file(g)?);
+            removed.extend(self.drop_file(g, stamp, &mut kept)?);
             st.files_removed += 1;
             changed = true;
         }
         let k = model.map(|m| m.k).unwrap_or(0);
         let mut builder = SegmentBuilder::new(k);
+        let t = Instant::now();
         if let (Some(m), false) = (model, todo.is_empty()) {
             m.warm(); // build the weight tables once, before the parallel pass
         }
+        prof::add(&prof::MODEL, t);
         let root = self.root.clone();
         let progress = self.progress && std::io::IsTerminal::is_terminal(&std::io::stderr());
         let mut done = 0usize;
         let mut last_tick = Instant::now();
         // the trees parsed first fill the cache, and the others are dropped at once, so the peak stays bounded
         let room = std::sync::atomic::AtomicIsize::new(TREE_CACHE_BYTES as isize);
+        let (mut own, mut other) = (None, None);
         for batch in todo.chunks(256) {
             if self.cancel.load(std::sync::atomic::Ordering::Relaxed) {
                 anyhow::bail!("cancelled");
             }
+            let reads: Vec<Read> = batch
+                .par_iter()
+                .map(|(rel, kh)| {
+                    let t = Instant::now();
+                    let r = read_file(&root, rel, kh.as_deref());
+                    prof::add(&prof::READ, t);
+                    r
+                })
+                .collect();
+            let t = Instant::now();
+            // content new to this path is looked for in the store, then in the main checkout's; a
+            // forced update parses every file
+            let mut found = Vec::with_capacity(reads.len());
+            for r in &reads {
+                found.push(match r {
+                    Read::Fresh(_, _, key, _) if !force => self.find_anywhere(key, model, &mut own, &mut other)?,
+                    _ => None,
+                });
+            }
+            prof::add(&prof::LOOKUP, t);
             let prevs: Vec<Option<PrevParse>> = batch.iter().map(|(rel, _)| self.trees.remove(rel).map(|t| t.1)).collect();
             let results: Vec<(String, Processed)> = batch
                 .par_iter()
+                .zip(reads)
+                .zip(found)
                 .zip(prevs)
-                .map(|((rel, kh), prev)| {
-                    let mut res = process(&root, rel, kh.as_deref(), model, prev);
-                    if let Processed::New(.., tree) = &mut res {
+                .map(|((((rel, _), read), found), prev)| {
+                    let mut res = process(rel, read, found, model, prev);
+                    if let Processed::New(.., tree, _, _) = &mut res {
                         let n = tree.as_ref().map_or(0, |t| t.source_len() as isize);
                         if room.fetch_sub(n, std::sync::atomic::Ordering::Relaxed) < n {
                             // a tree that does not fit gives its room back, so smaller ones can still use it
@@ -1455,10 +1693,10 @@ impl Index {
             }
             for (rel, res) in results {
                 match res {
-                    Processed::Gone => removed.extend(self.delete_file(&rel)?),
+                    Processed::Gone => removed.extend(self.drop_file(&rel, stamp, &mut kept)?),
                     Processed::Skip(s) => {
                         // binary / too large / unparsable: remember so we never re-read it
-                        removed.extend(self.delete_file(&rel)?);
+                        removed.extend(self.drop_file(&rel, stamp, &mut kept)?);
                         self.db.execute(
                             "INSERT OR REPLACE INTO files(path,size,mtime_ns,hash,ctime_ns) VALUES(?1,?2,?3,'SKIP',?4)",
                             params![rel, s.size, s.mtime, s.ctime],
@@ -1468,7 +1706,8 @@ impl Index {
                         // content identical, only the stat moved
                         self.db.execute("UPDATE files SET size=?1, mtime_ns=?2, ctime_ns=?3 WHERE path=?4", params![s.size, s.mtime, s.ctime, rel])?;
                     }
-                    Processed::New(s, h, rows, lex, imports, tree) => {
+                    Processed::New(s, h, key, rows, lex, imports, tree, body, parsed) => {
+                        self.parsed += usize::from(parsed);
                         if let Some(tree) = tree.filter(|t| t.source_len() <= TREE_CACHE_BYTES) {
                             self.tree_tick += 1;
                             self.trees.insert(rel.clone(), (self.tree_tick, tree));
@@ -1478,7 +1717,7 @@ impl Index {
                             }
                         }
                         let t = Instant::now();
-                        removed.extend(self.delete_file(&rel)?);
+                        removed.extend(self.drop_file(&rel, stamp, &mut kept)?);
                         let first = next_id;
                         next_id = self.insert(&rel, rows, next_id)?;
                         prof::add(&prof::INSERT, t);
@@ -1489,9 +1728,10 @@ impl Index {
                             }
                         }
                         builder.add_file(first, *lex);
+                        self.name_artifact(&key, body.as_deref(), stamp)?;
                         self.db.execute(
-                            "INSERT OR REPLACE INTO files(path,size,mtime_ns,hash,ctime_ns) VALUES(?1,?2,?3,?4,?5)",
-                            params![rel, s.size, s.mtime, h, s.ctime],
+                            "INSERT OR REPLACE INTO files(path,size,mtime_ns,hash,ctime_ns,art) VALUES(?1,?2,?3,?4,?5,?6)",
+                            params![rel, s.size, s.mtime, h, s.ctime, &key[..]],
                         )?;
                         st.files_changed += 1;
                         changed = true;
@@ -1510,6 +1750,9 @@ impl Index {
         }
         if builder.n > 0 {
             self.flush_segment(builder, seg_names)?;
+        }
+        if kept > 0 {
+            self.collect_kept()?;
         }
         self.set_meta("next_id", &next_id.to_string())?;
         if reparse {
@@ -1781,6 +2024,95 @@ impl Index {
             }
         }
         Ok(next_id)
+    }
+
+    /// The artifact `key` named by a file: stored with `body` when this store did not hold it, and
+    /// its texts no longer kept, since the file's rows hold them.
+    fn name_artifact(&self, key: &Key, body: Option<&[u8]>, stamp: i64) -> Result<()> {
+        match body {
+            Some(b) => self
+                .db
+                .prepare_cached("INSERT OR REPLACE INTO artifacts(key, body, kept, bytes, used) VALUES(?1, ?2, NULL, ?3, ?4)")?
+                .execute(params![&key[..], b, b.len() as i64, stamp])?,
+            None => self.db.prepare_cached("UPDATE artifacts SET kept=NULL, bytes=length(body), used=?2 WHERE key=?1")?.execute(params![&key[..], stamp])?,
+        };
+        Ok(())
+    }
+
+    /// `delete_file`, after the chunk texts of the file's artifact move into the store when no
+    /// other file names it: the same content under another path, or here again after a branch
+    /// switch, is then not parsed. `kept` counts the artifacts that moved.
+    fn drop_file(&self, rel: &str, stamp: i64, kept: &mut usize) -> Result<Vec<i64>> {
+        let art: Option<Vec<u8>> = self.db.prepare_cached("SELECT art FROM files WHERE path=?1")?.query_row([rel], |r| r.get(0)).optional()?.flatten();
+        if let Some(a) = art {
+            let shared: bool =
+                self.db.prepare_cached("SELECT EXISTS(SELECT 1 FROM files WHERE art=?1 AND path!=?2)")?.query_row(params![a, rel], |r| r.get(0))?;
+            if !shared {
+                let mut q = self.db.prepare_cached("SELECT text FROM chunks WHERE path=?1 ORDER BY id")?;
+                let texts: Vec<Vec<u8>> = q.query_map([rel], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+                let texts = crate::artifacts::encode_texts(&texts);
+                let n = self.db.prepare_cached("UPDATE artifacts SET kept=?1, bytes=length(body)+?2, used=?3 WHERE key=?4")?.execute(params![
+                    texts,
+                    texts.len() as i64,
+                    stamp,
+                    a
+                ])?;
+                if n == 0 {
+                    return Err(Damaged("a file names an artifact the store does not hold").into());
+                }
+                *kept += 1;
+            }
+        }
+        self.delete_file(rel)
+    }
+
+    /// Delete the artifacts no file names beyond the budget, least recently dropped first (inside
+    /// the update that dropped some): a quarter of the database's size, at least `kept_min`.
+    /// A file's own artifact is never deleted. -> how many went.
+    fn collect_kept(&self) -> Result<usize> {
+        let size: i64 = self.db.query_row("SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()", [], |r| r.get(0))?;
+        let budget = (size / 4).max(self.kept_min);
+        let mut q = self.db.prepare_cached("SELECT key, bytes FROM artifacts WHERE kept IS NOT NULL ORDER BY used DESC, key")?;
+        let rows: Vec<(Vec<u8>, i64)> = q.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+        let mut del = self.db.prepare_cached("DELETE FROM artifacts WHERE key=?1")?;
+        let (mut total, mut gone) = (0i64, 0usize);
+        for (key, bytes) in rows {
+            total += bytes;
+            if total > budget {
+                del.execute([key])?;
+                gone += 1;
+            }
+        }
+        Ok(gone)
+    }
+
+    /// The artifact of `key` from this index's store, else from the main checkout's when this is
+    /// a linked work tree (opened at the first miss, None when there is none); with the body to
+    /// store here when it came from the other one.
+    fn find_anywhere(
+        &self,
+        key: &Key,
+        model: Option<&SemanticModel>,
+        own: &mut Option<Segs>,
+        other: &mut Option<Option<Other>>,
+    ) -> Result<Option<(Found, Option<Vec<u8>>)>> {
+        let vectors = model.map(|m| (m.k, self.sig.as_str()));
+        let own = own.get_or_insert_with(|| Segs::new(self.seg_dir.clone(), self.segments(), self.meta("model_sig").unwrap_or_default()));
+        if let Some((found, _)) = find_artifact(&self.db, own, key, vectors, true)? {
+            return Ok(Some((found, None)));
+        }
+        let Some(o) = other.get_or_insert_with(|| open_other(&self.root)) else { return Ok(None) };
+        // another checkout's files are data: anything wrong with them is a miss
+        let hit = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            o.db.execute_batch("BEGIN")?;
+            let hit = find_artifact(&o.db, &mut o.segs, key, vectors, false);
+            o.db.execute_batch("COMMIT")?;
+            hit
+        }));
+        Ok(match hit {
+            Ok(Ok(Some((found, body)))) => Some((found, Some(body))),
+            _ => None,
+        })
     }
 
     /// Chunks vanish from SQLite; their segment rows simply stop being alive. Returns the ids that died.
@@ -2079,6 +2411,22 @@ impl Index {
         Ok(self.db.execute_batch(sql)?)
     }
 
+    /// The bytes of the artifacts no file names, and of the whole database.
+    #[doc(hidden)]
+    pub fn store_bytes(&self) -> Result<(i64, i64)> {
+        let kept = self.db.query_row("SELECT COALESCE(SUM(bytes), 0) FROM artifacts WHERE kept IS NOT NULL", [], |r| r.get(0))?;
+        let size = self.db.query_row("SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()", [], |r| r.get(0))?;
+        Ok((kept, size))
+    }
+
+    /// How many artifacts files name, and how many no file names.
+    #[doc(hidden)]
+    pub fn store_counts(&self) -> Result<(i64, i64)> {
+        let named = self.db.query_row("SELECT COUNT(DISTINCT art) FROM files WHERE art IS NOT NULL", [], |r| r.get(0))?;
+        let kept = self.db.query_row("SELECT COUNT(*) FROM artifacts WHERE kept IS NOT NULL", [], |r| r.get(0))?;
+        Ok((named, kept))
+    }
+
     /// Verify the index. Never repairs anything: `update()` / `rebuild()` do that.
     pub fn check(&mut self, files: bool) -> Result<CheckReport> {
         let mut r = CheckReport::default();
@@ -2120,6 +2468,7 @@ impl Index {
             }
         }
         r.files_indexed = self.db.query_row("SELECT COUNT(*) FROM files WHERE hash != 'SKIP'", [], |row| row.get::<_, i64>(0))? as usize;
+        r.problems.extend(self.check_store()?);
         if files {
             let mut st = self.db.prepare("SELECT path, hash FROM files WHERE hash != 'SKIP'")?;
             let rows: Vec<(String, String)> = st.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
@@ -2141,6 +2490,44 @@ impl Index {
             }
         }
         Ok(r)
+    }
+
+    /// The artifact store's problems: artifacts that do not decode, files that name one the store
+    /// does not hold, and files whose rows are not the chunks of their artifact.
+    fn check_store(&self) -> Result<Vec<String>> {
+        let mut chunks_of: HashMap<Vec<u8>, usize> = HashMap::new();
+        let mut bad = 0usize;
+        let mut st = self.db.prepare("SELECT key, body, kept FROM artifacts")?;
+        for row in st.query_map([], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?, r.get::<_, Option<Vec<u8>>>(2)?)))? {
+            let (key, body, kept) = row?;
+            match Artifact::decode(&body) {
+                Ok(a) if kept.as_ref().is_none_or(|k| crate::artifacts::decode_texts(k).is_ok_and(|t| t.len() == a.chunks.len())) => {
+                    chunks_of.insert(key, a.chunks.len());
+                }
+                _ => bad += 1,
+            }
+        }
+        let (mut missing, mut other) = (0usize, 0usize);
+        let mut st = self.db.prepare("SELECT f.art, (SELECT COUNT(*) FROM chunks c WHERE c.path = f.path) FROM files f WHERE f.art IS NOT NULL")?;
+        for row in st.query_map([], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, i64>(1)?)))? {
+            let (art, n) = row?;
+            match chunks_of.get(&art) {
+                None => missing += 1,
+                Some(&m) if m as i64 != n => other += 1,
+                _ => {}
+            }
+        }
+        let mut problems = Vec::new();
+        if bad > 0 {
+            problems.push(format!("{bad} artifacts of the store do not decode"));
+        }
+        if missing > 0 {
+            problems.push(format!("{missing} files name an artifact the store does not hold"));
+        }
+        if other > 0 {
+            problems.push(format!("{other} files hold other chunks than their artifact"));
+        }
+        Ok(problems)
     }
 
     /// Whether the committed index holds any file.

@@ -710,7 +710,12 @@ value). On/off variables follow the rule under Conventions.
 `.scrutate/text/` (the text index: a manifest and immutable trigram segments),
 `.scrutate/tsquery/` (the `tsquery` cache), while `serve` runs `.scrutate/session.sock`, plus a
 `.gitignore` so it is never committed. It is a cache: deleting it is always safe; `scrutate index
---force` rebuilds it; a damaged index rebuilds itself. If a newer scrutate built `.scrutate/`,
+--force` rebuilds it, parsing every file; a damaged index rebuilds itself. The index keeps what
+parsing made of each file's content (the artifact store), so a file renamed or moved under the
+same name, or brought back by a branch switch, is not parsed again. In a linked git work tree
+(`git worktree add`), a new index starts as a copy of the main checkout's index, and content new
+to the work tree is looked up in the main checkout's store; nothing of the main checkout is
+written (docs/SECURITY.md). If a newer scrutate built `.scrutate/`,
 this version reads the index without updating it (one line on stderr says so), or refuses it
 with exit 2 when it cannot read it; `scrutate index --force` (`--text --force` for the text
 index) rebuilds it with this version. A `serve` or `lsp` process that is already running

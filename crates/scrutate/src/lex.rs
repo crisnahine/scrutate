@@ -73,34 +73,6 @@ pub fn dequantize(q: &[i8], s: f32, out: &mut [f32]) {
     }
 }
 
-/// bags[i][c] is a {token: tf} map of chunk i, field c.
-pub fn pack_bags(bags: &[Vec<HashMap<String, u32>>], vec: Option<QVecs>) -> FileLex {
-    let m = bags.len();
-    let mut dl = vec![0f32; m];
-    let mut keys: Vec<Vec<i64>> = (0..NF).map(|_| Vec::new()).collect();
-    let mut tf: Vec<Vec<u8>> = (0..NF).map(|_| Vec::new()).collect();
-    let mut cnt: Vec<Vec<i32>> = (0..NF).map(|_| vec![0i32; m]).collect();
-    for (i, fields) in bags.iter().enumerate() {
-        let mut total: u64 = 0;
-        for (c, bag) in fields.iter().enumerate() {
-            if bag.is_empty() {
-                continue;
-            }
-            // deterministic order (the sort inside write_segment makes it irrelevant for scoring)
-            let mut items: Vec<(&String, &u32)> = bag.iter().collect();
-            items.sort_by(|a, b| a.0.cmp(b.0));
-            for (t, &c_) in items {
-                keys[c].push(tok_key(t));
-                tf[c].push(c_.min(255) as u8);
-                total += c_ as u64;
-            }
-            cnt[c][i] = bag.len() as i32;
-        }
-        dl[i] = total as f32;
-    }
-    FileLex { dl, keys, tf, cnt, vec }
-}
-
 /// A stored value points outside its segment: the caller rebuilds the index, as for a corrupt database.
 fn damaged() -> anyhow::Error {
     crate::index::Damaged("a segment array names a row outside the segment").into()

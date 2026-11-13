@@ -832,6 +832,10 @@ def diagram_security():
          ["Written only under `<root>/.scrutate/`; segments go to a temporary directory there and are renamed.",
           "A `.scrutate` that is a link, or holds one, is refused.",
           "`PRAGMA quick_check` on open, arrays validated; a damaged index is rebuilt."]),
+        ("Main checkout's index", "in a linked git work tree: another checkout's `.scrutate/`, read",
+         ["Found from git's own files, no program run; the link must be confirmed both ways.",
+          "Read only, in one snapshot; the same link checks; never written.",
+          "An artifact is used only for bytes that hash to its key; anything that does not decode is a miss."]),
     ]
     y = 34
     s.add(lbl(1, 18, "Outside: untrusted"))

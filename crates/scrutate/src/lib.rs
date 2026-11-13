@@ -6,6 +6,7 @@
 #![allow(clippy::needless_range_loop)]
 
 pub mod archive;
+pub mod artifacts;
 pub mod cli;
 pub mod config;
 pub mod files;

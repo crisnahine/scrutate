@@ -32,6 +32,8 @@
 //! and each commits in one step (a transaction; a manifest rename; a file rename), so a reader of
 //! one store sees its last commit and never half of one. Writers that keep both indexes take the
 //! two locks one after the other, code index first, and never hold both; no answer reads both.
+//! The artifact store is a table of the code index and commits with it; the main checkout's
+//! index a linked work tree reads is read in read transactions only.
 //! Inside one process the repositories of one root that `Repo::another` opened share one more
 //! lock, held by every write any of them makes (an update, the scan before a read, the update of
 //! the files an answer cites, a rebuild), so they write one at a time and a rebuild one of them

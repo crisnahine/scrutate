@@ -333,9 +333,10 @@ folded, so two spellings of one accented name are one name.
 
 ### Storage (`index.rs`, `lex.rs`)
 - **SQLite** (bundled, WAL, `synchronous=NORMAL`): `files` (size, mtime, status-change time
-  `ctime_ns`, SHA-1 content hash), `chunks` (metadata + zlib-compressed text), `refs` (call
-  edges), `imports`, `meta` (schema version, model signature, segment manifest, data version,
-  and `chunks_at`, the chunk count of the commit that wrote that data version).
+  `ctime_ns`, SHA-1 content hash, and `art`, the key of the file's artifact: this is the path
+  map), `chunks` (metadata + zlib-compressed text), `refs` (call edges), `imports`, `artifacts`
+  (the artifact store, below), `meta` (schema version, model signature, segment manifest, data
+  version, and `chunks_at`, the chunk count of the commit that wrote that data version).
   These tables are private to `index.rs`: the database handle is not public, and every other
   module asks `Index` a question instead (whether a path has a row, the indexed files, the chunks
   of ids, a file's outline, the chunk or window at a line, the chunks of a name, a name's
@@ -354,6 +355,45 @@ folded, so two spellings of one accented name are one name.
   segments ≥ 20 000 rows (spherical k-means, K = clamp(2√n, 32, 1024); a query probes 48
   clusters, measured at ±0.000 MRR against the exhaustive scan).
   Constant chunks have no segment rows.
+- **Artifacts** (`artifacts.rs`): what parsing and tokenizing make of one file, keyed by what
+  that depends on, so the same bytes under another path, after a branch switch and back, or in
+  the main checkout of a linked work tree are not parsed, tokenized or packed again. A parse reads
+  the bytes and, from the path, only the file name (the language, the module chunk's name, comment
+  marks) and, for an `index` file, its directory's name (an anonymous default export); those, the
+  artifact format and `CONTENT_REVISION` make the key (128-bit BLAKE2b). What depends on the rest
+  of the path stays with the path map and is made by `artifacts::derive`, the one function that
+  turns an artifact into a path's rows and postings, for a parsed file and a stored one alike:
+
+  | In the key (the artifact holds what they decide) | With the path (`derive` adds it) |
+  |---|---|
+  | the bytes (SHA-1 of the file) | the path of every row |
+  | the file name: language, module chunk name, comment marks, prose files | the test flag (`is_test_path`) |
+  | the directory name of an `index` file | the path field of the postings, and its share of each chunk's length |
+  | the parsing rules (`CONTENT_REVISION`) and the artifact format | the chunk ids and segment rows |
+  | | the vectors, when they are made: per model, from the stored word counts |
+  | | name resolution, which reads other files (asked at query time, as before) |
+
+  An artifact holds the chunks (kind, names, lines, the name's subwords, calls), the imports, and
+  per chunk and field the subwords and whole identifiers with their counts: the postings are made
+  from them, and the vectors of any model can be (`SemanticModel::encode_counts`; the next step
+  makes a model switch read them instead of parsing). The chunk texts and the vectors are not
+  stored twice: while a path names an artifact they are its rows and segment rows, and an
+  artifact found there takes them from those; when the last path that names it drops it (an
+  edit, a delete, a rename, a branch switch), its texts move into the artifact (`kept`), and its
+  vectors are made from the counts when it is used again. The artifacts no path names are kept up
+  to a quarter of the database's size (at least 4 MiB), the least recently dropped deleted first,
+  by the update that dropped some, inside its transaction; a lookup never deletes, and an artifact
+  a path names is never deleted. `index --force` parses every file. On this repository the store
+  adds 3.1 MB (7%) to a 43 MB `.scrutate/` of a fresh build, and nothing else.
+
+  In a linked git work tree (`files::main_checkout` reads git's files: the `.git` file, then the
+  `gitdir` and `commondir` files git keeps for the work tree, the link confirmed both ways), a new
+  index starts as a copy of the main checkout's index of the same schema, parsing rules and vector
+  model: the database read with `VACUUM INTO` in one snapshot and the segments it lists copied;
+  the first update then reads and hashes every file and parses only those that differ. Content an
+  update has not seen is looked up in this checkout's store, then in the main checkout's, read-only
+  in one snapshot for the update. Nothing of the other checkout is written; docs/SECURITY.md has
+  the review. Two plain clones of a repository do not find each other.
 - **Lifecycle**: content hashing (fast path when size, mtime and, on Unix, `ctime_ns` match, so
   a `chmod` alone costs a read and a hash; a row without `ctime_ns`, from an older index, is read
   once; SHA-1 verification), one `BEGIN IMMEDIATE`
@@ -542,7 +582,11 @@ other, code index first, and never holds both, so two writers cannot deadlock; b
 commits a reader can see the new code index beside the old text index, and no answer reads both.
 The repositories a session opens (`Repo::another`) share one more lock in the process, held by
 every write any of them makes, so they write one at a time and a rebuild after damage is made
-once, not once per reader; reads take no lock.
+once, not once per reader; reads take no lock. The artifact store is a table of the code index,
+so it commits in the code index's transaction and is recovered with it. A linked work tree reads
+its main checkout's index read-only, each lookup in a read transaction of its own, so it takes
+no lock of the other checkout but SQLite's read lock and holds back the other's checkpoint for
+no longer than one lookup; the copy a new index starts from is one `VACUUM INTO`, one read.
 
 ### Sessions (`session.rs`)
 A session holds one repository open for many calls. The MCP server, the language server, the

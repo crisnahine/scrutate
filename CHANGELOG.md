@@ -198,6 +198,15 @@ First release.
   line 18446744073709551615.
 
 ### Engine B: code intelligence
+- What parsing and tokenizing make of a file is an artifact, kept by the index under a key of the
+  file's content, its file name and the parsing rules (`artifacts.rs`); the `files` table names
+  each file's artifact, and one function (`artifacts::derive`) makes a path's rows and postings
+  from one, for a parsed file and a stored one alike, so both give the same index byte for byte.
+  An artifact holds the word counts the vectors are made from, so vectors for another model need
+  no parse (`SemanticModel::encode_counts`). The artifacts no file names are kept up to a quarter
+  of the database's size and collected by the update that dropped them. Schema 14: an older index
+  is built again once. The store adds 7% to `.scrutate/` on this repository; a fresh build costs
+  the same CPU.
 - The `tsquery` cache names its files by the searched paths from the root, where it named them
   by their absolute paths, so a copy of a tree with its `.scrutate/` answers from the cache the
   first tree made. Caches made before are not found and are evicted as old.
@@ -765,6 +774,12 @@ First release.
   (`.scrutate/tsquery/`) filled by earlier runs, so scrutate parsed no file while ast-grep parsed
   every file on each run; the documents and the chart now say so, and the benchmark harness runs
   `tsquery --no-cache` from now on, parse for parse.
+- In a linked git work tree (`git worktree add`), the first lookup answers from the main
+  checkout's index: the new index starts as a copy of it and parses only the files that differ,
+  0.06 s of CPU on this repository where a build costs 4.2 s. A file renamed or moved under the
+  same name, a copy of a file, and a branch switch and back no longer parse the files the index
+  has seen before. The main checkout is found from git's own files, the link confirmed both ways,
+  and nothing of it is written.
 - An index command (`symbol`, `callers`, `callees`, `refs`, `outline`, `deps`, `rdeps`, `read`,
   `similar`, `dupes`, `search`, the ranked part of `find`) uses the index a running `scrutate serve` holds open on the same root,
   through `.scrutate/session.sock` (Unix, owner only, no network port), and prints the same bytes
