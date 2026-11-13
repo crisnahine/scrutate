@@ -11,50 +11,54 @@
 
 <!-- End of head. -->
 
-The steps of a release, in order. They come from what the 0.1.0 release touched (`git log --stat`
-on its last commits) and from what the scripts refuse. Tick a step when its output has been read,
-not when its command started. Nothing is published from this repository yet (docs/ROADMAP.md), so
-the list ends at local artifacts.
+The steps of a release, in order, from what the 0.1.0 release touched (`git log --stat` on its
+last commits) and what the scripts refuse. Tick a step once its output is read, not once its
+command starts. No release is published yet (docs/ROADMAP.md), so the list ends at local
+artifacts.
 
-Any change to `crates/scrutate` or `vendor/ignore` after step 2 sends the release back to step 2:
-the benchmarks, the test results and the artifacts all name one binary by its SHA-256.
+A change to `crates/scrutate` or `vendor/ignore` after step 2 goes back to step 2: benchmarks,
+test results and artifacts all name one binary by its SHA-256.
 
 ## 1. Version and date
 
-The version is in `crates/scrutate/Cargo.toml`, `crates/scrutate-py/Cargo.toml`, `Cargo.lock`
-(both packages), `integrations/vscode/package.json`, `integrations/gitlab/.gitlab-ci.yml`,
-`integrations/bitbucket/bitbucket-pipelines.yml`, `packaging/homebrew/scrutate.rb`,
-`packaging/scoop/scrutate.json` and the winget manifests (the directory name too). The date is in
-the `CHANGELOG.md` heading, the title of `docs/DELIVERY.md` and the scope line of
-`docs/SECURITY.md`.
+| Where | Holds | `python3 tools/check_version.py 0.1.0` checks it |
+|---|---|---|
+| `crates/scrutate/Cargo.toml`, `crates/scrutate-py/Cargo.toml` | version | yes |
+| `Cargo.lock` (both packages) | version | no |
+| `integrations/vscode/package.json` and its lock file | version | yes |
+| `integrations/gitlab/.gitlab-ci.yml`, `integrations/bitbucket/bitbucket-pipelines.yml` | version | yes |
+| `packaging/homebrew/scrutate.rb` | version | yes (the URL) |
+| `packaging/scoop/scrutate.json` | version | yes |
+| the winget manifests and their directory name | version | yes |
+| the examples in the GitHub Action and pre-commit READMEs | version | yes |
+| the `CHANGELOG.md` heading, the title of `docs/DELIVERY.md`, the scope line of `docs/SECURITY.md` | date | no |
 
-`python3 tools/check_version.py 0.1.0` fails when any of these differs from the given version:
-both `Cargo.toml` files, the VS Code `package.json` and its lock file, the Scoop manifest, the
-winget directory and manifests, the Homebrew URL, the GitLab and Bitbucket templates, and the
-examples in the GitHub Action and pre-commit READMEs. The release workflow runs it on the tag
-(without its `v`) before anything else and refuses a tag that does not match.
+The check fails when a file differs from the version. The release workflow runs it first on the
+tag (less its `v`) and refuses a tag that does not match.
 
 The oldest compiler that builds is `rust-version` in the workspace `Cargo.toml`: 1.91, which the
-locked `notify-types` needs. A `ci.yml` job runs `cargo check` with that version, so a dependency
-update that raises it fails there; README.md and docs/INSTALL.md name it too.
+locked `notify-types` needs. A `ci.yml` job runs `cargo check` with it, so a dependency update
+that raises it fails there. README.md and docs/INSTALL.md name it too.
 
-`CONTENT_REVISION` in `crates/scrutate/src/index.rs` names the parsing rules an index was built
-with; the index keeps it in `meta` as `content_rev`. After a release, a change to `langs.rs`,
-`parse.rs` or `text.rs` raises it by one, so an index of the older rules reads every file again on
-its next update. 0.1.0 ships with 2: builds with the first rules were in use before the release,
-and their indexes must not keep chunks cut by those rules. Raise `SCHEMA_VERSION` when the
-database layout changes, `MODEL_REVISION` when the embedded semantic model changes, and the text
-index `FORMAT` when its files change. Each of the four only goes up: a binary leaves an index of a
-higher number alone (it reads a newer content revision as it is and refuses the other three), so
-two versions on one checkout never rebuild the index in turn.
+| Raise by one, after a release | When |
+|---|---|
+| `CONTENT_REVISION` in `crates/scrutate/src/index.rs` (in the index's `meta` as `content_rev`) | `langs.rs`, `parse.rs` or `text.rs` changes: an index of the older parsing rules reads every file again |
+| `SCHEMA_VERSION` | the database layout changes |
+| `MODEL_REVISION` | the embedded semantic model changes |
+| the text index `FORMAT` | its files change |
+
+0.1.0 ships with content revision 2: builds with the first rules were in use before the release,
+and their indexes must not keep chunks those rules cut. The four only go up: a binary leaves an
+index of a higher number alone, so two versions on one checkout never rebuild it in turn
+([Architecture](ARCHITECTURE.md#storage-indexrs-lexrs)).
 
 ## 2. Benchmarks on the release binary
 
 First move the previous results away: the harness resumes from an existing file and refuses one
-whose rows another binary measured (`--force` with no `--only` drops those rows before the first
-new one is saved, and `bench/compare_tools.py --only` refuses such a file too). Each goes to
-`bench/results/<platform>/superseded/` with the first four hex digits of its binary in the name,
-a row in that directory's `README.md`, and an entry in `HISTORY` in `bench/make_dashboard.py`.
+whose rows another binary measured (`--force` with no `--only` drops those rows before saving the
+first new one; `bench/compare_tools.py --only` refuses such a file too). Each goes to
+`bench/results/<platform>/superseded/`, named with the first four hex digits of its binary, with a
+row in that directory's `README.md` and an entry in `HISTORY` in `bench/make_dashboard.py`.
 
 macOS, about 4.5 hours:
 
@@ -63,41 +67,38 @@ cargo build --release -p scrutate --locked && sleep 3600 && bash bench/run_macos
 ```
 
 - Before the build, on Apple silicon: `python3 tools/order_file.py --check` reports the share of
-  the names in `crates/scrutate/startup.order` that the release links still have. Under 80 %, or
-  after a toolchain or `Cargo.lock` change, write it again (`python3 tools/order_file.py --dirs
+  names in `crates/scrutate/startup.order` the release links still have. Under 80 %, or after a
+  toolchain or `Cargo.lock` change, write it again (`python3 tools/order_file.py --dirs
   ~/.cache/scrutate-bench/corpora/startup ~/.cache/scrutate-bench/corpora/ripgrep`, about 15
   minutes: two release links, each run under lldb from Xcode's command line tools) and commit it.
-  A process started under lldb can hang at its start on some machines; the tool gives up on a
-  search after a minute and says so: run it again. A stale file only costs pages at start and
-  never breaks the build.
+  On some machines a process started under lldb hangs; the tool gives up on a search after a
+  minute and says so: run it again. A stale file only costs pages at start, never the build.
 - A just-built executable starts about 0.2 ms slower than the same file an hour later. Wait.
-- Do not run `cargo test` or `cargo build` until the chain ends: both can replace the binary.
-- Do not edit `bench/run_macos.sh` while it runs. bash reads it as it goes.
+- No `cargo test` or `cargo build` until the chain ends: both can replace the binary.
+- Do not edit `bench/run_macos.sh` while it runs: bash reads it as it goes.
 - Close the browser and the editor. With 18 GB the page cache cannot hold the LLVM tree beside
   them, and a warm run stops being warm (the harness records it as `resident`).
 
 Linux, about 1.5 hours, in a Colima VM with one virtual CPU per performance core
 (`colima start --cpu 5 --memory 12`; with 8, three run on efficiency cores and every tool's
-medians move by 10 to 30%). The commands are in the headers of `bench/competitors/linux_bench.sh`
-and `bench/competitors/linux_indexed.sh`; run the second after the first. Colima shares only the
-home directory with containers. The first script checks every tool it downloads against a
-SHA-256 written in the script: a new version of a tool needs its new hash there, from the tool's
-own release page.
+medians move by 10 to 30%). Run `bench/competitors/linux_bench.sh`, then
+`bench/competitors/linux_indexed.sh`; the commands are in their headers. Colima shares only the
+home directory with containers. The first script checks each tool it downloads against a SHA-256
+in the script: a new tool version needs its new hash there, from the tool's own release page.
 
-Then read the results before going on:
+Then read the results:
 
 - Every row's status, and the rows marked "measured again".
 - The regression gate measures the change and its base in one run. With
   `SCRUTATE_BASE_BIN=<the previous release binary>` set, `bench/leaderboard.py` times that binary
-  as `scrutate base` in the same interleaved blocks as `scrutate` (never ranked, left out of the
-  published tables), and `python3 bench/leaderboard_regression.py --within FILE.json` compares the
-  two inside that file. The ratio is the median over the blocks of median(new) / median(base) in
-  each block, with the interval from resampling inside each block. A row regresses when that 95%
-  interval lies above 1.10. A slow minute slows both binaries, so two runs taken minutes apart are
-  no gate. `--redo-unstable` refuses to continue a run whose `scrutate` binary or base binary is
-  not the one it measured. `leaderboard_regression.py OLD.json NEW.json` still compares two
-  recorded runs of one machine. `/usr/bin/time -l` gives instructions retired, which a busy
-  machine does not move.
+  as `scrutate base` in the same interleaved blocks as `scrutate` (never ranked or published), and
+  `python3 bench/leaderboard_regression.py --within FILE.json` compares the two in that file. The
+  ratio is the median over blocks of each block's median(new) / median(base), its interval from
+  resampling inside each block. A row regresses when that 95% interval lies above 1.10. A slow
+  minute slows both binaries, so two runs minutes apart are no gate. `--redo-unstable` refuses to
+  continue a run whose `scrutate` or base binary is not the one it measured.
+  `leaderboard_regression.py OLD.json NEW.json` still compares two recorded runs of one machine.
+  `/usr/bin/time -l` gives instructions retired, which a busy machine does not move.
 
 ## 3. Generated documents
 
@@ -121,16 +122,20 @@ python3 tools/scrub_home.py              # last: logs and results write ~ for th
 
 ## 4. Documents that carry the numbers by hand
 
-`README.md` (Status), `docs/FAQ.md` (speed, install, status), `docs/COMPETITIVE.md`,
-`docs/ROADMAP.md`, `docs/TRACEABILITY.md` (R-4.6, R-14.6, R-14.16, then
-`python3 tools/traceability_tally.py`), `docs/RELEASE_READINESS.md` (its table lists every row
-that is not PASS), `CHANGELOG.md`, `docs/SECURITY.md` (the `unsafe` inventory and the crate
-count), `docs/DELIVERY.md` (binary hashes and wheel names, after step 6).
+| Document | What to update |
+|---|---|
+| `README.md` | Status |
+| `docs/FAQ.md` | speed, install, status |
+| `docs/COMPETITIVE.md`, `docs/ROADMAP.md`, `CHANGELOG.md` | the numbers |
+| `docs/TRACEABILITY.md` | R-4.6, R-14.6, R-14.16, then `python3 tools/traceability_tally.py` |
+| `docs/RELEASE_READINESS.md` | its table lists every row that is not PASS |
+| `docs/SECURITY.md` | the `unsafe` inventory and the crate count |
+| `docs/DELIVERY.md` | binary hashes and wheel names, after step 6 |
 
 ## 5. Quality gates
 
-In a virtual environment with the dependencies of the training code and the tests (the versions in
-`python/constraints.txt`), and the three wheels: `cp39-abi3`, `cp314t` and `cp315-abi3.abi3t`.
+In a virtual environment with the training code's and the tests' dependencies (versions in
+`python/constraints.txt`) and the three wheels: `cp39-abi3`, `cp314t` and `cp315-abi3.abi3t`.
 
 ```sh
 V=/some/scratch/venv W=/some/scratch/wheels
@@ -144,24 +149,23 @@ uv pip install --python $V/bin/python --reinstall $W/*cp39-abi3*.whl
 $V/bin/python tools/gen_test_results.py --differential-cases 2000 --reproducible --wheels $W
 ```
 
-Among them, `cargo test` runs `tests/ranking_pins.rs`, which pins the features and scores of a
-small tree bit for bit, and `bench/quality.py` checks ranking quality against
-`bench/quality/floor.json` (docs/QUALITY.md). The parity runs against the Python reference engine
-(networkx, 21 repositories) ended with that engine; no gate needs networkx, `rich`, `mcp` or the
-benchmark clones any more. A new ranker or vector model that moves the measure records a new
-floor with `bench/quality.py target/release/scrutate --record` in the same commit;
-`bench/quality.py --make` takes a newer copy of the code as the corpus and writes its queries,
-followed by `--record`.
+`cargo test` runs `tests/ranking_pins.rs`, which pins the features and scores of a small tree bit
+for bit, and `bench/quality.py` checks ranking quality against `bench/quality/floor.json`
+(docs/QUALITY.md). The parity runs against the Python reference engine (networkx, 21
+repositories) ended with that engine; no gate needs networkx, `rich`, `mcp` or the benchmark
+clones now. A new ranker or vector model that moves the measure records a new floor in the same
+commit with `bench/quality.py target/release/scrutate --record`; `bench/quality.py --make` takes a
+newer copy of the code as the corpus and writes its queries, then `--record`.
 
 The wheel gate installs on 3.10 to 3.13, 3.14t, 3.15 and 3.15t. A final free-threaded 3.15 needs
 uv 0.13 or newer; with an older uv, install one elsewhere
 (`UV_PYTHON_INSTALL_DIR=/some/scratch uvx uv@latest python install 3.15t --no-bin`) and name every
 interpreter: `--pythons 3.10 3.11 3.12 3.13 3.14t 3.15 /some/scratch/.../bin/python3.15t`.
 
-It writes `docs/TEST_RESULTS.md`. Every gate must say PASS, the fuzz gates included (every target
-builds, and every input that once crashed one runs; they build in a workspace of their own, with
-its own `[patch]` for `vendor/ignore`). The hash under "reproducible build" must be the one
-docs/LEADERBOARD.md names for macOS.
+It writes `docs/TEST_RESULTS.md`. Every gate must say PASS, the fuzz gates too (every target
+builds and every input that once crashed one runs; they build in their own workspace, with its own
+`[patch]` for `vendor/ignore`). The "reproducible build" hash must be the one docs/LEADERBOARD.md
+names for macOS.
 
 ## 6. Platform checks and artifacts
 
@@ -181,62 +185,70 @@ tools/release_local.sh                                  # dist/ on macOS
 uvx --with jsonschema --with pyyaml python packaging/validate_manifests.py --draft   # Scoop, winget
 ```
 
-`--draft` lets the all-zero sha256 placeholders through; without it the check fails on them, so
-it runs without `--draft` only once the manifests carry the release checksums. The `.deb` and
-`.rpm` (`packaging/linux/build-packages.sh`) carry `LICENSE-APACHE`, `LICENSE-MIT` and
-`THIRD_PARTY_NOTICES.txt` (`/usr/share/doc/scrutate/` in the `.deb`,
-`/usr/share/licenses/scrutate/` in the `.rpm`).
+`--draft` lets the all-zero sha256 placeholders through; drop it once the manifests carry the
+release checksums. The `.deb` and `.rpm` (`packaging/linux/build-packages.sh`) carry
+`LICENSE-APACHE`, `LICENSE-MIT` and `THIRD_PARTY_NOTICES.txt` (in `/usr/share/doc/scrutate/` and
+`/usr/share/licenses/scrutate/` respectively).
 
-`dist-linux/` is `tools/release_local.sh` run in a clean `rust:1-slim-bookworm` container on a
-copy of the release commit at `/build` (`git archive HEAD | tar -x -C <dir>`, never a copy of the
-working tree: the container has no git, so the script packs `docs/` and `integrations/` as it
-finds them), with `maturin[patchelf]` installed in a virtual environment.
+`dist-linux/` is `tools/release_local.sh` run in a clean `rust:1-slim-bookworm` container, with
+`maturin[patchelf]` in a virtual environment, on a copy of the release commit at `/build`
+(`git archive HEAD | tar -x -C <dir>`, never a copy of the working tree: the container has no
+git, so the script packs `docs/` and `integrations/` as it finds them).
 
-On each platform three hashes must agree: the binary inside the archive, the one
-docs/LEADERBOARD.md says was measured, and the reproducible-build hash (`tools/repro_docker.sh`
-for Linux, docs/TEST_RESULTS.md for macOS). The archives contain `docs/`, so build them last.
+On each platform three hashes must agree: the binary in the archive, the one docs/LEADERBOARD.md
+says was measured, and the reproducible-build hash (`tools/repro_docker.sh` for Linux,
+docs/TEST_RESULTS.md for macOS). The archives contain `docs/`, so build them last.
 
 ## 7. What a published release adds
 
 A tag `v*` starts `.github/workflows/release.yml` (every platform, signing, attestations). It
-checks the version first, then runs all of `ci.yml` on the tagged commit (`workflow_call`); the
-release job waits for that run and for the binaries and wheels. The package definitions in
-`packaging/` need the release checksums (packaging/README.md). The two `-linux-gnu` binaries are
-built on Ubuntu 22.04 runners, and a step fails when one asks for a glibc newer than 2.34; when
-GitHub retires that image, build them in a container of that glibc or older, never on a newer
-runner (a build on Ubuntu 24.04 asks for 2.39).
+checks the version, then runs all of `ci.yml` on the tagged commit (`workflow_call`); the release
+job waits for that run and for the binaries and wheels. The package definitions in `packaging/`
+need the release checksums (packaging/README.md). The two `-linux-gnu` binaries build on Ubuntu
+22.04 runners, and a step fails when one asks for a glibc newer than 2.34. When GitHub retires
+that image, build them in a container of that glibc or older, never on a newer runner (Ubuntu
+24.04 asks for 2.39).
 
 The release workflow has not run. A manual run (`gh workflow run release.yml`) is a rehearsal: it
 builds, tests and packages the binaries and the three wheel kinds on every platform, installs each
-wheel, and publishes and signs nothing. It runs 8 binary jobs and 18 wheel jobs (six of each
-wheel kind); 4 binary jobs and 12 wheel jobs are on macOS and Windows runners, which count ten and
+wheel, and publishes and signs nothing. It runs 8 binary jobs and 18 wheel jobs (six per wheel
+kind); 4 binary and 12 wheel jobs are on macOS and Windows runners, whose minutes count ten and
 two times on a private repository.
 
-The repository is on GitHub, public, with `main` only. Run 43013926055 of `ci.yml` (on `9384c18`)
-is the first green one: all 12 jobs that run on a push passed, namely the Rust tests on macOS
-arm64, Intel macOS, Linux x86_64, Linux arm64, Windows x64 and Windows arm64, the musl build, the
-extra-langs job on the oldest supported Rust, the fuzz regressions, the Python reference,
-bindings, parity and differential job (now the training code, bindings, differential and ranking
-quality job), the advisories and the editor integrations. The dependency review runs only on pull
-requests. The workflows pass `actionlint` and `zizmor`, and the Linux jobs of `ci.yml` pass in a
-container (`tools/ci_rehearsal.sh`).
+The repository is on GitHub, public, `main` only. Run 43013926055 of `ci.yml` (on `9384c18`) is
+the first green one; all 12 jobs of a push passed:
 
-Before the first tag, in the repository's settings: a ruleset on `main` (pull request, the `ci`
-checks required, no force push), a tag ruleset on `v*`, an environment named `release` with a
-required reviewer (the publishing job waits for it), immutable releases, push protection, and
-CodeQL default setup. The release job makes a draft, attaches every file, then publishes, the
-order immutable releases need. Its notes are the version's section of `CHANGELOG.md`.
+| Kind | Jobs |
+|---|---|
+| Rust tests | macOS arm64, Intel macOS, Linux x86_64, Linux arm64, Windows x64, Windows arm64 |
+| builds | the musl build; extra-langs on the oldest supported Rust |
+| others | fuzz regressions; the Python reference, bindings, parity and differential job (now training code, bindings, differential and ranking quality); advisories; editor integrations |
 
-R-6.1, R-9.10 and R-12.2 in docs/TRACEABILITY.md are PASS from run 43013926055, the first green
-run of `ci.yml`. R-6.12 and R-13.9 stay PARTIAL until `release.yml` and `benchmarks.yml` have run
-on a runner: flip them from the recorded runs, not before.
+The dependency review runs on pull requests only. The workflows pass `actionlint` and `zizmor`,
+and the Linux jobs of `ci.yml` pass in a container (`tools/ci_rehearsal.sh`).
+
+Before the first tag, set in the repository settings:
+
+| Setting | Detail |
+|---|---|
+| ruleset on `main` | pull request, the `ci` checks required, no force push |
+| tag ruleset | on `v*` |
+| environment `release` | a required reviewer; the publishing job waits for it |
+| immutable releases, push protection, CodeQL default setup | |
+
+The release job makes a draft, attaches every file, then publishes, the order immutable releases
+need. Its notes are the version's section of `CHANGELOG.md`.
+
+R-6.1, R-9.10 and R-12.2 in docs/TRACEABILITY.md are PASS from run 43013926055. R-6.12 and R-13.9
+stay PARTIAL until `release.yml` and `benchmarks.yml` have run on a runner: flip them from the
+recorded runs, not before.
 
 `.github/FUNDING.yml` lists GitHub Sponsors and Buy Me a Coffee, both under `crisnahine`, and
-shows the Sponsor button; the "Sponsor and hire" section of README.md links the same two pages. A
-funding link that changes goes in both.
+shows the Sponsor button. The "Sponsor and hire" section of README.md links the same two pages; a
+changed funding link goes in both.
 
-After the release is out, take `open-pull-requests-limit: 0` out of `.github/dependabot.yml`.
-Version updates pause until then, because each Dependabot pull request runs `ci.yml` on six
-runners, and on a private repository macOS minutes count ten times. A bump of the `rust-stemmers`
-crate can change stems: merge it only when `tests/ranking_pins.rs` and `bench/quality.py` still
-pass, or with the pins recorded again on purpose.
+After the release, take `open-pull-requests-limit: 0` out of `.github/dependabot.yml`. Version
+updates pause until then because each Dependabot pull request runs `ci.yml` on six runners, and
+on a private repository macOS minutes count ten times. A `rust-stemmers` bump can change stems:
+merge it only when `tests/ranking_pins.rs` and `bench/quality.py` still pass, or with the pins
+recorded again on purpose.
