@@ -35,22 +35,22 @@
   </picture>
 </p>
 
-Scrutate is an open-source code search tool for the terminal, editors and AI coding agents. It is
-two independent engines behind one CLI ([questions and answers](docs/FAQ.md)).
+Scrutate is an open-source code search tool for the terminal, editors and AI coding agents: two
+independent engines behind one CLI ([questions and answers](docs/FAQ.md)).
 
 **Engine A, universal instant search.** No index, no parsers, no background process. Literal,
 regex (linear-time, size-limited), identifier (all casings), fuzzy, multiline, whole-word and
-inverted matching over every readable file, with `.gitignore` awareness, parallel traversal,
-streaming results, cancellation, colour or JSON Lines output. Built on the same `grep-*` /
-`ignore` crates ripgrep is assembled from, and differentially tested against ripgrep.
+inverted matching over every readable file. It reads `.gitignore`, walks in parallel, streams,
+can be cancelled, and prints colour or JSON Lines. Built on ripgrep's own `grep-*` and `ignore`
+crates, and differentially tested against ripgrep.
 
-**Engine B, code intelligence.** A persistent, incremental index (SQLite + memory-mapped
+**Engine B, code intelligence.** A persistent, incremental index (SQLite and memory-mapped
 segments): tree-sitter symbols from 61 grammars (74 with `--features extra-langs`), keyword
-heuristics for the rest, call edges, imports, BM25 postings, semantic vectors and a LightGBM
-ranker; and a trigram text index that answers grep-style queries with Engine A's exact output.
-Ranked search by meaning, name or identifier; definitions, callers/callees, references,
-outlines, dependencies, similar and duplicate code, structural queries, cross-repository search,
-and what a git diff touches: the changed definitions, their callers and the tests to run.
+heuristics for the rest, call edges, imports, BM25 postings, semantic vectors, a LightGBM ranker,
+and a trigram text index that answers grep queries with Engine A's exact output. It gives ranked
+search by meaning, name or identifier; definitions, callers, callees, references, outlines,
+dependencies, similar and duplicate code, structural queries, cross-repository search, and what a
+git diff touches (the changed definitions, their callers, the tests to run).
 
 [How the engines work and why](docs/ARCHITECTURE.md)
 
@@ -130,7 +130,7 @@ scrutate lsp                                    # language server for editors (V
 
 ## Benchmarks
 
-Everything below is measured; the numbers come from scripts in `bench/` that you can rerun.
+Every number comes from scripts in `bench/` that you can rerun.
 
 <p align="center">
   <picture>
@@ -139,22 +139,21 @@ Everything below is measured; the numbers come from scripts in `bench/` that you
   </picture>
 </p>
 
-[docs/LEADERBOARD.md](docs/LEADERBOARD.md) is generated from the raw results in `bench/results/`,
-with 30 runs per contender and 95% intervals.
+[docs/LEADERBOARD.md](docs/LEADERBOARD.md) is generated from the raw results in `bench/results/`:
+30 runs per contender, 95% intervals.
 
-On the development Mac (Apple M3 Pro, shared with other work, so none of this is a publishable #1
-claim), Engine A is significantly fastest in all 37 warm-cache benchmarks and all 5 cold-cache
-ones:
+On the development Mac (Apple M3 Pro, shared with other work, so not a publishable #1 claim),
+Engine A is significantly fastest in all 37 warm-cache benchmarks and all 5 cold-cache ones:
 
 - 15 to 30% ahead of the next tool on 12 of 13 text searches of the Linux kernel tree, and 45% ahead
   on the one with 1.3 million matching lines;
 - 15 to 30% on five of six LLVM rows, 24 to 26% on 200,000 small files, 17 to 24% on a 211-file
   repository, 43 to 58% on a 740 MB file, 23 to 28% with a cold cache.
 
-Six rows that other work on the laptop disturbed were measured twice; the table gives both.
-Structural search is 6 and 14 times faster than ast-grep, measured with scrutate's capture cache
-filled by earlier runs (it parsed no file; ast-grep parses every file on each run). A
-parse-for-parse run was not part of that measurement; the next benchmark run makes one.
+Six rows disturbed by other work on the laptop were measured twice; the table gives both.
+Structural search is 6 and 14 times faster than ast-grep with scrutate's capture cache filled by
+earlier runs (it parsed no file; ast-grep parses every file each run). The next benchmark run adds
+a parse-for-parse comparison.
 
 <p align="center">
   <picture>
@@ -164,14 +163,13 @@ parse-for-parse run was not part of that measurement; the next benchmark run mak
 </p>
 
 Against Zoekt the text index builds 25 times faster, is a tenth of the size, answers in 0.37 of the
-median time and serves 1.2 times the queries per second; all eight indexed metrics lead.
+median time and serves 1.2 times the queries per second: it leads all eight indexed metrics.
 
 In a 5-CPU Linux virtual machine on the same Mac, Engine A is significantly fastest on all 14
 Linux-tree benchmarks (7 to 16% ahead of ripgrep on 11, 40% with very many matches, 59% on the
 complex regex, 24 times faster than ast-grep on the structural query with its capture cache) and
-on all 4 cold-cache
-ones, where it takes 0.28 to 0.30 of the next tool's time. There the text index leads Zoekt and
-livegrep on all 8 indexed metrics (3.9 times the throughput of the next).
+on all 4 cold-cache ones, at 0.28 to 0.30 of the next tool's time. There the text index leads
+Zoekt and livegrep on all 8 indexed metrics (3.9 times the next one's throughput).
 
 More: [docs/BENCHMARKS.md](docs/BENCHMARKS.md) (latency, CPU, memory, start-up, concurrency, index
 metrics), [docs/dashboard.html](docs/dashboard.html) (every run so far) and
@@ -181,8 +179,8 @@ metrics), [docs/dashboard.html](docs/dashboard.html) (every run so far) and
 
 ## For AI agents and editors
 
-`scrutate serve` is an MCP server on stdio. Start it from inside a repository, or give it the
-repository with `--root`; `--watch` also updates the index from filesystem events.
+`scrutate serve` is an MCP server on stdio. Start it inside a repository or name one with
+`--root`; `--watch` also updates the index from filesystem events.
 
 ```sh
 scrutate --root /path/to/repo serve --watch
@@ -190,8 +188,8 @@ scrutate --root /path/to/repo serve --watch
 
 ### Set up your agent
 
-`scrutate setup` writes the server into an agent's own configuration, as one entry that runs this
-binary by its absolute path, and keeps every other line of the file:
+`scrutate setup` adds one entry to an agent's own configuration that runs this binary by its
+absolute path, and keeps every other line of the file:
 
 ```sh
 scrutate setup claude          # also codex, opencode, cursor, gemini
@@ -200,11 +198,11 @@ scrutate setup claude --hook   # also answer Claude Code's Grep with scrutate's 
 scrutate setup claude --uninstall   # take back exactly what setup wrote, the hook included
 ```
 
-`--dry-run` prints each file and the change and writes nothing. The hook runs only where Claude
-Code's Grep tool is enabled (a `--tools` list without `Grep` never runs it). No `CLAUDE.md`, `AGENTS.md` or
-`GEMINI.md` is touched unless you add `--instructions`. Which file each agent gets is in
-[docs/CLI.md](docs/CLI.md#setup-and-the-grep-hook); `scrutate hook stats` shows how many bytes the
-Grep hook sent against what Grep would have returned.
+`--dry-run` prints each file and change and writes nothing. The hook runs only where Claude Code's
+Grep tool is enabled (a `--tools` list without `Grep` never runs it). `CLAUDE.md`, `AGENTS.md` and
+`GEMINI.md` are touched only with `--instructions`. The file each agent gets is in
+[docs/CLI.md](docs/CLI.md#setup-and-the-grep-hook); `scrutate hook stats` shows the bytes the hook
+sent against what Grep would have returned.
 
 `scrutate lsp` is a Language Server Protocol server on stdio: definitions, references and symbols
 from the index.
@@ -213,7 +211,7 @@ from the index.
 scrutate --root /path/to/repo lsp
 ```
 
-Client set-up for each agent and editor is in [integrations/](integrations/):
+Client set-up is in [integrations/](integrations/):
 [MCP clients](integrations/mcp/README.md), [VS Code](integrations/vscode/README.md),
 [Neovim](integrations/neovim/README.md), [JetBrains](integrations/jetbrains/), and GitHub Action,
 GitLab, Bitbucket and pre-commit.
@@ -228,8 +226,8 @@ From source, with Rust 1.91 or newer (`rust-toolchain.toml` pins 1.99.1):
 cargo build --release -p scrutate --locked      # target/release/scrutate
 ```
 
-No release archive is published yet. `.github/workflows/release.yml` builds archives, checksums,
-Sigstore attestations, musl binaries and wheels for every platform when a version is tagged
+No release archive is published yet. When a version is tagged, `.github/workflows/release.yml`
+builds archives, checksums, Sigstore attestations, musl binaries and wheels for every platform
 ([docs/INSTALL.md](docs/INSTALL.md)).
 
 <p align="center"><img src="docs/assets/strip-python.svg" width="100%" alt=""></p>
@@ -250,34 +248,32 @@ print(repo.search("parse a date string", k=5))
 
 ## Status: 0.1.0
 
-This is the first release. It is **not** declared production-ready:
+The first release, **not** declared production-ready:
 [docs/RELEASE_READINESS.md](docs/RELEASE_READINESS.md) says exactly what is and is not verified.
 
 **Platforms.** macOS arm64, Linux aarch64 and Linux x86_64 are built and tested (Linux in clean
 containers with no Python on the image, including static musl binaries and wheels for CPython
-3.10 to 3.13 and free-threaded 3.14). macOS x86_64 and Windows x86_64 are cross-built here.
-On GitHub's runners (CI run 43382848665, commit `08cd9fa`) every job
-passed: the Rust tests on macOS arm64, macOS x86_64, Linux x86_64, Linux arm64, Windows x86_64
-and Windows ARM64, and the editor integrations ([docs/INSTALL.md](docs/INSTALL.md)).
+3.10 to 3.13 and free-threaded 3.14). macOS x86_64 and Windows x86_64 are cross-built here. On
+GitHub's runners (CI run 43382848665, commit `08cd9fa`) every job passed: the Rust tests on macOS
+arm64, macOS x86_64, Linux x86_64, Linux arm64, Windows x86_64 and Windows ARM64, and the editor
+integrations ([docs/INSTALL.md](docs/INSTALL.md)).
 
 **Tests.** In the last recorded run ([docs/TEST_RESULTS.md](docs/TEST_RESULTS.md), 2026-11-11),
 122 Rust tests (unit, 60-language snapshot, robustness, property, end-to-end CLI and MCP,
 incremental parsing), the Python tests, the bindings tests, fuzz regressions and a
 reproducible-build check all passed. The pinned ranking features and the ranking quality floor
-came after that run; CI runs both.
-Engine A agrees with ripgrep on 2,000 random corpora and patterns, run three ways: as shipped,
-with the parallel walk forced, and with every file searched in ranges.
+came after that run; CI runs both. Engine A agrees with ripgrep on 2,000 random corpora and
+patterns, run three ways: as shipped, with the parallel walk forced, and with every file searched
+in ranges.
 
-**Benchmarks.** See [Benchmarks](#benchmarks) above: generated from the raw results in
-`bench/results/`, 30 runs per contender, 95% intervals, on a shared laptop, so not a
-publishable #1 claim.
+**Benchmarks.** See [Benchmarks](#benchmarks): measured on a shared laptop, so not a publishable
+#1 claim.
 
-**Engine B.** Its models are trained on rows it writes itself; the Python reference that used to
-mirror it bit for bit is gone. A test pins its features and scores bit for bit on a small tree,
-and CI fails when its ranking quality on this repository's own code falls below a recorded
-floor. On held-out code in Python and five more languages its learned ranker beats its own
-lexical layer for function and type answers on every query type but one, which ties
-([docs/QUALITY.md](docs/QUALITY.md)).
+**Engine B.** Its models train on rows it writes itself (the Python reference that mirrored it bit
+for bit is gone). A test pins its features and scores bit for bit on a small tree, and CI fails
+when its ranking quality on this repository's own code falls below a recorded floor. On held-out
+code in Python and five more languages its learned ranker beats its own lexical layer for function
+and type answers on every query type but one, which ties ([docs/QUALITY.md](docs/QUALITY.md)).
 
 **Code checks.** `cargo clippy -D warnings` and `cargo fmt` are clean; `cargo audit` reports no
 vulnerabilities; an SBOM is generated.
@@ -336,19 +332,18 @@ vulnerabilities; an SBOM is generated.
 
 ## Sponsor and hire
 
-Scrutate is free to use under the licence in the next section. To fund its work,
+Scrutate is free under the licence below. To fund it,
 [sponsor the maintainer on GitHub](https://github.com/sponsors/crisnahine) or
-[buy a coffee](https://buymeacoffee.com/crisnahine). The maintainer also takes paid work around it:
+[buy a coffee](https://buymeacoffee.com/crisnahine). The maintainer also takes paid work:
 
 - a commercial licence or other terms, where a company's policy needs them
 - paid support
 - sponsored features
 - work for hire on code search and code intelligence
 
-To ask, reach the maintainer through the [GitHub profile](https://github.com/crisnahine), or
+To ask, use the [GitHub profile](https://github.com/crisnahine) or
 [open an issue](https://github.com/scrutate/scrutate/issues/new?title=Commercial%20inquiry)
-titled "Commercial inquiry". Leave the details out of the issue: the maintainer answers with a
-private channel.
+titled "Commercial inquiry" with no details: the maintainer answers with a private channel.
 
 <p align="center"><img src="docs/assets/strip-licence.svg" width="100%" alt=""></p>
 
@@ -363,10 +358,10 @@ at your option (SPDX: `MIT OR Apache-2.0`). That covers the code, the models, th
 images, the integrations and packaging, the benchmark harness and its results, and the tests. The
 vendored walker in `vendor/ignore` keeps its upstream terms, `Unlicense OR MIT`.
 
-Every crate compiled into the binary is under a licence compatible with both (MIT, Apache-2.0,
-BSD, ISC, Zlib, Unlicense, 0BSD, Unicode-3.0 or CC0-1.0); their licence and notice files are
-collected in `THIRD_PARTY_NOTICES.txt`, which release archives, wheels and the `.deb` and `.rpm`
-packages include (`tools/third_party_notices.py`).
+Every crate compiled into the binary has a licence compatible with both (MIT, Apache-2.0, BSD,
+ISC, Zlib, Unlicense, 0BSD, Unicode-3.0 or CC0-1.0). Their licence and notice files are collected
+in `THIRD_PARTY_NOTICES.txt` (`tools/third_party_notices.py`), which release archives, wheels and
+the `.deb` and `.rpm` packages include.
 
 Contributions are accepted under the [contributor licence agreement](CLA.md) and offered under
 the same two licences. The name and the logo are covered by the [trademark policy](TRADEMARKS.md).
