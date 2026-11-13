@@ -1845,7 +1845,7 @@ pub fn overrides(root: &Path, f: &Files) -> Result<ignore::overrides::Override> 
 }
 
 /// The file-type filters of `f`, which the walk asks after the globs and the ignore rules.
-fn file_types(f: &Files) -> Result<ignore::types::Types> {
+pub fn file_types(f: &Files) -> Result<ignore::types::Types> {
     let mut tb = ignore::types::TypesBuilder::new();
     for (i, t) in f.types.iter().enumerate() {
         let (neg, name) = match t.strip_prefix('!') {

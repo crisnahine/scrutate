@@ -312,6 +312,8 @@ fn grep(
         ..Files::walk(roots)
     };
     instant::overrides(&first, &f).map_err(|e| PyValueError::new_err(format!("{e:#}")))?;
+    // an unknown type is the call's error, not the first next()'s
+    instant::file_types(&f).map_err(|e| PyValueError::new_err(format!("{e:#}")))?;
     if let instant::Paths::Walk(roots) = &f.paths {
         if let Some(r) = roots.iter().find(|r| std::fs::metadata(r).is_err()) {
             return Err(PyFileNotFoundError::new_err(format!(
