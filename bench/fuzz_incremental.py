@@ -84,8 +84,10 @@ def op():
         d = rnd.choice(DIRS)
         os.makedirs(os.path.join(T, d), exist_ok=True)
         to = os.path.join(d, rnd.choice([os.path.basename(f), rnd.choice(NAMES) + os.path.splitext(f)[1]]))
-        if os.path.normpath(to) != os.path.normpath(f):
-            shutil.copyfile(full, os.path.join(T, to))
+        dest = os.path.join(T, to)
+        # on a file system that ignores case, a name that differs only in case is the same file
+        if os.path.normpath(to) != os.path.normpath(f) and not (os.path.exists(dest) and os.path.samefile(full, dest)):
+            shutil.copyfile(full, dest)
         return f"copy {f} -> {to}"
     if kind == "swap":
         g = os.path.join(T, rnd.choice(fs))
