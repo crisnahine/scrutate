@@ -51,6 +51,10 @@ incompatible index by itself, and that is never breaking.
   and once a week ([SECURITY](docs/SECURITY.md#controls-and-evidence)).
 - Every fuzz target runs for 45 minutes once a week in CI, from the corpus the last run kept; a
   crash fails the run and is uploaded ([fuzz](fuzz/README.md)).
+- The release workflow takes a `dry_run` input: a manual run with it runs every job, `ci.yml`
+  included, attests every file, and makes, checks and deletes a draft release
+  `rehearsal-<run id>`, so the tag path is tested before the first tag
+  ([Releasing](docs/RELEASING.md#7-what-a-published-release-adds)).
 
 ### Changed
 - The crate builds and runs on `wasm32-wasip1`, which starts no thread: the thread rules take

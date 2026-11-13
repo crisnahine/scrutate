@@ -1,16 +1,22 @@
 # Release: binaries for every declared platform, abi3, cp314t and abi3t wheels, checksums, SBOM and
 # build provenance attestations (Sigstore, via GitHub artifact attestations). Triggered by a tag.
-# A manual run is a rehearsal: it builds, tests and packages on every platform, and publishes
-# and signs nothing.
+# A manual run builds, tests and packages on every platform, and publishes and signs nothing.
+# With dry_run it rehearses the whole tag path: ci.yml, the attestations, and a draft release
+# named rehearsal-<run id>, which it checks and then deletes.
 # The build jobs can only read the repository. The one job that signs and publishes runs in the
-# `release` environment, and the release stays a draft until every file is attached. Nothing is
-# published unless the tag names the version the code declares and every ci.yml job passed on the
-# tagged commit.
+# `release` environment (`rehearsal` for a dry run), and the release stays a draft until every
+# file is attached. Nothing is published unless the tag names the version the code declares and
+# every ci.yml job passed on the tagged commit.
 name: release
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: also run ci.yml, attest, and make and delete a draft release rehearsal-<run id>
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -36,7 +42,7 @@ jobs:
   ci:
     name: ci on the tagged commit
     needs: version
-    if: github.ref_type == 'tag'
+    if: github.ref_type == 'tag' || inputs.dry_run
     # the documented form for a workflow of the same repository and commit; actionlint rejects $/
     uses: ./.github/workflows/ci.yml # zizmor: ignore[self-repository]
   binaries:
@@ -158,11 +164,15 @@ jobs:
           retention-days: 7
   release:
     name: sign and publish
-    needs: [ci, binaries, wheels]
-    if: github.ref_type == 'tag'
+    needs: [version, ci, binaries, wheels]
+    if: github.ref_type == 'tag' || inputs.dry_run
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    environment: release
+    # the release environment takes tags only; a rehearsal runs from a branch
+    environment: ${{ github.ref_type == 'tag' && 'release' || 'rehearsal' }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      REHEARSAL: ${{ github.ref_type != 'tag' }}
     permissions:
       contents: write          # the release itself
       id-token: write          # Sigstore signing of the attestations
@@ -185,9 +195,7 @@ jobs:
           path: artifacts
           merge-multiple: true
       - name: SBOM (CycloneDX, from the locked dependency graph)
-        run: |
-          echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
-          python3 tools/sbom.py --out "artifacts/scrutate-${GITHUB_REF_NAME#v}.cdx.json"
+        run: python3 tools/sbom.py --out "artifacts/scrutate-$VERSION.cdx.json"
       - name: combined checksums
         run: cd artifacts && sha256sum -- *.tar.gz *.zip *.whl *.cdx.json > SHA256SUMS
       - name: build provenance for every file
@@ -208,9 +216,20 @@ jobs:
       - name: draft, attach, publish
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           # the notes are this version's section of CHANGELOG.md; a release without one stops here
           awk -v v="[$VERSION]" '/^## /{p = index($0, v) > 0} p' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
           test -s "$RUNNER_TEMP/notes.md"
+          if [ "$REHEARSAL" = true ]; then
+            tag=rehearsal-$GITHUB_RUN_ID
+            # a draft makes no tag until it is published; the tag check covers a draft that did
+            trap 'gh release delete "$tag" --yes || true; if gh api "repos/$GH_REPO/git/ref/tags/$tag" > /dev/null 2>&1; then gh api -X DELETE "repos/$GH_REPO/git/refs/tags/$tag"; fi' EXIT
+            gh release create "$tag" --draft --prerelease --target "$GITHUB_SHA" --title "$tag (not a release)" --notes-file "$RUNNER_TEMP/notes.md" artifacts/*
+            # what a user checks: every file on the draft, and the provenance of this workflow on this ref
+            test "$(gh release view "$tag" --json assets -q '.assets | length')" = "$(find artifacts -maxdepth 1 -type f | wc -l)"
+            gh attestation verify artifacts/SHA256SUMS --repo "$GH_REPO" --signer-workflow "$GH_REPO/.github/workflows/release.yml" --source-ref "$GITHUB_REF" --deny-self-hosted-runners
+            exit 0
+          fi
           gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md" artifacts/*
           gh release edit "$GITHUB_REF_NAME" --draft=false

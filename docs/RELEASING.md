@@ -226,11 +226,26 @@ need the release checksums (packaging/README.md). The two `-linux-gnu` binaries 
 that image, build them in a container of that glibc or older, never on a newer runner (Ubuntu
 24.04 asks for 2.39).
 
-The release workflow has not run. A manual run (`gh workflow run release.yml`) is a rehearsal: it
-builds, tests and packages the binaries and the three wheel kinds on every platform, installs each
-wheel, and publishes and signs nothing. It runs 8 binary jobs and 18 wheel jobs (six per wheel
-kind); 4 binary and 12 wheel jobs are on macOS and Windows runners, whose minutes count ten and
-two times on a private repository.
+The release workflow has not run. A manual run (`gh workflow run release.yml`) builds, tests and
+packages the binaries and the three wheel kinds on every platform, installs each wheel, and
+publishes and signs nothing. It runs 8 binary jobs and 18 wheel jobs (six per wheel kind); 4
+binary and 12 wheel jobs are on macOS and Windows runners, whose minutes count ten and two times
+on a private repository.
+
+A dry run rehearses the tag path before the first tag:
+
+```sh
+gh workflow run release.yml --ref main -f dry_run=true
+gh run watch "$(gh run list --workflow release.yml -L 1 --json databaseId -q '.[0].databaseId')"
+```
+
+It takes the version from `crates/scrutate/Cargo.toml` and runs every job, `ci.yml` too. The
+sign-and-publish job runs in the `rehearsal` environment: it attests every file (real, public
+attestations that name `main` and a `workflow_dispatch`, so a verifier pinned to
+`refs/tags/v0.1.0` rejects them), makes a draft release `rehearsal-<run id>` with every file,
+checks that the draft has them all and that `gh attestation verify` passes on `SHA256SUMS` for
+this workflow and ref, and then deletes the draft. A draft makes no tag; the job deletes the tag
+if one exists. The files stay as the run's artifacts for 7 days.
 
 The repository is on GitHub, public, `main` only. Run 43013926055 of `ci.yml` (on `9384c18`) is
 the first green one; all 12 jobs of a push passed:
@@ -250,7 +265,8 @@ Before the first tag, set in the repository settings:
 |---|---|
 | ruleset on `main` | pull request, the `ci` checks required, no force push |
 | tag ruleset | on `v*` |
-| environment `release` | a required reviewer; the publishing job waits for it |
+| environment `release` | a required reviewer and the deployment rule "tags `v*`"; the publishing job waits for it |
+| environment `rehearsal` | no reviewer, the `main` branch only; a dry run's sign-and-publish job runs in it (GitHub makes it on first use when it is missing, with no rule) |
 | immutable releases, push protection, CodeQL default setup | |
 
 The release job makes a draft, attaches every file, then publishes, the order immutable releases
