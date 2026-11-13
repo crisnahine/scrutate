@@ -230,7 +230,9 @@ First release.
   diff (the working tree and untracked files against `HEAD` by default, another revision,
   `main...` for a merge base, or the staged changes) to the definitions it adds, edits and
   deletes, their callers through the resolver with the distance of each (3 steps by default),
-  and the test files to run. Text and JSON in the envelope of the other index commands, paged by
+  and the test files to run. The callers of a deleted definition are the definitions that still
+  call its name where no other definition answers the call, marked `(calls a deleted
+  definition)` (`calls_deleted` in JSON), and their callers and tests follow. Text and JSON in the envelope of the other index commands, paged by
   `--max-bytes`; a directory outside git, a bad revision and a missing merge base are errors with
   exit code 2, and a revision is never passed to git as an option. The MCP server has fifteen
   tools.

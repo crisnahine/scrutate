@@ -1,6 +1,7 @@
 //! `scrutate impact` and the MCP `impact` tool on git repositories made for each test: a call
 //! chain three deep with two test files, then a deletion, a rename with an edit, a staged-only
-//! change, a base revision, a merge base, an untracked file and a directory outside git.
+//! change, a base revision, a merge base, an untracked file and a directory outside git, and the
+//! callers of a deleted definition.
 
 use std::fs;
 use std::io::Write;
@@ -184,8 +185,65 @@ fn a_deleted_definition_is_named_from_the_base_and_a_new_one_as_added() {
     let text = t.impact(&[]);
     assert!(text.contains("lib/core.py:5-6  [function] spare  (deleted, lines of the base)"), "{text}");
     assert!(text.contains("lib/core.py:5-6  [function] fresh  (added)"), "{text}");
-    // nothing calls the new definition, and the test of the deleted one is no caller of anything changed
-    assert!(text.contains("tests: 0"), "{text}");
+    // nothing calls the new definition; the test of the deleted one still calls it, so it is run
+    assert!(text.contains(" 1  tests/test_other.py:4-5  [function] test_spare  (calls a deleted definition)"), "{text}");
+    assert!(text.contains("tests: 1\ntests/test_other.py  (distance 1"), "{text}");
+}
+
+#[test]
+fn the_callers_of_a_deleted_definition_are_followed_to_their_callers_and_tests() {
+    let t = chain("deletedcalled");
+    t.write("lib/core.py", "def spare(x):\n    return x\n");
+    let text = t.impact(&[]);
+    let lines: Vec<&str> = text.lines().skip(1).collect();
+    assert_eq!(
+        lines,
+        [
+            "changed: 2",
+            "lib/core.py  [file]  (edited)",
+            "lib/core.py:1-2  [function] deepest  (deleted, lines of the base)",
+            "callers: 3 (depth 3)",
+            " 1  lib/mid.py:4-5  [function] middle  (calls a deleted definition)",
+            " 2  lib/top.py:4-5  [function] top",
+            " 3  tests/test_top.py:4-5  [function] test_top",
+            "tests: 1",
+            "tests/test_top.py  (distance 3: tests/test_top.py:4-5  [function] test_top)",
+        ],
+        "{text}"
+    );
+    let v = t.json(&[]);
+    let callers = v["callers"].as_array().unwrap();
+    assert_eq!((callers[0]["calls_deleted"].clone(), callers[0]["via"].clone()), (Value::Bool(true), Value::from("lib/core.py:1-2")));
+    assert!(callers[1..].iter().all(|c| c["calls_deleted"] == false), "{v}");
+}
+
+#[test]
+fn a_call_that_resolves_to_a_namesake_is_no_caller_of_the_deleted_definition() {
+    let t = chain("deletednamesake");
+    t.write("lib/other.py", "def deepest(x):\n    return x\n");
+    t.write("lib/user.py", "from lib.other import deepest\n\n\ndef user(x):\n    return deepest(x)\n");
+    t.commit("a namesake");
+    t.write("lib/core.py", "def spare(x):\n    return x\n");
+    let v = t.json(&[]);
+    let gone: Vec<&str> = v["callers"].as_array().unwrap().iter().filter(|c| c["calls_deleted"] == true).map(|c| c["id"].as_str().unwrap()).collect();
+    assert_eq!(gone, ["lib/mid.py:4-5"], "{v}");
+    assert!(!ids(&v, "callers").contains(&"lib/user.py:4-5".to_string()), "{v}");
+}
+
+#[test]
+fn a_deleted_method_is_followed_where_the_receiver_types_it() {
+    let t = Tree::new("deletedmethod");
+    t.git(&["init", "-q"]);
+    t.write(
+        "shapes.py",
+        "class Box:\n    def area(self):\n        return 1\n\n    def side(self):\n        return 2\n\n\nclass Disc:\n    def area(self):\n        return 3\n",
+    );
+    t.write("use.py", "from shapes import Box, Disc\n\n\ndef boxed():\n    return Box().area()\n\n\ndef round_one():\n    return Disc().area()\n");
+    t.commit("first");
+    t.write("shapes.py", "class Box:\n    def side(self):\n        return 2\n\n\nclass Disc:\n    def area(self):\n        return 3\n");
+    let v = t.json(&[]);
+    let gone: Vec<&str> = v["callers"].as_array().unwrap().iter().filter(|c| c["calls_deleted"] == true).map(|c| c["id"].as_str().unwrap()).collect();
+    assert_eq!(gone, ["use.py:4-5"], "{v}");
 }
 
 #[test]

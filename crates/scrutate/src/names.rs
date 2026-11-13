@@ -244,6 +244,29 @@ impl<'a> Names<'a> {
         Ok((out, undecided, true))
     }
 
+    /// The definitions whose code calls the name of `gone`, a definition the tree no longer has,
+    /// where the resolver ties the call to no definition that exists: a namesake the call
+    /// resolves to, a local or an import from outside takes it.
+    pub fn callers_of_deleted(&mut self, gone: &Hit, limit: usize) -> Result<Vec<Hit>> {
+        let s = self.s;
+        let langs = Langs { root: &s.ix.root, seen: Default::default() };
+        let is_free = free(&gone.kind, &gone.qualname);
+        let mut out = Vec::new();
+        for row in s.ix.callers_of(&gone.name)? {
+            if !langs.same_family(&gone.path, &row.path) {
+                continue;
+            }
+            let uses = self.uses(&row.path, (row.start, row.end), &gone.name);
+            if uses.got.is_empty() && (if is_free { uses.unsure_free } else { uses.unsure }) {
+                out.push(Hit::from_row(&row, true));
+                if out.len() >= limit {
+                    break;
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// What the code of the definitions `name` stands for calls: definitions of the repository in
     /// the same language family, and the names it calls that have none.
     /// -> (resolved definitions, external names, the files of the definitions whose calls these are)

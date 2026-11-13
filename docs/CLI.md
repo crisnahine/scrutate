@@ -470,8 +470,13 @@ The answer has three sections, each a line with its count and then one line per 
 - `callers`: the definitions that call a changed one, then their callers, breadth first, each
   with its distance in front (`1` calls a changed definition) and each once, at its smallest
   distance. Each step is the answer `scrutate callers LOCATION --limit 500` gives for one
-  definition, undecided callers included (marked `(undecided)`). A window, a module and a
-  deleted definition are not followed further: nothing calls them by name in the tree as it is.
+  definition, undecided callers included (marked `(undecided)`). A deleted definition has no
+  location in the tree to ask about, so its callers at distance `1` are the definitions whose
+  code still calls its name where the resolver ties that call to no definition that exists (a
+  call it resolves to a namesake elsewhere, a local or an import from outside is not one; a
+  deleted method is matched by its name, with the receiver's type where the resolver decides it).
+  Each is marked `(calls a deleted definition)`, the first thing the diff breaks, and the walk
+  goes on from it as from any caller. A window and a module are not followed.
   `--depth N` (at most 10, `0` for none) stops the walk; 3 by default, because past three steps
   the callers of a much used function grow toward most of the repository and say little about
   what to test. The walk stops at 2,000 callers and says so.
@@ -484,8 +489,8 @@ The items are sorted by distance, path and line, the same on every run. A file w
 definitions to name gets a line under `notes` instead: a binary file, a submodule (its commits
 are not read), a file the index leaves out. `--json` gives the answer's envelope, its `result`
 with `against`, `base` (the commit compared with), `staged`, `depth`, `changed` (each with
-`status`), `callers` (each with `distance`, `via`, the location of what it calls, and
-`undecided`), `tests` (`path`, `distance`, `via`), `notes` and `stopped`. `--max-bytes` pages
+`status`), `callers` (each with `distance`, `via`, the location of what it calls, `undecided`
+and `calls_deleted`), `tests` (`path`, `distance`, `via`), `notes` and `stopped`. `--max-bytes` pages
 the text by whole lines, as the other answers. No change is exit code 1; a directory outside a
 git repository, git missing, a revision git does not know, two revisions with no merge base and a
 file with unmerged changes are errors (exit 2). A revision that starts with `-` is refused before

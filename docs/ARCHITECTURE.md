@@ -749,7 +749,9 @@ definition only the base has is deleted and one only the tree has is added. Line
 definition name the window that holds them. The callers are followed breadth first through one
 `Names` for the whole request, each step the answer of `Names::callers` for one location (as
 `callers --limit 500`), so the answer agrees with `callers` and each file is parsed once; a
-caller keeps the smallest distance it is reached at. The test files are those with the index's
+caller keeps the smallest distance it is reached at. A deleted definition is not in the index,
+so its first step is `Names::callers_of_deleted`: the call edges of its name (`Index::callers_of`)
+whose call the resolver ties to no existing definition. The test files are those with the index's
 test flag (`text::is_test_path`) among the changed definitions, the callers and the changed
 files. A command line `impact` is not sent to a session, so git runs in the environment of the
 command that asked.

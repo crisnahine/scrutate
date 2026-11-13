@@ -38,6 +38,8 @@ pub struct Caller {
     pub via: String,
     /// the resolver could not tell whether it calls that definition or another of its name
     pub undecided: bool,
+    /// it calls a definition the change deleted, by a name no other definition answers
+    pub calls_deleted: bool,
 }
 
 /// A test file to run, and the symbol in it that reached a change (none: the diff changed the file).
@@ -92,16 +94,28 @@ fn walkable(h: &Hit) -> bool {
 fn walk(s: &Searcher, changed: &[Changed], depth: usize) -> Result<(Vec<Caller>, bool)> {
     let mut seen: HashSet<i64> = changed.iter().map(|c| c.hit.id).filter(|id| *id != 0).collect();
     let mut frontier: Vec<Hit> = changed.iter().map(|c| c.hit.clone()).filter(walkable).collect();
+    // a deleted definition has no index entry to ask `callers` about: its callers are found by its name
+    let gone: Vec<&Hit> =
+        changed.iter().filter(|c| c.status == "deleted" && !matches!(c.hit.kind.as_str(), "window" | "module" | "file")).map(|c| &c.hit).collect();
     let mut callers = Vec::new();
     let mut names = Names::new(s)?;
     for distance in 1..=depth {
         let mut next = Vec::new();
-        for target in &frontier {
+        let deleted = if distance == 1 { gone.len() } else { 0 };
+        for k in 0..deleted + frontier.len() {
             if s.cancel.load(std::sync::atomic::Ordering::Relaxed) {
                 bail!("cancelled");
             }
-            let (hits, undecided) = names.callers(&target.loc(), STEP_CALLERS)?;
-            let decided = hits.len() - undecided;
+            let (target, decided, hits) = match k.checked_sub(deleted) {
+                None => {
+                    let hits = names.callers_of_deleted(gone[k], STEP_CALLERS)?;
+                    (gone[k], hits.len(), hits)
+                }
+                Some(j) => {
+                    let (hits, undecided) = names.callers(&frontier[j].loc(), STEP_CALLERS)?;
+                    (&frontier[j], hits.len() - undecided, hits)
+                }
+            };
             for (i, h) in hits.into_iter().enumerate() {
                 if !seen.insert(h.id) {
                     continue;
@@ -112,7 +126,7 @@ fn walk(s: &Searcher, changed: &[Changed], depth: usize) -> Result<(Vec<Caller>,
                 if walkable(&h) {
                     next.push(h.clone());
                 }
-                callers.push(Caller { hit: h, distance, via: target.loc(), undecided: i >= decided });
+                callers.push(Caller { hit: h, distance, via: target.loc(), undecided: i >= decided, calls_deleted: k < deleted });
             }
         }
         next.sort_by(|a, b| (&a.path, a.start, a.end).cmp(&(&b.path, b.start, b.end)));
@@ -720,7 +734,16 @@ impl Impact {
             format!("{}  ({}{at})", symbol(&c.hit), c.status)
         }));
         out.push(format!("callers: {} (depth {})", self.callers.len(), self.depth));
-        out.extend(self.callers.iter().map(|c| format!("{:>2}  {}{}", c.distance, symbol(&c.hit), if c.undecided { "  (undecided)" } else { "" })));
+        out.extend(self.callers.iter().map(|c| {
+            let mark = if c.calls_deleted {
+                "  (calls a deleted definition)"
+            } else if c.undecided {
+                "  (undecided)"
+            } else {
+                ""
+            };
+            format!("{:>2}  {}{mark}", c.distance, symbol(&c.hit))
+        }));
         out.push(format!("tests: {}", self.tests.len()));
         out.extend(self.tests.iter().map(|t| match &t.via {
             Some(h) => format!("{}  (distance {}: {})", shown(&t.path), t.distance, symbol(h)),
@@ -761,7 +784,7 @@ impl Impact {
             "changed": self.changed.iter().map(|c| with(symbol(&c.hit), "status", json!(c.status))).collect::<Vec<_>>(),
             "callers": self.callers.iter().map(|c| {
                 let v = with(symbol(&c.hit), "distance", json!(c.distance));
-                with(with(v, "via", json!(c.via)), "undecided", json!(c.undecided))
+                with(with(with(v, "via", json!(c.via)), "undecided", json!(c.undecided)), "calls_deleted", json!(c.calls_deleted))
             }).collect::<Vec<_>>(),
             "tests": self.tests.iter().map(|t| json!({"path": t.path, "distance": t.distance, "via": t.via.as_ref().map(symbol)})).collect::<Vec<_>>(),
             "notes": self.notes.iter().map(|(p, n)| json!({"path": p, "note": n})).collect::<Vec<_>>(),
