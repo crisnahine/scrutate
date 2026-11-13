@@ -52,6 +52,21 @@ The server answers definitions, references, workspace symbols and document symbo
 completion, hover or diagnostics, so the IDE keeps its own. Saving a file updates the index in the
 background.
 
+### Recording a run
+
+No CI job starts a JetBrains IDE, so a run counts only when recorded by hand. On a named IDE build
+with LSP4IJ 0.21.0:
+
+1. Make the test repository: `bash integrations/fixture.sh /tmp/scrutate-fixture` and
+   `mkdir /tmp/scrutate-fixture/.git`, then open that folder as a project.
+2. Follow steps 2 to 5 above exactly, with the mapping `*.py` / `python`.
+3. In the *Language Servers* tool window, set the server's trace to *verbose*.
+4. In `src/app.py`, put the caret on `make_point` in `return make_point().norm()` (line 5) and
+   run *Navigate → Declaration or Usages*. The editor jumps to `src/geo.py`, line 6.
+5. Save three things under `docs/evidence/`: the IDE and plugin versions (*Help → About*, copied as
+   text), the LSP console text with `initialize`, `textDocument/definition` and its response, and
+   a screen recording of the jump.
+
 ## MCP
 
 The MCP server (`scrutate serve`) also works with the MCP settings of JetBrains AI Assistant and
