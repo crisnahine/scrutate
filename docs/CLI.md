@@ -42,8 +42,9 @@
   `-c`, `-l` and `--symbols` are always sorted (without `--sort`, `-c` and `-l` compare whole
   paths as strings, all paths together). Engine B output is fully deterministic (ties broken by
   id).
-- **Machine-readable output**: `--json` on every command. Engine A emits JSON Lines with
-  `"schema": 1` and `"type"` ∈ {`match`, `context`, `count`, `file`, `summary`, `symbol_group`};
+- **Machine-readable output**: `--json` on every command that prints results (`stats` always
+  prints JSON). Engine A emits JSON Lines with
+  `"schema": 1` and `"type"` ∈ {`match`, `context`, `count`, `file`, `binary`, `summary`, `symbol_group`};
   Engine B commands emit one JSON document, an answer's envelope: `{"schema": 2, "result": ...}`,
   with `"stopped_at": N` when the answer stopped at its limit `N` with more left. `result` is the
   answer itself; a `batch` record and the MCP server's structured result carry the same envelope.
@@ -247,7 +248,7 @@ often while files change.
 | `dupes [--min-tokens N] [--threshold J] [--limit N]` | Exact and near-duplicate functions. `exact` means the same body text once runs of whitespace are squeezed; a pair with the same words written differently is `near` with similarity 1.00. `--threshold 1` prints the exact groups only. At most 50 groups, or `--limit`. |
 | `tsquery LANG QUERY [PATHS] [--limit N] [--no-cache]` | Tree-sitter structural query over every file of a language up to 1 MB (no index; per-file results are cached, see below). An empty query, a query without a `@capture` and an unknown predicate are errors. A path that does not exist from the current directory is read under `--root`; one that exists in neither place is named in a warning, the other paths are still searched, and the exit code is 2. Paths print as `grep PATH...` prints them, in plain output and in `--json`: the path as given, then the path below it (`src/a.py` for `src`, `./src/a.py` for `./src`, nothing in front for `.` or no path), so a printed path can be passed to the other commands. |
 | `check [--files] [--json]` | Verify database integrity, segment consistency and (with `--files`) that indexed files are unchanged. Exit 1 on problems. The line `chunks: N ranked in the database, M alive in segments, K constants (no postings)` counts the chunks that have segment rows, which leaves out constants, and then the constants; `--json` gives them as `constants`. `--json` counts the indexed files also without `--files` (`files_changed` and `files_missing` are then 0: not checked). |
-| `stats` | Index statistics (files, chunks, symbols, call edges, imports, segments, and the text index's files, segments and bytes). |
+| `stats` | Index statistics as one JSON object (files, chunks, symbols, call edges, imports, segments, and the text index's files, segments and bytes). |
 | `languages [--json]` | The verified capability registry. The JSON form gives each language's extensions, the extensions it shares with another language and takes by the file's text (`extensions_by_content`), its file names, and every kind of definition the index gives it (`definition_kinds`: `method` for a function in a class and `constant` included). |
 | `watch [PATH]` | Keep the index (and the text index, if there is one) up to date from filesystem events (see below). |
 | `serve [--refresh-interval S] [--max-bytes N] [--watch] [--structured]` | MCP server on stdio (see below); `--watch` also runs the watcher in a background thread; `--structured` also sends each answer as JSON. |
@@ -575,7 +576,7 @@ its last group with a `note:` line (`"note"` in JSON). An invalid pattern is an 
   snippets (measured with that client on 2026-11-11). Turn it on for a client whose scripts read
   tool results, such as Codex in Code Mode.
 - A call runs on a thread of its own, so `notifications/cancelled` reaches it, and calls run
-  side by side, each on a reader of its own (up to the number of cores, at most 8; one more waits
+  side by side, each on a reader of its own (up to the number of cores, at least 2 and at most 8; one more waits
   for a reader): a call waiting for the index or for a reader stops, an index update it runs (`reindex`, or the scan before a read)
   stops and rolls back at its next batch, and the answer of one already computing is dropped.
   Nothing more is sent for a cancelled request.
@@ -675,8 +676,9 @@ mid-update leaves the previous state in place.
 
 `serve --watch` runs the same watcher in a background thread while the server answers requests;
 when the watcher stops, stderr says why and the server goes on answering.
-The watcher and the tool calls share one engine, so a code index update and a request never run at
-the same time in that process.
+The watcher and the tool calls share one session: the watcher's updates and the scans before
+calls take one writer lock, so they run one at a time, and a call that reads meanwhile sees the
+index as of its last commit.
 
 ### `tsquery` cache
 Each file's captures are kept in `--root`/.scrutate/tsquery/, one file per (scrutate version,
@@ -693,7 +695,8 @@ is safe to delete at any time.
 ### Environment variables
 `SCRUTATE_ROOT`, `SCRUTATE_THREADS`, `SCRUTATE_GREP_{HIDDEN,NO_IGNORE,FOLLOW,SMART_CASE,MAX_FILESIZE,MAX_DEPTH,MAX_BYTES,GLOBS,TYPES}`,
 `SCRUTATE_INDEX_EXCLUDE_DIRS`, `SCRUTATE_REFRESH_INTERVAL`, `SCRUTATE_MAX_BYTES`,
-`SCRUTATE_MCP_STRUCTURED`, `SCRUTATE_CONFIG`, `SCRUTATE_WATCH_DEBUG`, `SCRUTATE_GREP_DEBUG`, `SCRUTATE_SEMANTIC`
+`SCRUTATE_MCP_STRUCTURED`, `SCRUTATE_CONFIG`, `SCRUTATE_WATCH_DEBUG`, `SCRUTATE_GREP_DEBUG`,
+`SCRUTATE_NO_SESSION`, `SCRUTATE_SESSION_DEBUG` (see `serve` above), `SCRUTATE_SEMANTIC`
 (path or `none`; another model makes the stored vectors anew on the next update),
 `SCRUTATE_RANKER` (path or `none`; a ranker whose features differ from this version's makes
 `search` fail), `SCRUTATE_PROFILE` (print indexing phase
@@ -703,8 +706,8 @@ value). On/off variables follow the rule under Conventions.
 ### The index directory
 `.scrutate/index.db` (SQLite, WAL), `.scrutate/seg/*/` (memory-mapped arrays) and
 `.scrutate/text/` (the text index: a manifest and immutable trigram segments),
-`.scrutate/tsquery/` (the `tsquery` cache), plus a `.gitignore`
-so it is never committed. It is a cache: deleting it is always safe; `scrutate index
+`.scrutate/tsquery/` (the `tsquery` cache), while `serve` runs `.scrutate/session.sock`, plus a
+`.gitignore` so it is never committed. It is a cache: deleting it is always safe; `scrutate index
 --force` rebuilds it; a damaged index rebuilds itself. If a newer scrutate built `.scrutate/`,
 this version reads the index without updating it (one line on stderr says so), or refuses it
 with exit 2 when it cannot read it; `scrutate index --force` (`--text --force` for the text

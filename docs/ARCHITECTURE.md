@@ -262,7 +262,8 @@ capabilities those crates do not provide rather than re-implementing what they a
   once, and threads let held output go between files, so nothing waits longer than a millisecond
   or the longest file being searched.
 - **Output**: path:line:text, `-c`, `-l`, context, colour, deterministic `--sort`, and JSONL
-  (`--json`, schema version 1: `match`, `context`, `count`, `file`, `summary`, `symbol_group`).
+  (`--json`, schema version 1: `match`, `context`, `count`, `file`, `binary`, `summary`,
+  `symbol_group`).
 - **No dependency on Engine B**: `grep` never opens the index. `grep --symbols` is the one
   opt-in bridge (group matches by the enclosing function using the index if one exists).
 
@@ -563,7 +564,7 @@ Every call gets a cancel flag of its own, and a panic stays inside it: the call 
 reader of its own: a SQLite connection with its statement cache, the segment maps and statistics
 (`LexStore`) and the searcher's caches, none of which can be shared between threads. Readers are
 opened when calls need them, from the open index without its triage (`Index::another`, about the
-cost of one SQLite open), up to the number of cores and at most 8, and kept; the model set is
+cost of one SQLite open), up to the number of cores, at least 2 and at most 8, and kept; the model set is
 shared (`Arc<ModelSet>`). A ninth call waits for a reader. Writes take the shared writer lock;
 a read beside a write sees the index as of its last commit (WAL, one transaction per update, the
 segment manifest swapped in that transaction), the way a read in another process does. The scan
@@ -655,7 +656,7 @@ request and ask it what the occurrence at a place refers to; no other module bui
 Within a request each file is read and parsed once, however many of its call sites are asked
 about. `callers` still asks about the 400 likeliest call sites and lists the rest as not checked:
 asking about every one costs about a second of CPU per thousand sites of a Java name in Guava
-(`callers size`, 1,970 sites: 2.4 s instead of 1.0 s). The caller count that ranking reads (`log_ncallers`) is also taken from `Names`: it counts
+(`callers size`, 1,970 sites: 2.4 s instead of 1.0 s). The caller count that ranking reads (`log_ncallers`) comes from the index (`Index::call_counts`): it counts
 every call edge of the name, namesakes included, the number the ranker was fitted on.
 
 `tsquery` keeps each file's captures in `.scrutate/tsquery/` (`tscache.rs`): one file per
@@ -684,7 +685,8 @@ into operations, run them through `Repo` (`Repo::run`, or `Repo::run_as_is` afte
 their own), and render answers; none of them has a default or an output format of its own (they
 had drifted: three different limits for `callers`, references textual in one and resolved in
 another). The JSON form leaves in one envelope (`Answer::envelope`: `schema`, `result`,
-`stopped_at`), which `--json`, a `batch` record and the MCP structured result print. A tool's
+`stopped_at`), which `--json`, a `batch` record and the MCP structured result print (the MCP
+result adds `complete`, and `text` when the result does not fit). A tool's
 JSON arguments are parsed in one place (`Op::from_tool`), which the MCP server, `batch`, the
 CLI's `read` and the bindings' `Repo.call` use. The language server asks the same operations
 for references, document symbols and the definitions of a name, and answers in LSP's shapes;
@@ -723,8 +725,9 @@ two eras on one pipe: the `initialize` handshake of the revisions up to 2025-11-
 2026-07-28, where each request names its version in `_meta` and nothing is remembered between
 requests. Each tool call runs on a thread of its own, so the loop keeps reading and a
 `notifications/cancelled` finds the call it names; the session runs the calls side by side.
-A result is text cut to the byte budget; with `serve --structured` it also carries the JSON
-form in `structuredContent` when both fit. That is a switch because clients differ in which
+A result is text cut to the byte budget; with `serve --structured` it also carries the envelope
+in `structuredContent`: the JSON form when the text and the JSON fit together, else
+`complete: false`, a null `result` and the text. That is a switch because clients differ in which
 form they show their model, and the text is the one written for a model. The Python bindings expose both
 engines with the GIL released and streaming results.
 
