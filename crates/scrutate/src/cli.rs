@@ -805,7 +805,7 @@ pub enum HookCmd {
     },
 }
 
-fn parse_size(s: &str) -> Result<u64> {
+pub(crate) fn parse_size(s: &str) -> Result<u64> {
     let s = s.trim();
     let (num, mult) = match s.chars().last() {
         Some('K') | Some('k') => (&s[..s.len() - 1], 1024u64),

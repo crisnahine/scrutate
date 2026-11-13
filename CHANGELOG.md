@@ -66,6 +66,11 @@ incompatible index by itself, and that is never breaking.
   INSTALL.md shows `brew trust --tap scrutate/tap`, which Homebrew 7 needs
   ([packaging](packaging/README.md)).
 
+- `[index] max_files` and `max_bytes` in the configuration file (`SCRUTATE_INDEX_MAX_FILES`,
+  `SCRUTATE_INDEX_MAX_BYTES`) cap how many files, and bytes of them, each index holds; an update
+  that would pass a cap stops with exit 2 and leaves the last index as it was. No cap by default
+  ([CLI](docs/CLI.md)).
+
 ### Changed
 - With `serve --structured`, a large answer pages in `structuredContent` too: each page carries
   the JSON of the items its text page shows, with `offset`, `next_offset` and `total`, in place

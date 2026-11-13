@@ -1205,6 +1205,13 @@ fn update_with(root: &Path, force: bool, progress: bool, only: Option<&[String]>
     for (_, (i, d)) in known {
         segs[i].live[d / 8] &= !(1 << (d % 8));
     }
+    let quota = crate::files::Quota::from_env()?;
+    if quota.is_set() {
+        // what stays live, and the changed files that replace or join it; nothing is written yet
+        let kept = segs.iter().flat_map(|s| (0..s.ndocs).filter(|&d| s.is_live(d)).map(|d| s.docs()[d * COLS].max(0) as u64));
+        let (n, bytes) = kept.chain(changed.iter().map(|c| c.1)).fold((0u64, 0u64), |(n, b), size| (n + 1, b.saturating_add(size)));
+        quota.check("text index", n, bytes)?;
+    }
     let mut next_seg = next_segment_number(&dir)?;
     let mut batch: Vec<DocIn> = Vec::new();
     let mut batch_postings = 0usize;

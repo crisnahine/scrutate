@@ -73,7 +73,14 @@
   at the index root, so every command, the MCP server, the language server and the Python
   bindings leave out the same directories wherever they start; elsewhere (a subdirectory's
   `.scrutate.toml`, `$SCRUTATE_CONFIG`, your `config.toml`) it is ignored with a warning.
-  `SCRUTATE_INDEX_EXCLUDE_DIRS`, when set, replaces it (empty: those directories are indexed). A
+  `SCRUTATE_INDEX_EXCLUDE_DIRS`, when set, replaces it (empty: those directories are indexed).
+  `[index] max_files` (`SCRUTATE_INDEX_MAX_FILES`) and `max_bytes` (`SCRUTATE_INDEX_MAX_BYTES`, a
+  number of bytes or with a `K`, `M` or `G` suffix, `"4G"`) cap each index: the files it would
+  hold after an update, and their total size (files over 1 MB, which the code index never reads,
+  add nothing to its bytes; the text index reads every file). An update that would pass either
+  stops before it writes anything, with exit 2 and one line naming the index, the count, the
+  setting and its variable; the last committed index stays as it was and answers as before, and
+  Engine A (`grep` without `--index`) is not limited. There is no limit by default. A
   `.scrutate.toml`'s globs match each path from the file's directory, whatever is searched and
   wherever the command runs; they never filter a path outside that directory or one named on
   the command line, and `-g` or `SCRUTATE_GREP_GLOBS` replaces them. `follow = true` in a
@@ -955,7 +962,7 @@ root.
 
 ### Environment variables
 `SCRUTATE_ROOT`, `SCRUTATE_THREADS`, `SCRUTATE_GREP_{HIDDEN,NO_IGNORE,FOLLOW,SMART_CASE,MAX_FILESIZE,MAX_DEPTH,MAX_BYTES,GLOBS,TYPES}`,
-`SCRUTATE_INDEX_EXCLUDE_DIRS`, `SCRUTATE_REFRESH_INTERVAL`, `SCRUTATE_MAX_BYTES`,
+`SCRUTATE_INDEX_EXCLUDE_DIRS`, `SCRUTATE_INDEX_MAX_FILES`, `SCRUTATE_INDEX_MAX_BYTES`, `SCRUTATE_REFRESH_INTERVAL`, `SCRUTATE_MAX_BYTES`,
 `SCRUTATE_MCP_STRUCTURED`, `SCRUTATE_MCP_SHORT_TOOLS`, `SCRUTATE_CONFIG`, `SCRUTATE_WATCH_DEBUG`, `SCRUTATE_GREP_DEBUG`,
 `SCRUTATE_NO_SESSION`, `SCRUTATE_SESSION_DEBUG`, `SCRUTATE_SESSION_WAIT_MS` (see `serve` above), and:
 

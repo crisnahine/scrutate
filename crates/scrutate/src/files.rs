@@ -66,6 +66,44 @@ pub fn make_index_dir(root: &Path) -> anyhow::Result<PathBuf> {
     Ok(dir)
 }
 
+/// The most files an index may hold, and the most bytes of the files it reads
+/// (`SCRUTATE_INDEX_MAX_FILES`, `SCRUTATE_INDEX_MAX_BYTES`, from `[index]` of the configuration
+/// file); no limit when unset or empty.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Quota {
+    pub files: Option<u64>,
+    pub bytes: Option<u64>,
+}
+
+impl Quota {
+    pub fn from_env() -> anyhow::Result<Quota> {
+        let get = |name: &str, parse: fn(&str) -> anyhow::Result<u64>| -> anyhow::Result<Option<u64>> {
+            match std::env::var(name) {
+                Ok(v) if !v.trim().is_empty() => parse(&v).map(Some).map_err(|e| anyhow::anyhow!("{name}: {e}")),
+                _ => Ok(None),
+            }
+        };
+        let count = |v: &str| v.trim().parse::<u64>().map_err(|_| anyhow::anyhow!("bad number {v:?}"));
+        Ok(Quota { files: get("SCRUTATE_INDEX_MAX_FILES", count)?, bytes: get("SCRUTATE_INDEX_MAX_BYTES", crate::cli::parse_size)? })
+    }
+
+    pub fn is_set(&self) -> bool {
+        self.files.is_some() || self.bytes.is_some()
+    }
+
+    /// An error naming the setting when `index` would hold more than the quota allows.
+    pub fn check(&self, index: &str, files: u64, bytes: u64) -> anyhow::Result<()> {
+        let over = |what: &str, n: u64, max: Option<u64>, key: &str, var: &str| match max {
+            Some(max) if n > max => {
+                Err(anyhow::anyhow!("the {index} would hold {n} {what}, more than index.{key} = {max} ({var}); nothing was written, the index is as it was"))
+            }
+            _ => Ok(()),
+        };
+        over("files", files, self.files, "max_files", "SCRUTATE_INDEX_MAX_FILES")?;
+        over("bytes of files", bytes, self.bytes, "max_bytes", "SCRUTATE_INDEX_MAX_BYTES")
+    }
+}
+
 /// The main checkout of the linked git work tree whose top is `root`, read from git's own files
 /// (no program is run): the `.git` file names `<common dir>/worktrees/<name>`, whose `gitdir`
 /// file names this `.git` file back and whose `commondir` names the common directory, which is

@@ -21,6 +21,8 @@
 //! [index]
 //! exclude_dirs = ["generated", "third_party"]   # SCRUTATE_INDEX_EXCLUDE_DIRS; read from the root's own file only
 //! refresh_interval = 2.0                         # SCRUTATE_REFRESH_INTERVAL (seconds, `serve`)
+//! max_files = 500000                             # SCRUTATE_INDEX_MAX_FILES (no limit by default)
+//! max_bytes = "4G"                               # SCRUTATE_INDEX_MAX_BYTES (bytes of the files read; or a number)
 //!
 //! [[language]]                                   # a language of its own: see custom.rs
 //! name = "mylang"
@@ -87,6 +89,16 @@ pub struct IndexCfg {
     #[serde(default)]
     pub exclude_dirs: Vec<String>,
     pub refresh_interval: Option<f64>,
+    pub max_files: Option<u64>,
+    pub max_bytes: Option<Size>,
+}
+
+/// A size as a number of bytes or with a `K`, `M` or `G` suffix (`"4G"`).
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum Size {
+    Bytes(u64),
+    Text(String),
 }
 
 /// The configuration file that applies to `root`, if any.
@@ -174,6 +186,14 @@ pub fn apply_as_env(cfg: &Config) {
     if let Some(v) = cfg.index.refresh_interval {
         set("SCRUTATE_REFRESH_INTERVAL", v.to_string());
     }
+    if let Some(v) = cfg.index.max_files {
+        set("SCRUTATE_INDEX_MAX_FILES", v.to_string());
+    }
+    match &cfg.index.max_bytes {
+        Some(Size::Bytes(v)) => set("SCRUTATE_INDEX_MAX_BYTES", v.to_string()),
+        Some(Size::Text(v)) => set("SCRUTATE_INDEX_MAX_BYTES", v.clone()),
+        None => {}
+    }
 }
 
 /// Root directory named on the command line (`--root`, before parsing), so the local config can be found.
@@ -198,7 +218,7 @@ mod tests {
     #[test]
     fn parses_documented_example() {
         let c: Config = toml::from_str(
-            "[grep]\nhidden = true\nthreads = 4\nmax_bytes = 4000\nglobs = [\"!vendor/**\"]\n[index]\nexclude_dirs = [\"generated\"]\nrefresh_interval = 2.0\n",
+            "[grep]\nhidden = true\nthreads = 4\nmax_bytes = 4000\nglobs = [\"!vendor/**\"]\n[index]\nexclude_dirs = [\"generated\"]\nrefresh_interval = 2.0\nmax_files = 500000\nmax_bytes = \"4G\"\n",
         )
         .unwrap();
         assert_eq!(c.grep.hidden, Some(true));
@@ -207,6 +227,10 @@ mod tests {
         assert_eq!(c.grep.globs, vec!["!vendor/**"]);
         assert_eq!(c.index.exclude_dirs, vec!["generated"]);
         assert_eq!(c.index.refresh_interval, Some(2.0));
+        assert_eq!(c.index.max_files, Some(500000));
+        assert_eq!(c.index.max_bytes, Some(Size::Text("4G".into())));
+        let c: Config = toml::from_str("[index]\nmax_bytes = 4000\n").unwrap();
+        assert_eq!(c.index.max_bytes, Some(Size::Bytes(4000)));
     }
 
     #[test]

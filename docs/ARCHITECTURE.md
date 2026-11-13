@@ -417,7 +417,11 @@ NFC with final sigma folded.
     written with remove and `create_new`, so the index never writes through a link;
   - every writer makes or opens `.scrutate` through `files::make_index_dir`, which on Unix gives
     it mode 0700 (also to an existing one of another mode), so the copies of private files it
-    holds stay with their owner.
+    holds stay with their owner;
+  - the quota (`files::Quota`, `index.max_files` and `index.max_bytes`) is checked once the files
+    of an update are known and before anything is written: the code index inside its write
+    transaction, which then rolls back, the text index before its first segment, so the manifest
+    still names the last committed one.
 
 ### Retrieval and ranking (`search.rs`, `semantic.rs`, `rank.rs`)
 

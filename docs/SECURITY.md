@@ -378,8 +378,10 @@ marker is not).
   A checkout several users share on Unix has one index each user cannot open but its owner's:
   the others search with Engine A, or the owner widens it with `chmod`, which the next write
   undoes.
-- **Denial of service by index size**: millions of files build a multi-gigabyte index; there is
-  no quota. Engine A has no such state.
+- **Denial of service by index size**: millions of files build a multi-gigabyte index unless
+  `index.max_files` or `index.max_bytes` is set ([CLI](CLI.md#conventions)); by default there is
+  no limit. The quota counts the files an index holds and their size, not the bytes `.scrutate/`
+  takes on disk. Engine A has no such state.
 - **Read rules the hook cannot see**: a `Read` or `Grep` rule given only on Claude Code's command
   line (`--disallowedTools`, `--settings`) or by an SDK host is in no file the hook reads, so the
   hook answers a Grep that rule would have filtered. Put such rules in a settings file, or leave

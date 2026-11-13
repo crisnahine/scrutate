@@ -1560,6 +1560,35 @@ impl Index {
         Ok(st)
     }
 
+    /// Err when the files the update leaves would pass the quota, counted before anything is
+    /// written. `files` is the whole tree, or with `only` the named files, which replace the
+    /// `known` rows of those paths.
+    fn within_quota(&self, only: bool, known: &HashMap<String, (i64, i64, Option<i64>, String)>, files: &[(String, Option<Stat>)]) -> Result<()> {
+        let quota = crate::files::Quota::from_env()?;
+        if !quota.is_set() {
+            return Ok(());
+        }
+        // a file over the size limit is never read
+        let read = |size: i64| if (0..=MAX_FILE_BYTES as i64).contains(&size) { size as u64 } else { 0 };
+        let mut present: HashMap<&str, u64> = files.iter().filter_map(|(p, s)| Some((p.as_str(), read(s.as_ref()?.size)))).collect();
+        let (mut n, mut bytes) = (0u64, 0u64);
+        if only {
+            let (all, sum): (i64, i64) = self.db.query_row(
+                "SELECT COUNT(*), COALESCE(SUM(CASE WHEN size BETWEEN 0 AND ?1 THEN size ELSE 0 END), 0) FROM files",
+                [MAX_FILE_BYTES as i64],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            n = (all as u64).saturating_sub(known.len() as u64);
+            bytes = (sum as u64).saturating_sub(known.values().map(|k| read(k.0)).sum());
+        } else {
+            // a file the walk lists but could not stat is held as it was
+            present.extend(files.iter().filter(|f| f.1.is_none()).map(|f| (f.0.as_str(), known.get(&f.0).map_or(0, |k| read(k.0)))));
+        }
+        n += present.len() as u64;
+        bytes += present.values().sum::<u64>();
+        quota.check("code index", n, bytes)
+    }
+
     /// Body of `update()`, inside the write transaction. -> whether anything changed.
     fn update_inner(
         &mut self,
@@ -1621,6 +1650,7 @@ impl Index {
                 paths.iter().filter(|p| file_inside(&self.root, p).is_some()).map(|p| (p.clone(), stat_of(p))).collect()
             }
         };
+        self.within_quota(only, &known, &files)?;
         let fileset: HashSet<&String> = files.iter().map(|f| &f.0).collect();
         let mut gone: Vec<String> = known.keys().filter(|p| !fileset.contains(p)).cloned().collect();
         gone.sort();

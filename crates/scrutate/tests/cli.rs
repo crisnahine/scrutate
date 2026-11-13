@@ -616,6 +616,23 @@ fn the_index_directory_is_private_to_its_owner_under_umask_022() {
 }
 
 #[test]
+fn the_index_quota_comes_from_the_configuration_file_and_the_environment_beats_it() {
+    let r = Repo::new("index_quota");
+    r.write("a.py", b"def a():\n    return 1\n");
+    r.write("b.py", b"def b():\n    return 2\n");
+    r.write(".scrutate.toml", b"[index]\nmax_files = 2\n");
+    let (code, _, err) = r.run(&["index", "--no-text"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("the code index would hold 3 files, more than index.max_files = 2 (SCRUTATE_INDEX_MAX_FILES)"), "{err}");
+    let (code, _, err) = run_in(&r.root, &["index"], &[("SCRUTATE_INDEX_MAX_FILES", "3")]);
+    assert_eq!(code, 0, "{err}");
+    r.write(".scrutate.toml", b"[index]\nmax_bytes = \"10\"\n");
+    let (code, _, err) = r.run(&["index", "--text"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("the text index would hold") && err.contains("index.max_bytes = 10"), "{err}");
+}
+
+#[test]
 fn git_file_of_worktrees_and_submodules_is_not_indexed() {
     let r = Repo::new("gitfile");
     r.write(".git", b"gitdir: /somewhere/else/.git/worktrees/wt\n");
