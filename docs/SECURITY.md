@@ -334,7 +334,8 @@ marker is not).
     caller frees when no stream was made. `watch::tests` starts a stream and receives a file's
     event, and every `tests/watch_files.rs` test runs on it;
   - the tests: `kill` (`tests/cli.rs`, `tests/running.rs`), `geteuid` (`tests/robustness.rs`)
-    and `clock_gettime` (`tests/parse_index.rs`) with arguments they own, and in
+    and `clock_gettime` (`tests/parse_index.rs`) with arguments they own, `std::env::set_var` in
+    `tests/index_quota.rs`, the one test of its binary, so no other thread reads the environment, and in
     `tests/lazy_bind.rs` C library calls (`snprintf`, `powf`, `qsort` with its callback, `fchdir`,
     `fork`, `getpid`, `_exit`, `waitpid`) made through the stubs above.
 
@@ -358,6 +359,7 @@ marker is not).
   | `crates/scrutate/src/text.rs` | 1 |
   | `crates/scrutate/src/watch.rs` | 21 |
   | `crates/scrutate/tests/cli.rs` | 1 |
+  | `crates/scrutate/tests/index_quota.rs` | 1 |
   | `crates/scrutate/tests/lazy_bind.rs` | 10 |
   | `crates/scrutate/tests/parse_index.rs` | 1 |
   | `crates/scrutate/tests/robustness.rs` | 1 |
