@@ -30,7 +30,7 @@ gap it closes in docs/TRACEABILITY.md.
 | Language server (R-6.15) | `scrutate lsp`; the VS Code extension starts it; JetBrains through LSP4IJ |
 | Sample for `ocaml_interface` (R-3.4) | all 74 grammars verified by samples (docs/LANGUAGES.md) |
 | int8 semantic vectors (R-4.3) | schema 13: index about a fifth smaller, ranking quality within 0.001 MRR (docs/QUALITY.md) |
-| `scrutate watch` (R-2B.1) | inotify on Linux, ReadDirectoryChangesW on Windows, the index's own check on a timer on macOS |
+| `scrutate watch` (R-2B.1) | inotify on Linux (directories past the watch limit checked on a timer), ReadDirectoryChangesW on Windows (an overflowed buffer walks the tree), FSEvents on macOS loaded only by `watch` (the index's own check on a timer when it cannot load) |
 | Benchmark dashboard (R-4.5) | `bench/make_dashboard.py` writes `docs/dashboard.html` from the results in `bench/results/` |
 | Package definitions (R-12.13) | `packaging/`: Homebrew formula (installed and tested in a Linux Homebrew), Scoop and winget manifests (schema-validated), `.deb` and `.rpm` (built and install-tested in clean Debian and Fedora containers) |
 | Third-party notices in releases | `tools/third_party_notices.py`; archives, wheels and the `.deb` and `.rpm` packages include `THIRD_PARTY_NOTICES.txt` |
@@ -162,16 +162,9 @@ docs/RELEASING.md, public (done), tag `v0.1.0`.
   reference to a function `text`, whatever the macro does.
 - Java: `refs` lists fields, enum constants and record accessors as unresolved (`field or key`,
   [CLI](CLI.md#refs)), a `static final` field too, which `symbol` finds as a constant.
-- On Windows the `notify` crate (8.2.2; read in its source, it reports no empty read) drops a
-  burst too large for the watch buffer. `watch` indexes it with the first change to an indexed
-  file 30 s or more after its last walk; a command run meanwhile scans the tree and finds it.
-- On Linux, past `fs.inotify.max_user_watches` the deepest directories get no watch
-  ([CLI](CLI.md#watch)). While any directory has none, every burst that changes an indexed file
-  walks the tree, so a change in an unwatched directory is indexed with the next change to an
-  indexed file anywhere.
-- On macOS `watch` checks the tree on a timer ([CLI](CLI.md#watch)), so on a tree of 20,000
-  directories a saved file is indexed after 11 to 14 s (debug build). Linux and Windows update the
-  saved file alone.
+- `watch` takes the `notify` crate at 9.0.0-rc.8, pinned, the first release that reports an
+  overflowed Windows buffer; 9.0.0 itself is not out (crates.io on 2026-11-13). Moving to it is a
+  version bump once it is.
 - Call forms the grammars do not tell apart: a Verilog task call without parentheses (`h;`) or on
   a member (`obj.m(1);`) records no call edge, a VHDL indexed signal `a(i)` is recorded as a call,
   and an assembly call under a local label counts for that label and for the global label above.

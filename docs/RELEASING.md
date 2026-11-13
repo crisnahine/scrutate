@@ -37,7 +37,7 @@ The check fails when a file differs from the version. The release workflow runs 
 tag (less its `v`) and refuses a tag that does not match.
 
 The oldest compiler that builds is `rust-version` in the workspace `Cargo.toml`: 1.91, which the
-locked `notify-types` needs. A `ci.yml` job runs `cargo check` with it, so a dependency update
+locked `notify` and `notify-types` need. A `ci.yml` job runs `cargo check` with it, so a dependency update
 that raises it fails there. README.md and docs/INSTALL.md name it too.
 
 | Raise by one, after a release | When |

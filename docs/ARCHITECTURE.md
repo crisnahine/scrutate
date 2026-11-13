@@ -492,14 +492,23 @@ compares sizes with Zoekt and livegrep, whose indexes hold the text), so a query
 candidate files from the source tree.
 
 ### Watching (`watch.rs`)
-`scrutate watch` and `serve --watch` turn filesystem events (the `notify` crate: inotify,
-ReadDirectoryChangesW) into index updates; macOS runs the index's own incremental check on a timer
-instead ([CLI](CLI.md#watch) has the platform details and the walk triggers). The watch is in
-place before the first update. A burst of files is decided by listing their directories with the
-indexes' own walks (`files::CodeWalk`, `textindex::walk_entries`), so no ignore rule is written by
-hand. Each walk also records the rule files it read that no event in the tree names; on Linux
-their directories are watched after the tree's own, and a failure there does not make every burst
-walk; on Windows they are watched beside the recursive watch on the root. A burst hands its change
+`scrutate watch` and `serve --watch` turn filesystem events into index updates: inotify and
+ReadDirectoryChangesW through the `notify` crate (9.0.0-rc.8, pinned: the first release that
+reports an overflowed Windows buffer as lost events), and on macOS FSEvents through `watch.rs`'s
+own `fsevents` module. That module loads CoreServices with `dlopen` and takes every function it
+calls from `dlsym` on that handle, so the executable imports nothing for it and only `watch`
+loads the framework; `notify` is built there with its kqueue backend, which is never started,
+for its event types alone. When the load or the stream fails, macOS falls back to the index's
+own incremental check on a timer ([CLI](CLI.md#watch) has the platform details and the walk
+triggers). The watch is in place before the first update. A burst of files is decided by listing
+their directories with the indexes' own walks (`files::CodeWalk`, `textindex::walk_entries`), so
+no ignore rule is written by hand. Each walk also records the rule files it read that no event in
+the tree names; on Linux their directories are watched after the tree's own; on Windows they are
+watched beside the recursive watch on the root; on macOS they are polled. Whatever got no watch
+(Linux past `max_user_watches`, a rule directory, the rule files above a macOS root) goes to
+`Poll`, which lists those directories or stats those files on a timer and hands each change to
+the burst as the event a watch would have sent, so no directory without a watch makes a burst
+walk the tree. A burst hands its change
 set (the files it names, or every file) to `Repo::update_stores`. There is no new write path: the
 watcher is one more writer behind the same SQLite transaction and text index lock file. The
 update's own reads are not events, so updates do not trigger themselves. It is no daemon: it runs

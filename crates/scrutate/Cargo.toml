@@ -139,13 +139,15 @@ tree-sitter-autohotkey = { version = "1.1", optional = true }
 tree-sitter-gdscript = "6.1"
 zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 
-# no file events on wasi: `watch` says so there
+# no file events on wasi: `watch` says so there. The release candidate, pinned: only 9.0 reports a
+# lost Windows buffer as a rescan, and 8.x has no backport
 [target.'cfg(not(target_os = "wasi"))'.dependencies]
-notify = { version = "8.2", default-features = false }
+notify = { version = "=9.0.0-rc.8", default-features = false }
 
-# kqueue instead of FSEvents keeps CoreServices out of the binary (the watcher polls on macOS)
+# kqueue instead of notify's FSEvents keeps CoreServices out of the binary: macOS uses only notify's
+# event types, and watch.rs loads FSEvents itself while `watch` runs
 [target.'cfg(target_os = "macos")'.dependencies]
-notify = { version = "8.2", default-features = false, features = ["macos_kqueue"] }
+notify = { version = "=9.0.0-rc.8", default-features = false, features = ["macos_kqueue"] }
 
 [dev-dependencies]
 proptest = "1"

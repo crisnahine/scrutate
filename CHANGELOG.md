@@ -97,8 +97,20 @@ incompatible index by itself, and that is never breaking.
   `關係` and `关系` and the reverse (OpenCC ver.1.4.2 `JPShinjitaiCharacters.txt`, Apache-2.0).
   The content revision is 3, so an older index reads every file again
   ([ARCHITECTURE](docs/ARCHITECTURE.md#tokens-textrs)).
+- `watch` on macOS follows FSEvents with file-level events, loaded with `dlopen` only by `watch`,
+  so a save updates that file alone with no walk of the tree: 0.24 to 0.31 s from the save to the
+  update on a tree of 20,000 directories (release build, the 200 ms burst wait included), where
+  the timer took 11 to 14 s (debug build). The timer stays as the fallback when FSEvents cannot
+  load ([CLI](docs/CLI.md#watch)).
+- The `notify` crate is 9.0.0-rc.8, pinned (it needs Rust 1.91, the existing minimum).
 
 ### Fixed
+- `watch` on Windows walks the tree when a burst overflows the watch buffer, now 64 KiB: before,
+  its files waited for a later change 30 s after the last walk ([CLI](docs/CLI.md#watch)).
+- `watch` on Linux checks the directories that got no inotify watch on a timer, so a change there
+  is indexed within 1 to 30 s, and the burst no longer walks the tree while one has none; the
+  message names `fs.inotify.max_user_watches` when that limit is the cause
+  ([CLI](docs/CLI.md#watch)).
 - The Grep hook reads the `managed-settings.d` drop-ins and lets Grep run wherever managed policy
   it does not read exists, so an administrator's read rule is never bypassed
   ([SECURITY](docs/SECURITY.md)).

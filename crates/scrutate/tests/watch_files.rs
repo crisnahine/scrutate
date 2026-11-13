@@ -242,23 +242,19 @@ fn wait_update(rx: &Receiver<String>, changed: usize, removed: usize) -> Vec<Str
     }
 }
 
-/// The last burst line among `lines`, where events drive the watcher (macOS checks on a timer).
-#[cfg(not(target_os = "macos"))]
+/// The last burst line among `lines`.
 fn last_burst(lines: &[String]) -> &str {
     lines.iter().rev().find(|l| l.contains("burst:")).map(String::as_str).unwrap_or_else(|| panic!("no burst line in {lines:?}"))
 }
 
 /// Assert that the burst before the update named `paths` (when given) and walked the tree or not.
-fn burst_was(_lines: &[String], _paths: Option<usize>, _full: bool) {
-    #[cfg(not(target_os = "macos"))]
-    {
-        let line = last_burst(_lines);
-        assert!(line.ends_with(&format!("full walk: {}", if _full { "yes" } else { "no" })), "{_lines:?}");
-        // Windows' recursive watch also reports the directory a change happened in, and paths
-        // inside a nested repository's `.git`: the count is checked where each watch is per directory
-        if let (Some(n), false) = (_paths, cfg!(windows)) {
-            assert!(line.contains(&format!("burst: {n} paths,")), "{_lines:?}");
-        }
+fn burst_was(lines: &[String], paths: Option<usize>, full: bool) {
+    let line = last_burst(lines);
+    assert!(line.ends_with(&format!("full walk: {}", if full { "yes" } else { "no" })), "{lines:?}");
+    // Windows' recursive watch also reports the directory a change happened in, and paths
+    // inside a nested repository's `.git`: the count is checked where events name files only
+    if let (Some(n), false) = (paths, cfg!(windows)) {
+        assert!(line.contains(&format!("burst: {n} paths,")), "{lines:?}");
     }
 }
 
@@ -290,6 +286,19 @@ fn a_save_deep_in_a_wide_tree_updates_that_file_without_a_walk() {
     #[cfg(target_os = "linux")]
     assert_eq!(inotify_watches(_child.0.id()), before, "no directory is watched again");
     assert!(r.indexed("saved_deep"));
+}
+
+/// About 2 MB of change records: far past a Windows watch buffer (64 KiB), whose overflow drops
+/// them all and must walk the tree. Nothing changes after the burst, so a lost file stays lost.
+#[test]
+fn a_burst_larger_than_the_watch_buffer_is_indexed_whole() {
+    let (r, _child, rx) = watched("buffer", &[("src/a.py", "def alpha():\n    return 1\n")]);
+    let pad = "p".repeat(80);
+    for i in 0..5000 {
+        r.write(&format!("src/{pad}_{i}.py"), format!("def burst_{i}():\n    return {i}\n").as_bytes());
+    }
+    wait_update_any(&rx);
+    wait_for(120, "every file of the burst", || r.indexed("burst_4999()") && r.indexed("burst_0()") && r.run(&["check", "--files"]) == 0);
 }
 
 #[test]
@@ -339,11 +348,10 @@ fn a_save_with_a_new_directory_in_the_same_burst_walks_the_tree() {
 fn a_save_of_an_ignored_file_starts_no_update() {
     let (r, _child, rx) = watched("ignored", &[(".ignore", "skip.py\n"), ("src/a.py", "def alpha():\n    return 1\n")]);
     r.write("src/skip.py", b"def ignored_one():\n    return 2\n");
-    // longer than a burst's quiet time, and than macOS's first pause between checks
+    // longer than a burst's quiet time
     std::thread::sleep(Duration::from_millis(2500));
     let lines: Vec<String> = rx.try_iter().collect();
     assert!(lines.iter().all(|l| !l.contains("changed")), "{lines:?}");
-    #[cfg(not(target_os = "macos"))]
     assert!(lines.iter().all(|l| !l.contains("burst:")), "{lines:?}");
     r.write("src/a.py", b"def alpha_two():\n    return 1\n");
     burst_was(&wait_update(&rx, 1, 0), Some(1), false);
@@ -416,7 +424,6 @@ fn a_file_written_above_the_root_starts_no_update() {
     std::thread::sleep(Duration::from_millis(2500));
     let lines: Vec<String> = rx.try_iter().collect();
     assert!(lines.iter().all(|l| !l.contains("changed")), "{lines:?}");
-    #[cfg(not(target_os = "macos"))]
     assert!(lines.iter().all(|l| !l.contains("burst:")), "{lines:?}");
     r.write("src/a.py", b"def alpha_two():\n    return 1\n");
     burst_was(&wait_update(&rx, 1, 0), Some(1), false);
@@ -505,11 +512,11 @@ fn a_nested_repository_does_not_take_the_ignore_rules_of_the_outer_one() {
     wait_for(20, "a new file in vendor/lib/out", || r.indexed("nested_out_two"));
 }
 
-/// A directory without read permission cannot be watched (inotify needs read access); root has it
-/// whatever the mode says, so the test does nothing there.
+/// A directory without read permission cannot be watched (inotify needs read access), as one past
+/// the watch limit cannot; root has it whatever the mode says, so the test does nothing there.
 #[cfg(target_os = "linux")]
 #[test]
-fn a_directory_that_could_not_be_watched_is_walked_with_the_next_change() {
+fn a_directory_that_could_not_be_watched_is_polled() {
     use std::os::unix::fs::PermissionsExt;
     struct Restore(PathBuf);
     impl Drop for Restore {
@@ -533,13 +540,12 @@ fn a_directory_that_could_not_be_watched_is_walked_with_the_next_change() {
         lines.push(rx.recv_timeout(Duration::from_secs(60)).expect("watch starts"));
     }
     assert!(lines.iter().any(|l| l.contains("could not watch 1 of")), "{lines:?}");
+    assert!(lines.iter().any(|l| l.contains("checked on a timer")), "{lines:?}");
     drop(restore);
-    // no event comes from locked/, so only the walk of the next burst finds this file
+    // no event comes from locked/: the poll finds this file, with no other change and no walk
     r.write("locked/c.py", b"def locked_new():\n    return 1\n");
-    std::thread::sleep(Duration::from_millis(500));
-    r.write("a.py", b"def alpha_two():\n    return 1\n");
-    burst_was(&wait_update_any(&rx), None, true);
-    wait_for(20, "locked/c.py", || r.indexed("locked_new") && r.indexed("alpha_two"));
+    burst_was(&wait_update_any(&rx), None, false);
+    wait_for(20, "locked/c.py", || r.indexed("locked_new"));
 }
 
 /// A directory above the root that cannot be watched costs its rules' changes the wait for the next
@@ -576,7 +582,6 @@ fn a_directory_above_the_root_that_could_not_be_watched_does_not_walk_every_burs
 }
 
 /// Stderr lines up to the first update line after a burst line.
-#[cfg(target_os = "linux")]
 fn wait_update_any(rx: &Receiver<String>) -> Vec<String> {
     let mut seen: Vec<String> = Vec::new();
     loop {

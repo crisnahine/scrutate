@@ -2,37 +2,31 @@
 //! events are debounced, and each burst runs an incremental update (which takes the indexes' write
 //! locks, so a crash mid-update is harmless). The indexes' own walks decide what a burst holds: a
 //! burst that names files lists their directories with those walks and updates the files listed.
-//! One that touches a directory or a rule file, loses events, or comes while a directory has no
-//! watch or the last walk is old walks the tree and updates everything.
+//! One that touches a directory or a rule file, loses events, or comes once the last walk is old
+//! walks the tree and updates everything. Directories and rule files that have no watch are
+//! checked on a timer, and what changed in them joins the next burst as events would.
 
-#[cfg_attr(target_os = "macos", allow(unused_imports))]
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(not(target_os = "macos"))]
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
-#[cfg(not(target_os = "macos"))]
-use anyhow::bail;
-use anyhow::{Context, Result};
-#[cfg_attr(target_os = "macos", allow(unused_imports))]
-use notify::{event::ModifyKind, Event, EventKind};
+use anyhow::{bail, Context, Result};
+use notify::event::{CreateKind, DataChange, ModifyKind, RemoveKind};
+use notify::{Event, EventKind};
 #[cfg(not(target_os = "macos"))]
 use notify::{RecursiveMode, Watcher};
 
-#[cfg_attr(target_os = "macos", allow(unused_imports))]
 use crate::files::{CodeWalk, INDEX_DIR};
 use crate::stores::{Changes, Named};
 
 /// A burst of events ends after this much quiet.
 pub const DEBOUNCE: Duration = Duration::from_millis(200);
 /// A burst that never goes quiet is still flushed this often.
-#[cfg(not(target_os = "macos"))]
 const MAX_WAIT: Duration = Duration::from_secs(2);
 /// A burst walks the tree once the last walk is this old: no event reports a directory made while
 /// its parent's watch was being set, or events the OS or notify dropped without saying so.
-#[cfg_attr(target_os = "macos", allow(dead_code))]
 const WALK_EVERY: Duration = Duration::from_secs(30);
 
 fn has_text_index(root: &Path) -> bool {
@@ -40,14 +34,12 @@ fn has_text_index(root: &Path) -> bool {
 }
 
 /// Under the root, and not the root itself, the index directory or `.git`.
-#[cfg_attr(target_os = "macos", allow(dead_code))]
 fn inside(root: &Path, p: &Path) -> bool {
     p.strip_prefix(root).ok().and_then(|r| r.components().next()).is_some_and(|c| c.as_os_str() != INDEX_DIR && c.as_os_str() != ".git")
 }
 
 /// git's `info/exclude` for the repository holding `root`. A linked worktree's `.git` is a file
 /// naming its git directory, whose `commondir` names the main repository's, as the walk reads it.
-#[cfg_attr(target_os = "macos", allow(dead_code))]
 fn git_exclude(root: &Path) -> Option<PathBuf> {
     let top = root.ancestors().find(|a| a.join(".git").exists())?;
     let git = top.join(".git");
@@ -67,7 +59,6 @@ fn git_exclude(root: &Path) -> Option<PathBuf> {
 /// The rule files the walks read that are not ignore files inside the tree: those of each
 /// directory above the root (`.gitignore` only up to the repository top), git's exclude file of
 /// the repository and of each one in `dirs`, and git's global excludes file.
-#[cfg_attr(target_os = "macos", allow(dead_code))]
 fn outer_rules<'a>(root: &Path, dirs: impl Iterator<Item = &'a PathBuf>) -> HashSet<PathBuf> {
     let top = root.ancestors().find(|a| a.join(".git").exists());
     let mut rules = HashSet::new();
@@ -100,7 +91,6 @@ fn outer_rules<'a>(root: &Path, dirs: impl Iterator<Item = &'a PathBuf>) -> Hash
 }
 
 /// What the last walk of the tree found.
-#[cfg_attr(target_os = "macos", allow(dead_code))]
 struct Walked {
     /// the directories each index's walk enters; none for the text index when there is none
     code: HashSet<PathBuf>,
@@ -110,13 +100,16 @@ struct Walked {
     rules: HashSet<PathBuf>,
     at: Instant,
     /// directories the walks enter that got no watch
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     unwatched: usize,
     /// directories that hold only rule files and got no watch
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     unwatched_rules: usize,
+    /// what `Poll` looks at: directories with no watch, and rule files whose directory has none
+    poll_dirs: Vec<PathBuf>,
+    poll_files: Vec<PathBuf>,
 }
 
-#[cfg_attr(target_os = "macos", allow(dead_code))]
 impl Walked {
     fn new(root: &Path, code: &CodeWalk) -> Walked {
         let text_index = has_text_index(root);
@@ -124,7 +117,7 @@ impl Walked {
             code.builder(root).build().flatten().filter(|e| e.file_type().is_some_and(|t| t.is_dir())).map(|e| e.into_path()).collect();
         let text: HashSet<PathBuf> = if text_index { crate::textindex::walk_entries(root, None).0.into_iter().collect() } else { HashSet::new() };
         let rules = outer_rules(root, code.union(&text));
-        Walked { code, text, text_index, rules, at: Instant::now(), unwatched: 0, unwatched_rules: 0 }
+        Walked { code, text, text_index, rules, at: Instant::now(), unwatched: 0, unwatched_rules: 0, poll_dirs: Vec::new(), poll_files: Vec::new() }
     }
 
     fn holds(&self, dir: &Path) -> bool {
@@ -132,11 +125,13 @@ impl Walked {
     }
 
     /// The directories of `rules` that no walk enters.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     fn rule_dirs(&self) -> HashSet<PathBuf> {
         self.rules.iter().filter_map(|r| r.parent()).filter(|d| !self.holds(d) && d.is_dir()).map(Path::to_path_buf).collect()
     }
 
     /// Every directory either walk enters, and those of `rule_dirs`.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     fn watched(&self) -> HashSet<PathBuf> {
         let mut all: HashSet<PathBuf> = self.code.union(&self.text).cloned().collect();
         all.extend(self.rule_dirs());
@@ -145,8 +140,7 @@ impl Walked {
 
     /// Whether a burst walks the tree whatever it names.
     fn due(&self, root: &Path) -> bool {
-        // a change in a directory without a watch sends no event
-        self.unwatched > 0 || self.at.elapsed() >= WALK_EVERY || self.text_index != has_text_index(root)
+        self.at.elapsed() >= WALK_EVERY || self.text_index != has_text_index(root)
     }
 
     /// Whether `path` holds rules for what is indexed: an ignore file in the tree, one of `rules`,
@@ -160,14 +154,12 @@ impl Walked {
 
 /// One directory as each index's walk lists it.
 #[derive(Default)]
-#[cfg_attr(target_os = "macos", allow(dead_code))]
 struct Listing {
     dirs: HashSet<PathBuf>,
     code: HashSet<PathBuf>,
     text: HashSet<PathBuf>,
 }
 
-#[cfg_attr(target_os = "macos", allow(dead_code))]
 impl Listing {
     fn of(dir: &Path, code: &CodeWalk, walked: &Walked) -> Listing {
         let mut l = Listing::default();
@@ -191,7 +183,6 @@ impl Listing {
 
 /// What the events of one burst ask for.
 #[derive(Default)]
-#[cfg_attr(target_os = "macos", allow(dead_code))]
 struct Burst {
     /// a rule file or lost events: walk the tree and update everything
     full: bool,
@@ -201,7 +192,6 @@ struct Burst {
     moved: HashSet<PathBuf>,
 }
 
-#[cfg_attr(target_os = "macos", allow(dead_code))]
 impl Burst {
     /// Take one event in; -> whether it names anything that may matter.
     fn note(&mut self, root: &Path, walked: &Walked, ev: &notify::Result<Event>) -> bool {
@@ -212,7 +202,8 @@ impl Burst {
                 self.full = true;
                 return true;
             }
-            // inotify's queue overflowed (IN_Q_OVERFLOW): events were lost
+            // a lost queue or buffer (IN_Q_OVERFLOW, an empty ReadDirectoryChangesW read,
+            // FSEvents' MustScanSubDirs): events were lost
             Ok(e) if e.need_rescan() => {
                 self.full = true;
                 return true;
@@ -279,6 +270,110 @@ impl Burst {
     }
 }
 
+/// An entry as `Poll` last saw it. A directory's own times change with each entry, which is seen
+/// on its own, so only its presence counts.
+#[derive(PartialEq)]
+struct Seen {
+    dir: bool,
+    len: u64,
+    modified: Option<SystemTime>,
+    /// inode and status-change time: a rename over the file, or a change of its mode
+    #[cfg(unix)]
+    change: (u64, i64, i64),
+}
+
+impl Seen {
+    fn of(md: &std::fs::Metadata) -> Seen {
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt;
+        if md.is_dir() {
+            return Seen {
+                dir: true,
+                len: 0,
+                modified: None,
+                #[cfg(unix)]
+                change: (0, 0, 0),
+            };
+        }
+        Seen {
+            dir: false,
+            len: md.len(),
+            modified: md.modified().ok(),
+            #[cfg(unix)]
+            change: (md.ino(), md.ctime(), md.ctime_nsec()),
+        }
+    }
+}
+
+/// The directories and rule files that have no watch, looked at on a timer: each change since the
+/// last look comes back as the event a watch would have sent. The pause grows with what a look
+/// costs, as macOS's timer does.
+struct Poll {
+    dirs: Vec<PathBuf>,
+    files: Vec<PathBuf>,
+    seen: HashMap<PathBuf, Seen>,
+    at: Instant,
+    pause: Duration,
+}
+
+impl Poll {
+    /// The first look, taken now: changes from here on are reported.
+    fn new(walked: &Walked) -> Poll {
+        let mut p = Poll { dirs: walked.poll_dirs.clone(), files: walked.poll_files.clone(), seen: HashMap::new(), at: Instant::now(), pause: POLL_MIN };
+        p.seen = p.look();
+        p
+    }
+
+    fn look(&self) -> HashMap<PathBuf, Seen> {
+        let mut seen = HashMap::new();
+        for d in &self.dirs {
+            for e in std::fs::read_dir(d).into_iter().flatten().flatten() {
+                if let Ok(md) = e.metadata() {
+                    seen.insert(e.path(), Seen::of(&md));
+                }
+            }
+        }
+        for f in &self.files {
+            if let Ok(md) = std::fs::symlink_metadata(f) {
+                seen.insert(f.clone(), Seen::of(&md));
+            }
+        }
+        seen
+    }
+
+    /// The changes since the last look, once the pause is over; none before.
+    fn check(&mut self) -> Vec<notify::Result<Event>> {
+        if self.dirs.is_empty() && self.files.is_empty() || self.at.elapsed() < self.pause {
+            return Vec::new();
+        }
+        self.check_now()
+    }
+
+    fn check_now(&mut self) -> Vec<notify::Result<Event>> {
+        let t0 = Instant::now();
+        let now = self.look();
+        let event = |kind, p: &PathBuf| Ok(Event::new(kind).add_path(p.clone()));
+        let mut out = Vec::new();
+        for (p, s) in &now {
+            match self.seen.get(p) {
+                None => out.push(event(EventKind::Create(CreateKind::Any), p)),
+                Some(old) if old.dir != s.dir => out.push(event(EventKind::Create(CreateKind::Any), p)),
+                Some(old) if old != s => out.push(event(EventKind::Modify(ModifyKind::Data(DataChange::Any)), p)),
+                Some(_) => {}
+            }
+        }
+        out.extend(self.seen.keys().filter(|p| !now.contains_key(*p)).map(|p| event(EventKind::Remove(RemoveKind::Any), p)));
+        self.seen = now;
+        self.pause = (t0.elapsed() * 10).clamp(POLL_MIN, POLL_MAX);
+        self.at = Instant::now();
+        out
+    }
+}
+
+/// The least and most time between two looks of `Poll` and two checks of macOS's timer.
+const POLL_MIN: Duration = Duration::from_secs(1);
+const POLL_MAX: Duration = Duration::from_secs(30);
+
 fn root_present(root: &Path) -> Result<()> {
     if !root.is_dir() {
         anyhow::bail!("{} is gone: the watched directory was removed or moved", root.display());
@@ -296,9 +391,20 @@ fn watch_order(root: &Path, dirs: &HashSet<PathBuf>) -> Vec<PathBuf> {
     v
 }
 
+/// The line that says how many directories of the tree got no inotify watch.
+#[cfg(target_os = "linux")]
+fn unwatched_message(unwatched: usize, of: usize, e: &notify::Error) -> String {
+    let limit = if matches!(e.kind, notify::ErrorKind::MaxFilesWatch) {
+        "; the limit is the sysctl fs.inotify.max_user_watches, which `sudo sysctl fs.inotify.max_user_watches=N` raises"
+    } else {
+        ""
+    };
+    format!("[scrutate] could not watch {unwatched} of {of} directories ({e}); they are checked on a timer instead, every 1 to 30 s{limit}")
+}
+
 /// Linux: walk the tree and set one non-recursive inotify watch per directory the walks enter, so
-/// ignored trees cost no watches; new directories get a watch and ones that left lose theirs. Only
-/// an error on `root` itself is returned.
+/// ignored trees cost no watches; new directories get a watch and ones that left lose theirs. Those
+/// left without one (past the watch limit) go to `Poll`. Only an error on `root` itself is returned.
 #[cfg(target_os = "linux")]
 fn sync_watches(watcher: &mut impl Watcher, root: &Path, code: &CodeWalk, old: Option<&Walked>) -> Result<Walked> {
     let mut now = Walked::new(root, code);
@@ -325,23 +431,22 @@ fn sync_watches(watcher: &mut impl Watcher, root: &Path, code: &CodeWalk, old: O
         if let Err(e) = watcher.watch(d, RecursiveMode::NonRecursive) {
             if i < tree_dirs {
                 now.unwatched += 1;
+                now.poll_dirs.push(d.clone());
                 first.get_or_insert(e);
             } else {
-                // not counted in `unwatched`: such a directory would make every burst walk
                 now.unwatched_rules += 1;
+                let files = now.rules.iter().filter(|r| r.parent() == Some(d.as_path())).cloned().collect::<Vec<_>>();
+                now.poll_files.extend(files);
                 first_rules.get_or_insert(e);
             }
         }
     }
     if let Some(e) = first.filter(|_| old.is_none_or(|o| o.unwatched != now.unwatched)) {
-        eprintln!(
-            "[scrutate] could not watch {} of {} directories ({e}); while any is unwatched, every change to an indexed file walks the tree, so a change in one of them is indexed with the next change elsewhere",
-            now.unwatched, tree_dirs
-        );
+        eprintln!("{}", unwatched_message(now.unwatched, tree_dirs, &e));
     }
     if let Some(e) = first_rules.filter(|_| old.is_none_or(|o| o.unwatched_rules != now.unwatched_rules)) {
         eprintln!(
-            "[scrutate] could not watch {} of {} directories that only hold ignore rules ({e}); a change to those rules applies with the next walk of the tree",
+            "[scrutate] could not watch {} of {} directories that only hold ignore rules ({e}); those rules are checked on a timer instead",
             now.unwatched_rules,
             order.len() - tree_dirs
         );
@@ -365,8 +470,18 @@ fn sync_watches(watcher: &mut impl Watcher, root: &Path, code: &CodeWalk, old: O
     Ok(now)
 }
 
+/// macOS: the FSEvents stream covers the root's whole tree. A stream on a directory above the root
+/// would report every change under it (the home directory, or `/`), so the rule files outside the
+/// root go to `Poll`.
+#[cfg(target_os = "macos")]
+fn sync_watches(_: &mut fsevents::Stream, root: &Path, code: &CodeWalk, _: Option<&Walked>) -> Result<Walked> {
+    let mut now = Walked::new(root, code);
+    now.poll_files = now.rules.iter().filter(|r| !r.starts_with(root)).cloned().collect();
+    now.poll_files.sort();
+    Ok(now)
+}
+
 /// `SCRUTATE_WATCH_DEBUG`: one line on stderr per burst, saying what it costs.
-#[cfg(not(target_os = "macos"))]
 fn debug() -> bool {
     std::env::var_os("SCRUTATE_WATCH_DEBUG").is_some_and(|v| !v.is_empty())
 }
@@ -375,26 +490,38 @@ fn debug() -> bool {
 /// after that `on_change` runs once per debounced burst that changes what an index holds, with the
 /// burst's change set: the files it names when it does not walk the tree. An error from the first
 /// `on_change`, or the root going away, ends the watch; later update errors are reported.
-#[cfg(not(target_os = "macos"))]
 pub fn run(root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), mut on_change: impl FnMut(&Changes) -> Result<()>) -> Result<()> {
     let root = std::fs::canonicalize(root).with_context(|| format!("watch {}", root.display()))?;
     let (tx, rx) = mpsc::channel();
+    #[cfg(target_os = "macos")]
+    let Some(mut watcher) = fsevents::Stream::start(&root, tx) else {
+        eprintln!("[scrutate] FSEvents could not be loaded or started; checking the tree on a timer instead");
+        return run_timer(&root, stop, on_ready, on_change);
+    };
+    #[cfg(not(target_os = "macos"))]
     let mut watcher = notify::recommended_watcher(tx).context("start the file watcher")?;
     let code = CodeWalk::new(&root);
     let mut walked = sync_watches(&mut watcher, &root, &code, None)?;
+    let mut poll = Poll::new(&walked);
     on_change(&Changes::All)?;
     on_ready();
     let debug = debug();
     while !stop.load(Ordering::Relaxed) {
         root_present(&root)?;
-        let ev = match rx.recv_timeout(Duration::from_millis(250)) {
-            Ok(ev) => ev,
-            Err(RecvTimeoutError::Timeout) => continue,
-            Err(RecvTimeoutError::Disconnected) => bail!("the file watcher stopped"),
-        };
         let mut burst = Burst::default();
-        if !burst.note(&root, &walked, &ev) {
-            continue;
+        let mut wanted = false;
+        for ev in poll.check() {
+            wanted |= burst.note(&root, &walked, &ev);
+        }
+        if !wanted {
+            let ev = match rx.recv_timeout(Duration::from_millis(250)) {
+                Ok(ev) => ev,
+                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Disconnected) => bail!("the file watcher stopped"),
+            };
+            if !burst.note(&root, &walked, &ev) {
+                continue;
+            }
         }
         let t0 = Instant::now();
         while t0.elapsed() < MAX_WAIT {
@@ -413,6 +540,7 @@ pub fn run(root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), mut on_chang
         let named = files.filter(|_| !walked.due(&root));
         if named.is_none() {
             walked = sync_watches(&mut watcher, &root, &code, Some(&walked))?;
+            poll = Poll::new(&walked);
         }
         if debug {
             eprintln!("[scrutate] burst: {} paths, full walk: {}", burst.paths.len(), if named.is_none() { "yes" } else { "no" });
@@ -424,16 +552,13 @@ pub fn run(root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), mut on_chang
     Ok(())
 }
 
-/// macOS: the FSEvents backend would link CoreServices into every scrutate command (about 1 ms of
-/// start-up and 4 MB), and a poller that compares whole-second modification times misses quick
-/// edits. So the index's own incremental check runs on a timer: it compares sizes and nanosecond
-/// times, and the pause grows with what a check costs (about a tenth of the time at most).
+/// macOS without FSEvents: the index's own incremental check runs on a timer. It compares sizes and
+/// nanosecond times, and the pause grows with what a check costs (about a tenth of the time at most).
 #[cfg(target_os = "macos")]
-pub fn run(root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), mut on_change: impl FnMut(&Changes) -> Result<()>) -> Result<()> {
-    let root = std::fs::canonicalize(root).with_context(|| format!("watch {}", root.display()))?;
+fn run_timer(root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), mut on_change: impl FnMut(&Changes) -> Result<()>) -> Result<()> {
     on_change(&Changes::All)?;
     on_ready();
-    let mut pause = Duration::from_secs(1);
+    let mut pause = POLL_MIN;
     while !stop.load(Ordering::Relaxed) {
         let t0 = Instant::now();
         while t0.elapsed() < pause && !stop.load(Ordering::Relaxed) {
@@ -442,14 +567,223 @@ pub fn run(root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), mut on_chang
         if stop.load(Ordering::Relaxed) {
             break;
         }
-        root_present(&root)?;
+        root_present(root)?;
         let t1 = Instant::now();
         if let Err(e) = on_change(&Changes::All) {
             eprintln!("[scrutate] update failed: {e:#}");
         }
-        pause = (t1.elapsed() * 10).clamp(Duration::from_secs(1), Duration::from_secs(30));
+        pause = (t1.elapsed() * 10).clamp(POLL_MIN, POLL_MAX);
     }
     Ok(())
+}
+
+/// FSEvents, loaded with `dlopen` while `watch` runs: linking CoreServices would load it into every
+/// command (about 1 ms of start-up and 4 MB). Every function, CoreFoundation's and libdispatch's
+/// too, comes from `dlsym` on that handle, so the executable imports nothing new.
+#[cfg(target_os = "macos")]
+mod fsevents {
+    use std::ffi::{c_char, c_int, c_void, CStr, CString, OsStr};
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::Path;
+    use std::ptr::null;
+    use std::sync::mpsc::Sender;
+
+    use notify::event::{CreateKind, DataChange, Flag, ModifyKind, RemoveKind, RenameMode};
+    use notify::{Event, EventKind};
+
+    extern "C" {
+        fn dlopen(path: *const c_char, mode: c_int) -> *mut c_void;
+        fn dlsym(handle: *mut c_void, name: *const c_char) -> *mut c_void;
+    }
+
+    const RTLD_NOW: c_int = 0x2;
+    const RTLD_LOCAL: c_int = 0x4;
+    // FSEvents.h
+    const CREATE_NO_DEFER: u32 = 0x2;
+    const CREATE_FILE_EVENTS: u32 = 0x10;
+    const SINCE_NOW: u64 = u64::MAX;
+    /// MustScanSubDirs, UserDropped, KernelDropped, RootChanged, Mount, Unmount: what the stream
+    /// says no longer holds, so the tree is walked
+    const RESCAN: u32 = 0x1 | 0x2 | 0x4 | 0x20 | 0x40 | 0x80;
+    const ITEM_CREATED: u32 = 0x100;
+    const ITEM_REMOVED: u32 = 0x200;
+    const ITEM_RENAMED: u32 = 0x800;
+    const ITEM_IS_DIR: u32 = 0x20000;
+    /// seconds the stream gathers events for before it calls back; the burst's own wait follows
+    const LATENCY: f64 = 0.05;
+
+    type Callback = unsafe extern "C" fn(*const c_void, *mut c_void, usize, *mut c_void, *const u32, *const u64);
+    type Retain = unsafe extern "C" fn(*const c_void) -> *const c_void;
+    type Release = unsafe extern "C" fn(*const c_void);
+    type CfStringCreate = unsafe extern "C" fn(*const c_void, *const c_char) -> *const c_void;
+    type CfArrayCreate = unsafe extern "C" fn(*const c_void, *const *const c_void, isize, *const c_void) -> *const c_void;
+    type CfRelease = unsafe extern "C" fn(*const c_void);
+    type QueueCreate = unsafe extern "C" fn(*const c_char, *const c_void) -> *mut c_void;
+    type StreamCreate = unsafe extern "C" fn(*const c_void, Callback, *mut Context, *const c_void, u64, f64, u32) -> *mut c_void;
+    type SetQueue = unsafe extern "C" fn(*mut c_void, *mut c_void);
+    type Start = unsafe extern "C" fn(*mut c_void) -> u8;
+    type Op = unsafe extern "C" fn(*mut c_void);
+
+    /// `FSEventStreamContext`
+    #[repr(C)]
+    struct Context {
+        version: isize,
+        info: *mut c_void,
+        retain: Option<Retain>,
+        release: Option<Release>,
+        copy_description: Option<Retain>,
+    }
+
+    struct Api {
+        cf_string: CfStringCreate,
+        cf_array: CfArrayCreate,
+        cf_release: CfRelease,
+        /// `&kCFTypeArrayCallBacks`
+        array_callbacks: *const c_void,
+        queue_create: QueueCreate,
+        queue_release: Op,
+        create: StreamCreate,
+        set_queue: SetQueue,
+        start: Start,
+        stop: Op,
+        invalidate: Op,
+        release: Op,
+    }
+
+    impl Api {
+        fn load() -> Option<Api> {
+            // SAFETY: a nul-terminated path; a missing framework gives a null handle
+            let lib = unsafe { dlopen(c"/System/Library/Frameworks/CoreServices.framework/CoreServices".as_ptr(), RTLD_NOW | RTLD_LOCAL) };
+            if lib.is_null() {
+                return None;
+            }
+            // SAFETY: a nul-terminated name on a handle `dlopen` returned
+            let sym = |name: &CStr| Some(unsafe { dlsym(lib, name.as_ptr()) }).filter(|p| !p.is_null());
+            // SAFETY (every transmute below): each name is the C function of that signature in
+            // the macOS SDK headers (FSEvents.h, CFString.h, CFArray.h, CFBase.h, dispatch/queue.h)
+            unsafe {
+                Some(Api {
+                    cf_string: std::mem::transmute::<*mut c_void, CfStringCreate>(sym(c"CFStringCreateWithFileSystemRepresentation")?),
+                    cf_array: std::mem::transmute::<*mut c_void, CfArrayCreate>(sym(c"CFArrayCreate")?),
+                    cf_release: std::mem::transmute::<*mut c_void, CfRelease>(sym(c"CFRelease")?),
+                    array_callbacks: sym(c"kCFTypeArrayCallBacks")?.cast_const(),
+                    queue_create: std::mem::transmute::<*mut c_void, QueueCreate>(sym(c"dispatch_queue_create")?),
+                    queue_release: std::mem::transmute::<*mut c_void, Op>(sym(c"dispatch_release")?),
+                    create: std::mem::transmute::<*mut c_void, StreamCreate>(sym(c"FSEventStreamCreate")?),
+                    set_queue: std::mem::transmute::<*mut c_void, SetQueue>(sym(c"FSEventStreamSetDispatchQueue")?),
+                    start: std::mem::transmute::<*mut c_void, Start>(sym(c"FSEventStreamStart")?),
+                    stop: std::mem::transmute::<*mut c_void, Op>(sym(c"FSEventStreamStop")?),
+                    invalidate: std::mem::transmute::<*mut c_void, Op>(sym(c"FSEventStreamInvalidate")?),
+                    release: std::mem::transmute::<*mut c_void, Op>(sym(c"FSEventStreamRelease")?),
+                })
+            }
+        }
+    }
+
+    type Tx = Sender<notify::Result<Event>>;
+
+    /// A started stream on one directory, scheduled on its own serial queue; its events go to the
+    /// channel as `notify` events.
+    pub struct Stream {
+        api: Api,
+        stream: *mut c_void,
+        queue: *mut c_void,
+    }
+
+    impl Stream {
+        /// None when CoreServices or one of its functions is missing, or the stream does not start.
+        pub fn start(root: &Path, tx: Tx) -> Option<Stream> {
+            let path = CString::new(root.as_os_str().as_bytes()).ok()?;
+            let api = Api::load()?;
+            // SAFETY: each call is made as its header declares, with pointers checked for null
+            // before use. The context's `info` is a boxed sender that `release_tx` frees when the
+            // stream is deallocated, or freed here when no stream was made.
+            unsafe {
+                let queue = (api.queue_create)(c"scrutate.watch".as_ptr(), null());
+                if queue.is_null() {
+                    return None;
+                }
+                let s = (api.cf_string)(null(), path.as_ptr());
+                let paths = if s.is_null() { null() } else { (api.cf_array)(null(), &s, 1, api.array_callbacks) };
+                if !s.is_null() {
+                    (api.cf_release)(s);
+                }
+                if paths.is_null() {
+                    (api.queue_release)(queue);
+                    return None;
+                }
+                let info = Box::into_raw(Box::new(tx)).cast::<c_void>();
+                let mut context = Context { version: 0, info, retain: None, release: Some(release_tx), copy_description: None };
+                let stream = (api.create)(null(), callback, &mut context, paths, SINCE_NOW, LATENCY, CREATE_FILE_EVENTS | CREATE_NO_DEFER);
+                (api.cf_release)(paths);
+                if stream.is_null() {
+                    drop(Box::from_raw(info.cast::<Tx>()));
+                    (api.queue_release)(queue);
+                    return None;
+                }
+                (api.set_queue)(stream, queue);
+                if (api.start)(stream) == 0 {
+                    (api.invalidate)(stream);
+                    (api.release)(stream);
+                    (api.queue_release)(queue);
+                    return None;
+                }
+                Some(Stream { api, stream, queue })
+            }
+        }
+    }
+
+    impl Drop for Stream {
+        fn drop(&mut self) {
+            // SAFETY: a started stream on its queue, torn down in the order FSEvents.h gives
+            unsafe {
+                (self.api.stop)(self.stream);
+                (self.api.invalidate)(self.stream);
+                (self.api.release)(self.stream);
+                (self.api.queue_release)(self.queue);
+            }
+        }
+    }
+
+    /// The stream's release callback for its `info`.
+    unsafe extern "C" fn release_tx(info: *const c_void) {
+        // SAFETY: `info` is the box `Stream::start` made, released once with the stream
+        drop(unsafe { Box::from_raw(info as *mut Tx) });
+    }
+
+    /// `FSEventStreamCallback`. Without `kFSEventStreamCreateFlagUseCFTypes`, `paths` is an array
+    /// of `n` C strings next to `n` flag words.
+    unsafe extern "C" fn callback(_: *const c_void, info: *mut c_void, n: usize, paths: *mut c_void, flags: *const u32, _: *const u64) {
+        if n == 0 || paths.is_null() || flags.is_null() {
+            return;
+        }
+        // SAFETY: `info` is the live boxed sender (the stream outlives its callbacks), and FSEvents
+        // passes `n` valid entries in each array
+        let (tx, paths, flags) =
+            unsafe { (&*info.cast::<Tx>(), std::slice::from_raw_parts(paths.cast::<*const c_char>(), n), std::slice::from_raw_parts(flags, n)) };
+        for (&p, &f) in paths.iter().zip(flags) {
+            // SAFETY: a nul-terminated path that lives until the callback returns
+            let p = Path::new(OsStr::from_bytes(unsafe { CStr::from_ptr(p) }.to_bytes()));
+            let _ = tx.send(Ok(event(p, f)));
+        }
+    }
+
+    /// One FSEvents event as `notify` names it.
+    pub fn event(path: &Path, flags: u32) -> Event {
+        if flags & RESCAN != 0 {
+            return Event::new(EventKind::Other).set_flag(Flag::Rescan);
+        }
+        let kind = if flags & ITEM_CREATED != 0 {
+            EventKind::Create(if flags & ITEM_IS_DIR != 0 { CreateKind::Folder } else { CreateKind::Any })
+        } else if flags & ITEM_REMOVED != 0 {
+            EventKind::Remove(RemoveKind::Any)
+        } else if flags & ITEM_RENAMED != 0 {
+            EventKind::Modify(ModifyKind::Name(RenameMode::Any))
+        } else {
+            EventKind::Modify(ModifyKind::Data(DataChange::Any))
+        };
+        Event::new(kind).add_path(path.to_path_buf())
+    }
 }
 
 #[cfg(test)]
@@ -641,12 +975,13 @@ mod tests {
     }
 
     #[test]
-    fn a_burst_walks_while_a_directory_has_no_watch_and_once_the_last_walk_is_old() {
+    fn a_burst_walks_once_the_last_walk_is_old_or_the_text_index_changed() {
         let root = tree("due");
         let mut w = Walked::new(&root, &CodeWalk::new(&root));
         assert!(!w.due(&root));
+        // a directory without a watch is polled, so it is no reason to walk
         w.unwatched = 1;
-        assert!(w.due(&root), "a directory without a watch");
+        assert!(!w.due(&root), "a directory without a watch");
         w.unwatched = 0;
         if let Some(old) = Instant::now().checked_sub(WALK_EVERY) {
             w.at = old;
@@ -655,6 +990,136 @@ mod tests {
         }
         std::fs::remove_file(root.join(".scrutate/text/manifest.json")).unwrap();
         assert!(w.due(&root), "the text index went away");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// `Poll` on `dirs` and `files` of a fresh walk, then `change`; -> the burst its next look makes.
+    fn polled(root: &Path, dirs: &[&str], files: &[&str], change: impl FnOnce()) -> Burst {
+        let mut walked = Walked::new(root, &CodeWalk::new(root));
+        walked.poll_dirs = dirs.iter().map(|d| root.join(d)).collect();
+        walked.poll_files = files.iter().map(|f| root.join(f)).collect();
+        let mut poll = Poll::new(&walked);
+        assert!(poll.check().is_empty(), "nothing before the pause is over");
+        change();
+        let mut b = Burst::default();
+        for e in poll.check_now() {
+            b.note(root, &walked, &e);
+        }
+        assert!(poll.check_now().is_empty(), "a second look reports nothing new");
+        b
+    }
+
+    #[test]
+    fn a_poll_reports_what_changed_in_a_directory_without_a_watch() {
+        let root = tree("poll");
+        let code = CodeWalk::new(&root);
+        std::fs::write(root.join("src/deep/old.py"), "x\n").unwrap();
+        let change = || {
+            std::fs::write(root.join("src/deep/new.py"), "y\n").unwrap();
+            std::fs::write(root.join("src/a.py"), "a longer text\n").unwrap();
+            std::fs::remove_file(root.join("src/deep/old.py")).unwrap();
+        };
+        let b = polled(&root, &["src", "src/deep"], &[], change);
+        assert!(!b.full);
+        let walked = Walked::new(&root, &code);
+        assert_eq!(b.files(&root, &code, &walked), both(&["src/a.py", "src/deep/new.py", "src/deep/old.py"]));
+        // a new directory walks the tree, as its event from a watch does
+        let b = polled(&root, &["src"], &[], || std::fs::create_dir(root.join("src/sub")).unwrap());
+        assert_eq!(b.files(&root, &code, &Walked::new(&root, &code)), None);
+        // a polled rule file walks the tree
+        let b = polled(&root, &[], &[".git/info/exclude"], || std::fs::write(root.join(".git/info/exclude"), "a.py\n").unwrap());
+        assert!(b.full, "a changed rule file");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A watcher that sets `left` watches, then fails as inotify does at the limit.
+    #[cfg(target_os = "linux")]
+    struct Limited {
+        left: usize,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Watcher for Limited {
+        fn new<F: notify::EventHandler>(_: F, _: notify::Config) -> notify::Result<Self> {
+            Ok(Limited { left: 0 })
+        }
+        fn watch(&mut self, _: &Path, _: RecursiveMode) -> notify::Result<()> {
+            if self.left == 0 {
+                return Err(notify::Error::new(notify::ErrorKind::MaxFilesWatch));
+            }
+            self.left -= 1;
+            Ok(())
+        }
+        fn unwatch(&mut self, _: &Path) -> notify::Result<()> {
+            Ok(())
+        }
+        fn kind() -> notify::WatcherKind {
+            notify::WatcherKind::NullWatcher
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn directories_past_the_watch_limit_are_polled() {
+        let root = tree("limit");
+        let code = CodeWalk::new(&root);
+        // the root and gone_dir (shallow, then by path); src and src/deep get none
+        let walked = sync_watches(&mut Limited { left: 2 }, &root, &code, None).unwrap();
+        assert_eq!(walked.unwatched, 2);
+        let mut dirs = walked.poll_dirs.clone();
+        dirs.sort();
+        assert_eq!(dirs, [root.join("src"), root.join("src/deep")]);
+        assert!(walked.poll_files.contains(&root.join(".git/info/exclude")), "{:?}", walked.poll_files);
+        assert!(!walked.due(&root), "no walk on every burst");
+        let mut poll = Poll::new(&walked);
+        std::fs::write(root.join("src/deep/b.py"), "y\n").unwrap();
+        let mut b = Burst::default();
+        for e in poll.check_now() {
+            b.note(&root, &walked, &e);
+        }
+        assert_eq!(b.files(&root, &code, &walked), both(&["src/deep/b.py"]));
+        let e = notify::Error::new(notify::ErrorKind::MaxFilesWatch);
+        assert!(unwatched_message(2, 4, &e).contains("fs.inotify.max_user_watches"));
+        let e = notify::Error::io(std::io::Error::from_raw_os_error(13));
+        assert!(!unwatched_message(2, 4, &e).contains("max_user_watches"), "another error names no limit");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn fsevents_flags_map_to_the_events_a_burst_reads() {
+        let p = Path::new("/r/a.py");
+        let kind = |flags| fsevents::event(p, flags).kind;
+        assert_eq!(kind(0x100 | 0x10000), EventKind::Create(CreateKind::Any));
+        assert_eq!(kind(0x100 | 0x20000), EventKind::Create(CreateKind::Folder));
+        assert_eq!(kind(0x200), EventKind::Remove(RemoveKind::Any));
+        assert_eq!(kind(0x800), EventKind::Modify(ModifyKind::Name(RenameMode::Any)));
+        assert_eq!(kind(0x1000), EventKind::Modify(ModifyKind::Data(DataChange::Any)));
+        for lost in [0x1, 0x2, 0x4, 0x20, 0x40, 0x80] {
+            assert!(fsevents::event(p, lost | 0x1000).need_rescan(), "{lost:#x}");
+        }
+        assert_eq!(fsevents::event(p, 0x1000).paths, [p]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn an_fsevents_stream_reports_a_file_written_under_its_root() {
+        let root = tree("fsevents");
+        let (tx, rx) = mpsc::channel();
+        let stream = fsevents::Stream::start(&root, tx).expect("FSEvents loads and starts");
+        let file = root.join("src/deep/written.py");
+        std::fs::write(&file, "x\n").unwrap();
+        let t0 = Instant::now();
+        let seen = loop {
+            let left = Duration::from_secs(10).checked_sub(t0.elapsed()).expect("an event for the file within 10 s");
+            match rx.recv_timeout(left) {
+                Ok(Ok(e)) if e.paths.contains(&file) => break e,
+                Ok(_) => {}
+                Err(e) => panic!("no event for the file: {e}"),
+            }
+        };
+        assert!(matches!(seen.kind, EventKind::Create(_) | EventKind::Modify(_)), "{seen:?}");
+        drop(stream);
         std::fs::remove_dir_all(&root).unwrap();
     }
 

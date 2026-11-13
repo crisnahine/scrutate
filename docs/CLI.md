@@ -804,16 +804,16 @@ Per platform:
 
 | Platform | How `watch` sees changes |
 |---|---|
-| Linux | each directory the indexes can hold gets its own inotify watch, an ignored tree none (2 watches instead of 7,012 on a tree with an ignored `node_modules` and `target`). The set is walked again after a burst that creates, removes or moves a directory, so new, moved and replaced directories are watched. The root is watched first, then shallow directories before deep ones, by path; when some get no watch (past `fs.inotify.max_user_watches`, or a directory that cannot be read) stderr says how many. `.git/info` gets a watch too, for its `exclude` file, also the main repository's when the root is a linked worktree. |
-| Windows | one recursive ReadDirectoryChangesW watch on `PATH`. |
-| macOS | the index's own incremental check, every second or, on a large tree, after a pause ten times as long as the last check took (at most 30 s). The FSEvents backend would link CoreServices into every `scrutate` command (about 1 ms of start-up), and the check compares sizes and nanosecond times, so it misses no edit. |
+| Linux | each directory the indexes can hold gets its own inotify watch, an ignored tree none (2 watches instead of 7,012 on a tree with an ignored `node_modules` and `target`). The set is walked again after a burst that creates, removes or moves a directory, so new, moved and replaced directories are watched. The root is watched first, then shallow directories before deep ones, by path; when some get no watch (past `fs.inotify.max_user_watches`, or a directory that cannot be read) stderr says how many, and at the watch limit names that sysctl. Those directories are checked on a timer instead: every second or, when a check takes long, after a pause ten times as long as the last one (at most 30 s), their entries are listed and compared by size, modification time, inode and status-change time, and what changed joins a burst as an event would. `.git/info` gets a watch too, for its `exclude` file, also the main repository's when the root is a linked worktree. |
+| Windows | one recursive ReadDirectoryChangesW watch on `PATH`, with a 64 KiB buffer. A burst too large for the buffer loses its change records; the `notify` crate reports that as lost events, so the tree is walked. |
+| macOS | one FSEvents stream on `PATH` with file-level events, on its own dispatch queue. CoreServices is loaded with `dlopen` when `watch` starts, so no other `scrutate` command links or loads it. A stream on a directory above the root would report every change under it, so the rule files outside the root are checked on the timer the Linux row describes. When FSEvents cannot be loaded or started, stderr says so and `watch` runs the index's own incremental check instead, every second or, on a large tree, after a pause ten times as long as the last check took (at most 30 s). |
 
 Events under `.scrutate/` and `.git/` are dropped. A file of a burst is kept when an index's walk
 lists it in its directory, so every rule the walks follow decides: ignore files above the
 repository top, a nested repository's own rules, a linked worktree's `info/exclude`, the skipped
 build and vendor directories and `SCRUTATE_INDEX_EXCLUDE_DIRS` for the code index, hidden paths
-for the text index. A burst is collected until 200 ms pass without an event (at most 2 s). On
-Linux and Windows a burst naming only files (written, created, removed or renamed in directories
+for the text index. A burst is collected until 200 ms pass without an event (at most 2 s). A
+burst naming only files (written, created, removed or renamed in directories
 already watched) updates those files alone, with no tree walk and no new watches, so a saved file
 costs the same in a tree of 20,000 directories as in a small one. The usual incremental update of
 the whole tree, reading the ignore files again, runs for a burst that:
@@ -824,14 +824,15 @@ the whole tree, reading the ignore files again, runs for a burst that:
   directory above the root, a `.gitignore` above it up to the repository top,
   `.git/info/exclude` of each repository nested in the tree, git's global excludes file and the
   git configuration files that name it;
-- reports lost events;
-- changes an indexed file while a directory has no watch, or once the last walk is 30 s old,
-  which is how a change the watcher did not see is found.
+- reports lost events (an inotify queue overflow, an overflowed Windows buffer, an FSEvents
+  stream that says it dropped events or must rescan);
+- changes an indexed file once the last walk is 30 s old, which is how a change the watcher did
+  not see is found.
 
 On Linux each directory above the root gets its own watch for those rule files, and another file
 written there costs a filter and nothing more. When such a directory cannot be watched the
-watcher says so once, and a change to its rules, like one in a rule directory made after the
-last walk, applies with the next tree walk. Either way the code index is updated, and the text
+watcher says so once and checks its rule files on the timer instead; a rule directory made after
+the last walk applies with the next tree walk. Either way the code index is updated, and the text
 index when `.scrutate/text/` exists (`watch` never creates one; `scrutate index` does).
 
 `SCRUTATE_WATCH_DEBUG=1` prints one stderr line per burst (the number of paths, and whether the
