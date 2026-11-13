@@ -90,17 +90,22 @@ cargo build --release -p scrutate --locked && bash bench/run_macos.sh
   The release chains do not pass it: R-14.10 in docs/TRACEABILITY.md defines a #1 over at least
   30 runs per tool. `SCRUTATE_BASE_BIN` turns it off, because the regression gate's block ratio
   needs every block of both binaries.
+- Cold runs evict only the corpus files' pages on macOS (`bench/evict.c`, `msync` with
+  `MS_INVALIDATE`, no root); Linux drops the whole page cache with `drop_caches`.
 - No `cargo test` or `cargo build` until the chain ends: both can replace the binary.
 - Do not edit `bench/run_macos.sh` while it runs: bash reads it as it goes.
 - Close the browser and the editor. With 18 GB the page cache cannot hold the LLVM tree beside
   them, and a warm run stops being warm (the harness records it as `resident`).
 
-Linux, about 1.5 hours, in a Colima VM with one virtual CPU per performance core
+Linux aarch64, about 1.5 hours, in a Colima VM with one virtual CPU per performance core
 (`colima start --cpu 5 --memory 12`; with 8, three run on efficiency cores and every tool's
 medians move by 10 to 30%). Run `bench/competitors/linux_bench.sh`, then
 `bench/competitors/linux_indexed.sh`; the commands are in their headers. Colima shares only the
 home directory with containers. The first script checks each tool it downloads against a SHA-256
 in the script: a new tool version needs its new hash there, from the tool's own release page.
+The VM shares the Mac, so it runs after the macOS chain, never beside it. Linux x86_64 runs on a
+dedicated server (Hetzner AX) with the same two scripts, natively (`--platform linux/amd64`,
+without `SCRUTATE_PREBUILT`), and can run at the same time as the macOS chain.
 
 Then read the results:
 

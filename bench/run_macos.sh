@@ -8,6 +8,8 @@
 # old: bench/wait_aged.py first waits until the binary starts faster than a fresh copy of itself,
 # at most an hour.
 #   cargo build --release -p scrutate --locked && bash bench/run_macos.sh
+# A Linux x86_64 run on a dedicated server (bench/competitors/linux_bench.sh) can go at the same
+# time; the Linux aarch64 virtual machine runs after this chain, since it shares this Mac.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 corpora=${CORPORA:-$HOME/.cache/scrutate-bench/corpora}

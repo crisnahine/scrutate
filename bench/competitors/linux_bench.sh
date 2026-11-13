@@ -2,6 +2,8 @@
 # Linux benchmark environment: every competitor at its latest stable release, installed the way
 # its maintainers publish it (release binaries where they exist, source builds otherwise), then the
 # Engine A leaderboard (warm and cold cache); linux_indexed.sh then runs the indexed comparison.
+# On a dedicated x86_64 server (Hetzner AX) it runs natively, at the same time as bench/run_macos.sh;
+# in the Colima VM on the Mac it runs after that chain, since both would share the Mac's cores.
 #
 # (for x86_64 on an arm64 host: --platform linux/amd64, its own volume, and
 #  -e SCRUTATE_PREBUILT=/prebuilt/scrutate with the cross-built binary mounted at /prebuilt)
