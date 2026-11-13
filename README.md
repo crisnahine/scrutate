@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="#install"><b>Install</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#quick-start"><b>Quick start</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#benchmarks"><b>Benchmarks</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#documentation"><b>Documentation</b></a>
+  <a href="#install"><b>Install</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#quick-start"><b>Quick start</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#benchmarks"><b>Benchmarks</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#documentation"><b>Documentation</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="docs/FAQ.md"><b>Questions</b></a>
 </p>
 
 <p align="center">
@@ -35,7 +35,8 @@
   </picture>
 </p>
 
-Scrutate is two independent engines behind one CLI.
+Scrutate is an open-source code search tool for the terminal, editors and AI coding agents. It is
+two independent engines behind one CLI ([questions and answers](docs/FAQ.md)).
 
 **Engine A, universal instant search.** No index, no parsers, no background process. Literal,
 regex (linear-time, size-limited), identifier (all casings), fuzzy, multiline, whole-word and
@@ -288,6 +289,10 @@ vulnerabilities; an SBOM is generated.
 <td width="50%" valign="top"><img src="docs/assets/icon-terminal.svg" width="20" height="20" alt=""> <a href="docs/CLI.md"><b>CLI</b></a><br>Every command, option, exit code, environment variable, config file</td>
 </tr>
 <tr>
+<td valign="top"><img src="docs/assets/banner-icon-faq.svg" width="20" height="20" alt=""> <a href="docs/FAQ.md"><b>Questions</b></a><br>What scrutate is, and the questions people ask first</td>
+<td valign="top"><img src="docs/assets/banner-icon-install.svg" width="20" height="20" alt=""> <a href="docs/INSTALL.md"><b>Install</b></a><br>Build it, the platforms, the package definitions</td>
+</tr>
+<tr>
 <td valign="top"><img src="docs/assets/icon-doc.svg" width="20" height="20" alt=""> <a href="docs/ARCHITECTURE.md"><b>Architecture</b></a><br>How the engines work and why</td>
 <td valign="top"><img src="docs/assets/icon-chart.svg" width="20" height="20" alt=""> <a href="docs/LEADERBOARD.md"><b>Leaderboard</b></a><br>The benchmark leaderboard: every tool, every benchmark, confidence intervals, statuses (generated)</td>
 </tr>
@@ -320,7 +325,7 @@ vulnerabilities; an SBOM is generated.
 <td valign="top"><img src="docs/assets/icon-plug.svg" width="20" height="20" alt=""> <a href="integrations/"><b>Integrations</b></a><br>VS Code, Neovim, JetBrains, GitHub Action, GitLab, Bitbucket, MCP, pre-commit</td>
 </tr>
 <tr>
-<td valign="top" colspan="2"><img src="docs/assets/icon-doc.svg" width="20" height="20" alt=""> <b>Also</b><br><a href="docs/INSTALL.md">INSTALL</a>, <a href="docs/DEPENDENCIES.md">DEPENDENCIES</a>, <a href="docs/ROADMAP.md">ROADMAP</a>, <a href="docs/RESEARCH.md">RESEARCH</a>, <a href="CHANGELOG.md">CHANGELOG</a>, <a href="CONTRIBUTING.md">CONTRIBUTING</a></td>
+<td valign="top" colspan="2"><img src="docs/assets/icon-doc.svg" width="20" height="20" alt=""> <b>Also</b><br><a href="docs/DEPENDENCIES.md">DEPENDENCIES</a>, <a href="docs/ROADMAP.md">ROADMAP</a>, <a href="docs/RESEARCH.md">RESEARCH</a>, <a href="CHANGELOG.md">CHANGELOG</a>, <a href="CONTRIBUTING.md">CONTRIBUTING</a></td>
 </tr>
 </table>
 

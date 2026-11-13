@@ -21,6 +21,9 @@ version rebuilds incompatible indexes automatically and this is never considered
   Engine A's matches, the lines ripgrep gives for the same arguments, bounded as an MCP answer is;
   a call it cannot answer exactly runs Grep as before. `scrutate hook stats` prints, per session
   and in all, the bytes Grep would have returned against the bytes the hook sent.
+- docs/FAQ.md answers the first questions about scrutate, each with a link to its evidence;
+  `llms.txt`, written by `tools/gen_doc_assets.py`, lists every Markdown document with the question it
+  answers for language models; `CITATION.cff` gives GitHub's "Cite this repository".
 
 ## [0.1.0] - 2026-11-11
 

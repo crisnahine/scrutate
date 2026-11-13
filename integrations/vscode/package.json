@@ -10,7 +10,18 @@
     "vscode": "^1.85.0"
   },
   "categories": [
+    "Programming Languages",
     "Other"
+  ],
+  "keywords": [
+    "code search",
+    "grep",
+    "semantic search",
+    "go to definition",
+    "find references",
+    "callers",
+    "language server",
+    "tree-sitter"
   ],
   "activationEvents": [
     "onStartupFinished"

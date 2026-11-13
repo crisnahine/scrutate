@@ -1,0 +1,54 @@
+# Scrutate
+
+> Universal instant code search and persistent code intelligence, in one Rust binary. Engine A searches any folder with no index; Engine B indexes a repository for ranked search by meaning or name, definitions, callers, references and the tests a git diff touches. A CLI, an MCP server for AI coding agents, a language server and Python bindings. No network use. MIT OR Apache-2.0.
+
+Each link is the raw Markdown of a document in the repository, followed by the question it answers.
+
+## Start here
+
+- [README](https://raw.githubusercontent.com/crisnahine/scrutate/main/README.md): What does scrutate do, how do I start, and what was measured?
+
+## Use it
+
+- [Questions](https://raw.githubusercontent.com/crisnahine/scrutate/main/docs/FAQ.md): What is scrutate, and what do people ask first?
+- [Install](https://raw.githubusercontent.com/crisnahine/scrutate/main/docs/INSTALL.md): How do I install, update and remove scrutate?
+- [Command line](https://raw.githubusercontent.com/crisnahine/scrutate/main/docs/CLI.md): What does each command do, and what does it print?
+- [MCP server](https://raw.githubusercontent.com/crisnahine/scrutate/main/integrations/mcp/README.md): How do I give an agent scrutate's tools?
+- [VS Code](https://raw.githubusercontent.com/crisnahine/scrutate/main/integrations/vscode/README.md): How do I use the language server in VS Code?
+- [Neovim](https://raw.githubusercontent.com/crisnahine/scrutate/main/integrations/neovim/README.md): How do I use scrutate from Neovim?
+- [JetBrains IDEs](https://raw.githubusercontent.com/crisnahine/scrutate/main/integrations/jetbrains/README.md): How do I run scrutate from a JetBrains IDE?
+- [GitHub Actions](https://raw.githubusercontent.com/crisnahine/scrutate/main/integrations/github/README.md): How do I run scrutate in a GitHub workflow?
+- [pre-commit hook](https://raw.githubusercontent.com/crisnahine/scrutate/main/integrations/pre-commit/README.md): How do I stop a commit that adds duplicate functions?
+- [Python bindings](https://raw.githubusercontent.com/crisnahine/scrutate/main/crates/scrutate-py/README.md): How do I call both engines from Python?
+
+## Understand it
+
+- [Architecture](https://raw.githubusercontent.com/crisnahine/scrutate/main/docs/ARCHITECTURE.md): How do the two engines work inside?
+- [Languages](https://raw.githubusercontent.com/crisnahine/scrutate/main/docs/LANGUAGES.md): What does the index find in each language?
+- [Glossary](https://raw.githubusercontent.com/crisnahine/scrutate/main/GLOSSARY.md): What does each word of this codebase mean?
+
+## Trust it
+
+- [Leaderboard](https://raw.githubusercontent.com/crisnahine/scrutate/main/docs/LEADERBOARD.md): Where is scrutate faster or slower, and how sure is that?
+- [Benchmarks](https://raw.githubusercontent.com/crisnahine/scrutate/main/docs/BENCHMARKS.md): What do time, memory and start-up cost, tool by tool?
+- [Ranking quality](https://raw.githubusercontent.com/crisnahine/scrutate/main/docs/QUALITY.md): How good are ranked answers on code it was not fitted on?
+- [Test results](https://raw.githubusercontent.com/crisnahine/scrutate/main/docs/TEST_RESULTS.md): Did every quality gate pass, and what did it print?
+- [Security](https://raw.githubusercontent.com/crisnahine/scrutate/main/docs/SECURITY.md): What can a hostile repository, query or client do?
+- [Traceability](https://raw.githubusercontent.com/crisnahine/scrutate/main/docs/TRACEABILITY.md): Which requirement is met, and what is the evidence?
+- [Release readiness](https://raw.githubusercontent.com/crisnahine/scrutate/main/docs/RELEASE_READINESS.md): Is 0.1.0 ready, and what is still missing?
+- [Competitive position](https://raw.githubusercontent.com/crisnahine/scrutate/main/docs/COMPETITIVE.md): What does the evidence say against other tools?
+
+## Optional
+
+- [Contributing](https://raw.githubusercontent.com/crisnahine/scrutate/main/CONTRIBUTING.md): What must pass before a change is merged?
+- [Releasing](https://raw.githubusercontent.com/crisnahine/scrutate/main/docs/RELEASING.md): Which steps does a release take, in order?
+- [Delivery index](https://raw.githubusercontent.com/crisnahine/scrutate/main/docs/DELIVERY.md): Where is each delivered item in this repository?
+- [Dependencies](https://raw.githubusercontent.com/crisnahine/scrutate/main/docs/DEPENDENCIES.md): Which crates and data are compiled in, and why?
+- [Roadmap](https://raw.githubusercontent.com/crisnahine/scrutate/main/docs/ROADMAP.md): What is done, what is blocked and what is next?
+- [Research](https://raw.githubusercontent.com/crisnahine/scrutate/main/docs/RESEARCH.md): Would a small transformer model rank code better?
+- [Naming](https://raw.githubusercontent.com/crisnahine/scrutate/main/docs/NAMING.md): Why is it called scrutate, and how was that checked?
+- [Changelog](https://raw.githubusercontent.com/crisnahine/scrutate/main/CHANGELOG.md): What changed in each version?
+- [Packaging](https://raw.githubusercontent.com/crisnahine/scrutate/main/packaging/README.md): Which package definitions exist, and how was each tested?
+- [Fuzz targets](https://raw.githubusercontent.com/crisnahine/scrutate/main/fuzz/README.md): What does each fuzz target check?
+- [Contributor licence agreement](https://raw.githubusercontent.com/crisnahine/scrutate/main/CLA.md): What rights do I give with a contribution, and what do I keep?
+- [Trademark policy](https://raw.githubusercontent.com/crisnahine/scrutate/main/TRADEMARKS.md): What may a fork, a package or a product do with the name and the logo?

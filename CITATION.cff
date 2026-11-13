@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use scrutate in your work, please cite it as below."
+type: software
+title: Scrutate
+abstract: >-
+  Universal instant code search and persistent code intelligence, in one Rust binary.
+  Engine A searches any folder with no index; Engine B indexes a repository for ranked
+  search by meaning or name, definitions, callers, references and the tests a git diff
+  touches. A CLI, an MCP server for AI coding agents, a language server and Python bindings.
+authors:
+  - given-names: Cris
+    family-names: Nahine
+repository-code: "https://github.com/crisnahine/scrutate"
+url: "https://github.com/crisnahine/scrutate"
+license:
+  - MIT
+  - Apache-2.0
+keywords:
+  - code search
+  - grep
+  - code intelligence
+  - semantic code search
+  - MCP server
+  - language server
+  - tree-sitter
+  - Rust

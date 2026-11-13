@@ -117,13 +117,13 @@ python3 tools/gen_assets.py capture --bin target/release/scrutate --repo $C     
 python3 tools/gen_assets.py capture-hero --bin target/release/scrutate --repo crates/scrutate   # the hero's searches and match spans
 python3 tools/gen_assets.py              # the README's images, from the two captures, the palette and rust-version;
                                          # then render social-preview.png again (the command is in the script's head)
-python3 tools/gen_doc_assets.py          # banners and diagrams; then --check: links, anchors, heads
+python3 tools/gen_doc_assets.py          # banners, diagrams, the hub and llms.txt; then --check: links, anchors, heads
 python3 tools/scrub_home.py              # last: logs and results write ~ for the home directory
 ```
 
 ## 4. Documents that carry the numbers by hand
 
-`README.md` (Status), `docs/COMPETITIVE.md`, `docs/ROADMAP.md`, `docs/TRACEABILITY.md` (R-4.6,
+`README.md` (Status), `docs/FAQ.md` (speed, install, status), `docs/COMPETITIVE.md`, `docs/ROADMAP.md`, `docs/TRACEABILITY.md` (R-4.6,
 R-14.6, R-14.16, then `python3 tools/traceability_tally.py`), `docs/RELEASE_READINESS.md` (its
 table lists every row that is not PASS), `CHANGELOG.md`, `docs/SECURITY.md` (the `unsafe`
 inventory and the crate count), `docs/DELIVERY.md` (binary hashes and wheel names, after step 6).

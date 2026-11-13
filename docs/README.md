@@ -15,50 +15,53 @@ The documents are grouped by what you came to do: use scrutate, understand how i
 </tr>
 <tr>
 <td width="50%" valign="top">
+<img src="assets/banner-icon-faq.svg" width="20" height="20" alt=""> <a href="FAQ.md"><b>Questions</b></a><br>
+What is scrutate, and what do people ask first?
+</td>
+<td width="50%" valign="top">
 <img src="assets/banner-icon-install.svg" width="20" height="20" alt=""> <a href="INSTALL.md"><b>Install</b></a><br>
 How do I install, update and remove scrutate?
 </td>
+</tr>
+<tr>
 <td width="50%" valign="top">
 <img src="assets/banner-icon-cli.svg" width="20" height="20" alt=""> <a href="CLI.md"><b>Command line</b></a><br>
 What does each command do, and what does it print?
 </td>
-</tr>
-<tr>
 <td width="50%" valign="top">
 <img src="assets/banner-icon-mcp.svg" width="20" height="20" alt=""> <a href="../integrations/mcp/README.md"><b>MCP server</b></a><br>
 How do I give an agent scrutate's tools?
 </td>
+</tr>
+<tr>
 <td width="50%" valign="top">
 <img src="assets/banner-icon-vscode.svg" width="20" height="20" alt=""> <a href="../integrations/vscode/README.md"><b>VS Code</b></a><br>
 How do I use the language server in VS Code?
 </td>
-</tr>
-<tr>
 <td width="50%" valign="top">
 <img src="assets/banner-icon-neovim.svg" width="20" height="20" alt=""> <a href="../integrations/neovim/README.md"><b>Neovim</b></a><br>
 How do I use scrutate from Neovim?
 </td>
+</tr>
+<tr>
 <td width="50%" valign="top">
 <img src="assets/banner-icon-jetbrains.svg" width="20" height="20" alt=""> <a href="../integrations/jetbrains/README.md"><b>JetBrains IDEs</b></a><br>
 How do I run scrutate from a JetBrains IDE?
 </td>
-</tr>
-<tr>
 <td width="50%" valign="top">
 <img src="assets/banner-icon-github.svg" width="20" height="20" alt=""> <a href="../integrations/github/README.md"><b>GitHub Actions</b></a><br>
 How do I run scrutate in a GitHub workflow?
 </td>
+</tr>
+<tr>
 <td width="50%" valign="top">
 <img src="assets/banner-icon-precommit.svg" width="20" height="20" alt=""> <a href="../integrations/pre-commit/README.md"><b>pre-commit hook</b></a><br>
 How do I stop a commit that adds duplicate functions?
 </td>
-</tr>
-<tr>
 <td width="50%" valign="top">
 <img src="assets/banner-icon-python.svg" width="20" height="20" alt=""> <a href="../crates/scrutate-py/README.md"><b>Python bindings</b></a><br>
 How do I call both engines from Python?
 </td>
-<td width="50%"></td>
 </tr>
 <tr>
 <th colspan="2" align="left"><img src="assets/banner-group-understand.svg" width="100%" alt="02 Understand it"><br><sub>How the engines work and what the words mean.</sub></th>

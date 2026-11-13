@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-labelledby="t d">
+<!-- written by tools/gen_doc_assets.py; edit that, not this file -->
+<title id="t">Questions</title>
+<desc id="d">Icon for Questions.</desc>
+<style></style>
+<rect width="32" height="32" rx="6" fill="#0c0c0e"/><g transform="translate(5 5) scale(.9167)"><path d="M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17z" fill="none" stroke="#f2eee3" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.4 2.3c-.6.3-.9.8-.9 1.4v.8" fill="none" stroke="#f2eee3" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 16.25a.75.75 0 1 1 0 1.5.75.75 0 0 1 0-1.5z" fill="none" stroke="#f2eee3" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></g>
+</svg>

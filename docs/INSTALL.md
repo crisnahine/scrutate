@@ -5,7 +5,7 @@
 
 # Installation, update, uninstallation
 
-[Documentation](README.md) &nbsp;·&nbsp; Next: [Command line](CLI.md)
+[Documentation](README.md) &nbsp;·&nbsp; Previous: [Questions](FAQ.md) &nbsp;·&nbsp; Next: [Command line](CLI.md)
 
 <!-- End of head. -->
 

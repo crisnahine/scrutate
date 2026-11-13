@@ -3,7 +3,7 @@
 
 Run from anywhere (Python 3.9 or newer, standard library only):
 
-    python3 tools/gen_doc_assets.py            # write docs/README.md, the heads and docs/assets/banner-*, diagram-*
+    python3 tools/gen_doc_assets.py            # write docs/README.md, llms.txt, the heads and docs/assets/banner-*, diagram-*
     python3 tools/gen_doc_assets.py --check    # fail when a committed file differs from what this script writes,
                                                # an SVG is malformed or too large, or a link or #anchor is broken
 
@@ -71,12 +71,15 @@ ICONS = {
              "M15 14.25a.75.75 0 1 1 0 1.5.75.75 0 0 1 0-1.5z"],
     "code": ["M8 8l-4 4 4 4", "M16 8l4 4-4 4", "M13.5 6l-3 12"],
     "history": ["M3.5 12a8.5 8.5 0 1 0 2.5-6", "M3 3.5V8h4.5", "M12 8v4l3 2"],
+    "question": ["M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17z", "M9.5 9.5a2.5 2.5 0 1 1 3.4 2.3c-.6.3-.9.8-.9 1.4v.8",
+                 "M12 16.25a.75.75 0 1 1 0 1.5.75.75 0 0 1 0-1.5z"],
 }
 
 # One row per document: key, path from the root, banner title, the question it answers, icon, group, contents line.
 # A row whose key starts with "+" is on the hub only (no head is written into that file).
 DOCS = [
-    ("install", "docs/INSTALL.md", "Install", "How do I install, update and remove scrutate?", "install", "use", False),
+    ("faq", "docs/FAQ.md", "Questions", "What is scrutate, and what do people ask first?", "question", "use", False),
+    ("install","docs/INSTALL.md", "Install", "How do I install, update and remove scrutate?", "install", "use", False),
     ("cli", "docs/CLI.md", "Command line", "What does each command do, and what does it print?", "cli", "use", True),
     ("mcp", "integrations/mcp/README.md", "MCP server", "How do I give an agent scrutate's tools?", "plug", "use", False),
     ("vscode", "integrations/vscode/README.md", "VS Code", "How do I use the language server in VS Code?", "editor", "use", False),
@@ -125,6 +128,12 @@ GENERATORS = {
     "docs/DEPENDENCIES.md": "tools/gen_dependencies_md.py",
 }
 HUB = "docs/README.md"
+LLMS = "llms.txt"
+RAW = "https://raw.githubusercontent.com/crisnahine/scrutate/main/"
+SUMMARY = ("Universal instant code search and persistent code intelligence, in one Rust binary. Engine A searches any "
+           "folder with no index; Engine B indexes a repository for ranked search by meaning or name, definitions, "
+           "callers, references and the tests a git diff touches. A CLI, an MCP server for AI coding agents, a "
+           "language server and Python bindings. No network use. MIT OR Apache-2.0.")
 HEAD_START = "<!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->"
 HEAD_END = "<!-- End of head. -->"
 
@@ -1079,6 +1088,19 @@ def hub():
     return "\n".join(out)
 
 
+def llms_txt():
+    """The documents for language models, in the llms.txt format (llmstxt.org): the Markdown documents of each
+    group with the question each answers, linked as raw files so an agent reads Markdown, not a rendered page."""
+    out = ["# Scrutate", "", "> " + SUMMARY, "",
+           "Each link is the raw Markdown of a document in the repository, followed by the question it answers.",
+           "", "## Start here", "",
+           f"- [README]({RAW}README.md): What does scrutate do, how do I start, and what was measured?"]
+    for g, name, _ in GROUPS:
+        out += ["", "## Optional" if g == "work" else f"## {name}", ""]
+        out += [f"- [{d[2]}]({RAW}{d[1]}): {d[3]}" for d in DOCS if d[5] == g and d[1].endswith(".md")]
+    return "\n".join(out) + "\n"
+
+
 # ---------------------------------------------------------------- writing and checking
 
 def planned():
@@ -1096,6 +1118,7 @@ def planned():
     for name, fn in DIAGRAMS.items():
         files[f"docs/assets/diagram-{name}.svg"] = fn().svg()
     files[HUB] = hub()
+    files[LLMS] = llms_txt()
     for d in headed():
         if d[1] in GENERATORS:
             continue
