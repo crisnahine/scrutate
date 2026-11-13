@@ -308,7 +308,8 @@ outputs in [CLI](docs/CLI.md), the measurements in [BENCHMARKS](docs/BENCHMARKS.
     interfaces).
   - A tsconfig `extends` written as a list is read.
   - An inherited method is the one the method resolution order reaches first, up to 8 levels:
-    `class D(B, C)` calls `C.m` where it named `A.m`.
+    `class D(B, C)` calls `C.m` where it named `A.m`, and a chain of more than 3 classes no
+    longer answers not found.
   - A variable inside a closure has the type of its enclosing declaration
     (`xs.map(x => p.norm())` calls `Point.norm`), unless the closure binds the name
     (`xs.map(p => p.norm())`, a bare `p => ...`).
@@ -358,321 +359,176 @@ outputs in [CLI](docs/CLI.md), the measurements in [BENCHMARKS](docs/BENCHMARKS.
 - A damaged segment found during a merge rebuilds the index; `serve --watch` and `watch` keep
   watching after an update panics.
 
-- A path in a tool call that leaves the repository by its own parts is refused before anything is
-  looked at; on Windows a share on another machine named in a call was connected to first. An
-  absolute path elsewhere (`/a.py`) no longer names the repository's file of the same relative
-  name in `outline`, `dependencies`, `dependents` and locations. The language server reads no
-  file behind a link that leaves the root, and on Windows it works on a workspace on a share or
-  in WSL (`file://wsl.localhost/...`). MCP `callees` says how many outside names it left out
-  past 50.
-- `read_code` gives one answer for a path outside the repository whether or not a file is there,
-  and a definition read with `symbol` fails when its file cannot be read as text, as reading that
-  file by `path` does. The Python bindings read a path spelling (`./pkg/a.py`) and a location
-  (`pkg/a.py:3-9`) as the MCP tools do in `symbol`, `outline`, `dependencies` and `dependents`,
-  and `read` has the same 1 MB cap and text check.
-- An older scrutate no longer rebuilds an index a newer one built. It reads it as it is when only
-  the parsing rules are newer, and refuses it with exit 2 and a clear message when its schema,
-  model or text format is newer; `scrutate index --force` rebuilds it with the version at hand.
-  A `serve` or `lsp` process running when the newer version took the index over answers each
-  request with that message until restarted.
-- A documentation comment whose lines carry no comment mark (a GNU style C block, a JSDoc line
-  without a star, Elm `{-| -}`, Lua `--[[ ]]`, Ruby `=begin`, a Vim comment) is in its
-  definition's documentation only, no longer in a window too. Without a grammar, the comment
-  above a definition is its documentation in its language's comment marks (OCaml `(* *)`,
-  Fortran `!`, Pascal `{ }`, Haskell `{- -}`, PowerShell `<# #>` and more).
-- The language server no longer goes to the plain namesake when a call has a receiver:
-  `o.valid?()` goes to `valid?`, `self.save!` to `save!`, `M.ok?(x)` to `ok?`,
-  `Main.update!(x)` to `update!`, `step' y` to `step'` (at its equation, below the type
-  signature), and the cursor on `is` in R `is.ready(x)` finds `is.ready`. References of `valid`
-  no longer list `valid?`.
-
-- `follow = true` in a repository's own `.scrutate.toml` is ignored with a warning, so a cloned
-  repository cannot make `scrutate grep` leave it through a symbolic link; `-L`, the environment
-  and your own configuration file still follow.
-- A name typed with its punctuation is found by that name and comes first: `search 'valid?'`,
-  `search Get-Greeting`, `search 'list->vector'`, `search 'Rec.valid?'`. More languages' test
-  files are told by name (`button.test.jsx`, `parser_test.rs`, `parser_spec.rb`,
-  `WidgetTest.kt`, a directory `MyApp.Tests`). `similar` takes a window's location, and
-  `symbol`, `callers` and `refs --def` say such a location is outside every definition.
-- `callers` lists calls written outside every definition (a script's main block, the last line
-  of a shell script, top-level JavaScript), under the module chunk or window that holds the line,
-  and `callees FILE:LINE` answers for such a line.
-- Elixir `@doc false` leaves a function undocumented, PowerShell help inside a function body and
-  an Erlang `-doc` attribute are documentation, a one-line `<# #>` comment loses its closing
-  mark, and `this["k"] = function` is the member `k`.
-- A Go type declared on its own line (`type Server struct`) takes the comment above it as its
-  documentation, also as the first statement of a function body, and a Go type alias
+- A tool call path that leaves the repository is refused before anything is looked at, and an
+  absolute path elsewhere (`/a.py`) no longer names the repository's file of that name. The
+  language server reads no file behind a link that leaves the root and works on a Windows share or
+  in WSL (`file://wsl.localhost/...`); MCP `callees` says how many outside names it left out past
+  50 ([SECURITY](docs/SECURITY.md)).
+- `read_code` gives one answer for a path outside the repository whether or not a file is there.
+  The Python bindings read a path spelling (`./pkg/a.py`) and a location (`pkg/a.py:3-9`) as the
+  MCP tools do.
+- An older scrutate no longer rebuilds an index a newer one built: it reads it when only the
+  parsing rules are newer and otherwise refuses it with exit 2; `scrutate index --force`
+  rebuilds it.
+- A documentation comment whose lines carry no comment mark (a GNU style C block, Lua
+  `--[[ ]]`, Ruby `=begin` and the like) is in its definition's documentation only, and without a
+  grammar a language's own comment marks are read ([LANGUAGES](docs/LANGUAGES.md)).
+- The language server goes to the definition a receiver call names, not the plain namesake:
+  `o.valid?()` to `valid?`, `self.save!` to `save!`, `M.ok?(x)` to `ok?`, `Main.update!(x)` to
+  `update!`, `step' y` to `step'`, and `is` in R `is.ready(x)` finds `is.ready`. References of
+  `valid` no longer list `valid?`.
+- `follow = true` in a repository's own `.scrutate.toml` is ignored with a warning, so a clone
+  cannot make `scrutate grep` leave it through a link ([SECURITY](docs/SECURITY.md)).
+- A name typed with its punctuation is found by that name first: `search 'valid?'`,
+  `search Get-Greeting`, `search 'list->vector'`, `search 'Rec.valid?'`. More test file names are
+  told (`button.test.jsx`, `parser_test.rs`, `parser_spec.rb`, `WidgetTest.kt`, a directory
+  `MyApp.Tests`). `similar` takes a window's location.
+- `callers` lists calls written outside every definition, and `callees FILE:LINE` answers for
+  such a line.
+- Elixir `@doc false` leaves a function undocumented, PowerShell help in a function body and an
+  Erlang `-doc` attribute are documentation, and `this["k"] = function` is the member `k`.
+- A Go type on its own line (`type Server struct`) takes the comment above it, and a Go type alias
   (`type Celsius = float64`) is a definition.
 - `symbol`, `callers`, `callees`, `refs`, `outline`, `deps`, `rdeps`, `similar`, `dupes`
   (exact + MinHash/LSH near-duplicates), `tsquery` (tree-sitter structural search),
   cross-repository `search --also`.
-- `refs` resolves each occurrence to the definition it refers to (scopes, imports, qualified
-  names) for Python, JavaScript/TypeScript, Rust, Go and Java; `--def` keeps one definition and
-  `--textual` gives every whole-word occurrence as before.
-- Java in `refs`, `callers`, `callees` and the language server's references: packages from each
-  file's `package` declaration in any source root, single, on-demand and static imports, locals,
-  fields, inherited members, nested and anonymous classes, records, default methods, calls typed
-  by declared types and return types, and method references. The argument count picks an
-  overload; a call not tied to one is a caller of every overload.
-- `callers` of an override or an implementation lists a call through its base class, interface
-  or trait as undecided, at any depth, and a variable declared as the base type and built by a
-  constructor in the same function is typed by the constructor (`Base b = new Big()`), so its
-  call is a decided caller of the override. TypeScript resolves inherited members through
-  `extends`. A `super` call is a decided call of the nearest base method that defines it
-  (Python by its method resolution order, also for `super(C, self)`), never of the override it
-  sits in. A bare Python import finds the module beside the importing file when no module from
-  the root has the name and the file's directory is not a package (`from helpers import x` in
-  `tests/`; `import logging` in a package with its own `logging.py` stays outside).
+- `refs` resolves each occurrence to its definition for Python, JavaScript/TypeScript, Rust, Go
+  and Java; `--def` keeps one definition and `--textual` gives every whole-word occurrence.
+- Java in `refs`, `callers`, `callees` and the language server: packages, imports, members,
+  nested classes, records, method references, and overloads picked by the argument count
+  ([CLI](docs/CLI.md)).
+- `callers` of an override lists a call through its base type as undecided, a `super` call is a
+  decided call of the nearest base method (also `super(C, self)`), TypeScript follows `extends`,
+  and a bare Python import finds the module beside the importing file (`from helpers import x`
+  in `tests/`).
 - A JavaScript or TypeScript import of a workspace package by its `package.json` name resolves to
-  the package's file: `exports` (conditions `types`, `import`, `default`, `require`, `node`, then
-  the others by name), `module`, `main` or an `index` file, a build output the repository lacks
-  standing for its source under `src/`, a subpath through `exports` or a path in the package. A
-  declaration file (`.d.ts`) beside its implementation no longer takes the import: `./m` with
-  `m.js` and `m.d.ts` is `m.js`.
-- Imports are recorded as their statements write them: a JavaScript or TypeScript exported
-  declaration is no import (only `export ... from`), a `require` or `import()` call counts with
-  a literal argument, and PHP double quotes and grouped `use`, R, Julia lists and `include`, Lua
-  long brackets, Objective-C `@import` and QML imports are recorded; Kotlin and C# record the
-  name, not the alias, Ruby only calls without a receiver, and a Java star import is one `a.b.*`
-  record that `deps` resolves to the package's files.
+  the package's file through `exports`, `module`, `main` or `index`; a `.d.ts` beside its
+  implementation no longer takes the import ([CLI](docs/CLI.md)).
+- Imports are recorded as their statements write them, in more languages; a Java star import is
+  one `a.b.*` record that `deps` resolves to the package's files.
 - In a language the resolver does not read, a call without a receiver is a call of the
-  definition in its own file: `callees` lists that one alone (it listed the index's first three
-  namesakes), and `callers` of a namesake in another file leaves the call out. Other undecided
-  callees are listed nearest first. A Nix function and a repository macro are listed as callees
-  (they were named after `external:`), and a MATLAB `.m` file is no longer in the C family.
-- A search that meets a damaged segment array (a posting row, a pointer or a cluster table that
-  points outside the segment) rebuilds the index and answers; it ended with a panic message.
+  definition in its own file (`callees` listed the index's first three namesakes), and a MATLAB `.m` file is no longer in the C family.
+- A search that meets a damaged segment array rebuilds the index and answers; it panicked.
 - `callers` of a constructor lists the calls of its class (`Point(1)` for `Point.__init__`,
-  `new Widget()` for `constructor`, `Invoice.new` for Ruby's `initialize`, and the Java, C#, C++,
-  PHP and Swift forms); it printed "(no results)". `refs` gives the reason
-  `not resolved in this language` for a language with a grammar and no resolver rules, and keeps
-  `no grammar` for files without one.
-- A call is recorded under its definition's name: a trailing `?` or `!` in Ruby and Elixir, `!`
-  in Julia, the dots of an R name, `::` in a Bash name, a prime in Haskell, OCaml, F# and Nix,
-  the last part of a PHP namespaced call, and a Rust raw identifier without `r#`.
+  `new Widget()`, `Invoice.new`); it printed "(no results)". `refs` gives the reason
+  `not resolved in this language` for a language with a grammar and no resolver rules.
+- A call is recorded under its definition's name (a trailing `?` or `!`, a prime, `r#`):
   `callers valid?` and `callers save!` printed "(no results)", and a Haskell `step'` was indexed
   as `step`.
-- The comment right above a definition is its documentation in Python, Starlark, fish, Common
-  Lisp, assembly, Jsonnet and MATLAB too, beside any docstring, and a Haskell or Elm function
-  starts at its type signature; `search` did not find a Python function by a word of the comment
-  above it. Documentation survives what stands between comment and definition: Rust attributes
-  (`/// doc`, `#[derive(...)]`, `struct`: 172 items of this repository had lost theirs),
-  TypeScript decorators, Dart `@override`, Elixir `@spec`, Erlang `-spec`. Elixir `@doc` and
-  `@moduledoc`, a Julia docstring, Haskell haddock comments and PowerShell's help block are read;
-  Ada nested functions, Nix, HCL and YAML keys and the first method of a Ruby class take their
-  comment; Go constants take theirs, and a Ruby constant at file, class or module level is a
-  constant.
-- More forms are definitions: a Lua function assigned to a name or given as a table field
-  (`M.f = function`, `f = function` in a table), a JavaScript or TypeScript function assigned to
-  a member (`Foo.prototype.bar = function` is the method `Foo.bar`), a Julia method added to
-  another module's function (`function Base.show(...)` is `show`, owned by `Base`), the C++ call
-  operator as `operator()`, a Haskell operator definition, and an R6 method (also of
-  `R6::R6Class`). In JavaScript and TypeScript also `this.x = function` in a function or a
-  constructor (`Widget.x`), `obj["k"] = function`, `exports.a.b = function`, the members of an
-  object assigned to `module.exports`, and a default export written as an expression, which keeps
-  its own name or takes the file's (`app` for `lib/app.js`); a call through
-  `const app = require("./app")` resolves to it. A Lua multiple assignment of functions and a
-  Julia `Base.:(==)` method are definitions too. The comment above such an assignment is the
-  function's documentation.
-- `search` looks up a query of one word, or of stop words alone, as a name: `search find` and
-  `search get` find the functions of that name; they printed "(no results)".
+- The comment above a definition is its documentation in more languages, and survives what
+  stands between (Rust attributes after `/// doc`: 172 items of this repository had lost theirs;
+  decorators, `@spec` and the like) ([LANGUAGES](docs/LANGUAGES.md)).
+- More forms are definitions: a function assigned to a name, member or table field in Lua,
+  JavaScript and TypeScript (`exports.a.b = function`, a call through
+  `const app = require("./app")` resolves to it), Julia methods on another module's function
+  (`Base.:(==)`), R6 methods (`R6::R6Class`) and the C++ call operator
+  ([LANGUAGES](docs/LANGUAGES.md)).
+- `search` looks a one-word query up as a name: `search find` and `search get` printed
+  "(no results)".
 - A Java file counts as a test by `Test.java` or `Tests.java` with the capital (`Contest.java`
   and `Latest.java` were ranked as tests), and a Django `tests.py` is a test file.
-- `languages --json` lists every kind of definition the index gives a language (`method` was
-  missing for Python, Ruby, Scala, Solidity and Kotlin, `constant` for eleven languages, the
-  kinds read off the head keyword for Kotlin, Swift and the Lisps). A Racket
+- `languages --json` lists every kind of definition the index gives a language, and a Racket
   `define-syntax-rule` is a macro.
 - `refs` finds a name in its composed and decomposed Unicode spelling.
-- `tsquery` keeps each file's captures in `.scrutate/tsquery/` by content hash: a repeated query
-  re-parses only changed files (the Linux tree: about 25 s, then 1.6 s), output identical to
-  `--no-cache`; it also accepts a single file as its path.
-- Semantic vectors stored as int8 with a scale per vector (schema 13): the index is about a fifth
-  smaller, ranking quality within 0.001 MRR, parity with the Python reference exact.
-- `scrutate lsp`: a language server (definitions, resolved references, workspace symbols,
-  outlines) for editors; the VS Code extension starts it, JetBrains uses it through LSP4IJ.
+- `tsquery` caches each file's captures in `.scrutate/tsquery/`: a repeated query on the Linux
+  tree, about 25 s then 1.6 s.
+- Semantic vectors stored as int8 (schema 13): the index about a fifth smaller, quality within
+  0.001 MRR.
+- `scrutate lsp`: a language server for editors; the VS Code extension starts it, JetBrains uses
+  it through LSP4IJ.
 - `scrutate watch` and `serve --watch` keep the indexes fresh as files change.
-- A long-running index (`watch`, `serve`, `lsp`) reparses an edited file against its previous
-  syntax tree (up to 2 MB of source kept) for the 21 grammars without an external scanner: a
-  66 KB Go file, 5.5 ms to 2.0 ms per edit.
-- Ranker v8, fitted on Python and on 16 repositories in Rust, Go, Java, JavaScript and TypeScript:
-  better than v7 on held-out code in 56 of 58 language, variant and query-type cells, never worse
-  beyond noise (docs/QUALITY.md).
-- Ranked search finds words of every script: scripts written without spaces (Han, kana, Thai,
-  Lao, Tibetan, Myanmar, Khmer, the Tai scripts, Balinese and Javanese) become overlapping
-  character pairs, other scripts one lowercased token per word; all-ASCII text gives the tokens it
-  gave before. Names compare in NFC (new dependency `unicode-normalization`), and a definition
-  name over 200 bytes with no whitespace is a symbol. Traditional and simplified Han find each
-  other: ranked search folds Han to simplified forms in index and query (a Unihan 18.0.0 table,
-  Unicode License v3, listed in the notices and the SBOM); names and stored text are not folded.
-- Constants are symbols of kind `constant` (Rust `const` and `static`, Go package `const` and
-  `var`, JavaScript and TypeScript top-level `const`, TypeScript enum members and `static
-  readonly` fields, JavaScript `static` fields in capitals, Java `static final`, Python
-  module-level and class-level capitals and tuple or list targets, C, C++, Objective-C and GLSL
-  `#define` values, enumerators and file or namespace `const` and `constexpr` with a value, C++
-  `static const` and `static constexpr` members of a class): `symbol`, `outline`, `read_code` and
-  `refs` find them, ranked search never returns them. Every name of a Go or Java declaration with
-  several (`var X, Y int`) is a constant.
-- A method is named by its owner's bare type (`Stack.push` for `impl<T> Stack<T>`, `Box.put` for
-  `Box<T>::put`); a dotted Lua or Elixir name is split off its owner (`M.helper` is `helper`,
-  `MyApp.Accounts.User` is `User`); `Account:deposit` in Lua is `Account.deposit`. A JavaScript
-  or TypeScript object literal's methods, and its properties whose value is a function, are
-  methods named under what holds the literal (`api.get`, `store.sub.m`, `tool.build` for
-  `module.exports.tool`), also through `as`, `satisfies` and parentheses; they keep their callers
-  and callees.
-- New definitions: Rust `mod` and `type` items, `macro_rules!` and trait methods without a body;
-  Go methods qualified by their receiver type; C++ methods declared in a class or struct body
-  (constructors, destructors, member templates, conversion operators) and out-of-line methods
-  split at `::`; C and C++ function-like macros; JavaScript class field functions and
-  `module.exports.X`; TypeScript abstract classes and methods, `declare function` and
-  namespaces; Java records; Swift protocol requirements; Kotlin type aliases; Elixir guards;
-  Objective-C methods and properties declared in an `@interface` or `@protocol`; a VHDL
-  subprogram with a body; a Jsonnet function; a function pointer typedef by its own name (`cb` in
-  `typedef int (*cb)(int)`); a C or C++ function declared without a body, also inside an include
-  guard (`symbol` lists the definition before the prototype). A `.h` file written in C++ or
-  Objective-C is parsed with that grammar; as C it lost its classes and methods.
-- Calls inside the arguments of a Rust macro (`println!("{}", f(x))`) and turbofish calls
-  (`f::<T>(x)`) are call edges.
-- Calls in Dart, Groovy, Elixir, LLVM IR, TLA+, Verilog (task calls and module instances too),
-  VHDL, Jsonnet, Make (`$(call g,...)`) and assembly (`call`, `bl`, `jal`; a label holds its
-  instructions up to the next label or section) are recorded. A method call records the method
-  in Lua (`obj:meth()`), Objective-C (`[obj meth]`), R (`obj$meth()`), PowerShell and PHP
-  (`?->`); `new Point()` records `Point`; a Lisp name is recorded whole (`list->vec`,
-  `set-car!`) and a JavaScript private method with its `#`. A Scheme `(define (f x) ...)` head, a
-  Lisp parameter list and Elixir's `def`, `use` and `alias` are not calls. Dart and Pascal
-  functions hold their bodies.
-- Chunk text and body are cut at 32 KiB, and a chunk ends on the last line holding its text. A
-  file of many sibling definitions or of deep nesting indexes in linear time (20,000 one-line
-  JavaScript functions: 58 s to 0.8 s; 60,000 nested Lisp calls: 19 s to 0.3 s; 50,000 nested
-  HTML elements: 15 s to 0.1 s, as HTML and XML, which yield no definitions, are no longer
-  parsed). A segment of 20,000 rows or more is not rewritten when a few of its rows die:
-  compaction judged it by its live rows, so every save near that size rewrote it.
+- A long-running index reparses an edited file incrementally for the 21 grammars without an
+  external scanner: a 66 KB Go file, 5.5 ms to 2.0 ms per edit.
+- Ranker v8: better than v7 on held-out code in 56 of 58 cells, never worse beyond noise
+  ([QUALITY](docs/QUALITY.md)).
+- Ranked search finds words of every script, scripts without spaces as character pairs; names
+  compare in NFC (new dependency `unicode-normalization`), and Traditional and simplified Han
+  find each other (a Unihan 18.0.0 table).
+- Constants are symbols of kind `constant` in many languages (TypeScript `static
+  readonly` fields, JavaScript `static` fields in capitals, Java `static final` and the like):
+  `symbol`, `outline`, `read_code` and `refs` find them, ranked search never returns them.
+- A method is named by its owner's bare type (`Box.put` for `Box<T>::put`); a dotted Lua or Elixir
+  name is split off its owner (`MyApp.Accounts.User` is `User`); `Account:deposit` in Lua is
+  `Account.deposit`; an object literal's functions are methods under what holds it.
+- New definitions in many languages, among them Rust `mod`, `type` and `macro_rules!`, C++
+  methods declared in a class, JavaScript `module.exports.X`, TypeScript `declare function`, and
+  C and C++ prototypes; a `.h` file in C++ or Objective-C is parsed with that grammar
+  ([LANGUAGES](docs/LANGUAGES.md)).
+- Calls inside Rust macro arguments and turbofish calls (`f::<T>(x)`) are call edges.
+- Calls are recorded in more languages and forms (PHP `?->`, Lisp names whole), and a Scheme
+  `(define (f x) ...)` head is not a call ([CLI](docs/CLI.md)).
+- Chunk text is cut at 32 KiB, and many sibling definitions or deep nesting index in linear time
+  (20,000 one-line JavaScript functions: 58 s to 0.8 s; 60,000 nested Lisp calls: 19 s to 0.3 s);
+  HTML and XML are no longer parsed.
 - Inside a git repository the ignore files decide for `build`, `dist`, `target` and `venv`;
-  outside one they are skipped by name. `\,` keeps a comma in `SCRUTATE_INDEX_EXCLUDE_DIRS`.
-- The heuristic tier skips leading modifiers and reads OCaml `let f x =` as a function; Kconfig
-  and `.txt` files get no keyword symbols.
-- The model signature is a hash of the model file, so a retrained model of the same shape
-  rebuilds the vectors.
-- A read never waits for another process's writer: it answers from the last committed index and
-  says so once on stderr. A read during another process's first build exits 2, and a `serve`
-  call waits up to 20 seconds for that build, as for its own.
-- Rebuilt as damage: a chunk text that does not inflate, a segment list that is not JSON, a
-  segment without vectors, an `index.db` deleted under an open index or that is a directory, a
-  `seg` that is a file, an emptied `chunks` table. A writer stopped before its commit no longer
-  blocks later writers. A read-only index directory, or a read-only repository with a complete
-  index, is answered as it is.
-- On Unix a change of status time alone (a `chmod`) is seen, at the cost of a read and a hash. A
-  file that cannot be read loses its chunks.
-- A `.scrutate` that is a symbolic link, or holds one, is refused, and a `--root` that is not an
-  existing directory is an error; nothing is written or deleted outside the repository.
-- `refs`, `callers` and `callees` infer a receiver's type from declared return types, fields,
-  module-level and static variables, constructors, Rust `?` and holders such as `Box`, and
-  TypeScript `await`, and a call on a call's result from the type its callee declares it returns;
-  a type from outside the repository makes the call external, unless a trait or interface of the
-  repository declares that method. `this` in a JavaScript or TypeScript object literal method is
-  the literal. In Rust macro arguments a name after `.` is a field or a method, `name:` in braces
-  a field name, and a closure parameter or `let` a local. `x.m()` is never a call of a free
-  function in Rust, JavaScript, TypeScript, Go and Java, a definition's own name is not a call of
-  it, and a JavaScript `var` belongs to its function.
-- A call matches a definition only in its own language family and by the name as written
-  (`Ok(1)` is not a call of `ok`); a call the resolver ties to an imported module, a local or a
-  field is not a call of a namesake in the repository.
-- `symbol`, `callers`, `callees`, `similar`, `refs` and `read_code` look a name up as typed first
-  (`list->vec`, `Foo::Bar`, `#main`), then read `Type::method`, `Type#method` and `p->method` as
-  `Type.method`, then compare owners without generic arguments and path (`Stack<T>.push`,
-  `crate::config::Config::new`), and last, for a path, a top-level definition of its last part;
-  they find one method among many namesakes; `operator->` and `operator*` are found by those
-  names. A leading dot is dropped (`callers .helper`). The name spelled as typed comes before its
-  namesakes in another case, then non-test files, types before functions and methods, and a
-  definition with a body before one without. The language server's definition request takes the
-  whole name under the cursor (`get-user`, `Foo::Bar`, a C++ `~Shape` or `operator==`, the `type`
-  of a Rust `r#type`). An explicit C++ destructor or operator call (`a.~Shape()`,
-  `a.operator==(b)`, `p->operator()(3)`) records that name, so `callers ~Shape` and
-  `callers operator==` find it.
+  `\,` keeps a comma in `SCRUTATE_INDEX_EXCLUDE_DIRS`.
+- The heuristic tier reads OCaml `let f x =` as a function; Kconfig and `.txt` files get no
+  keyword symbols.
+- The model signature is a hash of the model file, so a retrained model rebuilds the vectors.
+- A read never waits for another process's writer: it answers from the last committed index. A
+  `serve` call waits up to 20 seconds for a first build.
+- More kinds of damage are rebuilt, a writer stopped before its commit no longer blocks later
+  ones, and a read-only index is answered as it is ([ARCHITECTURE](docs/ARCHITECTURE.md)).
+- On Unix a change of status time alone (a `chmod`) is seen.
+- A `.scrutate` that is or holds a symbolic link is refused, and nothing is written or deleted
+  outside the repository ([SECURITY](docs/SECURITY.md)).
+- `refs`, `callers` and `callees` infer a receiver's type from return types, fields, constructors
+  and more, and a call matches a definition only in its own language family and by the name as
+  written (`Ok(1)` is not a call of `ok`) ([CLI](docs/CLI.md)).
+- Name lookup in `symbol`, `callers`, `callees`, `similar`, `refs` and `read_code` takes the name
+  as typed first, then `Type::method` and generic owners, and orders namesakes; the C++
+  `operator->` and `operator*` are found by name, and an explicit destructor or operator call
+  (`a.~Shape()`, `a.operator==(b)`, `p->operator()(3)`) is recorded, so `callers ~Shape` and
+  `callers operator==` find it ([CLI](docs/CLI.md)).
 - A location (`path:start-end`) names exactly one definition in `symbol`, `callers` and
-  `callees`. `callers` lists the callers the resolver ties to the definition first, then the
-  undecided ones that name the owner type or share its package.
+  `callees`.
 - `callers`, `callees`, `symbol`, `dupes`, `tsquery`, `read_code symbol`, `duplicates` and
-  `structural_search` end with a line when they stopped at their limit, naming the argument that
-  raises it.
-- `tsquery` reads a path that does not exist from the current directory under `--root`, and
-  names a path in neither place in a warning, exit code 2. It prints paths as `grep PATH...` does
-  (`src/a.py` for the argument `src`), in plain output and `--json`, so a printed path can be
-  passed to the other commands. `dupes` lists equal-size groups in one fixed order, so a limit
-  keeps the same groups every run.
-- Imports: Go binds a directory through the module path in `go.mod`; a Python module drops its
-  first segment only when that is the checkout's own name; an `#include "util.h"` resolves beside
-  the including file; `rdeps` matches by base name only an import that resolves to no file.
-  `tsconfig.json`, `jsconfig.json`, `package.json`, `Cargo.toml` and `go.mod` are read only when
-  they are regular files inside the repository of at most 1 MB.
-- A lambda, nested function, block or comprehension hides a name only inside itself. A name bound
-  by a pattern, a `catch` or a Go statement initializer hides a function only in its own branch
-  or statement, and a closure sees the locals around it. `tsquery` decodes files that are not
-  UTF-8 and skips files over 1 MB, and refuses an empty query, a query without a capture and an
-  unknown predicate.
-- `dupes`: `exact` means the same body text once whitespace is squeezed; functions with the same
-  words that differ in a literal or an operator are one `near` group with similarity 1.00;
-  `--threshold 1` prints the exact groups only.
+  `structural_search` say when they stopped at their limit and which argument raises it.
+- `tsquery` prints paths as `grep PATH...` does and names a missing path in a warning, exit code
+  2; `dupes` lists groups in one fixed order.
+- Imports: Go through `go.mod`, an `#include "util.h"` beside the including file; config files
+  are read only as regular files inside the repository of at most 1 MB.
+- A name binding hides an outer one only in its own scope; `tsquery` decodes non-UTF-8 files,
+  skips files over 1 MB and refuses an empty query.
+- `dupes`: `exact` means the same body once whitespace is squeezed; `--threshold 1` prints the
+  exact groups only.
 - `grep --symbols` with a path argument finds the file by its path under the root.
-- `deps` and `rdeps` resolve imports as `refs` does (Rust `crate::`, `self::`, `super::` and
-  `mod`, Go through `go.mod`, Python `from . import`, TypeScript `.js` names and `.d.ts` files),
-  and `rdeps` says how many unresolved imports may name the file, counting only those that could:
-  a relative import with the file's path, or a bare one with a part spelled as its module name. A
-  Java import resolves through the package declarations, in any source root: a class import to
-  the class's file, a package import to the package's files, a static import to its class's file.
+- `deps` and `rdeps` resolve imports as `refs` does (Python `from . import`, Rust, Go,
+  TypeScript, Java), and `rdeps` counts the unresolved imports that may name the file.
 - An index built with older parsing rules rereads every file once (`content_rev` in `meta`).
-- An update can be cancelled and rolls back; an update that panics rolls back at once, and the
-  next update clears a transaction left open.
-- The index cuts each chunk's text from the source one chunk at a time: a one-line file with
-  8,000 nested functions now peaks at 542 MB to index (462 MB with `SCRUTATE_SEMANTIC=none`),
-  down from about 1.1 GB (0.75 GB).
+- An update can be cancelled and rolls back, also when it panics.
+- A one-line file with 8,000 nested functions peaks at 542 MB to index (462 MB with
+  `SCRUTATE_SEMANTIC=none`), down from about 1.1 GB (0.75 GB).
 - `similar` on a constant says constants are not compared, and `similar -k 0` returns nothing
   instead of panicking.
-- A backslash in a Unix file name stays in `tsquery` output, `read_code` path matching and the
-  language server, and `tsquery` prints control characters in a capture escaped. A rebuild that
-  cannot reopen the index returns its error, and the next call opens it again.
-- Names with control characters print as escapes and a backslash doubled in the index commands;
-  what they print reads back as an argument.
-- The Python reference indexes the engine's file set (excluded extensions,
-  `SCRUTATE_INDEX_EXCLUDE_DIRS`, ripgrep without its configuration), cuts the same chunks, keeps
-  the lower index at the 200-candidate cut and refuses `read()` paths outside the repository; the
-  parity check fails on any difference.
-- One module, `stores.rs`, keeps every store under `.scrutate/` current: callers name a change
-  set, never a store. The MCP and `batch` `reindex` and the bindings' `index()` now also update
-  the text index when there is one, so `grep --index` finds what they indexed; they never make
-  one. The watcher hands its file list to the module as an argument, and damage to either index
-  is recovered by one rule, the language server's included.
-- `tsquery` keys its cache by the content hash the code index records, so a warm run reads no
-  file whose stat the index holds as current. Files an earlier build cached are parsed once more.
-- Every front end runs the same operations through `Repo`: the CLI's index commands, `search`
-  and `find` check the files an answer cites and recover from a damaged index as the MCP server
-  does, the Python bindings call no engine internals, and the language server asks the
-  operations for references, document symbols and the definitions of a name.
+- A backslash in a Unix file name stays in `tsquery`, `read_code` and the language server.
+- Names with control characters print as escapes in the index commands, and read back as an
+  argument.
+- The Python reference indexes the engine's file set and cuts the same chunks; the parity check
+  fails on any difference.
+- One module, `stores.rs`, keeps every store under `.scrutate/` current; `reindex` and the
+  bindings' `index()` now also update the text index when there is one.
+- `tsquery` keys its cache by the code index's content hash, so a warm run reads no unchanged
+  file.
+- Every front end runs the same operations through `Repo`.
 - Breaking, the JSON of the index commands (schema 2): `symbol`, `callers`, `callees`, `refs`,
   `outline`, `deps`, `rdeps`, `similar`, `dupes`, `read`, `search` and the ranked `find` print
   `{"schema": 2, "result": ...}` with `stopped_at` when the answer stopped at its limit; they
-  printed the answer alone. That answer is now under `result`, unchanged, except that
-  `refs --json` and the `grep_code` result lose their own `"schema": 1` to the envelope. A
-  `batch` record gains `"schema": 2` beside `op`, `result` and `stopped_at`, and the MCP
-  structured result says `"schema": 2`. Engine A's JSON Lines, the error records,
-  `tsquery --json`, `check`, `stats`, `languages` and `config` keep their shapes and schema 1.
-  The VS Code and Neovim plugins read `result`.
+  printed the answer alone. `refs --json` and the `grep_code` result lose their own
+  `"schema": 1`; a `batch` record and the MCP structured result say `"schema": 2`. Engine A's
+  JSON Lines, the error records, `tsquery --json`, `check`, `stats`, `languages` and `config`
+  keep schema 1 ([CLI](docs/CLI.md)).
 - `scrutate read PATH [--start N] [--end N]` and `read --symbol NAME`: the MCP `read_code` tool
-  on the command line, with its arguments, checks and answers.
+  on the command line.
 - The MCP `grep_code` tool takes `mode` (`regex`, `literal`, `identifier`, `fuzzy`,
   `fuzzy_regex`, `pcre2`, with `max_edits`), `case` (`sensitive`, `insensitive`, `smart`),
-  `word`, `path` (a file or directory of the repository) and `globs`; it was a case-sensitive
-  regex over every file the index holds.
-- `grep --max-bytes N` (`SCRUTATE_GREP_MAX_BYTES`, `[grep] max_bytes`) bounds a grep's text:
-  whole lines in path order, closing line included, then how many lines are left and the
-  `--offset` that continues; exit code as for the whole answer. Without it the answer stays whole,
-  so pipelines see every line (on this repository `grep -n "fn " .` printed 285 KB; with
-  `--max-bytes 4000`, 4,000 bytes or fewer). The newline ending a paged answer on the command
-  line counts too: an answer that filled its limit exactly printed one byte more (`grep`, `refs`,
-  `callers`, `search`, `tsquery`).
-- `find` lists the lines of its Engine A search in path order, as it said; they came in the
-  order the threads finished.
-- The Python bindings gain `Repo.references`, `Repo.call` (any MCP tool by name, with paging),
-  `undecided` on the callers list, and the files a NUL byte stopped in
+  `word`, `path` and `globs`; it was a case-sensitive regex.
+- `grep --max-bytes N` (`SCRUTATE_GREP_MAX_BYTES`, `[grep] max_bytes`) bounds a grep's text to
+  whole lines with the `--offset` that continues (on this repository `grep -n "fn " .` printed
+  285 KB; with `--max-bytes 4000`, 4,000 bytes or fewer). A paged answer that filled its limit
+  exactly no longer prints one byte more.
+- `find` lists the lines of its Engine A search in path order.
+- The Python bindings gain `Repo.references`, `Repo.call`, `undecided` on the callers list, and
   `GrepIter.stats()["notes"]`.
 
 ### Product
