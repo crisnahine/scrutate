@@ -135,6 +135,16 @@ incompatible index by itself, and that is never breaking.
 - On Unix `.scrutate/` is made with mode 0700, and an existing one is set to it by the next
   write: under umask 022 it was readable by every user, the text of files made private with
   `chmod 600` included ([SECURITY](docs/SECURITY.md)).
+- In Rust, a call on the result of a method of a standard or outside type goes through a table
+  of standard methods: `v.first().unwrap().ok()` on a `Vec<Report>` is `Report.ok`, and
+  `file.metadata().ok()` is external, so `callers` and `dead` decide more
+  ([CLI](docs/CLI.md#refs)).
+- A plain name in a Rust macro's arguments, outside the standard expression macros such as
+  `println!` and `vec!`, is `macro argument` and undecided, no longer tied by name to a
+  definition ([CLI](docs/CLI.md#refs)).
+- A Verilog task call without parentheses (`h;`) and a VHDL entity or component instance are
+  call edges, and `a(i)` of a VHDL signal, variable, constant or port the file declares is not;
+  an index reads its files again ([CLI](docs/CLI.md#engine-b)).
 - The Grep hook reads the `managed-settings.d` drop-ins and lets Grep run wherever managed policy
   it does not read exists, so an administrator's read rule is never bypassed
   ([SECURITY](docs/SECURITY.md)).

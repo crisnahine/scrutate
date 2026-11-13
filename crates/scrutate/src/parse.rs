@@ -7,7 +7,7 @@
 //!    custom language (custom.rs), with the block below them;
 //! 3. overlapping line windows for everything else.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::LazyLock;
 
 use regex::Regex;
@@ -749,14 +749,7 @@ fn callee_name(lang: &str, node: Node, field: &str, seps: &mut Seps) -> Option<S
             return IDENT_START.find(args.trim_start()).map(|m| m.as_str().to_string());
         }
         ("make", "raw_text") => return None,
-        ("verilog", "data_declaration") => {
-            // only the typeless declaration that an ERROR holding the arguments follows is a call
-            let next = target.next_named_sibling();
-            let args = next.filter(|n| n.kind() == "ERROR" && src.get(n.start_byte()) == Some(&b'('));
-            if node.child(0) != Some(target) || target.kind() != "list_of_variable_decl_assignments" || target.named_child_count() != 1 || args.is_none() {
-                return None;
-            }
-        }
+        ("verilog", "data_declaration") if !verilog_typeless_call(node, target, src) => return None,
         _ => {}
     }
     if target.kind() == "method_index_expression" {
@@ -904,8 +897,29 @@ fn sibling_callee(siblings: &[Node], at: usize, src: &[u8]) -> Option<String> {
     Some(txt(src, name.start_byte(), name.end_byte()))
 }
 
-/// A VHDL name with arguments, `f(x)` or `work.pkg.f(x)`, outside a type (`std_logic_vector(7 downto 0)`).
+/// Whether a Verilog declaration with no type, `target` its one name, is a task call: `h(1);`,
+/// where an ERROR holding the arguments follows, or `h;` in a block, since a declaration
+/// without a type needs `var` (IEEE 1800, the rule under `data_declaration`).
+fn verilog_typeless_call(node: Node, target: Node, src: &[u8]) -> bool {
+    let one_name = node.child(0) == Some(target) && target.kind() == "list_of_variable_decl_assignments" && target.named_child_count() == 1;
+    let args = target.next_named_sibling().is_some_and(|n| n.kind() == "ERROR" && src.get(n.start_byte()) == Some(&b'('));
+    let bare = target.next_sibling().is_some_and(|n| n.kind() == ";")
+        && target.named_child(0).is_some_and(|v| v.child_count() == 1)
+        && node.parent().is_some_and(|p| p.kind() == "block_item_declaration");
+    one_name && (args || bare)
+}
+
+/// A VHDL name with arguments, `f(x)` or `work.pkg.f(x)`, outside a type (`std_logic_vector(7 downto 0)`),
+/// or the entity or component an instance names (`u1: entity work.adder port map (...)`).
 fn vhdl_callee(node: Node, parent: Node, src: &[u8]) -> Option<String> {
+    if node.kind() == "component_instantiation_statement" {
+        let unit = node.child_by_field_name("component").or_else(|| {
+            let u = node.children(&mut node.walk()).find(|c| c.kind() == "instantiated_unit")?;
+            u.child_by_field_name("entity").or_else(|| u.child_by_field_name("component"))
+        })?;
+        let id = if unit.kind() == "identifier" { unit } else { unit.named_children(&mut unit.walk()).find(|c| c.kind() == "identifier")? };
+        return Some(txt(src, id.start_byte(), id.end_byte()));
+    }
     if parent.kind() == "subtype_indication" {
         return None;
     }
@@ -917,6 +931,36 @@ fn vhdl_callee(node: Node, parent: Node, src: &[u8]) -> Option<String> {
         _ => return None,
     };
     Some(txt(src, name.start_byte(), name.end_byte()))
+}
+
+/// The signals, variables, constants, files and ports a VHDL file declares: `a(i)` of one is an
+/// element, not a call, as the grammar gives both one shape.
+fn vhdl_objects(root: Node, src: &[u8]) -> HashSet<String> {
+    const OBJECTS: &[&str] = &[
+        "signal_declaration",
+        "variable_declaration",
+        "private_variable_declaration",
+        "constant_declaration",
+        "file_declaration",
+        "interface_declaration",
+        "interface_signal_declaration",
+        "interface_variable_declaration",
+        "interface_constant_declaration",
+        "interface_file_declaration",
+    ];
+    let mut out = HashSet::new();
+    let mut stack = vec![root];
+    while let Some(n) = stack.pop() {
+        if OBJECTS.contains(&n.kind()) {
+            for list in n.named_children(&mut n.walk()).filter(|c| c.kind() == "identifier_list") {
+                out.extend(
+                    list.named_children(&mut list.walk()).filter(|i| i.kind() == "identifier").map(|i| txt(src, i.start_byte(), i.end_byte()).to_lowercase()),
+                );
+            }
+        }
+        stack.extend(n.named_children(&mut n.walk()));
+    }
+    out
 }
 
 /// The part of a definition that names it or lists its parameters and that the grammar parses as
@@ -1782,7 +1826,7 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
     // calls outside every definition, by line: the module chunk or a window takes them
     let mut loose: Vec<(i64, String)> = Vec::new();
     let mut def_stack: Vec<usize> = Vec::new();
-    let mut heads: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut heads: HashSet<usize> = HashSet::new();
     // ancestors in `heads`, so a call need not scan its ancestors
     let mut open_heads = 0usize;
     let mut stack: Vec<(Node, bool, bool, usize)> = vec![(tree.root_node(), false, false, 0)];
@@ -2013,6 +2057,13 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
         if let Some((s, _)) = py_docstring_node(tree.root_node()) {
             mdoc = py_string_content(&txt(src, s.start_byte(), s.end_byte()));
         }
+    }
+    if spec.id == "vhdl" {
+        let objects = vhdl_objects(tree.root_node(), src);
+        for c in &mut chunks {
+            c.calls.retain(|n| !objects.contains(&n.to_lowercase()));
+        }
+        loose.retain(|(_, n)| !objects.contains(&n.to_lowercase()));
     }
     // a tree with errors is not kept: the next parse would likely redo it from scratch anyway
     let keep = (!tree.root_node().has_error() && INCREMENTAL.contains(&spec.id)).then(|| PrevParse { lang: spec.id, source: source.to_string(), tree });
@@ -2462,14 +2513,7 @@ mod tests {
                 return IDENT_START.find(args.split(',').next()?.trim()).map(|m| m.as_str().to_string());
             }
             ("make", "raw_text") => return None,
-            ("verilog", "data_declaration") => {
-                // only the typeless declaration that an ERROR holding the arguments follows is a call
-                let next = target.next_named_sibling();
-                let args = next.filter(|n| n.kind() == "ERROR" && src.get(n.start_byte()) == Some(&b'('));
-                if node.child(0) != Some(target) || target.kind() != "list_of_variable_decl_assignments" || target.named_child_count() != 1 || args.is_none() {
-                    return None;
-                }
-            }
+            ("verilog", "data_declaration") if !verilog_typeless_call(node, target, src) => return None,
             _ => {}
         }
         if target.kind() == "method_index_expression" {

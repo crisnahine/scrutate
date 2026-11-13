@@ -302,7 +302,10 @@ qualified name uses its owner's bare type (`Stack.push` for `impl<T> Stack<T>`),
 segments. The tree walk keeps its own ancestor list and visits children with a cursor, so a
 deeply nested or very wide file indexes in linear time. A call's name is read from both ends of
 its target: the last separator inside it is found by binary search over that separator's offsets
-in the file, gathered once per file, so a call chain costs time linear in its length. Constants
+in the file, gathered once per file, so a call chain costs time linear in its length. VHDL
+gives `f(x)` and the element `a(i)` one shape, so after the walk a VHDL file's calls lose the
+names the file declares as signals, variables, constants, files or ports (one more walk of the
+tree). Constants
 (`const`, `static`, enum members, `#define` values and the like) are chunks of kind `constant`
 with no postings and no vectors: name lookups find them, ranked search never does; Java fields and
 record components are kept the same way, as kind `field`. A JavaScript or
@@ -680,6 +683,18 @@ the top of the walker (functions, local binders, patterns) list the kinds of the
 the walker's scopes together, C, C++ and C# binders among them; PHP does not read them. A file's language comes from `langs::detect` alone: by its name, and by its text where an
 extension is shared (`.h`, `.m`, `.pp`, `.cls`); the parser, the resolver and `names.rs` all ask
 it.
+
+A call on the result of a call from outside the repository asks the rule set for its type
+(`Rules::outside_call`). Rust's (`resolve/rust.rs`) answers from a table of standard methods
+written from their std 1.99.1 signatures (`std_method`), whose answer keeps the type arguments
+it knows (`Option<Report>`, an iterator of `Report`), and else from two rules: a method of an
+outside type that is no standard holder and holds no repository type, and a function of the std
+modules whose functions return types of their own, give an outside type of no known name. A
+caller-picked method or a closure argument gives none. `type_of` keeps each type it finds by
+syntax node, so a chain such as `a.b().c().d()` types each receiver once though resolving a method
+and typing its call both ask for it. A plain name in the arguments of a macro that is not a
+standard expression macro answers `macro argument` where the walk would tie it to a definition;
+`Names` counts that answer as undecided.
 
 One module asks those rules (`names.rs`, `Names`): `callers`, `callees`, resolved `refs`, `deps`,
 `rdeps` and the language server's definition and references requests each open one `Names` per

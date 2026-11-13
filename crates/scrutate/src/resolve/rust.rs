@@ -28,9 +28,18 @@ impl Rules for Rust {
         spelled.strip_prefix("r#") == Some(name)
     }
 
-    fn occurrence(_r: &mut Resolver, _path: &str, fi: &FileInfo, node: Node, _name: &str, _line: i64) -> Option<Resolution> {
+    fn occurrence(r: &mut Resolver, path: &str, fi: &FileInfo, node: Node, name: &str, line: i64) -> Option<Resolution> {
         if node.parent().is_some_and(|p| p.kind() == "token_tree") {
-            return macro_token(node, &fi.src).map(Err);
+            if let Some(why) = macro_token(node, &fi.src) {
+                return Some(Err(why));
+            }
+            // a plain name a macro may use as anything: a local still hides it, a definition is not sure
+            if macro_plain(node, &fi.src) {
+                return Some(match r.resolve_bare(path, fi, Lang::Rust, node, name, line) {
+                    Ok(_) => Err("macro argument"),
+                    other => other,
+                });
+            }
         }
         None
     }
@@ -59,6 +68,35 @@ impl Rules for Rust {
 
     fn unwraps(name: &str) -> bool {
         RUST_DEREF.contains(&name)
+    }
+
+    fn outside_call(r: &mut Resolver, path: &str, fi: &FileInfo, lang: Lang, e: Node, f: Node) -> Option<Ty> {
+        let src = fi.src.as_str();
+        // a closure's result can be any type, so is a type the caller picks (`collect`, `into`)
+        let mut cur = e.walk();
+        let closure = e.child_by_field_name("arguments").is_some_and(|a| a.named_children(&mut cur).any(|x| x.kind() == "closure_expression"));
+        if let Some((obj, m)) = member_parts(f) {
+            let Some(Ty::Foreign(t, args)) = r.type_of(path, fi, lang, obj) else { return None };
+            return std_method(&t, &args, text(m, src)).unwrap_or_else(|| {
+                // a method of a type that holds no repository type gives none, unless the caller picks its type
+                let closed = !STD_GENERIC.contains(&t.as_str()) && args.iter().all(|a| a.as_ref().is_some_and(outside_only));
+                (closed && !closure && !CALLER_TYPED.contains(&text(m, src))).then(|| Ty::Foreign(OUTSIDE.into(), Vec::new()))
+            });
+        }
+        // a function of the std modules whose functions all return a type of their own (`std::fs::read`)
+        let segs: Vec<&str> = match f.kind() {
+            "scoped_identifier" => text(f.child_by_field_name("path")?, src).split("::").map(str::trim).collect(),
+            "identifier" => vec![text(f, src)],
+            _ => return None,
+        };
+        let full: Vec<&str> = match fi.bindings.iter().find(|b| b.local == segs[0]) {
+            // `use std::fs;` binds `fs` to `std::fs`, `use std::fs::read;` binds `read` in `std::fs`
+            Some(b) if f.kind() == "identifier" => b.module.split("::").collect(),
+            Some(b) => b.module.split("::").chain(b.item.as_deref()).chain(segs[1..].iter().copied()).filter(|s| !s.is_empty()).collect(),
+            None => segs,
+        };
+        let concrete = full.len() == 2 && matches!(full[0], "std" | "core") && STD_CONCRETE_MODULES.contains(&full[1]);
+        (concrete && !closure).then(|| Ty::Foreign(OUTSIDE.into(), Vec::new()))
     }
 
     // impl blocks may live in another file of the crate
@@ -109,6 +147,158 @@ impl Rules for Rust {
 
 /// Standard Rust types whose methods a call reaches through `Deref` to the type they hold.
 const RUST_DEREF: &[&str] = &["Box", "Rc", "Arc", "Ref", "RefMut", "Cow", "MutexGuard", "RwLockReadGuard", "RwLockWriteGuard", "Pin", "ManuallyDrop"];
+
+/// Standard types that hold values of other types, so a method of one may return a repository type.
+const STD_GENERIC: &[&str] = &[
+    "Option",
+    "Result",
+    "Vec",
+    "VecDeque",
+    "array_type",
+    "HashMap",
+    "BTreeMap",
+    "HashSet",
+    "BTreeSet",
+    "BinaryHeap",
+    ITER,
+    "Box",
+    "Rc",
+    "Arc",
+    "Weak",
+    "Cell",
+    "RefCell",
+    "Mutex",
+    "RwLock",
+    "Cow",
+    "OnceCell",
+    "OnceLock",
+    "LazyCell",
+    "LazyLock",
+    "Pin",
+    "ManuallyDrop",
+    "PhantomData",
+    "Reverse",
+];
+
+/// Methods whose return type the caller picks by inference, whatever the receiver.
+const CALLER_TYPED: &[&str] = &[
+    "into",
+    "try_into",
+    "parse",
+    "collect",
+    "sum",
+    "product",
+    "get",
+    "as_ref",
+    "as_mut",
+    "borrow",
+    "borrow_mut",
+    "deref",
+    "deref_mut",
+    "downcast",
+    "downcast_ref",
+    "downcast_mut",
+];
+
+/// The std modules none of whose functions returns a type its caller picks (std 1.99.1).
+const STD_CONCRETE_MODULES: &[&str] = &["env", "fs", "io", "path", "process"];
+
+/// The type an iterator over values of its one argument stands for.
+const ITER: &str = "Iterator";
+
+/// Whether a value of type `t` holds no repository type.
+fn outside_only(t: &Ty) -> bool {
+    match t {
+        Ty::Local(_) => false,
+        Ty::Foreign(_, args) => args.iter().all(|a| a.as_ref().is_some_and(outside_only)),
+    }
+}
+
+/// What a method of a standard type returns, from its signature in the std documentation
+/// (doc.rust-lang.org/1.99.1/std: `Option`, `Result`, `Vec` and slices, `HashMap`, `HashSet`,
+/// `String` and `str`, `Iterator`). None when the method is not listed; Some(None) when its
+/// type is the receiver's type argument and that is not known.
+fn std_method(t: &str, args: &[Option<Ty>], m: &str) -> Option<Option<Ty>> {
+    let arg = |i: usize| args.get(i).cloned().flatten();
+    let of = |n: &str, a: Vec<Option<Ty>>| Some(Ty::Foreign(n.to_string(), a));
+    let plain = |n: &str| of(n, Vec::new());
+    let same = || of(t, args.to_vec());
+    if m == "clone" {
+        return Some(same());
+    }
+    let ret = match t {
+        "Option" => match m {
+            "unwrap" | "expect" | "unwrap_or" | "unwrap_or_default" | "unwrap_or_else" | "unwrap_unchecked" | "insert" | "get_or_insert"
+            | "get_or_insert_with" => arg(0),
+            "is_some" | "is_none" | "is_some_and" | "is_none_or" => plain("bool"),
+            "as_ref" | "as_mut" | "as_deref" | "as_deref_mut" | "cloned" | "copied" | "take" | "take_if" | "or" | "or_else" | "xor" | "filter" | "inspect"
+            | "replace" => same(),
+            "ok_or" | "ok_or_else" => of("Result", vec![arg(0), None]),
+            "iter" | "iter_mut" | "into_iter" => of(ITER, vec![arg(0)]),
+            _ => return None,
+        },
+        "Result" => match m {
+            "unwrap" | "expect" | "unwrap_or" | "unwrap_or_default" | "unwrap_or_else" | "unwrap_unchecked" => arg(0),
+            "unwrap_err" | "expect_err" => arg(1),
+            "ok" => of("Option", vec![arg(0)]),
+            "err" => of("Option", vec![arg(1)]),
+            "is_ok" | "is_err" | "is_ok_and" | "is_err_and" => plain("bool"),
+            "as_ref" | "as_mut" | "inspect" | "inspect_err" => same(),
+            "map_err" => of("Result", vec![arg(0), None]),
+            "iter" | "into_iter" => of(ITER, vec![arg(0)]),
+            _ => return None,
+        },
+        "Vec" | "VecDeque" | "array_type" => match m {
+            "len" | "capacity" => plain("usize"),
+            "is_empty" | "contains" | "starts_with" | "ends_with" => plain("bool"),
+            "first" | "last" | "first_mut" | "last_mut" | "get_mut" | "pop" | "pop_front" | "pop_back" | "front" | "back" => of("Option", vec![arg(0)]),
+            "iter" | "iter_mut" | "into_iter" | "drain" => of(ITER, vec![arg(0)]),
+            "remove" | "swap_remove" => arg(0),
+            "to_vec" => of("Vec", vec![arg(0)]),
+            _ => return None,
+        },
+        "HashMap" | "BTreeMap" => match m {
+            "get_mut" | "remove" | "insert" => of("Option", vec![arg(1)]),
+            "contains_key" | "is_empty" => plain("bool"),
+            "len" => plain("usize"),
+            "keys" | "into_keys" => of(ITER, vec![arg(0)]),
+            "values" | "values_mut" | "into_values" => of(ITER, vec![arg(1)]),
+            _ => return None,
+        },
+        "HashSet" | "BTreeSet" => match m {
+            "contains" | "insert" | "remove" | "is_empty" => plain("bool"),
+            "len" => plain("usize"),
+            "iter" | "into_iter" | "drain" => of(ITER, vec![arg(0)]),
+            "take" => of("Option", vec![arg(0)]),
+            _ => return None,
+        },
+        "String" | "str" => match m {
+            "len" | "capacity" => plain("usize"),
+            "is_empty" | "starts_with" | "ends_with" | "contains" | "is_char_boundary" | "eq_ignore_ascii_case" | "is_ascii" => plain("bool"),
+            "trim" | "trim_start" | "trim_end" | "trim_matches" | "trim_start_matches" | "trim_end_matches" | "as_str" | "to_string" | "to_owned"
+            | "to_lowercase" | "to_uppercase" | "to_ascii_lowercase" | "to_ascii_uppercase" | "replace" | "replacen" | "repeat" => plain("String"),
+            "strip_prefix" | "strip_suffix" => of("Option", vec![plain("String")]),
+            "find" | "rfind" => of("Option", vec![plain("usize")]),
+            "split" | "rsplit" | "splitn" | "rsplitn" | "split_whitespace" | "split_terminator" | "lines" | "matches" => of(ITER, vec![plain("String")]),
+            "chars" => of(ITER, vec![plain("char")]),
+            "bytes" => of(ITER, vec![plain("u8")]),
+            _ => return None,
+        },
+        ITER => match m {
+            "next" | "next_back" | "last" | "nth" | "min" | "max" | "min_by" | "max_by" | "min_by_key" | "max_by_key" | "find" | "reduce" => {
+                of("Option", vec![arg(0)])
+            }
+            "count" => plain("usize"),
+            "any" | "all" => plain("bool"),
+            "position" | "rposition" => of("Option", vec![plain("usize")]),
+            "rev" | "skip" | "take" | "filter" | "peekable" | "fuse" | "step_by" | "cycle" | "inspect" | "skip_while" | "take_while" | "cloned" | "copied"
+            | "by_ref" => same(),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    Some(ret)
+}
 
 fn rust_push(full: &str, local: &str, sites: Vec<usize>, out: &mut Vec<Binding>) {
     let (module, item) = full.rsplit_once("::").unwrap_or(("", full));
@@ -356,6 +546,56 @@ fn macro_token(n: Node, src: &str) -> Option<&'static str> {
     (braced && next.is_some_and(|x| x.kind() == ":")).then_some("field or key")
 }
 
+/// The standard macros whose arguments are expressions (std 1.99.1, doc.rust-lang.org/1.99.1/std/#macros):
+/// a plain name in them is a value, read as outside a macro.
+const EXPRESSION_MACROS: &[&str] = &[
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "dbg",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "eprint",
+    "eprintln",
+    "format",
+    "format_args",
+    "panic",
+    "print",
+    "println",
+    "todo",
+    "unimplemented",
+    "unreachable",
+    "vec",
+    "write",
+    "writeln",
+];
+
+/// Whether `n` is a plain name in the arguments of a macro invocation that may take it as
+/// anything: not a call (`f(`), a path (`a::`, `::b`) or a nested macro (`m!`), and not in a
+/// standard macro that takes expressions. Names in an attribute or a `macro_rules!` body are not.
+fn macro_plain(n: Node, src: &str) -> bool {
+    let next = n.next_sibling();
+    let call = next.is_some_and(|x| matches!(x.kind(), "::" | "!") || (x.kind() == "token_tree" && text(x, src).starts_with('(')));
+    if call || n.prev_sibling().is_some_and(|p| p.kind() == "::") {
+        return false;
+    }
+    // the innermost macro: a nested `m!(..)` is tokens too, named by the identifier before its `!`
+    let mut tt = n.parent();
+    while let Some(t) = tt.filter(|t| t.kind() == "token_tree") {
+        let named = |m: Node| text(m, src).rsplit("::").next().is_some_and(|m| !EXPRESSION_MACROS.contains(&m));
+        let bang = t.prev_sibling().filter(|b| b.kind() == "!");
+        if let Some(m) = bang.and_then(|b| b.prev_sibling()).filter(|m| m.kind() == "identifier") {
+            return named(m);
+        }
+        match t.parent() {
+            Some(p) if p.kind() == "macro_invocation" => return p.child_by_field_name("macro").is_some_and(named),
+            p => tt = p,
+        }
+    }
+    false
+}
+
 /// Whether a name in a Rust macro argument is bound in the tokens before it: a parameter of a
 /// closure (`|(a, name)| ..`) or a `let`, in its own token tree or one around it.
 fn macro_local(n: Node, src: &str) -> bool {
@@ -383,6 +623,14 @@ fn macro_local(n: Node, src: &str) -> bool {
                 "let" => {
                     let bound = i + 1 + usize::from(kids.get(i + 1).is_some_and(|m| m.kind() == "mut"));
                     if bound == at || (bound < at && binds(&kids[bound..bound + 1])) {
+                        return true;
+                    }
+                }
+                // `for (a, name) in ..`: the pattern before `in`
+                // the grammar may give `for` and `in` in tokens as identifiers
+                _ if text(*k, src) == "for" => {
+                    let end = kids[i..].iter().position(|k| text(*k, src) == "in").map_or(i + 1, |p| i + p);
+                    if at < end || binds(&kids[i + 1..end]) {
                         return true;
                     }
                 }

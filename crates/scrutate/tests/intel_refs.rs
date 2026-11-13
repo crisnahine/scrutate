@@ -1443,11 +1443,12 @@ fn callers_follow_the_type_a_call_returns() {
     let (code, out) = r.run(&["callers", "Report.ok"]);
     assert_eq!(code, 0, "{out}");
     let names: Vec<&str> = out.lines().filter_map(|l| l.split("] ").nth(1)).collect();
-    assert_eq!(names, ["b", "c", "d"], "{out}");
-    assert!(out.contains("(1 of these call a definition of that name"), "{out}");
+    // `file.metadata().ok()` is a method of std's Result on a type written out: external
+    assert_eq!(names, ["b", "c"], "{out}");
+    assert!(!out.contains("of these call a definition of that name"), "{out}");
     let (_, other) = r.run(&["callers", "Other.ok"]);
     let names: Vec<&str> = other.lines().filter_map(|l| l.split("] ").nth(1)).collect();
-    assert_eq!(names, ["d"], "{other}");
+    assert!(names.is_empty(), "{other}");
 }
 
 #[test]

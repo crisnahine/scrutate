@@ -199,6 +199,11 @@ trait Rules {
         None
     }
 
+    /// The type of call `e` of `f`, a function or a method from outside the repository.
+    fn outside_call(_r: &mut Resolver, _path: &str, _fi: &FileInfo, _lang: Lang, _e: Node, _f: Node) -> Option<Ty> {
+        None
+    }
+
     /// Whether a type from outside named `name` stands for the type it holds (`Box<T>`, `Optional[T]`).
     fn unwraps(_name: &str) -> bool {
         false
@@ -373,6 +378,8 @@ pub struct Resolver<'a> {
     /// by scope node id, what was looked for and name: the byte ranges found, so a use in a big
     /// function does not walk all of it
     found: HashMap<(usize, &'static str, String), Spans>,
+    /// by node id: the type `type_of` found for it
+    tys: HashMap<usize, Ty>,
 }
 
 type Spans = Rc<Vec<(usize, usize)>>;
@@ -682,6 +689,10 @@ fn declared(b: Node) -> (Option<Node>, Option<Node>) {
     (p.child_by_field_name("type"), value)
 }
 
+/// The name of a type from outside that holds no repository type and whose name is not known:
+/// what a method of such a type returns (`file.metadata()`).
+const OUTSIDE: &str = "?";
+
 /// What the resolver knows of the type of a value.
 #[derive(Clone, Debug)]
 enum Ty {
@@ -766,6 +777,7 @@ impl<'a> Resolver<'a> {
             cs_bases: HashMap::new(),
             orders: HashMap::new(),
             found: HashMap::new(),
+            tys: HashMap::new(),
         })
     }
 
@@ -789,6 +801,7 @@ impl<'a> Resolver<'a> {
         self.cache.remove(path);
         // node ids name nodes of trees still loaded
         self.found.clear();
+        self.tys.clear();
     }
 
     /// `find()`, run once per scope, `what` and name.
@@ -1171,7 +1184,15 @@ impl<'a> Resolver<'a> {
     /// annotation or value, a call's declared return type, a field's declared type, a
     /// constructor. None when they do not.
     fn type_of(&mut self, path: &str, fi: &FileInfo, lang: Lang, e: Node) -> Option<Ty> {
-        self.nested(|s| s.type_of_inner(path, fi, lang, e))
+        // a chain asks for the type of its receiver once to resolve the method and once to type the call
+        if let Some(t) = self.tys.get(&e.id()) {
+            return Some(t.clone());
+        }
+        let t = self.nested(|s| s.type_of_inner(path, fi, lang, e));
+        if let Some(t) = &t {
+            self.tys.insert(e.id(), t.clone());
+        }
+        t
     }
 
     /// `f` one level deeper in the type walks, or None past 32 levels: the walks recurse on the
@@ -1206,6 +1227,7 @@ impl<'a> Resolver<'a> {
             // Rust `x?`: the value inside a `Result` or an `Option`
             "try_expression" => match self.type_of(path, fi, lang, e.named_child(0)?)? {
                 Ty::Foreign(n, args) if n == "Result" || n == "Option" => args.into_iter().next().flatten(),
+                Ty::Foreign(n, _) if n == OUTSIDE => Some(Ty::Foreign(n, Vec::new())),
                 _ => None,
             },
             "new_expression" => self.named_ty(path, fi, lang, e.child_by_field_name("constructor")?),
@@ -1233,6 +1255,7 @@ impl<'a> Resolver<'a> {
                     Err(_) if f.kind() == "scoped_identifier" && matches!(text(leaf, src), "new" | "default" | "with_capacity" | "from") => {
                         self.named_ty(path, fi, lang, f.child_by_field_name("path")?)
                     }
+                    Err("external") => rules!(lang, R => R::outside_call(self, path, fi, lang, e, f)),
                     Err(_) => None,
                 }
             }
@@ -1491,7 +1514,8 @@ impl<'a> Resolver<'a> {
                 for c in t.named_children(&mut cur).filter(|c| c.id() != base.id()) {
                     let mut c2 = c.walk();
                     let list: Vec<Node> = if matches!(c.kind(), "type_arguments" | "type_parameter") { c.named_children(&mut c2).collect() } else { vec![c] };
-                    for a in list {
+                    // a Rust lifetime is no type: `Cow<'a, str>` holds a `str`
+                    for a in list.into_iter().filter(|a| a.kind() != "lifetime") {
                         args.push(self.ty_of_type(path, fi, lang, a));
                     }
                 }
@@ -3077,7 +3101,7 @@ mod tests {
     #[test]
     fn a_call_is_typed_by_the_return_type_its_callee_declares() {
         let report = "pub struct Report;\n\nimpl Report {\n    pub fn load() -> Report {\n        Report\n    }\n    pub fn new() -> Self {\n        Report\n    }\n    pub fn ok(&self) -> bool {\n        true\n    }\n}\n\npub struct Builder;\n\nimpl Builder {\n    pub fn summary(&self) -> Report {\n        Report\n    }\n}\n\npub fn make() -> Builder {\n    Builder\n}\n\npub fn mystery(y: i32) -> Option<i32> {\n    Some(y)\n}\n\npub fn pick<T>(x: T) -> T {\n    x\n}\n\npub fn find() -> Option<Report> {\n    None\n}\n";
-        let user = "use crate::report::{find, make, mystery, pick, Report};\n\npub fn a(y: i32) -> bool {\n    mystery(y).ok().is_some()\n}\n\npub fn b() -> bool {\n    Report::load().ok() && Report::new().ok() && make().summary().ok()\n}\n\npub fn c(file: &std::fs::File, v: Vec<Report>) -> bool {\n    file.metadata().ok().is_some() && v.first().unwrap().ok() && pick(Report).ok() && find().unwrap().ok()\n}\n";
+        let user = "use crate::report::{find, make, mystery, pick, Report};\n\npub fn a(y: i32) -> bool {\n    mystery(y).ok().is_some()\n}\n\npub fn b() -> bool {\n    Report::load().ok() && Report::new().ok() && make().summary().ok()\n}\n\npub fn c(file: &std::fs::File, v: Vec<Report>) -> bool {\n    file.metadata().ok().is_some() && v.first().unwrap().ok() && pick(Report).ok() && find().unwrap().ok()\n}\n\npub fn d(v: &[Report], w: Vec<Report>, s: &str) -> bool {\n    std::fs::metadata(s).ok().is_some() && w.iter().map(|r| r).next().unwrap().ok() && w.iter().rev().next().unwrap().ok() && v.first().unwrap().ok() && s.trim().ok() && s.parse().unwrap().ok()\n}\n";
         let rs = [("lib.rs", "mod report;\nmod user;\n"), ("report.rs", report), ("user.rs", user)];
         let ok = "report.rs Report.ok";
         resolver_case(
@@ -3088,11 +3112,20 @@ mod tests {
                 ("user.rs", "Report::load().ok()", "ok", ok),
                 ("user.rs", "Report::new().ok()", "ok", ok),
                 ("user.rs", "make().summary().ok()", "ok", ok),
-                // a method of an outside type may return a repository type: `first` of a `Vec<Report>`
-                ("user.rs", "file.metadata().ok()", "ok", "receiver"),
-                ("user.rs", "v.first().unwrap().ok()", "ok", "receiver"),
+                // a method of an outside type that holds no repository type returns none
+                ("user.rs", "file.metadata().ok()", "ok", "external"),
+                ("user.rs", "std::fs::metadata(s).ok()", "ok", "external"),
+                ("user.rs", "s.trim().ok()", "ok", "external"),
+                // the std methods say where a repository type held by a std type goes
+                ("user.rs", "&& v.first().unwrap().ok() && pick", "ok", ok),
+                ("user.rs", "find().unwrap().ok()", "ok", ok),
+                ("user.rs", "rev().next().unwrap().ok()", "ok", ok),
+                // a closure or the caller picks the type: undecided
+                ("user.rs", "map(|r| r).next().unwrap().ok()", "ok", "receiver"),
+                ("user.rs", "s.parse().unwrap().ok()", "ok", "receiver"),
                 ("user.rs", "pick(Report).ok()", "ok", "receiver"),
-                ("user.rs", "find().unwrap().ok()", "ok", "receiver"),
+                // a slice's elements are not known
+                ("user.rs", "&& v.first().unwrap().ok() && s", "ok", "receiver"),
             ],
         );
         // a trait of the repository may give an outside type the method
@@ -3188,6 +3221,28 @@ mod tests {
                 ("src/lib.rs", "{ text: 1 }", "text", "field or key"),
                 ("src/lib.rs", "\"{} {}\", text()", "text", "src/lib.rs text"),
                 ("src/lib.rs", "crate::text()", "text", "src/lib.rs text"),
+            ],
+        );
+    }
+
+    #[test]
+    fn a_plain_name_in_a_macro_that_may_take_it_as_anything_is_undecided() {
+        let rs = "pub fn text() -> u8 {\n    1\n}\n\npub fn run() {\n    let n = 2;\n    mymac!(text, 3);\n    mymac!(text(3));\n    mymac!(n, 4);\n    println!(\"{}\", text);\n    std::println!(\"{} \", text);\n    vec![text; 2];\n    assert!(mymac!(text, 5));\n    stringify!(text);\n    mymac!(crate::text);\n    mymac!(for text in 0..2 { drop(text); });\n}\n";
+        resolver_case(
+            "macro_plain",
+            &[("src/lib.rs", rs), ("Cargo.toml", "[package]\nname = \"demo\"\n")],
+            &[
+                ("src/lib.rs", "mymac!(text, 3)", "text", "macro argument"),
+                ("src/lib.rs", "mymac!(text(3))", "text", "src/lib.rs text"),
+                ("src/lib.rs", "mymac!(n, 4)", "n", "local variable"),
+                ("src/lib.rs", "\"{}\", text)", "text", "src/lib.rs text"),
+                ("src/lib.rs", "\"{} \", text)", "text", "src/lib.rs text"),
+                ("src/lib.rs", "vec![text; 2]", "text", "src/lib.rs text"),
+                ("src/lib.rs", "mymac!(text, 5)", "text", "macro argument"),
+                ("src/lib.rs", "stringify!(text)", "text", "macro argument"),
+                ("src/lib.rs", "crate::text);", "text", "src/lib.rs text"),
+                ("src/lib.rs", "for text in", "text", "local variable"),
+                ("src/lib.rs", "drop(text)", "text", "local variable"),
             ],
         );
     }

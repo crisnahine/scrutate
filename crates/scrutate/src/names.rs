@@ -149,7 +149,7 @@ impl<'a> Names<'a> {
                     Err(why) => {
                         seen = true;
                         let unread = matches!(why, "no grammar" | crate::resolve::UNREAD | crate::resolve::TOO_DEEP);
-                        if unread || matches!(why, "receiver" | "not found") {
+                        if unread || matches!(why, "receiver" | "not found" | "macro argument") {
                             unsure = true;
                             unsure_free |= !(methods && line[..col].trim_end().ends_with('.'));
                             let receiver = [".", "->", "::"].iter().any(|r| line[..col].trim_end().ends_with(r));

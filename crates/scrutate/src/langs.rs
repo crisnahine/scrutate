@@ -1677,8 +1677,8 @@ const EXTRA: &[LangSpec] = &[
             d("task_declaration", "function", &[NameRule::Custom(verilog_fn_name)]),
             d("class_declaration", "class", &[NameRule::ChildKind(&["class_identifier", "simple_identifier"])]),
         ],
-        // a bare task call `h(1);` parses as a typeless declaration of `h` followed by an ERROR, and
-        // `h(1, 2);` as a checker instance without a name
+        // a bare task call `h(1);` or `h;` parses as a typeless declaration of `h`, and `h(1, 2);`
+        // as a checker instance without a name
         calls: &[c("tf_call", ""), c("module_instantiation", "simple_identifier"), c("checker_instantiation", "checker_identifier"), c("data_declaration", "")],
         docstring: false,
         wrappers: &[],
@@ -1698,8 +1698,8 @@ const EXTRA: &[LangSpec] = &[
             d("package_declaration", "module", &[NameRule::ChildKind(&["identifier"])]),
             d("package_definition", "module", &[NameRule::Field("package")]),
         ],
-        // `f(x)` and `a(i)` are one shape in VHDL: an indexed signal is recorded as a call too
-        calls: &[c("name", "")],
+        // `f(x)` and `a(i)` are one shape in VHDL: parse.rs drops the names the file declares as objects
+        calls: &[c("name", ""), c("component_instantiation_statement", "")],
         docstring: false,
         wrappers: &[],
         outer: &[],

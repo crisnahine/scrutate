@@ -152,12 +152,16 @@ docs/RELEASING.md, public (done), tag `v0.1.0`.
   or modification time keeps its chunks until `index --force` or `reindex` with `force` (Unix
   compares that time too). `MetadataExt::change_time` is unstable in Rust 1.99.1 (feature
   `windows_change_time`); another way needs an open handle per file on every scan.
-- A method call on a call's result resolves through the callee's declared return type. It stays
-  undecided when the callee declares none, returns a type parameter or an outside type holding a
-  repository type, or is a method of an outside type (`file.metadata().ok()`).
-- In `refs`, a plain name in a Rust macro's arguments that the token rules do not read as a field,
-  field name or local is tied by name to a definition: the `text` in `mymac!(text, 3)` counts as a
-  reference to a function `text`, whatever the macro does.
+- A method call on a call's result resolves through the callee's declared return type, and in
+  Rust through a table of standard methods ([CLI](CLI.md#refs)). It stays undecided when the
+  callee declares no type, returns a type parameter, takes a closure or lets the caller pick its
+  type (`collect`, `into`), or is a method of an outside type the table does not list that holds
+  a repository type; and in every language but Rust, when the callee is a method of an outside
+  type. A value of an outside type written without the type arguments that hold a repository
+  type (`let c = Cache::new()`) is taken to hold none. A precise answer needs a type checker.
+- In `refs`, a plain name in the arguments of a Rust macro other than the standard expression
+  macros is `macro argument`, undecided: only expanding the macro says what `text` in
+  `mymac!(text, 3)` is.
 - C and C++: `refs` reads no include paths of the build (`-I`, `compile_commands.json`): an
   include is found beside the including file or by its path suffix. A call on a value
   (`s.area()`, `p->next()`) stays undecided: the value's type is not followed
@@ -165,9 +169,9 @@ docs/RELEASING.md, public (done), tag `v0.1.0`.
 - `watch` takes the `notify` crate at 9.0.0-rc.8, pinned, the first release that reports an
   overflowed Windows buffer; 9.0.0 itself is not out (crates.io on 2026-11-13). Moving to it is a
   version bump once it is.
-- Call forms the grammars do not tell apart: a Verilog task call without parentheses (`h;`) or on
-  a member (`obj.m(1);`) records no call edge, a VHDL indexed signal `a(i)` is recorded as a call,
-  and an assembly call under a local label counts for that label and for the global label above.
+- Call forms the grammars do not tell apart: a Verilog task call on a member (`obj.m(1);`), which
+  tree-sitter-verilog 1.0.3 parses as an error, records no call edge, and a VHDL indexed signal
+  `a(i)` declared in another file than the use is recorded as a call.
 - Windows and Intel macOS are tested on GitHub's runners only ([Install](INSTALL.md) has the
   runners and the five Unix-only tests): no release archive is built for them, installed on a
   machine or benchmarked there.

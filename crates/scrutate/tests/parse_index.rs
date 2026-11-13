@@ -1261,10 +1261,20 @@ fn calls_are_recorded_in_the_optional_grammars() {
         ("m.vhd", VHDL, "pkg.p", &["q"]),
         ("m.vhd", VHDL, "rtl.h", &["f"]),
         ("m.vhd", VHDL, "rtl", &["h", "p"]),
+        ("m.sv", "module m;\n  task t;\n    h;\n  endtask\n  initial begin\n    int y;\n    h3;\n    h4(1);\n  end\nendmodule\n", "m.t", &["h"]),
+        ("m.sv", "module m;\n  task t;\n    h;\n  endtask\n  initial begin\n    int y;\n    h3;\n    h4(1);\n  end\nendmodule\n", "m", &["h3", "h4"]),
+        ("i.vhd", VHDL_INSTANCES, "rtl", &["adder", "adder2", "adder3", "h"]),
     ];
     let wrong = wrong_calls(cases);
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
+
+// an instance records its entity or component; `a(1)` of the signal `a` is no call
+#[cfg(feature = "extra-langs")]
+const VHDL_INSTANCES: &str = "architecture rtl of top is\n  signal a : std_logic_vector(7 downto 0);\n  signal s : integer;\n\
+  function h(x : integer) return integer is\n  begin\n    return x;\n  end function;\nbegin\n\
+  u1: entity work.adder port map (x => a(1), y => s);\n  u2: adder2 port map (x => A(2));\n\
+  u3: component adder3 port map (x => s);\n  process\n  begin\n    s <= h(2) + a(3);\n  end process;\nend architecture;\n";
 
 #[cfg(feature = "extra-langs")]
 const VHDL: &str = "package pkg is\n  function f(x : integer) return integer;\nend package;\n\npackage body pkg is\n\

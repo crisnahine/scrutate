@@ -318,3 +318,27 @@ fn the_c_cpp_and_csharp_samples_resolve() {
         assert_eq!(v["unresolved"], serde_json::json!([]), "{name}: {v}");
     }
 }
+
+#[test]
+fn a_std_method_on_a_call_result_is_external_and_a_macro_argument_is_undecided() {
+    let r = Repo::new(
+        "std_chain",
+        &[
+            ("Cargo.toml", "[package]\nname = \"rep\"\nversion = \"0.1.0\"\n"),
+            ("src/lib.rs", "pub mod report;\npub mod meta;\npub mod user;\n"),
+            ("src/report.rs", "pub struct Report;\n\nimpl Report {\n    pub fn ok(&self) -> bool {\n        true\n    }\n}\n\npub fn text() -> u8 {\n    1\n}\n"),
+            ("src/meta.rs", "pub fn meta(file: &std::fs::File) -> bool {\n    file.metadata().ok().is_some()\n}\n"),
+            (
+                "src/user.rs",
+                "use crate::report::{text, Report};\n\npub fn user(v: Vec<Report>) -> bool {\n    v.first().unwrap().ok()\n}\n\npub fn args() {\n    mymac!(text, 3);\n    println!(\"{}\", text);\n}\n",
+            ),
+        ],
+    );
+    let v = r.json(&["callers", "Report.ok", "--json"]);
+    let names: Vec<&str> = v.as_array().unwrap().iter().map(|h| h["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["user"], "{v}");
+    let v = r.json(&["refs", "text", "--json"]);
+    let why: Vec<(u64, &str)> = v["unresolved"].as_array().unwrap().iter().map(|u| (u["line"].as_u64().unwrap(), u["reason"].as_str().unwrap())).collect();
+    assert_eq!(why, [(8, "macro argument")], "{v}");
+    assert_eq!(r.resolved("text").get(&("src/user.rs".to_string(), 9)).map(String::as_str), Some("src/report.rs"));
+}
