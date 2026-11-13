@@ -325,7 +325,7 @@ pub(super) enum Outcome {
     /// nothing reported: search the source as one stream
     Stream,
     /// nothing reported: the source has no line breaks to split at and no NUL byte, so here it is
-    /// in one buffer of its exact size (a stream would grow its buffer by doubling, copying each time)
+    /// in one buffer of its exact size (a stream would triple its buffer, copying each time)
     Buffer(Vec<u8>),
 }
 
