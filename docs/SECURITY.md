@@ -188,8 +188,10 @@ Edge cases:
 - On another file system: the copy is a copy (a clone on APFS).
 - Being written at that moment: the reads see the last commit and never half of one. `VACUUM INTO`
   reads in one transaction, and the lookups of an update read in one snapshot that lasts the
-  update. A segment the snapshot lists that the main checkout's compaction removes meanwhile makes
-  the seed fail with nothing left behind, and the index is built as usual; an artifact whose
+  update. A segment the snapshot lists that the main checkout removes meanwhile (it removes a
+  segment it replaced right after its commit, so a copy can find it gone or half gone) makes the
+  seed fail with nothing left behind, because every copied segment must open before the copy is
+  taken, and the index is built as usual; an artifact whose
   vectors were in such a segment gets vectors made from its word counts. The main checkout's
   writer is never blocked: a reader of a WAL database does not stop a writer, it holds back the
   checkpoint until the read ends.

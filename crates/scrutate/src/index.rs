@@ -549,6 +549,7 @@ fn seed(root: &Path, dir: &Path, sig: &str) -> bool {
     let nanos = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
     let tag = format!("seed-{}-{nanos}", std::process::id());
     let tmp = dir.join(format!("index.db.{tag}"));
+    let mut made = Vec::new();
     let copied = (|| -> Result<()> {
         let db = Connection::open_with_flags(&src, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         db.busy_timeout(Duration::from_secs(1))?;
@@ -572,26 +573,39 @@ fn seed(root: &Path, dir: &Path, sig: &str) -> bool {
             if !segment_name(n) {
                 bail!("a segment name this program does not write");
             }
-            copy_segment(&main_dir.join("seg").join(n), &seg_dir, n, &tag)?;
+            if copy_segment(&main_dir.join("seg").join(n), &seg_dir, n, &tag)? {
+                made.push(seg_dir.join(n));
+            }
+        }
+        // the main checkout removes a segment it replaced right after its commit, so one the
+        // snapshot lists may be gone, or half gone while it was copied: every one must open
+        for n in &names {
+            crate::lex::Segment::open(&seg_dir.join(n))?;
         }
         // another process that made one first wins
         std::fs::hard_link(&tmp, dir.join("index.db"))?;
         Ok(())
     })();
     let _ = std::fs::remove_file(&tmp);
+    if copied.is_err() {
+        for d in &made {
+            let _ = std::fs::remove_dir_all(d);
+        }
+    }
     copied.is_ok()
 }
 
 /// The files of the segment directory `from` copied into `seg_dir/name` (a copy of the same
-/// name that is there already is the same segment: names are never reused).
-fn copy_segment(from: &Path, seg_dir: &Path, name: &str, tag: &str) -> Result<()> {
+/// name that is there already is the same segment: names are never reused); true when this call
+/// made it.
+fn copy_segment(from: &Path, seg_dir: &Path, name: &str, tag: &str) -> Result<bool> {
     let dest = seg_dir.join(name);
     if dest.exists() {
-        return Ok(());
+        return Ok(false);
     }
     let tmp = seg_dir.join(format!("{name}.{tag}"));
     std::fs::create_dir(&tmp)?;
-    let copied = (|| -> Result<()> {
+    let copied = (|| -> Result<bool> {
         for e in std::fs::read_dir(from)? {
             let e = e?;
             if !e.file_type()?.is_file() {
@@ -600,12 +614,12 @@ fn copy_segment(from: &Path, seg_dir: &Path, name: &str, tag: &str) -> Result<()
             std::fs::copy(e.path(), tmp.join(e.file_name()))?;
         }
         std::fs::rename(&tmp, &dest)?;
-        Ok(())
+        Ok(true)
     })();
     if copied.is_err() {
         let _ = std::fs::remove_dir_all(&tmp);
     }
-    copied.or_else(|e| if dest.is_dir() { Ok(()) } else { Err(e) })
+    copied.or_else(|e| if dest.is_dir() { Ok(false) } else { Err(e) })
 }
 
 /// The hash of a file's bytes the index records for it.

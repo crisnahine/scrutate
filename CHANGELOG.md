@@ -198,6 +198,10 @@ First release.
   line 18446744073709551615.
 
 ### Engine B: code intelligence
+- A linked work tree no longer takes a segment of its main checkout that was removed, or half
+  removed, while it was copied: every copied segment must open before the copy is used, and
+  otherwise the index is built as usual. Seen once on a Linux runner, where an update reported
+  success over an index that named a segment it did not hold.
 - `callers` lists its callers by path and line after those outside tests, where it followed the
   order the index had stored the files in: an index brought up to date through renames answered
   63 of 120 `callers` questions on three trees differently from a fresh index of the same tree.

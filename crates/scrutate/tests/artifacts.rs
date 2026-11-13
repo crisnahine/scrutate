@@ -264,6 +264,25 @@ fn a_linked_work_tree_starts_from_its_main_checkouts_index_and_equals_a_fresh_bu
 }
 
 #[test]
+fn a_segment_the_main_checkout_removed_while_it_was_copied_is_not_taken_into_a_work_tree() {
+    let models = ModelSet::none();
+    let t = Tmp::new("half_removed");
+    let (main, wt) = linked(&t.0);
+    let mut m = open(&main, &models);
+    m.update(false).unwrap();
+    drop(m);
+    // what a copy sees of a segment the main checkout is removing after its commit: part of it
+    let seg = fs::read_dir(main.join(".scrutate/seg")).unwrap().flatten().map(|e| e.path()).find(|p| p.join("ids.npy").exists()).unwrap();
+    fs::remove_file(seg.join("ids.npy")).unwrap();
+    let mut w = open(&wt, &models);
+    w.update(false).unwrap();
+    same(&dump(w), &fresh(&wt, Arc::clone(&models)));
+    let name = seg.file_name().unwrap();
+    let copied = wt.join(".scrutate/seg").join(name);
+    assert!(!copied.exists() || copied.join("ids.npy").exists(), "a half segment was kept");
+}
+
+#[test]
 fn a_link_that_is_not_confirmed_both_ways_or_a_linked_index_directory_is_not_followed() {
     let models = ModelSet::none();
     let t = Tmp::new("unconfirmed");

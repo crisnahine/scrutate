@@ -390,8 +390,9 @@ folded, so two spellings of one accented name are one name.
   In a linked git work tree (`files::main_checkout` reads git's files: the `.git` file, then the
   `gitdir` and `commondir` files git keeps for the work tree, the link confirmed both ways), a new
   index starts as a copy of the main checkout's index of the same schema, parsing rules and vector
-  model: the database read with `VACUUM INTO` in one snapshot and the segments it lists copied;
-  the first update then reads and hashes every file and parses only those that differ. Content an
+  model: the database read with `VACUUM INTO` in one snapshot and the segments it lists copied,
+  each of which must open (a segment the main checkout removed meanwhile fails the seed, and the
+  index is built as usual); the first update then reads and hashes every file and parses only those that differ. Content an
   update has not seen is looked up in this checkout's store, then in the main checkout's, read-only
   in one snapshot for the update. Nothing of the other checkout is written; docs/SECURITY.md has
   the review. Two plain clones of a repository do not find each other.
