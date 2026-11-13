@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="#install"><b>Install</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#quick-start"><b>Quick start</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#benchmarks"><b>Benchmarks</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#documentation"><b>Documentation</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="docs/FAQ.md"><b>Questions</b></a>
+  <a href="#install"><b>Install</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#quick-start"><b>Quick start</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#benchmarks"><b>Benchmarks</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#documentation"><b>Documentation</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="docs/FAQ.md"><b>Questions</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="https://scrutate.github.io"><b>Website</b></a>
 </p>
 
 <p align="center">

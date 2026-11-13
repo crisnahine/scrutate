@@ -11,7 +11,7 @@ authors:
   - given-names: Cris
     family-names: Nahine
 repository-code: "https://github.com/scrutate/scrutate"
-url: "https://github.com/scrutate/scrutate"
+url: "https://scrutate.github.io"
 license:
   - MIT
   - Apache-2.0
