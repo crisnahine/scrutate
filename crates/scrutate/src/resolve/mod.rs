@@ -329,6 +329,8 @@ pub struct Resolver<'a> {
     def_tys: HashMap<i64, Option<Ty>>,
     /// names a trait or interface of the repository declares as methods
     trait_members: Option<HashSet<String>>,
+    /// (type from outside, member name) -> whether the repository extends the type with it
+    extended: HashMap<(String, String), bool>,
     /// Java: directory -> its `.java` files, and package -> the directories that declare it
     java_dirs: Option<HashMap<String, Vec<String>>>,
     java_pkgs: Option<HashMap<String, Vec<String>>>,
@@ -705,6 +707,7 @@ impl<'a> Resolver<'a> {
             looked_up: HashMap::new(),
             def_tys: HashMap::new(),
             trait_members: None,
+            extended: HashMap::new(),
             java_dirs: None,
             java_pkgs: None,
             java_paths: HashMap::new(),
@@ -1073,9 +1076,20 @@ impl<'a> Resolver<'a> {
 
     /// Whether the repository defines `name` as a member of something named `ty` (a trait
     /// implemented for a type from outside, a prototype extension).
-    fn extended(&self, ty: &str, name: &str) -> bool {
-        let Ok(rows) = self.ix.named(name) else { return true };
-        rows.iter().any(|r| r.qualname.rsplit_once('.').is_some_and(|(owner, _)| owner.split(|c: char| !(c.is_alphanumeric() || c == '_')).any(|w| w == ty)))
+    fn extended(&mut self, ty: &str, name: &str) -> bool {
+        let key = (ty.to_string(), name.to_string());
+        if let Some(&e) = self.extended.get(&key) {
+            return e;
+        }
+        // asked for each call of a common method on a type from outside
+        let e = match self.ix.named(name) {
+            Ok(rows) => rows
+                .iter()
+                .any(|r| r.qualname.rsplit_once('.').is_some_and(|(owner, _)| owner.split(|c: char| !(c.is_alphanumeric() || c == '_')).any(|w| w == ty))),
+            Err(_) => true,
+        };
+        self.extended.insert(key, e);
+        e
     }
 
     /// Whether a trait or interface of the repository declares a method `name`: a blanket `impl`
