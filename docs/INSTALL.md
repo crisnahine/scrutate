@@ -9,13 +9,13 @@
 
 <!-- End of head. -->
 
-One static-friendly binary and an optional Python package. Nothing runs in the background and
-nothing phones home.
+One static-friendly binary and an optional Python package. Nothing runs in the background or
+phones home.
 
 ## Supported platforms (0.1.0)
 
 A platform is supported only once its binary and wheel were built, installed and tested on it.
-Each row names its evidence; the logs are in `bench/results/platforms/`.
+The logs each row names are in `bench/results/platforms/`.
 
 <p align="center">
 <img src="assets/diagram-platforms.svg" alt="Platforms: macOS arm64, Linux aarch64 and Linux x86_64 supported; macOS x86_64, Windows x86_64 and Windows ARM64 tested on CI runners, no wheel, not supported yet." width="880">
@@ -33,8 +33,7 @@ Each row names its evidence; the logs are in `bench/results/platforms/`.
 
 ## From a release archive
 
-No archive is published for 0.1.0: the repository is public on GitHub, but the release workflow
-has not run. Once releases exist:
+No archive is published for 0.1.0: the release workflow has not run. Once releases exist:
 
 ```sh
 v=0.1.0; t=x86_64-unknown-linux-gnu
@@ -62,8 +61,8 @@ cargo test --release -p scrutate                     # the Rust test suite
 `rust-toolchain.toml` pins the compiler (1.99.1) for reproducible builds; rustup installs it on
 first use. `--features extra-langs` adds the optional heavy grammars (Fortran, OCaml, F#, Verilog,
 VHDL, CUDA, TLA+, D, AutoHotkey, Odin, QML, LLVM IR; about 80 MB more). `.gitattributes` checks
-text files out with LF line ends everywhere: with CRLF, a Windows build's compiled-in data
-(`crates/scrutate/data`) would differ from every other build.
+text files out with LF line ends everywhere, so a Windows build's compiled-in data
+(`crates/scrutate/data`) matches every other build.
 
 ## Python package
 
@@ -73,26 +72,26 @@ maturin build --release --strip -m crates/scrutate-py/Cargo.toml -o dist
 pip install dist/scrutate-*.whl
 python -c "import scrutate; print(scrutate.__version__)"
 ```
-Three wheels per OS and architecture cover every supported interpreter, and `pip` picks the right
-one: `cp39-abi3` for standard CPython 3.9 to 3.14, `cp314t` for free-threaded 3.14 (which has no
+Three wheels per OS and architecture cover every supported interpreter, and `pip` picks one:
+`cp39-abi3` for standard CPython 3.9 to 3.14, `cp314t` for free-threaded 3.14 (which has no
 stable ABI), and `cp315-abi3.abi3t` for 3.15 and newer, standard and free-threaded. The build
-above makes the one for the interpreter that runs it; `-i python3.14t` names another. The Python
-API, its errors and Ctrl-C are in [Python bindings](../crates/scrutate-py/README.md).
+above makes the one for the interpreter that runs it; `-i python3.14t` names another. API, errors
+and Ctrl-C: [Python bindings](../crates/scrutate-py/README.md).
 
 ## Connect your coding agent
 
 `scrutate setup <claude|codex|opencode|cursor|gemini>` writes that agent's MCP server entry,
-running this binary by its absolute path; `--project` writes the repository's own file instead,
-`--hook` also installs Claude Code's Grep hook, and `--uninstall` takes back all setup added.
-Every option and the file each agent reads: [Command line](CLI.md#setup-and-the-grep-hook).
+running this binary by its absolute path; `--project` writes the repository's file instead,
+`--hook` adds Claude Code's Grep hook, and `--uninstall` takes back all setup added. Every option
+and each agent's file: [Command line](CLI.md#setup-and-the-grep-hook).
 
 ## Updating
 
-Replace the binary (same steps). Indexes are caches: a version that changes the index schema
-rebuilds the index on first use (`index schema changed; rebuilding the index` is normal). A
-version with another bundled model keeps the index and makes its vectors anew on the next update.
-A version that parses or tokenizes files differently reads every file of an index once, on its
-next update (`index built with other parsing rules; every file is read again on the next update`).
+Replace the binary (same steps). Indexes are caches. A version with another index schema rebuilds
+the index on first use (`index schema changed; rebuilding the index` is normal); one with another
+bundled model keeps the index and makes its vectors anew on the next update; one that parses or
+tokenizes differently reads every file once on its next update
+(`index built with other parsing rules; every file is read again on the next update`).
 
 ## Uninstalling
 
@@ -105,15 +104,15 @@ rm -rf ~/.local/state/scrutate                                             # rea
 pip uninstall scrutate                                                     # the Python package, if installed
 ```
 Scrutate writes nothing else: no services, no registry keys. Outside the repositories you indexed
-it writes only the configuration you created, the agent files `scrutate setup` edits, and its
-state directory (`$XDG_STATE_HOME/scrutate/`, else `~/.local/state/scrutate/`, on Windows
-`%LOCALAPPDATA%\scrutate\`), which holds `frecency.json` and `hook-grep.jsonl`.
+it writes only your configuration, the agent files `scrutate setup` edits, and its state
+directory (`$XDG_STATE_HOME/scrutate/`, else `~/.local/state/scrutate/`, on Windows
+`%LOCALAPPDATA%\scrutate\`) with `frecency.json` and `hook-grep.jsonl`.
 
 ## Package managers
 
 None is published for 0.1.0. The package definitions are in `packaging/`: a Homebrew formula, a
 Scoop manifest, winget manifests, and `.deb`/`.rpm` builds from `crates/scrutate/Cargo.toml`;
 `packaging/README.md` says how each was tested and what is left for release time. `cargo install
-scrutate` from crates.io is not possible yet: the bundled models are too large for a crates.io
-upload, and the build needs the patched `ignore` crate in `vendor/`, which a crates.io download
-would not get. From a checkout, `cargo install --path crates/scrutate --locked` works.
+scrutate` from crates.io is not possible yet: the bundled models are too large for crates.io, and
+the build needs the patched `ignore` crate in `vendor/`. From a checkout,
+`cargo install --path crates/scrutate --locked` works.

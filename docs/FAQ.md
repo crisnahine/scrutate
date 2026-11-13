@@ -16,7 +16,7 @@ Short answers, each linked to the document with the evidence.
 An open-source code search tool for the terminal, editors and AI coding agents, in one Rust
 binary. Engine A searches any folder at once with no index, like grep or ripgrep. Engine B indexes
 a repository for ranked search by meaning or name, definitions, callers, references, and the
-tests a git diff touches. [Architecture](ARCHITECTURE.md) explains both.
+tests a git diff touches ([Architecture](ARCHITECTURE.md)).
 
 ## How is it different from ripgrep?
 
@@ -24,22 +24,21 @@ Engine A is built on ripgrep's `grep-*` and `ignore` crates and agrees with ripg
 random corpora and patterns. It adds one spelling for every casing of an identifier (`--ident`),
 matches within N edits (`--fuzzy`, `--fuzzy-regex`) and a trigram text index (`grep --index`).
 Engine B has no ripgrep counterpart: it knows where each function is defined, what calls it and
-what each file imports. [Competitive position](COMPETITIVE.md) compares it with each tool.
+what each file imports ([Competitive position](COMPETITIVE.md)).
 
 ## Is it faster than ripgrep?
 
 In the recorded runs, yes. On the development Mac, Engine A was significantly faster than every
 grep-class tool measured, ripgrep included, in every warm-cache and cold-cache benchmark, and in a
 Linux virtual machine on the same Mac on every Linux-tree benchmark. That Mac is a laptop shared
-with other work, so these are measured results, not a publishable #1 claim.
-[Leaderboard](LEADERBOARD.md) has every number with its 95% interval.
+with other work, so this is no publishable #1 claim. [Leaderboard](LEADERBOARD.md) has every
+number with its 95% interval.
 
 ## Do I need to build an index?
 
 No. `scrutate grep` needs no index, parser or background process. `scrutate index` builds Engine
-B's index in `.scrutate/` at the repository root; it updates incrementally, and `scrutate watch`
-or `scrutate serve --watch` follows edits as they happen. [Command line](CLI.md) lists every
-command.
+B's index in `.scrutate/` at the repository root and updates it incrementally; `scrutate watch`
+or `scrutate serve --watch` follows edits as they happen ([Command line](CLI.md)).
 
 ## Does my code leave my machine?
 
@@ -58,26 +57,26 @@ patterns ([CLI](CLI.md#custom-languages)).
 
 `scrutate setup claude` (or `codex`, `opencode`, `cursor`, `gemini`) writes an MCP server entry
 into that agent's config file; `--uninstall` takes it out. The server is `scrutate serve`, MCP on
-stdio, and `--watch` keeps its index current. [MCP server](../integrations/mcp/README.md) lists
-the tools and each client's config.
+stdio; `--watch` keeps its index current. [MCP server](../integrations/mcp/README.md) lists the
+tools and each client's config.
 
 ## Does it work in my editor?
 
 Yes. `scrutate lsp` is a language server on stdio with definitions, references and symbols from
-the index; VS Code and Neovim use it, and JetBrains IDEs run scrutate as external tools. Set-up
-for each: [integrations/](../integrations/).
+the index; VS Code and Neovim use it, and JetBrains IDEs run scrutate as external tools
+([integrations/](../integrations/)).
 
 ## Which platforms does it run on?
 
 Supported: macOS on Apple silicon, and Linux on x86_64 and aarch64 (static musl builds too). macOS
 on Intel and Windows on x86_64 and ARM64 pass the Rust tests on CI but have no wheel yet, so they
-are not declared supported. [Install](INSTALL.md) has the details for each.
+are not declared supported ([Install](INSTALL.md)).
 
 ## How do I install it?
 
 From source for now: no release archive is published yet. [Install](INSTALL.md) has the build
-command, each platform's needs, and the package definitions (Homebrew, Scoop, winget, `.deb`,
-`.rpm`) that wait for the first release.
+command and the package definitions (Homebrew, Scoop, winget, `.deb`, `.rpm`) that wait for the
+first release.
 
 ## Can I use it from Python?
 
@@ -87,7 +86,7 @@ Yes. The bindings stream Engine A's matches with the GIL released and open the i
 ## Is it production-ready?
 
 Not yet declared. 0.1.0 is the first release; [Release readiness](RELEASE_READINESS.md) lists
-what is verified and what is not.
+what is and is not verified.
 
 ## Is it free to use?
 
