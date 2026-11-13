@@ -1,6 +1,8 @@
 # Superseded runs
 
-Earlier runs, kept as raw data. No document is generated from them.
+Earlier runs, kept as raw data. Until a newer run is recorded in the directory above, the
+published documents (docs/LEADERBOARD.md, the README's charts) are generated from the `*-261e`
+files. The dashboard charts every run here as history.
 
 | File | scrutate binary (SHA-256) | Virtual CPUs |
 |---|---|---|

@@ -91,7 +91,7 @@ type macro and matches nothing, which the first comparison mistook for ast-grep 
 
 Measured on the Linux kernel tree (95,578 files, 1.6 GB) on the development Mac, against Zoekt at
 commit `a5a933bc` built with `go install` as its README says (docs/LEADERBOARD.md, Engine B
-section; raw data in `bench/results/macos-arm64/indexed.json`). Every query was checked against an
+section; raw data in `bench/results/macos-arm64/superseded/indexed-9aa0.json`). Every query was checked against an
 independent reference, and both tools answered all 20 the same way as the reference.
 
 - **Building the index**: 5.3 s against 132 s (0.040x), 440 MB on disk against 4,238 MB (0.10x),
@@ -112,7 +112,7 @@ and can answer without the tree. Scrutate offers only the first mode in 0.1.0 (R
 In the Linux virtual machine, against Zoekt and livegrep (revision `923d5ad7`, built with Bazel as
 its README says; its `codesearch` server holds the index and a minimal gRPC client prints each
 answer), on the same tree and the same 20 queries, every answer checked: Scrutate is ahead on all 8
-metrics (`bench/results/linux-aarch64/indexed.json`).
+metrics (`bench/results/linux-aarch64/superseded/indexed-261e.json`).
 
 | Metric | Scrutate | Zoekt | livegrep |
 |---|---|---|---|
@@ -134,7 +134,7 @@ None of the measured tools has a code-intelligence index, so this has no competi
   an undocumented held-out Python code base, vs 0.468 for BM25 over the same candidates; 0.93 to
   0.99 for name and identifier queries; held-out Rust, Go, Java, JavaScript and TypeScript
   repositories also gain on every query type (docs/QUALITY.md).
-- **Symbols for 60 languages** (72 with the optional grammars), each verified by a sample; call
+- **Symbols from 60 grammars** (73 with the optional grammars), each verified by a sample; call
   graph, imports and dependents, references grouped by symbol, outline, similar code, exact and
   near-duplicate detection, cross-repository search.
 - **One interface for people and agents**: JSON everywhere (errors included), an MCP server with 14
@@ -157,7 +157,8 @@ What the evidence does not support, and this page does not claim:
 - A published "#1". Every number comes from one developer laptop shared with other work, and from
   a virtual machine on it. Section 14 of the mission asks for dedicated idle hardware
   (docs/RELEASE_READINESS.md).
-- Results on Windows or on Intel Macs. Both are cross-built only (docs/INSTALL.md).
+- Results on Windows or on Intel Macs. Both are tested on GitHub's runners only, with no
+  benchmark run there (docs/INSTALL.md).
 - Linux results on real hardware. The thread count for a cold tree and the read time that counts
   as a disk read were fitted in the VM (docs/ROADMAP.md).
 - A lead of half the time everywhere. On macOS a search of a large tree takes 0 to 12% longer than

@@ -1,8 +1,10 @@
 # Superseded runs
 
-Earlier, partial leaderboard runs, kept as raw data. No document is generated from them: each was
-measured with an older binary or an older version of the harness, as its own `environment` and
-`settings` record.
+Earlier leaderboard runs, kept as raw data. Each was measured with an older binary or an older
+version of the harness, as its own `environment` and `settings` record. Until a newer run is
+recorded in the directory above, the published documents (docs/LEADERBOARD.md,
+docs/BENCHMARKS.md, the README's charts) are generated from the `*-9aa0` files. The dashboard
+charts every run here as history.
 
 | File | Benchmarks | Interleaved blocks | scrutate binary (SHA-256) |
 |---|---|---|---|
@@ -23,8 +25,8 @@ threads and suffix-literal candidate lines. `leaderboard-warm-eeab` has both but
 walk for small trees and the one-buffer read of files without line breaks; it stopped before the two
 structural benchmarks, which the harness then called without `--json`.
 
-docs/LEADERBOARD.md is generated from `../leaderboard-warm.json`, `../leaderboard-cold.json` and
-`../indexed.json`.
+A newer run goes in the directory above as `leaderboard-warm.json`, `leaderboard-cold.json`,
+`indexed.json` and `compare.json`, and the documents are then generated from those.
 
 `indexed-eeab.json` and `compare-eeab.json` were measured with the same `eeab24663509...` binary (the latter before
 the harness measured peak memory on macOS).

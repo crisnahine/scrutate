@@ -33,7 +33,7 @@ better than the current code-word semantic model (`models/semantic.npz`), and at
   slots per chunk as the current model (view A: qualified name, signature and docstring; view B:
   body), and embeds the raw query text (bge gets its documented query prefix). Inputs are truncated
   to 256 tokens and vectors normalised. Everything else is unchanged: candidate pool (BM25 +
-  exact name + 100 semantic neighbours), the 47 features and `bench/train_ranker.py`.
+  exact name + 100 semantic neighbours), the 47 features of the time (48 now) and `bench/train_ranker.py`.
 - Fair ranker comparison: for every model, including the current one, the ranker was retrained
   with `train_ranker.py fit` on that model's DEV features and evaluated once on TEST. The retrained
   ranker on the current model is within 0.005 MRR of the shipped `models/ranker.npz` on every query
@@ -138,9 +138,8 @@ What would change the answer:
 
 ## Reproduce
 
-`bench/eval_transformers.py` ran on the Python reference engine and was removed with it. It last
-ran at commit `9e70ae7`, the last commit that has it: check that commit out to run the commands
-below.
+`bench/eval_transformers.py` ran on the Python reference engine and was removed with it. Commit
+`8a4f4b4` is the last that has it: check that commit out to run the commands below.
 
 ```sh
 # in a fresh virtual environment with numpy, scipy, scikit-learn, lightgbm, the scrutate_ref
