@@ -55,6 +55,7 @@ gap it closes in docs/TRACEABILITY.md.
 | Limits left in 0.1.0's first draft (R-2A, R-12.4) | smart case sees a letter written by its code point (`\x41`); the LSP server replaces a damaged index, from a save or from a request; the watcher's test of one path decides in the walk's order (a `.ignore` at any level before every `.gitignore`) |
 | Limits left in 0.1.0's second draft (R-2A, R-2B.1, R-2B.4) | calls inside Rust macro arguments are call edges; an MCP answer checks the files it cites and re-reads a changed one; files on `/proc`, `/sys` and the other kernel pseudo filesystems are read to the end; on Unix a `chmod` alone is seen (the index keeps the status-change time); an emptied `chunks` table is damage and is rebuilt; a JavaScript `var` belongs to its function; one file argument prints without its name, as in ripgrep, with `-H` and `-I`; C++ constructors, destructors, member templates and conversion operators declared in a class body are methods; `\,` keeps a comma in `SCRUTATE_INDEX_EXCLUDE_DIRS` |
 | Training reads the engine, and the mirror ended (R-5.3) | the ranker and the vector model are fitted on rows the engine writes (`batch --features`, the hidden `views` command), the benchmark builders read files and words through it, and the Python reference engine that mirrored it bit for bit on 7 of the 73 grammars is gone with `bench/parity.py`; `tests/ranking_pins.rs` and `bench/quality.py` watch ranking (docs/QUALITY.md) |
+| Function order on glibc Linux (R-4.6) | release builds for `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` link twice, the second time with lld's `--symbol-ordering-file` from `crates/scrutate/startup.order` under the build's own names (`tools/order_file.py --elf`); docs/RELEASING.md section 2 |
 | Benchmark corpora without hard links (R-14) | `bench/corpora.py` copies (APFS clones) where it linked: a hard-linked file costs every tool twice as long to open on macOS |
 
 ## Blocked: needs the repository published
@@ -120,10 +121,12 @@ docs/RELEASING.md, public (done), tag `v0.1.0`.
   the line; the two passes could serve it. The default mode holds ordered output on one large file
   with many matches (23 MB); 2 MB ranges in place of 8 MB halve that for 2.4 to 3.5% more
   instructions, not taken.
-- Linux has no function order. Of 5.8 MB resident at the start of a small search, 3.5 MB is the
-  executable's text, spread over 85 MB with the kernel mapping 64 KB around each fault; 0.5 MB
-  is data relocated at load. GNU ld in the build image cannot order functions; lld can, and a
-  linker script can list sections, once the unrun release workflow builds with either.
+- The function order on glibc Linux, measured. Of 5.8 MB resident at the start of a small search
+  before it, 3.5 MB was the executable's text, spread over 85 MB with the kernel mapping 64 KB
+  around each fault; 0.5 MB is data relocated at load. The release build now links the macOS
+  order with rust-lld (docs/RELEASING.md section 2); ci.yml's `rust` job prints the minor page
+  faults of `--version` and a one-file `grep` without and with it on x86_64 and aarch64. Record
+  them here from its first run. The musl builds keep GNU ld and no order.
 - Large trees on macOS are bound by `open` (docs/ARCHITECTURE.md): the Linux tree takes 0.52 s just to
   open and read on the five performance cores, a search 0.58 s; the rest above that floor is the
   search. The corpora `linux` and `linux-nodot` shared files by hard links, doubling every open's

@@ -65,6 +65,23 @@ jobs:
       # every test file runs, so one failure does not hide the next
       - run: cargo test --release -p scrutate --locked --no-fail-fast
       - run: cargo build --release -p scrutate --locked
+      # release.yml's second link on glibc Linux: the ordered names come first in the text, and
+      # minor page faults at start (median of 7) without and with the order
+      - name: function order (Linux)
+        if: runner.os == 'Linux'
+        env:
+          SCRUTATE_LINUX_ORDER: ${{ runner.temp }}/startup.order.elf
+        run: |
+          cp target/release/scrutate "$RUNNER_TEMP/unordered"
+          python3 tools/order_file.py --elf target/release/scrutate "$SCRUTATE_LINUX_ORDER"
+          cargo build --release -p scrutate --locked
+          python3 tools/order_file.py --elf-check target/release/scrutate "$SCRUTATE_LINUX_ORDER"
+          python3 tools/order_file.py --elf-check "$RUNNER_TEMP/unordered" "$SCRUTATE_LINUX_ORDER" > /dev/null || echo "the first build has them elsewhere, as expected"
+          [ -x /usr/bin/time ] || sudo apt-get -o Acquire::Retries=5 install -y time
+          faults() { for _ in 1 2 3 4 5 6 7; do /usr/bin/time -f %R -o "$RUNNER_TEMP/t" "$@" > /dev/null; cat "$RUNNER_TEMP/t"; done | sort -n | sed -n 4p; }
+          for b in "$RUNNER_TEMP/unordered" target/release/scrutate; do
+            echo "$b: minor page faults, --version $(faults "$b" --version), grep one file $(faults "$b" grep -F scrutate README.md)"
+          done
       - name: smoke test the binary
         run: |
           ./target/release/scrutate --version
