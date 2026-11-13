@@ -263,16 +263,9 @@ fn scopes(top: &Path, roots: &[PathBuf]) -> Vec<String> {
     roots.iter().map(|r| from_top(r).unwrap_or_else(|| r.to_string_lossy().into_owned())).collect()
 }
 
-pub fn tsquery_each(
-    lang: &str,
-    query: &str,
-    roots: &[PathBuf],
-    as_given: bool,
-    limit: usize,
-    cache_root: Option<&Path>,
-    on_capture: &mut dyn FnMut(Capture),
-) -> Result<usize> {
-    use rayon::prelude::*;
+/// A tree-sitter query compiled for `lang`, refused when it is empty, has no capture or uses a
+/// predicate tree-sitter does not evaluate.
+pub(crate) fn compile_query(lang: &str, query: &str) -> Result<(&'static crate::langs::LangSpec, tree_sitter::Language, tree_sitter::Query)> {
     let spec = crate::langs::by_id(lang).ok_or_else(|| anyhow!("unknown language {} (see `scrutate languages`)", echo(lang)))?;
     if query.trim().is_empty() {
         bail!("empty query: give a tree-sitter pattern with a @capture, such as (identifier) @name");
@@ -286,14 +279,25 @@ pub fn tsquery_each(
     if let Some(p) = (0..q.pattern_count()).flat_map(|i| q.general_predicates(i)).next() {
         bail!("unknown predicate #{} (supported: #eq?, #match?, #any-of? and their not- and any- forms)", p.operator);
     }
-    let names: Vec<String> = q.capture_names().iter().map(|n| n.to_string()).collect();
-    // (path, path from its root, path shown, the code index's hash of it when its stat is current)
-    let mut files: Vec<(PathBuf, String, String, Option<String>)> = Vec::new();
-    // the code index's record saves reading a file whose captures are cached
-    let recorded = cache_root.map(crate::stores::recorded).unwrap_or_default();
-    let top = cache_root.filter(|_| !recorded.is_empty()).and_then(|r| std::fs::canonicalize(r).ok());
-    for root in roots {
-        let under = top.as_ref().and_then(|t| std::fs::canonicalize(root).ok()?.strip_prefix(t).ok().map(|p| crate::instant::slashed(p.to_string_lossy())));
+    Ok((spec, language, q))
+}
+
+/// A file a structural query reads.
+pub(crate) struct QueryFile {
+    pub path: PathBuf,
+    /// from its root
+    pub rel: String,
+    pub shown: String,
+    pub md: std::fs::Metadata,
+    /// which of the roots holds it
+    pub root: usize,
+}
+
+/// The files of up to 1 MB under `roots` that `spec` may hold by name, in path order, as the
+/// walker gives them (ignore files read, hidden files and links left out).
+pub(crate) fn query_files(spec: &crate::langs::LangSpec, roots: &[PathBuf], as_given: bool) -> Vec<QueryFile> {
+    let mut files = Vec::new();
+    for (i, root) in roots.iter().enumerate() {
         let mut wb = ignore::WalkBuilder::new(root);
         wb.hidden(true).git_ignore(true).add_custom_ignore_filename(crate::instant::RGIGNORE).sort_by_file_path(|a, b| a.cmp(b));
         for entry in wb.build().flatten() {
@@ -315,14 +319,43 @@ pub fn tsquery_each(
                 } else {
                     rel.clone()
                 };
-                let known = under.as_ref().and_then(|u| {
-                    let (stat, hash) = recorded.get(&if u.is_empty() { rel.clone() } else { format!("{u}/{rel}") })?;
-                    (crate::index::Stat::of(&md) == *stat).then(|| hash.clone())
-                });
-                files.push((path.to_path_buf(), rel, shown, known));
+                files.push(QueryFile { path: path.to_path_buf(), rel, shown, md, root: i });
             }
         }
     }
+    files
+}
+
+pub fn tsquery_each(
+    lang: &str,
+    query: &str,
+    roots: &[PathBuf],
+    as_given: bool,
+    limit: usize,
+    cache_root: Option<&Path>,
+    on_capture: &mut dyn FnMut(Capture),
+) -> Result<usize> {
+    use rayon::prelude::*;
+    let (spec, language, q) = compile_query(lang, query)?;
+    let names: Vec<String> = q.capture_names().iter().map(|n| n.to_string()).collect();
+    // the code index's record saves reading a file whose captures are cached
+    let recorded = cache_root.map(crate::stores::recorded).unwrap_or_default();
+    let top = cache_root.filter(|_| !recorded.is_empty()).and_then(|r| std::fs::canonicalize(r).ok());
+    let under: Vec<Option<String>> = roots
+        .iter()
+        .map(|root| top.as_ref().and_then(|t| std::fs::canonicalize(root).ok()?.strip_prefix(t).ok().map(|p| crate::instant::slashed(p.to_string_lossy()))))
+        .collect();
+    // (path, path from its root, path shown, the code index's hash of it when its stat is current)
+    let files: Vec<(PathBuf, String, String, Option<String>)> = query_files(spec, roots, as_given)
+        .into_iter()
+        .map(|f| {
+            let known = under[f.root].as_ref().and_then(|u| {
+                let (stat, hash) = recorded.get(&if u.is_empty() { f.rel.clone() } else { format!("{u}/{}", f.rel) })?;
+                (crate::index::Stat::of(&f.md) == *stat).then(|| hash.clone())
+            });
+            (f.path, f.rel, f.shown, known)
+        })
+        .collect();
     let cache = cache_root.map(|r| crate::tscache::Cache::open(r, lang, query, &scopes(r, roots)));
     // parse in parallel, deliver in path order: workers send (file index, content hash, captures,
     // complete) through a bounded channel; the consumer reorders with a small buffer, so memory
