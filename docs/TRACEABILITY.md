@@ -11,15 +11,15 @@
 
 <!-- End of head. -->
 
-Every requirement of the mission (sections 1 to 14), with its implementation, source location,
-verification method, evidence and status. Status words follow the mission's definitions:
+Each requirement of the mission (sections 1 to 14) with its implementation, source location,
+verification, evidence and status. Status words as the mission defines them:
 
 - **PASS**: implemented and verified by the evidence named.
-- **PARTIAL**: implemented but incompletely verified, or verified only in part.
+- **PARTIAL**: implemented but verified only in part.
 - **FAIL**: not implemented, or verification failed.
-- **BLOCKED**: a genuine, documented technical limitation of the environment or the problem.
+- **BLOCKED**: a real, documented technical limit of the environment or the problem.
 
-Evidence files: `docs/TEST_RESULTS.md` (test and audit output, generated), `docs/LEADERBOARD.md`
+Evidence: `docs/TEST_RESULTS.md` (test and audit output, generated), `docs/LEADERBOARD.md`
 (section 14 benchmarks, generated from `bench/results/`), `docs/BENCHMARKS.md`, `docs/QUALITY.md`,
 `docs/SECURITY.md`, `docs/LANGUAGES.md`, `docs/NAMING.md`, `bench/results/platforms/` (per-platform
 logs). Test names refer to `crates/scrutate/tests/*.rs`, `crates/scrutate/src/*.rs` unit tests and
@@ -238,5 +238,5 @@ Counts: PASS 125 · PARTIAL 10 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 
 ## Tally
 
-PASS 125 · PARTIAL 10 · BLOCKED 1 · FAIL 0 over 136 rows. The PARTIAL, BLOCKED and FAIL rows are listed with their
-resolution in RELEASE_READINESS.md ("Remaining defects and incomplete requirements").
+PASS 125 · PARTIAL 10 · BLOCKED 1 · FAIL 0 over 136 rows. RELEASE_READINESS.md ("Remaining defects and incomplete requirements") lists
+the PARTIAL, BLOCKED and FAIL rows with what closes each.
