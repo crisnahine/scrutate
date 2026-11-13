@@ -56,10 +56,13 @@ impl Tree {
     /// The hook's stdout for `input`, and its exit code.
     fn hook(&self, input: &Value, env: &[(&str, &str)]) -> (i32, String) {
         let home = self.base.join("home");
-        assert!(home.starts_with(env!("CARGO_TARGET_TMPDIR")), "the hook runs only with a scratch home");
+        let tmp = fs::canonicalize(env!("CARGO_TARGET_TMPDIR")).unwrap();
+        assert!(fs::canonicalize(&self.base).unwrap().starts_with(&tmp), "the hook runs only with a scratch home");
         let mut c = Command::new(BIN);
         c.args(["hook", "grep"]).current_dir(&self.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         c.env("HOME", &home)
+            .env("USERPROFILE", &home)
+            .env("LOCALAPPDATA", home.join("state"))
             .env("XDG_STATE_HOME", home.join("state"))
             .env("CLAUDE_PROJECT_DIR", &self.root)
             .env_remove("CLAUDE_CONFIG_DIR")
@@ -136,6 +139,7 @@ fn have_rg() -> bool {
     ok
 }
 
+#[cfg(not(windows))]
 /// What Grep makes of ripgrep's output for `input`: ripgrep run with the arguments Grep gives it,
 /// then Grep's own handling of the lines (long lines, context breaks, paths from the session's
 /// directory). `rg --sort path` keeps the order fixed; Grep's own runs in any order.
@@ -239,6 +243,7 @@ fn grep_lines(t: &Tree, input: &Value) -> Vec<String> {
     }
 }
 
+#[cfg(not(windows))]
 /// The hook's lines: the reason without Grep's own first and last lines.
 fn hook_lines(reason: &str, mode: &str) -> Vec<String> {
     let mut lines: Vec<String> = reason.lines().map(String::from).collect();
@@ -255,6 +260,8 @@ fn hook_lines(reason: &str, mode: &str) -> Vec<String> {
     lines
 }
 
+// the hook lets Grep run on Windows by design: its answers are checked elsewhere
+#[cfg(not(windows))]
 #[test]
 fn the_hook_answers_with_ripgreps_lines_for_greps_arguments() {
     if !have_rg() {
@@ -340,6 +347,8 @@ fn calls_it_cannot_answer_exactly_let_grep_run() {
     assert_eq!(t.stats()["total"]["calls"], 1, "only answered calls count");
 }
 
+// the hook lets Grep run on Windows by design: its answers are checked elsewhere
+#[cfg(not(windows))]
 #[test]
 fn greps_paging_and_the_byte_limit_bound_the_answer() {
     let t = Tree::new("page");
@@ -367,6 +376,8 @@ fn greps_paging_and_the_byte_limit_bound_the_answer() {
     assert!(last.contains(&format!("offset={shown},")), "{last}");
 }
 
+// the hook lets Grep run on Windows by design: its answers are checked elsewhere
+#[cfg(not(windows))]
 #[test]
 fn the_counter_moves_by_the_measured_bytes() {
     let t = Tree::new("count");

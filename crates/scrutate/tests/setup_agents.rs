@@ -37,15 +37,21 @@ impl Scratch {
     /// `program` with the scratch homes, no variable of the Claude Code running these tests, and
     /// `path` as its PATH.
     fn command(&self, program: &str, path: &str) -> Command {
+        // Windows reads the home from USERPROFILE and app data from APPDATA and LOCALAPPDATA
         let vars = [
             ("HOME", self.home.clone()),
+            ("USERPROFILE", self.home.clone()),
+            ("APPDATA", self.base.join("data")),
+            ("LOCALAPPDATA", self.base.join("state")),
             ("CODEX_HOME", self.base.join("codex")),
             ("XDG_CONFIG_HOME", self.base.join("config")),
             ("XDG_STATE_HOME", self.base.join("state")),
             ("XDG_DATA_HOME", self.base.join("data")),
         ];
+        // both sides canonical: on Windows that adds the verbatim prefix to one of them only
+        let tmp = fs::canonicalize(env!("CARGO_TARGET_TMPDIR")).unwrap();
         for (_, v) in &vars {
-            assert!(v.starts_with(env!("CARGO_TARGET_TMPDIR")), "{} is not a scratch directory", v.display());
+            assert!(v.starts_with(&tmp), "{} is not a scratch directory", v.display());
         }
         let mut c = Command::new(program);
         for (k, _) in std::env::vars() {

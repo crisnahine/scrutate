@@ -598,6 +598,7 @@ mod tests {
         assert_eq!(bounded(&page, 10, 13, room, "lines"), format!("aaaa{more}"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn lexical_paths_resolve_dots_by_name() {
         assert_eq!(lexical(Path::new("/a/./b/../c")), Some(PathBuf::from("/a/c")));
