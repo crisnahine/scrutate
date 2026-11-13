@@ -74,6 +74,16 @@ cargo build --release -p scrutate --locked && bash bench/run_macos.sh
   minutes: two release links, each run under lldb from Xcode's command line tools) and commit it.
   On some machines a process started under lldb hangs; the tool gives up on a search after a
   minute and says so: run it again. A stale file only costs pages at start, never the build.
+- On glibc Linux the same file orders the functions, with nothing to commit. Rust names carry a
+  hash of how their crate was built, and it differs per target, so `release.yml` builds once,
+  maps the file to that build's names (`python3 tools/order_file.py --elf BIN OUT`: both sides
+  demangled with `c++filt`, hashes dropped), and builds again with `SCRUTATE_LINUX_ORDER=OUT`.
+  build.rs then passes `-fuse-ld=lld`, `-B` the toolchain's `gcc-ld` directory (rustc's own way
+  to reach its `rust-lld`, the default on x86_64 since Rust 1.90), `--symbol-ordering-file` and
+  `--no-warn-symbol-ordering`; lld passes over a name the link lacks. `--elf-check` fails the job
+  unless the first 20 listed functions lie in list order. A local Linux release build is
+  unordered unless it does the same; `tools/repro_docker.sh` does, so its hash is the ordered
+  binary's. The musl builds link with GNU ld and stay unordered.
 - A just-built executable starts about 0.2 ms slower than the same file an hour later. The chain
   waits for that first: `bench/wait_aged.py` times `scrutate --version` every 2 minutes against a
   fresh copy of the binary (a new file, so slow) and goes on once the binary starts faster than

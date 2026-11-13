@@ -166,8 +166,10 @@ adds:
   checks how many names a release link still has; a missing name is skipped. ThinLTO makes ld64 skip
   most of them (the `.llvm.N` ones it promoted, local ones several objects hold), so the release
   profile links one object (fat LTO, one codegen unit), and a release build takes 3 to 5 minutes
-  from scratch, up from under 2. The order file is for macOS on Apple silicon; other targets link as
-  before. Measured and left alone: 37,000 pointer fix-ups (applied lazily by the kernel, no cost),
+  from scratch, up from under 2. The order file is written for macOS on Apple silicon. The release
+  builds for glibc Linux take the same order through rust-lld's `--symbol-ordering-file`, after a
+  first link whose names `tools/order_file.py --elf` maps it to (crate hashes in Rust names differ
+  per target); musl and Windows link as before. Measured and left alone: 37,000 pointer fix-ups (applied lazily by the kernel, no cost),
   the code-signature page size (no difference), the 85 MB binary size (0.05 to 0.2 ms).
 
   | A one-file directory search, macOS | Measured |

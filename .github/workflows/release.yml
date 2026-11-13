@@ -67,6 +67,8 @@ jobs:
     env:
       TARGET: ${{ matrix.target }}
       VERSION: ${{ needs.version.outputs.version }}
+      # read by build.rs on glibc Linux alone; set for the tests too, so they reuse the ordered link
+      SCRUTATE_LINUX_ORDER: ${{ github.workspace }}/target/startup.order.elf
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -81,6 +83,13 @@ jobs:
         run: sudo apt-get -o Acquire::Retries=5 install -y musl-tools
       - shell: bash
         run: cargo build --release -p scrutate --target "$TARGET" --locked
+      # the functions a small search runs, side by side, under this build's own names: a second link
+      - name: function order (glibc Linux)
+        if: endsWith(matrix.target, '-linux-gnu')
+        run: |
+          python3 tools/order_file.py --elf "target/$TARGET/release/scrutate" "$SCRUTATE_LINUX_ORDER"
+          cargo build --release -p scrutate --target "$TARGET" --locked
+          python3 tools/order_file.py --elf-check "target/$TARGET/release/scrutate" "$SCRUTATE_LINUX_ORDER"
       - name: the glibc binary needs no glibc newer than 2.34
         if: endsWith(matrix.target, '-linux-gnu')
         shell: bash

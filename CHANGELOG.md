@@ -95,6 +95,9 @@ incompatible index by itself, and that is never breaking.
 - `bench/leaderboard.py --stop-early` stops a row at 20 runs once every verdict holds at alpha
   0.001 (Haybittle-Peto boundary); replayed over every recorded run it changed no verdict. Off by
   default ([RELEASING](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
+- The release binaries for glibc Linux (x86_64 and aarch64) lay out the functions a small search
+  runs side by side, as the macOS one does: a second link with rust-lld and the order file under
+  that build's own names ([Releasing](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
 - With `serve --structured`, a large answer pages in `structuredContent` too: each page carries
   the JSON of the items its text page shows, with `offset`, `next_offset` and `total`, in place
   of a `null` result ([CLI](docs/CLI.md#serve-mcp)).

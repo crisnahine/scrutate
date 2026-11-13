@@ -8,6 +8,10 @@ passes over a name it does not find, so a stale file costs pages, never the buil
 usage: order_file.py [--dirs DIR...]  regenerate (macOS on Apple silicon, about 15 minutes: two
                                       release links with a link map, each run under lldb)
        order_file.py --check          the share of the listed names the release links still have
+       order_file.py --elf BIN OUT    Linux: the same functions under the names the glibc release
+                                      build BIN has, for lld's --symbol-ordering-file
+       order_file.py --elf-check BIN LIST
+                                      Linux: the first listed functions BIN has lie in list order
 
 The functions are found by running each release link under lldb with a breakpoint on every
 function of its link map, so the names are those of that very link, the standard library's
@@ -19,10 +23,16 @@ and the local ones several objects hold. Needs lldb (Xcode's command line tools)
 processes started under lldb came to hang in dyld's open of their own executable when started
 from the build's path, so lldb runs a copy of it; the tool gives up after a minute a search
 (`ORDER_FILE_SEARCH_SECONDS` raises that on a busy machine).
+
+On Linux the crate hashes in the names differ from the macOS ones, so the list is mapped at build
+time: --elf demangles both sides with c++filt, drops the hashes, and writes the build's own names
+in the file's order. build.rs hands that list to lld when SCRUTATE_LINUX_ORDER names it, so a
+release build on Linux links twice (release.yml, tools/repro_docker.sh).
 """
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -194,13 +204,70 @@ def check():
     return 0 if found * 2 >= total else 1
 
 
+def unhashed(demangled):
+    """A demangled name without its crate hashes, which GNU c++filt prints as `std[1a2b3c4d]`."""
+    # right after a crate's name, so the slice type `[f32]` stays
+    return re.sub(r"(?<=\w)\[[0-9a-f]+\]", "", demangled)
+
+
+def demangle(names):
+    out = subprocess.run(["c++filt"], input="".join(f"{n}\n" for n in names), capture_output=True, text=True, check=True).stdout
+    return out.split("\n")[: len(names)]
+
+
+def elf_order(listed, have, demangle=demangle):
+    """The names of `have` that stand for the Mach-O names `listed`, in the order of `listed`."""
+    by_key = {}
+    for name, key in zip(have, demangle(have)):
+        by_key.setdefault(unhashed(key), []).append(name)
+    # Mach-O puts an underscore before every name
+    keys = dict.fromkeys(unhashed(k) for k in demangle([n[1:] if n.startswith("_") else n for n in listed]))
+    return [name for key in keys for name in sorted(by_key.pop(key, []))]
+
+
+def elf_functions(binary):
+    """{name: address} of the functions the ELF file defines."""
+    out = subprocess.run(["nm", "--defined-only", "-P", binary], capture_output=True, text=True, check=True).stdout
+    return {p[0]: int(p[2], 16) for p in (l.split() for l in out.splitlines()) if len(p) >= 3 and p[1] in ("t", "T")}
+
+
+def listed_names(path):
+    return [l.strip() for l in open(path) if l.strip() and not l.startswith("#")]
+
+
+def elf(binary, out):
+    have = elf_functions(binary)
+    listed = listed_names(ORDER)
+    names = elf_order(listed, list(have))
+    with open(out, "w") as f:
+        f.writelines(f"{n}\n" for n in names)
+    print(f"{out}: {len(names)} functions of {binary} for the {len(listed)} names of {os.path.relpath(ORDER, ROOT)}")
+    return 0 if names else 1
+
+
+def elf_check(binary, path, first=20):
+    have = elf_functions(binary)
+    placed = [(have[n], n) for n in listed_names(path) if n in have][:first]
+    for addr, name in placed:
+        print(f"{addr:#x} {name}")
+    ok = len(placed) == first and all(a[0] <= b[0] for a, b in zip(placed, placed[1:]))
+    print(f"the first {len(placed)} listed functions {'lie' if ok else 'do not lie'} in list order in {binary}")
+    return 0 if ok else 1
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--dirs", nargs="+", default=[], help="directories to search instead of a small tree made for the purpose")
+    ap.add_argument("--elf", nargs=2, metavar=("BIN", "OUT"))
+    ap.add_argument("--elf-check", nargs=2, metavar=("BIN", "LIST"))
+    a = ap.parse_args()
+    if a.elf:
+        return elf(*a.elf)
+    if a.elf_check:
+        return elf_check(*a.elf_check)
     if sys.platform != "darwin":
         sys.exit("the order file is made from ld64 link maps: run this on macOS")
-    a = ap.parse_args()
     return check() if a.check else generate(a.dirs) or 0
 
 

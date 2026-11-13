@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Reproducible build across two different build environments: slim Debian (the Rust image) and full
 # Debian (a non-Rust image with rustup installed at the same paths), each a fresh container with the
-# same source path. Both build with the toolchain pinned in rust-toolchain.toml. The release
-# binaries must have the same SHA-256.
+# same source path. Both build with the toolchain pinned in rust-toolchain.toml, and link twice as
+# release.yml does on Linux, the second time with the function order. The release binaries must
+# have the same SHA-256.
 #   tools/repro_docker.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -16,7 +17,13 @@ build='
     curl -sSf https://sh.rustup.rs | sh -s -- -y -q --profile minimal --default-toolchain none > /dev/null
   fi
   mkdir -p /build && tar -C /src --exclude=./.claude --exclude=./target --exclude=./dist --exclude=.scrutate --exclude=./fuzz -cf - . | tar -C /build -xf -
+  command -v python3 > /dev/null || { apt-get update -qq && apt-get install -y -qq --no-install-recommends python3-minimal > /dev/null; }
   cd /build && cargo build --release -p scrutate --locked -q
+  # the second link of release.yml: the function order under the names of this build
+  export SCRUTATE_LINUX_ORDER=/build/target/startup.order.elf
+  python3 tools/order_file.py --elf target/release/scrutate "$SCRUTATE_LINUX_ORDER" > /dev/null
+  cargo build --release -p scrutate --locked -q
+  python3 tools/order_file.py --elf-check target/release/scrutate "$SCRUTATE_LINUX_ORDER" > /dev/null
   sha256sum target/release/scrutate | cut -d" " -f1
   rustc --version
   . /etc/os-release && echo "$PRETTY_NAME"'
