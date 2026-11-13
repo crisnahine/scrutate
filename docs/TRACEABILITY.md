@@ -147,7 +147,7 @@ Counts: PASS 127 · PARTIAL 8 · BLOCKED 1 · FAIL 0 over 136 rows (computed by 
 | R-9.3 | End-to-end tests | `tests/cli.rs` runs the real binary | PASS |
 | R-9.4 | Differential tests | `bench/differential.py` (vs ripgrep; `--index` vs the walk); `bench/fuzz_grep.py` (`scrutate grep` vs ripgrep on random trees) and `bench/fuzz_incremental.py` (an updated index vs a fresh one after random edits), 20 seconds each in CI, failing when nothing was compared; every leaderboard answer vs a Python reference | PASS |
 | R-9.5 | Property-based tests | `tests/properties.rs`, `textindex::tests::property_condition_never_rejects_a_matching_text` | PASS |
-| R-9.6 | Fuzz tests | four cargo-fuzz targets (`fuzz/`), AddressSanitizer, ten-minute rounds; four defects found and fixed, crash inputs replayed by the test gate | PASS |
+| R-9.6 | Fuzz tests | four cargo-fuzz targets (`fuzz/`), AddressSanitizer, ten-minute rounds, and 45 minutes per target every week in CI (`fuzz-weekly.yml`); four defects found and fixed, crash inputs replayed by the test gate | PASS |
 | R-9.7 | Regression tests | snapshot `expected.json`; fuzz regressions; `bench/leaderboard_regression.py`; `bench/regression.py` | PASS |
 | R-9.8 | Stress tests | robustness (5 MB line, 200k lines, deep nesting, 3 writers + 2 readers x 30); 12 concurrent text-index updates on SMB | PASS |
 | R-9.9 | Security tests | regex limits, path confinement, symlink escape, corruption, panic containment, fuzzing | PASS |

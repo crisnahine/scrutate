@@ -15,6 +15,11 @@ cargo install cargo-fuzz
 cargo +nightly fuzz run -O trigram_query -- -max_total_time=600
 ```
 
+CI builds every target and replays `regressions/` on each push. Once a week
+`.github/workflows/fuzz-weekly.yml` fuzzes each target for 45 minutes, starting from the corpus the
+last run uploaded (an artifact named `corpus-<target>`); a crash fails the run and is uploaded as
+`crash-<target>`. Add a crash input to `regressions/` with its fix.
+
 `regressions/` keeps every input that once crashed a target. Replay one with
 `cargo +nightly fuzz run -O <target> regressions/<target>/<file>`; `tools/gen_test_results.py`
 replays them all. Each also has a unit test in the crate, so `cargo test` covers them on stable.

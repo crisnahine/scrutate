@@ -49,6 +49,8 @@ incompatible index by itself, and that is never breaking.
   crates.io only), `zizmor --persona pedantic` on `.github`, and a check that each file's count
   of `unsafe` matches the inventory in docs/SECURITY.md, on every push to main, every pull request
   and once a week ([SECURITY](docs/SECURITY.md#controls-and-evidence)).
+- Every fuzz target runs for 45 minutes once a week in CI, from the corpus the last run kept; a
+  crash fails the run and is uploaded ([fuzz](fuzz/README.md)).
 
 ### Changed
 - The crate builds and runs on `wasm32-wasip1`, which starts no thread: the thread rules take
