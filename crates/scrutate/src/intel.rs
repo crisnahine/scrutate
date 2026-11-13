@@ -121,6 +121,24 @@ pub struct DupGroup {
 /// candidates verified by Jaccard similarity of word 3-gram sets (>= `threshold`; 1 = exact only).
 pub fn dupes(ix: &Index, min_tokens: usize, threshold: f32, limit: usize) -> Result<Vec<DupGroup>> {
     let rows = ix.bodies(CODE_KINDS, min_tokens)?;
+    Ok(dupes_in(&rows.iter().collect::<Vec<_>>(), min_tokens, threshold, limit))
+}
+
+/// What `exact` duplicates share: the body below the signature line, runs of whitespace squeezed.
+pub(crate) fn body_key(text: &str) -> u64 {
+    let body = text.split_once('\n').map(|(_, b)| b).unwrap_or("");
+    let mut seq = 1469598103934665603u64;
+    for w in body.split_whitespace() {
+        for b in w.as_bytes() {
+            seq = (seq ^ *b as u64).wrapping_mul(1099511628211);
+        }
+        seq = (seq ^ 0x20).wrapping_mul(1099511628211);
+    }
+    seq
+}
+
+/// `dupes` over these definitions.
+pub(crate) fn dupes_in(rows: &[&crate::index::Body], min_tokens: usize, threshold: f32, limit: usize) -> Vec<DupGroup> {
     let mut exact: HashMap<u64, Vec<usize>> = HashMap::new();
     // the same words in the same order: bodies that differ in operators, numbers or spacing
     let mut same_words: HashMap<u64, Vec<usize>> = HashMap::new();
@@ -134,13 +152,7 @@ pub fn dupes(ix: &Index, min_tokens: usize, threshold: f32, limit: usize) -> Res
         let toks = tokenize2(body, Some(BODY_CAP)).0;
         sizes.push(toks.len());
         // exact: the same body text up to whitespace (the word tokens drop operators and numbers)
-        let mut seq = 1469598103934665603u64;
-        for w in body.split_whitespace() {
-            for b in w.as_bytes() {
-                seq = (seq ^ *b as u64).wrapping_mul(1099511628211);
-            }
-            seq = (seq ^ 0x20).wrapping_mul(1099511628211);
-        }
+        let seq = body_key(text);
         let mut words = 1469598103934665603u64;
         for t in &toks {
             for b in t.as_bytes() {
@@ -234,7 +246,7 @@ pub fn dupes(ix: &Index, min_tokens: usize, threshold: f32, limit: usize) -> Res
     // members last: the exact groups come from a hash map, and a cut must not depend on its order
     out.sort_by(|a, b| b.tokens.cmp(&a.tokens).then(b.similarity.partial_cmp(&a.similarity).unwrap()).then_with(|| a.members.cmp(&b.members)));
     out.truncate(limit);
-    Ok(out)
+    out
 }
 
 // ------------------------------------------------------------------------- structural queries
