@@ -137,8 +137,8 @@ incompatible index by itself, and that is never breaking.
   `chmod 600` included ([SECURITY](docs/SECURITY.md)).
 - In Rust, a call on the result of a method of a standard or outside type goes through a table
   of standard methods: `v.first().unwrap().ok()` on a `Vec<Report>` is `Report.ok`, and
-  `file.metadata().ok()` is external, so `callers` and `dead` decide more
-  ([CLI](docs/CLI.md#refs)).
+  `file.metadata().ok()` is external, so `callers` and `dead` decide more; a value built by
+  `Type::new()` with its type arguments unwritten stays undecided ([CLI](docs/CLI.md#refs)).
 - A plain name in a Rust macro's arguments, outside the standard expression macros such as
   `println!` and `vec!`, is `macro argument` and undecided, no longer tied by name to a
   definition ([CLI](docs/CLI.md#refs)).
