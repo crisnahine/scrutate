@@ -1040,29 +1040,71 @@ def cta(phone=False):
                                   rest="scaleX(0)")
     clk.beat("YOUR BROWSER is marked", 0.35, 0.42)
     notes = ("BOTH ENGINES, NO INSTALL", "YOUR CODE STAYS ON YOUR MACHINE")
-    go = "OPEN THE PLAYGROUND"
+    go = "OPEN THE PLAYGROUND \u2192"
     size = 11 if phone else 12.5
     if phone:
-        H = 214
+        H = 244
         nx, ny, anchor, step = x, y + cap * 1.55 + 46, "start", 20
     else:
-        H = 150
+        H = 176
         nx, ny, anchor, step = w - PAD, 58, "end", 24
     b = [panel(H, on, w=w, r=12), statement(x, y, "TRY IT IN", "YOUR BROWSER", cap, on, slab_cls)]
     for i, s in enumerate(notes):
         b.append(mono(nx, ny + i * step, s, size, c["dim"], 0.14, anchor))
-    gy = ny + len(notes) * step + (12 if phone else 10)
+    gy = ny + len(notes) * step + (24 if phone else 20)
     gw = text_w(go, size, True, 0.14)
-    cw, ch = size * 0.62, size * 1.25
-    if anchor == "end":
-        tx, cx = nx - cw - 6, nx - cw
-    else:
-        tx, cx = nx, nx + gw + 6
-    b.append(mono(tx, gy, go, size, c["fg"], 0.14, anchor, weight="700"))
-    b.append(f'<rect class="{blink(clk, 0, T)}" x="{cx:.1f}" y="{gy - ch + 3:.1f}" width="{cw:.1f}" height="{ch:.1f}" fill="{MARK}"/>')
-    desc = (f"A link to the playground at {PLAYGROUND.split('//')[1].rstrip('/')}: TRY IT IN YOUR BROWSER, with YOUR BROWSER on a highlighter mark. "
-            "Both engines run in the browser with no install, and the code you search stays on your machine.")
-    return svg(w, H, "Try scrutate in your browser", desc, "\n".join(b), WIPE_CSS + "\n" + clk.css(), animated=True)
+    padx, bh = 14, size + 18
+    bw = gw + 2 * padx
+    bx = nx - bw if anchor == "end" else nx
+    by = gy - size - 7
+
+    def label(fill):
+        return mono(bx + padx, gy, go, size, fill, 0.14, weight="700")
+
+    b.append(f'<rect x="{bx + .5:.1f}" y="{by + .5:.1f}" width="{bw - 1:.1f}" height="{bh - 1:.1f}" rx="6" fill="none" stroke="{c["fg"]}"/>')
+    b.append(label(c["fg"]))
+    # a hand glides in and presses the button: the button lights up and a ring spreads from the fingertip
+    t_click = 2.15
+    lit = clk.anim([(t_click, 0, "steps(1, end)"), (t_click + 0.01, 1), (T - 1.0, 1, "ease-in"), (T - 0.75, 0)], "opacity", rest=0)
+    b.append(f'<g class="{lit}" opacity="0"><rect x="{bx:.1f}" y="{by:.1f}" width="{bw:.1f}" height="{bh:.1f}" rx="6" '
+             f'fill="{MARK}"/>{label(INK)}</g>')
+    px, py = bx + bw * 0.62, by + bh * 0.58
+    still = {"transform": "scale(0.3)", "opacity": 0}
+    ring = clk.anim([(t_click, still, "steps(1, end)"), (t_click + 0.01, {"transform": "scale(0.3)", "opacity": 0.9}, EASE),
+                     (t_click + 0.55, {"transform": "scale(1.7)", "opacity": 0}, "steps(1, end)"), (t_click + 0.56, still)],
+                    rest=still, travel=True)
+    b.append(f'<circle class="spot {ring}" cx="{px:.1f}" cy="{py:.1f}" r="16" fill="none" stroke="{MARK}" stroke-width="2" opacity="0"/>')
+    sx, sy = px + 70, py + 60
+
+    def at(hx, hy, s=1, o=1):
+        return {"transform": f"translate({hx:.1f}px, {hy:.1f}px) scale({s})", "opacity": o}
+
+    hand_cls = clk.anim([(1.05, at(sx, sy, 1, 0), "steps(1, end)"), (1.1, at(sx, sy), EASE_IN_OUT), (1.95, at(px, py)),
+                         (t_click - 0.1, at(px, py), "ease-in"), (t_click, at(px, py, 0.86), EASE), (t_click + 0.22, at(px, py)),
+                         (T - 1.0, at(px, py), "ease-in"), (T - 0.7, at(px, py, 1, 0), "steps(1, end)"), (T - 0.69, at(sx, sy, 1, 0))],
+                        rest=at(sx, sy, 1, 0), travel=True)
+    clk.beat("the hand glides to OPEN THE PLAYGROUND", 1.1, 0.85)
+    clk.beat("it presses: the button lights up", t_click - 0.1, 0.32)
+    # still, the hand rests on the button
+    b.append(f'<g class="hand {hand_cls}" transform="translate({px:.1f} {py:.1f})">{hand(1.3 if phone else 1.4)}</g>')
+    desc = (f"A link to the playground at {PLAYGROUND.split('//')[1].rstrip('/')}: TRY IT IN YOUR BROWSER, with YOUR BROWSER on a highlighter mark, "
+            "and a hand that presses the OPEN THE PLAYGROUND button, which lights up. Both engines run in the browser with "
+            "no install, and the code you search stays on your machine.")
+    return svg(w, H, "Try scrutate in your browser", desc, "\n".join(b),
+               "\n".join([WIPE_CSS, SPOT_CSS, ".hand{transform-box:view-box;transform-origin:0 0}", clk.css()]), animated=True)
+
+
+def hand(s):
+    """A pointing hand, its fingertip at the origin: an ink outline under a paper fill, so the shapes merge."""
+    parts = [(-2.6, 0, 5.2, 15, 2.6), (2.2, 7, 4.6, 10, 2.3), (6.4, 8.5, 4.4, 9, 2.2), (10.4, 10, 4, 8, 2),
+             (-2.6, 13, 17, 11, 4.5), (-8, 12.5, 8, 4.6, 2.3)]
+
+    def layer(extra):
+        return "".join(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="{r}"{extra}/>' for x, y, w, h, r in parts)
+
+    return (f'<g transform="scale({s})">'
+            f'<g fill="{INK}" stroke="{INK}" stroke-width="3.2" stroke-linejoin="round">{layer("")}</g>'
+            f'<g fill="{PAPER}">{layer("")}</g></g>')
 
 
 # ---------------------------------------------------------------- icons, badges, social preview
