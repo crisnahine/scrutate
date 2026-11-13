@@ -76,6 +76,10 @@ decide what a name refers to.
 receiver and a base class list are read, how a module maps to files. The walker asks the rule set
 of a file's language at each step where languages differ.
 
+**Impact**: what a change touches (`impact.rs`, `scrutate impact`): the definitions a git diff
+changes, their callers through `Names` with the distance of each, and the test files to run. The
+diff is read by running `git`; the base side of a file is parsed from git's copy.
+
 **Grouped grep**: an Engine A search whose matching lines are grouped by the symbol that encloses
 them (`intel::grouped_grep`). The MCP `grep_code` tool, `grep --symbols` and both kinds of
 references use it.
@@ -87,7 +91,7 @@ and `Files` directly, and `watch`, which only writes the stores.
 
 **Operation**: one question a front end can ask of the index (`ops::Op`): ranked search, grep,
 symbol, callers, callees, read, outline, dependencies, dependents, references, similar,
-duplicates, structural search, reindex. An operation owns its arguments, their defaults and
+duplicates, structural search, impact, reindex. An operation owns its arguments, their defaults and
 limits, and the rule for refreshing the index first (`Op::reads_index`). Its grep carries an
 Engine A pattern (`instant::Pattern`: text, mode, case, whole words) and a **scope**
 (`ops::Scope`: a file or directory of the repository and globs). Front ends parse into

@@ -607,6 +607,20 @@ pub enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// what a change touches: the definitions a git diff changes, their callers and the tests to run
+    Impact {
+        /// compare with this revision; `main...` compares with the merge base of main and HEAD
+        #[arg(long, value_name = "REV")]
+        base: Option<String>,
+        /// the staged changes, not the working tree
+        #[arg(long)]
+        staged: bool,
+        /// follow callers this many steps (at most 10)
+        #[arg(long, default_value_t = crate::impact::DEPTH as u64, value_parser = clap::value_parser!(u64).range(0..=crate::impact::MAX_DEPTH as u64))]
+        depth: u64,
+        #[arg(long)]
+        json: bool,
+    },
     /// structural search with a tree-sitter query, e.g. `scrutate tsquery python '(function_definition name: (identifier) @n)'`
     Tsquery {
         lang: String,
@@ -1352,6 +1366,7 @@ pub fn run() -> Result<i32> {
             run_op(&cli.root, Op::from_tool("read_code", &args)?, json, page, outside.as_deref())
         }
         Cmd::Dupes { min_tokens, threshold, limit, json } => run_op(&cli.root, Op::Dupes { min_tokens, threshold, limit }, json, page, outside.as_deref()),
+        Cmd::Impact { base, staged, depth, json } => run_op(&cli.root, Op::Impact { base, staged, depth: depth as usize }, json, page, None),
         Cmd::Tsquery { lang, query, paths, limit, json, no_cache } => {
             // streamed: one JSON object or one text line per capture, in path order
             let stdout = std::io::stdout();
@@ -1602,7 +1617,9 @@ fn run_op(root: &Path, op: Op, json: bool, (max_bytes, offset): (usize, usize), 
 fn run_request(root: &Path, request: crate::session::Request) -> Result<i32> {
     let outside = request.outside.as_deref();
     // a session `serve` runs on this root does the same work with the index already open
-    let asked = match crate::session::wanted().then(|| std::fs::canonicalize(root).ok()).flatten() {
+    // git runs in the environment of the process that asked
+    let session = crate::session::wanted() && !matches!(request.op, Op::Impact { .. });
+    let asked = match session.then(|| std::fs::canonicalize(root).ok()).flatten() {
         Some(r) => crate::session::ask(&r, &request)?,
         None => None,
     };

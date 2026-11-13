@@ -205,6 +205,14 @@ First release.
   below a `class_name` and its `extends` line documents the class. Calls (`f()`, `obj.f()`,
   `super.f()`) are recorded for `callers` and `callees`; `refs` says it does not resolve the
   language. `grep --type gdscript` searches `.gd` files.
+- `scrutate impact [--base REV] [--staged] [--depth N]` and the MCP tool `impact`: from the git
+  diff (the working tree and untracked files against `HEAD` by default, another revision,
+  `main...` for a merge base, or the staged changes) to the definitions it adds, edits and
+  deletes, their callers through the resolver with the distance of each (3 steps by default),
+  and the test files to run. Text and JSON in the envelope of the other index commands, paged by
+  `--max-bytes`; a directory outside git, a bad revision and a missing merge base are errors with
+  exit code 2, and a revision is never passed to git as an option. The MCP server has fifteen
+  tools.
 - Windows: a damaged index is built again while another handle holds its files (a session's
   other readers, another process): the database that cannot be deleted is emptied where it is
   and a segment directory that cannot be removed keeps its name. Before, the rebuild could go on
@@ -862,7 +870,7 @@ First release.
   and `.rpm`, the release archives and `THIRD_PARTY_NOTICES.txt` say so. `vendor/ignore` keeps
   `Unlicense OR MIT`. The README has a "Sponsor and hire" section: paid terms, support,
   sponsored features and work for hire, asked for through GitHub.
-- Unified `find`, MCP server (14 tools), configuration files with environment-variable precedence,
+- Unified `find`, MCP server (15 tools), configuration files with environment-variable precedence,
   shell completions, progress reporting; errors as JSON records with `--json` or
   `SCRUTATE_DIAGNOSTICS=json`.
 - On/off environment variables are off for `0`, `false`, `no`, `off` or empty and on for any other

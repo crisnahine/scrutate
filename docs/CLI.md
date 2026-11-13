@@ -247,6 +247,7 @@ often while files change.
 | `deps FILE` / `rdeps TARGET` | Imports of a file (resolved to repository files when possible) / files importing a module or file. Imports resolve as in `refs`: Rust `crate::`, `self::` and `super::` paths and `mod` declarations (`deps` lists a `mod` line too), Go imports through `go.mod`, also from a module in a subdirectory, Python `from . import b`, TypeScript `./lib/c.js` to `c.ts` and `./types` to `types.d.ts`. `deps` gives one line per file a statement names. An `#include "util.h"` resolves to the file next to the including one; `rdeps` matches an import by its base name only when it resolves to no file. When nothing resolves to the target but some imports could not be resolved, `rdeps` says so: `no import resolves to X, but N imports could not be resolved and may name it`. It counts a relative import whose path is the target without its extension, the target or its directory, and, in a file that is not JavaScript or TypeScript, a bare import with a part spelled as the target's module name (`b` for `a/b.py` or `a/b/__init__.py`). A Java import resolves through the package declarations of the files, in any source root (`src/main/java` included): a class import to the class's file, `a.b.*` to the files of the package, a static import to the file of its class. A PHP `use` resolves to the file that defines the class or function it names, in the namespace it names. An import is recorded as its statement writes it. JavaScript and TypeScript: the module of `import`, of `export ... from` and of `import x = require()`, and the argument of a `require` or `import()` call when it is a string or a template string without `${}`; an exported declaration is no import. PHP: `require` and `include` with either kind of quote, and `use`, plain, `function` or grouped (`use Foo\{A, B}` gives `Foo\A` and `Foo\B`). R: `library`, `require`, `requireNamespace` and `source`. Julia: each module of a `using` or `import` list, the module before a colon, and `include`. Ruby and Lua: `require` and its kin without a receiver, with a literal argument. Kotlin and C#: the imported name, not its alias. Objective-C `@import` and QML imports are recorded too. |
 | `similar TARGET [-k N]` | Code similar to a symbol or `path:line` (vector cosine + token Jaccard). A constant has no vector: `similar` on one is an error that says so. |
 | `dupes [--min-tokens N] [--threshold J] [--limit N]` | Exact and near-duplicate functions. `exact` means the same body text once runs of whitespace are squeezed; a pair with the same words written differently is `near` with similarity 1.00. `--threshold 1` prints the exact groups only. At most 50 groups, or `--limit`. |
+| `impact [--base REV] [--staged] [--depth N]` | What a change touches: the definitions the git diff changes, the callers that reach them up to `N` steps away (default 3) with their distances, and the test files to run (see below). |
 | `tsquery LANG QUERY [PATHS] [--limit N] [--no-cache]` | Tree-sitter structural query over every file of a language up to 1 MB (no index; per-file results are cached, see below). An empty query, a query without a `@capture` and an unknown predicate are errors. A path that does not exist from the current directory is read under `--root`; one that exists in neither place is named in a warning, the other paths are still searched, and the exit code is 2. Paths print as `grep PATH...` prints them, in plain output and in `--json`: the path as given, then the path below it (`src/a.py` for `src`, `./src/a.py` for `./src`, nothing in front for `.` or no path), so a printed path can be passed to the other commands. |
 | `check [--files] [--json]` | Verify database integrity, segment consistency and (with `--files`) that indexed files are unchanged. Exit 1 on problems. The line `chunks: N ranked in the database, M alive in segments, K constants (no postings)` counts the chunks that have segment rows, which leaves out constants, and then the constants; `--json` gives them as `constants`. `--json` counts the indexed files also without `--files` (`files_changed` and `files_missing` are then 0: not checked). |
 | `stats` | Index statistics as one JSON object (files, chunks, symbols, call edges, imports, segments, and the text index's files, segments and bytes). |
@@ -444,10 +445,56 @@ and `note`): a use after that byte is not listed. Resolution reads the index's
 definitions and parses the files that hold occurrences again, so it needs no index change. The
 MCP `references` tool gives the same answer (`textual` and `def` are arguments there).
 
+### `impact`
+```
+scrutate impact [--base REV] [--staged] [--depth N] [--json]
+```
+What a change touches, from git's diff. By default the working tree against `HEAD`: the changes
+to tracked files, staged or not, and every untracked file that is not ignored, as a new file.
+`--base REV` compares the working tree with another commit; `--base main...` (three dots) with
+the merge base of `main` and `HEAD`, as git reads it (`A...B` is the merge base of `A` and `B`).
+`--staged` takes the staged changes alone, against `HEAD` or `--base`, and no untracked file.
+The answer has three sections, each a line with its count and then one line per item:
+
+- `changed`: each definition a changed line falls in, the innermost one around the line, as
+  `path:start-end  [kind] name  (status)`. `added` is a definition the base does not have (by
+  kind and qualified name in the file; a whole new file is all `added`), `edited` one it has, and
+  `deleted` one only the base has, named with its lines in the base. A file renamed with edits
+  (git's `-M`) names its definitions at the new path, and a note says what it was renamed from.
+  A changed line outside every definition names the window that holds it, as `callers` lists a
+  call written there, or the file (`path  [file]`) when no window does (a blank line, a deleted
+  line, a staged line). A staged change is read from the staged copy and named where the index
+  holds that definition now.
+- `callers`: the definitions that call a changed one, then their callers, breadth first, each
+  with its distance in front (`1` calls a changed definition) and each once, at its smallest
+  distance. Each step is the answer `scrutate callers LOCATION --limit 500` gives for one
+  definition, undecided callers included (marked `(undecided)`). A window, a module and a
+  deleted definition are not followed further: nothing calls them by name in the tree as it is.
+  `--depth N` (at most 10, `0` for none) stops the walk; 3 by default, because past three steps
+  the callers of a much used function grow toward most of the repository and say little about
+  what to test. The walk stops at 2,000 callers and says so.
+- `tests`: each test file (the index's test flag: a `test` or `tests` directory, `test_*.py`,
+  `*_test.go` and the like) that defines a changed symbol or holds a caller, with its distance and
+  the symbol in it that was reached, and each test file the diff changed, once, at its smallest
+  distance.
+
+The items are sorted by distance, path and line, the same on every run. A file with no
+definitions to name gets a line under `notes` instead: a binary file, a submodule (its commits
+are not read), a file the index leaves out. `--json` gives the answer's envelope, its `result`
+with `against`, `base` (the commit compared with), `staged`, `depth`, `changed` (each with
+`status`), `callers` (each with `distance`, `via`, the location of what it calls, and
+`undecided`), `tests` (`path`, `distance`, `via`), `notes` and `stopped`. `--max-bytes` pages
+the text by whole lines, as the other answers. No change is exit code 1; a directory outside a
+git repository, git missing, a revision git does not know, two revisions with no merge base and a
+file with unmerged changes are errors (exit 2). A revision that starts with `-` is refused before
+git runs, so it can never be read as an option. The command line does not send `impact` to a
+running `serve`: git runs in the command's own environment. The MCP tool `impact` takes `base`,
+`staged` and `depth` and gives the same answer.
+
 ### Answers from the index: one definition for every front end
 
-`symbol`, `callers`, `callees`, `refs`, `read`, `outline`, `deps`, `rdeps`, `similar`, `dupes`
-and the ranked search of `search` and `find` are operations (`ops.rs`): the CLI, the MCP server,
+`symbol`, `callers`, `callees`, `refs`, `read`, `outline`, `deps`, `rdeps`, `similar`, `dupes`,
+`impact` and the ranked search of `search` and `find` are operations (`ops.rs`): the CLI, the MCP server,
 `batch`, the Python bindings and the language server run the same code, through the same check
 of the files an answer cites and the same recovery from a damaged index, with the same defaults (search `k` 8, callers 30, callees 40, references 200, duplicates 50,
 structural search 1000) and print the same text or JSON. An empty answer has exit code 1;
@@ -479,9 +526,9 @@ budget the answer is whole, and a plain piped `grep` takes the same path it took
 
 ### `serve` (MCP)
 
-Fourteen tools over stdio, each one an operation above (`search_code`, `grep_code`,
+Fifteen tools over stdio, each one an operation above (`search_code`, `grep_code`,
 `find_symbol`, `callers`, `callees`, `read_code`, `outline`, `dependencies`, `dependents`,
-`references`, `similar_code`, `duplicates`, `structural_search`, `reindex`).
+`references`, `similar_code`, `duplicates`, `structural_search`, `impact`, `reindex`).
 
 Before a call the server checks the repository for changed files and updates the index. Without
 `--refresh-interval` the wait between scans is at most a second, and shorter when a scan is
@@ -498,7 +545,7 @@ answers the calls in flight, lets a running index build finish, and exits.
 While it runs, the server offers its open index to command line calls of the same user on the
 same root: `symbol`, `callers`, `callees`, `refs`, `outline`, `deps`, `rdeps`, `read`, `similar`,
 `dupes`, `search` (of this repository alone: with `--also` another root it does its own work) and
-the ranked part of `find` run there, with every file looked at first as always, and print the same bytes and
+the ranked part of `find` run there (`impact` does not: git runs in the command's own environment), with every file looked at first as always, and print the same bytes and
 exit code a fresh process gives (about 12 ms in place of 28 ms on a copy of this repository). The meeting
 point is a socket file, `.scrutate/session.sock` (owner only; Unix; no network port), removed
 when the server exits. A command never starts a server. When anything about the server is not
@@ -566,6 +613,8 @@ its last group with a `note:` line (`"note"` in JSON). An invalid pattern is an 
   results)` when nothing is found, and refuses an empty name.
 - `structural_search` refuses an empty query, a query without a `@capture` and an unknown
   predicate, as `tsquery` does.
+- `impact` takes `base` (a revision, `main...` for a merge base), `staged` (boolean) and `depth`
+  (default 3, at most 10), and answers as `scrutate impact` does (see `impact` above).
 - `reindex` takes `force` (boolean): every file is read again, also one whose size and
   modification time did not change, and a damaged index is rebuilt. It brings the text index
   up to date too when there is one, so `grep --index` sees what it indexed; it never makes one.

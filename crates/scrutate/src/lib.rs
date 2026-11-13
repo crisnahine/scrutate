@@ -13,6 +13,7 @@ pub mod config;
 pub mod files;
 pub mod fmt;
 pub mod fuzzyre;
+pub mod impact;
 pub mod index;
 pub mod instant;
 pub mod intel;

@@ -7,7 +7,7 @@
 
 [Documentation](README.md) &nbsp;·&nbsp; Previous: [Test results](TEST_RESULTS.md) &nbsp;·&nbsp; Next: [Traceability](TRACEABILITY.md)
 
-**Contents**: [Threat model](#threat-model) &nbsp;·&nbsp; [Controls and evidence](#controls-and-evidence) &nbsp;·&nbsp; [The session socket](#the-session-socket) &nbsp;·&nbsp; [The main checkout's index in a linked work tree](#the-main-checkouts-index-in-a-linked-work-tree) &nbsp;·&nbsp; [Known gaps and residual risks](#known-gaps-and-residual-risks) &nbsp;·&nbsp; [Reporting](#reporting)
+**Contents**: [Threat model](#threat-model) &nbsp;·&nbsp; [Controls and evidence](#controls-and-evidence) &nbsp;·&nbsp; [Running git](#running-git) &nbsp;·&nbsp; [The session socket](#the-session-socket) &nbsp;·&nbsp; [The main checkout's index in a linked work tree](#the-main-checkouts-index-in-a-linked-work-tree) &nbsp;·&nbsp; [Known gaps and residual risks](#known-gaps-and-residual-risks) &nbsp;·&nbsp; [Reporting](#reporting)
 
 <!-- End of head. -->
 
@@ -35,7 +35,7 @@ reaches the socket a running `serve` offers to command line calls (below).
 
 | Area | Control | Evidence |
 |---|---|---|
-| No code execution from repositories | Files are parsed as data (tree-sitter, regex); nothing is evaluated, imported, or run. No build systems, hooks, `.scrutate.toml` scripts or plugins exist. The binary starts another program in one case: `grep -z` decompresses bzip2, xz, lzma, lz4, zstd, brotli and `.Z` files by running the system's `bzip2`, `xz`, `lz4`, `zstd`, `brotli` or `uncompress` from `PATH` on the file (through `grep-cli`, as ripgrep does); gzip, zip and tar are read in process. Without `-z`, no program is started. | Code review: the engine's only process spawn is `grep_cli::DecompressionReaderBuilder` in `archive.rs`; the Rust engine never invokes `git`. |
+| No code execution from repositories | Files are parsed as data (tree-sitter, regex); nothing is evaluated, imported, or run. No build systems, hooks, `.scrutate.toml` scripts or plugins exist. The binary starts another program in two cases: `grep -z` decompresses bzip2, xz, lzma, lz4, zstd, brotli and `.Z` files by running the system's `bzip2`, `xz`, `lz4`, `zstd`, `brotli` or `uncompress` from `PATH` on the file (through `grep-cli`, as ripgrep does), while gzip, zip and tar are read in process; and `impact` (the command and the MCP tool) runs `git` from `PATH` in the root to read the diff (see [Running git](#running-git)). Without `-z` or `impact`, no program is started. | Code review: the engine's process spawns are `grep_cli::DecompressionReaderBuilder` in `archive.rs` and `Git::command` in `impact.rs`; `tests/impact.rs` (a revision written as an option is refused, and no file is written). |
 | No network | The binary makes no network connections and has no HTTP/DNS dependency. | `cargo tree` (docs/DEPENDENCIES.md) contains no networking crate; offline build and run verified in a proxy-restricted environment. |
 | Filesystem confinement | `read_code` / `read()` reject paths that resolve outside the repository root, and `read_code` refuses a path that is not a regular file; the index is written only under `<root>/.scrutate/`, and another checkout's index is only read, in a linked git work tree, from its main checkout ([below](#the-main-checkouts-index-in-a-linked-work-tree)); segment files are written to a temp directory *inside* `.scrutate/seg/` and renamed into place (no `/tmp`, no predictable world-writable paths). A repository's `exclude_dirs` (`.scrutate.toml` at the root) can only leave directories out by name: the file is read as other repository files are (a regular file inside the root, at most 1 MB; through a link only when the resolved file is one), and its names are never read as patterns. A `.scrutate` that is a symbolic link, or that holds one (checked three levels deep, no link followed), is refused, and files of fixed names are written with remove and `create_new`, so nothing outside the repository is written or deleted through a link. A `--root` that does not exist or is not a directory is an error, and nothing is created. `tsconfig.json`, `jsconfig.json`, `Cargo.toml` and `go.mod` are read only when they are regular files inside the repository, of at most 1 MB. A path a tool call names, a file an answer cites and a file a watch event names are indexed only when the path resolves inside the repository root: a linked folder on the way that leads outside makes the file count as missing. A path in a tool call that leaves the root by its own parts (`..`, an absolute path elsewhere, a share on another machine) is refused with nothing looked at, so on Windows no connection is made to a machine a call names. The language server reads a document from disk only under the root, links on the way included, and resolves no path on another machine's share than the root's: for a document outside it (another folder, a URI that leaves through `..`) it uses the text the editor sent, or nothing. | `tests/robustness.rs::symlinks_ignores_and_nested_repos` (symlink escape not followed by default), bindings test `r.read("../etc/passwd")` → error, lsp `a_document_that_is_not_under_the_root_is_never_read_from_disk`, mcp_tools `a_path_through_a_linked_folder_reads_nothing_outside_the_repository`. |
 | Symlinks | Not followed by default (Engine A and B); `-L` follows with loop detection (the `ignore` walker). | robustness: loop + dangling + escaping symlinks. |
@@ -54,6 +54,26 @@ reaches the socket a running `serve` offers to command line calls (below).
 | Untrusted `.scrutate.toml` | The configuration file sets option defaults only (booleans, numbers, globs); it cannot name programs or paths to execute. Unknown keys are rejected. `follow = true` in a repository's own file is ignored with a warning, so a cloned repository cannot make a search leave it through a symbolic link; the flag, the environment and the user's own file still can. | `config.rs` tests; `tests/cli.rs` (a link out of the repository). |
 | MCP server | Only reads the repository and writes `.scrutate/`; path arguments are confined; the server takes requests on stdio, and on Unix offers its open index to command line calls of the same user through `.scrutate/session.sock` (no network port; see [The session socket](#the-session-socket)). Malformed input gets the JSON-RPC error the specification names, and the server keeps reading: a line that is not JSON or not UTF-8 gets -32700; a message that is not an object, an empty batch and a request without `method` get -32600; an unknown method gets -32601; an unknown tool and a missing tool name get -32602; an argument of the wrong type, or a negative number, is a tool error that names the argument. Notifications are never answered, and a client's own responses are ignored. An error quotes at most 200 characters of an argument. Each tool call has a thread of its own, at most 32 at once (further calls run on the reading thread), and at most 8 read the index at once. | `mcp.rs`; manual protocol smoke test in docs/TEST_RESULTS.md. |
 | Python bindings | Engine behind a session (calls side by side, writes one at a time, a panic kept inside its call); `GrepIter` borrow-checked by PyO3; free-threaded declaration (`gil_used = false`) made after this review; stable ABI build. | `python/tests/test_bindings.py`. |
+
+## Running git
+
+`impact` reads what changed by running the `git` program found on `PATH` (on Windows the
+current directory is not searched first), with the root as its working directory: `rev-parse`, `merge-base`, `diff` (raw and `-U0`), `ls-files --others` and one
+`cat-file --batch`. Nothing in the repository names this program or its arguments, and the
+calls only read: each passes `--no-optional-locks` (git then does not refresh and write its index
+file), `-c core.fsmonitor=false` (no file system monitor program), `--no-ext-diff` and
+`--no-textconv` (no external diff or text conversion program from git's configuration).
+
+The one argument a caller gives is a revision (`--base`, the tool's `base`). It is refused
+before git runs when it is empty or starts with `-`, so `--base=--output=x` cannot become git's
+`--output` option and write a file, and it is passed as one argument, `REV^{commit}` to `git
+rev-parse --verify`. The commit id that call prints is what every later call gets. `A...B` is
+split first and each side checked the same way.
+
+What remains is git's own trust in its configuration: a clean filter that the user's git
+configuration defines (Git LFS, for example) runs when git compares a working tree file the
+repository's `.gitattributes` assigns to it, as it does for `git diff`. A repository can select
+such a filter but cannot define one: a clone carries no `.git/config`.
 
 ## The session socket
 

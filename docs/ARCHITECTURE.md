@@ -639,8 +639,8 @@ same root. Any difference, any error, a greeting slower than 20 ms (or `SCRUTATE
 wait (a write running, every reader busy, another process holding the write lock): the command
 line does the work itself, as without a session, and says nothing unless
 `SCRUTATE_SESSION_DEBUG=1`. `SCRUTATE_NO_SESSION=1` turns the use off. `grep`, `batch`, a
-`search` with `--also` another root (one session holds one repository) and the grep part of
-`find` do not use it. A socket path too long for a socket address is reached from its directory;
+`search` with `--also` another root (one session holds one repository), `impact` (git runs in
+the command's own environment) and the grep part of `find` do not use it. A socket path too long for a socket address is reached from its directory;
 the command line goes back by a descriptor of the directory it left, and stops with an error if
 even that fails. Windows has no session use. The language server offers no socket:
 one meeting point per root keeps the "two sessions on one root" case to `serve` alone.
@@ -733,6 +733,27 @@ first. On Guava `callers size` costs 1.4 s of CPU on a first run (19.2 billion i
 0.43 s (6.1 billion) from what was kept, where asking about the 400 likeliest sites cost 0.6 s
 (8.3 billion).
 
+`impact` (`impact.rs`) is an operation like the others, so it scans first and pages and prints as
+they do. It reads the diff by running the `git` program in the root, the one program Engine B
+starts: `git diff --raw -z` for each file's status, modes and blob ids, `git diff -U0` for the
+changed lines of each side, `git ls-files --others --exclude-standard` for the untracked files,
+`git rev-parse` and `git merge-base` for the base commit, and one `git cat-file --batch` for the
+base copies (and, with `--staged`, the staged copies). Every call passes `--no-optional-locks`,
+`core.fsmonitor=false`, `--no-ext-diff` and `--no-textconv`, so git writes nothing and starts no
+helper of its own; a revision is checked before it is passed (none starts with `-`) and is
+resolved to a commit id, which every later call uses. Each hunk's new lines are mapped onto the
+index's definitions of the file as it is now, the innermost one around each line, and its old
+lines onto the definitions a parse of the base copy gives (`parse::parse_file`, the parse the
+index stores); a definition is matched across the two sides by its kind and qualified name, so a
+definition only the base has is deleted and one only the tree has is added. Lines outside every
+definition name the window that holds them. The callers are followed breadth first through one
+`Names` for the whole request, each step the answer of `Names::callers` for one location (as
+`callers --limit 500`), so the answer agrees with `callers` and each file is parsed once; a
+caller keeps the smallest distance it is reached at. The test files are those with the index's
+test flag (`text::is_test_path`) among the changed definitions, the callers and the changed
+files. A command line `impact` is not sent to a session, so git runs in the environment of the
+command that asked.
+
 The caller count that ranking reads (`log_ncallers`) comes from the index (`Index::call_counts`): it counts
 every call edge of the name, namesakes included, the number the ranker was fitted on.
 
@@ -758,7 +779,7 @@ independently usable (`grep`, `index`/`search`) and independently tested.
 Every question a front end can ask of the index is an **operation** (`ops::Op`): its arguments,
 their defaults and limits live there, and it returns a typed **answer** (`ops::Answer`) with one
 text form and one JSON form. The CLI's index commands (`read` among them) and the ranked search
-of `search` and `find`, the MCP server's fourteen tools, `batch` and the Python bindings parse
+of `search` and `find`, the MCP server's fifteen tools, `batch` and the Python bindings parse
 into operations, run them through `Repo` (`Repo::run`, or `Repo::run_as_is` after a scan of
 their own), and render answers; none of them has a default or an output format of its own (they
 had drifted: three different limits for `callers`, references textual in one and resolved in
@@ -862,6 +883,7 @@ by the quality floor of `bench/quality.py` (docs/QUALITY.md).
 - Components are replaceable behind small interfaces: a grammar is a registry row; the ranker is
   an array file; the vector model is an `npz`; the store is a directory of immutable arrays.
 - No network, no execution of repository code, no background daemons: the engines are libraries
-  that a CLI, an MCP server and Python call directly. A command line call may use a session a
+  that a CLI, an MCP server and Python call directly. `impact` runs the `git` program found on
+  `PATH`, which reads the repository; nothing in the repository names a program to run. A command line call may use a session a
   running `serve` offers on a local socket, and never starts one.
 - Everything that can be measured is measured by a script in `bench/` that anyone can rerun.

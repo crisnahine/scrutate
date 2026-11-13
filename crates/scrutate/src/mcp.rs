@@ -31,7 +31,7 @@ const LIST_TTL_MS: u64 = 3_600_000;
 const INSTRUCTIONS: &str = "scrutate searches the code of this repository from a local index. \
 Start with search_code for a question in words or a name; use grep_code for an exact pattern, find_symbol for a definition, \
 references for every use of a name, callers and callees to follow calls, outline and read_code to read a file in pieces \
-or one whole definition. \
+or one whole definition, and impact for what a git diff changes, who calls it and which tests to run. \
 Every tool only reads, except reindex, which refreshes the index (a cache under .scrutate/). \
 Results are capped; a tool says when it stopped early and which argument raises the limit. \
 Each result begins with its location (path:start-end). Pass that location wherever a tool takes a symbol name \
@@ -103,6 +103,11 @@ fn tool_table() -> Value {
          "inputSchema": {"type": "object", "properties": {"min_tokens": {"type": "integer", "default": ops::DUPES_MIN_TOKENS}, "threshold": {"type": "number", "default": ops::DUPES_THRESHOLD}, "limit": {"type": "integer", "default": ops::DUPES_LIMIT}}}},
         {"name": "structural_search", "description": "Run a tree-sitter query (S-expression pattern with @captures) over all files of one language, e.g. lang=python query=\"(class_definition name: (identifier) @cls)\".",
          "inputSchema": {"type": "object", "properties": {"lang": {"type": "string"}, "query": {"type": "string"}, "limit": {"type": "integer", "default": ops::TSQUERY_LIMIT}}, "required": ["lang", "query"]}},
+        {"name": "impact", "description": "What does my change touch? From the git diff (the working tree and untracked files against HEAD; `base` a revision, `main...` for the merge base with main; `staged` the staged changes) to the changed definitions, their callers with distances up to `depth` steps, and the test files to run.",
+         "inputSchema": {"type": "object", "properties": {
+             "base": {"type": ["string", "null"], "default": null, "description": "revision to compare with (default HEAD)"},
+             "staged": {"type": "boolean", "default": false},
+             "depth": {"type": "integer", "default": crate::impact::DEPTH, "description": "steps of callers to follow (at most 10)"}}}},
         {"name": "reindex", "description": "Re-scan for changed files (searches already do this automatically). `force` reads every file again, also one whose size, modification time and change time did not change.",
          "inputSchema": {"type": "object", "properties": {"force": {"type": "boolean", "default": false}}}}
     ])

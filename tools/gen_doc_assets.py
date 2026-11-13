@@ -700,7 +700,7 @@ def diagram_front_ends():
 def diagram_cli_map():
     s = Svg(880, 700, "Command map: scrutate's commands by family",
             "Search without an index (grep, tsquery), search the index (search, find, grep --index, batch), "
-            "code intelligence (symbol, callers, callees, refs, outline, deps, rdeps, similar, dupes), "
+            "code intelligence (symbol, callers, callees, refs, outline, deps, rdeps, similar, dupes, impact), "
             "maintenance (index, check, stats, languages, config, completions) and servers (serve, lsp, watch).")
     fams = [
         ("Search, no index", "fg", 130, [
@@ -721,6 +721,7 @@ def diagram_cli_map():
             ("deps / rdeps", "imports of a file / files importing a module or file"),
             ("similar", "code similar to a symbol or `path:line`"),
             ("dupes", "exact and near-duplicate functions"),
+            ("impact", "what a git diff changes, its callers and the tests to run"),
         ]),
         ("Maintenance", "fg", 130, [
             ("index", "build or update `.scrutate/`"),

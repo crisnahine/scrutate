@@ -121,6 +121,13 @@ pub enum Op {
     Reindex {
         force: bool,
     },
+    /// What the working tree (`staged`: the staged changes) changes against `base` (`HEAD` when
+    /// none): the changed definitions, their callers up to `depth` steps away and the tests to run.
+    Impact {
+        base: Option<String>,
+        staged: bool,
+        depth: usize,
+    },
 }
 
 impl Op {
@@ -210,6 +217,11 @@ impl Op {
             },
             "structural_search" => Op::Tsquery { lang: text("lang")?, query: text("query")?, limit: count("limit", TSQUERY_LIMIT as u64, 5000)? as usize },
             "reindex" => Op::Reindex { force: flag("force")? },
+            "impact" => Op::Impact {
+                base: opt_text("base")?,
+                staged: flag("staged")?,
+                depth: natural("depth")?.map_or(crate::impact::DEPTH, |d| d.min(crate::impact::MAX_DEPTH as u64) as usize),
+            },
             _ => bail!("unknown tool {}", echo(name)),
         })
     }
@@ -349,6 +361,28 @@ pub fn output_schema(tool: &str) -> Value {
             json!({"kind": ty("string"), "similarity": ty("number"), "tokens": ty("integer"), "members": ty("array")}),
             &["kind", "similarity", "tokens", "members"],
         )),
+        "impact" => {
+            let item = |more: &[(&str, Value)]| {
+                let mut v = span("qualname");
+                for (k, t) in more {
+                    v["properties"][*k] = t.clone();
+                }
+                v["properties"]["start"] = json!({"type": ["integer", "null"]});
+                v["properties"]["end"] = json!({"type": ["integer", "null"]});
+                v
+            };
+            let test = obj(json!({"path": ty("string"), "distance": ty("integer"), "via": {"anyOf": [item(&[]), ty("null")]}}), &["path", "distance", "via"]);
+            let note = obj(json!({"path": ty("string"), "note": ty("string")}), &["path", "note"]);
+            obj(
+                json!({
+                    "against": ty("string"), "base": ty("string"), "staged": ty("boolean"), "depth": ty("integer"),
+                    "changed": list(item(&[("status", json!({"type": "string", "enum": ["added", "edited", "deleted"]}))])),
+                    "callers": list(item(&[("distance", ty("integer")), ("via", ty("string")), ("undecided", ty("boolean"))])),
+                    "tests": list(test), "notes": list(note), "stopped": ty("boolean"),
+                }),
+                &["against", "base", "staged", "depth", "changed", "callers", "tests", "notes", "stopped"],
+            )
+        }
         "structural_search" => list(obj(
             json!({"path": ty("string"), "line": ty("integer"), "column": ty("integer"), "capture": ty("string"), "kind": ty("string"), "text": ty("string")}),
             &["path", "line", "column", "capture", "kind", "text"],
@@ -460,6 +494,7 @@ pub enum Answer {
     Dupes(Vec<DupGroup>, Option<Stop>),
     Captures(Vec<Capture>, Option<Stop>),
     Reindexed(UpdateStats),
+    Impact(crate::impact::Impact),
 }
 
 /// Run one operation on the index as it is; `Repo::run` brings the index up to date first.
@@ -575,6 +610,7 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
             Answer::Captures(caps, stopped)
         }
         Op::Reindex { .. } => bail!("reindex keeps every store current: run it through Repo"),
+        Op::Impact { base, staged, depth } => Answer::Impact(crate::impact::impact(s, base.as_deref(), *staged, *depth)?),
     })
 }
 
@@ -942,6 +978,7 @@ impl Answer {
             Answer::Resolved { refs, .. } => rows(&refs.definitions).into_iter().chain(refs.occurrences.iter().map(|o| o.path.as_str())).collect(),
             Answer::Similar(v) => v.iter().map(|h| h.0.path.as_str()).collect(),
             Answer::Dupes(groups, _) => groups.iter().flat_map(|g| g.members.iter().map(|m| m.0.as_str())).collect(),
+            Answer::Impact(i) => i.cited(),
             Answer::Read { .. } | Answer::Captures(..) | Answer::Reindexed(_) => Vec::new(),
         }
     }
@@ -966,6 +1003,7 @@ impl Answer {
             Answer::Dupes(v, _) => v.is_empty(),
             Answer::Captures(v, _) => v.is_empty(),
             Answer::Reindexed(_) => false,
+            Answer::Impact(i) => i.is_empty(),
         }
     }
 
@@ -1132,6 +1170,8 @@ impl Answer {
                 Parts { tail: stop_line(*stopped, "matches"), items: caps.iter().map(capture_line).collect(), noun: "matches", ..Parts::default() }
             }
             Answer::Reindexed(st) => nothing(format!("{} files changed, {} removed, {} chunks", st.files_changed, st.files_removed, st.chunks)),
+            Answer::Impact(i) if i.is_empty() => nothing(format!("no changes: {}", i.head())),
+            Answer::Impact(i) => Parts { head: i.head(), items: i.lines(), tail: i.stop_line(), noun: "lines", ..Parts::default() },
         }
     }
 
@@ -1159,6 +1199,7 @@ impl Answer {
         match self {
             Answer::Hits { stopped, .. } | Answer::Callers { stopped, .. } | Answer::Callees { stopped, .. } => *stopped,
             Answer::Definitions(_, stopped) | Answer::Captures(_, stopped) | Answer::Dupes(_, stopped) => *stopped,
+            Answer::Impact(i) if i.stopped => Some(Stop { at: crate::impact::MAX_CALLERS, how: "pass a smaller depth" }),
             _ => None,
         }
     }
@@ -1168,6 +1209,7 @@ impl Answer {
         match self {
             Answer::Refs { refs, max_results, .. } => stopped_at(refs.truncated, *max_results),
             Answer::Resolved { refs, max_results, .. } => stopped_at(refs.truncated, *max_results),
+            Answer::Impact(i) => i.stop_line(),
             _ => self.stopped().map(|s| stop_line(Some(s), self.parts().noun)).unwrap_or_default(),
         }
     }
@@ -1249,6 +1291,7 @@ impl Answer {
             Answer::Dupes(groups, _) => serde_json::to_value(groups).unwrap_or_default(),
             Answer::Captures(caps, _) => serde_json::to_value(caps).unwrap_or_default(),
             Answer::Reindexed(st) => json!({"files_changed": st.files_changed, "files_removed": st.files_removed, "chunks": st.chunks}),
+            Answer::Impact(i) => i.json(),
         }
     }
 }
@@ -1306,6 +1349,11 @@ mod tests {
         assert!(matches!(op("duplicates", json!({})), Op::Dupes { min_tokens: DUPES_MIN_TOKENS, limit: DUPES_LIMIT, .. }));
         assert!(matches!(op("structural_search", json!({"lang": "rust", "query": "(x)"})), Op::Tsquery { limit: TSQUERY_LIMIT, .. }));
         assert!(matches!(op("reindex", json!({})), Op::Reindex { force: false }));
+        assert!(matches!(op("impact", json!({})), Op::Impact { base: None, staged: false, depth: crate::impact::DEPTH }));
+        assert!(matches!(
+            op("impact", json!({"base": "main...", "staged": true, "depth": 99})),
+            Op::Impact { staged: true, depth: crate::impact::MAX_DEPTH, .. }
+        ));
     }
 
     #[test]

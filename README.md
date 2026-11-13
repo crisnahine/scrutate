@@ -48,7 +48,8 @@ segments): tree-sitter symbols from 61 grammars (74 with `--features extra-langs
 heuristics for the rest, call edges, imports, BM25 postings, semantic vectors and a LightGBM
 ranker; and a trigram text index that answers grep-style queries with Engine A's exact output.
 Ranked search by meaning, name or identifier; definitions, callers/callees, references,
-outlines, dependencies, similar and duplicate code, structural queries, cross-repository search.
+outlines, dependencies, similar and duplicate code, structural queries, cross-repository search,
+and what a git diff touches: the changed definitions, their callers and the tests to run.
 
 [How the engines work and why](docs/ARCHITECTURE.md)
 
@@ -80,6 +81,7 @@ scrutate read --symbol refresh_token            #   one whole definition, or a f
 scrutate refs Graph --def networkx/classes/graph.py   # references resolved through imports and scopes
 scrutate dupes                                  #   exact and near-duplicate functions
 scrutate tsquery python '(class_definition name: (identifier) @c)'   # structural search (tree-sitter)
+scrutate impact --base main...                  #   what my diff changes, who calls it, which tests to run
 ```
 
 ### Serve agents and editors
