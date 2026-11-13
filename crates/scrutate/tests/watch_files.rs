@@ -298,7 +298,16 @@ fn a_burst_larger_than_the_watch_buffer_is_indexed_whole() {
         r.write(&format!("src/{pad}_{i}.py"), format!("def burst_{i}():\n    return {i}\n").as_bytes());
     }
     wait_update_any(&rx);
-    wait_for(120, "every file of the burst", || r.indexed("burst_4999()") && r.indexed("burst_0()") && r.run(&["check", "--files"]) == 0);
+    let t0 = Instant::now();
+    while !(r.indexed("burst_4999()") && r.indexed("burst_0()") && r.run(&["check", "--files"]) == 0) {
+        if t0.elapsed().as_secs() >= 120 {
+            // what the watcher said and what the index lacks, so a failure on a runner can be read
+            let said: Vec<String> = rx.try_iter().collect();
+            let (first, last) = (r.indexed("burst_0()"), r.indexed("burst_4999()"));
+            panic!("timed out waiting for every file of the burst (burst_0 {first}, burst_4999 {last}); the watcher said: {said:#?}");
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 #[test]

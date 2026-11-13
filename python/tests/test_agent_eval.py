@@ -164,13 +164,17 @@ def test_the_cost_estimate_grows_with_turns_and_with_the_tool_list():
     assert ae.cost_estimate("claude-sonnet-5-5", 10, 20000, 3000, 3000) < small
 
 
-@pytest.mark.skipif(not os.environ.get("SCRUTATE_BIN"), reason="needs SCRUTATE_BIN, a scrutate binary")
+# read at import: bench/leaderboard.py, which other test files import, removes every SCRUTATE_ variable
+BIN = os.environ.get("SCRUTATE_BIN")
+
+
+@pytest.mark.skipif(not BIN, reason="needs SCRUTATE_BIN, a scrutate binary")
 def test_the_server_starts_from_the_mcp_config_the_harness_writes(tmp_path):
     base = tmp_path / "base"
     (base / "pkg").mkdir(parents=True)
     (base / "pkg" / "m.py").write_text("def helper():\n    return 1\n\n\ndef main():\n    return helper()\n")
     t = {"id": "t", "question": "q", "answer_shape": {}}
-    run_dir = ae.prepare(t, "mcp", 0, str(base), str(tmp_path), os.path.abspath(os.environ["SCRUTATE_BIN"]))
+    run_dir = ae.prepare(t, "mcp", 0, str(base), str(tmp_path), os.path.abspath(BIN))
     with open(os.path.join(run_dir, "mcp.json")) as f:
         cfg = json.load(f)
     assert cfg["mcpServers"]["scrutate"]["args"] == ["--root", os.path.join(run_dir, "repo"), "serve"]
