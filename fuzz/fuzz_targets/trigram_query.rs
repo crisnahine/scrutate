@@ -2,7 +2,7 @@
 //! the pattern must accept that text's trigrams and their masks (otherwise `grep --index` would miss the match).
 #![no_main]
 use libfuzzer_sys::fuzz_target;
-use scrutate::instant::{Case, Mode, Options};
+use scrutate::instant::{Case, Mode, Pattern, Query};
 use scrutate::textindex::{holds, query_for, trigram_masks};
 
 fuzz_target!(|data: &[u8]| {
@@ -19,8 +19,8 @@ fuzz_target!(|data: &[u8]| {
         2 => Mode::Identifier,
         _ => Mode::Fuzzy { max_edits: 1 },
     };
-    let o = Options { pattern: pat.to_string(), mode, case, ..Options::default() };
-    let Ok(cond) = query_for(&o) else { return };
+    let q = Query { pattern: Pattern { text: pat.to_string(), mode, case, ..Pattern::default() }, ..Query::default() };
+    let Ok(cond) = query_for(&q) else { return };
     let tris = trigram_masks(text.as_bytes());
     let re = match mode {
         Mode::Regex => regex::RegexBuilder::new(pat).case_insensitive(case == Case::Insensitive).size_limit(1 << 20).build(),

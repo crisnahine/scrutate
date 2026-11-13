@@ -266,6 +266,22 @@ enum GrepCmd {
     Grep(GrepArgs),
 }
 
+/// The subcommand of `args`, past the options every command takes (`--root`, `--no-color`,
+/// `--max-bytes`, `--offset`), so `scrutate --root x grep` is read as grep's own arguments are,
+/// with grep's byte limit and grep's help.
+fn subcommand(args: &[String]) -> Option<&str> {
+    let mut i = 1;
+    while let Some(a) = args.get(i) {
+        match a.as_str() {
+            "--root" | "--max-bytes" | "--offset" => i += 2,
+            "--no-color" => i += 1,
+            a if a.starts_with("--root=") || a.starts_with("--max-bytes=") || a.starts_with("--offset=") => i += 1,
+            a => return Some(a),
+        }
+    }
+    None
+}
+
 /// The environment variables clap reads for `grep` (a test holds the list to clap's): with one
 /// of them set, `plain_grep` is not used. Any other variable is read after the arguments, by
 /// code both ways share.
@@ -943,10 +959,11 @@ pub fn run() -> Result<i32> {
     });
     // as with every other setting, the environment and the command line replace the file's globs
     let cfg_globs = if std::env::var_os("SCRUTATE_GREP_GLOBS").is_none() { cfg_globs } else { Vec::new() };
-    let mut cli = if matches!(args.get(1).map(String::as_str), Some("grep" | "g")) {
+    let mut cli = if matches!(subcommand(&args), Some("grep" | "g")) {
         // a setting from a file, or from a variable clap reads for grep, is clap's to read
         let settings = cfg_path.is_some() || GREP_ENV.iter().any(|name| std::env::var_os(name).is_some());
-        let (root, no_color, max_bytes, offset, grep) = match (!settings).then(|| plain_grep(&args)).flatten() {
+        let plain = (!settings && matches!(args.get(1).map(String::as_str), Some("grep" | "g"))).then(|| plain_grep(&args)).flatten();
+        let (root, no_color, max_bytes, offset, grep) = match plain {
             Some((no_color, grep)) => (PathBuf::from("."), no_color, None, 0, grep),
             None => {
                 let GrepCli { root, no_color, max_bytes, offset, cmd: GrepCmd::Grep(grep) } = GrepCli::parse();
@@ -962,12 +979,7 @@ pub fn run() -> Result<i32> {
         };
         Cli { root, no_color, max_bytes, offset, cmd: Cmd::Grep(grep) }
     } else {
-        let mut cli = Cli::parse();
-        // grep's budget is its own: SCRUTATE_MAX_BYTES bounds index answers, never a grep
-        if matches!(cli.cmd, Cmd::Grep(_)) && !args.iter().any(|a| a == "--max-bytes" || a.starts_with("--max-bytes=")) {
-            cli.max_bytes = std::env::var("SCRUTATE_GREP_MAX_BYTES").ok().and_then(|v| v.parse().ok());
-        }
-        cli
+        Cli::parse()
     };
     if let Some(e) = cfg_error {
         if !matches!(cli.cmd, Cmd::Config { .. } | Cmd::Completions { .. }) {

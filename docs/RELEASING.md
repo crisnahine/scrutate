@@ -160,8 +160,9 @@ uv 0.13 or newer; with an older uv, install one elsewhere
 (`UV_PYTHON_INSTALL_DIR=/some/scratch uvx uv@latest python install 3.15t --no-bin`) and name every
 interpreter: `--pythons 3.10 3.11 3.12 3.13 3.14t 3.15 /some/scratch/.../bin/python3.15t`.
 
-It writes `docs/TEST_RESULTS.md`. Every gate must say PASS, the fuzz regressions included (they
-build in a workspace of their own, with its own `[patch]` for `vendor/ignore`). The hash under
+It writes `docs/TEST_RESULTS.md`. Every gate must say PASS, the fuzz gates included (every
+target builds, and every input that once crashed one runs; they build in a workspace of their
+own, with its own `[patch]` for `vendor/ignore`). The hash under
 "reproducible build" must be the one docs/LEADERBOARD.md names for macOS.
 
 ## 6. Platform checks and artifacts

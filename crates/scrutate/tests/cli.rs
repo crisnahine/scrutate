@@ -1709,6 +1709,15 @@ fn a_shell_caller_can_bound_a_grep() {
     fs::remove_file(r.root.join(".scrutate.toml")).unwrap();
     // the budget of index answers is not grep's, and --json stays whole
     assert_eq!(run_in(&r.root, &["grep", "-n", "needle", "."], &[("SCRUTATE_MAX_BYTES", "400")]).1.lines().count(), 80);
+    // the same with an option every command takes before the subcommand
+    let root = r.root.to_string_lossy().into_owned();
+    assert_eq!(run_in(&r.root, &["--root", &root, "grep", "-n", "needle", "."], &[("SCRUTATE_MAX_BYTES", "400")]).1.lines().count(), 80);
+    assert_eq!(run_in(&r.root, &["--root", &root, "grep", "-n", "needle", "."], &[("SCRUTATE_GREP_MAX_BYTES", "400")]).1, cut);
+    assert_eq!(r.run(&["--max-bytes", "400", "grep", "-n", "needle", "."]).1, cut);
+    for args in [&["grep", "--help"][..], &["--root", ".", "grep", "--help"][..], &["--max-bytes", "10", "grep", "--help"][..]] {
+        let help = r.run(args).1;
+        assert!(help.contains("SCRUTATE_GREP_MAX_BYTES") && !help.contains("SCRUTATE_MAX_BYTES="), "{args:?}: {help}");
+    }
     assert_eq!(r.run(&["grep", "--json", "needle", ".", "--max-bytes", "400"]).1.lines().filter(|l| l.contains("\"match\"")).count(), 80);
     // a budget that holds everything changes nothing but the order
     let (_, all, _) = r.run(&["grep", "-n", "needle", ".", "--max-bytes", "100000"]);

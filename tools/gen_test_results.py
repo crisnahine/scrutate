@@ -64,6 +64,7 @@ def fuzz_gates(gate, nightly: str) -> None:
     if subprocess.run(fuzz + ["--version"], capture_output=True).returncode != 0:
         gate(f"fuzz regressions (cargo-fuzz on {nightly})", fuzz + ["--version"], tail=4)
         return
+    gate(f"every fuzz target builds (cargo-fuzz on {nightly})", fuzz + ["build", "-O"], tail=4)
     for d in sorted(os.listdir(os.path.join(ROOT, "fuzz", "regressions"))):
         for f in sorted(os.listdir(os.path.join(ROOT, "fuzz", "regressions", d))):
             gate(f"fuzz regression {d}/{f[:18]}", fuzz + ["run", "-O", d, os.path.join("fuzz", "regressions", d, f)], tail=2)

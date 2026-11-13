@@ -166,7 +166,7 @@ jobs:
           rustup toolchain install "$msrv" --profile minimal --no-self-update
           cargo "+$msrv" check -p scrutate --locked
   fuzz:
-    name: fuzz regressions
+    name: fuzz targets and regressions
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -181,6 +181,8 @@ jobs:
         with:
           workspaces: fuzz
       - run: cargo install cargo-fuzz --version 0.13.2 --locked
+      # every target, so one that no longer compiles against the crate fails here, not on its next run
+      - run: cargo "+$NIGHTLY" fuzz build -O
       - name: every input that once crashed a target
         run: |
           for f in fuzz/regressions/*/*; do
