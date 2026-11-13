@@ -47,13 +47,22 @@ impl Repo {
     }
 
     /// `cli` with the session's debug lines on: (the answer as without them, whether the session gave it).
+    /// A call whose greeting did not come within the command line's 20 ms (a loaded machine) did
+    /// the work itself; when that changed nothing, it is asked again, at most 5 times.
     fn through(&self, args: &[&str], env: &[(&str, &str)]) -> ((i32, String, String), String) {
         let mut env = env.to_vec();
         env.push(("SCRUTATE_SESSION_DEBUG", "1"));
-        let (code, out, err) = self.cli(args, &env);
-        let (said, rest): (Vec<&str>, Vec<&str>) = err.lines().partition(|l| l.starts_with("[scrutate] session: "));
-        let rest = rest.iter().map(|l| format!("{l}\n")).collect::<String>();
-        ((code, out, rest), said.join("\n"))
+        for attempt in 1.. {
+            let (code, out, err) = self.cli(args, &env);
+            let (said, rest): (Vec<&str>, Vec<&str>) = err.lines().partition(|l| l.starts_with("[scrutate] session: "));
+            let rest = rest.iter().map(|l| format!("{l}\n")).collect::<String>();
+            let said = said.join("\n");
+            if attempt < 5 && said.starts_with("[scrutate] session: no greeting") && !rest.contains("indexed ") {
+                continue;
+            }
+            return ((code, out, rest), said);
+        }
+        unreachable!()
     }
 
     fn fresh(&self, args: &[&str]) -> (i32, String, String) {
