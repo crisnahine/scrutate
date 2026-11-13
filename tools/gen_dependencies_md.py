@@ -45,7 +45,7 @@ PURPOSE = {
     "matrixmultiply": "sgemm for k-means (pure Rust)",
     "memchr": "newline and NUL scans when one large file is searched in ranges",
     "memmap2": "memory-mapped segments",
-    "notify": "filesystem events for `watch` and `serve --watch` (inotify, ReadDirectoryChangesW; polling on macOS)",
+    "notify": "filesystem events for `watch` and `serve --watch` (inotify, ReadDirectoryChangesW; polling on macOS; not built for wasi)",
     "proptest": "property-based tests (dev only)",
     "pyo3": "Python bindings (optional crate)",
     "rayon": "data parallelism (indexing, structural search)",

@@ -44,7 +44,20 @@ pub mod stores;
 pub mod text;
 pub mod textindex;
 pub mod tscache;
+#[cfg(not(target_os = "wasi"))]
 pub mod watch;
+/// No file events on wasi.
+#[cfg(target_os = "wasi")]
+pub mod watch {
+    pub fn run(
+        _root: &std::path::Path,
+        _stop: &std::sync::atomic::AtomicBool,
+        _on_ready: impl FnOnce(),
+        _on_change: impl FnMut(&crate::stores::Changes) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        anyhow::bail!("watch is not in the wasi build: it has no file events")
+    }
+}
 
 use std::path::Path;
 

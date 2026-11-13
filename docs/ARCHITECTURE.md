@@ -915,7 +915,7 @@ the records of a file wait in a vector and go to the caller before the next file
 index's walk and every other caller of `build_walker` work unchanged. rayon's global pool falls
 back to the calling thread by itself, which is what the index build's `par_iter` uses. What has to
 run beside the caller is not in that build: `serve`, `lsp` and `tsquery` fail with a message that
-says so, and the Grep hook lets Grep answer, since it has no thread to keep its deadline. The
+says so, `watch` too (wasi has no file events, so `notify` is not a dependency there), and the Grep hook lets Grep answer, since it has no thread to keep its deadline. The
 session socket is Unix only and was already absent there.
 
 ## Models (`models/`, `models.rs`)
