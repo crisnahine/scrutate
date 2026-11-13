@@ -11,7 +11,7 @@ result object `--output-format json` prints; the lines before it are the transcr
 calls and tool errors are read from the same output, and `--no-session-persistence` keeps the
 session off disk). Both arms get the same model, prompt and built-in tools, each run a fresh
 session in its own temporary copy of the corpus, and both may run read-only shell commands
-(`rg`, `grep`, `find`, `ls`, `cat`, `head`, `tail`, `wc`, `sed -n`); the arm that goes first
+(`rg`, `grep`, `ls`, `cat`, `head`, `tail`, `wc`; not `find` or `sed`, which can write); the arm that goes first
 alternates by task:
 
   mcp      --mcp-config RUN/mcp.json --strict-mcp-config, an index built before the clock starts
@@ -81,7 +81,8 @@ TOOLS = ("search_code", "grep_code", "find_symbol", "callers", "callees", "call_
 BUILTIN_TOOLS = "Bash,Read,Grep,Glob"
 # the read-only shell commands an agent reaches for, allowed in both arms: a denied Bash call costs a turn,
 # and more often in the arm without scrutate
-READ_ONLY_BASH = ",".join(f"Bash({c}:*)" for c in ("rg", "grep", "find", "ls", "cat", "head", "tail", "wc", "sed -n"))
+# (no find or sed: `find -delete`, `find -exec` and sed's `w FILE` write; Glob and Read do their part)
+READ_ONLY_BASH = ",".join(f"Bash({c}:*)" for c in ("rg", "grep", "ls", "cat", "head", "tail", "wc"))
 FLAGS = ("--print", "--output-format", "--verbose", "--model", "--mcp-config", "--strict-mcp-config", "--tools",
          "--allowedTools", "--permission-mode", "--no-session-persistence", "--max-budget-usd", "--bare",
          "--setting-sources", "--disable-slash-commands")
@@ -413,7 +414,8 @@ def summary(runs: list) -> str:
 
 NOTE = ("How to read this: the MCP arm's index is built before its clock starts, and the tasks and their answers were "
         "found with scrutate itself (then checked by grep and by reading the lines), so they lean toward what scrutate "
-        "answers well. Both arms may run read-only shell commands; `permission denials` counts the calls refused.")
+        "answers well. Both arms may run rg, grep, ls, cat, head, tail and wc in the shell, and nothing else there; "
+        "`permission denials` counts the calls refused.")
 
 
 def write_results(out_dir: str, runs: list, claude: dict, args, binary: str) -> None:
