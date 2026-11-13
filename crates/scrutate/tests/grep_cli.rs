@@ -932,7 +932,10 @@ fn run_stdin(cwd: &Path, args: &[&str], input: Option<&[u8]>, file: Option<&Path
     let mut child = c.spawn().unwrap();
     if let Some(bytes) = input {
         use std::io::Write;
-        child.stdin.take().unwrap().write_all(bytes).unwrap();
+        // a command that never reads standard input may exit before the write
+        if let Err(e) = child.stdin.take().unwrap().write_all(bytes) {
+            assert_eq!(e.kind(), std::io::ErrorKind::BrokenPipe, "{e}");
+        }
     }
     drop(child.stdin.take());
     let out = child.wait_with_output().unwrap();
