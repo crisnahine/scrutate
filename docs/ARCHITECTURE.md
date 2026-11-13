@@ -761,7 +761,7 @@ scored by a matcher of its own, not the Myers matcher of `grep --fuzzy`, because
 needs to know how a path matched and not only whether: a substring of the basename (or the
 path), the query's letters in order, or Sellers' approximate substring search with the optimal
 string alignment distance (a swap of neighbours is one edit), one edit per four characters of the
-query and at most three. On this repository a warm call takes about 15 ms. The frecency is one
+query and at most three. On this repository a warm call takes about 8 ms of wall time (best of 20). The frecency is one
 small JSON file outside the repository (`$XDG_STATE_HOME/scrutate/frecency.json`), keyed by the
 canonical root: per file a count and the time it was last set, decayed with a half-life of 7
 days when read, at most 1,000 files kept, written whole and renamed into place. The reads of the
