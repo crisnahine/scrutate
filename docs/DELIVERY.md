@@ -17,7 +17,7 @@ The fifteen items of the mission (section 11) and where each lives.
 | 2 | Source code and architecture | crates/scrutate (engines, CLI, MCP), crates/scrutate-py (bindings), python/scrutate_ref (model training code), models/; docs/ARCHITECTURE.md |
 | 3 | Implemented capabilities | README.md, docs/CLI.md, docs/TRACEABILITY.md (each requirement and its status) |
 | 4 | Rust toolchain and dependencies | docs/DEPENDENCIES.md, Cargo.lock, rust-toolchain.toml, the CycloneDX SBOM in `dist/` (tools/sbom.py) |
-| 5 | Platforms and language capabilities | docs/INSTALL.md (verified: macOS arm64, Linux aarch64 and x86_64; CI runners only, not supported yet: macOS x86_64, Windows x86_64, Windows ARM64), docs/LANGUAGES.md (61 verified grammars, 13 more optional, heuristic tier) |
+| 5 | Platforms and language capabilities | docs/INSTALL.md (all six supported: macOS arm64, Linux aarch64 and x86_64 tested here; macOS x86_64, Windows x86_64 and Windows ARM64 tested on GitHub's runners), docs/LANGUAGES.md (61 verified grammars, 13 more optional, heuristic tier) |
 | 6 | Installation and usage | docs/INSTALL.md, docs/CLI.md, README.md, integrations/*/README.md |
 | 7 | Automated test results | docs/TEST_RESULTS.md (generated), bench/results/platforms/ (per-platform logs, wheel matrices, musl checks, reproducible build), bench/results/fuzz/ |
 | 8 | Security assessment | docs/SECURITY.md |
@@ -52,8 +52,9 @@ carry the licence files too ([Releasing](RELEASING.md#6-platform-checks-and-arti
 With `uv` installed, `tools/release_local.sh` builds one wheel of each kind (interpreters 3.12,
 3.14t and 3.15) and stops if `uv` cannot find one of them; without `uv` it builds only the wheel
 for `python3`. `tools/linux_verify.sh` builds and tests the static musl binary, which is not
-packaged here. Signed archives, attestations and the other platforms come from
-`.github/workflows/release.yml` when a version is tagged.
+packaged here. The archives of the other platforms, the x86_64 `.deb` and `.rpm`, the `.vsix`
+and the attestations come from `.github/workflows/release.yml` when a version is tagged; a dry
+run of it rehearses them ([Releasing](RELEASING.md#7-what-a-published-release-adds)).
 
 The Python prototype ("Titan") stays untouched in its sibling directory. Its training code lives
 on as `python/scrutate_ref`, fitting the bundled models on rows the Rust engine writes; its

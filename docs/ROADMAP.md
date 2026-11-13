@@ -68,14 +68,15 @@ docs/RELEASING.md, public (done), tag `v0.1.0`.
 - The release workflow. `ci.yml` is green since run 43013926055
   ([Releasing](RELEASING.md#7-what-a-published-release-adds)); the changelog has what the three
   failed Windows runs before it found.
-- Signed releases with Sigstore attestations (`release.yml` has the steps; they need the
-  repository's OIDC identity), and the free-threaded wheels built in CI (built and tested locally).
+- Signed releases with Sigstore attestations (`release.yml` has the steps and a dry run that
+  rehearses them; they need one run on GitHub). The free-threaded `cp314t` wheels are built,
+  installed and tested in CI on all six runners (`ci.yml`, run 43408907893).
 - The packages: tap, bucket and winget pull requests with the release checksums (steps in
   packaging/README.md).
 - `cargo install scrutate`: crates.io refuses crates over 10 MB, and the semantic model is 14.6 MB,
   so it needs a smaller model (next: int8 weights, which would halve it, checked as QUALITY.md
   does) or a download on first use. A
-  published crate also cannot carry the `[patch]` for `vendor/ignore`: its four changes must first
+  published crate also cannot carry the `[patch]` for `vendor/ignore`: its eleven changes must first
   go upstream or out as a fork.
 - A comment on GitLab merge requests (R-12.12; on GitHub the Action's `comment: true` posts
   `scrutate review` on a pull request, and the GitLab template saves it as a Code Quality report),

@@ -39,8 +39,14 @@ Every PASS refers to a test, benchmark or audit output here.
    run and a release archive built by the release workflow and installed on a machine
    (docs/ROADMAP.md, known limits).
 2. **No independent security review** ([SECURITY](SECURITY.md#known-gaps-and-residual-risks)).
-3. **Release pipeline unexercised**: signed releases, attestations and package-manager packages
-   exist only as workflow definitions.
+3. **Release pipeline unexercised**: `release.yml` has never run on GitHub, so the attestations,
+   the draft release and the `.deb`, `.rpm` and `.vsix` exist only as workflow definitions. Its
+   dry run (`gh workflow run release.yml --ref main -f dry_run=true`) exercises all of it but
+   publishing, and needs the owner's yes. Publishing to PyPI, the VS Code Marketplace, Open VSX,
+   the Homebrew tap and the Scoop bucket waits on the owner's accounts and repositories
+   ([Releasing](RELEASING.md#7-what-a-published-release-adds), packaging/README.md); the
+   binaries carry no Apple or Windows code signature
+   ([SECURITY](SECURITY.md#known-gaps-and-residual-risks)).
 4. **Benchmark leadership is not proven on dedicated hardware**, which section 14 requires for #1
    claims; on the laptop and its Linux VM every row measured is won with significance (docs/LEADERBOARD.md,
    R-4.6 below).
@@ -54,7 +60,7 @@ Status words as in docs/TRACEABILITY.md.
 | R-4.6, R-14.16 | #1 on every benchmark, metric and declared platform: every row measured is won with significance (macOS arm64: 37 warm, 5 cold, 8 indexed; Linux aarch64 VM: 14 warm, 4 cold, 8 indexed), but Linux x86_64 has no benchmark run and nothing was measured on dedicated hardware | PARTIAL | a run of `bench/run_macos.sh` and `bench/competitors/linux_bench.sh` on a dedicated Mac and on dedicated aarch64 and x86_64 Linux machines |
 | R-14.11 | Results from dedicated, otherwise idle hardware | BLOCKED | a dedicated Mac and Linux machine; the harness and corpora are ready |
 | R-6.12, R-14.15, R-12.18 | CI runs, benchmark regression tracking in CI | PARTIAL | `ci.yml` has a green run (43013926055, all 12 jobs of a push); `benchmarks.yml` and `release.yml` run on a runner; for `release.yml` before the tag, a dry run (`gh workflow run release.yml --ref main -f dry_run=true`, docs/RELEASING.md section 7) |
-| R-12.17 | Signed releases and published packages | PARTIAL | the release workflow's Sigstore steps and the package pull requests, which need the published repository |
+| R-12.17 | Signed releases and published packages | PARTIAL | one run of the release workflow's Sigstore steps (a dry run first), then the owner's PyPI, Marketplace and Open VSX setup, the tap and bucket repositories and the winget pull request |
 | R-6.15, R-12.16 | GitHub App / GitLab integration exercised against a real platform | PARTIAL | the published repository |
 | R-12.15 | The cross-platform part of verification | PARTIAL | as R-9.10 |
 
