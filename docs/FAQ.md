@@ -53,7 +53,9 @@ ranks with are compiled into it. [Security](SECURITY.md) has the threat model an
 
 Engine A searches text in any language. Engine B parses code with tree-sitter grammars for the
 common languages, more with the `extra-langs` build feature, and uses keyword rules for the rest.
-[Languages](LANGUAGES.md) lists what the index finds in each language, checked by tests.
+[Languages](LANGUAGES.md) lists what the index finds in each language, checked by tests. A
+`[[language]]` table in `.scrutate.toml` adds a language of your own, with its extensions,
+comments and definition patterns ([CLI](CLI.md#custom-languages)).
 
 ## How do I give an AI coding agent scrutate's tools?
 

@@ -3,7 +3,8 @@
 //! Three tiers, so every text file is searchable and most code gets real symbols:
 //! 1. tree-sitter grammars (langs.rs): precise definitions, signatures, docs, bodies, call edges;
 //! 2. heuristic symbols for languages without a grammar: definition lines introduced by the usual
-//!    keywords (`def`, `fn`, `function`, `class`, `sub`, ...), with the block below them;
+//!    keywords (`def`, `fn`, `function`, `class`, `sub`, ...), or matched by the patterns of a
+//!    custom language (custom.rs), with the block below them;
 //! 3. overlapping line windows for everything else.
 
 use std::collections::{BTreeSet, HashMap};
@@ -2178,15 +2179,17 @@ fn is_comment_line(line: &str) -> bool {
 
 /// Comment marks of the keyword tier beyond the shared ones, by file extension: `!`, `"`, `(*`
 /// and `{` start code in other languages.
-struct Marks {
-    lines: &'static [&'static str],
+struct Marks<'a> {
+    lines: &'a [&'a str],
     /// (opener, closer) of block comments whose inner lines may carry no mark
-    blocks: &'static [(&'static str, &'static str)],
+    blocks: &'a [(&'a str, &'a str)],
     /// fixed-form Fortran: `c` or `C` in the first column
     fixed: bool,
+    /// the marks most languages share (`//`, `#`, `--`, `/* */` ...) count too; a custom language has only its own
+    shared: bool,
 }
 
-fn heuristic_marks(path: &str) -> Marks {
+fn heuristic_marks(path: &str) -> Marks<'static> {
     let ext = basename(path).rsplit_once('.').map_or("", |(_, e)| e);
     let (lines, blocks): (&'static [&'static str], &'static [(&'static str, &'static str)]) = match ext {
         "ml" | "mli" | "mll" | "mly" | "sml" | "sig" | "fs" | "fsi" | "fsx" => (&["(*"], &[("(*", "*)")]),
@@ -2202,13 +2205,13 @@ fn heuristic_marks(path: &str) -> Marks {
         "m" => (&[], &[("%{", "%}")]),
         _ => (&[], &[]),
     };
-    Marks { lines, blocks, fixed: matches!(ext, "f" | "for" | "F" | "f77" | "ftn") }
+    Marks { lines, blocks, fixed: matches!(ext, "f" | "for" | "F" | "f77" | "ftn"), shared: true }
 }
 
 fn is_marked(line: &str, m: &Marks) -> bool {
     let t = line.trim_start();
     let b = line.as_bytes();
-    is_comment_line(line)
+    (m.shared && is_comment_line(line))
         || m.lines.iter().any(|k| t.starts_with(k))
         || m.fixed && matches!(b.first(), Some(b'c' | b'C')) && !b.get(1).is_some_and(|c| c.is_ascii_alphanumeric())
 }
@@ -2222,7 +2225,8 @@ fn comment_top(lines: &[&str], floor: usize, mut at: usize, m: &Marks) -> usize 
     while at > floor {
         // the last line of a block comment: up to the line that opens it
         let t = lines[at - 1].trim();
-        let block = [("/*", "*/")].iter().chain(m.blocks).find(|(o, c)| t.ends_with(c) && !t.starts_with(o));
+        let shared: &[(&str, &str)] = if m.shared { &[("/*", "*/")] } else { &[] };
+        let block = shared.iter().chain(m.blocks).find(|(o, c)| t.ends_with(c) && !t.starts_with(o));
         let opener = block.and_then(|&(open, close)| {
             let from = at.saturating_sub(MAX_BLOCK_LINES).max(floor);
             (from..at - 1).rev().take_while(|&j| !lines[j].contains(close)).find(|&j| lines[j].trim_start().starts_with(open))
@@ -2238,11 +2242,35 @@ fn comment_top(lines: &[&str], floor: usize, mut at: usize, m: &Marks) -> usize 
 
 /// Keyword-introduced definitions for languages without a grammar (or whose grammar found nothing).
 pub fn heuristic_chunks(path: &str, source: &str) -> Vec<Chunk> {
+    line_chunks(source, &heuristic_marks(path), heuristic_def, clean_comment)
+}
+
+/// The definitions of a custom language: lines its patterns match, outside its comments, with
+/// the block below each as the keyword tier cuts it, and the comment above as the doc.
+pub fn custom_chunks(lang: &crate::custom::Lang, source: &str) -> Vec<Chunk> {
+    let (open, close) = lang.block_comment.as_ref().map_or(("", ""), |(o, c)| (o.as_str(), c.as_str()));
+    let lines: Vec<&str> = lang.line_comment.iter().map(String::as_str).chain((!open.is_empty()).then_some(open)).collect();
+    let blocks: Vec<(&str, &str)> = lang.block_comment.iter().map(|(o, c)| (o.as_str(), c.as_str())).collect();
+    let marks = Marks { lines: &lines, blocks: &blocks, fixed: false, shared: false };
+    let doc = |raw: &str| {
+        let strip = |l: &str| {
+            let mut t = l.trim();
+            t = lines.iter().find_map(|m| t.strip_prefix(m)).unwrap_or(t);
+            t = (!close.is_empty()).then(|| t.strip_suffix(close)).flatten().unwrap_or(t);
+            t.trim().to_string()
+        };
+        raw.split('\n').map(strip).filter(|l| !l.is_empty()).collect::<Vec<_>>().join("\n")
+    };
+    line_chunks(source, &marks, |l| if is_marked(l, &marks) { None } else { lang.definition(l) }, doc)
+}
+
+/// Chunks of the lines `def_of` names a definition: each block ends before the next definition
+/// at the same or a shallower indentation, and `doc_of` cleans the comment lines above it.
+fn line_chunks(source: &str, marks: &Marks, def_of: impl Fn(&str) -> Option<(&'static str, String)>, doc_of: impl Fn(&str) -> String) -> Vec<Chunk> {
     let lines = split_lines(source);
-    let marks = heuristic_marks(path);
     let mut defs: Vec<(usize, &'static str, String)> = Vec::new();
     for (i, line) in lines.iter().enumerate() {
-        if let Some((kind, name)) = heuristic_def(line) {
+        if let Some((kind, name)) = def_of(line) {
             defs.push((i, kind, name));
         }
     }
@@ -2261,7 +2289,7 @@ pub fn heuristic_chunks(path: &str, source: &str) -> Vec<Chunk> {
             while e > start + 1 && lines[e - 1].trim().is_empty() {
                 e -= 1;
             }
-            match comment_top(&lines, start + 1, e, &marks) {
+            match comment_top(&lines, start + 1, e, marks) {
                 top if top < e => e = top,
                 _ => break,
             }
@@ -2282,8 +2310,8 @@ pub fn heuristic_chunks(path: &str, source: &str) -> Vec<Chunk> {
         let text = head(&shown.join("\n"), cap);
         let body = head(&shown[1..].join("\n"), cap);
         // doc: comment lines directly above
-        let d = comment_top(&lines, 0, *start, &marks);
-        let doc = if d < *start { clean_comment(&lines[d..*start].join("\n")) } else { String::new() };
+        let d = comment_top(&lines, 0, *start, marks);
+        let doc = if d < *start { doc_of(&lines[d..*start].join("\n")) } else { String::new() };
         let doc_lines = (!doc.is_empty()).then_some((d as i64 + 1, *start as i64));
         out.push(Chunk {
             name: name.clone(),
@@ -2338,7 +2366,7 @@ pub fn sexp(spec: &'static LangSpec, source: &str) -> String {
 }
 
 // ------------------------------------------------------------------------- main
-/// Chunks and imports of one file (grammar tier, then heuristics, then windows).
+/// Chunks and imports of one file (a custom language, else the grammar tier, then heuristics, then windows).
 pub fn parse_file(path: &str, source: &str) -> Parsed {
     let mut parsed = parse_file_with(path, source, None).0;
     parsed.chunks.iter_mut().for_each(|c| c.fill(source.as_bytes()));
@@ -2348,6 +2376,10 @@ pub fn parse_file(path: &str, source: &str) -> Parsed {
 /// `parse_file`, reusing the tree of the file's previous version when there is one; also returns
 /// this version's tree for the next call. The result is the same as a fresh parse.
 pub fn parse_file_with(path: &str, source: &str, prev: Option<PrevParse>) -> (Parsed, Option<PrevParse>) {
+    let custom = crate::custom::current();
+    if let Some(lang) = custom.for_path(path) {
+        return (Parsed { chunks: finish(path, source, custom_chunks(lang, source), String::new(), Vec::new()), imports: Vec::new() }, None);
+    }
     if let Some(spec) = spec_for(path, source) {
         if let Some(((chunks, mdoc, imports, loose), tree)) = grammar_chunks(spec, path, source, prev) {
             // a parsed file is the grammar's verdict even when it holds no definitions: the

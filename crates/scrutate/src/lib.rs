@@ -10,6 +10,7 @@ pub mod archive;
 pub mod artifacts;
 pub mod cli;
 pub mod config;
+pub mod custom;
 pub mod files;
 pub mod finder;
 pub mod fmt;

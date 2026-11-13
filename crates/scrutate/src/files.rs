@@ -140,15 +140,11 @@ fn is_dir_name(n: &str) -> bool {
     n != "." && n != ".." && !n.chars().any(|c| std::path::is_separator(c) || c == '\\')
 }
 
-/// `[index] exclude_dirs` of the root's own `.scrutate.toml`: the setting belongs to the index, so
-/// every process that updates it reads the same list, wherever it starts. The file, after links
-/// are resolved, is read as other repository files are: a regular file inside the root, of at
-/// most 1,000,000 bytes. Names that are no directory name are dropped.
+/// `[index] exclude_dirs` of the root's own `.scrutate.toml` (`root_config_text`): the setting
+/// belongs to the index, so every process that updates it reads the same list, wherever it
+/// starts. Names that are no directory name are dropped.
 pub(crate) fn config_excludes(root: &Path) -> Vec<String> {
-    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let real = std::fs::canonicalize(root.join(".scrutate.toml")).ok();
-    let Some(rel) = real.as_deref().and_then(|r| r.strip_prefix(&root).ok()).and_then(Path::to_str) else { return Vec::new() };
-    let Some(text) = crate::resolve::repo_text(&root, rel) else { return Vec::new() };
+    let Some(text) = root_config_text(root) else { return Vec::new() };
     let Ok(table) = text.parse::<toml::Table>() else { return Vec::new() };
     let names = table.get("index").and_then(|i| i.get("exclude_dirs")).and_then(|v| v.as_array());
     names
@@ -157,6 +153,14 @@ pub(crate) fn config_excludes(root: &Path) -> Vec<String> {
             names.take(MAX_CONFIG_EXCLUDES).filter(|n| is_dir_name(n)).collect()
         })
         .unwrap_or_default()
+}
+
+/// The text of the root's own `.scrutate.toml`, read as other repository files are: after links
+/// are resolved, a regular file inside the root of at most 1,000,000 bytes.
+pub(crate) fn root_config_text(root: &Path) -> Option<String> {
+    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let real = std::fs::canonicalize(root.join(".scrutate.toml")).ok()?;
+    crate::resolve::repo_text(&root, real.strip_prefix(&root).ok()?.to_str()?)
 }
 
 /// A comma-separated list of names; `\,` is a comma inside a name.

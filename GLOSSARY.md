@@ -43,6 +43,12 @@ which files can match, so `grep --index` opens only those.
 it questions (the chunks of a file, of a name, at a line; the callers of a name) and never see
 its tables.
 
+**Custom language**: a language a `[[language]]` table adds without a build (`custom.rs`), in the
+root's `.scrutate.toml` or the user's configuration file: a name, extensions, comment marks and one
+regular expression per kind of definition, whose first group is the name. `custom::current` is the
+set in effect; its **stamp** (each extension with its language's signature) tells an index update
+which files to read again.
+
 **Artifact**: what parsing and tokenizing make of one file, kept in the **artifact store**
 (`artifacts.rs`, a table of the index) under a key of its content and the parts of its path the
 parser reads (the file name, and for an `index` file its directory's name), so the same bytes

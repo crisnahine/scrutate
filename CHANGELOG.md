@@ -29,6 +29,15 @@ version rebuilds incompatible indexes automatically and this is never considered
   a unified diff; `--write` writes each file whole by rename, only while its bytes are those read.
   Of overlapping matches the outer one is rewritten and the inner one named; a file whose text
   does not parse where it would change, before or after, is left alone and named. No MCP tool.
+- A `[[language]]` table in the root's `.scrutate.toml` or in your configuration file adds a
+  language without a build: its name, extensions, `line_comment`, `block_comment`, and
+  `definitions`, one regular expression per kind whose first group is the name. Its files get
+  symbols, outlines, documentation from the comments above definitions and ranked hits;
+  `grep --type` and `languages` know it (`custom: .scrutate.toml`). A changed table reads again
+  only the files of the extensions it changed. A bad table (TOML that does not parse, an unknown
+  key, a pattern that does not compile or has no group, a built-in name or extension) is one error
+  naming the file and the line, and exit 2.
+- A configuration file that does not parse is one line naming the file and the line.
 - docs/FAQ.md answers the first questions about scrutate, each with a link to its evidence;
   `llms.txt`, written by `tools/gen_doc_assets.py`, lists every Markdown document with the question it
   answers for language models; `CITATION.cff` gives GitHub's "Cite this repository".

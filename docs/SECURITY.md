@@ -7,7 +7,7 @@
 
 [Documentation](README.md) &nbsp;·&nbsp; Previous: [Test results](TEST_RESULTS.md) &nbsp;·&nbsp; Next: [Traceability](TRACEABILITY.md)
 
-**Contents**: [Threat model](#threat-model) &nbsp;·&nbsp; [Controls and evidence](#controls-and-evidence) &nbsp;·&nbsp; [Running git](#running-git) &nbsp;·&nbsp; [The session socket](#the-session-socket) &nbsp;·&nbsp; [The main checkout's index in a linked work tree](#the-main-checkouts-index-in-a-linked-work-tree) &nbsp;·&nbsp; [Setup and the Grep hook](#setup-and-the-grep-hook) &nbsp;·&nbsp; [The structural rewrite](#the-structural-rewrite) &nbsp;·&nbsp; [Known gaps and residual risks](#known-gaps-and-residual-risks) &nbsp;·&nbsp; [Reporting](#reporting)
+**Contents**: [Threat model](#threat-model) &nbsp;·&nbsp; [Controls and evidence](#controls-and-evidence) &nbsp;·&nbsp; [Running git](#running-git) &nbsp;·&nbsp; [The session socket](#the-session-socket) &nbsp;·&nbsp; [The main checkout's index in a linked work tree](#the-main-checkouts-index-in-a-linked-work-tree) &nbsp;·&nbsp; [A repository's language tables](#a-repositorys-language-tables) &nbsp;·&nbsp; [Setup and the Grep hook](#setup-and-the-grep-hook) &nbsp;·&nbsp; [The structural rewrite](#the-structural-rewrite) &nbsp;·&nbsp; [Known gaps and residual risks](#known-gaps-and-residual-risks) &nbsp;·&nbsp; [Reporting](#reporting)
 
 <!-- End of head. -->
 
@@ -232,6 +232,23 @@ Evidence: `tests/artifacts.rs` (a seeded work tree equals a fresh build, with an
 model; links not confirmed both ways, a main index directory that is or holds a link, and a plain
 copy are not followed; an uncommitted write of the main checkout is not read; a build in the main
 checkout beside lookups in the work tree; damage to the store found and rebuilt).
+
+## A repository's language tables
+
+A `[[language]]` table in a repository's `.scrutate.toml` adds a language to the index of that
+repository ([CLI](CLI.md#custom-languages)). It can name extensions that no built-in language
+owns, comment marks, and regular expressions that pick definition names out of single lines. It
+cannot run anything: the table is data, and its patterns are compiled by the `regex` crate (no
+backtracking, linear in the line) with the size limits of `grep`. It cannot read a file: no key
+names a path, an unknown key is an error, and the file itself is read as other repository files
+are (a regular file inside the root, at most 1 MB, through a link only when the resolved file is
+inside the root). It cannot change how another language is parsed: a built-in language's name
+or extension is refused. The worst a hostile table does is give that repository's own files of
+its extensions wrong symbols, or make every command in the repository stop with its error.
+
+Evidence: `tests/custom_lang.rs` (an `include` or `path` key refused with its line, a link to a
+table outside the repository not read, a pattern that does not compile, a built-in name or
+extension refused).
 
 ## Setup and the Grep hook
 

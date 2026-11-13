@@ -1559,6 +1559,11 @@ impl Index {
         let only = matches!(look, Look::Named(_));
         let reparse = !only && self.meta("content_rev").as_deref() != Some(rev.as_str());
         let force = force || reparse;
+        // the files of a custom language whose table changed are read again; their artifact keys hold the table
+        let lang_stamp = crate::custom::load(&self.root)?.stamp();
+        let old_stamp = self.meta("languages").unwrap_or_else(|| "{}".into());
+        let relang = if only { Vec::new() } else { crate::custom::changed(&old_stamp, &lang_stamp) };
+        let relang_file = |rel: &str| !relang.is_empty() && relang.iter().any(|e| crate::parse::basename(rel).to_lowercase().ends_with(e.as_str()));
         let scan_t0 = Instant::now();
         type Known = HashMap<String, (i64, i64, Option<i64>, String)>;
         let mut known: Known = HashMap::new();
@@ -1601,6 +1606,7 @@ impl Index {
             let Some(stat) = stat else {
                 continue;
             };
+            let force = force || relang_file(rel);
             if !force {
                 if let Some(k) = known.get(rel) {
                     if stat.matches(k.0, k.1, k.2) {
@@ -1761,6 +1767,9 @@ impl Index {
         self.set_meta("next_id", &next_id.to_string())?;
         if reparse {
             self.set_meta("content_rev", &rev)?;
+        }
+        if !only && lang_stamp != old_stamp {
+            self.set_meta("languages", &lang_stamp)?;
         }
         changed = changed || !removed.is_empty();
         st.chunks = self.db.query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))?;

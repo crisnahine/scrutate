@@ -288,7 +288,13 @@ them; a comment a blank line above a definition is in a window. Elixir's `@doc` 
 comments count as documentation, and in Python and Starlark the docstring after that comment
 does too. A Haskell or Elm function starts at its type signature, and the
 comment above the signature is its documentation. Adding a language is a registry entry
-and a sample file, not new code. A chunk's text and body keep at most 200 lines (40 for a
+and a sample file, not new code. A user adds one without a build in a `[[language]]` table
+(`custom.rs`, [CLI](CLI.md#custom-languages)): its extensions, comment marks and one regular
+expression per kind of definition, parsed as the keyword tier parses a file. The tables in effect
+are process-wide, loaded by each command and each index update for the root; the artifact key of
+a file of a custom language holds its language's signature, and the index's meta keeps every
+extension's signature (`languages`), so a changed table reads again only the files of the
+extensions it changed. A chunk's text and body keep at most 200 lines (40 for a
 container such as a class) and 32 KiB, cut at a character boundary, and a chunk ends on the last
 line that holds its text. Every line no chunk keeps (past those caps, outside the definitions, or
 only in a constant) is in overlapping 50-line windows named after the definition that holds it,

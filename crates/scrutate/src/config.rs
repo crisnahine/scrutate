@@ -21,6 +21,12 @@
 //! [index]
 //! exclude_dirs = ["generated", "third_party"]   # SCRUTATE_INDEX_EXCLUDE_DIRS; read from the root's own file only
 //! refresh_interval = 2.0                         # SCRUTATE_REFRESH_INTERVAL (seconds, `serve`)
+//!
+//! [[language]]                                   # a language of its own: see custom.rs
+//! name = "mylang"
+//! extensions = ["myl"]
+//! line_comment = "--"
+//! definitions = [{ kind = "function", pattern = '^\s*fn\s+([A-Za-z_]\w*)' }]
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -35,6 +41,27 @@ pub struct Config {
     pub grep: Grep,
     #[serde(default)]
     pub index: IndexCfg,
+    #[serde(default)]
+    pub language: Vec<LanguageCfg>,
+}
+
+/// One `[[language]]` table, as written; `custom.rs` checks it.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LanguageCfg {
+    pub name: toml::Spanned<String>,
+    pub extensions: toml::Spanned<Vec<String>>,
+    pub line_comment: Option<toml::Spanned<String>>,
+    pub block_comment: Option<toml::Spanned<Vec<String>>>,
+    #[serde(default)]
+    pub definitions: Vec<DefinitionCfg>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DefinitionCfg {
+    pub kind: toml::Spanned<String>,
+    pub pattern: toml::Spanned<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -89,7 +116,18 @@ pub fn confine(cfg: &mut Config) {
 
 pub fn load(path: &Path) -> Result<Config> {
     let text = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    toml::from_str(&text).with_context(|| format!("parse {}", path.display()))
+    parse(path, &text)
+}
+
+/// `text` of the file `path` as a configuration; an error is one line that names the file and the line.
+pub fn parse(path: &Path, text: &str) -> Result<Config> {
+    toml::from_str(text).map_err(|e| anyhow::anyhow!("{}: {}", at(path, text, e.span().map_or(0, |s| s.start)), e.message().trim().replace('\n', "; ")))
+}
+
+/// `path:line` of the byte `offset` of `text`.
+pub fn at(path: &Path, text: &str, offset: usize) -> String {
+    let line = text.as_bytes()[..offset.min(text.len())].iter().filter(|&&b| b == b'\n').count() + 1;
+    format!("{}:{line}", path.display())
 }
 
 /// Export the configured values as environment variables unless the variable is already set

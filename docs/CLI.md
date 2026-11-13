@@ -88,8 +88,10 @@
   is ignored with a warning: a search follows links only on your word (`-L`,
   `SCRUTATE_GREP_FOLLOW`, the file `$SCRUTATE_CONFIG` names, or your own
   `config.toml`). `scrutate config` names the file and shows what is in
-  effect, with the directory the globs match from. A file with an unknown field stops every command that reads it (exit 2, naming the
-  file and the field); `--help`, `--version`, `config` and `completions` still run. Precedence: command line >
+  effect, with the directory the globs match from. A file with an unknown field, or that does not
+  parse as TOML, stops every command that reads it (exit 2, one line naming the file, the line and
+  what is wrong); `--help`, `--version`, `config` and `completions` still run. `[[language]]` tables
+  add languages ([below](#custom-languages)). Precedence: command line >
   environment variable > configuration file > built-in default. Every configurable option names its
   variable in `--help` (e.g. `--hidden` ↔ `SCRUTATE_GREP_HIDDEN`). An on/off variable is off when
   it is `0`, `false`, `no`, `off` or empty, and on for any other value (`1`, `true`, `yes`, `on`).
@@ -259,7 +261,7 @@ often while files change.
 | `tsquery LANG QUERY [PATHS] [--limit N] [--no-cache]` | Tree-sitter structural query over every file of a language up to 1 MB (no index; per-file results are cached, see below). An empty query, a query without a `@capture` and an unknown predicate are errors. A path that does not exist from the current directory is read under `--root`; one that exists in neither place is named in a warning, the other paths are still searched, and the exit code is 2. Paths print as `grep PATH...` prints them, in plain output and in `--json`: the path as given, then the path below it (`src/a.py` for `src`, `./src/a.py` for `./src`, nothing in front for `.` or no path), so a printed path can be passed to the other commands. `--rewrite TEMPLATE` replaces each match with a template of its captures and prints a diff; `--write` changes the files (see below). |
 | `check [--files] [--json]` | Verify database integrity, segment consistency and (with `--files`) that indexed files are unchanged. Exit 1 on problems. The line `chunks: N ranked in the database, M alive in segments, K constants (no postings)` counts the chunks that have segment rows, which leaves out constants, and then the constants; `--json` gives them as `constants`. `--json` counts the indexed files also without `--files` (`files_changed` and `files_missing` are then 0: not checked). |
 | `stats` | Index statistics as one JSON object (files, chunks, symbols, call edges, imports, segments, and the text index's files, segments and bytes). |
-| `languages [--json]` | The verified capability registry. The JSON form gives each language's extensions, the extensions it shares with another language and takes by the file's text (`extensions_by_content`), its file names, and every kind of definition the index gives it (`definition_kinds`: `method` for a function in a class and `constant` included). |
+| `languages [--json]` | The verified capability registry. The JSON form gives each language's extensions, the extensions it shares with another language and takes by the file's text (`extensions_by_content`), its file names, and every kind of definition the index gives it (`definition_kinds`: `method` for a function in a class and `constant` included). A custom language follows the built-in ones: its line ends `custom: .scrutate.toml` (or `custom:` and the path of your configuration file), and its JSON has `"tier": "custom"` and `"source"`. |
 | `watch [PATH]` | Keep the index (and the text index, if there is one) up to date from filesystem events (see below). |
 | `serve [--refresh-interval S] [--max-bytes N] [--watch] [--structured]` | MCP server on stdio (see below); `--watch` also runs the watcher in a background thread; `--structured` also sends each answer as JSON. |
 | `lsp` | Language Server Protocol server on stdio (see below). |
@@ -842,6 +844,59 @@ The index learns of a written file as of any edit: the next `symbol`, `search` o
 sees its new size and time and reads it again, and Engine A's `grep` reads the file as it is.
 `grep --index` answers from the text index as it was built, so `grep --index --update` sees the
 new text. No MCP tool rewrites: the server only reads, except `reindex`.
+
+### Custom languages
+
+A `[[language]]` table adds a language without a new build. It is read from the `.scrutate.toml`
+at the root of the index and from your own configuration file (`$SCRUTATE_CONFIG`, else
+`$XDG_CONFIG_HOME/scrutate/config.toml` or `~/.config/scrutate/config.toml`), both at once,
+wherever the command starts:
+
+```toml
+[[language]]
+name = "mylang"
+extensions = ["myl"]
+line_comment = "--"
+block_comment = ["{-", "-}"]
+definitions = [
+  { kind = "function", pattern = '^\s*fn\s+([A-Za-z_][A-Za-z0-9_]*)' },
+  { kind = "class", pattern = '^\s*type\s+([A-Za-z_][A-Za-z0-9_]*)' },
+]
+```
+
+- `name`: the language's id (letters, digits, `_` and `-`). It may not be a built-in language or
+  a `--type` alias (`py`, `js`, `sh` ...), nor a name another table already took.
+- `extensions`: one or more, without the dot, matched without regard to case. An extension a
+  built-in language owns is refused, so every part of scrutate (the parser, the resolver, the
+  language server) agrees on what a file is; so is one the index never reads (`csv`, `log`,
+  `lock` ...) and one another custom language owns.
+- `line_comment` (optional): the mark that starts a comment line.
+- `block_comment` (optional): the opener and the closer of a block comment.
+- `definitions`: one table per pattern, `kind` one of `class`, `constant`, `enum`, `function`,
+  `impl`, `interface`, `macro`, `method`, `module`, `struct`, `trait`, `type`, and `pattern` a
+  regular expression (Rust `regex` syntax, the size limits of `grep`) matched against one line at
+  a time. The first group is the name, so a pattern needs one. The first pattern that matches a
+  line wins; comment lines never define.
+
+Files with those extensions are parsed as the heuristic tier parses a file
+([LANGUAGES](LANGUAGES.md)): a definition runs to the line before the next definition at the
+same or a shallower indentation, without the blank and comment lines at its end, at most 200
+lines (40 for a `class`, `struct`, `enum`, `impl`, `interface`, `trait`, `type` or `module`),
+and the comment right above it is its documentation, for the ranked search. Lines outside the
+definitions are windows. `symbol`, `outline`, `search` and `find` answer from them, `grep --type
+mylang` (and `--type-list`, and the `type` of `grep_code`) knows the extensions, and `languages`
+lists the language. There are no call edges or imports, so `callers` and `deps` find nothing in
+these files.
+
+The index keeps a signature of each custom language. When a table changes (a pattern, an
+extension, a comment mark, the table removed), the next update reads again the files of the
+extensions whose language changed, and no others. A table that does not hold stops every command
+that reads it, and every index update, with one line that names the file and the line, and exit
+2: TOML that does not parse, a key the table does not have (there is no key that names a file,
+so a table cannot make scrutate read one), a bad name or extension, a kind not in the list, a
+pattern that does not compile or has no group. The repository's file is read as other
+repository files are: a regular file inside the root, at most 1 MB, through a link only when
+the resolved file is inside the root.
 
 ### Environment variables
 `SCRUTATE_ROOT`, `SCRUTATE_THREADS`, `SCRUTATE_GREP_{HIDDEN,NO_IGNORE,FOLLOW,SMART_CASE,MAX_FILESIZE,MAX_DEPTH,MAX_BYTES,GLOBS,TYPES}`,

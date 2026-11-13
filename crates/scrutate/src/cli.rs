@@ -1133,6 +1133,19 @@ pub fn run() -> Result<i32> {
             );
         }
     }
+    // a bad language table stops the command, as a bad configuration file does
+    let wants_langs = match &cli.cmd {
+        Cmd::Grep(g) => g.index || g.symbols || !g.types.is_empty() || g.type_list,
+        Cmd::Config { .. } | Cmd::Completions { .. } | Cmd::Setup { .. } | Cmd::Hook { .. } => false,
+        _ => true,
+    };
+    if wants_langs {
+        let root = match (uses_index || root_given, &cwd) {
+            (false, Some(cwd)) => index_above(cwd).unwrap_or_else(|| cwd.clone()),
+            _ => cli.root.clone(),
+        };
+        crate::custom::load(&root)?;
+    }
     let no_color = cli.no_color;
     let page = (cli.max_bytes.unwrap_or(usize::MAX), cli.offset);
     match cli.cmd {
@@ -1599,6 +1612,13 @@ pub fn run() -> Result<i32> {
                         "docstrings": spec.docstring, "tier": "grammar"
                     })
                 })
+                .chain(crate::custom::current().langs.iter().map(|l| {
+                    serde_json::json!({
+                        "id": l.id, "extensions": l.exts, "extensions_by_content": [], "filenames": [],
+                        "definitions": !l.defs.is_empty(), "definition_kinds": l.kinds(),
+                        "call_edges": false, "imports": false, "docstrings": false, "tier": "custom", "source": l.source
+                    })
+                }))
                 .collect();
             println!("{}", serde_json::to_string_pretty(&v)?);
             Ok(0)
@@ -1609,6 +1629,12 @@ pub fn run() -> Result<i32> {
                 let labelled = |label: &str, v: &[&str]| (!v.is_empty()).then(|| format!("{label}{}", v.join(" ")));
                 let parts = [labelled("", spec.exts), labelled("by content: ", &by_content(spec.id)), labelled("files: ", spec.files)];
                 match writeln!(so, "{:<16} {}", spec.id, parts.into_iter().flatten().collect::<Vec<_>>().join("  ")) {
+                    Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => return Ok(0),
+                    r => r?,
+                }
+            }
+            for l in crate::custom::current().langs.iter() {
+                match writeln!(so, "{:<16} {}  custom: {}", l.id, l.exts.join(" "), l.source) {
                     Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => break,
                     r => r?,
                 }

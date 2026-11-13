@@ -35,7 +35,7 @@ pub type Key = [u8; 16];
 /// The key of the artifact of a file with this content hash at `rel`: besides the bytes, a parse
 /// reads the file's name (the language, the module chunk's name, comment marks) and, for an
 /// `index` file, its directory's name (an anonymous default export), under the parsing rules of
-/// this `CONTENT_REVISION`.
+/// this `CONTENT_REVISION` and of the custom language that claims the file, if one does.
 pub fn key(content_hash: &str, rel: &str) -> Key {
     let p = std::path::Path::new(rel);
     let base = rel.rsplit('/').next().unwrap_or(rel);
@@ -44,7 +44,10 @@ pub fn key(content_hash: &str, rel: &str) -> Key {
         _ => String::new(),
     };
     let rev = format!("{FORMAT} {}", crate::index::CONTENT_REVISION);
-    crate::tscache::hash(&[b"artifact", rev.as_bytes(), content_hash.as_bytes(), base.as_bytes(), dir.as_bytes()])
+    match crate::custom::current().for_path(rel) {
+        Some(l) => crate::tscache::hash(&[b"artifact", rev.as_bytes(), content_hash.as_bytes(), base.as_bytes(), dir.as_bytes(), l.sig().as_bytes()]),
+        None => crate::tscache::hash(&[b"artifact", rev.as_bytes(), content_hash.as_bytes(), base.as_bytes(), dir.as_bytes()]),
+    }
 }
 
 /// The words of one field of a chunk with their counts, each list sorted by word.

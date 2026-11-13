@@ -1257,8 +1257,14 @@ pub fn build_matcher(p: &Pattern) -> Result<AnyMatcher> {
 }
 
 // ------------------------------------------------------------------------- file types
-/// Named groups of extensions for `--type`, from the language registry plus common aliases.
+/// Named groups of extensions for `--type`, from the language registry plus common aliases, then
+/// the custom languages in effect.
 pub fn type_globs(name: &str) -> Option<Vec<String>> {
+    builtin_type_globs(name).or_else(|| crate::custom::current().by_id(name).map(|l| l.exts.iter().map(|e| format!("*{e}")).collect()))
+}
+
+/// `type_globs` of the built-in languages and aliases only.
+pub fn builtin_type_globs(name: &str) -> Option<Vec<String>> {
     let id = match name {
         "py" => "python",
         "js" => "javascript",
@@ -1282,7 +1288,9 @@ pub fn type_globs(name: &str) -> Option<Vec<String>> {
 }
 
 pub fn type_list() -> Vec<(String, Vec<String>)> {
-    crate::langs::LANGS.iter().map(|s| (s.id.to_string(), type_globs(s.id).unwrap_or_default())).collect()
+    let custom = crate::custom::current();
+    let ids = crate::langs::LANGS.iter().map(|s| s.id).chain(custom.langs.iter().map(|l| l.id.as_str()));
+    ids.map(|id| (id.to_string(), type_globs(id).unwrap_or_default())).collect()
 }
 
 // ------------------------------------------------------------------------- the search
