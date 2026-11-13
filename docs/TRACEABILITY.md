@@ -185,7 +185,7 @@ Counts: PASS 125 · PARTIAL 10 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 | R-12.4 | Binary files | NUL sniff (Engine B), `BinaryDetection::quit` (Engine A), text index keeps the bytes before the first NUL | robustness; LEADERBOARD `binheavy/literal` | PASS |
 | R-12.5 | Invalid encodings | invalid UTF-8 lossy; UTF-16 with a BOM transcoded by both engines | `cli.rs::utf16_bom_is_searched_by_engine_a_and_indexed_by_engine_b` | PASS |
 | R-12.6 | Symlinks | not followed by default, loop-safe with `-L` | robustness | PASS |
-| R-12.7 | Git worktrees and submodules | `.git` files skipped as VCS metadata; nested repos walked | robustness, `cli.rs::git_file_of_worktrees_and_submodules_is_not_indexed` | PASS |
+| R-12.7 | Git worktrees and submodules | `.git` files skipped as VCS metadata; nested repos walked; a linked work tree's new index starts from its main checkout's, the link read from git's files and confirmed both ways | robustness, `cli.rs::git_file_of_worktrees_and_submodules_is_not_indexed`, `tests/artifacts.rs` | PASS |
 | R-12.8 | Permissions | counted as errors, never fatal | robustness | PASS |
 | R-12.9 | Huge files | Engine A searches any size (100 MB single-line file in LEADERBOARD); Engine B skips > 1 MB; the text index maps files over 64 MB | robustness; LEADERBOARD `patho/long line` | PASS |
 | R-12.10 | Network filesystems | text-index lock polled with `try_lock` (SMB answers a blocking lock with EAGAIN) | `tools/netfs_check.sh` over SMB (Samba 4.23, macOS smbfs): identical Engine A output, Engine B index, concurrent updates, `check --files`; `bench/results/platforms/netfs-smb-macos.txt` | PASS for one host; an index shared by several machines over NFS/SMB is not supported (documented) |

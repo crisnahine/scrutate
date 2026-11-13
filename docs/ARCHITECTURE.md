@@ -383,8 +383,9 @@ folded, so two spellings of one accented name are one name.
   vectors are made from the counts when it is used again. The artifacts no path names are kept up
   to a quarter of the database's size (at least 4 MiB), the least recently dropped deleted first,
   by the update that dropped some, inside its transaction; a lookup never deletes, and an artifact
-  a path names is never deleted. `index --force` parses every file. On this repository the store
-  adds 3.1 MB (7%) to a 43 MB `.scrutate/` of a fresh build, and nothing else.
+  a path names is never deleted. `index --force` parses every file. The store adds 3.2 MB (7.5%)
+  to the 42 MB `.scrutate/` of a fresh build of this repository (`--no-text`), and 11.6 MB (9.5%)
+  to Guava's 123 MB, whose 1,329 copied files (the GWT sources) are now parsed once.
 
   In a linked git work tree (`files::main_checkout` reads git's files: the `.git` file, then the
   `gitdir` and `commondir` files git keeps for the work tree, the link confirmed both ways), a new

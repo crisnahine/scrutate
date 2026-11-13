@@ -102,7 +102,8 @@
   subdirectory the first command runs in, and the top's index wins over one an earlier run left
   in a subdirectory; with no index at the top, an index in a directory between is used. A
   clone, a submodule or a git worktree inside an indexed checkout is its own repository, with
-  its own index. Outside a repository the nearest directory above that holds `.scrutate` is
+  its own index (a linked worktree's starts as a copy of its main checkout's, see The index
+  directory). Outside a repository the nearest directory above that holds `.scrutate` is
   used, else the current directory. A home directory kept in git is not taken for a top. In
   the home directory or at a filesystem root with no index there, a command that would build a
   first index stops with exit code 2 and says to pass `--root` or run `scrutate index`;

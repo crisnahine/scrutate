@@ -875,6 +875,10 @@ fn retry_busy<T>(mut f: impl FnMut() -> rusqlite::Result<T>) -> rusqlite::Result
 /// The `art` column and its index, on a `files` table an older schema made without it; another
 /// process adding it at the same time is no error.
 fn add_art(db: &Connection) -> rusqlite::Result<()> {
+    // the index exists on every open but the first of an older index
+    if retry_busy(|| db.execute_batch(ART_INDEX)).is_ok() {
+        return Ok(());
+    }
     let has = |db: &Connection| db.prepare("SELECT 1 FROM pragma_table_info('files') WHERE name='art'").and_then(|mut q| q.exists([]));
     if !has(db)? {
         if let Err(e) = retry_busy(|| db.execute_batch("ALTER TABLE files ADD COLUMN art BLOB")) {
