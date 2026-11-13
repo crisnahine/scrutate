@@ -605,30 +605,30 @@ by lines; `--json` is never cut. Without a budget the answer is whole, and a pla
 takes the path it took before.
 ### `serve` (MCP)
 
-Nineteen tools over stdio, each one an operation above (`search_code`, `grep_code`,
-`find_symbol`, `callers`, `callees`, `call_path`, `repo_map`, `read_code`, `outline`,
-`dependencies`, `dependents`, `references`, `similar_code`, `duplicates`, `structural_search`,
-`impact`, `find_files`, `dead_code`, `reindex`). `repo_map` is `map` (argument `path`),
-`call_path` is `path` (arguments `from`, `to` and `depth`, at most 100), both with the same
-text, and `dead_code` is `dead`, with its directory or file in `path`.
+Nineteen tools over stdio, each an operation above (`search_code`, `grep_code`, `find_symbol`,
+`callers`, `callees`, `call_path`, `repo_map`, `read_code`, `outline`, `dependencies`,
+`dependents`, `references`, `similar_code`, `duplicates`, `structural_search`, `impact`,
+`find_files`, `dead_code`, `reindex`). `repo_map` is `map` (argument `path`), `call_path` is
+`path` (arguments `from`, `to` and `depth`, at most 100), both with the same text, and
+`dead_code` is `dead`, with its directory or file in `path`.
 
 Before a call the server checks the repository for changed files and updates the index. Without
-`--refresh-interval` scans are at most a second apart, and closer when a scan is cheap; with
-`--refresh-interval S` (or `SCRUTATE_REFRESH_INTERVAL`) no scan comes sooner than S seconds
-after the last. With `--watch`, each update the watcher makes counts as a scan. A scan that
-could not run because another process held the index does not start the interval. Inside that
-window an answer still checks the files it cites and the files its arguments name, one `stat`
-each: when one changed or is gone, or a named file is new and a scan would index it, those files
-alone are indexed again and the answer is computed again, once. A change in a file the answer
-does not cite or name waits for the next scan. At the end of its input (EOF) the server answers
-the calls in flight, lets a running index build finish, and exits.
+`--refresh-interval`, scans are at most a second apart, closer when a scan is cheap; with
+`--refresh-interval S` (or `SCRUTATE_REFRESH_INTERVAL`) no scan comes sooner than S seconds after
+the last. With `--watch`, each watcher update counts as a scan. A scan that could not run because
+another process held the index does not start the interval. Inside that window an answer still
+checks, one `stat` each, the files it cites and those its arguments name: when one changed or is
+gone, or a named file is new and a scan would index it, those files alone are indexed again and
+the answer computed again, once. A change in a file the answer does not cite or name waits for
+the next scan. At the end of its input (EOF) the server answers the calls in flight, lets a
+running index build finish, and exits.
 
 While it runs, the server offers its open index to command line calls of the same user on the
 same root: `symbol`, `callers`, `callees`, `path`, `map`, `refs`, `outline`, `deps`, `rdeps`,
 `read`, `similar`, `dupes`, `dead`, `search` (of this repository alone: with `--also` another
-root it does its own work) and the ranked part of `find` run there (not `impact`, since git runs
-in the command's own environment, nor `files`, which needs no index), with every file looked at
-first as always, and print the same bytes and exit code a fresh process gives (about 12 ms in
+root it does its own work) and the ranked part of `find`. Not `impact`, since git runs in the
+command's own environment, nor `files`, which needs no index. Every file is looked at first as
+always, and the output is the same bytes and exit code a fresh process gives (about 12 ms in
 place of 28 ms on a copy of this repository). The meeting point is a socket file,
 `.scrutate/session.sock` (owner only; Unix; no network port), removed when the server exits. A
 command never starts a server. When anything about the server differs from how the command would
@@ -647,153 +647,107 @@ servers on one root, the first offers the socket.
   the whole answer, closing line included, fits `max_bytes`. The default is 24,000 bytes (about
   6,000 tokens); `serve --max-bytes N` (or `SCRUTATE_MAX_BYTES`) sets another, and `tools/list`
   shows it. A call's `max_bytes` and the server's default are both held between 1,000 and
-  1,000,000, and a call's own value wins. `serve` refuses `--offset`: every tool call takes its
+  1,000,000, and a call's own value wins. `serve` refuses `--offset`: each tool call takes its
   own.
 - Every tool takes `response_format`: `detailed` (the default, the text described here) or
-  `concise`, which keeps every location and every name and drops what a call can ask for again:
-  code, snippets, kinds, scores, the containers of a name (`Answer.text` is `text`) and the notes
-  that explain an item. Closing lines (how to continue, where an answer stopped) and errors stay.
-  A concise page holds the same items as the detailed page of the same `max_bytes` and `offset`,
-  so an offset means the same in both forms. Paths are written once per directory: a line ending
-  with `/` names a directory (`./` the root), and a path without `/` below it is in that
-  directory (a path in another directory on the same line is written whole, a file at the root
-  `./name`); a location written `:start-end` (or `:line`, `:line:column`) is in the file of the
-  location before it. With `serve --structured` the JSON is the detailed one in both forms. Any
-  other value is an error (`response_format must be "detailed" or "concise"`). Per tool, concise
-  gives:
-  - `search_code`, `find_symbol`, `callers`, `callees`, `similar_code`: one line per result,
-    location and name (`callees` counts the external names in place of listing them);
-  - `grep_code`: the first line, then per symbol its location, name and the numbers of its
-    matching lines without their text (a file with no enclosing symbol: its path and the
-    numbers);
-  - `read_code` by path: the lines read that begin a definition the index knows,
-    `start-end  first line`, and the closing line (a page with none says so); by symbol: each
-    definition's location and name, its first line, and the definitions inside it,
-    `start-end  first line`;
-  - `outline`: each symbol's first line number and name, one space of indent per level;
-  - `dependencies`: each file the imports resolve to and each module that resolves to none,
-    once; `dependents`: each importing file once;
-  - `references`: per definition its location, name and count, then each use as
-    `path:line:column`, and the unresolved uses the same way, without line text or reasons
-    (`textual`: the definitions and callers as locations, the matching lines as `grep_code`
-    gives them);
-  - `duplicates`: one line per group, the similarity and the members' locations, with one name
-    when they share it;
-  - `structural_search`: `path:line:column @capture text`, without the node kind;
-  - `repo_map`: each file and its definitions' `start-end name`, without rank, score, kind or
-    calls;
-  - `call_path`: `path:line -> location name` per step, `(by name)` for a call the resolver did
-    not tie;
-  - `impact`: the same sections, a changed definition as `location name (status)`, a caller as
-    `distance location name`, `?` after the name of an undecided one; a test as `location name
-    (test, distance)` when the definition that reaches the change is in it, else `path (distance
-    via location name)`;
-  - `dead_code`: `location name`, `?` after an undecided one; `find_files`: the paths in rank
-    order, with a directory line each time the directory changes;
-  - `reindex`: the same line.
+  `concise`, which keeps every location and name and drops what a call can ask for again: code,
+  snippets, kinds, scores, the containers of a name (`Answer.text` is `text`) and the notes that
+  explain an item. Closing lines (how to continue, where an answer stopped) and errors stay. A
+  concise page holds the same items as the detailed page of the same `max_bytes` and `offset`,
+  so an offset means the same in both. Paths are written once per directory: a line ending with
+  `/` names a directory (`./` the root), and a path without `/` below it is in that directory (a
+  path in another directory on the same line is written whole, a file at the root `./name`); a
+  location written `:start-end` (or `:line`, `:line:column`) is in the file of the location
+  before it. With `serve --structured` the JSON is the detailed one in both forms. Any other
+  value is an error (`response_format must be "detailed" or "concise"`). Per tool, concise gives:
+
+  | Tool | Concise answer |
+  |---|---|
+  | `search_code`, `find_symbol`, `callers`, `callees`, `similar_code` | one line per result, location and name (`callees` counts the external names in place of listing them) |
+  | `grep_code` | the first line, then per symbol its location, name and the numbers of its matching lines without their text (a file with no enclosing symbol: its path and the numbers) |
+  | `read_code` | by path: the lines read that begin a definition the index knows, `start-end  first line`, and the closing line (a page with none says so); by symbol: each definition's location and name, its first line, and the definitions inside it, `start-end  first line` |
+  | `outline` | each symbol's first line number and name, one space of indent per level |
+  | `dependencies`, `dependents` | each file the imports resolve to and each module that resolves to none, once; each importing file once |
+  | `references` | per definition its location, name and count, then each use as `path:line:column`, and the unresolved uses the same way, without line text or reasons (`textual`: the definitions and callers as locations, the matching lines as `grep_code` gives them) |
+  | `duplicates` | one line per group, the similarity and the members' locations, with one name when they share it |
+  | `structural_search` | `path:line:column @capture text`, without the node kind |
+  | `repo_map` | each file and its definitions' `start-end name`, without rank, score, kind or calls |
+  | `call_path` | `path:line -> location name` per step, `(by name)` for a call the resolver did not tie |
+  | `impact` | the same sections, a changed definition as `location name (status)`, a caller as `distance location name`, `?` after the name of an undecided one; a test as `location name (test, distance)` when the definition that reaches the change is in it, else `path (distance via location name)` |
+  | `dead_code` | `location name`, `?` after an undecided one |
+  | `find_files` | the paths in rank order, with a directory line each time the directory changes |
+  | `reindex` | the same line |
 
   On this repository a concise answer over 1 KB of detailed text is 5% to 44% of it
   (`tests/concise.rs`); one made mostly of names, such as the outline of a test file whose
-  function names are sentences, keeps them and saves less. The command line has no concise form.
-- Arguments: a wrong type or a negative number is a tool error that names the argument
+  function names are sentences, saves less. The command line has no concise form.
+- Arguments: a wrong type or a negative number is a tool error naming the argument
   (`k must be a non-negative integer`), and JSON `null` is the same as leaving an argument out.
   An error quotes at most 200 characters of an argument. Every path argument may be written `./x`
   or `pkg/../x`. In text answers, control characters in a path show as escapes (`\n`, `\x1b`);
   the JSON form keeps them as they are. A path or location written that way is read back, so
   what an answer prints can be passed to the next call.
-- `grep_code` is an Engine A search of the files the index holds: hidden files such as `.github/`
-  are searched (with a text index, its trigrams say which of the files it holds as they are now
-  can match, and the other files are read; the answer is the same); ignored files, `.git/` and
-  the directories the index skips by name (`node_modules` and the like) are not (`scrutate grep`
-  skips hidden files unless `--hidden`, and reads those directories unless an ignore file
-  excludes them). The pattern is a regex unless `mode` names another matching mode (`literal`,
-  `identifier`, `fuzzy` and `fuzzy_regex` within `max_edits` edits, default 1, or `pcre2`), as
-  `grep -F`, `--ident`, `--fuzzy`, `--fuzzy-regex` and `-P` do; `case` is `sensitive` (the
-  default), `insensitive` or `smart`, and `word` keeps whole words. `path` keeps one file or
-  directory of the repository (answers still name files from the root; one that leaves the
-  repository is refused) and `globs` keeps the files they match, as `grep -g` (`!` excludes);
-  neither brings back a directory the index skips. Matching lines are grouped by enclosing
-  symbol; `max_results` (default 100) stops it, and the answer says so. A capped answer holds
-  the first matches in path order, so the same call gives the same lines every time and a second
-  page neither repeats nor skips one; `references` does the same, over the same files. A file
-  whose search a NUL byte stopped after a match ends its last group with a `note:` line
-  (`"note"` in JSON). An invalid pattern is an error.
-- `search_code` takes at most 10 `alt_queries`; a cancelled search stops between them. A
-  cancelled `grep_code` or `references` stops its search between files.
+
+Per tool:
+
+| Tool | Arguments and answer |
+|---|---|
+| `grep_code` | An Engine A search of the files the index holds. Hidden files such as `.github/` are searched (with a text index, its trigrams say which of the files it holds as they are now can match, and the other files are read; the answer is the same); ignored files, `.git/` and the directories the index skips by name (`node_modules` and the like) are not. (`scrutate grep` skips hidden files unless `--hidden`, and reads those directories unless an ignore file excludes them.) The pattern is a regex unless `mode` names another (`literal`, `identifier`, `fuzzy` and `fuzzy_regex` within `max_edits` edits, default 1, or `pcre2`), as `grep -F`, `--ident`, `--fuzzy`, `--fuzzy-regex` and `-P` do; `case` is `sensitive` (the default), `insensitive` or `smart`, and `word` keeps whole words. `path` keeps one file or directory of the repository (answers still name files from the root; one that leaves the repository is refused) and `globs` keeps the files they match, as `grep -g` (`!` excludes); neither brings back a directory the index skips. Matching lines are grouped by enclosing symbol; `max_results` (default 100) stops it, and the answer says so. A capped answer holds the first matches in path order, so the same call gives the same lines every time and a second page neither repeats nor skips one; `references` does the same, over the same files. A file whose search a NUL byte stopped after a match ends its last group with a `note:` line (`"note"` in JSON). An invalid pattern is an error. |
+| `search_code` | Takes at most 10 `alt_queries`; a cancelled search stops between them. A cancelled `grep_code` or `references` stops between files. |
+| `read_code` | Reads a line range of a file (`path`, `start`, `end`), or with `symbol` a whole definition: a name, `Class.method` or a location. A name with several definitions returns each (up to 20), and `path` keeps those in that file. With `end`, every line up to `end` is read; without it, 400 lines. The answer closes with `(lines A-B of N in P: read_code path=P start=B+1 for more)` while lines are left. An empty file answers `P is empty`, a `start` past the end `P has N lines: start=S is past the end`; an `end` before `start` and a path that is not a regular file are errors. A file is read through a 64 KB buffer and only as far as the last line asked for, with at most 1 MB of line text (a longer line is cut and says so). A file with a NUL byte in its first 8 KB is refused; a definition read with `symbol` goes through the same reader, so it fails as its file's read would. A path that leaves the repository by its own parts answers `path outside repo` with no file looked at, and a link that leaves it answers as a missing file does. An absolute path is one under the root as `config --json` prints it: another spelling of the same directory (through a link) counts as outside. A file over 1 MB not read to its end closes with `of P, more lines follow` in place of the line count, and the JSON `file_lines` is `null`. |
+| `references` | Ends with a closing line when `max_results` cut the search, answers `(no results)` when nothing is found, and refuses an empty name. |
+| `structural_search` | Refuses an empty query, a query without a `@capture` and an unknown predicate, as `tsquery` does. |
+| `impact` | Takes `base` (a revision, `main...` for a merge base), `staged` (boolean) and `depth` (default 3, at most 10), and answers as `scrutate impact` does (see `impact` above). |
+| `find_files` | Takes `query` and `limit` (default 20, at most 1000) and answers as `scrutate files` does (see `files` above). A `read_code` call counts one read of each file it reads. |
+| `reindex` | Takes `force` (boolean): every file is read again, also one whose size and modification time did not change, and a damaged index is rebuilt. It also updates the text index when there is one, so `grep --index` sees what it indexed; it never makes one. |
+
 - Every answer begins each result with its location (`path:start-end`). A location can be passed
-  wherever a tool takes a symbol, to mean exactly that definition among several of the same name:
+  wherever a tool takes a symbol, to mean exactly that definition among namesakes:
   `read_code symbol`, `find_symbol`, `callers`, `callees`, `call_path from` and `to`,
   `similar_code target`, `references def`. For `callers` of a location, the resolver decides when
   another definition of the same name in that language could be meant; a call site it cannot
   decide is kept, and a closing line counts those. `callees` of a location lists the calls inside
   that definition.
-- `read_code` reads a line range of a file (`path`, `start`, `end`), or with `symbol` a whole
-  definition: a name, `Class.method` or a location. A name with several definitions returns each
-  (up to 20), and `path` keeps those in that file. With `end`, every line up to `end` is read;
-  without it, 400 lines. The answer closes with `(lines A-B of N in P: read_code path=P
-  start=B+1 for more)` while lines are left. An empty file answers `P is empty`, a `start` past
-  the end `P has N lines: start=S is past the end`; an `end` before `start` and a path that is
-  not a regular file are errors. A file is read through a 64 KB buffer and only as far as the last
-  line asked for, with at most 1 MB of line text (a longer line is cut and says so). A file with
-  a NUL byte in its first 8 KB is refused, and a definition read with `symbol` goes through the
-  same reader, so it fails as the read of its file would. A path that leaves the repository by
-  its own parts answers `path outside repo` with no file looked at, and a link that leaves it
-  answers as a missing file does. An absolute path is one under the root as `config --json`
-  prints it: another spelling of the same directory (through a link) counts as outside. A file
-  over 1 MB not read to its end closes with `of P, more lines follow` in place of the line count,
-  and the JSON `file_lines` is `null`.
-- `references` ends with a closing line when `max_results` cut the search, answers `(no
-  results)` when nothing is found, and refuses an empty name.
-- `structural_search` refuses an empty query, a query without a `@capture` and an unknown
-  predicate, as `tsquery` does.
-- `impact` takes `base` (a revision, `main...` for a merge base), `staged` (boolean) and `depth`
-  (default 3, at most 10), and answers as `scrutate impact` does (see `impact` above).
-- `find_files` takes `query` and `limit` (default 20, at most 1000) and answers as `scrutate
-  files` does (see `files` above). A `read_code` call counts one read of each file it reads.
-- `reindex` takes `force` (boolean): every file is read again, also one whose size and
-  modification time did not change, and a damaged index is rebuilt. It brings the text index up
-  to date too when there is one, so `grep --index` sees what it indexed; it never makes one.
-- `serve --short-tools` (`SCRUTATE_MCP_SHORT_TOOLS=1`) sends a short `tools/list`: a
-  description of a few words per tool, no argument descriptions, and for a tool that only reads
-  only `readOnlyHint` and `openWorldHint` (the other two hints mean something only for a tool
-  that writes). The three arguments every tool shares (`response_format`, and `max_bytes` and
-  `offset` for every tool but `reindex`) are left out of each schema and named once, with their
-  types and defaults, in the server's `instructions`; every other argument name, type, enum,
-  default and `required` is that of the full list, and a call is checked as without the option.
-  On this repository's server the full list is 16,647 bytes and the short one 5,614, plus
-  186 bytes of instructions (the list before `response_format` was 13,968).
+- `serve --short-tools` (`SCRUTATE_MCP_SHORT_TOOLS=1`) sends a short `tools/list`: a few words
+  per tool, no argument descriptions, and for a read-only tool only `readOnlyHint` and
+  `openWorldHint` (the other two hints matter only for a tool that writes). The three shared
+  arguments (`response_format`, and `max_bytes` and `offset` for every tool but `reindex`) are
+  left out of each schema and named once, with types and defaults, in the server's
+  `instructions`. Every other argument name, type, enum, default and `required` is the full
+  list's, and a call is checked as without the option. On this repository's server the full
+  list is 16,647 bytes and the short one 5,614, plus 186 bytes of instructions (the list before
+  `response_format` was 13,968).
 - `serve --structured` (`SCRUTATE_MCP_STRUCTURED=1`) adds an `outputSchema` to every tool and
-  `structuredContent` to every result, beside its text: the answer's envelope with `complete`
-  (`{"schema": 2, "complete": true, "result": ...}`), as the matching CLI command prints it with
-  `--json`. When the text and the JSON together pass one and a half times `max_bytes`, `result`
-  is `null`, `complete` is `false` and `text` holds the page that fits; a larger `max_bytes` gets
-  the whole answer as JSON. It is off by default because clients differ in what they show their
+  `structuredContent` to every result, beside its text: the envelope with `complete`
+  (`{"schema": 2, "complete": true, "result": ...}`), as the matching CLI command prints with
+  `--json`. When text and JSON together pass one and a half times `max_bytes`, `result` is
+  `null`, `complete` is `false` and `text` holds the page that fits; a larger `max_bytes` gets the
+  whole answer as JSON. It is off by default because clients differ in what they show their
   model: Claude Code 2.1.322 shows the JSON in place of the text, and the text is the form with
   the snippets (measured with that client on 2026-11-11). Turn it on for a client whose scripts
   read tool results, such as Codex in Code Mode.
-- A call runs on a thread of its own, so `notifications/cancelled` reaches it, and calls run
-  side by side, each on a reader of its own (up to the number of cores, at least 2 and at most 8;
-  one more waits for a reader). On cancel, a call waiting for the index or for a reader stops, an
-  index update it runs (`reindex`, or the scan before a read) stops and rolls back at its next
-  batch, and the answer of one already computing is dropped. Nothing more is sent for a
-  cancelled request.
-- While the first index of a repository is being built, by this server or another process, a
-  call waits up to 20 seconds and then answers that the index is still being built. A call that
-  carries a `progressToken` waits for the index instead, with a `notifications/progress` every
-  two seconds, and gets its answer.
+- Each call runs on its own thread, so `notifications/cancelled` reaches it, and calls run side
+  by side, each on its own reader (up to the number of cores, at least 2 and at most 8; one more
+  waits for a reader). On cancel, a call waiting for the index or a reader stops, an index update
+  it runs (`reindex`, or the scan before a read) stops and rolls back at its next batch, and the
+  answer of one already computing is dropped. Nothing more is sent for a cancelled request.
+- While a repository's first index is being built, by this server or another process, a call
+  waits up to 20 seconds and then answers that the index is still being built. A call carrying a
+  `progressToken` waits for the index instead, with a `notifications/progress` every two
+  seconds, and gets its answer.
 - Protocol: a client that opens with `initialize` is served revisions 2024-11-05, 2025-03-26,
-  2025-06-18 and 2025-11-25. A request that names its version in `_meta`
+  2025-06-18 and 2025-11-25. A request naming its version in `_meta`
   (`io.modelcontextprotocol/protocolVersion`) is served by revision 2026-07-28, which has no
   handshake: `server/discover` describes the server, every result carries `resultType`, lists
-  carry `ttlMs` and `cacheScope`, and another version in `_meta` is answered with error -32022 and
-  the supported one. Both eras work on the same pipe. An `initialize` with a missing or unknown
+  carry `ttlMs` and `cacheScope`, and another version in `_meta` gets error -32022 and the
+  supported one. Both eras work on the same pipe. An `initialize` with a missing or unknown
   `protocolVersion` is answered with 2025-11-25.
-- JSON-RPC: a batch (an array of messages) is answered with one array. A line that is not valid
-  JSON, or not UTF-8, gets error -32700, and the server goes on reading. A message that is not an
-  object, an empty array and a request without `method` get -32600; an unknown method gets
-  -32601; an unknown tool or a `tools/call` without `name` gets -32602. A message without `id`
-  (a notification) is never answered; only `notifications/cancelled` does anything. A client's
-  response (a `result` or `error` without `method`) is ignored.
+- JSON-RPC: a batch (an array of messages) gets one array. A line that is not valid JSON, or not
+  UTF-8, gets error -32700, and the server goes on reading. A message that is not an object, an
+  empty array and a request without `method` get -32600; an unknown method -32601; an unknown
+  tool or a `tools/call` without `name` -32602. A message without `id` (a notification) is never
+  answered; only `notifications/cancelled` does anything. A client's response (a `result` or
+  `error` without `method`) is ignored.
 
 ### `lsp`
 
@@ -801,7 +755,7 @@ servers on one root, the first offers the socket.
 scrutate lsp
 ```
 A language server for editors (JSON-RPC 2.0 over stdin and stdout, `Content-Length` framing).
-The repository is the top of the one the editor's first workspace folder is in
+The repository is the top of the one holding the editor's first workspace folder
 (`workspaceFolders`, else `rootUri`), found as for a command run in that folder, so the editor
 and a shell there share one index; `--root` when the editor sends no folder. A folder of another
 repository is not answered. With no folder and no `--root`, started in the home directory or at
@@ -818,11 +772,11 @@ the Engine B index:
 It advertises only these four, plus full text sync. Open documents are read from the editor's
 text, so an unsaved line still finds the word under the cursor; locations in other files come
 from disk. `didSave` updates the index incrementally in a background thread, so requests keep
-being answered, and before a request the index is scanned for changes at most once a second.
-When the repository has no index, `initialize` builds one (as `scrutate index` does, without the
-text index) and reports it with `window/logMessage`; requests that arrive meanwhile wait for it.
-Columns are UTF-16 code units, as the protocol requires. The exit code is 0 after `shutdown`
-then `exit`, 1 otherwise. Logs go to stderr.
+being answered; before a request the index is scanned for changes at most once a second. With no
+index, `initialize` builds one (as `scrutate index` does, without the text index) and reports it
+with `window/logMessage`; requests that arrive meanwhile wait for it. Columns are UTF-16 code
+units, as the protocol requires. The exit code is 0 after `shutdown` then `exit`, 1 otherwise.
+Logs go to stderr.
 
 ### `watch`
 ```
@@ -832,62 +786,59 @@ Sets up the watch on `PATH` (default `--root`), then updates the index once, so 
 during that first update is seen, prints `watching PATH` on stderr, and waits for filesystem
 events.
 
-Per platform: on Linux each directory the indexes can hold gets one inotify watch of its own,
-and an ignored tree gets none (2 watches instead of 7,012 on a tree with an ignored
-`node_modules` and `target`); the set is walked again after a burst that creates, removes or
-moves a directory, so new, moved and replaced directories are watched. The root is watched
-first, then shallow directories before deep ones, by path; when some get no watch (past
-`fs.inotify.max_user_watches`, or a directory that cannot be read) stderr says how many.
-`.git/info` gets a watch too, for its `exclude` file, also the main repository's when the root is
-a linked worktree. Windows uses one recursive ReadDirectoryChangesW watch on `PATH`. macOS runs
-the index's own incremental check instead, every second or, on a large tree, after a pause ten
-times as long as the last check took (at most 30 s): the FSEvents backend would link
-CoreServices into every `scrutate` command (about 1 ms of start-up), and the check compares sizes
-and nanosecond times, so it misses no edit.
+Per platform:
 
-Events under `.scrutate/` and `.git/` are dropped. A file of a burst is kept when the walk of an
-index lists it in its directory, so every rule the walks follow decides: ignore files above the
+| Platform | How `watch` sees changes |
+|---|---|
+| Linux | each directory the indexes can hold gets its own inotify watch, an ignored tree none (2 watches instead of 7,012 on a tree with an ignored `node_modules` and `target`). The set is walked again after a burst that creates, removes or moves a directory, so new, moved and replaced directories are watched. The root is watched first, then shallow directories before deep ones, by path; when some get no watch (past `fs.inotify.max_user_watches`, or a directory that cannot be read) stderr says how many. `.git/info` gets a watch too, for its `exclude` file, also the main repository's when the root is a linked worktree. |
+| Windows | one recursive ReadDirectoryChangesW watch on `PATH`. |
+| macOS | the index's own incremental check, every second or, on a large tree, after a pause ten times as long as the last check took (at most 30 s). The FSEvents backend would link CoreServices into every `scrutate` command (about 1 ms of start-up), and the check compares sizes and nanosecond times, so it misses no edit. |
+
+Events under `.scrutate/` and `.git/` are dropped. A file of a burst is kept when an index's walk
+lists it in its directory, so every rule the walks follow decides: ignore files above the
 repository top, a nested repository's own rules, a linked worktree's `info/exclude`, the skipped
 build and vendor directories and `SCRUTATE_INDEX_EXCLUDE_DIRS` for the code index, hidden paths
 for the text index. A burst is collected until 200 ms pass without an event (at most 2 s). On
-Linux and Windows a burst that names only files (written, created, removed or renamed in
-directories already watched) updates those files alone, with no walk of the tree and no new
-watches, so a saved file costs the same in a tree of 20,000 directories as in a small one. A
-burst that creates, removes or moves a directory, changes an ignore file (`.gitignore`,
-`.ignore`, `.rgignore`, `.git/info/exclude`) or `.scrutate.toml`, or reports lost events runs
-the usual incremental update of the whole tree and reads the ignore files again. Rule files
-outside the tree count too: an `.ignore` or `.rgignore` in any directory above the root, a
-`.gitignore` above it up to the repository top, `.git/info/exclude` of each repository nested in
-the tree, git's global excludes file and the git configuration files that name it. On Linux each
-directory above the root gets one watch of its own for this, and another file written there costs
-a filter and nothing more; when such a directory cannot be watched the watcher says so once, and
-a change to its rules, like one in a rule directory made after the last walk, applies with the
-next walk of the tree. So does a burst that changes an indexed file while a directory has no
-watch, or once the last walk is 30 s old, which is how a change the watcher did not see is found.
-Either way the code index is updated, and the text index when `.scrutate/text/` exists (`watch`
-never creates one; `scrutate index` does).
+Linux and Windows a burst naming only files (written, created, removed or renamed in directories
+already watched) updates those files alone, with no tree walk and no new watches, so a saved file
+costs the same in a tree of 20,000 directories as in a small one. The usual incremental update of
+the whole tree, reading the ignore files again, runs for a burst that:
 
-`SCRUTATE_WATCH_DEBUG=1` prints one line per burst on stderr (the number of paths, and whether
-the tree was walked). Each update that changed something prints one line on stderr. A failed
-first update stops the watch; a later one that fails is reported and the watch goes on. Ctrl-C
-stops it after the update in progress (exit 130). When `PATH` is removed or moved away, `watch`
-stops with an error (exit 2). Other processes can read and update the same index meanwhile; the
-indexes' own locks order the writers, and stopping the process mid-update leaves the previous
-state in place.
+- creates, removes or moves a directory;
+- changes an ignore file (`.gitignore`, `.ignore`, `.rgignore`, `.git/info/exclude`) or
+  `.scrutate.toml`, also a rule file outside the tree: an `.ignore` or `.rgignore` in any
+  directory above the root, a `.gitignore` above it up to the repository top,
+  `.git/info/exclude` of each repository nested in the tree, git's global excludes file and the
+  git configuration files that name it;
+- reports lost events;
+- changes an indexed file while a directory has no watch, or once the last walk is 30 s old,
+  which is how a change the watcher did not see is found.
 
-`serve --watch` runs the same watcher in a background thread while the server answers requests;
-when the watcher stops, stderr says why and the server goes on answering. The watcher and the
-tool calls share one session: the watcher's updates and the scans before calls take one writer
-lock, so they run one at a time, and a call that reads meanwhile sees the index as of its last
-commit.
+On Linux each directory above the root gets its own watch for those rule files, and another file
+written there costs a filter and nothing more. When such a directory cannot be watched the
+watcher says so once, and a change to its rules, like one in a rule directory made after the
+last walk, applies with the next tree walk. Either way the code index is updated, and the text
+index when `.scrutate/text/` exists (`watch` never creates one; `scrutate index` does).
+
+`SCRUTATE_WATCH_DEBUG=1` prints one stderr line per burst (the number of paths, and whether the
+tree was walked). Each update that changed something prints one stderr line. A failed first
+update stops the watch; a later failure is reported and the watch goes on. Ctrl-C stops it after
+the update in progress (exit 130). When `PATH` is removed or moved away, `watch` stops with an
+error (exit 2). Other processes can read and update the same index meanwhile; the indexes' own
+locks order the writers, and stopping the process mid-update leaves the previous state in place.
+
+`serve --watch` runs the same watcher in a background thread while the server answers; when the
+watcher stops, stderr says why and the server goes on answering. Watcher and tool calls share
+one session: the watcher's updates and the scans before calls take one writer lock, so they run
+one at a time, and a call that reads meanwhile sees the index as of its last commit.
 
 ### `tsquery` cache
 Each file's captures are kept in `--root`/.scrutate/tsquery/, one file per (scrutate version,
 language, query text, searched paths from `--root`), keyed by a hash of the file's content and
-its name. No absolute path is part of a name, so a copy of the tree with its `.scrutate/` uses the
-same cache. The hash is the one the code index records, so with an index in `--root` a file whose
-size, modification time and change time the index holds as current is not read when its captures
-are cached. A file whose content was seen before is not parsed again; the output is
+name. No absolute path is part of a name, so a copy of the tree with its `.scrutate/` uses the
+same cache. The hash is the one the code index records, so with an index in `--root` a file
+whose size, modification time and change time the index holds as current is not read when its
+captures are cached. A file whose content was seen before is not parsed again; the output is
 byte-identical to `--no-cache`, which parses everything and leaves the cache alone. A run that
 visits every file keeps only the entries it used, so edited and deleted files do not accumulate.
 The directory is bounded at 128 MB: beyond it the least recently used query files are deleted,
@@ -899,27 +850,26 @@ query with TEMPLATE. The replaced text is the capture named `@match`; a match wi
 replaces its widest capture (the first written on a tie). In the template `$NAME` is the text of
 capture `@NAME`, `${NAME}` the same before a letter or for a name with characters other than
 letters, digits and `_`, and `$$` a dollar. A capture with several nodes gives the text from its
-first node to its last; one the match does not hold gives nothing. A template that names a
-capture the query does not have, or has a `$` without a name, is an error.
+first node to its last; one the match does not hold gives nothing. A template naming a capture
+the query lacks, or with a `$` without a name, is an error.
 
 ```
 scrutate tsquery python '(call function: (identifier) @f (#eq? @f "print") arguments: (argument_list) @args) @match' --rewrite 'log$args'
 ```
 
-Without `--write` it prints a unified diff of every file it would change (three lines of context,
-`--- PATH` and `+++ PATH` as `tsquery` prints the path, so `patch -p0` applies it) and changes
-nothing. With `--write` it changes them and prints `PATH: N replaced` per file written. The exit
-code is 0 when there was something to change, 1 when nothing, and 2 when a path cannot be read or
-a file was left alone. `--json`, `--limit` and `--offset` are refused with it, `--max-bytes` does
-not cut the diff, and it never reads or fills the `tsquery` cache: each file is read and parsed
-afresh.
+Without `--write` it changes nothing and prints a unified diff of every file it would change
+(three lines of context, `--- PATH` and `+++ PATH` as `tsquery` prints the path, so `patch -p0`
+applies it). With `--write` it changes them and prints `PATH: N replaced` per file written. Exit
+code 0: something to change; 1: nothing; 2: a path cannot be read or a file was left alone.
+`--json`, `--limit` and `--offset` are refused with it, `--max-bytes` does not cut the diff, and
+it never reads or fills the `tsquery` cache: each file is read and parsed afresh.
 
 Of two overlapping matches only the outer one is rewritten (of two over the same text, the first
 pattern's), and the inner one is named in a warning
 (`a.py:1:7: inside the match at 1:1, not rewritten`). The text the outer one keeps of its
-captures is the file's text as it was read, so a second run may rewrite what the first skipped.
-A match whose template gives back the same text is no change. Once the template's text no longer
-matches the query, a second run finds nothing to change and exits 1.
+captures is the file's text as read, so a second run may rewrite what the first skipped. A match
+whose template gives back the same text is no change. Once the template's text no longer matches
+the query, a second run finds nothing to change and exits 1.
 
 Each file is written whole: its bytes are read once, the new bytes go to a temporary file next to
 it (`.NAME.scrutate-PID.tmp`) with the file's permissions, and that file is renamed over the
@@ -937,10 +887,10 @@ new text. No MCP tool rewrites: the server only reads, except `reindex`.
 
 ### Custom languages
 
-A `[[language]]` table adds a language without a new build. It is read from the `.scrutate.toml`
-at the root of the index and from your own configuration file (`$SCRUTATE_CONFIG`, else
-`$XDG_CONFIG_HOME/scrutate/config.toml` or `~/.config/scrutate/config.toml`), both at once,
-wherever the command starts:
+A `[[language]]` table adds a language without a new build. It is read, wherever the command
+starts, from both the `.scrutate.toml` at the index root and your own configuration file
+(`$SCRUTATE_CONFIG`, else `$XDG_CONFIG_HOME/scrutate/config.toml` or
+`~/.config/scrutate/config.toml`):
 
 ```toml
 [[language]]
@@ -956,10 +906,10 @@ definitions = [
 
 - `name`: the language's id (letters, digits, `_` and `-`). Not a built-in language, a `--type`
   alias (`py`, `js`, `sh` ...), or a name another table already took.
-- `extensions`: one or more, without the dot, matched without regard to case. An extension a
-  built-in language owns is refused, so every part of scrutate (the parser, the resolver, the
-  language server) agrees on what a file is; so is one the index never reads (`csv`, `log`,
-  `lock` ...) and one another custom language owns.
+- `extensions`: one or more, without the dot, matched without regard to case. Refused: an
+  extension a built-in language owns (so the parser, the resolver and the language server agree
+  on what a file is), one the index never reads (`csv`, `log`, `lock` ...), and one another
+  custom language owns.
 - `line_comment` (optional): the mark that starts a comment line.
 - `block_comment` (optional): the opener and the closer of a block comment.
 - `definitions`: one table per pattern, `kind` one of `class`, `constant`, `enum`, `function`,
@@ -970,62 +920,66 @@ definitions = [
 
 Files with those extensions are parsed as the heuristic tier parses a file
 ([LANGUAGES](LANGUAGES.md)): a definition runs to the line before the next definition at the
-same or a shallower indentation, without the blank and comment lines at its end, at most 200
+same or a shallower indentation, without its trailing blank and comment lines, at most 200
 lines (40 for a `class`, `struct`, `enum`, `impl`, `interface`, `trait`, `type` or `module`),
 and the comment right above it is its documentation, for the ranked search. Lines outside the
-definitions are windows. `symbol`, `outline`, `search` and `find` answer from them, `grep --type
-mylang` (and `--type-list`, and the `type` of `grep_code`) knows the extensions, and `languages`
-lists the language. There are no call edges or imports, so `callers` and `deps` find nothing in
-these files.
+definitions are windows. `symbol`, `outline`, `search` and `find` answer from them,
+`grep --type mylang` (and `--type-list`, and the `type` of `grep_code`) knows the extensions,
+and `languages` lists the language. There are no call edges or imports, so `callers` and `deps`
+find nothing in these files.
 
 The index keeps a signature of each custom language. When a table changes (a pattern, an
 extension, a comment mark, the table removed), the next update reads again the files of the
-extensions whose language changed, and no others. A table that does not hold stops every command
-that reads it, and every index update, with one line that names the file and the line, and exit
-2: TOML that does not parse, a key the table does not have (no key names a file, so a table
-cannot make scrutate read one), a bad name or extension, a kind not in the list, a pattern that
-does not compile or has no group. The repository's file is read as other repository files are: a
-regular file inside the root, at most 1 MB, through a link only when the resolved file is inside
-the root.
+extensions whose language changed, and no others. A bad table stops every command that reads
+it, and every index update, with one line naming the file and the line, and exit 2: TOML that
+does not parse, a key the table does not have (no key names a file, so a table cannot make
+scrutate read one), a bad name or extension, a kind not in the list, a pattern that does not
+compile or has no group. The repository's file is read as other repository files are: a regular
+file inside the root, at most 1 MB, through a link only when the resolved file is inside the
+root.
 
 ### Environment variables
 `SCRUTATE_ROOT`, `SCRUTATE_THREADS`, `SCRUTATE_GREP_{HIDDEN,NO_IGNORE,FOLLOW,SMART_CASE,MAX_FILESIZE,MAX_DEPTH,MAX_BYTES,GLOBS,TYPES}`,
 `SCRUTATE_INDEX_EXCLUDE_DIRS`, `SCRUTATE_REFRESH_INTERVAL`, `SCRUTATE_MAX_BYTES`,
 `SCRUTATE_MCP_STRUCTURED`, `SCRUTATE_MCP_SHORT_TOOLS`, `SCRUTATE_CONFIG`, `SCRUTATE_WATCH_DEBUG`, `SCRUTATE_GREP_DEBUG`,
-`SCRUTATE_NO_SESSION`, `SCRUTATE_SESSION_DEBUG`, `SCRUTATE_SESSION_WAIT_MS` (see `serve` above),
-`SCRUTATE_SEMANTIC` (path or `none`; another model makes the stored vectors anew on the next
-update, from the word counts the index keeps and without reading a source file: a third of a
-fresh build's CPU or less for a model, next to nothing for `none`), `SCRUTATE_RANKER` (path or
-`none`; a ranker whose features differ from this version's makes `search` fail),
-`SCRUTATE_PROFILE` (print indexing phase timings), `SCRUTATE_DIAGNOSTICS` (`json`: errors as
-JSON records), `NO_COLOR` (any non-empty value), `XDG_STATE_HOME` (where `files` keeps its
-frecency, see `files` above). On/off variables follow the rule under Conventions.
+`SCRUTATE_NO_SESSION`, `SCRUTATE_SESSION_DEBUG`, `SCRUTATE_SESSION_WAIT_MS` (see `serve` above), and:
+
+| Variable | Meaning |
+|---|---|
+| `SCRUTATE_SEMANTIC` | path or `none`; another model makes the stored vectors anew on the next update, from the word counts the index keeps and without reading a source file: a third of a fresh build's CPU or less for a model, next to nothing for `none` |
+| `SCRUTATE_RANKER` | path or `none`; a ranker whose features differ from this version's makes `search` fail |
+| `SCRUTATE_PROFILE` | print indexing phase timings |
+| `SCRUTATE_DIAGNOSTICS` | `json`: errors as JSON records |
+| `NO_COLOR` | any non-empty value |
+| `XDG_STATE_HOME` | where `files` keeps its frecency, see `files` above |
+
+On/off variables follow the rule under Conventions.
 
 ### The index directory
 `.scrutate/index.db` (SQLite, WAL), `.scrutate/seg/*/` (memory-mapped arrays),
 `.scrutate/text/` (the text index: a manifest and immutable trigram segments),
 `.scrutate/tsquery/` (the `tsquery` cache), `.scrutate/answers/` (what `callers` and `callees`
 resolved, one file per request), `.scrutate/session.sock` while `serve` runs, and a
-`.gitignore` so it is never committed. It is a cache: deleting it is always safe; `scrutate index
---force` rebuilds it, parsing every file; a damaged index rebuilds itself. The index keeps what
-parsing made of each file's content (the artifact store), so a file renamed or moved under the
-same name, or brought back by a branch switch, is not parsed again. In a linked git work tree
-(`git worktree add`), a new index starts as a copy of the main checkout's index, and content new
-to the work tree is looked up in the main checkout's store; nothing of the main checkout is
-written (docs/SECURITY.md).
+`.gitignore` so it is never committed. It is a cache: deleting it is always safe;
+`scrutate index --force` rebuilds it, parsing every file; a damaged index rebuilds itself. The
+index keeps what parsing made of each file's content (the artifact store), so a file renamed or
+moved under the same name, or brought back by a branch switch, is not parsed again. In a linked
+git work tree (`git worktree add`), a new index starts as a copy of the main checkout's, and
+content new to the work tree is looked up in the main checkout's store; nothing of the main
+checkout is written (docs/SECURITY.md).
 
 If a newer scrutate built `.scrutate/`, this version reads the index without updating it (one
-line on stderr says so), or refuses it with exit 2 when it cannot read it; `scrutate index
---force` (`--text --force` for the text index) rebuilds it with this version. A running `serve`
-or `lsp` answers each request with that refusal as an error and stays up. A command that reads
-the index never waits for a process that is writing it: it answers from the last committed index
-and says so in one line on stderr. The one exception is a first build by another process, when
-nothing is committed to answer from: the command fails with "the index is being built by another
-process" (exit 2), and a `serve` tool call waits up to 20 seconds for it before it answers that
-the index is still being built. `scrutate index` (and `--force`) waits for the writer. A
-read-only index directory, or a read-only repository with a complete index, is answered from the
-index as it is. A `.scrutate` that is a symbolic link, or that holds one, is refused: nothing is
-written or deleted outside the repository.
+stderr line says so), or refuses it with exit 2 when it cannot read it;
+`scrutate index --force` (`--text --force` for the text index) rebuilds it with this version. A
+running `serve` or `lsp` answers each request with that refusal as an error and stays up. A
+command that reads the index never waits for a writer: it answers from the last committed index
+and says so in one stderr line. The one exception is another process's first build, with nothing
+committed to answer from: the command fails with "the index is being built by another process"
+(exit 2), and a `serve` tool call waits up to 20 seconds, then answers that the index is still
+being built. `scrutate index` (and `--force`) waits for the writer. A read-only index directory,
+or a read-only repository with a complete index, is answered from as it is. A `.scrutate` that
+is a symbolic link, or holds one, is refused: nothing is written or deleted outside the
+repository.
 ## Setup and the Grep hook
 
 ```
