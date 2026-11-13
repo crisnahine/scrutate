@@ -145,8 +145,11 @@ fn a_stopped_search_is_counted_and_a_killed_one_is_not() {
 }
 
 /// Waits until the process is stopped, as `ps` shows it.
+/// Whether the process stops within 10 s: a loaded machine can take seconds to run a stop handler,
+/// and the wait ends at the first sight of the stopped state.
 fn stopped(pid: u32) -> bool {
-    for _ in 0..200 {
+    let start = std::time::Instant::now();
+    while start.elapsed() < Duration::from_secs(10) {
         let out = Command::new("ps").args(["-o", "state=", "-p", &pid.to_string()]).output().unwrap();
         if String::from_utf8_lossy(&out.stdout).contains('T') {
             return true;
