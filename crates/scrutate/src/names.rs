@@ -1,7 +1,7 @@
 //! What a name refers to. Every question about a use of a name asks `Names`: callers, callees,
-//! references, the language server's definition, imports and importers, and the caller count
-//! ranking reads. The rules that decide live in `resolve/`; this module owns who asks them,
-//! once per request, with each file read and parsed once.
+//! references, the language server's definition, imports and importers. The rules that decide
+//! live in `resolve/`; this module owns who asks them, once per request, with each file read and
+//! parsed once. The caller count ranking reads is the index's (`Index::call_counts`).
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;

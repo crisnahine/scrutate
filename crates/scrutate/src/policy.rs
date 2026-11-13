@@ -37,8 +37,8 @@ pub(super) struct Values {
 /// macOS: about 25 us a warm read and 160 us or more a cold one (M3 Pro). Cold, the Linux tree took
 /// 2.7 s on 5 threads, 1.6 s on 11, 1.31 s on 24, 1.24 s on 48, 1.36 s on 96, and 200,000 small
 /// files were slower on 48 than on 22: twice the cores. The kernel serves about four file-reading
-/// threads at full speed across all processes, so searches share (py-big, 4 at once: 235 ms each on
-/// 5 threads, 190 ms on 1).
+/// threads at full speed across all processes, so searches share (py-big, 4 at once: 244 ms each on
+/// 5 threads, 189 ms on 1; docs/ARCHITECTURE.md has the runs).
 pub(super) const MACOS: Values = Values { cold_read_ns: 75_000, cold_threads: 0, shared: true };
 
 /// Linux: 99.9% of warm reads under 15 us and 97% of cold reads over 30 us (a VM on the same

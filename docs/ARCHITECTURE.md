@@ -362,8 +362,9 @@ folded, so two spellings of one accented name are one name.
   it was left by a writer stopped before its commit, and is removed), deletions as liveness
   bitmaps, background **compaction** (merge small segments / purge dead rows) that aborts if
   another writer moved the manifest, segment **GC** with an age guard inside the update's
-  transaction, **corruption detection** (`PRAGMA quick_check` on open, structural validation of
-  every array on segment open, deep validation in `scrutate check`; also a chunk text that does
+  transaction, **corruption detection** (`PRAGMA quick_check` on open of a database up to 64 MB,
+  `QUICK_CHECK_MAX_BYTES` or `SCRUTATE_QUICK_CHECK_MAX_BYTES`, a larger one when an error shows
+  damage and in `scrutate check`; structural validation of every array on segment open, deep validation in `scrutate check`; also a chunk text that does
   not inflate, a segment list that is not JSON, a segment without vectors under a model, an
   `index.db` that is deleted under an open index or is a directory, a `seg` that is a file, an
   emptied `chunks` table, and a chunk count that differs from `chunks_at` when the statistics

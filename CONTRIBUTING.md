@@ -81,5 +81,7 @@ quality gates, the platform checks and the artifacts, with the hashes that must 
 
 ## Commit messages
 
-Imperative mood, one logical change per commit, reference the traceability row(s) a change
-affects (`R-12.3`), and note benchmark deltas when performance is involved.
+One logical change per commit. The subject is one plain sentence that says what the program or
+the code does after the change ("Resolved references take the files to read from the text
+index ..."), not an order. Name the traceability row a change serves (`R-12.3`) and the
+benchmark deltas when performance is involved, in the body.
