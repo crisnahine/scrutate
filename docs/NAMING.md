@@ -92,8 +92,9 @@ the top GitHub match).
 ## Re-check on 2026-11-09
 
 - crates.io, PyPI, npm: still no package named `scrutate` (HTTP 404).
-- GitHub account or organisation `scrutate`: does not exist (the authenticated `GET /users/scrutate`
-  returns 404), so the name can be claimed there.
+- GitHub organisation `scrutate`: did not exist at the time of the query (the authenticated
+  `GET /users/scrutate` returned 404). The project claimed it on 2026-11-13; the repository is
+  github.com/scrutate/scrutate.
 - Domains (WHOIS): `scrutate.com` **is registered** (created 2026-06-22, registrar Cloudflare; WHOIS
   does not show the owner, and whether it belongs to this project's authors was not checked). `scrutate.io`, `scrutate.org` and `scrutate.net`
   returned "not found" (unregistered at the time of the query). `scrutate.dev` and `scrutate.app`:
