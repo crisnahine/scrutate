@@ -157,7 +157,7 @@ offers on `.scrutate/session.sock`.
 `.scrutate/` and the one module that keeps them current (`stores.rs`). A caller names a **change
 set** (`stores::Changes`) and what it does (`stores::Writer`), never a store.
 
-**[Model set](docs/ARCHITECTURE.md#models-models-modelsrs)**: the vector model, the ranker and the
+**[Model set](docs/ARCHITECTURE.md#models-cratesscrutatemodels-modelsrs)**: the vector model, the ranker and the
 feature list the ranker reads (`models::ModelSet`), each loaded on first use.
 
 **[Candidate source](docs/ARCHITECTURE.md#retrieval-and-ranking-searchrs-semanticrs-rankrs)**: one

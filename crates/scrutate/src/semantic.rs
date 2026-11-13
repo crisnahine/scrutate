@@ -9,7 +9,6 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use anyhow::{anyhow, Context, Result};
-use half::f16;
 
 use crate::npy::load_npz_bytes;
 
@@ -18,15 +17,21 @@ pub struct SemanticModel {
     pub vb: HashMap<String, usize>,
     idf_a: Vec<f32>,
     idf_b: Vec<f32>,
-    u16: Vec<f16>, // [|VA|, k] as stored
-    v16: Vec<f16>, // [|VB|, k]
-    w: Vec<f32>,   // (s / s[0]) ^ gamma, multiplies every dimension
+    uq: Table,   // [|VA|, k] as stored
+    vq: Table,   // [|VB|, k]
+    w: Vec<f32>, // (s / s[0]) ^ gamma, multiplies every dimension
     pub k: usize,
     pub wa: f32,
     pub cfg: serde_json::Value,
     pub n_pairs: Option<i64>,
     u32: OnceLock<Vec<f32>>,
     v32: OnceLock<Vec<f32>>,
+}
+
+/// An int8 table with one float32 scale per row: value = code * scale.
+struct Table {
+    q: Vec<i8>,
+    scale: Vec<f32>,
 }
 
 fn sublog(c: u32) -> f64 {
@@ -36,7 +41,7 @@ fn sublog(c: u32) -> f64 {
 impl SemanticModel {
     pub fn load(path: &Path) -> Result<SemanticModel> {
         let bytes = std::fs::read(path).with_context(|| format!("load semantic model {}", path.display()))?;
-        Self::from_arrays(load_npz_bytes(&bytes).with_context(|| format!("load semantic model {}", path.display()))?)
+        load_npz_bytes(&bytes).and_then(Self::from_arrays).with_context(|| format!("load semantic model {}", path.display()))
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<SemanticModel> {
@@ -52,8 +57,12 @@ impl SemanticModel {
         let idf_b = take("idf_b")?.to_vec::<f32>()?;
         let u = take("U")?;
         let k = u.shape[1];
-        let u16 = u.to_vec::<f16>()?;
-        let v16 = take("V")?.to_vec::<f16>()?;
+        let int8 = "its word tables must be int8 with a scale per row (bench/train_semantic.py writes them)";
+        let uq = Table { q: u.to_vec::<i8>().context(int8)?, scale: take("U_scale")?.to_vec::<f32>()? };
+        let vq = Table { q: take("V")?.to_vec::<i8>().context(int8)?, scale: take("V_scale")?.to_vec::<f32>()? };
+        if uq.q.len() != uq.scale.len() * k || vq.q.len() != vq.scale.len() * k {
+            return Err(anyhow!("model scales do not match its tables"));
+        }
         let s = take("s")?.to_vec::<f32>()?;
         let cfg_s = take("cfg")?.to_strings()?.into_iter().next().unwrap_or_else(|| "{}".into());
         let cfg: serde_json::Value = serde_json::from_str(&cfg_s).unwrap_or(serde_json::Value::Null);
@@ -66,8 +75,8 @@ impl SemanticModel {
             vb: vb.into_iter().enumerate().map(|(i, t)| (t, i)).collect(),
             idf_a,
             idf_b,
-            u16,
-            v16,
+            uq,
+            vq,
             w,
             k,
             wa,
@@ -80,29 +89,30 @@ impl SemanticModel {
 
     /// Build the weighted float32 tables (worth it before embedding many chunks).
     pub fn warm(&self) {
-        self.u32.get_or_init(|| self.expand(&self.u16));
-        self.v32.get_or_init(|| self.expand(&self.v16));
+        self.u32.get_or_init(|| self.expand(&self.uq));
+        self.v32.get_or_init(|| self.expand(&self.vq));
     }
 
-    fn expand(&self, t: &[f16]) -> Vec<f32> {
+    fn expand(&self, t: &Table) -> Vec<f32> {
         let k = self.k;
-        t.iter().enumerate().map(|(i, v)| v.to_f32() * self.w[i % k]).collect()
+        t.q.iter().enumerate().map(|(i, &v)| v as f32 * t.scale[i / k] * self.w[i % k]).collect()
     }
 
-    fn row_into(&self, table: &[f16], warmed: &OnceLock<Vec<f32>>, i: usize, out: &mut [f32]) {
+    fn row_into(&self, table: &Table, warmed: &OnceLock<Vec<f32>>, i: usize, out: &mut [f32]) {
         let k = self.k;
         if let Some(full) = warmed.get() {
             out.copy_from_slice(&full[i * k..(i + 1) * k]);
         } else {
+            let s = table.scale[i];
             for j in 0..k {
-                out[j] = table[i * k + j].to_f32() * self.w[j];
+                out[j] = table.q[i * k + j] as f32 * s * self.w[j];
             }
         }
     }
 
     /// Weighted sum of word vectors, accumulated in float64, as the trainer pools them
     /// (`python/scrutate_ref/semantic.py`).
-    fn proj(&self, counts: &[(usize, u32)], idf: &[f32], table: &[f16], warmed: &OnceLock<Vec<f32>>) -> Option<Vec<f64>> {
+    fn proj(&self, counts: &[(usize, u32)], idf: &[f32], table: &Table, warmed: &OnceLock<Vec<f32>>) -> Option<Vec<f64>> {
         if counts.is_empty() {
             return None;
         }
@@ -142,8 +152,8 @@ impl SemanticModel {
     /// counts a name word three times and a qualifier, signature or doc word once, view B counts
     /// the body words, as `encode_chunk` of the Python reference does.
     pub fn encode_counts(&self, a: &HashMap<&str, u32>, b: &HashMap<&str, u32>) -> Option<Vec<f32>> {
-        let za = self.proj(&Self::lookup(a, &self.va), &self.idf_a, &self.u16, &self.u32);
-        let zb = self.proj(&Self::lookup(b, &self.vb), &self.idf_b, &self.v16, &self.v32);
+        let za = self.proj(&Self::lookup(a, &self.va), &self.idf_a, &self.uq, &self.u32);
+        let zb = self.proj(&Self::lookup(b, &self.vb), &self.idf_b, &self.vq, &self.v32);
         if za.is_none() && zb.is_none() {
             return None;
         }
@@ -168,7 +178,7 @@ impl SemanticModel {
         for t in terms {
             *a.entry(t.as_str()).or_insert(0) += 1;
         }
-        let z = self.proj(&Self::lookup(&a, &self.va), &self.idf_a, &self.u16, &self.u32)?;
+        let z = self.proj(&Self::lookup(&a, &self.va), &self.idf_a, &self.uq, &self.u32)?;
         Self::normalize(z)
     }
 }

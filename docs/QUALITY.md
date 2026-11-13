@@ -305,11 +305,18 @@ samples) and a dictionary to version in the index.
 
 ## Semantic model and ranker
 
-- Semantic model (`crates/scrutate/models/semantic.npz`, 14.6 MB): a code-word model with two views per chunk
+- Semantic model (`crates/scrutate/models/semantic.npz`, 7.6 MB): a code-word model with two views per chunk
   (description: name + signature + docs; implementation: body), 256 dimensions, trained in numpy
   (`bench/train_semantic.py`) with an InfoNCE contrastive objective over (query, description),
   (query, implementation) and (description, implementation) pairs with 20 % word dropout. On DEV
   its semantic-only doc MRR rose from 0.247 (the previous PLS-SVD model) to 0.427.
+- Its two word tables are stored as int8 codes with one float32 scale per row (symmetric, value =
+  code × max|row| / 127, rounded half to even, as the index's vectors), in place of float16: the
+  file went from 14.6 MB to 7.6 MB, so the crate fits crates.io's 10 MB limit. `bench/quality.py`
+  on a release build, float16 → int8: MRR@10 0.5873 → 0.5874, hit@5 0.6636 → 0.6653 (floor
+  0.5673 and 0.6436); by type, doc function 0.3941 → 0.3955, kw type 0.0769 → 0.0764, name
+  function 0.8623 → 0.8618, the rest within 0.0004. The ranking pins moved in the six `sem_`
+  features and nine scores, with no change of order.
 - Training data: the 37 Python packages in `bench/groups.py` (27 to pretrain the semantic model,
   7 to tune and fit the ranker, 3 held out for the test). The model files keep word statistics,
   vocabulary tables and projections, not source text. Licences as declared on PyPI, and of the

@@ -24,7 +24,7 @@ better than the current code-word semantic model (`crates/scrutate/models/semant
 
   | Model | Params | Dim | Licence (model card) | Weights on disk |
   |---|---:|---:|---|---:|
-  | current code-word model | n/a | 256 | this repository | 14.6 MB |
+  | current code-word model | n/a | 256 | this repository | 14.6 MB (float16; 7.6 MB as int8 since) |
   | `sentence-transformers/all-MiniLM-L6-v2` | 22.7 M | 384 | Apache-2.0 | 91 MB (fp32) |
   | `BAAI/bge-small-en-v1.5` | 33 M | 384 | MIT | 133 MB (fp32) |
   | `ibm-granite/granite-embedding-small-english-r2` (model card reports code retrieval scores, CoIR) | 47 M | 384 | Apache-2.0 | 95 MB (bf16), 190 MB as fp32 |

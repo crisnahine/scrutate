@@ -14,7 +14,7 @@ use crate::semantic::SemanticModel;
 /// The vector model the stored vectors are made with. Bump it with every change of the embedded
 /// model (its signature changes then too): an index of a higher revision is refused, since its
 /// vectors do not match the queries this binary encodes.
-pub const REVISION: u32 = 1;
+pub const REVISION: u32 = 2;
 
 /// The ranking features, in the order the ranker reads them.
 pub const FEATURES: [&str; 48] = [
@@ -70,9 +70,9 @@ pub const FEATURES: [&str; 48] = [
 
 static SEMANTIC_NPZ: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/models/semantic.npz"));
 static RANKER_NPZ: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/models/ranker.npz"));
-/// The signature of the bundled vector model, so no process hashes 14.6 MB; a test prints the new
+/// The signature of the bundled vector model, so no process hashes 7.6 MB; a test prints the new
 /// value when the file changes (a hashing build dependency would rename the order file's symbols).
-pub const BUNDLED_SIGNATURE: &str = "blake2b:17861b39b366298cebb1640cdbb7784e";
+pub const BUNDLED_SIGNATURE: &str = "blake2b:f0f48afc6df71783a8c6dfb5048ed440";
 
 enum Source {
     Bundled,
@@ -204,6 +204,13 @@ mod tests {
     #[test]
     fn the_bundled_signature_is_the_hash_of_the_bundled_model() {
         assert_eq!(BUNDLED_SIGNATURE, file_signature(SEMANTIC_NPZ));
+    }
+
+    #[test]
+    fn the_bundled_models_fit_a_crates_io_crate_and_load() {
+        assert!(SEMANTIC_NPZ.len() + RANKER_NPZ.len() < 9_000_000, "crates.io refuses a crate over 10 MB");
+        let m = SemanticModel::from_bytes(SEMANTIC_NPZ).unwrap();
+        assert!(m.encode_query(&[m.va.keys().next().unwrap().clone()]).is_some());
     }
 
     #[test]

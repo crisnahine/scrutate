@@ -58,4 +58,13 @@ def test_weight_matrices_are_stored_raw_and_the_file_is_a_plain_npz(tmp_path):
     assert kinds["U.npy"] == zipfile.ZIP_STORED and kinds["V.npy"] == zipfile.ZIP_STORED
     assert kinds["va.npy"] == zipfile.ZIP_DEFLATED
     z = np.load(p, allow_pickle=False)  # np.load must keep working on it
-    assert z["U"].dtype == np.float16 and z["va"].tolist() == ["remov", "delet", "tool", "ping"]
+    assert z["U"].dtype == np.int8 and z["U_scale"].dtype == np.float32 and z["va"].tolist() == ["remov", "delet", "tool", "ping"]
+
+
+def test_rows_are_int8_with_one_scale_each_as_the_engine_quantizes():
+    from scrutate_ref.semantic import dequantize_rows, quantize_rows
+
+    q, s = quantize_rows(np.array([[0.5, -1.0, 0.25], [0.0, 0.0, 0.0]], np.float32))
+    assert q.tolist() == [[64, -127, 32], [0, 0, 0]]  # 63.5 rounds half to even
+    assert s.tolist() == [np.float32(1.0) / np.float32(127), 0.0]
+    assert np.allclose(dequantize_rows(q, s)[0], [0.5039, -1.0, 0.2520], atol=1e-4)

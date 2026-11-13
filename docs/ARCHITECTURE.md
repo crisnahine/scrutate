@@ -7,7 +7,7 @@
 
 [Documentation](README.md) &nbsp;·&nbsp; Next: [Languages](LANGUAGES.md)
 
-**Contents**: [Engine A: universal instant search](#engine-a-universal-instant-search-cratesscrutatesrcinstantrs) &nbsp;·&nbsp; [Engine B: code intelligence](#engine-b-code-intelligence-indexrs-lexrs-parsers-langsrs-searchrs-intelrs) &nbsp;·&nbsp; [Unified layer](#unified-layer-opsrs-librs-clirs-mcprs-cratesscrutate-py) &nbsp;·&nbsp; [Models](#models-models-modelsrs) &nbsp;·&nbsp; [Design rules for the next decade](#design-rules-for-the-next-decade)
+**Contents**: [Engine A: universal instant search](#engine-a-universal-instant-search-cratesscrutatesrcinstantrs) &nbsp;·&nbsp; [Engine B: code intelligence](#engine-b-code-intelligence-indexrs-lexrs-parsers-langsrs-searchrs-intelrs) &nbsp;·&nbsp; [Unified layer](#unified-layer-opsrs-librs-clirs-mcprs-cratesscrutate-py) &nbsp;·&nbsp; [Models](#models-cratesscrutatemodels-modelsrs) &nbsp;·&nbsp; [Design rules for the next decade](#design-rules-for-the-next-decade)
 
 <!-- End of head. -->
 
@@ -935,9 +935,11 @@ compiler of a wasi-sdk for SQLite and the grammars. The `wasi` job of `ci.yml` c
 and runs clippy on the native build without `pcre2`, on every push.
 
 ## Models (`crates/scrutate/models/`, `models.rs`)
-`semantic.npz` (14.6 MB: code-word vocabulary tables and projections) and `ranker.npz` (87 KB)
+`semantic.npz` (7.6 MB: code-word vocabulary tables and projections, the two word tables as int8
+codes with one float32 scale per row, quantised as the index's vectors are) and `ranker.npz` (87 KB)
 are embedded in the binary with `include_bytes!`; `SCRUTATE_SEMANTIC` / `SCRUTATE_RANKER` can
-point at other files or `none`. `models.rs` holds them as one model set, with the feature list the
+point at other files or `none` (a vector model file with the float16 tables of revision 1 is an
+error that names the file). `models.rs` holds them as one model set, with the feature list the
 ranker reads (`FEATURES`) and the model revision. Each part loads on first use, once per process,
 and a server's threads share it: `symbol`, `outline` and the other lookups never unpack either
 file. A ranker whose feature names are not `FEATURES` is an error the moment a search ranks with

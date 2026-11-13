@@ -42,6 +42,18 @@ def view_counts(name_t, qual_t, sig_t, doc_t, body_t):
     return a, b
 
 
+def quantize_rows(m) -> tuple[np.ndarray, np.ndarray]:
+    """Symmetric int8 codes and one float32 scale per row (value = code * scale), as lex::quantize."""
+    m = np.asarray(m, np.float32)
+    s = (np.abs(m).max(axis=1) / np.float32(127)).astype(np.float32)
+    d = np.where(s > 0, s, np.float32(1))[:, None]
+    return np.clip(np.rint(m / d), -127, 127).astype(np.int8), s
+
+
+def dequantize_rows(q, s) -> np.ndarray:
+    return np.asarray(q).astype(np.float32) * np.asarray(s, np.float32)[:, None]
+
+
 class SemanticModel:
     def __init__(self, va, vb, idf_a, idf_b, U, V, s, cfg=None):
         self.va = {t: i for i, t in enumerate(va)}
@@ -49,7 +61,7 @@ class SemanticModel:
         self.idf_a = np.asarray(idf_a, np.float32)
         self.idf_b = np.asarray(idf_b, np.float32)
         self.s = np.asarray(s, np.float32)
-        self.U0 = np.asarray(U)  # kept in the precision they are stored in (float16 on disk)
+        self.U0 = np.asarray(U)  # float32 while training; dequantized int8 rows when loaded
         self.V0 = np.asarray(V)
         self.cfg = cfg or {}
         self.file_sig: str | None = None  # set by load
@@ -138,11 +150,12 @@ class SemanticModel:
     def save(self, path: str) -> None:
         inv_a = sorted(self.va, key=self.va.get)
         inv_b = sorted(self.vb, key=self.vb.get)
+        (uq, us), (vq, vs) = quantize_rows(self.U0), quantize_rows(self.V0)
         arrays = dict(va=np.array(inv_a), vb=np.array(inv_b), idf_a=self.idf_a, idf_b=self.idf_b,
-                      U=np.ascontiguousarray(self.U0, dtype=np.float16), V=np.ascontiguousarray(self.V0, dtype=np.float16),
+                      U=np.ascontiguousarray(uq), U_scale=us, V=np.ascontiguousarray(vq), V_scale=vs,
                       s=self.s, cfg=np.array(json.dumps(self.cfg)))  # C order: the Rust engine maps these
-        # an .npz that np.load reads as usual; the weight matrices are stored raw (float16 barely
-        # compresses and inflating them took longer than reading them), the word lists deflated
+        # an .npz that np.load reads as usual; the weight matrices are stored raw (inflating them
+        # took longer than reading them), the word lists deflated
         with zipfile.ZipFile(path, "w") as zf:
             for name, arr in arrays.items():
                 info = zipfile.ZipInfo(name + ".npy", date_time=(2020, 1, 1, 0, 0, 0))
@@ -153,8 +166,8 @@ class SemanticModel:
     @classmethod
     def load(cls, path: str) -> "SemanticModel":
         z = np.load(path, allow_pickle=False)
-        m = cls(z["va"].tolist(), z["vb"].tolist(), z["idf_a"], z["idf_b"], z["U"], z["V"],
-                z["s"], json.loads(str(z["cfg"])))
+        m = cls(z["va"].tolist(), z["vb"].tolist(), z["idf_a"], z["idf_b"], dequantize_rows(z["U"], z["U_scale"]),
+                dequantize_rows(z["V"], z["V_scale"]), z["s"], json.loads(str(z["cfg"])))
         with open(path, "rb") as f:
             m.file_sig = "blake2b:" + hashlib.blake2b(f.read(), digest_size=16).hexdigest()  # as SemanticModel::signature
         return m

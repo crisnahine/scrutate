@@ -93,6 +93,10 @@ incompatible index by itself, and that is never breaking.
   ([Quality](docs/QUALITY.md#agent-eval)).
 
 ### Changed
+- The bundled semantic model stores its word tables as int8 with one scale per row: 7.6 MB in
+  place of 14.6 MB, the binary is that much smaller, and ranking quality holds (MRR@10 0.5873 to
+  0.5874). Its revision is 2, so an index makes its vectors again on the next update; a model
+  file named by `SCRUTATE_SEMANTIC` must be in the new format ([QUALITY](docs/QUALITY.md)).
 - The vendored walker is its own crate, `scrutate-ignore` (a modified copy of `ignore` 0.4.34,
   `Unlicense OR MIT`, its eleven changes listed in `vendor/ignore/README.md`), and the workspace
   `[patch]` is gone, so a crate built from crates.io walks with the same code
