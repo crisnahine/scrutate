@@ -432,8 +432,17 @@ impl Repo {
         eprintln!("[scrutate] index damaged ({why:#}); rebuilding");
         let progress = self.searcher.as_ref().is_some_and(|s| s.ix.progress);
         self.searcher = None; // the database is closed before its files are deleted
-        index::wipe_index(&self.root);
-        self.reopen(progress)
+        let gone = index::wipe_index(&self.root);
+        let mut s = Searcher::new(index::Index::open(&self.root, Arc::clone(&self.models))?);
+        if !gone {
+            // another handle holds the files (Windows does not delete an open file): no old row or
+            // segment may answer, so the database is emptied where it is
+            s.ix.clear_in_place()?;
+        }
+        s.ix.progress = progress;
+        let st = s.ix.update(true);
+        self.searcher = Some(s);
+        st
     }
 
     fn reopen(&mut self, progress: bool) -> Result<UpdateStats> {

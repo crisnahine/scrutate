@@ -511,9 +511,13 @@ pub fn occurrences_in(
 ) -> Result<(Vec<crate::instant::Record>, bool)> {
     use crate::instant::Record;
     let mut found: Vec<Record> = Vec::new();
+    // on Windows Engine A prints a verbatim root (`\\?\C:\x`) in its plain form (`C:/x`)
+    let printed_root = format!("{}/", crate::instant::slashed(root.to_string_lossy()));
     let from_root = |p: &mut std::sync::Arc<str>| {
         if let Ok(rel) = std::path::Path::new(&**p).strip_prefix(root) {
             *p = crate::instant::slashed(rel.to_string_lossy()).into();
+        } else if let Some(rel) = p.strip_prefix(printed_root.as_str()) {
+            *p = rel.into();
         }
     };
     let under = match &files.paths {

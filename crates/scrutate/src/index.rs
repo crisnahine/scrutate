@@ -808,9 +808,14 @@ pub fn error_is_corruption(e: &anyhow::Error) -> bool {
 
 /// Delete the index files of `root` (used after an operation reported database corruption on a
 /// database too large for the open-time integrity check). The caller reopens afterwards.
-pub fn wipe_index(root: &Path) {
-    if let Ok(dir) = crate::files::index_dir(root) {
-        Index::wipe(&dir, &dir.join("seg"));
+/// Whether the database file is gone: on Windows a file another handle holds open stays.
+pub fn wipe_index(root: &Path) -> bool {
+    match crate::files::index_dir(root) {
+        Ok(dir) => {
+            Index::wipe(&dir, &dir.join("seg"));
+            !dir.join("index.db").exists()
+        }
+        Err(_) => false,
     }
 }
 
@@ -1092,6 +1097,12 @@ impl Index {
     /// the same transaction. Another process that found the same
     /// index may have done that first and be building it: then nothing is cleared, and its write
     /// lock is not waited for.
+    /// Every file's rows and every segment gone, in the database as it is: what a rebuild does when
+    /// the files cannot be deleted. Segment names go on from the last one, never reused.
+    pub fn clear_in_place(&mut self) -> Result<()> {
+        self.clear_with(None)
+    }
+
     fn clear_with(&mut self, stamp_for: Option<&str>) -> Result<()> {
         let done = |db: &Connection| stamp_for.is_some() && Self::rebuild_reason(db).is_none();
         self.lex = None;
@@ -1232,14 +1243,36 @@ impl Index {
         while listed.contains(&format!("s{n:06}")) {
             n += 1;
         }
-        self.set_meta("seg_counter", &n.to_string())?;
-        let name = format!("s{n:06}");
-        for p in [self.seg_dir.join(&name), self.seg_dir.join(format!("{name}.tmp"))] {
-            if p.exists() {
-                std::fs::remove_dir_all(&p).with_context(|| format!("remove leftover {}", p.display()))?;
+        // a leftover directory another process still holds open cannot be removed on Windows: its
+        // name is skipped; anything else in the way is an error, as before
+        let free = |n: i64| -> Result<bool> {
+            let name = format!("s{n:06}");
+            for p in [self.seg_dir.join(&name), self.seg_dir.join(format!("{name}.tmp"))] {
+                match std::fs::symlink_metadata(&p) {
+                    Err(_) => {}
+                    Ok(m) if m.is_dir() => {
+                        if std::fs::remove_dir_all(&p).is_err() {
+                            return Ok(false);
+                        }
+                    }
+                    Ok(_) => bail!("remove leftover {}: not a directory", p.display()),
+                }
+            }
+            Ok(true)
+        };
+        let mut skipped = 0;
+        while !free(n)? {
+            skipped += 1;
+            if skipped > 1000 {
+                bail!("no segment name is free in {}", self.seg_dir.display());
+            }
+            n += 1;
+            while listed.contains(&format!("s{n:06}")) {
+                n += 1;
             }
         }
-        Ok(name)
+        self.set_meta("seg_counter", &n.to_string())?;
+        Ok(format!("s{n:06}"))
     }
 
     /// Delete segment directories no manifest refers to (left by a crash), unless brand new. Call

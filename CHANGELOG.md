@@ -198,6 +198,12 @@ First release.
   line 18446744073709551615.
 
 ### Engine B: code intelligence
+- Windows: a damaged index is built again while another handle holds its files (a session's
+  other readers, another process): the database that cannot be deleted is emptied where it is
+  and a segment directory that cannot be removed keeps its name. Before, the rebuild could go on
+  over the old database and fail on a segment it had deleted. `grep_code` and textual
+  references printed absolute paths for the files of a walk on Windows, where the root is a
+  verbatim path; they print paths from the root, as elsewhere.
 - A linked work tree no longer takes a segment of its main checkout that was removed, or half
   removed, while it was copied: every copied segment must open before the copy is used, and
   otherwise the index is built as usual. Seen once on a Linux runner, where an update reported

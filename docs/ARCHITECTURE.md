@@ -571,7 +571,10 @@ Recovery has one rule: a store found damaged is built again from the sources, on
 that found it, which says so on stderr, and an operation that met the damage runs again. The code
 index's files are deleted first (`Repo::recover`, which every front end reaches: the CLI, `batch`
 and the MCP server through `Repo::run` and `Repo::recovering`, the bindings through
-`Repo::recovering`, the language server and the watcher through `Repo`); the text index is
+`Repo::recovering`, the language server and the watcher through `Repo`). On Windows a file
+another handle holds open (a session's other readers, another process) cannot be deleted: the
+database that stays is then emptied where it is (`Index::clear_in_place`) before the build, and a
+segment directory that stays keeps its name, which a new segment skips. The text index is
 rebuilt in place and its manifest swapped last. `Index` and `textindex` only report damage
 (`index::Damaged`, `textindex::Damaged`). `grep --index` without `--update` reports a damaged text
 index instead of rebuilding it, since it promises not to walk the tree. An index file that does
