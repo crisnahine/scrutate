@@ -8,10 +8,11 @@ passes over a name it does not find, so a stale file costs pages, never the buil
 usage: order_file.py [--dirs DIR...]  regenerate (macOS on Apple silicon, about 15 minutes: two
                                       release links with a link map, each run under lldb)
        order_file.py --check          the share of the listed names the release links still have
-       order_file.py --elf BIN OUT    Linux: the same functions under the names the glibc release
-                                      build BIN has, for lld's --symbol-ordering-file
-       order_file.py --elf-check BIN LIST
-                                      Linux: the first listed functions BIN has lie in list order
+       order_file.py --elf MAP OUT    Linux: the same functions under the names of the glibc
+                                      release link whose lld link map is MAP, for lld's
+                                      --symbol-ordering-file
+       order_file.py --elf-check MAP LIST
+                                      Linux: the first listed functions lie in list order in MAP
 
 The functions are found by running each release link under lldb with a breakpoint on every
 function of its link map, so the names are those of that very link, the standard library's
@@ -25,9 +26,10 @@ from the build's path, so lldb runs a copy of it; the tool gives up after a minu
 (`ORDER_FILE_SEARCH_SECONDS` raises that on a busy machine).
 
 On Linux the crate hashes in the names differ from the macOS ones, so the list is mapped at build
-time: --elf demangles both sides with c++filt, drops the hashes, and writes the build's own names
-in the file's order. build.rs hands that list to lld when SCRUTATE_LINUX_ORDER names it, so a
-release build on Linux links twice (release.yml, tools/repro_docker.sh).
+time. With SCRUTATE_LINUX_ORDER=FILE, build.rs links with rust-lld and writes the link map to
+FILE.map; --elf demangles the names of both with c++filt, drops the hashes, and writes the build's
+own names to FILE in the order file's order; the next build hands FILE to lld. So a release build
+on Linux links twice (release.yml, tools/repro_docker.sh).
 """
 import argparse
 import json
@@ -225,33 +227,45 @@ def elf_order(listed, have, demangle=demangle):
     return [name for key in keys for name in sorted(by_key.pop(key, []))]
 
 
-def elf_functions(binary):
-    """{name: address} of the functions the ELF file defines."""
-    out = subprocess.run(["nm", "--defined-only", "-P", binary], capture_output=True, text=True, check=True).stdout
-    return {p[0]: int(p[2], 16) for p in (l.split() for l in out.splitlines()) if len(p) >= 3 and p[1] in ("t", "T")}
+def elf_functions(link_map):
+    """{name: address} of the symbols in .text of an lld link map (-Map); the binary is stripped."""
+    lines = open(link_map, errors="replace").read().splitlines()
+    # VMA LMA Size Align Out In Symbol: a line's depth is the column its name starts in
+    out_col, sym_col = lines[0].index("Out"), lines[0].index("Symbol")
+    have, section = {}, None
+    for line in lines[1:]:
+        p = line.split()
+        if len(p) < 5:
+            continue
+        col = len(line) - len(line[out_col:].lstrip())
+        if col == out_col:
+            section = p[4]
+        elif col == sym_col and section == ".text":
+            have.setdefault(p[4], int(p[0], 16))
+    return have
 
 
 def listed_names(path):
     return [l.strip() for l in open(path) if l.strip() and not l.startswith("#")]
 
 
-def elf(binary, out):
-    have = elf_functions(binary)
+def elf(link_map, out):
+    have = elf_functions(link_map)
     listed = listed_names(ORDER)
     names = elf_order(listed, list(have))
     with open(out, "w") as f:
         f.writelines(f"{n}\n" for n in names)
-    print(f"{out}: {len(names)} functions of {binary} for the {len(listed)} names of {os.path.relpath(ORDER, ROOT)}")
+    print(f"{out}: {len(names)} of the {len(have)} functions in {link_map}, for the {len(listed)} names of {os.path.relpath(ORDER, ROOT)}")
     return 0 if names else 1
 
 
-def elf_check(binary, path, first=20):
-    have = elf_functions(binary)
+def elf_check(link_map, path, first=20):
+    have = elf_functions(link_map)
     placed = [(have[n], n) for n in listed_names(path) if n in have][:first]
     for addr, name in placed:
         print(f"{addr:#x} {name}")
     ok = len(placed) == first and all(a[0] <= b[0] for a, b in zip(placed, placed[1:]))
-    print(f"the first {len(placed)} listed functions {'lie' if ok else 'do not lie'} in list order in {binary}")
+    print(f"the first {len(placed)} listed functions {'lie' if ok else 'do not lie'} in list order in {link_map}")
     return 0 if ok else 1
 
 
@@ -259,8 +273,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--dirs", nargs="+", default=[], help="directories to search instead of a small tree made for the purpose")
-    ap.add_argument("--elf", nargs=2, metavar=("BIN", "OUT"))
-    ap.add_argument("--elf-check", nargs=2, metavar=("BIN", "LIST"))
+    ap.add_argument("--elf", nargs=2, metavar=("MAP", "OUT"))
+    ap.add_argument("--elf-check", nargs=2, metavar=("MAP", "LIST"))
     a = ap.parse_args()
     if a.elf:
         return elf(*a.elf)

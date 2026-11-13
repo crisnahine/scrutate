@@ -87,9 +87,9 @@ jobs:
       - name: function order (glibc Linux)
         if: endsWith(matrix.target, '-linux-gnu')
         run: |
-          python3 tools/order_file.py --elf "target/$TARGET/release/scrutate" "$SCRUTATE_LINUX_ORDER"
+          python3 tools/order_file.py --elf "$SCRUTATE_LINUX_ORDER.map" "$SCRUTATE_LINUX_ORDER"
           cargo build --release -p scrutate --target "$TARGET" --locked
-          python3 tools/order_file.py --elf-check "target/$TARGET/release/scrutate" "$SCRUTATE_LINUX_ORDER"
+          python3 tools/order_file.py --elf-check "$SCRUTATE_LINUX_ORDER.map" "$SCRUTATE_LINUX_ORDER"
       - name: the glibc binary needs no glibc newer than 2.34
         if: endsWith(matrix.target, '-linux-gnu')
         shell: bash

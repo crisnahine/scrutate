@@ -13,14 +13,12 @@ fn main() {
             println!("cargo:rustc-link-arg-bins=-Wl,-order_file,{}", order.display());
         }
     }
-    // The same order on glibc Linux, from a list `tools/order_file.py --elf` maps from a first
-    // build's names: crate hashes in Rust names differ between targets.
+    // The same order on glibc Linux, from a list `tools/order_file.py --elf` maps from the link
+    // map of a first build: crate hashes in Rust names differ between targets, and the release
+    // binary is stripped.
     let order = env("SCRUTATE_LINUX_ORDER");
     if env("CARGO_CFG_TARGET_OS") == "linux" && env("CARGO_CFG_TARGET_ENV") == "gnu" && !order.is_empty() {
         println!("cargo:rerun-if-changed={order}");
-        if !std::path::Path::new(&order).is_file() {
-            return;
-        }
         // GNU ld has no symbol order. rustc on x86_64 Linux already links with its own rust-lld
         // this way; elsewhere gcc would pick GNU ld, so name the toolchain's rust-lld every time.
         let sysroot = std::process::Command::new(env("RUSTC")).args(["--print", "sysroot"]).output();
@@ -38,8 +36,12 @@ fn main() {
                 return;
             }
         }
-        // a name the link does not have is passed over; lld would warn once for each
-        println!("cargo:rustc-link-arg-bins=-Wl,--symbol-ordering-file={order}");
-        println!("cargo:rustc-link-arg-bins=-Wl,--no-warn-symbol-ordering");
+        // the map keeps the mangled names, which the order file must match
+        println!("cargo:rustc-link-arg-bins=-Wl,-Map={order}.map,--no-demangle");
+        if std::path::Path::new(&order).is_file() {
+            // a name the link does not have is passed over; lld would warn once for each
+            println!("cargo:rustc-link-arg-bins=-Wl,--symbol-ordering-file={order}");
+            println!("cargo:rustc-link-arg-bins=-Wl,--no-warn-symbol-ordering");
+        }
     }
 }

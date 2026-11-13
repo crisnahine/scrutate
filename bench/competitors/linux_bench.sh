@@ -107,7 +107,12 @@ if [ -n "${SCRUTATE_PREBUILT:-}" ]; then
   # cross-built first (tools/linux_x86_cross_verify.sh) and handed in
   mkdir -p $B/scrutate/target/release && cp "$SCRUTATE_PREBUILT" $B/scrutate/target/release/scrutate
 else
-  (cd $B/scrutate && cargo build --release -p scrutate --locked -q)
+  # linked twice with the function order, as release.yml links the glibc binaries
+  (cd $B/scrutate && export SCRUTATE_LINUX_ORDER=$B/scrutate/target/startup.order.elf \
+    && cargo build --release -p scrutate --locked -q \
+    && python3 tools/order_file.py --elf "$SCRUTATE_LINUX_ORDER.map" "$SCRUTATE_LINUX_ORDER" \
+    && cargo build --release -p scrutate --locked -q \
+    && python3 tools/order_file.py --elf-check "$SCRUTATE_LINUX_ORDER.map" "$SCRUTATE_LINUX_ORDER" > /dev/null)
 fi
 export SCRUTATE_BIN=$B/scrutate/target/release/scrutate ZOEKT_BIN_DIR=$B/bin
 

@@ -6,7 +6,40 @@ import sys
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "tools"))
-from order_file import elf_order, unhashed  # noqa: E402
+from order_file import elf_check, elf_functions, elf_order, unhashed  # noqa: E402
+
+# a stripped rust-lld link of three functions with --symbol-ordering-file listing gamma, alpha
+MAP = """\
+             VMA              LMA     Size Align Out     In      Symbol
+          2001a8           2001a8       54     1         m.o:(.eh_frame+0x2c)
+          201200           201200       4b    16 .text
+          201200           201200        6     8         m.o:(.text._RNvCs8AlEeC1jcYO_1m5gamma)
+          201200           201200        6     1                 _RNvCs8AlEeC1jcYO_1m5gamma
+          201208           201208        6     8         m.o:(.text._RNvCs8AlEeC1jcYO_1m5alpha)
+          201208           201208        6     1                 _RNvCs8AlEeC1jcYO_1m5alpha
+          201210           201210        6     8         m.o:(.text._RNvCs8AlEeC1jcYO_1m4beta)
+          201210           201210        6     1                 _RNvCs8AlEeC1jcYO_1m4beta
+          201220           201220       2b    16         m.o:(.text._start)
+          201220           201220       2b     1                 _start
+          202250           202250       18     8 .got
+          202250           202250       18     8         <internal>:(.got)
+"""
+
+
+def test_the_link_map_gives_the_functions_in_text_and_the_check_reads_their_order(tmp_path):
+    (tmp_path / "m.map").write_text(MAP)
+    have = elf_functions(str(tmp_path / "m.map"))
+    assert have == {
+        "_RNvCs8AlEeC1jcYO_1m5gamma": 0x201200,
+        "_RNvCs8AlEeC1jcYO_1m5alpha": 0x201208,
+        "_RNvCs8AlEeC1jcYO_1m4beta": 0x201210,
+        "_start": 0x201220,
+    }
+    (tmp_path / "in_order").write_text("_RNvCs8AlEeC1jcYO_1m5gamma\nmissing\n_RNvCs8AlEeC1jcYO_1m5alpha\n")
+    (tmp_path / "out_of_order").write_text("_start\n_RNvCs8AlEeC1jcYO_1m5alpha\n")
+    assert elf_check(str(tmp_path / "m.map"), str(tmp_path / "in_order"), first=2) == 0
+    assert elf_check(str(tmp_path / "m.map"), str(tmp_path / "out_of_order"), first=2) == 1
+    assert elf_check(str(tmp_path / "m.map"), str(tmp_path / "in_order"), first=3) == 1
 
 
 def test_names_match_across_crate_hashes_in_the_listed_order():

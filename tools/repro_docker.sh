@@ -18,12 +18,12 @@ build='
   fi
   mkdir -p /build && tar -C /src --exclude=./.claude --exclude=./target --exclude=./dist --exclude=.scrutate --exclude=./fuzz -cf - . | tar -C /build -xf -
   command -v python3 > /dev/null || { apt-get update -qq && apt-get install -y -qq --no-install-recommends python3-minimal > /dev/null; }
-  cd /build && cargo build --release -p scrutate --locked -q
-  # the second link of release.yml: the function order under the names of this build
+  # two links as in release.yml: the second has the function order under the names of the first
   export SCRUTATE_LINUX_ORDER=/build/target/startup.order.elf
-  python3 tools/order_file.py --elf target/release/scrutate "$SCRUTATE_LINUX_ORDER" > /dev/null
+  cd /build && cargo build --release -p scrutate --locked -q
+  python3 tools/order_file.py --elf "$SCRUTATE_LINUX_ORDER.map" "$SCRUTATE_LINUX_ORDER" > /dev/null
   cargo build --release -p scrutate --locked -q
-  python3 tools/order_file.py --elf-check target/release/scrutate "$SCRUTATE_LINUX_ORDER" > /dev/null
+  python3 tools/order_file.py --elf-check "$SCRUTATE_LINUX_ORDER.map" "$SCRUTATE_LINUX_ORDER" > /dev/null
   sha256sum target/release/scrutate | cut -d" " -f1
   rustc --version
   . /etc/os-release && echo "$PRETTY_NAME"'
