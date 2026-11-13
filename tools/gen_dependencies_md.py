@@ -85,7 +85,7 @@ def main() -> int:
            "## Toolchain\n",
            f"- Built and tested with `{rustc}` (pinned in `rust-toolchain.toml`); minimum supported `rust-version` = {core['rust_version']}.",
            "- Edition 2021. Release profile: `opt-level=3`, fat LTO, `codegen-units=1`, no debug info, stripped.",
-           "- Python ≥ 3.9 is needed only for the optional bindings, the training code of the models and the benchmark/test harnesses.\n",
+           "- Python ≥ 3.9 is needed only for the optional bindings, the models' training code and the benchmark/test harnesses.\n",
            "## Direct dependencies of the `scrutate` crate\n",
            "| Crate | Version (locked) | Licence | Purpose | Optional |", "|---|---|---|---|---|"]
     # one row per crate: a crate declared twice (per target, with other features) is one dependency
@@ -111,12 +111,12 @@ def main() -> int:
     out.append("|---|---|---|---|---|")
     for d in data_files():
         out.append(f"| `{d['file']}` | Unicode {d['version']} | {d['license']} | {d['url']} | {d['purpose']} |")
-    out.append(f"\n## Transitive graph\n\n{shipped} crates are compiled into the release binary (normal + build dependencies, dev dependencies excluded); "
-               "the exact set with licences and purls is the SBOM produced by `tools/sbom.py` (CycloneDX 1.5). `cargo audit` result: see docs/TEST_RESULTS.md.\n")
+    out.append(f"\n## Transitive graph\n\n{shipped} crates are compiled into the release binary (normal + build dependencies, no dev dependencies); "
+               "the SBOM from `tools/sbom.py` (CycloneDX 1.5) lists them with licences and purls. `cargo audit` result: docs/TEST_RESULTS.md.\n")
     out.append("## Policy\n")
-    out.append("- A dependency is added only with a written reason (what it replaces, size, maintenance, licence) and must be permissively licensed.\n"
-               "- `Cargo.lock` is committed; CI builds with `--locked`; `cargo audit` runs on every push and the SBOM is attached to every release.\n"
-               "- C code in the dependency tree: SQLite (bundled), tree-sitter runtime and grammars. No other native code; no networking crates.\n")
+    out.append("- A dependency is added only with a written reason (what it replaces, size, maintenance, licence), and only under a permissive licence.\n"
+               "- `Cargo.lock` is committed; CI builds with `--locked`; `cargo audit` runs on every push to main, every pull request and once a week, and every release carries the SBOM.\n"
+               "- C code in the dependency tree: SQLite (bundled), the tree-sitter runtime and grammars. No other native code; no networking crates.\n")
     with open(os.path.join(ROOT, "docs", "DEPENDENCIES.md"), "w") as f:
         f.write("\n".join(out) + "\n")
     print(f"wrote docs/DEPENDENCIES.md ({shipped} shipped crates)", file=sys.stderr)
