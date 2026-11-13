@@ -14,6 +14,15 @@
 </p>
 
 <p align="center">
+  <a href="https://scrutate.github.io/playground/">
+    <picture>
+      <source media="(max-width: 600px)" srcset="docs/assets/cta-playground-phone.svg">
+      <img src="docs/assets/cta-playground.svg" width="100%" alt="Try it in your browser: both engines run in the playground, with no install, and the code you search stays on your machine.">
+    </picture>
+  </a>
+</p>
+
+<p align="center">
   <a href="#install"><b>Install</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#quick-start"><b>Quick start</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#benchmarks"><b>Benchmarks</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="#documentation"><b>Documentation</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="docs/FAQ.md"><b>Questions</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="https://scrutate.github.io/playground/"><b>Playground</b></a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="https://scrutate.github.io"><b>Website</b></a>
 </p>
 

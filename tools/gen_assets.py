@@ -1223,6 +1223,49 @@ def strip(n, s, i=0, title=None):
 SPOT_CSS = ".spot{transform-box:fill-box;transform-origin:center}"
 
 
+PLAYGROUND = "https://scrutate.github.io/playground/"
+
+
+def cta(phone=False):
+    """The README's way into the playground: both engines run in the browser, with no install."""
+    on = "ink"
+    c = ON[on]
+    w = 400 if phone else W
+    cap = 24 if phone else 30
+    x = 28 if phone else PAD
+    y = 52 if phone else 60
+    T = 6.4
+    clk = Clock(T)
+    # the slab lands, holds while the line is read, and lifts just before the loop starts again
+    slab_cls = "wipe " + clk.anim(wipe(0.35, 0.42) + [(T - 0.6, "scaleX(1)", "ease-in"), (T - 0.3, "scaleX(0)")],
+                                  rest="scaleX(0)")
+    clk.beat("YOUR BROWSER is marked", 0.35, 0.42)
+    notes = ("BOTH ENGINES, NO INSTALL", "YOUR CODE STAYS ON YOUR MACHINE")
+    go = "OPEN THE PLAYGROUND"
+    size = 11 if phone else 12.5
+    if phone:
+        H = 214
+        nx, ny, anchor, step = x, y + cap * 1.55 + 46, "start", 20
+    else:
+        H = 150
+        nx, ny, anchor, step = w - PAD, 58, "end", 24
+    b = [panel(H, on, w=w, r=12), statement(x, y, "TRY IT IN", "YOUR BROWSER", cap, on, slab_cls)]
+    for i, s in enumerate(notes):
+        b.append(mono(nx, ny + i * step, s, size, c["dim"], 0.14, anchor))
+    gy = ny + len(notes) * step + (12 if phone else 10)
+    gw = text_w(go, size, True, 0.14)
+    cw, ch = size * 0.62, size * 1.25
+    if anchor == "end":
+        tx, cx = nx - cw - 6, nx - cw
+    else:
+        tx, cx = nx, nx + gw + 6
+    b.append(mono(tx, gy, go, size, c["fg"], 0.14, anchor, weight="700"))
+    b.append(f'<rect class="{blink(clk, 0, T)}" x="{cx:.1f}" y="{gy - ch + 3:.1f}" width="{cw:.1f}" height="{ch:.1f}" fill="{MARK}"/>')
+    desc = (f"A link to the playground at {PLAYGROUND.split('//')[1].rstrip('/')}: TRY IT IN YOUR BROWSER, with YOUR BROWSER on a highlighter mark. "
+            "Both engines run in the browser with no install, and the code you search stays on your machine.")
+    return svg(w, H, "Try scrutate in your browser", desc, "\n".join(b), WIPE_CSS + "\n" + clk.css(), animated=True)
+
+
 # ---------------------------------------------------------------- icons, badges, social preview
 
 ICONS = {
@@ -1553,6 +1596,8 @@ def outputs(only=None):
         for i, (name, n, s, *title) in enumerate(STRIPS):
             out[f"{name}.svg"] = strip(n, s, i, *title)
         out["social-preview.svg"] = social()
+        out["cta-playground.svg"] = cta()
+        out["cta-playground-phone.svg"] = cta(phone=True)
         for n in ICONS:
             out[f"icon-{n}.svg"] = icon(n)
         for k in BADGES:
