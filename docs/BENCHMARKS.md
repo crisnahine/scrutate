@@ -151,7 +151,7 @@ Lower is better. **bold** = fastest in the row. `n/a` = the tool cannot express 
 | massive | scrutate tsquery | 1,054,704 | 812 | 324 |
 | massive | ast-grep | 1,054,704 | 14,602 | 94 |
 
-Both tools parse every file with tree-sitter on each run (no index); scrutate's `tsquery` and ast-grep's `scan --inline-rules` were given the same node kind and returned identical counts.
+ast-grep parses every file with tree-sitter on each run; scrutate's `tsquery` ran with its capture cache (`.scrutate/tsquery/`), which earlier runs had filled, so its timed runs parsed no file (a parse-for-parse run, `--no-cache`, was not part of this measurement). scrutate's `tsquery` and ast-grep's `scan --inline-rules` were given the same node kind and returned identical counts.
 
 ## Engine B: index build, size and query latency
 

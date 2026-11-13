@@ -181,6 +181,10 @@ def engine_a(data, label):
             out.append(f"- **{bid}**: every tool searches every file, but {n:,} of the {r['reference']['files_searched']:,} files are not "
                        "compared: the reference's own parse of them has errors, and inside an error the node a tool reports depends on "
                        "tree-sitter's error recovery, which differs between versions.")
+        if r.get("qtype") == "structural" and "--no-cache" not in r.get("tools", {}).get("scrutate", {}).get("argv", ["--no-cache"]):
+            out.append(f"- **{bid}**: scrutate's `tsquery` ran with its capture cache (`.scrutate/tsquery/`), which earlier runs had "
+                       "filled: the timed runs read and hashed every file and parsed none, while ast-grep keeps no cache and parses "
+                       "every file on each run. A parse-for-parse run (`--no-cache`) was not part of this measurement.")
     out.append("")
     fails = [(bid, r) for bid, r in data["benchmarks"].items() if r["status"] == "FAIL"]
     if fails:

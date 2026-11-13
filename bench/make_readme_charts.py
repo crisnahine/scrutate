@@ -167,6 +167,8 @@ def walltime(warm: dict, compare: dict, W=G.W) -> str:
             assert x.get("status") == "ok", (bid, t)
             n = x.get("n", 0)
             pairs.append((t, x["median"], f"{ms(x['median'])} ms" + (f" ({n} runs)" if n and n < runs else "")))
+        if r.get("qtype") == "structural" and "--no-cache" not in r["tools"]["scrutate"].get("argv", ["--no-cache"]):
+            title += ", capture cache"
         row(title, f"ratio {r['ratio']:.3f}, 95% CI {r['ci95'][0]:.3f} to {r['ci95'][1]:.3f}, {r['status']}", pairs)
     sha = env.get("scrutate_sha256", "")[:8]
     b.append(f'<path d="M{pad} {y} H{W - pad}" stroke="{c["rule"]}"/>')
@@ -185,6 +187,8 @@ def walltime(warm: dict, compare: dict, W=G.W) -> str:
     for bid, t in WALL_ROWS:
         r = warm["benchmarks"][bid]
         bc = r["best_competitor"]
+        if r.get("qtype") == "structural" and "--no-cache" not in r["tools"]["scrutate"].get("argv", ["--no-cache"]):
+            t += ", capture cache"
         parts.append(f"{t}: scrutate {ms(r['tools']['scrutate']['median'])} ms, {bc} {ms(r['tools'][bc]['median'])} ms")
     desc = (f"Horizontal bars of median wall time, scrutate against the fastest other tool; the faster bar of each pair is "
             f"marked with a highlighter. {'; '.join(parts)}. "

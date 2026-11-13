@@ -83,7 +83,10 @@ dotfiles a repository's `.gitignore` explicitly re-includes (`!.mailmap` in the 
 Against ast-grep 0.51.1 with the same question (every call to `kmalloc` in the Linux tree, every
 `format!` in ripgrep), both answers checked against a tree-sitter reference: 943 ms against 13.4 s
 on the Linux tree (0.070x), 6.4 ms against 39.0 ms on ripgrep (0.163x); in the Linux VM, 662 ms
-against 16.3 s on the Linux tree. For C, ast-grep needs
+against 16.3 s on the Linux tree. These runs read scrutate's capture cache (`.scrutate/tsquery/`),
+which earlier runs had filled, so scrutate parsed no file while ast-grep parsed every file on each
+run: they measure the cached tool against the uncached one. A parse-for-parse run (`tsquery
+--no-cache`, which the benchmark harness now uses) was not part of that measurement. For C, ast-grep needs
 `--selector call_expression` and a statement as the pattern: alone, `kmalloc($$$A)` parses as a
 type macro and matches nothing, which the first comparison mistook for ast-grep being wrong.
 

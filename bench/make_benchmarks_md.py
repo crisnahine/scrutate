@@ -183,7 +183,12 @@ def main() -> int:
             w(f"| {r['corpus']} | {r['tool']} | {r['matches']:,} | {fmt_ms(r['wall_median_ms'])} | {r['maxrss_mb']:.0f} |")
         w("")
         same = all(r.get("agrees", True) for r in d["structural"])
-        w("Both tools parse every file with tree-sitter on each run (no index); scrutate's `tsquery` and ast-grep's `scan --inline-rules` "
+        cached = any(r["tool"].startswith("scrutate") and "--no-cache" not in r.get("cmd", "--no-cache") for r in d["structural"])
+        how = ("ast-grep parses every file with tree-sitter on each run; scrutate's `tsquery` ran with its capture cache "
+               "(`.scrutate/tsquery/`), which earlier runs had filled, so its timed runs parsed no file (a parse-for-parse run, "
+               "`--no-cache`, was not part of this measurement). " if cached else
+               "Both tools parse every file with tree-sitter on each run (scrutate's `tsquery` with `--no-cache`); ")
+        w(how + "scrutate's `tsquery` and ast-grep's `scan --inline-rules` "
           "were given the same node kind and " + ("returned identical counts.\n" if same else "their counts DIFFER on at least one corpus.\n"))
     # index
     if d.get("index"):

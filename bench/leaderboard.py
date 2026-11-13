@@ -304,7 +304,8 @@ def argv(tool, q, mode, corpus_dir):
 
 def structural_argv(tool, spec):
     if tool in ("scrutate", "scrutate base") and BIN.get(tool):
-        return [BIN[tool], "tsquery", "--json", spec["lang"], spec["tsquery"], ".", "--limit", "100000000"]
+        # --no-cache: every file parsed on each run, as ast-grep does; a kept capture cache would skip the parse
+        return [BIN[tool], "tsquery", "--json", "--no-cache", spec["lang"], spec["tsquery"], ".", "--limit", "100000000"]
     if tool == "ast-grep" and BIN["ast-grep"]:
         sel = ["--selector", spec["ast_grep_selector"]] if spec.get("ast_grep_selector") else []
         return [BIN["ast-grep"], "run", "-p", spec["ast_grep"], *sel, "-l", spec["lang"], "--json=stream", "."]

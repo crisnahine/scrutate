@@ -66,6 +66,8 @@ Medians in ms (runs in parentheses when fewer than the full count). `wrong` = an
 | ripgrep/structural (80 lines) | **6.4** |  |  |  |  |  |  | **39.0** |  | - | 0.163 [0.158, 0.166] vs ast-grep | PASS (load 13) |
 
 - **linux/structural**: every tool searches every file, but 32,577 of the 64,520 files are not compared: the reference's own parse of them has errors, and inside an error the node a tool reports depends on tree-sitter's error recovery, which differs between versions.
+- **linux/structural**: scrutate's `tsquery` ran with its capture cache (`.scrutate/tsquery/`), which the warm-up run had filled: the timed runs read and hashed every file and parsed none, while ast-grep keeps no cache and parses every file on each run. A parse-for-parse run (`--no-cache`) was not part of this measurement.
+- **ripgrep/structural**: scrutate's `tsquery` ran with its capture cache (`.scrutate/tsquery/`), which the warm-up run had filled: the timed runs read and hashed every file and parsed none, while ast-grep keeps no cache and parses every file on each run. A parse-for-parse run (`--no-cache`) was not part of this measurement.
 
 ### CPU time and peak memory
 
@@ -741,6 +743,7 @@ Medians in ms (runs in parentheses when fewer than the full count). `wrong` = an
 | linux/structural (374 lines) | **662** |  |  |  |  |  |  | 16,313 (1) |  | - | every correct competitor is more than 20x slower | PASS |
 
 - **linux/structural**: every tool searches every file, but 32,577 of the 64,520 files are not compared: the reference's own parse of them has errors, and inside an error the node a tool reports depends on tree-sitter's error recovery, which differs between versions.
+- **linux/structural**: scrutate's `tsquery` ran with its capture cache (`.scrutate/tsquery/`), which the warm-up run had filled: the timed runs read and hashed every file and parsed none, while ast-grep keeps no cache and parses every file on each run. A parse-for-parse run (`--no-cache`) was not part of this measurement.
 
 ### CPU time and peak memory
 

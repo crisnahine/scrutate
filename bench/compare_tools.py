@@ -344,7 +344,8 @@ def bench_memory(tools: dict, corpora: dict, res: dict) -> None:
 
 
 def structural_commands(tools: dict) -> dict[str, list[str]]:
-    cmds = {"scrutate tsquery": [SCRUTATE, "tsquery", "python", "(function_definition) @f", "--limit", "100000000", "."]}
+    # --no-cache: every file parsed on each run, as ast-grep does
+    cmds = {"scrutate tsquery": [SCRUTATE, "tsquery", "--no-cache", "python", "(function_definition) @f", "--limit", "100000000", "."]}
     sg = tools.get("ast-grep", {}).get("exe")
     if sg:
         # the same node kind through ast-grep's rule engine (a `def $F($$$A): $$$B` pattern would

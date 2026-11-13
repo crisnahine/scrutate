@@ -147,7 +147,9 @@ ones:
   repository, 43 to 58% on a 740 MB file, 23 to 28% with a cold cache.
 
 Six rows that other work on the laptop disturbed were measured twice; the table gives both.
-Structural search is 6 and 14 times faster than ast-grep.
+Structural search is 6 and 14 times faster than ast-grep, measured with scrutate's capture cache
+filled by earlier runs (it parsed no file; ast-grep parses every file on each run). A
+parse-for-parse run was not part of that measurement; the next benchmark run makes one.
 
 <p align="center">
   <picture>
@@ -161,7 +163,8 @@ median time and serves 1.2 times the queries per second; all eight indexed metri
 
 In a 5-CPU Linux virtual machine on the same Mac, Engine A is significantly fastest on all 14
 Linux-tree benchmarks (7 to 16% ahead of ripgrep on 11, 40% with very many matches, 59% on the
-complex regex, 24 times faster than ast-grep on the structural query) and on all 4 cold-cache
+complex regex, 24 times faster than ast-grep on the structural query with its capture cache) and
+on all 4 cold-cache
 ones, where it takes 0.28 to 0.30 of the next tool's time. There the text index leads Zoekt and
 livegrep on all 8 indexed metrics (3.9 times the throughput of the next).
 

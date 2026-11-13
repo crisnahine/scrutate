@@ -753,6 +753,15 @@ First release.
   `GrepIter.stats()["notes"]`.
 
 ### Product
+- `scrutate --root DIR grep ...` (an option every command takes, before `grep`) reads grep's own
+  arguments: its byte limit is `--max-bytes` or `SCRUTATE_GREP_MAX_BYTES` and its help is grep's;
+  the help showed the index commands' `SCRUTATE_MAX_BYTES` in that order. CI builds every fuzz
+  target before it replays the inputs that once crashed one, so a target that no longer compiles
+  fails there (`trigram_query` used a type that was gone).
+- The structural search numbers against ast-grep were measured with scrutate's capture cache
+  (`.scrutate/tsquery/`) filled by earlier runs, so scrutate parsed no file while ast-grep parsed
+  every file on each run; the documents and the chart now say so, and the benchmark harness runs
+  `tsquery --no-cache` from now on, parse for parse.
 - An index command (`symbol`, `callers`, `callees`, `refs`, `outline`, `deps`, `rdeps`, `read`,
   `similar`, `dupes`, `search`, the ranked part of `find`) uses the index a running `scrutate serve` holds open on the same root,
   through `.scrutate/session.sock` (Unix, owner only, no network port), and prints the same bytes
@@ -780,7 +789,7 @@ First release.
   for bit, in `cargo test` on every platform. The package keeps the training code: the ranker's
   export (`rank.py`) and the vector model's tables (`semantic.py`). The one-off scripts
   `bench/eval_transformers.py` and `bench/ivf_recall.py` ran on the mirror and were removed; commit
-  `9e70ae7` is the last that has them.
+  `8a4f4b4` is the last that has them.
 - `[index] exclude_dirs` is read from the `.scrutate.toml` at the root of the index (or
   `SCRUTATE_INDEX_EXCLUDE_DIRS`), so the command line, the servers and the bindings index the
   same files wherever they start; the reference engine reads it the same way. A name with a
