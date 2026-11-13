@@ -26,7 +26,7 @@ Python objects one batch at a time, never as one giant list.
 `grep` checks its arguments when called: `ValueError` for a bad pattern, glob or file type or no
 paths, `FileNotFoundError` for a path that does not exist; `threads=` is capped at 256. Matches
 come in the order the files are searched; `sort=True` gives path and line order (the first match
-then waits for the whole search). `Repo.read` raises `FileNotFoundError` for a missing file,
+then waits for the whole search). `Repo.read()` raises `FileNotFoundError` for a missing file,
 `ValueError` for a path outside the repository and `OSError` otherwise. Ctrl-C stops a `scrutate.grep(...)` or
 a `Repo.index()` within about 100 ms; an interrupted update stops at its next batch of files and
 leaves the index as it was. A panic inside the engine is raised as an exception: the `Repo` stays
