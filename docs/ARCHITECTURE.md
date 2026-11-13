@@ -924,7 +924,8 @@ there (one process sees the files), and the temporary names of the answer cache,
 state and a seeded index leave the process id out. PCRE2's JIT has no wasm
 backend, so that build leaves out the `pcre2` feature:
 `cargo build --release -p scrutate --target wasm32-wasip1 --no-default-features`, with the C
-compiler of a wasi-sdk for SQLite and the grammars.
+compiler of a wasi-sdk for SQLite and the grammars. The `wasi` job of `ci.yml` checks that build,
+and runs clippy on the native build without `pcre2`, on every push.
 
 ## Models (`models/`, `models.rs`)
 `semantic.npz` (14.6 MB: code-word vocabulary tables and projections) and `ranker.npz` (87 KB)
