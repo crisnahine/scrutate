@@ -20,11 +20,11 @@ tests a git diff touches ([Architecture](ARCHITECTURE.md)).
 
 ## Can I try it without installing it?
 
-Yes. The [playground](https://scrutate.github.io/playground/) runs scrutate, compiled to
-WebAssembly, in your browser: grep, ranked search, definitions, callers and references, on
-scrutate's own source, a public GitHub repository or a folder you open, which is never uploaded.
-It runs the newest scrutate release, or, until the first release is published, the newest `main`
-commit that passed CI.
+Yes. The [playground](https://scrutate.github.io/playground/) runs scrutate in your browser,
+compiled to WebAssembly ([Architecture](ARCHITECTURE.md#webassembly-wasm32-wasip1)): grep, ranked
+search, definitions, callers and references. It searches scrutate's own source, a public GitHub
+repository or a folder you open; a folder stays on your machine. It runs the newest scrutate
+release, or, until the first release is published, the newest `main` commit that passed CI.
 
 ## How is it different from ripgrep?
 
