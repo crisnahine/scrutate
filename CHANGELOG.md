@@ -138,6 +138,10 @@ incompatible index by itself, and that is never breaking.
   the timer took 11 to 14 s (debug build). The timer stays as the fallback when FSEvents cannot
   load ([CLI](docs/CLI.md#watch)).
 - The `notify` crate is 9.0.0-rc.8, pinned (it needs Rust 1.91, the existing minimum).
+- Three tool errors say how to fix the call: `missing required argument name` (was `missing
+  name`, and `missing to` for `call_path`), `missing path or symbol` names what each takes, and
+  `path outside repo` says to give a path relative to the root. `batch` reports the same text
+  ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
 - On Windows the indexes keep each file's status change time, as on Unix: a file edited back to

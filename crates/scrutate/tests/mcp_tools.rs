@@ -467,7 +467,7 @@ fn grep_code_takes_a_mode_a_case_and_a_scope() {
     let fuzzy = r.ok("grep_code", json!({"pattern": "refresh_tokne", "mode": "fuzzy", "max_edits": 2, "path": "src/a.py"}));
     assert_eq!(files(&fuzzy), ["src/a.py"], "{fuzzy}");
     assert!(r.ok("grep_code", json!({"pattern": "token", "word": true, "path": "docs"})).starts_with("0 matching lines"));
-    assert!(r.err("grep_code", json!({"pattern": "x", "path": "../elsewhere"})).contains("path outside repo"));
+    assert!(r.err("grep_code", json!({"pattern": "x", "path": "../elsewhere"})).contains("path outside repo: give a path relative to the repository root"));
     assert!(r.err("grep_code", json!({"pattern": "x", "path": "src/none"})).contains("no such file or directory in the repository"));
     assert!(r.err("grep_code", json!({"pattern": "x", "mode": "glob"})).contains("unknown mode glob"));
     assert!(r.err("grep_code", json!({"pattern": "x", "globs": "*.py"})).contains("globs must be an array of strings"));

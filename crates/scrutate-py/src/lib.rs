@@ -766,7 +766,7 @@ impl Repo {
             Err(e) => e.to_string(),
         };
         // the engine's message already says which: no file is looked at here
-        Err(if e == "path outside repo" {
+        Err(if e.starts_with("path outside repo") {
             PyValueError::new_err(e)
         } else if e.starts_with("cannot read ") {
             PyFileNotFoundError::new_err(e)

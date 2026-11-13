@@ -1683,7 +1683,7 @@ fn batch_runs_any_operation() {
     assert_eq!(recs[0]["op"], "find_symbol");
     assert_eq!(recs[0]["result"][0]["path"], "pkg/m3.py");
     assert!(recs[1]["result"].as_array().unwrap().iter().any(|s| s["name"] == "make_widget_3"), "{}", recs[1]);
-    assert_eq!(recs[2]["error"], "missing name");
+    assert_eq!(recs[2]["error"], "missing required argument name");
     assert!(recs[3]["hits"].as_array().is_some_and(|h| h.len() <= 2), "{}", recs[3]);
 }
 

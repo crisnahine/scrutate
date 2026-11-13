@@ -160,7 +160,7 @@ impl Op {
         let arg = |k: &str| args.get(k).filter(|v| !v.is_null());
         let wrong = |k: &str, ty: &str| anyhow!("{k} must be {ty}");
         let opt_text = |k: &str| arg(k).map(|v| v.as_str().map(str::to_string).ok_or_else(|| wrong(k, "a string"))).transpose();
-        let text = |k: &str| opt_text(k)?.ok_or_else(|| anyhow!("missing {k}"));
+        let text = |k: &str| opt_text(k)?.ok_or_else(|| anyhow!("missing required argument {k}"));
         let natural = |k: &str| arg(k).map(|v| v.as_u64().ok_or_else(|| wrong(k, "a non-negative integer"))).transpose();
         let count = |k: &str, default: u64, max: u64| natural(k).map(|n| n.unwrap_or(default).clamp(1, max));
         let line = |k: &str| arg(k).map(|v| v.as_i64().ok_or_else(|| wrong(k, "an integer (a line number)"))).transpose();
@@ -211,7 +211,7 @@ impl Op {
             "read_code" => {
                 let (path, symbol) = (opt_text("path")?, opt_text("symbol")?);
                 if path.is_none() && symbol.is_none() {
-                    bail!("missing path or symbol");
+                    bail!("missing path or symbol: read_code takes path (a file; start and end pick lines) or symbol (a name, Class.method or a path:start-end location)");
                 }
                 let (start, end) = (line("start")?.unwrap_or(1), line("end")?);
                 if let Some(end) = end.filter(|e| *e < start) {
@@ -321,7 +321,7 @@ impl Scope {
         if let Some(p) = path {
             let p = crate::fmt::unshown(p);
             if !inside(root, &p) {
-                bail!("path outside repo");
+                bail!("path outside repo: give a path relative to the repository root, or an absolute one under it");
             }
             // a link that leaves the repository reads as a missing path, as read_code answers it
             match std::fs::canonicalize(root.join(&*p)) {
@@ -761,7 +761,7 @@ pub fn read_range(s: &Searcher, path: &str, start: i64, end: i64) -> Result<(Vec
     // another machine would be connected to, and offered the user's login), and a link that
     // leaves reads as a missing file
     if !inside(&s.ix.root, path) {
-        bail!("path outside repo");
+        bail!("path outside repo: give a path relative to the repository root, or an absolute one under it");
     }
     let canon = match std::fs::canonicalize(s.ix.root.join(path)) {
         Ok(c) if c.starts_with(&s.ix.root) => c,
@@ -2101,7 +2101,10 @@ mod tests {
         assert!(matches!(op("callees", json!({"name": "n"})), Op::Callees { limit: CALLEES_LIMIT, .. }));
         assert!(matches!(op("read_code", json!({"path": "p"})), Op::Read { start: 1, end: None, symbol: None, .. }));
         assert!(matches!(op("read_code", json!({"symbol": "Point.norm"})), Op::Read { path: None, symbol: Some(_), .. }));
-        assert_eq!(Op::from_tool("read_code", &json!({})).err().unwrap().to_string(), "missing path or symbol");
+        assert_eq!(
+            Op::from_tool("read_code", &json!({})).err().unwrap().to_string(),
+            "missing path or symbol: read_code takes path (a file; start and end pick lines) or symbol (a name, Class.method or a path:start-end location)"
+        );
         assert!(matches!(op("references", json!({"name": "n"})), Op::Refs { max_results: REFS_MAX, textual: false, def: None, .. }));
         assert!(matches!(op("similar_code", json!({"target": "t"})), Op::Similar { k: SIMILAR_K, .. }));
         assert!(matches!(op("duplicates", json!({})), Op::Dupes { min_tokens: DUPES_MIN_TOKENS, limit: DUPES_LIMIT, .. }));
@@ -2116,7 +2119,7 @@ mod tests {
         ));
         assert!(matches!(op("repo_map", json!({})), Op::Map { path: None }));
         assert!(matches!(op("call_path", json!({"from": "a", "to": "b"})), Op::Path { depth: PATH_DEPTH, .. }));
-        assert_eq!(Op::from_tool("call_path", &json!({"from": "a"})).err().unwrap().to_string(), "missing to");
+        assert_eq!(Op::from_tool("call_path", &json!({"from": "a"})).err().unwrap().to_string(), "missing required argument to");
     }
 
     #[test]
@@ -2126,7 +2129,7 @@ mod tests {
         assert_eq!(Op::from_tool("search_code", &json!({"query": "q", "k": -3})).err().unwrap().to_string(), "k must be a non-negative integer");
         assert!(matches!(Op::from_tool("search_code", &json!({"query": "q", "k": null})).unwrap(), Op::Search { k: SEARCH_K, .. }));
         assert!(matches!(Op::from_tool("references", &json!({"name": "n", "max_results": 1_000_000})).unwrap(), Op::Refs { max_results: 5000, .. }));
-        assert_eq!(Op::from_tool("callers", &json!({})).err().unwrap().to_string(), "missing name");
+        assert_eq!(Op::from_tool("callers", &json!({})).err().unwrap().to_string(), "missing required argument name");
         assert_eq!(Op::from_tool("no_such_tool", &json!({})).err().unwrap().to_string(), "unknown tool no_such_tool");
         assert!(read_only("search_code") && read_only("read_code") && !read_only("reindex"));
     }
