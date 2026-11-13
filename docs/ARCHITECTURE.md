@@ -435,7 +435,7 @@ counts at 7 or less, whose logarithms every libm rounds alike. So the pins shoul
 every CI platform: macOS arm64 and Linux arm64 with glibc gave the same bits; x86_64, musl and
 Windows rest on this argument until CI runs there. A Python reference engine once mirrored this
 arithmetic bit for bit (`bench/parity.py`); it ended because it covered 7 of the 73 grammars and
-every change was written twice. Vector dot products are summed in float64 in one fixed order
+every change to tokens, chunks, BM25 or features was written twice. Vector dot products are summed in float64 in one fixed order
 (four running sums, added left to right) and rounded once, so no summation order can reorder
 near-tied chunks. Clustering a large segment is deterministic too: one xorshift64* generator draws
 the sample, the first centroids and the re-seeds of empty clusters in a fixed order, and every
