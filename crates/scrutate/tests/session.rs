@@ -82,7 +82,18 @@ fn cli_with(bin: &str, root: &Path, args: &[&str], env: &[(&str, &str)]) -> (i32
     for (k, v) in env {
         c.env(k, v);
     }
-    let out = c.output().unwrap();
+    // a copy of the binary just written can be busy for a moment on Linux: a child another test
+    // forked meanwhile holds the writing descriptor until it runs its own program
+    let mut tries = 0;
+    let out = loop {
+        match c.output() {
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy && tries < 100 => {
+                tries += 1;
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            r => break r.unwrap(),
+        }
+    };
     (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
 }
 
