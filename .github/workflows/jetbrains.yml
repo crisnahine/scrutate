@@ -9,10 +9,12 @@ on:
     branches: [main]
     paths:
       - integrations/jetbrains/**
+      - crates/scrutate/src/lsp.rs
       - .github/workflows/jetbrains.yml
   pull_request:
     paths:
       - integrations/jetbrains/**
+      - crates/scrutate/src/lsp.rs
       - .github/workflows/jetbrains.yml
   workflow_dispatch:
 permissions: {}
