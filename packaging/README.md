@@ -6,7 +6,9 @@ release URLs below do not exist. Every test's log is in `bench/results/platforms
 | Path | What it is |
 |---|---|
 | `homebrew/scrutate.rb` | Homebrew formula. Builds from the source tarball of tag `v0.1.0` with the Homebrew `rust`, installs bash, zsh and fish completions. |
+| `homebrew/tap/` | The files of the tap repository `scrutate/homebrew-tap` as `brew tap-new --github-packages scrutate/tap` writes them with Homebrew 7.0.13 (its `tap-new-*.yml` templates; tap-new picks the autobump hour at random): `tests.yml` (`brew test-bot` on pushes and pull requests, bottles on pull requests), `publish.yml` (`brew pr-pull` by dispatch, bottles to GitHub Packages, attestations), `autobump.yml` (a daily `brew bump`), `dependabot.yml`, and a README with `brew trust --tap`. |
 | `scoop/scrutate.json` | Scoop manifest for the Windows x86_64 and ARM64 release zips, with `checkver` and `autoupdate` (hashes from `SHA256SUMS`). |
+| `scoop/bucket/` | The files of the bucket repository `scrutate/scoop-bucket`, from `ScoopInstaller/BucketTemplate` (commit `dd0ce8a`, 2026-08-24): Excavator (`excavator.yml`, every 4 hours, updates the manifest from `checkver` and `autoupdate`), the bucket tests (`ci.yml`), the `bin/` scripts with `auto-pr.ps1` pointed at `scrutate/scoop-bucket:main`, and a README. Left out: the issue and pull request handlers and the template's CRLF `.gitattributes`. |
 | `winget/manifests/c/crisnahine/Scrutate/0.1.0/` | winget manifests (version, installer, default locale; schema 1.12.0). Portable install from the same zips. |
 | `linux/build-packages.sh` | Builds the `.deb` (cargo-deb) and `.rpm` (cargo-generate-rpm) in a `rust:1-slim-bookworm` container. The package metadata is in `crates/scrutate/Cargo.toml` under `[package.metadata.deb]` and `[package.metadata.generate-rpm]`. |
 | `linux/test-packages.sh` | Installs a package in a clean container, runs `scrutate --version` and a `scrutate grep`, removes it. |
@@ -56,13 +58,22 @@ own name. Nothing was published.
 ## At release time
 
 1. Tag `v0.1.0` and let `.github/workflows/release.yml` publish the archives and `SHA256SUMS`.
-2. Homebrew: set `sha256` in `homebrew/scrutate.rb` to `shasum -a 256` of
-   `https://github.com/scrutate/scrutate/archive/refs/tags/v0.1.0.tar.gz` and commit it to a tap
-   (`scrutate/homebrew-tap`), after `brew audit --strict --online scrutate`. homebrew-core takes
-   no repository younger than 30 days, nor, when its own author submits it, one below 90 forks,
-   90 watchers or 225 stars.
-3. Scoop: set both `hash` values in `scoop/scrutate.json` from `SHA256SUMS`, then open a PR to a
-   bucket (your own, or ScoopInstaller/Extras). Later versions update through `autoupdate`.
+2. Homebrew: create the public repository `scrutate/homebrew-tap` and commit the files of
+   `homebrew/tap/` to its `main`, with `homebrew/scrutate.rb` as `Formula/scrutate.rb` and its
+   `sha256` set to `shasum -a 256` of
+   `https://github.com/scrutate/scrutate/archive/refs/tags/v0.1.0.tar.gz`, after
+   `brew audit --strict --online scrutate/tap/scrutate`. Users run `brew trust --tap
+   scrutate/tap` first. `autobump.yml` opens a pull request for each new tag; a pull request
+   opened with `GITHUB_TOKEN` starts no workflow, so its tests run only when re-run by hand or
+   when the tap gets a GitHub App token. homebrew-core takes no repository younger than 30 days,
+   nor, when its own author submits it, one below 90 forks, 90 watchers or 225 stars.
+3. Scoop: create the public repository `scrutate/scoop-bucket` (from `ScoopInstaller/BucketTemplate`,
+   or empty), commit the files of `scoop/bucket/` and `scoop/scrutate.json` as
+   `bucket/scrutate.json` with both `hash` values from `SHA256SUMS`, and in Settings, Actions,
+   General allow all actions and keep "Read repository contents and packages permissions"
+   (Excavator's workflow asks for `contents: write` itself). Later versions update through
+   Excavator and `autoupdate`. ScoopInstaller/Extras wants an issue before a new manifest; Main
+   needs 500 stars and 150 forks.
 4. winget: set both `InstallerSha256` values from `SHA256SUMS`, run
    `winget validate --manifest packaging/winget/manifests/c/crisnahine/Scrutate/0.1.0` on Windows, then
    open a PR to microsoft/winget-pkgs (`wingetcreate submit` does both).

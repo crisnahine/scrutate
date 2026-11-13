@@ -137,7 +137,22 @@ directory (`$XDG_STATE_HOME/scrutate/`, else `~/.local/state/scrutate/`, on Wind
 
 None is published for 0.1.0. The package definitions are in `packaging/`: a Homebrew formula, a
 Scoop manifest, winget manifests, and `.deb`/`.rpm` builds from `crates/scrutate/Cargo.toml`;
-`packaging/README.md` says how each was tested and what is left for release time. `cargo install
+`packaging/README.md` says how each was tested and what is left for release time.
+
+Once the tap `scrutate/homebrew-tap` and the bucket `scrutate/scoop-bucket` exist, these will
+work. Homebrew 7 loads a tap only after it is trusted, so the first line is needed once:
+
+```sh
+brew trust --tap scrutate/tap
+brew install scrutate/tap/scrutate     # update: brew upgrade scrutate
+brew uninstall scrutate && brew untap scrutate/tap
+```
+
+```pwsh
+scoop bucket add scrutate https://github.com/scrutate/scoop-bucket
+scoop install scrutate/scrutate        # update: scoop update scrutate
+scoop uninstall scrutate
+``` `cargo install
 scrutate` from crates.io is not possible yet: the bundled models are too large for crates.io, and
 the build needs the patched `ignore` crate in `vendor/`. From a checkout,
 `cargo install --path crates/scrutate --locked` works.
