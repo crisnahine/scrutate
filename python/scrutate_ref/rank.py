@@ -127,4 +127,4 @@ class TreeEnsemble:
 
 
 def default_ranker_path() -> str:
-    return os.path.join(os.path.dirname(__file__), "..", "..", "models", "ranker.npz")
+    return os.path.join(os.path.dirname(__file__), "..", "..", "crates", "scrutate", "models", "ranker.npz")

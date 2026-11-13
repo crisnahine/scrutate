@@ -14,17 +14,17 @@
 #   TAG=name       feature tag (default r<short hash of HEAD>); features of an existing tag are reused
 #   REBUILD=1      build the benchmark again even when its query files are there
 #   CV=1           also run the package-held-out cross-validation on DEV (hyper-parameters)
-#   OLD_RANKER=f   the ranker to compare against (default: models/ranker.npz as it is now)
+#   OLD_RANKER=f   the ranker to compare against (default: crates/scrutate/models/ranker.npz as it is now)
 #   RANKER_PARAMS  passed to train_ranker.py
 #   TYPE_WEIGHT=w  weight of a type query's rows in training (default 1: every query counts the same)
 #
 # Stages: benchmark, DEV and TEST features from the engine of this checkout, fit on DEV,
 # evaluation of the old and new ranker on TEST (function rows and type rows, all languages and
-# each one). The new ranker goes to models/ranker.npz only when on TEST no row of 50 queries or
+# each one). The new ranker goes to crates/scrutate/models/ranker.npz only when on TEST no row of 50 queries or
 # more is below BM25 and the mean over all queries of a variant is not below the old ranker's,
 # each beyond its confidence interval; otherwise the script exits 1 and leaves it in the run
 # directory.
-# Rebuild the Rust binary afterwards, it embeds models/ranker.npz.
+# Rebuild the Rust binary afterwards, it embeds crates/scrutate/models/ranker.npz.
 set -euo pipefail
 
 : "${SCRUTATE_WORK:?set SCRUTATE_WORK to the scratch directory}"
@@ -36,7 +36,7 @@ TAG="${TAG:-r$(git rev-parse --short HEAD)}"
 RUN="$SCRUTATE_WORK/retrain/$TAG"
 mkdir -p "$RUN"
 OLD_RANKER="${OLD_RANKER:-$RUN/ranker_old.npz}"
-[ -f "$OLD_RANKER" ] || cp models/ranker.npz "$OLD_RANKER"
+[ -f "$OLD_RANKER" ] || cp crates/scrutate/models/ranker.npz "$OLD_RANKER"
 log() { echo "[$(date +%H:%M:%S)] $*"; }
 stage() { # name, command...: times a stage and keeps its output in $RUN/<name>.log
   local name=$1 t0=$SECONDS
@@ -109,7 +109,7 @@ have_feat() { # tag, packages...
 features() { # tag, group, packages...
   local t=$1 g=$2
   shift 2
-  "$PY" bench/gen_features.py models/semantic.npz "$t" "$g" --pkgs "$(csv "$@")"
+  "$PY" bench/gen_features.py crates/scrutate/models/semantic.npz "$t" "$g" --pkgs "$(csv "$@")"
 }
 if have_feat "${TAG}dev" $DEV_PY $CODE_DEV && have_feat "${TAG}test" $TEST_PY $CODE_TEST; then
   log "features: reusing ${TAG}dev and ${TAG}test"
@@ -144,8 +144,8 @@ set -e
 cat "$RUN/compare.log"
 grep -q "^function rows worse" "$RUN/compare.log" || { log "compare FAILED"; exit 2; }
 if [ $gate -ne 0 ]; then
-  log "the new ranker is below BM25 on a row or below the old ranker over all queries; models/ranker.npz is unchanged, the candidate is $RUN/ranker_new.npz"
+  log "the new ranker is below BM25 on a row or below the old ranker over all queries; crates/scrutate/models/ranker.npz is unchanged, the candidate is $RUN/ranker_new.npz"
   exit 1
 fi
-cp "$RUN/ranker_new.npz" models/ranker.npz
-log "models/ranker.npz written; logs in $RUN. Rebuild the binary (cargo build --release -p scrutate) to embed it."
+cp "$RUN/ranker_new.npz" crates/scrutate/models/ranker.npz
+log "crates/scrutate/models/ranker.npz written; logs in $RUN. Rebuild the binary (cargo build --release -p scrutate) to embed it."

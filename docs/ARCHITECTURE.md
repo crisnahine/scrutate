@@ -934,7 +934,7 @@ PCRE2's JIT has no wasm backend, so that build leaves out the `pcre2` feature:
 compiler of a wasi-sdk for SQLite and the grammars. The `wasi` job of `ci.yml` checks that build,
 and runs clippy on the native build without `pcre2`, on every push.
 
-## Models (`models/`, `models.rs`)
+## Models (`crates/scrutate/models/`, `models.rs`)
 `semantic.npz` (14.6 MB: code-word vocabulary tables and projections) and `ranker.npz` (87 KB)
 are embedded in the binary with `include_bytes!`; `SCRUTATE_SEMANTIC` / `SCRUTATE_RANKER` can
 point at other files or `none`. `models.rs` holds them as one model set, with the feature list the

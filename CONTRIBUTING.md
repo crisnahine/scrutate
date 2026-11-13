@@ -32,11 +32,11 @@ crates/scrutate/        the product: Engine A (instant.rs, source.rs, policy.rs)
                         (finder.rs), the structural rewrite (rewrite.rs), CLI (cli.rs, config.rs),
                         MCP server (mcp.rs), language server (lsp.rs), agent set-up and
                         the Grep hook (setup.rs, hook.rs); tests/ (samples,
-                        robustness, properties, ranking pins, CLI, MCP, LSP and more)
+                        robustness, properties, ranking pins, CLI, MCP, LSP and more);
+                        models/ (semantic.npz, ranker.npz, embedded into the binary)
 crates/scrutate-py/     optional PyO3 bindings (not built by default)
 python/scrutate_ref/    the models' training code (ranker export, vector model tables)
 python/tests/           tests of the training code, the benchmark builders and the bindings
-models/                 semantic.npz, ranker.npz (embedded into the binary)
 bench/                  benchmark harness, differential tests, ranking quality, training scripts,
                         the agent eval (agent_eval.py: paid Claude Code runs, never in CI)
 tools/                  name research, SBOM, docs generators, reproducibility check

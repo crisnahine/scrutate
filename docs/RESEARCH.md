@@ -12,7 +12,7 @@
 ## Question
 
 Would a small transformer text-embedding model, run on CPU with no network at runtime, rank code
-better than the current code-word semantic model (`models/semantic.npz`), and at what cost?
+better than the current code-word semantic model (`crates/scrutate/models/semantic.npz`), and at what cost?
 
 ## Setup
 
@@ -36,7 +36,7 @@ better than the current code-word semantic model (`models/semantic.npz`), and at
   neighbours), the 47 features of the time (48 now) and `bench/train_ranker.py`.
 - For every model, the current one included, the ranker was retrained with `train_ranker.py fit`
   on that model's DEV features and evaluated once on TEST. On the current model it is within
-  0.005 MRR of the shipped `models/ranker.npz` on every query type: a sound baseline.
+  0.005 MRR of the shipped `crates/scrutate/models/ranker.npz` on every query type: a sound baseline.
 - *semantic only* ranks the candidate pool by vector similarity alone, as in QUALITY.md.
 - Intervals: 95 % paired bootstrap over queries (1 000 resamples, seed 0), from `evalcore.py`.
 - Bulk embedding for the quality runs used the Apple GPU (MPS) to keep CPU load low, with granite

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Evaluate the ranker in models/ranker.npz once on the sealed hold-out (groups.SEALED and CODE_SEALED:
+# Evaluate the ranker in crates/scrutate/models/ranker.npz once on the sealed hold-out (groups.SEALED and CODE_SEALED:
 # packages and repositories never used to pretrain, tune, fit or test).
 #
 # usage: SCRUTATE_WORK=DIR SCRUTATE_VENV=DIR bench/eval_sealed.sh
@@ -16,7 +16,7 @@
 # packages alone), sealed_ranker.npz (the ranker evaluated) and sealed_evaluated.json, the record
 # of every evaluation (ranker SHA-256, commit, date). The record is written before the evaluation
 # starts. Any record under $SCRUTATE_WORK/retrain that names another ranker makes this script
-# refuse. It never changes models/ranker.npz and is no part of the retrain gate.
+# refuse. It never changes crates/scrutate/models/ranker.npz and is no part of the retrain gate.
 set -euo pipefail
 
 : "${SCRUTATE_WORK:?set SCRUTATE_WORK to the scratch directory}"
@@ -57,7 +57,7 @@ if bad:
 EOF
 
 # a copy, so the file evaluated is the file hashed
-cp models/ranker.npz "$RUN/sealed_ranker.npz"
+cp crates/scrutate/models/ranker.npz "$RUN/sealed_ranker.npz"
 SHA=$(shasum -a 256 "$RUN/sealed_ranker.npz" | cut -d' ' -f1)
 COMMIT=$(git rev-parse HEAD)
 DIRTY=$([ -z "$(git status --porcelain)" ] && echo false || echo true)
@@ -118,7 +118,7 @@ else
     rm -rf "$SCRUTATE_WORK/bench/src/$v/$p/.scrutate"
   done; done
   engine
-  stage sealed_features "$PY" bench/gen_features.py models/semantic.npz "${TAG}sealed" SEALED \
+  stage sealed_features "$PY" bench/gen_features.py crates/scrutate/models/semantic.npz "${TAG}sealed" SEALED \
     --pkgs "$(echo $SEALED_PY $CODE_SEALED | tr ' ' ,)"
 fi
 

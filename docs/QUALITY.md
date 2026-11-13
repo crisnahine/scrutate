@@ -222,7 +222,7 @@ has the highest mean on both, and counts every query the same.
 rayon v1.12.0 (Rust), gin v1.12.0 (Go), commons-collections 4.6.0 (Java), video.js v8.24.2
 (JavaScript) and TypeORM 1.1.2 (TypeScript). None was used to pretrain the semantic model, tune,
 fit or test, and the semantic model's training refuses them by name. `bench/eval_sealed.sh`
-evaluates the ranker in `models/ranker.npz` on the group, records each evaluation in
+evaluates the ranker in `crates/scrutate/models/ranker.npz` on the group, records each evaluation in
 `sealed_evaluated.json` (ranker SHA-256, commit, date), and refuses a second ranker unless
 `FORCE_SEALED=1` is set, which it records too.
 
@@ -305,7 +305,7 @@ samples) and a dictionary to version in the index.
 
 ## Semantic model and ranker
 
-- Semantic model (`models/semantic.npz`, 14.6 MB): a code-word model with two views per chunk
+- Semantic model (`crates/scrutate/models/semantic.npz`, 14.6 MB): a code-word model with two views per chunk
   (description: name + signature + docs; implementation: body), 256 dimensions, trained in numpy
   (`bench/train_semantic.py`) with an InfoNCE contrastive objective over (query, description),
   (query, implementation) and (description, implementation) pairs with 20 % word dropout. On DEV
@@ -325,7 +325,7 @@ samples) and a dictionary to version in the index.
   | MIT or Apache-2.0 | | rayon |
   | MPL-2.0 | pikepdf | |
 
-- Ranker (`models/ranker.npz`, 86 KB): LightGBM LambdaRank over 48 features, exported to arrays;
+- Ranker (`crates/scrutate/models/ranker.npz`, 86 KB): LightGBM LambdaRank over 48 features, exported to arrays;
   numpy and LightGBM predictions agree to 3.5e-8. Fitted on the 7 Python DEV packages and the 16
   `CODE_DEV` repositories of `bench/groups.py` (tokio, clap, chrono, grpc-go, zap, cobra,
   commons-lang, gson, javapoet, guava, commander, axios, immutable-js, eslint, three.js, vue
@@ -360,5 +360,5 @@ bash bench/retrain_ranker.sh   # benchmark, features, fit on DEV, old and new ra
 bash bench/eval_sealed.sh      # the sealed group, once per ranker
 ```
 
-`retrain_ranker.sh` writes `models/ranker.npz` only when the new ranker passes the rule above; the
+`retrain_ranker.sh` writes `crates/scrutate/models/ranker.npz` only when the new ranker passes the rule above; the
 binary embeds that file, so rebuild it afterwards. `eval_sealed.sh` never changes the ranker.

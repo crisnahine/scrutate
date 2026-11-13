@@ -17,7 +17,7 @@ most negatives are hard (same module, same vocabulary). Model selection uses the
 
 usage:
   train_semantic.py extract CACHE.pkl [--pkgs LIST]   # token lists of the pretraining packages
-  train_semantic.py train CACHE.pkl OUT.npz [--init models/semantic.npz] [--epochs 40]
+  train_semantic.py train CACHE.pkl OUT.npz [--init crates/scrutate/models/semantic.npz] [--epochs 40]
                         [--batch 1024] [--lr 2e-3] [--tau 0.05] [--lam 0.5] [--k 256] [--seed 0]
                         [--drop 0.2] [--wd 0.0]        # word dropout, decoupled weight decay
   train_semantic.py eval MODEL.npz [--types doc,kw]   # semantic-only MRR on DEV, variant A

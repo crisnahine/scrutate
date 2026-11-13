@@ -14,7 +14,7 @@ The fifteen items of the mission (section 11) and where each lives.
 | # | Item | Location |
 |---|---|---|
 | 1 | Project name and naming research | docs/NAMING.md, docs/name_research.json, tools/name_research.py |
-| 2 | Source code and architecture | crates/scrutate (engines, CLI, MCP), crates/scrutate-py (bindings), python/scrutate_ref (model training code), models/; docs/ARCHITECTURE.md |
+| 2 | Source code and architecture | crates/scrutate (engines, CLI, MCP), crates/scrutate-py (bindings), python/scrutate_ref (model training code), crates/scrutate/models/; docs/ARCHITECTURE.md |
 | 3 | Implemented capabilities | README.md, docs/CLI.md, docs/TRACEABILITY.md (each requirement and its status) |
 | 4 | Rust toolchain and dependencies | docs/DEPENDENCIES.md, Cargo.lock, rust-toolchain.toml, the CycloneDX SBOM in `dist/` (tools/sbom.py) |
 | 5 | Platforms and language capabilities | docs/INSTALL.md (all six supported: macOS arm64, Linux aarch64 and x86_64 tested here; macOS x86_64, Windows x86_64 and Windows ARM64 tested on GitHub's runners), docs/LANGUAGES.md (61 verified grammars, 13 more optional, heuristic tier) |

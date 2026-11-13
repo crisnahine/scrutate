@@ -164,7 +164,7 @@ def main() -> None:
         print(f"  {k:<14} MRR@10 {v:.4f}")
     if "--record" in a:
         head = subprocess.run(["git", "-C", REPO, "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
-        with open(os.path.join(REPO, "models", "ranker.npz"), "rb") as f:
+        with open(os.path.join(REPO, "crates", "scrutate", "models", "ranker.npz"), "rb") as f:
             ranker = hashlib.sha256(f.read()).hexdigest()
         rec = {"floor": {"mrr10": round(m["mrr10"] - MARGIN, 4), "hit5": round(m["hit5"] - MARGIN, 4)}, "margin": MARGIN,
                "measured": {"mrr10": m["mrr10"], "hit5": m["hit5"], "by_type": m["by_type"]}, "queries": m["queries"],

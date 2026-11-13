@@ -68,8 +68,8 @@ pub const FEATURES: [&str; 48] = [
     "exact_case",
 ];
 
-static SEMANTIC_NPZ: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../models/semantic.npz"));
-static RANKER_NPZ: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../models/ranker.npz"));
+static SEMANTIC_NPZ: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/models/semantic.npz"));
+static RANKER_NPZ: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/models/ranker.npz"));
 /// The signature of the bundled vector model, so no process hashes 14.6 MB; a test prints the new
 /// value when the file changes (a hashing build dependency would rename the order file's symbols).
 pub const BUNDLED_SIGNATURE: &str = "blake2b:17861b39b366298cebb1640cdbb7784e";

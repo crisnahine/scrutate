@@ -4,7 +4,7 @@ The training code for the models of [Scrutate](../README.md), in Python. It is n
 the product is the Rust binary in `crates/scrutate`.
 
 `bench/train_ranker.py` and `bench/train_semantic.py` fit the ranker and the semantic vectors
-that the Rust engine ships (`models/`). This package holds what they share: the export of a
+that the Rust engine ships (`crates/scrutate/models/`). This package holds what they share: the export of a
 LightGBM ensemble to the arrays the engine reads (`rank.py`) and the vector model's tables and
 file format (`semantic.py`). The rows they train on come from the engine itself
 (`bench/gen_features.py`, the hidden `views` command).

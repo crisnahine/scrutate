@@ -183,7 +183,7 @@ fn a_file_of_many_sibling_definitions_parses_in_linear_time() {
 #[test]
 fn the_model_signature_is_a_hash_of_the_model_file() {
     use blake2::digest::{Update, VariableOutput};
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../models/semantic.npz");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("models/semantic.npz");
     let bytes = std::fs::read(&path).unwrap();
     let mut h = blake2::Blake2bVar::new(16).unwrap();
     h.update(&bytes);
