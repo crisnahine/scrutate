@@ -692,8 +692,8 @@ the resolution of the name under the cursor (`Names::at`) and the workspace symb
 (`Index::symbols_containing`) are its own, as no operation asks them. An Engine A search is an
 operation argument too: `Op::Grep` carries the `instant::Pattern` (mode, case, whole words) and
 an `ops::Scope` (a path under the root, globs), so `grep_code` reaches every matching mode.
-With a text index and a look at every file kept, `grep_code` and `references --textual` read the
-trigrams for the files the text index holds as they are now (same size, mtime and status change
+With a text index and a look at every file kept, `grep_code` and `references` (textual, and the
+name search of resolved references) read the trigrams for the files the text index holds as they are now (same size, mtime and status change
 time as the look found) and read every other file of the look directly: new, changed, hidden or
 left out by the text index's walk (`stores::grep_files`). The walk runs instead when there is no
 text index or no look yet, when the pattern's trigrams narrow nothing, when a glob brings files

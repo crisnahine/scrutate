@@ -199,10 +199,11 @@ First release.
 
 ### Engine B: code intelligence
 - A look for changes walks the tree once and takes one `stat` per file for both indexes, where
-  `index` walked twice. `grep_code` and `references --textual` read the text index, when there is
+  `index` walked twice. `grep_code` and `references`, textual and resolved, read the text index, when there is
   one, for the files it holds as they are now, and read the other files directly, with the same
   answer: a rare word on 12,001 files went from a walk of the tree to the look the call makes
-  anyway.
+  anyway (resolved `refs` of a rare name on 12,000 files: 0.54 s of CPU, now
+  0.05 s).
 - One session module (`session.rs`) holds a repository open for the MCP server, the language
   server, the Python bindings and `watch`: the first-build wait, the refresh interval, a cancel
   flag per call, a panic kept inside its call, recovery, and reads side by side, each on a reader

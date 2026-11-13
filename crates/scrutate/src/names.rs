@@ -47,7 +47,10 @@ impl<'a> Names<'a> {
         let s = self.s;
         let bare = &crate::intel::bare_name(s, name)?;
         let q = crate::instant::Query { want_spans: true, ..crate::resolve::name_search(bare, max_results) };
-        let (found, mut truncated) = crate::intel::occurrences(&s.ix.root, &q, &s.cancel)?;
+        let walk = crate::files::repository_files(&s.ix.root);
+        // the text index, when it holds the files as the last look found them, says which can match
+        let files = crate::stores::grep_files(&s.ix, &q, &walk);
+        let (found, mut truncated) = crate::intel::occurrences_in(&s.ix.root, files.as_ref().unwrap_or(&walk), &q, &s.cancel)?;
         let mut notes = Vec::new();
         let mut hits = Vec::new();
         for r in found {

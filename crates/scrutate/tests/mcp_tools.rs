@@ -501,6 +501,24 @@ fn resolved_references_say_when_a_file_s_search_stopped_at_a_nul_byte() {
 }
 
 #[test]
+fn resolved_references_answer_alike_with_and_without_the_text_index() {
+    let mut files: Vec<(String, String)> = (0..60).map(|i| (format!("pkg/m{i:02}.py"), format!("def fn_{i}(x):\n    return x + {i}\n"))).collect();
+    files.push(("pkg/rare.py".into(), "def needle_rare():\n    return 7\n".into()));
+    files.push(("pkg/use.py".into(), "from pkg.rare import needle_rare\n\n\ndef go():\n    return needle_rare()\n".into()));
+    let refs: Vec<(&str, &str)> = files.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();
+    let mut r = Repo::new("refs_text_index", &refs);
+    let op = scrutate::ops::Op::from_tool("references", &json!({"name": "needle_rare"})).unwrap();
+    // with a text index its trigrams pick the files to read; the answer must not show it
+    scrutate::stores::update(&r.root, scrutate::stores::Writer::Index, false).unwrap();
+    assert!(scrutate::textindex::exists(&r.root));
+    let with = r.repo.run(&op, 0.0).unwrap().json();
+    assert!(with.to_string().contains("pkg/use.py"), "{with}");
+    fs::remove_dir_all(scrutate::textindex::dir_of(&r.root)).unwrap();
+    let without = r.repo.run(&op, 0.0).unwrap().json();
+    assert_eq!(with, without);
+}
+
+#[test]
 fn grep_code_and_textual_references_search_the_same_files() {
     let mut r = Repo::new(
         "hidden_refs",
