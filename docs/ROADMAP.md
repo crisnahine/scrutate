@@ -82,7 +82,7 @@ docs/RELEASING.md, public (done), tag `v0.1.0`.
   and weekly benchmark runs for the dashboard (R-4.5).
 - Now that `ci.yml` is green, one job or setting each (docs/research/github-ci-2026-11.md): wheels
   to PyPI by trusted publishing, CodeQL default setup for Rust, OpenSSF Scorecard, `zizmor` and
-  `cargo deny` as jobs, an instruction-count benchmark on pull requests. For the integrations
+  `cargo deny` as jobs. For the integrations
   (docs/research/integrations-setup-2026-11.md): an LSP4IJ template so JetBrains needs one import.
 
 ## Next

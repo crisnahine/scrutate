@@ -655,6 +655,8 @@ outputs in [CLI](docs/CLI.md), the measurements in [BENCHMARKS](docs/BENCHMARKS.
 - Benchmark suite (`bench/leaderboard.py`, `bench/indexed.py`) against grep, ripgrep, ack, ag,
   git grep, ugrep, ast-grep, Zoekt and livegrep, every answer checked, with a regression gate
   (`SCRUTATE_BASE_BIN`, `leaderboard_regression.py --within`) ([BENCHMARKS](docs/BENCHMARKS.md)).
+  `benchmarks.yml` runs it on the small corpora and counts every benchmark's instructions under
+  cachegrind (`bench/instructions.py`, past 1% fails), behind one `benchmark gate` check.
 - Random checks in CI: `bench/fuzz_grep.py` and `bench/fuzz_incremental.py`, 20 seconds each.
 - Packaging: Homebrew, Scoop and winget (schema 1.12.0), `.deb` and `.rpm`, each carrying
   `THIRD_PARTY_NOTICES.txt`; `docs/dashboard.html` charts the benchmark runs.

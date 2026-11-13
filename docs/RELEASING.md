@@ -99,6 +99,23 @@ Then read the results:
   continue a run whose `scrutate` or base binary is not the one it measured.
   `leaderboard_regression.py OLD.json NEW.json` still compares two recorded runs of one machine.
   `/usr/bin/time -l` gives instructions retired, which a busy machine does not move.
+- `.github/workflows/benchmarks.yml` runs both gates on GitHub's runners, on every pull request,
+  on Mondays and by hand. It builds the change and its base once (the pull request's merge base;
+  by hand, the `base` input; on Mondays the last `v*` tag, else `HEAD~1`). The wall-time job runs
+  the leaderboard as above on the corpora a runner measures in time (`ripgrep/`, `rgbuilt/`,
+  `patho/`, `binheavy/`, `smallfiles/`, `bigfile/`, `startup/`), without competitors, with
+  `--max-load "$(nproc)" --max-wait 30`: both binaries share every block, so load slows both
+  alike. The instruction job runs every benchmark of the suite, `linux/` and `llvm/` included,
+  once per binary under Valgrind's cachegrind (`bench/instructions.py`): text searches with
+  `-j1`, tsquery with `RAYON_NUM_THREADS=1`, since Valgrind runs one thread at a time. A row
+  regresses past 1% more instructions. The counts are "highly reproducible" (Valgrind's manual),
+  where wall time on shared runners varies by 2.66% run to run, so 1% catches what the wall-time
+  gate's 10% cannot. A pull request that changes nothing under `crates/`, `vendor/`, `bench/`,
+  the Cargo files, `.cargo/`, `rust-toolchain.toml` or the workflow passes without measuring.
+  The check to require on `main` is `benchmark gate`, which reads every job's result.
+- To prove the gate, run the workflow by hand twice on `main`: `mode: same-binary` measures HEAD
+  against a copy of itself and must read `same` on every row; `mode: planted` measures HEAD built
+  at `opt-level` 1 against HEAD at 3 and passes only when both gates fail on it.
 
 ## 3. Generated documents
 
