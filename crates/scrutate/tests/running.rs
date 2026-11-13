@@ -145,18 +145,34 @@ fn a_stopped_search_is_counted_and_a_killed_one_is_not() {
 }
 
 /// Waits until the process is stopped, as `ps` shows it.
-/// Whether the process stops within 10 s: a loaded machine can take seconds to run a stop handler,
-/// and the wait ends at the first sight of the stopped state.
-fn stopped(pid: u32) -> bool {
+/// What a process sent a stop did within 10 s (a loaded machine can take seconds to run a stop
+/// handler): it showed the stopped state, or it had ended. A process that ended and was not yet
+/// waited for still accepts the signal, so a `kill` that succeeds does not say it runs.
+#[derive(Debug, PartialEq)]
+enum Stop {
+    Stopped,
+    Ended,
+    Neither,
+}
+
+fn stop_seen(pid: u32) -> Stop {
     let start = std::time::Instant::now();
     while start.elapsed() < Duration::from_secs(10) {
         let out = Command::new("ps").args(["-o", "state=", "-p", &pid.to_string()]).output().unwrap();
-        if String::from_utf8_lossy(&out.stdout).contains('T') {
-            return true;
+        let state = String::from_utf8_lossy(&out.stdout);
+        if state.contains('T') {
+            return Stop::Stopped;
+        }
+        if state.trim().is_empty() || state.contains('Z') {
+            return Stop::Ended;
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    false
+    Stop::Neither
+}
+
+fn stopped(pid: u32) -> bool {
+    stop_seen(pid) == Stop::Stopped
 }
 
 #[test]
@@ -209,7 +225,12 @@ fn a_search_stopped_and_continued_prints_what_it_would_have() {
         if stop {
             a.next();
             while stops < 3 && a.try_signal("-TSTP") {
-                assert!(stopped(a.child.id()));
+                match stop_seen(a.child.id()) {
+                    Stop::Stopped => {}
+                    // it finished between the last continue and this stop
+                    Stop::Ended => break,
+                    Stop::Neither => panic!("the search neither stopped nor ended"),
+                }
                 a.signal("-CONT");
                 stops += 1;
             }
