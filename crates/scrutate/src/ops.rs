@@ -39,6 +39,8 @@ pub const DUPES_MIN_TOKENS: usize = 30;
 pub const DUPES_THRESHOLD: f32 = 0.75;
 pub const DUPES_LIMIT: usize = 50;
 pub const TSQUERY_LIMIT: usize = 1000;
+/// Calls a call path follows at most.
+pub const PATH_DEPTH: usize = 10;
 /// Lines one `read` returns at most.
 pub const READ_LINES: i64 = 400;
 /// Bytes of line text one `read_code` of a line range collects at most; a longer line is cut.
@@ -116,6 +118,17 @@ pub enum Op {
         lang: String,
         query: String,
         limit: usize,
+    },
+    /// The files ranked by how the others call and import them, each with its top definitions;
+    /// `path` keeps the files under one directory.
+    Map {
+        path: Option<String>,
+    },
+    /// The shortest chain of calls from one definition (a name or a location) to another.
+    Path {
+        from: String,
+        to: String,
+        depth: usize,
     },
     /// `force`: read every file again, also one whose size, modification and change times are unchanged.
     Reindex {
@@ -221,6 +234,8 @@ impl Op {
                 limit: count("limit", DUPES_LIMIT as u64, 500)? as usize,
             },
             "structural_search" => Op::Tsquery { lang: text("lang")?, query: text("query")?, limit: count("limit", TSQUERY_LIMIT as u64, 5000)? as usize },
+            "repo_map" => Op::Map { path: opt_text("path")? },
+            "call_path" => Op::Path { from: text("from")?, to: text("to")?, depth: count("depth", PATH_DEPTH as u64, 100)? as usize },
             "reindex" => Op::Reindex { force: flag("force")? },
             "impact" => Op::Impact {
                 base: opt_text("base")?,
@@ -248,6 +263,7 @@ impl Op {
         match self {
             Op::Symbol { name, .. } | Op::Callers { name, .. } | Op::Callees { name, .. } => loc(name).into_iter().collect(),
             Op::Similar { target, .. } => loc(target).into_iter().collect(),
+            Op::Path { from, to, .. } => loc(from).into_iter().chain(loc(to)).collect(),
             Op::Read { path, symbol: Some(symbol), .. } => loc(symbol).into_iter().chain(path.as_deref().map(plain)).collect(),
             Op::Outline { path } | Op::Deps { path } => vec![plain(path)],
             Op::Refs { def: Some(def), .. } => vec![loc(def).unwrap_or_else(|| plain(def))],
@@ -397,6 +413,24 @@ pub fn output_schema(tool: &str) -> Value {
             json!({"path": ty("string"), "line": ty("integer"), "column": ty("integer"), "capture": ty("string"), "kind": ty("string"), "text": ty("string")}),
             &["path", "line", "column", "capture", "kind", "text"],
         )),
+        "repo_map" => {
+            let mut def = span("qualname");
+            def["properties"]["calls"] = ty("integer");
+            list(obj(
+                json!({"path": ty("string"), "rank": ty("integer"), "score": ty("number"), "definitions": list(def)}),
+                &["path", "rank", "score", "definitions"],
+            ))
+        }
+        "call_path" => {
+            let step = obj(
+                json!({"path": ty("string"), "line": ty("integer"), "definition": span("name"), "tied": ty("boolean")}),
+                &["path", "line", "definition", "tied"],
+            );
+            obj(
+                json!({"from": span("name"), "to": span("name"), "found": ty("boolean"), "depth": ty("integer"), "stopped": ty("boolean"), "steps": list(step)}),
+                &["from", "to", "found", "depth", "stopped", "steps"],
+            )
+        }
         _ => {
             obj(json!({"files_changed": ty("integer"), "files_removed": ty("integer"), "chunks": ty("integer")}), &["files_changed", "files_removed", "chunks"])
         }
@@ -503,6 +537,8 @@ pub enum Answer {
     Similar(Vec<(Hit, f32, f32)>),
     Dupes(Vec<DupGroup>, Option<Stop>),
     Captures(Vec<Capture>, Option<Stop>),
+    Map(Vec<crate::repomap::MapFile>),
+    Path(Box<crate::names::CallPath>),
     Reindexed(UpdateStats),
     Impact(crate::impact::Impact),
     Files(Vec<crate::finder::FileHit>, Option<Stop>),
@@ -633,6 +669,8 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
             let (caps, stopped) = cut(caps, *limit, RAISE_LIMIT);
             Answer::Captures(caps, stopped)
         }
+        Op::Map { path } => Answer::Map(crate::repomap::map(s, path.as_deref().map(|p| repo_path(s, p)).as_deref())?),
+        Op::Path { from, to, depth } => Answer::Path(Box::new(Names::new(s)?.path(from, to, *depth)?)),
         Op::Reindex { .. } => bail!("reindex keeps every store current: run it through Repo"),
         Op::Impact { base, staged, depth } => Answer::Impact(crate::impact::impact(s, base.as_deref(), *staged, *depth)?),
         Op::Files { query, limit } => files(&s.ix.root, query, *limit)?,
@@ -881,6 +919,11 @@ fn with_note(mut v: Value, g: &RefGroup) -> Value {
     v
 }
 
+/// A definition as one line: `path:start-end  [kind] name`.
+fn hit_line(h: &Hit) -> String {
+    hit_blocks(std::slice::from_ref(h), &[], false, false).remove(0)
+}
+
 fn symbol_name(c: &ChunkRow) -> &str {
     if c.qualname.is_empty() {
         &c.name
@@ -1004,6 +1047,8 @@ impl Answer {
             Answer::Similar(v) => v.iter().map(|h| h.0.path.as_str()).collect(),
             Answer::Dupes(groups, _) => groups.iter().flat_map(|g| g.members.iter().map(|m| m.0.as_str())).collect(),
             Answer::Impact(i) => i.cited(),
+            Answer::Map(files) => files.iter().map(|f| f.path.as_str()).collect(),
+            Answer::Path(p) => [&p.from, &p.to].into_iter().chain(p.steps.iter().map(|s| &s.to)).map(|h| h.path.as_str()).collect(),
             Answer::Read { .. } | Answer::Captures(..) | Answer::Reindexed(_) | Answer::Files(..) => Vec::new(),
         }
     }
@@ -1027,6 +1072,8 @@ impl Answer {
             Answer::Similar(v) => v.is_empty(),
             Answer::Dupes(v, _) => v.is_empty(),
             Answer::Captures(v, _) => v.is_empty(),
+            Answer::Map(files) => files.is_empty(),
+            Answer::Path(p) => !p.found,
             Answer::Reindexed(_) => false,
             Answer::Impact(i) => i.is_empty(),
             Answer::Files(v, _) => v.is_empty(),
@@ -1195,6 +1242,46 @@ impl Answer {
             Answer::Captures(caps, stopped) => {
                 Parts { tail: stop_line(*stopped, "matches"), items: caps.iter().map(capture_line).collect(), noun: "matches", ..Parts::default() }
             }
+            Answer::Map(files) if files.is_empty() => nothing("(no file with a definition)".to_string()),
+            Answer::Map(files) => Parts {
+                items: files
+                    .iter()
+                    .enumerate()
+                    .map(|(i, f)| {
+                        let mut out = format!("{}  (rank {}, score {:.4})", shown(&f.path), i + 1, f.score);
+                        for (d, calls) in &f.definitions {
+                            let calls = match calls {
+                                0 => String::new(),
+                                1 => "  (1 call)".to_string(),
+                                n => format!("  ({n} calls)"),
+                            };
+                            let name = if d.qualname.is_empty() { &d.name } else { &d.qualname };
+                            out.push_str(&format!("\n  {}-{}  [{}] {}{calls}", d.start, d.end, d.kind, shown(name)));
+                        }
+                        out
+                    })
+                    .collect(),
+                noun: "files",
+                ..Parts::default()
+            },
+            Answer::Path(p) if !p.found => {
+                let ends = format!("from {} to {}", hit_line(&p.from), hit_line(&p.to));
+                nothing(if p.stopped {
+                    format!("(no call path {ends} within {} {}: raise depth to search further)", p.depth, if p.depth == 1 { "call" } else { "calls" })
+                } else {
+                    format!("(no call path {ends})")
+                })
+            }
+            Answer::Path(p) => Parts {
+                items: std::iter::once(hit_line(&p.from))
+                    .chain(p.steps.iter().map(|s| {
+                        let guess = if s.tied { "" } else { "  (by name: the resolver did not tie this call)" };
+                        format!("  {}:{}  calls {}{guess}", shown(&s.path), s.line, hit_line(&s.to))
+                    }))
+                    .collect(),
+                noun: "steps",
+                ..Parts::default()
+            },
             Answer::Reindexed(st) => nothing(format!("{} files changed, {} removed, {} chunks", st.files_changed, st.files_removed, st.chunks)),
             Answer::Impact(i) if i.is_empty() => nothing(format!("no changes: {}", i.head())),
             Answer::Impact(i) => Parts { head: i.head(), items: i.lines(), tail: i.stop_line(), noun: "lines", ..Parts::default() },
@@ -1320,6 +1407,27 @@ impl Answer {
                 .collect(),
             Answer::Dupes(groups, _) => serde_json::to_value(groups).unwrap_or_default(),
             Answer::Captures(caps, _) => serde_json::to_value(caps).unwrap_or_default(),
+            Answer::Map(files) => files
+                .iter()
+                .enumerate()
+                .map(|(i, f)| {
+                    let defs: Vec<Value> = f
+                        .definitions
+                        .iter()
+                        .map(|(d, calls)| {
+                            json!({"id": format!("{}:{}-{}", d.path, d.start, d.end), "path": d.path, "start": d.start, "end": d.end, "kind": d.kind, "qualname": d.qualname, "calls": calls})
+                        })
+                        .collect();
+                    json!({"path": f.path, "rank": i + 1, "score": f.score, "definitions": defs})
+                })
+                .collect(),
+            Answer::Path(p) => {
+                let hit = |h: &Hit| hits_json(std::slice::from_ref(h))[0].clone();
+                json!({
+                    "from": hit(&p.from), "to": hit(&p.to), "found": p.found, "depth": p.depth, "stopped": p.stopped,
+                    "steps": p.steps.iter().map(|s| json!({"path": s.path, "line": s.line, "definition": hit(&s.to), "tied": s.tied})).collect::<Vec<_>>(),
+                })
+            }
             Answer::Reindexed(st) => json!({"files_changed": st.files_changed, "files_removed": st.files_removed, "chunks": st.chunks}),
             Answer::Impact(i) => i.json(),
             Answer::Files(v, _) => serde_json::to_value(v).unwrap_or_default(),
@@ -1387,6 +1495,9 @@ mod tests {
             op("impact", json!({"base": "main...", "staged": true, "depth": 99})),
             Op::Impact { staged: true, depth: crate::impact::MAX_DEPTH, .. }
         ));
+        assert!(matches!(op("repo_map", json!({})), Op::Map { path: None }));
+        assert!(matches!(op("call_path", json!({"from": "a", "to": "b"})), Op::Path { depth: PATH_DEPTH, .. }));
+        assert_eq!(Op::from_tool("call_path", &json!({"from": "a"})).err().unwrap().to_string(), "missing to");
     }
 
     #[test]

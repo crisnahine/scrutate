@@ -2522,3 +2522,123 @@ fn max_results_is_never_exceeded() {
         }
     }
 }
+
+/// The text of one MCP tool call, through `serve` as an agent makes it.
+fn mcp_text(root: &Path, tool: &str, args: serde_json::Value) -> String {
+    let mut child =
+        Command::new(BIN).args(["--root", root.to_str().unwrap(), "serve"]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let hello = serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}}});
+    let call = serde_json::json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": tool, "arguments": args}});
+    writeln!(stdin, "{hello}\n{call}").unwrap();
+    drop(stdin);
+    let out = child.wait_with_output().unwrap();
+    let reply = String::from_utf8_lossy(&out.stdout).lines().map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap()).find(|v| v["id"] == 2).unwrap();
+    reply["result"]["content"][0]["text"].as_str().unwrap().to_string()
+}
+
+/// A module five others import and call, and a leaf nobody uses.
+fn hub_repo(name: &str) -> Repo {
+    let r = Repo::new(name);
+    fs::create_dir_all(r.root.join(".git")).unwrap();
+    r.write("hub.py", b"def helper(x):\n    return x + 1\n\n\ndef other_helper(x):\n    return helper(x) * 2\n");
+    for i in 1..=5 {
+        r.write(&format!("user{i}.py"), format!("import hub\n\n\ndef run_{i}():\n    return hub.helper({i})\n").as_bytes());
+    }
+    r.write("leaf.py", b"def lonely():\n    return 0\n");
+    r
+}
+
+#[test]
+fn map_ranks_the_hub_first_and_fits_every_budget() {
+    let r = hub_repo("map");
+    let (code, out, err) = r.run(&["map"]);
+    assert_eq!(code, 0, "{err}");
+    let files: Vec<&str> = out.lines().filter(|l| !l.starts_with(' ')).collect();
+    assert!(files[0].starts_with("hub.py  (rank 1, score "), "{out}");
+    assert!(files.last().unwrap().starts_with("leaf.py"), "the leaf comes last: {out}");
+    // the hub's most called definition first
+    let hub: Vec<&str> = out.lines().skip(1).take_while(|l| l.starts_with(' ')).collect();
+    assert!(hub[0].contains(" helper  (6 calls)") && hub[1].contains("other_helper"), "{out}");
+    assert_eq!(r.run(&["map"]).1, out, "two runs give the same bytes");
+    assert!(out.len() > 300, "{out}");
+    for budget in [180, 300, out.len()] {
+        let (code, cut, _) = r.run(&["--max-bytes", &budget.to_string(), "map"]);
+        assert_eq!(code, 0);
+        assert!(cut.len() <= budget, "{budget}: {} bytes\n{cut}", cut.len());
+        assert!(cut == out || cut.starts_with("hub.py") && cut.trim_end().ends_with("or narrow the request)"), "{budget}: {cut}");
+        assert_eq!(r.run(&["--max-bytes", &budget.to_string(), "map"]).1, cut);
+    }
+    let (code, json, _) = r.run(&["map", "--json"]);
+    assert_eq!(code, 0);
+    let v = answer(&json);
+    assert_eq!((v[0]["path"].as_str(), v[0]["rank"].as_u64()), (Some("hub.py"), Some(1)), "{json}");
+    assert_eq!((v[0]["definitions"][0]["qualname"].as_str(), v[0]["definitions"][0]["calls"].as_u64()), (Some("helper"), Some(6)), "{json}");
+    assert_eq!(mcp_text(&r.root, "repo_map", serde_json::json!({})), out.trim_end(), "the MCP tool gives the command's text");
+    // a path keeps the files under it
+    r.write("sub/inner.py", b"import hub\n\n\ndef inner():\n    return hub.helper(0)\n");
+    let (code, out, _) = r.run(&["map", "sub"]);
+    assert_eq!(code, 0);
+    assert!(out.starts_with("sub/inner.py  (rank 1, score ") && out.lines().all(|l| l.starts_with(' ') || l.starts_with("sub/")), "{out}");
+    assert_eq!(r.run(&["map", "nothing_here"]).0, 1);
+}
+
+/// `top -> middle -> deep`, each in its own file.
+fn chain_repo(name: &str) -> Repo {
+    let r = Repo::new(name);
+    fs::create_dir_all(r.root.join(".git")).unwrap();
+    r.write("a.py", b"from b import middle\n\n\ndef top():\n    x = 1\n    return middle(x)\n");
+    r.write("b.py", b"from c import deep\n\n\ndef middle(x):\n    return deep(x)\n");
+    r.write("c.py", b"def deep(x):\n    return x\n");
+    r
+}
+
+#[test]
+fn path_follows_the_call_chain_and_says_when_there_is_none() {
+    let r = chain_repo("path");
+    let (code, out, err) = r.run(&["path", "top", "deep"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(
+        out.lines().collect::<Vec<_>>(),
+        ["a.py:4-6  [function] top", "  a.py:6  calls b.py:4-5  [function] middle", "  b.py:5  calls c.py:1-2  [function] deep"],
+        "{out}"
+    );
+    // each step is one that callees gives
+    assert!(r.run(&["callees", "top"]).1.contains("b.py:4-5"));
+    assert!(r.run(&["callees", "b.py:4"]).1.contains("c.py:1-2"));
+    let (code, json, _) = r.run(&["path", "top", "deep", "--json"]);
+    assert_eq!(code, 0);
+    let v = answer(&json);
+    assert_eq!(v["steps"].as_array().unwrap().len(), 2, "{json}");
+    assert_eq!((v["steps"][0]["path"].as_str(), v["steps"][0]["line"].as_i64()), (Some("a.py"), Some(6)), "{json}");
+    assert_eq!(v["steps"][1]["definition"]["path"], "c.py", "{json}");
+    assert_eq!(mcp_text(&r.root, "call_path", serde_json::json!({"from": "top", "to": "deep"})), out.trim_end());
+    let (code, out, _) = r.run(&["path", "deep", "top"]);
+    assert_eq!(code, 1);
+    assert_eq!(out, "(no call path from c.py:1-2  [function] deep to a.py:4-6  [function] top)\n");
+    let (code, out, _) = r.run(&["path", "top", "deep", "--depth", "1"]);
+    assert_eq!(code, 1);
+    assert!(out.contains("within 1 call: raise depth"), "the depth limit says so: {out}");
+    // a name with two definitions lists them, and a location picks one
+    r.write("d.py", b"def deep(x):\n    return -x\n");
+    let (code, out, err) = r.run(&["path", "top", "deep"]);
+    assert_eq!(code, 2, "{out}");
+    assert!(err.contains("c.py:1-2") && err.contains("d.py:1-2") && err.contains("path:line"), "{err}");
+    let (code, out, _) = r.run(&["path", "top", "c.py:1"]);
+    assert_eq!(code, 0);
+    assert!(out.ends_with("  b.py:5  calls c.py:1-2  [function] deep\n"), "{out}");
+    assert_eq!(r.run(&["path", "top", "d.py:1"]).0, 1);
+}
+
+#[test]
+fn path_takes_a_call_the_resolver_cannot_tie_and_says_so() {
+    // C is a language the resolver does not read: callees lists `deep` by name
+    let r = Repo::new("path_c");
+    fs::create_dir_all(r.root.join(".git")).unwrap();
+    r.write("a.c", b"#include \"b.h\"\n\nint top(int x) {\n    return deep(x);\n}\n");
+    r.write("b.c", b"int deep(int x) {\n    return x;\n}\n");
+    let (code, out, err) = r.run(&["path", "top", "deep"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out.lines().nth(1), Some("  a.c:4  calls b.c:1-3  [function] deep  (by name: the resolver did not tie this call)"), "{out}");
+    assert_eq!(answer(&r.run(&["path", "top", "deep", "--json"]).1)["steps"][0]["tied"], false);
+}

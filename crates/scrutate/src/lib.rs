@@ -29,6 +29,7 @@ pub mod npy;
 pub mod ops;
 pub mod parse;
 pub mod rank;
+pub mod repomap;
 pub mod resolve;
 pub mod running;
 pub mod search;

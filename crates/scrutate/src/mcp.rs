@@ -29,13 +29,15 @@ const LIST_TTL_MS: u64 = 3_600_000;
 
 /// What a client shows its model before any tool is loaded; the first sentences stand alone.
 const INSTRUCTIONS: &str = "scrutate searches the code of this repository from a local index. \
-Start with search_code for a question in words or a name; use grep_code for an exact pattern, find_symbol for a definition, \
-references for every use of a name, callers and callees to follow calls, outline and read_code to read a file in pieces \
-or one whole definition, and impact for what a git diff changes, who calls it and which tests to run. \
+Start with search_code for a question in words or a name, or repo_map for the important files of a repository you do not know; \
+use grep_code for an exact pattern, find_symbol for a definition, find_files for a file by a part of its name, \
+references for every use of a name, callers and callees to follow calls, call_path for how one function reaches another, \
+outline and read_code to read a file in pieces or one whole definition, and impact for what a git diff changes, who calls it \
+and which tests to run. \
 Every tool only reads, except reindex, which refreshes the index (a cache under .scrutate/). \
 Results are capped; a tool says when it stopped early and which argument raises the limit. \
 Each result begins with its location (path:start-end). Pass that location wherever a tool takes a symbol name \
-to mean that one definition: read_code symbol, find_symbol, callers, callees, similar_code, references def. \
+to mean that one definition: read_code symbol, find_symbol, callers, callees, call_path, similar_code, references def. \
 A result of kind window is a stretch of lines outside every definition: callees and similar_code take its location, \
 and read_code reads it by path and lines; find_symbol, callers and references def answer that no symbol is there.";
 
@@ -84,6 +86,10 @@ fn tool_table() -> Value {
          "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "limit": {"type": "integer", "default": ops::CALLERS_LIMIT}}, "required": ["name"]}},
         {"name": "callees", "description": "Which functions does this function call?",
          "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "limit": {"type": "integer", "default": ops::CALLEES_LIMIT}}, "required": ["name"]}},
+        {"name": "call_path", "description": "How does `from` reach `to`? The shortest chain of calls between two functions (names, `Class.method` or locations), each step a call site and the function it calls; a name with several definitions lists them to pick one by location.",
+         "inputSchema": {"type": "object", "properties": {"from": {"type": "string"}, "to": {"type": "string"}, "depth": {"type": "integer", "default": ops::PATH_DEPTH, "description": "calls to follow at most"}}, "required": ["from", "to"]}},
+        {"name": "repo_map", "description": "The important files of the repository first: files ranked by how much the others call and import them (PageRank), each with its most called definitions. A first call in a repository you do not know.",
+         "inputSchema": {"type": "object", "properties": {"path": {"type": ["string", "null"], "default": null, "description": "keep the files under this directory"}}}},
         {"name": "read_code", "description": "Read a line range of a file (`path`, `start`, `end`), or one whole definition: `symbol` is a name, `Class.method`, or a location from another answer (`src/a.py:12-40`). A name with several definitions returns each; `path` then keeps the ones in that file.",
          "inputSchema": {"type": "object", "properties": {
              "path": {"type": ["string", "null"], "default": null}, "symbol": {"type": ["string", "null"], "default": null},

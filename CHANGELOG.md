@@ -233,6 +233,12 @@ First release.
   line 18446744073709551615.
 
 ### Engine B: code intelligence
+- `scrutate map [PATH]` and the MCP tool `repo_map`: the files that define code, ranked by
+  PageRank over the calls and imports between files that the index's names give, each with its 5
+  most called definitions, the same bytes on every run of one index and cut at whole files to
+  `--max-bytes`. `scrutate path FROM TO [--depth N]` and the MCP tool `call_path`: the shortest
+  chain of calls between two definitions over the calls `callees` resolves, each step a call site
+  and the definition it reaches; no chain exits 1, and a name with several definitions lists them.
 - GDScript (`.gd`) has a grammar in the default build (`tree-sitter-gdscript` 6.1.0, MIT, 0.27 MB
   of the binary): functions, `class_name` and inner classes, signals (kind `signal`), named enums,
   `const` (kind `constant`) and `var` (kind `key`) at file level or in an inner class body are
@@ -916,7 +922,7 @@ First release.
   and `.rpm`, the release archives and `THIRD_PARTY_NOTICES.txt` say so. `vendor/ignore` keeps
   `Unlicense OR MIT`. The README has a "Sponsor and hire" section: paid terms, support,
   sponsored features and work for hire, asked for through GitHub.
-- Unified `find`, MCP server (15 tools), configuration files with environment-variable precedence,
+- Unified `find`, MCP server (18 tools), configuration files with environment-variable precedence,
   shell completions, progress reporting; errors as JSON records with `--json` or
   `SCRUTATE_DIAGNOSTICS=json`.
 - On/off environment variables are off for `0`, `false`, `no`, `off` or empty and on for any other

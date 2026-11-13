@@ -2375,6 +2375,20 @@ impl Index {
         Ok(got)
     }
 
+    /// Every call edge as (the calling chunk's path, the name it calls), by path and name.
+    pub fn call_edges(&self) -> Result<Vec<(String, String)>> {
+        let mut st = self.db.prepare("SELECT c.path, r.callee FROM refs r JOIN chunks c ON c.id=r.chunk_id ORDER BY c.path, r.callee")?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// (name, path) of the definitions of these kinds, each pair once, by name and path.
+    pub fn definers(&self, kinds: &[&str]) -> Result<Vec<(String, String)>> {
+        let mut st = self.db.prepare(&format!("SELECT DISTINCT name, path FROM chunks WHERE kind IN ({}) ORDER BY name, path", quoted(kinds)))?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
     /// The imports a file records, as (line, module), by line.
     pub fn imports_of(&self, path: &str) -> Result<Vec<(i64, String)>> {
         let mut st = self.db.prepare_cached("SELECT line, module FROM imports WHERE path=?1 ORDER BY line")?;

@@ -713,6 +713,18 @@ walk at each site; a fifth of the whole was asking the index, at each call on a 
 outside, whether the repository extends that type with the method, which the walker now asks
 once per type and name.
 
+`path` (`Names::path`) walks breadth first from one definition, and at each definition asks the
+same question `callees` asks (`Names::calls`), so every step of a call path is a callee that
+`callees` lists; the call site is the first line the resolver ties to the definition reached.
+It walks the calls the resolver ties first, and only when they reach nothing, walks again over
+every callee, with each call it could not tie marked as such; the second walk reuses what the
+first asked. The repo map (`repomap.rs`) is the one answer that resolves no call site: resolving
+every call site took 188 s on Guava with one `Names`, where the map takes 1.1 s, so its file
+graph comes from the index's names alone (`Names::file_edges`: a call of a name to the other files of the caller's language
+family that define it, the weight split among them; an import to the file its module path maps
+onto, as `deps` maps a module the resolver does not read). PageRank (damping 0.85, 50
+iterations) ranks the files over that graph.
+
 `callers` and `callees` keep what they learn of each call site (`answers.rs`, `.scrutate/answers/`):
 one file per request (its kind and the name as given) that holds, for each call site (path,
 lines, name), the definitions its uses resolve to and which stayed unresolved, and what the run
@@ -795,7 +807,7 @@ independently usable (`grep`, `index`/`search`) and independently tested.
 Every question a front end can ask of the index is an **operation** (`ops::Op`): its arguments,
 their defaults and limits live there, and it returns a typed **answer** (`ops::Answer`) with one
 text form and one JSON form. The CLI's index commands (`read` among them) and the ranked search
-of `search` and `find`, the MCP server's sixteen tools, `batch` and the Python bindings parse
+of `search` and `find`, the MCP server's eighteen tools, `batch` and the Python bindings parse
 into operations, run them through `Repo` (`Repo::run`, or `Repo::run_as_is` after a scan of
 their own), and render answers; none of them has a default or an output format of its own (they
 had drifted: three different limits for `callers`, references textual in one and resolved in

@@ -282,50 +282,217 @@ impl<'a> Names<'a> {
 
     fn callees_kept(&mut self, name: &str, limit: usize) -> Result<(Vec<Hit>, Vec<String>, Vec<String>)> {
         let s = self.s;
-        let kinds: Vec<&str> = crate::search::CODE_KINDS.iter().copied().chain(["key", "macro"]).collect();
         let langs = Langs { root: &s.ix.root, seen: Default::default() };
-        // a key is what a call runs only in the caller's own language (Nix, whose functions are keys)
-        let callable = |from: &str, r: &ChunkRow| langs.same_family(from, &r.path) && (r.kind != "key" || langs.id(from) == langs.id(&r.path));
         let (mut resolved, mut external, mut seen) = (Vec::new(), Vec::new(), HashSet::new());
         let defs = crate::ops::targets(s, name, 5, true)?;
         let from = defs.iter().map(|d| d.path.clone()).collect();
         for d in defs {
-            let names = s.ix.callees_of(d.id)?;
-            for n in names {
-                let rows: Vec<ChunkRow> = s.ix.named_of_kinds(&n, &kinds)?.into_iter().filter(|r| callable(&d.path, r)).collect();
-                if rows.is_empty() {
-                    if !external.contains(&n) {
-                        external.push(n);
-                    }
+            for (n, picked, _) in self.calls(&d, &langs)? {
+                if picked.is_empty() && !external.contains(&n) {
+                    external.push(n);
                     continue;
                 }
-                let uses = self.uses(&d.path, (d.start, d.end), &n);
-                let tied: Vec<&ChunkRow> = rows.iter().filter(|r| uses.got.contains(&r.id)).collect();
-                let picked: Vec<&ChunkRow> = if !tied.is_empty() {
-                    tied
-                } else if uses.unsure {
-                    let mut near: Vec<&ChunkRow> = rows.iter().filter(|r| uses.unsure_free || !free(&r.kind, &r.qualname)).collect();
-                    let mine = |r: &&ChunkRow| own((&d.path, &d.qualname), &r.path, &r.kind, &r.qualname);
-                    if uses.own_file && near.iter().any(mine) {
-                        near.retain(mine);
-                    }
-                    // the nearest three: the caller's file, then its directory
-                    let dir = |p: &str| p.rsplit_once('/').map_or(String::new(), |(d, _)| d.to_string());
-                    near.sort_by_key(|r| (r.path != d.path, dir(&r.path) != dir(&d.path)));
-                    near.truncate(3);
-                    near
-                } else {
-                    Vec::new()
-                };
-                if picked.is_empty() && !external.contains(&n) {
-                    external.push(n.clone());
-                }
-                resolved.extend(picked.into_iter().filter(|r| seen.insert(r.id)).map(|r| Hit::from_row(r, true)));
+                resolved.extend(picked.into_iter().filter(|r| seen.insert(r.id)).map(|r| Hit::from_row(&r, true)));
             }
         }
         external.sort();
         resolved.truncate(limit);
         Ok((resolved, external, from))
+    }
+
+    /// What the code of definition `d` calls, name by name: the definitions of the repository each
+    /// name reaches, none for a name that reaches none, and whether the resolver tied the calls to
+    /// them (else they are the likeliest of the name's definitions).
+    fn calls(&mut self, d: &Hit, langs: &Langs) -> Result<Vec<(String, Vec<ChunkRow>, bool)>> {
+        let s = self.s;
+        let kinds: Vec<&str> = crate::search::CODE_KINDS.iter().copied().chain(["key", "macro"]).collect();
+        // a key is what a call runs only in the caller's own language (Nix, whose functions are keys)
+        let callable = |from: &str, r: &ChunkRow| langs.same_family(from, &r.path) && (r.kind != "key" || langs.id(from) == langs.id(&r.path));
+        let mut out = Vec::new();
+        for n in s.ix.callees_of(d.id)? {
+            let rows: Vec<ChunkRow> = s.ix.named_of_kinds(&n, &kinds)?.into_iter().filter(|r| callable(&d.path, r)).collect();
+            if rows.is_empty() {
+                out.push((n, Vec::new(), false));
+                continue;
+            }
+            let uses = self.uses(&d.path, (d.start, d.end), &n);
+            let tied: Vec<&ChunkRow> = rows.iter().filter(|r| uses.got.contains(&r.id)).collect();
+            let is_tied = !tied.is_empty();
+            let picked: Vec<&ChunkRow> = if is_tied {
+                tied
+            } else if uses.unsure {
+                let mut near: Vec<&ChunkRow> = rows.iter().filter(|r| uses.unsure_free || !free(&r.kind, &r.qualname)).collect();
+                let mine = |r: &&ChunkRow| own((&d.path, &d.qualname), &r.path, &r.kind, &r.qualname);
+                if uses.own_file && near.iter().any(mine) {
+                    near.retain(mine);
+                }
+                // the nearest three: the caller's file, then its directory
+                let dir = |p: &str| p.rsplit_once('/').map_or(String::new(), |(d, _)| d.to_string());
+                near.sort_by_key(|r| (r.path != d.path, dir(&r.path) != dir(&d.path)));
+                near.truncate(3);
+                near
+            } else {
+                Vec::new()
+            };
+            let picked = picked.into_iter().cloned().collect();
+            out.push((n, picked, is_tied));
+        }
+        Ok(out)
+    }
+
+    /// The shortest chain of calls from the definition `from` names to the one `to` names, each
+    /// call one that `callees` gives, at most `depth` calls long: over the calls the resolver ties
+    /// first, and only when they give none, over every call `callees` lists. Ties go to the
+    /// definition first by path and line, then to the call on the first line.
+    pub fn path(&mut self, from: &str, to: &str, depth: usize) -> Result<CallPath> {
+        let s = self.s;
+        let (start, goal) = (one_definition(s, from)?, one_definition(s, to)?);
+        let langs = Langs { root: &s.ix.root, seen: Default::default() };
+        let mut known = HashMap::new();
+        let mut walked = self.walk(&start, &goal, depth, true, &langs, &mut known)?;
+        if walked.0.is_none() {
+            walked = self.walk(&start, &goal, depth, false, &langs, &mut known)?;
+        }
+        let (steps, stopped) = walked;
+        Ok(CallPath { found: steps.is_some(), steps: steps.unwrap_or_default(), from: start, to: goal, depth, stopped })
+    }
+
+    /// One breadth-first walk of `path`, through untied calls too unless `tied_only`.
+    /// -> (the steps when it reached `goal`, whether `depth` stopped it with definitions left)
+    #[allow(clippy::type_complexity)]
+    fn walk(
+        &mut self,
+        start: &Hit,
+        goal: &Hit,
+        depth: usize,
+        tied_only: bool,
+        langs: &Langs,
+        known: &mut HashMap<i64, Vec<(String, Vec<ChunkRow>, bool)>>,
+    ) -> Result<(Option<Vec<Step>>, bool)> {
+        let s = self.s;
+        // each definition reached, and the call that reached it first
+        let mut came: HashMap<i64, Option<(i64, Step)>> = HashMap::from([(start.id, None)]);
+        let (mut level, mut taken, mut found) = (vec![start.clone()], 0, start.id == goal.id);
+        while !found && !level.is_empty() && taken < depth {
+            taken += 1;
+            let mut next = Vec::new();
+            for d in &level {
+                if s.cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    anyhow::bail!("cancelled");
+                }
+                if let std::collections::hash_map::Entry::Vacant(e) = known.entry(d.id) {
+                    e.insert(self.calls(d, langs)?);
+                }
+                let mut edges = Vec::new();
+                for (n, picked, tied) in &known[&d.id] {
+                    for r in picked.iter().filter(|r| (*tied || !tied_only) && !came.contains_key(&r.id)) {
+                        edges.push((self.call_line(&d.path, (d.start, d.end), n, r.id), r.clone(), *tied));
+                    }
+                }
+                edges.sort_by(|a, b| (a.0, &a.1.path, a.1.start).cmp(&(b.0, &b.1.path, b.1.start)));
+                for (line, r, tied) in edges {
+                    if came.contains_key(&r.id) {
+                        continue;
+                    }
+                    let to = Hit::from_row(&r, false);
+                    found |= r.id == goal.id;
+                    came.insert(r.id, Some((d.id, Step { path: d.path.clone(), line, to: to.clone(), tied })));
+                    next.push(to);
+                }
+                if found {
+                    break;
+                }
+            }
+            next.sort_by(|a, b| (&a.path, a.start, a.end).cmp(&(&b.path, b.start, b.end)));
+            level = next;
+        }
+        if !found {
+            return Ok((None, taken == depth && !level.is_empty()));
+        }
+        let mut steps = Vec::new();
+        let mut at = goal.id;
+        while let Some(Some((parent, step))) = came.get(&at) {
+            steps.push(step.clone());
+            at = *parent;
+        }
+        steps.reverse();
+        Ok((Some(steps), false))
+    }
+
+    /// The first line in `lines` of `path` where `name` is called and the resolver ties the call to
+    /// definition `id`, else the first where `name` is called (a pick the resolver could not tie).
+    fn call_line(&mut self, path: &str, (start, end): (i64, i64), name: &str, id: i64) -> i64 {
+        let fi = self.rv.file(path);
+        let ident = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+        let mut first = None;
+        let first_line = start.max(1);
+        for (i, line) in fi.src.lines().enumerate().skip(first_line as usize - 1).take((end - first_line + 1).max(0) as usize) {
+            let n = i as i64 + 1;
+            for (col, _) in line.match_indices(name) {
+                if ident(line[..col].chars().next_back()) || ident(line[col + name.len()..].chars().next()) {
+                    continue;
+                }
+                match self.rv.resolve_at(path, n as u64, col, name) {
+                    Ok((_, "definition")) => continue,
+                    Ok((got, why)) if got == id || (why == "overload" && self.rv.overloads(got).contains(&id)) => return n,
+                    _ => {}
+                }
+                first.get_or_insert(n);
+            }
+        }
+        first.unwrap_or(start)
+    }
+
+    /// The weighted edges between `files` (sorted) that the index's names give, without resolving
+    /// a call site: a call of a name goes to every other file of the caller's language family
+    /// that defines it, its weight split among them, unless the caller's own file defines it; an
+    /// import goes to the file its module path maps onto. -> (from, to, weight) by index into `files`
+    pub fn file_edges(&mut self, files: &[String]) -> Result<Vec<(usize, usize, f64)>> {
+        let s = self.s;
+        let langs = Langs { root: &s.ix.root, seen: Default::default() };
+        let at = |p: &str| files.binary_search_by(|f| f.as_str().cmp(p)).ok();
+        let kinds: Vec<&str> = crate::search::CODE_KINDS.iter().copied().chain(["macro"]).collect();
+        let mut definers: HashMap<String, Vec<usize>> = HashMap::new();
+        for (name, path) in s.ix.definers(&kinds)? {
+            if let Some(i) = at(&path) {
+                definers.entry(name).or_default().push(i);
+            }
+        }
+        let fam: Vec<Option<&str>> = files.iter().map(|f| langs.id(f).map(family)).collect();
+        let same = |a: usize, b: usize| fam[a].is_none() || fam[b].is_none() || fam[a] == fam[b];
+        // by file, the files it calls into and imports, with their weights
+        let mut out: Vec<HashMap<usize, f64>> = vec![HashMap::new(); files.len()];
+        // rows come by path and name: the calls of one name from one file are counted together
+        let calls = s.ix.call_edges()?;
+        for run in calls.chunk_by(|a, b| a == b) {
+            let (path, callee) = &run[0];
+            let (Some(from), Some(defs)) = (at(path), definers.get(callee)) else { continue };
+            if defs.contains(&from) {
+                continue;
+            }
+            let to: Vec<usize> = defs.iter().copied().filter(|&t| same(from, t)).collect();
+            for &t in &to {
+                *out[from].entry(t).or_default() += run.len() as f64 / to.len() as f64;
+            }
+        }
+        // a module is mapped once per directory it is imported from
+        let mut mapped: HashMap<(String, String), Option<usize>> = HashMap::new();
+        for (path, _, module) in s.ix.imports()? {
+            let Some(from) = at(&path) else { continue };
+            let dir = path.rsplit_once('/').map_or("", |(d, _)| d).to_string();
+            let to =
+                *mapped.entry((module, dir)).or_insert_with_key(|(module, _)| module_file(module, &path, self.rv.files(), &s.ix.root).and_then(|f| at(&f)));
+            if let Some(to) = to.filter(|&t| t != from) {
+                *out[from].entry(to).or_default() += 1.0;
+            }
+        }
+        let mut edges = Vec::new();
+        for (from, to) in out.into_iter().enumerate() {
+            let mut to: Vec<(usize, f64)> = to.into_iter().collect();
+            to.sort_by_key(|e| e.0);
+            edges.extend(to.into_iter().map(|(t, w)| (from, t, w)));
+        }
+        Ok(edges)
     }
 
     /// Modules a file imports, resolved to repository files where the module path maps onto one.
@@ -443,6 +610,44 @@ impl<'a> Names<'a> {
             out.dedup();
         }
         Ok((out, unsure))
+    }
+}
+
+/// A chain of calls between two definitions; `found` false: none within `depth` calls, and
+/// `stopped`: the search stopped there with definitions left to follow.
+#[derive(Clone, Debug)]
+pub struct CallPath {
+    pub from: Hit,
+    pub to: Hit,
+    pub steps: Vec<Step>,
+    pub found: bool,
+    pub depth: usize,
+    pub stopped: bool,
+}
+
+/// One call of a chain: the call site, the definition it reaches, and whether the resolver tied
+/// the call to it (else it is one of the likeliest definitions of the name, as `callees` lists).
+#[derive(Clone, Debug)]
+pub struct Step {
+    pub path: String,
+    pub line: i64,
+    pub to: Hit,
+    pub tied: bool,
+}
+
+/// The one definition `name` (a name or a location) stands for; several are an error that lists them.
+fn one_definition(s: &Searcher, name: &str) -> Result<Hit> {
+    const SHOWN: usize = 20;
+    let mut found = crate::ops::targets(s, name, SHOWN + 1, false)?;
+    match found.len() {
+        0 => anyhow::bail!("no definition of {}", crate::fmt::echo(name)),
+        1 => Ok(found.remove(0)),
+        n => {
+            let count = if n > SHOWN { format!("more than {SHOWN}") } else { n.to_string() };
+            found.truncate(SHOWN);
+            let listed = crate::fmt::hit_blocks(&found, &[], false, false).join("\n  ");
+            anyhow::bail!("{} names {count} definitions: pass one as a location (path:line)\n  {listed}", crate::fmt::echo(name))
+        }
     }
 }
 

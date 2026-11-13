@@ -12,7 +12,7 @@
 `scrutate serve` speaks the Model Context Protocol over stdio (JSON-RPC 2.0): the handshake
 revisions 2024-11-05 / 2025-03-26 / 2025-06-18 / 2025-11-25, and revision 2026-07-28, which has
 no handshake (`server/discover`, a protocol version in every request's `_meta`). Tools: `search_code`, `grep_code`,
-`find_symbol`, `callers`, `callees`, `read_code`, `outline`, `dependencies`, `dependents`,
+`find_symbol`, `callers`, `callees`, `call_path`, `repo_map`, `read_code`, `outline`, `dependencies`, `dependents`,
 `references`, `similar_code`, `duplicates`, `structural_search`, `impact`, `find_files`, `reindex`. The index refreshes
 itself before a call: by default the wait between scans is at most a second, shorter when a scan
 is cheap; with `--refresh-interval S`, no scan comes sooner than S seconds after the last one.

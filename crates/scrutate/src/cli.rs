@@ -538,6 +538,24 @@ pub enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// the shortest chain of calls from one function to another (names, `Class.method` or `path:line`)
+    #[command(name = "path")]
+    CallPath {
+        from: String,
+        to: String,
+        /// follow at most this many calls
+        #[arg(long, default_value_t = crate::ops::PATH_DEPTH)]
+        depth: usize,
+        #[arg(long)]
+        json: bool,
+    },
+    /// the files ranked by how the others call and import them, each with its top definitions
+    Map {
+        /// keep the files under this directory
+        path: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// modules/files a file imports (Engine B)
     Deps {
         file: String,
@@ -977,6 +995,7 @@ fn named_file(cmd: &Cmd) -> Option<&str> {
     match cmd {
         Cmd::Symbol { name, .. } | Cmd::Callers { name, .. } | Cmd::Callees { name, .. } => loc(name),
         Cmd::Similar { target, .. } => loc(target),
+        Cmd::CallPath { from, to, .. } => loc(from).or(loc(to)),
         Cmd::Deps { file, .. } | Cmd::Outline { file, .. } => Some(file),
         Cmd::Rdeps { target, .. } => Some(target),
         Cmd::Refs { def: Some(d), .. } => loc(d).or(Some(d)),
@@ -1406,6 +1425,10 @@ pub fn run() -> Result<i32> {
         Cmd::Symbol { name, limit, json } => run_op(&cli.root, Op::Symbol { name: here.location(&name), limit }, json, page, outside.as_deref()),
         Cmd::Callers { name, limit, json } => run_op(&cli.root, Op::Callers { name: here.location(&name), limit }, json, page, outside.as_deref()),
         Cmd::Callees { name, limit, json } => run_op(&cli.root, Op::Callees { name: here.location(&name), limit }, json, page, outside.as_deref()),
+        Cmd::CallPath { from, to, depth, json } => {
+            run_op(&cli.root, Op::Path { from: here.location(&from), to: here.location(&to), depth }, json, page, outside.as_deref())
+        }
+        Cmd::Map { path, json } => run_op(&cli.root, Op::Map { path: path.map(|p| here.path(&p)) }, json, page, outside.as_deref()),
         Cmd::Deps { file, json } => run_op(&cli.root, Op::Deps { path: here.path(&file) }, json, page, outside.as_deref()),
         Cmd::Rdeps { target, json } => run_op(&cli.root, Op::Rdeps { target: here.path(&target) }, json, page, outside.as_deref()),
         Cmd::Outline { file, json } => run_op(&cli.root, Op::Outline { path: here.path(&file) }, json, page, outside.as_deref()),

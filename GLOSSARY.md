@@ -68,6 +68,16 @@ version, the executable, the root and the `stat` of every file the resolver read
 the same request uses them only while all of that is the same, so it gives the answer the stored
 run gave; anything else resolves again.
 
+**Repo map**: the files that define code, ranked by PageRank over the edges between files
+(`repomap.rs`, `scrutate map`, the MCP tool `repo_map`). The edges come from the index's names
+without resolving a call site (`Names::file_edges`): a call goes to the other files of its
+language family that define the name, an import to the file its module maps onto. Each file
+lists its most called definitions.
+
+**Call path**: the shortest chain of calls from one definition to another (`Names::path`,
+`scrutate path`, the MCP tool `call_path`), found breadth first over the calls `callees` resolves,
+each step a call site and the definition it reaches.
+
 **Walker**: the part of the resolver every language shares (`resolve/mod.rs`): scopes from the
 definitions of the index, the lookup memo, the depth guards and the order of the steps that
 decide what a name refers to.
