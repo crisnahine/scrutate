@@ -93,6 +93,9 @@ incompatible index by itself, and that is never breaking.
   ([Quality](docs/QUALITY.md#agent-eval)).
 
 ### Changed
+- The `scrutate` crate is ready for crates.io: it holds its models and data and nothing else
+  (7.5 MiB compressed), and `cargo publish --dry-run -p scrutate-ignore -p scrutate` verifies both
+  crates; publishing waits for the release ([INSTALL](docs/INSTALL.md)).
 - The bundled semantic model stores its word tables as int8 with one scale per row: 7.6 MB in
   place of 14.6 MB, the binary is that much smaller, and ranking quality holds (MRR@10 0.5873 to
   0.5874). Its revision is 2, so an index makes its vectors again on the next update; a model

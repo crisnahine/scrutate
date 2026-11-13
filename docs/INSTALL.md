@@ -170,7 +170,7 @@ The release workflow also uploads the wheels to PyPI and the extension to the VS
 Marketplace and Open VSX once each is set up ([Releasing](RELEASING.md#7-what-a-published-release-adds)).
 Then `pip install scrutate` (update `pip install -U scrutate`) and
 `code --install-extension scrutate.scrutate` work; the extension runs the `scrutate` binary, which
-is installed separately. `cargo install
-scrutate` from crates.io is not possible yet: the bundled models are too large for crates.io, and
-the build needs the patched `ignore` crate in `vendor/`. From a checkout,
+is installed separately. Once the release is on crates.io, `cargo install scrutate --locked`
+builds it from source with Rust 1.91 or newer and a C compiler (SQLite and the grammars are C); it
+brings the walker it needs as the crate `scrutate-ignore`. From a checkout,
 `cargo install --path crates/scrutate --locked` works.

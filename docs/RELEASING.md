@@ -24,6 +24,7 @@ test results and artifacts all name one binary by its SHA-256.
 | Where | Holds | `python3 tools/check_version.py 0.1.0` checks it |
 |---|---|---|
 | `crates/scrutate/Cargo.toml`, `crates/scrutate-py/Cargo.toml` | version | yes |
+| `vendor/ignore/Cargo.toml` and the `ignore` line of `crates/scrutate/Cargo.toml` | the version of `scrutate-ignore`, kept apart from scrutate's: raise it when `vendor/ignore` changed since it was last published, since crates.io never takes a version twice | no |
 | `Cargo.lock` (both packages) | version | no |
 | `integrations/vscode/package.json` and its lock file | version | yes |
 | `integrations/gitlab/.gitlab-ci.yml`, `integrations/bitbucket/bitbucket-pipelines.yml` | version | yes |
@@ -319,6 +320,21 @@ release without them still succeeds:
 | `pypi` | `PYPI_PUBLISH` is `true`, on a tag only, after `testpypi` | the same on PyPI with environment `pypi` |
 | `marketplace` | the variable `VSCE_PUBLISH` is `true`, on a tag | a Microsoft account, the Marketplace publisher `scrutate`, and on it a Trusted Publishing policy: owner `scrutate`, repository `scrutate`, workflow `release.yml`, environment `marketplace`. `vsce publish --oidc` exchanges the job's OIDC token; Azure DevOps global PATs retire on 2026-12-01 |
 | `openvsx` | on a tag; it skips its steps unless the `openvsx` environment has the secret `OVSX_PAT` | an Eclipse account with the Publisher Agreement signed, an Open VSX access token, and the namespace (`npx ovsx create-namespace scrutate -p TOKEN`) |
+
+crates.io is published by hand, after the release job, with the owner's account (an API token from
+crates.io, scope `publish-new` the first time and `publish-update` after, in `cargo login`):
+
+```sh
+git checkout v0.1.0
+cargo publish --dry-run -p scrutate-ignore -p scrutate   # both verify, scrutate against scrutate-ignore
+cargo publish -p scrutate-ignore -p scrutate
+```
+
+Cargo uploads `scrutate-ignore` first, waits until crates.io serves it, then uploads `scrutate`.
+The two uploads are not one step: if the run stops after `scrutate-ignore` is up, run
+`cargo publish -p scrutate` alone. A version that is up cannot be uploaded again (`cargo yank`
+only hides it), so a failed `scrutate` upload is fixed and retried under the same version, and a
+second `scrutate-ignore` upload needs a new version.
 
 The PyPI uploads use trusted publishing (`pypa/gh-action-pypi-publish` v1.14.3, which also makes
 PEP 740 attestations); TestPyPI skips a file it already has, since a dry run sends the version

@@ -74,11 +74,9 @@ docs/RELEASING.md, public (done), tag `v0.1.0`.
   installed and tested in CI on all six runners (`ci.yml`, run 43408907893).
 - The packages: tap, bucket and winget pull requests with the release checksums (steps in
   packaging/README.md).
-- `cargo install scrutate`: crates.io refuses crates over 10 MB, and the semantic model is 14.6 MB,
-  so it needs a smaller model (next: int8 weights, which would halve it, checked as QUALITY.md
-  does) or a download on first use. A
-  published crate also cannot carry the `[patch]` for `vendor/ignore`: its eleven changes must first
-  go upstream or out as a fork.
+- `cargo install scrutate` from crates.io: both crates pass `cargo publish --dry-run`
+  (`scrutate-ignore`, then `scrutate` at 7.5 MiB of the 10 MB limit, with the int8 model); the
+  upload needs the owner's crates.io account at the release ([Releasing](RELEASING.md#7-what-a-published-release-adds)).
 - A comment on GitLab merge requests (R-12.12; on GitHub the Action's `comment: true` posts
   `scrutate review` on a pull request, and the GitLab template saves it as a Code Quality report),
   and weekly benchmark runs for the dashboard (R-4.5).

@@ -6,6 +6,11 @@ rust-version.workspace = true
 repository.workspace = true
 description = "Scrutate: universal instant code search (Engine A) and a persistent code-intelligence index with learned ranking (Engine B), one CLI and MCP server"
 license.workspace = true
+readme = "../../README.md"
+keywords = ["search", "grep", "code-search", "mcp", "index"]
+categories = ["command-line-utilities", "development-tools"]
+# what the build needs; the tests read sample trees that stay in the repository
+include = ["/src/**/*.rs", "/data/*", "/models/*.npz", "/build.rs", "/startup.order", "/LICENSE-APACHE", "/LICENSE-MIT"]
 
 [[bin]]
 name = "scrutate"

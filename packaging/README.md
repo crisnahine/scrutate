@@ -44,16 +44,14 @@ clean `debian:bookworm-slim` (`test-deb-debian-bookworm.log`) and a clean `fedor
 uninstall, binary gone. The RPM is unsigned and Fedora 45 refuses unsigned packages by default, so
 the test uses `rpm -i --nosignature`. x86_64 packages were not built.
 
-**crates.io** (`cargo-package.log`): `cargo package -p scrutate --list` lists 112 files and the
-`.crate` is 164 KB, but the verify build fails: `src/models.rs` embeds `models/semantic.npz` and
-`models/ranker.npz` from the workspace root with `include_bytes!`, outside the package. Moving them
-into the crate is not enough: `semantic.npz` is 14.6 MB, still 13.3 MB after gzip, over the 10 MB
-crates.io limit. Options: shrink the model (f16 or int8 weights, say) or download it on first
-use. Second blocker: the build needs the workspace's
-`[patch.crates-io] ignore = { path = "vendor/ignore" }`, and Cargo reads `[patch]` only from the
-workspace root, so a crate from crates.io would build against upstream `ignore`, which lacks the
-changes `instant.rs` calls (`grow_threads`). The fork would first have to be published under its
-own name. Nothing was published.
+**crates.io**: `cargo publish --dry-run -p scrutate-ignore -p scrutate` packages and verifies both
+crates, the second against the first through Cargo's temporary local registry. `scrutate-ignore`
+(`vendor/ignore`, a modified copy of `ignore`) is 22 files, 83 KiB compressed; `scrutate` is 66
+files, 7.5 MiB compressed, of which the int8 semantic model is most (crates.io refuses over 10 MB).
+The `scrutate` package holds `src/`, `data/`, `models/`, `build.rs`, `startup.order`, the README and
+the two licence files; its tests and their sample trees stay in the repository, so Cargo says it
+ignores each test target. The earlier log `cargo-package.log` is from before the models moved into
+the crate and before the walker had its own name. Nothing was published.
 
 ## At release time
 
@@ -82,8 +80,8 @@ own name. Nothing was published.
    built and tested, and attaches the four packages to the release, listed in `SHA256SUMS` and
    attested. The RPM is unsigned, so INSTALL.md installs it with `rpm -i --nosignature`; signing
    it (`rpmsign --addsign` in the release job) needs a GPG key held as an environment secret.
-6. crates.io: not possible (see above) until the models are smaller or fetched separately and the
-   `ignore` fork is published.
+6. crates.io: `cargo publish -p scrutate-ignore -p scrutate` with the owner's crates.io token, after
+   the tag ([Releasing](../docs/RELEASING.md#7-what-a-published-release-adds)).
 
 The zero hashes in the Homebrew, Scoop and winget files are placeholders that fail any install
 until replaced. Then `validate_manifests.py` without `--draft` must pass.
