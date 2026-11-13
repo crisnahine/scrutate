@@ -118,7 +118,7 @@ impl Stored {
         let path = dir.join(format!("{}.bin", hex(&crate::tscache::hash(&[kind.as_bytes(), name.as_bytes()]))));
         // without a database identity or a data version nothing is known to be the same
         let known = version.is_some() && !db.is_empty();
-        let old = known.then(|| std::fs::read(&path).ok()).flatten().and_then(|b| decode(&b, &header, limit).ok()).unwrap_or_default();
+        let old = known.then(|| crate::files::read_regular(&path, MAX_BYTES)).flatten().and_then(|b| decode(&b, &header, limit).ok()).unwrap_or_default();
         Stored { dir, path, header, version: version.filter(|_| known), old, new: HashMap::new(), strayed: false }
     }
 

@@ -774,6 +774,9 @@ First release.
   `GrepIter.stats()["notes"]`.
 
 ### Product
+- The `tsquery` cache and the kept answers are read only as regular files within their size limit,
+  never through a symbolic link, so a cache file planted in a repository's `.scrutate/` cannot
+  make a read endless.
 - `scrutate --root DIR grep ...` (an option every command takes, before `grep`) reads grep's own
   arguments: its byte limit is `--max-bytes` or `SCRUTATE_GREP_MAX_BYTES` and its help is grep's;
   the help showed the index commands' `SCRUTATE_MAX_BYTES` in that order. CI builds every fuzz

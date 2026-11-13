@@ -67,7 +67,7 @@ impl Cache {
             header.extend(s.as_bytes());
         }
         let path = dir.join(format!("{}.bin", hex(&hash(&[&header]))));
-        let entries = std::fs::read(&path).ok().and_then(|b| decode(&b, &header).ok()).unwrap_or_default();
+        let entries = crate::files::read_regular(&path, MAX_BYTES).and_then(|b| decode(&b, &header).ok()).unwrap_or_default();
         Cache { dir, path, header, entries }
     }
 

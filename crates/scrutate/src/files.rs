@@ -64,6 +64,23 @@ pub fn main_checkout(root: &Path) -> Option<PathBuf> {
     (is_dir && main != std::fs::canonicalize(root).ok()?).then_some(main)
 }
 
+/// The bytes of `path` when it is a regular file of at most `max` bytes, not reached through a
+/// symbolic link: a cache file planted in a repository's `.scrutate/` cannot make a read endless.
+pub fn read_regular(path: &Path, max: u64) -> Option<Vec<u8>> {
+    use std::io::Read;
+    if !std::fs::symlink_metadata(path).ok()?.is_file() {
+        return None;
+    }
+    let f = std::fs::File::open(path).ok()?;
+    let md = f.metadata().ok()?;
+    if !md.is_file() || md.len() > max {
+        return None;
+    }
+    let mut out = Vec::with_capacity(md.len() as usize);
+    f.take(max + 1).read_to_end(&mut out).ok()?;
+    (out.len() as u64 <= max).then_some(out)
+}
+
 /// The first line of a regular file of at most 4 KiB, trimmed.
 fn small_file(path: &Path) -> Option<String> {
     let md = std::fs::symlink_metadata(path).ok()?;
@@ -338,6 +355,26 @@ impl Membership {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_cache_file_is_read_only_as_a_regular_file_within_its_limit() {
+        let d = std::env::temp_dir().join(format!("scrutate_read_regular_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("small"), b"12345").unwrap();
+        assert_eq!(read_regular(&d.join("small"), 5).as_deref(), Some(&b"12345"[..]));
+        assert_eq!(read_regular(&d.join("small"), 4), None, "over the limit");
+        assert_eq!(read_regular(&d, 100), None, "a directory");
+        assert_eq!(read_regular(&d.join("missing"), 100), None);
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(d.join("small"), d.join("link")).unwrap();
+            assert_eq!(read_regular(&d.join("link"), 100), None, "a symbolic link");
+            std::os::unix::fs::symlink("/dev/zero", d.join("zero")).unwrap();
+            assert_eq!(read_regular(&d.join("zero"), 100), None, "a device behind a link");
+        }
+        let _ = std::fs::remove_dir_all(&d);
+    }
     use super::*;
 
     /// A tree under the temporary directory; a name ending in `/` is a directory.
