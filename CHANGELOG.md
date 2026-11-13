@@ -65,6 +65,10 @@ incompatible index by itself, and that is never breaking.
   and the text index updates without its lock, which wasi does not have. The vendored `ignore`
   gains two changes for it, eleven in all. A CI job checks the build
   ([ARCHITECTURE](docs/ARCHITECTURE.md)). Native builds are unchanged.
+- INSTALL.md's attestation check pins the release workflow and the tag
+  (`--signer-workflow`, `--source-ref`): with `--owner` alone any workflow of the organization
+  passed. It says what "signed" means and how to run the binaries, which carry no Apple or
+  Windows code signature ([Install](docs/INSTALL.md#unsigned-binaries-on-macos-and-windows)).
 - PCRE2 is the `pcre2` cargo feature, on by default; a build without it refuses `-P`
   ([CLI](docs/CLI.md)).
 - The repository is now github.com/scrutate/scrutate, under the `scrutate` organization; the old

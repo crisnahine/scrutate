@@ -187,3 +187,7 @@ docs/RELEASING.md, public (done), tag `v0.1.0`.
   runners and the five Unix-only tests): no release archive is built for them, installed on a
   machine or benchmarked there.
 - No benchmark has run on x86_64 Linux or on dedicated idle hardware (R-14.11 above).
+- The release binaries carry no platform code signature: no Apple notarization, no Windows
+  Authenticode. The integrity check is the Sigstore attestation and `SHA256SUMS`;
+  [Install](INSTALL.md#unsigned-binaries-on-macos-and-windows) has the Gatekeeper and SmartScreen
+  workarounds. Next: apply to SignPath Foundation (free for open source) after 0.1.0.
