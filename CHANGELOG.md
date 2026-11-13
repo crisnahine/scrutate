@@ -275,193 +275,194 @@ First release.
 ### Engine B: code intelligence
 - `scrutate map [PATH]` and the MCP tool `repo_map`: the files that define code, ranked by
   PageRank over the calls and imports between files that the index's names give, each with its 5
-  most called definitions, the same bytes on every run of one index and cut at whole files to
+  most called definitions, the same bytes every run of one index, cut at whole files to
   `--max-bytes`. `scrutate path FROM TO [--depth N]` and the MCP tool `call_path`: the shortest
-  chain of calls between two definitions over the calls `callees` resolves, each step a call site
-  and the definition it reaches; no chain exits 1, and a name with several definitions lists them.
+  call chain between two definitions over the calls `callees` resolves, each step a call site and
+  the definition it reaches; no chain exits 1, and a name with several definitions lists them.
 - `scrutate dead [PATH]` and the MCP tool `dead_code` list the functions, methods, classes and
-  types nothing in the repository uses: no line outside one names it, in any file. Entry points of
-  each language are left out (`main`, tests, Rust `pub` items of a library crate and trait impls,
-  `#[no_mangle]` and other registering attributes and decorators, Python `__all__` and `__x__`
-  names, JavaScript and TypeScript exports, Go `init` and exported names of a library package,
-  Java and C# public members). A definition whose name some line holds that the resolver ties to
-  nothing (a string such as `getattr(obj, "name")`, a comment, a use it cannot place) is listed as
-  undecided, with the reason.
+  types nothing in the repository uses: no line outside one names it, in any file. Each
+  language's entry points are left out (`main`, tests, Rust `pub` items of a library crate and
+  trait impls, `#[no_mangle]` and other registering attributes and decorators, Python `__all__`
+  and `__x__` names, JavaScript and TypeScript exports, Go `init` and exported names of a library
+  package, Java and C# public members). A definition whose name some line holds that the resolver
+  ties to nothing (a string such as `getattr(obj, "name")`, a comment, a use it cannot place) is
+  listed as undecided, with the reason.
 - GDScript (`.gd`) has a grammar in the default build (`tree-sitter-gdscript` 6.1.0, MIT, 0.27 MB
   of the binary): functions, `class_name` and inner classes, signals (kind `signal`), named enums,
   `const` (kind `constant`) and `var` (kind `key`) at file level or in an inner class body are
-  definitions, a `##` comment above a definition is its documentation, and the comment block
-  below a `class_name` and its `extends` line documents the class. A file that declares
+  definitions; a `##` comment above a definition is its documentation, and the comment block
+  below a `class_name` and its `extends` line documents the class. A file declaring
   `class_name Player` is that class: its top-level definitions are its members (`Player.move`, a
   method, still found by `symbol move`), each its own chunk. Calls (`f()`, `obj.f()`,
   `super.f()`) are recorded for `callers` and `callees`; `refs` says it does not resolve the
   language. `grep --type gdscript` searches `.gd` files.
 - `scrutate impact [--base REV] [--staged] [--depth N]` and the MCP tool `impact`: from the git
-  diff (the working tree and untracked files against `HEAD` by default, another revision,
+  diff (by default the working tree and untracked files against `HEAD`; or another revision,
   `main...` for a merge base, or the staged changes) to the definitions it adds, edits and
   deletes, their callers through the resolver with the distance of each (3 steps by default),
-  and the test files to run. The callers of a deleted definition are the definitions that still
-  call its name where no other definition answers the call, marked `(calls a deleted
-  definition)` (`calls_deleted` in JSON), and their callers and tests follow. Text and JSON in the envelope of the other index commands, paged by
-  `--max-bytes`; a directory outside git, a bad revision and a missing merge base are errors with
-  exit code 2, and a revision is never passed to git as an option.
-- `scrutate files QUERY [--limit N]` and the MCP tool `find_files`: the paths of the repository
-  ranked for a query that may be misspelt (`srch.rs` finds `search.rs`; a letter wrong, added or
-  left out, two letters swapped), an exact basename first, then basename matches before path
-  matches, then frecency, then shorter paths; no index needed, about 8 ms on this repository.
-  Frecency counts each file read through `read` and `read_code` (and a `files` query that is
-  exactly a path), halved every 7 days, in `$XDG_STATE_HOME/scrutate/frecency.json`.
-- Windows: a damaged index is built again while another handle holds its files (a session's
-  other readers, another process): the database that cannot be deleted is emptied where it is
-  and a segment directory that cannot be removed keeps its name. Before, the rebuild could go on
-  over the old database and fail on a segment it had deleted. `grep_code` and textual
-  references printed absolute paths for the files of a walk on Windows, where the root is a
-  verbatim path; they print paths from the root, as elsewhere.
+  and the test files to run. A deleted definition's callers are the definitions that still call
+  its name where no other definition answers the call, marked `(calls a deleted
+  definition)` (`calls_deleted` in JSON), and their callers and tests follow. Text and JSON in
+  the envelope of the other index commands, paged by `--max-bytes`; a directory outside git, a
+  bad revision and a missing merge base are errors with exit code 2, and a revision is never
+  passed to git as an option.
+- `scrutate files QUERY [--limit N]` and the MCP tool `find_files`: the repository's paths ranked
+  for a query that may be misspelt (`srch.rs` finds `search.rs`; a letter wrong, added or left
+  out, two letters swapped): an exact basename first, then basename before path matches, then
+  frecency, then shorter paths; no index needed, about 8 ms on this repository. Frecency counts
+  each file read through `read` and `read_code` (and a `files` query that is exactly a path),
+  halved every 7 days, in `$XDG_STATE_HOME/scrutate/frecency.json`.
+- Windows: a damaged index is rebuilt while another handle holds its files (a session's other
+  readers, another process): a database that cannot be deleted is emptied in place and a segment
+  directory that cannot be removed keeps its name. Before, the rebuild could go on over the old
+  database and fail on a segment it had deleted. `grep_code` and textual references print paths
+  from the root for a walk's files on Windows, where the root is a verbatim path; they printed
+  absolute paths.
 - A linked work tree no longer takes a segment of its main checkout that was removed, or half
-  removed, while it was copied: every copied segment must open before the copy is used, and
-  otherwise the index is built as usual. Seen once on a Linux runner, where an update reported
-  success over an index that named a segment it did not hold.
-- `callers` lists its callers by path and line after those outside tests, where it followed the
-  order the index had stored the files in: an index brought up to date through renames answered
-  63 of 120 `callers` questions on three trees differently from a fresh index of the same tree.
-  On a fresh index only the place of a window among its file's callers can move.
-- `callers` asks the resolver about every call site, where it asked about the 400 likeliest and
-  listed the rest as not checked, and `callers` and `callees` keep what they learned of each call
-  site under `.scrutate/answers/`, one file per request, with what the run read: the index
-  database and its data version, the executable, the root and the `stat` of every file the
-  resolver read. The same request again uses them while all of that is the same, and resolves
-  again after any change. `callers size` on Guava (1,970 call sites) costs 1.4 s of CPU on a first run and 0.43 s from what it kept, where the capped answer cost 0.6 s; the walker asks once per type and name whether the repository extends a type from outside with a method, where asking at every call
-  was a fifth of a first run. The bindings' callers list has no `unchecked` any more.
+  removed, during the copy: every copied segment must open before the copy is used, else the
+  index is built as usual. Seen once on a Linux runner, where an update reported success over an
+  index naming a segment it did not hold.
+- `callers` lists callers by path and line after those outside tests; it followed the order the
+  index stored the files in, so an index updated through renames answered 63 of 120 `callers`
+  questions on three trees differently from a fresh index of the same tree. On a fresh index
+  only a window's place among its file's callers can move.
+- `callers` asks the resolver about every call site (it asked about the 400 likeliest and listed
+  the rest as not checked), and `callers` and `callees` keep what they learned of each call site
+  under `.scrutate/answers/`, one file per request, with what the run read: the index database
+  and its data version, the executable, the root and the `stat` of every file the resolver read.
+  The same request reuses them while all of that is unchanged, and resolves again after any
+  change. `callers size` on Guava (1,970 call sites) costs 1.4 s of CPU on a first run and
+  0.43 s from what it kept (the capped answer cost 0.6 s); the walker asks once per type and name
+  whether the repository extends an outside type with a method, where asking at every call was a
+  fifth of a first run. The bindings' callers list has no `unchecked` any more.
 - What parsing and tokenizing make of a file is an artifact, kept by the index under a key of the
-  file's content, its file name and the parsing rules (`artifacts.rs`); the `files` table names
-  each file's artifact, and one function (`artifacts::derive`) makes a path's rows and postings
-  from one, for a parsed file and a stored one alike, so both give the same index byte for byte.
-  An artifact holds the word counts the vectors are made from, so vectors for another model need
-  no parse (`SemanticModel::encode_counts`). The artifacts no file names are kept up to a quarter
-  of the database's size and collected by the update that dropped them. Schema 14: an older index
-  is built again once. The store adds 7.5% to `.scrutate/` on this repository and 9.5% on
-  Guava; a fresh build costs the same CPU here and 18% less on Guava, whose 1,329 copied files are
-  parsed once.
-- The `tsquery` cache names its files by the searched paths from the root, where it named them
-  by their absolute paths, so a copy of a tree with its `.scrutate/` answers from the cache the
-  first tree made. Caches made before are not found and are evicted as old.
-- A look for changes walks the tree once and takes one `stat` per file for both indexes, where
-  `index` walked twice. `grep_code` and `references`, textual and resolved, read the text index,
-  when there is one, for the files it holds as they are now, and read the other files directly,
-  with the same answer: each call makes a look of its own (one walk, one `stat` per file), so a
-  file written just before the call is found, also inside a server's refresh interval. A rare
-  word on 12,001 files: 405 ms of CPU for a walk and search, 90 ms for the tool; resolved `refs`
-  of a rare name on 12,000 files: 0.54 s, now 0.05 s.
+  file's content, file name and parsing rules (`artifacts.rs`); the `files` table names each
+  file's artifact, and one function (`artifacts::derive`) makes a path's rows and postings from
+  one, for a parsed file and a stored one alike, so both give the same index byte for byte. An
+  artifact holds the word counts the vectors are made from, so vectors for another model need no
+  parse (`SemanticModel::encode_counts`). Artifacts no file names are kept up to a quarter of the
+  database's size and collected by the update that dropped them. Schema 14: an older index is
+  rebuilt once. The store adds 7.5% to `.scrutate/` on this repository and 9.5% on Guava; a
+  fresh build costs the same CPU here and 18% less on Guava, whose 1,329 copied files are parsed
+  once.
+- The `tsquery` cache names its files by the searched paths from the root (it used absolute
+  paths), so a copy of a tree with its `.scrutate/` answers from the first tree's cache. Older
+  caches are not found and are evicted as old.
+- A look for changes walks the tree once with one `stat` per file for both indexes (`index`
+  walked twice). `grep_code` and `references`, textual and resolved, read the text index, when
+  there is one, for the files it holds as they are now, and the other files directly, with the
+  same answer: each call makes its own look (one walk, one `stat` per file), so a file written
+  just before the call is found, also inside a server's refresh interval. A rare word on
+  12,001 files: 405 ms of CPU for a walk and search, 90 ms for the tool; resolved `refs` of a rare name
+  on 12,000 files: 0.54 s, now 0.05 s.
 - One session module (`session.rs`) holds a repository open for the MCP server, the language
   server, the Python bindings and `watch`: the first-build wait, the refresh interval, a cancel
-  flag per call, a panic kept inside its call, recovery, and reads side by side, each on a reader
-  of its own (`Repo::another`, a second SQLite connection on the open index, up to 8). The MCP
-  server no longer holds one lock for a whole call: eight `references` calls sent together no
-  longer wait in line. The language server opens no second index for its saves, rebuilds a
-  damaged index and answers instead of asking for a retry, and scans for changes before a request
-  at most once a second. The repositories of one session write one at a time under one lock, so a
-  rebuild after damage is made once.
-- The resolver is one walker and a rule set per language (`resolve/`): the steps every language
-  shares sit in `resolve/mod.rs`, and what Python, JavaScript and TypeScript, Rust, Go and Java
-  decide differently sits in one file each behind a `Rules` trait, moved without changing a rule.
+  flag per call, a panic kept inside its call, recovery, and side-by-side reads, each on its own
+  reader (`Repo::another`, a second SQLite connection on the open index, up to 8). The MCP server
+  no longer holds one lock for a whole call: eight `references` calls sent together no longer
+  queue. The language server opens no second index for its saves, rebuilds a damaged index and
+  answers instead of asking for a retry, and scans for changes before a request at most once a
+  second. A session's repositories write one at a time under one lock, so a rebuild after damage
+  happens once.
+- The resolver is one walker plus a rule set per language (`resolve/`): the steps every language
+  shares are in `resolve/mod.rs`, and what Python, JavaScript and TypeScript, Rust, Go and Java
+  decide differently is in one file each behind a `Rules` trait, moved without changing a rule.
   The walker tests a file's language in one `match`, so a language without a rule set does not
-  compile. A file's language comes from one function, `langs::detect`, which the parser, the
-  resolver and `names.rs` share. No answer changed.
+  compile. A file's language comes from one function, `langs::detect`, shared by the parser, the
+  resolver and `names.rs`. No answer changed.
 - `refs`, `callers`, `callees`, `deps`, `rdeps` and the language server resolve PHP, a sixth rule
   set (`resolve/php.rs`): `namespace` and `use` (aliased, grouped, `use function`), classes,
   traits and interfaces, `$x->m()` through the class of `$x` (`$this`, the latest assignment of
   `new C()` or of a call with a declared return type, a typed parameter, a typed property),
   `self::`, `static::`, `parent::` and `C::m()`, and the global function an unqualified call
-  falls back to. A `use` maps to the file of the class or function it names; `require` paths are
-  mapped as before. PHP occurrences no longer say `not resolved in this language`.
+  falls back to. A `use` maps to the file of the class or function it names; `require` paths map
+  as before. PHP occurrences no longer say `not resolved in this language`.
 - `search` and the ranked part of `find` use a running `serve` session too, under the same rules
   and with the same bytes, exit code and freshness as a fresh process for every option (about
   half the time or less). A `search` with `--also` another root does its own work. A command line
-  call that reaches a deep socket from its directory goes back by a descriptor of the directory
-  it left, and stops with an error if it cannot.
+  call that reaches a deep socket from its directory returns by a descriptor of the directory it
+  left, and stops with an error if it cannot.
 - The models are trained on rows the engine writes. `bench/gen_features.py` indexes each
   benchmark package with the binary and reads `batch --features`; `bench/train_semantic.py` reads
   the chunks, the tokens of each view and the query terms from a hidden `views` command.
   `bench/retrain_ranker.sh` and `bench/eval_sealed.sh` build the binary first. On six packages,
   one per language, both variants, the rows equal the reference's bit for bit (7,836 queries,
-  1,171,940 candidates), and so do the vector model's inputs.
+  1,171,940 candidates), as do the vector model's inputs.
 - The benchmark builders (`bench/make_bench.py`, `bench/make_bench_code.py`, `bench/quality.py
   --make`) and the ranker's trainer read the engine too: the hidden `views` command also takes a
-  file's text, prints its language and test flag, a name's subwords and the query stop list, and
-  `bench/gen_features.py` keeps each candidate's linear blend, which picks the ranker's
+  file's text and prints its language and test flag, a name's subwords and the query stop list,
+  and `bench/gen_features.py` keeps each candidate's linear blend, which picks the ranker's
   candidates. Before the reference engine was removed, the builders wrote the same files byte for
   byte on 13 packages of the six languages (1,877 files, 12,039 queries) and on the quality
   corpus, and the trainer handed LightGBM the same matrix (1,240,156 rows) and wrote the same
-  ranker. No answer of the engine changed.
+  ranker. No engine answer changed.
 - `batch --features` names the features: each line has `feature_names` (the order of every
-  candidate's `x`), and each candidate its `name` and `kind`, so a training script needs no second
-  list. In `search.rs` the candidate sources are a list and the features tables filled by name;
-  no feature, score or ranking changed (parity on the engine's source and on networkx).
-- The index keeps its tables to itself: the database handle is no longer public, and the other
-  modules ask `Index` what they need (the chunks of a file, of a name or at a line, the callers
-  of a name, a file's imports, whether a path has a row) instead of running SQL on its tables.
-  Answers, their order and the stored format are the same; a test that damages the index on
-  purpose does it through `Index::damage_for_tests`.
-- Go to definition in the language server names the definition the resolver ties the name under
-  the cursor to, as find references does: on `item.total()` after `item = Order()` with a class
-  `Item` in the same file it answered `Item.total`, and now `Order.total`. A name the resolver
+  candidate's `x`), and each candidate its `name` and `kind`, so a training script needs no
+  second list. In `search.rs` the candidate sources are a list and the feature tables are filled
+  by name; no feature, score or ranking changed (parity on the engine's source and on networkx).
+- The index keeps its tables to itself: the database handle is no longer public, and other
+  modules ask `Index` for what they need (the chunks of a file, of a name or at a line, the
+  callers of a name, a file's imports, whether a path has a row) instead of running SQL. Answers,
+  their order and the stored format are unchanged; a test that damages the index on purpose uses
+  `Index::damage_for_tests`.
+- The language server's go to definition names the definition the resolver ties the name under
+  the cursor to, as find references does: on `item.total()` after `item = Order()`, with a class
+  `Item` in the same file, it answered `Item.total` and now `Order.total`. A name the resolver
   cannot place is still looked up by name.
 - One module decides what a name refers to (`names.rs`): `callers`, `callees`, `refs`, `deps`,
   `rdeps`, the language server and the caller count ranking reads ask it, and no other module
-  builds a resolver. Answers are the same; a `callers` request reads each file once instead of
+  builds a resolver. Answers are unchanged; a `callers` request reads each file once instead of
   once per call site (450 call sites in one file: 33 ms CPU to 19 ms).
 - The vector model, the ranker and the feature list are one model set (`models.rs`), loaded on
   first use: `symbol` on this crate's index takes 6.8 ms CPU with the model, as without it
   (25.8 ms before), and a ranked search 20.5 ms (30.2 ms). The bundled model's signature is a
   constant a test checks, with the same value as before, so no process hashes the model.
-- A change of vector model makes the vectors anew instead of rebuilding the index: switching to
+- A change of vector model remakes the vectors without rebuilding the index: switching to
   `SCRUTATE_SEMANTIC=none` costs 22 ms CPU instead of 507 ms, and the index equals a fresh build
   with that model. Switching back makes the vectors from the word counts of each file's artifact
   and reads no source file: 1.39 s CPU instead of 3.47 s on this repository (a fresh build takes
-  4.12 s), 2.90 s instead of 8.34 s on Guava. An artifact a file names that the store does not
-  hold or that does not decode is damage at that switch, and the index is built again. A ranker
-  whose features differ from this version's makes `search` fail with what differs; before, it was
-  dropped without a word.
+  4.12 s), 2.90 s instead of 8.34 s on Guava. An artifact a file names that the store lacks or
+  that does not decode is damage at that switch, and the index is rebuilt. A ranker whose
+  features differ from this version's makes `search` fail saying what differs; before, it was
+  silently dropped.
 - Incremental index (SQLite + memory-mapped segments), content hashing, atomic updates,
   compaction, GC, corruption detection and self-healing rebuild, schema/model versioning,
   multi-process safety, `check` command.
-- 61 tree-sitter grammars in the default build, each verified by a snapshot sample; 13 more with
-  `--features extra-langs` (12 verified); keyword heuristics for grammar-less languages, windows for
+- 61 tree-sitter grammars in the default build and 13 more with `--features extra-langs`, each
+  verified by a snapshot sample (writing the optional ones' samples fixed the D, LLVM IR,
+  AutoHotkey, VHDL and OCaml rules); keyword heuristics for grammar-less languages, windows for
   everything else; imports and call edges.
 - Text index for repeated grep-style queries (`scrutate index --text`, `grep --index`): trigram
   postings over exactly the files Engine A's walk visits, trigram conditions derived from the
   pattern's syntax tree, candidates searched by Engine A's own matcher, so the output equals the
   walk's. Incremental (segments merge during updates) and safe for concurrent readers.
-- UTF-16 files with a byte-order mark are transcoded and indexed (previously skipped as binary).
+- UTF-16 files with a byte-order mark are transcoded and indexed (they were skipped as binary).
 - Text index format 2: each posting carries next-byte and position masks, so a literal's trigrams
   must line up in a file for it to be a candidate (the Linux tree: `kernel_thread` 1,781 candidate
-  files to 164; concurrent query throughput went from 4% behind Zoekt to 5% ahead). The index is
-  409 MB instead of 148 MB; format 1 indexes are rebuilt by the next update.
+  files to 164; concurrent query throughput from 4% behind Zoekt to 5% ahead). The index is
+  409 MB instead of 148 MB; the next update rebuilds a format 1 index.
 - Chunk line numbers follow grep's line counting (`\n` only); Python-style splitting had shifted
   them after form feeds (found by fuzzing). Index schema 12.
-- The 12 optional grammars (`--features extra-langs`) are verified by samples; writing them fixed
-  the D, LLVM IR, AutoHotkey, VHDL and OCaml rules.
 - Ranked search: field-weighted BM25 + exact lookup + semantic vectors (IVF) + LightGBM
   LambdaRank ranker; bit-identical with the Python reference implementation.
-- The Rust engine and the Python reference cluster a large index segment (20,000 chunks or
-  more) the same way, bit for bit, so their results are identical on a large repository too,
-  each engine on its own index (before, only when both read one index). `bench/parity.py`
-  compares the clusters, and `bench/parity_repos.sh` runs two large repositories more.
-- The ranker is trained with documented types as answers too (classes, structs, enums, traits,
+- The Rust engine and the Python reference cluster a large index segment (20,000 chunks or more)
+  the same way, bit for bit, so their results match on a large repository too, each engine on its
+  own index (before, only when both read one index). `bench/parity.py` compares the clusters, and
+  `bench/parity_repos.sh` runs two more large repositories.
+- The ranker is also trained with documented types as answers (classes, structs, enums, traits,
   interfaces, type aliases), so a type ranks for its own documentation and name as a function
   does; one more feature tells a name typed with its case (`BurstFiles`) from the same words in
   another case (`burst_files`), in either Unicode form, and a struct and its `impl` block are
   separate results. Every query weighs the same in the fit. `bench/retrain_ranker.sh` runs the
-  whole fit and refuses a ranker that falls below BM25 on a row of the held-out set or below
-  the ranker before it over all queries. On held-out code a type is found from its
-  documentation with MRR 0.478 (0.017 before), and functions lose 0.031 (docs/QUALITY.md). A
-  second hold-out that no choice has touched is kept for one evaluation of the ranker that
-  ships (`bench/eval_sealed.sh`).
+  whole fit and refuses a ranker that falls below BM25 on a row of the held-out set or below the
+  previous ranker over all queries. On held-out code a type is found from its documentation with
+  MRR 0.478 (0.017 before), and functions lose 0.031 (docs/QUALITY.md). A second hold-out no
+  choice has touched is kept for one evaluation of the ranker that ships (`bench/eval_sealed.sh`).
 - Ranked search reads every line of an indexed file. A chunk keeps at most 200 lines (40 for a
-  class or another container), and code outside the definitions of a file had no chunk once the
-  file held one definition; those lines are now in 50-line windows named after the definition or
-  file they are part of, and a definition with its windows is one result. A definition starts
-  at the attribute lines right above it (Rust `#[...]`, decorators and annotations), so
+  class or another container), and code outside a file's definitions had no chunk once the file
+  held one definition; those lines are now in 50-line windows named after the definition or file
+  they are part of, and a definition with its windows is one result. A definition starts at the
+  attribute lines right above it (Rust `#[...]`, decorators and annotations), so
   `#[get("/users")]` above a handler is found with it.
 - Lock files with an ordinary extension (`package-lock.json`, `npm-shrinkwrap.json`,
   `pnpm-lock.yaml`, `packages.lock.json`, `Package.resolved`, `.terraform.lock.hcl`, Gradle
@@ -469,8 +470,8 @@ First release.
 - Less memory in `grep`: `-j1` on a file of one very long line holds no more than the default
   mode (141 MB to 103 MB for a 100 MB line); `-j1` on large trees holds less (LLVM 9.4 to
   8.3 MB, binheavy 4.6 to 3.7, smallfiles 3.8 to 3.3) and is faster (the Linux tree 2.44 s to
-  2.36 s, py-big 132 ms to 126 ms); the default mode on one 740 MB file holds 6.1 MB where it
-  held 14.3 MB.
+  2.36 s, py-big 132 ms to 126 ms); the default mode on one 740 MB file holds 6.1 MB, down from
+  14.3 MB.
 - `refs`, `deps` and `rdeps`:
   - `rdeps` on a header no longer loads every including file, and `rdeps` of a module with
     thousands of importers stays near the size of one file (3.8 GB to 103 MB for 5,000
@@ -482,18 +483,18 @@ First release.
   - `refs` no longer overflows the stack or runs for minutes on a file nested hundreds of
     thousands of levels deep: a file past 2,000 levels is listed as nested too deeply to read,
     and `callers` keeps a call in it as a caller.
-  - The resolver no longer panics on an indexed file that now starts with a byte-order mark
-    and holds a NUL byte.
-  - `refs` through a typed variable takes linear time: 5,000 uses went from 23 to 32 s to
-    under 0.25 s.
-  - A Java class in front of a call (`Util.foo()`, `p.Util.foo()` with a one-part package of
-    the repository) is a use of the class, and a variable there is a local or a field: every
-    static call on a class was "not found".
+  - The resolver no longer panics on an indexed file that now starts with a byte-order mark and
+    holds a NUL byte.
+  - `refs` through a typed variable takes linear time: 5,000 uses went from 23 to 32 s to under
+    0.25 s.
+  - A Java class in front of a call (`Util.foo()`, `p.Util.foo()` with a one-part package of the
+    repository) is a use of the class, and a variable there is a local or a field: every static
+    call on a class was "not found".
   - Rust binaries, tests, examples, benches and `build.rs` are crate roots of their own, so
     `mod common;` in `tests/it.rs` finds `tests/common/mod.rs` and `crate::` in
     `src/bin/tool.rs` starts at that file.
-  - A variable's type comes from the declaration in scope at the use, no longer from one in a
-    block that has ended or from a closure's parameter.
+  - A variable's type comes from the declaration in scope at the use, no longer from one in an
+    ended block or from a closure's parameter.
   - A Java diamond of interfaces no longer takes exponential time (over 100 s to 0.04 s at 57
     interfaces).
   - A tsconfig `extends` written as a list is read.
@@ -502,26 +503,26 @@ First release.
     such as `class D(B, C)` calls `C.m` where it named `A.m`, and a chain of more than 3 classes
     no longer answers not found.
   - A variable used inside a closure, lambda, arrow function, nested function or Go func literal
-    has the type of its declaration in the functions around it, so `xs.map(x => p.norm())` is a
-    call of `Point.norm`; a Rust `fn` item still sees none of the locals around it. A name
-    bound inside the closure hides the outer one: a bare arrow parameter (`p => ...`), a
-    destructured name, a function's own name, a nested function or class, a Python
-    comprehension variable. So `xs.map(p => p.norm())` is not a call of the outer `p`'s
-    method. A Python method does not see the variables of its class body.
+    has the type of its declaration in the enclosing functions, so `xs.map(x => p.norm())` is a
+    call of `Point.norm`; a Rust `fn` item still sees none of the locals around it. A name bound
+    inside the closure hides the outer one: a bare arrow parameter (`p => ...`), a destructured
+    name, a function's own name, a nested function or class, a Python comprehension variable.
+    So `xs.map(p => p.norm())` is not a call of the outer `p`'s method. A Python method does not
+    see its class body's variables.
   - A Python base class from outside the repository keeps its place in the method resolution
     order: `class T(unittest.TestCase, Helper)` no longer calls `Helper.setUp` for
     `self.setUp()`, which stays undecided because `TestCase` may define it (`object` is not
     counted).
-  - tsconfig `paths` are read as TypeScript reads them: relative to the `baseUrl` the configs
-    end with after `extends`, inherited or not, else to the folder of the config that sets
-    `paths`. `${configDir}` at the start of a `paths` place or of `baseUrl` stands for the
-    folder of the config nearest the importing file, as TypeScript 5.5 reads it.
+  - tsconfig `paths` are read as TypeScript reads them: relative to the `baseUrl` the configs end
+    with after `extends`, inherited or not, else to the folder of the config that sets `paths`.
+    `${configDir}` at the start of a `paths` place or of `baseUrl` stands for the folder of the
+    config nearest the importing file, as TypeScript 5.5 reads it.
   - `refs` and `callers` stay fast in a function where many blocks bind the same name (2,000
     blocks: 11 to 13 s before, 0.14 s) and through a wide diamond of Python or TypeScript base
     classes.
-  - `refs` counts every use on a line, where it stopped at 64 without saying so;
-    `--max-results N` (MCP `max_results`) counts uses, not lines. `grep` with color or `--json`
-    lists every match on a line.
+  - `refs` counts every use on a line (it silently stopped at 64); `--max-results N` (MCP
+    `max_results`) counts uses, not lines. `grep` with color or `--json` lists every match on a
+    line.
   - `refs` in one large function, as in a bundle, takes linear time: 4,000 calls went from 28 s
     to 0.12 s.
   - A use on a line longer than 400 bytes shows the part of the line around it: 2,000 uses on
@@ -530,81 +531,80 @@ First release.
   a 300 MiB name took 1.27 GB and takes 5.6 MB.
 - Context output (`-A`, `-B`, `-C`) on several threads no longer runs one file's lines into
   another's without a `--`: a file's lines leave a group at a time.
-- A named pipe, `<(...)` or `/dev/stdin` given as a path is searched, as ripgrep does. A link
-  to a directory given as a path is walked without an `Is a directory` warning and error count.
+- A named pipe, `<(...)` or `/dev/stdin` given as a path is searched, as ripgrep does. A link to
+  a directory given as a path is walked without an `Is a directory` warning and error count.
 - `grep -z` finds the members after an old-GNU sparse member (`tar --sparse`) of a tar archive:
   every member after it was lost with a checksum warning.
 - A large file whose lines are too long for the line probes to see is streamed: 100 MB of 4 MB
   lines peaked at 103 MB and peak at 15 to 18 MB.
 - A case-insensitive search for a long literal no longer slows to seconds on lines that almost
   match it (10 MB of lines of 79 `=` against a pattern of 80: 1.2 s, now 0.01 s).
-- A large file of one line searched for a plain `-F` literal is read through small buffers in
-  two passes: on a 100 MB line peak memory falls from 103 MB to under 6 MB, and CPU time by a
-  third with output and by half with `-c`.
+- A large one-line file searched for a plain `-F` literal is read through small buffers in two
+  passes: on a 100 MB line peak memory falls from 103 MB to under 6 MB, and CPU time by a third
+  with output and by half with `-c`.
 - With `-e`, a first path that is not UTF-8 is searched as a path.
 - A home directory kept in git is no longer indexed from a folder below it when `HOME` is a
   symbolic link.
-- `--stats` and the JSON summary of a search stopped by `--max-results` count only the matches
-  that were printed.
+- `--stats` and the JSON summary of a search stopped by `--max-results` count only the printed
+  matches.
 - MCP tool calls no longer read a file outside the repository through a linked folder: a path a
-  call names, an answer cites or a watch event names is indexed only when it resolves inside
-  the root.
-- `serve` and `lsp` open the index another process built again (a rebuild after damage,
-  `index --force`) on their next call; before, they wrote into the deleted database and the two
-  processes rebuilt in turn. Two processes that meet an index of an older schema clear it once.
+  call names, an answer cites or a watch event names is indexed only when it resolves inside the
+  root.
+- `serve` and `lsp` open an index another process rebuilt (after damage, `index --force`) on
+  their next call; before, they wrote into the deleted database and the two processes rebuilt in
+  turn. Two processes that meet an index of an older schema clear it once.
 - A panic in the first index build no longer leaves `serve` answering "still building" for good:
   the failure is on stderr and in each tool call's answer, and `serve` exits when its input
   closes.
 - `index` keeps an update and exits 0 when the segment merge after it fails; the next update
   merges again.
-- The text index survives more: a file over 64 MB that is shortened while it is read no longer
-  ends the process (it was mapped; it is read in pieces now), a manifest cut short by a crash is
-  rebuilt by the next update, a liveness file left by an update that stopped early no longer
-  makes a file match twice, and many small updates no longer write a large index again (the
-  largest segment stays out of a merge that only the number of segments asks for). It sees an
-  edit that keeps a file's size and modification time (`cp -p`, `rsync -t`, `touch -r`); its
-  format is 3, and the next `index --text` or `grep --index --update` rebuilds an older one.
+- The text index survives more: a file over 64 MB shortened while read no longer ends the process
+  (it was mapped; it is read in pieces now), a manifest cut short by a crash is rebuilt by the
+  next update, a liveness file left by an update that stopped early no longer makes a file match
+  twice, and many small updates no longer rewrite a large index (the largest segment stays out of
+  a merge that only the segment count asks for). It sees an edit that keeps a file's size and
+  modification time (`cp -p`, `rsync -t`, `touch -r`); its format is 3, and the next
+  `index --text` or `grep --index --update` rebuilds an older one.
 - A full index build of a C, Go or Java tree no longer keeps every file's syntax tree in memory:
-  40 MB of C in 600 files took 2.1 GB and takes 0.56 GB. The cache counts the trees that
-  parses really keep, so C++ headers and files too large to parse take none of its budget, and
-  a tree too large for the room left gives that room back to smaller ones.
-- Haskell type synonyms, Puppet functions, LLVM named types and OCaml classes (the last two
-  with `extra-langs`) are definitions: their rules named grammar nodes that do not exist.
-- A file without a grammar whose definitions nest deeply is indexed in time linear in its size
-  (a 1 MB Perl file of 1,400 nested `sub` lines: 0.83 s of CPU, now 0.2 s). Nested PHP
-  `include` and `require` lines and declarations deep inside C or C++ `#if` blocks no longer
-  take time quadratic in the nesting depth (16,000 nested PHP includes: 20 s, now 0.06 s),
-  and neither does a chain of calls such as `a()()()` or `x.a().a()` (a 256 KB file of one
-  chain: 22 s, now 0.25 s). A C++ call is named for an operator only when at most three marks
-  follow `operator`, so `a.operator()()()` no longer stores names as long as the chain (a
-  16 KB file made 64 MB of names).
-- A damaged segment found while segments are merged rebuilds the index where the update ended
-  with an internal error; `serve --watch` and `watch` report an update that panics and keep
-  watching.
+  40 MB of C in 600 files took 2.1 GB and takes 0.56 GB. The cache counts the trees parses really
+  keep, so C++ headers and files too large to parse take none of its budget, and a tree too large
+  for the room left gives that room back to smaller ones.
+- Haskell type synonyms, Puppet functions, LLVM named types and OCaml classes (the last two with
+  `extra-langs`) are definitions: their rules named grammar nodes that do not exist.
+- A grammar-less file whose definitions nest deeply is indexed in time linear in its size (a 1 MB
+  Perl file of 1,400 nested `sub` lines: 0.83 s of CPU, now 0.2 s). Nested PHP `include` and
+  `require` lines and declarations deep inside C or C++ `#if` blocks no longer take time
+  quadratic in the nesting depth (16,000 nested PHP includes: 20 s, now 0.06 s), nor does a call
+  chain such as `a()()()` or `x.a().a()` (a 256 KB file of one chain: 22 s, now 0.25 s). A C++
+  call is named for an operator only when at most three marks follow `operator`, so
+  `a.operator()()()` no longer stores names as long as the chain (a 16 KB file made 64 MB of
+  names).
+- A damaged segment found during a segment merge rebuilds the index (the update ended with an
+  internal error); `serve --watch` and `watch` report an update that panics and keep watching.
 - The language server reads a document from disk only under the root; a document outside it is
   answered from the text the editor sent, or not at all.
-- A path in a tool call that leaves the repository by its own parts is refused before anything
-  is looked at; on Windows a share on another machine named in a call was connected to first.
-  An absolute path elsewhere (`/a.py`) no longer names the repository's file of the same
-  relative name in `outline`, `dependencies`, `dependents` and locations.
-  The language server reads no file behind a link that leaves the root, and on Windows it works
-  on a workspace on a share or in WSL (`file://wsl.localhost/...`). MCP `callees` says how many
-  outside names it left out past 50.
+- A path in a tool call that leaves the repository by its own parts is refused before anything is
+  looked at; on Windows a share on another machine named in a call was connected to first. An
+  absolute path elsewhere (`/a.py`) no longer names the repository's file of the same relative
+  name in `outline`, `dependencies`, `dependents` and locations. The language server reads no
+  file behind a link that leaves the root, and on Windows it works on a workspace on a share or
+  in WSL (`file://wsl.localhost/...`). MCP `callees` says how many outside names it left out
+  past 50.
 - `read_code` gives one answer for a path outside the repository whether or not a file is there,
-  and a definition read with `symbol` fails when its file cannot be read as text, as the read of
-  that file by `path` does. The Python bindings read a path spelling (`./pkg/a.py`) and a
-  location (`pkg/a.py:3-9`) as the MCP tools do in `symbol`, `outline`, `dependencies` and
-  `dependents`, and `read` has the same 1 MB cap and text check.
-- An index built by a newer scrutate is no longer rebuilt by an older one. It is read as it is
-  when only the parsing rules are newer, and refused with exit 2 and a clear message when its
-  schema, model or text format is newer; `scrutate index --force` rebuilds it with the version
-  at hand. A `serve` or `lsp` process that was running when the newer version took the index
-  over answers each request with that message until it is restarted.
+  and a definition read with `symbol` fails when its file cannot be read as text, as reading that
+  file by `path` does. The Python bindings read a path spelling (`./pkg/a.py`) and a location
+  (`pkg/a.py:3-9`) as the MCP tools do in `symbol`, `outline`, `dependencies` and `dependents`,
+  and `read` has the same 1 MB cap and text check.
+- An older scrutate no longer rebuilds an index a newer one built. It reads it as it is when only
+  the parsing rules are newer, and refuses it with exit 2 and a clear message when its schema,
+  model or text format is newer; `scrutate index --force` rebuilds it with the version at hand.
+  A `serve` or `lsp` process running when the newer version took the index over answers each
+  request with that message until restarted.
 - A documentation comment whose lines carry no comment mark (a GNU style C block, a JSDoc line
   without a star, Elm `{-| -}`, Lua `--[[ ]]`, Ruby `=begin`, a Vim comment) is in its
-  definition's documentation only, no longer in a window as well. Without a grammar, the
-  comment above a definition is its documentation in the comment marks of its language (OCaml
-  `(* *)`, Fortran `!`, Pascal `{ }`, Haskell `{- -}`, PowerShell `<# #>` and more).
+  definition's documentation only, no longer in a window too. Without a grammar, the comment
+  above a definition is its documentation in its language's comment marks (OCaml `(* *)`,
+  Fortran `!`, Pascal `{ }`, Haskell `{- -}`, PowerShell `<# #>` and more).
 - The language server no longer goes to the plain namesake when a call has a receiver:
   `o.valid?()` goes to `valid?`, `self.save!` to `save!`, `M.ok?(x)` to `ok?`,
   `Main.update!(x)` to `update!`, `step' y` to `step'` (at its equation, below the type
@@ -615,13 +615,13 @@ First release.
   repository cannot make `scrutate grep` leave it through a symbolic link; `-L`, the environment
   and your own configuration file still follow.
 - A name typed with its punctuation is found by that name and comes first: `search 'valid?'`,
-  `search Get-Greeting`, `search 'list->vector'`, `search 'Rec.valid?'`. A test file is told by
-  its name in more languages (`button.test.jsx`, `parser_test.rs`, `parser_spec.rb`,
-  `WidgetTest.kt`, a directory `MyApp.Tests`). `similar` takes the location of a window, and
-  `symbol`, `callers` and `refs --def` say that such a location is outside every definition.
+  `search Get-Greeting`, `search 'list->vector'`, `search 'Rec.valid?'`. More languages' test
+  files are told by name (`button.test.jsx`, `parser_test.rs`, `parser_spec.rb`,
+  `WidgetTest.kt`, a directory `MyApp.Tests`). `similar` takes a window's location, and
+  `symbol`, `callers` and `refs --def` say such a location is outside every definition.
 - `callers` lists calls written outside every definition (a script's main block, the last line
-  of a shell script, top-level JavaScript), under the module chunk or the window that holds the
-  line, and `callees FILE:LINE` answers for such a line.
+  of a shell script, top-level JavaScript), under the module chunk or window that holds the line,
+  and `callees FILE:LINE` answers for such a line.
 - Elixir `@doc false` leaves a function undocumented, PowerShell help inside a function body and
   an Erlang `-doc` attribute are documentation, a one-line `<# #>` comment loses its closing
   mark, and `this["k"] = function` is the member `k`.
@@ -637,8 +637,8 @@ First release.
 - Java in `refs`, `callers`, `callees` and the language server's references: packages from each
   file's `package` declaration in any source root, single, on-demand and static imports, locals,
   fields, inherited members, nested and anonymous classes, records, default methods, calls typed
-  by declared types and return types, and method references. The number of arguments picks an
-  overload; a call it does not tie to one is a caller of every overload.
+  by declared types and return types, and method references. The argument count picks an
+  overload; a call not tied to one is a caller of every overload.
 - `callers` of an override or an implementation lists a call through its base class, interface
   or trait as undecided, at any depth, and a variable declared as the base type and built by a
   constructor in the same function is typed by the constructor (`Base b = new Big()`), so its
@@ -648,58 +648,58 @@ First release.
   sits in. A bare Python import finds the module beside the importing file when no module from
   the root has the name and the file's directory is not a package (`from helpers import x` in
   `tests/`; `import logging` in a package with its own `logging.py` stays outside).
-- A JavaScript or TypeScript import of a workspace package by its `package.json` name resolves
-  to the package's file: `exports` (conditions `types`, `import`, `default`, `require`, `node`,
-  then the others by name), `module`, `main` or an `index` file, a build output the repository
-  does not hold standing for its source under `src/`, a subpath through `exports` or a path in
-  the package. A declaration file (`.d.ts`) beside its implementation no longer takes the
-  import: `./m` with `m.js` and `m.d.ts` is `m.js`.
+- A JavaScript or TypeScript import of a workspace package by its `package.json` name resolves to
+  the package's file: `exports` (conditions `types`, `import`, `default`, `require`, `node`, then
+  the others by name), `module`, `main` or an `index` file, a build output the repository lacks
+  standing for its source under `src/`, a subpath through `exports` or a path in the package. A
+  declaration file (`.d.ts`) beside its implementation no longer takes the import: `./m` with
+  `m.js` and `m.d.ts` is `m.js`.
 - Imports are recorded as their statements write them: a JavaScript or TypeScript exported
   declaration is no import (only `export ... from`), a `require` or `import()` call counts with
-  a literal argument, and PHP double quotes and grouped `use`, R, Julia lists and `include`,
-  Lua long brackets, Objective-C `@import` and QML imports are recorded; Kotlin and C# record
-  the name, not the alias, Ruby only calls without a receiver, and a Java star import is one
-  `a.b.*` record that `deps` resolves to the files of the package.
+  a literal argument, and PHP double quotes and grouped `use`, R, Julia lists and `include`, Lua
+  long brackets, Objective-C `@import` and QML imports are recorded; Kotlin and C# record the
+  name, not the alias, Ruby only calls without a receiver, and a Java star import is one `a.b.*`
+  record that `deps` resolves to the package's files.
 - In a language the resolver does not read, a call without a receiver is a call of the
-  definition in its own file: `callees` lists that one alone (it listed the first three
-  namesakes of the index), and `callers` of a namesake in another file leaves the call out.
-  Other undecided callees are listed nearest first. A Nix function and a macro of the
-  repository are listed as callees (they were named after `external:`), and a `.m` file of
-  MATLAB is no longer in the C family.
+  definition in its own file: `callees` lists that one alone (it listed the index's first three
+  namesakes), and `callers` of a namesake in another file leaves the call out. Other undecided
+  callees are listed nearest first. A Nix function and a repository macro are listed as callees
+  (they were named after `external:`), and a MATLAB `.m` file is no longer in the C family.
 - A search that meets a damaged segment array (a posting row, a pointer or a cluster table that
   points outside the segment) rebuilds the index and answers; it ended with a panic message.
 - `callers` of a constructor lists the calls of its class (`Point(1)` for `Point.__init__`,
   `new Widget()` for `constructor`, `Invoice.new` for Ruby's `initialize`, and the Java, C#, C++,
-  PHP and Swift forms); it printed "(no results)". `refs` gives the reason `not resolved in this language` for a language that has
-  a grammar and no resolver rules, and keeps `no grammar` for files without one.
-- A call is recorded under the name its definition has: a trailing `?` or `!` in Ruby and
-  Elixir, `!` in Julia, the dots of an R name, `::` in a Bash name, a prime in Haskell, OCaml,
-  F# and Nix, the last part of a PHP namespaced call, and a Rust raw identifier without `r#`.
+  PHP and Swift forms); it printed "(no results)". `refs` gives the reason
+  `not resolved in this language` for a language with a grammar and no resolver rules, and keeps
+  `no grammar` for files without one.
+- A call is recorded under its definition's name: a trailing `?` or `!` in Ruby and Elixir, `!`
+  in Julia, the dots of an R name, `::` in a Bash name, a prime in Haskell, OCaml, F# and Nix,
+  the last part of a PHP namespaced call, and a Rust raw identifier without `r#`.
   `callers valid?` and `callers save!` printed "(no results)", and a Haskell `step'` was indexed
   as `step`.
 - The comment right above a definition is its documentation in Python, Starlark, fish, Common
-  Lisp, assembly, Jsonnet and MATLAB too, beside the docstring where there is one, and a Haskell
-  or Elm function starts at its type signature; `search` did not find a Python function by a
-  word of the comment above it. The documentation is kept across what stands between comment
-  and definition: Rust attributes (`/// doc`, `#[derive(...)]`, `struct`: 172 items of this
-  repository had lost theirs), TypeScript decorators, Dart `@override`, Elixir `@spec`, Erlang
-  `-spec`; Elixir `@doc` and `@moduledoc`, a Julia docstring, Haskell haddock comments and
-  PowerShell's help block are read; Ada nested functions, Nix, HCL and YAML keys and the first
-  method of a Ruby class take their comment; Go constants take theirs, and a Ruby constant at
-  file, class or module level is a constant.
+  Lisp, assembly, Jsonnet and MATLAB too, beside any docstring, and a Haskell or Elm function
+  starts at its type signature; `search` did not find a Python function by a word of the comment
+  above it. Documentation survives what stands between comment and definition: Rust attributes
+  (`/// doc`, `#[derive(...)]`, `struct`: 172 items of this repository had lost theirs),
+  TypeScript decorators, Dart `@override`, Elixir `@spec`, Erlang `-spec`. Elixir `@doc` and
+  `@moduledoc`, a Julia docstring, Haskell haddock comments and PowerShell's help block are read;
+  Ada nested functions, Nix, HCL and YAML keys and the first method of a Ruby class take their
+  comment; Go constants take theirs, and a Ruby constant at file, class or module level is a
+  constant.
 - More forms are definitions: a Lua function assigned to a name or given as a table field
-  (`M.f = function`, `f = function` in a table), a JavaScript or TypeScript function assigned
-  to a member (`Foo.prototype.bar = function` is the method `Foo.bar`), a Julia method added to
-  another module's function (`function Base.show(...)` is `show`, owned by `Base`), the C++
-  call operator as `operator()`, a Haskell operator definition, and an R6 method (also of
+  (`M.f = function`, `f = function` in a table), a JavaScript or TypeScript function assigned to
+  a member (`Foo.prototype.bar = function` is the method `Foo.bar`), a Julia method added to
+  another module's function (`function Base.show(...)` is `show`, owned by `Base`), the C++ call
+  operator as `operator()`, a Haskell operator definition, and an R6 method (also of
   `R6::R6Class`). In JavaScript and TypeScript also `this.x = function` in a function or a
   constructor (`Widget.x`), `obj["k"] = function`, `exports.a.b = function`, the members of an
-  object assigned to `module.exports`, and a default export written as an expression, which
-  keeps its own name or takes the file's (`app` for `lib/app.js`); a call through
+  object assigned to `module.exports`, and a default export written as an expression, which keeps
+  its own name or takes the file's (`app` for `lib/app.js`); a call through
   `const app = require("./app")` resolves to it. A Lua multiple assignment of functions and a
   Julia `Base.:(==)` method are definitions too. The comment above such an assignment is the
   function's documentation.
-- `search` looks a query of one word, or of stop words alone, up as a name: `search find` and
+- `search` looks up a query of one word, or of stop words alone, as a name: `search find` and
   `search get` find the functions of that name; they printed "(no results)".
 - A Java file counts as a test by `Test.java` or `Tests.java` with the capital (`Contest.java`
   and `Latest.java` were ranked as tests), and a Django `tests.py` is a test file.
@@ -724,26 +724,26 @@ First release.
   beyond noise (docs/QUALITY.md).
 - Ranked search finds words of every script: scripts written without spaces (Han, kana, Thai,
   Lao, Tibetan, Myanmar, Khmer, the Tai scripts, Balinese and Javanese) become overlapping
-  character pairs, other scripts one lowercased token per word; an all-ASCII text gives the tokens it gave
-  before. Names compare in NFC (new dependency `unicode-normalization`), and a definition name
-  over 200 bytes is a symbol when it has no whitespace. Traditional and simplified Han find each
+  character pairs, other scripts one lowercased token per word; all-ASCII text gives the tokens it
+  gave before. Names compare in NFC (new dependency `unicode-normalization`), and a definition
+  name over 200 bytes with no whitespace is a symbol. Traditional and simplified Han find each
   other: ranked search folds Han to simplified forms in index and query (a Unihan 18.0.0 table,
   Unicode License v3, listed in the notices and the SBOM); names and stored text are not folded.
 - Constants are symbols of kind `constant` (Rust `const` and `static`, Go package `const` and
   `var`, JavaScript and TypeScript top-level `const`, TypeScript enum members and `static
   readonly` fields, JavaScript `static` fields in capitals, Java `static final`, Python
-  module-level and class-level capitals and tuple or list targets, C, C++, Objective-C and
-  GLSL `#define` values, enumerators and file or namespace `const` and `constexpr` with a value,
-  C++ `static const` and `static constexpr` members of a class):
-  `symbol`, `outline`, `read_code` and `refs` find them, ranked search never returns them. Every
-  name of a Go or Java declaration with several (`var X, Y int`) is a constant.
-- A method is named by its owner's bare type (`Stack.push` for `impl<T> Stack<T>`, `Box.put`
-  for `Box<T>::put`); a dotted Lua or Elixir name is split off its owner (`M.helper` is
-  `helper`, `MyApp.Accounts.User` is `User`); `Account:deposit` in Lua is `Account.deposit`.
-  A JavaScript or TypeScript object literal's methods, and its properties whose value is a
-  function, are methods named under what holds the literal (`api.get`, `store.sub.m`,
-  `tool.build` for `module.exports.tool`), also through `as`, `satisfies` and parentheses; they
-  keep their callers and callees.
+  module-level and class-level capitals and tuple or list targets, C, C++, Objective-C and GLSL
+  `#define` values, enumerators and file or namespace `const` and `constexpr` with a value, C++
+  `static const` and `static constexpr` members of a class): `symbol`, `outline`, `read_code` and
+  `refs` find them, ranked search never returns them. Every name of a Go or Java declaration with
+  several (`var X, Y int`) is a constant.
+- A method is named by its owner's bare type (`Stack.push` for `impl<T> Stack<T>`, `Box.put` for
+  `Box<T>::put`); a dotted Lua or Elixir name is split off its owner (`M.helper` is `helper`,
+  `MyApp.Accounts.User` is `User`); `Account:deposit` in Lua is `Account.deposit`. A JavaScript
+  or TypeScript object literal's methods, and its properties whose value is a function, are
+  methods named under what holds the literal (`api.get`, `store.sub.m`, `tool.build` for
+  `module.exports.tool`), also through `as`, `satisfies` and parentheses; they keep their callers
+  and callees.
 - New definitions: Rust `mod` and `type` items, `macro_rules!` and trait methods without a body;
   Go methods qualified by their receiver type; C++ methods declared in a class or struct body
   (constructors, destructors, member templates, conversion operators) and out-of-line methods
@@ -751,28 +751,26 @@ First release.
   `module.exports.X`; TypeScript abstract classes and methods, `declare function` and
   namespaces; Java records; Swift protocol requirements; Kotlin type aliases; Elixir guards;
   Objective-C methods and properties declared in an `@interface` or `@protocol`; a VHDL
-  subprogram with a body; a Jsonnet function; a function pointer typedef by its own name
-  (`cb` in `typedef int (*cb)(int)`); a C
-  or C++ function declared without a body, also inside an include guard (`symbol` lists the
-  definition before the prototype). A `.h` file written in C++ or Objective-C is parsed with that
-  grammar, where it lost its classes and methods as C.
+  subprogram with a body; a Jsonnet function; a function pointer typedef by its own name (`cb` in
+  `typedef int (*cb)(int)`); a C or C++ function declared without a body, also inside an include
+  guard (`symbol` lists the definition before the prototype). A `.h` file written in C++ or
+  Objective-C is parsed with that grammar; as C it lost its classes and methods.
 - Calls inside the arguments of a Rust macro (`println!("{}", f(x))`) and turbofish calls
   (`f::<T>(x)`) are call edges.
 - Calls in Dart, Groovy, Elixir, LLVM IR, TLA+, Verilog (task calls and module instances too),
   VHDL, Jsonnet, Make (`$(call g,...)`) and assembly (`call`, `bl`, `jal`; a label holds its
-  instructions up to the next label or section) are recorded. A method call records
-  the method in Lua (`obj:meth()`), Objective-C (`[obj meth]`), R (`obj$meth()`), PowerShell and
-  PHP (`?->`); `new Point()` records `Point`; a Lisp name is recorded whole (`list->vec`,
+  instructions up to the next label or section) are recorded. A method call records the method
+  in Lua (`obj:meth()`), Objective-C (`[obj meth]`), R (`obj$meth()`), PowerShell and PHP
+  (`?->`); `new Point()` records `Point`; a Lisp name is recorded whole (`list->vec`,
   `set-car!`) and a JavaScript private method with its `#`. A Scheme `(define (f x) ...)` head, a
   Lisp parameter list and Elixir's `def`, `use` and `alias` are not calls. Dart and Pascal
   functions hold their bodies.
-- Chunk text and body are cut at 32 KiB, and a chunk ends on the last line that holds its text.
-  A file of many sibling definitions or of deep nesting indexes in linear time (20,000 one-line
+- Chunk text and body are cut at 32 KiB, and a chunk ends on the last line holding its text. A
+  file of many sibling definitions or of deep nesting indexes in linear time (20,000 one-line
   JavaScript functions: 58 s to 0.8 s; 60,000 nested Lisp calls: 19 s to 0.3 s; 50,000 nested
-  HTML elements: 15 s to 0.1 s, as HTML and XML are no longer parsed, no definition being read
-  from them). A segment of 20,000 rows or more is not written again
-  when a few of its rows die: compaction judged it by its live rows, so every save near that
-  size rewrote it.
+  HTML elements: 15 s to 0.1 s, as HTML and XML, which yield no definitions, are no longer
+  parsed). A segment of 20,000 rows or more is not rewritten when a few of its rows die:
+  compaction judged it by its live rows, so every save near that size rewrote it.
 - Inside a git repository the ignore files decide for `build`, `dist`, `target` and `venv`;
   outside one they are skipped by name. `\,` keeps a comma in `SCRUTATE_INDEX_EXCLUDE_DIRS`.
 - The heuristic tier skips leading modifiers and reads OCaml `let f x =` as a function; Kconfig
@@ -787,19 +785,19 @@ First release.
   `seg` that is a file, an emptied `chunks` table. A writer stopped before its commit no longer
   blocks later writers. A read-only index directory, or a read-only repository with a complete
   index, is answered as it is.
-- On Unix a change of status time alone (a `chmod`) is seen: it costs a read and a hash. A file
-  that cannot be read loses its chunks.
-- A `.scrutate` that is a symbolic link, or that holds one, is refused, and a `--root` that is
-  not an existing directory is an error; nothing is written or deleted outside the repository.
+- On Unix a change of status time alone (a `chmod`) is seen, at the cost of a read and a hash. A
+  file that cannot be read loses its chunks.
+- A `.scrutate` that is a symbolic link, or holds one, is refused, and a `--root` that is not an
+  existing directory is an error; nothing is written or deleted outside the repository.
 - `refs`, `callers` and `callees` infer a receiver's type from declared return types, fields,
   module-level and static variables, constructors, Rust `?` and holders such as `Box`, and
-  TypeScript `await`, and a call on the result of a call from the type its callee declares it
-  returns; a type from outside the repository makes the call external, unless a trait or
-  interface of the repository declares that method. `this` in a JavaScript or TypeScript object
-  literal method is the literal. In Rust macro arguments a name after `.` is a field or a method,
-  `name:` in braces a field name, and a closure parameter or `let` a local. `x.m()` is
-  never a call of a free function in Rust, JavaScript, TypeScript, Go and Java, a definition's
-  own name is not a call of it, and a JavaScript `var` belongs to its function.
+  TypeScript `await`, and a call on a call's result from the type its callee declares it returns;
+  a type from outside the repository makes the call external, unless a trait or interface of the
+  repository declares that method. `this` in a JavaScript or TypeScript object literal method is
+  the literal. In Rust macro arguments a name after `.` is a field or a method, `name:` in braces
+  a field name, and a closure parameter or `let` a local. `x.m()` is never a call of a free
+  function in Rust, JavaScript, TypeScript, Go and Java, a definition's own name is not a call of
+  it, and a JavaScript `var` belongs to its function.
 - A call matches a definition only in its own language family and by the name as written
   (`Ok(1)` is not a call of `ok`); a call the resolver ties to an imported module, a local or a
   field is not a call of a namesake in the repository.
@@ -810,10 +808,11 @@ First release.
   they find one method among many namesakes; `operator->` and `operator*` are found by those
   names. A leading dot is dropped (`callers .helper`). The name spelled as typed comes before its
   namesakes in another case, then non-test files, types before functions and methods, and a
-  definition with a body before one without. The language server's definition request takes the whole name under the cursor
-  (`get-user`, `Foo::Bar`, a C++ `~Shape` or `operator==`, the `type` of a Rust `r#type`).
-  An explicit C++ destructor or operator call (`a.~Shape()`, `a.operator==(b)`,
-  `p->operator()(3)`) records that name, so `callers ~Shape` and `callers operator==` find it.
+  definition with a body before one without. The language server's definition request takes the
+  whole name under the cursor (`get-user`, `Foo::Bar`, a C++ `~Shape` or `operator==`, the `type`
+  of a Rust `r#type`). An explicit C++ destructor or operator call (`a.~Shape()`,
+  `a.operator==(b)`, `p->operator()(3)`) records that name, so `callers ~Shape` and
+  `callers operator==` find it.
 - A location (`path:start-end`) names exactly one definition in `symbol`, `callers` and
   `callees`. `callers` lists the callers the resolver ties to the definition first, then the
   undecided ones that name the owner type or share its package.
@@ -821,52 +820,52 @@ First release.
   `structural_search` end with a line when they stopped at their limit, naming the argument that
   raises it.
 - `tsquery` reads a path that does not exist from the current directory under `--root`, and
-  names a path that exists in neither place in a warning, exit code 2. It prints paths as
-  `grep PATH...` prints them (`src/a.py` for the argument `src`), in plain output and `--json`,
-  so a printed path can be passed to the other commands. `dupes` lists groups of equal size in
-  one fixed order, so a limit keeps the same groups on every run.
+  names a path in neither place in a warning, exit code 2. It prints paths as `grep PATH...` does
+  (`src/a.py` for the argument `src`), in plain output and `--json`, so a printed path can be
+  passed to the other commands. `dupes` lists equal-size groups in one fixed order, so a limit
+  keeps the same groups every run.
 - Imports: Go binds a directory through the module path in `go.mod`; a Python module drops its
-  first segment only when that is the checkout's own name; an `#include "util.h"` resolves
-  beside the including file; `rdeps` matches by base name only an import that resolves to no
-  file. `tsconfig.json`, `jsconfig.json`, `package.json`, `Cargo.toml` and `go.mod` are read
-  only when they are regular files inside the repository of at most 1 MB.
+  first segment only when that is the checkout's own name; an `#include "util.h"` resolves beside
+  the including file; `rdeps` matches by base name only an import that resolves to no file.
+  `tsconfig.json`, `jsconfig.json`, `package.json`, `Cargo.toml` and `go.mod` are read only when
+  they are regular files inside the repository of at most 1 MB.
 - A lambda, nested function, block or comprehension hides a name only inside itself. A name bound
   by a pattern, a `catch` or a Go statement initializer hides a function only in its own branch
-  or statement, and a closure sees the locals around it.
-  `tsquery` decodes files that are not UTF-8 and skips files over 1 MB, and refuses an empty
-  query, a query without a capture and an unknown predicate.
+  or statement, and a closure sees the locals around it. `tsquery` decodes files that are not
+  UTF-8 and skips files over 1 MB, and refuses an empty query, a query without a capture and an
+  unknown predicate.
 - `dupes`: `exact` means the same body text once whitespace is squeezed; functions with the same
   words that differ in a literal or an operator are one `near` group with similarity 1.00;
   `--threshold 1` prints the exact groups only.
 - `grep --symbols` with a path argument finds the file by its path under the root.
-- `deps` and `rdeps` resolve imports as `refs` does (Rust `crate::`, `self::`, `super::` and `mod`,
-  Go through `go.mod`, Python `from . import`, TypeScript `.js` names and `.d.ts` files), and
-  `rdeps` says how many unresolved imports may name the file, counting only those that could:
-  a relative import with the file's path, or a bare one with a part spelled as its module name. A Java
-  import resolves through the package declarations, in any source root: a class import to the
-  class's file, a package import to the package's files, a static import to its class's file.
-- An index built with older parsing rules reads every file again once (`content_rev` in `meta`).
+- `deps` and `rdeps` resolve imports as `refs` does (Rust `crate::`, `self::`, `super::` and
+  `mod`, Go through `go.mod`, Python `from . import`, TypeScript `.js` names and `.d.ts` files),
+  and `rdeps` says how many unresolved imports may name the file, counting only those that could:
+  a relative import with the file's path, or a bare one with a part spelled as its module name. A
+  Java import resolves through the package declarations, in any source root: a class import to
+  the class's file, a package import to the package's files, a static import to its class's file.
+- An index built with older parsing rules rereads every file once (`content_rev` in `meta`).
 - An update can be cancelled and rolls back; an update that panics rolls back at once, and the
   next update clears a transaction left open.
 - The index cuts each chunk's text from the source one chunk at a time: a one-line file with
   8,000 nested functions now peaks at 542 MB to index (462 MB with `SCRUTATE_SEMANTIC=none`),
-  where it took about 1.1 GB (0.75 GB).
+  down from about 1.1 GB (0.75 GB).
 - `similar` on a constant says constants are not compared, and `similar -k 0` returns nothing
   instead of panicking.
 - A backslash in a Unix file name stays in `tsquery` output, `read_code` path matching and the
   language server, and `tsquery` prints control characters in a capture escaped. A rebuild that
   cannot reopen the index returns its error, and the next call opens it again.
 - Names with control characters print as escapes and a backslash doubled in the index commands;
-  what they print is read back as an argument.
+  what they print reads back as an argument.
 - The Python reference indexes the engine's file set (excluded extensions,
   `SCRUTATE_INDEX_EXCLUDE_DIRS`, ripgrep without its configuration), cuts the same chunks, keeps
-  the lower index at the 200-candidate cut and refuses `read()` paths outside the repository;
-  the parity check fails on any difference.
+  the lower index at the 200-candidate cut and refuses `read()` paths outside the repository; the
+  parity check fails on any difference.
 - One module, `stores.rs`, keeps every store under `.scrutate/` current: callers name a change
-  set and never a store. The MCP and `batch` `reindex` and the bindings' `index()` now bring the
-  text index up to date too when there is one, so `grep --index` finds what they indexed; they
-  never make one. The watcher hands its file list to the module as an argument, and damage to
-  either index is recovered by one rule, the language server's included.
+  set, never a store. The MCP and `batch` `reindex` and the bindings' `index()` now also update
+  the text index when there is one, so `grep --index` finds what they indexed; they never make
+  one. The watcher hands its file list to the module as an argument, and damage to either index
+  is recovered by one rule, the language server's included.
 - `tsquery` keys its cache by the content hash the code index records, so a warm run reads no
   file whose stat the index holds as current. Files an earlier build cached are parsed once more.
 - Every front end runs the same operations through `Repo`: the CLI's index commands, `search`
@@ -875,13 +874,13 @@ First release.
   operations for references, document symbols and the definitions of a name.
 - Breaking, the JSON of the index commands (schema 2): `symbol`, `callers`, `callees`, `refs`,
   `outline`, `deps`, `rdeps`, `similar`, `dupes`, `read`, `search` and the ranked `find` print
-  `{"schema": 2, "result": ...}` with `stopped_at` when the answer stopped at its limit, where
-  they printed the answer alone. What they printed is now under `result`, unchanged, except that
-  `refs --json` and the `grep_code` result lose their own `"schema": 1` to the envelope. A `batch`
-  record gains `"schema": 2` beside `op`, `result` and `stopped_at`, and the MCP structured result
-  says `"schema": 2`. Engine A's JSON Lines, the error records, `tsquery --json`, `check`,
-  `stats`, `languages` and `config` keep their shapes and schema 1. The VS Code and Neovim
-  plugins read `result`.
+  `{"schema": 2, "result": ...}` with `stopped_at` when the answer stopped at its limit; they
+  printed the answer alone. That answer is now under `result`, unchanged, except that
+  `refs --json` and the `grep_code` result lose their own `"schema": 1` to the envelope. A
+  `batch` record gains `"schema": 2` beside `op`, `result` and `stopped_at`, and the MCP
+  structured result says `"schema": 2`. Engine A's JSON Lines, the error records,
+  `tsquery --json`, `check`, `stats`, `languages` and `config` keep their shapes and schema 1.
+  The VS Code and Neovim plugins read `result`.
 - `scrutate read PATH [--start N] [--end N]` and `read --symbol NAME`: the MCP `read_code` tool
   on the command line, with its arguments, checks and answers.
 - The MCP `grep_code` tool takes `mode` (`regex`, `literal`, `identifier`, `fuzzy`,
@@ -890,11 +889,11 @@ First release.
   regex over every file the index holds.
 - `grep --max-bytes N` (`SCRUTATE_GREP_MAX_BYTES`, `[grep] max_bytes`) bounds a grep's text:
   whole lines in path order, closing line included, then how many lines are left and the
-  `--offset` that continues; exit code as for the whole answer. Without it the answer stays
-  whole, so pipelines see every line (on this repository `grep -n "fn " .` printed 285 KB; with
-  `--max-bytes 4000`, 4,000 bytes or fewer).
-  The newline that ends a paged answer on the command line counts too: an answer that filled
-  its limit exactly printed one byte more (`grep`, `refs`, `callers`, `search`, `tsquery`).
+  `--offset` that continues; exit code as for the whole answer. Without it the answer stays whole,
+  so pipelines see every line (on this repository `grep -n "fn " .` printed 285 KB; with
+  `--max-bytes 4000`, 4,000 bytes or fewer). The newline ending a paged answer on the command
+  line counts too: an answer that filled its limit exactly printed one byte more (`grep`, `refs`,
+  `callers`, `search`, `tsquery`).
 - `find` lists the lines of its Engine A search in path order, as it said; they came in the
   order the threads finished.
 - The Python bindings gain `Repo.references`, `Repo.call` (any MCP tool by name, with paging),
