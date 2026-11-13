@@ -93,8 +93,9 @@ exception, the `Repo` stays usable, and an update that panicked has rolled back.
 ## Updating
 
 Replace the binary with the new release (same steps). Indexes are caches: a new version that
-changes the index schema or the bundled model re-indexes repositories automatically on first use
-(the message `index schema changed; rebuilding the index` is normal). A version that parses or
+changes the index schema rebuilds the index automatically on first use (the message
+`index schema changed; rebuilding the index` is normal). A version with another bundled model
+keeps the index and makes its vectors anew on the next update. A version that parses or
 tokenizes files differently reads every file of an index once, on its next update (`index built
 with other parsing rules; every file is read again on the next update`).
 

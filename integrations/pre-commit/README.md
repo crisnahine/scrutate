@@ -10,7 +10,7 @@
 <!-- End of head. -->
 
 Fail a commit when the repository holds exact duplicate functions, and list them. `--min-tokens`
-is the smallest function that counts, in distinct tokens of its body; `--threshold` below 1 also
+is the smallest function that counts, in word tokens of its body; `--threshold` below 1 also
 catches near duplicates. The hook runs the `scrutate` on `PATH`; pre-commit does not install it.
 
 From this repository (pre-commit 4.4 or newer):

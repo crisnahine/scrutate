@@ -25,16 +25,19 @@ beyond packaging takes its own name.
 ## Layout
 
 ```
-crates/scrutate/        the product: Engine A (instant.rs), Engine B (index.rs, lex.rs, parse.rs,
-                        langs.rs, search.rs, semantic.rs, rank.rs, intel.rs), CLI (cli.rs,
-                        config.rs), MCP server (mcp.rs); tests/ (samples, robustness, properties)
+crates/scrutate/        the product: Engine A (instant.rs, source.rs, policy.rs), Engine B
+                        (index.rs, stores.rs, textindex.rs, lex.rs, parse.rs, langs.rs, names.rs,
+                        resolve/, search.rs, semantic.rs, rank.rs, models.rs, intel.rs),
+                        operations and sessions (ops.rs, session.rs), CLI (cli.rs, config.rs),
+                        MCP server (mcp.rs), language server (lsp.rs); tests/ (samples,
+                        robustness, properties, ranking pins, CLI, MCP, LSP and more)
 crates/scrutate-py/     optional PyO3 bindings (not built by default)
 python/scrutate_ref/    the models' training code (ranker export, vector model tables)
 python/tests/           tests of the training code, the benchmark builders and the bindings
 models/                 semantic.npz, ranker.npz (embedded into the binary)
 bench/                  benchmark harness, differential tests, ranking quality, training scripts
 tools/                  name research, SBOM, docs generators, reproducibility check
-integrations/           VS Code, Neovim, JetBrains, GitLab, Bitbucket, MCP, pre-commit
+integrations/           VS Code, Neovim, JetBrains, GitHub, GitLab, Bitbucket, MCP, pre-commit
 docs/                   architecture, security, benchmarks, traceability, …
 ```
 

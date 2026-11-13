@@ -44,7 +44,7 @@ uninstall, binary gone. The RPM is unsigned, and Fedora 45 refuses unsigned pack
 the test installs it with `rpm -i --nosignature`. x86_64 packages were not built.
 
 **crates.io** (`cargo-package.log`): `cargo package -p scrutate --list` lists 112 files and the
-`.crate` is 164 KB, but the verify build fails: `src/lib.rs` embeds `models/semantic.npz` and
+`.crate` is 164 KB, but the verify build fails: `src/models.rs` embeds `models/semantic.npz` and
 `models/ranker.npz` from the workspace root with `include_bytes!`, and those files are outside the
 package. Moving them into the crate would not be enough: `semantic.npz` is 14.6 MB and still 13.3 MB
 after gzip, over the 10 MB crates.io limit. Options: shrink the model (for example f16 or int8

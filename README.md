@@ -44,7 +44,7 @@ streaming results, cancellation, colour or JSON Lines output. Built on the same 
 `ignore` crates ripgrep is assembled from, and differentially tested against ripgrep.
 
 **Engine B, code intelligence.** A persistent, incremental index (SQLite + memory-mapped
-segments): tree-sitter symbols for 60 languages (72 with `--features extra-langs`), keyword
+segments): tree-sitter symbols from 60 grammars (73 with `--features extra-langs`), keyword
 heuristics for the rest, call edges, imports, BM25 postings, semantic vectors and a LightGBM
 ranker; and a trigram text index that answers grep-style queries with Engine A's exact output.
 Ranked search by meaning, name or identifier; definitions, callers/callees, references,
@@ -234,10 +234,11 @@ On GitHub's runners (CI run 43013926055, commit `9384c18`, private repository) e
 passed: the Rust tests on macOS arm64, macOS x86_64, Linux x86_64, Linux arm64, Windows x86_64
 and Windows ARM64, and the editor integrations ([docs/INSTALL.md](docs/INSTALL.md)).
 
-**Tests.** 122 Rust tests (unit, 60-language snapshot, robustness, property, end-to-end CLI and
-MCP, incremental parsing, the pinned ranking features), the Python tests of the training code,
-the bindings tests, the ranking quality floor, fuzz regressions and a reproducible-build check,
-all passing ([docs/TEST_RESULTS.md](docs/TEST_RESULTS.md)).
+**Tests.** In the last recorded run ([docs/TEST_RESULTS.md](docs/TEST_RESULTS.md), 2026-11-11),
+122 Rust tests (unit, 60-language snapshot, robustness, property, end-to-end CLI and MCP,
+incremental parsing), the Python tests, the bindings tests, fuzz regressions and a
+reproducible-build check all passed. The pinned ranking features and the ranking quality floor
+came after that run; CI runs both.
 Engine A agrees with ripgrep on 2,000 random corpora and patterns, run three ways: as shipped,
 with the parallel walk forced, and with every file searched in ranges.
 
