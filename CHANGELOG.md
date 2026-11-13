@@ -198,6 +198,10 @@ First release.
   line 18446744073709551615.
 
 ### Engine B: code intelligence
+- `callers` lists its callers by path and line after those outside tests, where it followed the
+  order the index had stored the files in: an index brought up to date through renames answered
+  63 of 120 `callers` questions on three trees differently from a fresh index of the same tree.
+  On a fresh index only the place of a window among its file's callers can move.
 - `callers` asks the resolver about every call site, where it asked about the 400 likeliest and
   listed the rest as not checked, and `callers` and `callees` keep what they learned of each call
   site under `.scrutate/answers/`, one file per request, with what the run read: the index

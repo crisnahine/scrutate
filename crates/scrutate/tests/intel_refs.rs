@@ -362,6 +362,36 @@ fn the_outline_of_a_file_with_no_definition_is_its_module_line() {
 }
 
 #[test]
+fn callers_answers_alike_on_an_index_brought_up_to_date_and_a_fresh_one() {
+    let mut files: Vec<(String, String)> = vec![("lib.py".into(), "def target():\n    return 1\n".into())];
+    for i in 0..12 {
+        files.push((
+            format!("m{i:02}.py"),
+            format!("from lib import target\n\n\ndef first_{i}():\n    return target()\n\n\ndef second_{i}():\n    return target() + 1\n"),
+        ));
+    }
+    files.push(("tests/test_lib.py".into(), "from lib import target\n\n\ndef test_target():\n    assert target() == 1\n".into()));
+    let refs: Vec<(&str, &str)> = files.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();
+    let moved = Repo::new("callers_order_moved", &refs);
+    // files leave and come back, so their chunks get new ids after the others'
+    for i in (0..12).step_by(3) {
+        fs::rename(moved.root.join(format!("m{i:02}.py")), moved.root.join(format!("m{i:02}.away"))).unwrap();
+    }
+    moved.index();
+    for i in (0..12).step_by(3) {
+        fs::rename(moved.root.join(format!("m{i:02}.away")), moved.root.join(format!("m{i:02}.py"))).unwrap();
+    }
+    moved.index();
+    let fresh = Repo::new("callers_order_fresh", &refs);
+    for args in [&["callers", "target"][..], &["callers", "target", "--json"][..], &["callers", "target", "--limit", "5"][..]] {
+        assert_eq!(moved.run(args), fresh.run(args), "{args:?}");
+    }
+    let (_, out) = fresh.run(&["callers", "target"]);
+    let lines: Vec<&str> = out.lines().filter(|l| l.contains(".py:")).collect();
+    assert!(lines.first().is_some_and(|l| l.starts_with("m00.py:4-5")) && lines.last().is_some_and(|l| l.starts_with("tests/")), "{out}");
+}
+
+#[test]
 fn callers_resolves_every_call_site_and_answers_again_from_what_it_kept_until_a_file_changes() {
     let mut files: Vec<(String, String)> = vec![
         ("a/__init__.py".into(), String::new()),

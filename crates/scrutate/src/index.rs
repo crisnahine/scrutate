@@ -2297,11 +2297,12 @@ impl Index {
     }
 
     // ---- edges
-    /// The chunks with a call of `callee`, each once, those outside tests first.
+    /// The chunks with a call of `callee`, each once, those outside tests first, then by path and
+    /// line, so an index brought up to date answers as a fresh one of the same tree.
     pub fn callers_of(&self, callee: &str) -> Result<Vec<ChunkRow>> {
         let cols = CHUNK_COLS.split(',').map(|c| format!("c.{c}")).collect::<Vec<_>>().join(",");
         let mut st =
-            self.db.prepare_cached(&format!("SELECT DISTINCT {cols} FROM refs r JOIN chunks c ON c.id=r.chunk_id WHERE r.callee=?1 ORDER BY c.is_test"))?;
+            self.db.prepare_cached(&format!("SELECT DISTINCT {cols} FROM refs r JOIN chunks c ON c.id=r.chunk_id WHERE r.callee=?1 ORDER BY c.is_test, c.path, c.start, c.end DESC, c.kind, c.qualname"))?;
         let rows = st.query_map([callee], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
         Ok(rows)
     }
