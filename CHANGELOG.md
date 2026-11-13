@@ -25,8 +25,9 @@ version rebuilds incompatible indexes automatically and this is never considered
   the one before it as `:start-end`, and pages the same items. On this repository a concise answer
   is 5% to 44% of the detailed one where that passes 1 KB. The Python `Repo.call` reads it too; `batch` checks it.
 - `serve --short-tools` (or `SCRUTATE_MCP_SHORT_TOOLS=1`) sends a tool list with a few words per
-  tool and no argument descriptions: 8,833 bytes against 16,647, with the same tool names,
-  arguments, types, defaults and checks.
+  tool and no argument descriptions, and names the three arguments every tool shares once in the
+  server's instructions: 5,614 bytes against 16,647 (13,968 before `response_format`), with the
+  same tool names, arguments, types, defaults and checks.
 - `scrutate setup <claude|codex|opencode|cursor|gemini>` writes one MCP server entry that runs
   this binary by its absolute path into the agent's user file, or with `--project` into the
   repository's file, editing the text in place so every other key and comment stays; a file that

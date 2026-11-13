@@ -63,6 +63,14 @@ pub fn tools(structured: bool, max_bytes: usize, short: bool) -> Value {
             tool["outputSchema"] = ops::output_schema(&name);
         }
         let properties = &mut tool["inputSchema"]["properties"];
+        if short {
+            // the arguments every tool shares are named once, in the instructions (`instructions`)
+            tool["description"] = brief;
+            for schema in ["inputSchema", "outputSchema"] {
+                tool.get_mut(schema).into_iter().for_each(drop_descriptions);
+            }
+            continue;
+        }
         if read_only {
             properties["max_bytes"] = json!({"type": "integer", "default": max_bytes, "description": "size limit of the answer"});
             properties["offset"] =
@@ -70,14 +78,20 @@ pub fn tools(structured: bool, max_bytes: usize, short: bool) -> Value {
         }
         properties["response_format"] = json!({"type": "string", "enum": ["detailed", "concise"], "default": "detailed",
             "description": "concise: locations and names, no code"});
-        if short {
-            tool["description"] = brief;
-            for schema in ["inputSchema", "outputSchema"] {
-                tool.get_mut(schema).into_iter().for_each(drop_descriptions);
-            }
-        }
     }
     tools
+}
+
+/// What the server tells a client at the start; with the short tool list, the arguments every
+/// tool shares, which its schemas then leave out (the server checks them as before).
+fn instructions(short: bool, max_bytes: usize) -> String {
+    if !short {
+        return INSTRUCTIONS.to_string();
+    }
+    format!(
+        "{INSTRUCTIONS} Every tool also takes response_format (\"detailed\", the default, or \"concise\"), and every tool but \
+reindex takes max_bytes (an integer, default {max_bytes}) and offset (an integer, default 0)."
+    )
 }
 
 /// `schema` without the `description` of any property.
@@ -430,7 +444,7 @@ impl Server<'_> {
             "server/discover" if stateless => list(json!({
                 "supportedVersions": [STATELESS_VERSION],
                 "capabilities": {"tools": {}},
-                "instructions": INSTRUCTIONS,
+                "instructions": instructions(self.short, self.settings.max_bytes),
                 "_meta": {SERVER_INFO_KEY: {"name": "scrutate", "version": self.version}},
             })),
             "server/discover" => respond_err(send, &id, -32602, &format!("_meta has no {VERSION_KEY}"), None),
@@ -446,7 +460,7 @@ impl Server<'_> {
                         "protocolVersion": ver,
                         "capabilities": {"tools": {"listChanged": false}},
                         "serverInfo": {"name": "scrutate", "version": self.version},
-                        "instructions": INSTRUCTIONS,
+                        "instructions": instructions(self.short, self.settings.max_bytes),
                     }),
                 );
             }

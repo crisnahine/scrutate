@@ -893,7 +893,8 @@ scan before a read rolls back there.
 
 The MCP server (`mcp.rs`) is an adapter: the tool table with its hints for clients (`readOnlyHint`,
 `openWorldHint`) and output schemas, a short description per tool for `serve --short-tools`
-(which also drops every argument description, not a name, type or default), server instructions,
+(which also drops every argument description and names the three shared arguments once in the
+instructions instead of in each schema), server instructions,
 and the protocol loop. The loop serves
 two eras on one pipe: the `initialize` handshake of the revisions up to 2025-11-25, and revision
 2026-07-28, where each request names its version in `_meta` and nothing is remembered between

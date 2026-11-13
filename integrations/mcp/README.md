@@ -32,7 +32,8 @@ What a client gets (details in docs/CLI.md, `serve`):
   default `detailed` form;
 - with `serve --short-tools` (`SCRUTATE_MCP_SHORT_TOOLS=1`), a tool list with descriptions of a
   few words and none for the arguments, for a client that sends the list to its model in every
-  session; the tools, arguments, types and defaults are the same;
+  session; the tools, arguments, types and defaults are the same, with the three arguments every
+  tool shares named once in the server's instructions;
 - `grep_code` at the speed of `scrutate grep`, with matches grouped by enclosing symbol; it
   searches the files the index holds: hidden ones such as `.github/`, not ignored files, `.git/`
   or `node_modules/`; a capped answer holds the first matches in path order, so the next page

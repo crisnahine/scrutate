@@ -322,14 +322,28 @@ fn the_short_tool_list_keeps_every_tool_argument_type_default_and_check() {
     assert_eq!(full_tools.len(), 19);
     for (f, s) in full_tools.iter().zip(short_tools) {
         assert_eq!(f["name"], s["name"]);
-        assert_eq!(undescribed(f["inputSchema"].clone()), s["inputSchema"], "{}", f["name"]);
+        // the arguments every tool shares are named once, in the instructions
+        let mut own = undescribed(f["inputSchema"].clone());
+        for shared in ["response_format", "max_bytes", "offset"] {
+            own["properties"].as_object_mut().unwrap().remove(shared);
+        }
+        assert_eq!(own, s["inputSchema"], "{}", f["name"]);
         assert_eq!(f["annotations"]["readOnlyHint"], s["annotations"]["readOnlyHint"]);
         assert_eq!(f["annotations"]["openWorldHint"], s["annotations"]["openWorldHint"]);
         assert_eq!(f["inputSchema"]["properties"]["response_format"]["default"], "detailed");
         assert!(s["description"].as_str().unwrap().len() < f["description"].as_str().unwrap().len(), "{}", f["name"]);
     }
     let bytes = |v: &Value| v.to_string().len();
-    assert!(bytes(&short) * 100 <= bytes(&full) * 55, "{} bytes short, {} detailed", bytes(&short), bytes(&full));
+    assert!(bytes(&short) * 2 <= bytes(&full), "{} bytes short, {} detailed", bytes(&short), bytes(&full));
+    let hello = |args: &[&str]| {
+        Session::start(&r, args, &[]).ask(json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}}))["result"]["instructions"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let told = hello(&["serve", "--short-tools"]);
+    assert!(told.contains("response_format") && told.contains("max_bytes") && told.contains("offset"), "{told}");
+    assert!(!hello(&["serve"]).contains("max_bytes (an integer"));
     // the same calls fail with the same errors
     let calls = [
         ("find_symbol", json!({"name": 7})),

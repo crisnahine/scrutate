@@ -759,9 +759,12 @@ its last group with a `note:` line (`"note"` in JSON). An invalid pattern is an 
 - `serve --short-tools` (`SCRUTATE_MCP_SHORT_TOOLS=1`) sends a short `tools/list`: a
   description of a few words per tool, no description of any argument, and for a tool that only
   reads only `readOnlyHint` and `openWorldHint` (the other two hints mean something only for a
-  tool that writes). The tool names, the argument names, types, enums, defaults and `required`
-  are those of the full list, and a call is checked as it is without the option. On this repository's server the full list
-  is 16,647 bytes and the short one 8,833 (the list before `response_format` was 13,968).
+  tool that writes). The three arguments every tool shares (`response_format`, and `max_bytes` and
+  `offset` for every tool but `reindex`) are left out of each schema and named once, with their
+  types and defaults, in the server's `instructions`; every other argument name, type, enum,
+  default and `required` is that of the full list, and a call is checked as it is without the
+  option. On this repository's server the full list is 16,647 bytes and the short one 5,614, plus
+  186 bytes of instructions (the list before `response_format` was 13,968).
 - `serve --structured` (`SCRUTATE_MCP_STRUCTURED=1`) adds an `outputSchema` to every tool and
   `structuredContent` to every result, beside its text: the answer's envelope with `complete`
   (`{"schema": 2, "complete": true, "result": ...}`), as the matching CLI command prints it with
