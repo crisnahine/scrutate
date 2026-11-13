@@ -5,7 +5,7 @@
 
 # Documentation
 
-The documents are grouped by what you came to do: use scrutate, understand how it works, check the evidence behind its claims, or work on it. Each document starts with a link back here and to the documents before and after it in its group. A document written by a script says so at the top; change the script, not the page.
+Each document links back here and to its neighbours in its group. A document written by a script says so at the top: change the script, not the page.
 
 <!-- End of head. -->
 

@@ -1056,10 +1056,8 @@ def with_head(doc, text):
 def hub():
     out = [HEAD_START] + banner_block(HUB, "docs", "Documentation", "Every document, grouped by what you came to do") + [
         "", "# Documentation", "",
-        "The documents are grouped by what you came to do: use scrutate, understand how it works, check the "
-        "evidence behind its claims, or work on it. Each document starts with a link back here and to the "
-        "documents before and after it in its group. A document written by a script says so at the top; "
-        "change the script, not the page.",
+        "Each document links back here and to its neighbours in its group. A document written by a script "
+        "says so at the top: change the script, not the page.",
         "", HEAD_END, "", "<table>"]
     # One table, so the columns line up from group to group; each group opens with its band.
     for g, name, line in GROUPS:
