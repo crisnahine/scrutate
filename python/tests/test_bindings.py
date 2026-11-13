@@ -310,7 +310,7 @@ def test_the_operations_reach_python(repo):
     assert [o["line"] for o in refs["definitions"][0]["references"] if o["via"] != "definition"] == [12]
     assert r.references("make_widget_3", textual=True)["references"]
     callers = r.callers("make_widget_3")
-    assert callers.undecided == 0 and callers.unchecked == 0
+    assert callers.undecided == 0 and not hasattr(callers, "unchecked")
     # any operation by its MCP tool name, with the same arguments, text and paging
     a = r.call("grep_code", {"pattern": "MAKE_WIDGET_3", "mode": "identifier", "path": "pkg"})
     assert a["schema"] == 2 and "pkg/m3.py" in a["text"]

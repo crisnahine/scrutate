@@ -383,6 +383,7 @@ pub fn repo_text(root: &std::path::Path, rel: &str) -> Option<String> {
 }
 
 fn repo_bytes(root: &std::path::Path, rel: &str) -> Option<Vec<u8>> {
+    crate::answers::noted(root, rel);
     let p = root.join(rel);
     let meta = std::fs::symlink_metadata(&p).ok()?;
     if !meta.is_file() || meta.len() > crate::index::MAX_FILE_BYTES || !std::fs::canonicalize(&p).ok()?.starts_with(root) {

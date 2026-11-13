@@ -34,8 +34,7 @@ interrupted update stops at its next batch of files and leaves the index as it w
 `scrutate.Results` list. It is a `list` with one more field: `stopped_at` is the limit when more
 results were left, else `None`.
 `Repo.callers` also says how sure the resolver was: `undecided` counts the callers it kept
-without knowing whether they call this definition or another of the same name, `unchecked` the
-ones after them it was not asked about.
+without knowing whether they call this definition or another of the same name.
 
 Every `Repo` method runs the operation the CLI and the MCP tools run, with the same defaults,
 the same check of the files an answer cites, and the same recovery from a damaged index.

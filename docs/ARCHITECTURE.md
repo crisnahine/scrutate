@@ -371,7 +371,7 @@ folded, so two spellings of one accented name are one name.
   | the directory name of an `index` file | the path field of the postings, and its share of each chunk's length |
   | the parsing rules (`CONTENT_REVISION`) and the artifact format | the chunk ids and segment rows |
   | | the vectors, when they are made: per model, from the stored word counts |
-  | | name resolution, which reads other files (asked at query time, as before) |
+  | | name resolution, which reads other files (asked at query time; `callers` and `callees` keep their answers by request, below) |
 
   An artifact holds the chunks (kind, names, lines, the name's subwords, calls), the imports, and
   per chunk and field the subwords and whole identifiers with their counts: the postings are made
@@ -530,7 +530,8 @@ mid-update leaves the previous snapshot. Reads by the update itself are not even
 not trigger themselves. Not a daemon: it runs only while the command (or server) runs.
 
 ### Keeping the stores current (`stores.rs`)
-`.scrutate/` holds three stores: the code index, the text index and the `tsquery` cache. One
+`.scrutate/` holds four stores: the code index, the text index, the `tsquery` cache and the
+answers `callers` and `callees` keep (`answers.rs`, under Intelligence). One
 module keeps them current. A caller names what it does (`stores::Writer`, or a read through
 `Repo`) and what changed (`stores::Changes`: every file, or the files a watch burst names), never a
 store; the module decides which stores that touches, when it looks, and what happens on damage.
@@ -551,6 +552,7 @@ A new store is added there, with no edit in a caller.
 | any operation on `Repo` | the files its answer cites and its arguments name, one `stat` each | code index |
 | `serve` and `lsp` start, an `lsp` save | every file; waits | code index |
 | `tsquery` | its own walk, one `stat` per file against the code index's record | `tsquery` cache |
+| `callers`, `callees` | as any index command, then one `stat` per file the kept run read | its answers |
 
 A look at every file is one walk and one `stat` per file (`files::look`), whichever stores it
 serves: the walk enters each directory the code index's walk or Engine A's default walk enters,
@@ -576,7 +578,8 @@ not open at all is still sorted out when `Index::open` opens it (`Triage`), befo
 it.
 
 Locking: each store has its own writer lock (the code index a SQLite write transaction, the text
-index `.scrutate/text/lock`, the `tsquery` cache none, its files replaced by rename) and commits in
+index `.scrutate/text/lock`, the `tsquery` cache and the kept answers none, their files written by
+readers and replaced by rename) and commits in
 one step (a transaction, a manifest rename, a file rename), so a reader of a store sees its last
 commit and never half of one. A writer that keeps both indexes takes the two locks one after the
 other, code index first, and never holds both, so two writers cannot deadlock; between the two
@@ -700,9 +703,33 @@ One module asks those rules (`names.rs`, `Names`): `callers`, `callees`, resolve
 `rdeps` and the language server's definition and references requests each open one `Names` per
 request and ask it what the occurrence at a place refers to; no other module builds a resolver.
 Within a request each file is read and parsed once, however many of its call sites are asked
-about. `callers` still asks about the 400 likeliest call sites and lists the rest as not checked:
-asking about every one costs about a second of CPU per thousand sites of a Java name in Guava
-(`callers size`, 1,970 sites: 2.4 s instead of 1.0 s). The caller count that ranking reads (`log_ncallers`) comes from the index (`Index::call_counts`): it counts
+about, and `callers` asks about every call site. Of a run that keeps nothing (`callers size` on
+Guava, 1,970 sites), about half is reading and parsing the files of the call sites and half the
+walk at each site; a fifth of the whole was asking the index, at each call on a type from
+outside, whether the repository extends that type with the method, which the walker now asks
+once per type and name.
+
+`callers` and `callees` keep what they learn of each call site (`answers.rs`, `.scrutate/answers/`):
+one file per request (its kind and the name as given) that holds, for each call site (path,
+lines, name), the definitions its uses resolve to and which stayed unresolved, and what the run
+read: the index database (the device, number and creation time of `index.db`) and its data
+version, which every update that changes a row moves, the executable, the root, and the `stat`
+of every file the resolver read from disk, absent ones included. A run uses the file only when
+all of that is the same now and the stored run went at least as far (one that stopped at its
+limit stands for that limit and lower ones). It then asks about the same call sites in the same
+order of the same index and the same bytes, so every answer is the one the stored run made,
+which is the one a run with nothing kept makes. An answer is not kept by its own file's content
+alone because it reads more than that file: the definitions of a name anywhere, the file list,
+the Java package map, the interfaces of the repository; so after any update of the index a
+request resolves again, at the cost of a run that keeps nothing. Readers write these files
+without the writer lock, like the `tsquery` cache: whole, to a temporary name, then renamed into
+place, so a reader never sees half of one and two writers lose one write, never mix two; a file
+that does not decode in full is no file, and above 64 MB in all the least recently used go
+first. On Guava `callers size` costs 1.4 s of CPU on a first run (19.2 billion instructions),
+0.43 s (6.1 billion) from what was kept, where asking about the 400 likeliest sites cost 0.6 s
+(8.3 billion).
+
+The caller count that ranking reads (`log_ncallers`) comes from the index (`Index::call_counts`): it counts
 every call edge of the name, namesakes included, the number the ranker was fitted on.
 
 `tsquery` keeps each file's captures in `.scrutate/tsquery/` (`tscache.rs`): one file per

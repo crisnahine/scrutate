@@ -1,13 +1,16 @@
 //! What a name refers to. Every question about a use of a name asks `Names`: callers, callees,
 //! references, the language server's definition, imports and importers. The rules that decide
 //! live in `resolve/`; this module owns who asks them, once per request, with each file read and
-//! parsed once. The caller count ranking reads is the index's (`Index::call_counts`).
+//! parsed once. What `callers` and `callees` learn of a call site is kept (`answers.rs`), so the
+//! same request on the same index and files asks the rules nothing. The caller count ranking
+//! reads is the index's (`Index::call_counts`).
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
 use anyhow::Result;
 
+use crate::answers::{Reading, Stored};
 use crate::index::{ChunkRow, Symbol};
 use crate::resolve::{join, Occurrence, Resolution, Resolved, Resolver};
 use crate::search::{Hit, Searcher};
@@ -29,11 +32,16 @@ pub struct Names<'a> {
     rv: Resolver<'a>,
     /// by file: the byte each line starts at
     line_starts: HashMap<String, Vec<usize>>,
+    /// the kept answers of the request running, and the ones it adds
+    stored: Option<Stored>,
+    _reading: Reading,
 }
 
 impl<'a> Names<'a> {
     pub fn new(s: &'a Searcher) -> Result<Names<'a>> {
-        Ok(Names { s, rv: Resolver::new(&s.ix)?, line_starts: HashMap::new() })
+        // started first: the store keeps what every read of the request saw
+        let reading = Reading::start();
+        Ok(Names { s, rv: Resolver::new(&s.ix)?, line_starts: HashMap::new(), stored: None, _reading: reading })
     }
 
     /// The definition the occurrence of `name` at 1-based `line`, 0-based byte `col` of `path`
@@ -94,7 +102,19 @@ impl<'a> Names<'a> {
     }
 
     /// What the resolver makes of the occurrences of `name` in lines `start..=end` of `path`.
-    fn uses(&mut self, path: &str, (start, end): (i64, i64), name: &str) -> Uses {
+    fn uses(&mut self, path: &str, lines: (i64, i64), name: &str) -> Uses {
+        let site = (path.to_string(), lines.0, lines.1, name.to_string());
+        if let Some(u) = self.stored.as_mut().and_then(|st| st.get(&site)) {
+            return u.clone();
+        }
+        let u = self.resolve_uses(path, lines, name);
+        if let Some(st) = &mut self.stored {
+            st.put(site, u.clone());
+        }
+        u
+    }
+
+    fn resolve_uses(&mut self, path: &str, (start, end): (i64, i64), name: &str) -> Uses {
         let fi = self.rv.file(path);
         let src = &fi.src;
         // a file of thousands of call sites is not walked from its top for each one
@@ -148,8 +168,18 @@ impl<'a> Names<'a> {
     /// The definitions whose code calls what `name` stands for, and how many of them were kept only
     /// because the resolver could not tell which same-named definition they call. Those come after
     /// the decided ones, first the ones whose code names the target's type, then the ones in its package.
-    /// -> (callers: decided, then undecided, then unchecked; how many are undecided; how many unchecked)
-    pub fn callers(&mut self, name: &str, limit: usize) -> Result<(Vec<Hit>, usize, usize)> {
+    /// -> (callers: decided, then undecided; how many are undecided)
+    pub fn callers(&mut self, name: &str, limit: usize) -> Result<(Vec<Hit>, usize)> {
+        self.stored = Some(Stored::open(self.s, "callers", name, limit));
+        let r = self.callers_kept(name, limit);
+        if let (Some(st), Ok((_, _, complete))) = (self.stored.take(), &r) {
+            st.save(self.s, limit, *complete);
+        }
+        r.map(|(out, undecided, _)| (out, undecided))
+    }
+
+    /// `callers`, and whether it went through every call site
+    fn callers_kept(&mut self, name: &str, limit: usize) -> Result<(Vec<Hit>, usize, bool)> {
         let s = self.s;
         let langs = Langs { root: &s.ix.root, seen: Default::default() };
         let mut targets = crate::ops::targets(s, name, 500, false)?;
@@ -165,13 +195,12 @@ impl<'a> Names<'a> {
             targets.iter().filter_map(|t| t.qualname.rsplit_once('.').map(|(o, _)| o.rsplit('.').next().unwrap_or(o))).filter(|o| !o.is_empty()).collect();
         let packages: HashSet<&str> = targets.iter().map(|t| package(&t.path)).collect();
         let fits = |path: &str| targets.iter().any(|t| langs.same_family(&t.path, path));
-        let (mut out, mut unsure_rows, mut unchecked_rows, mut seen) = (Vec::new(), Vec::new(), Vec::new(), HashSet::new());
+        let (mut out, mut unsure_rows, mut seen) = (Vec::new(), Vec::new(), HashSet::new());
         // a call of a method a target overrides or implements may run the target
         let overridden: HashSet<i64> = targets.iter().flat_map(|t| self.rv.overridden(t.id)).filter(|id| !ids.contains(id)).collect();
         let names_owner = |text: &str| owners.iter().any(|o| has_word(text, o));
         let likely = |r: &ChunkRow| (!names_owner(&r.text), !packages.contains(package(&r.path)), r.path.clone(), r.start);
         let all_free = |n: &str| targets.iter().filter(|t| t.name == n).all(|t| free(&t.kind, &t.qualname));
-        let mut asked = 0;
         for n in names {
             let rows: Vec<Symbol> = s.ix.named(n)?.into_iter().filter(|r| r.kind != "window").collect();
             // with another definition of the name about, the likeliest call sites are asked first
@@ -185,12 +214,6 @@ impl<'a> Names<'a> {
                 sites.sort_by_cached_key(&likely);
             }
             for row in sites {
-                // a common name has thousands of call sites: the likeliest are resolved, the rest stay undecided
-                if asked >= CALLERS_RESOLVED {
-                    unchecked_rows.push(row);
-                    continue;
-                }
-                asked += 1;
                 let uses = self.uses(&row.path, (row.start, row.end), n);
                 let unsure = (if all_free(n) { uses.unsure_free } else { uses.unsure }) || !uses.dispatched.is_disjoint(&overridden);
                 if uses.got.is_disjoint(&ids) {
@@ -211,22 +234,30 @@ impl<'a> Names<'a> {
                 }
                 out.push(Hit::from_row(&row, true));
                 if out.len() >= limit {
-                    return Ok((out, 0, 0));
+                    return Ok((out, 0, false));
                 }
             }
         }
         unsure_rows.sort_by_cached_key(&likely);
         let undecided = unsure_rows.len().min(limit - out.len());
         out.extend(unsure_rows.iter().take(undecided).map(|r| Hit::from_row(r, true)));
-        let unchecked = unchecked_rows.len().min(limit - out.len());
-        out.extend(unchecked_rows.iter().take(unchecked).map(|r| Hit::from_row(r, true)));
-        Ok((out, undecided, unchecked))
+        Ok((out, undecided, true))
     }
 
     /// What the code of the definitions `name` stands for calls: definitions of the repository in
     /// the same language family, and the names it calls that have none.
     /// -> (resolved definitions, external names, the files of the definitions whose calls these are)
     pub fn callees(&mut self, name: &str, limit: usize) -> Result<(Vec<Hit>, Vec<String>, Vec<String>)> {
+        // every call site is asked whatever the limit, which only cuts the list at the end
+        self.stored = Some(Stored::open(self.s, "callees", name, 0));
+        let r = self.callees_kept(name, limit);
+        if let (Some(st), Ok(_)) = (self.stored.take(), &r) {
+            st.save(self.s, 0, true);
+        }
+        r
+    }
+
+    fn callees_kept(&mut self, name: &str, limit: usize) -> Result<(Vec<Hit>, Vec<String>, Vec<String>)> {
         let s = self.s;
         let kinds: Vec<&str> = crate::search::CODE_KINDS.iter().copied().chain(["key", "macro"]).collect();
         let langs = Langs { root: &s.ix.root, seen: Default::default() };
@@ -392,10 +423,6 @@ impl<'a> Names<'a> {
     }
 }
 
-/// Call sites the resolver is asked about in one `callers` answer, likeliest first. Every site of
-/// a Java name with 2,000 of them costs about 2.5 s; answers kept per file content would lift it.
-pub const CALLERS_RESOLVED: usize = 400;
-
 /// Languages whose code calls each other's definitions directly.
 fn family(id: &'static str) -> &'static str {
     match id {
@@ -438,19 +465,20 @@ impl Langs<'_> {
 }
 
 /// What the resolver makes of the occurrences of a name in some lines of a file.
-struct Uses {
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Uses {
     /// the definitions they resolve to
-    got: HashSet<i64>,
+    pub(crate) got: HashSet<i64>,
     /// the ones of `got` a call reaches other than through `super`, where an override may run instead
-    dispatched: HashSet<i64>,
+    pub(crate) dispatched: HashSet<i64>,
     /// one stayed unresolved (or none was found)
-    unsure: bool,
+    pub(crate) unsure: bool,
     /// one stayed unresolved that may call a free function: not `x.name(..)` where a method
     /// call never reaches a free function
-    unsure_free: bool,
+    pub(crate) unsure_free: bool,
     /// every unresolved one is a call without a receiver in a language the resolver does not
     /// read: it runs the definition in its own file when there is one (`own`)
-    own_file: bool,
+    pub(crate) own_file: bool,
 }
 
 /// Whether the definition (`path`, `kind`, `qualname`) is what a call without a receiver in the

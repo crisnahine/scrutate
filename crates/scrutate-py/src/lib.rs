@@ -511,7 +511,7 @@ impl Repo {
 
     /// Functions that call `name`. A `Results` list: `stopped_at` is `limit` when there were more,
     /// `undecided` counts the callers the resolver kept without knowing whether they call this
-    /// definition or another of the same name, `unchecked` the ones it was not asked about.
+    /// definition or another of the same name.
     #[pyo3(signature = (name, limit=scrutate::ops::CALLERS_LIMIT))]
     fn callers<'py>(
         &self,
@@ -527,12 +527,10 @@ impl Repo {
             Answer::Callers {
                 hits,
                 undecided,
-                unchecked,
                 stopped,
             } => {
                 let out = results(py, hits_py(hits), stopped)?;
                 out.setattr("undecided", undecided)?;
-                out.setattr("unchecked", unchecked)?;
                 Ok(out)
             }
             _ => Err(unexpected()),
@@ -803,7 +801,6 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ns.set_item("__doc__", "A list of results; `stopped_at` is the limit the answer stopped at when there were more, else None.")?;
     ns.set_item("stopped_at", py.None())?;
     ns.set_item("undecided", py.None())?;
-    ns.set_item("unchecked", py.None())?;
     m.add(
         "Results",
         py.get_type::<PyType>()

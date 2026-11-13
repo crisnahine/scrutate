@@ -198,6 +198,13 @@ First release.
   line 18446744073709551615.
 
 ### Engine B: code intelligence
+- `callers` asks the resolver about every call site, where it asked about the 400 likeliest and
+  listed the rest as not checked, and `callers` and `callees` keep what they learned of each call
+  site under `.scrutate/answers/`, one file per request, with what the run read: the index
+  database and its data version, the executable, the root and the `stat` of every file the
+  resolver read. The same request again uses them while all of that is the same, and resolves
+  again after any change. `callers size` on Guava (1,970 call sites) costs 1.4 s of CPU on a first run and 0.43 s from what it kept, where the capped answer cost 0.6 s; the walker asks once per type and name whether the repository extends a type from outside with a method, where asking at every call
+  was a fifth of a first run. The bindings' callers list has no `unchecked` any more.
 - What parsing and tokenizing make of a file is an artifact, kept by the index under a key of the
   file's content, its file name and the parsing rules (`artifacts.rs`); the `files` table names
   each file's artifact, and one function (`artifacts::derive`) makes a path's rows and postings
@@ -535,9 +542,7 @@ First release.
   points outside the segment) rebuilds the index and answers; it ended with a panic message.
 - `callers` of a constructor lists the calls of its class (`Point(1)` for `Point.__init__`,
   `new Widget()` for `constructor`, `Invoice.new` for Ruby's `initialize`, and the Java, C#, C++,
-  PHP and Swift forms); it printed "(no results)". Past the 400 call sites the resolver is asked
-  about, `callers` says "the last N were not checked", where it said the resolver could not
-  identify them. `refs` gives the reason `not resolved in this language` for a language that has
+  PHP and Swift forms); it printed "(no results)". `refs` gives the reason `not resolved in this language` for a language that has
   a grammar and no resolver rules, and keeps `no grammar` for files without one.
 - A call is recorded under the name its definition has: a trailing `?` or `!` in Ruby and
   Elixir, `!` in Julia, the dots of an R name, `::` in a Bash name, a prime in Haskell, OCaml,
@@ -683,8 +688,7 @@ First release.
   `p->operator()(3)`) records that name, so `callers ~Shape` and `callers operator==` find it.
 - A location (`path:start-end`) names exactly one definition in `symbol`, `callers` and
   `callees`. `callers` lists the callers the resolver ties to the definition first, then the
-  undecided ones that name the owner type or share its package, and asks the resolver about at
-  most 400 call sites (`callers Builder.new` on 300 crates: 3.2 s to 0.4 to 0.6 s).
+  undecided ones that name the owner type or share its package.
 - `callers`, `callees`, `symbol`, `dupes`, `tsquery`, `read_code symbol`, `duplicates` and
   `structural_search` end with a line when they stopped at their limit, naming the argument that
   raises it.
@@ -766,7 +770,7 @@ First release.
 - `find` lists the lines of its Engine A search in path order, as it said; they came in the
   order the threads finished.
 - The Python bindings gain `Repo.references`, `Repo.call` (any MCP tool by name, with paging),
-  `undecided` and `unchecked` on the callers list, and the files a NUL byte stopped in
+  `undecided` on the callers list, and the files a NUL byte stopped in
   `GrepIter.stats()["notes"]`.
 
 ### Product

@@ -61,6 +61,12 @@ dependencies, dependents and the language server's definition ask it what the oc
 place refers to, and it answers with the definition and how that was found, or why none was. One
 request opens one, so each file is read and parsed once. The rules it applies live in `resolve/`.
 
+**Kept answers**: what `callers` and `callees` learned of each call site, stored per request
+(`answers.rs`, `.scrutate/answers/`) with what the run read: the index database and its data
+version, the executable, the root and the `stat` of every file the resolver read. A later run of
+the same request uses them only while all of that is the same, so it gives the answer the stored
+run gave; anything else resolves again.
+
 **Walker**: the part of the resolver every language shares (`resolve/mod.rs`): scopes from the
 definitions of the index, the lookup memo, the depth guards and the order of the steps that
 decide what a name refers to.
@@ -117,7 +123,7 @@ command line call may use the session a running `serve` offers on `.scrutate/ses
 does the work itself when the session is not the same build, settings and root, or would wait.
 
 **Stores**: the derived data under `.scrutate/` (the code index, the text index, the `tsquery`
-cache) and the one module that keeps them current (`stores.rs`). A caller names a **change set**
+cache, the kept answers) and the one module that keeps them current (`stores.rs`). A caller names a **change set**
 (`stores::Changes`: every file, or the files a watch burst names) and what it does
 (`stores::Writer`), never a store; the module holds the rule per operation for when to look and
 the one recovery rule for damage.

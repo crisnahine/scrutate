@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use crate::fmt::{hit_blocks, hits_json};
 use crate::index::{ChunkRow, UpdateStats};
 use crate::intel::{Capture, DupGroup, RefGroup, References};
-use crate::names::{Dependency, Names, CALLERS_RESOLVED};
+use crate::names::{Dependency, Names};
 
 use crate::fmt::{echo, shown};
 use crate::instant::{Case, Files, Mode, Pattern};
@@ -402,12 +402,10 @@ pub enum Answer {
         stopped: Option<Stop>,
     },
     /// `undecided`: callers kept although the resolver could not tell whether they call this
-    /// definition or another of the same name. `unchecked`: the ones after them that it was not
-    /// asked about.
+    /// definition or another of the same name.
     Callers {
         hits: Vec<Hit>,
         undecided: usize,
-        unchecked: usize,
         stopped: Option<Stop>,
     },
     /// `from`: the files of the definitions whose calls these are.
@@ -490,14 +488,13 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
             Answer::Hits { hits, words: Vec::new(), snippet: true, stopped }
         }
         Op::Callers { name, limit } => {
-            let (hits, mut undecided, mut unchecked) = Names::new(s)?.callers(name, limit.saturating_add(1))?;
+            let (hits, mut undecided) = Names::new(s)?.callers(name, limit.saturating_add(1))?;
             let (hits, stopped) = cut(hits, *limit, RAISE_LIMIT);
-            // the unchecked ones come last and the undecided before them, so the one cut off was one of those
+            // the undecided ones come last, so the one cut off was one of them
             if stopped.is_some() {
-                let last = if unchecked > 0 { &mut unchecked } else { &mut undecided };
-                *last = last.saturating_sub(1);
+                undecided = undecided.saturating_sub(1);
             }
-            Answer::Callers { hits, undecided, unchecked, stopped }
+            Answer::Callers { hits, undecided, stopped }
         }
         Op::Callees { name, limit } => {
             let (resolved, external, from) = Names::new(s)?.callees(name, limit.saturating_add(1))?;
@@ -995,22 +992,16 @@ impl Answer {
                 Parts { items: hit_blocks(hits, words, *snippet, false), tail: stop_line(*stopped, "results"), noun: "results", ..Parts::default() }
             }
             Answer::Callers { hits, .. } if hits.is_empty() => nothing("(no results)".to_string()),
-            Answer::Callers { hits, undecided, unchecked, stopped } => Parts {
+            Answer::Callers { hits, undecided, stopped } => Parts {
                 items: hit_blocks(hits, &[], false, false),
                 tail: joined(
-                    joined(
-                        match *undecided {
-                            0 => String::new(),
-                            n if n == hits.len() => {
-                                "(the resolver could not tell whether any of these calls this definition or another of the same name)".to_string()
-                            }
-                            n => format!("({n} of these call a definition of that name the resolver could not identify: it may be another one)"),
-                        },
-                        match *unchecked {
-                            0 => String::new(),
-                            n => format!("(the last {n} were not checked: the resolver is asked about the {CALLERS_RESOLVED} likeliest call sites)"),
-                        },
-                    ),
+                    match *undecided {
+                        0 => String::new(),
+                        n if n == hits.len() => {
+                            "(the resolver could not tell whether any of these calls this definition or another of the same name)".to_string()
+                        }
+                        n => format!("({n} of these call a definition of that name the resolver could not identify: it may be another one)"),
+                    },
                     stop_line(*stopped, "results"),
                 ),
                 noun: "results",

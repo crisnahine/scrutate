@@ -1,5 +1,6 @@
 //! Keeps every store under `.scrutate/` current: the code index (`index.rs`), the text index
-//! (`textindex.rs`) and the `tsquery` cache (`tscache.rs`). A caller names what it is doing (a
+//! (`textindex.rs`), the `tsquery` cache (`tscache.rs`) and the answers `callers` and `callees`
+//! keep (`answers.rs`). A caller names what it is doing (a
 //! `Writer`, or a read through `Repo`) and what changed (`Changes`); this module decides which
 //! stores that touches, when it looks for changes, and what happens when a store is damaged.
 //!
@@ -20,6 +21,7 @@
 //! | any operation on `Repo` | the files its answer cites and its arguments name, one `stat` each | code index |
 //! | `serve` and `lsp` start, an `lsp` save | every file; waits | code index |
 //! | `tsquery` | its own walk, one `stat` per file against the code index's record | `tsquery` cache |
+//! | `callers`, `callees` | as any index command, then one `stat` per file the kept run read | its answers |
 //!
 //! Recovery: a store found damaged is built again from the sources, once, by the process that
 //! found it, which says so on stderr; an operation that met the damage then runs again. The code
@@ -28,7 +30,8 @@
 //! since it promises not to walk the tree.
 //!
 //! Locking: each store has its own writer lock (the code index a SQLite write transaction, the
-//! text index `.scrutate/text/lock`, the `tsquery` cache none: its files are replaced by rename),
+//! text index `.scrutate/text/lock`, the `tsquery` cache and the kept answers none: their files
+//! are written by readers and replaced by rename),
 //! and each commits in one step (a transaction; a manifest rename; a file rename), so a reader of
 //! one store sees its last commit and never half of one. Writers that keep both indexes take the
 //! two locks one after the other, code index first, and never hold both; no answer reads both.

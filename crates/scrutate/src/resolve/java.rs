@@ -221,6 +221,7 @@ pub(super) fn java_package(src: &str) -> String {
 /// The first bytes of a repository file: enough for its package declaration.
 fn java_head(root: &std::path::Path, rel: &str) -> String {
     use std::io::Read;
+    crate::answers::noted(root, rel);
     let p = root.join(rel);
     if !std::fs::symlink_metadata(&p).is_ok_and(|m| m.is_file()) {
         return String::new();

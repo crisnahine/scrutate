@@ -8,8 +8,10 @@ to another directory under the same name, a copy, two files that swap their cont
 .gitignore written or removed, binary or Latin-1 content, an emptied file) in a tree with a
 `.git` directory, runs `scrutate index --no-text`, indexes a copy of the tree from scratch, and
 compares chunks (their texts and search fields too), files and the artifacts they name, call
-edges and imports of the two databases. The moves, copies and swaps bring content the artifact
-store holds to another path. Every 15 steps it runs
+edges and imports of the two databases. It also asks the updated tree for the `callers` and
+`callees` of four names three times: with the answers kept since earlier steps, again (from its
+own), and with nothing kept; the three must be the same. The files call and import each other's functions. The moves,
+copies and swaps bring content the artifact store holds to another path. Every 15 steps it runs
 `scrutate check`. Needs the sqlite3 command line tool; a failing sqlite3 counts as a problem.
 Exit status 1 on any mismatch, or when no step compared a database holding a file; the tree that
 differed is kept under the temporary directory printed at the end.
@@ -34,9 +36,11 @@ def body(ext):
     n = rnd.randint(0, 5)
     ids = [rnd.randint(1, 40) for _ in range(n)]
     if ext == ".py":
-        return "import os\n\n" + "\n\n".join(f"def f_{i}(x):\n    return g_{rnd.randint(1, 40)}(x) + {i}" for i in ids) + "\n"
+        imports = "".join(rnd.choice(["from util import f_%d\n", "from src.alpha import f_%d\n", "from main import *\n%.0s"]) % rnd.randint(1, 40) for _ in range(rnd.randint(0, 2)))
+        methods = f"class C{rnd.randint(1, 3)}:\n    def f_{rnd.randint(1, 40)}(self, x):\n        return self.f_{rnd.randint(1, 40)}(x)\n\n\n" if rnd.random() < 0.3 else ""
+        return "import os\n" + imports + "\n" + methods + "\n\n".join(f"def f_{i}(x):\n    return g_{rnd.randint(1, 40)}(x) + f_{rnd.randint(1, 40)}(x) + {i}" for i in ids) + "\n"
     if ext == ".js":
-        return "\n".join(f"function f_{i}(x) {{\n  return g_{rnd.randint(1, 40)}(x) + {i};\n}}" for i in ids) + "\n"
+        return "\n".join(f"function f_{i}(x) {{\n  return g_{rnd.randint(1, 40)}(x) + f_{rnd.randint(1, 40)}(x) + {i};\n}}" for i in ids) + "\n"
     if ext == ".rs":
         return "\n".join(f"pub fn f_{i}(x: u32) -> u32 {{\n    g_{rnd.randint(1, 40)}(x) + {i}\n}}" for i in ids) + "\n"
     if ext == ".go":
@@ -120,6 +124,9 @@ Q = ("select 'chunk', path, kind, name, qualname || ' ' || is_test || ' ' || ndo
      "select 'ref', c.path, r.callee, c.qualname, '', c.start, 0 from refs r join chunks c on c.id = r.chunk_id union all "
      "select 'import', path, module, '', '', line, 0 from imports order by 1, 2, 6, 7, 3, 4, 5")
 
+def answers(root, names):
+    return [subprocess.run([BIN, "--root", root, *a], capture_output=True, text=True, stdin=subprocess.DEVNULL).stdout for n in names for a in (["callers", n, "--limit", "1000"], ["callees", n])]
+
 def dump(root):
     p = subprocess.run([BIN, "--root", root, "index", "--no-text"], capture_output=True, text=True)
     if p.returncode != 0:
@@ -140,6 +147,18 @@ while time.time() - t0 < SECONDS and bad < 3:
     F = os.path.join(HERE, f"fresh{SEED}_{steps}")
     shutil.copytree(T, F, symlinks=True, ignore=shutil.ignore_patterns(".scrutate"))
     fresh, err2 = dump(F)
+    names = [f"f_{rnd.randint(1, 40)}" for _ in range(4)]
+    kept, again = answers(T, names), answers(T, names)
+    shutil.rmtree(os.path.join(T, ".scrutate", "answers"), ignore_errors=True)
+    new = answers(T, names)
+    if kept != new or again != new:
+        bad += 1
+        which = [i for i in range(len(new)) if kept[i] != new[i] or again[i] != new[i]][0]
+        print(f"step {steps} ANSWERS DIFFER after {ops}: {['callers', 'callees'][which % 2]} {names[which // 2]}")
+        print("    kept:  ", kept[which][:300].replace("\n", " | "))
+        print("    again: ", again[which][:300].replace("\n", " | "))
+        print("    fresh: ", new[which][:300].replace("\n", " | "))
+        shutil.copytree(T, os.path.join(HERE, f"bad{SEED}_{steps}_answers"), symlinks=True)
     if inc is None or fresh is None:
         bad += 1
         print(f"step {steps}: index failed: {err or err2}; ops {ops}")

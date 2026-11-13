@@ -362,22 +362,59 @@ fn the_outline_of_a_file_with_no_definition_is_its_module_line() {
 }
 
 #[test]
-fn callers_says_which_call_sites_it_did_not_check() {
+fn callers_resolves_every_call_site_and_answers_again_from_what_it_kept_until_a_file_changes() {
     let mut files: Vec<(String, String)> = vec![
         ("a/__init__.py".into(), String::new()),
         ("a/helper.py".into(), "def helper():\n    return 1\n".into()),
+        ("b/__init__.py".into(), String::new()),
         ("b/helper.py".into(), "def helper():\n    return 2\n".into()),
     ];
     for i in 0..410 {
         files.push((format!("u/u{i:03}.py"), format!("from a.helper import helper\n\n\ndef f{i:03}():\n    return helper()\n")));
     }
     let files: Vec<(&str, &str)> = files.iter().map(|(p, b)| (p.as_str(), b.as_str())).collect();
-    let r = Repo::new("unchecked", &files);
-    let (code, out) = r.run(&["callers", "a/helper.py:1", "--limit", "500"]);
+    let r = Repo::new("all_sites", &files);
+    let kept = r.root.join(".scrutate/answers");
+    let callers = ["callers", "a/helper.py:1", "--limit", "500"];
+    // what a run with nothing kept answers
+    let fresh = || {
+        let _ = fs::remove_dir_all(&kept);
+        r.exec(&callers).1
+    };
+    // a file written again is a new one: renamed into place
+    let id = || {
+        let f = fs::read_dir(&kept).ok()?.flatten().find(|e| e.file_name().to_string_lossy().ends_with(".bin"))?;
+        #[cfg(unix)]
+        let ino = std::os::unix::fs::MetadataExt::ino(&f.metadata().unwrap());
+        #[cfg(not(unix))]
+        let ino = 0;
+        Some((f.path(), ino))
+    };
+    let (code, out) = r.run(&callers);
     assert_eq!(code, 0, "{out}");
     assert_eq!(out.lines().filter(|l| l.contains("] f")).count(), 410, "{out}");
-    assert!(out.contains("(the last 10 were not checked: the resolver is asked about the 400 likeliest call sites)"), "{out}");
-    assert!(!out.contains("could not"), "{out}");
+    assert!(!out.contains("not checked") && !out.contains("could not"), "{out}");
+    let written = id();
+    // nothing is kept where the file system does not say when the index database was made
+    assert_eq!(written.is_some(), fs::metadata(r.root.join(".scrutate/index.db")).unwrap().created().is_ok());
+    assert_eq!(r.run(&callers), (code, out.clone()));
+    assert_eq!(written, id(), "the second run answers from the kept file and writes nothing");
+    let edits: [(&str, &str); 4] = [
+        // an importing file now calls the other helper
+        ("u/u000.py", "from b.helper import helper\n\n\ndef f000():\n    return helper()\n"),
+        ("z.py", "def unrelated():\n    return 3\n"),
+        // the definition's file: the call sites now import a name it no longer defines
+        ("a/helper.py", "def helper2():\n    return 1\n"),
+        ("a/helper.py", "def helper():\n    return 1\n\n\ndef other():\n    return 0\n"),
+    ];
+    for (rel, body) in edits {
+        fs::write(r.root.join(rel), body).unwrap();
+        // the first run finds the kept answers of the state before, the second its own
+        let (stored, again) = (r.exec(&callers).1, r.exec(&callers).1);
+        assert!(stored == fresh(), "after writing {rel}: {stored}");
+        assert!(again == stored, "after writing {rel}, from what was kept: {again}");
+    }
+    assert!(fresh().contains("u001.py"));
 }
 
 #[test]
