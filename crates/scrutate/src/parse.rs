@@ -44,10 +44,12 @@ pub(crate) struct Lazy {
 }
 
 impl Chunk {
-    /// Cuts `text` and `body` from `src`. The index does it one chunk at a time, so a file of
-    /// thousands of nested definitions never holds all their copies at once.
-    pub fn fill(&mut self, src: &[u8]) {
+    /// Cuts `text` and `body` from `src`, the file's chunks in their order and from one `budget`.
+    /// The index does it one chunk at a time, so a file of thousands of nested definitions never
+    /// holds all their copies at once.
+    pub fn fill(&mut self, src: &[u8], budget: &mut TextBudget) {
         if let Some(l) = self.lazy.take() {
+            // windows do not nest, so their text grows with the file alone
             if self.kind == "window" {
                 // its lines as `split_lines` gives them (no "\r"); past twice the cap is cut anyway
                 let s = txt(src, l.text, l.end.min(l.text + 2 * MAX_CHUNK_BYTES + 8));
@@ -55,9 +57,23 @@ impl Chunk {
                 self.body = self.text.clone();
                 return;
             }
-            self.text = head_bytes(src, l.text, l.end, l.lines);
-            self.body = head_bytes(src, l.body, l.end, l.lines);
+            let (lines, max) = if budget.0 == 0 { (1, CUT_CHUNK_BYTES) } else { (l.lines, MAX_CHUNK_BYTES) };
+            self.text = head_bytes(src, l.text, l.end, lines, max);
+            self.body = head_bytes(src, l.body, l.end, lines, max);
+            budget.0 = budget.0.saturating_sub(self.text.len() + self.body.len());
         }
+    }
+}
+
+/// What the definitions of one file keep of its text, text and body together: `FILE_TEXT_FLOOR`
+/// bytes plus `FILE_TEXT_PER_BYTE` for each byte of the file. A definition filled once it is
+/// spent keeps its first line, at most `CUT_CHUNK_BYTES` of it, then "\n...": the text of a file
+/// of deeply nested definitions grows with the file, not with the nesting.
+pub struct TextBudget(usize);
+
+impl TextBudget {
+    pub fn of(source: &[u8]) -> TextBudget {
+        TextBudget(FILE_TEXT_FLOOR.saturating_add(FILE_TEXT_PER_BYTE.saturating_mul(source.len())))
     }
 }
 
@@ -81,6 +97,12 @@ pub const MAX_CHUNK_LINES: usize = 200;
 /// on one line with thousands of nested functions would otherwise hold its whole line per chunk.
 /// The longest chunk of this crate's sources is 9 KB, of networkx 15 KB.
 pub const MAX_CHUNK_BYTES: usize = 32 * 1024;
+/// `TextBudget`: all the chunks of a file keep at most 5.1 times its size and 1.8 MB (6,262 files
+/// of Rust, Python, C, C++, JavaScript, Markdown and JSON measured), so normal files stay under it.
+pub const FILE_TEXT_FLOOR: usize = 1 << 20;
+pub const FILE_TEXT_PER_BYTE: usize = 8;
+/// What a definition keeps of its first line once its file's budget is spent.
+pub const CUT_CHUNK_BYTES: usize = 256;
 
 /// `s[..]` cut to `MAX_CHUNK_BYTES` at a character boundary, and whether it was cut.
 fn cap_bytes(s: &str) -> (&str, bool) {
@@ -306,7 +328,8 @@ pub fn window_chunks(source: &str) -> Vec<Chunk> {
 pub fn window_chunks_from(source: &str, first_line: usize) -> Vec<Chunk> {
     let lines = split_lines(source);
     let mut out = windows_of(source, &lines, first_line.min(lines.len()), lines.len(), "");
-    out.iter_mut().for_each(|c| c.fill(source.as_bytes()));
+    let mut budget = TextBudget::of(source.as_bytes());
+    out.iter_mut().for_each(|c| c.fill(source.as_bytes(), &mut budget));
     out
 }
 
@@ -480,18 +503,18 @@ fn qualify(parent: &str, name: &str) -> String {
 }
 
 /// `head` of src[a..b], copying only what it keeps.
-fn head_bytes(src: &[u8], a: usize, b: usize, n: usize) -> String {
+fn head_bytes(src: &[u8], a: usize, b: usize, n: usize, max: usize) -> String {
     let (a, b) = (a.min(src.len()), b.min(src.len()));
     let b = b.max(a);
-    // past MAX_CHUNK_BYTES the text is cut anyway: scanning further makes nested chunks quadratic
-    let lim = b.min(a + MAX_CHUNK_BYTES + 1);
+    // past `max` the text is cut anyway: scanning further makes nested chunks quadratic
+    let lim = b.min(a + max + 1);
     // as str, so the search runs on the standard library's memchr; `lim` may split a character
     let s = std::str::from_utf8(&src[a..lim]).unwrap_or_else(|e| std::str::from_utf8(&src[a..a + e.valid_up_to()]).unwrap_or_default());
     let end = s.match_indices('\n').nth(n - 1).map_or(b, |(i, _)| a + i);
     let mut cut = end < b;
     let mut e = end;
-    if e - a > MAX_CHUNK_BYTES {
-        e = a + MAX_CHUNK_BYTES;
+    if e - a > max {
+        e = a + max;
         while e > a && src[e] & 0xC0 == 0x80 {
             e -= 1; // not inside a character
         }
@@ -1915,7 +1938,7 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
             // the comment sits above the node the chunk shows: a Go `const` above its only spec
             let up = if shown == node { ancestors.len() } else { ancestors.iter().rposition(|(a, _)| a.id() == shown.id()).unwrap_or(ancestors.len()) };
             let doc = leading_comment(spec.id, shown, &ancestors[..up], &pos[..=up], src, spec.wrappers, 0).0;
-            let text = head_bytes(src, shown.start_byte(), shown.end_byte(), MAX_CHUNK_LINES);
+            let text = head_bytes(src, shown.start_byte(), shown.end_byte(), MAX_CHUNK_LINES, MAX_CHUNK_BYTES);
             for name in names {
                 // `const int Config::kSize = 2;` is owned by `Config`
                 let (owner, name) = split_owner(spec.id, node, name, src);
@@ -2369,7 +2392,8 @@ pub fn sexp(spec: &'static LangSpec, source: &str) -> String {
 /// Chunks and imports of one file (a custom language, else the grammar tier, then heuristics, then windows).
 pub fn parse_file(path: &str, source: &str) -> Parsed {
     let mut parsed = parse_file_with(path, source, None).0;
-    parsed.chunks.iter_mut().for_each(|c| c.fill(source.as_bytes()));
+    let mut budget = TextBudget::of(source.as_bytes());
+    parsed.chunks.iter_mut().for_each(|c| c.fill(source.as_bytes(), &mut budget));
     parsed
 }
 

@@ -275,7 +275,16 @@ artifact key holds its language's signature, and the index's meta keeps every ex
 signature (`languages`), so a changed table rereads only the files of the extensions it changed.
 
 A chunk's text and body keep at most 200 lines (40 for a container such as a class) and 32 KiB,
-cut at a character boundary, and a chunk ends on the last line holding its text. Every line no
+cut at a character boundary, and a chunk ends on the last line holding its text. The definitions
+of one file share a budget (`parse::TextBudget`): 1 MiB plus 8 bytes per byte of the file, text
+and body together, spent in the file's chunk order. A definition filled once it is spent keeps
+its first line, at most 256 bytes of it, then `...`, so a file of deeply nested definitions keeps
+text in proportion to its size. Normal files stay under it: over 6,262 files of Rust, Python,
+C, C++, JavaScript, Markdown and JSON (this repository, ripgrep, networkx, pandas, mypy, parts of
+Linux and LLVM), every chunk of a file together kept at most 5.1 times its size and 1.8 MB. A
+one-line JavaScript file of 8,000 nested functions (112 KB) indexes in 0.13 s with a 44 MB peak
+(release build, macOS arm64; 3.1 to 3.5 s and 542 MB before) and keeps 0.34 MB of compressed
+chunk text in the database (40 MB before). Windows do not nest, so they are not cut. Every line no
 chunk keeps (past those caps, outside definitions, or only in a constant) is in overlapping
 50-line windows named after the enclosing definition, or the file's stem, so ranked search reads
 every line; a line of only brackets or a closing word (`end`, `fi`, `done`,

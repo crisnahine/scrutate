@@ -168,10 +168,6 @@ docs/RELEASING.md, public (done), tag `v0.1.0`.
 - Call forms the grammars do not tell apart: a Verilog task call without parentheses (`h;`) or on
   a member (`obj.m(1);`) records no call edge, a VHDL indexed signal `a(i)` is recorded as a call,
   and an assembly call under a local label counts for that label and for the global label above.
-- A one-line file with 8,000 nested functions takes 542 MB of memory to index (462 MB with
-  `SCRUTATE_SEMANTIC=none`) and 3.1 to 3.5 s (release build, macOS arm64): each of the 8,000
-  chunks keeps its own text (up to 32 KiB), so the index holds 40 MB of compressed chunk text for
-  the file, plus their postings.
 - Windows and Intel macOS are tested on GitHub's runners only ([Install](INSTALL.md) has the
   runners and the five Unix-only tests): no release archive is built for them, installed on a
   machine or benchmarked there.

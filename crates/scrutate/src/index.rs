@@ -289,9 +289,10 @@ pub fn build_rows(rel: &str, source: &str, model: Option<&SemanticModel>, prev: 
     }
     let mut chunks = Vec::with_capacity(parsed.chunks.len());
     let mut texts = Vec::with_capacity(parsed.chunks.len());
+    let mut budget = crate::parse::TextBudget::of(source.as_bytes());
     for mut c in parsed.chunks {
         let t = Instant::now();
-        c.fill(source.as_bytes());
+        c.fill(source.as_bytes(), &mut budget);
         let (fields, name_tok) = Artifact::tokenize(&c);
         if prof {
             prof::add(&prof::TOKENIZE, t);

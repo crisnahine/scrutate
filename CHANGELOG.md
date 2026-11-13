@@ -116,6 +116,10 @@ incompatible index by itself, and that is never breaking.
   is indexed within 1 to 30 s, and the burst no longer walks the tree while one has none; the
   message names `fs.inotify.max_user_watches` when that limit is the cause
   ([CLI](docs/CLI.md#watch)).
+- A one-line file of 8,000 nested functions indexes in 0.13 s with a 44 MB peak, from 3.1 s and
+  542 MB: the definitions of a file share a text budget of 1 MiB plus 8 bytes per byte of the
+  file, past which each keeps its first line. Normal files keep at most 5.1 times their size, so
+  they index as before ([ARCHITECTURE](docs/ARCHITECTURE.md)).
 - On Unix `.scrutate/` is made with mode 0700, and an existing one is set to it by the next
   write: under umask 022 it was readable by every user, the text of files made private with
   `chmod 600` included ([SECURITY](docs/SECURITY.md)).

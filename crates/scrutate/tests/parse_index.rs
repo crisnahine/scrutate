@@ -480,8 +480,15 @@ fn chunk_text_has_a_byte_cap_on_a_one_line_file_of_nested_functions() {
     for c in &chunks {
         assert!(c.text.len() <= MAX_CHUNK_BYTES + 4 && c.body.len() <= MAX_CHUNK_BYTES + 4, "{} bytes", c.text.len());
     }
+    // the file's budget keeps the text linear in the file: the outer definitions whole, the rest
+    // their first line, cut
+    use scrutate::parse::{CUT_CHUNK_BYTES, FILE_TEXT_FLOOR, FILE_TEXT_PER_BYTE};
     let total: usize = chunks.iter().map(|c| c.text.len() + c.body.len()).sum();
-    assert!(total < 600_000_000, "{total} bytes of chunk text");
+    let bound = FILE_TEXT_FLOOR + FILE_TEXT_PER_BYTE * src.len() + 2 * MAX_CHUNK_BYTES + 8 + n * 2 * (CUT_CHUNK_BYTES + 4);
+    assert!(total <= bound, "{total} bytes of chunk text, over {bound}");
+    assert!(chunks[0].text.len() > MAX_CHUNK_BYTES);
+    let last = &chunks[n / 2];
+    assert!(last.text.starts_with("function a(){") && last.text.ends_with("\n...") && last.text.len() <= CUT_CHUNK_BYTES + 4, "{}", last.text.len());
     // cut at a character, never inside one
     let wide = format!("function w() {{ \"{}\" }}", "\u{e9}".repeat(MAX_CHUNK_BYTES));
     let w = parse_source("w.js", &wide).into_iter().find(|c| c.name == "w").unwrap();
