@@ -1,0 +1,63 @@
+# Security checks for every push to main, every pull request and once a week, so a new advisory
+# or a new zizmor audit shows up without a code change: cargo deny against deny.toml, zizmor on
+# the workflows and the action, and the count of `unsafe` against docs/SECURITY.md.
+name: security
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "41 4 * * 1"
+permissions: {}
+defaults:
+  run:
+    shell: bash
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  deny:
+    name: cargo deny (advisories, licences, bans, sources)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # cargo deny reads the graph through cargo metadata, which needs the pinned toolchain
+      - run: rustup toolchain install --no-self-update
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-deny@0.20.2
+          fallback: none
+      - run: cargo deny --locked check
+  zizmor:
+    name: zizmor on .github (pedantic)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # advanced-security off: findings print to the log and fail the job
+      - uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
+        with:
+          inputs: .github
+          persona: pedantic
+          version: 1.32.0
+          advanced-security: false
+  unsafe:
+    name: unsafe count against docs/SECURITY.md
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read # checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: python3 tools/unsafe_count.py

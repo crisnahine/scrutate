@@ -55,9 +55,11 @@ writes an agent's configuration files, and the Grep hook it installs appends to 
 | Index corruption | `PRAGMA quick_check` on open; every segment array validated for dtype/shape/length on open; `scrutate check` runs `integrity_check` + deep validation (sorted ids, posting ranges, IVF permutation) and optional file re-hashing. Damaged indexes are rebuilt automatically, also when a search first meets the damage in a segment array (a posting row, a pointer or a cluster table that points outside the segment); a planted non-database file is replaced; locked ≠ corrupt (a live database is never deleted). The artifact store is part of the index: an artifact that does not decode, kept texts that do not decode, a file that names an artifact the store does not hold, and rows that disagree with their artifact are found where an update reads them (and by `scrutate check`) and rebuilt by the same rule. | `tests/artifacts.rs::damage_to_the_store_is_found_and_the_index_built_again`; robustness `corrupted_index_is_detected_and_rebuilt` (5 corruption scenarios); cli `a_posting_row_outside_its_segment_triggers_a_rebuild`; `concurrent_indexers_and_readers_do_not_corrupt` (3 writers + 2 readers, 30× repeated, `integrity_check` ok). |
 | Cache files | `.scrutate/tsquery/` (captures by content) and `.scrutate/answers/` (what `callers` and `callees` learned) are read only as regular files within their size limit (128 MB and 64 MB), never through a symbolic link, and decoded with every length checked; a file that does not decode, or whose header names another scrutate, executable, index database or root, counts as no file. They are written whole to a temporary name and renamed into place, only after the index directory check refuses a symbolic link anywhere in `.scrutate/`. A planted cache file that does decode is trusted as the checkout's own index is: it can make the answers it names wrong until it is deleted (deleting `.scrutate/` is always safe). | `files::tests::a_cache_file_is_read_only_as_a_regular_file_within_its_limit`; `answers::tests`; the tsquery tests in `tests/cli.rs`. |
 | Panic containment | A panic in the CLI prints one diagnostic line and exits 2. A panic inside an MCP tool call is reported as a tool error and the server keeps running: the session closes the reader the call ran on and opens another. The Python bindings and the language server keep a panic inside its call the same way. An index update that panics rolls back at once, and the next update clears a write transaction left open. A panic in the MCP server's first index build is reported on stderr and in each tool call's answer; calls stop waiting for it, and `serve` still exits when its input closes. | `cli::main_exit`, `session.rs`; `session::tests::a_panic_inside_one_call_is_that_calls_error_and_the_session_goes_on`; mcp_protocol `a_first_build_that_panics_is_reported_and_the_server_still_answers_and_exits`. |
-| Supply chain | 211 crates in the binary's dependency graph (every platform's), each with a permissive licence (MIT, Apache-2.0, BSD, ISC, Zlib, Unlicense, 0BSD, Unicode-3.0, CC0-1.0), plus one data file compiled in, a Han fold table derived from Unihan 18.0.0 (Unicode-3.0, `crates/scrutate/data/han_fold.txt`); `Cargo.lock` committed; `cargo audit` over the 256 locked crates: **0 vulnerabilities, 0 warnings** (RustSec advisory DB of 1,446 advisories, 2026-11-13). The bundled SQLite was upgraded for RUSTSEC-2026-0459 (`rusqlite` 0.41, `libsqlite3-sys` 0.39). `ignore` is vendored with four documented changes (`vendor/ignore`; the SBOM marks it as a modified copy). `zip` 9, used only by `grep -z`, has no open advisory; `pyo3` was upgraded to 0.30 (2 advisories in 0.27). SBOM generated per release (`tools/sbom.py`, CycloneDX 1.5). | `cargo audit` output in docs/TEST_RESULTS.md; SBOM in release artifacts. |
+| Supply chain | 211 crates in the binary's dependency graph (every platform's), each with a permissive licence (MIT, Apache-2.0, BSD, ISC, Zlib, Unlicense, 0BSD, Unicode-3.0, CC0-1.0), plus one data file compiled in, a Han fold table derived from Unihan 18.0.0 (Unicode-3.0, `crates/scrutate/data/han_fold.txt`); `Cargo.lock` committed; `cargo audit` over the 256 locked crates: **0 vulnerabilities, 0 warnings** (RustSec advisory DB of 1,446 advisories, 2026-11-13). The bundled SQLite was upgraded for RUSTSEC-2026-0459 (`rusqlite` 0.41, `libsqlite3-sys` 0.39). `ignore` is vendored with four documented changes (`vendor/ignore`; the SBOM marks it as a modified copy). `zip` 9, used only by `grep -z`, has no open advisory; `pyo3` was upgraded to 0.30 (2 advisories in 0.27). SBOM generated per release (`tools/sbom.py`, CycloneDX 1.5). `cargo deny check` runs on every push to main, every pull request and once a week against `deny.toml`: an advisory (vulnerable, unmaintained, unsound or yanked), a licence outside the list above, a wildcard version, or a crate from a registry other than crates.io or from git fails it. | `cargo audit` output in docs/TEST_RESULTS.md; SBOM in release artifacts; `deny.toml` and the `deny` job of `.github/workflows/security.yml`. |
 | Reproducible builds | Release profile pins codegen; `Cargo.lock` and a pinned toolchain (`rust-toolchain.toml`: 1.99.1). Two clean builds in two build images (`rust:1-slim-bookworm` and `golang:1.26-bookworm` with rustup, both on the pinned 1.99.1 compiler, fresh containers) produced the same SHA-256 for the release commit (`261ed1a2...`, linux/arm64); the binary the Linux leaderboard measured, built in another directory, has that hash too. Reproducibility on other operating systems, or across source paths in general, is not claimed. | `tools/repro_docker.sh`, `bench/results/platforms/repro/`; `tools/reproducible_check.sh` (same machine). |
 | Signed releases | The release workflow attaches SHA-256 checksums and Sigstore build-provenance attestations (`actions/attest`) to every binary and wheel. | `.github/workflows/release.yml`, **not yet executed**; no release has been signed yet. |
+| Workflows | Every action is pinned to a commit, checkout keeps no credentials, and each job gets only the permissions it names. `zizmor` 1.32.0 with `--persona pedantic` and its online audits checks `.github` on every push to main, every pull request and once a week; a finding fails the job. | the `zizmor` job of `.github/workflows/security.yml`; `actionlint`. |
+| `unsafe` count | Each file's count of the `unsafe` keyword (comments and strings left out) must equal the table in the [`unsafe` inventory](#known-gaps-and-residual-risks), checked on every push to main, every pull request and once a week, so a new `unsafe` cannot land without its line there. | `tools/unsafe_count.py`; the `unsafe` job of `.github/workflows/security.yml`. |
 | Coverage-guided fuzzing | Four libFuzzer targets (`fuzz/`, nightly toolchain, AddressSanitizer): the `.npy` reader on arbitrary bytes; the text-index soundness property (a text a pattern matches must satisfy the pattern's trigram condition); the edit-distance matcher; every parser tier on arbitrary text under 60 file extensions. They found four real defects, each fixed with a regression test and its crash input kept in `fuzz/regressions/`: chunk line numbers shifted after form feeds (Python-style line splitting); a truncated string array panicked the `.npy` reader; a shape whose element count overflowed wrapped in release builds and could have produced an over-long slice view (undefined behaviour, now a saturating count and checked sizes); a zero-width string array with a huge shape requested a multi-terabyte allocation. | `bench/results/fuzz/` (run logs), `fuzz/regressions/`, unit tests `npy::header_tests::damaged_headers_are_errors_not_panics`, `parse::tests::form_feeds_and_lone_cr_do_not_shift_line_numbers`. |
 | Network file systems | A repository on an SMB share (Samba 4.23 server, macOS `smbfs` client): Engine A output identical to the local copy; Engine B indexes, answers, survives three concurrent `index` processes with readers, and passes `check --files`. Found and fixed: a blocking file lock fails at once on SMB (EAGAIN), so the text index polls `try_lock`. One host only: several machines sharing one index over a network file system is not supported (SQLite's documentation warns that its locking is unreliable there). | `tools/netfs_check.sh`, `bench/results/platforms/netfs-smb-macos.txt`. |
 | Untrusted `.scrutate.toml` | The configuration file sets option defaults only (booleans, numbers, globs); it cannot name programs or paths to execute. Unknown keys are rejected. `follow = true` in a repository's own file is ignored with a warning, so a cloned repository cannot make a search leave it through a symbolic link; the flag, the environment and the user's own file still can. | `config.rs` tests; `tests/cli.rs` (a link out of the repository). |
@@ -285,7 +287,7 @@ marker is not).
 
 - **Not independently audited** (no external review or penetration test). The fuzzing campaign
   (above) ran each target for ten minutes on one machine: it finds shallow defects, not all.
-- **`unsafe` inventory** (every site in the Rust crates):
+- **`unsafe` inventory** (every site in the Rust crates, its count checked in CI):
   - `npy.rs`: memory-mapped array views (`Mmap::map` in `npy::map`, which the text index's
     segment files use too, read with bounds-checked slicing only; `from_raw_parts` after dtype,
     length and alignment checks; the `Pod` trait documents the invariants; a byte view of a `Pod`
@@ -316,7 +318,35 @@ marker is not).
     functions, each jumping to the address `dlsym` returned for its own name, with every argument
     register and the stack left as the caller set them; `fork` binds all of them first, so a child
     process never calls `dlsym`; `tests/lazy_bind.rs` runs variadic, floating-point, callback,
-    panic and `fork` calls through them.
+    panic and `fork` calls through them;
+  - the tests: `kill` (`tests/cli.rs`, `tests/running.rs`), `geteuid` (`tests/robustness.rs`)
+    and `clock_gettime` (`tests/parse_index.rs`) with arguments they own, and in
+    `tests/lazy_bind.rs` C library calls (`snprintf`, `powf`, `qsort` with its callback, `fchdir`,
+    `fork`, `getpid`, `_exit`, `waitpid`) made through the stubs above.
+
+  `vendor/ignore` has none. `tools/unsafe_count.py` counts the `unsafe` keywords outside comments
+  and strings in every file under `crates/` and `vendor/ignore`, and the security workflow fails
+  when the counts differ from this table, so a new `unsafe` needs a line above:
+
+  | File | `unsafe` |
+  |---|---|
+  | `crates/scrutate/src/cli.rs` | 4 |
+  | `crates/scrutate/src/config.rs` | 1 |
+  | `crates/scrutate/src/foldfind.rs` | 2 |
+  | `crates/scrutate/src/hook.rs` | 2 |
+  | `crates/scrutate/src/instant.rs` | 2 |
+  | `crates/scrutate/src/lazy_bind.rs` | 7 |
+  | `crates/scrutate/src/lex.rs` | 1 |
+  | `crates/scrutate/src/npy.rs` | 14 |
+  | `crates/scrutate/src/policy.rs` | 1 |
+  | `crates/scrutate/src/running.rs` | 12 |
+  | `crates/scrutate/src/session.rs` | 5 |
+  | `crates/scrutate/src/text.rs` | 1 |
+  | `crates/scrutate/tests/cli.rs` | 1 |
+  | `crates/scrutate/tests/lazy_bind.rs` | 10 |
+  | `crates/scrutate/tests/parse_index.rs` | 1 |
+  | `crates/scrutate/tests/robustness.rs` | 1 |
+  | `crates/scrutate/tests/running.rs` | 1 |
 
   tree-sitter grammars and SQLite are C code built from crates.io sources.
 - **Where the system cannot map a file** (`Mmap::map` fails with `Unsupported`, as on wasi),

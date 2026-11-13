@@ -1,0 +1,35 @@
+# cargo deny check: advisories, licences, bans and sources of Cargo.lock (.github/workflows/security.yml).
+[graph]
+# every feature, so the extra-langs grammars and the optional matchers are checked too
+all-features = true
+
+[advisories]
+yanked = "deny"
+
+[licenses]
+# the permissive licences of docs/DEPENDENCIES.md; a crate under any other licence fails the check
+allow = [
+  "0BSD",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "CC0-1.0",
+  "ISC",
+  "MIT",
+  "Unicode-3.0",
+  "Unlicense",
+  "Zlib",
+]
+confidence-threshold = 0.9
+unused-allowed-license = "deny"
+
+[bans]
+# syn 2 and 3 are both in the graph through different proc macros
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

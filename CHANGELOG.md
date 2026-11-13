@@ -45,6 +45,10 @@ incompatible index by itself, and that is never breaking.
   top links and `CITATION.cff`'s `url` point to it.
 - `.github/FUNDING.yml` shows GitHub's Sponsor button (GitHub Sponsors and Buy Me a Coffee), and
   the README's "Sponsor and hire" section links both.
+- A security workflow runs `cargo deny check` (`deny.toml`: advisories, the licence list,
+  crates.io only), `zizmor --persona pedantic` on `.github`, and a check that each file's count
+  of `unsafe` matches the inventory in docs/SECURITY.md, on every push to main, every pull request
+  and once a week ([SECURITY](docs/SECURITY.md#controls-and-evidence)).
 
 ### Changed
 - The crate builds and runs on `wasm32-wasip1`, which starts no thread: the thread rules take
