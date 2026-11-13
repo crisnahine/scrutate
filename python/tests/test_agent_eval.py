@@ -94,6 +94,8 @@ def test_the_answer_is_the_json_after_the_last_answer_line():
     assert ae.answer_of("no answer here") is None
     assert ae.answer_of("ANSWER: [1, 2]") is None
     assert ae.answer_of("ANSWER: {broken") is None
+    # pretty-printed over several lines, in a fence, with a word after it
+    assert ae.answer_of('Done.\nANSWER:\n```json\n{\n  "a": [1,\n 2]\n}\n```\nthanks') == {"a": [1, 2]}
 
 
 def test_a_right_answer_passes_whatever_its_formatting():
@@ -148,7 +150,9 @@ def test_the_two_arms_differ_only_in_the_mcp_config(tmp_path):
     builtin = ae.command(t, "builtin", str(tmp_path), Args)
     assert "--strict-mcp-config" in mcp and "--strict-mcp-config" in builtin and "--bare" in mcp
     assert "--mcp-config" not in builtin and mcp[mcp.index("--mcp-config") + 1] == str(tmp_path / "mcp.json")
-    assert [x for x in mcp if x not in builtin] == ["Read,Grep,Glob,mcp__scrutate", "--mcp-config", str(tmp_path / "mcp.json")]
+    allowed = "Read,Grep,Glob," + ae.READ_ONLY_BASH
+    assert builtin[builtin.index("--allowedTools") + 1] == allowed and "Bash(rg:*)" in allowed
+    assert [x for x in mcp if x not in builtin] == [allowed + ",mcp__scrutate", "--mcp-config", str(tmp_path / "mcp.json")]
     Args.login = True
     assert "--bare" not in ae.command(t, "builtin", str(tmp_path), Args)
 

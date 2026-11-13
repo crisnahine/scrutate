@@ -10,7 +10,9 @@ Every run is `claude -p` with `--output-format stream-json --verbose` (the last 
 result object `--output-format json` prints; the lines before it are the transcript, so tool
 calls and tool errors are read from the same output, and `--no-session-persistence` keeps the
 session off disk). Both arms get the same model, prompt and built-in tools, each run a fresh
-session in its own temporary copy of the corpus:
+session in its own temporary copy of the corpus, and both may run read-only shell commands
+(`rg`, `grep`, `find`, `ls`, `cat`, `head`, `tail`, `wc`, `sed -n`); the arm that goes first
+alternates by task:
 
   mcp      --mcp-config RUN/mcp.json --strict-mcp-config, an index built before the clock starts
   builtin  --strict-mcp-config and no --mcp-config: no MCP server at all
@@ -26,7 +28,7 @@ Every run is a paid agent run, so without --yes-spend (or with --dry-run) no `cl
 the dry run builds every copy, index and MCP config, prints each command line, and makes one
 initialize and tools/list round trip to each MCP config's server.
 
-Writes OUT/results.json (per run: solved, the check of each answer field, tokens, cost, tool
+Writes, after every run, so a timeout or Ctrl-C keeps the paid runs, OUT/results.json (per run: solved, the check of each answer field, tokens, cost, tool
 calls, tool errors, turns, wall time), OUT/results.md (a table per arm and the tool usage: the
 scrutate tools never called and the failed calls with their arguments) and OUT/transcripts/.
 
@@ -77,6 +79,9 @@ TOOLS = ("search_code", "grep_code", "find_symbol", "callers", "callees", "call_
          "dependencies", "dependents", "references", "similar_code", "duplicates", "structural_search", "impact",
          "find_files", "dead_code", "reindex")
 BUILTIN_TOOLS = "Bash,Read,Grep,Glob"
+# the read-only shell commands an agent reaches for, allowed in both arms: a denied Bash call costs a turn,
+# and more often in the arm without scrutate
+READ_ONLY_BASH = ",".join(f"Bash({c}:*)" for c in ("rg", "grep", "find", "ls", "cat", "head", "tail", "wc", "sed -n"))
 FLAGS = ("--print", "--output-format", "--verbose", "--model", "--mcp-config", "--strict-mcp-config", "--tools",
          "--allowedTools", "--permission-mode", "--no-session-persistence", "--max-budget-usd", "--bare",
          "--setting-sources", "--disable-slash-commands")
@@ -94,17 +99,19 @@ A location is written path:line, with the path relative to the current directory
 # ---- answers and checks -------------------------------------------------------------------
 
 def answer_of(text: str):
-    """The JSON object after the last `ANSWER:` of a reply, or None."""
-    for line in reversed((text or "").splitlines()):
-        at = line.find("ANSWER:")
-        if at >= 0:
-            body = line[at + len("ANSWER:"):].strip().strip("`")
-            try:
-                v = json.loads(body)
-            except json.JSONDecodeError:
-                return None
-            return v if isinstance(v, dict) else None
-    return None
+    """The JSON object after the last `ANSWER:` of a reply, on one line or over several, or None."""
+    text = text or ""
+    at = text.rfind("ANSWER:")
+    if at < 0:
+        return None
+    body = text[at + len("ANSWER:"):].strip().strip("`").strip()
+    if body.startswith("json"):
+        body = body[4:].strip()
+    try:
+        v, _ = json.JSONDecoder().raw_decode(body)
+    except json.JSONDecodeError:
+        return None
+    return v if isinstance(v, dict) else None
 
 
 def plain_path(p) -> str:
@@ -299,7 +306,7 @@ def mcp_config(binary: str, repo: str) -> dict:
 
 def command(task: dict, arm: str, run_dir: str, args) -> list:
     prompt = PROMPT.format(question=task["question"], shape=json.dumps(task["answer_shape"]))
-    allowed = "Read,Grep,Glob" + (",mcp__scrutate" if arm == "mcp" else "")
+    allowed = "Read,Grep,Glob," + READ_ONLY_BASH + (",mcp__scrutate" if arm == "mcp" else "")
     argv = ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose", "--model", args.model,
             "--no-session-persistence", "--tools", BUILTIN_TOOLS, "--allowedTools", allowed,
             "--permission-mode", "dontAsk", "--disable-slash-commands", "--max-budget-usd", str(args.max_budget_usd),
@@ -345,14 +352,19 @@ def clean_env() -> dict:
     return {k: v for k, v in os.environ.items() if not k.startswith("SCRUTATE_")}
 
 
-def run_one(argv: list, run_dir: str, timeout: float) -> tuple[list, float, int]:
+def run_one(argv: list, run_dir: str, timeout: float) -> tuple[list, float, int | None]:
+    """The transcript, the wall time and the exit code; the code is None when the run timed out,
+    and the transcript then holds what it wrote so far."""
     t0 = time.monotonic()
     with open(os.path.join(run_dir, "stream.jsonl"), "w") as out:
-        p = subprocess.run(argv, cwd=os.path.join(run_dir, "repo"), stdout=out, stderr=subprocess.PIPE, text=True,
-                           timeout=timeout, env=clean_env(), stdin=subprocess.DEVNULL, check=False)
+        try:
+            code = subprocess.run(argv, cwd=os.path.join(run_dir, "repo"), stdout=out, stderr=subprocess.PIPE, text=True,
+                                  timeout=timeout, env=clean_env(), stdin=subprocess.DEVNULL, check=False).returncode
+        except subprocess.TimeoutExpired:
+            code = None
     wall = time.monotonic() - t0
     with open(os.path.join(run_dir, "stream.jsonl")) as f:
-        return f.readlines(), wall, p.returncode
+        return f.readlines(), wall, code
 
 
 def cost_estimate(model: str, turns: int, prefix: int, growth: int, output: int, mcp_tokens: int = 0) -> float:
@@ -399,6 +411,26 @@ def summary(runs: list) -> str:
     return "\n".join(out)
 
 
+NOTE = ("How to read this: the MCP arm's index is built before its clock starts, and the tasks and their answers were "
+        "found with scrutate itself (then checked by grep and by reading the lines), so they lean toward what scrutate "
+        "answers well. Both arms may run read-only shell commands; `permission denials` counts the calls refused.")
+
+
+def write_results(out_dir: str, runs: list, claude: dict, args, binary: str) -> None:
+    result = {"date": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"), "claude": claude,
+              "model": args.model, "scrutate": binary, "tasks_file": args.tasks, "runs": runs, "tool_usage": tool_usage(runs)}
+    with open(os.path.join(out_dir, "results.json"), "w") as f:
+        json.dump(result, f, indent=1)
+    usage = result["tool_usage"]
+    denied = sum((r.get("metrics") or {}).get("permission_denials", 0) for r in runs)
+    md = [f"# Agent eval, {result['date']}", "", f"claude {claude['version']}, model {args.model}", "", NOTE, "",
+          summary(runs), "", table(runs), "", f"Permission denials in all runs: {denied}", "",
+          f"Never called: {', '.join(usage['never_called']) or 'none'}", "",
+          "Tools with failed calls: " + (", ".join(f"{t} ({u['errors']})" for t, u in usage["with_errors"].items()) or "none")]
+    with open(os.path.join(out_dir, "results.md"), "w") as f:
+        f.write("\n".join(md) + "\n")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--scrutate", required=True, help="the scrutate binary the MCP arm serves")
@@ -437,10 +469,11 @@ def main():
     print(f"claude {claude['version']}; scrutate {binary}; work folder {work}", file=sys.stderr)
 
     runs = []
-    for task in tasks:
+    for n, task in enumerate(tasks):
         base = corpus_base(task["corpus"], spec["corpora"][task["corpus"]], work, args.corpora)
         for rep in range(args.repeats):
-            for arm in arms:
+            # alternate which arm goes first, so neither always meets a cold cache or a slow minute first
+            for arm in (arms if (n + rep) % 2 == 0 else arms[::-1]):
                 run_dir = prepare(task, arm, rep, base, work, binary)
                 argv = command(task, arm, run_dir, args)
                 run = {"task": task["id"], "split": task["split"], "arm": arm, "repeat": rep, "run_dir": run_dir}
@@ -459,24 +492,18 @@ def main():
                 parsed = parse_stream(lines)
                 reply = (parsed["result"] or {}).get("result", "")
                 run.update(check(task, reply), wall_s=wall, exit_code=code, metrics=metrics(parsed),
-                           model=(parsed["init"] or {}).get("model"), problem=arm_problem(arm, parsed["init"]))
+                           model=(parsed["init"] or {}).get("model"),
+                           problem="timeout" if code is None else arm_problem(arm, parsed["init"]))
                 runs.append(run)
+                # after every run, so a timeout or Ctrl-C later keeps what was already paid for
+                write_results(out_dir, runs, claude, args, binary)
                 print(f"{task['id']} {arm} #{rep}: solved={run['solved']} cost={run['metrics']['cost_usd']} "
                       f"tools={run['metrics']['tool_calls']} {run['problem'] or ''}", file=sys.stderr)
     if args.dry_run:
         if not args.keep:
             shutil.rmtree(work)
         return
-    result = {"date": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"), "claude": claude,
-              "model": args.model, "scrutate": binary, "tasks_file": args.tasks, "runs": runs, "tool_usage": tool_usage(runs)}
-    with open(os.path.join(out_dir, "results.json"), "w") as f:
-        json.dump(result, f, indent=1)
-    usage = result["tool_usage"]
-    md = [f"# Agent eval, {result['date']}", "", f"claude {claude['version']}, model {args.model}", "", summary(runs), "", table(runs), "",
-          f"Never called: {', '.join(usage['never_called']) or 'none'}", "",
-          "Tools with failed calls: " + (", ".join(f"{t} ({u['errors']})" for t, u in usage["with_errors"].items()) or "none")]
-    with open(os.path.join(out_dir, "results.md"), "w") as f:
-        f.write("\n".join(md) + "\n")
+    write_results(out_dir, runs, claude, args, binary)
     print(f"wrote {out_dir}/results.json and results.md", file=sys.stderr)
     if not args.keep:
         shutil.rmtree(os.path.join(work, "runs"), ignore_errors=True)
