@@ -66,6 +66,10 @@ version rebuilds incompatible indexes automatically and this is never considered
   cursor, a block running along an arrow, a pulse. Before, they showed only slow cross-fades.
 
 ### Fixed
+- The Grep hook reads every `*.json` of `managed-settings.d` beside Claude Code's managed settings, and
+  lets Grep run wherever managed policy it does not read exists (a macOS configuration profile, the
+  Windows registry key `SOFTWARE\Policies\ClaudeCode`), so an administrator's read rule placed
+  only there is never bypassed.
 - `path` takes a function named like its file (`def main` in `main.py`) over the file's module
   chunk of the same name, as `callers` and `callees` do; two real definitions still list both.
 - A `tsquery` predicate written outside every pattern's parentheses is an error: tree-sitter

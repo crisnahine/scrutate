@@ -269,13 +269,20 @@ fn rules_limit_reads(project: &Path) -> bool {
         .or_else(|| std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(|h| PathBuf::from(h).join(".claude")));
     let mut files = vec![project.join(".claude").join("settings.json"), project.join(".claude").join("settings.local.json")];
     files.extend(home.map(|h| h.join("settings.json")));
-    files.push(PathBuf::from(if cfg!(target_os = "macos") {
+    let managed = PathBuf::from(if cfg!(target_os = "macos") {
         "/Library/Application Support/ClaudeCode/managed-settings.json"
     } else if cfg!(windows) {
         r"C:\Program Files\ClaudeCode\managed-settings.json"
     } else {
         "/etc/claude-code/managed-settings.json"
-    }));
+    });
+    files.extend(drop_ins(&managed));
+    files.push(managed);
+    // policies the hook does not read (a macOS profile, Windows registry policies) may hold read
+    // rules: where one exists, Grep runs and applies it itself
+    if managed_policy_elsewhere() {
+        return true;
+    }
     files.iter().any(|f| match std::fs::read(f) {
         Err(_) => false,
         Ok(b) => match serde_json::from_slice::<Value>(&b) {
@@ -287,6 +294,64 @@ fn rules_limit_reads(project: &Path) -> bool {
             }),
         },
     })
+}
+
+/// Every `*.json` of the `managed-settings.d` directory beside the managed settings file, which
+/// Claude Code reads as managed settings too, in name order.
+fn drop_ins(managed: &Path) -> Vec<PathBuf> {
+    let Some(Ok(rd)) = managed.parent().map(|d| std::fs::read_dir(d.join("managed-settings.d"))) else { return Vec::new() };
+    let mut drops: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
+    drops.sort();
+    drops
+}
+
+/// Whether Claude Code has managed settings in a place the hook does not read: a configuration
+/// profile's preferences on macOS, the policy keys of the registry on Windows.
+fn managed_policy_elsewhere() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        let user = std::env::var("USER").unwrap_or_default();
+        let plist = "com.anthropic.claudecode.plist";
+        let dir = Path::new("/Library/Managed Preferences");
+        dir.join(plist).exists() || (!user.is_empty() && dir.join(&user).join(plist).exists())
+    }
+    #[cfg(windows)]
+    {
+        windows_policy::exists()
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        false
+    }
+}
+
+#[cfg(windows)]
+mod windows_policy {
+    use std::ffi::c_void;
+
+    const HKEY_CURRENT_USER: isize = 0x8000_0001u32 as i32 as isize;
+    const HKEY_LOCAL_MACHINE: isize = 0x8000_0002u32 as i32 as isize;
+    const KEY_READ: u32 = 0x2_0019;
+
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn RegOpenKeyExW(key: isize, sub: *const u16, options: u32, sam: u32, out: *mut *mut c_void) -> i32;
+        fn RegCloseKey(key: *mut c_void) -> i32;
+    }
+
+    /// Whether `SOFTWARE\Policies\ClaudeCode` exists under HKLM or HKCU.
+    pub fn exists() -> bool {
+        let sub: Vec<u16> = r"SOFTWARE\Policies\ClaudeCode".encode_utf16().chain([0]).collect();
+        [HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER].iter().any(|&root| {
+            let mut out = std::ptr::null_mut();
+            // SAFETY: a nul-terminated UTF-16 string and a valid out pointer; the key is closed
+            let found = unsafe { RegOpenKeyExW(root, sub.as_ptr(), 0, KEY_READ, &mut out) } == 0;
+            if found {
+                unsafe { RegCloseKey(out) };
+            }
+            found
+        })
+    }
 }
 
 /// One line of Grep's result list, before the paging.
@@ -660,6 +725,20 @@ mod tests {
         assert_eq!(real_path(r"C:\Users\X\repo", r"C:\Users\X\repo", true).as_deref(), Some(r"C:\Users\X\repo"));
         assert_eq!(real_path(r"\\?\C:\elsewhere", r"C:\Users\X\link", true), None);
         assert_eq!(real_path(r"\\?\UNC\server\share\x", r"\\server\share\x", true), None);
+    }
+
+    #[test]
+    fn the_drop_in_directory_beside_the_managed_settings_is_read_in_name_order() {
+        let dir = std::env::temp_dir().join(format!("scrutate_drop_ins_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("managed-settings.d")).unwrap();
+        for f in ["b.json", "a.json", "notes.txt"] {
+            std::fs::write(dir.join("managed-settings.d").join(f), "{}").unwrap();
+        }
+        let got = drop_ins(&dir.join("managed-settings.json"));
+        assert_eq!(got, [dir.join("managed-settings.d/a.json"), dir.join("managed-settings.d/b.json")]);
+        assert!(drop_ins(&dir.join("elsewhere/managed-settings.json")).is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[cfg(unix)]

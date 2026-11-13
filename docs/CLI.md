@@ -1084,7 +1084,10 @@ ripgrep and scrutate's registry (it takes `asm`, `cmake`, `cs`, `csharp`, `dart`
 symbolic link, is not on a drive letter on Windows (a `\\server\share` path, which Claude Code
 searches another way) or lies outside the project (`$CLAUDE_PROJECT_DIR`, else `cwd`), a `deny` or `ask`
 rule for `Read` or `Grep` in a Claude Code settings file (the user's, the project's, the local one
-and the managed one, on Windows `C:\Program Files\ClaudeCode\managed-settings.json`), an invalid pattern, no match, a file name that is not UTF-8, a binary file
+and the managed one, on Windows `C:\Program Files\ClaudeCode\managed-settings.json`, with every `*.json` in the
+`managed-settings.d` directory beside it), managed policy it does not read (a configuration profile's
+`com.anthropic.claudecode.plist` under `/Library/Managed Preferences` on macOS, the registry key
+`SOFTWARE\Policies\ClaudeCode` under HKLM or HKCU on Windows: where one exists, Grep runs and applies it), an invalid pattern, no match, a file name that is not UTF-8, a binary file
 that matched, a file it could not read, a search longer than 3 seconds. It never
 exits with another code (exit code 2 would block the call), and it reads no `.scrutate.toml` or
 other scrutate configuration file.

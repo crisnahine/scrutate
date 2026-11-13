@@ -275,8 +275,12 @@ executed), and only below the project directory (`CLAUDE_PROJECT_DIR`, else the 
 directory): a search elsewhere is one Claude Code would ask about first, so the hook lets Grep
 run and Claude Code ask. Claude Code filters Grep's results by the `Read` and `Grep` rules of its
 settings; the hook cannot apply those rules, so when any settings file it can read (the user's,
-the project's, the local one, the managed file) has a `deny` or `ask` rule for `Read` or `Grep`, or
-does not parse, the hook lets Grep run. It fails open in the same way on any argument it does not
+the project's, the local one, the managed file and every `*.json` of the `managed-settings.d`
+directory beside it) has a `deny` or `ask` rule for `Read` or `Grep`, or does not parse, the hook
+lets Grep run. Managed policy it does not read (a macOS configuration profile's
+`com.anthropic.claudecode.plist` under `/Library/Managed Preferences`, the Windows registry key
+`SOFTWARE\Policies\ClaudeCode` under HKLM or HKCU) makes it let Grep run whenever it exists, so an
+administrator's read rule is never bypassed. It fails open in the same way on any argument it does not
 map, on an error, on a binary or unreadable file and after 3 seconds: it prints nothing, exits 0,
 and Grep runs. It answers on Windows as elsewhere, with Windows' `\` in the paths as Grep prints
 them, and lets Grep run for a path not on a drive letter. It never exits 2, which would block the call. It writes one file, the counter
@@ -328,6 +332,8 @@ person's comment with the marker is not).
   of ASCII word bytes (ASCII boundaries are UTF-8 boundaries); `config.rs`: `std::env::set_var`
   during startup before any thread exists; `cli.rs`: `signal(SIGINT, ...)` (Unix) and
   `SetConsoleCtrlHandler` (Windows) declarations, whose handler only stores to an atomic flag;
+  `hook.rs` (Windows): `RegOpenKeyExW` and `RegCloseKey` to see whether a policy key exists, with a
+  nul-terminated name and the key closed;
   `policy.rs`: one `sysctlbyname("hw.perflevel0.physicalcpu")` call on macOS, writing an `i32`
   whose size it passes; `instant.rs`: on Linux one `statfs` per search root, and per directory named `proc`
   or `sys` below one, into a buffer larger than
