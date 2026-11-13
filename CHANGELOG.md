@@ -533,218 +533,120 @@ outputs in [CLI](docs/CLI.md), the measurements in [BENCHMARKS](docs/BENCHMARKS.
 
 ### Product
 - The `tsquery` cache and the kept answers are read only as regular files within their size
-  limit, never through a symbolic link, so a cache file planted in a repository's `.scrutate/`
-  cannot make a read endless.
-- `scrutate --root DIR grep ...` (an option every command takes, before `grep`) reads grep's own
-  arguments: its byte limit is `--max-bytes` or `SCRUTATE_GREP_MAX_BYTES` and its help is grep's;
-  in that order the help showed the index commands' `SCRUTATE_MAX_BYTES`. CI builds every fuzz
-  target before replaying the inputs that once crashed one, so a target that no longer compiles
-  fails there (`trigram_query` used a type that was gone).
+  limit, never through a symbolic link ([SECURITY](docs/SECURITY.md)).
+- `scrutate --root DIR grep ...` reads grep's own arguments and shows grep's help. CI builds every
+  fuzz target before replaying the inputs that once crashed one.
 - The structural search numbers against ast-grep were measured with scrutate's capture cache
-  (`.scrutate/tsquery/`) filled by earlier runs, so scrutate parsed no file while ast-grep parsed
-  every file each run; the documents and the chart now say so, and the benchmark harness runs
-  `tsquery --no-cache` from now on, parse for parse.
-- In a linked git work tree (`git worktree add`), the first lookup answers from the main
-  checkout's index: the new index starts as a copy and parses only the files that differ,
-  0.06 s of user CPU (0.2 s with system time) on this repository, where a build costs 4.3 s. A
-  file renamed or moved under the same name, a copy of a file, and a branch switch and back no
-  longer parse files the index has seen. The main checkout is found from git's own files, the
-  link confirmed both ways, and nothing of it is written.
-- An index command (`symbol`, `callers`, `callees`, `refs`, `outline`, `deps`, `rdeps`, `read`,
-  `similar`, `dupes`, `search`, the ranked part of `find`) uses the index a running
-  `scrutate serve` holds open on the same root, through `.scrutate/session.sock` (Unix, owner
-  only, no network port), and prints the bytes and exit code a fresh process prints, every file
-  looked at first. It never starts a server; on any difference (another build, setting or root, a
-  stale socket, a server busy with a write) it does the work itself. `SCRUTATE_NO_SESSION=1` turns
-  this off; `SCRUTATE_SESSION_DEBUG=1` says why a call did not use a session.
+  filled, so scrutate parsed no file; the documents and the chart now say so, and the benchmark
+  harness runs `tsquery --no-cache` from now on.
+- In a linked git work tree (`git worktree add`), the first lookup copies the main checkout's
+  index and parses only the files that differ: 0.06 s of user CPU (0.2 s with system time) on
+  this repository, where a build costs 4.3 s. Renames, copies and a branch switch and back no
+  longer parse files the index has seen; nothing of the main checkout is written.
+- An index command uses the index a running `scrutate serve` holds open on the same root, through
+  `.scrutate/session.sock` (Unix, owner only), with the bytes and exit code a fresh process
+  prints; it never starts a server. `SCRUTATE_NO_SESSION=1` turns this off;
+  `SCRUTATE_SESSION_DEBUG=1` says why a call did not use one ([CLI](docs/CLI.md)).
 - The reference package lost its command line, MCP server and agent (`scrutate_ref/cli.py`,
   `mcp_server.py`, `agent.py`, `python -m scrutate_ref`, the `scrutate-ref` script and the `mcp`,
-  `agent` and `all` extras): nothing in `bench/`, `tools/` or CI used them. The binary is the
-  product.
-- Ranking quality has its own guard: `bench/quality.py` indexes a frozen copy of this
-  repository's code with its doc comments removed, runs 1,183 committed queries made from them,
-  and fails when MRR@10 or hit@5 is below the floor in `bench/quality/floor.json` (measured
-  0.5873 and 0.6636, floor 0.02 lower). A CI step and the release gates run it, in about 8 s.
-- The bit-for-bit Python mirror of the engine ended. `python/scrutate_ref` no longer parses,
-  indexes or ranks (`text.py`, `parse.py`, `index.py`, `lex.py`, `search.py`, `pretrain.py` and
-  their tests are gone, with the tree-sitter grammars and `snowballstemmer` they needed), and
-  `bench/parity.py` and `bench/parity_repos.sh` are gone from the scripts, CI and the release
-  gates. The engine is the one producer of training rows; the mirror covered 7 of the 73
-  grammars, and every change to tokens, chunks, BM25 or features was written twice. Ranking is
-  now watched by the quality floor of `bench/quality.py` and by `tests/ranking_pins.rs`, which
-  pins every candidate, feature and score of six queries on a small tree with the bundled models,
-  bit for bit, in `cargo test` on every platform. The package keeps the training code: the
-  ranker's export (`rank.py`) and the vector model's tables (`semantic.py`). The one-off scripts
-  `bench/eval_transformers.py` and `bench/ivf_recall.py` ran on the mirror and were removed;
-  commit `8a4f4b4` is the last that has them.
+  `agent` and `all` extras): nothing used them. The binary is the product.
+- Ranking quality has its own guard: `bench/quality.py` runs 1,183 committed queries on a frozen
+  copy of this repository and fails below the floor in `bench/quality/floor.json`; a CI step and
+  the release gates run it ([QUALITY](docs/QUALITY.md)).
+- The bit-for-bit Python mirror of the engine ended: `python/scrutate_ref` no longer parses,
+  indexes or ranks (`text.py`, `parse.py`, `index.py`, `lex.py`, `search.py`, `pretrain.py` are
+  gone, with the tree-sitter grammars and `snowballstemmer`), and `bench/parity.py` and
+  `bench/parity_repos.sh` are gone. The mirror covered 7 of the 73 grammars and doubled every
+  change; the quality floor and `tests/ranking_pins.rs` watch ranking now. The package keeps
+  `rank.py` and `semantic.py`; commit `8a4f4b4` is the last with `bench/eval_transformers.py` and
+  `bench/ivf_recall.py`.
 - `[index] exclude_dirs` is read from the `.scrutate.toml` at the index root (or
-  `SCRUTATE_INDEX_EXCLUDE_DIRS`), so the command line, the servers and the bindings index the
-  same files wherever they start; the reference engine reads it the same way. A name with a
-  slash or a backslash excludes nothing (a backslash made `grep_code` fail or hide a folder the
-  index holds), the file may be a link to a file inside the root (at most 1,000,000 bytes), and
-  `scrutate config` lists only the names the index uses. A `--json` answer that stops at its
-  limit says so on standard error, and a `batch` record carries `stopped_at`. `grep --index`
-  from a hidden or ignored directory says the index never enters it (exit 2); it printed
-  nothing. `--limit` at the largest integer is no limit, and `dupes --min-tokens` at the largest
-  value finds nothing (it wrapped to a negative minimum). `similar` reads a location's path as
-  the other commands do.
-- Contributions are accepted under a contributor licence agreement (`CLA.md`: the contributor
-  keeps the copyright, the maintainer may also offer other licence terms, and what is accepted
-  stays under the open source licence); the name and the logo have a trademark policy
-  (`TRADEMARKS.md`).
-- The licence is `MIT OR Apache-2.0` at the user's choice (it was Apache-2.0 alone): `LICENSE`
-  is now `LICENSE-APACHE` beside a new `LICENSE-MIT`, and the crate, the wheel, the reference
-  package, the VS Code extension, the Homebrew, Scoop and winget manifests, the `.deb` and
-  `.rpm`, the release archives and `THIRD_PARTY_NOTICES.txt` say so. `vendor/ignore` keeps
-  `Unlicense OR MIT`. The README has a "Sponsor and hire" section: paid terms, support,
-  sponsored features and work for hire, asked for through GitHub.
+  `SCRUTATE_INDEX_EXCLUDE_DIRS`), so every front end indexes the same files; the file may be a
+  link inside the root (at most 1,000,000 bytes), and a name with a backslash, which made
+  `grep_code` fail, excludes nothing. A capped `--json` answer says so on standard
+  error, `grep --index` from an ignored directory exits 2, and `dupes --min-tokens` at the
+  largest value no longer wraps.
+- Contributions are accepted under a contributor licence agreement (`CLA.md`), and the name and
+  the logo have a trademark policy (`TRADEMARKS.md`).
+- The licence is `MIT OR Apache-2.0` at the user's choice (it was Apache-2.0 alone): `LICENSE` is
+  now `LICENSE-APACHE` beside a new `LICENSE-MIT`, and every package and
+  `THIRD_PARTY_NOTICES.txt` say so; `vendor/ignore` keeps `Unlicense OR MIT`. The README has a
+  "Sponsor and hire" section.
 - Unified `find`, MCP server (19 tools), configuration files with environment-variable
   precedence, shell completions, progress reporting; errors as JSON records with `--json` or
   `SCRUTATE_DIAGNOSTICS=json`.
-- On/off environment variables are off for `0`, `false`, `no`, `off` or empty and on for any
-  other value; `NO_COLOR` turns colour off for any non-empty value.
+- On/off environment variables are off for `0`, `false`, `no`, `off` or empty; `NO_COLOR` turns
+  colour off for any non-empty value.
 - One definition of every index operation for the CLI, the MCP server, `batch` and the Python
-  bindings (`ops.rs`): the same defaults, limits, text and JSON everywhere. `batch` runs any
-  operation by name.
-- For AI agents. Every MCP tool but `reindex` is marked read-only and local; the server returns
-  instructions; `grep_code` is an Engine A search with matches grouped by enclosing symbol;
-  `references` resolves each use to its definition; an answer is at most 24,000 bytes by default
-  (`max_bytes`), cut at whole items, with the `offset` that continues it; the CLI has the same as
-  `--max-bytes` (`SCRUTATE_MAX_BYTES`) and `--offset`, also for `search` and `tsquery`; a first
-  index build blocks a tool call for at most 20 seconds. `serve --max-bytes` sets the server's
-  default.
-- A capped `grep_code` or `references` answer holds the first matches in path order, so a second
-  page neither repeats nor skips one.
-- `read_code` by path reads only as far as the lines it shows, keeps at most 1 MB of line text,
-  refuses a file with a NUL byte in its first 8 KB, and says `more lines follow` when a large
-  file was not read to its end.
-- Commands run in a subdirectory use the index and the `.scrutate.toml` above it and read path
-  arguments from the current directory. `search --also` prints another repository's results by
-  the path given, searches a root given twice once, and adds `root` to its JSON; a path or
-  location such a result prints is answered from that repository's index. The search for an
-  index above stops at the top of a repository, so a nested clone, submodule or worktree does not
-  use the outer index. A first index is built at the repository top, whichever subdirectory the
-  first command runs in, and the top's index wins over one left below it. A `.scrutate.toml`'s
-  globs match each path from the file's directory, whatever path is searched and wherever the
-  command runs; a path outside that directory and a path named on the command line are not
-  filtered by them.
-- Editors opened on a folder below the repository top use the index at the top: the language
-  server applies the same rule to the editor's first workspace folder (it built a second,
-  partial index there), and the VS Code and Neovim plugins ask `scrutate config --json` for the
-  root, so the paths they open exist. `config --json` prints the root an index command run there
-  uses and the configuration file, and builds nothing.
-- In the home directory or at a filesystem root with no index, a command that would build a
-  first index stops with exit code 2 and names `--root` and `scrutate index`; `serve` does not
-  start there, and the language server builds no index when the editor names no folder.
-- `languages` lists the extensions a language shares with another and takes by the file's text
-  (`.m` for matlab and objc, `.pp` for puppet and pascal, `.h` for cpp and objc); the JSON form
-  has them in `extensions_by_content`.
-- `symbol`, `callers` and `callees` take `--limit`. `check --json` counts the indexed files
-  without `--files`. `check` counts the constants, which have no segment rows (`constants` in
-  its JSON). `batch` reports a line that is not JSON by its number and runs the rest.
-- `reindex` takes `force`, which reads every file again. `grep_code` searches the files the
-  index holds: hidden ones such as `.github/`, not `.git/` or `node_modules/`.
-- JSON-RPC answers as the specification says: batches answered as one array, -32700 for a line
-  that is not JSON or not UTF-8, -32600 for a message that is not an object or has no `method`,
-  -32601 for an unknown method, -32602 for an unknown tool; notifications are never answered.
-- MCP revision 2026-07-28 beside the handshake revisions: `server/discover`, a protocol version
-  in each request's `_meta`, `resultType` on results, `ttlMs` and `cacheScope` on lists. With
-  `serve --structured` every tool has an `outputSchema` and every result `structuredContent`
-  (the `--json` form, or `null` and the text page when the answer is larger than its budget).
-  `notifications/cancelled` stops a waiting call, stops and rolls back an index update it runs,
-  and drops the answer of one that is computing; a call with a `progressToken` gets progress
-  reports while the first index is built, then its answer.
-- `read_code` reads a whole definition with `symbol` (a name, `Class.method`, or a location). The
-  location at the start of every result (`path:start-end`) is accepted wherever a tool takes a
-  symbol, so one of several same-named definitions can be followed up; JSON hits carry it as
-  `id`.
-- The index recovers from a corrupt database in every front end that stays open (the MCP server,
-  the LSP server, the Python bindings, `watch`), not only in the CLI.
-- `refs` resolves a method call on a local variable or a parameter through the type its
-  declaration states (`x: T`, `x = T()`, `new T()`, `T::new()`, `T {}`, `&T{}`), and finds a Go
-  method by its receiver type.
-- TypeScript and JavaScript imports through `paths` or `baseUrl` of a `tsconfig.json` or
-  `jsconfig.json` resolve to their files: `refs` follows them, and `deps` and `rdeps` list them.
-- Smart case sees a letter written by its code point (`\x41`). The watcher's test of one changed
-  path decides in the walk's order (a `.ignore` at any level before every `.gitignore`).
+  bindings (`ops.rs`); `batch` runs any operation by name.
+- For AI agents: every MCP tool but `reindex` is read-only; `grep_code` groups matches by
+  enclosing symbol; `references` resolves each use; an answer is at most 24,000 bytes by default
+  (`max_bytes`) with the `offset` that continues it, as `--max-bytes` (`SCRUTATE_MAX_BYTES`) and
+  `--offset` on the CLI; a first index build blocks a tool call for at most 20 seconds
+  ([CLI](docs/CLI.md)).
+- A capped `grep_code` or `references` answer holds the first matches in path order.
+- `read_code` by path keeps at most 1 MB of line text, refuses a file with a NUL byte in its first
+  8 KB, and says `more lines follow` when a large file was not read to its end.
+- Commands run in a subdirectory use the index and `.scrutate.toml` above it, up to the top of
+  the repository, so a nested clone or submodule does not use the outer index; `search --also`
+  prints another repository's results by the path given ([CLI](docs/CLI.md)).
+- Editors opened on a folder below the repository top use the index at the top, through
+  `scrutate config --json`; the language server built a second, partial index there.
+- In the home directory or at a filesystem root with no index, a command that would build one
+  stops with exit code 2 and names `--root` and `scrutate index`.
+- `languages` lists the extensions a language shares with another (`extensions_by_content`).
+- `symbol`, `callers` and `callees` take `--limit`; `check --json` counts the indexed files and
+  the constants; `batch` reports a line that is not JSON and runs the rest.
+- `reindex` takes `force`. `grep_code` searches the files the index holds.
+- JSON-RPC answers as the specification says (-32700, -32600, -32601, -32602), and notifications
+  are never answered.
+- MCP revision 2026-07-28 beside the handshake revisions; `serve --structured` gives every tool
+  an `outputSchema`; `notifications/cancelled` stops a call, and a `progressToken` gets progress
+  during the first build ([CLI](docs/CLI.md)).
+- `read_code` reads a whole definition with `symbol`, and the location at the start of every
+  result (`path:start-end`) is accepted wherever a tool takes a symbol.
+- The index recovers from a corrupt database in every front end that stays open, not only the
+  CLI.
+- `refs` resolves a method call on a variable through its declared type (`x: T`, `x = T()`,
+  `new T()`, `T::new()`, `T {}`, `&T{}`), and finds a Go method by its receiver type.
+- TypeScript and JavaScript imports through `paths` or `baseUrl` resolve for `refs`, `deps` and
+  `rdeps`.
+- Smart case sees a letter written by its code point (`\x41`).
 - `watch` and `serve --watch` no longer stop on Linux and Windows when `.git/info/exclude` has
-  patterns (the matcher was rooted at `.git/info` and panicked on the first changed path).
-- `-U` with `--fuzzy` or `--fuzzy-regex` is an error (it found nothing across lines).
-- An MCP answer checks the files it cites, and the files its arguments name, with one `stat`
-  each; a changed or deleted file, or a new file an argument names, is reindexed alone and the
-  answer computed again, once. A scan that could not run does not start the interval. Without
-  `--refresh-interval` the server scans at most a second apart, sooner when a scan is cheap; an
-  explicit `--refresh-interval` is a floor. `serve` refuses `--offset`.
-- At the end of its input the server answers the calls in flight and lets the first index build
-  finish before it exits. An `initialize` with a missing or unknown `protocolVersion` is
-  answered with 2025-11-25; a request without `method` gets -32600 and a client's response is
-  ignored.
-- `read_code` honours an explicit `end`, closes with the lines shown, the file's length and the
-  `start` for the rest, and answers an empty file and a `start` past the end in words; an `end`
-  before `start` and a path that is not a regular file are errors.
-- A tool argument of the wrong type, or a negative number, is an error that names the argument;
-  an error quotes at most 200 characters of it. Every path argument may be written `./x` or
-  `pkg/../x`. `references` says when `max_results` cut it and answers `(no results)`; an empty
-  name is an error. `search_code` takes at most 10 `alt_queries`.
-- `watch` and `serve --watch` set the watch before the first update, so changes made during it
-  are seen. On Linux each directory the indexes can hold gets one inotify watch (2 instead of
-  7,012 on a tree with an ignored `node_modules` and `target`); failed watches are named, and the
-  watch stops with an error when its root is removed. On Linux and Windows a burst of file events
-  updates those files alone, in both indexes, with no walk of the tree; a burst with a new,
-  removed or moved directory, a changed ignore file or `.scrutate.toml`, or lost events walks the
-  tree, sets the watches again and rereads the ignore rules. `.git/info/exclude` is watched, the
-  main repository's too from a linked worktree. The indexes' walks decide what a burst holds, so
-  an ignore file above the repository top and a nested repository's own rules apply to a saved
-  file as to a scan. Watches are set root first, then shallow directories by path; when some
-  directory gets no watch stderr says how many, and a burst walks the tree while one is
-  unwatched or once the last walk is 30 s old. A change to a rule file outside the tree walks it
-  too: an ignore file above the root, a nested repository's exclude file, git's global excludes
-  file and the configuration that names it.
+  patterns.
+- `-U` with `--fuzzy` or `--fuzzy-regex` is an error.
+- An MCP answer checks the files it cites with one `stat` each and reindexes a changed one alone;
+  without `--refresh-interval` the server scans at most a second apart.
+- At the end of its input the server answers the calls in flight first; an `initialize` without a
+  known `protocolVersion` is answered with 2025-11-25.
+- `read_code` honours an explicit `end` and says where the rest starts.
+- A tool argument of the wrong type is an error naming it; `search_code` takes at most 10
+  `alt_queries`.
+- `watch` and `serve --watch` set the watch before the first update, use one inotify watch per
+  directory on Linux (2 instead of 7,012 on a tree with an ignored `node_modules`), and update a
+  burst of saved files without a walk on Linux and Windows ([ARCHITECTURE](docs/ARCHITECTURE.md)).
 - `find` takes a question with a space and a trailing `?` as words, and goes to ranked search
-  when a regex-looking query finds nothing and an index exists.
-- Text files check out with LF line ends on every platform (`.gitattributes`), so a Windows build
-  compiles the same data into the binary.
+  when a regex-looking query finds nothing.
+- Text files check out with LF line ends on every platform (`.gitattributes`).
 - Toolchain pinned to Rust 1.99.1 (`rust-version` 1.91).
-- Python bindings (PyO3 0.30; abi3, abi3t and cp314t wheels; GIL released, in `stats()` and
-  `read()` too; streaming iterator; free-threading declaration after review). Three wheels per
-  platform: `cp39-abi3` for standard CPython up to 3.14, `cp314t`, and `cp315-abi3.abi3t` for
-  3.15 and newer, standard and free-threaded; the wheel's third-party notices are in
-  `dist-info/licenses`. The bindings' `callers`, `callees` and textual references match names
-  as the tools do. Ctrl-C stops `grep` and `Repo.index()` within about 100 ms (an interrupted
-  update rolls back); `Repo.read()` raises `FileNotFoundError`, `ValueError` or `OSError`;
-  `grep` raises its argument errors at call time and takes `sort=True`; a panic no longer leaves
-  the `Repo` unusable. `Repo.symbol`, `Repo.callers`, `Repo.duplicates` and the hits of
-  `Repo.callees` are a `scrutate.Results` list whose `stopped_at` is the limit when more results
-  were left.
-- Integrations: one MCP configuration per client (VS Code `servers`, Codex TOML, Zed
-  `context_servers`); the GitLab and Bitbucket templates pass on a repository with no duplicates
-  and unpack the tool outside the checkout; the pre-commit hook is valid YAML, fails when the
-  tool fails, and works through `repo:`; the GitHub Action runs on Windows runners; Neovim ships
-  `lsp/scrutate.lua`, so `vim.lsp.enable('scrutate')` is the whole setup, and the plugin needs
-  Neovim 0.10 or newer and its commands work on first use and after an edit; VS Code, Neovim and
-  JetBrains put `--` before a query, and VS Code stops without an open folder. On Windows the VS
-  Code extension and the Neovim plugin look a bare `scrutate` up on PATH themselves, in absolute
-  entries only, so a `scrutate.exe` in the opened folder is never run.
+- Python bindings (PyO3 0.30): three wheels per platform (`cp39-abi3`, `cp314t`,
+  `cp315-abi3.abi3t`), the GIL released (in `stats()` too), notices in `dist-info/licenses`,
+  Ctrl-C within about 100 ms, and results as a `scrutate.Results` list with `stopped_at`
+  ([bindings](crates/scrutate-py/README.md)).
+- Integrations: one MCP configuration per client, GitLab and Bitbucket templates, a pre-commit
+  hook that works through `repo:`, the GitHub Action on Windows runners, Neovim's
+  `lsp/scrutate.lua` (so `vim.lsp.enable('scrutate')` is the whole setup), and VS Code and Neovim
+  that never run a `scrutate.exe` from the opened folder.
 - `release.yml` refuses a tag whose version differs from the packages' (`tools/check_version.py`)
-  and runs all of `ci.yml` on the tagged commit before anything is published. Every workflow
-  action is pinned to a commit. The glibc archives are built on Ubuntu 22.04 and the job fails
-  when the binary asks for a glibc newer than 2.34 (one built on Ubuntu 24.04 asks for 2.39 and
-  does not start on Debian 12 or Ubuntu 22.04).
-- The GitHub Action puts scrutate's exit code in its `exit-code` output and fails its step only
-  on an error (2), so a job can gate on results.
-- Benchmark suite (`bench/leaderboard.py`, `bench/indexed.py`): grep, ripgrep, ack, ag, git grep,
-  ugrep, ast-grep, Zoekt and livegrep on pinned corpora, every answer checked against an
-  independent reference, 30+ runs per contender, bootstrap confidence intervals, hardware-ceiling
-  baseline, warm and cold cache; a regression gate that times the change and its base in one
-  interleaved run and takes their ratio inside each block (`SCRUTATE_BASE_BIN`,
-  `leaderboard_regression.py --within`; `--redo-unstable` checks both binaries); CI/release
-  workflows; SBOM; IDE and Git-platform integrations.
-- Random checks in CI: `bench/fuzz_grep.py` (against ripgrep) and `bench/fuzz_incremental.py`
-  (an updated index against a fresh one), 20 seconds each; a check that compared nothing fails.
-- Packaging: Homebrew formula, Scoop and winget manifests (schema 1.12.0), `.deb` and `.rpm`
-  packages (built and install-tested in clean containers); release archives, wheels and the
-  `.deb` and `.rpm` carry `THIRD_PARTY_NOTICES.txt`; `docs/dashboard.html` charts the benchmark
-  runs.
-- Fuzz targets (`fuzz/`): the `.npy` reader (three defects fixed: a panic on truncated string
-  arrays, a wrapping element count in release builds, a huge allocation for zero-width strings),
-  the text index's soundness, the edit-distance matcher and every parser tier.
+  and runs all of `ci.yml` on the tagged commit first; every action is pinned to a commit; the
+  glibc archives need at most glibc 2.34.
+- The GitHub Action puts scrutate's exit code in its `exit-code` output and fails only on an
+  error (2).
+- Benchmark suite (`bench/leaderboard.py`, `bench/indexed.py`) against grep, ripgrep, ack, ag,
+  git grep, ugrep, ast-grep, Zoekt and livegrep, every answer checked, with a regression gate
+  (`SCRUTATE_BASE_BIN`, `leaderboard_regression.py --within`) ([BENCHMARKS](docs/BENCHMARKS.md)).
+- Random checks in CI: `bench/fuzz_grep.py` and `bench/fuzz_incremental.py`, 20 seconds each.
+- Packaging: Homebrew, Scoop and winget (schema 1.12.0), `.deb` and `.rpm`, each carrying
+  `THIRD_PARTY_NOTICES.txt`; `docs/dashboard.html` charts the benchmark runs.
+- Fuzz targets (`fuzz/`): the `.npy` reader (three defects fixed), the text index, the
+  edit-distance matcher and every parser tier.
