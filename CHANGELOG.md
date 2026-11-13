@@ -189,315 +189,174 @@ outputs in [CLI](docs/CLI.md), the measurements in [BENCHMARKS](docs/BENCHMARKS.
 
 ### Engine B: code intelligence
 - `scrutate map [PATH]` and the MCP tool `repo_map`: the files that define code, ranked by
-  PageRank over the calls and imports between files that the index's names give, each with its 5
-  most called definitions, the same bytes every run of one index, cut at whole files to
-  `--max-bytes`. `scrutate path FROM TO [--depth N]` and the MCP tool `call_path`: the shortest
-  call chain between two definitions over the calls `callees` resolves, each step a call site and
-  the definition it reaches; no chain exits 1, and a name with several definitions lists them.
-- `scrutate dead [PATH]` and the MCP tool `dead_code` list the functions, methods, classes and
-  types nothing in the repository uses: no line outside one names it, in any file. Each
-  language's entry points are left out (`main`, tests, Rust `pub` items of a library crate and
-  trait impls, `#[no_mangle]` and other registering attributes and decorators, Python `__all__`
-  and `__x__` names, JavaScript and TypeScript exports, Go `init` and exported names of a library
-  package, Java and C# public members). A definition whose name some line holds that the resolver
-  ties to nothing (a string such as `getattr(obj, "name")`, a comment, a use it cannot place) is
-  listed as undecided, with the reason.
+  PageRank over calls and imports, each with its 5 most called definitions.
+  `scrutate path FROM TO [--depth N]` and the MCP tool `call_path`: the shortest call chain
+  between two definitions; no chain exits 1 ([CLI](docs/CLI.md)).
+- `scrutate dead [PATH]` and the MCP tool `dead_code` list the definitions nothing in the
+  repository uses, leaving out each language's entry points (`main`, tests, `#[no_mangle]`,
+  Python `__x__` names, exports and the like); a name some line holds that the resolver ties to
+  nothing is listed as undecided, with the reason.
 - GDScript (`.gd`) has a grammar in the default build (`tree-sitter-gdscript` 6.1.0, MIT, 0.27 MB
-  of the binary): functions, `class_name` and inner classes, signals (kind `signal`), named enums,
-  `const` (kind `constant`) and `var` (kind `key`) at file level or in an inner class body are
-  definitions; a `##` comment above a definition is its documentation, and the comment block
-  below a `class_name` and its `extends` line documents the class. A file declaring
-  `class_name Player` is that class: its top-level definitions are its members (`Player.move`, a
-  method, still found by `symbol move`), each its own chunk. Calls (`f()`, `obj.f()`,
-  `super.f()`) are recorded for `callers` and `callees`; `refs` says it does not resolve the
-  language. `grep --type gdscript` searches `.gd` files.
+  of the binary): functions, classes, signals, enums, constants and variables, `##` comments as
+  documentation, a file with `class_name Player` as that class, and calls (`f()`, `obj.f()`,
+  `super.f()`) for `callers` and `callees`; `grep --type gdscript` searches `.gd` files
+  ([LANGUAGES](docs/LANGUAGES.md)).
 - `scrutate impact [--base REV] [--staged] [--depth N]` and the MCP tool `impact`: from the git
-  diff (by default the working tree and untracked files against `HEAD`; or another revision,
-  `main...` for a merge base, or the staged changes) to the definitions it adds, edits and
-  deletes, their callers through the resolver with the distance of each (3 steps by default),
-  and the test files to run. A deleted definition's callers are the definitions that still call
-  its name where no other definition answers the call, marked `(calls a deleted
-  definition)` (`calls_deleted` in JSON), and their callers and tests follow. Text and JSON in
-  the envelope of the other index commands, paged by `--max-bytes`; a directory outside git, a
-  bad revision and a missing merge base are errors with exit code 2, and a revision is never
-  passed to git as an option.
+  diff to the definitions it adds, edits and deletes, their callers with distances (3 steps by
+  default) and the test files to run; a bad revision is exit code 2 ([CLI](docs/CLI.md)).
 - `scrutate files QUERY [--limit N]` and the MCP tool `find_files`: the repository's paths ranked
-  for a query that may be misspelt (`srch.rs` finds `search.rs`; a letter wrong, added or left
-  out, two letters swapped): an exact basename first, then basename before path matches, then
-  frecency, then shorter paths; no index needed, about 8 ms on this repository. Frecency counts
-  each file read through `read` and `read_code` (and a `files` query that is exactly a path),
-  halved every 7 days, in `$XDG_STATE_HOME/scrutate/frecency.json`.
-- Windows: a damaged index is rebuilt while another handle holds its files (a session's other
-  readers, another process): a database that cannot be deleted is emptied in place and a segment
-  directory that cannot be removed keeps its name. Before, the rebuild could go on over the old
-  database and fail on a segment it had deleted. `grep_code` and textual references print paths
-  from the root for a walk's files on Windows, where the root is a verbatim path; they printed
-  absolute paths.
-- A linked work tree no longer takes a segment of its main checkout that was removed, or half
-  removed, during the copy: every copied segment must open before the copy is used, else the
-  index is built as usual. Seen once on a Linux runner, where an update reported success over an
-  index naming a segment it did not hold.
-- `callers` lists callers by path and line after those outside tests; it followed the order the
-  index stored the files in, so an index updated through renames answered 63 of 120 `callers`
-  questions on three trees differently from a fresh index of the same tree. On a fresh index
-  only a window's place among its file's callers can move.
-- `callers` asks the resolver about every call site (it asked about the 400 likeliest and listed
-  the rest as not checked), and `callers` and `callees` keep what they learned of each call site
-  under `.scrutate/answers/`, one file per request, with what the run read: the index database
-  and its data version, the executable, the root and the `stat` of every file the resolver read.
-  The same request reuses them while all of that is unchanged, and resolves again after any
-  change. `callers size` on Guava (1,970 call sites) costs 1.4 s of CPU on a first run and
-  0.43 s from what it kept (the capped answer cost 0.6 s); the walker asks once per type and name
-  whether the repository extends an outside type with a method, where asking at every call was a
-  fifth of a first run. The bindings' callers list has no `unchecked` any more.
-- What parsing and tokenizing make of a file is an artifact, kept by the index under a key of the
-  file's content, file name and parsing rules (`artifacts.rs`); the `files` table names each
-  file's artifact, and one function (`artifacts::derive`) makes a path's rows and postings from
-  one, for a parsed file and a stored one alike, so both give the same index byte for byte. An
-  artifact holds the word counts the vectors are made from, so vectors for another model need no
-  parse (`SemanticModel::encode_counts`). Artifacts no file names are kept up to a quarter of the
-  database's size and collected by the update that dropped them. Schema 14: an older index is
-  rebuilt once. The store adds 7.5% to `.scrutate/` on this repository and 9.5% on Guava; a
-  fresh build costs the same CPU here and 18% less on Guava, whose 1,329 copied files are parsed
-  once.
-- The `tsquery` cache names its files by the searched paths from the root (it used absolute
-  paths), so a copy of a tree with its `.scrutate/` answers from the first tree's cache. Older
-  caches are not found and are evicted as old.
-- A look for changes walks the tree once with one `stat` per file for both indexes (`index`
-  walked twice). `grep_code` and `references`, textual and resolved, read the text index, when
-  there is one, for the files it holds as they are now, and the other files directly, with the
-  same answer: each call makes its own look (one walk, one `stat` per file), so a file written
-  just before the call is found, also inside a server's refresh interval. A rare word on
-  12,001 files: 405 ms of CPU for a walk and search, 90 ms for the tool; resolved `refs` of a rare name
-  on 12,000 files: 0.54 s, now 0.05 s.
+  for a query that may be misspelt (`srch.rs` finds `search.rs`), then by frecency; no index
+  needed, about 8 ms on this repository.
+- Windows: a damaged index is rebuilt while another handle holds its files (the rebuild could
+  fail on a segment it had deleted), and `grep_code` and textual references print paths from the
+  root, not absolute paths.
+- A linked work tree no longer takes a segment its main checkout removed during the copy, seen
+  once on a Linux runner as an update that reported success over a broken index.
+- `callers` lists callers in path and line order; an index updated through renames answered 63
+  of 120 `callers` questions differently from a fresh one.
+- `callers` asks the resolver about every call site (it stopped at the 400 likeliest), and
+  `callers` and `callees` keep what they learned under `.scrutate/answers/` while nothing they
+  read changes: `callers size` on Guava costs 1.4 s of CPU on a first run and 0.43 s after (the
+  capped answer cost 0.6 s). The bindings' callers list has no `unchecked` any more.
+- What parsing makes of a file is an artifact kept by content (`artifacts.rs`), so a parsed and a
+  stored file give the same index and vectors for another model need no parse. Schema 14 rebuilds
+  older indexes once. The store adds 7.5% to `.scrutate/` here and 9.5% on Guava; a fresh build
+  costs 18% less on Guava ([ARCHITECTURE](docs/ARCHITECTURE.md)).
+- The `tsquery` cache names files by their paths from the root, so a copied tree answers from
+  the first tree's cache.
+- A look for changes walks the tree once for both indexes, and `grep_code` and `references` read
+  the text index for the files it holds as they are now: a rare word on 12,001 files, 405 ms of
+  CPU to 90 ms; resolved `refs` of a rare name on 12,000 files, 0.54 s to 0.05 s.
 - One session module (`session.rs`) holds a repository open for the MCP server, the language
-  server, the Python bindings and `watch`: the first-build wait, the refresh interval, a cancel
-  flag per call, a panic kept inside its call, recovery, and side-by-side reads, each on its own
-  reader (`Repo::another`, a second SQLite connection on the open index, up to 8). The MCP server
-  no longer holds one lock for a whole call: eight `references` calls sent together no longer
-  queue. The language server opens no second index for its saves, rebuilds a damaged index and
-  answers instead of asking for a retry, and scans for changes before a request at most once a
-  second. A session's repositories write one at a time under one lock, so a rebuild after damage
-  happens once.
-- The resolver is one walker plus a rule set per language (`resolve/`): the steps every language
-  shares are in `resolve/mod.rs`, and what Python, JavaScript and TypeScript, Rust, Go and Java
-  decide differently is in one file each behind a `Rules` trait, moved without changing a rule.
-  The walker tests a file's language in one `match`, so a language without a rule set does not
-  compile. A file's language comes from one function, `langs::detect`, shared by the parser, the
-  resolver and `names.rs`. No answer changed.
-- `refs`, `callers`, `callees`, `deps`, `rdeps` and the language server resolve PHP, a sixth rule
-  set (`resolve/php.rs`): `namespace` and `use` (aliased, grouped, `use function`), classes,
-  traits and interfaces, `$x->m()` through the class of `$x` (`$this`, the latest assignment of
-  `new C()` or of a call with a declared return type, a typed parameter, a typed property),
-  `self::`, `static::`, `parent::` and `C::m()`, and the global function an unqualified call
-  falls back to. A `use` maps to the file of the class or function it names; `require` paths map
-  as before. PHP occurrences no longer say `not resolved in this language`.
-- `search` and the ranked part of `find` use a running `serve` session too, under the same rules
-  and with the same bytes, exit code and freshness as a fresh process for every option (about
-  half the time or less). A `search` with `--also` another root does its own work. A command line
-  call that reaches a deep socket from its directory returns by a descriptor of the directory it
-  left, and stops with an error if it cannot.
-- The models are trained on rows the engine writes. `bench/gen_features.py` indexes each
-  benchmark package with the binary and reads `batch --features`; `bench/train_semantic.py` reads
-  the chunks, the tokens of each view and the query terms from a hidden `views` command.
-  `bench/retrain_ranker.sh` and `bench/eval_sealed.sh` build the binary first. On six packages,
-  one per language, both variants, the rows equal the reference's bit for bit (7,836 queries,
-  1,171,940 candidates), as do the vector model's inputs.
+  server, the bindings and `watch`, with reads side by side on up to 8 readers: eight
+  `references` calls sent together no longer queue ([ARCHITECTURE](docs/ARCHITECTURE.md)).
+- The resolver is one walker plus a rule set per language (`resolve/`); no answer changed.
+- `refs`, `callers`, `callees`, `deps`, `rdeps` and the language server resolve PHP
+  (`resolve/php.rs`): namespaces and `use`, classes, traits, `$x->m()` through the type of `$x`,
+  `self::`, `static::`, `parent::` and `C::m()` ([CLI](docs/CLI.md)).
+- `search` and the ranked part of `find` use a running `serve` session too, with the same bytes
+  and exit code as a fresh process in about half the time or less.
+- The models are trained on rows the engine writes (`bench/gen_features.py`, `bench/train_semantic.py`);
+  on six packages the rows equal the reference's bit for bit (7,836 queries, 1,171,940
+  candidates).
 - The benchmark builders (`bench/make_bench.py`, `bench/make_bench_code.py`, `bench/quality.py
-  --make`) and the ranker's trainer read the engine too: the hidden `views` command also takes a
-  file's text and prints its language and test flag, a name's subwords and the query stop list,
-  and `bench/gen_features.py` keeps each candidate's linear blend, which picks the ranker's
-  candidates. Before the reference engine was removed, the builders wrote the same files byte for
-  byte on 13 packages of the six languages (1,877 files, 12,039 queries) and on the quality
-  corpus, and the trainer handed LightGBM the same matrix (1,240,156 rows) and wrote the same
-  ranker. No engine answer changed.
-- `batch --features` names the features: each line has `feature_names` (the order of every
-  candidate's `x`), and each candidate its `name` and `kind`, so a training script needs no
-  second list. In `search.rs` the candidate sources are a list and the feature tables are filled
-  by name; no feature, score or ranking changed (parity on the engine's source and on networkx).
-- The index keeps its tables to itself: the database handle is no longer public, and other
-  modules ask `Index` for what they need (the chunks of a file, of a name or at a line, the
-  callers of a name, a file's imports, whether a path has a row) instead of running SQL. Answers,
-  their order and the stored format are unchanged; a test that damages the index on purpose uses
-  `Index::damage_for_tests`.
-- The language server's go to definition names the definition the resolver ties the name under
-  the cursor to, as find references does: on `item.total()` after `item = Order()`, with a class
-  `Item` in the same file, it answered `Item.total` and now `Order.total`. A name the resolver
-  cannot place is still looked up by name.
-- One module decides what a name refers to (`names.rs`): `callers`, `callees`, `refs`, `deps`,
-  `rdeps`, the language server and the caller count ranking reads ask it, and no other module
-  builds a resolver. Answers are unchanged; a `callers` request reads each file once instead of
-  once per call site (450 call sites in one file: 33 ms CPU to 19 ms).
-- The vector model, the ranker and the feature list are one model set (`models.rs`), loaded on
-  first use: `symbol` on this crate's index takes 6.8 ms CPU with the model, as without it
-  (25.8 ms before), and a ranked search 20.5 ms (30.2 ms). The bundled model's signature is a
-  constant a test checks, with the same value as before, so no process hashes the model.
-- A change of vector model remakes the vectors without rebuilding the index: switching to
-  `SCRUTATE_SEMANTIC=none` costs 22 ms CPU instead of 507 ms, and the index equals a fresh build
-  with that model. Switching back makes the vectors from the word counts of each file's artifact
-  and reads no source file: 1.39 s CPU instead of 3.47 s on this repository (a fresh build takes
-  4.12 s), 2.90 s instead of 8.34 s on Guava. An artifact a file names that the store lacks or
-  that does not decode is damage at that switch, and the index is rebuilt. A ranker whose
-  features differ from this version's makes `search` fail saying what differs; before, it was
-  silently dropped.
+  --make`) and the ranker's trainer read the engine too: the hidden `views` command. Before the
+  reference engine was removed they wrote the same files byte for byte on 13
+  packages (1,877 files, 12,039 queries) and the same ranker ([QUALITY](docs/QUALITY.md)).
+- `batch --features` names the features (`feature_names`); no feature, score or ranking changed.
+- The index keeps its tables to itself: other modules ask `Index`; answers are unchanged.
+- The language server's go to definition names the definition the resolver picks: on
+  `item.total()` after `item = Order()`, with a class `Item` in the file, it answered
+  `Item.total` and now `Order.total`.
+- One module decides what a name refers to (`names.rs`); a `callers` request reads each file once
+  (450 call sites in one file: 33 ms CPU to 19 ms).
+- The models are one set (`models.rs`) loaded on first use: `symbol` on this crate's index takes
+  6.8 ms CPU (25.8 ms before), a ranked search 20.5 ms (30.2 ms).
+- A change of vector model remakes the vectors without rebuilding the index: to
+  `SCRUTATE_SEMANTIC=none` 22 ms CPU instead of 507 ms, and back 1.39 s instead of 3.47 s here,
+  2.90 s instead of 8.34 s on Guava. A ranker whose features differ makes `search` fail saying
+  so; before, it was silently dropped.
 - Incremental index (SQLite + memory-mapped segments), content hashing, atomic updates,
   compaction, GC, corruption detection and self-healing rebuild, schema/model versioning,
   multi-process safety, `check` command.
 - 61 tree-sitter grammars in the default build and 13 more with `--features extra-langs`, each
   verified by a snapshot sample (writing the optional ones' samples fixed the D, LLVM IR,
   AutoHotkey, VHDL and OCaml rules); keyword heuristics for grammar-less languages, windows for
-  everything else; imports and call edges.
+  everything else; imports and call edges ([LANGUAGES](docs/LANGUAGES.md)).
 - Text index for repeated grep-style queries (`scrutate index --text`, `grep --index`): trigram
-  postings over exactly the files Engine A's walk visits, trigram conditions derived from the
-  pattern's syntax tree, candidates searched by Engine A's own matcher, so the output equals the
-  walk's. Incremental (segments merge during updates) and safe for concurrent readers.
+  postings whose output equals the walk's; incremental and safe for concurrent readers.
 - UTF-16 files with a byte-order mark are transcoded and indexed (they were skipped as binary).
-- Text index format 2: each posting carries next-byte and position masks, so a literal's trigrams
-  must line up in a file for it to be a candidate (the Linux tree: `kernel_thread` 1,781 candidate
-  files to 164; concurrent query throughput from 4% behind Zoekt to 5% ahead). The index is
-  409 MB instead of 148 MB; the next update rebuilds a format 1 index.
-- Chunk line numbers follow grep's line counting (`\n` only); Python-style splitting had shifted
-  them after form feeds (found by fuzzing). Index schema 12.
+- Text index format 2 adds position masks to the postings (the Linux tree: `kernel_thread` 1,781
+  candidate files to 164; from 4% behind Zoekt to 5% ahead). The index is 409 MB instead of
+  148 MB.
+- Chunk line numbers follow grep's line counting (`\n` only), found by fuzzing. Index schema 12.
 - Ranked search: field-weighted BM25 + exact lookup + semantic vectors (IVF) + LightGBM
   LambdaRank ranker; bit-identical with the Python reference implementation.
-- The Rust engine and the Python reference cluster a large index segment (20,000 chunks or more)
-  the same way, bit for bit, so their results match on a large repository too, each engine on its
-  own index (before, only when both read one index). `bench/parity.py` compares the clusters, and
-  `bench/parity_repos.sh` runs two more large repositories.
-- The ranker is also trained with documented types as answers (classes, structs, enums, traits,
-  interfaces, type aliases), so a type ranks for its own documentation and name as a function
-  does; one more feature tells a name typed with its case (`BurstFiles`) from the same words in
-  another case (`burst_files`), in either Unicode form, and a struct and its `impl` block are
-  separate results. Every query weighs the same in the fit. `bench/retrain_ranker.sh` runs the
-  whole fit and refuses a ranker that falls below BM25 on a row of the held-out set or below the
-  previous ranker over all queries. On held-out code a type is found from its documentation with
-  MRR 0.478 (0.017 before), and functions lose 0.031 (docs/QUALITY.md). A second hold-out no
-  choice has touched is kept for one evaluation of the ranker that ships (`bench/eval_sealed.sh`).
-- Ranked search reads every line of an indexed file. A chunk keeps at most 200 lines (40 for a
-  class or another container), and code outside a file's definitions had no chunk once the file
-  held one definition; those lines are now in 50-line windows named after the definition or file
-  they are part of, and a definition with its windows is one result. A definition starts at the
-  attribute lines right above it (Rust `#[...]`, decorators and annotations), so
-  `#[get("/users")]` above a handler is found with it.
-- Lock files with an ordinary extension (`package-lock.json`, `npm-shrinkwrap.json`,
-  `pnpm-lock.yaml`, `packages.lock.json`, `Package.resolved`, `.terraform.lock.hcl`, Gradle
-  `*.lockfile`, `bun.lockb`) are left out of the index like `*.lock`; `grep` still searches them.
-- Less memory in `grep`: `-j1` on a file of one very long line holds no more than the default
-  mode (141 MB to 103 MB for a 100 MB line); `-j1` on large trees holds less (LLVM 9.4 to
-  8.3 MB, binheavy 4.6 to 3.7, smallfiles 3.8 to 3.3) and is faster (the Linux tree 2.44 s to
-  2.36 s, py-big 132 ms to 126 ms); the default mode on one 740 MB file holds 6.1 MB, down from
-  14.3 MB.
+- The Rust engine and the Python reference cluster a large segment (20,000 chunks or more)
+  bit for bit the same, checked by `bench/parity.py` and `bench/parity_repos.sh`.
+- The ranker is trained with documented types as answers too, and a feature tells a name typed
+  with its case (`BurstFiles`) from the same words in another case: a type is found from its
+  documentation with MRR 0.478 (0.017 before), functions lose 0.031 ([QUALITY](docs/QUALITY.md)).
+  `bench/retrain_ranker.sh` refuses a ranker that does worse; `bench/eval_sealed.sh` keeps a
+  sealed hold-out.
+- Ranked search reads every line of an indexed file: code outside definitions is in 50-line
+  windows, and a definition starts at its attribute lines (`#[get("/users")]` above a handler is
+  found with it).
+- Lock files with an ordinary extension (`package-lock.json`, `pnpm-lock.yaml` and the like) are
+  left out of the index like `*.lock`; `grep` still searches them ([CLI](docs/CLI.md)).
+- Less memory in `grep -j1` (141 MB to 103 MB for a 100 MB line), and faster (the Linux tree
+  2.44 s to 2.36 s, py-big 132 ms to 126 ms); the default mode on one 740 MB file holds 6.1 MB,
+  down from 14.3 MB.
 - `refs`, `deps` and `rdeps`:
-  - `rdeps` on a header no longer loads every including file, and `rdeps` of a module with
-    thousands of importers stays near the size of one file (3.8 GB to 103 MB for 5,000
+  - `rdeps` of a module with thousands of importers stays small (3.8 GB to 103 MB for 5,000
     importers).
-  - A relative import that climbs above the repository root (`../../lib` from `src/a.js`,
-    `from ...x` in `src/b.py`) resolves to no file.
-  - `refs` resolves uses on line 1 of a file with a byte-order mark and uses after an invalid
-    UTF-8 byte on the same line, and the language server places them right.
-  - `refs` no longer overflows the stack or runs for minutes on a file nested hundreds of
-    thousands of levels deep: a file past 2,000 levels is listed as nested too deeply to read,
-    and `callers` keeps a call in it as a caller.
-  - The resolver no longer panics on an indexed file that now starts with a byte-order mark and
-    holds a NUL byte.
-  - `refs` through a typed variable takes linear time: 5,000 uses went from 23 to 32 s to under
+  - A relative import that climbs above the root (`../../lib` from `src/a.js`, `from ...x` in
+    `src/b.py`) resolves to no file.
+  - `refs` places uses right after a byte-order mark or an invalid UTF-8 byte.
+  - A file past 2,000 levels of nesting is listed as too deep to read, where `refs` overflowed the
+    stack.
+  - The resolver no longer panics on a file that starts with a byte-order mark and holds a NUL
+    byte.
+  - `refs` through a typed variable takes linear time: 5,000 uses from 23 to 32 s to under
     0.25 s.
-  - A Java class in front of a call (`Util.foo()`, `p.Util.foo()` with a one-part package of the
-    repository) is a use of the class, and a variable there is a local or a field: every static
-    call on a class was "not found".
-  - Rust binaries, tests, examples, benches and `build.rs` are crate roots of their own, so
-    `mod common;` in `tests/it.rs` finds `tests/common/mod.rs` and `crate::` in
-    `src/bin/tool.rs` starts at that file.
-  - A variable's type comes from the declaration in scope at the use, no longer from one in an
-    ended block or from a closure's parameter.
+  - A Java class in front of a call (`Util.foo()`) is a use of the class: every static call on a
+    class was "not found".
+  - Rust binaries, tests, examples, benches and `build.rs` are crate roots (`crate::` in
+    `src/bin/tool.rs` starts at that file).
+  - A variable's type comes from the declaration in scope at the use.
   - A Java diamond of interfaces no longer takes exponential time (over 100 s to 0.04 s at 57
     interfaces).
   - A tsconfig `extends` written as a list is read.
-  - A method a Python, JavaScript or TypeScript class inherits is the one Python's method
-    resolution order (or the `extends` chain) reaches first, up to 8 levels of bases: a diamond
-    such as `class D(B, C)` calls `C.m` where it named `A.m`, and a chain of more than 3 classes
-    no longer answers not found.
-  - A variable used inside a closure, lambda, arrow function, nested function or Go func literal
-    has the type of its declaration in the enclosing functions, so `xs.map(x => p.norm())` is a
-    call of `Point.norm`; a Rust `fn` item still sees none of the locals around it. A name bound
-    inside the closure hides the outer one: a bare arrow parameter (`p => ...`), a destructured
-    name, a function's own name, a nested function or class, a Python comprehension variable.
-    So `xs.map(p => p.norm())` is not a call of the outer `p`'s method. A Python method does not
-    see its class body's variables.
+  - An inherited method is the one the method resolution order reaches first, up to 8 levels:
+    `class D(B, C)` calls `C.m` where it named `A.m`.
+  - A variable inside a closure has the type of its enclosing declaration
+    (`xs.map(x => p.norm())` calls `Point.norm`), unless the closure binds the name
+    (`xs.map(p => p.norm())`, a bare `p => ...`).
   - A Python base class from outside the repository keeps its place in the method resolution
     order: `class T(unittest.TestCase, Helper)` no longer calls `Helper.setUp` for
     `self.setUp()`, which stays undecided because `TestCase` may define it (`object` is not
     counted).
-  - tsconfig `paths` are read as TypeScript reads them: relative to the `baseUrl` the configs end
-    with after `extends`, inherited or not, else to the folder of the config that sets `paths`.
-    `${configDir}` at the start of a `paths` place or of `baseUrl` stands for the folder of the
-    config nearest the importing file, as TypeScript 5.5 reads it.
-  - `refs` and `callers` stay fast in a function where many blocks bind the same name (2,000
-    blocks: 11 to 13 s before, 0.14 s) and through a wide diamond of Python or TypeScript base
-    classes.
-  - `refs` counts every use on a line (it silently stopped at 64); `--max-results N` (MCP
-    `max_results`) counts uses, not lines. `grep` with color or `--json` lists every match on a
-    line.
-  - `refs` in one large function, as in a bundle, takes linear time: 4,000 calls went from 28 s
-    to 0.12 s.
-  - A use on a line longer than 400 bytes shows the part of the line around it: 2,000 uses on
-    one 8 KB line printed 16 MB and print under 1 MB.
-- `grep -z` reads at most 64 KiB of a tar member's long name or PAX path; a 306 KB archive with
-  a 300 MiB name took 1.27 GB and takes 5.6 MB.
-- Context output (`-A`, `-B`, `-C`) on several threads no longer runs one file's lines into
-  another's without a `--`: a file's lines leave a group at a time.
-- A named pipe, `<(...)` or `/dev/stdin` given as a path is searched, as ripgrep does. A link to
-  a directory given as a path is walked without an `Is a directory` warning and error count.
-- `grep -z` finds the members after an old-GNU sparse member (`tar --sparse`) of a tar archive:
-  every member after it was lost with a checksum warning.
-- A large file whose lines are too long for the line probes to see is streamed: 100 MB of 4 MB
-  lines peaked at 103 MB and peak at 15 to 18 MB.
-- A case-insensitive search for a long literal no longer slows to seconds on lines that almost
-  match it (10 MB of lines of 79 `=` against a pattern of 80: 1.2 s, now 0.01 s).
-- A large one-line file searched for a plain `-F` literal is read through small buffers in two
-  passes: on a 100 MB line peak memory falls from 103 MB to under 6 MB, and CPU time by a third
-  with output and by half with `-c`.
+  - tsconfig `paths` and `${configDir}` are read as TypeScript 5.5 reads them.
+  - `refs` and `callers` stay fast where many blocks bind one name (2,000 blocks: 11 to 13 s
+    before, 0.14 s).
+  - `refs` counts every use on a line (it stopped at 64); `--max-results N` counts uses.
+  - `refs` in one large function takes linear time: 4,000 calls from 28 s to 0.12 s.
+  - A use on a line longer than 400 bytes shows the part around it: 16 MB of output to under
+    1 MB.
+- `grep -z` reads at most 64 KiB of a tar member's long name: a 306 KB archive with a 300 MiB
+  name took 1.27 GB and takes 5.6 MB.
+- Context output on several threads no longer runs one file's lines into another's.
+- A named pipe, `<(...)` or `/dev/stdin` given as a path is searched, and a link to a directory
+  is walked without an `Is a directory` warning.
+- `grep -z` finds the members after an old-GNU sparse member (`tar --sparse`); they were lost.
+- A large file of very long lines is streamed: 100 MB of 4 MB lines peaked at 103 MB, now 15 to
+  18 MB.
+- A case-insensitive search for a long literal no longer slows on near misses (lines of 79 `=`
+  against a pattern of 80: 1.2 s, now 0.01 s).
+- A large one-line file searched for a `-F` literal peaks under 6 MB instead of 103 MB.
 - With `-e`, a first path that is not UTF-8 is searched as a path.
 - A home directory kept in git is no longer indexed from a folder below it when `HOME` is a
   symbolic link.
-- `--stats` and the JSON summary of a search stopped by `--max-results` count only the printed
+- `--stats` and the JSON summary of a search stopped by `--max-results` count only printed
   matches.
-- MCP tool calls no longer read a file outside the repository through a linked folder: a path a
-  call names, an answer cites or a watch event names is indexed only when it resolves inside the
-  root.
-- `serve` and `lsp` open an index another process rebuilt (after damage, `index --force`) on
-  their next call; before, they wrote into the deleted database and the two processes rebuilt in
-  turn. Two processes that meet an index of an older schema clear it once.
-- A panic in the first index build no longer leaves `serve` answering "still building" for good:
-  the failure is on stderr and in each tool call's answer, and `serve` exits when its input
-  closes.
-- `index` keeps an update and exits 0 when the segment merge after it fails; the next update
-  merges again.
-- The text index survives more: a file over 64 MB shortened while read no longer ends the process
-  (it was mapped; it is read in pieces now), a manifest cut short by a crash is rebuilt by the
-  next update, a liveness file left by an update that stopped early no longer makes a file match
-  twice, and many small updates no longer rewrite a large index (the largest segment stays out of
-  a merge that only the segment count asks for). It sees an edit that keeps a file's size and
-  modification time (`cp -p`, `rsync -t`, `touch -r`); its format is 3, and the next
-  `index --text` or `grep --index --update` rebuilds an older one.
-- A full index build of a C, Go or Java tree no longer keeps every file's syntax tree in memory:
-  40 MB of C in 600 files took 2.1 GB and takes 0.56 GB. The cache counts the trees parses really
-  keep, so C++ headers and files too large to parse take none of its budget, and a tree too large
-  for the room left gives that room back to smaller ones.
-- Haskell type synonyms, Puppet functions, LLVM named types and OCaml classes (the last two with
-  `extra-langs`) are definitions: their rules named grammar nodes that do not exist.
-- A grammar-less file whose definitions nest deeply is indexed in time linear in its size (a 1 MB
-  Perl file of 1,400 nested `sub` lines: 0.83 s of CPU, now 0.2 s). Nested PHP `include` and
-  `require` lines and declarations deep inside C or C++ `#if` blocks no longer take time
-  quadratic in the nesting depth (16,000 nested PHP includes: 20 s, now 0.06 s), nor does a call
-  chain such as `a()()()` or `x.a().a()` (a 256 KB file of one chain: 22 s, now 0.25 s). A C++
-  call is named for an operator only when at most three marks follow `operator`, so
-  `a.operator()()()` no longer stores names as long as the chain (a 16 KB file made 64 MB of
-  names).
-- A damaged segment found during a segment merge rebuilds the index (the update ended with an
-  internal error); `serve --watch` and `watch` report an update that panics and keep watching.
-- The language server reads a document from disk only under the root; a document outside it is
-  answered from the text the editor sent, or not at all.
+- MCP tool calls no longer read a file outside the repository through a linked folder
+  ([SECURITY](docs/SECURITY.md)).
+- `serve` and `lsp` open an index another process rebuilt on their next call; before, the two
+  processes rebuilt in turn.
+- A panic in the first index build no longer leaves `serve` answering "still building" for good.
+- `index` keeps an update and exits 0 when the segment merge after it fails.
+- The text index survives more: a file shortened while read, a manifest cut by a crash, many
+  small updates, and an edit that keeps size and modification time (`cp -p`, `rsync -t`,
+  `touch -r`); its format is 3 ([ARCHITECTURE](docs/ARCHITECTURE.md)).
+- A full index build of a C, Go or Java tree no longer keeps every syntax tree in memory: 40 MB
+  of C in 600 files took 2.1 GB and takes 0.56 GB.
+- Haskell type synonyms, Puppet functions, LLVM named types and OCaml classes are definitions.
+- Deep nesting no longer costs more than linear time: a 1 MB Perl file of nested `sub` lines
+  0.83 s to 0.2 s of CPU, 16,000 nested PHP includes 20 s to 0.06 s, declarations inside C `#if`
+  blocks, and a call chain such as `a()()()` or `x.a().a()` (a 256 KB file, 22 s to 0.25 s). A
+  C++ `operator` call such as `a.operator()()()` no longer stores names as long as the chain.
+- A damaged segment found during a merge rebuilds the index; `serve --watch` and `watch` keep
+  watching after an update panics.
 
 - A path in a tool call that leaves the repository by its own parts is refused before anything is
   looked at; on Windows a share on another machine named in a call was connected to first. An
