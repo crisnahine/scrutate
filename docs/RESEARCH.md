@@ -35,9 +35,8 @@ better than the current code-word semantic model (`models/semantic.npz`), and at
   normalised. Nothing else changes: the candidate pool (BM25 + exact name + 100 semantic
   neighbours), the 47 features of the time (48 now) and `bench/train_ranker.py`.
 - For every model, the current one included, the ranker was retrained with `train_ranker.py fit`
-  on that model's DEV features and evaluated once on TEST. On the current model the retrained
-  ranker is within 0.005 MRR of the shipped `models/ranker.npz` on every query type, so it is a
-  sound baseline.
+  on that model's DEV features and evaluated once on TEST. On the current model it is within
+  0.005 MRR of the shipped `models/ranker.npz` on every query type: a sound baseline.
 - *semantic only* ranks the candidate pool by vector similarity alone, as in QUALITY.md.
 - Intervals: 95 % paired bootstrap over queries (1 000 resamples, seed 0), from `evalcore.py`.
 - Bulk embedding for the quality runs used the Apple GPU (MPS) to keep CPU load low, with granite
@@ -92,42 +91,42 @@ class chunks from the TEST packages, two views each (2 000 texts), sorted by len
 | granite-small (fp32) | 20.3 s | not measured | 11.4 ms | 1.4 GB |
 
 - Indexing compute grows 46 to 107 times over the Python reference of the current model (the Rust
-  engine is faster still). A 100 000-chunk repository on 4 threads takes about 15 min (MiniLM) or
+  engine is faster still): a 100 000-chunk repository on 4 threads takes about 15 min (MiniLM) or
   28 min (bge) with PyTorch, more with candle, against seconds today.
 - Every query pays one more forward pass: 5 to 11 ms on CPU.
 - The binary is 84 MB today (release, macOS arm64). A transformer adds:
-  - runtime: candle-core + candle-nn + candle-transformers + tokenizers, about 4.3 MB in a
-    stripped release build (a probe binary with the same profile, 4.6 MB, against 0.4 MB for an
-    empty one); or ONNX Runtime, whose macOS arm64 library is 33 MB (version 1.31.1);
-  - weights: 91 MB (MiniLM) or 133 MB (bge) as fp32, about half as fp16; the tokenizer file adds
-    0.5 to 0.7 MB. So +95 to +140 MB with candle, more than doubling the binary.
+  - runtime: candle-core + candle-nn + candle-transformers + tokenizers, about 4.3 MB stripped
+    (a probe binary with the same profile, 4.6 MB, against 0.4 MB for an empty one); or ONNX
+    Runtime, whose macOS arm64 library is 33 MB (version 1.31.1);
+  - weights: 91 MB (MiniLM) or 133 MB (bge) as fp32, about half as fp16, plus 0.5 to 0.7 MB of
+    tokenizer file: +95 to +140 MB with candle, more than doubling the binary.
 - The candle probe was 3.6 to 4 times slower than PyTorch here and peaked at 2.2 GB RSS with
   batch 64; smaller batches would cut memory at some cost in speed.
-- At the time, the Python reference and the Rust engine agreed to the bit (`bench/parity.py`);
-  that mirror has since ended. The engine's features are still pinned bit for bit on every
-  platform (`tests/ranking_pins.rs`). Transformer inference through another backend would not give
-  the same bits everywhere, so those pins would need a tolerance.
+- At the time the Python reference and the Rust engine agreed to the bit (`bench/parity.py`), a
+  mirror since ended. The engine's features are still pinned bit for bit on every platform
+  (`tests/ranking_pins.rs`); transformer inference through another backend would not give the
+  same bits everywhere, so those pins would need a tolerance.
 
 ## Recommendation
 
 Do not ship a transformer in the binary now.
 
 The quality gain is real and consistent: with bge-small, learned MRR rises by +0.070 for doc,
-+0.055 for name and +0.019 for kw queries on undocumented code, with intervals clear of zero; id
-and qid queries do not move. The price is 46 to 107 times more indexing compute, about 1 GB of
-memory while indexing, 5 to 11 ms per query, a binary more than twice its size, and the loss of
++0.055 for name and +0.019 for kw queries on undocumented code, intervals clear of zero; id and
+qid queries do not move. The price: 46 to 107 times more indexing compute, about 1 GB of memory
+while indexing, 5 to 11 ms per query, a binary more than twice its size, and the loss of
 bit-level agreement (then between the reference and the engine, now across platforms).
 
 What would change the answer:
 
 1. Distillation, the cheapest next step: train the code-word model (`bench/train_semantic.py`)
-   with bge-small as a teacher, keeping today's runtime cost. Closing half of the +0.070 doc gap
-   would beat shipping the transformer.
-2. An opt-in model file: keep the current model as default and accept a separately installed
-   transformer for users who index once and query often, the way `SCRUTATE_SEMANTIC` already
-   points at another file.
+   with bge-small as a teacher, at today's runtime cost. Closing half of the +0.070 doc gap would
+   beat shipping the transformer.
+2. An opt-in model file: the current model by default and a separately installed transformer for
+   users who index once and query often, the way `SCRUTATE_SEMANTIC` already points at another
+   file.
 3. A measured int8 or fp16 model that keeps the gain at under 40 MB and under 5 s per 1 000
-   chunks. Not measured here.
+   chunks (not measured here).
 
 ## Not measured
 

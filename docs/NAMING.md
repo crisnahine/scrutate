@@ -19,11 +19,10 @@ Wiktionary's entry for *scrutor*, which lists English *scrutate* among its desce
 
 - It says what the tool does, search a codebase and examine it closely, without being a generic
   "code search" phrase.
-- It is a real word (SKROO-tayt) that is easy to say, type and remember, and it carries the sense
-  of *scrutiny*. It is rare enough in current English that no software project in the checked
-  registries uses it.
+- It is a real word (SKROO-tayt), easy to say, type and remember, with the sense of *scrutiny*.
+  It is rare enough in current English that nothing in the registries a developer tool could
+  collide with uses it (evidence below).
 - It is a verb, so it works in sentences ("scrutate the repo for callers of `refresh_token`").
-- Nothing in the registries a developer tool could collide with uses it (evidence below).
 
 ## Method
 
@@ -83,10 +82,10 @@ the top GitHub match.
 - crates.io, PyPI, npm: no package of that name (HTTP 404 on 2026-11-08).
 - GitHub: no repository named `scrutate`; the three name matches are French `Scrutateur` projects
   (an unrelated word).
-- Homebrew: no formula (`formulae.brew.sh` returns not-found; the same request for `ripgrep`
-  returns its formula, so the check works).
+- Homebrew: no formula (`formulae.brew.sh` returns not-found, and its formula for `ripgrep`, so
+  the check works).
 - Web search for "scrutate" software: no product or project. The nearest name is **Scrut**
-  (Scrut Automation, a compliance-automation SaaS), a different word in an unrelated market.
+  (Scrut Automation, a compliance-automation SaaS), another word in an unrelated market.
 
 ## Re-check on 2026-11-09
 
@@ -101,8 +100,8 @@ the top GitHub match.
   their status is unknown.
 - Trademarks: a web search for "Scrutate" as a software product, company or mark found none. The
   closest marks are **SCRUT**, **SCRUT.IO** and **THE SCRUT PLATFORM**, held by Scrut Automation
-  Inc. (security and compliance software; listed on Justia's trademark pages). They are a
-  different word, but in software, so a confusion analysis belongs in the legal review.
+  Inc. (security and compliance software; listed on Justia's trademark pages): another word, but
+  in software, so a confusion analysis belongs in the legal review.
 
 ## What is *not* verified: read before relying on the name
 

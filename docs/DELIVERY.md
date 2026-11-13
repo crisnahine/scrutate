@@ -34,8 +34,8 @@ The fifteen items of the mission (section 11) and where each lives.
 `tools/release_local.sh` on the release commit writes them to `dist/` (macOS) and, in a clean
 `rust:1-slim-bookworm` container, to `dist-linux/`. Neither is in git; `SHA256SUMS` in each holds
 the checksums. Every archive holds the binary, LICENSE-APACHE, LICENSE-MIT, README.md,
-CHANGELOG.md, THIRD_PARTY_NOTICES.txt, docs/ and integrations/. The `.deb` and `.rpm` packages
-(`packaging/linux/build-packages.sh`) also carry the two licence files and THIRD_PARTY_NOTICES.txt.
+CHANGELOG.md, THIRD_PARTY_NOTICES.txt, docs/ and integrations/; the `.deb` and `.rpm` packages
+carry the licence files too ([Releasing](RELEASING.md#6-platform-checks-and-artifacts)).
 
 | Artifact | Platform | Binary SHA-256 |
 |---|---|---|
@@ -56,5 +56,5 @@ packaged here. Signed archives, attestations and the other platforms come from
 `.github/workflows/release.yml` when a version is tagged.
 
 The Python prototype ("Titan") stays untouched in its sibling directory. Its training code lives
-on here as `python/scrutate_ref`, which fits the bundled models on rows the Rust engine writes.
-Its engine mirrored the Rust one bit for bit until that mirror ended.
+on as `python/scrutate_ref`, fitting the bundled models on rows the Rust engine writes; its
+engine mirrored the Rust one bit for bit until that mirror ended.
