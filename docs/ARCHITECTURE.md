@@ -66,31 +66,41 @@ adds:
   `GlobSet` once its tries cost about the build. A parallel walk can add threads as it runs
   (`grow_threads`), their visitors built at the start.
 - **Thread count** ([CLI](CLI.md#engine-a-grep-alias-g) has the limits): on macOS the performance
-  cores, as more threads opening files wait on each other in the kernel (the Linux tree on an M3
-  Pro: 977 ms on 11 threads, about 845 ms on 5). Small-file read time tells page cache from disk
-  (macOS: about 25 µs against 160 µs or more; Linux: under 15 µs against 30 µs or more). From disk
-  a walk or file list adds a thread per 16 slow reads, as the disk serves reads in flight (the
-  Linux tree cold on 5 CPUs: 1.22 s on 5 threads, 0.37 s this way; macOS: 2.7 s on 5 threads,
-  1.3 s on 22; 48 gained 5% on one tree, lost 4% on another). One at a time: a thread costs about
-  a slow read (231 files cold on Linux: 5.8 ms, 8.3 ms with a thread per slow read). `-j`
-  overrides all of it.
+  cores, as more threads opening files wait on each other in the kernel. Small-file read time
+  tells page cache from disk. From disk a walk or file list adds a thread per 16 slow reads, as the
+  disk serves reads in flight, one at a time, as a thread costs about a slow read. `-j` overrides
+  all of it.
+
+  | Measured | Result |
+  |---|---|
+  | the Linux tree on an M3 Pro | 977 ms on 11 threads, about 845 ms on 5 |
+  | a small-file read, page cache against disk | macOS: about 25 µs against 160 µs or more; Linux: under 15 µs against 30 µs or more |
+  | the Linux tree cold on 5 CPUs, Linux | 1.22 s on 5 threads, 0.37 s with a thread per 16 slow reads |
+  | cold, macOS | 2.7 s on 5 threads, 1.3 s on 22; 48 gained 5% on one tree, lost 4% on another |
+  | 231 files cold on Linux | 5.8 ms adding one at a time, 8.3 ms with a thread per slow read |
 - **Searches at the same time (macOS)**: the kernel serves about four file-reading threads at full
-  speed across all processes (py-big, four searches: 244 ms on five threads each, 189 ms on one).
-  A search that joins the count ([CLI](CLI.md#engine-a-grep-alias-g); also `grep_code` and
-  references) adds 1 to a per-user System V semaphore (`running.rs`) with `SEM_UNDO`, so the kernel
-  takes it back however the process dies. It reads the count after its first four files (searches
-  started together undercount each other) and, past 1,000 files, every 64 files. Walk threads over
-  the share pause between directories (`pause` in the vendored walker) until it rises; a list's
-  extra threads end and restart as it rises. A paused thread sleeps a thirty-second of its paused
-  time, at most 1 ms: the walk cannot end before it wakes, and a 1 ms sleep cost a 13 ms search
-  over a millisecond. py-big, two at once: 113 ms to 91 ms; four: 244 ms to 185 ms; eight: 482 ms
-  to 413 ms. The ripgrep sources (250 files), four at once: 14.7 ms to 13.3 ms (`-j1` 13.1 ms). A
-  lone search makes three system calls for this; one directory without subdirectories, or a list
-  of 256 files or fewer, makes none. A process leaves the count while a pipe or terminal write may block and
-  while stopped from its terminal: the SIGTSTP handler (installed only while counted and only if
-  nothing else handles the signal) takes it out, stops it with the default action, and puts it back
-  on continue. On Linux the cores are the limit and splitting never won (py-big on 5 CPUs, four at
-  once: 53 ms on 5 threads each, 60 ms on 1), so nothing is counted.
+  speed across all processes, so four searches on five threads each lose to four on one. A search
+  that joins the count ([CLI](CLI.md#engine-a-grep-alias-g); also `grep_code` and references)
+  adds 1 to a per-user System V semaphore (`running.rs`) with `SEM_UNDO`, so the kernel takes it
+  back however the process dies. It reads the count after its first four files (searches started
+  together undercount each other) and, past 1,000 files, every 64 files. Walk threads over the
+  share pause between directories (`pause` in the vendored walker) until it rises; a list's extra
+  threads end and restart as it rises. A paused thread sleeps a thirty-second of its paused time,
+  at most 1 ms: the walk cannot end before it wakes, and a 1 ms sleep cost a 13 ms search over a
+  millisecond. A lone search makes three system calls for this; one directory without
+  subdirectories, or a list of 256 files or fewer, makes none. A process leaves the count while a
+  pipe or terminal write may block and while stopped from its terminal: the SIGTSTP handler
+  (installed only while counted and only if nothing else handles the signal) takes it out, stops it
+  with the default action, and puts it back on continue. On Linux the cores are the limit and
+  splitting never won (py-big on 5 CPUs, four at once: 53 ms on 5 threads each, 60 ms on 1), so
+  nothing is counted.
+
+  | At once, macOS | Before | Counted |
+  |---|---|---|
+  | py-big, two | 113 ms | 91 ms |
+  | py-big, four | 244 ms (189 ms on one thread each) | 185 ms |
+  | py-big, eight | 482 ms | 413 ms |
+  | the ripgrep sources (250 files), four | 14.7 ms | 13.3 ms (`-j1` 13.1 ms) |
 - **One scheduler, one set of thread rules** (`instant::schedule`, `policy.rs`): every walk, file
   list and standard input goes through one scheduler, which builds each thread's `Run`, starts the
   threads, and asks the rules how many to start, when to add one and the search's share. The rules
@@ -136,38 +146,46 @@ adds:
   calls about 75. On macOS arm64 the other 133 are private stubs that look the function up with
   `dlsym` on first call and jump to it, keeping every argument register and the stack; `fork`
   binds them all first, so a child never looks one up. clap built every subcommand's definitions
-  before parsing; `scrutate grep` builds only its own. Start-up: 2.4 ms to 1.9 ms (a Rust
-  hello-world: 1.5 ms).
+  before parsing; `scrutate grep` builds only its own.
 
-  A one-file directory search then cost 21.1 M instructions against GNU grep's 20.8 M in the C
-  locale (hello-world 14.8 M), and on macOS each `open` or `getcwd` costs 150 to 200 thousand. So
-  the global git excludes file is read when a walk first meets a repository (git's configuration
-  and that file cost 0.5 M in every walk outside one), the walk reuses the command line's current
-  directory for `.`, a search without the index skips resolving the repository root, and a
-  one-file tree starts no thread: 19.2 M.
+  On macOS each `open` or `getcwd` costs 150 to 200 thousand instructions. So the global git
+  excludes file is read when a walk first meets a repository (git's configuration and that file
+  cost 0.5 M in every walk outside one), the walk reuses the command line's current directory for
+  `.`, a search without the index skips resolving the repository root, and a one-file tree starts
+  no thread.
 
-  That search took 459 page reclaims against 307 for GNU grep and 291 for hello-world, mostly the
-  executable's own code. `scrutate grep` parses plain argument shapes by hand and hands the rest
-  to clap (a property test holds both to one answer; a configuration file, or a variable clap
-  reads for grep, goes to clap), `-F` with one literal is a substring search with no regex engine,
-  14 more system functions bind on first use, and on macOS the linker drops the unused libiconv
-  and lays out side by side the functions a small search runs, from
-  `crates/scrutate/startup.order`. `tools/order_file.py` writes it: it runs the release links
-  under lldb with a breakpoint on every function of the link map (standard library ones included)
-  and checks how many names a release link still has; a missing name is skipped. ThinLTO makes
-  ld64 skip most of them (the `.llvm.N` ones it promoted, local ones several objects hold), so the
-  release profile links one object (fat LTO, one codegen unit). A one-file directory search now
-  touches 36 pages of `__TEXT`, not 75: 17 M instructions, 328 page reclaims, 2.6 MB peak memory,
-  where it was 19.3 M, 459 and 4.8 MB (GNU grep: 308 and 2.05 MB), and GNU grep's CPU time. A
-  release build takes 3 to 5 minutes from scratch, up from under 2. The order file is for macOS on
-  Apple silicon. Measured and left alone: 37,000 pointer fix-ups (applied lazily by the kernel, no
+  Page reclaims were mostly the executable's own code. `scrutate grep` parses plain argument
+  shapes by hand and hands the rest to clap (a property test holds both to one answer; a
+  configuration file, or a variable clap reads for grep, goes to clap), `-F` with one literal is a
+  substring search with no regex engine, 14 more system functions bind on first use, and on macOS
+  the linker drops the unused libiconv and lays out side by side the functions a small search
+  runs, from `crates/scrutate/startup.order`. `tools/order_file.py` writes it: it runs the release
+  links under lldb with a breakpoint on every function of the link map (standard library ones
+  included) and checks how many names a release link still has; a missing name is skipped.
+  ThinLTO makes ld64 skip most of them (the `.llvm.N` ones it promoted, local ones several objects
+  hold), so the release profile links one object (fat LTO, one codegen unit), and a release build
+  takes 3 to 5 minutes from scratch, up from under 2. The order file is for macOS on Apple
+  silicon. Measured and left alone: 37,000 pointer fix-ups (applied lazily by the kernel, no
   cost), the code-signature page size (no difference), the 85 MB binary size (0.05 to 0.2 ms).
-- **What bounds a search on macOS**: opening files. On APFS `open` costs 8 to 11 µs for a file
-  opened recently, about 19 µs once a large tree's kernel data has left the CPU caches; `close`
-  0.5 µs, a whole-file read 1.3 µs, `stat` 1 to 2 µs. Opens scale to the performance cores and no
-  further (the Linux tree, open and read only: 1.95 s on one thread, 0.56 s on five, 0.71 s on
-  six, 0.95 s on eleven; processes alike), hence the default thread count. A search of that tree
-  takes 0.66 s, so about 0.1 s is ours.
+
+  | A one-file directory search, macOS | Measured |
+  |---|---|
+  | start-up | 2.4 ms to 1.9 ms after the stubs and clap change (a Rust hello-world: 1.5 ms) |
+  | instructions | 21.1 M after start-up, against GNU grep's 20.8 M in the C locale (hello-world 14.8 M); 19.2 M after the walk changes; 17 M with the order file, where it was 19.3 M |
+  | page reclaims | 459, against 307 for GNU grep and 291 for hello-world; 328 with the order file (GNU grep: 308) |
+  | `__TEXT` pages touched | 75, then 36 with the order file |
+  | peak memory | 4.8 MB, then 2.6 MB (GNU grep: 2.05 MB) |
+  | CPU time | GNU grep's, with the order file |
+- **What bounds a search on macOS**: opening files, which scale to the performance cores and no
+  further (processes alike), hence the default thread count. A search of the Linux tree takes
+  0.66 s, so about 0.1 s is ours.
+
+  | On APFS | Cost |
+  |---|---|
+  | `open`, a file opened recently | 8 to 11 µs |
+  | `open`, once a large tree's kernel data has left the CPU caches | about 19 µs |
+  | `close`; a whole-file read; `stat` | 0.5 µs; 1.3 µs; 1 to 2 µs |
+  | the Linux tree, open and read only | 1.95 s on one thread, 0.56 s on five, 0.71 s on six, 0.95 s on eleven |
 - **Reading a file**: the first read asks for 64 KB and one byte. A short read is the whole file,
   searched in the thread's buffer with no size call (else a `statx` per file: 96,000 on the Linux
   tree). A larger file, or a NUL byte or byte-order mark in the first read, goes to the stream
