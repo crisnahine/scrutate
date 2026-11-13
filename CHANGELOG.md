@@ -198,6 +198,13 @@ First release.
   line 18446744073709551615.
 
 ### Engine B: code intelligence
+- GDScript (`.gd`) has a grammar in the default build (`tree-sitter-gdscript` 6.1.0, MIT, 0.27 MB
+  of the binary): functions, `class_name` and inner classes, signals (kind `signal`), named enums,
+  `const` (kind `constant`) and `var` (kind `key`) at file level or in an inner class body are
+  definitions, a `##` comment above a definition is its documentation, and the comment block
+  below a `class_name` and its `extends` line documents the class. Calls (`f()`, `obj.f()`,
+  `super.f()`) are recorded for `callers` and `callees`; `refs` says it does not resolve the
+  language. `grep --type gdscript` searches `.gd` files.
 - Windows: a damaged index is built again while another handle holds its files (a session's
   other readers, another process): the database that cannot be deleted is emptied where it is
   and a segment directory that cannot be removed keeps its name. Before, the rebuild could go on
@@ -312,7 +319,7 @@ First release.
 - Incremental index (SQLite + memory-mapped segments), content hashing, atomic updates,
   compaction, GC, corruption detection and self-healing rebuild, schema/model versioning,
   multi-process safety, `check` command.
-- 60 tree-sitter grammars in the default build, each verified by a snapshot sample; 13 more with
+- 61 tree-sitter grammars in the default build, each verified by a snapshot sample; 13 more with
   `--features extra-langs` (12 verified); keyword heuristics for grammar-less languages, windows for
   everything else; imports and call edges.
 - Text index for repeated grep-style queries (`scrutate index --text`, `grep --index`): trigram

@@ -137,7 +137,7 @@ None of the measured tools has a code-intelligence index, so this has no competi
   an undocumented held-out Python code base, vs 0.468 for BM25 over the same candidates; 0.93 to
   0.99 for name and identifier queries; held-out Rust, Go, Java, JavaScript and TypeScript
   repositories also gain on every query type (docs/QUALITY.md).
-- **Symbols from 60 grammars** (73 with the optional grammars), each verified by a sample; call
+- **Symbols from 61 grammars** (74 with the optional grammars), each verified by a sample; call
   graph, imports and dependents, references grouped by symbol, outline, similar code, exact and
   near-duplicate detection, cross-repository search.
 - **One interface for people and agents**: JSON everywhere (errors included), an MCP server with 14

@@ -292,6 +292,7 @@ Constants are symbols of kind `constant`:
 - C++: a `static const` or `static constexpr` member with a value in a class body
   (`Config.kSize`), and a member defined with its value outside the class
   (`const int Config::kLater = 5;` is `Config.kLater`).
+- GDScript: `const` at file level or in an inner class body (`Backpack.LIMIT`).
 
 Every name of a Go or Java declaration with several (`var X, Y int`, `const A, B = 1, 2`) is a
 constant with the whole declaration as its text.

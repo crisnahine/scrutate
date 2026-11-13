@@ -77,6 +77,18 @@ fn a_racket_define_syntax_rule_is_a_macro() {
 }
 
 #[test]
+fn a_gdscript_comment_below_the_class_header_documents_the_class_unless_a_member_follows_it() {
+    let doc = |src: &str, name: &str| parse_source("a.gd", src).into_iter().find(|c| c.name == name).map(|c| (c.doc, c.start, c.end));
+    let below = "class_name Hero\nextends Node\n## Walks the map.\n\nfunc go():\n\tpass\n";
+    assert_eq!(doc(below, "Hero"), Some(("Walks the map.".into(), 1, 3)));
+    let above = "## Walks the map.\nclass_name Hero extends Node\n## Starts walking.\nfunc go():\n\tpass\n";
+    assert_eq!(doc(above, "Hero"), Some(("Walks the map.".into(), 2, 2)));
+    let member = "class_name Hero\nextends Node\n## Starts walking.\nfunc go():\n\tpass\n";
+    assert_eq!(doc(member, "Hero"), Some((String::new(), 1, 2)));
+    assert_eq!(doc(member, "go").map(|d| d.0), Some("Starts walking.".into()));
+}
+
+#[test]
 fn every_text_file_is_searchable_even_without_symbols() {
     let chunks = parse_source("notes.whatever", "line one\nline two\n");
     assert!(!chunks.is_empty());

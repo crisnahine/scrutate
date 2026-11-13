@@ -495,6 +495,27 @@ const CORE: &[LangSpec] = &[
         imports: &[imp("import_statement", ImportHow::Fields("name")), imp("import_from_statement", ImportHow::Fields("module_name"))],
     },
     LangSpec {
+        id: "gdscript",
+        exts: &[".gd"],
+        files: &[],
+        language: || tree_sitter_gdscript::LANGUAGE.into(),
+        defs: &[
+            d("function_definition", "function", N),
+            d("constructor_definition", "function", &[NameRule::ChildKind(&["_init"])]),
+            d("class_definition", "class", N),
+            d("class_name_statement", "class", N),
+            d("signal_statement", "signal", N),
+            d("enum_definition", "enum", N),
+            Def { parents: &["source", "class_body"], ..d("variable_statement", "key", N) },
+        ],
+        calls: &[c("call", ""), c("attribute_call", ""), c("base_call", "")],
+        docstring: false,
+        wrappers: &[],
+        outer: &[],
+        body: "body",
+        imports: NO_IMPORTS,
+    },
+    LangSpec {
         id: "javascript",
         exts: &[".js", ".jsx", ".mjs", ".cjs"],
         files: &[],
@@ -2218,7 +2239,7 @@ static CPP_HEADER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(
 });
 
 /// The languages `parse::constant_of` reads constants in.
-pub const CONSTANT_LANGS: &[&str] = &["c", "cpp", "glsl", "go", "java", "javascript", "objc", "python", "ruby", "rust", "tsx", "typescript"];
+pub const CONSTANT_LANGS: &[&str] = &["c", "cpp", "gdscript", "glsl", "go", "java", "javascript", "objc", "python", "ruby", "rust", "tsx", "typescript"];
 
 /// The definition kinds the index gives a language: the kinds of its rules, `method` for a
 /// function in a class, `constant` where constants are read, and for a rule that takes its kind

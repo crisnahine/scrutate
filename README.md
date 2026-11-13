@@ -44,7 +44,7 @@ streaming results, cancellation, colour or JSON Lines output. Built on the same 
 `ignore` crates ripgrep is assembled from, and differentially tested against ripgrep.
 
 **Engine B, code intelligence.** A persistent, incremental index (SQLite + memory-mapped
-segments): tree-sitter symbols from 60 grammars (73 with `--features extra-langs`), keyword
+segments): tree-sitter symbols from 61 grammars (74 with `--features extra-langs`), keyword
 heuristics for the rest, call edges, imports, BM25 postings, semantic vectors and a LightGBM
 ranker; and a trigram text index that answers grep-style queries with Engine A's exact output.
 Ranked search by meaning, name or identifier; definitions, callers/callees, references,

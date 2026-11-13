@@ -523,6 +523,56 @@
       "build"
     ]
   ],
+  "sample.gd": [
+    [
+      "class",
+      "Player"
+    ],
+    [
+      "signal",
+      "scored"
+    ],
+    [
+      "enum",
+      "State"
+    ],
+    [
+      "key",
+      "speed"
+    ],
+    [
+      "function",
+      "_init"
+    ],
+    [
+      "function",
+      "move"
+    ],
+    [
+      "function",
+      "clamp_speed"
+    ],
+    [
+      "class",
+      "Inventory"
+    ],
+    [
+      "key",
+      "Inventory.items"
+    ],
+    [
+      "method",
+      "Inventory.add"
+    ],
+    [
+      "window",
+      "sample"
+    ],
+    [
+      "constant",
+      "MAX_SPEED"
+    ]
+  ],
   "sample.gleam": [
     [
       "module",

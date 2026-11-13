@@ -137,6 +137,7 @@ tree-sitter-xml = "0.7"
 tree-sitter-ini = "1.4"
 tree-sitter-rst = "0.2"
 tree-sitter-autohotkey = { version = "1.1", optional = true }
+tree-sitter-gdscript = "6.1"
 zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 
 # kqueue instead of FSEvents keeps CoreServices out of the binary (the watcher polls on macOS)

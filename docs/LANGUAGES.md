@@ -44,6 +44,7 @@ Engine A (instant search) needs none of this: it searches every readable file of
 | fish | `.fish` | function | yes | no | no | `tests/samples/sample.fish` |
 | fortran (extra-langs) | `.f .f90 .f95 .f03 .f08 .for .F .F90` | function | yes | no | no | `tests/samples_extra/sample.f90` |
 | fsharp (extra-langs) | `.fs .fsx .fsi` | function, type | yes | no | no | `tests/samples_extra/sample.fs` |
+| gdscript | `.gd` | class, constant, enum, function, key, method, signal | yes | no | no | `tests/samples/sample.gd` |
 | gleam | `.gleam` | function, type | yes | yes | no | `tests/samples/sample.gleam` |
 | glsl | `.glsl .vert .frag .geom .comp .tesc .tese` | function, struct | yes | yes | no | `tests/samples/sample.glsl` |
 | go | `.go` | constant, function, method, type | yes | yes | no | `tests/samples/sample.go` |
@@ -100,7 +101,7 @@ Engine A (instant search) needs none of this: it searches every readable file of
 A `.h` file is read as objc when it holds `@interface`, `@protocol`, `@implementation`, `@class `, else as cpp when a line matches `(?m)^[ \t]*(?:namespace\b[^;]*\{|namespace\s+\w[\w:]*\s*$|class\s+\w+|template\s*<|using\s+namespace\b|(?:public|private|protected)\s*:|extern\s+"C\+\+"|#\s*include\s*<[a-z_]+>)`, else as c (`sniff` in `crates/scrutate/src/langs.rs`).
 A `.m` file is read as objc when its first 4000 bytes hold `@interface`, `@implementation`, `#import`, `@end`, `@protocol`, else as matlab. A `.pp` file is read as pascal when it holds `procedure `, `function `, `begin`, `end;`, `unit `, `program ` and its first 4000 bytes hold no `$`, else as puppet.
 
-60 grammars in the default build, 13 more with `--features extra-langs`; 73 verified by snapshot samples. Call-edge and import extraction are declared per language by the registry rules; the sample for a language exercises them when its `expected.json` entry lists methods/functions and the file contains imports.
+61 grammars in the default build, 13 more with `--features extra-langs`; 74 verified by snapshot samples. Call-edge and import extraction are declared per language by the registry rules; the sample for a language exercises them when its `expected.json` entry lists methods/functions and the file contains imports.
 
 ## Heuristic tier (samples in the snapshot test)
 
@@ -139,6 +140,7 @@ Off by default because of their size. Each has a sample in `crates/scrutate/test
 - JavaScript and TypeScript: a function assigned to a member is a definition: `Foo.prototype.bar = function` is the method `Foo.bar`, `Foo.make = () => ...` is `Foo.make`, `obj["k"] = function` is `obj.k`, `exports.f` and `module.exports.f` are `f`, and `exports.a.b` is `a.b`. `this.x = function` inside a function or class is the method `x` of that function or class (`Widget.x`, `Panel.x` from its constructor). A default export written as an expression (`export default function () {}`, `export default class {}`, `module.exports = () => ...`) keeps its own name, or else takes the file's name (`app` for `lib/app.js`, the directory's name for an `index` file). The members of an object assigned to `module.exports` are definitions under their own names. A function stored under a computed key (`handlers[i] = function`) is not a definition. The comment above such an assignment is the function's documentation.
 - Julia: `function Base.show(...)` and `Base.show(...) = ...` are named `show` and owned by `Base`, so `symbol show` and `symbol Base.show` both find them; a method of a quoted operator, `Base.:(==)(a, b) = ...`, is named `==`.
 - C++: the call operator is named `operator()`. Haskell: an operator definition (`a <+> b = ...`, `(<+>) a b = ...`) is named by its operator. R: an R6 method in `R6Class("Counter", public = list(add = function(n) ...))` is the method `Counter.add`.
+- GDScript: a file's `class_name` is a class whose chunk holds the `extends` line right below it and, when no member follows it at once, the comment block below the two, where Godot writes a class's documentation. The file's functions are top-level functions, not methods of that class; an inner `class` owns its methods (`Backpack.stash`). A `signal` is of kind `signal`, a `var` at file level or in an inner class body a `key`, a `const` there a `constant`, and a named `enum` an `enum`.
 - Ruby and Elixir names keep a trailing `?` or `!`, Julia names a `!`, R names their dots, Bash names their `::`, Haskell, OCaml, F# and Nix names their primes; a Rust raw identifier `r#type` is named `type`.
 
 ## Known limits

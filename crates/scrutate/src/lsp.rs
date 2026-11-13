@@ -241,6 +241,7 @@ fn symbol_kind(kind: &str) -> u8 {
         "impl" => 19,
         "key" => 20,
         "struct" => 23,
+        "signal" => 24,
         "class" | "type" => 5,
         _ => 13,
     }

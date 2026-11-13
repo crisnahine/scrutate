@@ -177,6 +177,11 @@ def main() -> int:
                "- C++: the call operator is named `operator()`. Haskell: an operator definition (`a <+> b = ...`, `(<+>) a b = ...`) "
                "is named by its operator. R: an R6 method in `R6Class(\"Counter\", public = list(add = function(n) ...))` is the "
                "method `Counter.add`.\n"
+               "- GDScript: a file's `class_name` is a class whose chunk holds the `extends` line right below it and, when no "
+               "member follows it at once, the comment block below the two, where Godot writes a class's documentation. The "
+               "file's functions are top-level functions, not methods of that class; an inner `class` owns its methods "
+               "(`Backpack.stash`). A `signal` is of kind `signal`, a `var` at file level or in an inner class body a `key`, a "
+               "`const` there a `constant`, and a named `enum` an `enum`.\n"
                "- Ruby and Elixir names keep a trailing `?` or `!`, Julia names a `!`, R names their dots, Bash names their `::`, "
                "Haskell, OCaml, F# and Nix names their primes; a Rust raw identifier `r#type` is named `type`.\n")
     out.append("## Known limits\n")

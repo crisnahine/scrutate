@@ -302,6 +302,76 @@ fn search_finds_the_definition_below_a_comment_in_a_language_without_a_grammar()
     assert_eq!(got, [("a.f90", "second"), ("a.ml", "second")], "{out}");
 }
 
+fn gdscript_repo(name: &str) -> Repo {
+    let r = Repo::new(name);
+    r.write(
+        "game/player.gd",
+        b"class_name Player\nextends CharacterBody2D\n## The hero the user steers.\n\nsignal health_changed(value)\nsignal died\n\nenum Mood { CALM, ANGRY }\n\nconst MAX_HEALTH = 10\n\nvar health := MAX_HEALTH\n\n\n## Takes damage and tells the listeners.\nfunc take_damage(amount):\n\thealth = Scoring.clamp_health(health - amount)\n\thealth_changed.emit(health)\n\n\nclass Backpack:\n\tvar slots = []\n\n\t## Puts a thing into the first free slot.\n\tfunc stash(thing):\n\t\tslots.append(thing)\n",
+    );
+    r.write(
+        "game/scoring.gd",
+        b"class_name Scoring\nextends RefCounted\n\n\n## Bounds the number inside the quartz lantern range.\nstatic func clamp_health(value):\n\treturn clampi(value, 0, Player.MAX_HEALTH)\n",
+    );
+    r.write(
+        "game/level.gd",
+        b"extends Node\n\n@onready var player = $Player\n\n\nfunc _ready():\n\tplayer.take_damage(3)\n\tprint(Scoring.clamp_health(20))\n",
+    );
+    r
+}
+
+#[test]
+fn gdscript_definitions_calls_and_docs_answer_through_the_index_commands() {
+    let r = gdscript_repo("gdscript");
+    let (code, out, err) = r.run(&["outline", "game/player.gd", "--json"]);
+    assert_eq!(code, 0, "{err}");
+    let got: Vec<(String, String)> =
+        answer(&out).as_array().unwrap().iter().map(|h| (h["kind"].as_str().unwrap().to_string(), h["qualname"].as_str().unwrap().to_string())).collect();
+    let want = [
+        ("class", "Player"),
+        ("signal", "health_changed"),
+        ("signal", "died"),
+        ("enum", "Mood"),
+        ("constant", "MAX_HEALTH"),
+        ("key", "health"),
+        ("function", "take_damage"),
+        ("class", "Backpack"),
+        ("key", "Backpack.slots"),
+        ("method", "Backpack.stash"),
+    ];
+    assert_eq!(got, want.map(|(k, q)| (k.to_string(), q.to_string())), "{out}");
+    for (name, path, kind) in [("Backpack.stash", "game/player.gd", "method"), ("died", "game/player.gd", "signal"), ("Scoring", "game/scoring.gd", "class")] {
+        let (code, out, _) = r.run(&["symbol", name, "--json"]);
+        let hits = answer(&out);
+        assert!(code == 0 && hits[0]["path"] == path && hits[0]["kind"] == kind, "{name}: {out}");
+    }
+    let (code, out, _) = r.run(&["callers", "clamp_health", "--json"]);
+    assert_eq!(code, 0, "{out}");
+    let mut callers: Vec<String> =
+        answer(&out).as_array().unwrap().iter().map(|h| format!("{}:{}", h["path"].as_str().unwrap(), h["name"].as_str().unwrap())).collect();
+    callers.sort();
+    assert_eq!(callers, ["game/level.gd:_ready", "game/player.gd:take_damage"], "{out}");
+    // the words of the doc comment alone find the function, and the class's comment below its header finds the class
+    for (query, path, name) in [("quartz lantern", "game/scoring.gd", "clamp_health"), ("hero the user steers", "game/player.gd", "Player")] {
+        let (code, out, _) = r.run(&["search", query, "-k", "3", "--json"]);
+        let hits = answer(&out);
+        assert!(code == 0 && hits[0]["path"] == path && hits[0]["name"] == name, "{query}: {out}");
+    }
+    let (code, out, _) = r.run(&["refs", "clamp_health", "--json"]);
+    let unresolved = answer(&out)["unresolved"].clone();
+    assert!(code == 0 && unresolved.as_array().unwrap().iter().all(|u| u["reason"] == "not resolved in this language"), "{out}");
+    let (code, out, _) = r.run(&["grep", "--type", "gdscript", "-l", "clamp_health", "."]);
+    assert_eq!((code, sorted_lines(&out)), (0, vec!["./game/level.gd".to_string(), "./game/player.gd".into(), "./game/scoring.gd".into()]), "{out}");
+    let (code, out, _) = r.run(&["grep", "--type", "py", "-l", "clamp_health", "."]);
+    assert_eq!((code, out.as_str()), (1, ""));
+    let (code, out, _) = r.run(&["languages"]);
+    assert!(code == 0 && out.lines().any(|l| l.split_whitespace().collect::<Vec<_>>() == ["gdscript", ".gd"]), "{out}");
+    let (_, out, _) = r.run(&["languages", "--json"]);
+    let langs: Vec<serde_json::Value> = serde_json::from_str(&out).unwrap();
+    let gd = langs.iter().find(|l| l["id"] == "gdscript").expect("gdscript in languages --json");
+    assert_eq!(gd["definition_kinds"], serde_json::json!(["class", "constant", "enum", "function", "key", "method", "signal"]), "{gd}");
+    assert_eq!((gd["call_edges"].as_bool(), gd["tier"].as_str()), (Some(true), Some("grammar")), "{gd}");
+}
+
 #[test]
 fn search_finds_a_line_past_what_a_long_function_keeps_as_one_hit_naming_it() {
     let r = Repo::new("long_fn");

@@ -1065,6 +1065,7 @@ fn constant_of<'t>(lang: &str, node: Node<'t>, ancestors: &[(Node<'t>, Vec<Node<
             }
             (names.into_iter().filter(|n| n.kind() == "field_identifier").map(text_of).collect(), node)
         }
+        ("gdscript", "const_statement") if matches!(kind_up(1), "source" | "class_body") => (vec![text_of(field(node, "name")?)], node),
         ("c" | "cpp", "preproc_def") if field(node, "value").is_some() => (vec![text_of(field(node, "name")?)], node),
         ("c" | "cpp", "enumerator") => (vec![text_of(field(node, "name")?)], node),
         // a capitalized name is a constant in Ruby
@@ -1463,6 +1464,40 @@ fn is_attribute(lang: &str, p: Node, src: &[u8]) -> bool {
     }
 }
 
+/// A GDScript `class_name` holds the `extends` line after it, and Godot writes the class's
+/// documentation below the two: a comment block there is the class's when no member follows it at once.
+fn gdscript_header_doc(c: &mut Chunk, after: &[Node], src: &[u8]) {
+    // 0-based row of the line right below what the chunk holds
+    let mut next_row = c.end;
+    let mut end = None;
+    let mut rest = after;
+    if let Some(e) = after.first().filter(|n| n.kind() == "extends_statement" && n.start_position().row as i64 == next_row) {
+        (end, next_row, rest) = (Some(*e), last_row(*e) + 1, &after[1..]);
+    }
+    let mut block = Vec::new();
+    let mut block_end = next_row;
+    for n in rest {
+        if n.kind() != "comment" || n.start_position().row as i64 != block_end {
+            // a member right below the block owns it
+            if n.start_position().row as i64 == block_end {
+                block.clear();
+            }
+            break;
+        }
+        block.push(*n);
+        block_end = last_row(*n) + 1;
+    }
+    if c.doc.is_empty() && !block.is_empty() {
+        c.doc = clean_comment(&block.iter().map(|n| txt(src, n.start_byte(), n.end_byte())).collect::<Vec<_>>().join("\n"));
+        end = block.last().copied();
+    }
+    let Some(end) = end else { return };
+    c.end = last_row(end) + 1;
+    if let Some(l) = c.lazy.as_mut() {
+        l.end = end.end_byte();
+    }
+}
+
 /// Position among `siblings` of the type signature Haskell and Elm write right above function `name`.
 fn type_signature(lang: &str, name: &str, siblings: &[Node], at: usize, src: &[u8]) -> Option<usize> {
     let kind = match lang {
@@ -1858,6 +1893,9 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
                 if let Some(l) = c.lazy.as_mut() {
                     l.end = last.end_byte();
                 }
+            }
+            if let (true, Some((_, siblings))) = (spec.id == "gdscript" && t == "class_name_statement", ancestors.last()) {
+                gdscript_header_doc(chunks.last_mut().unwrap(), &siblings[at + 1..], src);
             }
             def_stack.push(chunks.len() - 1);
             pushed_now = true;
