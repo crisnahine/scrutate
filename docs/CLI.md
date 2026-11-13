@@ -264,58 +264,53 @@ while files change.
 | `config [--json]` | Show the configuration file in effect. `--json` prints `{"root": ..., "configuration_file": ...}`: the root an index command run here uses, and the configuration file (`null` when none). It builds no index; the editor plugins read it to find the root. |
 | `batch FILE [--features] [--timing]` | Run requests from a JSON-lines file with one index open. A line `{"query": ..., "k": ...}` is a ranked search; a line `{"op": TOOL, ...}` runs any operation, named and given arguments as the MCP tool is (`{"op": "callers", "name": "parse"}`), and prints the answer's envelope with the operation's name (`{"op", "schema", "result"}`, and `stopped_at` when it stopped at its limit) or `{"op", "error"}`; a `response_format` other than `detailed` or `concise` is such an error, and either form prints the same envelope. A line that is not JSON prints `{"error": "line 3, column 2: not JSON (...)"}` and the other lines still run. `--features` adds to a search every candidate (`id`, `path`, `name`, `qualname`, `kind`, `score` and its features `x`), the feature names once per line (`feature_names`, the order of `x`) and the ids each source found (`exact_ids`, `lex_ids`, `sem_ids`): the rows the ranker is trained on. |
 
-The code index holds every file the ignore rules let through, hidden files included, except
-binary files, files over 1 MB, `.git/`, `.scrutate/`, the directories named in
-`SCRUTATE_INDEX_EXCLUDE_DIRS` (when it is not set, in `exclude_dirs` of the root's
-`.scrutate.toml`: names only, at most 1000; a name with `/` or `\`, `.` and `..` exclude
-nothing; in the variable `\,` is a comma inside a name; the file may be a link to a file inside
-the root), and cache and tool directories by name (`node_modules`, `__pycache__`, `.venv`,
-`.mypy_cache`, `.pytest_cache`, `.next`, `.tox`, `.idea`, `.vscode`). `build`, `dist`, `target`
-and `venv` are skipped by name outside a git repository; inside one the ignore files decide, so a
-`target/` that `.gitignore` does not list is indexed. Data, generated and binary files are left
-out by extension (`.lock`, `.sum`, `.csv`, `.log`, `.min.js`, `.map`, archives, media) and lock
-files by name (`package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`,
-`packages.lock.json`, `Package.resolved`, `.terraform.lock.hcl`, `*.lockfile`, `bun.lockb`);
-`scrutate grep` still searches them. The ignore files are those `grep` reads, `.rgignore`
-included. A `.h` file is Objective-C when it holds `@interface`, `@protocol`, `@implementation`
-or `@class`, C++ when a line starts with `namespace`, `class`, `template <`, `using namespace`,
-an access label (`public:`), `extern "C++"` or a standard C++ include (`#include <vector>`), and
-C otherwise.
+The code index holds every file the ignore rules let through, hidden files included, except:
+
+- binary files, files over 1 MB, `.git/` and `.scrutate/`;
+- the directories named in `SCRUTATE_INDEX_EXCLUDE_DIRS`, or when it is not set in
+  `exclude_dirs` of the root's `.scrutate.toml` (names only, at most 1000; a name with `/` or
+  `\`, `.` and `..` exclude nothing; in the variable `\,` is a comma inside a name; the file may
+  be a link to a file inside the root);
+- cache and tool directories by name (`node_modules`, `__pycache__`, `.venv`, `.mypy_cache`,
+  `.pytest_cache`, `.next`, `.tox`, `.idea`, `.vscode`); `build`, `dist`, `target` and `venv`
+  only outside a git repository, since inside one the ignore files decide (a `target/` that
+  `.gitignore` does not list is indexed);
+- data, generated and binary files by extension (`.lock`, `.sum`, `.csv`, `.log`, `.min.js`,
+  `.map`, archives, media) and lock files by name (`package-lock.json`, `npm-shrinkwrap.json`,
+  `pnpm-lock.yaml`, `packages.lock.json`, `Package.resolved`, `.terraform.lock.hcl`,
+  `*.lockfile`, `bun.lockb`), which `scrutate grep` still searches.
+
+The ignore files are those `grep` reads, `.rgignore` included. A `.h` file is Objective-C when
+it holds `@interface`, `@protocol`, `@implementation` or `@class`; C++ when a line starts with
+`namespace`, `class`, `template <`, `using namespace`, an access label (`public:`),
+`extern "C++"` or a standard C++ include (`#include <vector>`); else C.
 
 Constants are symbols of kind `constant`:
 
-- Rust: `const` and `static` at file level, in a `mod` block or in an `impl` or trait body.
-- Go: package-level `const` and `var`.
-- JavaScript and TypeScript: a top-level `const` that is not a function (exported or not). In a
-  class body, a TypeScript `static readonly` field and a JavaScript `static` field whose name is
-  in capitals (`static MAX = 1`).
-- TypeScript: enum members.
-- Java: `static final` fields.
-- Python: an assignment to a name in capitals at module level or in a class body, and each such
-  name of a tuple or list target (`A, B = 1, 2`, `[A, B] = 1, 2`).
-- C, C++, Objective-C and GLSL: `#define NAME value`, enumerators, and a `const` or `constexpr`
-  declaration with a value at file level, in a namespace or in `extern "C"`, also inside an
-  include guard (`const int SIZE = 4;`, `NSString *const kName = @"x";`, not
-  `extern const int SIZE;`).
-- C++: a `static const` or `static constexpr` member with a value in a class body
-  (`Config.kSize`), and a member defined with its value outside the class
-  (`const int Config::kLater = 5;` is `Config.kLater`).
-- GDScript: `const` at file level or in an inner class body (`Backpack.LIMIT`), owned by the
-  file's `class_name` when it declares one (`Player.LIMIT`, `Player.Backpack.LIMIT`).
+| Language | Constants |
+|---|---|
+| Rust | `const` and `static` at file level, in a `mod` block or in an `impl` or trait body. |
+| Go | package-level `const` and `var`. |
+| JavaScript and TypeScript | a top-level `const` that is not a function (exported or not); in a class body, a TypeScript `static readonly` field and a JavaScript `static` field named in capitals (`static MAX = 1`). |
+| TypeScript | enum members. |
+| Java | `static final` fields. |
+| Python | an assignment to a name in capitals at module level or in a class body, and each such name of a tuple or list target (`A, B = 1, 2`, `[A, B] = 1, 2`). |
+| C, C++, Objective-C and GLSL | `#define NAME value`, enumerators, and a `const` or `constexpr` declaration with a value at file level, in a namespace or in `extern "C"`, also inside an include guard (`const int SIZE = 4;`, `NSString *const kName = @"x";`, not `extern const int SIZE;`). |
+| C++ | a `static const` or `static constexpr` member with a value in a class body (`Config.kSize`), and a member defined with its value outside the class (`const int Config::kLater = 5;` is `Config.kLater`). |
+| GDScript | `const` at file level or in an inner class body (`Backpack.LIMIT`), owned by the file's `class_name` when it declares one (`Player.LIMIT`, `Player.Backpack.LIMIT`). |
 
-Every name of a Go or Java declaration with several (`var X, Y int`, `const A, B = 1, 2`) is a
-constant with the whole declaration as its text. `symbol`, `outline`, `read_code symbol` and
-`refs` find them; ranked search (`search`, `find`, the MCP `search_code`) never returns one.
+Each name of a Go or Java declaration with several (`var X, Y int`, `const A, B = 1, 2`) is a
+constant whose text is the whole declaration. `symbol`, `outline`, `read_code symbol` and `refs`
+find constants; ranked search (`search`, `find`, the MCP `search_code`) never returns one.
 
 Ranked search reads words of every script. Scripts written without spaces (Han, kana, Thai, Lao,
-Tibetan, Myanmar, Khmer, the Tai scripts, Balinese and Javanese) become overlapping pairs of
-characters, so `天気` finds `東京の天気`; any other script gives one lowercased token per word.
-Han characters fold to their simplified form for matching, in the index and the query, so
-`资料库` finds `資料庫` and the reverse, Japanese text included. Names, `symbol`, `grep` and the
-text shown in results keep the characters as written. Only ASCII words are split at case changes
-and stemmed. Names compare in Unicode NFC, so a name typed with a combining accent finds the
-precomposed spelling. A definition name longer than 200 bytes is still a symbol when it holds no
-whitespace.
+Tibetan, Myanmar, Khmer, the Tai scripts, Balinese and Javanese) become overlapping character
+pairs, so `天気` finds `東京の天気`; other scripts give one lowercased token per word. Han
+characters fold to their simplified form for matching, in index and query, so `资料库` finds
+`資料庫` and the reverse, Japanese text included. Names, `symbol`, `grep` and the text shown in
+results keep the characters as written. Only ASCII words are split at case changes and stemmed.
+Names compare in Unicode NFC, so a name typed with a combining accent finds the precomposed
+spelling. A definition name longer than 200 bytes is still a symbol when it holds no whitespace.
 
 ### `refs`
 ```
@@ -324,304 +319,290 @@ scrutate refs NAME [--def PATH[:LINE]] [--textual] [--max-results N] [--json]
 Finds every whole-word occurrence of `NAME` (as `grep -w`) and decides which definition each
 refers to. For Python, JavaScript, TypeScript, Rust and Go the rules are, in order:
 
-1. An occurrence that is the name of a definition, or the name in an import statement, is that
-   definition (or what the import resolves to).
+1. The name of a definition, or the name in an import statement, is that definition (or what
+   the import resolves to).
 2. A qualified occurrence (`obj.N`, `a::b::N`, `pkg.N`) is looked up in what the qualifier names:
-   a module bound by an import (`import x`, `import * as x`, `use crate::a`, a Go import), a
-   module path (`crate::`, `self::`, `super::`, a workspace crate, a Rust child module), or a
-   class or type (`Class.N`, `Type::N`, then its Python and JavaScript base classes in method
-   resolution order, up to 8 levels; a Python base from outside the repository keeps its place
-   in the order, and a method it may define stays undecided). `self.N`, `this.N`, `cls.N` and
-   `Self::N` look in the enclosing class or impl. A receiver that is a local variable or a
-   parameter (`x.N`) is looked up in the type its declaration states: an annotation (`x: T`,
-   `x T`, `x: &T`) or what it is built from (`T(...)`, `new T(...)`, `T::new(...)`, `T { .. }`,
-   `&T{}`). That is the nearest declaration before the use that is in scope there, in the
-   function around the use or the functions around that (a closure sees the variables of the
-   function it is written in, unless it binds the name itself; a Rust `fn` item does not, and a
-   Python method does not see its class body); not one in a block that has ended, a closure or
-   lambda, an `if let` or `match` arm, or the declaration's own value (a Python function is one
-   scope, and a JavaScript `var` belongs to its whole function). A variable set from a function
-   call takes the function's declared return type (through `?` and holders such as `Box`, `Rc`
-   and `Arc` in Rust, `await` in TypeScript); `self.x.N` takes the declared type of the field
-   `x`, and a module-level or static variable its declared or built type. A Go method is found by
-   its receiver type in any file of the package. A method call on a call's result
-   (`mk().norm()`) goes through the type the callee declares it returns. `this` inside a method
-   of a JavaScript or TypeScript object literal is the literal (`this.put()` in `api.get` is
-   `api.put`); an arrow function takes `this` from the code around it. A call on a value of an
-   outside type is external, unless a trait or interface of the repository declares a method of
-   that name: then it stays undecided, since a blanket `impl` or a merged interface can give the
-   outside type that method. A variable whose type none of these gives is unresolved.
-3. A plain occurrence is, first, a definition nested in an enclosing function (or directly in an
-   enclosing class body); a parameter or local variable of that name hides everything else
-   within its own scope (a lambda's parameter inside the lambda, a block-scoped name inside its
-   block). A name bound by a pattern hides only in its own branch (Rust `if let`, `while let`
-   and a `match` arm, a Python `case`); a `catch` binding and a Go `:=` in an `if`, `for`,
-   `switch` or type switch only in that statement; a Python parameter only in the function body
-   (defaults and annotations are outside it); a `let` or `for` not in its own value; an import
-   inside a function only in that function. A closure sees the locals of the function it is
-   written in; a Rust `fn` item inside a function does not. Then a top-level definition of the
-   file; then a name an import binds (`from x import N`, `import {N} from './x'`, `use a::N`,
-   `require`); then, in Go, a top-level definition of another file of the same package
-   directory; then wildcard imports (`from x import *`, `export * from`, `use a::*`, Go dot
-   imports).
+   - a module bound by an import (`import x`, `import * as x`, `use crate::a`, a Go import), or a
+     module path (`crate::`, `self::`, `super::`, a workspace crate, a Rust child module);
+   - a class or type (`Class.N`, `Type::N`), then its Python and JavaScript base classes in
+     method resolution order, up to 8 levels; a Python base from outside the repository keeps its
+     place in the order, and a method it may define stays undecided. `self.N`, `this.N`, `cls.N`
+     and `Self::N` look in the enclosing class or impl;
+   - for a local variable or parameter (`x.N`), the type its declaration states: an annotation
+     (`x: T`, `x T`, `x: &T`) or what it is built from (`T(...)`, `new T(...)`, `T::new(...)`,
+     `T { .. }`, `&T{}`). That is the nearest in-scope declaration before the use, in the
+     function around the use or the functions around that. A closure sees its enclosing
+     function's variables unless it binds the name itself; a Rust `fn` item does not, and a
+     Python method does not see its class body. Not counted: a declaration in a block that has
+     ended, a closure or lambda, an `if let` or `match` arm, or the declaration's own value. A
+     Python function is one scope; a JavaScript `var` belongs to its whole function.
 
-The arguments of a Rust macro are tokens to the grammar, so there a name after `.` is a field,
-or a method when `(` follows; `name:` inside `{}` is a field name; and a closure parameter or a
+   A variable set from a call takes the function's declared return type (through `?` and holders
+   such as `Box`, `Rc` and `Arc` in Rust, `await` in TypeScript); `self.x.N` takes field `x`'s
+   declared type, and a module-level or static variable its declared or built type. A Go method
+   is found by its receiver type in any file of the package. A method call on a call's result
+   (`mk().norm()`) goes through the callee's declared return type. `this` inside a method of a
+   JavaScript or TypeScript object literal is the literal (`this.put()` in `api.get` is
+   `api.put`); an arrow function takes `this` from the code around it. A call on a value of an
+   outside type is external, unless a repository trait or interface declares a method of that
+   name: then it stays undecided, since a blanket `impl` or a merged interface can give the
+   outside type that method. A variable whose type none of these gives is unresolved.
+3. A plain occurrence is, in order:
+   - a definition nested in an enclosing function (or directly in an enclosing class body). A
+     parameter or local of that name hides everything else within its own scope (a lambda's
+     parameter inside the lambda, a block-scoped name inside its block). A name bound by a
+     pattern hides only in its own branch (Rust `if let`, `while let` and a `match` arm, a Python
+     `case`); a `catch` binding and a Go `:=` in an `if`, `for`, `switch` or type switch only in
+     that statement; a Python parameter only in the function body (defaults and annotations are
+     outside it); a `let` or `for` not in its own value; an import inside a function only in that
+     function. A closure sees the locals of the function it is written in; a Rust `fn` item
+     inside a function does not;
+   - a top-level definition of the file;
+   - a name an import binds (`from x import N`, `import {N} from './x'`, `use a::N`, `require`);
+   - in Go, a top-level definition of another file of the same package directory;
+   - wildcard imports (`from x import *`, `export * from`, `use a::*`, Go dot imports).
+
+Inside a Rust macro's arguments, which are tokens to the grammar, a name after `.` is a field,
+or a method when `(` follows; `name:` inside `{}` is a field name; a closure parameter or a
 `let` is a local. An occurrence matches the name in either Unicode spelling, composed or
 decomposed.
 
-Java has rules of its own. A file's package comes from its `package` declaration, so every
-source root works. Imports are single-type, on-demand (`.*`) and `static`. Locals are
-parameters, lambda parameters and the variables of `for`, `catch`, an `instanceof` pattern and a
-try-with-resources. A plain name is also looked up in the enclosing class and the classes and
-interfaces it extends, through nested, inner and anonymous classes, enums with methods, records
-and default methods. A receiver goes through its declared type, a chain through declared return
-types. A class in front of a call (`Util.foo()`, also `p.Util.foo()` with `p` a package of the
-repository) is a use of that class; a local, a parameter or a field there is that variable. A
-receiver typed by an interface resolves to the interface's method. The number of arguments picks
-one overload; when it does not, the call, like a method reference (`Sq::grow`), stands for every
-overload of the name. Undecided: an untyped lambda parameter, an element of a generic type
-(`list.get(0).area()`), a value of a type parameter, and a class whose base type is not in the
-repository. Fields, enum constants and record accessors are not definitions here: their
-occurrences are listed as `field or key`.
+Java has rules of its own:
 
-PHP has rules of its own too. A class or function name is made full through the `use` that
-binds its first part (plain, aliased, grouped, `use function`), else through the `namespace` it
-is written in (a `namespace X;` line or a braced block); a name with a leading `\` is full as it
-is. A full name `A\B\C` is the class, interface, trait or enum named `C` whose file declares the
-namespace `A\B` where it defines it; an unqualified function call that finds none there takes
-the global function, as PHP does. `$x->m()` goes through the class of `$x`: `$this` is the class
-around, a variable the value of its latest assignment before the use (`new C()`, what a call
-returns), else the type its parameter declares; `$this->p` the type property `p` declares, also
-through a constructor parameter that declares it. A call takes the return type its method or
-function declares (`self` and `static` are the class it is in). `self::m()` and `static::m()`
-look in the class around, `parent::m()` in the class it extends, `C::m()` in `C`. A method is
-looked for in the class, then the traits it uses, then the class it extends and the interfaces
-it implements; when a base from outside the repository may declare it, the call is external.
-Undecided: a variable bound by `foreach` or `catch`, a value of an untyped parameter, a union
-type, a dynamic name (`$o->$m()`). Properties and class constants are `field or key`, a bare
-constant is `constant`, a part of a namespace is `namespace`. Names compare as written, though
-PHP ignores the case of class and function names.
+- A file's package comes from its `package` declaration, so every source root works. Imports
+  are single-type, on-demand (`.*`) and `static`.
+- Locals are parameters, lambda parameters and the variables of `for`, `catch`, an `instanceof`
+  pattern and a try-with-resources.
+- A plain name is also looked up in the enclosing class and what it extends, through nested,
+  inner and anonymous classes, enums with methods, records and default methods.
+- A receiver goes through its declared type, a chain through declared return types; one typed by
+  an interface resolves to the interface's method. A class in front of a call (`Util.foo()`,
+  also `p.Util.foo()` with `p` a repository package) is a use of that class; a local, parameter
+  or field there is that variable.
+- The number of arguments picks one overload; when it does not, the call, like a method
+  reference (`Sq::grow`), stands for every overload of the name.
+- Undecided: an untyped lambda parameter, an element of a generic type
+  (`list.get(0).area()`), a value of a type parameter, and a class whose base type is not in
+  the repository.
+- Fields, enum constants and record accessors are not definitions here: their occurrences are
+  listed as `field or key`.
+
+PHP has rules of its own too:
+
+- A class or function name is made full through the `use` that binds its first part (plain,
+  aliased, grouped, `use function`), else through the `namespace` it is written in (a
+  `namespace X;` line or a braced block); a name with a leading `\` is full as it is.
+- A full name `A\B\C` is the class, interface, trait or enum named `C` whose file declares the
+  namespace `A\B` where it defines it; an unqualified function call that finds none there takes
+  the global function, as PHP does.
+- `$x->m()` goes through the class of `$x`: `$this` is the class around; a variable is the value
+  of its latest assignment before the use (`new C()`, what a call returns), else its parameter's
+  declared type; `$this->p` is the type property `p` declares, also through a constructor
+  parameter that declares it. A call takes its method or function's declared return type
+  (`self` and `static` are the class it is in).
+- `self::m()` and `static::m()` look in the class around, `parent::m()` in the class it extends,
+  `C::m()` in `C`. A method is looked for in the class, then its traits, then the class it
+  extends and the interfaces it implements; when a base from outside the repository may declare
+  it, the call is external.
+- Undecided: a variable bound by `foreach` or `catch`, a value of an untyped parameter, a union
+  type, a dynamic name (`$o->$m()`).
+- Properties and class constants are `field or key`, a bare constant is `constant`, a part of a
+  namespace is `namespace`. Names compare as written, though PHP ignores the case of class and
+  function names.
 
 Import paths resolve to repository files:
 
-- Python: relative imports, packages (`__init__.py`), and an absolute import whose first part is
-  the name of the checkout directory (`networkx.classes` in a checkout named `networkx`). When no
-  module from the root has the name and the importing file's directory is not a package (it
-  holds no `__init__.py`), the module beside the importing file (`from helpers import make_items`
-  in `tests/` finds `tests/helpers.py`, as Python finds it when it runs the script); such a
-  sibling wins over a standard library module of the same name, while `import logging` in a
-  package that has its own `logging.py` stays the standard library.
-- JavaScript: relative paths with the usual extensions and `index` files (a `.js` import finds
-  the `.ts` source), and the names a project gives its own folders in `tsconfig.json` or
-  `jsconfig.json` (`paths`, `baseUrl`, also through a relative `extends`, a string or a list
-  whose later entries win; `${configDir}` at the start of a `paths` place or of `baseUrl` stands
-  for the folder of the config nearest the importing file; `paths` are relative to the `baseUrl`
-  the configs end with, else to the folder of the config that sets them). Then a workspace
-  package by its `package.json` name: through `exports` (the conditions `types`, `import`,
-  `default`, `require` and `node` in that order, then any other by name), `module`, `main` or an
-  `index` file; a target in a build directory the repository does not hold stands for the same
-  path under `src/` (`./dist/index.js` for `src/index.ts`); a subpath through its `exports` key
-  or pattern, else a path in the package; of two packages with one name, the one nearest the
-  importing file. A declaration file (`.d.ts`) stands in only when no implementation has the
-  name (`./m` with `m.js` and `m.d.ts` side by side is `m.js`).
-- Rust: module files (`a.rs`, `a/mod.rs`) from the crate root, workspace crates by their
-  `Cargo.toml` name. A file directly in a package's `src/bin/`, `tests/`, `examples/` or
-  `benches/`, and `build.rs`, is a crate root of its own (`mod common;` in `tests/it.rs` is
-  `tests/common/mod.rs`), a file beside it is its module only when it declares it, and `path`
-  entries of `Cargo.toml` are not read.
-- Go: import paths through the module path in `go.mod` (by the directory they end with when
-  there is no `go.mod`).
-- PHP: a `use` to the file that defines the class or function it names; a `require` or `include`
-  path is mapped onto the files as in a language the resolver does not read.
+| Language | Resolves |
+|---|---|
+| Python | relative imports, packages (`__init__.py`), and an absolute import whose first part is the checkout directory's name (`networkx.classes` in a checkout named `networkx`). When no module from the root has the name and the importing file's directory is not a package (no `__init__.py`), the module beside the importing file, as Python finds it when it runs the script (`from helpers import make_items` in `tests/` finds `tests/helpers.py`). Such a sibling wins over a standard library module of the same name, while `import logging` in a package that has its own `logging.py` stays the standard library. |
+| JavaScript | relative paths with the usual extensions and `index` files (a `.js` import finds the `.ts` source), and the project's own folder names in `tsconfig.json` or `jsconfig.json` (`paths`, `baseUrl`, also through a relative `extends`, a string or a list whose later entries win; `${configDir}` at the start of a `paths` place or of `baseUrl` is the folder of the config nearest the importing file; `paths` are relative to the final `baseUrl`, else to the folder of the config that sets them). Then a workspace package by its `package.json` name: through `exports` (the conditions `types`, `import`, `default`, `require` and `node` in that order, then any other by name), `module`, `main` or an `index` file. A target in a build directory the repository does not hold stands for the same path under `src/` (`./dist/index.js` for `src/index.ts`); a subpath goes through its `exports` key or pattern, else a path in the package; of two packages with one name, the one nearest the importing file wins. A declaration file (`.d.ts`) stands in only when no implementation has the name (`./m` with `m.js` and `m.d.ts` side by side is `m.js`). |
+| Rust | module files (`a.rs`, `a/mod.rs`) from the crate root, workspace crates by their `Cargo.toml` name. A file directly in a package's `src/bin/`, `tests/`, `examples/` or `benches/`, and `build.rs`, is a crate root of its own (`mod common;` in `tests/it.rs` is `tests/common/mod.rs`); a file beside it is its module only when it declares it; `path` entries of `Cargo.toml` are not read. |
+| Go | import paths through the module path in `go.mod` (by the directory they end with when there is no `go.mod`). |
+| PHP | a `use` to the file that defines the class or function it names; a `require` or `include` path is mapped onto the files as in a language the resolver does not read. |
 
-`tsconfig.json`, `jsconfig.json`, `package.json`, `Cargo.toml` and `go.mod` are read only when
-they are regular files inside the repository, of at most 1 MB. Re-exports (`from .x import N` in
-`__init__.py`, `export {N} from`, `pub use`) are followed. Unresolved: occurrences in comments
-and strings, in a language the resolver does not read (`not resolved in this language`), in a
-file without a grammar (`no grammar`), in a file whose syntax tree is more than 2,000 levels deep
-(`nested too deeply to read`), and anything the rules do not reach (method calls on a value
-whose type they cannot infer, enum variants, local variables). In JavaScript a `var` belongs to
-its function, `let` and `const` to their block. Imports of modules outside the repository give
-`external`; a package name that no `package.json` of the repository declares is outside.
+`tsconfig.json`, `jsconfig.json`, `package.json`, `Cargo.toml` and `go.mod` are read only as
+regular files inside the repository, of at most 1 MB. Re-exports (`from .x import N` in
+`__init__.py`, `export {N} from`, `pub use`) are followed. In JavaScript a `var` belongs to its
+function, `let` and `const` to their block. Imports of modules outside the repository give
+`external`; a package name no repository `package.json` declares is outside. Unresolved:
+
+- occurrences in comments and strings;
+- in a language the resolver does not read (`not resolved in this language`), a file without a
+  grammar (`no grammar`), or a file whose syntax tree is more than 2,000 levels deep
+  (`nested too deeply to read`);
+- anything the rules do not reach (method calls on a value whose type they cannot infer, enum
+  variants, local variables).
 
 The output lists each definition with its references, then the unresolved occurrences with the
 reason. `--def PATH[:LINE]` keeps one definition of `NAME`: the one in `PATH`, or the one
-containing `LINE` when the file has several; no such definition is an error. `--textual` gives the
-behaviour without resolution: definitions, callers and every occurrence grouped by enclosing
-symbol (it never misses anything, and works without an index). Both search the files the MCP
-`grep_code` tool searches: hidden files included, the directories the index skips left out. With
-`--json`, each definition has a `references` list (`path`, `line`, `column` in bytes, `text`,
-`via`) and the document has an `unresolved` list with a `reason` (left out with `--def`). A file
-whose search a NUL byte stopped after a match is named in a `note:` line at the end (`notes` in
-JSON, each with `path` and `note`): a use after that byte is not listed. Resolution reads the
-index's definitions and parses the files that hold occurrences again, so it needs no index
-change. The MCP `references` tool gives the same answer (`textual` and `def` are arguments
-there).
+containing `LINE` when the file has several; no such definition is an error. `--textual` skips
+resolution: definitions, callers and every occurrence grouped by enclosing symbol (it never
+misses anything, and works without an index). Both search the files the MCP `grep_code` tool
+searches: hidden files included, the directories the index skips left out. With `--json`, each
+definition has a `references` list (`path`, `line`, `column` in bytes, `text`, `via`) and the
+document an `unresolved` list with a `reason` (left out with `--def`). A file whose search a NUL
+byte stopped after a match is named in a final `note:` line (`notes` in JSON, each with `path`
+and `note`): a use after that byte is not listed. Resolution reads the index's definitions and
+parses the files holding occurrences again, so it needs no index change. The MCP `references`
+tool gives the same answer (`textual` and `def` are arguments there).
 
 ### `impact`
 ```
 scrutate impact [--base REV] [--staged] [--depth N] [--json]
 ```
-What a change touches, from git's diff. By default the working tree against `HEAD`: the changes
-to tracked files, staged or not, and every untracked file that is not ignored, as a new file.
-`--base REV` compares the working tree with another commit; `--base main...` (three dots) with
-the merge base of `main` and `HEAD`, as git reads it (`A...B` is the merge base of `A` and `B`).
-`--staged` takes the staged changes alone, against `HEAD` or `--base`, and no untracked file.
-The answer has three sections, each a line with its count and then one line per item:
+What a change touches, from git's diff. By default: the working tree against `HEAD`, tracked
+files staged or not, plus every untracked file that is not ignored, as a new file. `--base REV`
+compares the working tree with another commit; `--base main...` (three dots) with the merge base
+of `main` and `HEAD`, as git reads it (`A...B` is the merge base of `A` and `B`). `--staged`
+takes the staged changes alone, against `HEAD` or `--base`, and no untracked file. The answer has
+three sections, each a line with its count and then one line per item:
 
-- `changed`: each definition a changed line falls in, the innermost one around the line, as
-  `path:start-end  [kind] name  (status)`. `added` is a definition the base does not have (by
-  kind and qualified name in the file; a whole new file is all `added`), `edited` one it has, and
-  `deleted` one only the base has, named with its lines in the base. A file renamed with edits
-  (git's `-M`) names its definitions at the new path, with a note saying what it was renamed
-  from. A changed line outside every definition names the window that holds it, as `callers`
-  lists a call written there, or the file (`path  [file]`) when no window does (a blank line, a
-  deleted line, a staged line). A staged change is read from the staged copy and named where the
-  index holds that definition now.
-- `callers`: the definitions that call a changed one, then their callers, breadth first, each
-  with its distance in front (`1` calls a changed definition) and each once, at its smallest
-  distance. Each step is the answer `scrutate callers LOCATION --limit 500` gives for one
-  definition, undecided callers included (marked `(undecided)`). A deleted definition has no
-  location in the tree to ask about, so its callers at distance `1` are the definitions whose
-  code still calls its name where the resolver ties that call to no definition that exists (not
-  a call it resolves to a namesake elsewhere, a local or an import from outside; a deleted method
-  is matched by its name, with the receiver's type where the resolver decides it). Each is
-  marked `(calls a deleted definition)`, the first thing the diff breaks, and the walk goes on
-  from it as from any caller. A window and a module are not followed. `--depth N` (at most 10,
-  `0` for none) stops the walk; 3 by default, because past three steps the callers of a much used
-  function grow toward most of the repository and say little about what to test. The walk stops
-  at 2,000 callers and says so.
+- `changed`: the innermost definition around each changed line, as
+  `path:start-end  [kind] name  (status)`. `added`: the base lacks it (by kind and qualified name
+  in the file; a whole new file is all `added`); `edited`: the base has it; `deleted`: only the
+  base has it, named with its base lines. A file renamed with edits (git's `-M`) names its
+  definitions at the new path, with a note naming the old one. A changed line outside every
+  definition names the window holding it, as `callers` lists a call written there, else the file
+  (`path  [file]`: a blank line, a deleted line, a staged line). A staged change is read from the
+  staged copy and named where the index holds that definition now.
+- `callers`: the callers of a changed definition, then theirs, breadth first, each once at its
+  smallest distance, shown in front (`1` calls a changed definition). Each step is the answer of
+  `scrutate callers LOCATION --limit 500` for one definition, undecided callers included (marked
+  `(undecided)`). A deleted definition has no location to ask about, so its distance `1` callers
+  are the definitions whose code still calls its name where the resolver ties that call to no
+  existing definition (not a namesake elsewhere, a local or an outside import; a deleted method
+  is matched by name, with the receiver's type where the resolver decides it). Each is marked
+  `(calls a deleted definition)`, the first thing the diff breaks, and the walk goes on from it.
+  Windows and modules are not followed. `--depth N` (at most 10, `0` for none, default 3) stops
+  the walk; past three steps a much used function's callers grow toward most of the repository
+  and say little about what to test. The walk stops at 2,000 callers and says so.
 - `tests`: each test file (the index's test flag: a `test` or `tests` directory, `test_*.py`,
-  `*_test.go` and the like) that defines a changed symbol or holds a caller, with its distance and
-  the symbol in it that was reached, and each test file the diff changed, once, at its smallest
-  distance.
+  `*_test.go` and the like) that defines a changed symbol or holds a caller, with its distance
+  and the symbol reached, and each test file the diff changed, once, at its smallest distance.
 
-The items are sorted by distance, path and line, the same on every run. A file with no
-definitions to name gets a line under `notes` instead: a binary file, a submodule (its commits
-are not read), a file the index leaves out. `--json` gives the answer's envelope, its `result`
-with `against`, `base` (the commit compared with), `staged`, `depth`, `changed` (each with
-`status`), `callers` (each with `distance`, `via`, the location of what it calls, `undecided`
-and `calls_deleted`), `tests` (`path`, `distance`, `via`), `notes` and `stopped`. `--max-bytes`
-pages the text by whole lines, as the other answers. No change is exit code 1. Errors (exit 2): a
-directory outside a git repository, git missing, a revision git does not know, two revisions
-with no merge base, a file with unmerged changes. A revision that starts with `-` is refused
-before git runs, so it can never be read as an option. The command line does not send `impact`
-to a running `serve`: git runs in the command's own environment. The MCP tool `impact` takes
-`base`, `staged` and `depth` and gives the same answer.
+Items sort by distance, path and line, the same every run. A file with no definitions to name
+gets a line under `notes`: a binary file, a submodule (its commits are not read), a file the
+index leaves out. `--json` gives the envelope, its `result` with `against`, `base` (the commit
+compared with), `staged`, `depth`, `changed` (each with `status`), `callers` (each with
+`distance`, `via`, the location of what it calls, `undecided` and `calls_deleted`), `tests`
+(`path`, `distance`, `via`), `notes` and `stopped`. `--max-bytes` pages the text by whole lines,
+as the other answers. No change is exit code 1. Errors (exit 2): a directory outside a git
+repository, git missing, a revision git does not know, two revisions with no merge base, a file
+with unmerged changes. A revision that starts with `-` is refused before git runs, so it can
+never be read as an option. The command line does not send `impact` to a running `serve`: git
+runs in the command's own environment. The MCP tool `impact` takes `base`, `staged` and `depth`
+and gives the same answer.
 
 ### `review`
 ```
 scrutate review --base REV [--head REV] [--format markdown|json|gitlab] [--depth N] [--link URL]
 ```
-A report of a pull request for CI: `impact` between two commits, `--base` (a revision, or
-`main...` for the merge base) and `--head` (`HEAD` by default), from the diff git gives between
-the two, with no untracked file. Each side is read from git's copies, and a definition is named
-where the index, the working tree's, holds it, so check the head out first. Callers, tests and
-`--depth` work as in `impact`.
+A pull request report for CI: `impact` between `--base` (a revision, or `main...` for the merge
+base) and `--head` (`HEAD` by default), from git's diff of the two, with no untracked file. Each
+side is read from git's copies, and a definition is named where the index (the working tree's)
+holds it, so check the head out first. Callers, tests and `--depth` work as in `impact`.
 
-It adds the duplicates the head adds: the groups `dupes` finds with its defaults (`--min-tokens
-30`, `--threshold 0.75`) that the base did not have, at most 50. Only a group with a member in a
-changed file can be new. The base's groups come from the same search over the index's
-definitions with each changed file replaced by a parse of its base copy, and a head group is old
-when one base group holds a match for each of its members, each base member used once: the same
+It adds the duplicates the head adds: the groups `dupes` finds with its defaults
+(`--min-tokens 30`, `--threshold 0.75`) that the base lacked, at most 50. Only a group with a
+member in a changed file can be new. The base's groups come from the same search over the
+index's definitions, each changed file replaced by a parse of its base copy. A head group is old
+when one base group matches each of its members, each base member used once: the same
 definition (path and qualified name), or the same body text up to whitespace. So a pair the base
-had stays out when one of them is edited or moved, and a third copy of it is listed. A changed
-definition (added or edited, outside a test file) that no test file reaches through the calls the
-walk found is marked: no test reaches it.
+had stays out when one of them is edited or moved, and a third copy is listed. A changed
+definition (added or edited, outside a test file) that no test file reaches through the calls
+the walk found is marked: no test reaches it.
 
-`--format markdown` (the default) is the body of a PR comment. Its first line is the marker
-`<!-- scrutate-review -->`, by which the GitHub Action finds its comment again, then a line naming
-the two commits, a line of counts, and a section for each part that has items: `Changed
-definitions`, `Callers, up to N steps away` (each with its distance), `Tests to run`, `New
-duplicates` and `Notes`. Locations are paths from the repository root; with `--link URL` each
-links to `URL/PATH#Lstart-Lend` (the Action passes `https://github.com/OWNER/REPO/blob/COMMIT`).
-The body is cut at whole lines before 65,536 characters, GitHub's limit for a comment, with a
-last line that says so. `--format json` is the answer's envelope: `impact`'s `result` with `head`,
-`head_commit`, `new_duplicates` (each group as `dupes --json` gives it) and `untested` (the
-locations of the marked definitions). `--format gitlab` is a GitLab Code Quality report: a JSON
-list of issues with `description`, `check_name`, `fingerprint`, `severity` and
+`--format markdown` (the default) is a PR comment body: the marker `<!-- scrutate-review -->`
+(by which the GitHub Action finds its comment again), a line naming the two commits, a line of
+counts, and a section for each part with items: `Changed definitions`,
+`Callers, up to N steps away` (each with its distance), `Tests to run`, `New duplicates` and
+`Notes`. Locations are paths from the repository root; with `--link URL` each links to
+`URL/PATH#Lstart-Lend` (the Action passes `https://github.com/OWNER/REPO/blob/COMMIT`). The body
+is cut at whole lines before 65,536 characters, GitHub's comment limit, with a last line that
+says so. `--format json` is the envelope: `impact`'s `result` with `head`, `head_commit`,
+`new_duplicates` (each group as `dupes --json` gives it) and `untested` (the marked
+definitions' locations). `--format gitlab` is a GitLab Code Quality report: a JSON list of issues
+with `description`, `check_name`, `fingerprint`, `severity` and
 `location.path`/`location.lines.begin`. Each new duplicate group is one `scrutate-duplicate`
-issue of severity `minor` at the member the diff changed, and each marked definition one
+issue of severity `minor` at the member the diff changed; each marked definition one
 `scrutate-untested-change` issue of severity `info`. A fingerprint is the SHA-1 of the check and
 the paths and qualified names involved, not the lines, so GitLab matches an issue across pushes.
 
-Nothing to report (no changed definition, note or test, and no new duplicate) is exit code 1,
-with the report still printed (in Markdown a line that says so, in GitLab an empty list). The
-errors of `impact` are the errors here (exit 2), and `--head` is checked as `--base` is: a
-revision that starts with `-` is refused before git runs. `review` runs `git` as `impact` does
-and nothing else, writes only the index, as every index command does, and posts nothing; the
-GitHub Action posts its output ([GitHub Actions](../integrations/github/README.md)). There is no
-MCP tool.
+Nothing to report (no changed definition, note or test, no new duplicate) is exit code 1, with
+the report still printed (in Markdown a line that says so, in GitLab an empty list). The errors
+are `impact`'s (exit 2), and `--head` is checked as `--base` is: a revision that starts with `-`
+is refused before git runs. `review` runs `git` as `impact` does and nothing else, writes only
+the index, as every index command does, and posts nothing; the GitHub Action posts its output
+([GitHub Actions](../integrations/github/README.md)). There is no MCP tool.
 
 ### `files`
 ```
 scrutate files QUERY [--limit N] [--json]
 ```
-The paths of the files a search of the repository covers (the files `grep_code` sees), ranked
-for `QUERY`, one per line, at most 20 or `--limit N` (1 to 1000) with a closing line when more
+The paths of the files a repository search covers (the files `grep_code` sees), ranked for
+`QUERY`, one per line, at most 20 or `--limit N` (1 to 1000), with a closing line when more
 matched. No file is opened (the walk reads only the ignore files) and no index is needed. Case
 is ignored, and `\` in the query is `/`. A path matches when the query is a part of it, when the
 query's letters appear in it in order (`srch.rs` finds `search.rs`), or when the query is within
 a few edits of a part of it (a letter wrong, added or left out, or two neighbours swapped:
-`saerch.rs`), one edit for each four characters of the query and at most three. The order:
+`saerch.rs`): one edit per four query characters, at most three. The order:
 
 1. a basename equal to the query, with or without its extension (`search` and `search.rs` both
    name `src/search.rs` exactly);
-2. then a match in the basename, then a match in the rest of the path (a query with `/` in it
-   matches the whole path only);
+2. then a match in the basename, then in the rest of the path (a query with `/` matches the
+   whole path only);
 3. then a part before letters in order before fewer edits;
 4. then frecency, higher first;
 5. then the shorter path, then the path.
 
-The answer is the same on every run for the same files and the same frecency. Frecency is the
-number of reads of a file, each counting half as much after 7 days. `read` and the MCP
-`read_code` count one read of each file they read; `files` counts one for a query that is
-exactly a path it lists, so a caller that shows the list and opens the chosen path says which it
-chose by asking for that path. The counts live in `frecency.json` under
-`$XDG_STATE_HOME/scrutate/` (else `~/.local/state/scrutate/`; on Windows
-`%LOCALAPPDATA%\scrutate\`), keyed by the repository's root: at most 1,000 files over every
-repository, the lowest counts dropped first, written whole to a new file that is renamed over the
-old. A file that does not parse is ignored and replaced at the next write; one that cannot be
-written leaves the read as it was. Calls of one process wait for each other; two processes
-writing at the same moment can lose one count. `--json` gives the envelope with each `path`, its
-`match` (`exact`, `basename` or `path`), `edits` and `frecency`, and `stopped_at` when the limit
-cut it. No match is exit code 1 with nothing on standard output; an empty query is an error
-(exit 2). The command line does not send `files` to a running `serve`. The MCP tool
+The same files and frecency give the same answer every run. Frecency is a file's number of
+reads, each counting half as much after 7 days. `read` and the MCP `read_code` count one read of
+each file they read; `files` counts one for a query that is exactly a path it lists, so a caller
+that shows the list and opens the chosen path says which it chose by asking for that path. The
+counts live in `frecency.json` under `$XDG_STATE_HOME/scrutate/` (else
+`~/.local/state/scrutate/`; on Windows `%LOCALAPPDATA%\scrutate\`), keyed by repository root: at
+most 1,000 files over every repository, lowest counts dropped first, written whole to a new file
+renamed over the old. A file that does not parse is ignored and replaced at the next write; one
+that cannot be written leaves the read as it was. Calls of one process wait for each other; two
+processes writing at the same moment can lose one count. `--json` gives the envelope with each
+`path`, its `match` (`exact`, `basename` or `path`), `edits` and `frecency`, and `stopped_at`
+when the limit cut it. No match is exit code 1 with nothing on standard output; an empty query
+is an error (exit 2). The command line does not send `files` to a running `serve`. The MCP tool
 `find_files` takes `query` and `limit` and gives the same answer.
 
 ### Answers from the index: one definition for every front end
 
 `symbol`, `callers`, `callees`, `path`, `map`, `refs`, `read`, `outline`, `deps`, `rdeps`,
 `similar`, `dupes`, `impact`, `dead` and the ranked search of `search` and `find` are operations
-(`ops.rs`): the CLI, the MCP server, `batch`, the Python bindings and the language server run the
+(`ops.rs`). The CLI, the MCP server, `batch`, the Python bindings and the language server run the
 same code, with the same check of the files an answer cites, the same recovery from a damaged
-index and the same defaults (search `k` 8, callers 30, callees 40, call path depth 10,
-references 200, duplicates 50, structural search 1000), and print the same text or JSON. An
-empty answer has exit code 1; `outline`, `deps`, `rdeps`, `similar` and `dupes` then print
-nothing on standard output and one sentence on standard error. When `symbol`, `callers`,
-`callees`, `dupes`, `tsquery`, `read_code symbol`, `duplicates` or `structural_search` stops at
-its limit with more left, the answer ends with a line that says so and names the argument that
-raises it (`(stopped at 30 results: raise limit to see more)`): the MCP argument `limit`, and
-`--limit` for `symbol`, `callers`, `callees`, `dupes` and `tsquery`; with `serve --structured`
-the JSON carries `stopped_at`. With `--json` the envelope carries `stopped_at` and that line goes
-to standard error; a `batch` record that stopped carries `stopped_at` too.
+index, the same defaults (search `k` 8, callers 30, callees 40, call path depth 10, references
+200, duplicates 50, structural search 1000) and the same text or JSON. An empty answer has exit
+code 1; `outline`, `deps`, `rdeps`, `similar` and `dupes` then print nothing on standard output
+and one sentence on standard error. When `symbol`, `callers`, `callees`, `dupes`, `tsquery`,
+`read_code symbol`, `duplicates` or `structural_search` stops at its limit with more left, a last
+line says so and names the argument that raises it
+(`(stopped at 30 results: raise limit to see more)`): the MCP argument `limit`, and `--limit` for
+`symbol`, `callers`, `callees`, `dupes` and `tsquery`. With `serve --structured` the JSON carries
+`stopped_at`. With `--json` the envelope carries `stopped_at` and that line goes to standard
+error; a `batch` record that stopped carries `stopped_at` too.
 
-`--max-bytes BYTES` (or `SCRUTATE_MAX_BYTES`) limits the size of such an answer, and of the
-answers of `search` and `tsquery` (`--json` ignores both). A cut answer keeps whole items and
-ends with a line like `(12 more results not shown: call again with offset=8, or narrow the
-request)`; `--offset 8` continues it. The whole answer, that line included, fits the budget;
-only a budget smaller than one item and that line together is passed. An agent that runs the CLI
-through a shell can set the variable once, so its harness never cuts an answer in the middle.
+`--max-bytes BYTES` (or `SCRUTATE_MAX_BYTES`) limits the size of such an answer, and of `search`
+and `tsquery` answers (`--json` ignores both). A cut answer keeps whole items and ends with a
+line like `(12 more results not shown: call again with offset=8, or narrow the request)`;
+`--offset 8` continues it. The whole answer, that line included, fits the budget; only a budget
+smaller than one item plus that line is passed. An agent running the CLI through a shell can set
+the variable once, so its harness never cuts an answer in the middle.
 
 `grep` keeps its own budget, so a pipeline (`| wc -l`, `| xargs`) sees every line unless asked:
 `grep --max-bytes BYTES` (or `SCRUTATE_GREP_MAX_BYTES`, or `max_bytes` under `[grep]` in the
-configuration file; `SCRUTATE_MAX_BYTES` does not apply to it) prints whole lines in path order,
-as `--sort` does, and closes with `(N more lines not shown: call again with offset=K, or narrow
-the request)` when it cut the answer; `grep --offset K` continues it. The whole answer, that line
-included, fits the budget, and the exit code is that of the whole answer. `-c`, `-l`, `--symbols`
-and context lines are cut the same way, by lines; `--json` is never cut. Without a budget the
-answer is whole, and a plain piped `grep` takes the same path it took before.
+configuration file; `SCRUTATE_MAX_BYTES` does not apply) prints whole lines in path order, as
+`--sort` does, and closes with
+`(N more lines not shown: call again with offset=K, or narrow the request)` when it cut the answer;
+`grep --offset K` continues it. The whole answer, that line included, fits the budget, and the
+exit code is the whole answer's. `-c`, `-l`, `--symbols` and context lines are cut the same way,
+by lines; `--json` is never cut. Without a budget the answer is whole, and a plain piped `grep`
+takes the path it took before.
 ### `serve` (MCP)
 
 Nineteen tools over stdio, each one an operation above (`search_code`, `grep_code`,
