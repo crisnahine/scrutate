@@ -2,8 +2,8 @@
 //!
 //! Query time only. Definitions come from the index (`chunks`); scopes, qualifiers and import
 //! bindings come from parsing the files that hold occurrences (and the modules they import) again
-//! with tree-sitter. Python, JavaScript/TypeScript, Rust, Go, Java and PHP are understood; other
-//! languages leave their occurrences unresolved.
+//! with tree-sitter. Python, JavaScript/TypeScript, Rust, Go, Java, PHP, C, C++ and C# are
+//! understood; other languages leave their occurrences unresolved.
 //!
 //! This module is the walker: the steps every language shares (scopes from the definitions of
 //! the index, the lookup memo, the depth guards, the order of the steps). What a language decides
@@ -18,6 +18,8 @@ use tree_sitter::{Node, Parser, Point, Tree};
 use crate::fmt::shown;
 use crate::index::{ChunkRow, Index, Symbol};
 
+mod c;
+mod csharp;
 mod go;
 mod java;
 mod js;
@@ -34,9 +36,12 @@ pub enum Lang {
     Go,
     Java,
     Php,
+    /// C and C++
+    C,
+    CSharp,
 }
 
-const LANGS: [Lang; 6] = [Lang::Python, Lang::Js, Lang::Rust, Lang::Go, Lang::Java, Lang::Php];
+const LANGS: [Lang; 8] = [Lang::Python, Lang::Js, Lang::Rust, Lang::Go, Lang::Java, Lang::Php, Lang::C, Lang::CSharp];
 
 /// `$e` with `$r` naming the rule set of `$lang`.
 macro_rules! rules {
@@ -64,6 +69,14 @@ macro_rules! rules {
             }
             Lang::Php => {
                 type $r = php::Php;
+                $e
+            }
+            Lang::C => {
+                type $r = c::C;
+                $e
+            }
+            Lang::CSharp => {
+                type $r = csharp::CSharp;
                 $e
             }
         }
@@ -346,6 +359,15 @@ pub struct Resolver<'a> {
     java_fields: HashMap<i64, Rc<HashSet<String>>>,
     /// PHP: a full name and the kinds looked for -> the definition it names
     php_paths: HashMap<String, std::result::Result<i64, &'static str>>,
+    /// C and C++: file name -> the repository files of that name, and by declaration the
+    /// definition it stands for (None: several)
+    c_names: Option<HashMap<String, Vec<String>>>,
+    c_defs: HashMap<i64, Option<i64>>,
+    /// C#: type name -> (definition, namespace, class it is nested in); namespace -> its files;
+    /// by type, the types it extends and implements
+    cs_types: HashMap<String, CsTypes>,
+    cs_namespaces: Option<HashMap<String, Vec<String>>>,
+    cs_bases: HashMap<i64, Rc<Vec<std::result::Result<i64, &'static str>>>>,
     /// by class: the classes it inherits from, in method resolution order (`linearized`)
     orders: HashMap<i64, Rc<Vec<i64>>>,
     /// by scope node id, what was looked for and name: the byte ranges found, so a use in a big
@@ -354,6 +376,8 @@ pub struct Resolver<'a> {
 }
 
 type Spans = Rc<Vec<(usize, usize)>>;
+/// C# types of one name: (definition, its namespace, the class it is nested in)
+type CsTypes = Rc<Vec<(i64, String, Option<i64>)>>;
 
 /// Whether the tree has a node more than `MAX_DEPTH` levels below its root.
 fn too_deep(t: &Tree) -> bool {
@@ -505,6 +529,21 @@ const LOCAL_BINDERS: &[(&str, &str)] = &[
     ("arrow_function", "parameter"),
     ("named_expression", "name"),
     ("splat_pattern", ""),
+    // C and C++: `int x = 1, *p;`, parameters, `T &r`, `auto [a, b]`
+    ("declaration", "declarator"),
+    ("init_declarator", "declarator"),
+    ("parameter_declaration", "declarator"),
+    ("optional_parameter_declaration", "declarator"),
+    ("pointer_declarator", "declarator"),
+    ("array_declarator", "declarator"),
+    ("reference_declarator", ""),
+    ("structured_binding_declarator", ""),
+    // C#: parameters, `foreach`, `catch`, `out var x`, `is T t`
+    ("parameter", "name"),
+    ("foreach_statement", "left"),
+    ("catch_declaration", "name"),
+    ("declaration_expression", "name"),
+    ("declaration_pattern", "name"),
 ];
 
 /// Rust patterns whose plain names bind; a capitalized one names a constant or a variant.
@@ -720,6 +759,11 @@ impl<'a> Resolver<'a> {
             java_bases: HashMap::new(),
             java_fields: HashMap::new(),
             php_paths: HashMap::new(),
+            c_names: None,
+            c_defs: HashMap::new(),
+            cs_types: HashMap::new(),
+            cs_namespaces: None,
+            cs_bases: HashMap::new(),
             orders: HashMap::new(),
             found: HashMap::new(),
         })
@@ -1523,11 +1567,22 @@ impl<'a> Resolver<'a> {
         r
     }
 
-    /// `name` as a member container `id` itself declares.
+    /// `name` as a member container `id` itself declares; a field is no such member: a method
+    /// of its name is called, a field read.
     fn declared_member(&mut self, id: i64, name: &str) -> Option<i64> {
+        self.declared(id, name, false)
+    }
+
+    /// A field or constant `name` container `id` itself declares.
+    fn declared_field(&mut self, id: i64, name: &str) -> Option<i64> {
+        self.declared(id, name, true)
+    }
+
+    fn declared(&mut self, id: i64, name: &str, field: bool) -> Option<i64> {
         let (path, qualname) = self.def_row(id)?;
         let want = format!("{}.{name}", strip_generics(&qualname));
-        self.file(&path).defs.iter().find(|d| d.name == name && strip_generics(&d.qualname) == want).map(|d| d.id)
+        let wanted = |d: &&Def| d.name == name && (d.kind == "field" || field && d.kind == "constant") == field && strip_generics(&d.qualname) == want;
+        self.file(&path).defs.iter().find(wanted).map(|d| d.id)
     }
 
     fn member_inner(&mut self, id: i64, name: &str, depth: usize) -> Option<i64> {
@@ -1731,7 +1786,8 @@ impl<'a> Resolver<'a> {
         let Some(owner) = defs.iter().find(|d| d.id == id).and_then(|d| d.parent) else { return Vec::new() };
         let head: String = self.ix.texts(&[defs[owner].id]).ok().and_then(|mut t| t.remove(&defs[owner].id)).unwrap_or_default();
         let head = &head[..head.find('{').into_iter().chain(head.find(":\n")).min().unwrap_or(head.len())];
-        if !head.contains('(') && !head.split(|c: char| !c.is_alphanumeric()).any(|w| matches!(w, "for" | "extends" | "implements")) {
+        // a C++ or C# base list follows a `:`
+        if !head.contains(['(', ':']) && !head.split(|c: char| !c.is_alphanumeric()).any(|w| matches!(w, "for" | "extends" | "implements")) {
             return Vec::new();
         }
         let fi = self.file(&path);
@@ -3249,10 +3305,10 @@ mod tests {
 
     #[test]
     fn an_import_in_a_language_without_a_resolver_loads_no_file() {
-        let (root, s) = indexed("unread_import", &[("a.h", "int a(void);\n"), ("m.c", "#include \"a.h\"\nint m(void) { return a(); }\n")]);
+        let (root, s) = indexed("unread_import", &[("a.rb", "def a\nend\n"), ("m.rb", "require_relative 'a'\nputs a\n")]);
         let mut rv = Resolver::new(&s.ix).unwrap();
-        let found = rv.import_files("m.c", 1, "a.h");
-        let used = rv.resolve_at("m.c", 2, 21, "a");
+        let found = rv.import_files("m.rb", 1, "a");
+        let used = rv.resolve_at("m.rb", 2, 5, "a");
         let cached = rv.cache.len();
         drop(rv);
         drop(s);
@@ -3595,7 +3651,7 @@ public class Main extends Base {
             ("Main", "Circle.Inner()", "Inner", "Circle:30 Circle.Inner (qualified)"),
             ("Main", "Inner().depth()", "depth", "Circle:31 Circle.Inner.depth (member)"),
             ("Main", "SMALL.big()", "big", "Circle:37 Circle.Kind.big (member)"),
-            ("Main", "SMALL.big()", "SMALL", "field or key"),
+            ("Main", "SMALL.big()", "SMALL", "Circle:35 Circle.Kind.SMALL (field)"),
             ("Main", "int area = 3", "area", "local variable"),
             ("Main", "t.length()", "length", "external"),
             ("Main", "super.inherited()", "inherited", "Base:4 Base.inherited (super)"),
@@ -3608,12 +3664,12 @@ public class Main extends Base {
             ("Circle", "last.ok()", "ok", "Report:4 Report.ok (member)"),
             ("Circle", "Math.PI", "PI", "external"),
             ("Circle", "new Report(area())", "area", "Circle:13 Circle.area (member)"),
-            ("Circle", "this == LARGE", "LARGE", "field or key"),
-            ("Circle", "this.r = r", "r", "field or key"),
+            ("Circle", "this == LARGE", "LARGE", "Circle:35 Circle.Kind.LARGE (field)"),
+            ("Circle", "this.r = r", "r", "Circle:6 Circle.r (field)"),
             ("Circle", "= r;", "r", "local variable"),
             ("Square", "return label();", "label", "Shape:6 Shape.label (member)"),
             ("Shape", "+ area()", "area", "Shape:4 Shape.area (member)"),
-            ("Report", "value > 0", "value", "field or key"),
+            ("Report", "value > 0", "value", "Report:3 Report.value (field)"),
         ];
         let mut wrong = Vec::new();
         let file_of = |short: &str| files.iter().find(|(p, _)| p.ends_with(&format!("/{short}.java"))).unwrap();

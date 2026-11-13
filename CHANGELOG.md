@@ -70,6 +70,14 @@ incompatible index by itself, and that is never breaking.
   `SCRUTATE_INDEX_MAX_BYTES`) cap how many files, and bytes of them, each index holds; an update
   that would pass a cap stops with exit 2 and leaves the last index as it was. No cap by default
   ([CLI](docs/CLI.md)).
+- `refs`, `callers`, `callees`, `deps`, `rdeps` and the language server resolve C and C++
+  (`#include` to repository files, namespaces and `::`, members of the class around and its
+  bases, a header's declaration as the definition it declares) and C# (namespaces, `using`,
+  aliases, typed locals, members, partial classes) ([CLI](docs/CLI.md#refs)).
+- Java fields and record components are symbols of a new kind, `field`, and enum and interface
+  constants are constants: `refs` ties a field read, `this.f`, `obj.f`, `C.F`, a static import
+  and a record accessor `p.x()` to them, where it listed `field or key`
+  ([CLI](docs/CLI.md#refs)). An index made before reads every file again.
 
 ### Changed
 - With `serve --structured`, a large answer pages in `structuredContent` too: each page carries

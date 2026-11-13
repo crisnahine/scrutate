@@ -337,7 +337,7 @@ public class Main {
     // a local, a parameter or a field in front of a call is that variable
     assert_eq!(r.reasons("list", "p/Main.java"), ["14 local variable", "15 local variable"]);
     assert_eq!(r.reasons("names", "p/Main.java"), ["13 local variable", "14 local variable", "16 local variable"]);
-    assert_eq!(r.reasons("items", "p/Main.java"), ["7 field or key", "17 field or key"]);
+    assert_eq!(r.refs_of("items", "p/Main.java:7"), ["Main.java:17", "Main.java:7"]);
     // a variable named as a method of the class around is no call of that method
     assert_eq!(r.names(&["callers", "p/Util.java:4", "--json"]), ["Main.run", "Main.viaLocal"]);
     let (_, text) = r.run(&["callers", "p/Util.java:4"]);
@@ -444,4 +444,89 @@ fn a_class_named_through_a_one_part_package_of_the_repository_resolves() {
     assert_eq!(r.reasons("p", "q/Main.java"), ["5 package"]);
     // a package the repository does not hold is from outside
     assert_eq!(r.reasons("Far", "q/Main.java"), ["5 external"]);
+}
+
+#[test]
+fn java_fields_enum_constants_and_record_accessors_resolve_to_their_declarations() {
+    let shapes = "package s;
+
+public class Shapes {
+    public static final int MAX = 9;
+    protected int count;
+    int size;
+
+    int size() {
+        return size + count + MAX;
+    }
+
+    void grow() {
+        this.count = count + 1;
+    }
+}
+";
+    let more = "package s;
+
+public class More extends Shapes {
+    int twice() {
+        return count * 2 + size() + Shapes.MAX;
+    }
+}
+";
+    let kinds = "package s;
+
+public interface Limits {
+    int LOW = 1;
+}
+
+enum Color {
+    RED, GREEN;
+
+    static Color first() {
+        return RED;
+    }
+}
+
+record P(int x, int y) {
+    int sum() {
+        return x() + y;
+    }
+}
+";
+    let main = "package m;
+
+import static s.Shapes.MAX;
+import s.Shapes;
+
+public class Main {
+    int run(Shapes sh, s.P p) {
+        return sh.count + MAX + p.x() + s.Limits.LOW + s.Color.RED.ordinal() + p.y;
+    }
+}
+";
+    let files: Vec<(String, &str)> =
+        vec![("s/Shapes.java".to_string(), shapes), ("s/More.java".to_string(), more), ("s/Kinds.java".to_string(), kinds), ("m/Main.java".to_string(), main)];
+    let r = Repo::with("fields", &files);
+    // a static final field, through its class, a static import and a subclass
+    assert_eq!(r.refs_of("MAX", "s/Shapes.java:4"), ["Main.java:3", "Main.java:8", "More.java:5", "Shapes.java:4", "Shapes.java:9"]);
+    // an inherited field, `this.count`, and one read through a typed parameter
+    assert_eq!(r.refs_of("count", "s/Shapes.java:5"), ["Main.java:8", "More.java:5", "Shapes.java:13", "Shapes.java:13", "Shapes.java:5", "Shapes.java:9"]);
+    // a field and a method of one name: the call is the method, the read the field
+    assert_eq!(r.refs_of("size", "s/Shapes.java:6"), ["Shapes.java:6", "Shapes.java:9"]);
+    assert_eq!(r.refs_of("size", "s/Shapes.java:8"), ["More.java:5", "Shapes.java:8"]);
+    assert_eq!(r.names(&["callers", "s/Shapes.java:8", "--json"]), ["More.twice"]);
+    // enum constants, an interface constant, record components and their implicit accessors
+    assert_eq!(r.refs_of("RED", "s/Kinds.java:8"), ["Kinds.java:11", "Kinds.java:8", "Main.java:8"]);
+    assert_eq!(r.refs_of("LOW", "s/Kinds.java:4"), ["Kinds.java:4", "Main.java:8"]);
+    assert_eq!(r.refs_of("x", "s/Kinds.java:15"), ["Kinds.java:15", "Kinds.java:17", "Main.java:8"]);
+    assert_eq!(r.refs_of("y", "s/Kinds.java:15"), ["Kinds.java:15", "Kinds.java:17", "Main.java:8"]);
+    for name in ["MAX", "count", "RED", "LOW", "x", "y"] {
+        let v = r.json(&["refs", name, "--json"]);
+        assert_eq!(v["unresolved"], serde_json::json!([]), "{name}: {v}");
+    }
+    // the index names them by kind
+    let v = r.json(&["outline", "s/Shapes.java", "--json"]);
+    let kinds: Vec<String> = v.as_array().unwrap().iter().map(|d| format!("{} {}", d["kind"].as_str().unwrap(), d["qualname"].as_str().unwrap())).collect();
+    for want in ["constant Shapes.MAX", "field Shapes.count", "field Shapes.size"] {
+        assert!(kinds.iter().any(|k| k == want), "{want}: {kinds:?}");
+    }
 }

@@ -2242,7 +2242,7 @@ static CPP_HEADER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(
 pub const CONSTANT_LANGS: &[&str] = &["c", "cpp", "gdscript", "glsl", "go", "java", "javascript", "objc", "python", "ruby", "rust", "tsx", "typescript"];
 
 /// The definition kinds the index gives a language: the kinds of its rules, `method` for a
-/// function in a class, `constant` where constants are read, and for a rule that takes its kind
+/// function in a class, `constant` where constants are read, `field` in Java, and for a rule that takes its kind
 /// from the keyword at the head of the definition, the kinds of the keywords the language has.
 pub fn definition_kinds(spec: &LangSpec) -> Vec<&'static str> {
     let mut kinds: Vec<&str> = spec.defs.iter().map(|d| d.kind).collect();
@@ -2251,6 +2251,9 @@ pub fn definition_kinds(spec: &LangSpec) -> Vec<&'static str> {
     }
     if CONSTANT_LANGS.contains(&spec.id) {
         kinds.push("constant");
+    }
+    if spec.id == "java" {
+        kinds.push("field");
     }
     // a rule that lists its head keywords takes the kind of each; the three that do not list
     // them read `interface`, `enum class`, `struct`, `extension` and `defmacro` off the head

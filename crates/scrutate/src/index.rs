@@ -83,7 +83,7 @@ pub struct CheckReport {
     pub database_ok: bool,
     pub segments: usize,
     pub segments_ok: bool,
-    /// chunks with a segment row: every chunk but the constants
+    /// chunks with a segment row: every chunk but the constants and fields
     pub chunks_db: i64,
     pub chunks_alive: i64,
     pub files_indexed: usize,
@@ -482,7 +482,7 @@ fn find_artifact(db: &Connection, segs: &mut Segs, key: &Key, vectors: Option<(u
             // the rows of a path that names it hold its texts and vectors
             let mut q = db.prepare_cached("SELECT id, text FROM chunks WHERE path=(SELECT path FROM files WHERE art=?1 LIMIT 1) ORDER BY id")?;
             let rows: Vec<(i64, Vec<u8>)> = q.query_map([&key[..]], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
-            let ids: Vec<i64> = rows.iter().zip(&art.chunks).filter(|(_, c)| c.kind != "constant").map(|(r, _)| r.0).collect();
+            let ids: Vec<i64> = rows.iter().zip(&art.chunks).filter(|(_, c)| !crate::parse::SYMBOL_ONLY.contains(&c.kind.as_str())).map(|(r, _)| r.0).collect();
             (rows.into_iter().map(|r| r.1).collect(), Some(ids))
         }
     };
@@ -1384,7 +1384,7 @@ impl Index {
             // one statement, so the counts and the version they are checked against are of one commit
             let (at_ver, at, n_all, n_live): (Option<String>, Option<String>, i64, i64) = self.db.query_row(
                 "SELECT (SELECT value FROM meta WHERE key='data_version'), (SELECT value FROM meta WHERE key='chunks_at'), \
-                 (SELECT COUNT(*) FROM chunks), (SELECT COUNT(*) FROM chunks WHERE kind != 'constant')",
+                 (SELECT COUNT(*) FROM chunks), (SELECT COUNT(*) FROM chunks WHERE kind NOT IN ('constant','field'))",
                 [],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )?;
@@ -1850,7 +1850,7 @@ impl Index {
         replaced: &mut Vec<String>,
     ) -> Result<()> {
         let mut q = self.db.prepare(
-            "SELECT f.path, f.art, MIN(c.id), SUM(c.kind != 'constant') FROM files f JOIN chunks c ON c.path = f.path \
+            "SELECT f.path, f.art, MIN(c.id), SUM(c.kind NOT IN ('constant','field')) FROM files f JOIN chunks c ON c.path = f.path \
              WHERE f.hash != 'SKIP' GROUP BY f.path ORDER BY MIN(c.id)",
         )?;
         type Ranked = (String, Option<Vec<u8>>, i64, i64);
@@ -2351,17 +2351,17 @@ impl Index {
         Ok(st.query_row(params![path, qualname], ChunkRow::from_row).optional()?)
     }
 
-    /// Ids of the ranked chunks (no windows, no constants) whose name key is one of `keys`.
+    /// Ids of the ranked chunks (no windows, constants or fields) whose name key is one of `keys`.
     pub fn ids_named(&self, keys: &[String], limit: usize) -> Result<Vec<i64>> {
         let ph = vec!["?"; keys.len()].join(",");
-        let mut st = self.db.prepare(&format!("SELECT id FROM chunks WHERE name_key IN ({ph}) AND kind NOT IN ('window','constant') LIMIT {limit}"))?;
+        let mut st = self.db.prepare(&format!("SELECT id FROM chunks WHERE name_key IN ({ph}) AND kind NOT IN ('window','constant','field') LIMIT {limit}"))?;
         let ids = st.query_map(params_from_iter(keys.iter()), |r| r.get::<_, i64>(0))?.collect::<rusqlite::Result<_>>()?;
         Ok(ids)
     }
 
     /// Id and qualified name key of the ranked chunks whose name key is `key`, at most 200.
     pub fn qual_keys_named(&self, key: &str) -> Result<Vec<(i64, String)>> {
-        let mut st = self.db.prepare_cached("SELECT id, qual_key FROM chunks WHERE name_key=?1 AND kind NOT IN ('window','constant') LIMIT 200")?;
+        let mut st = self.db.prepare_cached("SELECT id, qual_key FROM chunks WHERE name_key=?1 AND kind NOT IN ('window','constant','field') LIMIT 200")?;
         let rows = st.query_map([key], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?.unwrap_or_default())))?.collect::<rusqlite::Result<_>>()?;
         Ok(rows)
     }
@@ -2519,9 +2519,9 @@ impl Index {
         out
     }
 
-    /// How many constants the index holds: they have no segment row.
+    /// How many constants and fields the index holds: they have no segment row.
     pub fn constants(&self) -> i64 {
-        self.db.query_row("SELECT COUNT(*) FROM chunks WHERE kind = 'constant'", [], |r| r.get(0)).unwrap_or(0)
+        self.db.query_row("SELECT COUNT(*) FROM chunks WHERE kind IN ('constant','field')", [], |r| r.get(0)).unwrap_or(0)
     }
 
     /// Runs `sql` on the index's own connection, to damage the index on purpose in a test.
@@ -2557,7 +2557,7 @@ impl Index {
         if !r.database_ok {
             r.problems.push(format!("database integrity: {integrity}"));
         }
-        r.chunks_db = self.db.query_row("SELECT COUNT(*) FROM chunks WHERE kind != 'constant'", [], |row| row.get(0))?;
+        r.chunks_db = self.db.query_row("SELECT COUNT(*) FROM chunks WHERE kind NOT IN ('constant','field')", [], |row| row.get(0))?;
         let names = self.segments();
         r.segments = names.len();
         match LexStore::open(&self.seg_dir, &names) {

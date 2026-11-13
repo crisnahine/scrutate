@@ -219,7 +219,7 @@ pub(super) fn java_package(src: &str) -> String {
 }
 
 /// The first bytes of a repository file: enough for its package declaration.
-fn java_head(root: &std::path::Path, rel: &str) -> String {
+pub(super) fn java_head(root: &std::path::Path, rel: &str) -> String {
     use std::io::Read;
     crate::answers::noted(root, rel);
     let p = root.join(rel);
@@ -303,6 +303,19 @@ fn java_binder(n: Node) -> bool {
         "lambda_expression" => is("parameters"),
         _ => false,
     }
+}
+
+/// Whether the identifier `n` names a field, an enum constant or a record component where it is declared.
+fn java_field_site(n: Node) -> bool {
+    let Some(p) = n.parent() else { return false };
+    let named = p.child_by_field_name("name").is_some_and(|c| c.id() == n.id());
+    named
+        && match p.kind() {
+            "variable_declarator" => p.parent().is_some_and(|d| matches!(d.kind(), "field_declaration" | "constant_declaration")),
+            "enum_constant" => true,
+            "formal_parameter" => p.parent().and_then(|l| l.parent()).is_some_and(|r| r.kind() == "record_declaration"),
+            _ => false,
+        }
 }
 
 /// The code a Java local binder `b` is visible in.
@@ -402,7 +415,8 @@ impl<'a> Resolver<'a> {
             };
             found = Ok(cur);
             for s in &segs[k + 1..] {
-                match self.member(cur, s, 0) {
+                // `import static a.C.counter` names a field
+                match self.member(cur, s, 0).or_else(|| self.declared_field(cur, s)) {
                     Some(m) => cur = m,
                     None => {
                         found = Err("not found");
@@ -454,7 +468,12 @@ impl<'a> Resolver<'a> {
                 return Err("local variable");
             }
             if self.java_is_field(fi, node, name) {
-                return Err("field or key");
+                let found = java_classes(fi, node).into_iter().find_map(|c| match c {
+                    JClass::Named(id) if self.java_has_field(id, name, 0, &mut HashMap::new()) => Some(self.java_field_def(id, name, 0, &mut HashMap::new())),
+                    _ => None,
+                });
+                let why = if java_field_site(node) { "definition" } else { "field" };
+                return found.flatten().map(|f| (f, why)).ok_or("field or key");
             }
         }
         match self.java_type(fi, node, name) {
@@ -473,7 +492,7 @@ impl<'a> Resolver<'a> {
         for c in java_classes(fi, node) {
             let found = match c {
                 JClass::Named(id) => {
-                    let found = self.member(id, name, 0);
+                    let found = self.member(id, name, 0).or_else(|| self.java_accessor(id, name));
                     if found.is_none() {
                         let (o, u) = self.java_base_state(id, 0, &mut HashMap::new());
                         outside |= o;
@@ -551,9 +570,12 @@ impl<'a> Resolver<'a> {
         match owner {
             Ty::Local(c) if call => self.java_member(c, name).map(|m| self.java_overload(m, arity, "member")),
             Ty::Local(c) => {
-                // a nested type; a field or an enum constant is no definition of the index
+                // a nested type, else a field or an enum constant
                 let nested = self.member(c, name, 0).filter(|&m| self.def_kind(m).is_some_and(|k| CONTAINER_KINDS.contains(&k.as_str())));
-                nested.map(|m| (m, "qualified")).ok_or("field or key")
+                match nested {
+                    Some(m) => Ok((m, "qualified")),
+                    None => self.java_field_def(c, name, 0, &mut HashMap::new()).map(|f| (f, "field")).ok_or("field or key"),
+                }
             }
             Ty::Foreign(t, _) if call && (self.extended(&t, name) || self.trait_member(name)) => Err("receiver"),
             Ty::Foreign(..) => Err("external"),
@@ -618,15 +640,36 @@ impl<'a> Resolver<'a> {
         if JAVA_OBJECT_METHODS.contains(&name) || (decl == Some("enum_declaration") && JAVA_ENUM_METHODS.contains(&name)) {
             return Err("external");
         }
-        // the accessor of a record component is implicit
-        if decl == Some("record_declaration") && self.java_field_names(id).contains(name) {
-            return Err("field or key");
+        if let Some(f) = self.java_accessor(id, name) {
+            return Ok(f);
         }
         match self.java_base_state(id, 0, &mut HashMap::new()) {
             (_, true) => Err("not found"),
             (true, false) => Err("external"),
             _ => Err("not found"),
         }
+    }
+
+    /// The component of record `id` whose implicit accessor `name()` is: it stands for the accessor.
+    fn java_accessor(&mut self, id: i64, name: &str) -> Option<i64> {
+        let (path, _) = self.def_row(id)?;
+        let record = def_node(&self.file(&path), id).is_some_and(|n| n.kind() == "record_declaration");
+        self.declared_field(id, name).filter(|_| record)
+    }
+
+    /// The field or constant `name` of class `id`, inherited ones included.
+    fn java_field_def(&mut self, id: i64, name: &str, depth: usize, seen: &mut HashMap<i64, usize>) -> Option<i64> {
+        if java_seen(seen, id, depth) {
+            return None;
+        }
+        if let Some(f) = self.declared_field(id, name) {
+            return Some(f);
+        }
+        if depth >= 8 {
+            return None;
+        }
+        let bases = self.java_bases(id);
+        bases.iter().find_map(|b| b.ok().filter(|&bid| bid != id).and_then(|bid| self.java_field_def(bid, name, depth + 1, seen)))
     }
 
     /// Whether class `id` extends or implements a type from outside the repository, and whether

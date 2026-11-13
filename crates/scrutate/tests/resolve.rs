@@ -54,6 +54,27 @@ impl Repo {
         }
         m
     }
+    /// `path:line` of the occurrences `refs NAME --def DEF` ties to that definition, sorted.
+    fn refs_of(&self, name: &str, def: &str) -> Vec<String> {
+        let v = self.json(&["refs", name, "--def", def, "--json"]);
+        let refs = v["definitions"][0]["references"].as_array().unwrap_or_else(|| panic!("{v}"));
+        let mut out: Vec<String> = refs.iter().map(|o| format!("{}:{}", o["path"].as_str().unwrap(), o["line"])).collect();
+        out.sort();
+        out
+    }
+    /// `line reason` of each unresolved occurrence of `name` in `file`.
+    fn reasons(&self, name: &str, file: &str) -> Vec<String> {
+        let v = self.json(&["refs", name, "--json"]);
+        let rows = v["unresolved"].as_array().unwrap().iter().filter(|o| o["path"] == file);
+        rows.map(|o| format!("{} {}", o["line"], o["reason"].as_str().unwrap())).collect()
+    }
+    /// The qualified names of a `callers` answer, sorted.
+    fn callers(&self, target: &str) -> Vec<String> {
+        let v = self.json(&["callers", target, "--json"]);
+        let mut out: Vec<String> = v.as_array().unwrap().iter().map(|h| h["name"].as_str().unwrap_or("").to_string()).collect();
+        out.sort();
+        out
+    }
 }
 
 impl Drop for Repo {
@@ -208,4 +229,92 @@ fn javascript_var_belongs_to_the_function_and_let_to_the_block() {
             ("use.js", 21, h)
         ])
     );
+}
+
+#[test]
+fn c_names_resolve_through_includes_to_the_definition_a_declaration_stands_for() {
+    let main = "#include \"util/util.h\"\n#include <stdio.h>\n\nstatic int add_twice(int x) {\n    int add = x;\n    return add + add;\n}\n\nint main(void) {\n    printf(\"%d\", add(1, 2));\n    return add_twice(FAST);\n}\n";
+    let r = Repo::new(
+        "c",
+        &[
+            ("util/util.h", "#ifndef UTIL_H\n#define UTIL_H\nint add(int a, int b);\nenum mode { FAST, SLOW };\n#endif\n"),
+            ("util/util.c", "#include \"util.h\"\n\nint add(int a, int b) { return a + b; }\n"),
+            ("other/add.c", "static int add(int a) { return a; }\nint use(void) { return add(3); }\n"),
+            ("src/main.c", main),
+        ],
+    );
+    let (u, o, m) = ("util/util.c", "other/add.c", "src/main.c");
+    // the header's declaration and a call through the include both stand for the definition in
+    // the file named like the header; a static function of another file is that file's own
+    assert_eq!(r.resolved("add"), expect(&[("util/util.h", 3, u), (u, 3, u), (m, 5, "-"), (m, 6, "-"), (m, 10, u), (o, 1, o), (o, 2, o)]));
+    assert_eq!(r.reasons("add", m), ["5 local variable", "6 local variable", "6 local variable"]);
+    // an enumerator is in the scope of its enum
+    assert_eq!(r.resolved("FAST"), expect(&[("util/util.h", 4, "util/util.h"), (m, 11, "util/util.h")]));
+    assert_eq!(r.reasons("printf", m), ["10 external"]);
+    assert_eq!(r.callers("util/util.c:3"), ["main"]);
+    let deps = r.json(&["deps", m, "--json"]);
+    let resolved: Vec<&str> = deps.as_array().unwrap().iter().map(|d| d["resolved"].as_str().unwrap_or("-")).collect();
+    assert_eq!(resolved, ["util/util.h", "-"], "{deps}");
+}
+
+#[test]
+fn cpp_names_resolve_through_namespaces_classes_and_bases() {
+    let hpp = "#pragma once\nnamespace geo {\nclass Shape {\npublic:\n    virtual double area() const;\n    double twice() const { return area() * 2; }\n};\ndouble dist(double a, double b);\n}\n";
+    let cpp = "#include \"shape.hpp\"\nnamespace geo {\ndouble Shape::area() const { return 1; }\ndouble dist(double a, double b) { return a - b; }\n}\n";
+    let main = "#include \"geo/shape.hpp\"\n#include <vector>\n\nclass Square : public geo::Shape {\npublic:\n    double area() const { return 4; }\n    double both() const { return area() + twice(); }\n};\n\nint main() {\n    geo::Shape s;\n    std::vector<int> v;\n    return geo::dist(s.area(), 1) + v.size();\n}\n";
+    let r = Repo::new("cpp", &[("geo/shape.hpp", hpp), ("geo/shape.cpp", cpp), ("app/main.cpp", main)]);
+    let (h, c, m) = ("geo/shape.hpp", "geo/shape.cpp", "app/main.cpp");
+    assert_eq!(r.resolved("dist"), expect(&[(h, 8, c), (c, 4, c), (m, 13, c)]));
+    // a member of the class around, the out-of-class definition a declaration stands for, and a
+    // call on a value, whose type is not followed
+    assert_eq!(r.resolved("area"), expect(&[(h, 5, c), (h, 6, c), (c, 3, c), (m, 6, m), (m, 7, m), (m, 13, "-")]));
+    assert_eq!(r.reasons("area", m), ["13 receiver"]);
+    // a member of a base class
+    assert_eq!(r.resolved("twice"), expect(&[(h, 6, h), (m, 7, h)]));
+    assert_eq!(r.reasons("vector", m), ["2 comment or string", "12 external"]);
+    assert_eq!(r.callers(&format!("{c}:3")), ["geo.Shape.twice", "main"]);
+}
+
+#[test]
+fn csharp_names_resolve_through_namespaces_usings_and_typed_values() {
+    let shape = "namespace Acme.Models;\n\npublic interface IShape { double Area(); }\n\npublic partial class Circle : IShape\n{\n    private double r;\n    public Circle(double r) { this.r = r; }\n    public double Area() => 3 * r * r;\n    public static Circle Unit() => new Circle(1);\n}\n";
+    let extra = "namespace Acme.Models\n{\n    public partial class Circle\n    {\n        public Report Summary() { return new Report(Area()); }\n    }\n\n    public class Report\n    {\n        public Report(double v) { }\n        public bool Ok() { return true; }\n    }\n}\n";
+    let program = "using System;\nusing Acme.Models;\nusing M = Acme.Models;\n\nnamespace Acme.App\n{\n    public class Program\n    {\n        static bool Run(IShape s)\n        {\n            var c = new Circle(2);\n            Console.WriteLine(c.Area());\n            M.Circle u = Circle.Unit();\n            return s.Area() > 0 && u.Summary().Ok();\n        }\n    }\n}\n";
+    let r = Repo::new("csharp", &[("Models/Shape.cs", shape), ("Models/Circle.Extra.cs", extra), ("App/Program.cs", program)]);
+    let (s, e, p) = ("Models/Shape.cs", "Models/Circle.Extra.cs", "App/Program.cs");
+    // a variable built with `new`, a parameter typed by an interface, the other part of a partial class
+    assert_eq!(r.refs_of("Area", &format!("{s}:9")), [format!("{p}:12"), format!("{e}:5"), format!("{s}:9")]);
+    assert_eq!(r.refs_of("Area", &format!("{s}:3")), [format!("{p}:14"), format!("{s}:3")]);
+    // a static call, a chain typed by declared return types, a type through an alias
+    assert_eq!(r.refs_of("Unit", &format!("{s}:10")), [format!("{p}:13"), format!("{s}:10")]);
+    assert_eq!(r.refs_of("Summary", &format!("{e}:5")), [format!("{p}:14"), format!("{e}:5")]);
+    assert_eq!(r.refs_of("Ok", &format!("{e}:11")), [format!("{p}:14"), format!("{e}:11")]);
+    assert_eq!(r.reasons("Console", p), ["12 external"]);
+    assert_eq!(r.reasons("r", s), ["7 field or key", "8 local variable", "8 field or key", "8 local variable", "9 field or key", "9 field or key"]);
+    // a call through the interface may run the implementation: it comes undecided
+    assert_eq!(r.callers(&format!("{s}:9")), ["Acme.App.Program.Run", "Acme.Models.Circle.Summary"]);
+    let deps = r.json(&["deps", p, "--json"]);
+    let mut resolved: Vec<&str> = deps.as_array().unwrap().iter().filter_map(|d| d["resolved"].as_str()).collect();
+    resolved.sort();
+    resolved.dedup();
+    assert_eq!(resolved, [e, s], "{deps}");
+}
+
+/// The resolver reads the C, C++ and C# snapshot samples: each call and use lands on its definition.
+#[test]
+fn the_c_cpp_and_csharp_samples_resolve() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples");
+    let read = |n: &str| fs::read_to_string(dir.join(n)).unwrap();
+    let (c, cpp, cs) = (read("sample.c"), read("sample.cpp"), read("sample.cs"));
+    let r = Repo::new("samples", &[("sample.c", &c), ("sample.cpp", &cpp), ("sample.cs", &cs)]);
+    assert_eq!(r.resolved("add"), expect(&[("sample.c", 4, "sample.c"), ("sample.c", 8, "sample.c"), ("sample.c", 16, "sample.c")]));
+    assert_eq!(r.refs_of("add", "sample.c:8"), ["sample.c:16", "sample.c:4", "sample.c:8"]);
+    assert_eq!(r.refs_of("dist", "sample.cpp:16"), ["sample.cpp:16", "sample.cpp:18"]);
+    assert_eq!(r.refs_of("Point", "sample.cpp:14"), ["sample.cpp:14", "sample.cpp:15", "sample.cpp:16", "sample.cpp:16", "sample.cpp:18"]);
+    assert_eq!(r.refs_of("Format", "sample.cs:8"), ["sample.cs:7", "sample.cs:8"]);
+    assert_eq!(r.refs_of("Name", "sample.cs:5"), ["sample.cs:5", "sample.cs:6", "sample.cs:7"]);
+    for name in ["add", "dist", "Point", "Format", "Name", "Greeter", "RED"] {
+        let v = r.json(&["refs", name, "--json"]);
+        assert_eq!(v["unresolved"], serde_json::json!([]), "{name}: {v}");
+    }
 }

@@ -1924,7 +1924,7 @@ fn watch_command(root: &Path) -> Result<i32> {
 fn check_command(root: &Path, files: bool, json: bool) -> Result<i32> {
     let mut s = crate::open(root)?;
     let report = s.ix.check(files)?;
-    // a constant has no postings, so no segment row: the counts below leave it out
+    // a constant or a field has no postings, so no segment row: the counts below leave it out
     let constants = s.ix.constants();
     if json {
         let mut v = serde_json::to_value(&report)?;
@@ -1934,7 +1934,7 @@ fn check_command(root: &Path, files: bool, json: bool) -> Result<i32> {
         println!("database: {}", if report.database_ok { "ok" } else { "CORRUPT" });
         println!("segments: {} checked, {}", report.segments, if report.segments_ok { "ok" } else { "DAMAGED" });
         println!(
-            "chunks: {} ranked in the database, {} alive in segments{}, {constants} constants (no postings)",
+            "chunks: {} ranked in the database, {} alive in segments{}, {constants} constants and fields (no postings)",
             report.chunks_db,
             report.chunks_alive,
             if report.chunks_db == report.chunks_alive { "" } else { "  MISMATCH" }

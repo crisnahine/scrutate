@@ -526,8 +526,10 @@ fn check_reports_consistency_and_staleness() {
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert!(v["constants"].as_u64().unwrap() >= 2 && v["chunks_db"] == v["chunks_alive"], "{json}");
     let (code, out, _) = r.run(&["check"]);
-    let line =
-        format!("chunks: {} ranked in the database, {} alive in segments, {} constants (no postings)", v["chunks_db"], v["chunks_alive"], v["constants"]);
+    let line = format!(
+        "chunks: {} ranked in the database, {} alive in segments, {} constants and fields (no postings)",
+        v["chunks_db"], v["chunks_alive"], v["constants"]
+    );
     assert!(code == 0 && out.lines().any(|l| l == line), "{line}\n{out}");
     fs::remove_file(r.root.join("pkg/consts.py")).unwrap();
     r.run(&["index"]);

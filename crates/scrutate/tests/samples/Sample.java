@@ -9,6 +9,6 @@ public class Greeter {
     public String greet() { return helper(name); }
     private static String helper(String s) { return "hi " + s; }
 }
-interface Shape { double area(); }
+interface Shape { int SIDES = 0; double area(); }
 enum Color { RED, GREEN }
 record Pt(int x) {}

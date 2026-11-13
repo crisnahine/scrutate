@@ -95,12 +95,32 @@
       "Pt"
     ],
     [
+      "field",
+      "Greeter.name"
+    ],
+    [
       "constant",
       "Greeter.MIN"
     ],
     [
       "constant",
       "Greeter.MAX"
+    ],
+    [
+      "constant",
+      "Shape.SIDES"
+    ],
+    [
+      "constant",
+      "Color.RED"
+    ],
+    [
+      "constant",
+      "Color.GREEN"
+    ],
+    [
+      "field",
+      "Pt.x"
     ]
   ],
   "manifest.pp": [

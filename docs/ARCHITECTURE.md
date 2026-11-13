@@ -304,7 +304,8 @@ deeply nested or very wide file indexes in linear time. A call's name is read fr
 its target: the last separator inside it is found by binary search over that separator's offsets
 in the file, gathered once per file, so a call chain costs time linear in its length. Constants
 (`const`, `static`, enum members, `#define` values and the like) are chunks of kind `constant`
-with no postings and no vectors: name lookups find them, ranked search never does. A JavaScript or
+with no postings and no vectors: name lookups find them, ranked search never does; Java fields and
+record components are kept the same way, as kind `field`. A JavaScript or
 TypeScript object literal's methods are owned by the name holding the literal (`api.get`), so
 `callers` treats them as methods, never free functions.
 
@@ -641,7 +642,7 @@ over token 3-grams, nested chunks excluded), and **structural search** (`tsquery
 query language over all files of a language, parallel, no index needed).
 
 `refs` resolves names (`resolve/`). Engine A finds the whole-word occurrences; each file holding
-one (Python, JavaScript/TypeScript, Rust, Go, Java, PHP) is parsed again with tree-sitter for the
+one (Python, JavaScript/TypeScript, Rust, Go, Java, PHP, C, C++, C#) is parsed again with tree-sitter for the
 identifier node, its qualifier, the enclosing scopes and the names its imports bind, while
 definitions and their nesting come from the index's `chunks` rows. A file whose tree is more than
 2,000 levels deep is not read and type walks stop at 32 nested steps, so hostile nesting cannot
@@ -659,18 +660,24 @@ The resolver is one walker and one rule set per language. The walker (`resolve/m
 every language shares: the scopes the index's definitions make, the lookup memo, the depth guards
 and the order of steps (the import at a name's own statement, the definition's own name, then the
 local scopes, the receiver and its type, the imports, the package and the wildcard imports). A
-rule set (`resolve/python.rs`, `js.rs`, `rust.rs`, `go.rs`, `java.rs`, `php.rs`) implements the
-`Rules` trait: its grammars, what binds a name, which blocks a local does not leave, how a receiver
-and a base class list are read, how a module path maps to files, and, for Java and PHP, a walk of
-its own: Java's locals, fields, enclosing classes and overloads; PHP's namespaces, `use`, typed
-locals and properties, `$this`, `self::` and `parent::`. A PHP class is found by name in the index
-and kept when its defining file declares the namespace the reference names, so no namespace list
-is built. A step a rule set leaves out is the walker's own. The walker picks a file's rule set
-with one `match` on its language, in a macro, so a language added to the `Lang` enum without a
-rule set does not compile; it tests a language nowhere else. The node kind tables near the top
-of the walker (functions, local
-binders, patterns) still list the kinds of the first five grammars together; PHP does not read
-them. A file's language comes from `langs::detect` alone: by its name, and by its text where an
+rule set (`resolve/python.rs`, `js.rs`, `rust.rs`, `go.rs`, `java.rs`, `php.rs`, `c.rs`,
+`csharp.rs`) implements the `Rules` trait: its grammars, what binds a name, which blocks a local
+does not leave, how a receiver and a base class list are read, how a module path maps to files,
+and, for Java, PHP and C#, a walk of its own: Java's locals, fields, enclosing classes and
+overloads; PHP's namespaces, `use`, typed locals and properties, `$this`, `self::` and `parent::`;
+C#'s namespaces, `using`, typed locals, members and partial classes. A PHP or C# class is found by
+name in the index and kept when its defining file declares the namespace the reference names, so
+no namespace list is built for `refs` (C# builds one for `deps`, from the index's namespace rows
+and each file's head). The C and C++ rule set (one for both grammars) binds each `#include` as a
+wildcard import, maps it to files by a path suffix through a file name table built once per
+request, and maps a function declaration to the definition with a body, once per declaration. A
+Java field is a definition of the index (kind `field`); a field and a method of one name stay
+apart because the walker's member lookup skips fields and the Java rules ask for a field only
+where a value is read. A step a rule set leaves out is the walker's own. The walker picks a file's
+rule set with one `match` on its language, in a macro, so a language added to the `Lang` enum
+without a rule set does not compile; it tests a language nowhere else. The node kind tables near
+the top of the walker (functions, local binders, patterns) list the kinds of the grammars that use
+the walker's scopes together, C, C++ and C# binders among them; PHP does not read them. A file's language comes from `langs::detect` alone: by its name, and by its text where an
 extension is shared (`.h`, `.m`, `.pp`, `.cls`); the parser, the resolver and `names.rs` all ask
 it.
 

@@ -54,7 +54,7 @@ Engine A (instant search) needs none of this: it searches every readable file, i
 | hcl | `.tf .tfvars .hcl .nomad` | block | yes | no | no | `tests/samples/sample.tf` |
 | html | `.html .htm .xhtml` | (module only) | no | no | no | `tests/samples/sample.html` |
 | ini | `.ini .cfg .conf .properties .editorconfig .gitconfig .gitconfig .npmrc setup.cfg` | block | no | no | no | `tests/samples/sample.ini` |
-| java | `.java` | class, constant, enum, interface, method | yes | yes | no | `tests/samples/Sample.java` |
+| java | `.java` | class, constant, enum, field, interface, method | yes | yes | no | `tests/samples/Sample.java` |
 | javascript | `.js .jsx .mjs .cjs` | class, constant, function, method | yes | yes | no | `tests/samples/sample.js` |
 | json | `.json .jsonc .json5 .webmanifest` | key | no | no | no | `tests/samples/sample.json` |
 | jsonnet | `.jsonnet .libsonnet` | function, key | yes | no | no | `tests/samples/sample.jsonnet` |

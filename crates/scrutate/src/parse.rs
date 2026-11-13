@@ -86,6 +86,8 @@ pub struct Parsed {
 }
 
 pub const CONTAINERS: &[&str] = &["class", "impl", "interface", "trait", "enum", "struct", "type", "module", "block", "section", "key"];
+/// Kinds that are symbols only: no postings, no vector, and after every other chunk of a file.
+pub const SYMBOL_ONLY: &[&str] = &["constant", "field"];
 const COMMENT_TYPES: &[&str] =
     &["comment", "line_comment", "block_comment", "doc_comment", "documentation_comment", "comment_block", "statement_comment", "module_comment", "haddock"];
 /// Nodes that list the statements of a body or file: a comment above the first one sits outside the list.
@@ -982,13 +984,22 @@ static CAPS_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^_*[A-Z][A-Z0-
 /// module- or class-level ALL_CAPS assignment, a TS `static readonly` and JS ALL_CAPS `static`
 /// class field, a C/C++ `#define NAME value`, enumerator and file or namespace `const` with a value
 /// (GLSL and Objective-C too), a C++ `static const` or `constexpr` class member with a value, and a
-/// Ruby assignment to a capitalized name at file, module or class level.
+/// Ruby assignment to a capitalized name at file, module or class level. Java also gives its
+/// enum constants and interface constants, and its other fields and record components as `field`.
 /// `scope` is the kind of the nearest ancestor that is no `#if` block or include guard.
-fn constant_of<'t>(lang: &str, node: Node<'t>, ancestors: &[(Node<'t>, Vec<Node<'t>>)], scope: Option<&str>, src: &[u8]) -> Option<(Vec<String>, Node<'t>)> {
+/// -> (names, the node shown, the kind)
+fn constant_of<'t>(
+    lang: &str,
+    node: Node<'t>,
+    ancestors: &[(Node<'t>, Vec<Node<'t>>)],
+    scope: Option<&str>,
+    src: &[u8],
+) -> Option<(Vec<String>, Node<'t>, &'static str)> {
     let up = |i: usize| ancestors.len().checked_sub(i).map(|j| ancestors[j].0);
     let kind_up = |i: usize| up(i).map_or("", |n| n.kind());
     let text_of = |n: Node| txt(src, n.start_byte(), n.end_byte());
     let field = |n: Node<'t>, f: &str| n.child_by_field_name(f);
+    let mut kind = "constant";
     let (names, shown) = match (lang, node.kind()) {
         ("rust", "const_item" | "static_item") if matches!(kind_up(1), "source_file" | "declaration_list") => (vec![text_of(field(node, "name")?)], node),
         ("go", "const_spec" | "var_spec") => {
@@ -1016,14 +1027,20 @@ fn constant_of<'t>(lang: &str, node: Node<'t>, ancestors: &[(Node<'t>, Vec<Node<
         }
         ("typescript" | "tsx", "property_identifier") if kind_up(1) == "enum_body" => (vec![text_of(node)], node),
         ("typescript" | "tsx", "enum_assignment") if kind_up(1) == "enum_body" => (vec![text_of(field(node, "name")?)], node),
-        ("java", "field_declaration") => {
-            let mods = node.children(&mut node.walk()).find(|c| c.kind() == "modifiers")?;
-            let words: Vec<&str> = mods.children(&mut mods.walk()).map(|c| c.kind()).collect();
-            if !(words.contains(&"static") && words.contains(&"final")) {
-                return None;
+        ("java", "field_declaration" | "constant_declaration") => {
+            let mods = node.children(&mut node.walk()).find(|c| c.kind() == "modifiers");
+            let words: Vec<&str> = mods.map(|m| m.children(&mut m.walk()).map(|c| c.kind()).collect()).unwrap_or_default();
+            // a field of an interface is a constant
+            if node.kind() == "field_declaration" && !(words.contains(&"static") && words.contains(&"final")) {
+                kind = "field";
             }
             let names: Vec<String> = node.children_by_field_name("declarator", &mut node.walk()).filter_map(|d| field(d, "name")).map(text_of).collect();
             (names, node)
+        }
+        ("java", "enum_constant") => (vec![text_of(field(node, "name")?)], node),
+        ("java", "formal_parameter") if kind_up(2) == "record_declaration" => {
+            kind = "field";
+            (vec![text_of(field(node, "name")?)], node)
         }
         ("python", "expression_statement")
             if (kind_up(1) == "module" || kind_up(1) == "block" && kind_up(2) == "class_definition") && node.named_child_count() == 1 =>
@@ -1099,7 +1116,7 @@ fn constant_of<'t>(lang: &str, node: Node<'t>, ancestors: &[(Node<'t>, Vec<Node<
         _ => return None,
     };
     let names: Vec<String> = names.into_iter().filter(|n| n != "_" && (lang != "python" || CAPS_NAME.is_match(n))).collect();
-    (!names.is_empty()).then_some((names, shown))
+    (!names.is_empty()).then_some((names, shown, kind))
 }
 
 /// The chunk kind named by the first declaration keyword on the node's first line.
@@ -1606,7 +1623,7 @@ fn finish(path: &str, source: &str, mut chunks: Vec<Chunk>, module_doc: String, 
         Some(i) if i > 0 => &base[..i],
         _ => base,
     };
-    let first_def = chunks.iter().filter(|c| c.kind != "constant").map(|c| c.start).min();
+    let first_def = chunks.iter().filter(|c| !SYMBOL_ONLY.contains(&c.kind)).map(|c| c.start).min();
     let lines = split_lines(source);
     let head_end = match first_def {
         Some(fd) => (fd - 1).max(0) as usize,
@@ -1614,9 +1631,9 @@ fn finish(path: &str, source: &str, mut chunks: Vec<Chunk>, module_doc: String, 
     }
     .min(60);
     let head_all = lines[..head_end.min(lines.len())].join("\n");
-    // the lines each chunk's text keeps whole; constants have no postings, so they keep none
+    // the lines each chunk's text keeps whole; constants and fields have no postings, so they keep none
     let mut spans = vec![(1, kept_lines(head_all.as_bytes(), usize::MAX).min(head_end) as i64)];
-    for c in chunks.iter().filter(|c| c.kind != "constant") {
+    for c in chunks.iter().filter(|c| !SYMBOL_ONLY.contains(&c.kind)) {
         let kept = match c.lazy {
             Some(l) => kept_lines(&source.as_bytes()[l.text.min(l.end)..l.end.min(source.len())], l.lines),
             None => kept_lines(c.text.as_bytes(), if CONTAINERS.contains(&c.kind) { MAX_CONTAINER_LINES } else { MAX_CHUNK_LINES }),
@@ -1625,7 +1642,7 @@ fn finish(path: &str, source: &str, mut chunks: Vec<Chunk>, module_doc: String, 
         // its documentation is searchable in its doc field
         spans.extend(c.doc_lines);
     }
-    let defs: Vec<(i64, i64, &str)> = chunks.iter().filter(|c| c.kind != "constant").map(|c| (c.start, c.end, c.qualname.as_str())).collect();
+    let defs: Vec<(i64, i64, &str)> = chunks.iter().filter(|c| !SYMBOL_ONLY.contains(&c.kind)).map(|c| (c.start, c.end, c.qualname.as_str())).collect();
     let mut windows = uncovered_windows(source, &lines, &spans, &defs, stem_name);
     let mut module_calls = BTreeSet::new();
     for (line, callee) in loose {
@@ -1661,8 +1678,8 @@ fn finish(path: &str, source: &str, mut chunks: Vec<Chunk>, module_doc: String, 
     }
     // every line no chunk keeps is searchable as windows
     chunks.extend(windows);
-    // constants last: the index gives the chunks before them their lexical rows (constants get none)
-    chunks.sort_by_key(|c| c.kind == "constant");
+    // constants and fields last: the index gives the chunks before them their lexical rows (they get none)
+    chunks.sort_by_key(|c| SYMBOL_ONLY.contains(&c.kind));
     if chunks.is_empty() {
         return window_chunks(source);
     }
@@ -1932,7 +1949,7 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
             def_stack.push(chunks.len() - 1);
             pushed_now = true;
             heads.extend(def_head(spec.id, node).map(|h| h.id()));
-        } else if let Some((names, shown)) = constant_of(spec.id, node, &ancestors, scopes.last().map(|&i| ancestors[i].0.kind()), src) {
+        } else if let Some((names, shown, kind)) = constant_of(spec.id, node, &ancestors, scopes.last().map(|&i| ancestors[i].0.kind()), src) {
             // not on def_stack: calls in the initializer stay with the enclosing definition
             let parent_q = def_stack.last().map(|&i| chunks[i].qualname.as_str()).or(file_class.as_deref()).unwrap_or_default();
             // the comment sits above the node the chunk shows: a Go `const` above its only spec
@@ -1946,7 +1963,7 @@ fn grammar_chunks(spec: &'static LangSpec, path: &str, source: &str, prev: Optio
                 consts.push(Chunk {
                     qualname: qualify(&parent_q, &name),
                     name,
-                    kind: "constant",
+                    kind,
                     start: shown.start_position().row as i64 + 1,
                     end: last_row(shown) + 1,
                     text: text.clone(),

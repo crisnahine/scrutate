@@ -94,9 +94,9 @@ pub struct Chunk {
 }
 
 impl Chunk {
-    /// A constant is a symbol only: no postings, no vector.
+    /// A constant or a field is a symbol only: no postings, no vector.
     fn lexed(&self) -> bool {
-        self.kind != "constant"
+        !crate::parse::SYMBOL_ONLY.contains(&self.kind.as_str())
     }
 }
 

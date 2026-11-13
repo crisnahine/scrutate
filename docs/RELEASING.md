@@ -48,8 +48,8 @@ that raises it fails there. README.md and docs/INSTALL.md name it too.
 | the text index `FORMAT` | its files change |
 
 0.1.0 ships with content revision 3: builds with earlier rules were in use before the release,
-and their indexes must not keep the chunks and tokens those rules made (revision 3 joins Japanese
-shinjitai to the Han fold). The four only go up: a binary leaves an index of a higher number
+and their indexes must not keep the chunks, symbols and tokens those rules made (revision 3 joins
+Japanese shinjitai to the Han fold, and adds Java fields as symbols). The four only go up: a binary leaves an index of a higher number
 alone, so two versions on one checkout never rebuild it in turn
 ([Architecture](ARCHITECTURE.md#storage-indexrs-lexrs)).
 

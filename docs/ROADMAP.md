@@ -138,8 +138,6 @@ docs/RELEASING.md, public (done), tag `v0.1.0`.
 - Windows: nothing is measured. It takes the macOS values (threads: the cores, at most 12; cold:
   twice the cores, at most 24; a disk read: 75 µs) from the `OTHER` row in
   `crates/scrutate/src/policy.rs`, where a measured row goes.
-- References for C# and C/C++ includes; `refs` resolves Python, JavaScript/TypeScript, Rust, Go,
-  Java and PHP today. A language is one more rule set under `resolve/`.
 - Benchmark leadership on dedicated idle hardware (R-14.11): every number comes from a developer
   laptop shared with other work, and Linux x86_64 has no run; in the last macOS run six of 37 warm
   rows were measured twice for that reason. An x86_64 run emulated on this laptop was dropped:
@@ -160,8 +158,10 @@ docs/RELEASING.md, public (done), tag `v0.1.0`.
 - In `refs`, a plain name in a Rust macro's arguments that the token rules do not read as a field,
   field name or local is tied by name to a definition: the `text` in `mymac!(text, 3)` counts as a
   reference to a function `text`, whatever the macro does.
-- Java: `refs` lists fields, enum constants and record accessors as unresolved (`field or key`,
-  [CLI](CLI.md#refs)), a `static final` field too, which `symbol` finds as a constant.
+- C and C++: `refs` reads no include paths of the build (`-I`, `compile_commands.json`): an
+  include is found beside the including file or by its path suffix. A call on a value
+  (`s.area()`, `p->next()`) stays undecided: the value's type is not followed
+  ([CLI](CLI.md#refs)).
 - `watch` takes the `notify` crate at 9.0.0-rc.8, pinned, the first release that reports an
   overflowed Windows buffer; 9.0.0 itself is not out (crates.io on 2026-11-13). Moving to it is a
   version bump once it is.

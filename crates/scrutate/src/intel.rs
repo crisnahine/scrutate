@@ -36,8 +36,8 @@ pub fn locate(s: &Searcher, target: &str) -> Result<Option<ChunkRow>> {
 /// Chunks whose implementation vector is closest to the target's, with token-set Jaccard as a second opinion.
 pub fn similar(s: &mut Searcher, target: &str, k: usize) -> Result<Vec<(Hit, f32, f32)>> {
     let Some(row) = locate(s, target)? else { bail!("no symbol or location matches {}", echo(target)) };
-    if row.kind == "constant" {
-        bail!("{} is a constant: constants have no implementation vector and are not compared", shown(&row.qualname));
+    if crate::parse::SYMBOL_ONLY.contains(&row.kind.as_str()) {
+        bail!("{} is a {}: constants and fields have no implementation vector and are not compared", shown(&row.qualname), row.kind);
     }
     let (_, b) = s.ix.lex()?.vec_of(row.id)?.ok_or_else(|| anyhow!("the index has no vectors (semantic model disabled)"))?;
     if b.iter().all(|x| *x == 0.0) {

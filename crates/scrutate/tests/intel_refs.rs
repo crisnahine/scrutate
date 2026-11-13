@@ -460,14 +460,14 @@ fn refs_names_a_language_the_resolver_does_not_read_apart_from_one_without_a_gra
     let r = Repo::new(
         "unread",
         &[
-            ("m.c", "int helper(void) {\n    return 1;\n}\n\nint run(void) {\n    return helper();\n}\n"),
+            ("m.kt", "fun helper(): Int {\n    return 1\n}\n\nfun run(): Int {\n    return helper()\n}\n"),
             ("m.pl", "sub helper {\n    return 1;\n}\n\nhelper();\n"),
         ],
     );
     let (_, out) = r.run(&["refs", "helper"]);
     let reason_of = |file: &str| out.lines().filter(|l| l.contains(file)).map(|l| l.rsplit('(').next().unwrap_or("").to_string()).collect::<Vec<_>>();
-    assert!(reason_of("m.c").iter().any(|w| w.starts_with("not resolved in this language")), "{out}");
-    assert!(reason_of("m.c").iter().all(|w| !w.starts_with("no grammar")), "{out}");
+    assert!(reason_of("m.kt").iter().any(|w| w.starts_with("not resolved in this language")), "{out}");
+    assert!(reason_of("m.kt").iter().all(|w| !w.starts_with("no grammar")), "{out}");
     assert!(reason_of("m.pl").iter().any(|w| w.starts_with("no grammar")), "{out}");
 }
 
