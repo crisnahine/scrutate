@@ -163,7 +163,11 @@ The argument after `-e` is the pattern whatever it starts with (`-e '->'`, `-F -
 grep and ripgrep.
 Options mirror grep/ripgrep where the meaning is identical: `-i`, `-S` (smart case), `-w`, `-U`
 (multiline: each line of a multi-line match is printed with its own number), `-v`, `-l`, `-c`,
-`-A/-B/-C`, `-m`, `--max-results`, `-g GLOB` (`!` excludes), `-t TYPE` / `--type-list`, `--hidden`,
+`-A/-B/-C`, `-m`, `--max-results`, `-g GLOB` (`!` excludes), `-t TYPE` / `--type-list` (`-t !TYPE`
+excludes, ripgrep's `-T`; a type matches the file name after the ignore rules, as ripgrep's
+does, so a gitignored file of the type stays out, a hidden file of the type comes in, a glob
+that matches a file decides before the type, and a file named on the command line is searched
+whatever its type), `--hidden`,
 `--no-ignore`, `-L` (follow links), `--max-filesize`, `--max-depth`, `-n` / `-N` (line numbers
 or none; the later wins, and `--json` keeps them), `-j THREADS` (at most 256, as are
 `SCRUTATE_THREADS` and the configuration file's `threads`; default: the cores, at most 12; on
@@ -227,7 +231,8 @@ can contain a match (trigram postings), and Engine A's matcher searches only tho
 is what the walk prints for the indexed snapshot of `--root`. Run `scrutate index` (or `index
 --text`) after changing files; the update is incremental. Options that change which files a walk
 visits (`--hidden`, `--no-ignore`, `-L`, `--max-depth`, `--max-filesize`, explicit paths) are
-refused with `--index`; `-g` and `-t` filter the indexed files. `--index --update` first brings
+refused with `--index`; `-g` and `-t` filter the indexed files, so a hidden file that a type
+or a glob brings into the walk is not searched (the index holds no hidden file). `--index --update` first brings
 the text index up to date (building it if there is none; only new and changed files are read),
 so the answer is the walk's for the tree as it is now: the call for an editor that searches
 often while files change.

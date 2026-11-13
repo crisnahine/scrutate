@@ -10,7 +10,9 @@ Both tools are run with equivalent flags (line numbers, no colour, same case rul
 semantics, multiline when the pattern contains a newline escape). Known, documented semantic
 differences are excluded from the generator rather than tolerated in the comparison.
 
-Each corpus is a git repository, so both tools apply its .gitignore. Most patterns are drawn from
+Each corpus is a git repository, so both tools apply its .gitignore; a quarter of the cases add a
+file type (`-t py`, `-t rust` or their negation), which both match after the ignore rules, so a
+gitignored `.rs` file stays out and a hidden `.py` one comes in. Most patterns are drawn from
 the corpus's own text, so most cases have matches; the share that matched nothing is printed.
 Every case runs scrutate twice: as is, and in one of the modes the engine picks on its own for
 some inputs (SCRUTATE_SMALL_TREE: the one-thread path for a small tree, the parallel walk, or a
@@ -78,8 +80,10 @@ def random_corpus(rng: random.Random, root: str) -> list[str]:
             f.write("docs/\n*.rs\n")
     if rng.random() < 0.3:
         os.makedirs(os.path.join(root, ".hidden"), exist_ok=True)
-        with open(os.path.join(root, ".hidden", "h.txt"), "w") as f:
-            f.write("alpha beta\n")
+        # a hidden directory stays out whatever its files' type; a hidden file of the type does not
+        for name in (os.path.join(".hidden", "h.txt"), ".h.py"):
+            with open(os.path.join(root, name), "w") as f:
+                f.write("alpha beta\n")
     subprocess.run(["git", "init", "-q", root], check=True)
     return written
 
@@ -194,9 +198,14 @@ def indexed_agrees(rng: random.Random, root: str, pat: str, sf: list[str], mode:
             return f"index --text failed (corpus {root})"
         rc1, o1 = run_json([SCRUTATE, "grep", "--sort", "--json", *sf, pat], root)
         rc2, o2 = run_json([SCRUTATE, "grep", "--index", "--sort", "--json", *sf, pat], root)
-        if rc1 != rc2 or scrutate_matches(o1) != scrutate_matches(o2):
-            only_walk = sorted(scrutate_matches(o1) - scrutate_matches(o2))[:3]
-            only_index = sorted(scrutate_matches(o2) - scrutate_matches(o1))[:3]
+        walk, index = scrutate_matches(o1), scrutate_matches(o2)
+        if "-t" in sf:
+            # the index holds no hidden file, and the walk takes a hidden file of a type
+            walk = {m for m in walk if not m[0].startswith(".")}
+            rc1 = rc1 if walk or rc1 != 0 else 1
+        if rc1 != rc2 or walk != index:
+            only_walk = sorted(walk - index)[:3]
+            only_index = sorted(index - walk)[:3]
             return f"--index differs ({stage}) for {pat!r} ({mode}, flags {sf}): exit {rc1}/{rc2}; only walk {only_walk}; only index {only_index} (corpus {root})"
     return None
 
@@ -210,6 +219,10 @@ def one_case(rng: random.Random, keep: bool, stats: dict) -> str | None:
     try:
         lines = random_corpus(rng, root)
         pat, sf, rf, mode = random_pattern(rng, lines)
+        if rng.random() < 0.25:
+            # a type matches after the ignore rules: an ignored `.rs` stays out, a hidden `.py` comes in
+            name, negated = rng.choice(["py", "rust"]), rng.random() < 0.3
+            sf, rf = sf + ["-t", "!" + name if negated else name], rf + ["-T" if negated else "-t", name]
         envs = [{}, random_mode(rng)]
         if mode == "multiline":
             # rg's -U with --json reports multi-line matches as one record spanning lines; compare counts of files instead

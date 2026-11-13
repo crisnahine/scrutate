@@ -104,7 +104,7 @@ impl Drop for Tree {
 }
 
 #[test]
-fn a_walk_type_keeps_ignored_files_out_where_a_type_glob_does_not() {
+fn a_type_keeps_ignored_files_out_where_a_glob_brings_them_in() {
     use scrutate::instant::{search, Files, Output, Pattern, Query, Record};
     let t = Tree::new("types");
     t.write(".gitignore", "gone.py\n");
@@ -126,9 +126,9 @@ fn a_walk_type_keeps_ignored_files_out_where_a_type_glob_does_not() {
         paths
     };
     let walk = || Files::walk(vec![t.root.clone()]);
-    assert_eq!(files(Files { walk_types: vec!["py".into()], ..walk() }), ["b.py", "c.pyi"]);
-    assert_eq!(files(Files { types: vec!["py".into()], ..walk() }), ["gone.py", "b.py", "c.pyi"]);
-    assert!(search(&Query::default(), &Files { walk_types: vec!["nope".into()], ..walk() }, Default::default(), Output::Records(&mut |_| {})).is_err());
+    assert_eq!(files(Files { types: vec!["py".into()], ..walk() }), ["b.py", "c.pyi"]);
+    assert_eq!(files(Files { globs: vec!["*.py".into()], ..walk() }), ["gone.py", "b.py"]);
+    assert!(search(&Query::default(), &Files { types: vec!["nope".into()], ..walk() }, Default::default(), Output::Records(&mut |_| {})).is_err());
 }
 
 fn have_rg() -> bool {
@@ -311,6 +311,11 @@ fn the_hook_answers_with_ripgreps_lines_for_greps_arguments() {
         let reason = t.reason(ask.clone()).unwrap_or_else(|| panic!("no answer for {ask}"));
         assert_eq!(hook_lines(&reason, mode), want, "for {ask}");
     }
+    // an answer the bound does not cut costs the header and its line break more than Grep's
+    let s = t.stats();
+    let (grep, sent) = (s["total"]["grep_bytes"].as_u64().unwrap(), s["total"]["sent_bytes"].as_u64().unwrap());
+    eprintln!("{} calls: Grep {grep} bytes, sent {sent}", s["total"]["calls"]);
+    assert_eq!(sent, grep + 28 * (HEADER.len() as u64 + 1));
 }
 
 #[test]

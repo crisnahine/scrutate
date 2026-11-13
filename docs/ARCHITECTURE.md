@@ -867,8 +867,7 @@ or list item goes in or comes out, and the new text is parsed again and must rea
 with that one change. Codex's `config.toml` gets one table appended or cut out, checked the same
 way, and the instruction block sits between two marker lines. `hook.rs` is Claude Code's Grep
 hook: it maps a Grep call onto an Engine A query and file set the way Grep calls ripgrep (a
-`type` through `Files::walk_types`, which matches after the ignore rules as ripgrep's `--type`
-does), words the records as Grep words ripgrep's lines, and bounds the result as an MCP answer is
+`type` through `Files::types`, which `grep -t` uses too), words the records as Grep words ripgrep's lines, and bounds the result as an MCP answer is
 bounded; an argument it cannot map, or any error, lets Grep run.
 
 ## Models (`models/`, `models.rs`)

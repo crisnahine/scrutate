@@ -1272,3 +1272,53 @@ fn json_spans_lie_inside_the_text_they_describe() {
         assert_eq!(json_spans(&out), [(1, s(&[want]))], "{args:?}");
     }
 }
+
+/// `-t` matches after the ignore rules, as ripgrep's `--type` does: a gitignored file of the
+/// type stays out, a hidden one comes in, and a file named on the command line is searched
+/// whatever its type. Checked against `rg` where it is installed, and against its answers here.
+#[test]
+fn a_type_matches_after_the_ignore_rules_as_ripgrep_does() {
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("grepcli_types_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    // a repository of its own, so its ignore file applies for ripgrep too
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let d = Dir(fs::canonicalize(&root).unwrap());
+    d.write(".gitignore", b"gone.py\n");
+    for f in ["gone.py", "kept.py", ".hidden.py", "notes.txt", "sub/also.py"] {
+        d.write(f, b"needle\n");
+    }
+    let cases: &[(&[&str], &[&str])] = &[
+        (&["-t", "py", "needle"], &[".hidden.py:1:needle", "kept.py:1:needle", "sub/also.py:1:needle"]),
+        (&["-t", "py", "needle", "."], &["./.hidden.py:1:needle", "./kept.py:1:needle", "./sub/also.py:1:needle"]),
+        (&["-t", "!py", "needle"], &["notes.txt:1:needle"]),
+        (&["-t", "py", "-g", "*.txt", "needle"], &["notes.txt:1:needle"]),
+        (&["-t", "py", "needle", "gone.py", "notes.txt", "sub"], &["gone.py:1:needle", "notes.txt:1:needle", "sub/also.py:1:needle"]),
+        (&["--no-ignore", "-t", "py", "needle"], &[".hidden.py:1:needle", "gone.py:1:needle", "kept.py:1:needle", "sub/also.py:1:needle"]),
+    ];
+    let want = |w: &[&str]| w.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let have_rg = Command::new("rg").arg("--version").stdout(Stdio::null()).status().is_ok_and(|s| s.success());
+    for &(args, w) in cases {
+        for env in [&[][..], &[("SCRUTATE_SMALL_TREE", "0")]] {
+            let v = [&["grep", "-n"][..], args].concat();
+            let (code, out, err) = d.run_env(&v, env);
+            assert_eq!((code, sorted(&out)), (0, want(w)), "{v:?} {env:?}: {err}");
+        }
+        if have_rg {
+            // ripgrep spells a negated type `-T NAME`
+            let mut rg: Vec<&str> = vec!["--no-config", "-n"];
+            for a in args {
+                match *a {
+                    "!py" => {
+                        rg.pop();
+                        rg.extend(["-T", "py"]);
+                    }
+                    a => rg.push(a),
+                }
+            }
+            let out = Command::new("rg").args(&rg).current_dir(&d.0).stdin(Stdio::null()).output().unwrap();
+            assert_eq!(sorted(&String::from_utf8_lossy(&out.stdout)), want(w), "rg {rg:?}");
+        }
+    }
+    let (code, out, _) = d.run_env(&["grep", "-n", "needle"], &[("SCRUTATE_GREP_TYPES", "py")]);
+    assert_eq!((code, sorted(&out)), (0, want(&[".hidden.py:1:needle", "kept.py:1:needle", "sub/also.py:1:needle"])));
+}

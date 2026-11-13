@@ -183,11 +183,9 @@ pub struct Files {
     pub globs: Vec<String>,
     /// globs matched from one directory, whatever path is searched (a configuration file's)
     pub scoped_globs: Option<Arc<ScopedGlobs>>,
-    /// language ids / type names from the registry (`py`, `rust`, ...); negative with a leading `!`
+    /// language ids / type names from the registry (`py`, `rust`, ...); negative with a leading
+    /// `!`. Matched on the file name after the ignore rules, as ripgrep's `--type` and `--type-not`
     pub types: Vec<String>,
-    /// type names of the registry matched as ripgrep's `--type` matches them: after the ignore
-    /// rules, so an ignored file of the type stays out (`types` match before them, as globs do)
-    pub walk_types: Vec<String>,
     /// search the members of zip/tar archives and the contents of compressed files (`-z`)
     pub search_zip: bool,
     /// report each path as the walk reached it from the root it was given (`dir/a.rs`, `./a.rs`),
@@ -219,7 +217,6 @@ impl Default for Files {
             globs: Vec::new(),
             scoped_globs: None,
             types: Vec::new(),
-            walk_types: Vec::new(),
             search_zip: false,
             paths_as_given: false,
             cwd: None,
@@ -1837,24 +1834,36 @@ impl Collector<'_> {
 /// ripgrep's own ignore file: read before `.ignore` and `.gitignore`, switched off with them.
 pub const RGIGNORE: &str = ".rgignore";
 
-/// The glob and file-type filters of `f`, plus the index directory, which is never searched.
+/// The glob filters of `f`, plus the index directory, which is never searched.
 pub fn overrides(root: &Path, f: &Files) -> Result<ignore::overrides::Override> {
     let mut ob = OverrideBuilder::new(root);
     ob.add(&format!("!{}/", crate::files::INDEX_DIR))?;
     for g in &f.globs {
         ob.add(g).with_context(|| format!("invalid glob {g:?}"))?;
     }
-    for t in &f.types {
+    Ok(ob.build()?)
+}
+
+/// The file-type filters of `f`, which the walk asks after the globs and the ignore rules.
+fn file_types(f: &Files) -> Result<ignore::types::Types> {
+    let mut tb = ignore::types::TypesBuilder::new();
+    for (i, t) in f.types.iter().enumerate() {
         let (neg, name) = match t.strip_prefix('!') {
             Some(n) => (true, n),
             None => (false, t.as_str()),
         };
-        let globs = type_globs(name).ok_or_else(|| anyhow!("unknown file type {name:?} (see --type-list)"))?;
-        for g in globs {
-            ob.add(&if neg { format!("!{g}") } else { g })?;
+        // the builder takes only alphanumeric names, and a registry id may hold `_`
+        let key = format!("t{i}");
+        for g in type_globs(name).ok_or_else(|| anyhow!("unknown file type {name:?} (see --type-list)"))? {
+            tb.add(&key, &g)?;
+        }
+        if neg {
+            tb.negate(&key);
+        } else {
+            tb.select(&key);
         }
     }
-    Ok(ob.build()?)
+    Ok(tb.build()?)
 }
 
 /// Globs matched against each path from `dir`, the directory of the file that holds them. A path
@@ -1964,15 +1973,8 @@ fn walk_builder(roots: &[PathBuf], f: &Files, threads: usize) -> Result<WalkBuil
     // anchored at a root that is a file, the filters would miss the files of the other roots
     let anchor = if roots[0].is_dir() { roots[0].as_path() } else { roots[0].parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new(".")) };
     wb.overrides(overrides(anchor, f)?);
-    if !f.walk_types.is_empty() {
-        let mut tb = ignore::types::TypesBuilder::new();
-        for name in &f.walk_types {
-            for g in type_globs(name).ok_or_else(|| anyhow!("unknown file type {name:?} (see --type-list)"))? {
-                tb.add(name, &g)?;
-            }
-            tb.select(name);
-        }
-        wb.types(tb.build()?);
+    if !f.types.is_empty() {
+        wb.types(file_types(f)?);
     }
     if let Some(sg) = f.scoped_globs.clone() {
         let scopes: Vec<(PathBuf, Scope)> = roots.iter().map(|r| (r.clone(), sg.scope(r))).collect();
@@ -2800,10 +2802,16 @@ fn run_files(
     let t0 = Instant::now();
     let matcher = build_matcher(&q.pattern)?;
     let ov = overrides(root, f)?;
+    let types = file_types(f)?;
     let scoped = f.scoped_globs.as_ref().map(|sg| (sg, sg.scope(root)));
     let mut files: Vec<(PathBuf, Arc<str>, bool)> = list
         .iter()
-        .filter(|rel| !filtered_out(&ov, rel) && !scoped.as_ref().is_some_and(|(sg, s)| sg.excludes_file(s, rel)))
+        .filter(|rel| {
+            // a glob that matches decides alone, as in the walk
+            let by_glob = filtered_out(&ov, rel);
+            let typed_out = || ov.matched(rel.as_str(), false).is_none() && types.matched(rel.as_str(), false).is_ignore();
+            !by_glob && !typed_out() && !scoped.as_ref().is_some_and(|(sg, s)| sg.excludes_file(s, rel))
+        })
         .map(|rel| (root.join(rel), Arc::from(rel.as_str()), false))
         .collect();
     let counters = Counters::default();

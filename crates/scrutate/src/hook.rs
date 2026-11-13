@@ -77,7 +77,7 @@ struct Ask {
     target: PathBuf,
     cwd: PathBuf,
     globs: Vec<String>,
-    walk_type: Option<String>,
+    file_type: Option<String>,
     shape: Shape,
     before: usize,
     after: usize,
@@ -169,7 +169,7 @@ fn read_ask(input: &Value) -> Option<Ask> {
         }
         globs.push(g);
     }
-    let walk_type = match text("type")?.filter(|t| !t.is_empty()) {
+    let file_type = match text("type")?.filter(|t| !t.is_empty()) {
         Some(t) if SAME_TYPES.contains(&t) => Some(t.to_string()),
         Some(_) => return None,
         None => None,
@@ -179,7 +179,7 @@ fn read_ask(input: &Value) -> Option<Ask> {
         target,
         cwd,
         globs,
-        walk_type,
+        file_type,
         shape,
         before: if shape == Shape::Content { before } else { 0 },
         after: if shape == Shape::Content { after } else { 0 },
@@ -279,7 +279,7 @@ fn search(ask: &Ask) -> Option<Vec<Item>> {
     let f = Files {
         hidden: true,
         globs: ask.globs.clone(),
-        walk_types: ask.walk_type.iter().cloned().collect(),
+        types: ask.file_type.iter().cloned().collect(),
         paths_as_given: true,
         ..Files::walk(vec![ask.target.clone()])
     };

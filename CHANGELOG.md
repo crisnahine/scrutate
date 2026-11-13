@@ -25,6 +25,12 @@ version rebuilds incompatible indexes automatically and this is never considered
   `llms.txt`, written by `tools/gen_doc_assets.py`, lists every Markdown document with the question it
   answers for language models; `CITATION.cff` gives GitHub's "Cite this repository".
 
+### Fixed
+- `grep -t TYPE` (and `-t !TYPE`, `SCRUTATE_GREP_TYPES`, the configuration file's `types`)
+  matches after the ignore rules, as ripgrep's `--type` does: a gitignored file of the type is no
+  longer searched, and a glob that matches a file decides before the type (`-g '*.txt' -t py`
+  searches the `.txt` files, as ripgrep does, where before it searched both).
+
 ## [0.1.0] - 2026-11-11
 
 First release.

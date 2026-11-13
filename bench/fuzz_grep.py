@@ -4,7 +4,8 @@
 usage: fuzz_grep.py [--bin SCRUTATE] [--seconds 60] [--seed 1] [--ordered]
 
 Each tree has a `.git` directory, CRLF and BOM files, NUL bytes (some past the first 64 KB), invalid UTF-8, hidden files,
-`.gitignore`, `.ignore` and `.rgignore` files and a symlink. Six random flag sets run on it with
+`.gitignore`, `.ignore` and `.rgignore` files and a symlink. Six random flag sets (now and then
+with `-t rust` or `-T rust`, which match after the ignore rules) run on it with
 both tools, each on `.`, one file, one directory, a file and a directory, or paths that repeat or
 overlap (a file twice, a directory twice, a directory and one inside it, `.` and a directory or
 `plain.txt`), with each tool's default for printing file names unless -H or -I is drawn; sorted
@@ -113,6 +114,8 @@ def args():
         out += ["--max-depth", str(rnd.randint(1, 3))]
     if rnd.random() < 0.15:
         out += ["-g", rnd.choice(["*.txt", "!*.log", "sub/**", "!sub/**", "*.rs", "!dir1/", "*.{txt,log}"])]
+    if rnd.random() < 0.12:
+        out += [rnd.choice(["-t", "-t", "-T"]), "rust"]
     if rnd.random() < 0.08:
         out += ["--max-filesize", str(rnd.choice([10, 50, 200]))]
     if rnd.random() < 0.15:
@@ -149,8 +152,19 @@ def paths(a):
     return a + rnd.choice([["plain.txt", "plain.txt"], [d, d], [".", d], [d, "."], ["plain.txt", "."], [d] + inner[:1], inner[:1] + [d]])
 
 
+def ours(a):
+    """The arguments as scrutate spells them: ripgrep's `-T NAME` is `-t !NAME`."""
+    out = []
+    for x in a:
+        if out[-1:] == ["-T"]:
+            out[-1:] = ["-t", "!" + x]
+        else:
+            out.append(x)
+    return out
+
+
 def run(tool, a):
-    cmd = (["rg", "-n", "--no-heading", "--no-messages"] if tool == "rg" else [BIN, "grep"]) + a
+    cmd = ["rg", "-n", "--no-heading", "--no-messages"] + a if tool == "rg" else [BIN, "grep"] + ours(a)
     if tool == "rg" and "--sort" in a:
         cmd.insert(cmd.index("--sort") + 1, "path")
     try:
