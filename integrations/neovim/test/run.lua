@@ -1,7 +1,8 @@
 -- Runs the plugin in a headless Neovim against a real scrutate binary:
 --   cd <a repository> && nvim --headless -u NONE -l <this file> <path to scrutate>
 -- The repository must be the one integrations/fixture.sh makes (two Python files). Exits 1 on a failure.
-local here = debug.getinfo(1, "S").source:sub(2):match("(.*/)")
+-- either separator: on Windows Neovim may give the script path with backslashes
+local here = debug.getinfo(1, "S").source:sub(2):match("(.*[/\\])")
 vim.opt.runtimepath:append(here .. "..")
 local bin = arg[1] or "scrutate"
 require("scrutate").setup({ bin = bin })
@@ -21,7 +22,8 @@ end
 local function quickfix()
   local out = {}
   for _, e in ipairs(vim.fn.getqflist()) do
-    table.insert(out, { file = vim.fn.bufname(e.bufnr), line = e.lnum, text = e.text })
+    -- Windows names a buffer with backslashes; the checks below use forward slashes
+    table.insert(out, { file = (vim.fn.bufname(e.bufnr):gsub("\\", "/")), line = e.lnum, text = e.text })
   end
   return out
 end
@@ -115,7 +117,7 @@ vim.cmd("cd src")
 vim.cmd("silent! %bwipeout!")
 local function opens(list, tail, line)
   for _, e in ipairs(list) do
-    if e.line == line and vim.fn.filereadable(e.file) == 1 and vim.fn.fnamemodify(e.file, ":p"):sub(-#tail) == tail then return true end
+    if e.line == line and vim.fn.filereadable(e.file) == 1 and vim.fn.fnamemodify(e.file, ":p"):gsub("\\", "/"):sub(-#tail) == tail then return true end
   end
   return false
 end
