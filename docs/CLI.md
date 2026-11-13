@@ -1062,116 +1062,115 @@ scrutate hook grep
 scrutate hook stats [--json]
 ```
 
-`setup` adds one MCP server entry named `scrutate` to an agent's configuration. The entry runs
-this binary by its absolute path (an agent started from the dock has no shell `PATH`) with the
-argument `serve`, so the server serves the repository the agent starts it in. With `--project`
-the entry goes into the agent's file in the current repository (its top, the directory that
-holds `.git`) and runs `--root <that directory> serve`.
+`setup` adds one MCP server entry named `scrutate` to an agent's configuration. It runs this
+binary by absolute path (an agent started from the dock has no shell `PATH`) with `serve`, so the
+server serves the repository the agent starts it in. With `--project` the entry goes into the
+agent's file at the top of the current repository (the directory that holds `.git`) and runs
+`--root <that directory> serve`.
 
-| Agent | User file | `--project` | Entry |
-|---|---|---|---|
-| `claude` | `~/.claude.json` (`$CLAUDE_CONFIG_DIR/.claude.json` when set), top-level `mcpServers`; through `claude mcp add-json scrutate JSON --scope user` when `claude` is on `PATH` | `.mcp.json` | `{"type": "stdio", "command": ..., "args": [...]}` |
-| `codex` | `$CODEX_HOME/config.toml` (default `~/.codex`) | none: an error | `[mcp_servers.scrutate]` with `command` and `args` |
-| `opencode` | `opencode.jsonc` or `opencode.json` in `$XDG_CONFIG_HOME/opencode` (default `~/.config/opencode`): the first that exists, else a new `opencode.json` | the same names at the top | `mcp.scrutate` = `{"type": "local", "command": [...], "enabled": true}`; in a file whose `mcp` already holds `servers`, `mcp.servers.scrutate` without `enabled` |
-| `cursor` | `~/.cursor/mcp.json` | `.cursor/mcp.json` | `mcpServers.scrutate` = `{"command": ..., "args": [...]}` |
-| `gemini` | `~/.gemini/settings.json` | `.gemini/settings.json` | `mcpServers.scrutate` = `{"command": ..., "args": [...]}` |
+| Agent | User file | `--project` | Entry | `--instructions` file (user; `--project`) | `--hook` |
+|---|---|---|---|---|---|
+| `claude` | `~/.claude.json` (`$CLAUDE_CONFIG_DIR/.claude.json` when set), top-level `mcpServers`; through `claude mcp add-json scrutate JSON --scope user` when `claude` is on `PATH` | `.mcp.json` | `{"type": "stdio", "command": ..., "args": [...]}` | `~/.claude/CLAUDE.md`; `CLAUDE.md` | the Grep hook, below |
+| `codex` | `$CODEX_HOME/config.toml` (default `~/.codex`) | none: an error | `[mcp_servers.scrutate]` with `command` and `args` | `$CODEX_HOME/AGENTS.md` | a note: Codex has `PreToolUse` hooks but searches by running `rg` in its shell, with no search tool |
+| `opencode` | `opencode.jsonc` or `opencode.json` in `$XDG_CONFIG_HOME/opencode` (default `~/.config/opencode`): the first that exists, else a new `opencode.json` | the same names at the top | `mcp.scrutate` = `{"type": "local", "command": [...], "enabled": true}`; in a file whose `mcp` already holds `servers`, `mcp.servers.scrutate` without `enabled` | `~/.config/opencode/AGENTS.md`; `AGENTS.md` | a note: opencode's hooks are JavaScript plugins (`tool.execute.before`), not commands |
+| `cursor` | `~/.cursor/mcp.json` | `.cursor/mcp.json` | `mcpServers.scrutate` = `{"command": ..., "args": [...]}` | none (Cursor keeps a user's rules in its settings); `AGENTS.md` | a note: cursor-agent has a `preToolUse` hook, but its search tool takes other arguments and answers in another form |
+| `gemini` | `~/.gemini/settings.json` | `.gemini/settings.json` | `mcpServers.scrutate` = `{"command": ..., "args": [...]}` | `~/.gemini/GEMINI.md`; `GEMINI.md` | a note: Gemini CLI has a `BeforeTool` hook, but its search tool takes other arguments and answers in another form |
 
-Every other key, server, comment and blank line of the file stays as it was, byte for byte: a
-JSON or JSONC file is edited as text, one member put in or taken out, never rewritten from a
-parse; `config.toml` gets one table appended. A file that does not parse, or where a key on the
-way to the entry is not an object, is named in an error (exit 2) and left as it is, and nothing
-of that run is written. The new text goes to a temporary file in the same directory, which
-replaces the file by rename and keeps its permissions; a symbolic link is followed and stays. A
-file that changed between the read and the write is not written, and the error says to run setup
-again. A missing file is created (with its directory) holding only the entry. Run twice, setup
-leaves the file as it is; a `scrutate` entry that runs something else is replaced.
+Every other key, server, comment and blank line stays byte for byte: JSON and JSONC files are
+edited as text, one member in or out, never rewritten from a parse; `config.toml` gets one table
+appended. A file that does not parse, or where a key on the way to the entry is not an object, is
+named in an error (exit 2), and the run writes nothing. The new text goes to a temporary file in
+the same directory, renamed over the file with its permissions kept; a symbolic link is followed
+and stays. A file that changed between read and write is not written, and the error says to run
+setup again. A missing file is created, with its directory, holding only the entry. A second run
+changes nothing; a `scrutate` entry that runs something else is replaced.
 
-`--uninstall` takes out everything `setup` adds for that agent and scope: the `scrutate` entry,
-the Grep hook (any `PreToolUse` group with matcher `Grep` whose one command is a `scrutate`
-binary's `hook grep`, wherever that binary is now) and the marked block, so each file is again
-what it was before `setup`, byte for byte; `--hook` and `--instructions` are accepted with it and
-change nothing; a file `setup` created is deleted when nothing else is left in it. Claude Code's
-user file goes through `claude mcp remove scrutate --scope user` when `claude` is on `PATH`;
-Claude Code writes that whole file itself (as its running sessions do all the time), and keeps an
-empty `mcpServers` it made. `--dry-run` prints each file it would change with the lines it would
-add (`+`) or take out (`-`), and the commands it would run, and writes and runs nothing.
+`--uninstall` takes out everything `setup` adds for that agent and scope, leaving each file byte
+for byte as before: the `scrutate` entry, the marked block, and the Grep hook (any `PreToolUse`
+group with matcher `Grep` whose one command is a `scrutate` binary's `hook grep`, wherever that
+binary is now). `--hook` and `--instructions` are accepted with it and change nothing. A file
+`setup` created is deleted when nothing else is left in it. Claude Code's user file goes through
+`claude mcp remove scrutate --scope user` when `claude` is on `PATH`; Claude Code writes that
+whole file itself (its running sessions do so all the time) and keeps an empty `mcpServers` it
+made. `--dry-run` writes and runs nothing: it prints each file it would change, with the lines it
+would add (`+`) or take out (`-`), and the commands it would run.
 
 Claude Code asks once before it starts a server of a project's `.mcp.json`. Gemini CLI starts a
 stdio server only in a folder it trusts (`gemini trust`, or `~/.gemini/trustedFolders.json`);
 `setup gemini` says so and leaves trust to you.
 
-`--hook` (Claude Code) adds a `PreToolUse` group to Claude Code's settings,
-`~/.claude/settings.json` (`$CLAUDE_CONFIG_DIR/settings.json`), or `.claude/settings.json` with
-`--project`:
+`--hook` (Claude Code only; the table says why the others get a note and no hook) adds this
+`PreToolUse` group to `~/.claude/settings.json` (`$CLAUDE_CONFIG_DIR/settings.json`), or to
+`.claude/settings.json` with `--project`:
 `{"matcher": "Grep", "hooks": [{"type": "command", "command": "<binary> hook grep", "timeout": 10}]}`.
-On Windows Claude Code runs a hook command in Git Bash, or in PowerShell when it finds no Git
-Bash, so the command is the binary's path with `/` (`C:/Users/me/.cargo/bin/scrutate.exe hook
-grep`), which both run as written; a path with a space or another character either shell reads
-goes as `"command": "<binary>", "args": ["hook", "grep"]`, which Claude Code starts with no shell.
-The other agents get a note and no hook: Codex has `PreToolUse` hooks but searches by running `rg`
-in its shell, with no search tool of its own; cursor-agent has a `preToolUse` hook and Gemini CLI
-a `BeforeTool` hook, but their search tools take other arguments and answer in another form;
-opencode's hooks are JavaScript plugins (`tool.execute.before`), not commands. The hook runs only
-where Claude Code's Grep tool is enabled: a setup that turns Grep off, or a `--tools` list without
-it, never runs it (`claude -p --tools Grep` does).
+On Windows Claude Code runs a hook command in Git Bash, else PowerShell, so the command is the
+binary's path with `/` (`C:/Users/me/.cargo/bin/scrutate.exe hook grep`), which both run as
+written; a path with a space or another character either shell reads goes as
+`"command": "<binary>", "args": ["hook", "grep"]`, which Claude Code starts with no shell. The
+hook runs only where Claude Code's Grep tool is enabled: never under a setup that turns Grep off
+or a `--tools` list without it (`claude -p --tools Grep` runs it).
 
-`--instructions` adds a short block that tells the agent to use scrutate's tools, between
-`<!-- scrutate:begin -->` and `<!-- scrutate:end -->`, after a blank line at the end of the
-agent's instruction file: Claude Code `~/.claude/CLAUDE.md` (`CLAUDE.md`), Codex
-`$CODEX_HOME/AGENTS.md`, opencode `~/.config/opencode/AGENTS.md` (`AGENTS.md`), Cursor
-`AGENTS.md` with `--project` only (it keeps a user's rules in its settings), Gemini CLI
-`~/.gemini/GEMINI.md` (`GEMINI.md`); the names in parentheses are the `--project` files at the
-top. Without the option no instruction file is read or written.
+`--instructions` appends a short block telling the agent to use scrutate's tools, between
+`<!-- scrutate:begin -->` and `<!-- scrutate:end -->`, after a blank line, to the instruction
+file in the table (the `--project` file at the top). Without the option no instruction file is
+read or written.
 
 `hook grep` is the hook program. It reads on standard input the JSON Claude Code sends before a
 Grep call (`hook_event_name`, `tool_name`, `tool_input`, `cwd`, `session_id`) and answers with
-Engine A's matches: the lines ripgrep gives for the arguments Grep passes it (`--hidden`,
-`--glob '!.git'` and the other version control directories, `--max-columns 500`, `-U
---multiline-dotall` for `multiline`, `-i`, `-A`, `-B`, `-C` or `context`, the `glob` argument
-split at whitespace and at commas outside braces, `type`), worded as Grep words them:
-`path:N:text` for a match and `path-N-text` for a context line, the path from the session's
-directory (with `\` on Windows, where the session's directory is matched without case, as Node's
-`path.relative` does, and the path is the file's real one with its letters' case on disk), `--`
-between groups when context was asked, no number for `-n: false`, no path when the path searched
-is a file, `[Omitted long matching line]` for a line longer than 500 characters; `Found N files`
-and the paths for `files_with_matches`, newest first as Grep sorts them; the counts and
-`Found N total occurrences across M files.` for `count`. Matches come in path order. Grep's
-paging applies (`head_limit`, 250 lines when not given and none for 0, and `offset`, with Grep's
-`[Showing results with pagination = ...]`), then the bound of the MCP tools: at most 24,000
-bytes (`SCRUTATE_MAX_BYTES`, held between 1,000 and 1,000,000), whole lines, ending with
-`(N more lines not shown: call Grep again with offset=K, or narrow the request)` when it cut. It
-prints
-`{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "Grep result:\n..."}}`,
-and Claude Code gives the reason to the model in place of Grep's result. The header line
-`Grep result:` is the whole cost of an answer the bound does not cut: 13 bytes more than Grep's
-own result. In Claude Code 2.1.323's own code the reason of a hook from the user's settings
-files reaches the model whole, and the reason of another hook is cut at 2,000 characters.
+Engine A's matches for the arguments Grep passes ripgrep: `--hidden`, `--glob '!.git'` and the
+other version control directories, `--max-columns 500`, `-U --multiline-dotall` for `multiline`,
+`-i`, `-A`, `-B`, `-C` or `context`, `type`, and `glob` split at whitespace and at commas outside
+braces. The answer is worded as Grep words it:
 
-It fails open (prints nothing and exits 0, so Grep runs as if there were no hook) for any other
-tool or event, an argument it does not know, `-o`, a `glob` with a `/` other than a leading
-`**/` (ripgrep matches it from its own working directory), a `glob` with a `\` on Windows (a
-separator there), a `type` whose files differ between ripgrep and scrutate's registry (it takes
-`asm`, `cmake`, `cs`, `csharp`, `dart`, `elisp`, `elm`, `erlang`, `fish`, `gleam`, `go`,
-`julia`, `kotlin`, `lua`, `nix`, `py`, `python`, `racket`, `rst`, `rust`, `solidity`, `swift`
-and `yaml`), a path that starts with `~`, goes through a symbolic link, is not on a drive letter
-on Windows (a `\\server\share` path, which Claude Code searches another way) or lies outside the
-project (`$CLAUDE_PROJECT_DIR`, else `cwd`), a `deny` or `ask` rule for `Read` or `Grep` in a
-Claude Code settings file (the user's, the project's, the local one and the managed one, on
-Windows `C:\Program Files\ClaudeCode\managed-settings.json`, with every `*.json` in the
-`managed-settings.d` directory beside it), managed policy it does not read (a configuration
-profile's `com.anthropic.claudecode.plist` under `/Library/Managed Preferences` on macOS, the
-registry key `SOFTWARE\Policies\ClaudeCode` under HKLM or HKCU on Windows: where one exists, Grep
-runs and applies it), an invalid pattern, no match, a file name that is not UTF-8, a binary file
-that matched, a file it could not read, and a search longer than 3 seconds. It never exits with
-another code (exit code 2 would block the call), and it reads no `.scrutate.toml` or other
-scrutate configuration file.
+| Case | Wording |
+|---|---|
+| lines | `path:N:text` for a match, `path-N-text` for a context line, `--` between groups when context was asked, no number for `-n: false`, no path when the path searched is a file |
+| paths | from the session's directory; on Windows with `\`, the session's directory matched without case (as Node's `path.relative` does), and the file's real path with its case on disk |
+| long lines | `[Omitted long matching line]` for a line longer than 500 characters |
+| `files_with_matches` | `Found N files` and the paths, newest first as Grep sorts them |
+| `count` | the counts and `Found N total occurrences across M files.` |
+
+Matches come in path order. Grep's paging applies (`head_limit`, 250 lines when not given and
+none for 0, and `offset`, with Grep's `[Showing results with pagination = ...]`), then the MCP
+tools' bound: at most 24,000 bytes (`SCRUTATE_MAX_BYTES`, held between 1,000 and 1,000,000),
+whole lines, ending with `(N more lines not shown: call Grep again with offset=K, or narrow the request)`
+when it cut. It prints
+`{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "Grep result:\n..."}}`,
+and Claude Code gives the model the reason in place of Grep's result. The header line
+`Grep result:` is the whole cost of an uncut answer: 13 bytes more than Grep's own result. In
+Claude Code 2.1.323's own code, a hook reason from the user's settings files reaches the model
+whole; another hook's is cut at 2,000 characters.
+
+It fails open (prints nothing and exits 0, so Grep runs as if there were no hook) on:
+
+- another tool or event, an argument it does not know, or `-o`;
+- a `glob` with a `/` other than a leading `**/` (ripgrep matches it from its own working
+  directory), or with a `\` on Windows (a separator there);
+- a `type` whose files differ between ripgrep and scrutate's registry (it takes `asm`, `cmake`,
+  `cs`, `csharp`, `dart`, `elisp`, `elm`, `erlang`, `fish`, `gleam`, `go`, `julia`, `kotlin`,
+  `lua`, `nix`, `py`, `python`, `racket`, `rst`, `rust`, `solidity`, `swift` and `yaml`);
+- a path that starts with `~`, goes through a symbolic link, lies outside the project
+  (`$CLAUDE_PROJECT_DIR`, else `cwd`), or on Windows is not on a drive letter (a `\\server\share`
+  path, which Claude Code searches another way);
+- a `deny` or `ask` rule for `Read` or `Grep` in a Claude Code settings file: the user's, the
+  project's, the local or the managed one (on Windows
+  `C:\Program Files\ClaudeCode\managed-settings.json`, with every `*.json` in the
+  `managed-settings.d` directory beside it);
+- managed policy it does not read: a configuration profile's `com.anthropic.claudecode.plist`
+  under `/Library/Managed Preferences` on macOS, the registry key `SOFTWARE\Policies\ClaudeCode`
+  under HKLM or HKCU on Windows (where one exists, Grep runs and applies it);
+- an invalid pattern, no match, a non-UTF-8 file name, a binary file that matched, a file it
+  could not read, or a search longer than 3 seconds.
+
+It never exits with another code (exit code 2 would block the call) and reads no
+`.scrutate.toml` or other scrutate configuration file.
 
 `hook stats` prints the counter. Each answered call appends one line to
 `$XDG_STATE_HOME/scrutate/hook-grep.jsonl` (default `~/.local/state/scrutate/`; on Windows
-`%LOCALAPPDATA%\scrutate\`): `{"session", "grep_bytes", "sent_bytes", "time"}`, where
-`grep_bytes` is the size of the result Grep would have returned for that call (every match
-Engine A found, worded and paged as Grep does) and `sent_bytes` the size of the reason sent. The
-text form gives one line per session, in the order the sessions began,
+`%LOCALAPPDATA%\scrutate\`): `{"session", "grep_bytes", "sent_bytes", "time"}`, with `grep_bytes`
+the size of the result Grep would have returned (every match Engine A found, worded and paged as
+Grep does) and `sent_bytes` the size of the reason sent. The text form gives one line per
+session, in the order the sessions began,
 `session ID: N calls, Grep would have returned A bytes, scrutate sent B (C saved)`, then the same
 for `all sessions`; `--json` prints
 `{"counter": PATH, "sessions": [{"session", "calls", "grep_bytes", "sent_bytes", "saved_bytes"}], "total": {...}}`.
