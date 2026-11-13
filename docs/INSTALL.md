@@ -33,7 +33,8 @@ The logs each row names are in `bench/results/platforms/`.
 
 ## From a release archive
 
-No archive is published for 0.1.0: the release workflow has not run. Once releases exist:
+No archive is published for 0.1.0: the repository is public on GitHub, and the release workflow
+has not run. Once releases exist:
 
 ```sh
 v=0.1.0; t=x86_64-unknown-linux-gnu
