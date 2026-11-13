@@ -23,7 +23,7 @@ The fifteen items the mission asks for (section 11), each with where it lives in
 | 8 | Security assessment | docs/SECURITY.md |
 | 9 | Reproducible competitive benchmarks | docs/LEADERBOARD.md (generated), bench/leaderboard.py, bench/indexed.py, bench/corpora.py (pinned corpora), bench/results/ (raw JSON and logs) |
 | 10 | Performance and memory measurements | docs/LEADERBOARD.md (wall time, CPU time, peak memory per benchmark and tool; indexed latency percentiles, index time and size), docs/BENCHMARKS.md (start-up, concurrency, Engine B index metrics) |
-| 11 | Documentation | docs/ (this directory, with the release checklist in docs/RELEASING.md and first questions in docs/FAQ.md), README.md, CHANGELOG.md, CONTRIBUTING.md, GLOSSARY.md, llms.txt (the documents for language models, generated), CITATION.cff |
+| 11 | Documentation | docs/ (this directory, with the release checklist in docs/RELEASING.md and first questions in docs/FAQ.md), README.md, CHANGELOG.md, CONTRIBUTING.md, GLOSSARY.md, CITATION.cff |
 | 12 | Remaining defects and incomplete requirements | docs/RELEASE_READINESS.md, docs/TRACEABILITY.md (PARTIAL, FAIL and BLOCKED rows) |
 | 13 | Release-readiness assessment | docs/RELEASE_READINESS.md |
 | 14 | Future engineering roadmap | docs/ROADMAP.md |

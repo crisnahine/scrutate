@@ -117,7 +117,7 @@ python3 tools/gen_assets.py capture --bin target/release/scrutate --repo $C     
 python3 tools/gen_assets.py capture-hero --bin target/release/scrutate --repo crates/scrutate   # the hero's searches and match spans
 python3 tools/gen_assets.py              # the README's images, from the two captures, the palette and rust-version;
                                          # then render social-preview.png again (the command is in the script's head)
-python3 tools/gen_doc_assets.py          # banners, diagrams, the hub and llms.txt; then --check: links, anchors, heads
+python3 tools/gen_doc_assets.py          # banners, diagrams and the hub; then --check: links, anchors, heads
 python3 tools/scrub_home.py              # last: logs and results write ~ for the home directory
 ```
 

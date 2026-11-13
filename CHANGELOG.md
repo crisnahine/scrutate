@@ -38,9 +38,8 @@ version rebuilds incompatible indexes automatically and this is never considered
   key, a pattern that does not compile or has no group, a built-in name or extension) is one error
   naming the file and the line, and exit 2.
 - A configuration file that does not parse is one line naming the file and the line.
-- docs/FAQ.md answers the first questions about scrutate, each with a link to its evidence;
-  `llms.txt`, written by `tools/gen_doc_assets.py`, lists every Markdown document with the question it
-  answers for language models; `CITATION.cff` gives GitHub's "Cite this repository".
+- docs/FAQ.md answers the first questions about scrutate, each with a link to its evidence, and
+  `CITATION.cff` gives GitHub's "Cite this repository".
 - The website https://scrutate.github.io (repository `scrutate/scrutate.github.io`) says what
   scrutate does and how to start; the README's top links and `CITATION.cff`'s `url` point to it.
 - `.github/FUNDING.yml` shows GitHub's Sponsor button on the repository, with GitHub Sponsors and
@@ -49,7 +48,7 @@ version rebuilds incompatible indexes automatically and this is never considered
 ### Changed
 - The repository lives at github.com/scrutate/scrutate, under the `scrutate` organization; the
   old address redirects. The install commands, the GitHub Action, the CI templates, the package
-  definitions, `CITATION.cff` and `llms.txt` name the new one.
+  definitions and `CITATION.cff` name the new one.
 - With reduced motion on, the README and document images keep their typing, counts, marks and
   cuts running and stop only what travels or grows: the reticle, the wordmark's letters and
   cursor, a block running along an arrow, a pulse. Before, they showed only slow cross-fades.

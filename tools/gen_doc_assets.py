@@ -3,7 +3,7 @@
 
 Run from anywhere (Python 3.9 or newer, standard library only):
 
-    python3 tools/gen_doc_assets.py            # write docs/README.md, llms.txt, the heads and docs/assets/banner-*, diagram-*
+    python3 tools/gen_doc_assets.py            # write docs/README.md, the heads and docs/assets/banner-*, diagram-*
     python3 tools/gen_doc_assets.py --check    # fail when a committed file differs from what this script writes,
                                                # an SVG is malformed or too large, or a link or #anchor is broken
 
@@ -128,12 +128,6 @@ GENERATORS = {
     "docs/DEPENDENCIES.md": "tools/gen_dependencies_md.py",
 }
 HUB = "docs/README.md"
-LLMS = "llms.txt"
-RAW = "https://raw.githubusercontent.com/scrutate/scrutate/main/"
-SUMMARY = ("Universal instant code search and persistent code intelligence, in one Rust binary. Engine A searches any "
-           "folder with no index; Engine B indexes a repository for ranked search by meaning or name, definitions, "
-           "callers, references and the tests a git diff touches. A CLI, an MCP server for AI coding agents, a "
-           "language server and Python bindings. No network use. MIT OR Apache-2.0.")
 HEAD_START = "<!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->"
 HEAD_END = "<!-- End of head. -->"
 
@@ -1089,19 +1083,6 @@ def hub():
     return "\n".join(out)
 
 
-def llms_txt():
-    """The documents for language models, in the llms.txt format (llmstxt.org): the Markdown documents of each
-    group with the question each answers, linked as raw files so an agent reads Markdown, not a rendered page."""
-    out = ["# Scrutate", "", "> " + SUMMARY, "",
-           "Each link is the raw Markdown of a document in the repository, followed by the question it answers.",
-           "", "## Start here", "",
-           f"- [README]({RAW}README.md): What does scrutate do, how do I start, and what was measured?"]
-    for g, name, _ in GROUPS:
-        out += ["", "## Optional" if g == "work" else f"## {name}", ""]
-        out += [f"- [{d[2]}]({RAW}{d[1]}): {d[3]}" for d in DOCS if d[5] == g and d[1].endswith(".md")]
-    return "\n".join(out) + "\n"
-
-
 # ---------------------------------------------------------------- writing and checking
 
 def planned():
@@ -1119,7 +1100,6 @@ def planned():
     for name, fn in DIAGRAMS.items():
         files[f"docs/assets/diagram-{name}.svg"] = fn().svg()
     files[HUB] = hub()
-    files[LLMS] = llms_txt()
     for d in headed():
         if d[1] in GENERATORS:
             continue
