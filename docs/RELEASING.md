@@ -231,10 +231,9 @@ R-6.1, R-9.10 and R-12.2 in docs/TRACEABILITY.md are PASS from run 43013926055, 
 run of `ci.yml`. R-6.12 and R-13.9 stay PARTIAL until `release.yml` and `benchmarks.yml` have run
 on a runner: flip them from the recorded runs, not before.
 
-When the repository goes public: enable GitHub Sponsors on the `crisnahine` account (only the
-account's owner can enrol it), then add `.github/FUNDING.yml` with `github: crisnahine` and a
-"Sponsor" line to the "Sponsor and hire" section of README.md. Not before: a sponsor button that
-leads nowhere is worse than none.
+GitHub Sponsors is on for the `crisnahine` account, and `.github/FUNDING.yml` shows the Sponsor
+button; the "Sponsor and hire" section of README.md links the same page. A funding link that
+changes goes in both.
 
 After the release is out: take `open-pull-requests-limit: 0` out of `.github/dependabot.yml`.
 Version updates are paused until then, because each Dependabot pull request runs `ci.yml` on six
