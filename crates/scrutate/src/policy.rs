@@ -97,6 +97,12 @@ pub(super) struct Policy {
 
 impl Policy {
     pub(super) fn read<M: Machine + ?Sized>(m: &M, asked: usize) -> Policy {
+        // one thread, as if asked for: wasi starts no other
+        #[cfg(target_os = "wasi")]
+        let asked = {
+            let _ = asked;
+            1
+        };
         let asked = asked.min(MAX_THREADS);
         if asked != 0 {
             // every rule keeps a number asked for: the cores are not asked of the system (system calls)

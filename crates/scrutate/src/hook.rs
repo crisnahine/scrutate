@@ -364,6 +364,10 @@ struct Item {
 /// Engine A's answer as Grep's lines, in path order (by modification time, newest first, for
 /// `files_with_matches`, as Grep sorts them); `None` when it cannot stand for ripgrep's.
 fn search(ask: &Ask) -> Option<Vec<Item>> {
+    // no thread to keep the deadline on wasi: Grep answers there
+    if cfg!(target_os = "wasi") {
+        return None;
+    }
     let q = Query {
         pattern: Pattern {
             text: if ask.multiline { format!("(?s){}", ask.pattern) } else { ask.pattern.clone() },

@@ -694,6 +694,9 @@ fn document_symbol(lines: &mut Lines, rel: &str, r: &ChunkRow) -> Value {
 
 /// Serve until `exit` or end of input. -> the process exit code (0 only after `shutdown`).
 pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
+    if cfg!(target_os = "wasi") {
+        bail!("lsp is not in the wasi build: it needs threads");
+    }
     let mut srv = Server { root: root.to_path_buf(), root_given, session: None, docs: HashMap::new(), saves: None, initialized: false, shutdown: false };
     let mut input = std::io::stdin().lock();
     while let Some(body) = read_message(&mut input)? {

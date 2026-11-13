@@ -415,6 +415,9 @@ pub fn tsquery_each(
     on_capture: &mut dyn FnMut(Capture),
 ) -> Result<usize> {
     use rayon::prelude::*;
+    if cfg!(target_os = "wasi") {
+        bail!("tsquery is not in the wasi build: it needs threads");
+    }
     let (spec, language, q) = compile_query(lang, query)?;
     let names: Vec<String> = q.capture_names().iter().map(|n| n.to_string()).collect();
     // the code index's record saves reading a file whose captures are cached

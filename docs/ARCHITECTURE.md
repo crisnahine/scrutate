@@ -902,6 +902,22 @@ Grep call onto an Engine A query and file set the way Grep calls ripgrep (a `typ
 bounds the result as an MCP answer is bounded; an argument it cannot map, or any error, lets Grep
 run.
 
+### WebAssembly (`wasm32-wasip1`)
+The crate builds for `wasm32-wasip1`, where a process cannot start a thread: `std::thread::spawn`
+fails there, and so does every scope that spawns. Each branch for it sits under
+`cfg(target_os = "wasi")` beside the native code, which it leaves as it is. The thread rules
+(`policy.rs`) take one thread as if it were asked for, so a large file is never split into ranges
+and no read is shared out. Engine A's `schedule` walks with the sequential walker
+(`WalkBuilder::build`) and searches each file on the calling thread as it is found. A bounded
+channel between a producer and a consumer on one thread waits forever once it is full, so on wasi
+the records of a file wait in a vector and go to the caller before the next file is opened.
+`vendor/ignore` runs a parallel walk's one worker on the calling thread, so `files`, the text
+index's walk and every other caller of `build_walker` work unchanged. rayon's global pool falls
+back to the calling thread by itself, which is what the index build's `par_iter` uses. What has to
+run beside the caller is not in that build: `serve`, `lsp` and `tsquery` fail with a message that
+says so, and the Grep hook lets Grep answer, since it has no thread to keep its deadline. The
+session socket is Unix only and was already absent there.
+
 ## Models (`models/`, `models.rs`)
 `semantic.npz` (14.6 MB: code-word vocabulary tables and projections) and `ranker.npz` (87 KB)
 are embedded in the binary with `include_bytes!`; `SCRUTATE_SEMANTIC` / `SCRUTATE_RANKER` can

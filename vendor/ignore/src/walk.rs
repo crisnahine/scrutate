@@ -1537,6 +1537,10 @@ impl WalkParallel {
             }
         }
         // Create the workers and then wait for them to finish.
+        #[cfg(target_os = "wasi")]
+        {
+            self.grow = None;
+        }
         let quit_now = Arc::new(AtomicBool::new(false));
         let active_workers = Arc::new(AtomicUsize::new(threads));
         let (extra, want) = match self.grow.take() {
@@ -1571,6 +1575,7 @@ impl WalkParallel {
             workers: std::sync::Mutex::new(workers.split_off(threads)),
         };
         let spare = &spare;
+        #[cfg(not(target_os = "wasi"))]
         std::thread::scope(|s| {
             let handles: Vec<_> = workers
                 .into_iter()
@@ -1580,9 +1585,17 @@ impl WalkParallel {
                 handle.join().unwrap();
             }
         });
+        // wasi starts no thread: the one worker runs on the calling thread
+        #[cfg(target_os = "wasi")]
+        std::thread::scope(|s| {
+            workers.into_iter().for_each(|worker| worker.run(s, spare))
+        });
     }
 
     fn threads(&self) -> usize {
+        if cfg!(target_os = "wasi") {
+            return 1;
+        }
         if self.threads == 0 {
             std::thread::available_parallelism().map_or(1, |n| n.get()).min(12)
         } else {

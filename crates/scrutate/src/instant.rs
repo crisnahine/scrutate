@@ -11,6 +11,9 @@
 //! rules, or a list) and a cancel flag the search reads and never sets. Results stream out as they
 //! are found: `Record`s, each of one kind, or plain lines written by the search threads.
 
+// wasi's `schedule` leaves out the thread rules and the code that starts threads
+#![cfg_attr(target_os = "wasi", allow(dead_code))]
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -2263,6 +2266,7 @@ fn hit_channel() -> (mpsc::SyncSender<Vec<Record>>, mpsc::Receiver<Vec<Record>>)
 }
 
 /// Waits while `HIT_BATCHES` batches wait for the caller.
+#[cfg(not(target_os = "wasi"))]
 fn send(c: &Counters, tx: &mpsc::SyncSender<Vec<Record>>, batch: Vec<Record>) {
     #[cfg(test)]
     c.most_queued.fetch_max(c.queued.fetch_add(1, Ordering::Relaxed) + 1, Ordering::Relaxed);
@@ -2272,6 +2276,7 @@ fn send(c: &Counters, tx: &mpsc::SyncSender<Vec<Record>>, batch: Vec<Record>) {
 }
 
 /// Hand the records to the caller in arrival order, until every sender is gone.
+#[cfg(not(target_os = "wasi"))]
 fn drain(rx: mpsc::Receiver<Vec<Record>>, c: &Counters, mut on_hit: impl FnMut(Record)) {
     for batch in rx {
         #[cfg(test)]
@@ -2282,6 +2287,25 @@ fn drain(rx: mpsc::Receiver<Vec<Record>>, c: &Counters, mut on_hit: impl FnMut(R
     tests::MOST_QUEUED.with(|m| m.set(m.get().max(c.most_queued.load(Ordering::Relaxed))));
     #[cfg(not(test))]
     let _ = c;
+}
+
+#[cfg(target_os = "wasi")]
+thread_local! {
+    /// The batches of the file being searched: on one thread a full channel would wait forever.
+    static HELD: std::cell::RefCell<Vec<Vec<Record>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(target_os = "wasi")]
+fn send(_: &Counters, _: &mpsc::SyncSender<Vec<Record>>, batch: Vec<Record>) {
+    HELD.with_borrow_mut(|held| held.push(batch));
+}
+
+/// Hand the records held so far to the caller, in arrival order.
+#[cfg(target_os = "wasi")]
+fn take_held(on_hit: &mut dyn FnMut(Record)) {
+    for batch in HELD.with_borrow_mut(std::mem::take) {
+        batch.into_iter().for_each(&mut *on_hit);
+    }
 }
 
 fn stats(c: &Counters, t0: Instant, stop: &Stop) -> Stats {
@@ -2344,6 +2368,7 @@ fn run_memory(
     }
     let (tx, rx) = hit_channel();
     let c = &counters;
+    #[cfg(not(target_os = "wasi"))]
     std::thread::scope(|s| {
         let matcher = &matcher;
         s.spawn(move || {
@@ -2359,6 +2384,20 @@ fn run_memory(
         });
         drain(rx, c, &mut *on_hit);
     });
+    #[cfg(target_os = "wasi")]
+    {
+        drop(rx);
+        let mut fw = file_worker(q);
+        let r = Run { matcher: &matcher, q, f, p, c, stop, tx: &tx, plain, labels: &[], raw: None };
+        for (name, bytes) in order {
+            if stop.is_set() {
+                break;
+            }
+            count_file(&r, q.want_bytes.then_some(bytes.len() as u64));
+            source::search(&mut fw, &r, &mut source::Bytes(bytes), Arc::from(name.as_str()), false);
+            take_held(on_hit);
+        }
+    }
     Ok(stats(&counters, t0, stop))
 }
 
@@ -2629,6 +2668,7 @@ impl<'a> Threads<'a> {
 /// third of a one-file search past start-up). Past `small_tree_files` files that walk stops and
 /// the parallel walk skips what it searched; walk errors count only when that walk finished (the
 /// parallel walk meets them again otherwise).
+#[cfg(not(target_os = "wasi"))]
 fn schedule(feed: Feed, s: &Common, on_hit: &mut dyn FnMut(Record)) -> Result<()> {
     let (q, f, p, c, stop) = (s.q, s.f, s.p, s.c, s.stop);
     let roots = match feed {
@@ -2791,6 +2831,50 @@ fn schedule(feed: Feed, s: &Common, on_hit: &mut dyn FnMut(Record)) -> Result<()
         drain(rx, c, &mut *on_hit);
         walk.join().map_err(|_| anyhow!("search worker panicked"))
     })
+}
+
+/// `schedule` on wasi, which starts no thread: the calling thread walks in order and searches each
+/// file as it is found, handing its records over before the next.
+#[cfg(target_os = "wasi")]
+fn schedule(feed: Feed, s: &Common, on_hit: &mut dyn FnMut(Record)) -> Result<()> {
+    let (q, f, c, stop) = (s.q, s.f, s.c, s.stop);
+    let (tx, _rx) = hit_channel();
+    let r = s.run(s.matcher, &tx);
+    let mut fw = file_worker(q);
+    match feed {
+        Feed::List(files, stop_at) => {
+            let items = Items::List { files, next: AtomicUsize::new(0), stop_at };
+            while !stop.is_set() {
+                let Some((path, rel, size, named)) = items.next(s) else { break };
+                search_one(&mut fw, &r, &path, rel, size, named);
+                take_held(on_hit);
+            }
+        }
+        Feed::Walk(roots) => {
+            for entry in walk_builder(roots, f, 1)?.build() {
+                if stop.is_set() {
+                    break;
+                }
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(e) => {
+                        c.failed(e.to_string());
+                        continue;
+                    }
+                };
+                if !searchable(&entry) {
+                    c.met_dir(&entry);
+                    continue;
+                }
+                let size = if q.want_bytes { entry.metadata().ok().map(|m| m.len()) } else { None };
+                let rel = label(entry.path(), s.labels, f);
+                let named = f.paths_as_given && entry.depth() == 0;
+                search_one(&mut fw, &r, entry.path(), rel, size, named);
+                take_held(on_hit);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Search the given files (paths relative to `root`, as an index lists them) with exactly the

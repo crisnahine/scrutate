@@ -1618,6 +1618,9 @@ pub fn run() -> Result<i32> {
             })
         }
         Cmd::Serve { refresh_interval, watch, structured, short_tools } => {
+            if cfg!(target_os = "wasi") {
+                anyhow::bail!("serve is not in the wasi build: it needs threads");
+            }
             if cli.offset != 0 {
                 anyhow::bail!("--offset does nothing with serve: a tool call takes its own offset");
             }

@@ -47,6 +47,11 @@ incompatible index by itself, and that is never breaking.
   the README's "Sponsor and hire" section links both.
 
 ### Changed
+- The crate builds and runs on `wasm32-wasip1`, which starts no thread: the thread rules take
+  one thread, and Engine A, a parallel walk of the vendored `ignore`, `index`, `search`, `symbol`
+  and `callers` run on the calling thread. `serve`, `lsp` and `tsquery` fail there with a message
+  that says they need threads, and the Grep hook lets Grep answer
+  ([ARCHITECTURE](docs/ARCHITECTURE.md)). Native builds are unchanged.
 - The repository is now github.com/scrutate/scrutate, under the `scrutate` organization; the old
   address redirects, and the install commands, Action, CI templates, packages and
   `CITATION.cff` name the new one.
