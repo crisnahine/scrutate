@@ -29,90 +29,86 @@
   invalid pattern, a `--root` that is not an existing directory, a missing search path...),
   `130` interrupted (Ctrl-C, or stopped early for a reason other than `--max-results`).
   `grep --type-list` and `grep --version` need no pattern.
-- **Diagnostics**: an error is one line on stderr (`scrutate: error: ...`). With `--json`, or
-  `SCRUTATE_DIAGNOSTICS=json` for any command, it is one JSON record:
+- **Diagnostics**: an error is one stderr line (`scrutate: error: ...`); with `--json`, or
+  `SCRUTATE_DIAGNOSTICS=json` for any command, one JSON record
   `{"type": "error", "schema": 1, "message": "..."}` (`"internal_error"` for a bug).
 - **Streams**: results on stdout, diagnostics and progress on stderr. Piped output is plain
-  `path:line:text`; colour only on a terminal (`--no-color`, or `NO_COLOR` set to any non-empty
-  value, turns it off).
-- **Determinism**: `--sort` orders Engine A output as `rg --sort path` does: the paths in
+  `path:line:text`; colour only on a terminal, off with `--no-color` or a non-empty `NO_COLOR`.
+- **Determinism**: `--sort` orders Engine A output as `rg --sort path` does: paths in
   command-line order, under each its files by path compared part by part, then by line
   (`sub/deep/a.txt` before `sub/deep-x/b.txt`, `foo/mod.rs` before `foo.rs`); a file two paths
-  reach comes once under each. Default output is in completion order, for speed. `-c`, `-l` and
-  `--symbols` are always sorted (without `--sort`, `-c` and `-l` compare whole paths as strings,
-  all paths together). Engine B output is fully deterministic (ties broken by id).
+  reach comes once under each. The default is completion order, for speed. `-c`, `-l` and
+  `--symbols` always sort (without `--sort`, `-c` and `-l` compare whole paths as strings, all
+  paths together). Engine B output is deterministic (ties broken by id).
 - **Machine-readable output**: `--json` on every command that prints results (`stats` always
   prints JSON). Engine A emits JSON Lines with `"schema": 1` and `"type"` ∈ {`match`, `context`,
-  `count`, `file`, `binary`, `summary`, `symbol_group`}. Engine B commands emit one JSON
-  document, the answer's envelope `{"schema": 2, "result": ...}`, with `"stopped_at": N` when the
-  answer stopped at its limit `N` with more left; a `batch` record and the MCP server's
-  structured result carry the same envelope. The schema number changes only on incompatible
-  changes (in schema 1 the index commands printed the answer alone, and `refs` and the
-  `grep_code` answer carried a `schema` key of their own). `tsquery --json`, `check`, `stats`,
-  `languages` and `config` print a report of their own, not an answer. In `match` and `context`
-  records `spans` and `column` count bytes of `text` (an invalid byte prints as U+FFFD, three
-  bytes), and a span never runs past `text` into the line end; the Python bindings'
-  `Match.spans` and `Match.column` count the same way.
+  `count`, `file`, `binary`, `summary`, `symbol_group`}. Engine B commands emit one document,
+  `{"schema": 2, "result": ...}`, plus `"stopped_at": N` when the answer stopped at its limit `N`
+  with more left; a `batch` record and the MCP structured result carry the same envelope. The
+  schema number changes only on incompatible changes (in schema 1 the index commands printed the
+  bare answer, and `refs` and the `grep_code` answer carried their own `schema` key).
+  `tsquery --json`, `check`, `stats`, `languages` and `config` print their own report. In
+  `match` and `context` records, `spans` and `column` count bytes of `text` (an invalid byte
+  prints as U+FFFD, three bytes) and a span never runs past `text` into the line end; the Python
+  bindings' `Match.spans` and `Match.column` count the same way.
 - **Paths**: `scrutate grep` prints a path as the walk reached it, as grep and ripgrep do:
-  `dir/a.txt` for `dir/`, `./dir/a.txt` for `.`, an absolute path for an absolute one, relative
-  to `.` with no path (text, `--json`, `-c` and `-l` alike; with `--symbols`, the path under
-  `--root` the index names). Each line and count carries its path unless the only path given is
-  one file; `-H` (`--with-filename`) and `-I` (`--no-filename`) choose, the later winning. `-l`
-  and `--json` always carry the path. `find`, the index commands, the MCP tools and the LSP
-  server print paths relative to the repository root. On Windows `\` prints as `/` and a
-  verbatim drive path (`\\?\C:\x`) as `C:/x`; on Unix a backslash is part of a file name. A Unix
-  file name that is not UTF-8 prints as its own bytes in piped output, `-l` and `-c`, so
-  `scrutate grep -l x | xargs cat` opens it; in `--json` its `path` shows U+FFFD for the bad
-  bytes and the record gains `path_bytes`, the name's bytes as an array of numbers. Windows
-  names that are not valid UTF-16 print with U+FFFD. The index commands and the MCP tools show a
-  control character in a name as an escape (`\n`, `\x1b`) and a backslash doubled (`\\`), and
-  every command that takes a path or location reads that form back. `scrutate grep` does the
-  same in colour on a terminal and in `--symbols` text; its piped output prints the name as it
-  is, as grep and ripgrep do.
+  `dir/a.txt` for `dir/`, `./dir/a.txt` for `.`, absolute for absolute, relative to `.` with no
+  path (text, `--json`, `-c` and `-l` alike; with `--symbols`, the path under `--root` the index
+  names). Each line and count carries its path unless the only path given is one file; `-H`
+  (`--with-filename`) and `-I` (`--no-filename`) choose, the later winning; `-l` and `--json`
+  always carry it. `find`, the index commands, the MCP tools and the LSP server print paths from
+  the repository root. On Windows `\` prints as `/` and a verbatim drive path (`\\?\C:\x`) as
+  `C:/x`; on Unix a backslash is part of a file name. A non-UTF-8 Unix file name prints as its
+  own bytes in piped output, `-l` and `-c` (so `scrutate grep -l x | xargs cat` opens it); in
+  `--json` its `path` shows U+FFFD for the bad bytes and the record adds `path_bytes`, the name's
+  bytes as an array of numbers. Windows names that are not valid UTF-16 print with U+FFFD. The
+  index commands and MCP tools escape a control character in a name (`\n`, `\x1b`) and double a
+  backslash (`\\`), and every command that takes a path or location reads that form back.
+  `scrutate grep` does the same in colour on a terminal and in `--symbols` text; piped, it prints
+  the name as is, as grep and ripgrep do.
 - **Configuration**: the nearest `.scrutate.toml` from the current directory up to the
-  repository top (the directory that holds `.git` or `.scrutate`), else
+  repository top (the directory holding `.git` or `.scrutate`), else
   `$XDG_CONFIG_HOME/scrutate/config.toml`; `$SCRUTATE_CONFIG` names a file, and with `--root` the
   file in that directory is used. `[index] exclude_dirs` is read only from the `.scrutate.toml`
   at the index root, so every command, the MCP server, the language server and the Python
-  bindings leave out the same directories wherever they start; in any other file (a
-  subdirectory's `.scrutate.toml`, `$SCRUTATE_CONFIG`, your `config.toml`) it is ignored with a
-  warning. `SCRUTATE_INDEX_EXCLUDE_DIRS`, when set, replaces it (set empty, those directories are
-  indexed). A `.scrutate.toml`'s globs match each path from the file's directory, whatever is
-  searched and wherever the command runs; they do not filter a path outside that directory or a
-  path named on the command line, and `-g` or `SCRUTATE_GREP_GLOBS` replaces them.
-  `follow = true` in a repository's own `.scrutate.toml` is ignored with a warning: a search
-  follows links only on your word (`-L`, `SCRUTATE_GREP_FOLLOW`, the file `$SCRUTATE_CONFIG`
-  names, or your own `config.toml`). `scrutate config` names the file and shows what is in
-  effect, with the directory the globs match from. A file with an unknown field, or that is not
-  valid TOML, stops every command that reads it (exit 2, one line naming the file, the line and
-  the fault); `--help`, `--version`, `config` and `completions` still run. `[[language]]` tables
-  add languages ([below](#custom-languages)). Precedence: command line > environment variable >
-  configuration file > built-in default. Every configurable option names its variable in
-  `--help` (e.g. `--hidden` ↔ `SCRUTATE_GREP_HIDDEN`). An on/off variable is off when `0`,
-  `false`, `no`, `off` or empty, on for any other value (`1`, `true`, `yes`, `on`). `--root`
-  (`SCRUTATE_ROOT`) must be an existing directory, else the command exits 2 and creates nothing.
-- **Running in a subdirectory**: without `--root` (or `SCRUTATE_ROOT`), a command that uses the
-  index runs on the top of the current repository (the first directory upward that holds `.git`,
-  a file or a directory) and says so on stderr (`[scrutate] using the index in <path>`). The
-  first index is built there whatever subdirectory the first command runs in, and the top's
-  index wins over one an earlier run left in a subdirectory; with none at the top, an index in a
-  directory between is used. A clone, submodule or git worktree inside an indexed checkout is
-  its own repository with its own index (a linked worktree's starts as a copy of its main
-  checkout's, see [The index directory](#the-index-directory)). Outside a repository the nearest
-  directory above that holds `.scrutate` is used, else the current directory. A home directory
-  kept in git is not taken for a top. In the home directory or at a filesystem root with no
-  index there, a command that would build a first index exits 2 and says to pass `--root` or run
-  `scrutate index`; `scrutate index`, `--root` and `SCRUTATE_ROOT` build there as asked, and an
-  index already there is used. A path argument is read from the current directory when it exists
-  there, else as given (a path from the repository root, as answers print it). A file or location
-  of another indexed repository, as `search --also` prints it (`../two/src/db.py:5-6`), is
-  answered from that repository's index by `symbol`, `callers`, `callees`, `refs --def`,
-  `outline`, `deps`, `rdeps` and `similar`; a file under no index is answered as one that
-  `is outside the repository`. `grep --index` from a subdirectory answers for that subdirectory,
-  and from a directory the index never enters (hidden or ignored) says so and exits 2; `tsquery`
-  walks from the current directory and keeps its cache in the root's index; `serve` and `watch`
-  use the index above. The language server applies the same rule to the editor's first
-  workspace folder (else `rootUri`), so it uses the index at the top.
+  bindings leave out the same directories wherever they start; elsewhere (a subdirectory's
+  `.scrutate.toml`, `$SCRUTATE_CONFIG`, your `config.toml`) it is ignored with a warning.
+  `SCRUTATE_INDEX_EXCLUDE_DIRS`, when set, replaces it (empty: those directories are indexed). A
+  `.scrutate.toml`'s globs match each path from the file's directory, whatever is searched and
+  wherever the command runs; they never filter a path outside that directory or one named on
+  the command line, and `-g` or `SCRUTATE_GREP_GLOBS` replaces them. `follow = true` in a
+  repository's own `.scrutate.toml` is ignored with a warning: a search follows links only on
+  your word (`-L`, `SCRUTATE_GREP_FOLLOW`, the file `$SCRUTATE_CONFIG` names, or your own
+  `config.toml`). `scrutate config` names the file and shows what is in effect, with the
+  directory the globs match from. An unknown field or invalid TOML stops every command that reads
+  the file (exit 2, one line naming the file, the line and the fault); `--help`, `--version`,
+  `config` and `completions` still run. `[[language]]` tables add languages
+  ([below](#custom-languages)). Precedence: command line > environment variable > configuration
+  file > built-in default. Every configurable option names its variable in `--help` (e.g.
+  `--hidden` ↔ `SCRUTATE_GREP_HIDDEN`). An on/off variable is off when `0`, `false`, `no`, `off`
+  or empty, on otherwise (`1`, `true`, `yes`, `on`). `--root` (`SCRUTATE_ROOT`) must be an
+  existing directory, else the command exits 2 and creates nothing.
+- **Running in a subdirectory**: without `--root` (or `SCRUTATE_ROOT`), an index command runs on
+  the top of the current repository (the first directory upward holding `.git`, as a file or a
+  directory) and says so on stderr (`[scrutate] using the index in <path>`). The first index is
+  built there from any subdirectory, and the top's index wins over one an earlier run left in a
+  subdirectory; with none at the top, an index in a directory between is used. A clone,
+  submodule or git worktree inside an indexed checkout is its own repository with its own index
+  (a linked worktree's starts as a copy of its main checkout's, see
+  [The index directory](#the-index-directory)). Outside a repository the nearest directory above
+  holding `.scrutate` is used, else the current directory. A home directory kept in git is never
+  a top. In the home directory or at a filesystem root with no index there, a command that would
+  build a first index exits 2 and says to pass `--root` or run `scrutate index`; either of those or
+  `SCRUTATE_ROOT` builds there as asked, and an index already there is used. A path argument is
+  read from the current directory when it exists there, else as given (from the repository root,
+  as answers print it). A file or location of another indexed repository, as `search --also`
+  prints it (`../two/src/db.py:5-6`), is answered from that repository's index by `symbol`,
+  `callers`, `callees`, `refs --def`, `outline`, `deps`, `rdeps` and `similar`; a file under no
+  index `is outside the repository`. `grep --index` from a subdirectory answers for that
+  subdirectory, and from a directory the index never enters (hidden or ignored) says so and exits
+  2. `tsquery` walks from the current directory and keeps its cache in the root's index; `serve`
+  and `watch` use the index above. The language server applies the same rule to the editor's
+  first workspace folder (else `rootUri`).
 - **Shell completion**: `scrutate completions bash|zsh|fish|powershell|elvish`.
 - **Cancellation**: Ctrl-C stops a search between files and exits 130; a closed pipe
   (`| head`) stops it silently, with `-c`, `-l`, `--sort`, `--type-list` and `languages` too.
@@ -123,79 +119,82 @@
 scrutate grep [OPTIONS] PATTERN [PATHS...]
 ```
 With no path, `grep` searches standard input when it is a pipe or a file, else the current
-directory; `-` names standard input among other paths. A path on the command line that is not a
-directory, such as a named pipe, `<(...)` or `/dev/stdin`, is searched as ripgrep does; a named
-pipe met while walking a directory is skipped. Standard input's lines carry the label `<stdin>`
-where a path would stand (`-H`, `--json`); `--index` ignores standard input.
+directory; `-` names standard input among other paths. A command-line path that is not a
+directory (a named pipe, `<(...)`, `/dev/stdin`) is searched as ripgrep does; a named pipe met
+while walking is skipped. Standard input's lines carry the label `<stdin>` where a path would
+stand (`-H`, `--json`); `--index` ignores standard input.
 
-`PATTERN` is a regex unless `-F` (literal), `--ident` (identifier in any casing) or `--fuzzy[=N]`
-(literal within N edits, default 1, at most 4096 characters; an edit is one character inserted,
-deleted or substituted, a byte of invalid UTF-8 counts as one, and `-i` and `-S` fold case as
-for a regex). The default regex engine runs in linear time and has no look-around or
-backreferences; `-P` (`--pcre2`) switches to PCRE2 for those. PCRE2 backtracks, so a pattern can
-take exponential time; its match limit then stops the search of the file, with a warning naming
-it. With `-P`, `--index` cannot narrow the files and searches all of them. PCRE2 is the `pcre2`
-cargo feature, on by default; a build without it (`--no-default-features`, as the `wasm32-wasip1`
-build is, since PCRE2's JIT has no wasm backend) refuses `-P` and the `pcre2` mode (`grep_code`)
-with `-P/--pcre2 (mode pcre2) is not in this build: it was built without the pcre2 feature`.
-`--fuzzy-regex[=N]`
-matches a regex within N edits (default 1): an edit is one character, as with `--fuzzy`, and a
-byte of invalid UTF-8 is one unit that no position matches; classes (`\w`, `\d`, `\s` too) are
-Unicode, and `-i` and `-S` fold case as for a regex (`-i 'été'` finds `ÉTÉ`). It has no anchors
-or word boundaries, at most 64 character positions (a bounded repeat counts each copy), and
-refuses a pattern within N edits of the empty string.
+`PATTERN` is a regex unless one of these is given:
+
+| Option | Pattern |
+|---|---|
+| `-F` | literal |
+| `--ident` | identifier in any casing |
+| `--fuzzy[=N]` | literal within N edits (default 1), at most 4096 characters; an edit is one character inserted, deleted or substituted, a byte of invalid UTF-8 counts as one, and `-i` and `-S` fold case as for a regex |
+| `--fuzzy-regex[=N]` | regex within N edits (default 1), an edit counted as with `--fuzzy`; a byte of invalid UTF-8 is one unit no position matches; classes (`\w`, `\d`, `\s` too) are Unicode, and `-i` and `-S` fold case as for a regex (`-i 'été'` finds `ÉTÉ`); no anchors or word boundaries, at most 64 character positions (a bounded repeat counts each copy), and a pattern within N edits of the empty string is refused |
+| `-P` (`--pcre2`) | PCRE2 regex, with look-around and backreferences |
+
+The default regex engine runs in linear time and has no look-around or backreferences. PCRE2
+backtracks, so a pattern can take exponential time; its match limit then stops the file's
+search with a warning naming it. With `-P`, `--index` cannot narrow the files and searches all
+of them. PCRE2 is the `pcre2` cargo feature, on by default. A build without it
+(`--no-default-features`, as the `wasm32-wasip1` build is, since PCRE2's JIT has no wasm backend)
+refuses `-P` and the `pcre2` mode (`grep_code`) with
+`-P/--pcre2 (mode pcre2) is not in this build: it was built without the pcre2 feature`.
 
 `-z` also searches zip and tar archives (members shown as `archive.zip{dir/file}`) and
 compressed files: gzip in process; bzip2, xz, zstd, lz4, brotli and `.Z` through the system's
-tools, as ripgrep does. An archive or compressed file stops at 8 GiB expanded or a million
-members, and a member or compressed file stops with a warning at a line longer than 64 MiB (not
-with `-U`, which holds the whole member). A tar member whose GNU long name or PAX path is over
-64 KiB is skipped with a warning; other PAX records are read past and not kept. An old-GNU
-sparse member (`tar --sparse`) is skipped and the members after it searched. An archive named
-alone is searched as a directory of its members, so each line names its member, also when it is
-the only one; a compressed file named alone prints no name. Control characters in a member name
-show as escapes (`\n`, `\x1b`, a backslash as two), so a name cannot forge an output line;
+tools, as ripgrep does. Limits:
+
+- an archive or compressed file stops at 8 GiB expanded or a million members;
+- a member or compressed file stops with a warning at a line longer than 64 MiB (not with `-U`,
+  which holds the whole member);
+- a tar member whose GNU long name or PAX path is over 64 KiB is skipped with a warning; other
+  PAX records are read past and not kept;
+- an old-GNU sparse member (`tar --sparse`) is skipped and the members after it searched.
+
+An archive named alone is searched as a directory of its members, so each line names its member,
+even the only one; a compressed file named alone prints no name. Control characters in a member
+name show as escapes (`\n`, `\x1b`, a backslash as two), so a name cannot forge an output line;
 `--json` keeps the name as it is. Archives inside archives are not opened, and `--index` does
 not cover archive members.
 
-`-e PATTERN` (repeatable) gives several patterns; a line matching any of them matches, and the
-first positional argument is then a path. The argument after `-e` is the pattern whatever it
-starts with (`-e '->'`, `-F -e -1`), as in grep and ripgrep.
+`-e PATTERN` (repeatable) gives several patterns; a line matching any matches, and the first
+positional argument is then a path. The argument after `-e` is the pattern whatever it starts
+with (`-e '->'`, `-F -e -1`), as in grep and ripgrep.
 
-Options mirror grep/ripgrep where the meaning is the same: `-i`, `-S` (smart case), `-w`, `-U`
-(multiline: each line of a multi-line match is printed with its own number), `-v`, `-l`, `-c`,
-`-A/-B/-C`, `-m`, `--max-results`, `-g GLOB` (`!` excludes), `-t TYPE` / `--type-list` (`-t !TYPE`
-excludes, ripgrep's `-T`; as in ripgrep a type matches the file name after the ignore rules, so
-a gitignored file of the type stays out, a hidden one comes in, a glob that matches a file
-decides before the type, and a file named on the command line is searched whatever its type),
-`--hidden`, `--no-ignore`, `-L` (follow links), `--max-filesize`, `--max-depth`, `-n` / `-N`
-(line numbers or none; the later wins, and `--json` keeps them), `-j THREADS`, `--sort`,
-`--max-bytes BYTES` and `--offset N` (a bounded answer in path order, see "Answers from the
-index" below), `--json`, `--stats` (with `-l` each file is searched only to its first match, so
-it prints `N of M files match` and the JSON summary gives `"matches": null`), `--symbols` (group
-lines by the enclosing function using the index, when one exists; a file whose search a NUL byte
-stopped after a match ends its last group with a `note:` line, `"note"` in the JSON
-`symbol_group`).
+Options mirror grep/ripgrep where the meaning is the same: `-i`, `-S` (smart case), `-w`, `-v`,
+`-l`, `-c`, `-A/-B/-C`, `-m`, `--max-results`, `--hidden`, `--no-ignore`, `-L` (follow links),
+`--max-filesize`, `--max-depth`, `-j THREADS`, `--sort`, `--json`, and:
 
-Threads: `-j` takes at most 256, as do `SCRUTATE_THREADS` and the configuration file's
-`threads`. The default is the cores, at most 12 (on macOS the performance cores), and more when
-the files come from the disk, a cold cache: up to 64 on Linux, elsewhere twice the cores, at
-most 24. On macOS, searches of one user that run at the same time split the default threads and
-take them back as the others end: each gets the default divided by the number running, at least
-1 (py-big, four at once: 244 ms each before, 185 ms now; one alone is unchanged). A search that
-walks directories, or searches a list of more than 256 files (`--sort`, `--index`), joins that
-count when it starts, so four searches of a small repository started together run on one thread
-each (13.3 ms each, GNU grep 14.5 ms; before, 20 threads on 5 cores and 14.7 ms). A search given
-a thread count (`-j`, `SCRUTATE_THREADS`, `threads`) keeps it and is not counted, and neither is
-one waiting on a reader that does not read or one stopped with Ctrl-Z, until it goes on. A search
-stopped with SIGSTOP, which no program can see coming, stays counted until it continues or ends.
-The count is a System V semaphore of the user, listed by `ipcs -s` until the machine restarts; a
-killed search leaves nothing in it, and where the system gives none a search runs as it would
-alone. `SCRUTATE_GREP_DEBUG=1` prints the count and the threads taken on stderr each time they
-change.
+| Option | Notes |
+|---|---|
+| `-U` | multiline: each line of a multi-line match is printed with its own number |
+| `-g GLOB` | `!` excludes |
+| `-t TYPE` / `--type-list` | `-t !TYPE` excludes (ripgrep's `-T`). As in ripgrep a type matches the file name after the ignore rules: a gitignored file of the type stays out, a hidden one comes in, a glob that matches a file decides before the type, and a file named on the command line is searched whatever its type |
+| `-n` / `-N` | line numbers or none; the later wins, and `--json` keeps them |
+| `--max-bytes BYTES`, `--offset N` | a bounded answer in path order, see "Answers from the index" below |
+| `--stats` | with `-l` each file is searched only to its first match, so it prints `N of M files match` and the JSON summary gives `"matches": null` |
+| `--symbols` | groups lines by the enclosing function using the index, when one exists; a file whose search a NUL byte stopped after a match ends its last group with a `note:` line, `"note"` in the JSON `symbol_group` |
 
-Files that cannot be read, or not to the end, are named in warnings on stderr (the first ten)
-and do not change the exit code. A search path that does not exist is named in a warning and the
+Threads: `-j`, `SCRUTATE_THREADS` and the configuration file's `threads` take at most 256. The
+default is the cores, at most 12 (on macOS the performance cores), and more when the files come
+from the disk, a cold cache: up to 64 on Linux, elsewhere twice the cores, at most 24. On macOS,
+one user's concurrent searches split the default threads and take them back as the others end:
+each gets the default divided by the number running, at least 1 (py-big, four at once: 244 ms
+each before, 185 ms now; one alone is unchanged). A search that walks directories, or searches a
+list of more than 256 files (`--sort`, `--index`), joins that count when it starts, so four
+searches of a small repository started together run on one thread each (13.3 ms each, GNU grep
+14.5 ms; before, 20 threads on 5 cores and 14.7 ms). Not counted: a search given a thread count
+(`-j`, `SCRUTATE_THREADS`, `threads`), which keeps it, and, until it goes on, one waiting on a
+reader that does not read or stopped with Ctrl-Z. One stopped with SIGSTOP, which no program can
+see coming, stays counted until it continues or ends. The count is a System V semaphore of the
+user, listed by `ipcs -s` until the machine restarts; a killed search leaves nothing in it, and
+where the system gives none a search runs as it would alone. `SCRUTATE_GREP_DEBUG=1` prints the
+count and the threads taken on stderr each time they change.
+
+Files that cannot be read, or not to the end, are named in stderr warnings (the first ten) and
+do not change the exit code. A search path that does not exist is named in a warning and the
 exit code is 2; matches in the other paths still print. On Linux, files on `/proc`, `/sys` or
 another kernel pseudo filesystem (debugfs, tracefs, securityfs, configfs, cgroup) give their size
 as 0 and can answer the first read short, so they are read until the kernel has no more. The walk
@@ -208,39 +207,31 @@ The ignore files are `.gitignore`, `.ignore`, `.rgignore`, the global git exclud
 `node_modules` and the other directories the code index skips by name, unless an ignore file
 excludes them.
 
-Where tools differ in the details, scrutate does what ripgrep does. `-m N` stops a file at its
-Nth matching line: the trailing context after it is printed, and a match inside that context
-shows as a match. `--max-results N` stops after N matching lines in total, with `-c` and `-l`
-too; with `--sort` they are the first N in path order, the same on every run. A file named on
-the command line that holds a NUL byte is searched as ripgrep does it: the NUL ends a line,
-counts and lists include the file, and line output prints one line in place of its lines,
-`binary file matches (found "\0" byte around offset N)` (with `--json`, a record
-`{"type": "binary", "path", "text"}`). A file the walk finds with a NUL byte is left out of `-c`
-and `-l`, so `-v -l`, `-v` and `-v -c` agree. When the search of such a file stops at a NUL byte
-after a match, a last line says so, as in ripgrep:
-`path: WARNING: stopped searching binary file after match (found "\0" byte around offset N)` (a
-`binary` record with `--json`). `-c` and `-l` give one record per path given: a file that two
-paths reach is counted or listed twice. Smart case folds only a pattern that has a literal and
-no uppercase letter, so `-S '\p{Ll}'` stays case-sensitive and matches lowercase letters only.
-Of `-i` and `-S` the later wins, and `SCRUTATE_GREP_SMART_CASE` applies only when neither is
-given. With `-A`, `-B` or `-C`, groups that are not adjacent, and different files, are separated
-by a line `--` (not in `--json`). With context on several threads a file's lines leave a group at
-a time, so another file's lines never stand between them; a file searched alone still streams. A
-`-g` value is one glob, commas included (`-g '*.{txt,log}'`); `SCRUTATE_GREP_GLOBS` is split at
-commas outside braces. One difference: a `-g` glob with a slash (`-g 'sub/*.rs'`) applies under
-every searched path, where ripgrep matches it from the current directory. The globs of a
-`.scrutate.toml` match from that file's directory (see Configuration above).
+Where tools differ in the details, scrutate does what ripgrep does:
+
+| Case | Behaviour |
+|---|---|
+| `-m N`, `--max-results N` | `-m N` stops a file at its Nth matching line; the trailing context after it prints, and a match inside that context shows as a match. `--max-results N` stops after N matching lines in total, with `-c` and `-l` too; with `--sort` they are the first N in path order, the same every run |
+| NUL byte | In a file named on the command line, the NUL ends a line, counts and lists include the file, and line output prints one line in place of its lines, `binary file matches (found "\0" byte around offset N)` (with `--json`, a record `{"type": "binary", "path", "text"}`). A file the walk finds with a NUL byte is left out of `-c` and `-l`, so `-v -l`, `-v` and `-v -c` agree. When such a file's search stops at a NUL byte after a match, a last line says so: `path: WARNING: stopped searching binary file after match (found "\0" byte around offset N)` (a `binary` record with `--json`) |
+| `-c`, `-l` | one record per path given: a file two paths reach is counted or listed twice |
+| `-i`, `-S` | smart case folds only a pattern that has a literal and no uppercase letter, so `-S '\p{Ll}'` stays case-sensitive and matches lowercase letters only. The later of `-i` and `-S` wins; `SCRUTATE_GREP_SMART_CASE` applies only when neither is given |
+| `-A`, `-B`, `-C` | a line `--` separates groups that are not adjacent, and different files (not in `--json`). With context on several threads a file's lines leave a group at a time, so another file's lines never stand between them; a file searched alone still streams |
+| `-g` | one glob per value, commas included (`-g '*.{txt,log}'`); `SCRUTATE_GREP_GLOBS` is split at commas outside braces |
+
+One difference: a `-g` glob with a slash (`-g 'sub/*.rs'`) applies under every searched path,
+where ripgrep matches it from the current directory. A `.scrutate.toml`'s globs match from that
+file's directory (see Configuration above).
 
 `--index` answers from Engine B's text index (`scrutate index`): its trigram postings name the
-files that can contain a match, and Engine A's matcher searches only those, so the output is
-what the walk prints for the indexed snapshot of `--root`. Run `scrutate index` (or `index
---text`) after changing files; the update is incremental. Options that change which files a walk
-visits (`--hidden`, `--no-ignore`, `-L`, `--max-depth`, `--max-filesize`, explicit paths) are
-refused with `--index`; `-g` and `-t` filter the indexed files, so a hidden file that a type or
-a glob brings into the walk is not searched (the index holds no hidden file). `--index --update`
-first brings the text index up to date (building it if there is none; only new and changed files
-are read), so the answer is the walk's for the tree as it is now: the call for an editor that
-searches often while files change.
+files that can contain a match, and Engine A's matcher searches only those, so the output is what
+the walk prints for the indexed snapshot of `--root`. Run `scrutate index` (or `index --text`)
+after changing files; the update is incremental. Options that change which files a walk visits
+(`--hidden`, `--no-ignore`, `-L`, `--max-depth`, `--max-filesize`, explicit paths) are refused
+with `--index`; `-g` and `-t` filter the indexed files, so a hidden file a type or glob brings
+into the walk is not searched (the index holds no hidden file). `--index --update` first brings
+the text index up to date (building it if there is none; only new and changed files are read),
+so the answer is the walk's for the tree as it is now: the call for an editor that searches often
+while files change.
 
 ## Engine B
 
