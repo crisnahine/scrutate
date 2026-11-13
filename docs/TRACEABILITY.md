@@ -24,7 +24,7 @@ Evidence files: `docs/TEST_RESULTS.md` (test and audit output, generated), `docs
 `docs/SECURITY.md`, `docs/LANGUAGES.md`, `docs/NAMING.md`, `bench/results/platforms/` (per-platform
 logs). Test names refer to `crates/scrutate/tests/*.rs`, `crates/scrutate/src/*.rs` unit tests and
 `python/tests/*.py`.
-Counts: PASS 124 · PARTIAL 11 · BLOCKED 1 · FAIL 0 over 136 rows (computed by `tools/traceability_tally.py`).
+Counts: PASS 125 · PARTIAL 10 · BLOCKED 1 · FAIL 0 over 136 rows (computed by `tools/traceability_tally.py`).
 
 ## 2A. Engine A: universal instant search
 
@@ -238,5 +238,5 @@ Counts: PASS 124 · PARTIAL 11 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 
 ## Tally
 
-PASS 124 · PARTIAL 11 · BLOCKED 1 · FAIL 0 over 136 rows. The PARTIAL, BLOCKED and FAIL rows are listed with their
+PASS 125 · PARTIAL 10 · BLOCKED 1 · FAIL 0 over 136 rows. The PARTIAL, BLOCKED and FAIL rows are listed with their
 resolution in RELEASE_READINESS.md ("Remaining defects and incomplete requirements").
