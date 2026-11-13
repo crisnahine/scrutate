@@ -5,10 +5,10 @@ usage:
   python3 tools/gen_assets.py            write every image
   python3 tools/gen_assets.py --check    exit 1 when a committed image differs from what this writes, when an
                                          SVG breaks a rule below, or when a link or image in README.md is missing
-  python3 tools/gen_assets.py demo       write only demo.svg from docs/assets/demo.json
   python3 tools/gen_assets.py beats      print the hero's timeline, beat by beat
   python3 tools/gen_assets.py capture --bin PATH/TO/scrutate --repo DIR
-                                         run the demo's commands for real in DIR and write demo.json
+                                         run the commands in docs/assets/demo.json for real in DIR and keep
+                                         their output there (the social preview draws it)
   python3 tools/gen_assets.py capture-hero --bin PATH/TO/scrutate --repo crates/scrutate
                                          run the hero's searches (docs/assets/hero.json) with --json in DIR and
                                          keep the exact spans on its block of lines; edit the list there to change them
@@ -730,26 +730,9 @@ def _hero(phone=False):
                "\n".join(style), animated=True), clk
 
 
-# ---------------------------------------------------------------- terminal demo
+# ---------------------------------------------------------------- the social preview's terminal output
 
 LOC = re.compile(r"^(\s*\S+?:\d+(?:-\d+)?(?::\d+)?)(:|\s\s)")
-
-
-def trim(lines, keep=None, only=None):
-    """The lines shown: those matching `only` (each run of the others becomes one '    ...'), then the first `keep`."""
-    out = []
-    if only:
-        rx = re.compile(only)
-        for ln in lines:
-            if rx.search(ln):
-                out.append(ln)
-            elif out and out[-1] != "    ...":
-                out.append("    ...")
-    else:
-        out = list(lines)
-    if keep and len(out) > keep:
-        out = out[:keep] + ["..."]
-    return out
 
 
 def capture(binary: str, repo: str) -> int:
@@ -773,50 +756,6 @@ def shell_join(argv) -> str:
     return " ".join(a if re.fullmatch(r"[\w./=:-]+", a) else '"' + a + '"' for a in argv)
 
 
-def term_parts(s, hl, ink):
-    """A line of output as (text, attributes) runs: the location dim, a [kind] dim and the name bold (search,
-    callers), and the matches of `hl` (grep) as their own runs; also the columns of those matches."""
-    k = ON["ink"]
-    m = LOC.match(s)
-    head = m.group(1) if m else ""
-    rest = s[len(head):]
-    runs = [(head, f'fill="{k["dim"]}"')] if head else []
-    cols = []
-    kind = re.match(r"^(\s+\[\w+\]\s)(.*)$", rest)
-    if s.strip() == "...":
-        runs = [(s, f'fill="{k["dim"]}"')]
-    elif kind:
-        runs += [(kind.group(1), f'fill="{k["dim"]}"'), (kind.group(2), 'font-weight="700"')]
-    elif hl:
-        last = 0
-        for mm in hl.finditer(rest):
-            runs.append((rest[last:mm.start()], ""))
-            cols.append((len(head) + mm.start(), len(head) + mm.end()))
-            runs.append((mm.group(0), ""))
-            last = mm.end()
-        runs.append((rest[last:], ""))
-    else:
-        runs.append((rest, ""))
-    return [r for r in runs if r[0]], cols
-
-
-def runs_text(x, y, runs, size, fill, cw, cls=""):
-    """Runs of one line in system mono, each character `cw` apart (see code_text)."""
-    s = "".join(t for t, _ in runs)
-    lead = len(s) - len(s.lstrip(" "))
-    out, skip = [], lead
-    for t, attrs in runs:
-        cut, skip = min(skip, len(t)), max(0, skip - len(t))
-        if t[cut:]:
-            out.append(f"<tspan {attrs}>{esc(t[cut:])}</tspan>" if attrs else esc(t[cut:]))
-    n = len(s.strip(" "))
-    if not n:
-        return ""
-    s_end = len(s.rstrip(" "))
-    return (f'<text class="{f"m {cls}".strip()}" x="{x + lead * cw:.1f}" y="{y:.1f}" font-size="{size}" fill="{fill}" '
-            f'textLength="{(s_end - lead) * cw:.1f}" lengthAdjust="spacing" xml:space="preserve">{"".join(out).rstrip()}</text>')
-
-
 def marked_line(x, y, s, rx, size, fg, pfx):
     """One line of real output, still (the social card): the location in `pfx`, each match of `rx` on a
     highlighter slab in ink. Returns (svg, slabs)."""
@@ -832,146 +771,6 @@ def marked_line(x, y, s, rx, size, fg, pfx):
         last = mm.end()
     spans.append(esc(rest[last:]))
     return "".join(slabs) + f'<text x="{x}" y="{y}" class="m pre" font-size="{size}" fill="{fg}">{"".join(spans)}</text>', len(slabs)
-
-
-def slice_runs(runs, a, e):
-    """The part of (text, attributes) runs between columns a and e of the line they make up."""
-    out, k = [], 0
-    for t, attrs in runs:
-        lo, hi = max(a, k), min(e, k + len(t))
-        if lo < hi:
-            out.append((t[lo - k:hi - k], attrs))
-        k += len(t)
-    return out
-
-
-def demo(phone=False) -> str:
-    """A terminal session that loops for ever: each command is typed, its output arrives in bursts, the matches
-    of a grep are marked, the next prompt waits, the screen clears and the next command is typed. On a phone
-    the terminal is narrow and long lines wrap, as they would in a narrow terminal window."""
-    spec = demo_spec()
-    k = ON["ink"]
-    PW = 400 if phone else W
-    tx, ty, top = (14, 58, 34) if phone else (24, 64, 40)    # the terminal window inside the paper panel
-    tw = PW - 2 * tx
-    x0 = tx + (14 if phone else 22)
-    screens = []
-    for c in spec["commands"]:
-        screens.append((c, shell_join(c["argv"]), trim(c["output"], c.get("keep"), c.get("only"))))
-    if phone:
-        fs = 12.0
-        cols = int((tw - 28) // (fs * 0.6))
-    else:
-        widest = max(len(ln) for _, cmd, out in screens for ln in out + ["$ " + cmd])
-        fs = min(14.0, round((tw - 44) / (widest * 0.6), 1))
-        cols = 10_000
-    cw, lh = fs * 0.6, round(fs * 1.4, 1)
-    wrapped = [wrap_rows(out, cols) for _, _, out in screens]
-    rows = max(len(wr) for wr in wrapped) + 2       # the command, its output, the next prompt
-    th = int(top + 18 + lh * rows + 10)
-    H = ty + th + (16 if phone else 28)
-    y0 = ty + top + 18 + fs * 0.8
-    clk = Clock()
-    head = f"real output, {spec['version']}" if phone else f"Engine B in a terminal // real output, {spec['version']}"
-    b = [panel(H, "paper"), label(PAD if not phone else 24, 38 if phone else 42, "", head, "paper", PW - (24 if phone else PAD)),
-         f'<defs><clipPath id="win"><rect x="{tx}" y="{ty}" width="{tw}" height="{th}" rx="8"/></clipPath></defs>',
-         f'<rect x="{tx}" y="{ty}" width="{tw}" height="{th}" rx="8" fill="{INK}"/>']
-    if phone:
-        b[0] = panel(H, "paper", w=PW)
-    for i in range(3):
-        b.append(f'<rect x="{tx + 14 + i * 14}" y="{ty + 13}" width="7" height="7" fill="{k["rule"]}"/>')
-    b.append(mono(tx + tw - 14, ty + 21, spec["title"].upper(), 9.5 if phone else 11, k["dim"], 0.14, "end"))
-    b.append(f'<path d="M{tx} {ty + top} H{tx + tw}" stroke="{k["rule"]}"/>')
-    b.append('<g clip-path="url(#win)">')
-    b.append(mono(x0, y0, "$", fs, MARK))
-
-    # the timeline: type, Enter, the output in two bursts, the marks, the next prompt, a pause, clear
-    t = 0.6
-    plan = []
-    for i, (c, cmd, out) in enumerate(screens):
-        pts, t_typed = typing(t, cmd, 21)
-        t_enter = t_typed + 0.4
-        bursts = [t_enter + 0.1, t_enter + 0.3]
-        hl = re.compile(c["highlight"]) if c.get("highlight") else None
-        n_marks = sum(len(term_parts(ln, hl, INK)[1]) for ln in out) if hl else 0
-        t_marks = bursts[1] + 0.25
-        t_done = t_marks + 0.13 * n_marks + 0.3
-        t_clear = t_done + 2.4
-        clk.beat(f"command {i + 1}: `{cmd}` is typed", t, t_typed - t)
-        clk.beat(f"command {i + 1}: Enter; the output arrives in two bursts", t_enter, bursts[1] - t_enter)
-        if n_marks:
-            clk.beat(f"command {i + 1}: {n_marks} matches are marked, one after another", t_marks, t_done - t_marks)
-        clk.beat(f"command {i + 1}: the next prompt waits; hold", t_done, t_clear - t_done)
-        clk.beat(f"command {i + 1}: the screen clears", t_clear, 0.4)
-        plan.append((c, cmd, out, hl, pts, t, t_typed, t_enter, bursts, t_marks, t_done, t_clear))
-        t = t_clear + 0.4
-    T = clk.total = t
-    cur = []
-    for i, (c, cmd, out, hl, pts, t0, t_typed, t_enter, bursts, t_marks, t_done, t_clear) in enumerate(plan):
-        assert len(cmd) + 2 <= cols, f"the command {cmd!r} does not fit the terminal"
-        prev_clear = plan[i - 1][11]
-        cut = [(t_clear, 1, "steps(1, end)"), (t_clear + 0.01, 0)]
-        if i:
-            g = clk.anim([(prev_clear + 0.01, 0, "steps(1, end)"), (prev_clear + 0.02, 1)] + cut, "opacity", rest=0)
-        else:
-            g = clk.anim(cut + [(T - 0.02, 0, "steps(1, end)"), (T - 0.01, 1)], "opacity", rest=1)
-        b.append(f'<g class="{g}"' + (' opacity="0"' if i else "") + ">")
-        xs = x0 + 2 * cw
-        b.append(code_text(xs, y0, cmd, fs, PAPER, cw))
-        L = len(cmd) * cw + 2
-        cov = [(tt, f"scaleX({1 - n * cw / L:.4f})", *rest) for tt, n, *rest in pts]
-        b.append(f'<rect class="cover {clk.anim(cov + [(t_clear, "scaleX(0)", "steps(1, end)"), (t_clear + 0.01, "scaleX(1)")], rest="scaleX(1)")}" '
-                 f'x="{xs - 1:.1f}" y="{y0 - fs:.1f}" width="{L:.1f}" height="{lh + 2}" fill="{INK}" transform="scale(0 1)"/>')
-        cur += [(t0 - 0.31, {"transform": f"translateX({xs:.1f}px)", "opacity": 0}, "steps(1, end)"),
-                (t0 - 0.3, {"transform": f"translateX({xs:.1f}px)", "opacity": 1})]
-        cur += [(tt, {"transform": f"translateX({xs + n * cw:.1f}px)", "opacity": 1}, *rest) for tt, n, *rest in pts]
-        cur += [(t_enter, {"transform": f"translateX({xs + len(cmd) * cw:.1f}px)", "opacity": 1}, "steps(1, end)"),
-                (t_enter + 0.01, {"transform": f"translateX({xs + len(cmd) * cw:.1f}px)", "opacity": 0})]
-        # the output: a first burst of two lines, then the rest, as a tool writes its buffer
-        wr = wrapped[i]
-        split = min(2, len(out))
-        marks = []
-        for part, (lo, hi) in enumerate(((0, split), (split, len(out)))):
-            if lo == hi:
-                continue
-            ob = clk.anim([(bursts[part], 0, "steps(1, end)"), (bursts[part] + 0.01, 1), (t_clear, 1, "steps(1, end)"),
-                           (t_clear + 0.01, 0)], "opacity", rest=0)
-            b.append(f'<g class="{ob}">')
-            for j in range(lo, hi):
-                runs, cols_hl = term_parts(out[j], hl, INK)
-                for a, e in cols_hl:
-                    tm = t_marks + 0.13 * len(marks)
-                    for r, kk, sa, se in segments(wr, j, a, e):
-                        y = y0 + (r + 1) * lh
-                        slab = wipe(tm, 0.28) + [(t_clear, "scaleX(1)", "steps(1, end)"), (t_clear + 0.01, "scaleX(0)")]
-                        b.append(marker(x0 + (sa - kk) * cw - 2, y - fs * 0.95, (se - sa) * cw + 3, fs * 1.3,
-                                        "wipe " + clk.anim(slab, rest="scaleX(0)")))
-                        marks.append((out[j][sa:se], sa - kk, y, tm))
-                for r, (jj, kk, txt) in enumerate(wr):
-                    if jj == j:
-                        b.append(runs_text(x0, y0 + (r + 1) * lh, slice_runs(runs, kk, kk + len(txt)), fs, PAPER, cw))
-            b.append("</g>")
-        for word, a, y, tm in marks:
-            ink = [(tm + 0.18, 0, "steps(1, end)"), (tm + 0.19, 1), (t_clear, 1, "steps(1, end)"), (t_clear + 0.01, 0)]
-            b.append(code_text(x0 + a * cw, y, word, fs, INK, cw, clk.anim(ink, "opacity", rest=0)))
-        # the next prompt, and its cursor blinking while the output is read
-        yp = y0 + (len(wr) + 1) * lh
-        nxt = clk.anim([(t_done, 0, "steps(1, end)"), (t_done + 0.01, 1), (t_clear, 1, "steps(1, end)"), (t_clear + 0.01, 0)],
-                       "opacity", rest=0)
-        b.append(f'<g class="{nxt}">' + mono(x0, yp, "$", fs, MARK)
-                 + f'<rect class="{blink(clk, t_done, t_clear)}" x="{x0 + 2 * cw:.1f}" y="{yp - fs + 1:.1f}" width="{cw:.1f}" '
-                 f'height="{fs + 3}" fill="{MARK}"/></g>')
-        b.append("</g>")
-    b.append(f'<g class="{clk.anim(cur, rest=cur[-1][1])}" opacity="0"><rect y="{y0 - fs + 1:.1f}" width="{cw:.1f}" '
-             f'height="{fs + 3}" fill="{MARK}"/></g>')
-    b.append("</g>")
-    style = [WIPE_CSS, ".cover{transform-box:fill-box;transform-origin:right center}", clk.css()]
-    cmds = "; ".join(cmd for _, cmd, _ in screens)
-    desc = (f"A terminal running {spec['version']} in {spec['repo']}, one command at a time: {cmds}. Each command is typed, "
-            "its output (the binary's own, captured by tools/gen_assets.py capture) arrives, the matches of each grep are "
-            "marked with a highlighter, and the screen clears for the next; a line '...' marks output left out."
-            + (" Long lines wrap, as in a narrow terminal." if phone else ""))
-    return svg(PW, H, "Scrutate in a terminal", desc, "\n".join(b), "\n".join(style), animated=True)
 
 
 # ---------------------------------------------------------------- two engines
@@ -1581,27 +1380,23 @@ def font_json(otf: str) -> int:
 
 # ---------------------------------------------------------------- write / check
 
-def outputs(only=None):
+def outputs():
     out = {}
-    if only in (None, "demo"):
-        out["demo.svg"] = demo()
-        out["demo-phone.svg"] = demo(phone=True)
-    if only is None:
-        out["logo-mark.svg"] = logo_mark()
-        out["logo.svg"] = logo()
-        out["hero.svg"] = hero()
-        out["hero-phone.svg"] = hero(phone=True)
-        out["engines.svg"] = engines()
-        out["engines-phone.svg"] = engines(phone=True)
-        for i, (name, n, s, *title) in enumerate(STRIPS):
-            out[f"{name}.svg"] = strip(n, s, i, *title)
-        out["social-preview.svg"] = social()
-        out["cta-playground.svg"] = cta()
-        out["cta-playground-phone.svg"] = cta(phone=True)
-        for n in ICONS:
-            out[f"icon-{n}.svg"] = icon(n)
-        for k in BADGES:
-            out[f"badge-{k}.svg"] = badge(k)
+    out["logo-mark.svg"] = logo_mark()
+    out["logo.svg"] = logo()
+    out["hero.svg"] = hero()
+    out["hero-phone.svg"] = hero(phone=True)
+    out["engines.svg"] = engines()
+    out["engines-phone.svg"] = engines(phone=True)
+    for i, (name, n, s, *title) in enumerate(STRIPS):
+        out[f"{name}.svg"] = strip(n, s, i, *title)
+    out["social-preview.svg"] = social()
+    out["cta-playground.svg"] = cta()
+    out["cta-playground-phone.svg"] = cta(phone=True)
+    for n in ICONS:
+        out[f"icon-{n}.svg"] = icon(n)
+    for k in BADGES:
+        out[f"badge-{k}.svg"] = badge(k)
     return out
 
 
@@ -1734,7 +1529,7 @@ def write_or_check(files: dict, directory: str, check: bool) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("what", nargs="?", choices=["demo", "capture", "capture-hero", "font", "beats"])
+    ap.add_argument("what", nargs="?", choices=["capture", "capture-hero", "font", "beats"])
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--bin")
     ap.add_argument("--repo")
@@ -1752,8 +1547,8 @@ def main() -> int:
     if a.what == "beats":
         print(_hero()[1].sheet())
         return 0
-    bad = write_or_check(outputs(a.what), ASSETS, a.check)
-    if a.check and a.what is None:
+    bad = write_or_check(outputs(), ASSETS, a.check)
+    if a.check:
         for p in checker_problems() + readme_problems():
             print(p, file=sys.stderr)
             bad = 1

@@ -130,7 +130,7 @@ python3 bench/make_readme_charts.py      # the README's charts, from the same re
 python3 tools/gen_dependencies_md.py     # when Cargo.lock changed
 python3 tools/gen_languages_md.py        # when a language changed
 C=/some/scratch/demo && mkdir -p $C && git archive HEAD:crates/scrutate src | tar -x -C $C
-python3 tools/gen_assets.py capture --bin target/release/scrutate --repo $C                     # the demo's output (it indexes $C)
+python3 tools/gen_assets.py capture --bin target/release/scrutate --repo $C                     # the social preview's output (it indexes $C)
 python3 tools/gen_assets.py capture-hero --bin target/release/scrutate --repo crates/scrutate   # the hero's searches and match spans
 python3 tools/gen_assets.py              # the README's images, from the two captures, the palette and rust-version;
                                          # then render social-preview.png again (the command is in the script's head)

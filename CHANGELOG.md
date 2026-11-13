@@ -43,8 +43,9 @@ incompatible index by itself, and that is never breaking.
   `CITATION.cff` gives GitHub's "Cite this repository".
 - The website https://scrutate.github.io (repository `scrutate/scrutate.github.io`), with a
   playground that runs scrutate compiled to WebAssembly in the browser; the README's top links
-  and `CITATION.cff`'s `url` point to it, and a "Try it in your browser" image under the README's
-  badges opens the playground.
+  and `CITATION.cff`'s `url` point to it. The README opens with a "Try it in your browser" image
+  that opens the playground and with its top links; the terminal demo image is gone, since the
+  hero already shows real searches and the playground runs them live.
 - `.github/FUNDING.yml` shows GitHub's Sponsor button (GitHub Sponsors and Buy Me a Coffee), and
   the README's "Sponsor and hire" section links both.
 - A security workflow runs `cargo deny check` (`deny.toml`: advisories, the licence list,

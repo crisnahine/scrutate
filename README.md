@@ -1,19 +1,4 @@
 <p align="center">
-  <picture>
-    <source media="(max-width: 600px)" srcset="docs/assets/hero-phone.svg">
-    <img src="docs/assets/hero.svg" width="100%" alt="Scrutate: instant search with no index, and code intelligence from an index, in one Rust binary. Four real searches of scrutate's own source run one after another (a literal, any casing, within one edit, a regex), every match marked with a highlighter.">
-  </picture>
-</p>
-
-<p align="center"><b>Universal instant code search and persistent code intelligence, in one Rust binary.</b></p>
-
-<p align="center">
-  <a href="#licence"><img src="docs/assets/badge-licence.svg" alt="licence: MIT OR Apache-2.0" height="24"></a>
-  <a href="#install"><img src="docs/assets/badge-rust.svg" alt="rust: 1.91 or newer" height="24"></a>
-  <a href="#status-010"><img src="docs/assets/badge-platforms.svg" alt="platforms: macOS, Linux, Windows" height="24"></a>
-</p>
-
-<p align="center">
   <a href="https://scrutate.github.io/playground/">
     <picture>
       <source media="(max-width: 600px)" srcset="docs/assets/cta-playground-phone.svg">
@@ -28,9 +13,17 @@
 
 <p align="center">
   <picture>
-    <source media="(max-width: 600px)" srcset="docs/assets/demo-phone.svg">
-    <img src="docs/assets/demo.svg" width="100%" alt="A terminal running four Engine B commands in an indexed copy of scrutate's own source: grep --index max_filesize, search &quot;parse a size like 10M&quot;, callers text_within and refs index_dir, each with the output the binary printed.">
+    <source media="(max-width: 600px)" srcset="docs/assets/hero-phone.svg">
+    <img src="docs/assets/hero.svg" width="100%" alt="Scrutate: instant search with no index, and code intelligence from an index, in one Rust binary. Four real searches of scrutate's own source run one after another (a literal, any casing, within one edit, a regex), every match marked with a highlighter.">
   </picture>
+</p>
+
+<p align="center"><b>Universal instant code search and persistent code intelligence, in one Rust binary.</b></p>
+
+<p align="center">
+  <a href="#licence"><img src="docs/assets/badge-licence.svg" alt="licence: MIT OR Apache-2.0" height="24"></a>
+  <a href="#install"><img src="docs/assets/badge-rust.svg" alt="rust: 1.91 or newer" height="24"></a>
+  <a href="#status-010"><img src="docs/assets/badge-platforms.svg" alt="platforms: macOS, Linux, Windows" height="24"></a>
 </p>
 
 <p align="center"><img src="docs/assets/strip-engines.svg" width="100%" alt=""></p>
