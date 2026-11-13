@@ -322,7 +322,8 @@ jobs:
             echo "the package holds test or build files"
             exit 1
           fi
-          SCRUTATE_VSIX=$PWD/scrutate.vsix run node test/run.js
+          # node on Windows needs the Windows form of the path, not Git Bash's
+          SCRUTATE_VSIX="$(pwd -W 2> /dev/null || pwd)/scrutate.vsix" run node test/run.js
   neovim:
     name: Neovim ${{ matrix.nvim }} (${{ matrix.os }})
     needs: rust
