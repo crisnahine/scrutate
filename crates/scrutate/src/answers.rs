@@ -357,6 +357,8 @@ mod tests {
         if database(&root).is_empty() {
             // a file system that does not say when the database was made keeps nothing
             assert_eq!(kept(10), 0);
+            // Windows deletes no file the open index holds
+            drop(s);
             return std::fs::remove_dir_all(&root).unwrap();
         }
         assert_eq!((kept(10), kept(11)), (1, 1), "a run that went through every site stands for any limit");
@@ -378,6 +380,7 @@ mod tests {
         }
         assert_eq!(kept(10), 0);
         assert!(Stored::open(&s, "callers", "nothing", 10).old.is_empty(), "another request");
+        drop(s);
         std::fs::remove_dir_all(&root).unwrap();
     }
 }
