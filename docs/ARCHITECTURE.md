@@ -56,20 +56,21 @@ adds:
 - **Traversal**: the `ignore` parallel walker (work stealing, `.gitignore` / `.ignore` / global
   excludes, hidden files off, symlink loop detection, depth and size filters, type globs from the
   language registry), vendored (`vendor/ignore`) with eleven changes listed in the workspace
-  `Cargo.toml`. Four are for speed. The global git excludes path comes from `~/.gitconfig` through
-  a small parser, not a regex per run (0.4 ms of a 6 ms search). An idle thread waits 10 µs,
-  doubling up to the original 1 ms, before looking for work (598 files: 12.3 ms to 9.3 ms).
-  Gitignore lines of three shapes (`**/` and a name with `*` or `?`, `**/` and a literal path, `/`
-  and a name with `*` or `?`) match by a byte loop, tested at random against `GlobSet`, whose
-  regex cost 100 to 400 µs per file to build. Many such globs on many paths are slow (the Linux
-  tree's root `.gitignore`: over 100 globs, 95,000 paths, 7.8% of the CPU), so a matcher builds one
-  `GlobSet` once its tries cost about the build. A parallel walk can add threads as it runs
-  (`grow_threads`), their visitors built at the start.
+  `Cargo.toml`. Four are for speed. The global git excludes path comes from `~/.gitconfig` through a
+  small parser, not a regex per run (0.4 ms of a 6 ms search). An idle thread waits 10 µs, doubling
+  up to the original 1 ms, before looking for work (598 files: 12.3 ms to 9.3 ms). Gitignore lines
+  of three shapes (`**/` and a name with `*` or `?`, `**/` and a literal path, `/` and a name with
+  `*` or `?`) match by a byte loop, tested at random against `GlobSet`, whose regex cost 100 to
+  400 µs per file to build, more than a small repository's whole walk. Many such globs on many paths are
+  slow (the Linux tree's root `.gitignore`: over 100 globs, 95,000 paths, 7.8% of the CPU), so a
+  matcher builds one `GlobSet` once its tries cost about the build, which a small repository never
+  reaches. A parallel walk can add threads as it runs (`grow_threads`), their visitors built at the
+  start.
 - **Thread count** ([CLI](CLI.md#engine-a-grep-alias-g) has the limits): on macOS the performance
-  cores, as more threads opening files wait on each other in the kernel. Small-file read time
-  tells page cache from disk. From disk a walk or file list adds a thread per 16 slow reads, as the
-  disk serves reads in flight, one at a time, as a thread costs about a slow read. `-j` overrides
-  all of it.
+  cores, as more threads opening files wait on each other in the kernel. Small-file read time tells
+  page cache from disk. From disk a walk or file list adds a thread per 16 slow reads, as the disk
+  serves reads in flight, one at a time, as a thread costs about a slow read, which a small tree
+  never earns back. `-j` overrides all of it.
 
   | Measured | Result |
   |---|---|
@@ -109,10 +110,11 @@ adds:
   nowhere, and count nothing), once per search and per look at the count, never per file. A test
   supplies its own readings, so the share and the cold-disk rule are tested without the hardware.
 - **One large file, every core**: a file of 64 MB or more is cut into ranges of whole lines (8 MB
-  each). Pass one counts each range's newlines, 256 KiB at a time per thread (1 MiB held 14.3 MB
-  on a 740 MB file, 6.1 MB now); a NUL byte sends the file back to the single pass. Pass two
-  searches a window of ranges per thread and writes output in file order. Context lines,
-  `--max-count`, `--max-results`, `-l`, multiline and a byte-order mark keep the single pass.
+  each). Pass one counts each range's newlines, 256 KiB at a time per thread (1 MiB held 14.3 MB on
+  a 740 MB file, 6.1 MB now); a NUL byte sends the file back to the single pass, so binary handling
+  is unchanged. Pass two searches a window of ranges per thread and writes output in file order, so
+  memory stays bounded. Context lines, `--max-count`, `--max-results`, `-l`, multiline and a
+  byte-order mark keep the single pass.
 - **Files without line breaks**: a large file with no line break before its last byte is read into
   one buffer of its exact size, checked for NUL bytes, and searched as a slice. Threads fill it in
   1 MiB pieces in order; the first line break or NUL byte sends it to the stream, so lines too long
@@ -132,7 +134,7 @@ adds:
   a large tree, 1 to 3 MB, is mostly memory the allocator freed and kept (per-CPU magazines, as the
   walk thread moves between cores), the ignore matchers, and directories read whole. Output that
   is not plain (colour, `--json`, a caller's iterator) goes through a queue of at most 64 batches;
-  a thread that fills it waits for the formatter.
+  a thread that fills it waits for the formatter, so held hits do not grow with matches.
 - **Roots without directories**: when no root holds a directory to enter, a sequential walk with
   the same rules runs on the calling thread and three threads search what it finds, more from
   disk. No thread starts before a second file (four threads cost about 1 M instructions, a third
@@ -154,19 +156,19 @@ adds:
   `.`, a search without the index skips resolving the repository root, and a one-file tree starts
   no thread.
 
-  Page reclaims were mostly the executable's own code. `scrutate grep` parses plain argument
-  shapes by hand and hands the rest to clap (a property test holds both to one answer; a
-  configuration file, or a variable clap reads for grep, goes to clap), `-F` with one literal is a
-  substring search with no regex engine, 14 more system functions bind on first use, and on macOS
-  the linker drops the unused libiconv and lays out side by side the functions a small search
-  runs, from `crates/scrutate/startup.order`. `tools/order_file.py` writes it: it runs the release
-  links under lldb with a breakpoint on every function of the link map (standard library ones
-  included) and checks how many names a release link still has; a missing name is skipped.
-  ThinLTO makes ld64 skip most of them (the `.llvm.N` ones it promoted, local ones several objects
-  hold), so the release profile links one object (fat LTO, one codegen unit), and a release build
-  takes 3 to 5 minutes from scratch, up from under 2. The order file is for macOS on Apple
-  silicon. Measured and left alone: 37,000 pointer fix-ups (applied lazily by the kernel, no
-  cost), the code-signature page size (no difference), the 85 MB binary size (0.05 to 0.2 ms).
+  Page reclaims were mostly the executable's own code. `scrutate grep` parses plain argument shapes
+  by hand and hands the rest to clap (a property test holds both to one answer; a configuration
+  file, or a variable clap reads for grep, goes to clap), `-F` with one literal is a substring
+  search with no regex engine, 14 more system functions bind on first use, and on macOS the linker
+  drops the unused libiconv and lays out side by side the functions a small search runs, from
+  `crates/scrutate/startup.order`. `tools/order_file.py` writes it: it runs the release links under
+  lldb with a breakpoint on every function of the link map (standard library ones included) and
+  checks how many names a release link still has; a missing name is skipped. ThinLTO makes ld64 skip
+  most of them (the `.llvm.N` ones it promoted, local ones several objects hold), so the release
+  profile links one object (fat LTO, one codegen unit), and a release build takes 3 to 5 minutes
+  from scratch, up from under 2. The order file is for macOS on Apple silicon; other targets link as
+  before. Measured and left alone: 37,000 pointer fix-ups (applied lazily by the kernel, no cost),
+  the code-signature page size (no difference), the 85 MB binary size (0.05 to 0.2 ms).
 
   | A one-file directory search, macOS | Measured |
   |---|---|
@@ -294,7 +296,7 @@ in the file, gathered once per file, so a call chain costs time linear in its le
 (`const`, `static`, enum members, `#define` values and the like) are chunks of kind `constant`
 with no postings and no vectors: name lookups find them, ranked search never does. A JavaScript or
 TypeScript object literal's methods are owned by the name holding the literal (`api.get`), so
-`callers` treats them as methods.
+`callers` treats them as methods, never free functions.
 
 ### Tokens (`text.rs`)
 One tokenizer serves index and query in both engines. An ASCII word is split at `_` and case
@@ -311,16 +313,16 @@ NFC with final sigma folded.
 
 ### Storage (`index.rs`, `lex.rs`)
 - **SQLite** (bundled, WAL, `synchronous=NORMAL`): `files` (size, mtime, status-change time
-  `ctime_ns`, SHA-1 content hash, and `art`, the key of the file's artifact: the path map),
-  `chunks` (metadata + zlib-compressed text), `refs` (call edges), `imports`, `artifacts` (the
-  artifact store, below), `meta` (schema version, model signature, segment manifest, data version,
-  and `chunks_at`, the chunk count of the commit that wrote that data version). The tables are
-  private to `index.rs`: other modules ask `Index` a question (whether a path has a row, the
-  indexed files, the chunks of ids, a file's outline, the chunk or window at a line, the chunks of
-  a name, a name's definitions in lookup order, a name's callers and a chunk's callees, call
-  counts, a file's imports and every import, the counts `check` and `stats` print). Each question
-  keeps the order its callers read, and its statement is cached on the connection. A test that
-  damages the index does it through `Index::damage_for_tests`.
+  `ctime_ns`, SHA-1 content hash, and `art`, the key of the file's artifact: the path map), `chunks`
+  (metadata + zlib-compressed text), `refs` (call edges), `imports`, `artifacts` (the artifact
+  store, below), `meta` (schema version, model signature, segment manifest, data version, and
+  `chunks_at`, the chunk count of the commit that wrote that data version). The tables are private
+  to `index.rs` (the database handle is not public): other modules ask `Index` a question (whether a
+  path has a row, the indexed files, the chunks of ids, a file's outline, the chunk or window at a
+  line, the chunks of a name, a name's definitions in lookup order, a name's callers and a chunk's
+  callees, call counts, a file's imports and every import, the counts `check` and `stats` print).
+  Each question keeps the order its callers read, and its statement is cached on the connection. A
+  test that damages the index does it through `Index::damage_for_tests`.
 - **Segments** (`.scrutate/seg/sNNNNNN/`): immutable, memory-mapped `.npy` arrays, Lucene-style.
   Per field (name, qualified name, signature, docs, body, path): BM25 postings (`ptr`, `doc`,
   `tf`) over a shared 63-bit token-hash vocabulary; `ids`, `dl`; int8 semantic vectors (`vec`, two
@@ -332,7 +334,7 @@ NFC with final sigma folded.
   Constant chunks have no segment rows.
 - **Artifacts** (`artifacts.rs`): what parsing and tokenizing make of one file, keyed by what that
   depends on, so the same bytes under another path, after a branch switch and back, or in the main
-  checkout of a linked work tree are not processed again. A parse reads the
+  checkout of a linked work tree are not parsed, tokenized or packed again. A parse reads the
   bytes and, of the path, only the file name (language, module chunk name, comment marks) and, for
   an `index` file, its directory's name (an anonymous default export); those, the artifact format
   and `CONTENT_REVISION` make the key (128-bit BLAKE2b). The rest stays with the path map, made by
@@ -352,7 +354,8 @@ NFC with final sigma folded.
   per chunk and field the subwords and whole identifiers with their counts. The postings come from
   those, and so do any model's vectors (`Artifact::vectors`, through
   `SemanticModel::encode_counts`), at a change of model too. Chunk texts and vectors are not stored
-  twice: while a path names an artifact they are its rows and segment rows. When the last path
+  twice: while a path names an artifact they are its rows and segment rows, and an artifact
+  found there takes them from those. When the last path
   naming it drops it (an edit, a delete, a rename, a branch switch), its texts move into the
   artifact (`kept`), and its vectors are made from the counts when it is used again. Artifacts no
   path names are kept up to a quarter of the database's size (at least 4 MiB), least recently
@@ -365,7 +368,8 @@ NFC with final sigma folded.
   `commondir` files git keeps for the work tree, the link confirmed both ways), a new index starts
   as a copy of the main checkout's index of the same schema, parsing rules and vector model: the
   database read with `VACUUM INTO` in one snapshot and the segments it lists copied, each of which
-  must open (else the index is built as usual). The first update reads and hashes every file and
+  must open (a segment the main checkout removed meanwhile fails the seed, and the index is built
+  as usual). The first update reads and hashes every file and
   parses only those that differ. Content an update has not seen is looked up in this checkout's
   store, then the main checkout's, read-only in one snapshot per update. Nothing of the other
   checkout is written (review in docs/SECURITY.md). Two plain clones do not find each other.
