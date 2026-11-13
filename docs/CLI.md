@@ -868,8 +868,11 @@ file that changed between the read and the write is not written, and the error s
 again. A missing file is created (with its directory) holding only the entry. Run twice, setup
 leaves the file as it is; a `scrutate` entry that runs something else is replaced.
 
-`--uninstall` takes out the `scrutate` entry, and with `--hook` and `--instructions` the hook and
-the block, so the file is again what it was before `setup`, byte for byte; a file `setup` created
+`--uninstall` takes out everything `setup` adds for that agent and scope: the `scrutate` entry,
+the Grep hook (any `PreToolUse` group with matcher `Grep` whose one command is a `scrutate`
+binary's `hook grep`, wherever that binary is now) and the marked block, so each file is again
+what it was before `setup`, byte for byte; `--hook` and `--instructions` are accepted with it and
+change nothing; a file `setup` created
 is deleted when nothing else is left in it. Claude Code's user file goes through
 `claude mcp remove scrutate --scope user` when `claude` is on `PATH`; Claude Code writes that whole
 file itself (as its running sessions do all the time), and keeps an empty `mcpServers` it made.
@@ -886,7 +889,9 @@ stdio server only in a folder it trusts (`gemini trust`, or `~/.gemini/trustedFo
 The other agents get a note and no hook: Codex has `PreToolUse` hooks but searches by running `rg`
 in its shell, with no search tool of its own; cursor-agent has a `preToolUse` hook and Gemini CLI
 a `BeforeTool` hook, but their search tools take other arguments and answer in another form;
-opencode's hooks are JavaScript plugins (`tool.execute.before`), not commands.
+opencode's hooks are JavaScript plugins (`tool.execute.before`), not commands. The hook runs only
+where Claude Code's Grep tool is enabled: a setup that turns Grep off, or a `--tools` list without
+it, never runs it (`claude -p --tools Grep` does).
 
 `--instructions` adds a short block that tells the agent to use scrutate's tools, between
 `<!-- scrutate:begin -->` and `<!-- scrutate:end -->`, after a blank line at the end of the agent's

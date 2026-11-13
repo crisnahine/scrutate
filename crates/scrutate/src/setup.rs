@@ -24,9 +24,9 @@ pub struct Options {
     pub project: bool,
     pub uninstall: bool,
     pub dry_run: bool,
-    /// also the Grep hook (Claude Code only)
+    /// also the Grep hook (Claude Code only); `uninstall` takes it out whether asked or not
     pub hook: bool,
-    /// also a block in the agent's instruction file
+    /// also a block in the agent's instruction file; `uninstall` takes it out whether asked or not
     pub instructions: bool,
 }
 
@@ -256,9 +256,9 @@ fn plan(agent: Agent, o: Options, env: &Env) -> Result<Vec<Step>> {
             if o.project && !o.uninstall {
                 steps.push(Step::Note("Claude Code asks once before it starts a server of a project's .mcp.json".into()));
             }
-            if o.hook {
+            if o.hook || o.uninstall {
                 let settings = if o.project { env.top.join(".claude").join("settings.json") } else { env.claude_dir.join("settings.json") };
-                steps.extend(claude_hook(&settings, &bin, o)?);
+                steps.extend(asked(o.hook, claude_hook(&settings, &bin, o)?));
             }
         }
         Agent::Codex => {
@@ -316,7 +316,8 @@ fn plan(agent: Agent, o: Options, env: &Env) -> Result<Vec<Step>> {
             }
         }
     }
-    if o.instructions {
+    // an uninstall takes out everything setup adds, so a removed binary leaves no hook behind
+    if o.instructions || o.uninstall {
         let file = match (agent, o.project) {
             (Agent::Claude, false) => Some(env.claude_dir.join("CLAUDE.md")),
             (Agent::Claude, true) => Some(env.top.join("CLAUDE.md")),
@@ -328,13 +329,19 @@ fn plan(agent: Agent, o: Options, env: &Env) -> Result<Vec<Step>> {
             (Agent::Gemini, true) => Some(env.top.join("GEMINI.md")),
         };
         match file {
-            Some(f) => steps.extend(block_entry(&f, o)?),
+            Some(f) => steps.extend(asked(o.instructions, block_entry(&f, o)?)),
+            None if !o.instructions => {}
             None => steps.push(Step::Note(
                 "Cursor keeps a user's rules in its settings, not in a file: no instructions were written (with --project they go into AGENTS.md)".into(),
             )),
         }
     }
     Ok(steps)
+}
+
+/// `steps`, without the notes (`has no scrutate hook`) of a part the command line did not name.
+fn asked(named: bool, steps: Vec<Step>) -> Vec<Step> {
+    steps.into_iter().filter(|s| named || !matches!(s, Step::Note(_))).collect()
 }
 
 /// The user scope of Claude Code through its own `claude mcp`, which many running Claude Code

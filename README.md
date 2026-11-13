@@ -196,10 +196,11 @@ binary by its absolute path, and keeps every other line of the file:
 scrutate setup claude          # also codex, opencode, cursor, gemini
 scrutate setup cursor --project   # the repository's .cursor/mcp.json instead of the user's file
 scrutate setup claude --hook   # also answer Claude Code's Grep with scrutate's search
-scrutate setup claude --uninstall --hook   # take back exactly what setup wrote
+scrutate setup claude --uninstall   # take back exactly what setup wrote, the hook included
 ```
 
-`--dry-run` prints each file and the change and writes nothing. No `CLAUDE.md`, `AGENTS.md` or
+`--dry-run` prints each file and the change and writes nothing. The hook runs only where Claude
+Code's Grep tool is enabled (a `--tools` list without `Grep` never runs it). No `CLAUDE.md`, `AGENTS.md` or
 `GEMINI.md` is touched unless you add `--instructions`. Which file each agent gets is in
 [docs/CLI.md](docs/CLI.md#setup-and-the-grep-hook); `scrutate hook stats` shows how many bytes the
 Grep hook sent against what Grep would have returned.

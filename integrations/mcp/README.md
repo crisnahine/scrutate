@@ -56,7 +56,7 @@ scrutate setup opencode    # ~/.config/opencode/opencode.json (or .jsonc)
 scrutate setup cursor      # ~/.cursor/mcp.json
 scrutate setup gemini      # ~/.gemini/settings.json
 scrutate setup cursor --project            # the repository's .cursor/mcp.json (.mcp.json for Claude Code)
-scrutate setup claude --uninstall          # takes the entry out again, byte for byte
+scrutate setup claude --uninstall          # takes out what setup added (hook included), byte for byte
 ```
 
 The entry runs `scrutate` by its absolute path with `serve`, so the server serves the repository

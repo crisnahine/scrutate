@@ -306,7 +306,8 @@ the time, and no file name or text of the repository.
 - **Read rules the hook cannot see**: a `Read` or `Grep` rule given only on Claude Code's command
   line (`--disallowedTools`, `--settings`) or by an SDK host is not in a file the hook reads, so the
   hook answers a Grep that such a rule would have filtered. Put such rules in a settings file, or
-  leave the hook out (`scrutate setup claude --uninstall --hook`).
+  leave the hook out (`scrutate setup claude --uninstall`, then `scrutate setup claude` without
+  `--hook`).
 - **Timing side channels, multi-tenant hosting, encryption at rest**: out of scope for a local
   developer tool.
 

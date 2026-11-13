@@ -22,6 +22,8 @@ version rebuilds incompatible indexes automatically and this is never considered
   a call it cannot answer exactly runs Grep as before. `scrutate hook stats` prints, per session
   and in all, the bytes Grep would have returned against the bytes the hook sent. An answer the
   bound does not cut costs 13 bytes more than Grep's own result, the line `Grep result:` before it.
+  A plain `--uninstall` takes the hook and the instruction block out with the server entry, so a
+  removed binary leaves no hook behind.
 - docs/FAQ.md answers the first questions about scrutate, each with a link to its evidence;
   `llms.txt`, written by `tools/gen_doc_assets.py`, lists every Markdown document with the question it
   answers for language models; `CITATION.cff` gives GitHub's "Cite this repository".

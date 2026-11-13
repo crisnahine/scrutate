@@ -304,6 +304,38 @@ fn the_hook_and_the_instructions_come_only_when_asked_and_go_with_uninstall() {
     assert!(out.contains("trust"), "{out}");
 }
 
+#[test]
+fn a_plain_uninstall_takes_out_the_server_the_hook_and_the_block() {
+    let s = Scratch::new("plainuninstall");
+    let settings = s.home.join(".claude/settings.json");
+    let claude_md = s.home.join(".claude/CLAUDE.md");
+    let before_settings = "{\n  \"model\": \"opus\"\n}\n";
+    let before_md = "# My rules\n";
+    s.write(&settings, before_settings);
+    s.write(&claude_md, before_md);
+    assert_eq!(s.setup(&["claude", "--hook", "--instructions"]).0, 0);
+    let (code, out, _) = s.setup(&["claude", "--uninstall", "--dry-run"]);
+    assert_eq!(code, 0);
+    for part in ["mcpServers.scrutate", "Grep hook", "scrutate block"] {
+        assert!(out.contains(part), "{part}: {out}");
+    }
+    assert!(fs::read_to_string(&settings).unwrap().contains("hook grep"), "a dry run writes nothing");
+    let (code, _, err) = s.setup(&["claude", "--uninstall"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(fs::read_to_string(&settings).unwrap(), before_settings);
+    assert_eq!(fs::read_to_string(&claude_md).unwrap(), before_md);
+    assert!(!s.user_file("claude").exists());
+
+    // a hook of a scrutate binary that has moved since goes too, and the project files setup made
+    let moved = "{\n  \"hooks\": {\n    \"PreToolUse\": [{\"matcher\": \"Grep\", \"hooks\": [{\"type\": \"command\", \"command\": \"/old/place/scrutate hook grep\", \"timeout\": 10}]}]\n  }\n}\n";
+    s.write(&settings, moved);
+    assert_eq!(s.setup(&["claude", "--uninstall"]).0, 0);
+    assert_eq!(fs::read_to_string(&settings).unwrap(), "{\n  \"hooks\": {\n    \"PreToolUse\": []\n  }\n}\n", "only the hook");
+    assert_eq!(s.setup(&["claude", "--project", "--hook", "--instructions"]).0, 0);
+    assert_eq!(s.setup(&["claude", "--project", "--uninstall"]).0, 0);
+    assert!(!s.repo.join(".claude/settings.json").exists() && !s.repo.join("CLAUDE.md").exists() && !s.repo.join(".mcp.json").exists());
+}
+
 /// Sends `initialize` and `tools/list` to `argv` run in `dir` and returns the tool names.
 fn mcp_tools(argv: &[String], dir: &Path, s: &Scratch) -> Vec<String> {
     let mut child = s
