@@ -52,10 +52,36 @@ The server answers definitions, references, workspace symbols and document symbo
 completion, hover or diagnostics, so the IDE keeps its own. Saving a file updates the index in the
 background.
 
-### Recording a run
+### The automated run
 
-No CI job starts a JetBrains IDE, so a run counts only when recorded by hand. On a named IDE build
-with LSP4IJ 0.21.0:
+The `jetbrains` workflow (`.github/workflows/jetbrains.yml`) runs the test in `test/` on every
+change under `integrations/jetbrains/`, and by hand. It starts IntelliJ IDEA 2026.2.3 headless,
+as the IntelliJ Platform's tests do, with LSP4IJ 0.21.0 from the Marketplace, and:
+
+1. opens the fixture repository below as a project whose only content root it is, so LSP4IJ
+   sends it as `rootUri`;
+2. registers the server with the values steps 3 and 4 save (name `Scrutate`, command
+   `<binary> lsp`, the mapping `*.py` / `python`), through the call the dialog's **OK** makes;
+3. opens `src/app.py`, puts the caret on `make_point` in line 5 and asks for the targets of
+   *Navigate → Declaration or Usages*. It passes when the one target comes from the language
+   server and is `src/geo.py`, line 6.
+
+The log names the IDE build and the LSP4IJ version. The test does not click through the Settings
+dialog, since the platform's tests run without its Swing UI. To run it yourself, with Java 21 and
+Gradle 9 (the first run downloads the IDE into Gradle's cache):
+
+```sh
+bash integrations/fixture.sh /tmp/scrutate-fixture
+cd integrations/jetbrains/test
+SCRUTATE_BIN=/path/to/scrutate SCRUTATE_FIXTURE=/tmp/scrutate-fixture gradle test
+```
+
+Keep the fixture outside any Git repository: the server takes the top of the repository around
+it as the root.
+
+### Recording a run by hand
+
+For another IDE build, or when the workflow cannot run. On a named IDE build with LSP4IJ 0.21.0:
 
 1. Make the test repository: `bash integrations/fixture.sh /tmp/scrutate-fixture` and
    `mkdir /tmp/scrutate-fixture/.git`, then open that folder as a project.

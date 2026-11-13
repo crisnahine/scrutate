@@ -1,0 +1,8 @@
+<!-- Only loads LSP4IJ into the test IDE; it adds nothing of its own. -->
+<idea-plugin>
+    <id>dev.scrutate.lsp4ij-test</id>
+    <name>Scrutate LSP4IJ test</name>
+    <vendor>Scrutate</vendor>
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.redhat.devtools.lsp4ij</depends>
+</idea-plugin>
