@@ -195,6 +195,14 @@ jobs:
           "$m" grep --sort --json -F "fn " crates | untimed > /tmp/musl.jsonl
           cmp /tmp/glibc.jsonl /tmp/musl.jsonl
           python3 bench/musl_vs_glibc.py target/release/scrutate "$m" crates
+      # the binary the templates' Debian 12 image and the action on Linux x86_64 run: the glibc one
+      # from Ubuntu 24.04 asks for GLIBC_2.39 and does not start there
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: scrutate-musl
+          path: target/x86_64-unknown-linux-musl/release/scrutate
+          if-no-files-found: error
+          retention-days: 3
   wasi:
     name: wasm32-wasip1 build and the build without pcre2
     runs-on: ubuntu-latest
