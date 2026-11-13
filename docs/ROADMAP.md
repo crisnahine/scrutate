@@ -122,8 +122,8 @@ docs/RELEASING.md, public (done), tag `v0.1.0`.
   instructions, not taken.
 - Linux has no function order. Of 5.8 MB resident at the start of a small search, 3.5 MB is the
   executable's text, spread over 85 MB with the kernel mapping 64 KB around each fault; 0.5 MB
-  is data relocated at load. GNU ld in the build image cannot order functions; lld or a linker
-  script can, once the unrun release workflow builds with it.
+  is data relocated at load. GNU ld in the build image cannot order functions; lld can, and a
+  linker script can list sections, once the unrun release workflow builds with either.
 - Large trees on macOS are bound by `open` (docs/ARCHITECTURE.md): the Linux tree takes 0.52 s just to
   open and read on the five performance cores, a search 0.58 s; the rest above that floor is the
   search. The corpora `linux` and `linux-nodot` shared files by hard links, doubling every open's

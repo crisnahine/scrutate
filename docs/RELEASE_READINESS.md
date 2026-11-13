@@ -42,7 +42,8 @@ Every PASS refers to a test, benchmark or audit output here.
 3. **Release pipeline unexercised**: signed releases, attestations and package-manager packages
    exist only as workflow definitions.
 4. **Benchmark leadership is not proven on dedicated hardware**, which section 14 requires for #1
-   claims; the laptop and its Linux VM win every benchmark (docs/LEADERBOARD.md, R-4.6 below).
+   claims; on the laptop and its Linux VM every row measured is won with significance (docs/LEADERBOARD.md,
+   R-4.6 below).
 
 ## Remaining defects and incomplete requirements
 
@@ -112,5 +113,6 @@ search engines, each one the first user or CI run would hit:
 ## Recommendation
 
 Use 0.1.0 for development on macOS arm64 and Linux, where both engines are verified and the
-results reproduce from this repository. It is production-ready once the four gaps above are
-closed.
+results reproduce from this repository. Before calling it production-ready: release archives and
+wheels built by the release workflow and installed on Windows and Intel macOS, an independent
+security review, and the benchmarks repeated on dedicated hardware.

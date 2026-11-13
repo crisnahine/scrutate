@@ -88,8 +88,8 @@
   `--hidden` ↔ `SCRUTATE_GREP_HIDDEN`). An on/off variable is off when `0`, `false`, `no`, `off`
   or empty, on otherwise (`1`, `true`, `yes`, `on`). `--root` (`SCRUTATE_ROOT`) must be an
   existing directory, else the command exits 2 and creates nothing.
-- **Running in a subdirectory**: without `--root` (or `SCRUTATE_ROOT`), an index command runs on
-  the top of the current repository (the first directory upward holding `.git`, as a file or a
+- **Running in a subdirectory**: without `--root` (or `SCRUTATE_ROOT`), a command that uses the
+  index runs on the top of the current repository (the first directory upward holding `.git`, as a file or a
   directory) and says so on stderr (`[scrutate] using the index in <path>`). The first index is
   built there from any subdirectory, and the top's index wins over one an earlier run left in a
   subdirectory; with none at the top, an index in a directory between is used. A clone,
@@ -512,8 +512,8 @@ had stays out when one of them is edited or moved, and a third copy is listed. A
 definition (added or edited, outside a test file) that no test file reaches through the calls
 the walk found is marked: no test reaches it.
 
-`--format markdown` (the default) is a PR comment body: the marker `<!-- scrutate-review -->`
-(by which the GitHub Action finds its comment again), a line naming the two commits, a line of
+`--format markdown` (the default) is a PR comment body: first the marker `<!-- scrutate-review -->`
+(by which the GitHub Action finds its comment again), then a line naming the two commits, a line of
 counts, and a section for each part with items: `Changed definitions`,
 `Callers, up to N steps away` (each with its distance), `Tests to run`, `New duplicates` and
 `Notes`. Locations are paths from the repository root; with `--link URL` each links to

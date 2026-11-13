@@ -196,7 +196,7 @@ Edge cases:
 
 - The main checkout deleted or moved: the link is not confirmed, and the index is built as usual.
   A seeded index needs nothing of the main checkout afterwards.
-- The copy is a real copy on another file system, a clone on APFS.
+- On another file system the copy is a real copy; on APFS it is a clone.
 - Being written at that moment: the reads see the last commit, never half of one (`VACUUM INTO`
   reads in one transaction, an update's lookups in one snapshot). The main checkout removes a
   segment it replaced right after its commit; if a listed segment is gone or half gone, the seed
@@ -231,10 +231,10 @@ extension refused).
 `scrutate setup <agent>` writes only the files [docs/CLI.md](CLI.md#setup-and-the-grep-hook) names
 for that agent and scope (under the home directory, `$CODEX_HOME` or `$XDG_CONFIG_HOME`, or the
 repository's top with `--project`), and only when it is run; no other command touches them. Each
-gets one entry named `scrutate` that runs this binary by its absolute path with `serve` and
-nothing else (with `--project`, `--root <repository> serve`), a `--hook` group and an
-`--instructions` block. A file that does not parse is left
-as it is, and a crash leaves the old file or the new one, never half of one. For Claude Code's
+file gets one entry named `scrutate`, which runs this binary by its absolute path with `serve`
+(with `--project`, `--root <repository> serve`) and nothing else. Only with `--hook` does Claude
+Code's settings get one `PreToolUse` group, and only with `--instructions` does the agent's
+instruction file get one marked block. A file that does not parse is left as it is, and a crash leaves the old file or the new one, never half of one. For Claude Code's
 user file, `setup` runs `claude` from `PATH` (`claude mcp add-json`, `claude mcp remove`), because
 running Claude Code sessions rewrite that file themselves. An entry in a project file (`.mcp.json`,
 `.cursor/mcp.json`) is a command line the agent runs for anyone who opens the repository and
@@ -320,7 +320,8 @@ marker is not).
 
   tree-sitter grammars and SQLite are C code built from crates.io sources.
 - **Where the system cannot map a file** (`Mmap::map` fails with `Unsupported`, as on wasi),
-  `npy::map` reads the whole file into memory, so a change on disk after the read is not seen. Any
+  `npy::map` reads the whole file into memory: an index's arrays and text index segments are
+  held in memory there, and a change on disk after the read is not seen. Any
   other mapping error is an error.
 - **Memory-mapped files can change underneath a reader** if another process rewrites a segment in
   place. scrutate never does (temp dir + rename; deletion only after the manifest no longer

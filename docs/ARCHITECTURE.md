@@ -198,7 +198,7 @@ adds:
   instructions on macOS and 1% to 3% less CPU on the Linux tree in a Linux VM. Linux pseudo
   filesystem files report size 0 and answer a first read short (4 KB of the 7.3 MB
   `/proc/kallsyms`); one `statfs` per root and per `proc` or `sys` directory finds them
-  ([CLI](CLI.md#engine-a-grep-alias-g)). On Linux this and the matcher change took the Linux-tree
+  ([CLI](CLI.md#engine-a-grep-alias-g)). On Linux, where opens are cheap, this and the matcher change took the Linux-tree
   search from 144 ms to 120 ms in the test VM (ripgrep: 135 ms), with 316,000 system calls against
   ripgrep's 526,000.
 - **One way in**: `instant::search` takes a `Query` (the `Pattern`, invert, report: lines, counts
@@ -224,7 +224,8 @@ adds:
   searcher scans whole buffers, not a line at a time.
 - **Line-start literals**: when every match starts a line with one of at most 64 literals
   (`^(a|aa)+$`, `^#include`), candidates are line starts followed by one, each decided by an
-  anchored search. A match that would cross a line break goes to grep-regex's matcher.
+  anchored search. A match that would cross a line break goes to grep-regex's matcher, which
+  cannot match one, so it finds nothing.
 - **Suffix literals**: when a regex has no literal prefix but every match ends in one of at most
   64 literals of 3 bytes or more (`\w+_(suspend|resume)\(`), Aho-Corasick finds candidate lines
   and the regex runs only there (ripgrep, from the same crates, scans every byte).
