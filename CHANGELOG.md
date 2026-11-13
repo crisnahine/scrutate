@@ -282,8 +282,12 @@ First release.
   constant a test checks, with the same value as before, so no process hashes the model.
 - A change of vector model makes the vectors anew instead of rebuilding the index: switching to
   `SCRUTATE_SEMANTIC=none` costs 22 ms CPU instead of 507 ms, and the index equals a fresh build
-  with that model. A ranker whose features differ from this version's makes `search` fail with
-  what differs; before, it was dropped without a word.
+  with that model. Switching back makes the vectors from the word counts of each file's artifact
+  and reads no source file: 1.39 s CPU instead of 3.47 s on this repository (a fresh build takes
+  4.12 s), 2.90 s instead of 8.34 s on Guava. An artifact a file names that the store does not
+  hold or that does not decode is damage at that switch, and the index is built again. A ranker
+  whose features differ from this version's makes `search` fail with what differs; before, it was
+  dropped without a word.
 - Incremental index (SQLite + memory-mapped segments), content hashing, atomic updates,
   compaction, GC, corruption detection and self-healing rebuild, schema/model versioning,
   multi-process safety, `check` command.

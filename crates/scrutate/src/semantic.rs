@@ -138,24 +138,9 @@ impl SemanticModel {
         }
     }
 
-    /// Unit vector of a chunk from its token lists (any list may be empty).
-    pub fn encode_chunk(&self, name: &[String], qual: &[String], sig: &[String], doc: &[String], body: &[String]) -> Option<Vec<f32>> {
-        let mut a: HashMap<&str, u32> = HashMap::new();
-        for t in name {
-            *a.entry(t.as_str()).or_insert(0) += 3;
-        }
-        for t in qual.iter().chain(sig).chain(doc) {
-            *a.entry(t.as_str()).or_insert(0) += 1;
-        }
-        let mut b: HashMap<&str, u32> = HashMap::new();
-        for t in body {
-            *b.entry(t.as_str()).or_insert(0) += 1;
-        }
-        self.encode_counts(&a, &b)
-    }
-
-    /// `encode_chunk` from the word counts of its two views: view A counts a name word three
-    /// times and a qualifier, signature or doc word once, view B counts the body words.
+    /// Unit vector of a chunk from the word counts of its two views (either may be empty): view A
+    /// counts a name word three times and a qualifier, signature or doc word once, view B counts
+    /// the body words, as `encode_chunk` of the Python reference does.
     pub fn encode_counts(&self, a: &HashMap<&str, u32>, b: &HashMap<&str, u32>) -> Option<Vec<f32>> {
         let za = self.proj(&Self::lookup(a, &self.va), &self.idf_a, &self.u16, &self.u32);
         let zb = self.proj(&Self::lookup(b, &self.vb), &self.idf_b, &self.v16, &self.v32);

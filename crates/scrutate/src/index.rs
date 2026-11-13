@@ -12,11 +12,11 @@ use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use sha1::{Digest, Sha1};
 
 use crate::artifacts::{Artifact, Found, Key};
-use crate::lex::{merge_segments, quantize, FileLex, LexStore, QVecs, SegmentBuilder};
+use crate::lex::{merge_segments, FileLex, LexStore, QVecs, SegmentBuilder};
 use crate::models::ModelSet;
 use crate::parse::{parse_file_with, PrevParse};
 use crate::semantic::SemanticModel;
-use crate::text::{name_key, tokenize2, BODY_CAP};
+use crate::text::name_key;
 
 pub const SCHEMA_VERSION: u32 = 14;
 /// What the parser and tokenizer make of a file. Bump it with every change of the rules in
@@ -321,53 +321,6 @@ pub fn build_rows(rel: &str, source: &str, model: Option<&SemanticModel>, prev: 
     }
     let (rows, lex, imports) = crate::artifacts::derive(rel, Found { art, texts, vecs: None }, model);
     (rows, lex, imports, tree, body)
-}
-
-/// The (A view, B view) vector of one chunk from its stemmed name, qualifier, signature, doc and
-/// body words, quantized onto the end of `vecs`.
-fn push_vectors(m: &SemanticModel, kind: &str, [name, qual, sig, doc, body]: [&[String]; 5], vecs: &mut QVecs) {
-    let k = m.k;
-    let mut z = vec![0f32; 2 * k];
-    if kind != "window" {
-        if let Some(za) = m.encode_chunk(name, qual, sig, doc, &[]) {
-            z[..k].copy_from_slice(&za);
-        }
-    }
-    if let Some(zb) = m.encode_chunk(&[], &[], &[], &[], body) {
-        z[k..].copy_from_slice(&zb);
-    }
-    let mut q = vec![0i8; 2 * k];
-    let (qa, qb) = q.split_at_mut(k);
-    vecs.scale.push(quantize(&z[..k], qa));
-    vecs.scale.push(quantize(&z[k..], qb));
-    vecs.q.extend(q);
-}
-
-/// The vectors `build_rows` makes for the file at `rel`, without its rows and postings; None when
-/// its content no longer has the hash `known_hash` (or does not parse), so it must be indexed again.
-fn file_vectors(root: &Path, rel: &str, known_hash: &str, m: &SemanticModel) -> Option<QVecs> {
-    let raw = std::fs::read(root.join(rel)).ok()?;
-    let source = decode_source(&raw)?;
-    if format!("{:x}", Sha1::digest(&raw)) != known_hash {
-        return None;
-    }
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let mut vecs = QVecs::default();
-        for mut c in parse_file_with(rel, &source, None).0.chunks.into_iter().filter(|c| c.kind != "constant") {
-            c.fill(source.as_bytes());
-            let qual = c.qualname.rfind('.').map_or("", |i| &c.qualname[..i]);
-            let toks = [
-                tokenize2(&c.name, None).0,
-                tokenize2(qual, None).0,
-                tokenize2(&c.sig, Some(80)).0,
-                tokenize2(&c.doc, Some(200)).0,
-                tokenize2(&c.body, Some(BODY_CAP)).0,
-            ];
-            push_vectors(m, c.kind, [&toks[0], &toks[1], &toks[2], &toks[3], &toks[4]], &mut vecs);
-        }
-        vecs
-    }))
-    .ok()
 }
 
 enum Processed {
@@ -1771,11 +1724,11 @@ impl Index {
         Ok(changed)
     }
 
-    /// Write every segment again with the vectors `model` makes (none without a model), and its
-    /// other arrays as they are, in place of the old one in the manifest (inside the update's
-    /// transaction). One segment's vectors are held at a time. The rows of files in `todo` or
-    /// `gone` are left out, as are those of a file whose content is not what the index recorded:
-    /// that file joins `todo`, to be indexed whole.
+    /// Write every segment again with the vectors `model` makes (none without a model) from the
+    /// word counts of each file's artifact, and its other arrays as they are, in place of the old
+    /// one in the manifest (inside the update's transaction). No source file is read. One
+    /// segment's vectors are held at a time. The rows of files in `todo` or `gone` are left out,
+    /// as are those of a file that names no artifact: that file joins `todo`, to be indexed whole.
     fn vectors_anew(
         &mut self,
         model: Option<&SemanticModel>,
@@ -1785,10 +1738,11 @@ impl Index {
         replaced: &mut Vec<String>,
     ) -> Result<()> {
         let mut q = self.db.prepare(
-            "SELECT f.path, f.hash, MIN(c.id), SUM(c.kind != 'constant') FROM files f JOIN chunks c ON c.path = f.path \
+            "SELECT f.path, f.art, MIN(c.id), SUM(c.kind != 'constant') FROM files f JOIN chunks c ON c.path = f.path \
              WHERE f.hash != 'SKIP' GROUP BY f.path ORDER BY MIN(c.id)",
         )?;
-        let files: Vec<(String, String, i64, i64)> = q.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?.collect::<rusqlite::Result<_>>()?;
+        type Ranked = (String, Option<Vec<u8>>, i64, i64);
+        let files: Vec<Ranked> = q.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?.collect::<rusqlite::Result<_>>()?;
         drop(q);
         let queued: HashSet<&str> = todo.iter().map(|t| t.0.as_str()).chain(gone.iter().map(String::as_str)).collect();
         let files: Vec<_> = files.into_iter().filter(|f| f.3 > 0 && !queued.contains(f.0.as_str())).collect();
@@ -1801,7 +1755,7 @@ impl Index {
         let old = self.segments();
         for name in &old {
             let seg = crate::lex::Segment::open(&self.seg_dir.join(name)).map_err(|_| Damaged("a listed segment does not open"))?;
-            let mine: Vec<&(String, String, i64, i64)> = files.iter().filter(|f| seg.row_of(f.2).is_some()).collect();
+            let mine: Vec<&Ranked> = files.iter().filter(|f| seg.row_of(f.2).is_some()).collect();
             let mut vecs = QVecs::default();
             let mut at: HashMap<i64, usize> = HashMap::new();
             let mut alive = vec![false; seg.n];
@@ -1809,14 +1763,38 @@ impl Index {
                 if self.cancel.load(std::sync::atomic::Ordering::Relaxed) {
                     anyhow::bail!("cancelled");
                 }
-                let root = &self.root;
                 let made: Vec<Option<QVecs>> = match model {
-                    Some(m) => batch.par_iter().map(|(rel, hash, ..)| file_vectors(root, rel, hash, m)).collect(),
+                    Some(m) => {
+                        let mut q = self.db.prepare_cached("SELECT body FROM artifacts WHERE key=?1")?;
+                        let bodies = batch
+                            .iter()
+                            .map(|f| match &f.1 {
+                                Some(key) => q
+                                    .query_row([key], |r| r.get::<_, Vec<u8>>(0))
+                                    .optional()?
+                                    .map(Some)
+                                    .ok_or_else(|| Damaged("a file names an artifact the store does not hold").into()),
+                                None => Ok(None),
+                            })
+                            .collect::<Result<Vec<Option<Vec<u8>>>>>()?;
+                        let made: Vec<Result<Option<QVecs>>> = batch
+                            .par_iter()
+                            .zip(bodies)
+                            .map(|(&&(_, _, _, n), body)| {
+                                let Some(body) = body else { return Ok(None) };
+                                let art = Artifact::decode(&body).map_err(|_| Damaged("an artifact does not decode"))?;
+                                if art.lexed() != n as usize {
+                                    return Err(Damaged("an artifact and the rows made from it disagree").into());
+                                }
+                                Ok(Some(art.vectors(m)))
+                            })
+                            .collect();
+                        made.into_iter().collect::<Result<_>>()?
+                    }
                     None => batch.iter().map(|_| Some(QVecs::default())).collect(),
                 };
                 for (&(rel, _, first, n), v) in batch.iter().zip(made) {
-                    let fits = v.as_ref().filter(|v| model.is_none() || v.scale.len() == 2 * *n as usize);
-                    let Some(v) = fits else {
+                    let Some(v) = v else {
                         again.push((rel.clone(), None));
                         continue;
                     };

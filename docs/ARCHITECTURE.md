@@ -375,8 +375,8 @@ folded, so two spellings of one accented name are one name.
 
   An artifact holds the chunks (kind, names, lines, the name's subwords, calls), the imports, and
   per chunk and field the subwords and whole identifiers with their counts: the postings are made
-  from them, and the vectors of any model can be (`SemanticModel::encode_counts`; the next step
-  makes a model switch read them instead of parsing). The chunk texts and the vectors are not
+  from them, and so are the vectors of any model (`Artifact::vectors`, through
+  `SemanticModel::encode_counts`), at a change of model too. The chunk texts and the vectors are not
   stored twice: while a path names an artifact they are its rows and segment rows, and an
   artifact found there takes them from those; when the last path that names it drops it (an
   edit, a delete, a rename, a branch switch), its texts move into the artifact (`kept`), and its
@@ -804,9 +804,14 @@ checks against the file; a model named at run time is hashed on first need and t
 size, modification time and status change time (where the system has none, a file rewritten with
 its old size and modification time keeps its old signature). Another vector model makes the
 vectors anew in the next update, inside its write transaction: each segment is written again with
-its postings and the new vectors, or none for `none`, and no database row is written again. Only
-a model that makes vectors reads and parses the files, for their vectors alone; a file whose
-content changed is indexed whole as usual. The index is then the one a fresh build with that model
+its postings and the new vectors, or none for `none`, and no database row is written again. A
+model that makes vectors makes them from the word counts of each file's artifact
+(`Artifact::vectors`), which a build with `none` stores as well, so no source file is read or
+parsed: on this repository 1.39 s CPU where a fresh build takes 4.12 s, on Guava 2.90 s of 9.46 s,
+nearly all of it the vector arithmetic a fresh build does too. A file whose content changed is
+indexed whole as usual, and so is a file that names no artifact; a file that names one the store
+does not hold, or one that does not decode or does not fit its rows, is damage, and the index is
+built again by the one recovery rule (`stores.rs`). The index is then the one a fresh build with that model
 writes (`tests/models.rs` compares every row and segment array). A switch that stops halfway
 leaves the index as it was, and until one commits a search does not compare its query with the
 vectors of another model. Training (numpy + LightGBM) lives in `bench/train_semantic.py` and

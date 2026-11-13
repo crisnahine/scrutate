@@ -124,7 +124,8 @@ the one recovery rule for damage.
 
 **Model set**: the vector model, the ranker and the feature list the ranker reads
 (`models::ModelSet`), each loaded on its first use. The index stores the vector model's
-signature; another model makes the vectors anew and keeps the rest of the index.
+signature; another model makes the vectors anew from the word counts of the artifacts and keeps
+the rest of the index.
 
 **Candidate source**: one way a ranked search finds candidates (`search::Source`): exact names,
 lexical (BM25) or semantic (vectors). The candidates are the union of the sources' answers, and

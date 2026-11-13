@@ -700,7 +700,9 @@ is safe to delete at any time.
 `SCRUTATE_INDEX_EXCLUDE_DIRS`, `SCRUTATE_REFRESH_INTERVAL`, `SCRUTATE_MAX_BYTES`,
 `SCRUTATE_MCP_STRUCTURED`, `SCRUTATE_CONFIG`, `SCRUTATE_WATCH_DEBUG`, `SCRUTATE_GREP_DEBUG`,
 `SCRUTATE_NO_SESSION`, `SCRUTATE_SESSION_DEBUG` (see `serve` above), `SCRUTATE_SEMANTIC`
-(path or `none`; another model makes the stored vectors anew on the next update),
+(path or `none`; another model makes the stored vectors anew on the next update, from the word
+counts the index keeps and without reading a source file: a third of a fresh build's CPU or less
+for a model, next to nothing for `none`),
 `SCRUTATE_RANKER` (path or `none`; a ranker whose features differ from this version's makes
 `search` fail), `SCRUTATE_PROFILE` (print indexing phase
 timings), `SCRUTATE_DIAGNOSTICS` (`json`: errors as JSON records), `NO_COLOR` (any non-empty

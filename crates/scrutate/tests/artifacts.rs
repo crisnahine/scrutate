@@ -402,6 +402,77 @@ fn damage_to_the_store_is_found_and_the_index_built_again() {
     }
 }
 
+/// An index of six Python and six Rust files built without a vector model.
+fn built_without_a_model(name: &str) -> Tmp {
+    let t = Tmp::new(name);
+    for i in 0..6 {
+        put(&t.0, &format!("src/m{i}.py"), &py(i));
+        put(&t.0, &format!("lib/r{i}.rs"), &rs(i));
+    }
+    open(&t.0, &ModelSet::none()).update(false).unwrap();
+    t
+}
+
+#[cfg(unix)]
+#[test]
+fn a_change_to_a_vector_model_makes_the_vectors_from_the_store_and_reads_no_source_file() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let models = ModelSet::from_env();
+    assert!(models.semantic_enabled(), "the bundled model");
+    let t = built_without_a_model("vectors_from_store");
+    let ix = open(&t.0, &models);
+    let files = ix.files().unwrap();
+    // every source file unreadable, with the stat the index records, so only a read would see it
+    for f in &files {
+        let p = t.0.join(f);
+        fs::set_permissions(&p, fs::Permissions::from_mode(0o000)).unwrap();
+        let md = fs::metadata(&p).unwrap();
+        ix.damage_for_tests(&format!("UPDATE files SET ctime_ns={} WHERE path='{f}'", md.ctime() * 1_000_000_000 + md.ctime_nsec())).unwrap();
+    }
+    if fs::read(t.0.join(&files[0])).is_ok() {
+        eprintln!("skipped: this user reads a file of mode 000");
+        return;
+    }
+    let mut ix = open(&t.0, &models);
+    let st = ix.update(false).unwrap();
+    assert_eq!((ix.parsed, st.files_changed, st.files_removed), (0, 0, 0));
+    for f in &files {
+        fs::set_permissions(t.0.join(f), fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    same(&dump(ix), &fresh(&t.0, Arc::clone(&models)));
+}
+
+#[test]
+fn a_file_that_names_no_artifact_is_read_again_at_a_change_of_vector_model() {
+    let models = ModelSet::from_env();
+    let t = built_without_a_model("no_artifact");
+    // as an index written before the store held artifacts
+    let ix = open(&t.0, &models);
+    ix.damage_for_tests("DELETE FROM artifacts WHERE key=(SELECT art FROM files WHERE path='src/m2.py'); UPDATE files SET art=NULL WHERE path='src/m2.py'")
+        .unwrap();
+    let mut ix = open(&t.0, &models);
+    ix.update(false).unwrap();
+    assert_eq!(ix.parsed, 1);
+    same(&dump(ix), &fresh(&t.0, Arc::clone(&models)));
+}
+
+#[test]
+fn damage_to_the_store_met_at_a_change_of_vector_model_builds_the_index_again() {
+    // the model set `stores::update` opens with
+    let models = ModelSet::from_env();
+    for (name, damage) in [
+        ("garbage", "UPDATE artifacts SET body = x'789c0300000000' WHERE key=(SELECT art FROM files WHERE path='lib/r3.rs')"),
+        ("missing", "DELETE FROM artifacts WHERE key=(SELECT art FROM files WHERE path='lib/r3.rs')"),
+        ("other", "UPDATE artifacts SET body=(SELECT body FROM artifacts WHERE key=(SELECT art FROM files WHERE path='src/m0.py')) WHERE key=(SELECT art FROM files WHERE path='lib/r3.rs')"),
+    ] {
+        let t = built_without_a_model(&format!("switch_damage_{name}"));
+        open(&t.0, &models).damage_for_tests(damage).unwrap();
+        let up = scrutate::stores::update(&t.0, scrutate::stores::Writer::IndexCode, false);
+        assert!(up.is_ok(), "{name}: {up:?}");
+        same(&dump(open(&t.0, &models)), &fresh(&t.0, Arc::clone(&models)));
+    }
+}
+
 #[test]
 fn the_store_collected_while_a_reader_holds_it_leaves_the_reader_its_snapshot() {
     let models = ModelSet::none();

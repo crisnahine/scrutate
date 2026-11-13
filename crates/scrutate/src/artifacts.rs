@@ -195,6 +195,15 @@ impl Artifact {
     pub fn lexed(&self) -> usize {
         self.chunks.iter().filter(|c| c.lexed()).count()
     }
+
+    /// The vectors `m` makes of the ranked chunks, from the counts alone, as `derive` makes them.
+    pub fn vectors(&self, m: &SemanticModel) -> QVecs {
+        let mut v = QVecs::default();
+        for c in self.chunks.iter().filter(|c| c.lexed()) {
+            push_vectors(m, c, &mut v);
+        }
+        v
+    }
 }
 
 /// The chunk texts of an artifact no path names, as the store keeps them.
