@@ -55,6 +55,10 @@ incompatible index by itself, and that is never breaking.
   included, attests every file, and makes, checks and deletes a draft release
   `rehearsal-<run id>`, so the tag path is tested before the first tag
   ([Releasing](docs/RELEASING.md#7-what-a-published-release-adds)).
+- The release workflow attaches the VS Code extension (`.vsix`) to the release and attests it,
+  and uploads the wheels to TestPyPI and PyPI and the extension to the VS Code Marketplace and
+  Open VSX, each by trusted publishing or token and each only once the owner sets it up
+  ([Releasing](docs/RELEASING.md#7-what-a-published-release-adds)).
 - `packaging/homebrew/tap/` and `packaging/scoop/bucket/` hold the files of the Homebrew tap and
   the Scoop bucket repositories, with their test, bottle, autobump and Excavator workflows;
   INSTALL.md shows `brew trust --tap scrutate/tap`, which Homebrew 7 needs

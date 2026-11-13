@@ -53,7 +53,7 @@ The attestation check passes only for a file that `release.yml` of `scrutate/scr
 from the tag `v$v` on a GitHub-hosted runner, and it names the commit. With `--owner scrutate`
 alone, a file built by any workflow of the organization would pass, a dry run's included. It says
 where and how the file was built, not that its code is safe. Every file on a release (archives,
-wheels, `SHA256SUMS`) carries such an attestation, and `--predicate-type
+wheels, the `.vsix`, `SHA256SUMS`) carries such an attestation, and `--predicate-type
 https://cyclonedx.org/bom` checks the SBOM attestation of an archive.
 
 The `-linux-gnu` archives need glibc 2.34 or newer (Debian 12, Ubuntu 22.04, RHEL 9 and later);
@@ -152,7 +152,13 @@ brew uninstall scrutate && brew untap scrutate/tap
 scoop bucket add scrutate https://github.com/scrutate/scoop-bucket
 scoop install scrutate/scrutate        # update: scoop update scrutate
 scoop uninstall scrutate
-``` `cargo install
+```
+
+The release workflow also uploads the wheels to PyPI and the extension to the VS Code
+Marketplace and Open VSX once each is set up ([Releasing](RELEASING.md#7-what-a-published-release-adds)).
+Then `pip install scrutate` (update `pip install -U scrutate`) and
+`code --install-extension scrutate.scrutate` work; the extension runs the `scrutate` binary, which
+is installed separately. `cargo install
 scrutate` from crates.io is not possible yet: the bundled models are too large for crates.io, and
 the build needs the patched `ignore` crate in `vendor/`. From a checkout,
 `cargo install --path crates/scrutate --locked` works.

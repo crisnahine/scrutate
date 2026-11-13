@@ -162,9 +162,38 @@ jobs:
           path: dist/*.whl
           if-no-files-found: error
           retention-days: 7
+  vsix:
+    name: the VS Code extension
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"  # vsce 4 and ovsx 1.4 need 22 or newer
+          package-manager-cache: false
+      # vsce refuses SVG images, and the README's generated head is one; links resolve on GitHub
+      - working-directory: integrations/vscode
+        run: |
+          sed -i '/^<!-- Head written by/,/^<!-- End of head. -->/d' README.md
+          npm ci
+          npx --yes @vscode/vsce@4.1.1 package --out "$GITHUB_WORKSPACE/dist/scrutate-$VERSION.vsix" \
+            --baseContentUrl "https://github.com/$GITHUB_REPOSITORY/blob/HEAD/integrations/vscode" \
+            --baseImagesUrl "https://github.com/$GITHUB_REPOSITORY/raw/HEAD/integrations/vscode"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vsix
+          path: dist/*.vsix
+          if-no-files-found: error
+          retention-days: 7
   release:
     name: sign and publish
-    needs: [version, ci, binaries, wheels]
+    needs: [version, ci, binaries, wheels, vsix]
     if: github.ref_type == 'tag' || inputs.dry_run
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -194,10 +223,14 @@ jobs:
           pattern: wheel-*
           path: artifacts
           merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vsix
+          path: artifacts
       - name: SBOM (CycloneDX, from the locked dependency graph)
         run: python3 tools/sbom.py --out "artifacts/scrutate-$VERSION.cdx.json"
       - name: combined checksums
-        run: cd artifacts && sha256sum -- *.tar.gz *.zip *.whl *.cdx.json > SHA256SUMS
+        run: cd artifacts && sha256sum -- *.tar.gz *.zip *.whl *.vsix *.cdx.json > SHA256SUMS
       - name: build provenance for every file
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
@@ -205,6 +238,7 @@ jobs:
             artifacts/*.tar.gz
             artifacts/*.zip
             artifacts/*.whl
+            artifacts/*.vsix
             artifacts/SHA256SUMS
       - name: the SBOM, bound to the archives it describes
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
@@ -233,3 +267,88 @@ jobs:
           fi
           gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md" artifacts/*
           gh release edit "$GITHUB_REF_NAME" --draft=false
+  # The publishing jobs below do nothing until the owner sets them up (docs/RELEASING.md section 7):
+  # each waits for a repository variable, or for its token, so a release without them succeeds.
+  testpypi:
+    name: wheels to TestPyPI
+    needs: release
+    if: vars.PYPI_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: testpypi  # the trusted publisher on test.pypi.org names it
+    permissions:
+      id-token: write  # trusted publishing; no password
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+      # a name uploaded once can never be uploaded again; a rehearsal already sent this version
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+  pypi:
+    name: wheels to PyPI
+    needs: testpypi
+    if: github.ref_type == 'tag' && vars.PYPI_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: pypi  # the trusted publisher on pypi.org names it
+    permissions:
+      id-token: write  # trusted publishing; no password
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+  marketplace:
+    name: the extension to the VS Code Marketplace
+    needs: [version, release]
+    if: github.ref_type == 'tag' && vars.VSCE_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: marketplace  # the Marketplace's trusted publishing policy names it
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    permissions:
+      id-token: write  # trusted publishing: the Marketplace takes the OIDC token, no PAT
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vsix
+          path: dist
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - run: npx --yes @vscode/vsce@4.1.1 publish --oidc --packagePath "dist/scrutate-$VERSION.vsix"
+  openvsx:
+    name: the extension to Open VSX
+    needs: [version, release]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: openvsx  # holds the OVSX_PAT secret
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      OVSX_PAT: ${{ secrets.OVSX_PAT }}
+    steps:
+      - if: env.OVSX_PAT == ''
+        run: echo "no OVSX_PAT secret in the openvsx environment; Open VSX is skipped"
+      - if: env.OVSX_PAT != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vsix
+          path: dist
+      - if: env.OVSX_PAT != ''
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      # ovsx reads the token from OVSX_PAT
+      - if: env.OVSX_PAT != ''
+        run: npx --yes ovsx@1.4.0 publish "dist/scrutate-$VERSION.vsix"

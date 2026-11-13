@@ -270,7 +270,26 @@ Before the first tag, set in the repository settings:
 | immutable releases, push protection, CodeQL default setup | |
 
 The release job makes a draft, attaches every file, then publishes, the order immutable releases
-need. Its notes are the version's section of `CHANGELOG.md`.
+need. Its notes are the version's section of `CHANGELOG.md`. The files are the archives, the
+wheels, the VS Code extension (`scrutate-<version>.vsix`, packaged with `@vscode/vsce` 4.1.1),
+the SBOM and `SHA256SUMS`.
+
+Four publishing jobs follow the release job. Each does nothing until its setup exists, so a
+release without them still succeeds:
+
+| Job | Runs when | Setup (owner) |
+|---|---|---|
+| `testpypi` | the repository variable `PYPI_PUBLISH` is `true`; on a tag and on a dry run | a TestPyPI account with 2FA and a pending publisher: owner `scrutate`, repository `scrutate`, workflow `release.yml`, environment `testpypi`, project `scrutate` |
+| `pypi` | `PYPI_PUBLISH` is `true`, on a tag only, after `testpypi` | the same on PyPI with environment `pypi` |
+| `marketplace` | the variable `VSCE_PUBLISH` is `true`, on a tag | a Microsoft account, the Marketplace publisher `scrutate`, and on it a Trusted Publishing policy: owner `scrutate`, repository `scrutate`, workflow `release.yml`, environment `marketplace`. `vsce publish --oidc` exchanges the job's OIDC token; Azure DevOps global PATs retire on 2026-12-01 |
+| `openvsx` | on a tag; it skips its steps unless the `openvsx` environment has the secret `OVSX_PAT` | an Eclipse account with the Publisher Agreement signed, an Open VSX access token, and the namespace (`npx ovsx create-namespace scrutate -p TOKEN`) |
+
+The PyPI uploads use trusted publishing (`pypa/gh-action-pypi-publish` v1.14.3, which also makes
+PEP 740 attestations); TestPyPI skips a file it already has, since a dry run sends the version
+first. No PyPI document says whether PyPI takes the `cp315-abi3.abi3t` wheels. Its upload code
+(`warehouse/forklift/legacy.py` on 2026-11-12) parses a wheel name with `packaging` 26.3, which
+reads `abi3.abi3t` as two tags, and checks only the platform tag; a dry run's TestPyPI upload
+settles it.
 
 R-6.1, R-9.10 and R-12.2 in docs/TRACEABILITY.md are PASS from run 43013926055. R-6.12 and R-13.9
 stay PARTIAL until `release.yml` and `benchmarks.yml` have run on a runner: flip them from the
