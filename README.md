@@ -229,8 +229,8 @@ cargo build --release -p scrutate --locked      # target/release/scrutate
 ```
 
 No release archive is published yet. `.github/workflows/release.yml` builds archives, checksums,
-Sigstore attestations, musl binaries and wheels for every platform once the repository is public;
-it is private for now ([docs/INSTALL.md](docs/INSTALL.md)).
+Sigstore attestations, musl binaries and wheels for every platform when a version is tagged
+([docs/INSTALL.md](docs/INSTALL.md)).
 
 <p align="center"><img src="docs/assets/strip-python.svg" width="100%" alt=""></p>
 
@@ -256,7 +256,7 @@ This is the first release. It is **not** declared production-ready:
 **Platforms.** macOS arm64, Linux aarch64 and Linux x86_64 are built and tested (Linux in clean
 containers with no Python on the image, including static musl binaries and wheels for CPython
 3.10 to 3.13 and free-threaded 3.14). macOS x86_64 and Windows x86_64 are cross-built here.
-On GitHub's runners (CI run 43013926055, commit `9384c18`, private repository) every job
+On GitHub's runners (CI run 43382848665, commit `08cd9fa`) every job
 passed: the Rust tests on macOS arm64, macOS x86_64, Linux x86_64, Linux arm64, Windows x86_64
 and Windows ARM64, and the editor integrations ([docs/INSTALL.md](docs/INSTALL.md)).
 

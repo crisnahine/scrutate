@@ -53,7 +53,7 @@ With `uv` installed, `tools/release_local.sh` builds one wheel of each kind (int
 3.14t and 3.15) and stops when `uv` finds one of them missing; without `uv` it builds only the
 one for `python3`. The static musl binary is built and
 tested by `tools/linux_verify.sh` but not packaged here. Signed archives, attestations and the
-other platforms come from `.github/workflows/release.yml` once the repository is public.
+other platforms come from `.github/workflows/release.yml` when a version is tagged.
 
 Previous work is preserved untouched in the sibling directory that held the Python prototype
 ("Titan"); its training code lives on here as `python/scrutate_ref`, which fits the bundled models on rows

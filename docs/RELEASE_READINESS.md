@@ -34,8 +34,8 @@ below). Every PASS refers to a test, benchmark or audit output in this repositor
 
 ## Why not "production-ready" yet
 
-1. **Platform coverage.** The repository is on GitHub, private. CI run 43013926055 (commit
-   `9384c18`) passed every job that runs on a push: the Rust tests on macOS arm64, Intel macOS,
+1. **Platform coverage.** The repository is public on GitHub. CI run 43382848665 (commit
+   `08cd9fa`) passed every job that runs on a push: the Rust tests on macOS arm64, Intel macOS,
    Linux x86_64, Linux arm64, Windows x64 and Windows arm64, and the editor integrations. What is
    still missing for Windows and Intel macOS: a release archive built by the release workflow
    and installed on a machine, and a benchmark run (docs/ROADMAP.md, known limits).

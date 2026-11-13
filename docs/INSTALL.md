@@ -33,8 +33,8 @@ on it. Every row below names the evidence; `bench/results/platforms/` holds the 
 
 ## From a release archive
 
-No archive is published for 0.1.0: the repository is on GitHub but private, and the release
-workflow has not run. Once releases exist, the steps are:
+No archive is published for 0.1.0: the repository is public on GitHub, and the release workflow
+has not run. Once releases exist, the steps are:
 
 ```sh
 v=0.1.0; t=x86_64-unknown-linux-gnu
@@ -54,7 +54,7 @@ Windows: unzip, put `scrutate.exe` on `PATH`, `scrutate completions powershell |
 
 ## From source (any platform with stable Rust 1.91 or newer)
 
-From a copy of the source tree (the clone URL works for everyone once the repository is public):
+From a copy of the source tree:
 
 ```sh
 git clone https://github.com/scrutate/scrutate && cd scrutate
