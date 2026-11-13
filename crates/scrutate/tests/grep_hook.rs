@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 use serde_json::{json, Value};
 
 const BIN: &str = env!("CARGO_BIN_EXE_scrutate");
-const HEADER: &str = "Grep result from scrutate (the lines ripgrep gives; Grep did not run):";
+const HEADER: &str = "Grep result:";
 
 /// A fixture tree and a scratch home under the build's own temporary directory.
 struct Tree {

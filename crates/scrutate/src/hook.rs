@@ -31,7 +31,9 @@ pub const SAME_TYPES: [&str; 23] = [
     "rust", "solidity", "swift", "yaml",
 ];
 const KEYS: [&str; 15] = ["pattern", "path", "glob", "type", "output_mode", "-B", "-A", "-C", "context", "-n", "-i", "-o", "head_limit", "offset", "multiline"];
-pub const HEADER: &str = "Grep result from scrutate (the lines ripgrep gives; Grep did not run):";
+/// The line before the result: short, as it is paid on every answer, and enough for the model
+/// to read what follows as Grep's result (Claude Code says a hook denied the call).
+pub const HEADER: &str = "Grep result:";
 
 /// The answer to one Grep call.
 #[derive(Debug)]

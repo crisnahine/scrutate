@@ -912,8 +912,10 @@ Grep's `[Showing results with pagination = ...]`), and then the bound of the MCP
 24,000 bytes (`SCRUTATE_MAX_BYTES`, held between 1,000 and 1,000,000), whole lines, ending with
 `(N more lines not shown: call Grep again with offset=K, or narrow the request)` when it cut. It
 prints
-`{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "Grep result from scrutate (the lines ripgrep gives; Grep did not run):\n..."}}`,
-and Claude Code gives the reason to the model in place of Grep's result. In Claude Code 2.1.323's
+`{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "Grep result:\n..."}}`,
+and Claude Code gives the reason to the model in place of Grep's result. The header line
+`Grep result:` is the whole cost of an answer the bound does not cut: 13 bytes more than Grep's
+own result. In Claude Code 2.1.323's
 own code the reason of a hook from the user's settings files reaches the model whole, and the
 reason of another hook is cut at 2,000 characters.
 
