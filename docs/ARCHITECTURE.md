@@ -762,82 +762,73 @@ sends an Engine A query through the text index. Both engines stay independently 
 
 Every question a front end can ask of the index is an **operation** (`ops::Op`): its arguments,
 defaults and limits live there, and it returns a typed **answer** (`ops::Answer`) with one text
-form and one JSON form. The CLI's index commands (`read` among them) and the ranked search of
-`search` and `find`, the MCP server's nineteen tools, `batch` and the Python bindings parse into
-operations, run them through `Repo` (`Repo::run`, or `Repo::run_as_is` after a scan of their
-own), and render answers; none has a default or output format of its own (they had drifted:
-three different limits for `callers`, references textual in one and resolved in another). The
-JSON form leaves in one envelope (`Answer::envelope`: `schema`, `result`, `stopped_at`), which
-`--json`, a `batch` record and the MCP structured result print (the MCP result adds `complete`,
-and `text` when the result does not fit). A tool's JSON arguments are parsed in one place
-(`Op::from_tool`), used by the MCP server, `batch`, the CLI's `read` and the bindings'
-`Repo.call`. The language server asks the same operations for references, document symbols and
-the definitions of a name, and answers in LSP's shapes; resolving the name under the cursor
-(`Names::at`) and the workspace symbol search (`Index::symbols_containing`) are its own, as no
-operation asks them. An Engine A search is an operation argument too: `Op::Grep` carries the
-`instant::Pattern` (mode, case, whole words) and an `ops::Scope` (a path under the root, globs),
-so `grep_code` reaches every matching mode.
+form and one JSON form. The CLI's index commands (`read` among them) and ranked search, the MCP
+server's nineteen tools, `batch` and the Python bindings parse into operations, run them through
+`Repo` (`Repo::run`, or `Repo::run_as_is` after a scan of their own), and render answers; none has
+a default or output format of its own (they had drifted: three different limits for `callers`,
+references textual in one and resolved in another). The JSON form leaves in one envelope
+(`Answer::envelope`: `schema`, `result`, `stopped_at`), which `--json`, a `batch` record and the
+MCP structured result print (the MCP result adds `complete`, and `text` when the result does not
+fit). A tool's JSON arguments are parsed in one place (`Op::from_tool`), used by the MCP server,
+`batch`, the CLI's `read` and the bindings' `Repo.call`. The language server asks the same
+operations for references, document symbols and the definitions of a name, and answers in LSP's
+shapes; resolving the name under the cursor (`Names::at`) and the workspace symbol search
+(`Index::symbols_containing`) are its own. An Engine A search is an operation argument too:
+`Op::Grep` carries the `instant::Pattern` (mode, case, whole words) and an `ops::Scope` (a path
+under the root, globs), so `grep_code` reaches every matching mode.
 
 With a text index, `grep_code` and `references` (textual, and the name search of resolved
-references) make a look of their own (one walk and one `stat` per file, no index update), read
-the trigrams for the files the text index holds as they are now (the size, mtime and status
-change time that look found) and read every other file of the look directly: new, changed,
-hidden or left out by the text index's walk (`stores::grep_files`). Windows has no status change
-time, so there, as for the code index, a file rewritten with its old size and modification time
-is read from what the text index recorded until the next update. The walk runs instead when there
-is no text index, when the pattern's trigrams narrow nothing, when a glob brings files in, when a
-name is not UTF-8, or when the path is a file or a directory the look did not enter. No grep
-builds a text index. A look costs about what a walk costs without the search (on 12,001 small
-files, 90 ms of CPU for the tool against 405 ms for `grep` over the tree).
+references) make a look of their own (one walk and one `stat` per file, no index update), read the
+trigrams for the files the text index holds as they are now (the size, mtime and status change
+time that look found) and read every other file of the look directly: new, changed, hidden or left
+out by the text index's walk (`stores::grep_files`). Windows has no status change time, so there,
+as for the code index, a file rewritten with its old size and modification time is read from what
+the text index recorded until the next update. The walk runs instead when there is no text index,
+when the pattern's trigrams narrow nothing, when a glob brings files in, when a name is not UTF-8,
+or when the path is a file or a directory the look did not enter. No grep builds a text index. A
+look costs about what a walk costs without the search (on 12,001 small files, 90 ms of CPU for the
+tool against 405 ms for `grep` over the tree).
 
 A plain `scrutate grep` is not an operation: its flags are read once into a `Query` and a `Files`
 and go to Engine A directly, with no record built (see Start-up above); with `--max-bytes` its
 lines are paged by the operations' budget rule (`ops::paged_counted`). An answer renders within a
-byte budget: whole items, then a line with how many are left and the offset that continues it,
-because an agent's harness cuts a long tool result where it likes (Codex at 10,000 tokens, from
-the middle). It renders in one of two forms (`ops::Form`, the tools' `response_format`):
-`Answer::parts` builds each answer kind's items once with a concise line set beside each item,
-and the page is cut by the detailed items in both forms, so an offset means the same items. The
-concise lines are pieces (text, a path, a location) that the page writes with each directory once
-and a location in the file before it as `:start-end`; it keeps every location and name and leaves
-out what a call can ask for again, 5% to 44% of the detailed bytes on this repository where those
-pass 1 KB (`tests/concise.rs`).
+byte budget ([CLI](CLI.md#answers-from-the-index-one-definition-for-every-front-end)), because an
+agent's harness cuts a long tool result where it likes (Codex at 10,000 tokens, from the middle).
+It renders in one of two forms (`ops::Form`, the tools' `response_format`): `Answer::parts` builds
+each answer kind's items once with a concise line set beside each item, and the page is cut by the
+detailed items in both forms, so an offset means the same items. The concise lines are pieces
+(text, a path, a location) that the page writes with each directory once and a location in the
+file before it as `:start-end`; the sizes are in [CLI](CLI.md#serve-mcp) (`tests/concise.rs`).
 
 `Repo` (`stores.rs`) is an open repository: the searcher on its index and the stores kept current
 around it (see "Keeping the stores current" above). After an operation it checks the files the
-answer cites and the files its arguments name against the index, one `stat` each; when one
-changed or is gone, those files alone are updated and the operation runs again, once. `read_code`
-by path streams the file through a 64 KB buffer and stops after the last line it shows. The MCP
-server, the Python bindings, the language server and `watch` reach one through their session
-(`session.rs`). The MCP server builds the first index in the background and answers "still
-building" after a 20 second wait, and waits as long for another process building it. A cancelled
-call sets the flag the index update checks between batches, so a `reindex` or the scan before a
-read rolls back there.
+answer cites and the files its arguments name against the index, one `stat` each, and updates
+and reruns once when one changed ([CLI](CLI.md#serve-mcp)). `read_code` by path streams the file
+through a 64 KB buffer and stops after the last line it shows. The MCP server, the Python
+bindings, the language server and `watch` reach one through their session (`session.rs`). The MCP
+server builds the first index in the background, answering "still building" after a 20 second
+wait. A cancelled call sets the flag the index update checks between batches, so a `reindex` or
+the scan before a read rolls back there.
 
 The MCP server (`mcp.rs`) is an adapter: the tool table with its client hints (`readOnlyHint`,
-`openWorldHint`) and output schemas, a short description per tool for `serve --short-tools`
-(which also drops every argument description and names the three shared arguments once in the
-instructions), server instructions, and the protocol loop. The loop serves two eras on one pipe:
-the `initialize` handshake of the revisions up to 2025-11-25, and revision 2026-07-28, where each
-request names its version in `_meta` and nothing is remembered between requests. Each tool call
-runs on its own thread, so the loop keeps reading and a `notifications/cancelled` finds the call
-it names; the session runs calls side by side. A result is text cut to the byte budget; with
-`serve --structured` it also carries the envelope in `structuredContent`: the JSON form when text
-and JSON fit together, else `complete: false`, a null `result` and the text. It is a switch
-because clients differ in which form they show their model, and the text is the one written for
-a model. The flags and protocol details are in the [CLI reference](CLI.md#serve-mcp). The Python
-bindings expose both engines with the GIL released and streaming results.
+`openWorldHint`) and output schemas, a short description per tool for `serve --short-tools`, server
+instructions, and the protocol loop, which serves two eras on one pipe: the `initialize` handshake
+of the revisions up to 2025-11-25, and revision 2026-07-28, where each request names its version in
+`_meta` and nothing is remembered between requests. Each tool call runs on its own thread, so the
+loop keeps reading and a `notifications/cancelled` finds the call it names. A result is text cut
+to the byte budget; with `serve --structured` it also carries the envelope in `structuredContent`
+(`complete: false`, a null `result` and the text when both forms do not fit).
+That is a switch because clients differ in which form they show their model, and the text is the
+one written for a model. Flags and protocol details: [CLI reference](CLI.md#serve-mcp). The
+Python bindings expose both engines with the GIL released and streaming results.
 
 `lsp.rs` is a language server for editors (`scrutate lsp`), hand-written like the MCP server: a
 `Content-Length` framed JSON-RPC loop on stdio that turns definition, references, workspace symbol
 and document symbol requests into the index lookups of `symbol`, `refs` and `outline`, and
 converts between the index's lines and the protocol's UTF-16 columns. Definition and references
-first ask `Names` about the name under the cursor, so both name the same definition; a name it
-cannot place falls back to the lookup by name. `initialize` finds the root with the CLI's own rule
-(`cli::index_above`) from the editor's first folder, so editor and shell share the index at the
-repository top. Requests wait for the first index build, and the index is scanned before a request
-at most once a second (the session's interval). A save updates the index through the session's
-writer in a background thread; requests keep reading while it writes.
+first ask `Names` about the name under the cursor, so both name the same definition. `initialize`
+finds the root with the CLI's own rule (`cli::index_above`), and a save updates the index
+through the session's writer; the rest is in [CLI](CLI.md#lsp).
 
 `setup.rs` writes an agent's configuration for `scrutate setup`. It makes the whole plan first (a
 file from its old text to its new one, the agent's own command, a note) and writes nothing when a
@@ -851,26 +842,24 @@ bounds the result as an MCP answer is bounded; an argument it cannot map, or any
 run.
 
 ### WebAssembly (`wasm32-wasip1`)
-The crate builds for `wasm32-wasip1`, where a process cannot start a thread: `std::thread::spawn`
-fails there, and so does every scope that spawns. Each branch for it sits under
-`cfg(target_os = "wasi")` beside the native code, which it leaves as it is. The thread rules
-(`policy.rs`) take one thread as if it were asked for, so a large file is never split into ranges
-and no read is shared out. Engine A's `schedule` walks with the sequential walker
+The crate builds for `wasm32-wasip1`, where `std::thread::spawn` fails, and so does every scope
+that spawns. Each branch for it sits under `cfg(target_os = "wasi")` beside the native code, which
+it leaves as it is. The thread rules (`policy.rs`) take one thread as if asked for, so no file is
+split into ranges and no read shared out. Engine A's `schedule` walks with the sequential walker
 (`WalkBuilder::build`) and searches each file on the calling thread as it is found. A bounded
-channel between a producer and a consumer on one thread waits forever once it is full, so on wasi
-the records of a file wait in a vector and go to the caller before the next file is opened.
-`vendor/ignore` runs a parallel walk's one worker on the calling thread, so `files`, the text
-index's walk and every other caller of `build_walker` work unchanged. rayon's global pool falls
-back to the calling thread by itself, which is what the index build's `par_iter` uses. What has to
-run beside the caller is not in that build: `serve`, `lsp` and `tsquery` fail with a message that
-says so, `watch` too (wasi has no file events, so `notify` is not a dependency there), and the Grep hook lets Grep answer, since it has no thread to keep its deadline. The
-session socket is Unix only and was already absent there. `memmap2` maps nothing on wasi, so
-`npy::map` reads a segment file whole into memory when a map fails with `Unsupported`; every
-other error is reported as before, and native builds keep mapping. wasi has no file locks and no
-process id either: the text index's update goes on without its lock when locking is unsupported
-there (one process sees the files), and the temporary names of the answer cache, the frecency
-state and a seeded index leave the process id out. PCRE2's JIT has no wasm
-backend, so that build leaves out the `pcre2` feature:
+channel on one thread waits forever once full, so on wasi a file's records wait in a vector and
+go to the caller before the next file is opened. `vendor/ignore` runs a parallel walk's one worker
+on the calling thread, so `files`, the text index's walk and every other caller of `build_walker`
+work unchanged. rayon's global pool, which the index build's `par_iter` uses, falls back to the
+calling thread by itself. What must run beside the caller is left out: `serve`, `lsp` and
+`tsquery` fail with a message that says so, `watch` too (wasi has no file events, so `notify` is
+not a dependency there), and the Grep hook lets Grep answer, having no thread to keep its
+deadline. The session socket is Unix only. `memmap2` maps nothing on wasi, so `npy::map` reads a
+segment file whole when a map fails with `Unsupported`; every other error is reported as before,
+and native builds keep mapping. wasi has no file locks or process id: the text index updates
+without its lock when locking is unsupported (one process sees the files), and the temporary
+names of the answer cache, the frecency state and a seeded index leave the process id out.
+PCRE2's JIT has no wasm backend, so that build leaves out the `pcre2` feature:
 `cargo build --release -p scrutate --target wasm32-wasip1 --no-default-features`, with the C
 compiler of a wasi-sdk for SQLite and the grammars. The `wasi` job of `ci.yml` checks that build,
 and runs clippy on the native build without `pcre2`, on every push.
@@ -884,23 +873,22 @@ and a server's threads share it: `symbol`, `outline` and the other lookups never
 file. A ranker whose feature names are not `FEATURES` is an error the moment a search ranks with
 it; commands that do not rank never read it.
 
-The index records the vector model's signature: a blake2b hash of the model file. The bundled
+The index records the vector model's signature, a blake2b hash of the model file. The bundled
 model's is a constant in `models.rs`, checked against the file by a test; a model named at run
 time is hashed on first need and the hash kept in `.scrutate/model.sig` beside the file's size,
 modification time and status change time (where the system has none, a file rewritten with its
 old size and modification time keeps its old signature). Another vector model makes the vectors
 anew in the next update, inside its write transaction: each segment is written again with its
-postings and the new vectors, or none for `none`, and no database row is rewritten. A model that
-makes vectors makes them from the word counts of each file's artifact (`Artifact::vectors`),
-which a build with `none` stores as well, so no source file is read or parsed: on this repository
-1.39 s CPU where a fresh build takes 4.12 s, on Guava 2.90 s of 9.46 s, nearly all of it the
-vector arithmetic a fresh build does too. A file whose content changed is indexed whole as usual,
-and so is a file that names no artifact; a file that names one the store does not hold, or one
-that does not decode or fit its rows, is damage, and the index is built again by the one recovery
-rule (`stores.rs`). The index is then the one a fresh build with that model writes
-(`tests/models.rs` compares every row and segment array). A switch that stops halfway leaves the
-index as it was, and until one commits a search does not compare its query with another model's
-vectors.
+postings and the new vectors, or none for `none`, and no database row is rewritten. The vectors
+come from the word counts of each file's artifact (`Artifact::vectors`), which a build with `none`
+stores as well, so no source file is read or parsed: on this repository 1.39 s CPU where a fresh
+build takes 4.12 s, on Guava 2.90 s of 9.46 s, nearly all of it vector arithmetic a fresh build
+does too. A file whose content changed, or that names no artifact, is indexed whole; one that
+names an artifact the store does not hold, or one that does not decode or fit its rows, is
+damage, rebuilt by the one recovery rule (`stores.rs`). The index is then the one a fresh build
+with that model writes (`tests/models.rs` compares every row and segment array). A switch that
+stops halfway leaves the index as it was, and until one commits a search does not compare its
+query with another model's vectors.
 
 Training (numpy + LightGBM) lives in `bench/train_semantic.py` and `bench/train_ranker.py` and
 reads its inputs from the engine: `bench/gen_features.py` indexes each benchmark package with the
