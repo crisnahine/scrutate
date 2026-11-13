@@ -90,6 +90,14 @@ at 256. `Repo.read()` raises `FileNotFoundError` for a missing file, `ValueError
 outside the repository and `OSError` otherwise. After a panic inside the engine, raised as an
 exception, the `Repo` stays usable, and an update that panicked has rolled back.
 
+## Connect your coding agent
+
+`scrutate setup <claude|codex|opencode|cursor|gemini>` writes the MCP server entry for that
+agent, running this binary by its absolute path; `--project` writes the repository's own file
+instead, `--hook` also installs Claude Code's Grep hook, and `--uninstall` takes back everything
+setup added. [Command line](CLI.md#setup-and-the-grep-hook) has every option and the file each
+agent reads.
+
 ## Updating
 
 Replace the binary with the new release (same steps). Indexes are caches: a new version that

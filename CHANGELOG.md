@@ -52,6 +52,11 @@ version rebuilds incompatible indexes automatically and this is never considered
   definitions, `CITATION.cff` and `llms.txt` name the new one.
 
 ### Fixed
+- `path` takes a function named like its file (`def main` in `main.py`) over the file's module
+  chunk of the same name, as `callers` and `callees` do; two real definitions still list both.
+- A `tsquery` predicate written outside every pattern's parentheses is an error: tree-sitter
+  applied it to nothing, so the pattern matched every node, and `--rewrite --write` would have
+  rewritten all of them.
 - `grep -t TYPE` (and `-t !TYPE`, `SCRUTATE_GREP_TYPES`, the configuration file's `types`)
   matches after the ignore rules, as ripgrep's `--type` does: a gitignored file of the type is no
   longer searched, and a glob that matches a file decides before the type (`-g '*.txt' -t py`

@@ -2631,6 +2631,22 @@ fn path_follows_the_call_chain_and_says_when_there_is_none() {
 }
 
 #[test]
+fn path_takes_a_function_named_like_its_file_over_the_files_module() {
+    let r = Repo::new("path_module_name");
+    fs::create_dir_all(r.root.join(".git")).unwrap();
+    r.write("lib/core.py", b"def deep(x):\n    return x + 1\n");
+    r.write("lib/mid.py", b"from lib.core import deep\n\n\ndef middle(x):\n    return deep(x)\n");
+    r.write("lib/top.py", b"from lib.mid import middle\n\n\ndef top(x):\n    return middle(x)\n");
+    let (code, out, err) = r.run(&["path", "top", "deep"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(
+        out.lines().collect::<Vec<_>>(),
+        ["lib/top.py:4-5  [function] top", "  lib/top.py:5  calls lib/mid.py:4-5  [function] middle", "  lib/mid.py:5  calls lib/core.py:1-2  [function] deep"],
+        "{out}"
+    );
+}
+
+#[test]
 fn path_takes_a_call_the_resolver_cannot_tie_and_says_so() {
     // C is a language the resolver does not read: callees lists `deep` by name
     let r = Repo::new("path_c");

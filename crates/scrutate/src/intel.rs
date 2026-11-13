@@ -270,6 +270,11 @@ pub(crate) fn compile_query(lang: &str, query: &str) -> Result<(&'static crate::
     if query.trim().is_empty() {
         bail!("empty query: give a tree-sitter pattern with a @capture, such as (identifier) @name");
     }
+    if let Some(line) = loose_predicate(query) {
+        bail!(
+            "a predicate on line {line} stands outside every pattern, so tree-sitter ignores it and the pattern matches every node: put it inside the pattern's parentheses, as in ((identifier) @i (#eq? @i \"x\"))"
+        );
+    }
     let language = (spec.language)();
     let q = tree_sitter::Query::new(&language, query).map_err(|e| anyhow!("bad query: {e}"))?;
     if q.capture_names().is_empty() {
@@ -280,6 +285,68 @@ pub(crate) fn compile_query(lang: &str, query: &str) -> Result<(&'static crate::
         bail!("unknown predicate #{} (supported: #eq?, #match?, #any-of? and their not- and any- forms)", p.operator);
     }
     Ok((spec, language, q))
+}
+
+/// The line of a predicate written at the top level of `query`, outside every pattern's
+/// parentheses: tree-sitter accepts it and applies it to nothing.
+fn loose_predicate(query: &str) -> Option<usize> {
+    let (mut depth, mut line) = (0usize, 1usize);
+    let mut chars = query.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\n' => line += 1,
+            ';' => {
+                for c in chars.by_ref() {
+                    if c == '\n' {
+                        line += 1;
+                        break;
+                    }
+                }
+            }
+            '"' => {
+                while let Some(c) = chars.next() {
+                    match c {
+                        '\\' => {
+                            chars.next();
+                        }
+                        '"' => break,
+                        '\n' => line += 1,
+                        _ => {}
+                    }
+                }
+            }
+            '(' | '[' => {
+                if depth == 0 && c == '(' {
+                    let mut ahead = chars.clone();
+                    while ahead.peek().is_some_and(|c| c.is_whitespace()) {
+                        ahead.next();
+                    }
+                    if ahead.peek() == Some(&'#') {
+                        return Some(line);
+                    }
+                }
+                depth += 1;
+            }
+            ')' | ']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod loose_predicate_tests {
+    #[test]
+    fn a_predicate_outside_every_pattern_is_found_by_its_line() {
+        use super::loose_predicate;
+        assert_eq!(loose_predicate(r#"(identifier) @i (#eq? @i "r")"#), Some(1));
+        assert_eq!(loose_predicate("(call) @c\n( #match? @c \"x\")"), Some(2));
+        assert_eq!(loose_predicate(r#"[(a) (b)] @x (#eq? @x "y")"#), Some(1));
+        assert_eq!(loose_predicate(r#"((identifier) @i (#eq? @i "r"))"#), None);
+        assert_eq!(loose_predicate(r#"(call function: (identifier) @f (#eq? @f "print")) @m"#), None);
+        assert_eq!(loose_predicate("; (#eq? not code)\n(identifier) @i"), None);
+        assert_eq!(loose_predicate(r#"((string) @s (#eq? @s "(#x"))"#), None);
+    }
 }
 
 /// A file a structural query reads.

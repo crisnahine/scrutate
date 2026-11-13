@@ -696,6 +696,10 @@ pub struct Step {
 fn one_definition(s: &Searcher, name: &str) -> Result<Hit> {
     const SHOWN: usize = 20;
     let mut found = crate::ops::targets(s, name, SHOWN + 1, false)?;
+    // a file's module chunk takes the file's name: `def main` in main.py is the one meant
+    if found.iter().any(|h| h.kind != "module") {
+        found.retain(|h| h.kind != "module");
+    }
     match found.len() {
         0 => anyhow::bail!("no definition of {}", crate::fmt::echo(name)),
         1 => Ok(found.remove(0)),
