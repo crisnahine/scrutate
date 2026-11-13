@@ -60,6 +60,26 @@ def plan_for(r):
     return PLANS["default"]
 
 
+STRUCTURAL_CACHED = ("scrutate's `tsquery` ran with its capture cache (`.scrutate/tsquery/`) filled by earlier runs, so its timed "
+                     "runs read and hashed every file and parsed none, while ast-grep, with no cache, parses every file each run. "
+                     "This measurement has no parse-for-parse run (`--no-cache`).")
+
+# method notes the page states once, above the sections that use them
+LEGEND = ("- Engine A tables: medians in ms (runs in parentheses when fewer than the full count); `wrong` = answer differs from "
+          "the reference (disqualified), `n/a` = the tool cannot express the query or filter, `timeout` = did not finish. The "
+          "`scrutate --index` column (Engine B's text index, another category) is published but never ranked.")
+CPU_TESTED = ("- CPU time (user + system seconds) and peak memory (resident set) come from the same runs as the wall time and are "
+              "tested like it: the 95% interval of median(scrutate) / median(the competitor lowest on that metric), bootstrapped over "
+              "the runs, gives PASS below 1, FAIL above 1, PARTIAL when it contains 1 (no BLOCKED: no hardware ceiling). The "
+              "competitors lowest on CPU time and on memory in the pilot get full runs too, whatever their wall time. Rank is the "
+              "place among tools with a correct answer, lowest first, 3-run pilots included. The default mode (`scrutate grep` with "
+              "its default thread count) is the product default because it leads wall time; `scrutate grep -j1` (one search "
+              "thread) is the mode for least CPU time and memory: checked against the reference like any tool, timed in the same "
+              "blocks, never ranked for wall time.")
+CPU_UNTESTED = ("- CPU time and peak memory tables without a status give medians over the same runs (user + system CPU seconds, "
+                "peak resident set in MB); rank is scrutate's place among tools with a correct answer, lowest first. These rows "
+                "predate significance tests for CPU time and memory.")
+
 METRICS = {"cpu": "CPU time", "rss": "peak memory"}
 MODES = ["default", "-j1"]
 
@@ -98,11 +118,14 @@ def hardware(env):
     if env.get("platform", "").startswith("Linux") and (not cpu or cpu.startswith("0x")):
         if env.get("cpus", 0) <= 5:
             # one virtual CPU per performance core of the host: none has to run on an efficiency core
-            return ("a Linux virtual machine (Colima, Apple Virtualization) on the Apple M3 Pro above, one virtual CPU per "
-                    "performance core of that machine; macOS schedules them, so runs vary more than on the host")
-        return ("a Linux virtual machine (Colima, Apple Virtualization) on the Apple M3 Pro above; macOS schedules its virtual "
-                "CPUs on performance or efficiency cores, so runs vary more than on the host")
+            return f"{VM}, one virtual CPU per performance core"
+        return f"{VM}, its virtual CPUs on performance or efficiency cores"
     return cpu
+
+
+VM = "a Linux virtual machine on the Apple M3 Pro above"
+VM_NOTE = ("- The Linux virtual machine is Colima (Apple Virtualization); macOS schedules its virtual CPUs, so its runs vary "
+           "more than the host's.")
 
 
 def engine_a(data, label):
@@ -114,13 +137,13 @@ def engine_a(data, label):
                + (f"; {env.get('perf_cores')} performance + {env.get('efficiency_cores')} efficiency cores" if env.get("perf_cores") else "")
                + f"), {mem:.0f} GB RAM; {env['platform']}")
     st = data["settings"]
-    out.append(f"- Method: hyperfine (`{env.get('hyperfine', '?')}`), output piped, {st['runs']} timed runs of every tool in "
-               f"{st.get('blocks', 1)} interleaved blocks ({st['warmup']} warm-up run per block), {st['cache']} cache"
+    out.append(f"- Method: hyperfine (`{env.get('hyperfine', '?')}`), output piped, {st['runs']} timed runs per tool in "
+               f"{st.get('blocks', 1)} interleaved blocks ({st['warmup']} warm-up run each), {st['cache']} cache"
                + (f" (prepare: `{st['cold_prepare']}`)" if st.get("cold_prepare") else "")
-               + f"; each block first waits a bounded time for the 1-minute load average to fall below {st['max_load']:.0f}.")
+               + f"; each block first waits (bounded) for a 1-minute load average below {st['max_load']:.0f}.")
     loads = [r.get("max_load", 0) for r in data["benchmarks"].values()]
     loads = [x for r in data["benchmarks"].values() for x in r.get("load", [])] or loads
-    out.append(f"- 1-minute load average at the start of each measured block: median {statistics.median(loads):.1f}, max {max(loads):.1f} on "
+    out.append(f"- 1-minute load average as each block started: median {statistics.median(loads):.1f}, max {max(loads):.1f} on "
                f"{env.get('cpus')} logical CPUs.")
     out.append("- Tool versions: " + "; ".join(f"{t}: `{v}`" for t, v in env["tools"].items() if v and t not in ("scrutate --index", "scrutate base", "scrutate -j1")) + ".")
     if env.get("scrutate_sha256"):
@@ -131,10 +154,7 @@ def engine_a(data, label):
         for key, name in METRICS.items():
             out.append(f"Status counts, {name}: " + "; ".join(
                 f"{mode} mode " + count_line([r["metrics"][key][mode]["status"] for r in data["benchmarks"].values() if "metrics" in r]) for mode in MODES) + ".\n")
-    out.append("Medians in ms (runs in parentheses when fewer than the full count). `wrong` = answer differs from the reference (disqualified), "
-               "`n/a` = the tool cannot express the query or filter, `timeout` = did not finish. The `scrutate --index` column (Engine B's "
-               "text index, another category) is published but never ranked.\n")
-    head = "| Benchmark | " + " | ".join(TOOLS) + " | scrutate --index | read files | ratio vs best (95% CI) | status |"
+    head ="| Benchmark | " + " | ".join(TOOLS) + " | scrutate --index | read files | ratio vs best (95% CI) | status |"
     out.append(head)
     out.append("|" + "---|" * (len(TOOLS) + 5))
     for bid, r in data["benchmarks"].items():
@@ -169,10 +189,10 @@ def engine_a(data, label):
             out.append(f"- **{bid}**: every tool searches every file, but {n:,} of the {r['reference']['files_searched']:,} files are not "
                        "compared: the reference's own parse of them has errors, and inside an error the node a tool reports depends on "
                        "tree-sitter's error recovery, which differs between versions.")
-        if r.get("qtype") == "structural" and "--no-cache" not in r.get("tools", {}).get("scrutate", {}).get("argv", ["--no-cache"]):
-            out.append(f"- **{bid}**: scrutate's `tsquery` ran with its capture cache (`.scrutate/tsquery/`) filled by earlier runs: the "
-                       "timed runs read and hashed every file and parsed none, while ast-grep, with no cache, parses every file each run. "
-                       "This measurement has no parse-for-parse run (`--no-cache`).")
+    cached = [bid for bid, r in data["benchmarks"].items()
+              if r.get("qtype") == "structural" and "--no-cache" not in r.get("tools", {}).get("scrutate", {}).get("argv", ["--no-cache"])]
+    if cached:
+        out.append(f"- {', '.join(f'**{b}**' for b in cached)}: {STRUCTURAL_CACHED}")
     out.append("")
     fails = [(bid, r) for bid, r in data["benchmarks"].items() if r["status"] == "FAIL"]
     if fails:
@@ -187,14 +207,6 @@ def engine_a(data, label):
     out.append("### CPU time and peak memory\n")
     tested = [(bid, r) for bid, r in data["benchmarks"].items() if "metrics" in r]
     if tested:
-        out.append("From the same runs as the wall time: CPU time is user + system seconds, memory the peak resident set. Each is tested "
-                   "like wall time: the 95% interval of median(scrutate) / median(the competitor lowest on that metric), bootstrapped over "
-                   "the runs, gives PASS below 1, FAIL above 1, PARTIAL when it contains 1 (no BLOCKED: no hardware ceiling). The "
-                   "competitors lowest on CPU time and on memory in the pilot get full runs too, whatever their wall time. Rank is the "
-                   "place among tools with a correct answer, lowest first, 3-run pilots included.\n")
-        out.append("The default mode (`scrutate grep` with its default thread count) is the product default because it leads wall time. "
-                   "`scrutate grep -j1` (one search thread) is the mode for least CPU time and memory: checked against the reference like "
-                   "any tool, timed in the same blocks, never ranked for wall time.\n")
         out.append("| Benchmark | CPU, default | CPU, -j1 | memory, default | memory, -j1 | lowest CPU competitor | lowest memory competitor |")
         out.append("|---|---|---|---|---|---|---|")
         for bid, r in tested:
@@ -209,8 +221,6 @@ def engine_a(data, label):
     untested = [(bid, r) for bid, r in data["benchmarks"].items() if "metrics" not in r]
     if untested:
         # rows from the harness before the metrics had a status
-        out.append("Medians over the same runs (user + system CPU seconds, peak resident set in MB). Rank is scrutate's place among tools "
-                   "with a correct answer, lowest first; these rows predate significance tests for CPU time and memory.\n")
         out.append("| Benchmark | scrutate CPU s | lowest competitor CPU s | CPU rank | scrutate MB | lowest competitor MB | memory rank |")
         out.append("|---|---|---|---|---|---|---|")
     for bid, r in untested:
@@ -318,16 +328,25 @@ def main() -> int:
         "there are cores). A row measured later under heavier load can read PARTIAL where a quieter run reads BLOCKED; PARTIAL is "
         "the weaker claim.",
         "- A benchmark where some tool's block medians differed by more than 25% was disturbed by other work and measured again once, "
-        "whatever its status (`leaderboard.py --redo-unstable`); its status column also gives the first measurement. The second "
+        "whatever its status (`leaderboard.py --redo-unstable`); its status column also gives the first measurement, and the second "
         "reflects the machine as it was by then."]
     if any(r.get("resident") is not None for d in datas for r in d["benchmarks"].values()):
         lines.append("- A warm-cache benchmark records how much of its corpus was in the page cache at its end (`bench/evict.c --resident`); "
                      "a row under 95% says so in its status column.")
+    indexed_datas = [json.load(open(p)) for p in a.indexed]
+    if any(hardware(d["environment"]).startswith(VM) for d in datas + indexed_datas):
+        lines.append(VM_NOTE)
+    rows = [r for d in datas for r in d["benchmarks"].values()]
+    if rows:
+        lines.append(LEGEND)
+    if any("metrics" in r for r in rows):
+        lines.append(CPU_TESTED)
+    if any("metrics" not in r for r in rows):
+        lines.append(CPU_UNTESTED)
     lines.append("")
     for p, d in zip(a.engine_a, datas):
         lines += engine_a(d, f"{os.path.basename(os.path.dirname(os.path.abspath(p)))}, {d['settings']['cache']} cache")
-    for p in a.indexed:
-        d = json.load(open(p))
+    for p, d in zip(a.indexed, indexed_datas):
         lines += indexed(d, os.path.basename(os.path.dirname(os.path.abspath(p))))
     with open(a.out, "w") as f:
         f.write("\n".join(lines) + "\n")
