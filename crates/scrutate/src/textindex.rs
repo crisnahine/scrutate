@@ -1275,12 +1275,12 @@ fn update_with(root: &Path, force: bool, progress: bool, only: Option<&[String]>
         let p = dir.join(&s.name).join(&live_name);
         let tmp = p.with_extension("tmp");
         crate::index::write_new(&tmp, &s.live)?;
-        std::fs::rename(&tmp, &p)?;
+        crate::index::rename_settled(&tmp, &p)?;
     }
     let m = Manifest { format: FORMAT, generation, segments: segs.iter().map(|s| SegRef { name: s.name.clone(), live: live_name.clone() }).collect() };
     let tmp = dir.join("manifest.json.tmp");
     crate::index::write_new(&tmp, &serde_json::to_vec(&m)?)?;
-    std::fs::rename(&tmp, dir.join("manifest.json"))?;
+    crate::index::rename_settled(&tmp, &dir.join("manifest.json"))?;
     let names: Vec<String> = segs.iter().map(|s| s.name.clone()).collect();
     let nsegs = segs.len();
     drop(segs);

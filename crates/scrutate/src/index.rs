@@ -837,6 +837,22 @@ pub fn write_new(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::File::options().write(true).create_new(true).open(path)?.write_all(bytes)
 }
 
+/// `std::fs::rename`, tried again for up to about two seconds on Windows when it is refused: a
+/// virus scanner or the search indexer briefly holds files the index has just written, and a
+/// rename of their directory, or over a file it has open, is then denied.
+pub fn rename_settled(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut wait = std::time::Duration::from_millis(10);
+    loop {
+        match std::fs::rename(from, to) {
+            Err(e) if cfg!(windows) && e.kind() == std::io::ErrorKind::PermissionDenied && wait < std::time::Duration::from_millis(1300) => {
+                std::thread::sleep(wait);
+                wait *= 2;
+            }
+            r => return r,
+        }
+    }
+}
+
 /// `.gitignore` of the index directory, unless something is there already.
 pub(crate) fn write_gitignore(dir: &Path) -> std::io::Result<()> {
     let gi = dir.join(".gitignore");

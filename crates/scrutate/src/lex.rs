@@ -375,7 +375,7 @@ pub fn write_segment(
             npy::save(&tmp.join("vscale.npy"), &v.scale, &[n, 2])?;
         }
     }
-    std::fs::rename(&tmp, dest).with_context(|| format!("rename {} -> {}", tmp.display(), dest.display()))?;
+    crate::index::rename_settled(&tmp, dest).with_context(|| format!("rename {} -> {}", tmp.display(), dest.display()))?;
     Ok(())
 }
 
