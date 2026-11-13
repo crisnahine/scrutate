@@ -9,40 +9,39 @@
 
 <!-- End of head. -->
 
-*scrutate*: an English verb descended from Latin *scrūtor / scrūtārī*, "to search carefully,
-search into or out, examine thoroughly, investigate" (Lewis & Short, *A Latin Dictionary*, 1879,
-as cited by Wiktionary's entry for *scrutor*, which lists English *scrutate* among the word's
-descendants next to *scrutinize*). The CLI is `scrutate`, the crate is `scrutate`, the Python
-package is `scrutate`, the index directory is `.scrutate/`.
+*scrutate*: an English verb from Latin *scrūtor / scrūtārī*, "to search carefully, search into or
+out, examine thoroughly, investigate" (Lewis & Short, *A Latin Dictionary*, 1879, as cited by
+Wiktionary's entry for *scrutor*, which lists English *scrutate* among its descendants next to
+*scrutinize*). The CLI, the crate and the Python package are `scrutate`; the index directory is
+`.scrutate/`.
 
 ## Why this name
 
-- It says what the tool does (searching through a codebase and examining it closely) without
-  being a generic "code search" phrase.
-- It is a real, pronounceable word (SKROO-tayt) that developers can say, type and remember, with
-  the connotation of *scrutiny* already attached; it is rare enough in current English that no
-  software project in the checked registries uses it.
+- It says what the tool does, search a codebase and examine it closely, without being a generic
+  "code search" phrase.
+- It is a real word (SKROO-tayt) that is easy to say, type and remember, and it carries the sense
+  of *scrutiny*. It is rare enough in current English that no software project in the checked
+  registries uses it.
 - It is a verb, so it works in sentences ("scrutate the repo for callers of `refresh_token`").
-- Nothing in the registries a developer tool collides with uses it (evidence below).
+- Nothing in the registries a developer tool could collide with uses it (evidence below).
 
 ## Method
 
-Thirty candidates were generated in two rounds (real words with search/insight semantics, coined
-blends, Rust- and grep-themed names). Each was checked on **2026-11-08** with
-`tools/name_research.py` against:
+Thirty candidates came from two rounds (real words about search or insight, coined blends, Rust-
+and grep-themed names). Each was checked on **2026-11-08** with `tools/name_research.py` against:
 
 | Source | How | Result recorded |
 |---|---|---|
 | crates.io | `GET /api/v1/crates/<name>` | taken / free |
 | PyPI | `GET /pypi/<name>/json` | taken / free |
 | npm | `GET registry.npmjs.org/<name>` | taken / free |
-| GitHub repositories | search API, `<name> in:name`, 30 most-starred inspected | number of name matches; most-starred repository whose name is exactly the candidate |
-| GitHub user/organisation | `GET /users/<name>` | **not verifiable** from this environment (the token is repository-scoped; the endpoint returned 403 for every candidate) |
+| GitHub repositories | search API, `<name> in:name`, 30 most-starred inspected | number of name matches; most-starred repository named exactly the candidate |
+| GitHub user/organisation | `GET /users/<name>` | **not verifiable** here (the token is repository-scoped; the endpoint returned 403 for every candidate) |
 | Homebrew | `formulae.brew.sh/api/formula/<name>.json` (finalist only) | no formula |
-| Web search | finalist only | software products / companies with the same or a confusable name |
+| Web search | finalist only | software products or companies with the same or a confusable name |
 
-Raw evidence: `docs/name_research.json` (one record per candidate with the HTTP status codes and
-the top GitHub match).
+Raw evidence: `docs/name_research.json`, one record per candidate with the HTTP status codes and
+the top GitHub match.
 
 ## Evidence table
 
@@ -83,32 +82,33 @@ the top GitHub match).
 
 - crates.io, PyPI, npm: no package of that name (HTTP 404 on 2026-11-08).
 - GitHub: no repository named `scrutate`; the three name matches are French `Scrutateur` projects
-  (unrelated word).
+  (an unrelated word).
 - Homebrew: no formula (`formulae.brew.sh` returns not-found; the same request for `ripgrep`
-  returns the formula, so the check itself works).
+  returns its formula, so the check works).
 - Web search for "scrutate" software: no product or project. The nearest name is **Scrut**
   (Scrut Automation, a compliance-automation SaaS), a different word in an unrelated market.
 
 ## Re-check on 2026-11-09
 
 - crates.io, PyPI, npm: still no package named `scrutate` (HTTP 404).
-- GitHub organisation `scrutate`: did not exist at the time of the query (the authenticated
-  `GET /users/scrutate` returned 404). The project claimed it on 2026-11-13; the repository is
+- GitHub organisation `scrutate`: did not exist then (the authenticated `GET /users/scrutate`
+  returned 404). The project claimed it on 2026-11-13; the repository is
   github.com/scrutate/scrutate.
-- Domains (WHOIS): `scrutate.com` **is registered** (created 2026-06-22, registrar Cloudflare; WHOIS
-  does not show the owner, and whether it belongs to this project's authors was not checked). `scrutate.io`, `scrutate.org` and `scrutate.net`
-  returned "not found" (unregistered at the time of the query). `scrutate.dev` and `scrutate.app`:
-  the registry's WHOIS server gave no answer to this client, so their status is unknown.
+- Domains (WHOIS): `scrutate.com` **is registered** (created 2026-06-22, registrar Cloudflare;
+  WHOIS hides the owner, and whether it is this project's authors' was not checked).
+  `scrutate.io`, `scrutate.org` and `scrutate.net` returned "not found" (unregistered then).
+  `scrutate.dev` and `scrutate.app`: the registry's WHOIS server did not answer this client, so
+  their status is unknown.
 - Trademarks: a web search for "Scrutate" as a software product, company or mark found none. The
-  closest marks found are **SCRUT**, **SCRUT.IO** and **THE SCRUT PLATFORM**, held by Scrut
-  Automation Inc. (security and compliance software; listed on Justia's trademark pages). They are
-  a different word, but they are in software, so a confusion analysis belongs in the legal review.
+  closest marks are **SCRUT**, **SCRUT.IO** and **THE SCRUT PLATFORM**, held by Scrut Automation
+  Inc. (security and compliance software; listed on Justia's trademark pages). They are a
+  different word, but in software, so a confusion analysis belongs in the legal review.
 
 ## What is *not* verified: read before relying on the name
 
 - **Trademark registers**: USPTO, EUIPO, WIPO and national registers were not searched directly,
-  and the name has **not** been legally cleared. A search by counsel is required before
-  commercial use, and it should cover the SCRUT marks above.
+  and the name has **not** been legally cleared. Counsel must search before commercial use,
+  covering the SCRUT marks above.
 - **The `.com` domain** is registered; unless it is already the authors', a product site needs
   another domain or a purchase.
 - **Global uniqueness** is not claimed: the checks cover the listed registries on the listed dates
