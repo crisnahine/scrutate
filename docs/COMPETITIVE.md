@@ -70,7 +70,9 @@ Linux VM (0.925 of ripgrep's time), the second measurement of `llvm/case-insensi
 (0.915) and `patho/one-byte lines` (0.869 of ripgrep's: ten million one-byte lines, where printing
 sets the time). The lead cannot grow much on large trees on macOS, for the reason above: the time
 to open the files is most of the search. Outside the suite, ugrep has an interactive query UI and
-Boolean queries, and ast-grep rewrites code as well as finding it; Scrutate has neither.
+Boolean queries; Scrutate has neither. ast-grep rewrites code as well as finding it, and so does
+`scrutate tsquery --rewrite` with a template of the captures, with fewer means: no rule files, no
+interactive review of each change.
 
 **Correctness differences found while making the comparison fair**, so the reader can judge them:
 ag and ack have no Unicode case folding (`-i KÖNIG` finds nothing); ag, ack and git grep's own `-w`

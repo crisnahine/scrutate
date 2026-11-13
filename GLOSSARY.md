@@ -91,6 +91,10 @@ of a file's language at each step where languages differ.
 changes, their callers through `Names` with the distance of each, and the test files to run. The
 diff is read by running `git`; the base side of a file is parsed from git's copy.
 
+**Rewrite**: a structural search that replaces what it finds (`rewrite.rs`, `scrutate tsquery
+--rewrite`): a **plan** (`rewrite::Plan`) holds each file's bytes as read and as rewritten, and
+either prints as a diff or writes each file whole by rename while its bytes are still those read.
+
 **Frecency**: how often and how lately a file was read, which `scrutate files` (`finder.rs`, the
 MCP `find_files`) ranks by among equal matches: one count per read through `read` or `read_code`
 (or a `files` query that is exactly the path), each counting half as much after 7 days. Kept in

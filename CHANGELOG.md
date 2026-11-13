@@ -24,6 +24,11 @@ version rebuilds incompatible indexes automatically and this is never considered
   bound does not cut costs 13 bytes more than Grep's own result, the line `Grep result:` before it.
   A plain `--uninstall` takes the hook and the instruction block out with the server entry, so a
   removed binary leaves no hook behind.
+- `scrutate tsquery LANG QUERY [PATHS] --rewrite TEMPLATE` replaces each match (its `@match`
+  capture, else its widest) with a template of the captures (`$NAME`, `${NAME}`, `$$`) and prints
+  a unified diff; `--write` writes each file whole by rename, only while its bytes are those read.
+  Of overlapping matches the outer one is rewritten and the inner one named; a file whose text
+  does not parse where it would change, before or after, is left alone and named. No MCP tool.
 - docs/FAQ.md answers the first questions about scrutate, each with a link to its evidence;
   `llms.txt`, written by `tools/gen_doc_assets.py`, lists every Markdown document with the question it
   answers for language models; `CITATION.cff` gives GitHub's "Cite this repository".

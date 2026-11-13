@@ -31,6 +31,7 @@ pub mod parse;
 pub mod rank;
 pub mod repomap;
 pub mod resolve;
+pub mod rewrite;
 pub mod running;
 pub mod search;
 pub mod semantic;

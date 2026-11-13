@@ -7,7 +7,7 @@
 
 [Documentation](README.md) &nbsp;·&nbsp; Previous: [Test results](TEST_RESULTS.md) &nbsp;·&nbsp; Next: [Traceability](TRACEABILITY.md)
 
-**Contents**: [Threat model](#threat-model) &nbsp;·&nbsp; [Controls and evidence](#controls-and-evidence) &nbsp;·&nbsp; [Running git](#running-git) &nbsp;·&nbsp; [The session socket](#the-session-socket) &nbsp;·&nbsp; [The main checkout's index in a linked work tree](#the-main-checkouts-index-in-a-linked-work-tree) &nbsp;·&nbsp; [Setup and the Grep hook](#setup-and-the-grep-hook) &nbsp;·&nbsp; [Known gaps and residual risks](#known-gaps-and-residual-risks) &nbsp;·&nbsp; [Reporting](#reporting)
+**Contents**: [Threat model](#threat-model) &nbsp;·&nbsp; [Controls and evidence](#controls-and-evidence) &nbsp;·&nbsp; [Running git](#running-git) &nbsp;·&nbsp; [The session socket](#the-session-socket) &nbsp;·&nbsp; [The main checkout's index in a linked work tree](#the-main-checkouts-index-in-a-linked-work-tree) &nbsp;·&nbsp; [Setup and the Grep hook](#setup-and-the-grep-hook) &nbsp;·&nbsp; [The structural rewrite](#the-structural-rewrite) &nbsp;·&nbsp; [Known gaps and residual risks](#known-gaps-and-residual-risks) &nbsp;·&nbsp; [Reporting](#reporting)
 
 <!-- End of head. -->
 
@@ -33,7 +33,8 @@ hostile inputs). Attackers considered: a **hostile repository** (crafted files, 
 a **hostile MCP client** (malformed JSON-RPC, path escapes), and **another local process** that
 reaches the socket a running `serve` offers to command line calls (below). Two commands write
 outside a repository, on the user's word only: `scrutate setup` writes an agent's configuration
-files, and the Grep hook it installs appends to a counter file (below).
+files, and the Grep hook it installs appends to a counter file (below). One command writes source
+files: `scrutate tsquery --rewrite` with `--write` ([below](#the-structural-rewrite)).
 
 <p align="center">
 <img src="assets/diagram-trust-boundaries.svg" alt="Trust boundaries: repository content, patterns, MCP requests and the .scrutate directory, with the controls on each boundary; no network." width="880">
@@ -264,6 +265,20 @@ and Grep runs. It never exits 2, which would block the call. It writes one file,
 `$XDG_STATE_HOME/scrutate/hook-grep.jsonl` (default `~/.local/state/scrutate/`, on Windows
 `%LOCALAPPDATA%\scrutate\`): one line per answered call with the session id, two byte counts and
 the time, and no file name or text of the repository.
+
+## The structural rewrite
+
+`scrutate tsquery LANG QUERY [PATHS] --rewrite TEMPLATE` prints a diff and writes nothing. Only
+with `--write` does it change files, and only files under the given paths whose canonical path
+lies inside `--root`: a file reached through a link that leads out of the root, and a file that is
+itself a link, are left alone and named. Each file is written to a new temporary file in its own
+directory (`create_new`, so nothing planted there is opened) with the original's permissions,
+and renamed over the original only if the original's bytes are still exactly those read, so an
+edit made meanwhile is never lost. A file whose text does not parse where it would change, or
+whose rewritten text would not parse there, is not written. The template is text: nothing in it
+is run. No MCP tool rewrites, so an agent on the MCP server cannot change a source file. Tests:
+`tests/rewrite.rs` (a link out of the root, an edit between the read and the write, the diff
+mode writing nothing).
 
 ## Known gaps and residual risks
 

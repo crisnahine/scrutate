@@ -256,7 +256,7 @@ often while files change.
 | `dupes [--min-tokens N] [--threshold J] [--limit N]` | Exact and near-duplicate functions. `exact` means the same body text once runs of whitespace are squeezed; a pair with the same words written differently is `near` with similarity 1.00. `--threshold 1` prints the exact groups only. At most 50 groups, or `--limit`. |
 | `impact [--base REV] [--staged] [--depth N]` | What a change touches: the definitions the git diff changes, the callers that reach them up to `N` steps away (default 3) with their distances, and the test files to run (see below). |
 | `files QUERY [--limit N]` | Paths of the repository ranked for a short query that may be misspelt (`srch.rs` finds `search.rs`), files read lately first among equals; no index needed (see below). |
-| `tsquery LANG QUERY [PATHS] [--limit N] [--no-cache]` | Tree-sitter structural query over every file of a language up to 1 MB (no index; per-file results are cached, see below). An empty query, a query without a `@capture` and an unknown predicate are errors. A path that does not exist from the current directory is read under `--root`; one that exists in neither place is named in a warning, the other paths are still searched, and the exit code is 2. Paths print as `grep PATH...` prints them, in plain output and in `--json`: the path as given, then the path below it (`src/a.py` for `src`, `./src/a.py` for `./src`, nothing in front for `.` or no path), so a printed path can be passed to the other commands. |
+| `tsquery LANG QUERY [PATHS] [--limit N] [--no-cache]` | Tree-sitter structural query over every file of a language up to 1 MB (no index; per-file results are cached, see below). An empty query, a query without a `@capture` and an unknown predicate are errors. A path that does not exist from the current directory is read under `--root`; one that exists in neither place is named in a warning, the other paths are still searched, and the exit code is 2. Paths print as `grep PATH...` prints them, in plain output and in `--json`: the path as given, then the path below it (`src/a.py` for `src`, `./src/a.py` for `./src`, nothing in front for `.` or no path), so a printed path can be passed to the other commands. `--rewrite TEMPLATE` replaces each match with a template of its captures and prints a diff; `--write` changes the files (see below). |
 | `check [--files] [--json]` | Verify database integrity, segment consistency and (with `--files`) that indexed files are unchanged. Exit 1 on problems. The line `chunks: N ranked in the database, M alive in segments, K constants (no postings)` counts the chunks that have segment rows, which leaves out constants, and then the constants; `--json` gives them as `constants`. `--json` counts the indexed files also without `--files` (`files_changed` and `files_missing` are then 0: not checked). |
 | `stats` | Index statistics as one JSON object (files, chunks, symbols, call edges, imports, segments, and the text index's files, segments and bytes). |
 | `languages [--json]` | The verified capability registry. The JSON form gives each language's extensions, the extensions it shares with another language and takes by the file's text (`extensions_by_content`), its file names, and every kind of definition the index gives it (`definition_kinds`: `method` for a function in a class and `constant` included). |
@@ -800,6 +800,48 @@ leaves the cache alone. A run that visits every file keeps only the entries it u
 deleted files do not accumulate. The directory is bounded at 128 MB: beyond it the least recently
 used query files are deleted, and a query whose results alone exceed it is not cached. The cache
 is safe to delete at any time.
+
+### `tsquery --rewrite`
+`scrutate tsquery LANG QUERY [PATHS] --rewrite TEMPLATE [--write]` replaces each match of the
+query with TEMPLATE. The replaced text is the capture named `@match`; a match without one
+replaces its widest capture (the first written on a tie). In the template `$NAME` is the text of
+capture `@NAME`, `${NAME}` the same before a letter or for a name with other characters than
+letters, digits and `_`, and `$$` a dollar. A capture with several nodes gives the text from its
+first node to its last; one the match does not hold gives nothing. A template that names a
+capture the query does not have, or has a `$` without a name, is an error.
+
+```
+scrutate tsquery python '(call function: (identifier) @f (#eq? @f "print") arguments: (argument_list) @args) @match' --rewrite 'log$args'
+```
+
+Without `--write` it prints a unified diff of every file it would change (three lines of context,
+`--- PATH` and `+++ PATH` as `tsquery` prints the path, so `patch -p0` applies it) and changes
+nothing. With `--write` it changes them and prints `PATH: N replaced` per file written. The exit
+code is 0 when there was something to change, 1 when nothing, and 2 when a path cannot be read or
+a file was left alone. `--json`, `--limit` and `--offset` are refused with it, `--max-bytes` does
+not cut the diff, and it never reads or fills the `tsquery` cache: each file is read and parsed
+afresh.
+
+Two matches that overlap are not both rewritten: the outer one is (of two over the same text,
+the first pattern's), and the inner one is named in a warning
+(`a.py:1:7: inside the match at 1:1, not rewritten`). The text the outer one keeps of its
+captures is the file's text as it was read, so a second run may rewrite what the first skipped.
+A match whose template gives back the same text is no change. Once the template's text no longer
+matches the query, a second run finds nothing to change and exits 1.
+
+Each file is written whole: its bytes are read once, the new bytes are written to a temporary
+file next to it (`.NAME.scrutate-PID.tmp`), which gets the file's permissions, and that file is
+renamed over the original only if the original's bytes on disk are still exactly those read; a
+file changed meanwhile is left alone and named in a warning. A file is left alone, and named,
+when its text where a match would change does not parse (a tree-sitter error or missing node
+there), when the rewritten text does not parse there, when it is not UTF-8, when it is a link,
+and when it lies outside `--root`. Only files under the given paths are read, as `tsquery`
+reads them (ignore files obeyed, hidden files and links below a given path left out).
+
+The index learns of a written file as of any edit: the next `symbol`, `search` or other lookup
+sees its new size and time and reads it again, and Engine A's `grep` reads the file as it is.
+`grep --index` answers from the text index as it was built, so `grep --index --update` sees the
+new text. No MCP tool rewrites: the server only reads, except `reindex`.
 
 ### Environment variables
 `SCRUTATE_ROOT`, `SCRUTATE_THREADS`, `SCRUTATE_GREP_{HIDDEN,NO_IGNORE,FOLLOW,SMART_CASE,MAX_FILESIZE,MAX_DEPTH,MAX_BYTES,GLOBS,TYPES}`,

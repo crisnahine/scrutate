@@ -29,7 +29,7 @@ crates/scrutate/        the product: Engine A (instant.rs, source.rs, policy.rs)
                         (index.rs, stores.rs, textindex.rs, lex.rs, parse.rs, langs.rs, names.rs,
                         resolve/, search.rs, semantic.rs, rank.rs, models.rs, intel.rs, impact.rs),
                         operations and sessions (ops.rs, session.rs), the file finder
-                        (finder.rs), CLI (cli.rs, config.rs),
+                        (finder.rs), the structural rewrite (rewrite.rs), CLI (cli.rs, config.rs),
                         MCP server (mcp.rs), language server (lsp.rs), agent set-up and
                         the Grep hook (setup.rs, hook.rs); tests/ (samples,
                         robustness, properties, ranking pins, CLI, MCP, LSP and more)

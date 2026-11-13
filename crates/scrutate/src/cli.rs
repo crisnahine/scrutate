@@ -660,6 +660,12 @@ pub enum Cmd {
         /// parse every file again instead of reusing the results cached in `--root`/.scrutate/tsquery
         #[arg(long)]
         no_cache: bool,
+        /// replace each match with TEMPLATE, where `$NAME` or `${NAME}` is capture @NAME and `$$` a dollar; prints a diff
+        #[arg(long, value_name = "TEMPLATE", conflicts_with_all = ["json", "limit"])]
+        rewrite: Option<String>,
+        /// with --rewrite: change the files instead of printing the diff
+        #[arg(long, requires = "rewrite")]
+        write: bool,
     },
     /// index statistics
     Stats,
@@ -1445,7 +1451,46 @@ pub fn run() -> Result<i32> {
         Cmd::Dupes { min_tokens, threshold, limit, json } => run_op(&cli.root, Op::Dupes { min_tokens, threshold, limit }, json, page, outside.as_deref()),
         Cmd::Impact { base, staged, depth, json } => run_op(&cli.root, Op::Impact { base, staged, depth: depth as usize }, json, page, None),
         Cmd::Files { query, limit, json } => run_op(&cli.root, Op::Files { query, limit: limit as usize }, json, page, None),
-        Cmd::Tsquery { lang, query, paths, limit, json, no_cache } => {
+        Cmd::Tsquery { lang, query, paths, rewrite: Some(template), write, .. } => {
+            if cli.offset != 0 {
+                anyhow::bail!("--offset does nothing with --rewrite: the diff is printed whole");
+            }
+            let paths: Vec<PathBuf> = paths.iter().map(|p| here.shell(p)).collect();
+            let mut trouble = false;
+            for p in &paths {
+                if let Err(e) = std::fs::metadata(p) {
+                    diagnostic("warning", &format!("{}: {e}", p.display()));
+                    trouble = true;
+                }
+            }
+            let plan = crate::rewrite::plan(&lang, &query, &template, &paths, &cli.root)?;
+            plan.skipped.iter().for_each(|s| diagnostic("warning", s));
+            let mut left = plan.left.clone();
+            let mut w = std::io::BufWriter::new(std::io::stdout().lock());
+            if write {
+                for (f, why) in plan.files.iter().zip(plan.write()) {
+                    match why {
+                        Some(why) => left.push(why),
+                        None => writeln!(w, "{}: {} replaced", f.shown, f.replaced)?,
+                    }
+                }
+            } else if let Err(e) = w.write_all(plan.diff().as_bytes()) {
+                if e.kind() != std::io::ErrorKind::BrokenPipe {
+                    return Err(e.into());
+                }
+            }
+            let _ = w.flush();
+            left.iter().for_each(|s| diagnostic("warning", s));
+            trouble |= !left.is_empty();
+            Ok(if trouble {
+                2
+            } else if plan.files.is_empty() {
+                1
+            } else {
+                0
+            })
+        }
+        Cmd::Tsquery { lang, query, paths, limit, json, no_cache, .. } => {
             // streamed: one JSON object or one text line per capture, in path order
             let stdout = std::io::stdout();
             let mut w = std::io::BufWriter::new(stdout.lock());

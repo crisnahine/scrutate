@@ -793,6 +793,16 @@ by `--limit` is never stored, so a cached list is always the complete one and th
 gives the same prefix. Files are written to a temporary name and renamed; an unreadable one
 counts as empty. Eviction is by query file, least recently used first, above 128 MB in total.
 
+`tsquery --rewrite` (`rewrite.rs`) shares the query's checks and its walk with `tsquery`
+(`intel::compile_query`, `intel::query_files`) but not the cache, since a write must rest on the
+bytes it read: `rewrite::plan` reads and parses each file once, takes per match the `@match`
+capture or the widest one, fills the template from the captures' original text, keeps the
+outermost of overlapping matches, and checks that the text parses where it changes, before and
+after. `Plan::diff` prints the hunks from the known edit positions (no line diff is computed), and
+`Plan::write` writes each file whole to a temporary file beside it and renames it over the
+original only while the original still holds the bytes read. No index is touched: the next lookup
+finds the file's new stat and reads it, as after any edit. The MCP server has no tool for it.
+
 ## Unified layer (`ops.rs`, `lib.rs`, `cli.rs`, `mcp.rs`, `crates/scrutate-py`)
 
 <p align="center">
