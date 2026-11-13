@@ -774,6 +774,16 @@ test flag (`text::is_test_path`) among the changed definitions, the callers and 
 files. A command line `impact` is not sent to a session, so git runs in the environment of the
 command that asked.
 
+`review` (`review.rs`) is a command line answer, not an operation: it serves CI, so no MCP tool
+or session runs it. It asks `impact::between` for the diff of two commits (`git diff BASE HEAD`,
+each side parsed from git's copies, as `--staged` reads the staged side) and keeps what the
+answer already read: the base copy of each changed file and every call the walk met. The new
+duplicates take two runs of `dupes`' search (`intel::dupes_in`) over the index's bodies: one as
+they are, one with the changed files replaced by the definitions a parse of their base copies
+gives; a head group with no member in a changed file is dropped before the second run, since the
+base had it as it is. A changed definition is untested when no test file is reached from it over
+the calls the walk met. The three renderings (Markdown, JSON, GitLab) are methods of `Review`.
+
 `files` (`finder.rs`, the MCP `find_files`) is an operation that reads no index: the command line
 runs it without opening one, and the MCP server through `Repo` as any other. It walks the files
 of `files::repository_files` (the set `grep_code` searches) and opens none of them. Each path is

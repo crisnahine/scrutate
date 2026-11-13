@@ -93,6 +93,14 @@ pub struct Cli {
     pub cmd: Cmd,
 }
 
+/// What `review` prints.
+#[derive(Clone, Copy, ValueEnum, Debug)]
+pub enum ReviewFormat {
+    Markdown,
+    Json,
+    Gitlab,
+}
+
 #[derive(Clone, Copy, ValueEnum, Debug)]
 pub enum Shell {
     Bash,
@@ -638,6 +646,23 @@ pub enum Cmd {
         depth: u64,
         #[arg(long)]
         json: bool,
+    },
+    /// a pull request report: impact between two commits and the duplicates the head adds
+    Review {
+        /// the commit the pull request starts from; `main...` is the merge base of main and the head
+        #[arg(long, value_name = "REV")]
+        base: String,
+        /// the commit of the pull request; check it out first, the index is the working tree's
+        #[arg(long, value_name = "REV", default_value = "HEAD")]
+        head: String,
+        #[arg(long, value_enum, default_value_t = ReviewFormat::Markdown)]
+        format: ReviewFormat,
+        /// follow callers this many steps (at most 10)
+        #[arg(long, default_value_t = crate::impact::DEPTH as u64, value_parser = clap::value_parser!(u64).range(0..=crate::impact::MAX_DEPTH as u64))]
+        depth: u64,
+        /// link each location in the Markdown to URL/PATH#Lstart-Lend
+        #[arg(long, value_name = "URL")]
+        link: Option<String>,
     },
     /// paths of the repository ranked for a short query that may be misspelt (`srch.rs` finds `search.rs`), files read lately first among equals
     Files {
@@ -1470,6 +1495,18 @@ pub fn run() -> Result<i32> {
         }
         Cmd::Dupes { min_tokens, threshold, limit, json } => run_op(&cli.root, Op::Dupes { min_tokens, threshold, limit }, json, page, outside.as_deref()),
         Cmd::Impact { base, staged, depth, json } => run_op(&cli.root, Op::Impact { base, staged, depth: depth as usize }, json, page, None),
+        Cmd::Review { base, head, format, depth, link } => {
+            let r = open_fresh(&cli.root)?.recovering(|s| crate::review::review(s, &base, Some(&head), depth as usize))?;
+            match format {
+                ReviewFormat::Markdown => print!("{}", r.markdown(link.as_deref())),
+                ReviewFormat::Json => {
+                    let stopped = r.impact.stopped.then_some(crate::ops::Stop { at: crate::impact::MAX_CALLERS, how: "pass a smaller depth" });
+                    println!("{}", serde_json::to_string_pretty(&crate::ops::envelope(r.json(), stopped))?)
+                }
+                ReviewFormat::Gitlab => println!("{}", serde_json::to_string_pretty(&r.gitlab())?),
+            }
+            Ok(i32::from(r.is_empty()))
+        }
         Cmd::Files { query, limit, json } => run_op(&cli.root, Op::Files { query, limit: limit as usize }, json, page, None),
         Cmd::Tsquery { lang, query, paths, rewrite: Some(template), write, .. } => {
             if cli.offset != 0 {

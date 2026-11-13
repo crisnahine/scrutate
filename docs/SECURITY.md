@@ -7,7 +7,7 @@
 
 [Documentation](README.md) &nbsp;·&nbsp; Previous: [Test results](TEST_RESULTS.md) &nbsp;·&nbsp; Next: [Traceability](TRACEABILITY.md)
 
-**Contents**: [Threat model](#threat-model) &nbsp;·&nbsp; [Controls and evidence](#controls-and-evidence) &nbsp;·&nbsp; [Running git](#running-git) &nbsp;·&nbsp; [The session socket](#the-session-socket) &nbsp;·&nbsp; [The main checkout's index in a linked work tree](#the-main-checkouts-index-in-a-linked-work-tree) &nbsp;·&nbsp; [A repository's language tables](#a-repositorys-language-tables) &nbsp;·&nbsp; [Setup and the Grep hook](#setup-and-the-grep-hook) &nbsp;·&nbsp; [The structural rewrite](#the-structural-rewrite) &nbsp;·&nbsp; [Known gaps and residual risks](#known-gaps-and-residual-risks) &nbsp;·&nbsp; [Reporting](#reporting)
+**Contents**: [Threat model](#threat-model) &nbsp;·&nbsp; [Controls and evidence](#controls-and-evidence) &nbsp;·&nbsp; [Running git](#running-git) &nbsp;·&nbsp; [The session socket](#the-session-socket) &nbsp;·&nbsp; [The main checkout's index in a linked work tree](#the-main-checkouts-index-in-a-linked-work-tree) &nbsp;·&nbsp; [A repository's language tables](#a-repositorys-language-tables) &nbsp;·&nbsp; [Setup and the Grep hook](#setup-and-the-grep-hook) &nbsp;·&nbsp; [The structural rewrite](#the-structural-rewrite) &nbsp;·&nbsp; [The review comment](#the-review-comment) &nbsp;·&nbsp; [Known gaps and residual risks](#known-gaps-and-residual-risks) &nbsp;·&nbsp; [Reporting](#reporting)
 
 <!-- End of head. -->
 
@@ -45,7 +45,7 @@ files: `scrutate tsquery --rewrite` with `--write` ([below](#the-structural-rewr
 
 | Area | Control | Evidence |
 |---|---|---|
-| No code execution from repositories | Files are parsed as data (tree-sitter, regex); nothing is evaluated, imported, or run. No build systems, repository hooks, `.scrutate.toml` scripts or plugins exist. The binary starts another program in two cases: `grep -z` decompresses bzip2, xz, lzma, lz4, zstd, brotli and `.Z` files by running the system's `bzip2`, `xz`, `lz4`, `zstd`, `brotli` or `uncompress` from `PATH` on the file (through `grep-cli`, as ripgrep does), while gzip, zip and tar are read in process; and `impact` (the command and the MCP tool) runs `git` from `PATH` in the root to read the diff (see [Running git](#running-git)). Without `-z` or `impact`, no search starts a program. `scrutate setup claude` runs `claude mcp add-json` or `claude mcp remove` from `PATH` when it is there ([below](#setup-and-the-grep-hook)). | Code review: the engine's process spawns are `grep_cli::DecompressionReaderBuilder` in `archive.rs` and `Git::command` in `impact.rs`, and `setup.rs` runs `claude` as above; `tests/impact.rs` (a revision written as an option is refused, and no file is written). |
+| No code execution from repositories | Files are parsed as data (tree-sitter, regex); nothing is evaluated, imported, or run. No build systems, repository hooks, `.scrutate.toml` scripts or plugins exist. The binary starts another program in two cases: `grep -z` decompresses bzip2, xz, lzma, lz4, zstd, brotli and `.Z` files by running the system's `bzip2`, `xz`, `lz4`, `zstd`, `brotli` or `uncompress` from `PATH` on the file (through `grep-cli`, as ripgrep does), while gzip, zip and tar are read in process; and `impact` (the command and the MCP tool) and `review` run `git` from `PATH` in the root to read the diff (see [Running git](#running-git)). Without `-z`, `impact` or `review`, no search starts a program. `scrutate setup claude` runs `claude mcp add-json` or `claude mcp remove` from `PATH` when it is there ([below](#setup-and-the-grep-hook)). | Code review: the engine's process spawns are `grep_cli::DecompressionReaderBuilder` in `archive.rs` and `Git::command` in `impact.rs`, and `setup.rs` runs `claude` as above; `tests/impact.rs` (a revision written as an option is refused, and no file is written). |
 | No network | The binary makes no network connections and has no HTTP/DNS dependency. | `cargo tree` (docs/DEPENDENCIES.md) contains no networking crate; offline build and run verified in a proxy-restricted environment. |
 | Filesystem confinement | `read_code` / `read()` reject paths that resolve outside the repository root, and `read_code` refuses a path that is not a regular file; the index is written only under `<root>/.scrutate/`, and another checkout's index is only read, in a linked git work tree, from its main checkout ([below](#the-main-checkouts-index-in-a-linked-work-tree)); segment files are written to a temp directory *inside* `.scrutate/seg/` and renamed into place (no `/tmp`, no predictable world-writable paths). A repository's `exclude_dirs` (`.scrutate.toml` at the root) can only leave directories out by name: the file is read as other repository files are (a regular file inside the root, at most 1 MB; through a link only when the resolved file is one), and its names are never read as patterns. A `.scrutate` that is a symbolic link, or that holds one (checked three levels deep, no link followed), is refused, and files of fixed names are written with remove and `create_new`, so nothing outside the repository is written or deleted through a link. A `--root` that does not exist or is not a directory is an error, and nothing is created. `tsconfig.json`, `jsconfig.json`, `Cargo.toml` and `go.mod` are read only when they are regular files inside the repository, of at most 1 MB. A path a tool call names, a file an answer cites and a file a watch event names are indexed only when the path resolves inside the repository root: a linked folder on the way that leads outside makes the file count as missing. A path in a tool call that leaves the root by its own parts (`..`, an absolute path elsewhere, a share on another machine) is refused with nothing looked at, so on Windows no connection is made to a machine a call names. The language server reads a document from disk only under the root, links on the way included, and resolves no path on another machine's share than the root's: for a document outside it (another folder, a URI that leaves through `..`) it uses the text the editor sent, or nothing. | `tests/robustness.rs::symlinks_ignores_and_nested_repos` (symlink escape not followed by default), bindings test `r.read("../etc/passwd")` → error, lsp `a_document_that_is_not_under_the_root_is_never_read_from_disk`, mcp_tools `a_path_through_a_linked_folder_reads_nothing_outside_the_repository`. |
 | Symlinks | Not followed by default (Engine A and B); `-L` follows with loop detection (the `ignore` walker). | robustness: loop + dangling + escaping symlinks. |
@@ -67,14 +67,14 @@ files: `scrutate tsquery --rewrite` with `--write` ([below](#the-structural-rewr
 
 ## Running git
 
-`impact` reads what changed by running the `git` program found on `PATH` (on Windows the
+`impact` and `review` read what changed by running the `git` program found on `PATH` (on Windows the
 current directory is not searched first), with the root as its working directory: `rev-parse`, `merge-base`, `diff` (raw and `-U0`), `ls-files --others` and one
 `cat-file --batch`. Nothing in the repository names this program or its arguments, and the
 calls only read: each passes `--no-optional-locks` (git then does not refresh and write its index
 file), `-c core.fsmonitor=false` (no file system monitor program), `--no-ext-diff` and
 `--no-textconv` (no external diff or text conversion program from git's configuration).
 
-The one argument a caller gives is a revision (`--base`, the tool's `base`). It is refused
+The one argument a caller gives is a revision (`--base`, the tool's `base`, and `review --head`). It is refused
 before git runs when it is empty or starts with `-`, so `--base=--output=x` cannot become git's
 `--output` option and write a file, and it is passed as one argument, `REV^{commit}` to `git
 rev-parse --verify`. The commit id that call prints is what every later call gets. `A...B` is
@@ -297,6 +297,24 @@ whose rewritten text would not parse there, is not written. The template is text
 is run. No MCP tool rewrites, so an agent on the MCP server cannot change a source file. Tests:
 `tests/rewrite.rs` (a link out of the root, an edit between the read and the write, the diff
 mode writing nothing).
+
+## The review comment
+
+`scrutate review` reads the repository (through git, as above), writes only its index and
+prints; it never posts.
+The GitHub Action posts its Markdown when `comment: true` is set, with the token of its
+`github-token` input (`github.token` by default), which needs one permission, `pull-requests:
+write`, to list, post and edit the pull request's comments. It edits only a comment a bot wrote
+whose body starts with the marker `<!-- scrutate-review -->`, so a person's comment that quotes
+the marker is left alone. No input reaches a shell: the pull request number, the base commit and
+the repository name reach `comment.sh` through the step's environment, each is checked against
+its shape (digits, a 40 or 64 digit hexadecimal commit id, `owner/name`) before anything runs, and
+each is used only in double quotes; the body goes to `gh api` as a file (`-F body=@FILE`), never
+on a command line. Any error is a warning and the step exits 0, so the comment never fails the
+job. `actionlint` and `zizmor --persona pedantic` report nothing on the action. Tests:
+`tests/review.rs` (`comment_script`: a value that would run a command is refused with nothing
+run, a failed call is a warning with exit 0, the comment is posted once and then edited, a
+person's comment with the marker is not).
 
 ## Known gaps and residual risks
 

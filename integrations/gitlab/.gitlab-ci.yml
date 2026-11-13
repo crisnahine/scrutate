@@ -1,15 +1,18 @@
-# GitLab CI template: run Scrutate checks in every merge request pipeline (duplicate code report
-# and a query the team cares about). Copy into your repository's .gitlab-ci.yml or `include:` it.
-# The reports are job artifacts; nothing is posted to the merge request.
+# GitLab CI template: run Scrutate checks in every merge request pipeline (duplicate code report,
+# a query the team cares about, and a Code Quality report of what the merge request changes).
+# Copy into your repository's .gitlab-ci.yml or `include:` it. The reports are job artifacts;
+# nothing is posted to the merge request.
 variables:
   SCRUTATE_VERSION: "0.1.0"
+  # the whole history, so the merge request's base commit is in the checkout
+  GIT_DEPTH: "0"
 scrutate:
   image: debian:bookworm-slim
   stage: test
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
   before_script:
-    - apt-get update -qq && apt-get install -y -qq curl ca-certificates > /dev/null
+    - apt-get update -qq && apt-get install -y -qq curl ca-certificates git > /dev/null
     - name="scrutate-${SCRUTATE_VERSION}-x86_64-unknown-linux-musl"
     - url="https://github.com/scrutate/scrutate/releases/download/v${SCRUTATE_VERSION}"
     # in /tmp, so the tool does not index its own files
@@ -22,6 +25,10 @@ scrutate:
     # exit status 1 means nothing was found, which is not a failed job; 2 is an error
     - scrutate dupes --json --min-tokens 60 > scrutate-dupes.json || [ $? -eq 1 ]
     - scrutate grep -F --json "TODO(security)" . > scrutate-todos.jsonl || [ $? -eq 1 ]
+    # the new duplicates and the changed definitions no test reaches, shown in the merge request
+    - scrutate review --base "$CI_MERGE_REQUEST_DIFF_BASE_SHA" --format gitlab > gl-code-quality-report.json || [ $? -eq 1 ]
   artifacts:
     paths: [scrutate-dupes.json, scrutate-todos.jsonl]
+    reports:
+      codequality: gl-code-quality-report.json
     expire_in: 1 week

@@ -257,6 +257,7 @@ often while files change.
 | `similar TARGET [-k N]` | Code similar to a symbol or `path:line` (vector cosine + token Jaccard). A constant has no vector: `similar` on one is an error that says so. |
 | `dupes [--min-tokens N] [--threshold J] [--limit N]` | Exact and near-duplicate functions. `exact` means the same body text once runs of whitespace are squeezed; a pair with the same words written differently is `near` with similarity 1.00. `--threshold 1` prints the exact groups only. At most 50 groups, or `--limit`. |
 | `impact [--base REV] [--staged] [--depth N]` | What a change touches: the definitions the git diff changes, the callers that reach them up to `N` steps away (default 3) with their distances, and the test files to run (see below). |
+| `review --base REV [--head REV] [--format markdown\|json\|gitlab] [--depth N] [--link URL]` | A pull request report: `impact` between two commits and the duplicates the head adds, as a PR comment, JSON or a GitLab Code Quality report (see below). |
 | `files QUERY [--limit N]` | Paths of the repository ranked for a short query that may be misspelt (`srch.rs` finds `search.rs`), files read lately first among equals; no index needed (see below). |
 | `dead [PATH]` | Definitions nothing in the repository uses: functions, methods, classes, structs, traits, interfaces, types and enums (fields, constants, variables, modules, `impl` blocks and windows are not looked at). One is dead when no line outside its own lines names it as a whole word, in any file the code index's walk reaches (every regular file the ignore rules let through, also one the index leaves out by its extension or size; a binary file is not read). One whose name another line holds is asked of the resolver (`Names`) about up to 16 of those lines in files the resolver reads, its own file first: a line the resolver ties to it is a use, and the definition is in neither group. Otherwise it is undecided, and the reason counts the lines that name it: those the resolver ties to something else (another definition, a local, a comment or a string, so `getattr(obj, "name")` keeps `name` undecided), those it cannot place, those in files it does not read, and those not asked. While a file over 64 MB is there, nothing is called dead: a definition no other line names is undecided. Entry points are in neither group: definitions in a test file, `main`, a definition with an attribute, decorator or annotation other than ones that change nothing about who calls it (`#[inline]`, `#[allow]`, `#[derive]`, `#[cfg]` other than `cfg(test)`, `@property`, `@staticmethod`, `@Deprecated`, `@Nullable` and their kin), every method of a type or `impl` that has such an attribute (`#[pymethods]`), a method written `override`, and a constructor (`constructor`, `initialize`, a method named as its class). Per language: Python names that start with `__` (called by name by Python or a host such as `__lldb_init_module`) or with `test`, and a name quoted in a file with `__all__`; Rust `extern` functions, the methods of a trait `impl`, `write_fmt` (which `write!` calls), and `pub` items and the methods of a `pub` trait in a library crate (a file under the `src/` of the nearest `Cargo.toml` that has `src/lib.rs` or a `[lib]` table, `src/main.rs` and `src/bin/` aside); Go `init`, exported names of a package other than `main` and exported methods (an interface may call them); JavaScript and TypeScript an `export`ed definition, the methods of an exported class, a name on a line of its file that exports (`module.exports = { f }`) and every definition of a `.d.ts` file, and an interface, type or class of a TypeScript file that has `declare module` or `declare global` (it may merge with one from outside); Java and C# `public`, `protected` and `internal` members, interface members and Java's serialization hooks (`readObject`, `writeObject`, `readObjectNoData`, `readResolve`, `writeReplace`); Kotlin, Scala and Groovy definitions and PHP methods unless `private` or `internal`, PHP magic methods; Swift `public` and `open`; Dart names without a leading `_`; GDScript names with one (the engine's virtual functions); Make targets. A JavaScript or TypeScript method of an object literal, and a definition in a `.vue`, `.svelte` or `.astro` file, is undecided when no other line names it: code may call it by its key, or the component's template may use it. A method of a type that extends or implements another, and a class or struct that does, is undecided when no other line names it: the base type's code may call it. A name built at run time (`getattr(obj, "handle_" + kind)`) or by a macro that pastes identifiers is not seen. `PATH` (a directory or file) keeps the definitions under it, the uses are still looked for in the whole repository, and a path that is not there is an error. The dead come first, then the undecided, each by path and line, and a last line counts both: `app.py:8-9  [function] unused_private`, `app.py:21-22  [function] by_name  (undecided: named on 1 other line: 1 tied to something else (another definition, a local, a comment or a string))`, `(1 dead, 1 undecided)`; nothing found prints `(no dead code found)` and exits 1. `--json` gives `dead` and `undecided`, lists of `id`, `path`, `start`, `end`, `kind`, `name`, `qualname`, and `reason` for an undecided one. What the resolver said of each line is kept (`.scrutate/answers/`) as for `callers`. `tools/check_dead.py BINARY [ROOT]` checks with ripgrep that no other line of the tree names a definition it calls dead. |
 | `tsquery LANG QUERY [PATHS] [--limit N] [--no-cache]` | Tree-sitter structural query over every file of a language up to 1 MB (no index; per-file results are cached, see below). An empty query, a query without a `@capture`, an unknown predicate, and a predicate written outside every pattern's parentheses (tree-sitter would apply it to nothing, so the pattern would match every node: write `((identifier) @i (#eq? @i "x"))`) are errors. A path that does not exist from the current directory is read under `--root`; one that exists in neither place is named in a warning, the other paths are still searched, and the exit code is 2. Paths print as `grep PATH...` prints them, in plain output and in `--json`: the path as given, then the path below it (`src/a.py` for `src`, `./src/a.py` for `./src`, nothing in front for `.` or no path), so a printed path can be passed to the other commands. `--rewrite TEMPLATE` replaces each match with a template of its captures and prints a diff; `--write` changes the files (see below). |
@@ -507,6 +508,49 @@ file with unmerged changes are errors (exit 2). A revision that starts with `-` 
 git runs, so it can never be read as an option. The command line does not send `impact` to a
 running `serve`: git runs in the command's own environment. The MCP tool `impact` takes `base`,
 `staged` and `depth` and gives the same answer.
+
+### `review`
+```
+scrutate review --base REV [--head REV] [--format markdown|json|gitlab] [--depth N] [--link URL]
+```
+A report of a pull request for CI. It is `impact` between two commits, `--base` (a revision, or
+`main...` for the merge base) and `--head` (`HEAD` by default), the diff git gives between the
+two, with no untracked file; each side is read from git's copies, and a definition is named
+where the index, the working tree's, holds it, so check the head out first. The callers and tests
+are found as `impact` finds them, `--depth` as there.
+
+It adds the duplicates the head adds: the groups `dupes` finds with its defaults (`--min-tokens
+30`, `--threshold 0.75`) that the base did not have, at most 50. Only a group with a member in a
+changed file can be new. The base's groups come from the same search over the index's
+definitions with each changed file replaced by a parse of its base copy, and a head group is old
+when one base group holds a match for each of its members, each base member used once: the same
+definition (path and qualified name), or the same body text up to whitespace. So a pair the base
+had stays out when one of them is edited or moved, and a third copy of it is listed. A changed
+definition (added or edited, outside a test file) that no test file reaches through the calls the
+walk found is marked: no test reaches it.
+
+`--format markdown` (the default) is the body of a PR comment. Its first line is the marker
+`<!-- scrutate-review -->`, by which the GitHub Action finds its comment again, then a line naming
+the two commits, a line of counts, and a section for each part that has items: `Changed
+definitions`, `Callers, up to N steps away` (each with its distance), `Tests to run`, `New
+duplicates` and `Notes`. Locations are paths from the repository root; with `--link URL` each
+links to `URL/PATH#Lstart-Lend` (the Action passes `https://github.com/OWNER/REPO/blob/COMMIT`).
+The body is cut at whole lines before 65,536 characters, GitHub's limit for a comment, with a
+last line that says so. `--format json` is the answer's envelope: `impact`'s `result` with `head`,
+`head_commit`, `new_duplicates` (each group as `dupes --json` gives it) and `untested` (the
+locations of the marked definitions). `--format gitlab` is a GitLab Code Quality report: a JSON
+list of issues with `description`, `check_name`, `fingerprint`, `severity` and
+`location.path`/`location.lines.begin`. Each new duplicate group is one `scrutate-duplicate`
+issue of severity `minor` at the member the diff changed, and each marked definition one
+`scrutate-untested-change` issue of severity `info`. A fingerprint is the SHA-1 of the check and
+the paths and qualified names involved, not the lines, so GitLab matches an issue across pushes.
+
+Nothing to report (no changed definition, note or test, and no new duplicate) is exit code 1, with
+the report still printed (in Markdown a line that says so, in GitLab an empty list). The errors of
+`impact` are the errors here (exit 2), and `--head` is checked as `--base` is: a revision that
+starts with `-` is refused before git runs. `review` runs `git` as `impact` does and nothing else,
+writes only the index, as every index command does, and posts nothing; the GitHub Action posts its output
+([GitHub Actions](../integrations/github/README.md)). There is no MCP tool.
 
 ### `files`
 ```

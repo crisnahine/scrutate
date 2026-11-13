@@ -61,28 +61,75 @@ pub struct Impact {
     /// (path, why it gives no symbol): a binary file, a submodule, a file the index leaves out
     pub notes: Vec<(String, String)>,
     pub stopped: bool,
+    /// the head commit, when the change is between two commits
+    pub head: Option<String>,
+    /// (path, bytes) of the base copy of each changed file the index would hold
+    pub(crate) base_copies: Vec<(String, Vec<u8>)>,
+    /// the path each changed file has after the change
+    pub(crate) head_paths: Vec<String>,
+    /// every call the walk met
+    pub(crate) edges: Vec<Edge>,
+}
+
+/// A call: the caller's chunk id and the location of the definition it calls.
+pub(crate) type Edge = (i64, String);
+
+/// Where the changed side of a diff comes from.
+enum New {
+    Tree,
+    Staged,
+    Commit(String),
 }
 
 /// What the working tree (with `staged`, the staged changes) changes against `base` (`HEAD`, a
 /// revision, or `A...B` for the merge base of the two), on the index as it is.
 pub fn impact(s: &Searcher, base: Option<&str>, staged: bool, depth: usize) -> Result<Impact> {
+    compare(s, base.unwrap_or("HEAD"), if staged { New::Staged } else { New::Tree }, depth)
+}
+
+/// What commit `head` changes against `base` (a revision or `A...B`), read from git's copies and
+/// named where the index, the working tree's, holds each definition.
+pub fn between(s: &Searcher, base: &str, head: &str, depth: usize) -> Result<Impact> {
+    compare(s, base, New::Commit(head.to_string()), depth)
+}
+
+fn compare(s: &Searcher, against: &str, new: New, depth: usize) -> Result<Impact> {
     let git = Git::new(&s.ix.root)?;
-    let against = base.unwrap_or("HEAD").to_string();
+    let against = against.to_string();
     let base = git.base(&against)?;
-    let entries = git.diff(&base, staged)?;
-    let mut b = Builder { s, staged, changed: Vec::new(), notes: Vec::new(), seen: HashSet::new(), files: Vec::new() };
+    let new = match new {
+        New::Commit(rev) => New::Commit(git.commit(&rev)?),
+        other => other,
+    };
+    let entries = git.diff(&base, &new)?;
+    let (staged, head) = match new {
+        New::Tree => (false, None),
+        New::Staged => (true, None),
+        New::Commit(c) => (false, Some(c)),
+    };
+    let from_blobs = staged || head.is_some();
+    let mut b = Builder {
+        s,
+        from_blobs,
+        changed: Vec::new(),
+        notes: Vec::new(),
+        seen: HashSet::new(),
+        files: Vec::new(),
+        base_copies: Vec::new(),
+        head_paths: Vec::new(),
+    };
     let blobs = git.blobs(&entries.iter().flat_map(|e| b.blobs_wanted(e)).collect::<BTreeSet<_>>())?;
     for e in &entries {
         b.entry(e, &blobs)?;
     }
-    let Builder { mut changed, mut notes, files, .. } = b;
+    let Builder { mut changed, mut notes, files, base_copies, head_paths, .. } = b;
     changed.sort_by(|a, b| {
         (&a.hit.path, a.hit.start, a.hit.end, &a.hit.kind, &a.hit.qualname).cmp(&(&b.hit.path, b.hit.start, b.hit.end, &b.hit.kind, &b.hit.qualname))
     });
     notes.sort();
-    let (callers, stopped) = walk(s, &changed, depth)?;
+    let (callers, edges, stopped) = walk(s, &changed, depth)?;
     let tests = test_files(&changed, &callers, &files);
-    Ok(Impact { against, base, staged, depth, changed, callers, tests, notes, stopped })
+    Ok(Impact { against, base, staged, depth, changed, callers, tests, notes, stopped, head, base_copies, head_paths, edges })
 }
 
 /// Kinds whose callers are not asked for: lines outside every definition, and a module.
@@ -90,14 +137,15 @@ fn walkable(h: &Hit) -> bool {
     h.id != 0 && !matches!(h.kind.as_str(), "window" | "module" | "file")
 }
 
-/// Callers breadth first, each at the smallest distance it is reached by, in (distance, path, line) order.
-fn walk(s: &Searcher, changed: &[Changed], depth: usize) -> Result<(Vec<Caller>, bool)> {
+/// Callers breadth first, each at the smallest distance it is reached by, in (distance, path, line)
+/// order, and every call met on the way.
+fn walk(s: &Searcher, changed: &[Changed], depth: usize) -> Result<(Vec<Caller>, Vec<Edge>, bool)> {
     let mut seen: HashSet<i64> = changed.iter().map(|c| c.hit.id).filter(|id| *id != 0).collect();
     let mut frontier: Vec<Hit> = changed.iter().map(|c| c.hit.clone()).filter(walkable).collect();
     // a deleted definition has no index entry to ask `callers` about: its callers are found by its name
     let gone: Vec<&Hit> =
         changed.iter().filter(|c| c.status == "deleted" && !matches!(c.hit.kind.as_str(), "window" | "module" | "file")).map(|c| &c.hit).collect();
-    let mut callers = Vec::new();
+    let (mut callers, mut edges) = (Vec::new(), Vec::new());
     let mut names = Names::new(s)?;
     for distance in 1..=depth {
         let mut next = Vec::new();
@@ -117,11 +165,12 @@ fn walk(s: &Searcher, changed: &[Changed], depth: usize) -> Result<(Vec<Caller>,
                 }
             };
             for (i, h) in hits.into_iter().enumerate() {
+                edges.push((h.id, target.loc()));
                 if !seen.insert(h.id) {
                     continue;
                 }
                 if callers.len() >= MAX_CALLERS {
-                    return Ok((callers, true));
+                    return Ok((callers, edges, true));
                 }
                 if walkable(&h) {
                     next.push(h.clone());
@@ -133,7 +182,7 @@ fn walk(s: &Searcher, changed: &[Changed], depth: usize) -> Result<(Vec<Caller>,
         frontier = next;
     }
     callers.sort_by(|a, b| (a.distance, &a.hit.path, a.hit.start, a.hit.end).cmp(&(b.distance, &b.hit.path, b.hit.start, b.hit.end)));
-    Ok((callers, false))
+    Ok((callers, edges, false))
 }
 
 /// The test files (`is_test_path`, the index's test flag) that hold a changed symbol or a caller,
@@ -242,13 +291,16 @@ fn nearest<'a>(defs: &'a [Def], d: &Def) -> Option<&'a Def> {
 
 struct Builder<'a> {
     s: &'a Searcher,
-    staged: bool,
+    /// the changed side is read from git's copies (staged, or a commit), not the working tree
+    from_blobs: bool,
     changed: Vec<Changed>,
     notes: Vec<(String, String)>,
     /// chunk ids, and (path, start, kind, qualname) of what has no id, already listed
     seen: HashSet<(i64, String, i64, String, String)>,
     /// every path the diff changed
     files: Vec<String>,
+    base_copies: Vec<(String, Vec<u8>)>,
+    head_paths: Vec<String>,
 }
 
 impl Builder<'_> {
@@ -260,7 +312,7 @@ impl Builder<'_> {
         if e.old.is_some() {
             v.push(e.old_blob.clone());
         }
-        if self.staged && e.new.is_some() && !e.untracked {
+        if self.from_blobs && e.new.is_some() && !e.untracked {
             v.push(e.new_blob.clone());
         }
         v
@@ -280,6 +332,7 @@ impl Builder<'_> {
     fn entry(&mut self, e: &Entry, blobs: &BTreeMap<String, Vec<u8>>) -> Result<()> {
         let path = e.new.as_deref().or(e.old.as_deref()).unwrap_or_default().to_string();
         self.files.push(path.clone());
+        self.head_paths.extend(e.new.clone());
         if let (Some(old), Some(new)) = (&e.old, &e.new) {
             if old != new {
                 self.notes.push((new.clone(), format!("renamed from {}", shown(old))));
@@ -298,6 +351,9 @@ impl Builder<'_> {
             return Ok(());
         }
         let blob = |sha: &str| blobs.get(sha).map(Vec::as_slice).unwrap_or_default();
+        if let Some(old) = &e.old {
+            self.base_copies.push((old.clone(), blob(&e.old_blob).to_vec()));
+        }
         let old_defs = match &e.old {
             Some(old) => parsed(old, blob(&e.old_blob)),
             None => Vec::new(),
@@ -312,7 +368,7 @@ impl Builder<'_> {
                     .into_iter()
                     .map(|r| Def { kind: r.kind, name: r.name, qualname: r.qualname, start: r.start, end: r.end, id: r.id })
                     .collect();
-                if self.staged && !e.untracked {
+                if self.from_blobs && !e.untracked {
                     (parsed(new, blob(&e.new_blob)), rows)
                 } else {
                     (rows.clone(), rows)
@@ -349,7 +405,7 @@ impl Builder<'_> {
         }
         // lines outside every definition: the window that holds them, as callers names such a caller
         let mut bare = !old_outside.is_empty();
-        let from_index = e.new.is_some() && (!self.staged || e.untracked);
+        let from_index = e.new.is_some() && (!self.from_blobs || e.untracked);
         let mut after = 0;
         for l in new_outside {
             if !from_index {
@@ -468,14 +524,17 @@ impl Git {
     }
 
     /// The files that differ from `base`, with their changed lines, and the untracked files.
-    fn diff(&self, base: &str, staged: bool) -> Result<Vec<Entry>> {
+    fn diff(&self, base: &str, new: &New) -> Result<Vec<Entry>> {
         let common = ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--relative", "-M", "--src-prefix=a/", "--dst-prefix=b/"];
         let with = |more: &[&str]| -> Vec<String> {
             let mut v: Vec<String> = common.iter().chain(more).map(|s| s.to_string()).collect();
-            if staged {
+            if matches!(new, New::Staged) {
                 v.push("--cached".into());
             }
             v.push(base.to_string());
+            if let New::Commit(head) = new {
+                v.push(head.clone());
+            }
             v.push("--".into());
             v
         };
@@ -496,7 +555,7 @@ impl Git {
                 None => e.submodule || e.old != e.new,
             }
         });
-        if !staged {
+        if matches!(new, New::Tree) {
             for p in self.run(&["ls-files", "--others", "--exclude-standard", "-z"])?.split(|&b| b == 0).filter(|p| !p.is_empty()) {
                 entries.push(Entry { new: Some(String::from_utf8_lossy(p).into_owned()), untracked: true, ..Entry::default() });
             }

@@ -1,12 +1,21 @@
 name: scrutate
-description: Install a Scrutate release binary and run a command (search, check, dupes, ...) in CI.
+description: Install a Scrutate release binary, run a command (search, check, dupes, ...) in CI, and post the review of a pull request as one comment.
 inputs:
   version:
     description: release tag to install (e.g. v0.1.0)
     required: true
   args:
-    description: arguments passed to scrutate (e.g. dupes --json --limit 20); quote an argument that has spaces or an apostrophe
-    required: true
+    description: arguments passed to scrutate (e.g. dupes --json --limit 20); quote an argument that has spaces or an apostrophe; none runs no command
+    required: false
+    default: ''
+  comment:
+    description: on a pull request, post scrutate review as one comment and edit it on the next push (needs pull-requests write permission and a checkout with fetch-depth 0)
+    required: false
+    default: 'false'
+  github-token:
+    description: the token the comment is posted with
+    required: false
+    default: ${{ github.token }}
 outputs:
   exit-code:
     description: the command's exit code (0 results, 1 none); the step fails on 2 (an error) and above
@@ -41,6 +50,7 @@ runs:
         if [ "$ext" = zip ]; then unzip -q "$name.zip"; else tar xzf "$name.tar.gz"; fi
         echo "$(pwd -W 2> /dev/null || pwd)/$name" >> "$GITHUB_PATH"
     - id: run
+      if: inputs.args != ''
       shell: bash
       env:
         ARGS: ${{ inputs.args }}
@@ -53,3 +63,14 @@ runs:
         code=$(cat "$code_file")
         echo "exit-code=$code" >> "$GITHUB_OUTPUT"
         [ "$code" -lt 2 ]
+    - if: inputs.comment == 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ github.repository }}
+        SERVER_URL: ${{ github.server_url }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      # the script exits 0 on its own errors; the fallback covers bash failing to start it
+      run: |
+        bash "$GITHUB_ACTION_PATH/comment.sh" || echo "::warning::scrutate review comment: the script did not run"

@@ -104,6 +104,12 @@ of a file's language at each step where languages differ.
 changes, their callers through `Names` with the distance of each, and the test files to run. The
 diff is read by running `git`; the base side of a file is parsed from git's copy.
 
+**Review**: the report of a pull request (`review.rs`, `scrutate review`): the impact between a
+base and a head commit, and the **new duplicates**, the `dupes` groups of the head that no group
+of the base matches member for member (by path and qualified name, or by body text). It prints as
+the PR comment the GitHub Action posts and edits in place (found again by the marker
+`<!-- scrutate-review -->`), as JSON, or as a GitLab Code Quality report.
+
 **Rewrite**: a structural search that replaces what it finds (`rewrite.rs`, `scrutate tsquery
 --rewrite`): a **plan** (`rewrite::Plan`) holds each file's bytes as read and as rewritten, and
 either prints as a diff or writes each file whole by rename while its bytes are still those read.

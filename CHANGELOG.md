@@ -9,6 +9,16 @@ version rebuilds incompatible indexes automatically and this is never considered
 ## [Unreleased]
 
 ### Added
+- `scrutate review --base REV [--head REV]` reports a pull request: `impact` between the two
+  commits (changed definitions, callers with distances, test files to run, and the changed
+  definitions no test reaches) and the duplicates the head adds, a group the base already had
+  left out even when one member is edited or moved. `--format markdown` is a PR comment of at
+  most 65,536 characters that starts with the marker `<!-- scrutate-review -->`, `--format json`
+  the answer's envelope, `--format gitlab` a GitLab Code Quality report, which the GitLab
+  template now saves as the job's `codequality` report.
+- The GitHub Action's `comment: true` posts that report as one comment on a pull request and
+  edits it on the next push, with only the `pull-requests: write` permission; its own errors are
+  warnings, so it never fails the job. `args` is now optional.
 - `scrutate setup <claude|codex|opencode|cursor|gemini>` writes one MCP server entry that runs
   this binary by its absolute path into the agent's user file, or with `--project` into the
   repository's file, editing the text in place so every other key and comment stays; a file that
