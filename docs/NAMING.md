@@ -101,13 +101,49 @@ the top GitHub match.
 - Trademarks: a web search for "Scrutate" as a software product, company or mark found none. The
   closest marks are **SCRUT**, **SCRUT.IO** and **THE SCRUT PLATFORM**, held by Scrut Automation
   Inc. (security and compliance software; listed on Justia's trademark pages): another word, but
-  in software, so a confusion analysis belongs in the legal review.
+  in software, so a confusion analysis belongs in the legal review. The registers searched on
+  2026-11-13 (below) show the US filings of these marks abandoned and the UK ones registered.
+
+## Trademark knockout search on 2026-11-13
+
+A lay knockout search of the official registers, for the name and close variants. Class 9 covers
+downloadable software and class 42 software as a service; both matter here.
+
+| Register | Query | Result |
+|---|---|---|
+| USPTO Trademark Search, General search, live and dead | `CM:*scrutat*` (SCRUTATE, SCRUTATOR, SCRUTATION) | 0 |
+| USPTO | sound-alike regex `CM:/.*s[ck]+r[ouw]+t+[aei]+t.*/` | 0 (the control `CM:/.*s[ck]+r[ouw]+t+[aeiou]+[nt].*/` found 46, so the regex form works) |
+| USPTO | `CM:*scrut*` | 53; `CM:*scrut* AND LD:true AND (IC:009 OR IC:042)`: 9 live marks in class 9 or 42 |
+| TMview (EUIPO and the national offices it carries), "Contains" | `scrutate` | 0 |
+| TMview | `scrut*` | 175, all read; none is SCRUTATE |
+| WIPO Global Brand Database, "Embedded" | `scrutate`, `scrutat` | 0 and 0; the fuzzy search found nothing closer than SCRUTARE |
+| UKIPO, "Contains String", all statuses | `scrut` | 24, all read; none is SCRUTATE |
+| IP Australia, part match | `scrut` | 9; none is SCRUTATE |
+
+Not searched directly: CIPO (Canada), JPO J-PlatPat (Japan) and US state registers; TMview's
+Canadian and Japanese records for `scrut*` hold no SCRUTATE. Also on 2026-11-13: crates.io, PyPI,
+npm and Homebrew return HTTP 404 for `scrutate` and `scrutator`, UK Companies House has no company
+of that name, and a web search found no product or company called Scrutate.
+
+No register searched holds SCRUTATE or any mark starting SCRUTAT, in any class, live or dead. The
+near marks, for counsel to rate:
+
+- **SCRUTINY**, US 99613386, pending, class 9, "Downloadable software development tools for code
+  review" (Five Rivers Development LLC): the closest by goods.
+- **SCRUT**, **SCRUT.IO**, **SCRUT AUTOMATION** and **THE SCRUT PLATFORM** (Scrut Automation
+  Inc.): registered in the UK (UK00004112700, UK00004113041, UK00004113052, UK00004113065; classes
+  9 and 42) and India (5185038, class 9). Every US filing of the family is abandoned (98766403,
+  98179232, 98076953, 98076950, 98817425).
+- **SCRUTINIZER**, registered in the US (86684376, class 9; 87289586, class 42), the UK, Australia
+  and Japan.
+- Recent European filings: Scrutor (Austria, 35 and 42), Scrutoir (France, 9, 41, 42 and 45),
+  ScrutIA (France, 9 and 42).
 
 ## What is *not* verified: read before relying on the name
 
-- **Trademark registers**: USPTO, EUIPO, WIPO and national registers were not searched directly,
-  and the name has **not** been legally cleared. Counsel must search before commercial use,
-  covering the SCRUT marks above.
+- **Legal clearance**: the registers above had a lay knockout search only, and the name has
+  **not** been legally cleared. Counsel must give a clearance opinion before commercial use,
+  rating the near marks above, SCRUTINY and the SCRUT family first.
 - **The `.com` domain** is registered; unless it is already the authors', a product site needs
   another domain or a purchase.
 - **Global uniqueness** is not claimed: the checks cover the listed registries on the listed dates

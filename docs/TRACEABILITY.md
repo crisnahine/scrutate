@@ -23,7 +23,7 @@ Evidence: generated `docs/TEST_RESULTS.md` (tests, audits) and `docs/LEADERBOARD
 (section 14, from `bench/results/`), `docs/BENCHMARKS.md`, `docs/QUALITY.md`, `docs/SECURITY.md`,
 `docs/LANGUAGES.md`, `docs/NAMING.md`, `bench/results/platforms/` (per-platform logs). Tests are
 in `crates/scrutate/tests/*.rs`, `crates/scrutate/src/*.rs` and `python/tests/*.py`.
-Counts: PASS 126 · PARTIAL 9 · BLOCKED 1 · FAIL 0 over 136 rows (computed by `tools/traceability_tally.py`).
+Counts: PASS 127 · PARTIAL 8 · BLOCKED 1 · FAIL 0 over 136 rows (computed by `tools/traceability_tally.py`).
 
 ## 2A. Engine A: universal instant search
 
@@ -127,7 +127,7 @@ Counts: PASS 126 · PARTIAL 9 · BLOCKED 1 · FAIL 0 over 136 rows (computed by 
 | ID | Requirement | Implementation | Verification | Status |
 |---|---|---|---|---|
 | R-7.1 | Original, memorable, commercially suitable name | **Scrutate** | NAMING.md | PASS |
-| R-7.2 | At least 15 candidates; GitHub, crates.io, products, registries, domains, trademarks | 30 candidates; crates.io, PyPI, npm, GitHub (repositories and the `scrutate` account: free), Homebrew, WHOIS (.com registered 2026-06-22, owner not shown; .io, .org, .net unregistered; .dev, .app no answer), web search for marks (none for "Scrutate"; confusable "SCRUT" of Scrut Automation Inc.) | NAMING.md, `docs/name_research.json` | PARTIAL (no search of trademark registers by counsel) |
+| R-7.2 | At least 15 candidates; GitHub, crates.io, products, registries, domains, trademarks | 30 candidates; crates.io, PyPI, npm, GitHub, Homebrew, WHOIS, web; trademark knockout search on 2026-11-13 of USPTO, TMview (EUIPO and national offices), WIPO Global Brand Database, UKIPO and IP Australia: no SCRUTATE or SCRUTAT* mark in any class; near marks in classes 9 and 42 (SCRUTINY US 99613386, SCRUT UK, SCRUTINIZER, Scrutor, Scrutoir, ScrutIA) listed for counsel | NAMING.md, `docs/name_research.json` | PASS (knockout search; legal clearance by counsel is the owner's decision) |
 | R-7.3 | Selection by documented evidence; no false uniqueness/legal claims | NAMING.md | review | PASS |
 
 ## 8. Actually build the product
@@ -237,5 +237,5 @@ Counts: PASS 126 · PARTIAL 9 · BLOCKED 1 · FAIL 0 over 136 rows (computed by 
 
 ## Tally
 
-PASS 126 · PARTIAL 9 · BLOCKED 1 · FAIL 0 over 136 rows. [RELEASE_READINESS](RELEASE_READINESS.md#remaining-defects-and-incomplete-requirements)
+PASS 127 · PARTIAL 8 · BLOCKED 1 · FAIL 0 over 136 rows. [RELEASE_READINESS](RELEASE_READINESS.md#remaining-defects-and-incomplete-requirements)
 lists the others with what closes each.

@@ -57,7 +57,6 @@ Status words as in docs/TRACEABILITY.md.
 | R-12.17 | Signed releases and published packages | PARTIAL | the release workflow's Sigstore steps and the package pull requests, which need the published repository |
 | R-6.15, R-12.16 | GitHub App / GitLab integration exercised against a real platform | PARTIAL | the published repository |
 | R-12.15 | The cross-platform part of verification | PARTIAL | as R-9.10 |
-| R-7.2 | Trademark search by counsel | PARTIAL | counsel's search of the trademark registers |
 
 ## Defects found and fixed while preparing this release
 
