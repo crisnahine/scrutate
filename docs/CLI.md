@@ -1026,7 +1026,7 @@ root.
 
 | Variable | Meaning |
 |---|---|
-| `SCRUTATE_SEMANTIC` | path or `none`; another model makes the stored vectors anew on the next update, from the word counts the index keeps and without reading a source file: a third of a fresh build's CPU or less for a model, next to nothing for `none` |
+| `SCRUTATE_SEMANTIC` | path or `none`; the file is an `.npz` with int8 word tables and one scale per row, as `bench/train_semantic.py` writes it; another model makes the stored vectors anew on the next update, from the word counts the index keeps and without reading a source file: a third of a fresh build's CPU or less for a model, next to nothing for `none` |
 | `SCRUTATE_RANKER` | path or `none`; a ranker whose features differ from this version's makes `search` fail |
 | `SCRUTATE_PROFILE` | print indexing phase timings |
 | `SCRUTATE_DIAGNOSTICS` | `json`: errors as JSON records |
