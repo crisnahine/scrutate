@@ -362,7 +362,13 @@ mod tests {
         assert_eq!((kept(10), kept(11)), (1, 1), "a run that went through every site stands for any limit");
         assert_eq!(callers().0[0].qualname, first.0[0].qualname);
         // the index is not told: the resolver reads the file as it is now, so the kept answer goes
-        std::fs::write(root.join("b.py"), "from a import helper as h\n\n\ndef run():\n    return h()\n").unwrap();
+        // a virus scanner on a Windows runner can hold a file just written for a moment
+        let mut tries = 0;
+        while let Err(e) = std::fs::write(root.join("b.py"), "from a import helper as h\n\n\ndef run():\n    return h()\n") {
+            tries += 1;
+            assert!(tries < 200 && e.raw_os_error() == Some(32), "{e}");
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
         assert_eq!(kept(10), 0);
         assert!(Stored::open(&s, "callers", "nothing", 10).old.is_empty(), "another request");
         std::fs::remove_dir_all(&root).unwrap();

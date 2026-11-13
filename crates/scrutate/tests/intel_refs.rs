@@ -152,6 +152,16 @@ fn class_dot_method_is_found_among_many_namesakes() {
     assert!(!out.contains("no symbol or location matches"), "{out}");
 }
 
+/// What `scrutate lsp` in `root` writes for the framed messages `input`, its log after it, so an
+/// answer that is not there shows why.
+fn lsp_session(root: &Path, input: &[u8]) -> String {
+    use std::io::Write;
+    let mut child = Command::new(BIN).arg("lsp").current_dir(root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    child.stdin.take().unwrap().write_all(input).unwrap();
+    let out = child.wait_with_output().unwrap();
+    format!("{}\n--- stderr:\n{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))
+}
+
 #[test]
 fn lsp_definition_of_a_qualified_call_among_many_namesakes() {
     let r = many_runs();
@@ -170,11 +180,9 @@ fn lsp_definition_of_a_qualified_call_among_many_namesakes() {
         let body = m.to_string();
         input.extend(format!("Content-Length: {}\r\n\r\n{body}", body.len()).into_bytes());
     }
-    let mut child = Command::new(BIN).arg("lsp").current_dir(&r.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
-    use std::io::Write;
-    child.stdin.take().unwrap().write_all(&input).unwrap();
-    let out = String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).into_owned();
+    let out = lsp_session(&r.root, &input);
     let answer = out.split("Content-Length").find(|m| m.contains("\"id\":2")).unwrap_or_else(|| panic!("{out}"));
+    assert!(!answer.contains("\"error\""), "{out}");
     let line_of_c69_run = 1 + 3 + 69 * 6 + 1; // 1-based line of `def run` in class C69
     assert!(answer.contains(&format!("\"line\":{}", line_of_c69_run - 1)), "{answer}");
 }
@@ -552,11 +560,9 @@ fn a_bare_python_import_of_the_module_next_door_binds_it() {
         let body = m.to_string();
         input.extend(format!("Content-Length: {}\r\n\r\n{body}", body.len()).into_bytes());
     }
-    let mut child = Command::new(BIN).arg("lsp").current_dir(&r.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
-    use std::io::Write;
-    child.stdin.take().unwrap().write_all(&input).unwrap();
-    let out = String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).into_owned();
+    let out = lsp_session(&r.root, &input);
     let answer = out.split("Content-Length").find(|m| m.contains("\"id\":2")).unwrap_or_else(|| panic!("{out}"));
+    assert!(!answer.contains("\"error\""), "{out}");
     let body: Value = serde_json::from_str(&answer[answer.find('{').unwrap()..]).unwrap();
     let mut got: Vec<String> = body["result"]
         .as_array()
@@ -1241,11 +1247,10 @@ fn lsp_answer(r: &Repo, method: &str, rel: &str, line: u32, character: u32) -> S
         let body = m.to_string();
         input.extend(format!("Content-Length: {}\r\n\r\n{body}", body.len()).into_bytes());
     }
-    let mut child = Command::new(BIN).arg("lsp").current_dir(&r.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
-    use std::io::Write;
-    child.stdin.take().unwrap().write_all(&input).unwrap();
-    let out = String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).into_owned();
-    out.split("Content-Length").find(|m| m.contains("\"id\":2")).unwrap_or_else(|| panic!("{out}")).to_string()
+    let out = lsp_session(&r.root, &input);
+    let answer = out.split("Content-Length").find(|m| m.contains("\"id\":2")).unwrap_or_else(|| panic!("{out}")).to_string();
+    assert!(!answer.contains("\"error\""), "{out}");
+    answer
 }
 
 #[test]

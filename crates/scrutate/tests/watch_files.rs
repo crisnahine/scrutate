@@ -254,7 +254,9 @@ fn burst_was(_lines: &[String], _paths: Option<usize>, _full: bool) {
     {
         let line = last_burst(_lines);
         assert!(line.ends_with(&format!("full walk: {}", if _full { "yes" } else { "no" })), "{_lines:?}");
-        if let Some(n) = _paths {
+        // Windows' recursive watch also reports the directory a change happened in, and paths
+        // inside a nested repository's `.git`: the count is checked where each watch is per directory
+        if let (Some(n), false) = (_paths, cfg!(windows)) {
             assert!(line.contains(&format!("burst: {n} paths,")), "{_lines:?}");
         }
     }

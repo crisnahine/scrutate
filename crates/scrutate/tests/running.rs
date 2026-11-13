@@ -123,6 +123,7 @@ fn a_stopped_search_is_counted_and_a_killed_one_is_not() {
     let a = Search::start(&["-F", "nothing-matches-this"], Stdio::null());
     a.next();
     a.signal("-STOP");
+    held(&a, "the first search");
     let mut ok = false;
     // another search of this user may start or end between the two probes: try again
     for _ in 0..5 {
@@ -130,6 +131,7 @@ fn a_stopped_search_is_counted_and_a_killed_one_is_not() {
         let b = Search::start(&["-F", "nothing-matches-this"], Stdio::null());
         b.next();
         b.signal("-STOP");
+        held(&b, "the second search");
         let (more, _) = probe();
         b.signal("-KILL");
         b.finish();
@@ -144,7 +146,6 @@ fn a_stopped_search_is_counted_and_a_killed_one_is_not() {
     assert!(ok, "a stopped search added 1 to the count and its kill took it back");
 }
 
-/// Waits until the process is stopped, as `ps` shows it.
 /// What a process sent a stop did within 10 s (a loaded machine can take seconds to run a stop
 /// handler): it showed the stopped state, or it had ended. A process that ended and was not yet
 /// waited for still accepts the signal, so a `kill` that succeeds does not say it runs.
@@ -171,8 +172,14 @@ fn stop_seen(pid: u32) -> Stop {
     Stop::Neither
 }
 
-fn stopped(pid: u32) -> bool {
-    stop_seen(pid) == Stop::Stopped
+/// Panics with what was seen unless the search is stopped: one that ended before the stop came
+/// says so, with the machine's semaphores, so a fast or unusual machine reads as such.
+fn held(s: &Search, what: &str) {
+    let seen = stop_seen(s.child.id());
+    if seen != Stop::Stopped {
+        let ipcs = Command::new("ipcs").arg("-s").output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+        panic!("{what}: the search shows {seen:?}, not stopped; its count lines so far: {:?}; ipcs -s:\n{ipcs}", s.lines.try_iter().collect::<Vec<_>>());
+    }
 }
 
 #[test]
@@ -186,7 +193,7 @@ fn a_search_stopped_from_its_terminal_leaves_the_count_and_joins_again() {
         let first = a.next();
         // what Ctrl-Z sends
         a.signal("-TSTP");
-        assert!(stopped(a.child.id()), "SIGTSTP stops the search");
+        held(&a, "SIGTSTP stops the search");
         let (while_stopped, _) = probe();
         // a second search held while it is counted (SIGSTOP cannot be caught): the first one then
         // sees one search more than at its start, but only if it joins the count again
@@ -256,6 +263,7 @@ fn searches_started_together_share_and_take_back_the_threads() {
     let first = a.next();
     // stopped right after it counted itself: the next one starts before it looks again
     a.signal("-STOP");
+    held(&a, "the first search");
     let b = Search::start(&["-F", "nothing-matches-this"], Stdio::null());
     let (k, t) = b.next();
     assert!(k > first.0, "{k} searches seen after {first:?}");
