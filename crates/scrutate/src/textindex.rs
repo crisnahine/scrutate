@@ -1105,6 +1105,9 @@ fn lock_exclusive(f: &File) -> Result<()> {
             Ok(()) => return Ok(()),
             Err(std::fs::TryLockError::WouldBlock) => {}
             Err(std::fs::TryLockError::Error(e)) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            // wasi has no file locks: its one process is the only writer it can see
+            #[cfg(target_os = "wasi")]
+            Err(std::fs::TryLockError::Error(e)) if e.kind() == std::io::ErrorKind::Unsupported => return Ok(()),
             Err(std::fs::TryLockError::Error(e)) => return Err(anyhow::Error::new(e).context("lock the text index")),
         }
         if t0.elapsed() > std::time::Duration::from_secs(600) {

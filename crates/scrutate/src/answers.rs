@@ -191,7 +191,11 @@ impl Stored {
         std::fs::create_dir_all(&self.dir)?;
         crate::index::write_gitignore(scrutate)?;
         let nanos = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+        #[cfg(not(target_os = "wasi"))]
         let tmp = self.dir.join(format!(".tmp-{}-{:?}-{nanos}", std::process::id(), std::thread::current().id()).replace(['(', ')'], ""));
+        // wasi has no process id, and its one thread is the only writer
+        #[cfg(target_os = "wasi")]
+        let tmp = self.dir.join(format!(".tmp-{nanos}"));
         crate::index::write_new(&tmp, &out)?;
         if let Err(e) = std::fs::rename(&tmp, &self.path) {
             let _ = std::fs::remove_file(&tmp);

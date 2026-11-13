@@ -547,7 +547,11 @@ fn seed(root: &Path, dir: &Path, sig: &str) -> bool {
         return false;
     }
     let nanos = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    #[cfg(not(target_os = "wasi"))]
     let tag = format!("seed-{}-{nanos}", std::process::id());
+    // wasi has no process id
+    #[cfg(target_os = "wasi")]
+    let tag = format!("seed-{nanos}");
     let tmp = dir.join(format!("index.db.{tag}"));
     let mut made = Vec::new();
     let copied = (|| -> Result<()> {

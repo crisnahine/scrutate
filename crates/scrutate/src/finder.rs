@@ -248,7 +248,11 @@ impl State {
         self.version = 1;
         let dir = file.parent().unwrap_or(Path::new("."));
         std::fs::create_dir_all(dir)?;
+        #[cfg(not(target_os = "wasi"))]
         let tmp = dir.join(format!("{STATE_FILE}.{}.tmp", std::process::id()));
+        // wasi has no process id
+        #[cfg(target_os = "wasi")]
+        let tmp = dir.join(format!("{STATE_FILE}.tmp"));
         std::fs::write(&tmp, serde_json::to_vec(self)?)?;
         if let Err(e) = std::fs::rename(&tmp, file) {
             let _ = std::fs::remove_file(&tmp);

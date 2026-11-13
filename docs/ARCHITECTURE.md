@@ -918,7 +918,10 @@ run beside the caller is not in that build: `serve`, `lsp` and `tsquery` fail wi
 says so, `watch` too (wasi has no file events, so `notify` is not a dependency there), and the Grep hook lets Grep answer, since it has no thread to keep its deadline. The
 session socket is Unix only and was already absent there. `memmap2` maps nothing on wasi, so
 `npy::map` reads a segment file whole into memory when a map fails with `Unsupported`; every
-other error is reported as before, and native builds keep mapping. PCRE2's JIT has no wasm
+other error is reported as before, and native builds keep mapping. wasi has no file locks and no
+process id either: the text index's update goes on without its lock when locking is unsupported
+there (one process sees the files), and the temporary names of the answer cache, the frecency
+state and a seeded index leave the process id out. PCRE2's JIT has no wasm
 backend, so that build leaves out the `pcre2` feature:
 `cargo build --release -p scrutate --target wasm32-wasip1 --no-default-features`, with the C
 compiler of a wasi-sdk for SQLite and the grammars.
