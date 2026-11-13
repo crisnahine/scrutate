@@ -187,9 +187,8 @@ impl Stored {
             bail!("too large to keep");
         }
         let scrutate = self.dir.parent().unwrap_or(&self.dir);
-        crate::files::index_dir(scrutate.parent().unwrap_or(scrutate))?;
+        crate::files::make_index_dir(scrutate.parent().unwrap_or(scrutate))?;
         std::fs::create_dir_all(&self.dir)?;
-        crate::index::write_gitignore(scrutate)?;
         let nanos = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
         #[cfg(not(target_os = "wasi"))]
         let tmp = self.dir.join(format!(".tmp-{}-{:?}-{nanos}", std::process::id(), std::thread::current().id()).replace(['(', ')'], ""));

@@ -111,6 +111,9 @@ incompatible index by itself, and that is never breaking.
   is indexed within 1 to 30 s, and the burst no longer walks the tree while one has none; the
   message names `fs.inotify.max_user_watches` when that limit is the cause
   ([CLI](docs/CLI.md#watch)).
+- On Unix `.scrutate/` is made with mode 0700, and an existing one is set to it by the next
+  write: under umask 022 it was readable by every user, the text of files made private with
+  `chmod 600` included ([SECURITY](docs/SECURITY.md)).
 - The Grep hook reads the `managed-settings.d` drop-ins and lets Grep run wherever managed policy
   it does not read exists, so an administrator's read rule is never bypassed
   ([SECURITY](docs/SECURITY.md)).

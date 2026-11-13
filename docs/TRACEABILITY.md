@@ -106,7 +106,7 @@ Counts: PASS 127 · PARTIAL 8 · BLOCKED 1 · FAIL 0 over 136 rows (computed by 
 | ID | Requirement | Implementation | Verification | Status |
 |---|---|---|---|---|
 | R-6.1 | Target Linux, macOS, Windows | portable code; CI matrix for 6 runners | macOS arm64 natively; Linux aarch64 and x86_64 in clean containers (x86_64 under emulation); macOS x86_64 and Windows x86_64 cross-built (`bench/results/platforms/`, INSTALL.md); in CI run 43013926055 (`9384c18`) the Rust tests and a smoke test of the release binary passed on all six runners: macOS arm64, Intel macOS, Linux x86_64, Linux arm64, Windows x64 and Windows arm64 | PASS |
-| R-6.2 | Secure filesystem access | path confinement in `read`, no symlink following by default, index only under root | SECURITY.md; robustness; bindings | PASS |
+| R-6.2 | Secure filesystem access | path confinement in `read`, no symlink following by default, index only under root, index directory owner-only (0700) on Unix | SECURITY.md; robustness; bindings; cli `the_index_directory_is_private_to_its_owner_under_umask_022` | PASS |
 | R-6.3 | Permission-aware indexing | unreadable files counted and skipped (text index: searched by Engine A, retried on the next update) | robustness `unreadable_files_are_reported_not_fatal` | PASS |
 | R-6.4 | Repository isolation | one `.scrutate/` per repository | design; concurrency tests | PASS |
 | R-6.5 | Resource exhaustion protection | regex size limits, file size caps, binary skip, bounded buffers, overflow-checked array sizes | robustness; fuzz target `npy` | PASS |

@@ -588,6 +588,33 @@ fn utf16_bom_is_searched_by_engine_a_and_indexed_by_engine_b() {
     assert!(out.contains("\"w.py\"") && out.contains("\"start\": 1"), "{out}");
 }
 
+#[cfg(unix)]
+#[test]
+fn the_index_directory_is_private_to_its_owner_under_umask_022() {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    let under_022 = |r: &Repo, args: &str| {
+        let out =
+            Command::new("sh").arg("-c").arg(format!("umask 022; exec \"$0\" {args}")).arg(BIN).current_dir(&r.root).stdin(Stdio::null()).output().unwrap();
+        assert!(matches!(out.status.code(), Some(0 | 1)), "{args}: {}", String::from_utf8_lossy(&out.stderr));
+    };
+    let r = Repo::new("private_index");
+    r.write("secrets.py", b"def token():\n    return 'hunter2'\n");
+    fs::set_permissions(r.root.join("secrets.py"), fs::Permissions::from_mode(0o600)).unwrap();
+    for args in ["index --text", "index --no-text", "callers token", "tsquery python '(function_definition) @f' ."] {
+        let _ = fs::remove_dir_all(r.root.join(".scrutate"));
+        under_022(&r, args);
+        assert_eq!(mode(&r.root.join(".scrutate")), 0o700, "{args}");
+    }
+    under_022(&r, "index");
+    assert_eq!(mode(&r.root.join(".scrutate")), 0o700);
+    assert_eq!(mode(&r.root.join(".scrutate/text")) & 0o077, 0o055, "inside, the umask applies; the directory above keeps others out");
+    // an index an earlier version left open to everyone is closed on the next write
+    fs::set_permissions(r.root.join(".scrutate"), fs::Permissions::from_mode(0o755)).unwrap();
+    under_022(&r, "index");
+    assert_eq!(mode(&r.root.join(".scrutate")), 0o700);
+}
+
 #[test]
 fn git_file_of_worktrees_and_submodules_is_not_indexed() {
     let r = Repo::new("gitfile");

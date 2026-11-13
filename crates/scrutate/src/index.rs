@@ -956,10 +956,8 @@ impl Index {
     pub fn open(root: &Path, models: Arc<ModelSet>) -> Result<Index> {
         crate::files::index_dir(root)?;
         let root = std::fs::canonicalize(root).with_context(|| format!("open {}", root.display()))?;
-        let dir = crate::files::index_dir(&root)?;
+        let dir = crate::files::make_index_dir(&root)?;
         let seg_dir = dir.join("seg");
-        std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
-        write_gitignore(&dir)?;
         let db_path = dir.join("index.db");
         let sem_sig = models.signature(&dir)?;
         if !db_path.exists() {

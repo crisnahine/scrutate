@@ -414,7 +414,10 @@ NFC with final sigma folded.
     inode on its next call and opens the new one (on Windows the open file cannot be deleted); two
     processes that find an index of an older schema clear it once;
   - a `.scrutate` that is a symbolic link, or holds one, is refused, and fixed-name files are
-    written with remove and `create_new`, so the index never writes through a link.
+    written with remove and `create_new`, so the index never writes through a link;
+  - every writer makes or opens `.scrutate` through `files::make_index_dir`, which on Unix gives
+    it mode 0700 (also to an existing one of another mode), so the copies of private files it
+    holds stay with their owner.
 
 ### Retrieval and ranking (`search.rs`, `semantic.rs`, `rank.rs`)
 

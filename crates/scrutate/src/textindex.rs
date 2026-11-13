@@ -1138,10 +1138,9 @@ pub fn update_paths(root: &Path, paths: &[String]) -> Result<TextStats> {
 
 fn update_with(root: &Path, force: bool, progress: bool, only: Option<&[String]>, found: Option<&[crate::files::Found]>) -> Result<TextStats> {
     let t0 = Instant::now();
-    crate::files::index_dir(root)?;
+    crate::files::make_index_dir(root)?;
     let dir = dir_of(root);
     std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
-    crate::index::write_gitignore(&root.join(".scrutate"))?;
     let lock = File::options().create(true).truncate(false).write(true).open(dir.join("lock"))?;
     lock_exclusive(&lock)?;
     let old = match read_manifest(&dir) {

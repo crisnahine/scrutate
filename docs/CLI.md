@@ -975,7 +975,9 @@ On/off variables follow the rule under Conventions.
 `.scrutate/text/` (the text index: a manifest and immutable trigram segments),
 `.scrutate/tsquery/` (the `tsquery` cache), `.scrutate/answers/` (what `callers` and `callees`
 resolved, one file per request), `.scrutate/session.sock` while `serve` runs, and a
-`.gitignore` so it is never committed. It is a cache: deleting it is always safe;
+`.gitignore` so it is never committed. On Unix only its owner can enter it (mode 0700, set by
+every command that writes it, also on an index an earlier version made), since it holds the text
+of files that may be private (docs/SECURITY.md). It is a cache: deleting it is always safe;
 `scrutate index --force` rebuilds it, parsing every file; a damaged index rebuilds itself. The
 index keeps what parsing made of each file's content (the artifact store), so a file renamed or
 moved under the same name, or brought back by a branch switch, is not parsed again. In a linked

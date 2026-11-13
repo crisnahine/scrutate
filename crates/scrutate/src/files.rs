@@ -41,6 +41,31 @@ pub fn index_dir(root: &Path) -> anyhow::Result<PathBuf> {
     Ok(dir)
 }
 
+/// `index_dir`, made if missing, with its `.gitignore`. On Unix only its owner may enter it, since
+/// it holds the text of files that may be private to the owner; an existing one is tightened the
+/// same way (left as it is when this user cannot change it).
+pub fn make_index_dir(root: &Path) -> anyhow::Result<PathBuf> {
+    use anyhow::Context;
+    let dir = index_dir(root)?;
+    #[cfg(unix)]
+    let made = std::os::unix::fs::DirBuilderExt::mode(&mut std::fs::DirBuilder::new(), 0o700).create(&dir);
+    #[cfg(not(unix))]
+    let made = std::fs::create_dir(&dir);
+    match made {
+        Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => return Err(e).with_context(|| format!("create {}", dir.display())),
+        _ => {}
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if std::fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir() && m.permissions().mode() & 0o777 != 0o700) {
+            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+        }
+    }
+    crate::index::write_gitignore(&dir).with_context(|| format!("create {}", dir.join(".gitignore").display()))?;
+    Ok(dir)
+}
+
 /// The main checkout of the linked git work tree whose top is `root`, read from git's own files
 /// (no program is run): the `.git` file names `<common dir>/worktrees/<name>`, whose `gitdir`
 /// file names this `.git` file back and whose `commondir` names the common directory, which is
