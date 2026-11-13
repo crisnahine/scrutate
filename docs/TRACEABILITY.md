@@ -11,19 +11,18 @@
 
 <!-- End of head. -->
 
-Each requirement of the mission (sections 1 to 14) with its implementation, source location,
-verification, evidence and status. Status words as the mission defines them:
+Each mission requirement (sections 1 to 14) with its implementation, source, verification,
+evidence and status. The mission's status words:
 
 - **PASS**: implemented and verified by the evidence named.
-- **PARTIAL**: implemented but verified only in part.
+- **PARTIAL**: implemented, verified in part.
 - **FAIL**: not implemented, or verification failed.
 - **BLOCKED**: a real, documented technical limit of the environment or the problem.
 
-Evidence: `docs/TEST_RESULTS.md` (test and audit output, generated), `docs/LEADERBOARD.md`
-(section 14 benchmarks, generated from `bench/results/`), `docs/BENCHMARKS.md`, `docs/QUALITY.md`,
-`docs/SECURITY.md`, `docs/LANGUAGES.md`, `docs/NAMING.md`, `bench/results/platforms/` (per-platform
-logs). Test names refer to `crates/scrutate/tests/*.rs`, `crates/scrutate/src/*.rs` unit tests and
-`python/tests/*.py`.
+Evidence: generated `docs/TEST_RESULTS.md` (tests, audits) and `docs/LEADERBOARD.md`
+(section 14, from `bench/results/`), `docs/BENCHMARKS.md`, `docs/QUALITY.md`, `docs/SECURITY.md`,
+`docs/LANGUAGES.md`, `docs/NAMING.md`, `bench/results/platforms/` (per-platform logs). Tests are
+in `crates/scrutate/tests/*.rs`, `crates/scrutate/src/*.rs` and `python/tests/*.py`.
 Counts: PASS 125 · PARTIAL 10 · BLOCKED 1 · FAIL 0 over 136 rows (computed by `tools/traceability_tally.py`).
 
 ## 2A. Engine A: universal instant search
@@ -238,5 +237,5 @@ Counts: PASS 125 · PARTIAL 10 · BLOCKED 1 · FAIL 0 over 136 rows (computed by
 
 ## Tally
 
-PASS 125 · PARTIAL 10 · BLOCKED 1 · FAIL 0 over 136 rows. RELEASE_READINESS.md ("Remaining defects and incomplete requirements") lists
-the PARTIAL, BLOCKED and FAIL rows with what closes each.
+PASS 125 · PARTIAL 10 · BLOCKED 1 · FAIL 0 over 136 rows. [RELEASE_READINESS](RELEASE_READINESS.md#remaining-defects-and-incomplete-requirements)
+lists the others with what closes each.
