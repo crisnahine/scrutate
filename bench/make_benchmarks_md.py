@@ -211,7 +211,7 @@ def main() -> int:
         w(f"- Not available on this machine, so absent rather than estimated: {', '.join(missing)}.")
     w(f"- {env['cores']} logical cores. Multi-threaded tools (scrutate, ripgrep, ugrep, git grep) scale with cores; grep, ack and ag search one file at a time.")
     w("- The corpora are Python only: byte-level search cost does not depend on the language, but structural search and indexing figures do.")
-    w("- Rows where scrutate is slower are in the tables like any other. docs/LEADERBOARD.md has the statistical comparison (30 runs per tool, confidence intervals) on more corpora; this page adds memory, start-up, concurrency and index costs.")
+    w("- Rows where scrutate is slower are in the tables like any other. docs/LEADERBOARD.md has the statistical comparison (at least 20 runs per tool, 30 unless every verdict holds at the first look; confidence intervals) on more corpora; this page adds memory, start-up, concurrency and index costs.")
     text = "\n".join(out) + "\n"
     with open(a.out, "w") as f:
         f.write(text)

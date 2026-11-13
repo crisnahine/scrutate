@@ -2,7 +2,7 @@
 """Benchmark leaderboard for Engine A and structural search (mission section 14).
 
 usage: leaderboard.py --corpora DIR --out FILE.json [--only ID_PREFIX...] [--runs 30]
-                      [--cache warm|cold] [--cold-prepare CMD] [--max-load X] [--stop-early] [--force]
+                      [--cache warm|cold] [--cold-prepare CMD] [--max-load X] [--no-stop-early] [--force]
 
 Per benchmark:
  1. Correctness. Every tool runs the query once; its output is normalised to the set of
@@ -12,15 +12,15 @@ Per benchmark:
  2. Pilot. Three runs per valid tool; the fastest competitor, and any tool within 1.25x of the
     fastest (`--contender`), are contenders. So are the competitors with the lowest pilot CPU time
     and the lowest pilot peak memory (metric contenders).
- 3. Measurement. hyperfine, output piped (no /dev/null shortcuts), >= 30 runs for scrutate and
-    every contender, taken in interleaved blocks (A B, A B, A B; one warm-up run per block) so load
+ 3. Measurement. hyperfine, output piped (no /dev/null shortcuts), 30 runs (20 under the stop
+    rule below) for scrutate and every contender, taken in interleaved blocks (A B, A B, A B; one warm-up run per block) so load
     drift on a shared machine does not bias the comparison (cold cache: the prepare command runs
     before every run). `scrutate -j1` (one search thread, the documented mode for the least CPU
     time and memory) runs scrutate's command lines with -j1 in the same blocks; it is ranked on CPU
     time and memory only. With SCRUTATE_BASE_BIN set, `scrutate base` runs scrutate's command lines
     with that binary in the same blocks, for bench/leaderboard_regression.py; it is never ranked.
     A concurrent row times each tool's verified command started 4 times at once by one shell.
-    Stop rule (--stop-early, ignored with SCRUTATE_BASE_BIN): after the second block a row stops when
+    Stop rule (on by default, off with --no-stop-early or SCRUTATE_BASE_BIN): after the second block a row stops when
     its wall-time verdict and its four CPU and memory verdicts are PASS, FAIL or n/a at alpha 0.001
     and no tool's block medians differ by more than 25%; every other row takes all its blocks and is
     judged at alpha 0.049 (the Haybittle-Peto boundary; the alphas sum to 0.05). The row records its
@@ -904,8 +904,9 @@ def main() -> int:
                     "factor of the fastest also get the full run count")
     ap.add_argument("--short-metric-runs", action="store_true", help="a metric contender that is not a wall-time contender and whose pilot "
                     "median is over 2 s gets half the runs (shortens a full cycle; its CPU and memory statuses then rest on fewer runs)")
-    ap.add_argument("--stop-early", action="store_true", help="a row may stop after its second block once its wall-time and CPU and "
-                    "memory verdicts are settled at alpha 0.001 (then fewer than --runs runs, below R-14.10's 30); ignored with SCRUTATE_BASE_BIN")
+    ap.add_argument("--stop-early", action=argparse.BooleanOptionalAction, default=True, help="a row may stop after its second block "
+                    "once its wall-time and CPU and memory verdicts are settled at alpha 0.001 (20 runs, the R-14.10 floor); "
+                    "--no-stop-early takes every block; ignored with SCRUTATE_BASE_BIN")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--redo-unstable", action="store_true", help="measure again, once, the benchmarks in --out where a tool's block medians "
                     "differ by more than 25%% (the machine was disturbed); each keeps its first status, ratio, interval and load as `first`")

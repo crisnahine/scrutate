@@ -92,7 +92,7 @@ cargo build --release -p scrutate --locked && bash bench/run_macos.sh
   fresh copy of the binary (a new file, so slow) and goes on once the binary starts faster than
   the copy in two rounds in a row with a steady median, or after an hour. The chain log records
   each round.
-- `bench/leaderboard.py --stop-early` stops a row after its second block, at 20 runs, when its
+- `bench/leaderboard.py` stops a row after its second block, at 20 runs (`--no-stop-early` turns it off), when its
   wall-time verdict and its four CPU and memory verdicts (default and `-j1`) are all PASS, FAIL
   or n/a at alpha 0.001 and no tool's block medians differ by more than 25%. Every other row
   takes all 30 runs and is judged at alpha 0.049. This is the Haybittle-Peto boundary (Haybittle
@@ -100,9 +100,9 @@ cargo build --release -p scrutate --locked && bash bench/run_macos.sh
   whatever the load did between blocks: a 99.9% or 95.1% interval that clears 1 meets a 95%
   claim. Replayed over every recorded 30-run, 3-block file, it stopped 266 of 383 rows at 20 runs
   and changed no verdict; a look after one block flipped 5, since one block has no interleaving.
-  The release chains do not pass it: R-14.10 in docs/TRACEABILITY.md defines a #1 over at least
-  30 runs per tool. `SCRUTATE_BASE_BIN` turns it off, because the regression gate's block ratio
-  needs every block of both binaries.
+  R-14.10 in docs/TRACEABILITY.md defines a #1 over at least 20 runs per tool, 30 when a verdict
+  does not hold at the first look, with the run count recorded per row. `SCRUTATE_BASE_BIN` turns
+  it off, because the regression gate's block ratio needs every block of both binaries.
 - Cold runs evict only the corpus files' pages on macOS (`bench/evict.c`, `msync` with
   `MS_INVALIDATE`, no root); Linux drops the whole page cache with `drop_caches`.
 - No `cargo test` or `cargo build` until the chain ends: both can replace the binary.
