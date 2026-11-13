@@ -18,25 +18,22 @@ below; it is **not** an independent audit or penetration test.
 ## Threat model
 
 Scrutate reads source trees the user chooses and writes one cache directory (`.scrutate/`) inside
-each indexed repository. Outside it, it writes one small state file: `frecency.json` under
-`$XDG_STATE_HOME/scrutate/` (else `~/.local/state/scrutate/`; on Windows `%LOCALAPPDATA%\scrutate\`),
-where `read`, `read_code` and `files` count the reads of each file for `files` to rank by. It holds
-each repository's canonical root and the paths of files read in it, with a count and a time, at
-most 1,000 files. It is written whole to a new file in that directory and renamed into place, and a
-file there that does not parse is ignored and replaced. Nothing in it is ever run or used as a path
-to open: a path in it only ranks a file the walk of the repository already found. Delete it at any
-time to forget the counts. In a linked git work tree scrutate also reads the index of the
-repository's main checkout (below).
+each indexed repository. Outside it, it writes one small state file, `frecency.json` under
+`$XDG_STATE_HOME/scrutate/`, the read counts `files` ranks by ([CLI](CLI.md#files)): each
+repository's canonical root and the paths of files read in it, with a count and a time. Nothing in
+it is run or opened: a path in it only ranks a file the walk already found. Delete it at any time
+to forget the counts. In a linked git work tree
+scrutate also reads the index of the repository's main checkout (below).
 
-The assets are (1) the confidentiality of the source code, (2) the integrity of the machine running
-the tool, (3) availability (no hangs or resource exhaustion on hostile inputs). Attackers
-considered: a **hostile repository** (crafted files, names, symlinks, `.gitignore`, a corrupted or
-planted `.scrutate/` directory), a **hostile query** (patterns), a **hostile MCP client**
-(malformed JSON-RPC, path escapes), and **another local process** that reaches the socket a running
-`serve` offers to command line calls (below). Two commands write outside a repository, on the
-user's word only: `scrutate setup` writes an agent's configuration files, and the Grep hook it
-installs appends to a counter file (below). One command writes source files:
-`scrutate tsquery --rewrite` with `--write` ([below](#the-structural-rewrite)).
+The assets: (1) the confidentiality of the source code, (2) the integrity of the machine running
+the tool, (3) availability (no hangs or resource exhaustion on hostile inputs). Attackers: a
+**hostile repository** (crafted files, names, symlinks, `.gitignore`, a corrupted or planted
+`.scrutate/` directory), a **hostile query** (patterns), a **hostile MCP client** (malformed
+JSON-RPC, path escapes), and **another local process** that reaches the socket a running `serve`
+offers (below). Writes outside a repository happen on the user's word only: `scrutate setup`
+writes an agent's configuration files, and the Grep hook it installs appends to a counter file
+(below). Only `scrutate tsquery --rewrite` with `--write` writes source files
+([below](#the-structural-rewrite)).
 
 <p align="center">
 <img src="assets/diagram-trust-boundaries.svg" alt="Trust boundaries: repository content, patterns, MCP requests and the .scrutate directory, with the controls on each boundary; no network." width="880">
@@ -69,184 +66,161 @@ installs appends to a counter file (below). One command writes source files:
 
 ## Running git
 
-`impact` and `review` read what changed by running the `git` program found on `PATH` (on Windows
-the current directory is not searched first), with the root as its working directory:
-`rev-parse`, `merge-base`, `diff` (raw and `-U0`), `ls-files --others` and one `cat-file --batch`.
-Nothing in the repository names this program or its arguments, and the calls only read: each
-passes `--no-optional-locks` (git then does not refresh and write its index file),
+`impact` and `review` run the `git` program found on `PATH` (on Windows the current directory is
+not searched first) in the root: `rev-parse`, `merge-base`, `diff` (raw and `-U0`),
+`ls-files --others` and one `cat-file --batch`. Nothing in the repository names this program or
+its arguments. Every call only reads: `--no-optional-locks` (git writes no index file),
 `-c core.fsmonitor=false` (no file system monitor program), `--no-ext-diff` and `--no-textconv`
 (no external diff or text conversion program from git's configuration).
 
-The one argument a caller gives is a revision (`--base`, the tool's `base`, and `review --head`).
-It is refused before git runs when it is empty or starts with `-`, so `--base=--output=x` cannot
-become git's `--output` option and write a file. It is passed as one argument, `REV^{commit}` to
-`git rev-parse --verify`. The commit id that call prints is what every later call gets. `A...B`
-is split first and each side checked the same way.
+The one argument a caller gives is a revision (`--base`, the tool's `base`, `review --head`). An
+empty one, or one starting with `-`, is refused before git runs, so `--base=--output=x` cannot
+become git's `--output` and write a file. It goes as one argument, `REV^{commit}`, to
+`git rev-parse --verify`, and later calls get the commit id that prints. Each side of `A...B` is
+checked the same way.
 
-What remains is git's own trust in its configuration: a clean filter the user's git configuration
-defines (Git LFS, for example) runs when git compares a working tree file the repository's
-`.gitattributes` assigns to it, as it does for `git diff`. A repository can select such a filter
-but cannot define one: a clone carries no `.git/config`.
+What remains is git's trust in its own configuration: a clean filter the user's git configuration
+defines (Git LFS, for example) runs on a working tree file `.gitattributes` assigns to it, as in
+`git diff`. A repository can select such a filter but not define one: a clone carries no
+`.git/config`.
 
 ## The session socket
 
-While `scrutate serve` runs on a repository on Unix, it listens on a socket file at
-`<root>/.scrutate/session.sock`, so an index command (`symbol`, `refs`, `search`, the ranked part
-of `find` and the others the CLI documents) can use the index the server holds open. This is a new
-local boundary, reviewed here.
+While `scrutate serve` runs on Unix, index commands use its open index through a socket file,
+`<root>/.scrutate/session.sock` ([CLI](CLI.md#serve-mcp) lists the commands and settings). This
+local boundary is reviewed here.
 
 What it is. A Unix-domain stream socket, mode 0600, made when `serve` starts and removed when it
-exits. No TCP or UDP port is opened. The command line never starts a server: without a running
-`serve` there is no socket and nothing listens. The listening thread lives inside the `serve`
-process and ends with it, so no process outlives the command that started it. On Windows there is
-no socket and no session use: a named pipe with the same protection would be a boundary nobody
-here can run or test, so there the command line always does its own work.
+exits; no TCP or UDP port. The command line never starts a server, and the listening thread ends
+with `serve`. Windows has no socket and no session use: a named pipe with the same protection
+would be a boundary nobody here can run or test.
 
 Checks, at both ends:
 
 - The server asks the system who the peer is (`getpeereid` on macOS and the BSDs, `SO_PEERCRED`
   on Linux) and closes a connection from another user before it reads or writes a byte.
-- The command line connects only to a path that is a socket owned by its own user, in a
-  `.scrutate` directory owned by its own user, neither a symbolic link (`lstat`, no link
-  followed), then asks the system who the peer is and drops a server of another user.
+- The command line connects only to a socket, in a `.scrutate` directory, both owned by its own
+  user and neither a symbolic link (`lstat`, no link followed), then drops a peer of another user.
 - The server greets with its identity: the executable file (device, inode, size, modification
   time), the version, the index schema and content revisions, the model signatures, every
-  `SCRUTATE_*` setting that can change an answer, and its root. The command line compares it with
-  its own and uses the server only when all match.
-- A request is one line of at most 1 MB, read within 2 seconds; at most 16 connections are served
-  at once and a further one is closed. A greeting slower than 20 ms (`SCRUTATE_SESSION_WAIT_MS`
-  sets another wait), an answer slower than 60 s, a closed connection or any error makes the
-  command line do the work itself.
+  `SCRUTATE_*` setting that can change an answer, and its root. The command line uses it only
+  when all match its own.
+- A request is one line of at most 1 MB, read within 2 seconds; at most 16 connections at once, a
+  further one closed. A greeting slower than 20 ms (`SCRUTATE_SESSION_WAIT_MS`), an answer slower
+  than 60 s, a closed connection or any error makes the command line do the work itself.
 
-What a process of the same user can do through it that it could not do before: nothing. A request
-is an operation the command line could run itself (`ops::Op`, a ranked search included, with how
-to print it: `--json`, the byte limit and offset, `--why`), deserialised and run through the same
-`Repo` path with the same path confinement (a path that leaves the root is refused as in a tool
-call). The answer is text that process could have computed by running `scrutate` in the same
-directory. The socket reads only the repository the server was started on and writes only its
-`.scrutate/` and that user's frecency file, all of which that user can already read and write. It
-can keep the server busy, as it could keep any process of its own busy; the limits above bound
-what one connection holds.
+What a process of the same user gains: nothing. A request is an operation the command line could
+run itself (`ops::Op`, ranked search included, with how to print it: `--json`, the byte limit and
+offset, `--why`), run through the same `Repo` path and path confinement, and the answer is what
+`scrutate` would print in that directory. The socket reads only the server's repository and
+writes only its `.scrutate/` and that user's frecency file, which the user can already write. It
+can keep the server busy, as it could any process of its own; the limits above bound one
+connection.
 
-What another user on the machine can do: nothing. The file mode keeps another user from connecting
-on systems that check a socket file's mode (Linux); everywhere, the server checks the peer's user
-before it reads a byte, so a connection from another user gets no greeting and no answer. Another
-user who plants a socket of their own at the path (possible only if they can write the
-repository's `.scrutate/`) is refused by the command line's owner and peer checks.
+What another user can do: nothing. The file mode stops them where the system checks a socket's
+mode (Linux), and everywhere the server checks the peer before it reads a byte. A socket another
+user plants at the path (only if they can write the repository's `.scrutate/`) fails the command
+line's owner and peer checks.
 
-What a hostile repository can do: it cannot point the socket elsewhere. The path is fixed
-(`.scrutate/session.sock` under the root), and the rule that a `.scrutate` that is a symbolic link,
-or holds one, is refused applies to the socket's name too (`files::index_dir` refuses the index,
-the server will not bind there, and the command line will not connect through a link). A checkout
-cannot hold a socket (git stores no sockets); a regular file planted at the path is not removed,
-the server offers no socket, and the command line passes it over.
+A hostile repository cannot point the socket elsewhere. The path is fixed, and a `.scrutate` that
+is or holds a symbolic link is refused for the socket too (`files::index_dir` refuses the index,
+the server will not bind there, the command line will not connect through a link). git stores no
+sockets; a regular file planted at the path is not removed, and neither side uses it.
 
 Edge cases:
 
-- A path too long for a socket address (103 bytes on macOS, 107 on Linux): the socket is named
-  from its directory, which the process enters for the call and leaves; the server does this at
-  its start before any thread runs, the command line before it starts any. The process opens the
-  directory it was in before it enters and goes back through that descriptor (`fchdir`), so a
-  working directory renamed or unreachable by its path meanwhile is still the one it returns to.
-  If even that fails, the command line stops with an error rather than go on in the wrong
-  directory, and a server offers no socket.
-- Two servers on one root: the first keeps the socket; a second finds a live server there and
-  offers none. When the first exits it removes the socket only if it is still the one it made
-  (device and inode), so it never removes another's.
-- A server that died without removing its socket (killed): a connect fails at once (refused), the
-  command line does its own work, and the next `serve` replaces the stale socket file.
-- A moved root: the socket moves with it, but the server's root in its greeting no longer
-  matches, so the command line does its own work. A deleted root takes the socket with it.
+- A path too long for a socket address (103 bytes on macOS, 107 on Linux): the process enters the
+  socket's directory before it starts any thread and goes back through a descriptor of the
+  directory it left (`fchdir`), even if that was renamed. If that fails, the command line stops
+  with an error and a server offers no socket.
+- Two servers on one root: the first keeps the socket. A server removes it on exit only if it is
+  still the one it made (device and inode).
+- A killed server's stale socket: a connect is refused at once, and the next `serve` replaces it.
+- A moved root no longer matches the greeting; a deleted root takes the socket with it.
 - A session that would have to wait (its first build or another write running, every reader busy,
-  another process holding the index's write lock): the command line does its own work.
-- `SCRUTATE_NO_SESSION=1` turns the use off; `SCRUTATE_SESSION_DEBUG=1` says on stderr why a call
-  did not use a session.
+  another process holding the index's write lock) is not used.
+- `SCRUTATE_NO_SESSION=1` turns the use off and `SCRUTATE_SESSION_DEBUG=1` says on stderr why a
+  call did not use a session.
+
+In the last four cases the command line does its own work.
 
 Evidence: `tests/session.rs` (the same bytes and exit codes as a fresh process for every command,
-a ranked search and find with each of their options, an edit seen at once, another build, another
+and for ranked search and find with each option; an edit seen at once; another build, another
 setting, the switch, a stale socket, a file that is no socket, two servers, a moved root, a deep
-root, a deep root reached from another directory with relative arguments, the socket's mode) and
-the unit test of the return to a renamed working directory in `session.rs`. A peer of another user
-could not be faked without a second account and is checked by code review only.
+root, also reached from another directory with relative arguments; the socket's mode) and a unit
+test in `session.rs` of the return to a renamed working directory. A peer of another user needs a
+second account to fake, so it is checked by code review only.
 
 ## The main checkout's index in a linked work tree
 
-In a linked git work tree (`git worktree add`), a new index starts as a copy of the index of the
-repository's main checkout, and an update looks in the main checkout's artifact store for content
-it has not seen before it parses the file. Both read files outside the root, so this is a boundary
-too, reviewed here.
+In a linked git work tree (`git worktree add`), a new index starts as a copy of the main
+checkout's index, and an update looks in the main checkout's artifact store for content it has not
+seen before it parses the file. Both read files outside the root.
 
 How the main checkout is found: from git's own files, with no program run. The root's `.git` must
-be a regular file of at most 4 KiB whose first line is `gitdir: <dir>`, and `<dir>` must be
-`<common dir>/worktrees/<name>`. git records the link back: `<dir>/gitdir` must name this `.git`
-file, and `<dir>/commondir` must name the common directory (paths compared after links are
-resolved). The common directory must be named `.git` and be the `.git` directory, no link, of its
-parent, which is the main checkout. Anything else (a `.git` file that merely points somewhere, a
-bare repository, a main checkout without an index) is not followed, and the index is built as
-always. The main checkout's `.scrutate` is checked as this checkout's own is: one that is a
-symbolic link, or holds one, is refused, and its `index.db` must be a regular file.
+be a regular file of at most 4 KiB whose first line is `gitdir: <dir>`, with `<dir>` equal to
+`<common dir>/worktrees/<name>`; `<dir>/gitdir` must name this `.git` file back and
+`<dir>/commondir` the common directory (compared after links are resolved), which must be the
+`.git` directory, no link, of its parent: the main checkout. Anything else (a `.git` file that
+merely points somewhere, a bare repository, a main checkout without an index) is not followed,
+and the index is built as always. The main checkout's `.scrutate` is checked as this checkout's
+own is (one that is or holds a symbolic link is refused), and its `index.db` must be a regular
+file.
 
 Read, not write. Nothing under the main checkout's `.scrutate/` is written. Its database is opened
-read-only (SQLite marks its read lock in `index.db-shm`, as every reader of that database does),
-the copy is made with `VACUUM INTO` into this checkout's own `.scrutate/`, and the segments it
-lists are copied, not linked. Writing new artifacts into the main checkout's store would let a
-branch switch in one work tree save a parse in the others, but it would break the rule that
-scrutate writes only its own `.scrutate/`, and one work tree could damage another's index; so it
-is not done.
+read-only (SQLite marks its read lock in `index.db-shm`, as for every reader), copied with
+`VACUUM INTO` into this checkout's `.scrutate/`, and the segments it lists are copied, not linked.
+New artifacts are not written into the main checkout's store: that would save a parse in other
+work trees, but break the rule that scrutate writes only its own `.scrutate/` and let one work
+tree damage another's index.
 
 What a hostile repository can make it read: a work tree's `.git` file is no file git checks out,
-so it is not repository content. An attacker who can write it must also write the `gitdir` file
-it names, which must name it back, and then makes scrutate read one more `.scrutate/` the same
-attacker wrote. That is the power of planting a `.scrutate/` in the repository itself, which the
-threat model covers: decoded as data, with bounds checks, never run. An artifact whose counts do
-not fit its bytes, a segment whose arrays do not validate, or a panic while reading the other
-index counts as a miss, and the file is parsed.
+so it is not repository content. An attacker who can write it, and the `gitdir` file it names that
+must name it back, makes scrutate read one more `.scrutate/` they wrote: the same power as
+planting a `.scrutate/` in the repository, which the threat model covers (decoded as data, with
+bounds checks, never run). An artifact whose counts do not fit its bytes, a segment whose arrays
+do not validate, or a panic while reading the other index counts as a miss, and the file is
+parsed.
 
 What is verified and what is trusted: an artifact's key is a 128-bit BLAKE2b hash of the artifact
 format, the content revision, the SHA-1 of the file's bytes, its file name, and for an `index`
-file its directory's name, computed by this process from its own read of the file. So an artifact
-is used only for bytes that hash to its key, and only under a name that parses the same. It is not
-verified that the artifact holds what a parse of those bytes gives: the store that wrote it is
-trusted, as a checkout's own index is today. A planted store can make the answers about the
-content it names wrong in the work tree that reads it, until `scrutate index --force` (which
-parses every file and reads no store) or a rebuild after damage (the same). Whether an artifact
-exists for some content tells the reader nothing new: it is the same user, who can read that
-index already.
+file its directory's name, all from this process's own read. So an artifact is used only for bytes
+that hash to its key, under a name that parses the same. That it holds what a parse of those bytes
+gives is not verified: its store is trusted, as a checkout's own index is. A planted store can make
+answers about the content it names wrong in the work tree that reads it, until
+`scrutate index --force` (which parses every file and reads no store) or a rebuild after damage.
+Whether an artifact exists tells the reader nothing new: the same user can read that index
+already.
 
 Edge cases:
 
-- The main checkout deleted or moved: the link is no longer confirmed, and the index is built as
-  usual. A seeded index needs nothing of the main checkout afterwards: its database and segments
-  are its own.
-- On another file system: the copy is a copy (a clone on APFS).
-- Being written at that moment: the reads see the last commit and never half of one. `VACUUM INTO`
-  reads in one transaction, and an update's lookups read in one snapshot that lasts the update. A
-  segment the snapshot lists that the main checkout removes meanwhile (it removes a segment it
-  replaced right after its commit, so a copy can find it gone or half gone) makes the seed fail
-  with nothing left behind, because every copied segment must open before the copy is taken, and
-  the index is built as usual; an artifact whose vectors were in such a segment gets vectors made
-  from its word counts. The main checkout's writer is never blocked: a reader of a WAL database
-  does not stop a writer, it holds back the checkpoint until the read ends.
+- The main checkout deleted or moved: the link is not confirmed, and the index is built as usual.
+  A seeded index needs nothing of the main checkout afterwards.
+- The copy is a real copy on another file system, a clone on APFS.
+- Being written at that moment: the reads see the last commit, never half of one (`VACUUM INTO`
+  reads in one transaction, an update's lookups in one snapshot). The main checkout removes a
+  segment it replaced right after its commit; if a listed segment is gone or half gone, the seed
+  fails with nothing left behind (every copied segment must open before the copy is taken) and
+  the index is built as usual, and an artifact whose vectors were in it gets vectors made from its
+  word counts. The main checkout's writer is never blocked: a WAL reader only holds back the
+  checkpoint until the read ends.
 - Two plain clones of one repository (no git link between them) do not find each other, and a
   second checkout that is no git work tree builds its index as before.
 
 Evidence: `tests/artifacts.rs` (a seeded work tree equals a fresh build, with and without a vector
 model; links not confirmed both ways, a main index directory that is or holds a link, and a plain
-copy are not followed; an uncommitted write of the main checkout is not read; a build in the main
-checkout beside lookups in the work tree; damage to the store found and rebuilt).
+copy not followed; the main checkout's uncommitted write not read; its build beside lookups in the
+work tree; damage to the store found and rebuilt).
 
 ## A repository's language tables
 
 A `[[language]]` table in a repository's `.scrutate.toml` adds a language to that repository's
-index ([CLI](CLI.md#custom-languages)). It can name extensions no built-in language owns, comment
-marks, and regular expressions that pick definition names out of single lines. It cannot run
-anything: the table is data, and the `regex` crate compiles its patterns (no backtracking, linear
-in the line) with the size limits of `grep`. It cannot read a file: no key names a path, an
-unknown key is an error, and the file itself is read as other repository files are (a regular file
-inside the root, at most 1 MB, through a link only when the resolved file is inside the root). It
-cannot change how another language is parsed: a built-in language's name or extension is refused.
-The worst a hostile table does is give that repository's own files of its extensions wrong
-symbols, or make every command in the repository stop with its error.
+index ([CLI](CLI.md#custom-languages)). It is data. It runs nothing: the `regex` crate compiles
+its patterns (no backtracking, linear in the line) with `grep`'s size limits. It reads no file: no
+key names a path, an unknown key is an error, and the file is read as other repository files are.
+It cannot change another language: a built-in name or extension is refused. The worst a hostile
+table does is give the repository's files of its extensions wrong symbols, or stop every command
+there with its error.
 
 Evidence: `tests/custom_lang.rs` (an `include` or `path` key refused with its line, a link to a
 table outside the repository not read, a pattern that does not compile, a built-in name or
@@ -255,80 +229,62 @@ extension refused).
 ## Setup and the Grep hook
 
 `scrutate setup <agent>` writes only the files [docs/CLI.md](CLI.md#setup-and-the-grep-hook) names
-for that agent and scope (the user's file under the home directory, `$CODEX_HOME` or
-`$XDG_CONFIG_HOME`, or with `--project` the agent's file at the top of the repository the current
-directory is in), and only when it is run; no other command and no search touches them. In each
-file it puts or takes out one entry named `scrutate`, which runs this binary by its absolute path
-with `serve` (with `--project`, `--root <repository> serve`), and nothing else; with `--hook` one
-`PreToolUse` group in Claude Code's settings, and with `--instructions` one marked block in the
-agent's instruction file. A file that does not parse is left as it is. The new text goes to a
-temporary file beside the old one, which then replaces it by rename with the old file's
-permissions, so a crash leaves the old file or the new one, never half of one; a link is followed
-and stays a link. For Claude Code's user file, `setup` runs the `claude` program found on `PATH`
-(`claude mcp add-json` and `claude mcp remove`, with the arguments `--dry-run` prints), because
-running Claude Code sessions rewrite that file themselves. An entry in a project file
-(`.mcp.json`, `.cursor/mcp.json`) is a command line the agent runs for anyone who opens the
-repository and accepts it; Claude Code asks before it starts one.
+for that agent and scope (under the home directory, `$CODEX_HOME` or `$XDG_CONFIG_HOME`, or the
+repository's top with `--project`), and only when it is run; no other command touches them. Each
+gets one entry named `scrutate` that runs this binary by its absolute path with `serve` and
+nothing else (with `--project`, `--root <repository> serve`), a `--hook` group and an
+`--instructions` block. A file that does not parse is left
+as it is, and a crash leaves the old file or the new one, never half of one. For Claude Code's
+user file, `setup` runs `claude` from `PATH` (`claude mcp add-json`, `claude mcp remove`), because
+running Claude Code sessions rewrite that file themselves. An entry in a project file (`.mcp.json`,
+`.cursor/mcp.json`) is a command line the agent runs for anyone who opens the repository and
+accepts it; Claude Code asks before it starts one.
 
-`scrutate hook grep` runs for each Grep call of Claude Code. Its input is the call as Claude Code
-sends it on standard input: the pattern, the path, the flags, the session's directory and id. It
-reads files as Engine A always does (ignore rules followed, no link followed, nothing executed),
-and only below the project directory (`CLAUDE_PROJECT_DIR`, else the session's directory): a
-search elsewhere is one Claude Code would ask about first, so the hook lets Grep run and Claude
-Code ask. Claude Code filters Grep's results by the `Read` and `Grep` rules of its settings. The
-hook cannot apply those rules, so when any settings file it can read (the user's, the project's,
-the local one, the managed file and every `*.json` of the `managed-settings.d` directory beside
-it) has a `deny` or `ask` rule for `Read` or `Grep`, or does not parse, the hook lets Grep run.
-Managed policy it does not read (a macOS configuration profile's
-`com.anthropic.claudecode.plist` under `/Library/Managed Preferences`, the Windows registry key
-`SOFTWARE\Policies\ClaudeCode` under HKLM or HKCU) makes it let Grep run whenever it exists, so an
-administrator's read rule is never bypassed. It fails open the same way on any argument it does
-not map, on an error, on a binary or unreadable file and after 3 seconds: it prints nothing, exits
-0, and Grep runs. It answers on Windows as elsewhere, with Windows' `\` in the paths as Grep
-prints them, and lets Grep run for a path not on a drive letter. It never exits 2, which would
-block the call. It writes one file, the counter `$XDG_STATE_HOME/scrutate/hook-grep.jsonl`
-(default `~/.local/state/scrutate/`, on Windows `%LOCALAPPDATA%\scrutate\`): one line per answered
-call with the session id, two byte counts and the time, and no file name or text of the
-repository.
+`scrutate hook grep` answers each Claude Code Grep call it reads on standard input. It reads files
+as Engine A does (ignore rules followed, no link followed, nothing executed), and only below the
+project directory (`CLAUDE_PROJECT_DIR`, else the session's directory); a search elsewhere is one
+Claude Code would ask about, so the hook lets Grep run. It cannot apply the `Read` and `Grep`
+rules Claude Code filters Grep's results by, so it lets Grep run when any settings file it reads
+has a `deny` or `ask` rule for either or does not parse, and whenever managed policy it does not
+read exists (a macOS `com.anthropic.claudecode.plist`, the Windows key
+`SOFTWARE\Policies\ClaudeCode`): an administrator's read rule is never bypassed. It also fails open
+on any argument it does not map, an error, a binary or unreadable file and after 3 seconds
+([CLI](CLI.md#setup-and-the-grep-hook) lists every case): no output, exit 0, Grep runs. It never
+exits 2, which would block the call. Its one file is the counter
+`$XDG_STATE_HOME/scrutate/hook-grep.jsonl`: per answered call the session id, two byte counts and
+the time, and no file name or text of the repository.
 
 ## The structural rewrite
 
-`scrutate tsquery LANG QUERY [PATHS] --rewrite TEMPLATE` prints a diff and writes nothing. Only
-with `--write` does it change files, and only files under the given paths whose canonical path
-lies inside `--root`: a file reached through a link that leads out of the root, and a file that
-is itself a link, are left alone and named. Each file is written to a new temporary file in its
-own directory (`create_new`, so nothing planted there is opened) with the original's permissions,
-and renamed over the original only if the original's bytes are still exactly those read, so an
-edit made meanwhile is never lost. A file whose text does not parse where it would change, or
-whose rewritten text would not parse there, is not written. The template is text: nothing in it
-is run. No MCP tool rewrites, so an agent on the MCP server cannot change a source file. Tests:
-`tests/rewrite.rs` (a link out of the root, an edit between the read and the write, the diff mode
-writing nothing).
+`scrutate tsquery LANG QUERY [PATHS] --rewrite TEMPLATE` prints a diff and writes nothing. With
+`--write` it changes only files under the given paths whose canonical path lies inside `--root`
+([CLI](CLI.md#tsquery---rewrite) lists every file it leaves alone, a link among them). Each is
+written to a new temporary file in its own directory (`create_new`, so nothing planted there is
+opened) and renamed over the original only if the original's bytes are unchanged, so an edit made
+meanwhile is never lost. The template is text: nothing in it is run. No MCP tool rewrites, so an MCP agent cannot change a source file.
+Tests: `tests/rewrite.rs` (a link out of the root, an edit between the read and the write, the
+diff mode writing nothing).
 
 ## The review comment
 
-`scrutate review` reads the repository (through git, as above), writes only its index and prints;
-it never posts. The GitHub Action posts its Markdown when `comment: true` is set, with the token of
-its `github-token` input (`github.token` by default), which needs one permission,
-`pull-requests: write`, to list, post and edit the pull request's comments. It edits only a
-comment whose body starts with the marker `<!-- scrutate-review -->` and that a bot wrote, or,
-when `github-token` is a person's token, that person (the login `gh api user` gives; GITHUB_TOKEN
-cannot ask, so then only the bot's counts): another person's comment that quotes the marker is
-left alone. No input reaches a shell: the pull request number, the base commit and the repository
-name reach `comment.sh` through the step's environment, each is checked against its shape
-(digits, a 40 or 64 digit hexadecimal commit id, `owner/name`) before anything runs, and each is
-used only in double quotes; the body goes to `gh api` as a file (`-F body=@FILE`), never on a
-command line. Any error is a warning and the step exits 0, so the comment never fails the job.
-`actionlint` and `zizmor --persona pedantic` report nothing on the action. Tests:
-`tests/review.rs` (`comment_script`: a value that would run a command is refused with nothing run,
-a failed call is a warning with exit 0, the comment is posted once and then edited, a person's
-comment with the marker is not).
+`scrutate review` reads the repository through git (above), writes only its index and never
+posts. The GitHub Action posts its Markdown when `comment: true` is set, with its `github-token`
+input (`github.token` by default), which needs only `pull-requests: write`. How it finds its own
+comment, checks its inputs and never fails the job is in
+[GitHub Actions](../integrations/github/README.md). Details that page leaves out: a
+person's token is matched by the login `gh api user` gives (GITHUB_TOKEN cannot ask, so then only
+the bot's comment counts), so another person's comment that quotes the marker
+`<!-- scrutate-review -->` is left alone; the inputs reach `comment.sh` through the environment and are checked before anything runs, the commit
+id as 40 or 64 hexadecimal digits, and used only in double quotes; the body goes to `gh api` as a
+file (`-F body=@FILE`), never on a command line. Tests: `tests/review.rs`
+(`comment_script`: a value that would run a command is refused with nothing run, a failed call is
+a warning with exit 0, the comment is posted once and then edited, a person's comment with the
+marker is not).
 
 ## Known gaps and residual risks
 
-- **Not independently audited.** No external review or penetration test has been done. The fuzzing
-  campaign (above) ran each target for ten minutes on one machine, which finds shallow defects,
-  not all of them.
+- **Not independently audited** (no external review or penetration test). The fuzzing campaign
+  (above) ran each target for ten minutes on one machine: it finds shallow defects, not all.
 - **`unsafe` inventory** (every site in the Rust crates):
   - `npy.rs`: memory-mapped array views (`Mmap::map` in `npy::map`, which the text index's
     segment files use too, read with bounds-checked slicing only; `from_raw_parts` after dtype,
@@ -363,23 +319,22 @@ comment with the marker is not).
     panic and `fork` calls through them.
 
   tree-sitter grammars and SQLite are C code built from crates.io sources.
-- **Where the system cannot map a file** (`Mmap::map` fails with `Unsupported`, as it does on
-  wasi), `npy::map` reads the whole file into memory instead, so an index's arrays and text index
-  segments are held in memory there and a change on disk after the read is not seen. Any other
-  mapping error is an error, as before.
+- **Where the system cannot map a file** (`Mmap::map` fails with `Unsupported`, as on wasi),
+  `npy::map` reads the whole file into memory, so a change on disk after the read is not seen. Any
+  other mapping error is an error.
 - **Memory-mapped files can change underneath a reader** if another process rewrites a segment in
-  place. Segments are never modified in place (temp dir + rename; deletion only after the manifest
-  no longer references them), so this needs an external actor; on Windows a mapped file cannot be
-  deleted and GC retries later.
+  place. scrutate never does (temp dir + rename; deletion only after the manifest no longer
+  references them), so this needs an external actor; on Windows a mapped file cannot be deleted
+  and GC retries later.
 - **Index privacy**: `.scrutate/` holds a compressed copy of every indexed chunk's text. git
-  ignores it (`.scrutate/.gitignore` is written automatically), but anyone with read access to the
-  repository directory can read it, the same access they already have to the sources.
-- **Denial of service by index size**: a repository with millions of files builds a
-  multi-gigabyte index; there is no quota. Engine A has no such state.
+  ignores it (`.scrutate/.gitignore` is written automatically); anyone who can read the
+  repository directory can read it, as they can the sources.
+- **Denial of service by index size**: millions of files build a multi-gigabyte index; there is
+  no quota. Engine A has no such state.
 - **Read rules the hook cannot see**: a `Read` or `Grep` rule given only on Claude Code's command
-  line (`--disallowedTools`, `--settings`) or by an SDK host is not in a file the hook reads, so
-  the hook answers a Grep that such a rule would have filtered. Put such rules in a settings file,
-  or leave the hook out (`scrutate setup claude --uninstall`, then `scrutate setup claude` without
+  line (`--disallowedTools`, `--settings`) or by an SDK host is in no file the hook reads, so the
+  hook answers a Grep that rule would have filtered. Put such rules in a settings file, or leave
+  the hook out (`scrutate setup claude --uninstall`, then `scrutate setup claude` without
   `--hook`).
 - **Timing side channels, multi-tenant hosting, encryption at rest**: out of scope for a local
   developer tool.
