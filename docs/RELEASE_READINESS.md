@@ -23,8 +23,8 @@ below). Every PASS refers to a test, benchmark or audit output in this repositor
 | Reliable filesystem traversal | **met**: ignore rules, symlink loops, dangling links, permissions, long and unicode names, case-colliding checkouts, SMB shares |
 | Ignore rules and advanced filtering | **met** |
 | Literal and regex search | **met**: linear-time regex with size limits |
-| Machine-readable output | **met**: JSON Lines (schema 1) and JSON on every command, JSON error records |
-| Functioning, tested code-intelligence foundation | **met**: 60 + 12 verified grammars, call graph, imports, ranked search with measured quality, text index equal to Engine A |
+| Machine-readable output | **met**: JSON Lines (schema 1) from `grep`, one JSON envelope (schema 2) from the index commands, JSON error records |
+| Functioning, tested code-intelligence foundation | **met**: 60 + 13 verified grammars, call graph, imports, ranked search with measured quality, text index equal to Engine A |
 | Automated tests | **met**: 122 Rust tests, Python tests of the training code and benchmark builders, bindings tests on four or five interpreters per platform, pinned ranking features, a ranking quality floor, 2,000 differential cases against ripgrep, fuzz regressions and a reproducible build, all passing (docs/TEST_RESULTS.md) |
 | Reproducible competitive benchmarks | **met**: `bench/leaderboard.py`, `bench/indexed.py`, pinned corpora, raw results in `bench/results/` |
 | Verified builds for declared supported platforms | **met for the declared platforms**; others are not declared |
@@ -54,7 +54,7 @@ Status words as in docs/TRACEABILITY.md. "Resolution" says what closes the item.
 |---|---|---|---|
 | R-4.6, R-14.16 | #1 on every benchmark, metric and declared platform: every row measured is won with significance (macOS arm64: 37 warm, 5 cold, 8 indexed; Linux aarch64 VM: 14 warm, 4 cold, 8 indexed), but Linux x86_64 has no benchmark run and nothing was measured on dedicated hardware | PARTIAL | a run of `bench/run_macos.sh` and `bench/competitors/linux_bench.sh` on a dedicated Mac and on dedicated aarch64 and x86_64 Linux machines |
 | R-14.11 | Results from dedicated, otherwise idle hardware | BLOCKED | a dedicated Mac and Linux machine; the harness and corpora are ready |
-| R-6.1, R-9.10, R-12.2, R-13.9 | Windows and Intel macOS executed, not only cross-built | PARTIAL | CI run 43013926055 passed on Intel macOS, Windows x64 and Windows arm64 (Rust tests and a smoke test of the release binary); wheels and release archives built and installed there by `release.yml` |
+| R-13.9 | Windows and Intel macOS executed, not only cross-built | PARTIAL | CI run 43013926055 passed on Intel macOS, Windows x64 and Windows arm64 (Rust tests and a smoke test of the release binary); wheels and release archives built and installed there by `release.yml` |
 | R-6.12, R-14.15, R-12.18 | CI runs, benchmark regression tracking in CI | PARTIAL | `ci.yml` has a green run (43013926055, all 12 jobs of a push); `benchmarks.yml` and `release.yml` run on a runner |
 | R-12.17 | Signed releases and published packages | PARTIAL | the release workflow's Sigstore steps and the package pull requests, which need the published repository |
 | R-6.15, R-12.16 | GitHub App / GitLab integration exercised against a real platform | PARTIAL | the published repository |
@@ -116,6 +116,6 @@ reference lacked four definition kinds the engine has, so parity failed on Rust 
 
 Use 0.1.0 for development work on macOS arm64 and Linux: both engines are verified there, the
 results are reproducible from this repository, and the remaining gaps are listed above with what
-closes each. Before calling it production-ready: a green run of the CI matrix, the Windows tests
-passing on it, get an independent security review, and repeat the
-benchmarks on dedicated hardware.
+closes each. Before calling it production-ready: release archives and wheels built by the release
+workflow and installed on Windows and Intel macOS, an independent security review, and the
+benchmarks repeated on dedicated hardware.

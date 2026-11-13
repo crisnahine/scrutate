@@ -208,8 +208,9 @@ GitHub retires that image, build them in a container of that glibc or older, nev
 runner (a build on Ubuntu 24.04 asks for 2.39). The release workflow has not
 run. A manual run of it (`gh workflow run release.yml`) is a rehearsal: it builds, tests and
 packages the binaries and the three wheel kinds on every platform, installs each wheel, and
-publishes and signs nothing. It runs 8 binary jobs and 18 wheel jobs, six of each kind on macOS
-and Windows runners, which count ten and two times on a private repository. The repository is on GitHub, private, with `main` only. Run 43013926055 of `ci.yml` (on
+publishes and signs nothing. It runs 8 binary jobs and 18 wheel jobs (six of each wheel kind);
+4 binary jobs and 12 wheel jobs are on macOS and Windows runners, which count ten and two times
+on a private repository. The repository is on GitHub, private, with `main` only. Run 43013926055 of `ci.yml` (on
 `9384c18`) is the first green one: all 12 jobs that run on a push passed, the Rust tests on
 macOS arm64, Intel macOS, Linux x86_64, Linux arm64, Windows x64 and Windows arm64, the musl
 build, the extra-langs job on the oldest supported Rust, the fuzz regressions, the Python

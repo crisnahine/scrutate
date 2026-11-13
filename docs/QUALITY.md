@@ -268,7 +268,7 @@ doc and kw queries:
 - exact scan, int8 top-100 against float16 top-100: recall 0.9945 (top-10: 0.9915);
 - default scan (48 of 698 clusters) against the float16 exact top-100: 0.8910 with int8,
   0.8901 with float16 (`bench/ivf_recall.py` at nprobe 48: 0.8922 and 0.8901; the script ran on
-  the reference engine and was removed with it, and commit `9e70ae7` is the last that has it);
+  the reference engine and was removed with it, and commit `8a4f4b4` is the last that has it);
 - final top-10 of the whole pipeline: same first result for 376 of 398 queries, 96.1 % of the
   top-10 in common.
 
@@ -296,7 +296,7 @@ On a 20 000-chunk sample of the large index, per-chunk zstd with a 110 KB traine
 19 % (level 3) to 30 % (level 19) smaller than the current zlib level 6; the whole text column is
 41 MiB, so the index would shrink by 8 to 13 MiB (3 to 5 %), and by about 0.5 to 0.8 MiB on the
 networkx package. That would add a C library to the engine and a third-party package to the
-reference, a dictionary training pass before chunks can be compressed (1.6 s of CPU for 30 000
+reference engine of the time, a dictionary training pass before chunks can be compressed (1.6 s of CPU for 30 000
 samples), and a dictionary to version in the index, for a few percent.
 
 ## Semantic model and ranker

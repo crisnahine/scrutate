@@ -17,7 +17,7 @@ The fifteen items the mission asks for (section 11), each with where it lives in
 | 2 | Complete source code and architecture | crates/scrutate (engines, CLI, MCP), crates/scrutate-py (bindings), python/scrutate_ref (training code of the models), models/; docs/ARCHITECTURE.md |
 | 3 | Implemented capabilities | README.md, docs/CLI.md, docs/TRACEABILITY.md (every requirement with its status) |
 | 4 | Rust toolchain and dependency summary | docs/DEPENDENCIES.md, Cargo.lock, rust-toolchain.toml, the CycloneDX SBOM in `dist/` (tools/sbom.py) |
-| 5 | Supported platforms and language capabilities | docs/INSTALL.md (macOS arm64, Linux aarch64 and x86_64 verified; macOS x86_64 and Windows x86_64 cross-built only), docs/LANGUAGES.md (60 verified grammars, 12 more optional, heuristic tier) |
+| 5 | Supported platforms and language capabilities | docs/INSTALL.md (macOS arm64, Linux aarch64 and x86_64 verified; macOS x86_64, Windows x86_64 and Windows ARM64 tested on CI runners only, not supported yet), docs/LANGUAGES.md (60 verified grammars, 13 more optional, heuristic tier) |
 | 6 | Installation and usage instructions | docs/INSTALL.md, docs/CLI.md, README.md, integrations/*/README.md |
 | 7 | Automated test results | docs/TEST_RESULTS.md (generated), bench/results/platforms/ (per-platform logs, wheel matrices, musl checks, reproducible build), bench/results/fuzz/ |
 | 8 | Security assessment | docs/SECURITY.md |
