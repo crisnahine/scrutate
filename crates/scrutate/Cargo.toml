@@ -44,7 +44,7 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 grep-cli = "0.1"
 grep-matcher = "0.1"
 grep-regex = "0.1"
-grep-pcre2 = "0.1"
+grep-pcre2 = { version = "0.1", optional = true }
 grep-searcher = "0.1"
 half = "2"
 ignore = "0.4"
@@ -151,6 +151,8 @@ notify = { version = "8.2", default-features = false, features = ["macos_kqueue"
 proptest = "1"
 
 [features]
-default = []
+default = ["pcre2"]
+# `grep -P`: PCRE2's C library with its JIT, which has no wasm backend
+pcre2 = ["dep:grep-pcre2"]
 # heavy or niche grammars (about 80 MB of parse tables): Fortran, OCaml, F#, Verilog, VHDL, CUDA, TLA+, D, AutoHotkey, Odin, QML, LLVM IR
 extra-langs = ["dep:tree-sitter-fortran", "dep:tree-sitter-ocaml", "dep:tree-sitter-fsharp", "dep:tree-sitter-verilog", "dep:tree-sitter-vhdl", "dep:tree-sitter-cuda", "dep:tree-sitter-tlaplus", "dep:tree-sitter-d", "dep:tree-sitter-autohotkey", "dep:tree-sitter-odin", "dep:tree-sitter-qmljs", "dep:tree-sitter-llvm"]

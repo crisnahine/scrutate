@@ -1927,6 +1927,7 @@ fn whole_file_reads_equal_the_stream_reader() {
 }
 
 #[test]
+#[cfg(feature = "pcre2")]
 fn pcre2_look_around_backreferences_and_the_match_limit() {
     let r = Repo::new("pcre2");
     r.write("t.txt", b"foobar\nbazbar\nabba\nabc\n");

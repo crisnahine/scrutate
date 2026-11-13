@@ -794,6 +794,7 @@ pub enum AnyMatcher {
     Literal(Literal),
     Regex(LineRegex),
     Fuzzy(Box<FuzzyMatcher>),
+    #[cfg(feature = "pcre2")]
     Pcre2(grep_pcre2::RegexMatcher),
     FuzzyRegex(Box<crate::fuzzyre::FuzzyRegex>),
 }
@@ -808,6 +809,7 @@ impl AnyMatcher {
             AnyMatcher::Literal(m) => can(m),
             AnyMatcher::Regex(m) => can(m),
             AnyMatcher::Fuzzy(m) => can(m.as_ref()),
+            #[cfg(feature = "pcre2")]
             AnyMatcher::Pcre2(m) => can(m),
             AnyMatcher::FuzzyRegex(m) => can(m.as_ref()),
         }
@@ -818,6 +820,7 @@ impl AnyMatcher {
             AnyMatcher::Literal(m) => searcher.search_slice(m, slice, sink),
             AnyMatcher::Regex(m) => searcher.search_slice(m, slice, sink),
             AnyMatcher::Fuzzy(m) => searcher.search_slice(m.as_ref(), slice, sink),
+            #[cfg(feature = "pcre2")]
             AnyMatcher::Pcre2(m) => searcher.search_slice(m, slice, sink),
             AnyMatcher::FuzzyRegex(m) => searcher.search_slice(m.as_ref(), slice, sink),
         }
@@ -828,6 +831,7 @@ impl AnyMatcher {
             AnyMatcher::Literal(m) => searcher.search_file(m, file, sink),
             AnyMatcher::Regex(m) => searcher.search_file(m, file, sink),
             AnyMatcher::Fuzzy(m) => searcher.search_file(m.as_ref(), file, sink),
+            #[cfg(feature = "pcre2")]
             AnyMatcher::Pcre2(m) => searcher.search_file(m, file, sink),
             AnyMatcher::FuzzyRegex(m) => searcher.search_file(m.as_ref(), file, sink),
         }
@@ -838,6 +842,7 @@ impl AnyMatcher {
             AnyMatcher::Literal(m) => searcher.search_reader(m, reader, sink),
             AnyMatcher::Regex(m) => searcher.search_reader(m, reader, sink),
             AnyMatcher::Fuzzy(m) => searcher.search_reader(m.as_ref(), reader, sink),
+            #[cfg(feature = "pcre2")]
             AnyMatcher::Pcre2(m) => searcher.search_reader(m, reader, sink),
             AnyMatcher::FuzzyRegex(m) => searcher.search_reader(m.as_ref(), reader, sink),
         }
@@ -1217,6 +1222,10 @@ pub fn build_matcher(p: &Pattern) -> Result<AnyMatcher> {
             bail!("multiline matching (-U) is not available with --fuzzy or --fuzzy-regex");
         }
     }
+    #[cfg(not(feature = "pcre2"))]
+    if p.mode == Mode::Pcre2 {
+        bail!("-P/--pcre2 (mode pcre2) is not in this build: it was built without the pcre2 feature");
+    }
     let Translated { insensitive, pattern: pat } = p.translate();
     if let Some(m) = Literal::of(p, insensitive) {
         return Ok(AnyMatcher::Literal(m));
@@ -1224,6 +1233,7 @@ pub fn build_matcher(p: &Pattern) -> Result<AnyMatcher> {
     match p.mode {
         Mode::Fuzzy { max_edits } => Ok(AnyMatcher::Fuzzy(Box::new(FuzzyMatcher::new(&pat, max_edits, insensitive)?))),
         Mode::FuzzyRegex { max_edits } => Ok(AnyMatcher::FuzzyRegex(Box::new(crate::fuzzyre::FuzzyRegex::new(&pat, max_edits, insensitive)?))),
+        #[cfg(feature = "pcre2")]
         Mode::Pcre2 => {
             let m = grep_pcre2::RegexMatcherBuilder::new()
                 .caseless(insensitive)
@@ -1626,6 +1636,7 @@ fn each_match(matcher: &AnyMatcher, line: &[u8], mut f: impl FnMut(usize, usize)
             AnyMatcher::Literal(m) => m.find_at(line, at).ok().flatten(),
             AnyMatcher::Regex(m) => m.find_at(line, at).ok().flatten(),
             AnyMatcher::Fuzzy(m) => m.find_at(line, at).ok().flatten(),
+            #[cfg(feature = "pcre2")]
             AnyMatcher::Pcre2(m) => m.find_at(line, at).ok().flatten(),
             AnyMatcher::FuzzyRegex(m) => m.find_at(line, at).ok().flatten(),
         }

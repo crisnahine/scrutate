@@ -1563,6 +1563,7 @@ mod tests {
                             instant::AnyMatcher::Literal(m) => m.is_match(h.as_bytes()).unwrap(),
                             instant::AnyMatcher::Regex(m) => m.is_match(h.as_bytes()).unwrap(),
                             instant::AnyMatcher::Fuzzy(m) => m.is_match(h.as_bytes()).unwrap(),
+                            #[cfg(feature = "pcre2")]
                             instant::AnyMatcher::Pcre2(m) => m.is_match(h.as_bytes()).unwrap(),
                             instant::AnyMatcher::FuzzyRegex(m) => m.is_match(h.as_bytes()).unwrap(),
                         };

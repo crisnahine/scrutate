@@ -134,7 +134,11 @@ deleted or substituted, a byte of invalid UTF-8 counts as one, and `-i` and `-S`
 for a regex). The default regex engine runs in linear time and has no look-around or
 backreferences; `-P` (`--pcre2`) switches to PCRE2 for those. PCRE2 backtracks, so a pattern can
 take exponential time; its match limit then stops the search of the file, with a warning naming
-it. With `-P`, `--index` cannot narrow the files and searches all of them. `--fuzzy-regex[=N]`
+it. With `-P`, `--index` cannot narrow the files and searches all of them. PCRE2 is the `pcre2`
+cargo feature, on by default; a build without it (`--no-default-features`, as the `wasm32-wasip1`
+build is, since PCRE2's JIT has no wasm backend) refuses `-P` and the `pcre2` mode (`grep_code`)
+with `-P/--pcre2 (mode pcre2) is not in this build: it was built without the pcre2 feature`.
+`--fuzzy-regex[=N]`
 matches a regex within N edits (default 1): an edit is one character, as with `--fuzzy`, and a
 byte of invalid UTF-8 is one unit that no position matches; classes (`\w`, `\d`, `\s` too) are
 Unicode, and `-i` and `-S` fold case as for a regex (`-i 'été'` finds `ÉTÉ`). It has no anchors
