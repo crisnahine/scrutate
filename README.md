@@ -336,8 +336,8 @@ vulnerabilities; an SBOM is generated.
 ## Sponsor and hire
 
 Scrutate is free to use under the licence in the next section. To fund its work,
-[sponsor the maintainer on GitHub](https://github.com/sponsors/crisnahine). The maintainer also
-takes paid work around it:
+[sponsor the maintainer on GitHub](https://github.com/sponsors/crisnahine) or
+[buy a coffee](https://buymeacoffee.com/crisnahine). The maintainer also takes paid work around it:
 
 - a commercial licence or other terms, where a company's policy needs them
 - paid support

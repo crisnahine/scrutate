@@ -27,8 +27,8 @@ version rebuilds incompatible indexes automatically and this is never considered
 - docs/FAQ.md answers the first questions about scrutate, each with a link to its evidence;
   `llms.txt`, written by `tools/gen_doc_assets.py`, lists every Markdown document with the question it
   answers for language models; `CITATION.cff` gives GitHub's "Cite this repository".
-- `.github/FUNDING.yml` shows GitHub's Sponsor button on the repository, and the README's
-  "Sponsor and hire" section links the maintainer's GitHub Sponsors page.
+- `.github/FUNDING.yml` shows GitHub's Sponsor button on the repository, with GitHub Sponsors and
+  Buy Me a Coffee, and the README's "Sponsor and hire" section links both.
 
 ### Changed
 - The repository lives at github.com/scrutate/scrutate, under the `scrutate` organization; the
