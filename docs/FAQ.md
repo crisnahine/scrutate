@@ -23,7 +23,8 @@ tests a git diff touches ([Architecture](ARCHITECTURE.md)).
 Yes. The [playground](https://scrutate.github.io/playground/) runs scrutate, compiled to
 WebAssembly, in your browser: grep, ranked search, definitions, callers and references, on
 scrutate's own source, a public GitHub repository or a folder you open, which is never uploaded.
-It runs the newest version of scrutate.
+It runs the newest scrutate release, or, until the first release is published, the newest `main`
+commit that passed CI.
 
 ## How is it different from ripgrep?
 

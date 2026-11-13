@@ -56,7 +56,7 @@ questions in [What it does](#what-it-does), and what a git diff touches.
 
 ## Quick start
 
-Build the binary first ([Install](#install)), or try both engines first in the
+Build the binary ([Install](#install)), or try both engines first in the
 [playground](https://scrutate.github.io/playground/), which runs scrutate in your browser. Every
 command, option and exit code: [docs/CLI.md](docs/CLI.md).
 
