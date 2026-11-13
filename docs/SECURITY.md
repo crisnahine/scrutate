@@ -330,9 +330,10 @@ comment with the marker is not).
   campaign (above) ran each target for ten minutes on one machine, which finds shallow defects,
   not all of them.
 - **`unsafe` inventory** (every site in the Rust crates):
-  - `npy.rs`: memory-mapped array views (`Mmap::map`; `from_raw_parts` after dtype, length and
-    alignment checks; the `Pod` trait documents the invariants; a byte view of a `Pod` slice when
-    saving);
+  - `npy.rs`: memory-mapped array views (`Mmap::map` in `npy::map`, which the text index's
+    segment files use too, read with bounds-checked slicing only; `from_raw_parts` after dtype,
+    length and alignment checks; the `Pod` trait documents the invariants; a byte view of a `Pod`
+    slice when saving);
   - `lex.rs`: one `matrixmultiply::sgemm` call with lengths derived from the slices it is given;
   - `text.rs`: `from_utf8_unchecked` on a run of ASCII word bytes (ASCII boundaries are UTF-8
     boundaries);
@@ -359,8 +360,7 @@ comment with the marker is not).
     functions, each jumping to the address `dlsym` returned for its own name, with every argument
     register and the stack left as the caller set them; `fork` binds all of them first, so a child
     process never calls `dlsym`; `tests/lazy_bind.rs` runs variadic, floating-point, callback,
-    panic and `fork` calls through them;
-  - `textindex.rs`: segment files through `npy::map` (bounds-checked slicing only).
+    panic and `fork` calls through them.
 
   tree-sitter grammars and SQLite are C code built from crates.io sources.
 - **Where the system cannot map a file** (`Mmap::map` fails with `Unsupported`, as it does on

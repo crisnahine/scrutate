@@ -50,8 +50,13 @@ incompatible index by itself, and that is never breaking.
 - The crate builds and runs on `wasm32-wasip1`, which starts no thread: the thread rules take
   one thread, and Engine A, a parallel walk of the vendored `ignore`, `index`, `search`, `symbol`
   and `callers` run on the calling thread. `serve`, `lsp` and `tsquery` fail there with a message
-  that says they need threads, and the Grep hook lets Grep answer
+  that says they need threads, `watch` says wasi has no file events (`notify` is not built
+  there), and the Grep hook lets Grep answer. Files the system cannot map are read into memory,
+  and the text index updates without its lock, which wasi does not have. The vendored `ignore`
+  gains two changes for it, eleven in all. A CI job checks the build
   ([ARCHITECTURE](docs/ARCHITECTURE.md)). Native builds are unchanged.
+- PCRE2 is the `pcre2` cargo feature, on by default; a build without it refuses `-P`
+  ([CLI](docs/CLI.md)).
 - The repository is now github.com/scrutate/scrutate, under the `scrutate` organization; the old
   address redirects, and the install commands, Action, CI templates, packages and
   `CITATION.cff` name the new one.
