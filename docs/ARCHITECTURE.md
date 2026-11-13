@@ -808,129 +808,135 @@ file's new stat and reads it, as after any edit. The MCP server has no tool for 
 <br><sub>Every front end goes through the same operations to one <code>.scrutate/</code> directory.</sub>
 </p>
 `find QUERY` chooses: regex-looking → Engine A; otherwise ranked search when an index exists or
-the repository is small enough to index on the spot; otherwise identifier grep. `grep --index` sends
-an Engine A query through the text index. Both engines stay
-independently usable (`grep`, `index`/`search`) and independently tested.
+the repository is small enough to index on the spot; otherwise identifier grep. `grep --index`
+sends an Engine A query through the text index. Both engines stay independently usable (`grep`,
+`index`/`search`) and independently tested.
 
 Every question a front end can ask of the index is an **operation** (`ops::Op`): its arguments,
-their defaults and limits live there, and it returns a typed **answer** (`ops::Answer`) with one
-text form and one JSON form. The CLI's index commands (`read` among them) and the ranked search
-of `search` and `find`, the MCP server's nineteen tools, `batch` and the Python bindings parse
-into operations, run them through `Repo` (`Repo::run`, or `Repo::run_as_is` after a scan of
-their own), and render answers; none of them has a default or an output format of its own (they
-had drifted: three different limits for `callers`, references textual in one and resolved in
-another). The JSON form leaves in one envelope (`Answer::envelope`: `schema`, `result`,
-`stopped_at`), which `--json`, a `batch` record and the MCP structured result print (the MCP
-result adds `complete`, and `text` when the result does not fit). A tool's
-JSON arguments are parsed in one place (`Op::from_tool`), which the MCP server, `batch`, the
-CLI's `read` and the bindings' `Repo.call` use. The language server asks the same operations
-for references, document symbols and the definitions of a name, and answers in LSP's shapes;
-the resolution of the name under the cursor (`Names::at`) and the workspace symbol search
-(`Index::symbols_containing`) are its own, as no operation asks them. An Engine A search is an
-operation argument too: `Op::Grep` carries the `instant::Pattern` (mode, case, whole words) and
-an `ops::Scope` (a path under the root, globs), so `grep_code` reaches every matching mode.
+defaults and limits live there, and it returns a typed **answer** (`ops::Answer`) with one text
+form and one JSON form. The CLI's index commands (`read` among them) and the ranked search of
+`search` and `find`, the MCP server's nineteen tools, `batch` and the Python bindings parse into
+operations, run them through `Repo` (`Repo::run`, or `Repo::run_as_is` after a scan of their
+own), and render answers; none has a default or output format of its own (they had drifted:
+three different limits for `callers`, references textual in one and resolved in another). The
+JSON form leaves in one envelope (`Answer::envelope`: `schema`, `result`, `stopped_at`), which
+`--json`, a `batch` record and the MCP structured result print (the MCP result adds `complete`,
+and `text` when the result does not fit). A tool's JSON arguments are parsed in one place
+(`Op::from_tool`), used by the MCP server, `batch`, the CLI's `read` and the bindings'
+`Repo.call`. The language server asks the same operations for references, document symbols and
+the definitions of a name, and answers in LSP's shapes; resolving the name under the cursor
+(`Names::at`) and the workspace symbol search (`Index::symbols_containing`) are its own, as no
+operation asks them. An Engine A search is an operation argument too: `Op::Grep` carries the
+`instant::Pattern` (mode, case, whole words) and an `ops::Scope` (a path under the root, globs),
+so `grep_code` reaches every matching mode.
+
 With a text index, `grep_code` and `references` (textual, and the name search of resolved
-references) make a look of their own (one walk and one `stat` per file, no index update), read the
-trigrams for the files the text index holds as they are now (the same size, mtime and status
-change time as that look found) and read every other file of the look directly: new, changed,
+references) make a look of their own (one walk and one `stat` per file, no index update), read
+the trigrams for the files the text index holds as they are now (the size, mtime and status
+change time that look found) and read every other file of the look directly: new, changed,
 hidden or left out by the text index's walk (`stores::grep_files`). Windows has no status change
 time, so there, as for the code index, a file rewritten with its old size and modification time
-is read from what the text index recorded until the next update. The walk runs instead when
-there is no text index, when the pattern's trigrams narrow nothing, when a glob brings files in,
-when a name is not UTF-8, or when the path is a file or a directory the look did not enter. No
-grep builds a text index. A look costs about what a walk costs without the search (on 12,001
-small files, 90 ms of CPU for the tool against 405 ms for `grep` over the tree).
-A plain `scrutate grep` is not an operation: its flags are read once into a `Query` and a
-`Files` and go to Engine A directly, with no record built (the start-up section above); with
-`--max-bytes` its lines are paged by the operations' budget rule (`ops::paged_counted`). An answer renders within a byte budget: whole items, then
-a line with how many are left and the offset that continues it, because an agent's harness cuts a
-long tool result where it likes (Codex at 10,000 tokens, from the middle). It renders in one of
-two forms (`ops::Form`, the tools' `response_format`): `Answer::parts` builds each answer kind's
-items once with a concise line set beside each item, and the page is cut by the detailed items in
-both forms, so an offset means the same items. The concise lines are pieces (text, a path, a
-location) that the page writes with each directory once and a location in the file before it as
-`:start-end`; it keeps every location and name and leaves out what a call can ask for again,
-5% to 44% of the detailed bytes on this repository where those pass 1 KB (`tests/concise.rs`).
+is read from what the text index recorded until the next update. The walk runs instead when there
+is no text index, when the pattern's trigrams narrow nothing, when a glob brings files in, when a
+name is not UTF-8, or when the path is a file or a directory the look did not enter. No grep
+builds a text index. A look costs about what a walk costs without the search (on 12,001 small
+files, 90 ms of CPU for the tool against 405 ms for `grep` over the tree).
+
+A plain `scrutate grep` is not an operation: its flags are read once into a `Query` and a `Files`
+and go to Engine A directly, with no record built (see Start-up above); with `--max-bytes` its
+lines are paged by the operations' budget rule (`ops::paged_counted`). An answer renders within a
+byte budget: whole items, then a line with how many are left and the offset that continues it,
+because an agent's harness cuts a long tool result where it likes (Codex at 10,000 tokens, from
+the middle). It renders in one of two forms (`ops::Form`, the tools' `response_format`):
+`Answer::parts` builds each answer kind's items once with a concise line set beside each item,
+and the page is cut by the detailed items in both forms, so an offset means the same items. The
+concise lines are pieces (text, a path, a location) that the page writes with each directory once
+and a location in the file before it as `:start-end`; it keeps every location and name and leaves
+out what a call can ask for again, 5% to 44% of the detailed bytes on this repository where those
+pass 1 KB (`tests/concise.rs`).
 
 `Repo` (`stores.rs`) is an open repository: the searcher on its index and the stores kept current
-around it (see "Keeping the stores current" above). After an operation it checks the files the answer cites, and the files its
-arguments name, against the index with one `stat` each; when one changed or is gone, those
-files alone are updated and the operation runs again, once. `read_code` by path streams the file
-through a 64 KB buffer and stops after the last line it shows. The MCP server, the Python bindings,
-the language server and `watch` reach one through their session (`session.rs`); the MCP server builds the first index in the background and answers
-"still building" after a 20 second wait, and waits as long for another process that builds it.
-A cancelled call sets the flag the index update checks between batches, so a `reindex` or the
-scan before a read rolls back there.
+around it (see "Keeping the stores current" above). After an operation it checks the files the
+answer cites and the files its arguments name against the index, one `stat` each; when one
+changed or is gone, those files alone are updated and the operation runs again, once. `read_code`
+by path streams the file through a 64 KB buffer and stops after the last line it shows. The MCP
+server, the Python bindings, the language server and `watch` reach one through their session
+(`session.rs`). The MCP server builds the first index in the background and answers "still
+building" after a 20 second wait, and waits as long for another process building it. A cancelled
+call sets the flag the index update checks between batches, so a `reindex` or the scan before a
+read rolls back there.
 
-The MCP server (`mcp.rs`) is an adapter: the tool table with its hints for clients (`readOnlyHint`,
+The MCP server (`mcp.rs`) is an adapter: the tool table with its client hints (`readOnlyHint`,
 `openWorldHint`) and output schemas, a short description per tool for `serve --short-tools`
 (which also drops every argument description and names the three shared arguments once in the
-instructions instead of in each schema), server instructions,
-and the protocol loop. The loop serves
-two eras on one pipe: the `initialize` handshake of the revisions up to 2025-11-25, and revision
-2026-07-28, where each request names its version in `_meta` and nothing is remembered between
-requests. Each tool call runs on a thread of its own, so the loop keeps reading and a
-`notifications/cancelled` finds the call it names; the session runs the calls side by side.
-A result is text cut to the byte budget; with `serve --structured` it also carries the envelope
-in `structuredContent`: the JSON form when the text and the JSON fit together, else
-`complete: false`, a null `result` and the text. That is a switch because clients differ in which
-form they show their model, and the text is the one written for a model. The Python bindings expose both
-engines with the GIL released and streaming results.
+instructions), server instructions, and the protocol loop. The loop serves two eras on one pipe:
+the `initialize` handshake of the revisions up to 2025-11-25, and revision 2026-07-28, where each
+request names its version in `_meta` and nothing is remembered between requests. Each tool call
+runs on its own thread, so the loop keeps reading and a `notifications/cancelled` finds the call
+it names; the session runs calls side by side. A result is text cut to the byte budget; with
+`serve --structured` it also carries the envelope in `structuredContent`: the JSON form when text
+and JSON fit together, else `complete: false`, a null `result` and the text. It is a switch
+because clients differ in which form they show their model, and the text is the one written for
+a model. The flags and protocol details are in the [CLI reference](CLI.md#serve-mcp). The Python
+bindings expose both engines with the GIL released and streaming results.
 
 `lsp.rs` is a language server for editors (`scrutate lsp`), hand-written like the MCP server: a
 `Content-Length` framed JSON-RPC loop on stdio that turns definition, references, workspace symbol
-and document symbol requests into the same index lookups as `symbol`, `refs` and `outline`, and
+and document symbol requests into the index lookups of `symbol`, `refs` and `outline`, and
 converts between the index's lines and the protocol's UTF-16 columns. Definition and references
-ask `Names` about the name under the cursor first, so both name the same definition; a name it
-cannot place falls back to the lookup by name. `initialize` finds the root
-with the CLI's own rule (`cli::index_above`) from the editor's first folder, so the editor and a
-shell share the index at the repository top. Requests wait for the first index build, and
-the index is scanned before a request at most once a second (the session's interval). A save
-updates the index through the session's writer in a background thread; requests keep reading
-while it writes.
+first ask `Names` about the name under the cursor, so both name the same definition; a name it
+cannot place falls back to the lookup by name. `initialize` finds the root with the CLI's own rule
+(`cli::index_above`) from the editor's first folder, so editor and shell share the index at the
+repository top. Requests wait for the first index build, and the index is scanned before a request
+at most once a second (the session's interval). A save updates the index through the session's
+writer in a background thread; requests keep reading while it writes.
 
 `setup.rs` writes an agent's configuration for `scrutate setup`. It makes the whole plan first (a
 file from its old text to its new one, the agent's own command, a note) and writes nothing when a
 file of it does not parse. JSON and JSONC files are edited on their text by byte span: one member
-or list item goes in or comes out, and the new text is parsed again and must read as the old value
-with that one change. Codex's `config.toml` gets one table appended or cut out, checked the same
-way, and the instruction block sits between two marker lines. `hook.rs` is Claude Code's Grep
-hook: it maps a Grep call onto an Engine A query and file set the way Grep calls ripgrep (a
-`type` through `Files::types`, which `grep -t` uses too), words the records as Grep words ripgrep's lines, and bounds the result as an MCP answer is
-bounded; an argument it cannot map, or any error, lets Grep run.
+or list item goes in or comes out, and the new text must parse as the old value with that one
+change. Codex's `config.toml` gets one table appended or cut out, checked the same way, and the
+instruction block sits between two marker lines. `hook.rs` is Claude Code's Grep hook: it maps a
+Grep call onto an Engine A query and file set the way Grep calls ripgrep (a `type` through
+`Files::types`, which `grep -t` uses too), words the records as Grep words ripgrep's lines, and
+bounds the result as an MCP answer is bounded; an argument it cannot map, or any error, lets Grep
+run.
 
 ## Models (`models/`, `models.rs`)
 `semantic.npz` (14.6 MB: code-word vocabulary tables and projections) and `ranker.npz` (87 KB)
 are embedded in the binary with `include_bytes!`; `SCRUTATE_SEMANTIC` / `SCRUTATE_RANKER` can
-point at other files or `none`. `models.rs` holds them as one model set, with the feature list
-the ranker reads (`FEATURES`) and the model revision. Each part loads on its first use, once per
-process, and the threads of a server share it: `symbol`, `outline` and the other lookups never
-unpack either file. A ranker whose feature names are not `FEATURES` is an error the moment a
-search ranks with it; commands that do not rank never read it.
+point at other files or `none`. `models.rs` holds them as one model set, with the feature list the
+ranker reads (`FEATURES`) and the model revision. Each part loads on first use, once per process,
+and a server's threads share it: `symbol`, `outline` and the other lookups never unpack either
+file. A ranker whose feature names are not `FEATURES` is an error the moment a search ranks with
+it; commands that do not rank never read it.
 
-The index records the signature of the vector model: a blake2b hash of the model file. The bundled model's is a constant in `models.rs`, which a test
-checks against the file; a model named at run time is hashed on first need and the hash kept in `.scrutate/model.sig` beside the file's
-size, modification time and status change time (where the system has none, a file rewritten with
-its old size and modification time keeps its old signature). Another vector model makes the
-vectors anew in the next update, inside its write transaction: each segment is written again with
-its postings and the new vectors, or none for `none`, and no database row is written again. A
-model that makes vectors makes them from the word counts of each file's artifact
-(`Artifact::vectors`), which a build with `none` stores as well, so no source file is read or
-parsed: on this repository 1.39 s CPU where a fresh build takes 4.12 s, on Guava 2.90 s of 9.46 s,
-nearly all of it the vector arithmetic a fresh build does too. A file whose content changed is
-indexed whole as usual, and so is a file that names no artifact; a file that names one the store
-does not hold, or one that does not decode or does not fit its rows, is damage, and the index is
-built again by the one recovery rule (`stores.rs`). The index is then the one a fresh build with that model
-writes (`tests/models.rs` compares every row and segment array). A switch that stops halfway
-leaves the index as it was, and until one commits a search does not compare its query with the
-vectors of another model. Training (numpy + LightGBM) lives in `bench/train_semantic.py` and
-`bench/train_ranker.py`, and reads its inputs from the engine: `bench/gen_features.py` indexes
-each benchmark package with the binary and keeps the rows `batch --features` prints, and
-`train_semantic.py` reads the chunks, view tokens and query terms of the hidden `views` command,
-which the benchmark builders also ask for a file's language, test flag and definitions, a name's
-subwords and the query stop list. `python/scrutate_ref` holds only what the trainers share: the
-ranker's export and the vector model's tables. Ranking is watched by the pinned features above and
-by the quality floor of `bench/quality.py` (docs/QUALITY.md).
+The index records the vector model's signature: a blake2b hash of the model file. The bundled
+model's is a constant in `models.rs`, checked against the file by a test; a model named at run
+time is hashed on first need and the hash kept in `.scrutate/model.sig` beside the file's size,
+modification time and status change time (where the system has none, a file rewritten with its
+old size and modification time keeps its old signature). Another vector model makes the vectors
+anew in the next update, inside its write transaction: each segment is written again with its
+postings and the new vectors, or none for `none`, and no database row is rewritten. A model that
+makes vectors makes them from the word counts of each file's artifact (`Artifact::vectors`),
+which a build with `none` stores as well, so no source file is read or parsed: on this repository
+1.39 s CPU where a fresh build takes 4.12 s, on Guava 2.90 s of 9.46 s, nearly all of it the
+vector arithmetic a fresh build does too. A file whose content changed is indexed whole as usual,
+and so is a file that names no artifact; a file that names one the store does not hold, or one
+that does not decode or fit its rows, is damage, and the index is built again by the one recovery
+rule (`stores.rs`). The index is then the one a fresh build with that model writes
+(`tests/models.rs` compares every row and segment array). A switch that stops halfway leaves the
+index as it was, and until one commits a search does not compare its query with another model's
+vectors.
+
+Training (numpy + LightGBM) lives in `bench/train_semantic.py` and `bench/train_ranker.py` and
+reads its inputs from the engine: `bench/gen_features.py` indexes each benchmark package with the
+binary and keeps the rows `batch --features` prints, and `train_semantic.py` reads the chunks,
+view tokens and query terms of the hidden `views` command, which the benchmark builders also ask
+for a file's language, test flag and definitions, a name's subwords and the query stop list.
+`python/scrutate_ref` holds only what the trainers share: the ranker's export and the vector
+model's tables. Ranking is watched by the pinned features above and by the quality floor of
+`bench/quality.py` (docs/QUALITY.md).
 
 ## Design rules for the next decade
 - Formats are versioned (`schema_version`, `.npy` headers, JSONL `schema`) and migrations are a
@@ -940,6 +946,7 @@ by the quality floor of `bench/quality.py` (docs/QUALITY.md).
 - No network, no execution of repository code, no background daemons: the engines are libraries
   that a CLI, an MCP server and Python call directly. `impact` runs the `git` program found on
   `PATH`, which reads the repository; nothing in the repository names a program to run. The one
-  file written outside `.scrutate/` is the frecency state of `files`, under `XDG_STATE_HOME`. A command line call may use a session a
-  running `serve` offers on a local socket, and never starts one.
+  file written outside `.scrutate/` is the frecency state of `files`, under `XDG_STATE_HOME`. A
+  command line call may use a session a running `serve` offers on a local socket, and never
+  starts one.
 - Everything that can be measured is measured by a script in `bench/` that anyone can rerun.
