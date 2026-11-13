@@ -33,8 +33,10 @@ the repository and once on its `src` folder; `test/root.test.js` first checks th
 plain Node. Without a display: `xvfb-run -a npm test`. It last passed in VS Code 1.145.3 on Linux
 arm64 (2026-11-11), before the `src` folder run was added. `VSCODE_VERSION=1.85.0` picks the VS
 Code to download (default `stable`). `SCRUTATE_VSIX=/path/to/scrutate.vsix node test/run.js`
-installs the package with `--install-extension` and runs the same checks on the installed copy;
-the suite asserts which copy ran. The `vscode` job in `.github/workflows/ci.yml` runs both passes,
+installs the package with `--install-extension` and runs the same checks on the installed copy,
+with the suite copied into it (VS Code gives a file the API object of the extension whose folder
+holds it, so the suite's stubs reach the extension only from there); the suite asserts which copy
+ran. The `vscode` job in `.github/workflows/ci.yml` runs both passes,
 and checks the package's file list, on Linux, macOS and Windows with VS Code 1.85.0 (the
 `engines` floor) and stable. The server is also tested end to end in
 `crates/scrutate/tests/lsp.rs`.
