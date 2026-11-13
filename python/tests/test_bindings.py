@@ -281,12 +281,20 @@ def test_gil_is_released_during_rust_work(repo):
     def work():
         counts.append(len(list(scrutate.grep("line 1499999 with", [str(repo)], mode="literal"))))
 
+    t0 = time.perf_counter()
     work()  # warm the cache
+    # enough rounds per thread that thread start-up is noise (one search takes 17 ms on some runners)
+    rounds = max(1, int(0.1 / max(time.perf_counter() - t0, 1e-3)) + 1)
+
+    def job():
+        for _ in range(rounds):
+            work()
+
     t0 = time.perf_counter()
     for _ in range(4):
-        work()
+        job()
     seq = time.perf_counter() - t0
-    threads = [threading.Thread(target=work) for _ in range(4)]
+    threads = [threading.Thread(target=job) for _ in range(4)]
     t0 = time.perf_counter()
     for t in threads:
         t.start()
@@ -294,7 +302,7 @@ def test_gil_is_released_during_rust_work(repo):
         t.join()
     par = time.perf_counter() - t0
     # an assert inside a thread only warns, so the counts are checked here
-    assert counts == [1] * 9, counts
+    assert counts == [1] * (1 + 8 * rounds), counts
     cpus = os.cpu_count() or 1
     load = os.getloadavg()[0] if hasattr(os, "getloadavg") else 0.0
     if cpus < 2 or load > cpus * 0.5:
