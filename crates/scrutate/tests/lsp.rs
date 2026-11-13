@@ -515,8 +515,9 @@ fn a_destructor_an_operator_and_a_raw_identifier_are_one_name() {
     c.notify("initialized", json!({}));
     // (file, line, text the cursor sits one character into, definition lines)
     let cases: &[(&str, u64, &str, &[u64])] = &[
-        ("shape.cpp", 16, "Shape", &[2, 9]),
-        ("shape.cpp", 17, "operator", &[3, 11]),
+        // the C/C++ rules take a declaration to the one definition with a body
+        ("shape.cpp", 16, "Shape", &[9]),
+        ("shape.cpp", 17, "operator", &[11]),
         // `~` before a name the index has no destructor for is the bitwise operator
         ("shape.cpp", 23, "bits", &[21]),
         ("raw.rs", 5, "r#type", &[0]),
