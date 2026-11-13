@@ -2258,12 +2258,18 @@ fn watch_keeps_the_code_and_text_indexes_fresh() {
     fs::remove_file(r.root.join("c.py")).unwrap();
     r.write("skipped/s.py", b"def ignored_by_rules():\n    pass\n");
     // `check` and `grep --index` read the indexes as they are: only the watcher can have updated them
-    wait_for(30, "the watcher to update both indexes", || {
-        r.run(&["check", "--files"]).0 == 0
-            && r.run(&["grep", "--index", "-F", "beta_new"]).0 == 0
-            && r.run(&["grep", "--index", "-F", "alpha_two"]).0 == 0
-            && r.run(&["grep", "--index", "-F", "gamma_old"]).0 == 1
-    });
+    let t0 = std::time::Instant::now();
+    while !(r.run(&["check", "--files"]).0 == 0
+        && r.run(&["grep", "--index", "-F", "beta_new"]).0 == 0
+        && r.run(&["grep", "--index", "-F", "alpha_two"]).0 == 0
+        && r.run(&["grep", "--index", "-F", "gamma_old"]).0 == 1)
+    {
+        if t0.elapsed().as_secs() >= 30 {
+            let said: Vec<String> = rx.try_iter().collect();
+            panic!("timed out waiting for the watcher to update both indexes; it said: {said:#?}\ncheck: {:?}", r.run(&["check", "--files"]));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
     let (code, out, _) = r.run(&["stats"]);
     assert_eq!(code, 0);
     let st: serde_json::Value = serde_json::from_str(&out).unwrap();

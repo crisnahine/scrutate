@@ -112,7 +112,9 @@ exports.run = async function () {
     assert.strictEqual(said, "Scrutate: no matches");
 
     assert.ok(fs.existsSync(path.join(top, ".scrutate")), "the index is at the top");
-    if (folder.fsPath !== top) assert.ok(!fs.existsSync(path.join(folder.fsPath, ".scrutate")), "no index in the folder");
+    // VS Code lowercases the drive letter of fsPath on Windows
+    const same = (a, b) => (process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b);
+    if (!same(folder.fsPath, top)) assert.ok(!fs.existsSync(path.join(folder.fsPath, ".scrutate")), "no index in the folder");
   } finally {
     Object.assign(vscode.window, { showInputBox, showQuickPick, showInformationMessage });
   }

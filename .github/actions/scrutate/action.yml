@@ -47,7 +47,7 @@ runs:
         curl -sSfL -o "$name.$ext" "$url/$name.$ext"
         curl -sSfL -o "$name.sha256" "$url/$name.sha256"
         if command -v sha256sum > /dev/null; then sha256sum -c "$name.sha256"; else shasum -a 256 -c "$name.sha256"; fi
-        if [ "$ext" = zip ]; then unzip -q "$name.zip"; else tar xzf "$name.tar.gz"; fi
+        if [ "$ext" = zip ]; then unzip -o -q "$name.zip"; else tar xzf "$name.tar.gz"; fi
         echo "$(pwd -W 2> /dev/null || pwd)/$name" >> "$GITHUB_PATH"
     - id: run
       if: inputs.args != ''

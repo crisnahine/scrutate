@@ -18,10 +18,15 @@ const { runTests, runVSCodeCommand } = require("@vscode/test-electron");
     fs.mkdirSync(path.join(repo, ".git"));
     return repo;
   };
-  // `scrutate.path` is a machine setting: a repository cannot name the program to run
-  const user = path.join(work, "user-data", "User");
-  fs.mkdirSync(user, { recursive: true });
-  fs.writeFileSync(path.join(user, "settings.json"), JSON.stringify({ "scrutate.path": process.env.SCRUTATE_BIN || "scrutate" }));
+  // `scrutate.path` is a machine setting: a repository cannot name the program to run. Each launch
+  // gets its own user data: VS Code 1.85 trips over the instance socket a first launch left, and on
+  // macOS that socket path must stay under 104 bytes, so it lives under /tmp there
+  const userData = (name) => {
+    const dir = process.platform === "darwin" ? fs.mkdtempSync(`/tmp/scv-${name}-`) : path.join(work, `user-data-${name}`);
+    fs.mkdirSync(path.join(dir, "User"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "User", "settings.json"), JSON.stringify({ "scrutate.path": process.env.SCRUTATE_BIN || "scrutate" }));
+    return dir;
+  };
   const version = process.env.VSCODE_VERSION || "stable";
   let extensionDevelopmentPath = path.join(__dirname, "..");
   let extensions = ["--disable-extensions"];
@@ -47,7 +52,7 @@ const { runTests, runVSCodeCommand } = require("@vscode/test-electron");
         extensionDevelopmentPath,
         extensionTestsPath: path.join(__dirname, "suite.js"),
         extensionTestsEnv: { SCRUTATE_TEST_TOP: repo, SCRUTATE_TEST_EXTENSION_UNDER: expected },
-        launchArgs: [path.join(repo, folder), "--user-data-dir", path.join(work, "user-data"), ...extensions, "--disable-workspace-trust", "--no-sandbox", "--disable-gpu"],
+        launchArgs: [path.join(repo, folder), "--user-data-dir", userData(name), ...extensions, "--disable-workspace-trust", "--no-sandbox", "--disable-gpu"],
       });
     }
   } catch (e) {
