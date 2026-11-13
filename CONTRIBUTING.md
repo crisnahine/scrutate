@@ -11,13 +11,13 @@
 
 ## Licence of contributions
 
-Scrutate is open source, under MIT or Apache-2.0 at the user's choice (LICENSE-MIT,
-LICENSE-APACHE), and stays so. A contribution is accepted under the
-[contributor licence agreement](CLA.md): you keep the copyright in what you write, you give the
-project a licence to it that also lets the maintainer offer other terms (a commercial licence,
-for example), and the project promises that what it accepts stays available under the open
-source licence it had that day. What is merged is offered to everyone under the same two
-licences. You agree once, by ticking the line in the pull request form.
+Scrutate is and stays open source, under MIT or Apache-2.0 at the user's choice (LICENSE-MIT,
+LICENSE-APACHE). Contributions are accepted under the
+[contributor licence agreement](CLA.md): you keep the copyright, you give the project a licence
+that also lets the maintainer offer other terms (a commercial licence, for example), and the
+project promises that what it accepts stays available under the open source licence it had that
+day. What is merged is offered to everyone under the same two licences. You agree once, by
+ticking the line in the pull request form.
 
 The name and the logo are covered by the [trademark policy](TRADEMARKS.md): a fork with changes
 beyond packaging takes its own name.
@@ -41,7 +41,7 @@ models/                 semantic.npz, ranker.npz (embedded into the binary)
 bench/                  benchmark harness, differential tests, ranking quality, training scripts
 tools/                  name research, SBOM, docs generators, reproducibility check
 integrations/           VS Code, Neovim, JetBrains, GitHub, GitLab, Bitbucket, MCP, pre-commit
-docs/                   architecture, security, benchmarks, traceability, …
+docs/                   architecture, security, benchmarks, traceability, ...
 ```
 
 ## Quality gates (all must pass before a change is merged)
@@ -61,30 +61,30 @@ python3 tools/gen_assets.py --check && python3 tools/gen_doc_assets.py --check &
 
 - **Ranking moves on purpose.** `tests/ranking_pins.rs` pins every feature and score of a small
   tree bit for bit. A change to tokenization, BM25, vectors, features or the ranker that moves
-  them records the pins again (`UPDATE_PINS=1 cargo test --test ranking_pins`) in the same
-  commit, and says why in its message; `bench/quality.py` must stay above its floor. Training
-  reads its rows from the engine, so there is no second copy to change.
-- **Index format changes bump `SCHEMA_VERSION`**; old indexes are then rebuilt
-  automatically. Never read a field that the version check did not guarantee.
+  them records the pins again (`UPDATE_PINS=1 cargo test --test ranking_pins`) in the same commit
+  and says why in its message; `bench/quality.py` must stay above its floor. Training reads its
+  rows from the engine, so there is no second copy to change.
+- **Index format changes bump `SCHEMA_VERSION`**, so old indexes are rebuilt automatically.
+  Never read a field the version check did not guarantee.
 - **Adding a language**: one `LangSpec` in `langs.rs` (node kinds, name rules, call rules, import
   rules) plus `tests/samples/sample.<ext>` and its entry in `expected.json`
   (`UPDATE_EXPECTED=1 cargo test --test samples` records it; review the diff). Then regenerate
   docs/LANGUAGES.md with `tools/gen_languages_md.py`.
-- **No new dependency without a reason** written in the PR: size, maintenance, licence, and what
-  it replaces. Run `cargo audit` and `tools/sbom.py`.
-- **No claims without evidence.** Numbers in docs come from a script in `bench/` or `tools/` that
-  anyone can rerun; status words (PASS/PARTIAL/FAIL/BLOCKED) follow docs/TRACEABILITY.md.
+- **No new dependency without a reason** in the PR: size, maintenance, licence, and what it
+  replaces. Run `cargo audit` and `tools/sbom.py`.
+- **No claims without evidence.** Numbers in docs come from a rerunnable script in `bench/` or
+  `tools/`; status words (PASS/PARTIAL/FAIL/BLOCKED) follow docs/TRACEABILITY.md.
 - **Never execute repository content.** Parsers parse; nothing in a repository (including
   `.scrutate.toml`) may name a program to run.
 
 ## Releasing
 
-docs/RELEASING.md is the checklist: benchmarks on the release binary, generated documents, the
-quality gates, the platform checks and the artifacts, with the hashes that must agree.
+docs/RELEASING.md is the checklist: benchmarks on the release binary, generated documents,
+quality gates, platform checks and artifacts, with the hashes that must agree.
 
 ## Commit messages
 
-One logical change per commit. The subject is one plain sentence that says what the program or
-the code does after the change ("Resolved references take the files to read from the text
-index ..."), not an order. Name the traceability row a change serves (`R-12.3`) and the
-benchmark deltas when performance is involved, in the body.
+One logical change per commit. The subject is one plain sentence saying what the program or code
+does after the change ("Resolved references take the files to read from the text index ..."),
+not an order. The body names the traceability row the change serves (`R-12.3`) and, when
+performance is involved, the benchmark deltas.
