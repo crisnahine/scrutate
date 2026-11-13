@@ -50,6 +50,9 @@ version rebuilds incompatible indexes automatically and this is never considered
 - The repository lives at github.com/scrutate/scrutate, under the `scrutate` organization; the
   old address redirects. The install commands, the GitHub Action, the CI templates, the package
   definitions, `CITATION.cff` and `llms.txt` name the new one.
+- With reduced motion on, the README and document images keep their typing, counts, marks and
+  cuts running and stop only what travels or grows: the reticle, the wordmark's letters and
+  cursor, a block running along an arrow, a pulse. Before, they showed only slow cross-fades.
 
 ### Fixed
 - `path` takes a function named like its file (`def main` in `main.py`) over the file's module

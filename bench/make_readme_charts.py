@@ -52,7 +52,8 @@ def default(platform: str, name: str, published: str) -> str:
 class Show:
     """The charts' loop on one clock: the bars are drawn like pen strokes one row after another while their
     values count up, then the faster bar of each row gets its highlighter, the chart holds to be read, and it
-    is cleared and drawn again. At rest (and under reduced motion) it is the finished chart."""
+    is cleared and drawn again. At rest it is the finished chart; nothing in it travels, so reduced motion keeps
+    the loop."""
 
     ROW, DRAW, MARK_GAP, HOLD = 0.32, 0.55, 0.16, 4.2
 

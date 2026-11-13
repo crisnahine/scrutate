@@ -377,7 +377,7 @@ def hops(stops, t0, step):
             t = t0 + step * k
             pts += [(t - 0.28, at(stops[k - 1], 1), G.EASE_IN_OUT), (t, at(p, 1.25), G.EASE), (t + 0.14, at(p, 1))]
         pts += [(T - 0.6, at(stops[-1], 1), "ease-in"), (T - 0.3, at(stops[-1], 1.4, 0))]
-        return clk.anim(pts, rest=at(stops[-1], 1.4, 0))
+        return clk.anim(pts, rest=at(stops[-1], 1.4, 0), travel=True)
     return fn
 
 
@@ -430,7 +430,7 @@ def banner(key, title, line, icon, group=None):
     ix, iy = W - PAD - s, (H - s) / 2 + 12
     settle = clk.anim([(0.4, {"transform": "scale(1.45)", "opacity": 0}, G.EASE), (0.95, {"transform": "scale(1)", "opacity": 1}),
                        (4.5, {"transform": "scale(1)", "opacity": 1}, "ease-in"), (4.9, {"transform": "scale(1.2)", "opacity": 0})],
-                      rest={"transform": "scale(1.2)", "opacity": 0})
+                      rest={"transform": "scale(1.2)", "opacity": 0}, travel=True)
     clk.beat("the reticle closes on the icon and settles", 0.4, 0.55)
     clk.beat("it holds, then lets go; the cursor blinks throughout", 0.95, 3.95)
     b.append(f'<g class="{settle} spot">' + G.ticks(ix, iy, s, s, c["dim"]) + "</g>")

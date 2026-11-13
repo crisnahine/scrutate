@@ -50,7 +50,6 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 @keyframes k14 { 0.000% { opacity: 0; animation-timing-function: steps(1, end); } 58.182% { opacity: 0; animation-timing-function: steps(1, end); } 58.303% { opacity: 1; animation-timing-function: steps(1, end); } 92.727% { opacity: 1; animation-timing-function: steps(1, end); } 92.848% { opacity: 0; animation-timing-function: steps(1, end); } 100.000% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
   .mv { animation: none !important; }
-  .fd { animation-name: var(--calm) !important; }
 }
 </style>
 <defs><pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse"><rect x="10" y="10" width="2" height="2" fill="#2a2a2f"/></pattern></defs><rect width="880" height="1330" rx="14" fill="#0c0c0e"/><rect x="10" y="10" width="860" height="1310" rx="8" fill="url(#dots)"/><rect x="10.5" y="10.5" width="859" height="1309" rx="8" fill="none" stroke="#2a2a2f"/>
@@ -183,9 +182,9 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <path d="M654 1118 L686 1118" class="arrow" marker-end="url(#ah)"/>
 <path class="mv k12" d="M654 1118 L686 1118" pathLength="100" fill="none" stroke="#d9ff3d" stroke-width="9" stroke-dasharray="30.0 300" stroke-dashoffset="30.0"/>
 <rect x="690" y="34" width="189" height="1176" rx="4" class="out"/>
-<path class="wipe mv k13" d="M702.1 45.0 H784.2 L781.1 67.0 H699.0 Z" fill="#d9ff3d"/>
+<path class="wipe sm k13" d="M702.1 45.0 H784.2 L781.1 67.0 H699.0 Z" fill="#d9ff3d"/>
 <text x="706" y="61" class="h"><tspan class="m">scrutate</tspan></text>
-<text x="706" y="61" class="hm mv k14"><tspan class="m">scrutate</tspan></text>
+<text x="706" y="61" class="hm sm k14"><tspan class="m">scrutate</tspan></text>
 <text x="706" y="82" class="b">Engine A, Engine B,</text>
 <text x="706" y="102" class="b">the CLI, the MCP</text>
 <text x="706" y="122" class="b">server and the</text>

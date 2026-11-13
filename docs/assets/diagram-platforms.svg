@@ -28,7 +28,6 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 @keyframes k3 { 0.000% { transform: scaleX(0); animation-timing-function: steps(1, end); } 20.202% { transform: scaleX(0); animation-timing-function: cubic-bezier(.2,.7,.2,1); } 24.929% { transform: scaleX(1.03); animation-timing-function: ease-in-out; } 26.263% { transform: scaleX(1); animation-timing-function: steps(1, end); } 87.879% { transform: scaleX(1); animation-timing-function: ease-in; } 93.939% { transform: scaleX(0); animation-timing-function: steps(1, end); } 100.000% { transform: scaleX(0); } }
 @media (prefers-reduced-motion: reduce) {
   .mv { animation: none !important; }
-  .fd { animation-name: var(--calm) !important; }
 }
 </style>
 <rect width="880" height="497" rx="14" fill="#f2eee3"/><rect x="10.5" y="10.5" width="859" height="476" rx="8" fill="none" stroke="#cfc9ba"/>
@@ -43,7 +42,7 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <text x="18" y="65" class="h">macOS arm64</text>
 <text x="176" y="64" class="b">Built and tested natively.</text>
 <text x="556" y="65" class="b">cp39-abi3, cp314t</text>
-<path class="wipe mv k1" d="M715.6 47.0 H827.6 L824.0 73.0 H712.0 Z" fill="#d9ff3d"/>
+<path class="wipe sm k1" d="M715.6 47.0 H827.6 L824.0 73.0 H712.0 Z" fill="#d9ff3d"/>
 <path d="M724 60.0 l4 4 7-8" fill="none" stroke="#0c0c0e" stroke-width="1.9" stroke-linecap="square"/>
 <text x="742" y="65" class="bi" style="fill: #0c0c0e">supported</text>
 <line x1="2" y1="84" x2="878" y2="84" stroke="#cfc9ba"/>
@@ -51,7 +50,7 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <text x="176" y="112" class="b">Built and tested in a clean container;</text>
 <text x="176" y="132" class="b">glibc and static musl.</text>
 <text x="556" y="112" class="b">cp39-abi3, cp314t</text>
-<path class="wipe mv k2" d="M715.6 105.0 H827.6 L824.0 131.0 H712.0 Z" fill="#d9ff3d"/>
+<path class="wipe sm k2" d="M715.6 105.0 H827.6 L824.0 131.0 H712.0 Z" fill="#d9ff3d"/>
 <path d="M724 118.0 l4 4 7-8" fill="none" stroke="#0c0c0e" stroke-width="1.9" stroke-linecap="square"/>
 <text x="742" y="123" class="bi" style="fill: #0c0c0e">supported</text>
 <line x1="2" y1="152" x2="878" y2="152" stroke="#cfc9ba"/>
@@ -59,7 +58,7 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 <text x="176" y="180" class="b">Cross-built on arm64; the Linux tests run</text>
 <text x="176" y="200" class="b">in an amd64 container.</text>
 <text x="556" y="180" class="b">cp39-abi3, cp314t</text>
-<path class="wipe mv k3" d="M715.6 173.0 H827.6 L824.0 199.0 H712.0 Z" fill="#d9ff3d"/>
+<path class="wipe sm k3" d="M715.6 173.0 H827.6 L824.0 199.0 H712.0 Z" fill="#d9ff3d"/>
 <path d="M724 186.0 l4 4 7-8" fill="none" stroke="#0c0c0e" stroke-width="1.9" stroke-linecap="square"/>
 <text x="742" y="191" class="bi" style="fill: #0c0c0e">supported</text>
 <line x1="2" y1="220" x2="878" y2="220" stroke="#cfc9ba"/>

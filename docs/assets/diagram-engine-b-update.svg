@@ -44,7 +44,6 @@ text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", 
 @keyframes k11 { 0.000% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 53.202% { stroke-dashoffset: 30.0; animation-timing-function: cubic-bezier(.6,0,.25,1); } 64.039% { stroke-dashoffset: -100; animation-timing-function: steps(1, end); } 64.138% { stroke-dashoffset: 30.0; animation-timing-function: steps(1, end); } 100.000% { stroke-dashoffset: 30.0; } }
 @media (prefers-reduced-motion: reduce) {
   .mv { animation: none !important; }
-  .fd { animation-name: var(--calm) !important; }
 }
 </style>
 <defs><pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse"><rect x="10" y="10" width="2" height="2" fill="#2a2a2f"/></pattern></defs><rect width="880" height="641" rx="14" fill="#0c0c0e"/><rect x="10" y="10" width="860" height="621" rx="8" fill="url(#dots)"/><rect x="10.5" y="10.5" width="859" height="620" rx="8" fill="none" stroke="#2a2a2f"/>

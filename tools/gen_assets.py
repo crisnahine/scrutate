@@ -24,8 +24,8 @@ under 150 KB, and complete with motion off (the still state is the finished stat
 Motion is CSS inside each SVG (GitHub shows them through <img>: no script). Each animated image runs on one
 master clock (Clock below): every element's keyframes are percentages of one loop, so it repeats for ever
 without a seam. Only transform, opacity and stroke-dashoffset are animated. An element's attributes are its
-finished state; its class says whether its motion travels (`mv`, stopped under reduced motion) or only fades
-(`fd`, kept), and --check refuses an animated element that has neither.
+finished state; its class says whether its motion travels (`mv`, stopped under reduced motion) or stays in
+place (`sm`, kept), and --check refuses an animated element that has neither.
 
 Headlines are outlines of Geist Mono Black (SIL Open Font License 1.1, tools/fonts/OFL.txt), read from
 tools/fonts/geist-mono-black.json, so they look the same whatever fonts a reader has.
@@ -64,11 +64,11 @@ SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, A
 MONO = 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace'
 EASE = "cubic-bezier(.2,.7,.2,1)"          # out: fast start, long settle (a pen stroke, a bar)
 EASE_IN_OUT = "cubic-bezier(.6,0,.25,1)"   # a reticle travelling to its target
-# Motion that travels, scales, types or counts carries the class `mv`; a cross-fade or a cursor blink carries `fd`.
-# A reader who asks for reduced motion gets every `mv` element in its finished state and keeps the fades, each in
-# its calm version (--calm: slower cross-fades where the motion version cuts).
-REDUCED = ("@media (prefers-reduced-motion: reduce) {\n  .mv { animation: none !important; }\n"
-           "  .fd { animation-name: var(--calm) !important; }\n}")
+# Motion that travels across the image or grows (a reticle, letters dropping in, a block running along an arrow,
+# a pulse) carries the class `mv`; motion that stays in place (typing, a count, a mark wiped in, a cursor, a fade)
+# carries `sm`. A reader who asks for reduced motion gets every `mv` element in its finished state, and the rest
+# keeps running, so the page still shows the searches being done.
+REDUCED = "@media (prefers-reduced-motion: reduce) {\n  .mv { animation: none !important; }\n}"
 BANNER = "<!-- written by tools/gen_assets.py; edit that, not this file -->"
 MAX_BYTES = 150 * 1024
 
@@ -106,7 +106,7 @@ class Clock:
     """One master clock per image. A beat is a name, a start and a length in seconds; each animated element gets
     keyframes as (seconds, value[, timing function of the segment that follows]) and they are written as
     percentages of the one loop, so nothing drifts and the loop has no seam: the value at 0 and at the end is the
-    element's `rest`. An element's SVG attributes are its finished state, which is what reduced motion shows."""
+    element's `rest`. An element's SVG attributes are its finished state, which reduced motion shows for an `mv`."""
 
     def __init__(self, total=None):
         self.total, self.beats, self.tracks = total, [], []
@@ -115,15 +115,11 @@ class Clock:
         self.beats.append((name, round(start, 3), round(length, 3)))
         return start + length
 
-    def anim(self, points, prop="transform", rest=None, fade=False, calm=None):
+    def anim(self, points, prop="transform", rest=None, travel=False):
         """The class string for an element animated through `points`; a value may be a dict of properties.
-        A fade (opacity only) runs under reduced motion too, as `calm` if given (slower cross-fades), else as is."""
-        self.tracks.append((list(points), prop, rest, fade))
-        n = len(self.tracks)
-        if calm is not None:
-            assert fade, "only a fade has a calm version"
-            self.tracks.append((list(calm), prop, rest, "calm"))
-        return ("fd" if fade else "mv") + f" k{n}"
+        `travel` marks motion across the image or growing, which reduced motion stops."""
+        self.tracks.append((list(points), prop, rest))
+        return ("mv" if travel else "sm") + f" k{len(self.tracks)}"
 
     def more(self, cls, points):
         """Add keyframes to the element whose class string `anim` returned."""
@@ -136,7 +132,7 @@ class Clock:
     def css(self):
         T = self.total
         out = []
-        for i, (points, prop, rest, fade) in enumerate(self.tracks, 1):
+        for i, (points, prop, rest) in enumerate(self.tracks, 1):
             pts = sorted(points, key=lambda p: p[0])
             if pts[0][0] > 0:
                 assert rest is not None, f"k{i}: a track that starts after 0 needs its rest value"
@@ -148,14 +144,7 @@ class Clock:
             assert pts[-1][0] <= T + 1e-6, f"k{i} runs past the loop ({pts[-1][0]:.2f} s of {T:.2f} s)"
             assert pts[0][1] == pts[-1][1], f"k{i}: the value at 0 and at the end differ, so the loop would jump"
             assert all(b[0] > a[0] for a, b in zip(pts, pts[1:])), f"k{i}: two keyframes at one time"
-            if fade == "calm":
-                pass   # the reduced-motion version of the fade before it: keyframes only
-            elif fade and i < len(self.tracks) and self.tracks[i][3] == "calm":
-                out.append(f".k{i}{{animation:k{i} {T:.2f}s linear infinite;--calm:k{i + 1}}}")
-            elif fade:
-                out.append(f".k{i}{{animation:k{i} {T:.2f}s linear infinite;--calm:k{i}}}")
-            else:
-                out.append(f".k{i}{{animation:k{i} {T:.2f}s linear infinite}}")
+            out.append(f".k{i}{{animation:k{i} {T:.2f}s linear infinite}}")
             frames = []
             for j, p in enumerate(pts):
                 v = p[1] if isinstance(p[1], dict) else {prop: p[1]}
@@ -169,31 +158,19 @@ class Clock:
         return "\n".join(out)
 
 
-def window(a, b, T, d=1.0):
-    """Opacity points of something that fades in over [a, a+d], stays, and fades out over [b, b+d], on a loop of
-    T seconds; either fade may run across the loop's end."""
-    a %= T
-    b = b % T + (T if b % T < a else 0)
-
-    def f(t):
-        return max(min(1.0, (u - a) / d, (b + d - u) / d) if a <= u <= b + d else 0.0 for u in (t - T, t, t + T))
-    cuts = sorted({0.0, T} | {round(x % T, 4) for x in (a, a + d, b, b + d)})
-    return [(t, round(f(t), 3)) for t in cuts]
-
-
 def wipe(t, d=0.32, over=1.03):
     """A marker stroke landing: it decelerates and overshoots by a hair. Keyframe points for scaleX."""
     return [(t, "scaleX(0)", EASE), (t + d * 0.78, f"scaleX({over})", "ease-in-out"), (t + d, "scaleX(1)")]
 
 
 def blink(clk, t0, t1, period=1.06):
-    """A cursor blinking from t0 to t1 on the clock: visible, hidden, visible ... (a fade-class track)."""
+    """A cursor blinking from t0 to t1 on the clock: visible, hidden, visible ..."""
     pts, t, on = [], t0, True
     while t < t1 - 1e-6:
         pts.append((t, 1 if on else 0, "steps(1, end)"))
         t, on = t + period / 2, not on
     pts.append((t1, 1))
-    return clk.anim(pts, "opacity", rest=1, fade=True)
+    return clk.anim(pts, "opacity", rest=1)
 
 
 def typing(t0, text, cps=26.0):
@@ -483,8 +460,7 @@ def count_up(final: str):
 
 def counter(clk, x, y, n, t0, t1, t_clear, size, fill, bold=True, suffix=""):
     """A number that runs up from blank to `n` between t0 and t1 and is blank again from t_clear, right-aligned
-    at x, with `suffix` after each value: a strip of values behind a one-row window. Its finished state, what
-    reduced motion shows, is `n`."""
+    at x, with `suffix` after each value: a strip of values behind a one-row window. Its finished state is `n`."""
     rows = [""] + [v + suffix for v in count_up(str(n))]
     wide = len(str(n) + suffix) * size * 0.62 + size
     dy = size * 1.5
@@ -609,14 +585,14 @@ def _hero(phone=False):
         letters.append(clk.anim([(t, {"transform": f"translateY({lift:.0f}px)", "opacity": 0}, "steps(1, start)"),
                                  (t + 0.01, {"transform": f"translateY({lift:.0f}px)", "opacity": 1}, EASE),
                                  (t + 0.34, {"transform": "translateY(0px)", "opacity": 1})],
-                                rest={"transform": f"translateY({lift:.0f}px)", "opacity": 0}))
+                                rest={"transform": f"translateY({lift:.0f}px)", "opacity": 0}, travel=True))
     clk.beat("wordmark: the letters cut in", 0.1, 0.075 * 7 + 0.34)
     t_bar = clk.beat("wordmark: the A's bar is drawn", 0.78, 0.34) - 0.34
     t_cur = clk.beat("wordmark: the cursor lands", 1.1, 0.3) - 0.3
     bar_cls = "wipe " + clk.anim(wipe(t_bar, 0.34), rest="scaleX(0)")
     cur_cls = clk.anim([(t_cur, {"transform": f"translateY({-cap * 0.6:.0f}px)", "opacity": 0}, EASE),
                         (t_cur + 0.3, {"transform": "translateY(0px)", "opacity": 1})],
-                       rest={"transform": f"translateY({-cap * 0.6:.0f}px)", "opacity": 0})
+                       rest={"transform": f"translateY({-cap * 0.6:.0f}px)", "opacity": 0}, travel=True)
     slab_cls = "wipe " + clk.anim(wipe(1.3, 0.42), rest="scaleX(0)")
     clk.beat(f"statement: {HERO_LINE[1]} is marked", 1.3, 0.42)
 
@@ -676,15 +652,13 @@ def _hero(phone=False):
     prev = None
     n = len(queries)
     for qi, (q, cmd, pts, t0, t_typed, t_run, marks, t_landed, t_lift) in enumerate(queries):
-        # with motion, a search's group is cut in and out while its line is empty and its marks are gone;
-        # with reduced motion the groups cross-fade, a second each way
+        # a search's group is cut in and out while its line is empty and its marks are gone
         cut_out = [(t_lift + 0.3, 1, "steps(1, end)"), (t_lift + 0.31, 0)]
         p = queries[qi - 1][8]   # the lift of the search before (for the first, the last one's)
-        calm = window(p + 0.4, t_lift - 0.5, t_end)
         if qi:
-            g_cls = clk.anim([(p + 0.3, 0, "steps(1, end)"), (p + 0.31, 1)] + cut_out, "opacity", rest=0, fade=True, calm=calm)
+            g_cls = clk.anim([(p + 0.3, 0, "steps(1, end)"), (p + 0.31, 1)] + cut_out, "opacity", rest=0)
         else:
-            g_cls = clk.anim(cut_out + [(p + 0.3, 0, "steps(1, end)"), (p + 0.31, 1)], "opacity", rest=1, fade=True, calm=calm)
+            g_cls = clk.anim(cut_out + [(p + 0.3, 0, "steps(1, end)"), (p + 0.31, 1)], "opacity", rest=1)
         g_open = f'<g class="{g_cls}"' + (' opacity="0"' if qi else "") + ">"
         slabs = [g_open]
         b.append(g_open)
@@ -742,7 +716,7 @@ def _hero(phone=False):
     # the prompt's cursor and the reticle are hidden between searches; they rest where they were last seen
     b.append(f'<g class="{clk.anim(cur_pts, rest=cur_pts[-1][1])}" opacity="0"><rect y="{py - ps + 1:.1f}" width="{pw:.1f}" '
              f'height="{ps + 3}" fill="{MARK}"/></g>')
-    b.append(reticle(clk.anim(ret_pts, rest=ret_pts[-1][1]), PAPER, 9 if phone else 11))
+    b.append(reticle(clk.anim(ret_pts, rest=ret_pts[-1][1], travel=True), PAPER, 9 if phone else 11))
     style = [WIPE_CSS, ".cover{transform-box:fill-box;transform-origin:right center}", clk.css()]
     qs = "; ".join(f"`{cmd}` marks {len(q['spans'])} on these lines and reports {q['lines_matched']} matching lines in "
                    f"{q['files_matched']} of {q['files_searched']} files" for q, cmd, *_ in queries)
@@ -751,7 +725,7 @@ def _hero(phone=False):
     desc = (f"Lines {first} to {last} of {spec['file']} (scrutate's own source, crates/scrutate at {spec['source']}), and four "
             f"searches run over them with {spec['version']}, one after another: {qs}. Each search is typed, a reticle finds each "
             f"match the binary reported, a highlighter marks it and the counts run up to the real numbers. {where}"
-            f"{HERO_DESC}. With reduced motion the searches cross-fade with every match marked.")
+            f"{HERO_DESC}. With reduced motion the searches still run; the reticle and the wordmark stand still.")
     return svg(PW, H, "Scrutate: instant search with no index, code intelligence from an index", desc, "\n".join(b),
                "\n".join(style), animated=True), clk
 
@@ -937,11 +911,10 @@ def demo(phone=False) -> str:
         assert len(cmd) + 2 <= cols, f"the command {cmd!r} does not fit the terminal"
         prev_clear = plan[i - 1][11]
         cut = [(t_clear, 1, "steps(1, end)"), (t_clear + 0.01, 0)]
-        calm = window(prev_clear + 0.2, t_clear - 0.6, T)
         if i:
-            g = clk.anim([(prev_clear + 0.01, 0, "steps(1, end)"), (prev_clear + 0.02, 1)] + cut, "opacity", rest=0, fade=True, calm=calm)
+            g = clk.anim([(prev_clear + 0.01, 0, "steps(1, end)"), (prev_clear + 0.02, 1)] + cut, "opacity", rest=0)
         else:
-            g = clk.anim(cut + [(T - 0.02, 0, "steps(1, end)"), (T - 0.01, 1)], "opacity", rest=1, fade=True, calm=calm)
+            g = clk.anim(cut + [(T - 0.02, 0, "steps(1, end)"), (T - 0.01, 1)], "opacity", rest=1)
         b.append(f'<g class="{g}"' + (' opacity="0"' if i else "") + ">")
         xs = x0 + 2 * cw
         b.append(code_text(xs, y0, cmd, fs, PAPER, cw))
@@ -1016,7 +989,7 @@ def dash_run(clk, t0, t1, ease=EASE_IN_OUT, dash=6.0):
     """A short block of highlighter running along a path drawn with pathLength=100, from before its start to past
     its end, between t0 and t1; hidden the rest of the loop. Returns the class and the dash array."""
     return clk.anim([(t0, f"{dash:.1f}", ease), (t1, "-100", "steps(1, end)"), (t1 + 0.01, f"{dash:.1f}")], "stroke-dashoffset",
-                    rest=f"{dash:.1f}"), f"{dash:.1f} 300"
+                    rest=f"{dash:.1f}", travel=True), f"{dash:.1f} 300"
 
 
 def dash_path(d, cls, dash, width=3.5, colour=MARK):
@@ -1215,7 +1188,8 @@ def seek(clk, x0, x1, y, cx, r, colour, t0=0.6, on="ink"):
     block is ink and the mark has an ink edge, since the highlighter alone does not read on paper."""
     cls, dash = dash_run(clk, t0, t0 + 0.95, dash=22 / (x1 - x0) * 100)
     t_hit = t0 + 0.9
-    ring = clk.anim([(t_hit, "scale(1)", EASE), (t_hit + 0.12, "scale(1.5)", EASE), (t_hit + 0.5, "scale(1)")], rest="scale(1)")
+    ring = clk.anim([(t_hit, "scale(1)", EASE), (t_hit + 0.12, "scale(1.5)", EASE), (t_hit + 0.5, "scale(1)")], rest="scale(1)",
+                    travel=True)
     dot = clk.anim([(t_hit + 0.15, "scale(0)", EASE), (t_hit + 0.45, "scale(1)"), (clk.total - 0.8, "scale(1)", "ease-in"),
                     (clk.total - 0.45, "scale(0)")], rest="scale(0)")
     clk.beat("a block runs along the hairline to the crosshair", t0, 0.95)
@@ -1592,8 +1566,9 @@ MAX_ANIMATED = 80
 
 def motion_problems(text: str):
     """An animated image keeps the reduced-motion rule word for word; runs on one clock (one duration, no
-    delays); animates only transform, opacity and stroke-dashoffset; each animated element is `mv` or `fd`;
-    a fade (and its calm version) changes only opacity; and it has at most MAX_ANIMATED animated elements."""
+    delays); animates only transform, opacity and stroke-dashoffset; each animated element is `mv` or `sm`;
+    an `sm` element neither travels (no 2-D translate, no stroke-dashoffset) nor grows (no scale above 1.05);
+    and it has at most MAX_ANIMATED animated elements."""
     if "@keyframes" not in text and "animation" not in text:
         return []
     bad = []
@@ -1618,19 +1593,15 @@ def motion_problems(text: str):
         if not hit:
             continue
         used += 1
-        kind = {"mv", "fd"} & set(names)
+        kind = {"mv", "sm"} & set(names)
         if len(kind) != 1:
-            bad.append(f"animated element of class {m.group(1)!r} is neither mv nor fd (or both)")
-        if "fd" in kind:
+            bad.append(f"animated element of class {m.group(1)!r} is neither mv nor sm (or both)")
+        if "sm" in kind:
             for n in hit:
-                calm = re.search(r"--calm\s*:\s*([\w-]+)", animated[n])
-                own = re.search(r"animation\s*:\s*([\w-]+)", animated[n]).group(1)
-                if not calm:
-                    bad.append(f".{n} is a fade without --calm")
-                for k in {own, calm.group(1) if calm else own}:
-                    props = {p.strip() for p in re.findall(r"([\w-]+)\s*:", frames.get(k, ""))} - {"animation-timing-function"}
-                    if props - {"opacity"}:
-                        bad.append(f".{n} is a fade but @keyframes {k} changes {', '.join(sorted(props - {'opacity'}))}")
+                body = frames.get(re.search(r"animation\s*:\s*([\w-]+)", animated[n]).group(1), "")
+                grows = [float(s) for s in re.findall(r"\bscale\(([\d.]+)", body)]
+                if "stroke-dashoffset" in body or re.search(r"\btranslate\(", body) or any(s > 1.05 for s in grows):
+                    bad.append(f".{n} travels or grows but is sm: reduced motion would not stop it")
     if any(not re.fullmatch(r"k\d+", c) for c in animated):
         bad.append("an animation rule on a class the clock did not write")
     if used > MAX_ANIMATED:
@@ -1671,11 +1642,19 @@ def svg_problems(name: str, text: str):
 REFUSED = ['<rect onload="x()"/>', '<set attributeName="href" to="//e.com/x"/>', '<style>@IMPORT "x.css";</style>',
            '<rect style="fill:URL(x.svg)"/>', '<rect style="fill:u\\72l(x)"/>', '<rect filter="blur(2px)"/>',
            '<rect style="filter : blur(2px)"/>', '<a href="https://e.com">x</a>', "<use href='x.svg#a'/>"]
+# motion that reduced motion would not stop: travel and growth under `sm`
+REFUSED_MOTION = ["transform: translate(9px, 9px)", "transform: scale(1.5)", "stroke-dashoffset: -100"]
 
 
 def checker_problems():
     head = '<svg xmlns="http://www.w3.org/2000/svg"><title>t</title><desc>d</desc>'
-    return [f"the checker passes {b}" for b in REFUSED if not svg_problems("probe", head + b + "</svg>")]
+    bad = [f"the checker passes {b}" for b in REFUSED if not svg_problems("probe", head + b + "</svg>")]
+    for v in REFUSED_MOTION:
+        probe = (f"{head}<style>.k1{{animation:k1 2.00s linear infinite}} @keyframes k1 {{ 0% {{ {v}; }} }}\n{REDUCED}</style>"
+                 '<rect class="sm k1"/></svg>')
+        if not motion_problems(probe):
+            bad.append(f"the checker passes an sm element with {v}")
+    return bad
 
 
 def readme_problems():
