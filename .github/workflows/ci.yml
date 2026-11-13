@@ -5,7 +5,9 @@
 # the bindings on every runner. The editor jobs run the CI binary in the hosts the integrations
 # claim: VS Code (the folder and the packaged .vsix) and Neovim on Linux, macOS and Windows, at each
 # version floor and the current release. The action job installs a CI binary through the action
-# of this commit on all six runners, with curl answering the release URLs. Every action is pinned
+# of this commit on all six runners, with curl answering the release URLs. The GitLab and
+# Bitbucket templates run in local emulators (gitlab-ci-local, pipeline-runner) on the musl
+# binary, served from the fixture repository through SCRUTATE_URL. Every action is pinned
 # to a commit; .github/dependabot.yml moves the pins. The Rust version, rustfmt and clippy come from
 # rust-toolchain.toml.
 name: ci
@@ -418,3 +420,50 @@ jobs:
           echo "$where"
           case "$where" in *scrutate-0.1.0-*) ;; *) echo "scrutate on PATH is not the installed release"; exit 1 ;; esac
           scrutate --version
+  gitlab-template:
+    name: GitLab template in gitlab-ci-local
+    needs: musl
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: scrutate-musl
+          path: bin
+      - name: the template on a merge request that adds a duplicate, in debian:bookworm-slim
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -sSfL --retry 5 -o gcl.tar.gz https://github.com/firecow/gitlab-ci-local/releases/download/4.77.1/gitlab-ci-local-linux-amd64.tar.gz
+          echo "bdf795f48ea29a0d175db4637c643cb016cfc1e5c0c412fe024d1b871fc465d0  gcl.tar.gz" | sha256sum -c -
+          tar xzf gcl.tar.gz
+          ./gitlab-ci-local --version
+          bash "$GITHUB_WORKSPACE/tools/test_ci_templates.sh" gitlab "$GITHUB_WORKSPACE/bin/scrutate" "$RUNNER_TEMP/gitlab-ci-local"
+  bitbucket-template:
+    name: Bitbucket template in pipeline-runner
+    needs: musl
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: scrutate-musl
+          path: bin
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: the template on a push, in debian:bookworm-slim
+        run: |
+          cd "$RUNNER_TEMP"
+          w=bitbucket_pipeline_runner-0.6.4-py3-none-any.whl
+          curl -sSfL --retry 5 -o "$w" "https://files.pythonhosted.org/packages/py3/b/bitbucket-pipeline-runner/$w"
+          echo "614209d936fd9618485cc9a968529f17d7d509ec493cd0c68fb44c9c26268064  $w" | sha256sum -c -
+          python -m venv pr
+          pr/bin/pip install --quiet "./$w"
+          pr/bin/pipeline-runner --version
+          bash "$GITHUB_WORKSPACE/tools/test_ci_templates.sh" bitbucket "$GITHUB_WORKSPACE/bin/scrutate" "$RUNNER_TEMP/pr/bin/pipeline-runner"

@@ -8,7 +8,8 @@ definitions:
           - apt-get update -qq && apt-get install -y -qq curl ca-certificates > /dev/null
           - export V=0.1.0
           - export NAME="scrutate-$V-x86_64-unknown-linux-musl"
-          - export URL="https://github.com/scrutate/scrutate/releases/download/v$V"
+          # a repository variable SCRUTATE_URL points a mirror, or a test before the release, elsewhere
+          - export URL="${SCRUTATE_URL:-https://github.com/scrutate/scrutate/releases/download/v$V}"
           # in /tmp, so the tool does not index its own files
           - curl -sSfL -o "/tmp/$NAME.tar.gz" "$URL/$NAME.tar.gz"
           - curl -sSfL -o "/tmp/$NAME.sha256" "$URL/$NAME.sha256"
