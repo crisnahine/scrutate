@@ -2,7 +2,7 @@
 """Benchmark leaderboard for Engine A and structural search (mission section 14).
 
 usage: leaderboard.py --corpora DIR --out FILE.json [--only ID_PREFIX...] [--runs 30]
-                      [--cache warm|cold] [--cold-prepare CMD] [--max-load X] [--force]
+                      [--cache warm|cold] [--cold-prepare CMD] [--max-load X] [--stop-early] [--force]
 
 Per benchmark:
  1. Correctness. Every tool runs the query once; its output is normalised to the set of
@@ -20,6 +20,11 @@ Per benchmark:
     time and memory only. With SCRUTATE_BASE_BIN set, `scrutate base` runs scrutate's command lines
     with that binary in the same blocks, for bench/leaderboard_regression.py; it is never ranked.
     A concurrent row times each tool's verified command started 4 times at once by one shell.
+    Stop rule (--stop-early, ignored with SCRUTATE_BASE_BIN): after the second block a row stops when
+    its wall-time verdict and its four CPU and memory verdicts are PASS, FAIL or n/a at alpha 0.001
+    and no tool's block medians differ by more than 25%; every other row takes all its blocks and is
+    judged at alpha 0.049 (the Haybittle-Peto boundary; the alphas sum to 0.05). The row records its
+    run count (`runs`) and the alpha of its interval (`alpha`).
  4. Status. The 95% confidence interval of median(scrutate) / median(best competitor), by a
     bootstrap over the runs: PASS if it lies below 1, FAIL above 1, PARTIAL if it contains 1;
     BLOCKED (a tie at the hardware limit) when it contains 1 and both medians are within 15% of
@@ -39,6 +44,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import platform
 import random
@@ -506,14 +512,36 @@ def hyperfine(cmd, cwd, env, runs, warmup, prepare=None):
     }
 
 
-def boot_ratio(a, b, B=10000, seed=1):
+def boot_ratio(a, b, B=None, seed=1, alpha=0.05):
+    """median(a) / median(b) and its 1 - alpha percentile bootstrap interval."""
+    # at least 25 resamples beyond each end of the interval: 10,000 at alpha 0.05, 50,000 at 0.001
+    B = B or max(10000, math.ceil(25 / (alpha / 2)))
     rng = random.Random(seed)
     med = statistics.median
     rs = []
     for _ in range(B):
         rs.append(med(rng.choices(a, k=len(a))) / med(rng.choices(b, k=len(b))))
     rs.sort()
-    return med(a) / med(b), rs[int(0.025 * B)], rs[int(0.975 * B) - 1]
+    return med(a) / med(b), rs[round(alpha / 2 * B)], rs[round((1 - alpha / 2) * B) - 1]
+
+
+# Stopping by evidence, the Haybittle-Peto boundary (Haybittle 1971; Peto et al. 1976): a look before
+# the last stops a row only at alpha 0.001, the last look spends the rest, and the alphas sum to 0.05
+# (Bonferroni), whatever the load did between the blocks.
+ALPHA, INTERIM_ALPHA, FIRST_LOOK = 0.05, 0.001, 2
+
+
+def stop_rule(blocks):
+    """(blocks after which a row may stop early, the alpha of the last look)."""
+    interim = list(range(FIRST_LOOK, blocks))
+    return interim, round(ALPHA - INTERIM_ALPHA * len(interim), 6)
+
+
+def settled(res):
+    """True when the wall-time verdict and all four CPU and memory verdicts can no longer change
+    and the blocks agree (no tool's block medians differ by more than 25%)."""
+    return (res["status"] in ("PASS", "FAIL") and not unstable(res)
+            and all(m["status"] in ("PASS", "FAIL", "n/a") for ms in res["metrics"].values() for m in ms.values()))
 
 
 def bad_exit(codes):
@@ -638,6 +666,8 @@ def run_bench(b, corpora, a, cache_dir):
         # interleaved blocks (A B C, A B C, ...): on a shared machine the load drifts, and one long
         # block per tool would turn that drift into a difference between the tools
         acc = {t: {"n": 0, "times": [], "cpu": [], "rss": [], "exit": set()} for t in contenders}
+        per = -(-a.runs // a.blocks)
+        interim, res["alpha"] = stop_rule(a.blocks) if a.stop else ([], ALPHA)
         for i in range(a.blocks):
             # alternate the order, so of two tools neither always runs first in a block
             for t in (contenders if i % 2 == 0 else contenders[::-1]):
@@ -648,19 +678,14 @@ def run_bench(b, corpora, a, cache_dir):
                     acc[t][k] += h[k]
                 acc[t]["n"] += h["n"]
                 acc[t]["exit"] |= set(h["exit"])
-        for t in contenders:
-            res["tools"][t].update({**acc[t], "exit": sorted(acc[t]["exit"]), "blocks": a.blocks})
-            if target[t] != a.runs:
-                res["tools"][t]["runs_target"] = target[t]
+            res["runs"] = per * (i + 1)
+            fill(res, acc, target, valid, a.runs, a.blocks, i + 1)
+            if i + 1 in interim:
+                decide(res, [t for t in valid if res["tools"][t]["status"] == "ok"], res["runs"], INTERIM_ALPHA)
+                if settled(res):
+                    res["alpha"] = INTERIM_ALPHA
+                    break
         res["load"].append(loadavg())
-        for t in valid:
-            r = res["tools"][t]
-            if bad_exit(r.get("exit", [])):
-                r.update({"status": "error", "note": f"exit {bad_exit(r['exit'])} in a timed run"})
-            if "times" in r:
-                r["median"] = statistics.median(r["times"])
-                r["cpu_median"] = statistics.median(r["cpu"]) if r.get("cpu") else None
-                r["rss_median"] = statistics.median(r["rss"]) if r.get("rss") else None
     # 4. hardware ceiling and status (none for a concurrent row: it reads the files k times)
     if not structural and not conc:
         # the ceiling depends only on the file set and the cache state: measured once per run
@@ -680,13 +705,30 @@ def run_bench(b, corpora, a, cache_dir):
         # a warm run is one whose files were in memory: on a machine short of it they are not
         res["resident"] = resident(lst, cdir)
     valid = [t for t in valid if res["tools"][t]["status"] == "ok"]
-    decide(res, valid, a.runs)
+    decide(res, valid, res.get("runs", a.runs), res.get("alpha", ALPHA))
     res["max_load"] = max(res["load"]) if res["load"] else loadavg()
     return res
 
 
-def decide(res, valid, runs):
-    """Status of one benchmark from its stored runs (see the module docstring)."""
+def fill(res, acc, target, valid, runs, blocks, done):
+    """The contenders' runs of the first `done` blocks into their rows, with medians and exit checks."""
+    for t, x in acc.items():
+        res["tools"][t].update({**x, "exit": sorted(x["exit"]), "blocks": done})
+        if target[t] != runs:
+            res["tools"][t]["runs_target"] = target[t] if done == blocks else -(-target[t] // blocks) * done
+    for t in valid:
+        r = res["tools"][t]
+        if bad_exit(r.get("exit", [])):
+            r.update({"status": "error", "note": f"exit {bad_exit(r['exit'])} in a timed run"})
+        if "times" in r:
+            r["median"] = statistics.median(r["times"])
+            r["cpu_median"] = statistics.median(r["cpu"]) if r.get("cpu") else None
+            r["rss_median"] = statistics.median(r["rss"]) if r.get("rss") else None
+
+
+def decide(res, valid, runs, alpha=ALPHA):
+    """Status of one benchmark from its stored runs (see the module docstring); `runs` and `alpha`
+    are the row's own: the run count of its look and the alpha spent there."""
     for k in ("best_competitor", "ratio", "ci95", "why"):
         res.pop(k, None)
     us = res["tools"].get("scrutate", {})
@@ -701,21 +743,21 @@ def decide(res, valid, runs):
         res["why"] = "every correct competitor is more than 20x slower" if others else "no competitor answers this query correctly"
     else:
         best = min(comps, key=lambda t: res["tools"][t]["median"])
-        ratio, lo, hi = boot_ratio(us["times"], res["tools"][best]["times"])
+        ratio, lo, hi = boot_ratio(us["times"], res["tools"][best]["times"], alpha=alpha)
         res.update({"best_competitor": best, "ratio": ratio, "ci95": [lo, hi], "status": ci_status(lo, hi)})
         if res["status"] == "PARTIAL":
             raw = res.get("rawread", {}).get("median")
             if raw and us["median"] <= 1.15 * raw and res["tools"][best]["median"] <= 1.15 * raw:
                 res["status"] = "BLOCKED"
                 res["why"] = "tie at the hardware limit (both within 15% of reading the files)"
-    res["metrics"] = {key: {mode: metric_verdict(res["tools"], tool, valid, key, runs) for mode, tool in MODES.items()} for key in ("cpu", "rss")}
+    res["metrics"] = {key: {mode: metric_verdict(res["tools"], tool, valid, key, runs, alpha) for mode, tool in MODES.items()} for key in ("cpu", "rss")}
 
 
 def ci_status(lo, hi):
     return "PASS" if hi < 1 else "FAIL" if lo > 1 else "PARTIAL"
 
 
-def metric_verdict(tools, us_tool, valid, key, runs):
+def metric_verdict(tools, us_tool, valid, key, runs, alpha=ALPHA):
     """CPU time (`cpu`) or peak memory (`rss`) of one scrutate mode against the competitor lowest on
     that metric, by the wall-time rule; there is no hardware ceiling, so no BLOCKED. The rank counts
     every correct competitor with a median, the 3-run pilots included."""
@@ -735,7 +777,7 @@ def metric_verdict(tools, us_tool, valid, key, runs):
     best = min(full, key=lambda t: med(full[t]))
     if min(full[best]) <= 0:
         return {**out, "status": "PARTIAL", "best_competitor": best, "why": f"{best} reads 0 in some runs"}
-    ratio, lo, hi = boot_ratio(us[key], full[best])
+    ratio, lo, hi = boot_ratio(us[key], full[best], alpha=alpha)
     return {**out, "best_competitor": best, "best_median": med(full[best]), "ratio": ratio, "ci95": [lo, hi], "status": ci_status(lo, hi)}
 
 
@@ -862,6 +904,8 @@ def main() -> int:
                     "factor of the fastest also get the full run count")
     ap.add_argument("--short-metric-runs", action="store_true", help="a metric contender that is not a wall-time contender and whose pilot "
                     "median is over 2 s gets half the runs (shortens a full cycle; its CPU and memory statuses then rest on fewer runs)")
+    ap.add_argument("--stop-early", action="store_true", help="a row may stop after its second block once its wall-time and CPU and "
+                    "memory verdicts are settled at alpha 0.001 (then fewer than --runs runs, below R-14.10's 30); ignored with SCRUTATE_BASE_BIN")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--redo-unstable", action="store_true", help="measure again, once, the benchmarks in --out where a tool's block medians "
                     "differ by more than 25%% (the machine was disturbed); each keeps its first status, ratio, interval and load as `first`")
@@ -869,6 +913,8 @@ def main() -> int:
     ap.add_argument("--restatus", action="store_true", help="no measurement: refresh each benchmark's hardware ceiling from the run's shared "
                     "measurements and recompute every status")
     a = ap.parse_args()
+    # the regression gate's block ratio needs every block of both binaries
+    a.stop = a.stop_early and not SCRUTATE_BASE
     if a.cache == "cold" and not a.cold_prepare:
         raise SystemExit("--cache cold needs --cold-prepare (e.g. 'sync; echo 3 > /proc/sys/vm/drop_caches')")
     benches = suite()
@@ -890,7 +936,7 @@ def main() -> int:
             raw = RAWREAD.get(f"{r['corpus']}|{r['mode']}|{r['cache']}|{n}")
             if raw and not r.get("concurrent"):
                 r["rawread"] = {k: v for k, v in raw.items() if k != "times"}
-            decide(r, [t for t, x in r["tools"].items() if x.get("status") == "ok"], data["settings"]["runs"])
+            decide(r, [t for t, x in r["tools"].items() if x.get("status") == "ok"], r.get("runs", data["settings"]["runs"]), r.get("alpha", ALPHA))
             print(f"{r['id']}: {r['status']}", file=sys.stderr)
         json.dump(data, open(a.out, "w"), indent=1)
         return 0
@@ -911,6 +957,9 @@ def main() -> int:
         data["corpora"] = json.load(open(os.path.join(a.corpora, "manifest.json")))
         data["settings"] = {"runs": a.runs, "cache": a.cache, "cold_prepare": a.cold_prepare, "max_load": a.max_load, "warmup": 1,
                             "contender": a.contender, "blocks": a.blocks, "short_metric_runs": a.short_metric_runs}
+        if a.stop:
+            interim, last = stop_rule(a.blocks)
+            data["settings"]["stop"] = {"after_blocks": interim, "interim_alpha": INTERIM_ALPHA, "last_alpha": last}
     for b in benches:
         old = data["benchmarks"].get(b["id"])
         if a.only and not any(b["id"].startswith(p) for p in a.only):

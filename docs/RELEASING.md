@@ -75,6 +75,17 @@ cargo build --release -p scrutate --locked && sleep 3600 && bash bench/run_macos
   On some machines a process started under lldb hangs; the tool gives up on a search after a
   minute and says so: run it again. A stale file only costs pages at start, never the build.
 - A just-built executable starts about 0.2 ms slower than the same file an hour later. Wait.
+- `bench/leaderboard.py --stop-early` stops a row after its second block, at 20 runs, when its
+  wall-time verdict and its four CPU and memory verdicts (default and `-j1`) are all PASS, FAIL
+  or n/a at alpha 0.001 and no tool's block medians differ by more than 25%. Every other row
+  takes all 30 runs and is judged at alpha 0.049. This is the Haybittle-Peto boundary (Haybittle
+  1971, Peto et al. 1976), with the last look lowered so the alphas sum to 0.05 by Bonferroni
+  whatever the load did between blocks: a 99.9% or 95.1% interval that clears 1 meets a 95%
+  claim. Replayed over every recorded 30-run, 3-block file, it stopped 266 of 383 rows at 20 runs
+  and changed no verdict; a look after one block flipped 5, since one block has no interleaving.
+  The release chains do not pass it: R-14.10 in docs/TRACEABILITY.md defines a #1 over at least
+  30 runs per tool. `SCRUTATE_BASE_BIN` turns it off, because the regression gate's block ratio
+  needs every block of both binaries.
 - No `cargo test` or `cargo build` until the chain ends: both can replace the binary.
 - Do not edit `bench/run_macos.sh` while it runs: bash reads it as it goes.
 - Close the browser and the editor. With 18 GB the page cache cannot hold the LLVM tree beside

@@ -167,14 +167,14 @@ def walltime(warm: dict, compare: dict, W=G.W) -> str:
             x = r["tools"][t]
             assert x.get("status") == "ok", (bid, t)
             n = x.get("n", 0)
-            pairs.append((t, x["median"], f"{ms(x['median'])} ms" + (f" ({n} runs)" if n and n < runs else "")))
+            pairs.append((t, x["median"], f"{ms(x['median'])} ms" + (f" ({n} runs)" if n and n < r.get("runs", runs) else "")))
         if r.get("qtype") == "structural" and "--no-cache" not in r["tools"]["scrutate"].get("argv", ["--no-cache"]):
             title += ", capture cache"
-        row(title, f"ratio {r['ratio']:.3f}, 95% CI {r['ci95'][0]:.3f} to {r['ci95'][1]:.3f}, {r['status']}", pairs)
+        row(title, f"ratio {r['ratio']:.3f}, {(1 - r.get('alpha', 0.05)) * 100:g}% CI {r['ci95'][0]:.3f} to {r['ci95'][1]:.3f}, {r['status']}", pairs)
     sha = env.get("scrutate_sha256", "")[:8]
     b.append(f'<path d="M{pad} {y} H{W - pad}" stroke="{c["rule"]}"/>')
     y = foot(b, y + 22, W, [f"{env['cpu']}, macOS, shared with other work, {env['date'][:10]}, binary {sha}, "
-                            f"{runs} runs, medians. docs/LEADERBOARD.md"], c["dim"]) - 6
+                            f"{'up to ' if warm['settings'].get('stop') else ''}{runs} runs, medians. docs/LEADERBOARD.md"], c["dim"]) - 6
     # start-up comes from another harness with another run count: its own block and its own source line
     st = {TOOL_LABEL.get(s["tool"], s["tool"]): s["startup_median_ms"] for s in compare["startup"] if "startup_median_ms" in s}
     other = min((t for t in st if t != "scrutate"), key=st.get)

@@ -64,6 +64,12 @@ STRUCTURAL_CACHED = ("scrutate's `tsquery` ran with its capture cache (`.scrutat
                      "runs read and hashed every file and parsed none, while ast-grep, with no cache, parses every file each run. "
                      "This measurement has no parse-for-parse run (`--no-cache`).")
 
+STOP_NOTE = ("- Stop rule (`leaderboard.py --stop-early`, the Haybittle-Peto boundary: Haybittle 1971, Peto et al. 1976): a row whose wall-time verdict and four CPU "
+             "and memory verdicts are all PASS, FAIL or n/a at alpha 0.001 after its second block, with no tool's block medians 25% "
+             "apart, stops there with 20 runs and shows its 99.9% interval. Every other row takes all its runs and is judged at "
+             "alpha 0.049, a 95.1% interval. The alphas sum to 0.05 (Bonferroni), so either interval clearing 1 meets the 95% claim "
+             "above, whatever the load did between the blocks.")
+
 # method notes the page states once, above the sections that use them
 LEGEND = ("- Engine A tables: medians in ms (runs in parentheses when fewer than the full count); `wrong` = answer differs from "
           "the reference (disqualified), `n/a` = the tool cannot express the query or filter, `timeout` = did not finish. The "
@@ -95,13 +101,19 @@ def metric_value(key, v):
     return "-" if v is None else f"{ms(v)} ms" if key == "cpu" else f"{v / 1e6:.1f} MB"
 
 
-def metric_cell(key, m):
+def level(r):
+    """The interval's level where the row's own alpha is not 0.05 (a row judged by the stop rule)."""
+    alpha = r.get("alpha", 0.05)
+    return "" if alpha == 0.05 else f" ({(1 - alpha) * 100:g}%)"
+
+
+def metric_cell(key, m, lvl=""):
     """One mode's verdict on one metric: median, ratio and interval, rank, status (with the gap on FAIL)."""
     if m["status"] == "n/a":
         return "n/a"
     parts = [metric_value(key, m.get("median"))] if m.get("median") is not None else []
     if "ratio" in m:
-        parts.append(f"{m['ratio']:.3f} [{m['ci95'][0]:.3f}, {m['ci95'][1]:.3f}]")
+        parts.append(f"{m['ratio']:.3f} [{m['ci95'][0]:.3f}, {m['ci95'][1]:.3f}]{lvl}")
     if m.get("rank"):
         parts.append(f"rank {m['rank']} of {m['of']}")
     st = m["status"]
@@ -137,8 +149,13 @@ def engine_a(data, label):
                + (f"; {env.get('perf_cores')} performance + {env.get('efficiency_cores')} efficiency cores" if env.get("perf_cores") else "")
                + f"), {mem:.0f} GB RAM; {env['platform']}")
     st = data["settings"]
-    out.append(f"- Method: hyperfine (`{env.get('hyperfine', '?')}`), output piped, {st['runs']} timed runs per tool in "
-               f"{st.get('blocks', 1)} interleaved blocks ({st['warmup']} warm-up run each), {st['cache']} cache"
+    stop = st.get("stop")
+    runs = (f"{st['runs']} timed runs per tool in {st.get('blocks', 1)} interleaved blocks" if not stop else
+            f"up to {st['runs']} timed runs per tool in up to {st['blocks']} interleaved blocks (a row stops after block "
+            f"{' or '.join(map(str, stop['after_blocks']))} once every verdict holds at alpha {stop['interim_alpha']:g}, else is judged "
+            f"at alpha {stop['last_alpha']:g}: see the stop rule above)")
+    out.append(f"- Method: hyperfine (`{env.get('hyperfine', '?')}`), output piped, {runs}"
+               f" ({st['warmup']} warm-up run each), {st['cache']} cache"
                + (f" (prepare: `{st['cold_prepare']}`)" if st.get("cold_prepare") else "")
                + f"; each block first waits (bounded) for a 1-minute load average below {st['max_load']:.0f}.")
     loads = [r.get("max_load", 0) for r in data["benchmarks"].values()]
@@ -169,11 +186,11 @@ def engine_a(data, label):
                 n = x.get("n", 0)
                 v = ms(x.get("median"))
                 cells.append(f"**{v}**" if t == r.get("best_competitor") or (t == "scrutate" and r["status"] == "PASS") else v)
-                if n and n < data["settings"]["runs"]:
+                if n and n < r.get("runs", data["settings"]["runs"]):
                     cells[-1] += f" ({n})"
         xi = r["tools"].get("scrutate --index", {})
         idx = ms(xi.get("median")) if xi.get("status") == "ok" else xi.get("status", "")
-        ratio = f"{r['ratio']:.3f} [{r['ci95'][0]:.3f}, {r['ci95'][1]:.3f}] vs {r['best_competitor']}" if "ratio" in r else r.get("why", "")
+        ratio = f"{r['ratio']:.3f} [{r['ci95'][0]:.3f}, {r['ci95'][1]:.3f}]{level(r)} vs {r['best_competitor']}" if "ratio" in r else r.get("why", "")
         cpus = data["environment"].get("cpus") or 1
         flag = f" (load {r.get('max_load', 0):.0f})" if r.get("max_load", 0) > cpus else ""
         first = r.get("first")
@@ -211,7 +228,7 @@ def engine_a(data, label):
         out.append("|---|---|---|---|---|---|---|")
         for bid, r in tested:
             m = r["metrics"]
-            cells = [metric_cell(key, m[key][mode]) for key in METRICS for mode in MODES]
+            cells = [metric_cell(key, m[key][mode], level(r)) for key in METRICS for mode in MODES]
             for key in METRICS:
                 lead = m[key]["default"].get("best_competitor") or m[key]["-j1"].get("best_competitor")
                 med = r["tools"].get(lead, {}).get({"cpu": "cpu_median", "rss": "rss_median"}[key]) if lead else None
@@ -314,12 +331,15 @@ def main() -> int:
     ap.add_argument("--indexed", action="append", default=[])
     ap.add_argument("--out", default=os.path.join(os.path.dirname(__file__), "..", "docs", "LEADERBOARD.md"))
     a = ap.parse_args()
+    datas = [json.load(open(p)) for p in a.engine_a]
+    fewest = min((r.get("runs", d["settings"]["runs"]) for d in datas for r in d["benchmarks"].values()), default=30)
     lines = [DOC_HEAD,
              "Generated by `bench/make_leaderboard_md.py` from the raw results in `bench/results/`; nothing is typed by hand. "
              "A benchmark is **PASS** only when the 95% confidence interval of median(scrutate) / median(best competitor), bootstrapped over at "
-             "least 30 runs of each, lies wholly below 1; **FAIL** when above 1; **PARTIAL** when it contains 1; **BLOCKED** for a tie "
+             f"least {fewest} runs of each, lies wholly below 1; **FAIL** when above 1; **PARTIAL** when it contains 1; **BLOCKED** for a tie "
              "at the hardware limit (both within 15% of the time to read the same files). \"Fastest\" claims apply only to PASS rows.", ""]
-    datas = [json.load(open(p)) for p in a.engine_a]
+    if any(d["settings"].get("stop") for d in datas):
+        lines.append(STOP_NOTE)
     lines += [
         "- Every machine was shared with other work, so no result is a publishable #1 claim (section 14 requires dedicated idle "
         "hardware); a row whose load exceeded the CPU count shows it in the status column.",
