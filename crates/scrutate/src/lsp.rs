@@ -320,6 +320,9 @@ struct Server {
     saves: Option<mpsc::Sender<()>>,
     initialized: bool,
     shutdown: bool,
+    /// how long a request waits for the first build before it is answered that the index is
+    /// still being built (`session::BUILD_WAIT`)
+    build_wait: std::time::Duration,
 }
 
 type Reply = std::result::Result<Value, (i64, String)>;
@@ -478,10 +481,15 @@ impl Server {
             return Ok(Value::Null);
         }
         let session = self.session.clone();
+        let build_wait = self.build_wait;
         let run = |f: &mut dyn FnMut(&mut Searcher) -> Result<Value>| -> Reply {
             let session = session.as_ref().ok_or((-32603, "the index is not available (see the log)".to_string()))?;
             let never = Arc::new(AtomicBool::new(false));
-            session.wait_built(&never, None, |_| {});
+            // the one thread that reads requests must not wait out a long first build: a cancel,
+            // a change and shutdown come in behind it; ContentModified asks the editor to ask again
+            if !session.wait_built(&never, Some(build_wait), |_| {}) {
+                return Err((-32801, "the index is still being built".to_string()));
+            }
             // a damaged index is built again and the request answered from the new one
             session
                 .read(&never, true, |s| {
@@ -695,7 +703,16 @@ pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
     if cfg!(target_os = "wasi") {
         bail!("lsp is not in the wasi build: it needs threads");
     }
-    let mut srv = Server { root: root.to_path_buf(), root_given, session: None, docs: HashMap::new(), saves: None, initialized: false, shutdown: false };
+    let mut srv = Server {
+        root: root.to_path_buf(),
+        root_given,
+        session: None,
+        docs: HashMap::new(),
+        saves: None,
+        initialized: false,
+        shutdown: false,
+        build_wait: crate::session::BUILD_WAIT,
+    };
     let mut input = std::io::stdin().lock();
     while let Some(body) = read_message(&mut input)? {
         let msg: Value = match serde_json::from_slice(&body) {
@@ -731,6 +748,34 @@ pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_request_during_the_first_build_is_answered_once_the_wait_runs_out() {
+        let root = std::env::temp_dir().join(format!("scrutate_lsp_building_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+        let session = Arc::new(Session::open(&root, crate::session::Every::given(None)).unwrap());
+        // a first build is running and does not end
+        session.building();
+        let mut srv = Server {
+            root: root.clone(),
+            root_given: true,
+            session: Some(session),
+            docs: HashMap::new(),
+            saves: None,
+            initialized: true,
+            shutdown: false,
+            build_wait: std::time::Duration::from_millis(300),
+        };
+        let t0 = std::time::Instant::now();
+        let r = srv.request("workspace/symbol", &serde_json::json!({"query": "alpha"}));
+        assert!(t0.elapsed() < std::time::Duration::from_secs(5), "{:?}", t0.elapsed());
+        assert_eq!(r.map_err(|e| e.0), Err(-32801));
+        // shutdown is answered at once whatever the build does
+        assert!(srv.request("shutdown", &Value::Null).is_ok());
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[cfg(unix)]
     #[test]

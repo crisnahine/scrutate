@@ -861,7 +861,9 @@ text, so an unsaved line still finds the word under the cursor; locations in oth
 from disk. `didSave` updates the index incrementally in a background thread, so requests keep
 being answered; before a request the index is scanned for changes at most once a second. With no
 index, `initialize` builds one (as `scrutate index` does, without the text index) and reports it
-with `window/logMessage`; requests that arrive meanwhile wait for it. Columns are UTF-16 code
+with `window/logMessage`; a request that arrives meanwhile waits for it up to 20 seconds, then
+is answered with error -32801 (ContentModified), "the index is still being built", which asks the
+editor to ask again, and `shutdown` and cancellations are read meanwhile. Columns are UTF-16 code
 units, as the protocol requires. The exit code is 0 after `shutdown` then `exit`, 1 otherwise.
 Logs go to stderr.
 
