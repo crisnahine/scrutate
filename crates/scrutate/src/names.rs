@@ -75,7 +75,7 @@ impl<'a> Names<'a> {
         let mut q = crate::instant::Query { want_spans: true, ..crate::resolve::name_search(bare, max_results) };
         // a name defined in a language that ignores case is looked for in any case, and kept in
         // another case only in a file of such a language
-        let any_case = bare.is_ascii() && s.ix.named_any_case(bare)?.iter().any(|d| self.langs.folds(&d.path, &d.kind, &d.qualname));
+        let any_case = bare.is_ascii() && s.ix.named_any_case(bare)?.iter().any(|d| self.langs.folds(&d.path, &d.kind));
         if any_case {
             q.pattern.case = crate::instant::Case::Insensitive;
         }
@@ -98,7 +98,7 @@ impl<'a> Names<'a> {
         truncated |= total as u64 > max_results;
         for h in hits {
             let line_text: std::sync::Arc<str> = h.text.trim_end_matches(['\n', '\r']).into();
-            let folds = !any_case || self.langs.folds(&h.path, "function", "");
+            let folds = !any_case || self.langs.folds(&h.path, "function");
             let spans = h.spans.iter().filter(|&&(a, b)| folds || h.text.get(a..b) == Some(bare.as_str()));
             for &(a, b) in spans.take(max_results.saturating_sub(occurrences.len() as u64) as usize) {
                 let ((da, db), col) = self.rv.decoded_span(&h.path, h.line, (a, b));
@@ -199,7 +199,7 @@ impl<'a> Names<'a> {
         let ident = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
         let methods = crate::resolve::methods_only(self.langs.id(path));
         // ASCII lowercase keeps every byte where it is, so the columns hold
-        let any_case = self.langs.folds(path, "function", "") && name.is_ascii();
+        let any_case = self.langs.folds(path, "function") && name.is_ascii();
         let wanted = if any_case { name.to_ascii_lowercase() } else { name.to_string() };
         let mut uses = Uses { got: HashSet::new(), dispatched: HashSet::new(), unsure: true, unsure_free: true, own_file: false };
         let (mut unsure, mut unsure_free, mut seen, mut elsewhere) = (false, false, false, false);
@@ -287,13 +287,13 @@ impl<'a> Names<'a> {
             let rivals = rows.iter().any(|r| !ids.contains(&r.id) && fits(&r.path));
             let mut sites = s.ix.callers_of(n)?;
             // a call in a language that ignores case may spell the name in another case
-            if targets.iter().any(|t| t.name == n && langs.folds(&t.path, &t.kind, &t.qualname)) {
+            if targets.iter().any(|t| t.name == n && langs.folds(&t.path, &t.kind)) {
                 if self.callee_cases.is_none() {
                     self.callee_cases = Some(s.ix.callees_by_lowercase()?);
                 }
                 let spellings = self.callee_cases.as_ref().and_then(|m| m.get(&n.to_ascii_lowercase())).cloned().unwrap_or_default();
                 for other in spellings.into_iter().filter(|c| c != n) {
-                    sites.extend(s.ix.callers_of(&other)?.into_iter().filter(|r| langs.folds(&r.path, "function", "")));
+                    sites.extend(s.ix.callers_of(&other)?.into_iter().filter(|r| langs.folds(&r.path, "function")));
                 }
             }
             sites.retain(|r| fits(&r.path) && seen.insert(r.id));
@@ -458,8 +458,8 @@ impl<'a> Names<'a> {
         for n in s.ix.callees_of(d.id)? {
             let mut rows: Vec<ChunkRow> = s.ix.named_of_kinds(&n, &kinds)?.into_iter().filter(|r| callable(&d.path, r)).collect();
             // a call in a language that ignores case reaches a definition so named in any case
-            if langs.folds(&d.path, "function", "") {
-                let other_case = |r: &ChunkRow| r.name != n && langs.folds(&r.path, &r.kind, &r.qualname);
+            if langs.folds(&d.path, "function") {
+                let other_case = |r: &ChunkRow| r.name != n && langs.folds(&r.path, &r.kind);
                 rows.extend(s.ix.named_of_kinds_any_case(&n, &kinds)?.into_iter().filter(|r| other_case(r) && callable(&d.path, r)));
             }
             // an import alias names what it imports: `h` of `from util import helper as h`
@@ -894,8 +894,8 @@ impl Langs<'_> {
     }
 
     /// Whether a definition of `path` is named in any case (`langs::ignores_case`).
-    fn folds(&self, path: &str, kind: &str, qualname: &str) -> bool {
-        crate::langs::ignores_case(self.id(path), kind, qualname)
+    fn folds(&self, path: &str, kind: &str) -> bool {
+        crate::langs::ignores_case(self.id(path), kind)
     }
 
     /// A file of no known language may call or be called by any.

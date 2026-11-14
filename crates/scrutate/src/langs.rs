@@ -2325,7 +2325,7 @@ pub fn sniff(path: &str, source: &str) -> Option<&'static LangSpec> {
 
 /// Whether a definition in language `lang` is named in any case: Fortran, Pascal and Ada names,
 /// and PHP functions, methods, classes, interfaces, traits and enums (not constants or properties).
-pub fn ignores_case(lang: Option<&str>, kind: &str, _qualname: &str) -> bool {
+pub fn ignores_case(lang: Option<&str>, kind: &str) -> bool {
     match lang {
         Some("fortran" | "pascal" | "ada") => true,
         Some("php") => matches!(kind, "function" | "method" | "class" | "interface" | "trait" | "enum"),

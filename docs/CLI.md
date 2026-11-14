@@ -464,7 +464,7 @@ PHP has rules of its own too:
   type, a dynamic name (`$o->$m()`).
 - Properties and class constants are `field or key`, a bare constant is `constant`, a part of a
   namespace is `namespace`. Class, interface, trait, enum, function, method, namespace and `use`
-  alias names compare in any case, as PHP compares them (`s::SLUG()` after `use App\Util\Str as
+  alias names, and `self`, `static` and `parent`, compare in any case, as PHP compares them (`s::SLUG()` after `use App\Util\Str as
   S` is `Str::slug`); variables, properties and constants compare as written.
 
 C and C++ have rules of their own:

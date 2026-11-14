@@ -220,3 +220,11 @@ fn a_call_on_a_static_property_goes_through_the_property_type() {
     assert_eq!(r.resolved("save"), expect(&[("a.php", 5, "a.php"), ("a.php", 8, "a.php")]));
     assert_eq!(r.resolved("current"), expect(&[("a.php", 4, "field or key"), ("a.php", 8, "field or key")]));
 }
+
+#[test]
+fn self_static_and_parent_match_in_any_case() {
+    let a = "<?php\nclass Base\n{\n    public static function make() { return 1; }\n}\nclass Kid extends Base\n{\n    public static function build() { return 2; }\n    public static function run()\n    {\n        return SELF::build() + Static::build() + PARENT::make();\n    }\n}\n";
+    let r = Repo::new("keyword_case", &[("a.php", a)]);
+    assert_eq!(r.resolved("build"), expect(&[("a.php", 8, "a.php"), ("a.php", 11, "a.php")]));
+    assert_eq!(r.resolved("make"), expect(&[("a.php", 4, "a.php"), ("a.php", 11, "a.php")]));
+}

@@ -228,7 +228,8 @@ impl Resolver<'_> {
     /// `S::name(..)`: a method of the class `S` names, of the class around for `self` and
     /// `static`, of its parent for `parent`, or of the class of the value `S` is.
     fn php_static_call(&mut self, fi: &FileInfo, scope: Node, name: &str) -> Resolution {
-        match text(scope, &fi.src).trim() {
+        // `self`, `static` and `parent` are keywords, in any case
+        match text(scope, &fi.src).trim().to_ascii_lowercase().as_str() {
             "parent" => {
                 let c = self.php_around(fi, scope)?;
                 let base = self.php_parent(c)?;
@@ -280,7 +281,7 @@ impl Resolver<'_> {
     /// The class a name written at `n` stands for (`User`, `\App\User`, `self`, `parent`).
     fn php_type(&mut self, fi: &FileInfo, n: Node) -> std::result::Result<i64, &'static str> {
         let written = text(n, &fi.src).trim();
-        match written {
+        match written.to_ascii_lowercase().as_str() {
             "self" | "static" => return self.php_around(fi, n),
             "parent" => {
                 let c = self.php_around(fi, n)?;
@@ -341,7 +342,7 @@ impl Resolver<'_> {
         let mut cur = node.walk();
         let base = node.named_children(&mut cur).find(|n| n.kind() == "base_clause").and_then(|b| b.named_child(0)).ok_or("not found")?;
         // `extends parent` would name this class's parent again
-        if matches!(text(base, &fi.src), "self" | "static" | "parent") {
+        if matches!(text(base, &fi.src).to_ascii_lowercase().as_str(), "self" | "static" | "parent") {
             return Err("not found");
         }
         self.php_type(&fi, base)
@@ -458,7 +459,7 @@ impl Resolver<'_> {
         match t.kind() {
             "named_type" | "optional_type" => self.php_hint(fi, t.named_child(0).ok_or("receiver")?),
             "name" | "qualified_name" | "relative_name" => self.php_type(fi, t),
-            _ if matches!(text(t, &fi.src).trim(), "self" | "static") => self.php_around(fi, t),
+            _ if matches!(text(t, &fi.src).trim().to_ascii_lowercase().as_str(), "self" | "static") => self.php_around(fi, t),
             _ => Err("receiver"),
         }
     }

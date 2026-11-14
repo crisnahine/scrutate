@@ -80,7 +80,7 @@ pub(crate) fn candidates(ix: &crate::index::Index, under: Option<&str>) -> anyho
     let mut lang_of: HashMap<&str, Option<&'static str>> = HashMap::new();
     for (s, &id) in wanted.iter().zip(&id_of).filter(|(s, _)| s.name.is_ascii()) {
         let lang = *lang_of.entry(s.path.as_str()).or_insert_with(|| crate::langs::detect_at(root, &s.path).map(|l| l.id));
-        if !crate::langs::ignores_case(lang, &s.kind, &s.qualname) {
+        if !crate::langs::ignores_case(lang, &s.kind) {
             continue;
         }
         let ids = folded.entry(looked_for(&s.name).0.to_ascii_lowercase()).or_default();
@@ -455,7 +455,7 @@ fn registered(f: &Facts, d: &Symbol) -> bool {
 
 fn rule(path: &str, f: &Facts, d: &Symbol, parent: Option<&Symbol>) -> Rule {
     let name = d.name.as_str();
-    let main = if crate::langs::ignores_case(Some(f.lang), &d.kind, &d.qualname) { name.eq_ignore_ascii_case("main") } else { name == "main" };
+    let main = if crate::langs::ignores_case(Some(f.lang), &d.kind) { name.eq_ignore_ascii_case("main") } else { name == "main" };
     if crate::text::is_test_path(path) || main {
         return Rule::Entry;
     }
