@@ -1000,7 +1000,9 @@ impl Here {
     /// given (a path from the root, as answers print it, or a module name).
     fn path(&self, arg: &str) -> String {
         match self.named(arg) {
-            Named::Root(r) if !r.is_empty() => r,
+            // the root itself (`..` from a directory below it)
+            Named::Root(r) if r.is_empty() => ".".to_string(),
+            Named::Root(r) => r,
             _ => arg.to_string(),
         }
     }

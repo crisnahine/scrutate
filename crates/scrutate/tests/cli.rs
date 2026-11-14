@@ -2726,3 +2726,20 @@ fn a_path_that_leaves_the_repository_and_comes_back_names_its_file() {
     assert_eq!(code, 0, "{out}{err}");
     assert!(out.contains("function  used") && out.contains("function  dead_one"), "{out}");
 }
+
+/// `..` from a directory below the root names the root, for `dead` and `map` as for the other
+/// commands that take a path.
+#[test]
+fn a_path_naming_the_root_from_below_it_is_the_whole_repository() {
+    let r = Repo::new("root_from_below");
+    fs::create_dir_all(r.root.join(".git")).unwrap();
+    r.write("pkg/a.py", b"def used():\n    return 1\n\ndef dead_one():\n    return used()\n");
+    r.write("b.py", b"from pkg.a import used\n\nused()\n");
+    assert_eq!(r.run(&["index"]).0, 0);
+    for cmd in ["dead", "map"] {
+        let (code, whole, err) = r.run(&[cmd]);
+        assert_eq!(code, 0, "{cmd}: {err}");
+        let (code, out, err) = run_in(&r.root.join("pkg"), &[cmd, ".."], &[]);
+        assert_eq!((code, out), (0, whole), "{cmd} ..: {err}");
+    }
+}

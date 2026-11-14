@@ -161,6 +161,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- A path that names the repository's root from a directory below it (`dead ..`, `map ..` from
+  `repo/pkg`) is the whole repository: it was an error, "no such file or directory in the
+  repository" ([CLI](docs/CLI.md#engine-b)).
 - `grep -c -U` counts as ripgrep does when a match ends at the end of its lines (`b|\n$`,
   `a|b\n\B`, `-w a|b\n`): `$`, `\B` and word edges saw the end of the matched lines as the end
   of the text, and counted a match too many ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
