@@ -44,6 +44,21 @@ def test_grep_streams_and_matches_cli(repo):
         assert cli == got
 
 
+
+def test_grep_types_are_the_custom_languages_of_the_index_it_starts_in(tmp_path, monkeypatch):
+    # another Repo of the process loaded its own tables last: a custom -t still names this tree's
+    a, b = tmp_path / "a", tmp_path / "b"
+    for d in (a, b):
+        (d / ".git").mkdir(parents=True)
+    (a / ".scrutate.toml").write_text('[[language]]\nname = "onlya"\nextensions = ["oa"]\n')
+    (a / "x.oa").write_text("needle\n")
+    (a / "y.txt").write_text("needle\n")
+    (b / "z.py").write_text("x = 1\n")
+    scrutate.Repo(str(b)).symbol("x")
+    monkeypatch.chdir(a)
+    found = [m.path for m in scrutate.grep("needle", ["."], types=["onlya"])]
+    assert len(found) == 1 and found[0].endswith("x.oa"), found
+
 def test_grep_modes_and_errors(repo):
     assert len(list(scrutate.grep(r"def make_widget_\d+", [str(repo)]))) == 20
     # identifier mode: one spelling finds every casing of the whole identifier (def + call in m3.py)

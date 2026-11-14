@@ -182,9 +182,10 @@ incompatible index by itself, and that is never breaking.
   as `o.Tidy`) and of a Ruby writer (`def label=`, used as `v.label = "x"`) by its own name: both
   were called dead while code used them. A method's declaration in its class and its body no
   longer count as uses of each other ([CLI](docs/CLI.md#engine-b)).
-- Two `Repo`s of the Python module with different custom languages, updated side by side, each
-  parse under their own root's tables: an update could parse with the other root's and keep
-  those chunks ([CLI](docs/CLI.md#custom-languages)).
+- Two `Repo`s of the Python module with different custom languages each work under their own
+  root's tables: an update, a tool call (`impact` parses files itself) and `grep(types=)` could use
+  the tables another `Repo` loaded last, keep chunks parsed with them or call a custom type
+  unknown ([CLI](docs/CLI.md#custom-languages)).
 - `grep -t cpp` takes `.h` files, as ripgrep's `cpp` type does, `-t objc` takes `.h` and `.m`, and `-t matlab` and
   `-t puppet` find `.m` and `.pp` files, where they found none: a type now includes the extensions its language shares with another and is told apart in by
   content ([CLI](docs/CLI.md#engine-a-grep-alias-g)).

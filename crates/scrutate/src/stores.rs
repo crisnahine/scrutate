@@ -160,6 +160,8 @@ pub struct Repo {
     models: Arc<ModelSet>,
     /// held by every write this repository makes; shared with the ones `another` opened
     writer: Arc<Mutex<()>>,
+    /// the custom languages of `root` as its last operation read them
+    customs: Option<Arc<crate::custom::Customs>>,
 }
 
 /// The writer lock, also after a panic in a write that held it: the stores commit whole or not at all.
@@ -175,7 +177,7 @@ impl Repo {
 
     fn around(searcher: Searcher, writer: Arc<Mutex<()>>) -> Repo {
         let (root, models) = (searcher.ix.root.clone(), Arc::clone(&searcher.ix.models));
-        Repo { root, searcher: Some(searcher), stale: false, updated: false, models, writer }
+        Repo { root, searcher: Some(searcher), stale: false, updated: false, models, writer, customs: None }
     }
 
     /// Another open repository on the same index, to read beside this one: a connection of its
@@ -353,6 +355,14 @@ impl Repo {
     /// waits for the next scan. A damaged database is rebuilt and the operation run again. A
     /// `reindex` brings every store up to date (`Writer::Reindex`).
     pub fn run_as_is(&mut self, op: &ops::Op) -> Result<ops::Answer> {
+        // under this repository's custom languages, whichever another one in the process loaded
+        // last (`impact` parses files itself)
+        let customs = crate::custom::of_root(&self.root, self.customs.as_ref())?;
+        self.customs = Some(Arc::clone(&customs));
+        crate::custom::with(&customs, || self.run_scoped(op))
+    }
+
+    fn run_scoped(&mut self, op: &ops::Op) -> Result<ops::Answer> {
         if let ops::Op::Reindex { force } = op {
             let up = self.update_stores(Writer::Reindex, &Changes::All, *force)?;
             return Ok(ops::Answer::Reindexed(up.code.unwrap_or_default()));
@@ -566,7 +576,8 @@ mod tests {
     fn a_rebuild_that_could_not_reopen_the_index_is_an_error_until_it_can() {
         let root = std::env::temp_dir().join(format!("scrutate_reopen_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        let mut repo = Repo { searcher: None, root: root.clone(), stale: false, updated: false, models: ModelSet::from_env(), writer: Arc::default() };
+        let mut repo =
+            Repo { searcher: None, root: root.clone(), stale: false, updated: false, models: ModelSet::from_env(), writer: Arc::default(), customs: None };
         let op = ops::Op::Symbol { name: "f".into(), limit: 5 };
         repo.set_cancel(Arc::default());
         assert!(repo.update(false).is_err());

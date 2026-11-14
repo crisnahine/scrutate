@@ -61,6 +61,12 @@ pub struct Customs {
     files: Vec<(PathBuf, String)>,
 }
 
+impl std::fmt::Debug for Customs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.langs.iter().map(|l| &l.id)).finish()
+    }
+}
+
 impl Customs {
     /// The custom language whose extension `path` ends with (the longest one).
     pub fn for_path(&self, path: &str) -> Option<&Lang> {
@@ -132,6 +138,20 @@ fn user_file() -> Option<PathBuf> {
 
 /// Reads the tables that apply to `root`, checks them, and makes them `current`.
 pub fn load(root: &Path) -> Result<Arc<Customs>> {
+    let c = of_root(root, None)?;
+    *CURRENT.write().unwrap_or_else(|p| p.into_inner()) = Arc::clone(&c);
+    Ok(c)
+}
+
+/// The tables of the index a search started in `dir` uses (the one above it, else `dir`'s own), as
+/// the command line reads them; `current` is left alone.
+pub fn for_search(dir: &Path) -> Result<Arc<Customs>> {
+    of_root(&crate::cli::index_above(dir).unwrap_or_else(|| dir.to_path_buf()), None)
+}
+
+/// The tables that apply to `root`, checked, with `current` left alone: `known` (or `current`)
+/// when its texts are the ones found, so an unchanged table is not compiled again.
+pub fn of_root(root: &Path, known: Option<&Arc<Customs>>) -> Result<Arc<Customs>> {
     let own = root.join(".scrutate.toml");
     let mut files: Vec<(PathBuf, String)> = Vec::new();
     if let Some(text) = crate::files::root_config_text(root) {
@@ -142,6 +162,9 @@ pub fn load(root: &Path) -> Result<Arc<Customs>> {
         if let (false, Ok(text)) = (same, std::fs::read_to_string(&user)) {
             files.push((user, text));
         }
+    }
+    if let Some(k) = known.filter(|k| k.files == files) {
+        return Ok(Arc::clone(k));
     }
     let cur = current();
     if cur.files == files {
@@ -164,9 +187,7 @@ pub fn load(root: &Path) -> Result<Arc<Customs>> {
             langs.push(lang);
         }
     }
-    let c = Arc::new(Customs { langs, files });
-    *CURRENT.write().unwrap_or_else(|p| p.into_inner()) = Arc::clone(&c);
-    Ok(c)
+    Ok(Arc::new(Customs { langs, files }))
 }
 
 /// The first line of a regex error that says what is wrong.

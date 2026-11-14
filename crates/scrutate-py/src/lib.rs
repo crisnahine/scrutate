@@ -302,7 +302,7 @@ fn grep(
     let Some(first) = roots.first().cloned() else {
         return Err(PyValueError::new_err("no paths to search"));
     };
-    let f = Files {
+    let mut f = Files {
         hidden,
         no_ignore,
         follow_links,
@@ -313,6 +313,15 @@ fn grep(
         threads,
         ..Files::walk(roots)
     };
+    // a custom type is the one of the index this search starts in, as on the command line,
+    // whichever Repo of the process loaded its tables last
+    if !f.types.is_empty() {
+        let here = std::env::current_dir().map_err(|e| PyValueError::new_err(e.to_string()))?;
+        f.customs = Some(
+            scrutate::custom::for_search(&here)
+                .map_err(|e| PyValueError::new_err(format!("{e:#}")))?,
+        );
+    }
     instant::overrides(&first, &f).map_err(|e| PyValueError::new_err(format!("{e:#}")))?;
     // an unknown type is the call's error, not the first next()'s
     instant::file_types(&f).map_err(|e| PyValueError::new_err(format!("{e:#}")))?;
@@ -781,8 +790,9 @@ fn version() -> &'static str {
 ///   reader of its own, and its writes one at a time;
 /// * `GrepIter` methods take `&mut self`: PyO3's borrow checker rejects concurrent mutable access
 ///   with an exception instead of racing; the channel receiver is additionally behind a `Mutex`;
-/// * the module holds no other global mutable state; the crate's custom language tables are the
-///   last root's for a type's globs, and each index update parses under its own root's.
+/// * the module holds no other global mutable state; the crate's custom language tables are
+///   read per use: each `Repo` call and index update under its own root's, and `grep(types=)`
+///   under those of the index the current directory is in, as on the command line.
 #[pymodule(gil_used = false)]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Match>()?;

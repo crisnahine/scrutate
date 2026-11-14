@@ -206,6 +206,9 @@ pub struct Files {
     /// files at least this large are searched as several ranges of whole lines at once (an eighth of
     /// it each): one huge file would otherwise keep a single core busy while the others idle
     pub split_file_bytes: u64,
+    /// the custom languages `-t` names, when not those `custom::current` gives (a caller that
+    /// searches for one repository among several in the process)
+    pub customs: Option<Arc<crate::custom::Customs>>,
 }
 
 impl Default for Files {
@@ -226,6 +229,7 @@ impl Default for Files {
             threads: 0,
             small_tree: None,
             split_file_bytes: 64 << 20,
+            customs: None,
         }
     }
 }
@@ -1903,7 +1907,11 @@ pub fn file_types(f: &Files) -> Result<ignore::types::Types> {
         };
         // the builder takes only alphanumeric names, and a registry id may hold `_`
         let key = format!("t{i}");
-        for g in type_globs(name).ok_or_else(|| anyhow!("unknown file type {name:?} (see --type-list)"))? {
+        let globs = match &f.customs {
+            Some(c) => builtin_type_globs(name).or_else(|| c.by_id(name).map(|l| l.exts.iter().map(|e| format!("*{e}")).collect())),
+            None => type_globs(name),
+        };
+        for g in globs.ok_or_else(|| anyhow!("unknown file type {name:?} (see --type-list)"))? {
             tb.add(&key, &g)?;
         }
         if neg {
