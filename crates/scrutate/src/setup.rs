@@ -555,16 +555,17 @@ fn block_entry(path: &Path, o: Options) -> Result<Vec<Step>> {
     );
     let before = read(path)?;
     let text = before.as_deref().unwrap_or("");
-    // a marker counts only as a whole line: a sentence quoting one is the user's text
+    // a marker counts only as a whole line, ended by LF or CRLF: a sentence quoting one is the user's text
+    let eol = |i: usize| if text[i..].starts_with("\r\n") { 2 } else { usize::from(text[i..].starts_with('\n')) };
     let line = |from: usize, m: &str| {
         text[from..]
             .match_indices(m)
             .map(|(i, _)| from + i)
-            .find(|&i| (i == 0 || text.as_bytes()[i - 1] == b'\n') && matches!(text.as_bytes().get(i + m.len()), None | Some(b'\n')))
+            .find(|&i| (i == 0 || text.as_bytes()[i - 1] == b'\n') && (i + m.len() == text.len() || eol(i + m.len()) > 0))
     };
     let found = match line(0, BEGIN) {
         Some(b) => match line(b, END) {
-            Some(e) => Some((b, e + END.len() + usize::from(text[e + END.len()..].starts_with('\n')))),
+            Some(e) => Some((b, e + END.len() + eol(e + END.len()))),
             None => bail!("{} has a {BEGIN} line with no {END} line: edit it by hand", path.display()),
         },
         None => None,
@@ -573,7 +574,7 @@ fn block_entry(path: &Path, o: Options) -> Result<Vec<Step>> {
         let Some((b, e)) = found else {
             return Ok(vec![Step::Note(format!("{} has no scrutate block", path.display()))]);
         };
-        let start = b.saturating_sub(usize::from(b > 0 && text.as_bytes()[b - 1] == b'\n'));
+        let start = if text[..b].ends_with("\r\n") { b - 2 } else { b.saturating_sub(usize::from(text[..b].ends_with('\n'))) };
         let after = format!("{}{}", &text[..start], &text[e..]);
         return Ok(vec![file_step(path, before.clone(), (!after.is_empty()).then_some(after), "removed the scrutate block from")]);
     }

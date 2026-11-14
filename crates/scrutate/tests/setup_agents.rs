@@ -360,6 +360,26 @@ fn a_marker_quoted_in_prose_is_not_the_block() {
     assert_eq!(fs::read_to_string(&claude_md).unwrap(), broken);
 }
 
+#[test]
+fn a_block_with_crlf_line_ends_is_the_block() {
+    let s = Scratch::new("markercrlf");
+    let claude_md = s.home.join(".claude/CLAUDE.md");
+    let before_md = "# Rules\r\n\r\nBe brief.\r\n";
+    s.write(&claude_md, before_md);
+    assert_eq!(s.setup(&["claude", "--instructions"]).0, 0);
+    // an editor or git's autocrlf turns every line end into CRLF
+    let crlf = fs::read_to_string(&claude_md).unwrap().replace("\r\n", "\n").replace('\n', "\r\n");
+    s.write(&claude_md, &crlf);
+    let (code, _, err) = s.setup(&["claude", "--instructions"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(fs::read_to_string(&claude_md).unwrap().matches("<!-- scrutate:begin -->").count(), 1, "one block");
+    let (code, _, err) = s.setup(&["claude", "--uninstall", "--instructions"]);
+    assert_eq!(code, 0, "{err}");
+    let after = fs::read_to_string(&claude_md).unwrap();
+    assert!(!after.contains("scrutate:"), "{after:?}");
+    assert!(after.starts_with(before_md.trim_end()), "{after:?}");
+}
+
 /// Sends `initialize` and `tools/list` to `argv` run in `dir` and returns the tool names.
 fn mcp_tools(argv: &[String], dir: &Path, s: &Scratch) -> Vec<String> {
     let mut child = s
