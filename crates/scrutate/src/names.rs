@@ -115,10 +115,16 @@ impl<'a> Names<'a> {
         let defs: Vec<Hit> = definitions.iter().map(|d| Hit::from_row(d, false)).collect();
         let langs = Langs { root: &s.ix.root, seen: Default::default() };
         importing.extend(self.aliases_of(&defs, &langs)?.into_iter().map(|(_, f)| f));
+        // `super()` in a JavaScript or TypeScript subclass constructor calls the class it extends
+        let def_ids: HashSet<i64> = definitions.iter().map(|d| d.id).collect();
+        let classes = definitions.iter().any(|d| d.kind == "class" && matches!(langs.id(&d.path), Some("javascript" | "typescript" | "tsx")));
         let ident = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
         for path in importing {
-            let aliases: Vec<(String, String, Vec<usize>)> = self.rv.alias_sites(&path).into_iter().filter(|(_, item, _)| item == bare).collect();
+            let mut aliases: Vec<(String, String, Vec<usize>)> = self.rv.alias_sites(&path).into_iter().filter(|(_, item, _)| item == bare).collect();
             let sites: HashSet<usize> = aliases.iter().flat_map(|(_, _, s)| s.iter().copied()).collect();
+            if classes {
+                aliases.push(("super".into(), bare.to_string(), Vec::new()));
+            }
             let fi = self.rv.file(&path);
             let mut line_start = 0;
             for (i, line) in fi.src.split_inclusive('\n').enumerate() {
@@ -133,6 +139,11 @@ impl<'a> Names<'a> {
                         // the alias spelled in a string or bound again locally is not a use
                         let resolution = self.rv.resolve_at(&path, i as u64 + 1, col, local);
                         if resolution.is_err() {
+                            continue;
+                        }
+                        // only a `super(..)` call names the class, and only one of these definitions
+                        let called = line[col + local.len()..].trim_start().starts_with('(');
+                        if local == "super" && !(called && matches!(resolution, Ok((id, _)) if def_ids.contains(&id))) {
                             continue;
                         }
                         let text = line.trim_end_matches('\r').into();

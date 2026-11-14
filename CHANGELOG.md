@@ -192,8 +192,8 @@ incompatible index by itself, and that is never breaking.
   `import m = require('./n')` bind their names to the module's definitions, where `refs` read
   them as local variables or receivers ([CLI](docs/CLI.md#engine-b)).
 - A JavaScript or TypeScript `super()` in a subclass constructor is a call of the base class:
-  `callers Base` and `impact` list `Kid.constructor`, and `callees Kid.constructor` gives `Base`
-  where it said `external: super` ([CLI](docs/CLI.md#engine-b)).
+  `callers Base` and `impact` list `Kid.constructor`, `refs Base` lists the `super()`, and
+  `callees Kid.constructor` gives `Base` where it said `external: super` ([CLI](docs/CLI.md#engine-b)).
 - A field of a Java anonymous class is what a use of its name inside the class reads, where a
   local of that name in the method around it hid the field and the field had no references
   ([CLI](docs/CLI.md#engine-b)).
