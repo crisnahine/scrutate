@@ -742,6 +742,12 @@ fn encode_postings(out: &mut Vec<u8>, list: &[(u32, u16)]) {
     }
 }
 
+/// The file at `path` flushed to disk, through a handle that may write: Windows flushes no other
+/// (FlushFileBuffers needs write access; Unix fsyncs a read-only one too).
+fn sync_file(path: &Path) -> std::io::Result<()> {
+    std::fs::OpenOptions::new().write(true).open(path)?.sync_all()
+}
+
 /// `bytes` as the file at `path`, on disk before this returns.
 fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let mut f = File::create(path)?;
@@ -1283,14 +1289,14 @@ fn update_with(root: &Path, force: bool, progress: bool, only: Option<&[String]>
         let p = dir.join(&s.name).join(&live_name);
         let tmp = p.with_extension("tmp");
         crate::index::write_new(&tmp, &s.live)?;
-        File::open(&tmp)?.sync_all()?;
+        sync_file(&tmp)?;
         crate::index::rename_settled(&tmp, &p)?;
         crate::index::sync_dir(&dir.join(&s.name))?;
     }
     let m = Manifest { format: FORMAT, generation, segments: segs.iter().map(|s| SegRef { name: s.name.clone(), live: live_name.clone() }).collect() };
     let tmp = dir.join("manifest.json.tmp");
     crate::index::write_new(&tmp, &serde_json::to_vec(&m)?)?;
-    File::open(&tmp)?.sync_all()?;
+    sync_file(&tmp)?;
     // every file the manifest names is on disk before it is: a power loss leaves the old one
     crate::index::sync_dir(&dir)?;
     crate::index::rename_settled(&tmp, &dir.join("manifest.json"))?;
