@@ -1024,7 +1024,7 @@ impl<'a> Resolver<'a> {
         if let Some(q) = qualifier(node) {
             return self.resolve_qualified(path, &fi, lang, q, node, name, line);
         }
-        if matches!(node.kind(), "property_identifier" | "field_identifier" | "shorthand_property_identifier") {
+        if matches!(node.kind(), "property_identifier" | "field_identifier") {
             return Err("field or key");
         }
         self.resolve_bare(path, &fi, lang, node, name, line)

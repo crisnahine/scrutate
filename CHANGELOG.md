@@ -169,6 +169,8 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `refs` ties a JavaScript or TypeScript shorthand property, the `helper` in `{ helper }` or
+  `module.exports = { helper }`, to the `helper` it reads, where it listed it as `field or key`.
 - A Rust path inside a macro's arguments resolves as the same path outside a macro: with `use
   other::work`, the `util::work()` in `println!("{}", util::work())` or `vec![util::work()]` was
   read as the bare `work` and tied to `other::work` ([CLI](docs/CLI.md#engine-b)).

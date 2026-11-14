@@ -213,6 +213,18 @@ fn rust_a_path_in_a_macro_argument_is_resolved_as_a_path() {
 }
 
 #[test]
+fn javascript_a_shorthand_property_is_a_use_of_the_name() {
+    let r = Repo::new(
+        "js_shorthand",
+        &[
+            ("lib.js", "export function helper() {\n  return 1;\n}\n"),
+            ("main.js", "import { helper } from './lib.js';\nconst table = { helper };\nconst other = { helper: 2 };\ntable.helper();\n"),
+        ],
+    );
+    assert_eq!(r.refs_of("helper", "lib.js:1"), ["lib.js:1", "main.js:1", "main.js:2"]);
+}
+
+#[test]
 fn go_two_areas() {
     let r = Repo::new(
         "go",
