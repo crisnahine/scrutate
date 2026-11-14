@@ -139,6 +139,8 @@ fn php_method_calls_follow_the_type_of_their_receiver() {
             (app, 20, circle),
             // a typed parameter
             (app, 21, shape),
+            // a call through a `use function` alias
+            (app, 22, helpers),
             // an unqualified call falls back to the global function
             (app, 23, global),
             (app, 24, square),
