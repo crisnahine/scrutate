@@ -158,6 +158,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- A Free Pascal unit in a `.pp` file that starts with compiler directives (`{$mode objfpc}{$H+}`,
+  the Lazarus default) is parsed as Pascal, not as one Puppet module; an index reads its files
+  again.
 - The resolver takes a file's language as the parser does, from its text where the extension is
   shared: an Objective-C `.h` header no longer goes through the C rules, which could not place its
   calls and left `dead` asking about them in place of a C file's call.

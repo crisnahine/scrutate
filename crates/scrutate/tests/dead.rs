@@ -381,3 +381,16 @@ fn an_objective_c_header_is_read_in_its_own_language() {
         assert!(!names(&v, group).contains(&"util.c helper".to_string()), "util.c helper is called from main.c: {v:#}");
     }
 }
+
+/// A Free Pascal unit starts with compiler directives (`{$mode objfpc}{$H+}`, the Lazarus default):
+/// their `$` is no Puppet variable, and the unit is parsed as Pascal.
+#[test]
+fn a_free_pascal_unit_with_directives_in_a_pp_file_is_pascal() {
+    let pp = "unit unit1;\n\n{$mode objfpc}{$H+}\n\ninterface\n\nfunction Add(a, b: Integer): Integer;\n\nimplementation\n\nfunction Add(a, b: Integer): Integer;\nbegin\n  Result := a + b;\nend;\n\nend.\n";
+    let r = Repo::new("fpc_unit", &[("unit1.pp", pp), ("site.pp", "class site {\n  $port = 80\n}\n")]);
+    let (code, out) = r.run(&["outline", "unit1.pp"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.lines().any(|l| l.split_whitespace().eq(["11-14", "function", "Add"])), "{out}");
+    let (_, out) = r.run(&["outline", "site.pp"]);
+    assert!(out.contains("site") && !out.contains("function"), "Puppet stays Puppet: {out}");
+}

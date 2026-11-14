@@ -2230,6 +2230,10 @@ pub fn by_id(id: &str) -> Option<&'static LangSpec> {
     LANGS.iter().find(|s| s.id == id).copied()
 }
 
+/// The first statement of a Pascal unit, program or library: `unit unit1;`.
+static PASCAL_HEADER: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"(?im)^[ \t]*(?:unit|program|library)[ \t]+[\w.]+[ \t]*;").unwrap());
+
 /// Extensions shared by several languages are decided by looking at the text.
 /// Lines only C++ writes: what tells a C++ header named `.h` from a C one.
 static CPP_HEADER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
@@ -2294,7 +2298,10 @@ pub fn sniff(path: &str, source: &str) -> Option<&'static LangSpec> {
             return None;
         }
     } else if lower.ends_with(".pp") {
-        if ["procedure ", "function ", "begin", "end;", "unit ", "program "].iter().any(|k| source.contains(k)) && !head.contains("$") {
+        // a unit or program header is Pascal whatever directives follow (`{$mode objfpc}`); else
+        // a `$` is taken for a Puppet variable
+        let pascal_words = ["procedure ", "function ", "begin", "end;", "unit ", "program "].iter().any(|k| source.contains(k));
+        if PASCAL_HEADER.is_match(head) || (pascal_words && !head.contains("$")) {
             "pascal"
         } else {
             "puppet"
