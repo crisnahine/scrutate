@@ -31,7 +31,7 @@ def refs(result) -> set:
 class Cli(Adapter):
     name = "scrutate"
     form = "process"
-    workloads = frozenset({"W1", "W2", "W3", "W4", "W5", "W6", "W9"})
+    workloads = frozenset({"W1", "W2", "W3", "W4", "W5", "W6", "W8", "W9"})
 
     def __init__(self, binary: str | None = None):
         self.bin = os.path.abspath(binary or lb.SCRUTATE)
@@ -63,6 +63,9 @@ class Cli(Adapter):
             return lb.normalise(subprocess.run([self.bin, *cmd[1:]], cwd=self.corpus, capture_output=True, stdin=subprocess.DEVNULL).stdout, "scrutate")
         if workload == "W9":
             return {self.run(["--version"]).returncode}
+        if workload == "W8":
+            res = json.loads(self.run(["search", "-k", "10", "--json", query["query"]]).stdout)["result"]
+            return [(h["path"], h["start"], h["end"]) for h in res]
         kind = query.get("kind", "symbol")
         out = self.run([kind, "--json", query["name"]] + (["--limit", "500"] if kind != "refs" else []))
         result = json.loads(out.stdout)["result"] if out.stdout else []
@@ -74,7 +77,7 @@ class Mcp(Adapter):
 
     name = "scrutate-mcp"
     form = "resident"
-    workloads = frozenset({"W4", "W5", "W10"})
+    workloads = frozenset({"W4", "W5", "W8", "W10"})
     TOOL = {"symbol": "find_symbol", "refs": "references", "callers": "callers"}
 
     def __init__(self, binary: str | None = None):
@@ -123,6 +126,9 @@ class Mcp(Adapter):
         return r
 
     def ask(self, workload, query):
+        if workload == "W8":
+            res = self.call("search_code", {"query": query["query"], "k": 10})["structuredContent"]["result"]
+            return [(h["path"], h["start"], h["end"]) for h in res]
         kind = query.get("kind", "symbol")
         r = self.call(self.TOOL[kind], {"name": query["name"], **({"limit": 500} if kind != "refs" else {})})
         result = r["structuredContent"]["result"]

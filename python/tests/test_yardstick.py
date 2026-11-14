@@ -74,3 +74,20 @@ def test_answers_are_compared_as_the_query_says():
     assert Y.check("W4", {("a.py", "f"), ("b.py", "f")}, {"expect": [["a.py", "f"]]}) is None
     assert Y.check("W4", {("a.py", "f"), ("b.py", "f")}, {"expect": [["a.py", "f"]], "exact": True}).startswith("extra")
     assert Y.check("W4", set(), {"expect": [["a.py", "f"]]}).startswith("missing")
+
+
+class Ranked(Fake):
+    workloads = frozenset({"W8"})
+
+
+def test_a_semantic_tool_is_ranked_by_where_its_first_relevant_hit_falls():
+    q = {"id": "W8/1", "workload": "W8", "query": "make a point", "relevant": [["geo.py", 6, 7]]}
+    hit = [("other.py", 1, 3), ("geo.py", 7, 9)]  # the second hit overlaps the target's lines
+    miss = [("other.py", 1, 3)]
+    CALLS.clear()
+    out = Y.measure([Ranked("scrutate-mcp", [("geo.py", 6, 7)]), Ranked("finds it second", hit), Ranked("misses", miss)], [q], runs=2, warmup=0, corpus="/c", work="/w")
+    ranks = {r["tool"]: r["rank"] for r in out["rows"]}
+    assert ranks == {"scrutate-mcp": 1, "finds it second": 2, "misses": None}
+    assert all(r["status"] == "ok" and len(r["times"]) == 2 for r in out["rows"])
+    quality = Y.summary(out["rows"])["W8"]["quality"]
+    assert quality == {"scrutate-mcp": {"mrr10": 1.0, "hit5": 1.0}, "finds it second": {"mrr10": 0.5, "hit5": 1.0}, "misses": {"mrr10": 0.0, "hit5": 0.0}}

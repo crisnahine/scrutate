@@ -33,6 +33,15 @@ def check(workload: str, answer, query: dict) -> str | None:
     return None
 
 
+def rank_in(hits, relevant) -> int | None:
+    """1-based rank among the first ten of the first hit in a relevant file whose lines overlap a
+    relevant definition's, or None."""
+    for i, (path, start, end) in enumerate(list(hits)[:10], 1):
+        if any(path == p and start <= e and s <= end for p, s, e in relevant):
+            return i
+    return None
+
+
 def measure(adapters: list, queries: list[dict], runs: int, warmup: int, corpus: str, work: str) -> dict:
     """Check, then time, every adapter on every query of a workload it serves."""
     tools: dict = {}
@@ -66,7 +75,12 @@ def measure(adapters: list, queries: list[dict], runs: int, warmup: int, corpus:
                     row["status"] = f"error: {tools[a.name]['error']}"
                 else:
                     try:
-                        bad = check(w, a.ask(w, q), q)
+                        answer = a.ask(w, q)
+                        if w == "W8":
+                            # ranked, not right or wrong: the rank of the first relevant hit is the result
+                            row["rank"], bad = rank_in(answer, q["relevant"]), None
+                        else:
+                            bad = check(w, answer, q)
                         row["status"] = f"wrong: {bad}" if bad else "ok"
                     except Unsupported as e:
                         row["status"] = f"missing: {e}"
@@ -120,12 +134,19 @@ def summary(rows: list[dict]) -> dict:
         else:
             seen = sorted({f"{r['tool']} {r['status']}" for r in mine})
             out[w] = {"reason": "no rival answered right: " + ("; ".join(seen) if seen else "none adapted")}
+        if w == "W8":
+            import evalcore  # numpy: only a semantic run needs it
+
+            ranked = [r for r in rows if r["workload"] == w and r["status"] == "ok"]
+            out[w]["quality"] = {t: {"mrr10": round(s["MRR"], 4), "hit5": round(s["hit@5"], 4)}
+                                 for t in dict.fromkeys(r["tool"] for r in ranked)
+                                 for s in [evalcore.summarize([r["rank"] for r in ranked if r["tool"] == t])]}
     return out
 
 
 def adapters(binary: str | None = None) -> list:
     """Every adapter: scrutate's forms first, then the rivals (each says why when it cannot run)."""
-    from rivals import index, lsp, scrutate, text
+    from rivals import index, lsp, scrutate, semantic, text
     b = binary or lb.SCRUTATE
 
     def server(name, cmd, version, languages):
@@ -136,7 +157,7 @@ def adapters(binary: str | None = None) -> list:
     return [
         scrutate.Cli(b), scrutate.Mcp(b), scrutate.McpCold(b), lsp.Lsp("scrutate-lsp", [b, "lsp"], [b, "--version"], calls=False),
         *(text.Grep(t) for t in ("ripgrep", "ugrep", "GNU grep", "git grep")),
-        index.ZoektWeb(), index.LivegrepWeb(),
+        index.ZoektWeb(), index.LivegrepWeb(), semantic.Ck(), semantic.Grepai(), semantic.ClaudeContext(),
         text.Ctags(), text.AstGrep(), text.EmptyProgram(),
         server("rust-analyzer", ["rust-analyzer"], ["rust-analyzer", "--version"], {"rust"}),
         server("pyright", ["pyright-langserver", "--stdio"], ["pyright", "--version"], {"python"}),
@@ -145,11 +166,36 @@ def adapters(binary: str | None = None) -> list:
     ]
 
 
+def quality_queries(n: int, corpus: str, binary: str) -> list[dict]:
+    """`n` of bench/quality/queries.json (a fixed sample), each with the definitions it asks for
+    (path, start, end) as scrutate's index of the frozen corpus places them; a query whose target
+    the index does not hold is left out."""
+    import json
+    import random
+    import subprocess
+
+    import evalcore
+    import quality
+
+    with open(quality.QUERIES) as f:
+        qs = json.load(f)
+    out = []
+    for q in sorted(random.Random(9).sample(qs, min(n, len(qs))), key=qs.index):
+        look = q["qualname"] if q["match"] != "name" else q["name"]
+        res = json.loads(subprocess.run([binary, "--root", corpus, "symbol", "--json", "--limit", "500", look], capture_output=True, text=True).stdout or "{}")
+        spans = [[h["path"], h["start"], h["end"]] for h in res.get("result", [])
+                 if evalcore.is_relevant(q, h["path"], h["name"], h["name"].rsplit(".", 1)[-1], h["kind"])]
+        if spans:
+            out.append({"id": f"W8/{q['type']} {q['target_kind']}: {q['query'][:60]}", "workload": "W8", "query": q["query"], "relevant": spans})
+    return out
+
+
 def main() -> int:
     import argparse
     import json
     import os
     import shutil
+    import subprocess
     import sys
     import tempfile
 
@@ -163,16 +209,24 @@ def main() -> int:
     ap.add_argument("--runs", type=int, default=20)
     ap.add_argument("--warmup", type=int, default=2)
     ap.add_argument("--only", help="workloads, comma-separated (W3,W4)")
+    ap.add_argument("--quality", type=int, metavar="N", help="W8 alone: N of the QUALITY queries on the frozen corpus (bench/quality)")
     a = ap.parse_args()
     if a.smoke:
         a.queries, a.runs, a.warmup = os.path.join(here, "yardstick_smoke", "queries.json"), 3, 1
-    elif not (a.corpus and a.queries):
-        ap.error("give --corpus and --queries, or --smoke")
-    queries = json.load(open(a.queries))
+    elif not (a.corpus and a.queries) and not a.quality:
+        ap.error("give --corpus and --queries, --quality N, or --smoke")
+    queries = json.load(open(a.queries)) if a.queries else []
     if a.only:
         queries = [q for q in queries if q["workload"] in a.only.split(",")]
     with tempfile.TemporaryDirectory() as work:
         corpus = a.corpus
+        if a.quality:
+            import quality
+
+            corpus = os.path.join(work, "quality")
+            quality.extract(corpus)
+            subprocess.run([lb.SCRUTATE, "--root", corpus, "index", "--no-text"], capture_output=True, check=True)
+            queries = quality_queries(a.quality, corpus, lb.SCRUTATE)
         if a.smoke:
             # a copy: the tools write their indexes into the tree they search
             corpus = os.path.join(work, "tree")
