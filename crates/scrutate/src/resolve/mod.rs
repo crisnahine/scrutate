@@ -2124,8 +2124,9 @@ impl Resolver<'_> {
     /// function, block or comprehension that does not hold `node` does not.
     fn shadowed(&mut self, lang: Lang, node: Node, name: &str, src: &str) -> bool {
         // a JavaScript class expression binds its name inside the class only
-        if std::iter::successors(node.parent(), |n| n.parent())
-            .any(|c| c.kind() == "class" && c.child_by_field_name("name").is_some_and(|x| text(x, src) == name))
+        if lang == Lang::Js
+            && std::iter::successors(node.parent(), |n| n.parent())
+                .any(|c| c.kind() == "class" && c.child_by_field_name("name").is_some_and(|x| text(x, src) == name))
         {
             return true;
         }
