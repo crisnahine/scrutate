@@ -57,7 +57,7 @@ def measure(adapters: list, queries: list[dict], runs: int, warmup: int, corpus:
                 found, _ = lb.reference(corpus, lb.file_list(corpus, q.get("mode", "ignore")), q["grep"])
                 q = {**q, "expect": sorted(found), "exact": True}
             live = []
-            for a in (a for a in adapters if w in a.workloads):
+            for a in (a for a in adapters if w in a.workloads and (a.languages is None or q.get("language") in a.languages)):
                 row = {"workload": w, "query": q["id"], "tool": a.name, "form": a.form}
                 rows.append(row)
                 if tools[a.name]["missing"]:
@@ -125,9 +125,24 @@ def summary(rows: list[dict]) -> dict:
 
 def adapters(binary: str | None = None) -> list:
     """Every adapter: scrutate's forms first, then the rivals (each says why when it cannot run)."""
-    from rivals import lsp, scrutate
+    from rivals import index, lsp, scrutate, text
     b = binary or lb.SCRUTATE
-    return [scrutate.Cli(b), scrutate.Mcp(b), scrutate.McpCold(b), lsp.Lsp("scrutate-lsp", [b, "lsp"], [b, "--version"], calls=False)]
+
+    def server(name, cmd, version, languages):
+        s = lsp.Lsp(name, cmd, version)
+        s.languages = frozenset(languages)
+        return s
+
+    return [
+        scrutate.Cli(b), scrutate.Mcp(b), scrutate.McpCold(b), lsp.Lsp("scrutate-lsp", [b, "lsp"], [b, "--version"], calls=False),
+        *(text.Grep(t) for t in ("ripgrep", "ugrep", "GNU grep", "git grep")),
+        index.ZoektWeb(), index.LivegrepWeb(),
+        text.Ctags(), text.AstGrep(), text.EmptyProgram(),
+        server("rust-analyzer", ["rust-analyzer"], ["rust-analyzer", "--version"], {"rust"}),
+        server("pyright", ["pyright-langserver", "--stdio"], ["pyright", "--version"], {"python"}),
+        server("clangd", ["clangd"], ["clangd", "--version"], {"c", "cpp"}),
+        server("gopls", ["gopls"], ["gopls", "version"], {"go"}),
+    ]
 
 
 def main() -> int:

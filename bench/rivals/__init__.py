@@ -25,6 +25,8 @@ class Adapter:
     workloads: frozenset = frozenset()
     # "process" starts a program per request; "resident" asks a server that holds its index
     form = "process"
+    # the query languages it answers for (a language server); None for any
+    languages: frozenset | None = None
 
     def missing(self) -> str | None:
         """Why the tool cannot run here (no binary, no corpus, no API key); None when it can."""
