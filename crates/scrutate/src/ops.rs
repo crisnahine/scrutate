@@ -1338,8 +1338,10 @@ impl Parts {
         loop {
             let (out, shown, cut) = self.render(max_bytes, room, offset);
             if out.len() <= max_bytes || room == 0 || (shown <= 1 && !cut) {
+                // the concise text of the same items when it fits, else the detailed page, which
+                // says how to go on
                 let text = match &self.brief {
-                    Some(brief) if form == Form::Concise => self.render_brief(brief, max_bytes, offset, shown),
+                    Some(brief) if form == Form::Concise => Some(self.render_brief(brief, offset, shown)).filter(|b| b.len() <= max_bytes).unwrap_or(out),
                     _ => out,
                 };
                 return (text, shown);
@@ -1348,7 +1350,7 @@ impl Parts {
         }
     }
 
-    fn render_brief(&self, brief: &[Vec<Brief>], max_bytes: usize, offset: usize, count: usize) -> String {
+    fn render_brief(&self, brief: &[Vec<Brief>], offset: usize, count: usize) -> String {
         let mut out = self.head.clone();
         let mut page = Written::default();
         let lines: Vec<&Brief> = brief.iter().skip(offset).take(count).flatten().collect();
@@ -1359,15 +1361,6 @@ impl Parts {
         if let (false, Some((_, first, _))) = (any, &self.file) {
             let last = first + (offset + count) as i64 - 1;
             push_line(&mut out, &format!("(no definition starts in lines {}-{last}: response_format detailed shows them)", first + offset as i64));
-        }
-        if out.len() > max_bytes {
-            let mut at = max_bytes.saturating_sub(CUT_ITEM.len() + 1);
-            while !out.is_char_boundary(at) {
-                at -= 1;
-            }
-            out.truncate(at);
-            push_line(&mut out, CUT_ITEM);
-            return out;
         }
         self.close(&mut out, offset, count, self.brief_tail.as_deref().unwrap_or(&self.tail));
         out

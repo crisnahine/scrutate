@@ -161,6 +161,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- A concise tool answer too long for `max_bytes` is the detailed page, which says how to go on:
+  it was cut in the middle of an item and lost the line with the next offset, so items between
+  pages were never shown ([CLI](docs/CLI.md#serve-mcp)).
 - The language server counts columns as the editor does in a file with a byte order mark, so
   definition on its first line and its document symbols land on the name, and two definitions
   on one line are siblings in the document symbols, not one inside the other

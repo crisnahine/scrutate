@@ -1123,3 +1123,16 @@ fn paths_through_the_root_as_the_server_was_given_it_name_its_files() {
     drop(s);
     let _ = fs::remove_dir_all(&base);
 }
+
+/// A concise page that would pass max_bytes is the detailed page, which says how to go on: no
+/// item is cut and none is lost between pages.
+#[test]
+fn a_concise_page_too_long_for_max_bytes_still_says_how_to_go_on() {
+    let files: Vec<(String, String)> = (0..400).map(|i| (format!("d{i}/a.py"), format!("x{i} = 1\n"))).collect();
+    let refs: Vec<(&str, &str)> = files.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();
+    let mut r = Repo::new("concise_page", &refs);
+    let text = r.ok("find_files", json!({"query": "a.py", "limit": 400, "max_bytes": 1000, "response_format": "concise"}));
+    assert!(text.len() <= 1000, "{}", text.len());
+    assert!(!text.contains("this item is cut"), "{text}");
+    assert!(text.contains("call again with offset="), "{text}");
+}
