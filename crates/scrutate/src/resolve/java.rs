@@ -590,7 +590,8 @@ impl<'a> Resolver<'a> {
                     None => self.java_field_def(c, name, 0, &mut HashMap::new()).map(|f| (f, "field")).ok_or("field or key"),
                 }
             }
-            Ty::Foreign(t, _) if call && (self.extended(&t, name) || self.trait_member(name)) => Err("receiver"),
+            // a class this default-package file cannot see is from the classpath, whatever extends a namesake
+            Ty::Foreign(t, _) if call && !self.java_unseen(fi, &t) && (self.extended(&t, name) || self.trait_member(name)) => Err("receiver"),
             Ty::Foreign(..) => Err("external"),
         }
     }

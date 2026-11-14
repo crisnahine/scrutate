@@ -599,3 +599,19 @@ fn a_default_package_class_another_directory_holds_is_external_to_refs_and_calle
     assert_eq!(r.reasons("Util", "ex/c/Main.java"), ["3 external"]);
     assert!(r.names(&["callees", "Main.run", "--json"]).is_empty(), "callees by name fallback");
 }
+
+#[test]
+fn an_instance_call_on_a_default_package_class_another_directory_holds_is_external_to_all() {
+    let util = |n: u8| format!("public class Util {{\n    int inst() {{\n        return {n};\n    }}\n}}\n");
+    let (a, b) = (util(1), util(2));
+    let files = vec![
+        ("ex/a/Util.java".to_string(), a.as_str()),
+        ("ex/b/Util.java".to_string(), b.as_str()),
+        ("ex/c/Main.java".to_string(), "public class Main {\n    int run() {\n        return new Util().inst();\n    }\n}\n"),
+    ];
+    let r = Repo::with("default_pkg_instance", &files);
+    assert_eq!(r.reasons("inst", "ex/c/Main.java"), ["3 external"]);
+    assert!(r.names(&["callees", "Main.run", "--json"]).is_empty(), "callees by name fallback");
+    let (_, out) = r.run(&["callers", "ex/a/Util.java:2"]);
+    assert_eq!(out.trim(), "(no results)", "callers by name");
+}
