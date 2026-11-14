@@ -425,14 +425,27 @@ jobs:
         with:
           version: v0.1.0
           args: grep -c fn\smain crates/scrutate/src/main.rs
+      # xargs' own escapes, which the run step leaves to xargs: doubled, these search fn\ or fail to split
+      - id: escaped-blank
+        uses: ./.github/actions/scrutate # zizmor: ignore[self-repository] the action of this commit, as release.yml calls ci.yml
+        with:
+          version: v0.1.0
+          args: grep -c -F fn\ main crates/scrutate/src/main.rs
+      - id: escaped-quote
+        uses: ./.github/actions/scrutate # zizmor: ignore[self-repository] the action of this commit, as release.yml calls ci.yml
+        with:
+          version: v0.1.0
+          args: grep -c -F don\'t integrations/github/README.md
       - name: exit codes in the output, and the installed binary on PATH
         env:
           FOUND: ${{ steps.found.outputs.exit-code }}
           NONE: ${{ steps.none.outputs.exit-code }}
           BACKSLASH: ${{ steps.backslash.outputs.exit-code }}
+          ESCAPED_BLANK: ${{ steps.escaped-blank.outputs.exit-code }}
+          ESCAPED_QUOTE: ${{ steps.escaped-quote.outputs.exit-code }}
         run: |
-          echo "found: $FOUND, none: $NONE, backslash: $BACKSLASH"
-          [ "$FOUND" = 0 ] && [ "$NONE" = 1 ] && [ "$BACKSLASH" = 0 ]
+          echo "found: $FOUND, none: $NONE, backslash: $BACKSLASH, escaped blank: $ESCAPED_BLANK, escaped quote: $ESCAPED_QUOTE"
+          [ "$FOUND" = 0 ] && [ "$NONE" = 1 ] && [ "$BACKSLASH" = 0 ] && [ "$ESCAPED_BLANK" = 0 ] && [ "$ESCAPED_QUOTE" = 0 ]
           where=$(command -v scrutate)
           echo "$where"
           case "$where" in *scrutate-0.1.0-*) ;; *) echo "scrutate on PATH is not the installed release"; exit 1 ;; esac
