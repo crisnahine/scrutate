@@ -724,7 +724,8 @@ servers on one root, the first offers the socket.
   snippets, kinds, scores, the containers of a name (`Answer.text` is `text`) and the notes that
   explain an item. Closing lines (how to continue, where an answer stopped) and errors stay. A
   concise page holds the same items as the detailed page of the same `max_bytes` and `offset`,
-  so an offset means the same in both. Paths are written once per directory: a line ending with
+  so an offset means the same in both; when its text would pass `max_bytes`, the detailed page
+  is sent in its place. Paths are written once per directory: a line ending with
   `/` names a directory (`./` the root), and a path without `/` below it is in that directory (a
   path in another directory on the same line is written whole, a file at the root `./name`); a
   location written `:start-end` (or `:line`, `:line:column`) is in the file of the location
