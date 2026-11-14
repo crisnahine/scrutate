@@ -129,6 +129,20 @@ impl Rules for Rust {
         r.rust_module(from, &segs)
     }
 
+    // the longest prefix of the path a file holds, then the inline modules down to the item
+    fn unfiled_item(r: &mut Resolver, from: &str, module: &str, item: &str) -> Option<i64> {
+        let segs: Vec<&str> = module.split("::").filter(|s| !s.is_empty()).collect();
+        let filed = (1..segs.len()).rev().find_map(|k| r.rust_module(from, &segs[..k]).map(|files| (k, files)));
+        // no file prefix: an inline module of `from` itself (`use other::work`)
+        let own = || (!matches!(*segs.first()?, "crate" | "self" | "super")).then(|| (0, vec![from.to_string()]));
+        let (k, files) = filed.or_else(own)?;
+        let mut cur = r.lookup_top(&files, segs[k], 0)?;
+        for seg in &segs[k + 1..] {
+            cur = r.member(cur, seg, 0)?;
+        }
+        r.member(cur, item, 0)
+    }
+
     fn import_files(r: &mut Resolver, from: &str, fi: &FileInfo, line: i64, module: &str) -> Option<Vec<String>> {
         let mut out = Vec::new();
         for b in statement_bindings(fi, line, &["use_declaration"]) {

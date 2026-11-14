@@ -258,6 +258,24 @@ fn javascript_refs_list_a_use_under_an_alias_in_a_file_that_never_spells_the_nam
 }
 
 #[test]
+fn rust_a_use_of_an_inline_module_item_is_that_item() {
+    let r = Repo::new(
+        "rs_inline_mod",
+        &[
+            ("Cargo.toml", "[package]\nname = \"im\"\nversion = \"0.1.0\"\n"),
+            (
+                "src/main.rs",
+                "mod util {\n    pub fn work() -> i32 {\n        1\n    }\n}\nmod other {\n    pub fn work() -> i32 {\n        2\n    }\n}\nuse other::work;\n\nfn caller() -> i32 {\n    work() + util::work()\n}\n",
+            ),
+        ],
+    );
+    let m = "src/main.rs";
+    assert_eq!(r.refs_of("work", "src/main.rs:7"), [format!("{m}:11"), format!("{m}:14"), format!("{m}:7")]);
+    assert_eq!(r.refs_of("work", "src/main.rs:2"), [format!("{m}:14"), format!("{m}:2")]);
+    assert!(r.reasons("work", m).is_empty());
+}
+
+#[test]
 fn go_two_areas() {
     let r = Repo::new(
         "go",

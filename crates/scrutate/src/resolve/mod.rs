@@ -253,6 +253,11 @@ trait Rules {
     /// The files of `module` as an import of `from` names it.
     fn module_files(r: &mut Resolver, from: &str, module: &str) -> Option<Vec<String>>;
 
+    /// The definition `item` of a `module` no file holds (a Rust inline `mod`), as `from` names it.
+    fn unfiled_item(_r: &mut Resolver, _from: &str, _module: &str, _item: &str) -> Option<i64> {
+        None
+    }
+
     /// Whether the resolver maps an import recorded as `module`; the generic mapping of paths
     /// onto files takes the others, without a parse.
     fn reads_import(_module: &str) -> bool {
@@ -1952,7 +1957,14 @@ impl<'a> Resolver<'a> {
         if b.module.is_empty() && b.local == item {
             return None; // `export {a}` names the file's own `a`, already looked up
         }
-        let files = if b.module.is_empty() { vec![from.to_string()] } else { self.module_files(from, lang, &b.module)? };
+        let files = if b.module.is_empty() {
+            vec![from.to_string()]
+        } else {
+            match self.module_files(from, lang, &b.module) {
+                Some(files) => files,
+                None => return rules!(lang, R => R::unfiled_item(self, from, &b.module, item)),
+            }
+        };
         self.lookup_top(&files, item, depth + 1)
     }
 

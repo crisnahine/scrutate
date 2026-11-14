@@ -169,6 +169,8 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- A Rust `use` of an item of an inline `mod other { }` reaches it: `use other::work` and the
+  calls `work()` after it were `external` ([CLI](docs/CLI.md#engine-b)).
 - `refs` lists a use under an import alias also in a file whose import never spells the
   definition's name: `h()` after `const h = require("./m")` or `import h from "./m"`, which
   `callers` already found ([CLI](docs/CLI.md#engine-b)).
