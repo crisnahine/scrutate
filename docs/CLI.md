@@ -200,7 +200,9 @@ reader that does not read or stopped with Ctrl-Z. One stopped with SIGSTOP, whic
 see coming, stays counted until it continues or ends. The count is a System V semaphore of the
 user, listed by `ipcs -s` until the machine restarts; a killed search leaves nothing in it, and
 where the system gives none a search runs as it would alone. `SCRUTATE_GREP_DEBUG=1` prints the
-count and the threads taken on stderr each time they change.
+count and the threads taken on stderr each time they change; `SCRUTATE_COUNT_KEY=N` (a
+number) keeps a count of its own, apart from the one the user's other searches join, as the
+tests of the count do.
 
 Files that cannot be read, or not to the end, are named in stderr warnings (the first ten) and
 do not change the exit code. A search path that does not exist is named in a warning and the
@@ -1038,7 +1040,7 @@ root.
 ### Environment variables
 `SCRUTATE_ROOT`, `SCRUTATE_THREADS`, `SCRUTATE_GREP_{HIDDEN,NO_IGNORE,FOLLOW,SMART_CASE,MAX_FILESIZE,MAX_DEPTH,MAX_BYTES,GLOBS,TYPES}`,
 `SCRUTATE_INDEX_EXCLUDE_DIRS`, `SCRUTATE_INDEX_MAX_FILES`, `SCRUTATE_INDEX_MAX_BYTES`, `SCRUTATE_REFRESH_INTERVAL`, `SCRUTATE_MAX_BYTES`,
-`SCRUTATE_MCP_STRUCTURED`, `SCRUTATE_MCP_SHORT_TOOLS`, `SCRUTATE_CONFIG`, `SCRUTATE_WATCH_DEBUG`, `SCRUTATE_GREP_DEBUG`,
+`SCRUTATE_MCP_STRUCTURED`, `SCRUTATE_MCP_SHORT_TOOLS`, `SCRUTATE_CONFIG`, `SCRUTATE_WATCH_DEBUG`, `SCRUTATE_GREP_DEBUG`, `SCRUTATE_COUNT_KEY`,
 `SCRUTATE_NO_SESSION`, `SCRUTATE_SESSION_DEBUG`, `SCRUTATE_SESSION_WAIT_MS` (see `serve` above), and:
 
 | Variable | Meaning |

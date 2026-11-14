@@ -9,6 +9,9 @@ incompatible index by itself, and that is never breaking.
 ## [Unreleased]
 
 ### Added
+- `SCRUTATE_COUNT_KEY=N` keeps a count of big searches apart from the one the user's other
+  searches join; the tests of that count use it, so another suite's searches cannot change what
+  they see ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
 - `scrutate review --base REV [--head REV]` reports a pull request: `impact` between the two
   commits and the duplicates the head adds, as a PR comment (`--format markdown`), JSON or a
   GitLab Code Quality report, which the GitLab template saves as the job's `codequality` report
