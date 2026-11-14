@@ -210,8 +210,10 @@ incompatible index by itself, and that is never breaking.
   so its files are indexed with no further change ([CLI](docs/CLI.md#watch)).
 - An open of the index that finds another process writing no longer takes the lock for damage:
   it replaced the database and deleted that process's work.
-- `grep -c -U` no longer counts the empty match after each matched group's line end, as
-  ripgrep: `^$` on `a`, a blank line and `b` counts 1, not 2.
+- `grep -c -U` no longer counts the empty match after each matched group's line end, at the end
+  of a file with no final line end, or right where a match before it ended, as ripgrep: `^$` on
+  `a`, a blank line and `b` counts 1, not 2, and `b?$` on the same text with no final line end 3,
+  not 4.
 - `grep -A` and `-B` win over `-C` in either order, as in ripgrep: `-C1 -A3` showed one line
   after each match, not three ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
 - `grep -i` with a class that matches nothing (`ab[^\s\S]`) finds nothing and exits 1, as

@@ -726,6 +726,26 @@ fn a_multi_line_count_does_not_count_the_empty_match_after_a_group_ends() {
 }
 
 #[test]
+fn a_multi_line_count_matches_ripgrep_without_a_final_line_end_and_after_a_match() {
+    let d = Dir::new("mlnofinal");
+    // ripgrep 15.2.0's counts
+    for (text, pat, want) in [
+        (&b"a\n\nb"[..], "$", "2\n"),
+        (b"a\n\nb", "b?$", "3\n"),
+        (b"a\nb", "$", "1\n"),
+        (b"a\nb", "b?$", "2\n"),
+        (b"b", "$", "1\n"),
+        (b"b", "b?$", "1\n"),
+        (b"a\n\nb\n", "b?$", "3\n"),
+        (b"a\n\nb\n", "$", "3\n"),
+        (b"a\nb", "^", "2\n"),
+    ] {
+        d.write("t.txt", text);
+        assert_eq!(d.run(&["grep", "-c", "-U", pat, "t.txt"]).1, want, "{pat} on {:?}", String::from_utf8_lossy(text));
+    }
+}
+
+#[test]
 fn a_bad_configuration_file_stops_only_the_commands_that_use_it() {
     let d = Dir::new("badcfg");
     d.write("a.txt", b"foo\n");
