@@ -169,6 +169,8 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `$this->word()` in a PHP trait that has no `word` is `receiver` in `refs`, since the class using
+  the trait decides, where it said `not found` ([CLI](docs/CLI.md#engine-b)).
 - `this` in a JavaScript method under a quoted key (`"get": function () {}`, `"del"() {}`) is
   the object literal, so `this.put()` there is `api.put`, where it was `receiver`
   ([CLI](docs/CLI.md#engine-b)).

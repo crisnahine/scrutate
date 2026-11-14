@@ -253,6 +253,10 @@ impl Resolver<'_> {
         if let Some(m) = self.member(c, name, 0) {
             return Ok((m, how));
         }
+        // a trait's `$this` is the class that uses it, which may have the method
+        if self.def_kind(c).as_deref() == Some("trait") {
+            return Err("receiver");
+        }
         let (_, outside, unknown) = self.linearized(c, 0, &mut HashMap::new());
         Err(if outside && !unknown { "external" } else { "not found" })
     }

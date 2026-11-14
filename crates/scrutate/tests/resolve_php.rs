@@ -205,3 +205,10 @@ fn a_variable_a_closure_captures_with_use_has_the_type_it_has_outside() {
     let r = Repo::new("closure_use", &[("a.php", a)]);
     assert_eq!(r.resolved("save"), expect(&[("a.php", 4, "a.php"), ("a.php", 8, "a.php"), ("a.php", 10, "a.php")]));
 }
+
+#[test]
+fn this_in_a_trait_calling_a_method_the_trait_lacks_is_a_receiver() {
+    let a = "<?php\ntrait Greets\n{\n    public function hello() { return $this->word(); }\n}\nclass Person\n{\n    use Greets;\n    public function word() { return 'hi'; }\n}\n";
+    let r = Repo::new("trait_this", &[("a.php", a)]);
+    assert_eq!(r.resolved("word"), expect(&[("a.php", 4, "receiver"), ("a.php", 9, "a.php")]));
+}

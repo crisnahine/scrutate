@@ -454,7 +454,8 @@ PHP has rules of its own too:
 - `self::m()` and `static::m()` look in the class around, `parent::m()` in the class it extends,
   `C::m()` in `C`. A method is looked for in the class, then its traits, then the class it
   extends and the interfaces it implements; when a base from outside the repository may declare
-  it, the call is external.
+  it, the call is external. In a trait, `$this->m()` for an `m` the trait lacks is `receiver`: the
+  class that uses the trait decides.
 - A variable a closure takes with `use ($u)` has the type it has around the closure, as one an
   arrow `fn` reads does.
 - Undecided: a variable bound by `foreach` or `catch`, a value of an untyped parameter, a union
