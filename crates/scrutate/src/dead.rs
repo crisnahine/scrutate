@@ -149,6 +149,40 @@ fn every_file(root: &Path) -> Vec<String> {
     out
 }
 
+/// Ruby methods the interpreter or the core library calls without the code naming them.
+const RUBY_HOOKS: [&str; 30] = [
+    "method_missing",
+    "respond_to_missing?",
+    "coerce",
+    "to_s",
+    "to_str",
+    "to_ary",
+    "to_a",
+    "to_proc",
+    "to_hash",
+    "to_h",
+    "to_int",
+    "to_i",
+    "inspect",
+    "hash",
+    "eql?",
+    "each",
+    "initialize_copy",
+    "initialize_dup",
+    "initialize_clone",
+    "inherited",
+    "included",
+    "extended",
+    "prepended",
+    "method_added",
+    "singleton_method_added",
+    "const_missing",
+    "marshal_dump",
+    "marshal_load",
+    "_dump",
+    "_load",
+];
+
 /// The (name, 1-based line) of every whole-word occurrence in `src` of a name of `names`.
 fn occurrences(src: &str, names: &HashMap<&str, u32>, odd: &[&str], odd_finder: &aho_corasick::AhoCorasick) -> Vec<(u32, i64)> {
     use unicode_normalization::UnicodeNormalization;
@@ -422,6 +456,8 @@ fn rule(path: &str, f: &Facts, d: &Symbol, parent: Option<&Symbol>) -> Rule {
         // public unless marked otherwise
         "kotlin" | "scala" | "groovy" | "php" if !(word("private") || word("internal") || (f.lang == "php" && in_type.is_none())) => return Rule::Entry,
         "php" if name.starts_with("__") => return Rule::Entry,
+        // Ruby calls these itself, and an operator method by its operator (`a <=> b`)
+        "ruby" if !name.chars().any(word_char) || RUBY_HOOKS.contains(&name) => return Rule::Entry,
         "swift" if word("public") || word("open") => return Rule::Entry,
         "dart" if !name.starts_with('_') => return Rule::Entry,
         // the engine calls `_ready`, `_process` and the other virtual functions

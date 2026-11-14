@@ -156,6 +156,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `dead` no longer lists Ruby methods that Ruby calls itself (`method_missing`,
+  `respond_to_missing?`, `coerce`, `to_str`, `inherited` and their kin) or operator methods
+  (`<=>`) ([CLI](docs/CLI.md#engine-b)).
 - `callers`, `callees`, `impact` and `refs` follow an import alias: with `from util import helper
   as h` or `const { lone: l } = require("./u")`, a call `h()` was no caller of `helper`, so
   `impact` found no callers and no tests ([CLI](docs/CLI.md#engine-b)).

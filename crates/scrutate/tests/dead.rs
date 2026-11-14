@@ -248,3 +248,11 @@ fn the_dead_code_tool_gives_the_text_of_the_command() {
     assert!(tool["inputSchema"]["properties"]["path"].is_object());
     assert_eq!(by_id(3)["result"]["content"][0]["text"].as_str().unwrap().trim_end(), cli.trim_end());
 }
+
+#[test]
+fn ruby_methods_the_runtime_calls_are_entry_points() {
+    let rb = "class Proxy\n  def initialize(s)\n    @s = s\n  end\n\n  def method_missing(name, *args)\n    @s.send(name, *args)\n  end\n\n  def respond_to_missing?(name, all = false)\n    true\n  end\n\n  def <=>(other)\n    0\n  end\n\n  def coerce(n)\n    [n, 1]\n  end\n\n  def to_str\n    @s\n  end\n\n  def self.inherited(k)\n    super\n  end\n\n  def really_unused\n    1\n  end\nend\n\nputs Proxy.new(\"abc\").upcase\n";
+    let r = Repo::new("ruby_hooks", &[("p.rb", rb)]);
+    let v = r.json(&["dead"]);
+    assert_eq!(names(&v, "dead"), ["p.rb Proxy.really_unused"], "{v:#}");
+}
