@@ -2593,12 +2593,14 @@ fn diagnostic(kind: &str, message: &str) {
     }
 }
 
-/// The one line a panic prints. Only a panic that may come from the index advises rebuilding it.
-fn panic_text(msg: &str, location: &str) -> String {
+/// The one line a panic prints. Only a panic in a process that opened an index advises rebuilding it.
+fn panic_text(msg: &str, location: &str, index_opened: bool) -> String {
     if msg.contains("failed to spawn thread") {
         format!("{msg} ({location}). The system refused another thread: lower -j or SCRUTATE_THREADS, or raise the process limit.")
-    } else {
+    } else if index_opened {
         format!("{msg} ({location}). If this persists run `scrutate index --force`; please report it with RUST_BACKTRACE=1.")
+    } else {
+        format!("{msg} ({location}). Please report it with RUST_BACKTRACE=1.")
     }
 }
 
@@ -2607,7 +2609,8 @@ pub fn main_exit() {
     // (2 = error) instead of a backtrace dump; RUST_BACKTRACE=1 shows the details
     std::panic::set_hook(Box::new(|info| {
         let msg = info.payload().downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| info.payload().downcast_ref::<String>().cloned()).unwrap_or_default();
-        diagnostic("internal_error", &panic_text(&msg, &info.location().map(|l| l.to_string()).unwrap_or_default()));
+        let opened = crate::index::OPENED.load(std::sync::atomic::Ordering::Relaxed);
+        diagnostic("internal_error", &panic_text(&msg, &info.location().map(|l| l.to_string()).unwrap_or_default(), opened));
     }));
     let code = match std::panic::catch_unwind(run) {
         Ok(Ok(c)) => c,
@@ -2837,8 +2840,14 @@ mod tests {
 
     #[test]
     fn a_failed_thread_spawn_does_not_blame_the_index() {
-        let t = super::panic_text("failed to spawn thread: Os { code: 35 }", "x.rs:1:1");
+        let t = super::panic_text("failed to spawn thread: Os { code: 35 }", "x.rs:1:1", true);
         assert!(!t.contains("index") && t.contains("-j"), "{t}");
-        assert!(super::panic_text("index out of bounds", "x.rs:1:1").contains("index --force"));
+        assert!(super::panic_text("index out of bounds", "x.rs:1:1", true).contains("index --force"));
+    }
+
+    #[test]
+    fn a_panic_in_a_process_that_opened_no_index_does_not_blame_the_index() {
+        let t = super::panic_text("index out of bounds", "x.rs:1:1", false);
+        assert!(!t.contains("index --force") && t.contains("RUST_BACKTRACE=1"), "{t}");
     }
 }

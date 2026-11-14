@@ -986,6 +986,9 @@ pub(crate) fn file_inside(root: &Path, rel: &str) -> Option<std::fs::Metadata> {
     std::fs::canonicalize(&full).ok()?.starts_with(root).then_some(md)
 }
 
+/// Whether this process has opened an index, so a panic may come from one.
+pub static OPENED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Run `f` again while it fails with SQLITE_BUSY/LOCKED (statements the busy handler does not cover,
 /// such as the journal-mode switch of a brand-new database opened by several processes at once).
 fn retry_busy<T>(mut f: impl FnMut() -> rusqlite::Result<T>) -> rusqlite::Result<T> {
@@ -1109,6 +1112,7 @@ fn file_id(path: &Path) -> Option<(u64, u64)> {
 
 impl Index {
     pub fn open(root: &Path, models: Arc<ModelSet>) -> Result<Index> {
+        OPENED.store(true, std::sync::atomic::Ordering::Relaxed);
         crate::files::index_dir(root)?;
         let root = std::fs::canonicalize(root).with_context(|| format!("open {}", root.display()))?;
         let dir = crate::files::make_index_dir(&root)?;

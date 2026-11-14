@@ -156,6 +156,8 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- An internal error advises `scrutate index --force` only in a process that opened an index:
+  `grep`, `hook`, `setup` and the other commands without one now only ask for a report.
 - The MCP tools `repo_map` and `dead_code` take an absolute directory under the root, which
   gave no files or "no such file", and `repo_map` and `map` refuse a path that is not there;
   `grep_code` reads a path whose name holds a backslash (`x\ty`) as written when no file has the
