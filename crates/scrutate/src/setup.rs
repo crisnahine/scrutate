@@ -601,7 +601,15 @@ fn block_entry(path: &Path, o: Options) -> Result<Vec<Step>> {
         let Some((b, e)) = found else {
             return Ok(vec![Step::Note(format!("{} has no scrutate block", path.display()))]);
         };
-        let start = if text[..b].ends_with("\r\n") { b - 2 } else { b.saturating_sub(usize::from(text[..b].ends_with('\n'))) };
+        // the line break before the block is setup's only when the block ends the file: text after
+        // it would join the line above
+        let start = if e < text.len() {
+            b
+        } else if text[..b].ends_with("\r\n") {
+            b - 2
+        } else {
+            b.saturating_sub(usize::from(text[..b].ends_with('\n')))
+        };
         let after = format!("{}{}", &text[..start], &text[e..]);
         return Ok(vec![file_step(path, before.clone(), (!after.is_empty()).then_some(after), "removed the scrutate block from")]);
     }

@@ -1131,7 +1131,9 @@ changes nothing; a `scrutate` entry that runs something else is replaced.
 `--uninstall` takes out everything `setup` adds for that agent and scope, leaving each file byte
 for byte as before: the `scrutate` entry, the marked block, and the Grep hook (any `PreToolUse`
 group with matcher `Grep` whose one command is a `scrutate` binary's `hook grep`, wherever that
-binary is now). `--hook` and `--instructions` are accepted with it and change nothing. It reads
+binary is now). Text added after the marked block stays on its own line: the line break `setup`
+put before the block goes with it only when the block ends the file. `--hook` and
+`--instructions` are accepted with it and change nothing. It reads
 the instruction file in the table with or without `--instructions`: when that file has a
 `<!-- scrutate:begin -->` line with no `<!-- scrutate:end -->` line, even one `setup` never wrote,
 the uninstall stops with exit code 2 and changes no file, the MCP entry and hook included, and

@@ -540,3 +540,18 @@ fn each_installed_agent_lists_the_server() {
         assert!(listed.contains("scrutate") && listed.contains("Connected"), "{listed}");
     }
 }
+
+/// Text added after the scrutate block stays on a line of its own when the block is taken out:
+/// only a block at the end of the file takes the line break setup put before it.
+#[test]
+fn uninstall_keeps_text_added_after_the_block_on_its_own_line() {
+    let s = Scratch::new("after_block");
+    let claude_md = s.home.join(".claude/CLAUDE.md");
+    s.write(&claude_md, "# Notes");
+    assert_eq!(s.setup(&["claude", "--instructions"]).0, 0);
+    let md = fs::read_to_string(&claude_md).unwrap();
+    s.write(&claude_md, &format!("{md}- rule two\n"));
+    let (code, _, err) = s.setup(&["claude", "--uninstall", "--instructions"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(fs::read_to_string(&claude_md).unwrap(), "# Notes\n- rule two\n");
+}
