@@ -156,6 +156,8 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `grep foo . > out.txt` skips `out.txt`, as ripgrep does: it searched its own output and grew
+  it until the disk or a file size limit stopped it ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
 - A new segment's files and directory are flushed to disk before the database names them, so
   power lost after an update can no longer leave the index naming segments of empty or zeroed
   files that pass their shape checks; an update of 20 files takes about 60 ms longer on macOS

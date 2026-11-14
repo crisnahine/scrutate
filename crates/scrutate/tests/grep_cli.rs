@@ -326,6 +326,30 @@ fn after_and_before_win_over_context_in_either_order() {
     assert_eq!(out, "1-a\n2-b\n3:foo\n");
 }
 
+/// `grep foo . > out.txt` in the tree it searches, with the file size capped at 10 MB so a search
+/// that reads its own output stops (SIGXFSZ) instead of growing without bound.
+#[cfg(unix)]
+#[test]
+fn a_walk_skips_the_file_standard_output_writes() {
+    let d = Dir::new("ownoutput");
+    let lines: String = (0..2000).map(|i| format!("foo {i}\n")).collect();
+    for i in 0..50 {
+        d.write(&format!("f{i:02}.txt"), lines.as_bytes());
+    }
+    let out = Command::new("sh")
+        .arg("-c")
+        .arg(format!("ulimit -f 20000; exec '{BIN}' grep foo . > out.txt"))
+        .current_dir(&d.0)
+        .env_remove("NO_COLOR")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let text = fs::read_to_string(d.0.join("out.txt")).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(!text.lines().any(|l| l.starts_with("out.txt:") || l.starts_with("./out.txt:")), "its own output was searched");
+    assert_eq!(text.lines().count(), 50 * 2000);
+}
+
 #[test]
 fn smart_case_folds_only_a_pattern_with_lowercase_literals() {
     let d = Dir::new("smart");

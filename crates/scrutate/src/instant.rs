@@ -1987,6 +1987,8 @@ fn walk_builder(roots: &[PathBuf], f: &Files, threads: usize) -> Result<WalkBuil
         .follow_links(f.follow_links)
         .max_depth(f.max_depth)
         .max_filesize(f.max_filesize)
+        // `grep foo . > out.txt` must not read what it writes, as ripgrep skips it
+        .skip_stdout(true)
         .threads(threads);
     if !f.no_ignore {
         wb.add_custom_ignore_filename(RGIGNORE);
