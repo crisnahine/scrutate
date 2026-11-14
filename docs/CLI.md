@@ -184,7 +184,7 @@ Options mirror grep/ripgrep where the meaning is the same: `-i`, `-S` (smart cas
 |---|---|
 | `-U` | multiline: each line of a multi-line match is printed with its own number |
 | `-g GLOB` | `!` excludes |
-| `-t TYPE` / `--type-list` | `-t !TYPE` excludes (ripgrep's `-T`). As in ripgrep a type matches the file name after the ignore rules: a gitignored file of the type stays out, a hidden one comes in, a glob that matches a file decides before the type, and a file named on the command line is searched whatever its type |
+| `-t TYPE` / `--type-list` | `-t !TYPE` excludes (ripgrep's `-T`). As in ripgrep a type matches the file name after the ignore rules: a gitignored file of the type stays out, a hidden one comes in, a glob that matches a file decides before the type, and a file named on the command line is searched whatever its type. A language's type also takes the extensions it shares with another language and is told apart in by content: `.h` for `cpp` and `objc` as for `c`, `.m` for `objc` and `matlab`, `.pp` for `pascal` and `puppet`, as ripgrep's `cpp` takes `.h` |
 | `-n` / `-N` | line numbers or none; the later wins, and `--json` keeps them |
 | `--max-bytes BYTES`, `--offset N` | a bounded answer in path order, see "Answers from the index" below |
 | `--stats` | with `-l` each file is searched only to its first match, so it prints `N of M files match` and the JSON summary gives `"matches": null` |

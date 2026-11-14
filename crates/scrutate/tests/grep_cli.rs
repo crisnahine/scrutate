@@ -1448,3 +1448,17 @@ fn a_type_matches_after_the_ignore_rules_as_ripgrep_does() {
     let (code, out, _) = d.run_env(&["grep", "-n", "needle"], &[("SCRUTATE_GREP_TYPES", "py")]);
     assert_eq!((code, sorted(&out)), (0, want(&[".hidden.py:1:needle", "kept.py:1:needle", "sub/also.py:1:needle"])));
 }
+
+/// `-t` of a language takes the extensions it shares with another language and is told apart in
+/// by content (`.h` for C++ and Objective-C, `.m` for Objective-C), as ripgrep 15.2.0's types do.
+#[test]
+fn a_type_takes_the_extensions_its_language_shares_by_content() {
+    let d = Dir::new("shared_types");
+    for f in ["a.c", "a.cpp", "a.h", "a.hpp", "a.m", "a.mm"] {
+        d.write(f, b"needle\n");
+    }
+    for (t, want) in [("cpp", "a.cpp\na.h\na.hpp\n"), ("c", "a.c\na.h\n"), ("objc", "a.h\na.m\na.mm\n")] {
+        let (code, out, err) = d.run(&["grep", "--sort", "-l", "-t", t, "needle"]);
+        assert_eq!((code, out.as_str()), (0, want), "-t {t}: {err}");
+    }
+}
