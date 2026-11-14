@@ -627,6 +627,7 @@ fn a_byte_order_mark_and_two_definitions_on_one_line_are_placed_as_the_editor_se
     let r = Repo::new("bom_symbols");
     fs::write(r.root.join("u4.py"), b"\xef\xbb\xbfdef foo(): return foo2()\ndef foo2(): return 1\n").unwrap();
     r.write("u8.js", "function b() { return 1; } function c() { return 2; }\n");
+    r.write("u9.js", "function b() {\n  return 1;\n} function c() { return 2; }\n");
     let mut child = Command::new(BIN).arg("lsp").current_dir(&r.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
     let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
     c.request("initialize", json!({"processId": null, "rootUri": uri(&r.root), "capabilities": {}}));
@@ -651,6 +652,15 @@ fn a_byte_order_mark_and_two_definitions_on_one_line_are_placed_as_the_editor_se
         syms["result"].as_array().unwrap().iter().map(|s| (s["name"].as_str().unwrap(), s["range"]["start"]["character"].as_u64().unwrap())).collect();
     // the index keeps lines, not columns: c's range starts at its name, after b
     assert_eq!(roots, [("b", 0), ("c", 36)], "{syms}");
+    // one that starts on the line another ends on is its sibling too
+    let syms = c.request("textDocument/documentSymbol", json!({"textDocument": doc("u9.js")}));
+    let roots: Vec<(&str, u64, u64)> = syms["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| (s["name"].as_str().unwrap(), s["range"]["start"]["line"].as_u64().unwrap(), s["range"]["start"]["character"].as_u64().unwrap()))
+        .collect();
+    assert_eq!(roots, [("b", 0, 0), ("c", 2, 11)], "{syms}");
     c.request("shutdown", Value::Null);
     c.notify("exit", Value::Null);
     drop(c);

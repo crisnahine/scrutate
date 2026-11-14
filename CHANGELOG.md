@@ -219,8 +219,9 @@ incompatible index by itself, and that is never breaking.
   it was cut in the middle of an item and lost the line with the next offset, so items between
   pages were never shown ([CLI](docs/CLI.md#serve-mcp)).
 - The language server counts columns as the editor does in a file with a byte order mark, so
-  definition on its first line and its document symbols land on the name, and two definitions
-  on one line are siblings in the document symbols, not one inside the other
+  definition on its first line and its document symbols land on the name, and a definition that
+  starts on the first or last line of another (`} function c() {`) is its sibling in the
+  document symbols, not inside it
   ([CLI](docs/CLI.md#lsp)).
 - `grep --json` spans and colour leave out the empty matches ripgrep leaves out: one right where
   a match ended and one past the line's end (`\s*$` on `foo  ` gives one span, not three), and an

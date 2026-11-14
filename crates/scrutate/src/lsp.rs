@@ -646,18 +646,22 @@ impl Server {
                 None => roots.push(v),
             }
         };
+        // lines an earlier definition starts or ends on
+        let mut taken: std::collections::HashSet<i64> = std::collections::HashSet::new();
         for r in &rows {
-            // a definition that starts on the line of the open one, and is not named inside it,
-            // is its sibling (`function b() {} function c() {}` on one line)
-            let sibling = |top: &ChunkRow| top.start == r.start && !r.qualname.starts_with(&format!("{}.", top.qualname));
+            // one that starts on the first or last line of the open one, and is not named inside
+            // it, is its sibling (`function b() {} function c() {}`, `} function c() {`)
+            let sibling = |top: &ChunkRow| (top.start == r.start || top.end == r.start) && !named_inside(&r.qualname, &top.qualname);
             while stack.last().is_some_and(|top| top.0.end < r.end || sibling(top.0)) {
                 pop(&mut stack, &mut roots);
             }
             let mut v = document_symbol(&mut lines, &rel, r);
-            // the index keeps lines, not columns: the second definition of a line starts at its name
-            if rows.iter().take_while(|o| !std::ptr::eq(*o, r)).any(|o| o.start == r.start) {
+            // the index keeps lines, not columns: a definition on a line another one starts or
+            // ends on starts at its name
+            if taken.contains(&r.start) {
                 v["range"]["start"] = v["selectionRange"]["start"].clone();
             }
+            taken.extend([r.start, r.end]);
             stack.push((r, v, Vec::new()));
         }
         while !stack.is_empty() {
@@ -693,6 +697,11 @@ fn definitions(s: &mut Searcher, name: &str) -> Result<Vec<crate::search::Hit>> 
     }
     let Answer::Hits { hits, .. } = ops::run(s, &Op::Symbol { name: name.to_string(), limit: 50 })? else { unreachable!("symbol answers hits") };
     Ok(hits)
+}
+
+/// Whether the qualified name `inner` is a name inside `outer` (`b.c` inside `b`).
+fn named_inside(inner: &str, outer: &str) -> bool {
+    inner.strip_prefix(outer).is_some_and(|rest| rest.starts_with('.'))
 }
 
 fn document_symbol(lines: &mut Lines, rel: &str, r: &ChunkRow) -> Value {
