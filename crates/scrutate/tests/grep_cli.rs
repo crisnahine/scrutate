@@ -1540,3 +1540,24 @@ fn ctrl_c_ends_an_indexed_search_s_wait_for_the_text_index_lock() {
     assert_eq!(child.wait().unwrap().code(), Some(130));
     drop(lock);
 }
+
+/// `-c -U` counts each match as ripgrep 15.2.0 does, with `$`, `\B` and `-w` read against the
+/// text around the matched lines, not against their end.
+#[test]
+fn a_multiline_count_reads_anchors_against_the_whole_text() {
+    let d = Dir::new("multiline_count");
+    d.write("one.txt", b"b\nc");
+    d.write("two.txt", b"a b\nc\n");
+    for (args, want) in [
+        (&["-U", "-c", "-e", r"b|\n$", "one.txt"][..], "1\n"),
+        (&["-U", "-c", "-e", r"a|b\n\B", "two.txt"], "1\n"),
+        (&["-U", "-w", "-c", "-e", r"a|b\n", "two.txt"], "1\n"),
+        (&["-U", "-c", "-e", r"b\n|\n$", "one.txt"], "1\n"),
+        (&["-U", "-c", "-e", r"b$|c", "one.txt"], "2\n"),
+    ] {
+        let mut all = vec!["grep"];
+        all.extend_from_slice(args);
+        let (code, out, err) = d.run(&all);
+        assert_eq!((code, out.as_str()), (0, want), "{args:?}: {err}");
+    }
+}

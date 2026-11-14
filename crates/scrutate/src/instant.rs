@@ -1592,6 +1592,8 @@ struct Collector<'a> {
     numbered: bool,
     /// `-c` counts each match of a multi-line search, not each merged group of lines
     count_each: bool,
+    /// those matches in the group `matched` was given, counted there against the whole buffer
+    each: Option<u64>,
 }
 
 /// Offsets into `line` (a match may run on into the line end left out of it) as offsets into
@@ -1649,9 +1651,16 @@ fn spans_in(matcher: &AnyMatcher, line: &[u8]) -> Vec<(usize, usize)> {
 
 /// Calls `f` with each match in `line` until it returns false. As ripgrep, leaves out an empty
 /// match right where the match before it ended, and one past the line's end (after its `\n`).
-fn each_match(matcher: &AnyMatcher, line: &[u8], mut f: impl FnMut(usize, usize) -> bool) {
-    let mut at = 0;
-    let content = line.len() - usize::from(line.ends_with(b"\n"));
+fn each_match(matcher: &AnyMatcher, line: &[u8], f: impl FnMut(usize, usize) -> bool) {
+    each_match_in(matcher, line, 0..line.len(), f)
+}
+
+/// `each_match` over `hay[lines]`, read with the text around it: `$`, `\B` and word edges see
+/// what follows the lines, not their end. Offsets are into `hay`.
+fn each_match_in(matcher: &AnyMatcher, hay: &[u8], lines: std::ops::Range<usize>, mut f: impl FnMut(usize, usize) -> bool) {
+    let line = hay;
+    let mut at = lines.start;
+    let content = lines.end - usize::from(hay[lines.clone()].ends_with(b"\n"));
     let mut last_end = None;
     let find = |at: usize| -> Option<MatchSpan> {
         match matcher {
@@ -1666,9 +1675,12 @@ fn each_match(matcher: &AnyMatcher, line: &[u8], mut f: impl FnMut(usize, usize)
     while at <= line.len() {
         match find(at) {
             Some(m) => {
+                if m.start() > content {
+                    break;
+                }
                 at = if m.end() > m.start() { m.end() } else { m.end() + 1 };
                 let empty = m.start() == m.end();
-                if m.start() > content || (empty && last_end == Some(m.start())) {
+                if empty && last_end == Some(m.start()) {
                     continue;
                 }
                 if !empty {
@@ -1688,6 +1700,15 @@ impl<'a> Sink for Collector<'a> {
 
     fn matched(&mut self, _s: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, std::io::Error> {
         let bytes = mat.bytes();
+        if self.count_each {
+            // as ripgrep counts: not an empty match at the end of a file with no line end
+            let (hay, mut n) = (mat.buffer(), 0);
+            each_match_in(self.matcher, hay, mat.bytes_range_in_buffer(), |a, b| {
+                n += u64::from(!(a == b && a == hay.len()));
+                true
+            });
+            self.each = Some(n.max(1));
+        }
         let line = bytes.strip_suffix(b"\n").map(|b| b.strip_suffix(b"\r").unwrap_or(b)).unwrap_or(bytes);
         self.take_match(bytes, Text::Here(line), mat.line_number())
     }
@@ -1772,18 +1793,7 @@ impl Collector<'_> {
             }
             self.matched = true;
             // as ripgrep: merged matches that span lines count one by one
-            self.file_count += if self.count_each {
-                // as ripgrep counts: not an empty match at the end of a file with no line end
-                // (each_match leaves out the others ripgrep does not count)
-                let mut n = 0;
-                each_match(self.matcher, bytes, |a, b| {
-                    n += u64::from(!(a == b && a == bytes.len()));
-                    true
-                });
-                n.max(1)
-            } else {
-                1
-            };
+            self.file_count += self.each.take().unwrap_or(1);
             if self.max_results.is_some_and(|max| n >= max) {
                 self.stop.set();
                 return Ok(false);
@@ -2221,6 +2231,7 @@ impl<'a> Run<'a> {
             named: o.with_filename,
             numbered: o.line_numbers,
             count_each: o.pattern.multiline && o.report == Report::Counts && !o.invert && self.matcher.spans_lines(),
+            each: None,
         }
     }
 }

@@ -161,6 +161,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `grep -c -U` counts as ripgrep does when a match ends at the end of its lines (`b|\n$`,
+  `a|b\n\B`, `-w a|b\n`): `$`, `\B` and word edges saw the end of the matched lines as the end
+  of the text, and counted a match too many ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
 - The language server answers requests queued behind one that waited out the first build at
   once, so `shutdown` behind four of them comes after one 20-second wait, not four
   ([CLI](docs/CLI.md#lsp)).

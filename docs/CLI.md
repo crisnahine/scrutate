@@ -185,7 +185,7 @@ each. Also:
 
 | Option | Notes |
 |---|---|
-| `-U` | multiline: each line of a multi-line match is printed with its own number |
+| `-U` | multiline: each line of a multi-line match is printed with its own number; `-c` counts each match, with `$`, `\B` and `-w` read against the text after the matched lines, as ripgrep counts |
 | `-g GLOB` | `!` excludes |
 | `-t TYPE` / `--type-list` | `-t !TYPE` excludes (ripgrep's `-T`). As in ripgrep a type matches the file name after the ignore rules: a gitignored file of the type stays out, a hidden one comes in, a glob that matches a file decides before the type, and a file named on the command line is searched whatever its type. A language's type also takes the extensions it shares with another language and is told apart in by content: `.h` for `cpp` and `objc` as for `c`, `.m` for `objc` and `matlab`, `.pp` for `pascal` and `puppet`, as ripgrep's `cpp` takes `.h` |
 | `-n` / `-N` | line numbers or none; the later wins, and `--json` keeps them |
