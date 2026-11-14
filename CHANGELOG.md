@@ -145,8 +145,7 @@ incompatible index by itself, and that is never breaking.
   they showed only slow cross-fades.
 - Ranked search folds Japanese shinjitai with traditional and simplified Han, so `関係` finds
   `關係` and `关系` and the reverse (OpenCC ver.1.4.2 `JPShinjitaiCharacters.txt`, Apache-2.0).
-  The content revision is 3, so an older index reads every file again
-  ([ARCHITECTURE](docs/ARCHITECTURE.md#tokens-textrs)).
+  An older index reads every file again ([ARCHITECTURE](docs/ARCHITECTURE.md#tokens-textrs)).
 - `watch` on macOS follows FSEvents with file-level events, loaded with `dlopen` only by `watch`,
   so a save updates that file alone with no walk of the tree: 0.24 to 0.31 s from the save to the
   update on a tree of 20,000 directories (release build, the 200 ms burst wait included), where
