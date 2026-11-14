@@ -1127,6 +1127,8 @@ pub struct Index {
     pub count: Arc<FileCount>,
     /// a read snapshot (`begin_read`) is open on `db`
     reading: bool,
+    /// the last update could not truncate the log: the next one tries first
+    log_left: bool,
     lex: Option<LexStore>,
     lex_ver: Option<String>,
     last_refresh: Option<Instant>,
@@ -1201,8 +1203,11 @@ impl Index {
         let setup = |db: &Connection| -> Result<()> {
             wait_busy(db, &never, |db| db.query_row("PRAGMA journal_mode=WAL", [], |_| Ok(())))?;
             // WAL + NORMAL: durable against process crashes, consistent after power loss (at worst the
-            // last transaction rolls back); one fsync per checkpoint instead of per transaction
-            wait_busy(db, &never, |db| db.execute_batch("PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-32000;"))
+            // last transaction rolls back); one fsync per checkpoint instead of per transaction; a
+            // log cut back at a checkpoint keeps at most 4 MB of its file
+            wait_busy(db, &never, |db| {
+                db.execute_batch("PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-32000; PRAGMA journal_size_limit=4194304;")
+            })
         };
         let schema = |db: &Connection| wait_busy(db, &never, |db| db.execute_batch(SCHEMA).and_then(|()| add_art(db)));
         let read_only = |e: &anyhow::Error| matches!(e.downcast_ref::<rusqlite::Error>(), Some(rusqlite::Error::SqliteFailure(f, _)) if f.code == rusqlite::ffi::ErrorCode::ReadOnly);
@@ -1254,6 +1259,7 @@ impl Index {
             trees_peak: 0,
             cancel: Arc::default(),
             reading: false,
+            log_left: false,
             count: Arc::default(),
             db_id: file_id(&db_path),
             parsed: 0,
@@ -1323,6 +1329,7 @@ impl Index {
             trees_peak: 0,
             cancel: Arc::default(),
             reading: false,
+            log_left: false,
             count: Arc::default(),
             db_id: file_id(&db_path),
             parsed: 0,
@@ -1717,6 +1724,16 @@ impl Index {
         wait_busy(&self.db, &self.cancel, |db| if needless(db) { Ok(false) } else { db.execute_batch("BEGIN IMMEDIATE").map(|()| true) })
     }
 
+    /// Copy the log into the database and cut it to nothing, waiting about a second for readers
+    /// on an older commit (an operation's snapshot lasts that long at most, mostly far less).
+    /// -> whether it was done; when not, the next update tries again first.
+    fn truncate_log(&self) -> bool {
+        let _ = self.db.busy_timeout(Duration::from_secs(1));
+        let done = self.db.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get::<_, i64>(0)).is_ok_and(|busy| busy == 0);
+        let _ = self.db.busy_timeout(BUSY);
+        done
+    }
+
     /// `update`; with `wait` false a write lock held by another process is an error at once.
     fn update_with(&mut self, force: bool, wait: bool, look: Look) -> Result<UpdateStats> {
         let only = match look {
@@ -1744,6 +1761,9 @@ impl Index {
         // a panic in an earlier update may have left its transaction open on this connection
         if !self.db.is_autocommit() {
             let _ = self.db.execute_batch("ROLLBACK");
+        }
+        if self.log_left {
+            self.log_left = !self.truncate_log();
         }
         // one writer at a time; readers keep working (WAL)
         if wait {
@@ -1817,11 +1837,7 @@ impl Index {
                 }
                 Ok(()) => {}
             }
-            // a reader's snapshot keeps the log until its operation ends: the update does not wait
-            // for it, and a later update truncates the log
-            let _ = self.db.busy_timeout(Duration::ZERO);
-            let _ = self.db.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)");
-            let _ = self.db.busy_timeout(BUSY);
+            self.log_left = !self.truncate_log();
             // a long-running process would otherwise keep a build's word caches for its whole life
             rayon::broadcast(|_| crate::text::clear_caches());
             crate::text::clear_caches();

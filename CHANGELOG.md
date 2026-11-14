@@ -158,6 +158,11 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- The index's write-ahead log stays small while readers overlap: after an update it is cut to
+  nothing once readers on older commits finish (waited for about a second, else by the next
+  update), and a cut log keeps at most 4 MB of its file. Under four MCP servers searching and a
+  `watch` editing every second for 10 minutes, the log peaked at 1.29 MB, where it reached 5.88
+  MB ([ARCHITECTURE](docs/ARCHITECTURE.md)).
 - A Free Pascal unit in a `.pp` file that starts with compiler directives (`{$mode objfpc}{$H+}`,
   the Lazarus default) is parsed as Pascal, not as one Puppet module; an index reads its files
   again.
