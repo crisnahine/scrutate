@@ -1625,8 +1625,9 @@ fn text_offsets(spans: &mut [(usize, usize)], line: &[u8], text: &str, valid: bo
         }
         y
     };
+    // an empty match stays empty, at the start of the character it falls in
     for s in spans {
-        *s = (at(s.0, false), at(s.1, true));
+        *s = if s.0 == s.1 { (at(s.0, false), at(s.0, false)) } else { (at(s.0, false), at(s.1, true)) };
     }
 }
 
@@ -1639,9 +1640,12 @@ fn spans_in(matcher: &AnyMatcher, line: &[u8]) -> Vec<(usize, usize)> {
     out
 }
 
-/// Calls `f` with each match in `line` until it returns false.
+/// Calls `f` with each match in `line` until it returns false. As ripgrep, leaves out an empty
+/// match right where the match before it ended, and one past the line's end (after its `\n`).
 fn each_match(matcher: &AnyMatcher, line: &[u8], mut f: impl FnMut(usize, usize) -> bool) {
     let mut at = 0;
+    let content = line.len() - usize::from(line.ends_with(b"\n"));
+    let mut last_end = None;
     let find = |at: usize| -> Option<MatchSpan> {
         match matcher {
             AnyMatcher::Literal(m) => m.find_at(line, at).ok().flatten(),
@@ -1656,6 +1660,13 @@ fn each_match(matcher: &AnyMatcher, line: &[u8], mut f: impl FnMut(usize, usize)
         match find(at) {
             Some(m) => {
                 at = if m.end() > m.start() { m.end() } else { m.end() + 1 };
+                let empty = m.start() == m.end();
+                if m.start() > content || (empty && last_end == Some(m.start())) {
+                    continue;
+                }
+                if !empty {
+                    last_end = Some(m.end());
+                }
                 if !f(m.start(), m.end()) {
                     break;
                 }
@@ -1755,15 +1766,11 @@ impl Collector<'_> {
             self.matched = true;
             // as ripgrep: merged matches that span lines count one by one
             self.file_count += if self.count_each {
-                // as ripgrep counts: not an empty match where the group ends (after its line end, or
-                // at the end of a file with none), nor one right where the match before it ended
-                let (mut n, mut last_end) = (0, None);
+                // as ripgrep counts: not an empty match at the end of a file with no line end
+                // (each_match leaves out the others ripgrep does not count)
+                let mut n = 0;
                 each_match(self.matcher, bytes, |a, b| {
-                    let skipped = a == b && (a == bytes.len() || last_end == Some(a));
-                    n += u64::from(!skipped);
-                    if b > a {
-                        last_end = Some(b);
-                    }
+                    n += u64::from(!(a == b && a == bytes.len()));
                     true
                 });
                 n.max(1)

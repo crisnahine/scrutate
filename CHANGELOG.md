@@ -161,6 +161,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `grep --json` spans and colour leave out the empty matches ripgrep leaves out: one right where
+  a match ended and one past the line's end (`\s*$` on `foo  ` gives one span, not three), and an
+  empty match inside a character stays empty instead of covering the character.
 - Ctrl-C stops a `watch` update at its next batch of files, the first update of a large tree
   included, where it ran on to its end; a second Ctrl-C ends any command at once
   ([CLI](docs/CLI.md#watch)).

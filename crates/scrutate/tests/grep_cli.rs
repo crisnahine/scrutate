@@ -745,6 +745,31 @@ fn a_multi_line_count_matches_ripgrep_without_a_final_line_end_and_after_a_match
     }
 }
 
+/// The spans `--json` gives, as ripgrep 15.2.0 gives them: no empty match right where a match
+/// ended, none past the line's end, and an empty match stays empty.
+#[test]
+fn json_spans_leave_out_the_empty_matches_ripgrep_leaves_out() {
+    let d = Dir::new("jsonspans");
+    let spans = |text: &str, args: &[&str]| -> Vec<(u64, u64)> {
+        d.write("t.txt", format!("{text}\n").as_bytes());
+        let (_, out, err) = d.run(&[&["grep", "--json"][..], args, &["t.txt"]].concat());
+        let line = out.lines().find(|l| l.contains("\"type\":\"match\"")).unwrap_or_else(|| panic!("{args:?}: {out}{err}"));
+        let v: serde_json::Value = serde_json::from_str(line).unwrap();
+        v["spans"].as_array().unwrap().iter().map(|s| (s["start"].as_u64().unwrap(), s["end"].as_u64().unwrap())).collect()
+    };
+    assert_eq!(spans("foo  ", &["-e", r"\s*$"]), [(3, 5)]);
+    assert_eq!(spans("foo", &["-e", "^"]), [(0, 0)]);
+    assert_eq!(spans("hello", &["-F", "-e", ""]), [(0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)]);
+    assert_eq!(spans("ab", &["-e", "b*"]), [(0, 0), (1, 2)]);
+    assert_eq!(spans("aXbX", &["-e", "X*"]), [(0, 0), (1, 2), (3, 4)]);
+    // ripgrep puts the empty matches inside `é` and `€` at bytes 1, 3 and 4; here they stay empty
+    // at the start of their character, where the text can be cut
+    let got = spans("é€x", &["-P", "-e", "x*"]);
+    assert_eq!(got.len(), 6, "{got:?}");
+    assert_eq!(got.last(), Some(&(5, 6)));
+    assert!(got[..5].iter().all(|&(a, b)| a == b && [0, 2].contains(&a)), "{got:?}");
+}
+
 #[test]
 fn a_bad_configuration_file_stops_only_the_commands_that_use_it() {
     let d = Dir::new("badcfg");
