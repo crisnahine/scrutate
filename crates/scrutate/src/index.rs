@@ -1002,7 +1002,8 @@ thread_local! {
     pub static BEFORE_CHUNKS: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = std::cell::RefCell::new(None);
 }
 
-/// Whether this process has opened an index, so a panic may come from one.
+/// Whether this process has opened an index, the code index or the text index, so a panic may
+/// come from one.
 pub static OPENED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// How long SQLite's busy handler waits for a lock before a statement fails with SQLITE_BUSY;

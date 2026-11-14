@@ -947,6 +947,7 @@ impl TextIndex {
     /// The current snapshot, or None when no text index has been built. A concurrent update may
     /// delete a segment between reading the manifest and opening it: retry with the new manifest.
     pub fn open(root: &Path) -> Result<Option<TextIndex>> {
+        crate::index::OPENED.store(true, std::sync::atomic::Ordering::Relaxed);
         let dir = dir_of(root);
         let mut last = None;
         for _ in 0..5 {
@@ -1330,6 +1331,20 @@ mod tests {
 
     fn trigrams(text: &[u8]) -> Vec<(u32, u16)> {
         trigram_masks(text)
+    }
+
+    #[test]
+    fn opening_the_text_index_alone_counts_as_opening_an_index() {
+        let root = std::env::temp_dir().join(format!("scrutate_text_opened_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.txt"), "kernel\n").unwrap();
+        update(&root, false, false).unwrap();
+        // a panic under `grep --index` may come from this index: the hint to rebuild applies
+        crate::index::OPENED.store(false, std::sync::atomic::Ordering::Relaxed);
+        assert!(TextIndex::open(&root).unwrap().is_some());
+        assert!(crate::index::OPENED.load(std::sync::atomic::Ordering::Relaxed));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

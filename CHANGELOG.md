@@ -177,7 +177,8 @@ incompatible index by itself, and that is never breaking.
   end. The column, the `--json` spans and the colour took a lower bound (`zzz a12b` gave column 1
   for `a[0-9]*b`) ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
 - An internal error advises `scrutate index --force` only in a process that opened an index:
-  `grep`, `hook`, `setup` and the other commands without one now only ask for a report.
+  `grep` without `--index`, `hook`, `setup` and the other commands without one now only ask for a
+  report; with `--index` the text index counts.
 - The MCP tools `repo_map` and `dead_code` take an absolute directory under the root, which
   gave no files or "no such file", and `repo_map` and `map` refuse a path that is not there;
   `grep_code` reads a path whose name holds a backslash (`x\ty`) as written when no file has the
