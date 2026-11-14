@@ -532,6 +532,37 @@ mod tests {
     use super::*;
 
     #[test]
+    fn an_operation_reads_one_commit_while_a_writer_commits_another() {
+        let root = std::env::temp_dir().join(format!("scrutate_ops_snapshot_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("f.py"), "def needle_alpha():\n    return 1\n").unwrap();
+        std::fs::write(root.join("g.py"), "def other():\n    return 2\n").unwrap();
+        let mut ix = crate::index::Index::open(&root, ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        let mut repo = Repo::around(Searcher::new(ix), Arc::default());
+        // another process rewrites f.py and commits after the search picked its rows, before it reads them
+        let r = root.clone();
+        crate::index::BEFORE_CHUNKS.with(|h| {
+            *h.borrow_mut() = Some(Box::new(move || {
+                std::fs::write(r.join("f.py"), "def needle_alpha():\n    return 3\n").unwrap();
+                crate::index::Index::open(&r, crate::models::ModelSet::none()).unwrap().update(false).unwrap();
+            }))
+        });
+        let ops::Answer::Hits { hits, .. } = repo.run_as_is(&ops::Op::Search { query: "needle_alpha".into(), alt: Vec::new(), k: 5, snippets: false }).unwrap()
+        else {
+            panic!("a search answers hits")
+        };
+        assert!(crate::index::BEFORE_CHUNKS.with(|h| h.borrow().is_none()), "the writer ran");
+        // the row of the commit the search started on, which the writer has since deleted
+        let row = repo.ix.chunk(hits.iter().find(|h| h.name == "needle_alpha").map(|h| h.id).unwrap_or(-1)).unwrap();
+        assert!(hits.iter().any(|h| h.name == "needle_alpha"), "{hits:?}");
+        assert!(row.is_none(), "the writer's commit replaced the row");
+        drop(repo);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn a_rebuild_that_could_not_reopen_the_index_is_an_error_until_it_can() {
         let root = std::env::temp_dir().join(format!("scrutate_reopen_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);

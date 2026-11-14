@@ -489,7 +489,7 @@ impl Server {
                     if let Some(newer) = s.ix.newer().filter(|n| !n.readable) {
                         return Err(newer.into());
                     }
-                    f(s)
+                    crate::ops::in_snapshot(s, &mut *f)
                 })
                 .map_err(|e| (-32603, format!("{e:#}")))
         };

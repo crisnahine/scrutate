@@ -996,6 +996,12 @@ pub(crate) fn file_inside(root: &Path, rel: &str) -> Option<std::fs::Metadata> {
     std::fs::canonicalize(&full).ok()?.starts_with(root).then_some(md)
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Run once at the next `Index::chunks`: a test's writer commits between a query's reads.
+    pub static BEFORE_CHUNKS: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = std::cell::RefCell::new(None);
+}
+
 /// Whether this process has opened an index, so a panic may come from one.
 pub static OPENED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -1075,6 +1081,8 @@ pub struct Index {
     pub cancel: Arc<std::sync::atomic::AtomicBool>,
     /// the files updates read, for the progress a front end reports
     pub count: Arc<FileCount>,
+    /// a read snapshot (`begin_read`) is open on `db`
+    reading: bool,
     lex: Option<LexStore>,
     lex_ver: Option<String>,
     last_refresh: Option<Instant>,
@@ -1192,6 +1200,7 @@ impl Index {
             #[cfg(test)]
             trees_peak: 0,
             cancel: Arc::default(),
+            reading: false,
             count: Arc::default(),
             db_id: file_id(&db_path),
             parsed: 0,
@@ -1255,6 +1264,7 @@ impl Index {
             #[cfg(test)]
             trees_peak: 0,
             cancel: Arc::default(),
+            reading: false,
             count: Arc::default(),
             db_id: file_id(&db_path),
             parsed: 0,
@@ -1486,14 +1496,37 @@ impl Index {
         fresh.progress = self.progress;
         fresh.cancel = Arc::clone(&self.cancel);
         fresh.count = Arc::clone(&self.count);
+        let reading = self.reading;
         *self = fresh;
+        if reading {
+            self.begin_read()?;
+        }
         Ok(())
+    }
+
+    /// Start a read snapshot: every read until `end_read` sees one commit, which a writer's later
+    /// commits do not change (WAL: the writer goes on; the log is not truncated past the snapshot
+    /// until it ends). -> false when a transaction is open already (an update), which is left alone.
+    pub fn begin_read(&mut self) -> Result<bool> {
+        if !self.db.is_autocommit() {
+            return Ok(false);
+        }
+        self.db.execute_batch("BEGIN")?;
+        self.reading = true;
+        Ok(true)
+    }
+
+    /// End the snapshot `begin_read` started.
+    pub fn end_read(&mut self) {
+        if std::mem::take(&mut self.reading) {
+            let _ = self.db.execute_batch("COMMIT");
+        }
     }
 
     /// The segment store, with statistics for the chunks that are alive right now.
     pub fn lex(&mut self) -> Result<&mut LexStore> {
         self.reopen_if_replaced()?;
-        let ver = self.meta("data_version").unwrap_or_else(|| "0".into());
+        let mut ver = self.meta("data_version").unwrap_or_else(|| "0".into());
         let names = self.segments();
         if self.lex.as_ref().map(|l| l.names != names).unwrap_or(true) {
             let vectors = self.meta("model_sig").is_some_and(|s| s != "none");
@@ -1513,6 +1546,12 @@ impl Index {
                         // segments that are gone. Re-read it a few times before calling it damage.
                         attempt += 1;
                         std::thread::sleep(Duration::from_millis(20 * attempt));
+                        // a snapshot names the segments of its commit, which a writer may have
+                        // replaced and removed since: a later snapshot names the ones there now
+                        if self.reading {
+                            self.db.execute_batch("COMMIT; BEGIN")?;
+                            ver = self.meta("data_version").unwrap_or_else(|| "0".into());
+                        }
                         let again = self.segments();
                         if again != names && attempt <= 5 {
                             names = again;
@@ -1727,7 +1766,11 @@ impl Index {
                 }
                 Ok(()) => {}
             }
+            // a reader's snapshot keeps the log until its operation ends: the update does not wait
+            // for it, and a later update truncates the log
+            let _ = self.db.busy_timeout(Duration::ZERO);
             let _ = self.db.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)");
+            let _ = self.db.busy_timeout(Duration::from_secs(30));
             // a long-running process would otherwise keep a build's word caches for its whole life
             rayon::broadcast(|_| crate::text::clear_caches());
             crate::text::clear_caches();
@@ -2433,6 +2476,10 @@ impl Index {
 
     /// The chunks of these ids, by id.
     pub fn chunks(&self, ids: &[i64]) -> Result<HashMap<i64, ChunkRow>> {
+        #[cfg(test)]
+        if let Some(f) = BEFORE_CHUNKS.with(|h| h.borrow_mut().take()) {
+            f();
+        }
         let mut by_id = HashMap::with_capacity(ids.len());
         for part in ids.chunks(500) {
             let ph = vec!["?"; part.len()].join(",");

@@ -156,6 +156,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- Each search, tool call and language server request reads the code index from one commit: a
+  `watch` that committed between its reads could drop a hit whose rows it had already picked
+  ([ARCHITECTURE](docs/ARCHITECTURE.md)).
 - A failed write of `grep`'s output other than a closed pipe (a full disk, a file size limit)
   is an error with exit code 2, as in ripgrep: it stopped the search and exited 0 or 1 without a
   word.

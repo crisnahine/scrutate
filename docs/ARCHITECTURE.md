@@ -410,6 +410,9 @@ NFC with final sigma folded.
     each file and the directory flushed to disk, and renamed before the database names them, so
     a checkpoint never makes a manifest durable ahead of its segments (the name is taken inside that transaction, so a directory already under it was left
     by a writer stopped before its commit, and is removed); deletions as liveness bitmaps;
+  - one read snapshot per operation (`ops::run`, each language server request): its reads see
+    one commit, and a commit meanwhile shows in the next operation; an update does not wait
+    for a snapshot to truncate the log, a later one does;
   - background **compaction** (merge small segments / purge dead rows) that aborts if another
     writer moved the manifest; segment **GC** with an age guard inside the update's transaction;
   - **corruption detection**, all with automatic **rebuild**: `PRAGMA quick_check` on opening a

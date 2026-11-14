@@ -566,8 +566,38 @@ pub fn files(root: &std::path::Path, query: &str, limit: usize) -> Result<Answer
     Ok(Answer::Files(hits, more.then_some(Stop { at: limit, how: RAISE_LIMIT })))
 }
 
-/// Run one operation on the index as it is; `Repo::run` brings the index up to date first.
+/// Run one operation on the index as it is; `Repo::run` brings the index up to date first. Every
+/// read of it comes from one commit: a writer's commit meanwhile shows in the next operation.
 pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
+    in_snapshot(s, |s| run_in(s, op))
+}
+
+/// `f` on `s` with every read of the code index from one commit (`Index::begin_read`).
+pub fn in_snapshot<T>(s: &mut Searcher, f: impl FnOnce(&mut Searcher) -> Result<T>) -> Result<T> {
+    let snap = Snapshot::begin(s)?;
+    f(&mut *snap.0)
+}
+
+/// A read snapshot of the code index while it lives, ended on every way out (an error or a panic
+/// too); none when a transaction is open already (an update).
+struct Snapshot<'s>(&'s mut Searcher, bool);
+
+impl<'s> Snapshot<'s> {
+    fn begin(s: &'s mut Searcher) -> Result<Snapshot<'s>> {
+        let own = s.ix.begin_read()?;
+        Ok(Snapshot(s, own))
+    }
+}
+
+impl Drop for Snapshot<'_> {
+    fn drop(&mut self) {
+        if self.1 {
+            self.0.ix.end_read();
+        }
+    }
+}
+
+fn run_in(s: &mut Searcher, op: &Op) -> Result<Answer> {
     Ok(match op {
         Op::Search { query, alt, k, snippets } => {
             let mut qs = vec![query.clone()];
