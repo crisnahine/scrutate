@@ -714,8 +714,6 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
     })
 }
 
-/// Whether `root` joined with `path` stays under `root` by their parts alone (`.` dropped and
-/// `..` taking a part away), with no file looked at.
 /// `p` with the escapes an answer writes read back (`a\tb` as a tab), when that names a file or
 /// directory and prints as `p` again; else `p` as written (a directory named `x\ty`).
 fn unescaped<'p>(root: &std::path::Path, p: &'p str) -> std::borrow::Cow<'p, str> {
@@ -735,6 +733,8 @@ fn existing(s: &Searcher, path: Option<&str>) -> Result<()> {
     }
 }
 
+/// Whether `root` joined with `path` stays under `root` by their parts alone (`.` dropped and
+/// `..` taking a part away), with no file looked at.
 fn inside(root: &std::path::Path, path: &str) -> bool {
     let mut out = std::path::PathBuf::new();
     for c in root.join(path).components() {
