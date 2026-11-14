@@ -62,8 +62,9 @@
   own bytes in piped output, `-l` and `-c` (so `scrutate grep -l x | xargs cat` opens it); in
   `--json` its `path` shows U+FFFD for the bad bytes and the record adds `path_bytes`, the name's
   bytes as an array of numbers. Windows names that are not valid UTF-16 print with U+FFFD. The
-  index commands and MCP tools escape a control character in a name (`\n`, `\x1b`) and double a
-  backslash (`\\`), and every command that takes a path or location reads that form back.
+  index commands and MCP tools escape a control character in a name (`\n`, `\x1b`) and a character
+  that reorders text or breaks a line (`\u{202e}`), double a backslash (`\\`), and every command
+  that takes a path or location reads that form back.
   `scrutate grep` does the same in colour on a terminal and in `--symbols` text; piped, it prints
   the name as is, as grep and ripgrep do.
 - **Configuration**: the nearest `.scrutate.toml` from the current directory up to the
@@ -163,8 +164,9 @@ tools, as ripgrep does. Limits:
 - an old-GNU sparse member (`tar --sparse`) is skipped and the members after it searched.
 
 An archive named alone is searched as a directory of its members, so each line names its member,
-even the only one; a compressed file named alone prints no name. Control characters in a member
-name show as escapes (`\n`, `\x1b`, a backslash as two), so a name cannot forge an output line;
+even the only one; a compressed file named alone prints no name. Control characters and the
+characters that reorder text or break a line in a member name show as escapes (`\n`, `\x1b`,
+`\u{202e}`, a backslash as two), so a name cannot forge or disguise an output line;
 `--json` keeps the name as it is. Archives inside archives are not opened, and `--index` does
 not cover archive members.
 
