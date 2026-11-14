@@ -472,3 +472,12 @@ fn a_std_method_on_a_call_result_is_external_and_a_macro_argument_is_undecided()
     assert_eq!(why, [(8, "macro argument")], "{v}");
     assert_eq!(r.resolved("text").get(&("src/user.rs".to_string(), 9)).map(String::as_str), Some("src/report.rs"));
 }
+
+#[test]
+fn javascript_this_in_a_method_under_a_quoted_key_is_the_object_literal() {
+    let r = Repo::new(
+        "js_quoted_key",
+        &[("a.js", "const api = {\n  \"get\": function () {\n    return this.put();\n  },\n  \"del\"() {\n    return this.put();\n  },\n  put() {\n    return 1;\n  },\n};\n")],
+    );
+    assert_eq!(r.refs_of("put", "a.js:8"), ["a.js:3", "a.js:6", "a.js:8"]);
+}

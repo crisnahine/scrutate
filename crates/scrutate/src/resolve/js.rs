@@ -544,14 +544,22 @@ pub(super) fn plain_json(text: &str) -> String {
 fn literal_owner(fi: &FileInfo, n: Node) -> Option<String> {
     let f = std::iter::successors(n.parent(), |p| p.parent()).find(|p| FUNCTION_NODES.contains(&p.kind()) && p.kind() != "arrow_function")?;
     let p = f.parent()?;
-    let key = match f.kind() {
-        "method_definition" if p.kind() == "object" => f.child_by_field_name("name")?,
-        "function_expression" | "function" if p.kind() == "pair" && p.parent()?.kind() == "object" => p.child_by_field_name("key")?,
+    let (key, object) = match f.kind() {
+        "method_definition" if p.kind() == "object" => (f.child_by_field_name("name")?, p),
+        "function_expression" | "function" if p.kind() == "pair" && p.parent()?.kind() == "object" => (p.child_by_field_name("key")?, p.parent()?),
         _ => return None,
     };
-    let (name, line) = (text(key, &fi.src), key.start_position().row as i64 + 1);
-    let d = fi.defs.iter().filter(|d| d.name == name && d.start <= line && line <= d.end).min_by_key(|d| d.end - d.start);
-    Some(d.and_then(|d| d.qualname.rsplit_once('.')).map(|(o, _)| o.to_string()).unwrap_or_default())
+    // the owner of the method a key names; a quoted key (`"get": function`) may name none, then a
+    // sibling member's owner is the literal's
+    let owner = |key: Node| {
+        let name = if key.kind() == "string" { string_content(key, &fi.src) } else { text(key, &fi.src).to_string() };
+        let line = key.start_position().row as i64 + 1;
+        let d = fi.defs.iter().filter(|d| d.name == name && d.start <= line && line <= d.end).min_by_key(|d| d.end - d.start);
+        d.and_then(|d| d.qualname.rsplit_once('.')).map(|(o, _)| o.to_string())
+    };
+    let mut cur = object.walk();
+    let siblings: Vec<Node> = object.named_children(&mut cur).filter_map(|m| m.child_by_field_name("name").or_else(|| m.child_by_field_name("key"))).collect();
+    Some(owner(key).or_else(|| siblings.into_iter().find_map(owner)).unwrap_or_default())
 }
 
 /// A binder declared with JavaScript `var`, which belongs to the whole function around it.

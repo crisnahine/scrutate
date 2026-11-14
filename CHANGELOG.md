@@ -169,6 +169,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `this` in a JavaScript method under a quoted key (`"get": function () {}`, `"del"() {}`) is
+  the object literal, so `this.put()` there is `api.put`, where it was `receiver`
+  ([CLI](docs/CLI.md#engine-b)).
 - `callers`, `callees`, `impact` and `refs` follow an import alias through a package that
   re-exports the name: `from pkg import helper as h` with `pkg/__init__.py` importing `helper`
   from `.util`, where the alias was looked for only in imports naming `helper` or `util`

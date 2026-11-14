@@ -365,7 +365,7 @@ refers to. For Python, JavaScript, TypeScript, Rust and Go the rules are, in ord
    itself is the default method of a trait the type implements (`impl Greet for S {}`). A method call on a call's result
    (`mk().norm()`) goes through the callee's declared return type. `this` inside a method of a
    JavaScript or TypeScript object literal is the literal (`this.put()` in `api.get` is
-   `api.put`); an arrow function takes `this` from the code around it. A call on a value of an
+   `api.put`, also under a quoted key, `"get": function () {}`); an arrow function takes `this` from the code around it. A call on a value of an
    outside type is external, unless a repository trait or interface declares a method of that
    name: then it stays undecided, since a blanket `impl` or a merged interface can give the
    outside type that method. In Rust a call on the result of a method of an outside type is typed
