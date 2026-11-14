@@ -524,7 +524,7 @@ mod tests {
         all.insert("valid?", 2);
         let finder = aho_corasick::AhoCorasick::new(odd).unwrap();
         let src = "run()\nrerun run_it $run\ncafe\u{301} x.valid? valid?x\n";
-        assert_eq!(occurrences(src, &all, &odd, &finder), [(0, 1), (0, 2), (1, 3), (2, 3)]);
+        assert_eq!(occurrences(src, &all, &HashMap::new(), &odd, &finder), [(0, 1), (0, 2), (1, 3), (2, 3)]);
     }
 
     #[test]
