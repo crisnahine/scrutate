@@ -4,6 +4,7 @@
 Uses `cargo metadata` (the authoritative, locked graph) so the SBOM lists exactly what the binary
 was built from: name, version, license expression, source registry and purl for every crate, and
 one `data` component per data file from outside the project (`third_party_notices.data_files`).
+The timestamp is SOURCE_DATE_EPOCH when that is set, else now; the serial number is new each run.
 
 usage: sbom.py [--out FILE] [--package scrutate]
 """
@@ -26,6 +27,9 @@ def main() -> int:
     ap.add_argument("--out", default=None)
     ap.add_argument("--package", default="scrutate")
     a = ap.parse_args()
+    epoch = os.environ.get("SOURCE_DATE_EPOCH")
+    if epoch and not epoch.isdigit():
+        sys.exit(f"SOURCE_DATE_EPOCH must be whole seconds since 1970, got {epoch!r}")
     meta, seen, root_id = graph(a.package)
     by_id = {p["id"]: p for p in meta["packages"]}
     nodes = {n["id"]: n for n in meta["resolve"]["nodes"]}
@@ -66,7 +70,7 @@ def main() -> int:
         "serialNumber": f"urn:uuid:{uuid.uuid4()}",
         "version": 1,
         "metadata": {
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(epoch) if epoch else None)),
             "tools": [{"name": "scrutate/tools/sbom.py", "version": root["version"]}],
             "component": {"type": "application", "bom-ref": f"pkg:cargo/{root['name']}@{root['version']}", "name": root["name"], "version": root["version"],
                           "licenses": [{"expression": root["license"]}] if root.get("license") else []},
