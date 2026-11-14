@@ -2311,14 +2311,23 @@ pub fn sniff(path: &str, source: &str) -> Option<&'static LangSpec> {
     by_id(id)
 }
 
-/// Whether the definition at `path` is named in any case: Fortran, Pascal and Ada names, and PHP
-/// functions outside a class.
-pub fn ignores_case(path: &str, kind: &str, qualname: &str) -> bool {
-    match detect(path, None).map(|l| l.id) {
+/// Whether a definition in language `lang` is named in any case: Fortran, Pascal and Ada names,
+/// and PHP functions outside a class.
+pub fn ignores_case(lang: Option<&str>, kind: &str, qualname: &str) -> bool {
+    match lang {
         Some("fortran" | "pascal" | "ada") => true,
         Some("php") => kind == "function" && !qualname.contains('.'),
         _ => false,
     }
+}
+
+/// The grammar of the repository file `rel` as the parser takes it: by its name, and by its text
+/// where its extension is shared by several languages (`.pp`, `.h`, `.m`, `.cls`).
+pub fn detect_at(root: &std::path::Path, rel: &str) -> Option<&'static LangSpec> {
+    let lower = rel.to_lowercase();
+    let shared = BY_CONTENT.iter().any(|(e, _)| lower.ends_with(e));
+    let text = shared.then(|| crate::resolve::repo_text(root, rel)).flatten();
+    detect(rel, text.as_deref())
 }
 
 /// The grammar of `path`: by its name, and by `text` where the extension is shared by several

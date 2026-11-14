@@ -351,3 +351,11 @@ fn a_pascal_call_without_parentheses_is_a_call() {
     assert!(out.contains("DoWork") && out.contains("Tidy") && !out.contains("external: x"), "{out}");
     assert!(names(&r.json(&["dead"]), "dead").is_empty(), "{:?}", r.json(&["dead"]));
 }
+
+#[test]
+fn a_pascal_unit_in_a_pp_file_ignores_case_too() {
+    let pp = "unit U;\n\ninterface\n\nprocedure DoWork;\nprocedure Run;\n\nimplementation\n\nprocedure DoWork;\nbegin\nend;\n\nprocedure Run;\nbegin\n  dowork;\n  dowork();\nend;\n\nend.\n";
+    let r = Repo::new("pascal_pp_case", &[("u.pp", pp)]);
+    assert_eq!(callers(&r, "DoWork"), ["u.pp Run"]);
+    assert!(!names(&r.json(&["dead"]), "dead").iter().any(|n| n.ends_with("DoWork")), "{:?}", r.json(&["dead"]));
+}

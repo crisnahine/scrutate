@@ -70,7 +70,12 @@ pub(crate) fn candidates(ix: &crate::index::Index, under: Option<&str>) -> anyho
     // a name in a language that ignores case is found in any case, by its lowercase form; ASCII
     // letters only, as Fortran, Pascal, Ada and PHP fold no others in their names
     let mut folded: HashMap<String, Vec<u32>> = HashMap::new();
-    for s in wanted.iter().filter(|s| s.name.is_ascii() && crate::langs::ignores_case(&s.path, &s.kind, &s.qualname)) {
+    let mut lang_of: HashMap<&str, Option<&'static str>> = HashMap::new();
+    for s in wanted.iter().filter(|s| s.name.is_ascii()) {
+        let lang = *lang_of.entry(s.path.as_str()).or_insert_with(|| crate::langs::detect_at(root, &s.path).map(|l| l.id));
+        if !crate::langs::ignores_case(lang, &s.kind, &s.qualname) {
+            continue;
+        }
         let id = name_ids[s.name.as_str()];
         let ids = folded.entry(s.name.to_ascii_lowercase()).or_default();
         if !ids.contains(&id) {
@@ -428,7 +433,7 @@ fn registered(f: &Facts, d: &Symbol) -> bool {
 
 fn rule(path: &str, f: &Facts, d: &Symbol, parent: Option<&Symbol>) -> Rule {
     let name = d.name.as_str();
-    let main = if crate::langs::ignores_case(path, &d.kind, &d.qualname) { name.eq_ignore_ascii_case("main") } else { name == "main" };
+    let main = if crate::langs::ignores_case(Some(f.lang), &d.kind, &d.qualname) { name.eq_ignore_ascii_case("main") } else { name == "main" };
     if crate::text::is_test_path(path) || main {
         return Rule::Entry;
     }
