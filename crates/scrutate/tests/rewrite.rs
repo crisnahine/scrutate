@@ -254,3 +254,28 @@ fn a_directory_swapped_for_a_link_outside_the_root_after_the_read_is_left_alone(
     let left_there: Vec<String> = fs::read_dir(outside.root.join("d")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
     assert_eq!(left_there, ["a.py"]);
 }
+
+/// The root itself swapped for a link to somewhere else after the plan leaves that place alone:
+/// the plan holds the root it opened and writes through it.
+#[cfg(unix)]
+#[test]
+fn the_root_swapped_for_a_link_after_the_plan_is_never_written_through() {
+    let t = Tree::new("swap_root");
+    t.write("a.py", "print(x)\n");
+    let outside = Tree::new("swap_root_outside");
+    outside.write("a.py", "print(x)\n");
+    let plan = scrutate::rewrite::plan("python", PRINT, "log$args", std::slice::from_ref(&t.root), &t.root).unwrap();
+    assert_eq!(plan.files.len(), 1);
+    let moved = t.root.with_extension("moved");
+    let _ = fs::remove_dir_all(&moved);
+    fs::rename(&t.root, &moved).unwrap();
+    std::os::unix::fs::symlink(&outside.root, &t.root).unwrap();
+    let left = plan.write();
+    assert_eq!(outside.read("a.py"), "print(x)\n", "{left:?}");
+    let there: Vec<String> = fs::read_dir(&outside.root).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    assert!(!there.iter().any(|n| n.ends_with(".tmp")), "{there:?}");
+    // the write went to the directory the plan opened, wherever it is now
+    assert_eq!(fs::read_to_string(moved.join("a.py")).unwrap(), "log(x)\n", "{left:?}");
+    fs::remove_file(&t.root).unwrap();
+    let _ = fs::remove_dir_all(&moved);
+}

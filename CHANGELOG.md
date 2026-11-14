@@ -188,9 +188,10 @@ incompatible index by itself, and that is never breaking.
 - `grep -t cpp` takes `.h` files, as ripgrep's `cpp` type does, `-t objc` takes `.h` and `.m`, and `-t matlab` and
   `-t puppet` find `.m` and `.pp` files, where they found none: a type now includes the extensions its language shares with another and is told apart in by
   content ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
-- `tsquery --rewrite --write` on Linux and macOS writes through each file's directory as opened
-  from the root, refusing links: a directory swapped for a link between the read and the write
-  sent the write and its temporary file outside `--root`
+- `tsquery --rewrite --write` on Linux and macOS reads and writes through the root as it was
+  opened when the plan started and each directory opened from it, refusing links: a directory
+  swapped for a link between the read and the write, the root included, sent the write and its
+  temporary file outside `--root`
   ([Security](docs/SECURITY.md#the-structural-rewrite)).
 - The keyword tier (OCaml and F# without a grammar, unknown languages) names `let rec fact` as
   `fact`, finds `let inline square` and `let private helper`, no longer takes `let mutable x` for a

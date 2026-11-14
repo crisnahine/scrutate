@@ -267,13 +267,15 @@ the time, and no file name or text of the repository.
 ([CLI](CLI.md#tsquery---rewrite) lists every file it leaves alone, a link among them). Each is
 written to a new temporary file in its own directory (`create_new`, so nothing planted there is
 opened) and renamed over the original only if the original's bytes are unchanged, so an edit made
-meanwhile is never lost. On Linux and macOS the write goes through the file's directory as
-opened from the root one name at a time with `O_NOFOLLOW`, and the temporary file, the check
-and the rename are relative to that handle (`openat`, `renameat`), so a directory swapped for a
-link after the read cannot send the write, or a temporary file, outside the root; on Windows the
-write still goes by path. The template is text: nothing in it is run. No MCP tool rewrites, so an MCP agent cannot change a source file.
+meanwhile is never lost. On Linux and macOS the root is opened once when the plan starts, and
+every read and write goes through that handle and the directories opened from it one name at a
+time with `O_NOFOLLOW`: the temporary file, the check and the rename are relative to the file's
+directory handle (`openat`, `renameat`). A directory swapped for a link after the plan starts,
+the root and its ancestors included, therefore cannot send a read, the write or a temporary file
+outside the root. On Windows the reads and the write still go by path. The template is text: nothing in it is run. No MCP tool rewrites, so an MCP agent cannot change a source file.
 Tests: `tests/rewrite.rs` (a link out of the root, an edit between the read and the write, a
-directory swapped for a link after the read, the diff mode writing nothing).
+directory swapped for a link after the read, the root swapped for one after the plan, the diff
+mode writing nothing).
 
 ## The review comment
 
