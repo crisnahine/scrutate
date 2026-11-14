@@ -285,6 +285,8 @@ incompatible index by itself, and that is never breaking.
   what comes before a dot when the name with its dots finds nothing, as the language server
   does: on `norm` in `p.norm()` they asked only for `p.norm` and found nothing. R's `is.ready` is
   still asked whole.
+- The GitHub Action keeps a backslash in `args` as written: `grep -c \bTODO\b .` searched for
+  `bTODOb` and `--root C:\repo` named `C:repo`, so a gate could pass on the wrong search.
 
 ## [0.1.0] - 2026-11-11
 

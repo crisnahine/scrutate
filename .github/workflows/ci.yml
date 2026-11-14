@@ -419,13 +419,20 @@ jobs:
         with:
           version: v0.1.0
           args: grep -F "zzzz_no_such_text_qqqq" crates/scrutate/src
+      # unquoted on purpose: with the backslash dropped the pattern is fnsmain, which matches nothing
+      - id: backslash
+        uses: ./.github/actions/scrutate # zizmor: ignore[self-repository] the action of this commit, as release.yml calls ci.yml
+        with:
+          version: v0.1.0
+          args: grep -c fn\smain crates/scrutate/src/main.rs
       - name: exit codes in the output, and the installed binary on PATH
         env:
           FOUND: ${{ steps.found.outputs.exit-code }}
           NONE: ${{ steps.none.outputs.exit-code }}
+          BACKSLASH: ${{ steps.backslash.outputs.exit-code }}
         run: |
-          echo "found: $FOUND, none: $NONE"
-          [ "$FOUND" = 0 ] && [ "$NONE" = 1 ]
+          echo "found: $FOUND, none: $NONE, backslash: $BACKSLASH"
+          [ "$FOUND" = 0 ] && [ "$NONE" = 1 ] && [ "$BACKSLASH" = 0 ]
           where=$(command -v scrutate)
           echo "$where"
           case "$where" in *scrutate-0.1.0-*) ;; *) echo "scrutate on PATH is not the installed release"; exit 1 ;; esac
