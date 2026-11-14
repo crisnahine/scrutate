@@ -61,3 +61,16 @@ def test_an_unsettled_memory_verdict_holds_the_row():
     L.decide(r, ["scrutate", "ripgrep"], 20, L.INTERIM_ALPHA)
     # both use 5 MB in every run: a tie
     assert r["status"] == "PASS" and r["metrics"]["rss"]["default"]["status"] == "PARTIAL" and not L.settled(r)
+
+
+def test_import_keeps_the_environment_and_a_run_drops_scrutate_settings():
+    # a test that imports leaderboard must still see SCRUTATE_BIN; the tools a run starts must not
+    code = (
+        "import os, subprocess, sys; os.environ['SCRUTATE_PROBE'] = '1'; sys.path.insert(0, sys.argv[1]); import leaderboard as L; "
+        "assert os.environ.get('SCRUTATE_PROBE') == '1', 'import dropped it'; L.drop_scrutate_settings(); "
+        "env = subprocess.run([sys.executable, '-c', 'import os; print(sorted(os.environ))'], capture_output=True, text=True).stdout; "
+        "assert 'SCRUTATE_' not in env, env"
+    )
+    import subprocess
+    r = subprocess.run([sys.executable, "-c", code, os.path.join(os.path.dirname(__file__), "..", "..", "bench")], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr

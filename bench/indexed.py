@@ -212,6 +212,7 @@ def du(path, apparent=False):
 
 
 def main() -> int:
+    lb.drop_scrutate_settings()
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus", default=os.path.expanduser("~/.cache/scrutate-bench/corpora/linux-nodot"))
     ap.add_argument("--work", default=os.path.expanduser("~/.cache/scrutate-bench/indexed-work"))

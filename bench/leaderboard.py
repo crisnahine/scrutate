@@ -61,10 +61,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, ".."))
 SCRUTATE = os.environ.get("SCRUTATE_BIN", os.path.join(ROOT, "target", "release", "scrutate"))
 SCRUTATE_BASE = os.environ.get("SCRUTATE_BASE_BIN") or None
-# the tools run without these and without the caller's own settings: any SCRUTATE_ variable in a
-# search's environment is a setting to scrutate, which then reads its arguments the slower way
-for _name in [k for k in os.environ if k.startswith("SCRUTATE_")]:
-    del os.environ[_name]
+
+
+def drop_scrutate_settings():
+    """Drop every SCRUTATE_ variable, so no tool a run starts reads one as a setting (scrutate then
+    reads its arguments the slower way). Each benchmark's main() calls it; an import does not."""
+    for name in [k for k in os.environ if k.startswith("SCRUTATE_")]:
+        del os.environ[name]
 
 
 def which(*names):
@@ -887,6 +890,7 @@ def _selfcheck() -> None:
 
 
 def main() -> int:
+    drop_scrutate_settings()
     _selfcheck()
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpora", default=os.path.expanduser("~/.cache/scrutate-bench/corpora"))
