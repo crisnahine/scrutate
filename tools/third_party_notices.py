@@ -38,6 +38,11 @@ OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE."""
 
 
+def ships(dep: dict) -> bool:
+    """Whether a `cargo metadata` dependency edge is compiled into the package: normal or build."""
+    return any(k["kind"] in (None, "build") for k in dep["dep_kinds"])
+
+
 def graph(package: str) -> tuple[dict, set[str], str]:
     """The locked `cargo metadata`, the ids compiled into `package` (itself included) and its id.
 
@@ -55,7 +60,7 @@ def graph(package: str) -> tuple[dict, set[str], str]:
             continue
         seen.add(nid)
         for dep in nodes[nid]["deps"]:
-            if any(k["kind"] in (None, "build") for k in dep["dep_kinds"]):
+            if ships(dep):
                 stack.append(dep["pkg"])
     return meta, seen, root
 

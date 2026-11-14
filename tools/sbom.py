@@ -17,7 +17,7 @@ import sys
 import time
 import uuid
 
-from third_party_notices import data_files, graph
+from third_party_notices import data_files, graph, ships
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -78,7 +78,7 @@ def main() -> int:
         "components": comps,
         "dependencies": [
             {"ref": f"pkg:cargo/{by_id[nid]['name']}@{by_id[nid]['version']}",
-             "dependsOn": sorted({f"pkg:cargo/{by_id[d['pkg']]['name']}@{by_id[d['pkg']]['version']}" for d in nodes[nid]["deps"] if d["pkg"] in seen})}
+             "dependsOn": sorted({f"pkg:cargo/{by_id[d['pkg']]['name']}@{by_id[d['pkg']]['version']}" for d in nodes[nid]["deps"] if d["pkg"] in seen and ships(d)})}
             for nid in sorted(seen, key=lambda i: (by_id[i]["name"], by_id[i]["version"]))
         ],
     }
