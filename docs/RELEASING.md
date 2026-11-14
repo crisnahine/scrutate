@@ -48,10 +48,12 @@ that raises it fails there. README.md and docs/INSTALL.md name it too.
 | `MODEL_REVISION` | the embedded semantic model changes |
 | the text index `FORMAT` | its files change |
 
-0.1.0 ships with content revision 4: builds with earlier rules were in use before the release,
+0.1.0 ships with content revision 7: builds with earlier rules were in use before the release,
 and their indexes must not keep the chunks, symbols and tokens those rules made (revision 3 joins
 Japanese shinjitai to the Han fold, and adds Java fields as symbols; revision 4 makes a Pascal
-statement that is a name alone a call). The four only go up: a binary leaves an index of a higher number
+statement that is a name alone a call; revision 5 reads a Free Pascal `.pp` unit as Pascal;
+revision 6 reads a C++ header with a Doxygen `@class` as C++; revision 7 names the definition
+after `let rec`, `let inline` and the like in the keyword tier). The four only go up: a binary leaves an index of a higher number
 alone, so two versions on one checkout never rebuild it in turn
 ([Architecture](ARCHITECTURE.md#storage-indexrs-lexrs)).
 
