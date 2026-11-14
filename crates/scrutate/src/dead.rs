@@ -161,9 +161,13 @@ fn every_file(root: &Path) -> Vec<String> {
 
 /// Ruby methods the interpreter or the core library calls without the code naming them.
 const RUBY_HOOKS: [&str; 30] = [
+    // a call of a method the object lacks, and `respond_to?` about one
     "method_missing",
     "respond_to_missing?",
+    // arithmetic with a built-in number on the left: `1 + money`
     "coerce",
+    // implicit conversions: interpolation and `puts`, `String#+`, splats and `Array()`, `&obj`,
+    // `**obj` and `Hash()`, `Integer()` and array indexes
     "to_s",
     "to_str",
     "to_ary",
@@ -173,13 +177,19 @@ const RUBY_HOOKS: [&str; 30] = [
     "to_h",
     "to_int",
     "to_i",
+    // `p` and the console
     "inspect",
+    // a Hash key and `uniq`
     "hash",
     "eql?",
+    // Enumerable's methods all call it
     "each",
+    // `dup` and `clone`
     "initialize_copy",
     "initialize_dup",
     "initialize_clone",
+    // the class and module hooks: a subclass, `include`, `extend`, `prepend`, a `def`, a constant
+    // not found
     "inherited",
     "included",
     "extended",
@@ -187,6 +197,7 @@ const RUBY_HOOKS: [&str; 30] = [
     "method_added",
     "singleton_method_added",
     "const_missing",
+    // Marshal
     "marshal_dump",
     "marshal_load",
     "_dump",
