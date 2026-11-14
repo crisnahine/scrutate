@@ -2230,6 +2230,11 @@ pub fn by_id(id: &str) -> Option<&'static LangSpec> {
     LANGS.iter().find(|s| s.id == id).copied()
 }
 
+/// A line Objective-C starts with a keyword of its own; a Doxygen `@class` in a C++ comment is
+/// not one.
+static OBJC_HEADER: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"(?m)^[ \t]*@(?:interface|protocol|implementation|class)\b").unwrap());
+
 /// The first statement of a Pascal unit, program or library: `unit unit1;`.
 static PASCAL_HEADER: std::sync::LazyLock<regex::Regex> =
     std::sync::LazyLock::new(|| regex::Regex::new(r"(?im)^[ \t]*(?:unit|program|library)[ \t]+[\w.]+[ \t]*;").unwrap());
@@ -2290,7 +2295,7 @@ pub fn sniff(path: &str, source: &str) -> Option<&'static LangSpec> {
             "matlab"
         }
     } else if lower.ends_with(".h") {
-        if ["@interface", "@protocol", "@implementation", "@class "].iter().any(|k| source.contains(k)) {
+        if OBJC_HEADER.is_match(source) {
             "objc"
         } else if CPP_HEADER.is_match(source) {
             "cpp"

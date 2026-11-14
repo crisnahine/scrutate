@@ -158,6 +158,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- A C++ header with a Doxygen `@class` (or `@interface`, `@protocol`) in a comment is parsed as
+  C++: only a line that starts with an Objective-C keyword makes a `.h` file Objective-C; an index
+  reads its files again.
 - Text answers show bidi marks, embeddings, overrides and isolates and the line and paragraph
   separators in a path as escapes (`\u{202e}`), as they show control characters: a file named
   `bidi<U+202E>yp.txt` displayed as `biditxt.py` ([CLI](docs/CLI.md#serve-mcp)).

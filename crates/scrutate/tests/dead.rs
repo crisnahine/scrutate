@@ -394,3 +394,17 @@ fn a_free_pascal_unit_with_directives_in_a_pp_file_is_pascal() {
     let (_, out) = r.run(&["outline", "site.pp"]);
     assert!(out.contains("site") && !out.contains("function"), "Puppet stays Puppet: {out}");
 }
+
+/// A C++ header with a Doxygen `@class` in a comment is C++: only a line that starts with an
+/// Objective-C keyword makes a `.h` Objective-C.
+#[test]
+fn a_doxygen_class_tag_in_a_comment_leaves_a_cpp_header_cpp() {
+    let h = "namespace ui {\n/** @class Widget\n *  Draws itself. */\ntemplate <typename T> class Widget {\n  void draw();\n};\n}\n";
+    let objc = "#import <Foundation/Foundation.h>\n@interface Shim : NSObject\n- (int)count;\n@end\n";
+    let r = Repo::new("doxygen_class", &[("widget.h", h), ("shim.h", objc)]);
+    let (code, out) = r.run(&["outline", "widget.h"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("draw"), "parsed as C++: {out}");
+    let (_, out) = r.run(&["outline", "shim.h"]);
+    assert!(out.contains("Shim"), "Objective-C stays Objective-C: {out}");
+}
