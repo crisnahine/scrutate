@@ -304,7 +304,8 @@ impl<'a> Names<'a> {
                     continue;
                 }
                 if uses.got.is_disjoint(&ids) {
-                    // with no other definition of the name, a call the resolver cannot place is this one's
+                    // with no other definition of the name, a call in a language the resolver does not
+                    // read is this one's
                     if unsure && rivals {
                         let mine = |r: &&Symbol| own((&row.path, &row.qualname), &r.path, &r.kind, &r.qualname);
                         let mine: Vec<i64> = rows.iter().filter(|r| uses.own_file && mine(r)).map(|r| r.id).collect();
@@ -316,6 +317,11 @@ impl<'a> Names<'a> {
                             continue;
                         }
                     } else if !unsure {
+                        continue;
+                    } else if crate::resolve::reads(&s.ix.root, &row.path) {
+                        // the resolver read the call and could not place it (`tx.foo.update()`, an
+                        // untyped parameter): only its name ties it, so it is undecided
+                        unsure_rows.push(row);
                         continue;
                     }
                 }

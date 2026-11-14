@@ -169,6 +169,10 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `callers` lists a call the resolver could not place, tied by its name only (`tx.foo.update()`
+  on an untyped parameter), as undecided also when no other definition has the name, where
+  `callers update` listed it as decided and `callers ProviderProfile.update` as undecided;
+  `impact` marks such callers undecided too ([CLI](docs/CLI.md#engine-b)).
 - An assignment directly in a Python class body, `h = 5` beside `from util import helper as h`,
   is a local of the class body, where `refs helper` listed it as a use of the import
   ([CLI](docs/CLI.md#engine-b)).

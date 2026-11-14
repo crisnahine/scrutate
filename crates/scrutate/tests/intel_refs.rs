@@ -2029,6 +2029,16 @@ fn a_name_re_exported_under_another_name_is_a_caller_and_a_callee() {
 }
 
 #[test]
+fn a_call_only_its_name_ties_to_a_definition_is_an_undecided_caller() {
+    let profile = "export class ProviderProfile {\n  update(x: number) {\n    return x;\n  }\n}\nexport function update(x: number) {\n  return x;\n}\n";
+    let svc = "import { update } from './profile';\nexport class Svc {\n  rename(tx) {\n    return tx.providerProfile.update(1);\n  }\n}\nexport function direct() {\n  return update(2);\n}\n";
+    let r = Repo::new("by_name_only", &[("lib/profile.ts", profile), ("lib/svc.ts", svc)]);
+    // the call through an untyped `tx` is tied by its name only, however the target is named
+    assert_eq!(split_callers(&r, "update"), (strs(&["direct"]), strs(&["Svc.rename"])));
+    assert_eq!(split_callers(&r, "ProviderProfile.update"), (strs(&[]), strs(&["Svc.rename"])));
+}
+
+#[test]
 fn a_super_call_in_a_constructor_is_a_call_of_the_base_class() {
     let base = "export class Base {\n  constructor() {\n    this.x = 1;\n  }\n}\n";
     let kid = "import { Base } from './base.js';\nexport class Kid extends Base {\n  constructor() {\n    super();\n  }\n}\n";
