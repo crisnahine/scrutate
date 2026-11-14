@@ -19,9 +19,10 @@ impl Rules for Go {
     }
 
     // a method is declared outside its type, in any file of the package: its receiver names the type
-    fn inherited(r: &mut Resolver, _id: i64, name: &str, _depth: usize, path: &str, qualname: &str) -> Option<i64> {
+    fn inherited(r: &mut Resolver, id: i64, name: &str, depth: usize, path: &str, qualname: &str) -> Option<i64> {
         let owner = strip_generics(qualname);
-        for f in r.go_dir(dir_of(path)) {
+        let files = r.go_dir(dir_of(path));
+        for f in files.clone() {
             let gf = r.file(&f);
             let Some(tree) = gf.tree.as_ref() else { continue };
             let root = tree.root_node();
@@ -33,6 +34,31 @@ impl Rules for Go {
                     if let Some(d) = gf.defs.iter().find(|d| d.name == name && d.start <= line && line <= d.end) {
                         return Some(d.id);
                     }
+                }
+            }
+        }
+        // a method promoted from an embedded field of the struct (`type Wrap struct { *Base }`)
+        if depth > 4 {
+            return None;
+        }
+        let fi = r.file(path);
+        let mut embedded = Vec::new();
+        let mut stack: Vec<Node> = def_node(&fi, id).into_iter().collect();
+        while let Some(n) = stack.pop() {
+            if n.kind() == "field_declaration" {
+                if n.child_by_field_name("name").is_none() {
+                    embedded.extend(n.child_by_field_name("type").and_then(type_name).map(|t| text(t, &fi.src).to_string()));
+                }
+                continue;
+            }
+            let mut cur = n.walk();
+            stack.extend(n.named_children(&mut cur));
+        }
+        for e in embedded {
+            for f in &files {
+                let Some(base) = top_level(&r.file(f), &e).map(|d| d.id) else { continue };
+                if let Some(m) = r.member(base, name, depth + 1) {
+                    return Some(m);
                 }
             }
         }

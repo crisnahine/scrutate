@@ -288,6 +288,21 @@ fn rust_a_trait_default_method_is_found_on_the_implementing_type() {
 }
 
 #[test]
+fn go_a_method_promoted_through_an_embedded_struct_is_found() {
+    let r = Repo::new(
+        "go_promoted",
+        &[
+            ("go.mod", "module ex\n\ngo 1.22\n"),
+            (
+                "main.go",
+                "package main\n\ntype Base struct{}\n\nfunc (b Base) Hello() int {\n\treturn 1\n}\n\ntype Wrap struct {\n\t*Base\n}\n\ntype Outer struct {\n\tWrap\n}\n\nfunc main() {\n\tv := Wrap{}\n\tv.Hello()\n\tv.Base.Hello()\n\to := Outer{}\n\to.Hello()\n}\n",
+            ),
+        ],
+    );
+    assert_eq!(r.refs_of("Hello", "main.go:5"), ["main.go:19", "main.go:20", "main.go:22", "main.go:5"]);
+}
+
+#[test]
 fn go_two_areas() {
     let r = Repo::new(
         "go",

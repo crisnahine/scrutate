@@ -169,6 +169,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `refs` finds a Go method promoted through an embedded struct field: `v.Hello()` on a `Wrap`
+  that embeds `Base` (or `*Base`, also two levels down) is `Base.Hello`, where it said
+  `not found` ([CLI](docs/CLI.md#engine-b)).
 - `refs` ties a call of a Rust trait's default method on a type that implements the trait
   without overriding it (`s.hello()` after `impl Greet for S {}`) to that method, where it said
   `not found` ([CLI](docs/CLI.md#engine-b)).
