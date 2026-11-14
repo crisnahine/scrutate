@@ -75,7 +75,7 @@ def main() -> int:
         "dependencies": [
             {"ref": f"pkg:cargo/{by_id[nid]['name']}@{by_id[nid]['version']}",
              "dependsOn": sorted({f"pkg:cargo/{by_id[d['pkg']]['name']}@{by_id[d['pkg']]['version']}" for d in nodes[nid]["deps"] if d["pkg"] in seen})}
-            for nid in sorted(seen, key=lambda i: by_id[i]["name"])
+            for nid in sorted(seen, key=lambda i: (by_id[i]["name"], by_id[i]["version"]))
         ],
     }
     text = json.dumps(bom, indent=1)
