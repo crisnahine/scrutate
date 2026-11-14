@@ -30,13 +30,11 @@ import sys
 import tempfile
 import time
 
+from leaderboard import drop_scrutate_settings
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRUTATE = os.environ.get("SCRUTATE_BIN", os.path.join(HERE, "..", "target", "release", "scrutate"))
 WORK = os.environ.get("SCRUTATE_WORK", os.path.join(HERE, "..", "..", "work"))
-# the tools run without these and without the caller's own settings: any SCRUTATE_ variable in a
-# search's environment is a setting to scrutate, which then reads its arguments the slower way
-for _name in [k for k in os.environ if k.startswith("SCRUTATE_")]:
-    del os.environ[_name]
 
 
 # --------------------------------------------------------------------------- tool discovery
@@ -648,6 +646,7 @@ def environment(tools: dict) -> dict:
 
 
 def main() -> int:
+    drop_scrutate_settings()
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus", action="append", required=True, help="NAME=DIR")
     ap.add_argument("--runs", type=int, default=5)
