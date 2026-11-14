@@ -228,3 +228,10 @@ fn self_static_and_parent_match_in_any_case() {
     assert_eq!(r.resolved("build"), expect(&[("a.php", 8, "a.php"), ("a.php", 11, "a.php")]));
     assert_eq!(r.resolved("make"), expect(&[("a.php", 4, "a.php"), ("a.php", 11, "a.php")]));
 }
+
+#[test]
+fn a_variable_a_closure_captures_by_reference_has_the_type_it_has_outside() {
+    let a = "<?php\nclass User\n{\n    public function save() { return 1; }\n}\nfunction run(User $u) {\n    $f = function () use (&$u) {\n        return $u->save();\n    };\n}\n";
+    let r = Repo::new("closure_use_ref", &[("a.php", a)]);
+    assert_eq!(r.resolved("save"), expect(&[("a.php", 4, "a.php"), ("a.php", 8, "a.php")]));
+}

@@ -185,8 +185,8 @@ incompatible index by itself, and that is never breaking.
   re-exports the name: `from pkg import helper as h` with `pkg/__init__.py` importing `helper`
   from `.util`, where the alias was looked for only in imports naming `helper` or `util`
   ([CLI](docs/CLI.md#engine-b)).
-- A PHP variable a closure takes with `function () use ($u)` has the type it has around the
-  closure, so `$u->save()` inside is `User::save`, where it was `receiver`
+- A PHP variable a closure takes with `function () use ($u)`, or `use (&$u)`, has the type it
+  has around the closure, so `$u->save()` inside is `User::save`, where it was `receiver`
   ([CLI](docs/CLI.md#engine-b)).
 - `const x = require('./n').x`, `const { later } = await import('./lazy')` and TypeScript
   `import m = require('./n')` bind their names to the module's definitions, where `refs` read

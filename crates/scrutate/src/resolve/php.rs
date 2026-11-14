@@ -445,7 +445,8 @@ impl Resolver<'_> {
         let mut c2 = scope.walk();
         let captured = scope.named_children(&mut c2).filter(|c| c.kind() == "anonymous_function_use_clause").find_map(|u| {
             let mut c3 = u.walk();
-            let found = u.named_children(&mut c3).find(|v| text(*v, src).trim_start_matches('&').trim() == var);
+            // `use (&$u)` holds the variable in a by_ref node
+            let found = u.named_children(&mut c3).map(|v| if v.kind() == "by_ref" { v.named_child(0).unwrap_or(v) } else { v }).find(|v| text(*v, src) == var);
             found
         });
         match captured {
