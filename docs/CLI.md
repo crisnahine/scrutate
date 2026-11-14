@@ -508,7 +508,9 @@ Import paths resolve to repository files:
 
 `tsconfig.json`, `jsconfig.json`, `package.json`, `Cargo.toml` and `go.mod` are read only as
 regular files inside the repository, of at most 1 MB. Re-exports (`from .x import N` in
-`__init__.py`, `export {N} from`, `pub use`) are followed. In JavaScript a `var` belongs to its
+`__init__.py`, `export {N} from`, `pub use`) are followed, also by `callers`, `callees` and
+`impact` for a name imported under an alias from the re-exporting package (`from pkg import
+helper as h`). In JavaScript a `var` belongs to its
 function, `let` and `const` to their block. Imports of modules outside the repository give
 `external`; a package name no repository `package.json` declares is outside. Unresolved:
 

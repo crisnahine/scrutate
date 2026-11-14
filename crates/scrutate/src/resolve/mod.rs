@@ -835,6 +835,11 @@ impl<'a> Resolver<'a> {
         self.alias_sites(path).into_iter().map(|(local, item, _)| (local, item)).collect()
     }
 
+    /// Whether `path` imports a name as `name` from another module (`from .util import helper`).
+    pub(crate) fn imports_as(&mut self, path: &str, name: &str) -> bool {
+        self.file(path).bindings.iter().any(|b| b.local == name && !b.module.is_empty())
+    }
+
     /// `aliases`, each with the start bytes of the import statement's identifiers that name it.
     pub(crate) fn alias_sites(&mut self, path: &str) -> Vec<(String, String, Vec<usize>)> {
         let fi = self.file(path);

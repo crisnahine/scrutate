@@ -169,6 +169,10 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `callers`, `callees`, `impact` and `refs` follow an import alias through a package that
+  re-exports the name: `from pkg import helper as h` with `pkg/__init__.py` importing `helper`
+  from `.util`, where the alias was looked for only in imports naming `helper` or `util`
+  ([CLI](docs/CLI.md#engine-b)).
 - A PHP variable a closure takes with `function () use ($u)` has the type it has around the
   closure, so `$u->save()` inside is `User::save`, where it was `receiver`
   ([CLI](docs/CLI.md#engine-b)).

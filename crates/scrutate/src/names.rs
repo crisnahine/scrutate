@@ -349,17 +349,27 @@ impl<'a> Names<'a> {
         let stem = |p: &'_ str| p.rsplit_once('.').map_or(p, |(s, _)| s).to_string();
         let mut needles: BTreeSet<String> = names.iter().map(|n| n.to_string()).collect();
         needles.extend(targets.iter().map(|t| module_name(&stem(&t.path)).to_string()));
-        // past a few names one pass over every import is cheaper than one search per name
-        let rows: Vec<(String, String)> = if needles.len() <= 16 {
-            needles.iter().map(|n| self.s.ix.imports_holding(n)).collect::<Result<Vec<_>>>()?.concat()
-        } else {
-            self.s.ix.imports()?.into_iter().map(|(path, _, module)| (path, module)).collect()
-        };
-        let mut files = BTreeSet::new();
-        for (path, module) in rows {
-            let names_it = module.split(|c: char| !(c.is_alphanumeric() || c == '_')).any(|seg| needles.contains(seg));
-            if names_it && targets.iter().any(|t| langs.same_family(&t.path, &path)) {
-                files.insert(path);
+        let (mut files, mut asked) = (BTreeSet::new(), BTreeSet::new());
+        // a file that imports a target under its own name re-exports it (`pkg/__init__.py`): an
+        // import of that file's module may alias it too, a few re-exports deep
+        for _ in 0..3 {
+            let fresh: Vec<String> = needles.difference(&asked).cloned().collect();
+            if fresh.is_empty() {
+                break;
+            }
+            asked.extend(fresh.iter().cloned());
+            // past a few names one pass over every import is cheaper than one search per name
+            let rows: Vec<(String, String)> = if fresh.len() <= 16 {
+                fresh.iter().map(|n| self.s.ix.imports_holding(n)).collect::<Result<Vec<_>>>()?.concat()
+            } else {
+                self.s.ix.imports()?.into_iter().map(|(path, _, module)| (path, module)).collect()
+            };
+            for (path, module) in rows {
+                let names_it = module.split(|c: char| !(c.is_alphanumeric() || c == '_')).any(|seg| fresh.contains(&seg.to_string()));
+                let kept = names_it && targets.iter().any(|t| langs.same_family(&t.path, &path)) && files.insert(path.clone());
+                if kept && names.iter().any(|n| self.rv.imports_as(&path, n)) {
+                    needles.insert(module_name(&stem(&path)).to_string());
+                }
             }
         }
         let mut out = Vec::new();

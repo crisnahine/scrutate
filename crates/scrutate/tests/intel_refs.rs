@@ -1984,6 +1984,20 @@ fn a_default_export_called_under_a_local_name_of_its_own_has_that_caller() {
 }
 
 #[test]
+fn an_alias_of_a_name_a_package_init_re_exports_is_a_caller() {
+    let r = Repo::new(
+        "py_reexport_alias",
+        &[
+            ("pkg/util.py", "def helper():\n    return 1\n"),
+            ("pkg/__init__.py", "from .util import helper\n"),
+            ("app.py", "from pkg import helper as h\n\n\ndef main():\n    return h()\n"),
+        ],
+    );
+    let (code, out) = r.run(&["callers", "helper"]);
+    assert!(code == 0 && out.lines().any(|l| l.ends_with(" main")), "callers helper: {out}");
+}
+
+#[test]
 fn a_super_call_in_a_constructor_is_a_call_of_the_base_class() {
     let base = "export class Base {\n  constructor() {\n    this.x = 1;\n  }\n}\n";
     let kid = "import { Base } from './base.js';\nexport class Kid extends Base {\n  constructor() {\n    super();\n  }\n}\n";
