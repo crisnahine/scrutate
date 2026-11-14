@@ -53,6 +53,7 @@ PURPOSE = {
     "rusqlite": "SQLite (bundled)",
     "unicode-normalization": "NFC form of names and non-ASCII words, so two spellings of one name match",
     "rust-stemmers": "Snowball English stemmer",
+    "windows-sys": "opens and a rename relative to a directory handle (NtCreateFile, NtSetInformationFile) for `tsquery --rewrite --write`, refusing junctions (Windows; already in the tree through other crates)",
     "same-file": "tells the file standard output writes to apart, so `grep --index` does not search its own output (already in the tree through ignore)",
     "rustix": "directory-relative opens and renames for `tsquery --rewrite --write`, refusing links (Linux and macOS; already in the tree through tar)",
     "serde": "serialisation",

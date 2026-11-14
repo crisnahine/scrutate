@@ -160,6 +160,11 @@ notify = { version = "=9.0.0-rc.8", default-features = false, features = ["macos
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", default-features = false, features = ["std", "fs"] }
 
+# the same on Windows: opens and a rename relative to a directory handle (NtCreateFile,
+# NtSetInformationFile), already in the tree through other crates
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO"] }
+
 [dev-dependencies]
 proptest = "1"
 

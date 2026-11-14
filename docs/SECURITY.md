@@ -267,15 +267,18 @@ the time, and no file name or text of the repository.
 ([CLI](CLI.md#tsquery---rewrite) lists every file it leaves alone, a link among them). Each is
 written to a new temporary file in its own directory (`create_new`, so nothing planted there is
 opened) and renamed over the original only if the original's bytes are unchanged, so an edit made
-meanwhile is never lost. On Linux and macOS the root is opened once when the plan starts, and
-every read and write goes through that handle and the directories opened from it one name at a
-time with `O_NOFOLLOW`: the temporary file, the check and the rename are relative to the file's
-directory handle (`openat`, `renameat`). A directory swapped for a link after the plan starts,
-the root and its ancestors included, therefore cannot send a read, the write or a temporary file
-outside the root. On Windows the reads and the write still go by path. The template is text: nothing in it is run. No MCP tool rewrites, so an MCP agent cannot change a source file.
+meanwhile is never lost. The root is opened once when the plan starts, and every read and write
+goes through that handle and the directories opened from it one name at a time, a name never
+followed: with `O_NOFOLLOW` on Linux and macOS (`openat`, `renameat`), and on Windows with
+`FILE_OPEN_REPARSE_POINT` (`NtCreateFile` and a `FileRenameInformation` rename relative to the
+directory handle), where a directory that is a junction or link is refused. The temporary file,
+the check and the rename are relative to the file's directory handle. A directory swapped for a
+link or junction after the plan starts, the root and its ancestors included, therefore cannot send
+a read, the write or a temporary file outside the root. The template is text: nothing in it is run. No MCP tool rewrites, so an MCP agent cannot change a source file.
 Tests: `tests/rewrite.rs` (a link out of the root, an edit between the read and the write, a
 directory swapped for a link after the read, the root swapped for one after the plan, the diff
-mode writing nothing).
+mode writing nothing, and on Windows the same with junctions) and `rewrite::tests` on Windows (each
+step meeting a junction as itself).
 
 ## The review comment
 
@@ -332,6 +335,11 @@ marker is not).
     descriptor 1 borrowed for one `fstat` and never closed;
   - `foldfind.rs` (x86_64 only): one call to a function compiled for AVX2, made after the CPU
     reports AVX2;
+  - `rewrite.rs` (Windows): `NtCreateFile` relative to a directory handle it holds, with one name
+    in a `UNICODE_STRING` and an `OBJECT_ATTRIBUTES` that live for the call, the returned handle
+    taken into an `OwnedHandle` once; and `NtSetInformationFile` with `FileRenameInformation` from
+    a zeroed, 8-byte aligned buffer at least the size of `FILE_RENAME_INFORMATION`, the name copied
+    after the `FileName` offset and the length passed;
   - `session.rs`: `geteuid`, and `getpeereid` (macOS, the BSDs) or `getsockopt(SO_PEERCRED)`
     (Linux) into a `struct ucred` whose size it passes and checks, on a connected socket it owns,
     and `fchdir` back to a directory descriptor it holds open;
@@ -373,6 +381,7 @@ marker is not).
   | `crates/scrutate/src/lex.rs` | 1 |
   | `crates/scrutate/src/npy.rs` | 14 |
   | `crates/scrutate/src/policy.rs` | 1 |
+  | `crates/scrutate/src/rewrite.rs` | 2 |
   | `crates/scrutate/src/running.rs` | 12 |
   | `crates/scrutate/src/session.rs` | 5 |
   | `crates/scrutate/src/text.rs` | 1 |

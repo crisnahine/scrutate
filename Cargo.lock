@@ -1241,6 +1241,7 @@ dependencies = [
  "tree-sitter-yaml",
  "tree-sitter-zig",
  "unicode-normalization",
+ "windows-sys",
  "zip",
 ]
 

@@ -175,6 +175,10 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `tsquery --rewrite --write` on Windows reads and writes through the root it opened and each
+  directory opened from it, refusing a junction or link at every name: a directory swapped for a
+  junction after the plan, the root included, sent the write outside `--root`
+  ([Security](docs/SECURITY.md#the-structural-rewrite)).
 - `callees` of PHP code that writes `new self()`, `new static()` or `new parent()` lists the
   class, where it listed `self`, `static` or `parent` as an external name
   ([CLI](docs/CLI.md#engine-b)).
