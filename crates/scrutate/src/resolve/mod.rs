@@ -842,6 +842,8 @@ impl<'a> Resolver<'a> {
 
     /// `aliases`, each with the start bytes of the import statement's identifiers that name it.
     pub(crate) fn alias_sites(&mut self, path: &str) -> Vec<(String, String, Vec<usize>)> {
+        // a lookup cut at the depth limit is no answer for a lookup that starts here
+        self.looked_up.clear();
         let fi = self.file(path);
         let Some(lang) = fi.lang else { return Vec::new() };
         let mut out = Vec::new();
@@ -1930,8 +1932,8 @@ impl<'a> Resolver<'a> {
     }
 
     fn lookup_top_inner(&mut self, files: &[String], name: &str, depth: usize) -> Option<i64> {
-        // each import hop counts twice (the binding, then the lookup): 6 hops of re-exports
-        if depth > 12 {
+        // `depth` counts the imports followed from one file into another: 6 hops at most
+        if depth > 6 {
             return None;
         }
         for f in files {
@@ -1947,7 +1949,7 @@ impl<'a> Resolver<'a> {
             let fi = self.file(f);
             let Some(lang) = fi.lang else { continue };
             for b in fi.bindings.iter().filter(|b| b.local == name) {
-                if let Some(id) = self.resolve_binding(f, lang, b, depth + 1) {
+                if let Some(id) = self.resolve_binding(f, lang, b, depth) {
                     return Some(id);
                 }
             }
@@ -1987,7 +1989,8 @@ impl<'a> Resolver<'a> {
                 None => return rules!(lang, R => R::unfiled_item(self, from, &b.module, item)),
             }
         };
-        self.lookup_top(&files, item, depth + 1)
+        // a name the file binds from itself (`module.exports = helper`) is no hop
+        self.lookup_top(&files, item, depth + usize::from(!b.module.is_empty()))
     }
 
     /// Files of the module a qualifier chain (`nx.utils`, `crate::a`, `pkg`) names, if it is one.

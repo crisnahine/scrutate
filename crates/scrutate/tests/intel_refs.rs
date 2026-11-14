@@ -2050,6 +2050,29 @@ fn a_super_call_in_a_class_expression_is_a_call_of_its_base() {
 }
 
 #[test]
+fn a_require_chain_is_followed_six_import_hops_deep_by_refs_and_callees_alike() {
+    // main -> r_n -> .. -> r1 -> m: n + 1 import hops
+    let chain = |n: usize| {
+        let mut files = vec![("lib/m.js".to_string(), "function helper() {\n  return 1;\n}\nmodule.exports = helper;\n".to_string())];
+        for i in 1..=n {
+            let from = if i == 1 { "./m".to_string() } else { format!("./r{}", i - 1) };
+            files.push((format!("lib/r{i}.js"), format!("const helper = require('{from}');\nmodule.exports = helper;\n")));
+        }
+        files.push(("lib/main.js".to_string(), format!("const k = require('./r{n}');\nfunction start() {{\n  return k();\n}}\n")));
+        files
+    };
+    for (n, reached) in [(3, true), (5, true), (6, false)] {
+        let files = chain(n);
+        let refs: Vec<(&str, &str)> = files.iter().map(|(p, b)| (p.as_str(), b.as_str())).collect();
+        let r = Repo::new(&format!("cjs_chain_{n}"), &refs);
+        let callees = callee_names(&r, "start");
+        let (_, out) = r.run(&["refs", "k"]);
+        let tied = out.lines().take_while(|l| !l.starts_with("unresolved")).any(|l| l.contains("lib/main.js:3:"));
+        assert_eq!((callees == ["helper"], tied), (reached, reached), "{n} re-exports: callees {callees:?}, refs k: {out}");
+    }
+}
+
+#[test]
 fn a_super_call_in_a_constructor_is_a_call_of_the_base_class() {
     let base = "export class Base {\n  constructor() {\n    this.x = 1;\n  }\n}\n";
     let kid = "import { Base } from './base.js';\nexport class Kid extends Base {\n  constructor() {\n    super();\n  }\n}\n";
