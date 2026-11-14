@@ -1984,6 +1984,16 @@ fn a_default_export_called_under_a_local_name_of_its_own_has_that_caller() {
 }
 
 #[test]
+fn a_super_call_in_a_constructor_is_a_call_of_the_base_class() {
+    let base = "export class Base {\n  constructor() {\n    this.x = 1;\n  }\n}\n";
+    let kid = "import { Base } from './base.js';\nexport class Kid extends Base {\n  constructor() {\n    super();\n  }\n}\n";
+    let r = Repo::new("js_super_ctor", &[("lib/base.js", base), ("lib/kid.js", kid)]);
+    let (code, out) = r.run(&["callers", "Base"]);
+    assert!(code == 0 && out.lines().any(|l| l.ends_with("Kid.constructor")), "callers Base: {out}");
+    assert_eq!(callee_names(&r, "Kid.constructor"), ["Base"]);
+}
+
+#[test]
 fn a_super_call_is_a_decided_call_of_the_base_method_and_no_call_of_the_override() {
     let ts = "export class Base {\n  size(): number {\n    return 0;\n  }\n}\nexport class Big extends Base {\n  size(): number {\n    return super.size() + 9;\n  }\n  other(): number {\n    return this.size();\n  }\n}\nexport class Bigger extends Big {\n  size(): number {\n    return super.size() + 1;\n  }\n}\nexport function viaBase(b: Base): number {\n  return b.size();\n}\n";
     let far = "import { Outer } from 'outside';\nexport class Far extends Outer {\n  size(): number {\n    return super.size() + 3;\n  }\n}\n";

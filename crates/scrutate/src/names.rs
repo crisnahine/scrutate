@@ -256,6 +256,10 @@ impl<'a> Names<'a> {
         if !made_by_new.is_empty() {
             names.insert("new");
         }
+        // `super()` in a JavaScript or TypeScript constructor calls the base class
+        if targets.iter().any(|t| t.kind == "class" && matches!(langs.id(&t.path), Some("javascript" | "typescript" | "tsx"))) {
+            names.insert("super");
+        }
         let owners: HashSet<&str> =
             targets.iter().filter_map(|t| t.qualname.rsplit_once('.').map(|(o, _)| o.rsplit('.').next().unwrap_or(o))).filter(|o| !o.is_empty()).collect();
         let packages: HashSet<&str> = targets.iter().map(|t| package(&t.path)).collect();
@@ -291,6 +295,10 @@ impl<'a> Names<'a> {
             for row in sites {
                 let uses = self.uses(&row.path, (row.start, row.end), n);
                 let unsure = (if all_free(n) { uses.unsure_free } else { uses.unsure }) || !uses.dispatched.is_disjoint(&overridden);
+                // a `super` the resolver does not tie to a target is some other class's
+                if n == "super" && uses.got.is_disjoint(&ids) {
+                    continue;
+                }
                 if uses.got.is_disjoint(&ids) {
                     // with no other definition of the name, a call the resolver cannot place is this one's
                     if unsure && rivals {
@@ -436,6 +444,12 @@ impl<'a> Names<'a> {
             // an import alias names what it imports: `h` of `from util import helper as h`
             if let Some((_, item)) = self.rv.aliases(&d.path).into_iter().find(|(local, _)| *local == n) {
                 rows.extend(s.ix.named_of_kinds(&item, &kinds)?.into_iter().filter(|r| callable(&d.path, r)));
+            }
+            // `super(..)` is named by no definition: it calls the base class the resolver ties it to
+            if n == "super" && rows.is_empty() {
+                for id in self.uses(&d.path, (d.start, d.end), &n).got {
+                    rows.extend(s.ix.chunk(id)?);
+                }
             }
             if rows.is_empty() {
                 out.push((n, Vec::new(), false));
