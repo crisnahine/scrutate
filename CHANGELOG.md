@@ -158,6 +158,10 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- The definition patterns of every `[[language]]` table share one regex size budget, so a
+  repository's `.scrutate.toml` with many large patterns is refused at once with the pattern's
+  line; each pattern had the whole budget, and ten took 340 MB and three seconds in every command,
+  `serve` and `lsp` included ([CLI](docs/CLI.md#custom-languages)).
 - The index's write-ahead log stays small while readers overlap: after an update it is cut to
   nothing once readers on older commits finish (waited for about a second, else by the next
   update), and a cut log keeps at most 4 MB of its file. Under four MCP servers searching and a

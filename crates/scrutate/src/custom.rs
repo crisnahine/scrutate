@@ -126,11 +126,20 @@ pub fn load(root: &Path) -> Result<Arc<Customs>> {
     if cur.files == files {
         return Ok(cur);
     }
-    let mut langs: Vec<Lang> = Vec::new();
+    let mut tables = Vec::new();
     for (i, (path, text)) in files.iter().enumerate() {
         let source = if i == 0 && *path == own { ".scrutate.toml".to_string() } else { path.display().to_string() };
-        for l in crate::config::parse(path, text)?.language {
-            let lang = check(l, path, &source, text, &langs)?;
+        tables.push((path, source, text, crate::config::parse(path, text)?.language));
+    }
+    // every pattern of every table shares the size budget one regex has: a repository's table of
+    // many large patterns is refused at once, where each pattern had it whole (gigabytes)
+    let patterns = tables.iter().flat_map(|t| &t.3).map(|l| l.definitions.len()).sum::<usize>().max(1);
+    let all = crate::instant::Pattern::default();
+    let limits = (all.regex_size_limit / patterns, all.dfa_size_limit / patterns);
+    let mut langs: Vec<Lang> = Vec::new();
+    for (path, source, text, table) in tables {
+        for l in table {
+            let lang = check(l, path, &source, text, &langs, limits)?;
             langs.push(lang);
         }
     }
@@ -145,7 +154,7 @@ fn regex_error(e: &regex::Error) -> String {
     s.lines().find_map(|l| l.strip_prefix("error: ")).unwrap_or(&s).trim().replace('\n', " ")
 }
 
-fn check(l: LanguageCfg, path: &Path, source: &str, text: &str, seen: &[Lang]) -> Result<Lang> {
+fn check(l: LanguageCfg, path: &Path, source: &str, text: &str, seen: &[Lang], (size, dfa): (usize, usize)) -> Result<Lang> {
     let err = |span: Range<usize>, msg: String| anyhow!("{}: {msg}", at(path, text, span.start));
     let name = l.name.get_ref().clone();
     if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
@@ -192,7 +201,6 @@ fn check(l: LanguageCfg, path: &Path, source: &str, text: &str, seen: &[Lang]) -
         },
         None => None,
     };
-    let limits = crate::instant::Pattern::default();
     let mut defs = Vec::new();
     for d in l.definitions {
         let kind = d.kind.get_ref();
@@ -200,8 +208,8 @@ fn check(l: LanguageCfg, path: &Path, source: &str, text: &str, seen: &[Lang]) -
             return Err(err(d.kind.span(), format!("definition kind {kind:?} is not one of {}", KINDS.join(", "))));
         };
         let re = regex::RegexBuilder::new(d.pattern.get_ref())
-            .size_limit(limits.regex_size_limit)
-            .dfa_size_limit(limits.dfa_size_limit)
+            .size_limit(size)
+            .dfa_size_limit(dfa)
             .build()
             .map_err(|e| err(d.pattern.span(), format!("the pattern of a {kind} definition does not compile: {}", regex_error(&e))))?;
         if re.captures_len() < 2 {

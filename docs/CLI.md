@@ -1009,8 +1009,9 @@ definitions = [
 - `block_comment` (optional): the opener and the closer of a block comment.
 - `definitions`: one table per pattern, `kind` one of `class`, `constant`, `enum`, `function`,
   `impl`, `interface`, `macro`, `method`, `module`, `struct`, `trait`, `type`, and `pattern` a
-  regular expression (Rust `regex` syntax, the size limits of `grep`) matched against one line at
-  a time. The first group is the name, so a pattern needs one. The first pattern that matches a
+  regular expression (Rust `regex` syntax) matched against one line at a time. All the patterns
+  of every table share the size limits of one `grep` pattern (20 MB compiled, 10 MB of lazy DFA),
+  split evenly, so a table of many large patterns is an error at the pattern that is over. The first group is the name, so a pattern needs one. The first pattern that matches a
   line wins; comment lines never define.
 
 Files with those extensions are parsed as the heuristic tier parses a file
