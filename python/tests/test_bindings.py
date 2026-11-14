@@ -251,6 +251,33 @@ def test_grep_sort_with_max_results_is_the_first_in_path_order(tmp_path):
         assert got == want
 
 
+def test_cancel_lets_other_python_threads_run(tmp_path):
+    # one big file with no match: the search checks for a stop only between files and at matches
+    words = ["alpha", "beta", "gamma", "delta", "omega", "sigma", "kappa", "lambda"]
+    line = " ".join(words) + " " + " ".join(reversed(words)) + "\n"
+    (tmp_path / "big.txt").write_text(line * (10 * 2**20 // len(line)))
+    it = scrutate.grep(r"zqxjvkwpyhgb\w+", [str(tmp_path)], mode="fuzzy_regex", fuzzy_edits=3, threads=1)
+    turns, stop = [0], threading.Event()
+
+    def spin():
+        while not stop.is_set():
+            turns[0] += 1
+
+    t = threading.Thread(target=spin)
+    s0 = time.perf_counter()
+    t.start()
+    time.sleep(0.05)
+    before, t0 = turns[0], time.perf_counter()
+    it.cancel()
+    took, during = time.perf_counter() - t0, turns[0] - before
+    stop.set()
+    t.join()
+    if took < 0.05:
+        pytest.skip(f"the search ended before cancel() had to wait ({took:.3f} s)")
+    expected = before / (t0 - s0) * took
+    assert during >= 0.2 * expected, f"cancel() took {took:.3f} s; the other thread ran {during} turns of {expected:.0f}"
+
+
 def _interrupt_latency(call, delay):
     """Seconds from a SIGINT sent `delay` s into `call()` to the KeyboardInterrupt; None if it finished first."""
     timer = threading.Timer(delay, os.kill, (os.getpid(), signal.SIGINT))

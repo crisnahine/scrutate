@@ -150,9 +150,10 @@ pub struct GrepIter {
 }
 
 impl GrepIter {
-    fn finish(&mut self) {
+    /// Join the search thread with the GIL released: in a slow file it stops only at its next check.
+    fn finish(&mut self, py: Python<'_>) {
         if let Some(h) = self.handle.take() {
-            match h.join() {
+            match py.detach(|| h.join()) {
                 Ok(Ok((st, notes))) => {
                     self.stats = Some(st);
                     self.notes = notes;
@@ -190,7 +191,7 @@ impl GrepIter {
             }
             None => {
                 this.rx = None;
-                this.finish();
+                this.finish(py);
                 if let Some(e) = this.error.take() {
                     return Err(err(e));
                 }
@@ -200,11 +201,11 @@ impl GrepIter {
     }
 
     /// Stop the search; remaining results are discarded.
-    fn cancel(&mut self) {
+    fn cancel(&mut self, py: Python<'_>) {
         self.cancel.store(true, Ordering::Relaxed);
         self.rx = None;
         self.buf.clear();
-        self.finish();
+        self.finish(py);
     }
 
     /// Statistics of a finished search (files searched/matched, matches, bytes, elapsed ms,
@@ -213,7 +214,7 @@ impl GrepIter {
         if self.rx.is_some() {
             return Ok(None); // still running
         }
-        self.finish();
+        self.finish(py);
         match &self.stats {
             None => Ok(None),
             Some(st) => {
