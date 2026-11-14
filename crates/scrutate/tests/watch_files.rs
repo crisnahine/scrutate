@@ -639,3 +639,24 @@ fn a_failed_update_is_tried_again_with_no_further_change() {
     // no file changes again: the retry alone indexes the burst
     wait_for(30, "the retry", || chunk_names(&r.root).contains("alpha_new"));
 }
+
+/// Ctrl-C during watch's first update stops it at its next batch of files, and a second Ctrl-C
+/// ends the process at once, as for any program.
+#[cfg(unix)]
+#[test]
+fn ctrl_c_stops_a_long_first_update_of_watch() {
+    let r = Repo::new("sigint_update");
+    let body: String = (0..40).map(|j| format!("def f{j}(x):\n    return x + {j}\n\n")).collect();
+    for i in 0..20000 {
+        r.write(&format!("d{}/m{i}.py", i % 200), body.as_bytes());
+    }
+    let (mut child, rx) = start_watch(&r.root);
+    // the first update is reading the files by now
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(child.0.try_wait().unwrap().is_none(), "watch ended before the signal");
+    assert!(!rx.try_iter().any(|l| l.contains("watching")), "the first update ended before the signal: a larger tree is needed");
+    assert!(Command::new("kill").args(["-INT", &child.0.id().to_string()]).status().unwrap().success());
+    let t0 = Instant::now();
+    wait_for(10, "watch to stop on Ctrl-C", || child.0.try_wait().unwrap().is_some());
+    assert_eq!(child.0.wait().unwrap().code(), Some(130), "{:?}", t0.elapsed());
+}

@@ -161,6 +161,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- Ctrl-C stops a `watch` update at its next batch of files, the first update of a large tree
+  included, where it ran on to its end; a second Ctrl-C ends any command at once
+  ([CLI](docs/CLI.md#watch)).
 - A C++ header with a Doxygen `@class` (or `@interface`, `@protocol`) in a comment is parsed as
   C++: only a line that starts with an Objective-C keyword makes a `.h` file Objective-C; an index
   reads its files again.

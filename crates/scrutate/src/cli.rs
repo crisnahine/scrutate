@@ -33,35 +33,42 @@ mod interrupt {
     #[cfg(any(unix, windows))]
     static FLAG: OnceLock<Arc<AtomicBool>> = OnceLock::new();
 
-    // async-signal-safe: an atomic load of the cell and an atomic store
+    // async-signal-safe: an atomic load of the cell and an atomic store. -> whether the flag was
+    // set already: a second Ctrl-C ends the process as it would any program
     #[cfg(any(unix, windows))]
-    fn fire() {
-        if let Some(f) = FLAG.get() {
-            f.store(true, Ordering::Relaxed);
-        }
+    fn fire() -> bool {
+        FLAG.get().is_some_and(|f| f.swap(true, Ordering::Relaxed))
     }
 
     #[cfg(unix)]
     pub fn install(flag: Arc<AtomicBool>) {
         extern "C" fn handler(_: i32) {
-            fire()
+            if fire() {
+                // the default action, then the signal again: the process ends as Ctrl-C ends any
+                unsafe {
+                    signal(SIGINT, SIG_DFL);
+                    raise(SIGINT);
+                }
+            }
         }
         extern "C" {
-            fn signal(sig: i32, handler: extern "C" fn(i32)) -> usize;
+            fn signal(sig: i32, handler: usize) -> usize;
+            fn raise(sig: i32) -> i32;
         }
         const SIGINT: i32 = 2;
+        const SIG_DFL: usize = 0;
         if FLAG.set(flag).is_ok() {
             unsafe {
-                signal(SIGINT, handler);
+                signal(SIGINT, handler as *const () as usize);
             }
         }
     }
 
     #[cfg(windows)]
     pub fn install(flag: Arc<AtomicBool>) {
+        // 0 for a second Ctrl-C: the next handler, the system's own, ends the process
         unsafe extern "system" fn handler(_: u32) -> i32 {
-            fire();
-            1
+            i32::from(!fire())
         }
         #[link(name = "kernel32")]
         extern "system" {
@@ -1899,7 +1906,13 @@ fn watch_command(root: &Path) -> Result<i32> {
         s => s?,
     };
     let update = |changes: &crate::stores::Changes| -> Result<()> {
-        let up = session.write(|repo| repo.update_stores(Writer::Watch, changes, false))?;
+        // Ctrl-C stops an update at its next batch of files
+        let up = session.write(|repo| {
+            repo.set_cancel(Arc::clone(&stop));
+            let up = repo.update_stores(Writer::Watch, changes, false);
+            repo.set_cancel(Arc::default());
+            up
+        })?;
         let (st, text) = (up.code.unwrap_or_default(), up.text);
         let text_changed = text.as_ref().map(|t| t.files_changed + t.files_removed).unwrap_or(0);
         if st.files_changed + st.files_removed + text_changed > 0 {

@@ -303,7 +303,9 @@ marker is not).
     boundaries);
   - `config.rs`: `std::env::set_var` during startup before any thread exists;
   - `cli.rs`: `signal(SIGINT, ...)` (Unix) and `SetConsoleCtrlHandler` (Windows) declarations,
-    whose handler only stores to an atomic flag;
+    whose handler only swaps an atomic flag; on a second Ctrl-C the Unix handler restores the
+    default action with `signal` and sends `raise(SIGINT)`, both async-signal-safe, and the
+    Windows one passes the event on to the system's handler;
   - `hook.rs` (Windows): `RegOpenKeyExW` and `RegCloseKey` to see whether a policy key exists,
     with a nul-terminated name and the key closed;
   - `index.rs` (Windows): the status change time of a file, from `GetFileInformationByName`
@@ -355,7 +357,7 @@ marker is not).
 
   | File | `unsafe` |
   |---|---|
-  | `crates/scrutate/src/cli.rs` | 4 |
+  | `crates/scrutate/src/cli.rs` | 5 |
   | `crates/scrutate/src/config.rs` | 1 |
   | `crates/scrutate/src/foldfind.rs` | 2 |
   | `crates/scrutate/src/hook.rs` | 2 |

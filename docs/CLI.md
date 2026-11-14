@@ -117,7 +117,8 @@
   and `watch` use the index above. The language server applies the same rule to the editor's
   first workspace folder (else `rootUri`).
 - **Shell completion**: `scrutate completions bash|zsh|fish|powershell|elvish`.
-- **Cancellation**: Ctrl-C stops a search between files and exits 130; a closed pipe
+- **Cancellation**: Ctrl-C stops a search between files and exits 130, and a second Ctrl-C
+  ends the process at once; a closed pipe
   (`| head`) stops it silently, with `-c`, `-l`, `--sort`, `--type-list` and `languages` too; any
   other failed write of the output (a full disk, a file size limit) is an error, exit code 2.
 
@@ -878,7 +879,8 @@ scrutate watch [PATH]
 Sets up the watch on `PATH` (default `--root`), then updates the index once, so a change made
 during that first update is seen, prints `watching PATH` on stderr, and waits for filesystem
 events. While another process writes the index, an update waits for it (up to 10 minutes), the
-first one too; Ctrl-C stops `watch` at once, also during that wait, with exit code 130.
+first one too; Ctrl-C stops `watch` at once, also during that wait, with exit code 130, and
+an update that is running stops at its next batch of files.
 
 Per platform:
 
