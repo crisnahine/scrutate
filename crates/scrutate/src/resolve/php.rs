@@ -403,9 +403,15 @@ impl Resolver<'_> {
     /// The class of variable `e`: the value of its latest assignment before the use, else the
     /// type its parameter declares.
     fn php_variable(&mut self, fi: &FileInfo, e: Node) -> std::result::Result<i64, &'static str> {
+        self.php_variable_above(fi, e, e)
+    }
+
+    /// `php_variable` of `e` in the function around `inside`.
+    fn php_variable_above(&mut self, fi: &FileInfo, e: Node, inside: Node) -> std::result::Result<i64, &'static str> {
         let src = fi.src.as_str();
         let var = text(e, src);
-        let scope = std::iter::successors(e.parent(), |n| n.parent()).find(|n| PHP_FUNCTIONS.contains(&n.kind()) || n.parent().is_none()).ok_or("receiver")?;
+        let scope =
+            std::iter::successors(inside.parent(), |n| n.parent()).find(|n| PHP_FUNCTIONS.contains(&n.kind()) || n.parent().is_none()).ok_or("receiver")?;
         let at = e.start_byte();
         let binders = self.found_in(scope, "php binders", var, || php_binders(scope, var, src));
         let latest = binders[..binders.partition_point(|&(_, end)| end <= at)].last().copied();
@@ -420,8 +426,20 @@ impl Resolver<'_> {
         let param = scope
             .child_by_field_name("parameters")
             .and_then(|ps| ps.named_children(&mut cur).find(|p| p.child_by_field_name("name").is_some_and(|n| text(n, src) == var)));
-        let t = param.and_then(|p| p.child_by_field_name("type")).ok_or("receiver")?;
-        self.php_hint(fi, t)
+        if let Some(t) = param.and_then(|p| p.child_by_field_name("type")) {
+            return self.php_hint(fi, t);
+        }
+        // `function () use ($u)` captures `$u` as it is in the code around the closure
+        let mut c2 = scope.walk();
+        let captured = scope.named_children(&mut c2).filter(|c| c.kind() == "anonymous_function_use_clause").find_map(|u| {
+            let mut c3 = u.walk();
+            let found = u.named_children(&mut c3).find(|v| text(*v, src).trim_start_matches('&').trim() == var);
+            found
+        });
+        match captured {
+            Some(v) => self.php_variable_above(fi, v, scope),
+            None => Err("receiver"),
+        }
     }
 
     /// The class a type declaration names (`User`, `?User`, `self`); None for a primitive or a union.

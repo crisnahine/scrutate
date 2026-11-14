@@ -455,6 +455,8 @@ PHP has rules of its own too:
   `C::m()` in `C`. A method is looked for in the class, then its traits, then the class it
   extends and the interfaces it implements; when a base from outside the repository may declare
   it, the call is external.
+- A variable a closure takes with `use ($u)` has the type it has around the closure, as one an
+  arrow `fn` reads does.
 - Undecided: a variable bound by `foreach` or `catch`, a value of an untyped parameter, a union
   type, a dynamic name (`$o->$m()`).
 - Properties and class constants are `field or key`, a bare constant is `constant`, a part of a

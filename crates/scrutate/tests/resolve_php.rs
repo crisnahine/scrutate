@@ -198,3 +198,10 @@ fn php_class_alias_namespace_and_method_names_match_in_any_case() {
     let s = "src/Util/Str.php";
     assert_eq!(r.resolved("slug"), expect(&[(s, 6, s), ("app.php", 7, s), ("app.php", 8, s), ("app.php", 10, s)]));
 }
+
+#[test]
+fn a_variable_a_closure_captures_with_use_has_the_type_it_has_outside() {
+    let a = "<?php\nclass User\n{\n    public function save() { return 1; }\n}\nfunction run(User $u) {\n    $f = function () use ($u) {\n        return $u->save();\n    };\n    $g = fn() => $u->save();\n}\n";
+    let r = Repo::new("closure_use", &[("a.php", a)]);
+    assert_eq!(r.resolved("save"), expect(&[("a.php", 4, "a.php"), ("a.php", 8, "a.php"), ("a.php", 10, "a.php")]));
+}
