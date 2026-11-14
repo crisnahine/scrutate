@@ -27,13 +27,7 @@ impl Rules for C {
     }
 
     fn inherited(r: &mut Resolver, id: i64, name: &str, depth: usize, _path: &str, _qualname: &str) -> Option<i64> {
-        if depth >= 8 || r.nest > 32 {
-            return None;
-        }
-        r.nest += 1;
-        let found = r.c_bases(id).into_iter().find_map(|b| r.declared_member(b, name).or_else(|| Self::inherited(r, b, name, depth + 1, "", "")));
-        r.nest -= 1;
-        found
+        r.inherited_through(id, name, depth, |r, id| r.c_bases(id))
     }
 
     fn bases(r: &mut Resolver, id: i64, _path: &str, _fi: &FileInfo, _d: &Def, _lang: Lang) -> Vec<std::result::Result<i64, &'static str>> {

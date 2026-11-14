@@ -156,6 +156,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `callers` and `refs` through a C# or C++ type whose bases form a wide diamond take linear time:
+  each base type is read once per depth, as for Java, where 9 levels of 6 interfaces took 35 s for
+  one call.
 - `setup` makes its temporary file with the permissions of the file it replaces before writing to
   it: a `config.toml` only its owner may read was readable by others while it was written
   ([CLI](docs/CLI.md#setup-and-the-grep-hook)).

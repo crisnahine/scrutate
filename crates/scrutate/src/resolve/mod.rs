@@ -2176,6 +2176,44 @@ impl Resolver<'_> {
     }
 }
 
+impl Resolver<'_> {
+    /// `name` as a member type `id` inherits, by `bases` (Java, C#, C++): its bases in header
+    /// order, each with its own bases first, at most 8 deep. A type the walk came to before at
+    /// that depth or less is not walked again, so a diamond of many paths reads each type once
+    /// per depth.
+    pub(crate) fn inherited_through(&mut self, id: i64, name: &str, depth: usize, bases: fn(&mut Resolver, i64) -> Vec<i64>) -> Option<i64> {
+        self.inherited_walk(id, name, depth, bases, &mut HashMap::new())
+    }
+
+    fn inherited_walk(&mut self, id: i64, name: &str, depth: usize, bases: fn(&mut Resolver, i64) -> Vec<i64>, seen: &mut HashMap<i64, usize>) -> Option<i64> {
+        if depth >= 8 || self.nest > 32 {
+            return None;
+        }
+        self.nest += 1;
+        let mut found = None;
+        for bid in bases(self, id) {
+            if bid != id && !seen_at(seen, bid, depth + 1) {
+                found = self.declared_member(bid, name).or_else(|| self.inherited_walk(bid, name, depth + 1, bases, seen));
+                if found.is_some() {
+                    break;
+                }
+            }
+        }
+        self.nest -= 1;
+        found
+    }
+}
+
+/// Whether a walk over base types already came to `id` at `depth` or less, whose answer stands
+/// for this visit too; marks it otherwise. A type reached by many paths is read once per depth.
+pub(crate) fn seen_at(seen: &mut HashMap<i64, usize>, id: i64, depth: usize) -> bool {
+    if seen.get(&id).is_some_and(|&d| d <= depth) {
+        return true;
+    }
+    seen.insert(id, depth);
+    false
+}
+
 // ------------------------------------------------------------------------- refs
 /// Whether two spellings are one name: they compare in NFC.
 pub fn same_name(a: &str, b: &str) -> bool {

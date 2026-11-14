@@ -1403,6 +1403,33 @@ fn a_call_through_an_import_alias_is_a_call_of_the_imported_definition() {
     assert!(r.resolved("helper").contains(&("app.py:5".to_string(), "util.py".to_string())), "{:?}", r.resolved("helper"));
 }
 
+/// Interfaces 9 deep, each extending all 6 of the next level, and a call of a member none has:
+/// each type is walked once per depth, not once per path (6^8 of them).
+#[test]
+fn a_base_type_walk_over_a_diamond_of_many_paths_takes_linear_time() {
+    let (levels, wide) = (9, 6);
+    let mut cs = String::new();
+    let mut java = String::new();
+    for l in 0..levels {
+        for w in 0..wide {
+            let next: Vec<String> = if l + 1 < levels { (0..wide).map(|v| format!("I{}x{v}", l + 1)).collect() } else { Vec::new() };
+            let ext = if next.is_empty() { String::new() } else { format!(" : {}", next.join(", ")) };
+            cs.push_str(&format!("interface I{l}x{w}{ext} {{ }}\n"));
+            let ext = if next.is_empty() { String::new() } else { format!(" extends {}", next.join(", ")) };
+            java.push_str(&format!("interface I{l}x{w}{ext} {{ }}\n"));
+        }
+    }
+    cs.push_str("class Use {\n    void Run(I0x0 t) { t.Missing(); }\n    void Missing() { }\n}\n");
+    java.push_str("class Use {\n    void run(I0x0 t) { t.missing(); }\n    void missing() { }\n}\n");
+    let r = Repo::new("diamond", &[("a.cs", cs.as_str()), ("A.java", java.as_str())]);
+    let lib = r.lib();
+    for name in ["Use.Missing", "Use.missing"] {
+        let t0 = std::time::Instant::now();
+        lib.callers(name, 50).unwrap();
+        assert!(t0.elapsed() < std::time::Duration::from_secs(3), "{name}: {:?}", t0.elapsed());
+    }
+}
+
 #[test]
 fn deps_and_rdeps_resolve_typescript_esm_names_and_declaration_files() {
     let r = Repo::new(

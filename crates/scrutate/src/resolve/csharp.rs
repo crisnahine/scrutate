@@ -43,21 +43,7 @@ impl Rules for CSharp {
     }
 
     fn inherited(r: &mut Resolver, id: i64, name: &str, depth: usize, _path: &str, _qualname: &str) -> Option<i64> {
-        if depth >= 8 || r.nest > 32 {
-            return None;
-        }
-        r.nest += 1;
-        let mut found = None;
-        for b in r.cs_bases(id).iter() {
-            if let Ok(bid) = *b {
-                found = r.declared_member(bid, name).or_else(|| Self::inherited(r, bid, name, depth + 1, "", ""));
-                if found.is_some() {
-                    break;
-                }
-            }
-        }
-        r.nest -= 1;
-        found
+        r.inherited_through(id, name, depth, |r, id| r.cs_bases(id).iter().filter_map(|b| b.ok()).collect())
     }
 
     fn bases(r: &mut Resolver, id: i64, _path: &str, _fi: &FileInfo, _d: &Def, _lang: Lang) -> Vec<std::result::Result<i64, &'static str>> {
