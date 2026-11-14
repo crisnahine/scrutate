@@ -322,6 +322,23 @@ fn javascript_a_member_of_require_a_dynamic_import_and_ts_import_require_bind_na
 }
 
 #[test]
+fn go_a_method_promoted_from_another_package_s_type_is_that_type_s() {
+    let r = Repo::new(
+        "go_promoted_pkg",
+        &[
+            ("go.mod", "module ex\n\ngo 1.22\n"),
+            ("base/base.go", "package base\n\ntype Base struct{}\n\nfunc (b Base) Hello() int {\n\treturn 1\n}\n"),
+            (
+                "main.go",
+                "package main\n\nimport \"ex/base\"\n\ntype Base struct{}\n\nfunc (b Base) Hello() int {\n\treturn 2\n}\n\ntype Ext struct {\n\tbase.Base\n}\n\nfunc run(e Ext) int {\n\treturn e.Hello()\n}\n",
+            ),
+        ],
+    );
+    assert_eq!(r.refs_of("Hello", "base/base.go:5"), ["base/base.go:5", "main.go:16"]);
+    assert_eq!(r.refs_of("Hello", "main.go:7"), ["main.go:7"]);
+}
+
+#[test]
 fn go_two_areas() {
     let r = Repo::new(
         "go",

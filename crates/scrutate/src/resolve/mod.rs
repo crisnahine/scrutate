@@ -1762,11 +1762,7 @@ impl<'a> Resolver<'a> {
         for b in named {
             let Some(leaf) = type_name(b) else { continue };
             let leaf_name = text(leaf, &fi.src);
-            let found = match qualifier(leaf) {
-                Some(q) => self.resolve_qualified(path, fi, lang, q, leaf, leaf_name, d.start),
-                None => self.resolve_bare(path, fi, lang, leaf, leaf_name, d.start),
-            };
-            let found = match found {
+            let found = match self.type_leaf(path, fi, lang, leaf, d.start) {
                 Err("not found") if !self.defined_anywhere(leaf_name) => Err("external"),
                 f => f,
             };
@@ -1782,6 +1778,16 @@ impl<'a> Resolver<'a> {
             }
         }
         out
+    }
+
+    /// The definition a type name `leaf` written on `line` stands for: through its qualifier
+    /// (`base.Base`, `a::T`) when it has one, else as a plain name in scope.
+    fn type_leaf(&mut self, path: &str, fi: &FileInfo, lang: Lang, leaf: Node, line: i64) -> Resolution {
+        let name = text(leaf, &fi.src);
+        match qualifier(leaf) {
+            Some(q) => self.resolve_qualified(path, fi, lang, q, leaf, name, line),
+            None => self.resolve_bare(path, fi, lang, leaf, name, line),
+        }
     }
 
     /// Container `id` and the classes it inherits from, in Python's method resolution order (C3,

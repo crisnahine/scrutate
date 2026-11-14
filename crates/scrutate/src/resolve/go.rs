@@ -21,8 +21,7 @@ impl Rules for Go {
     // a method is declared outside its type, in any file of the package: its receiver names the type
     fn inherited(r: &mut Resolver, id: i64, name: &str, depth: usize, path: &str, qualname: &str) -> Option<i64> {
         let owner = strip_generics(qualname);
-        let files = r.go_dir(dir_of(path));
-        for f in files.clone() {
+        for f in r.go_dir(dir_of(path)) {
             let gf = r.file(&f);
             let Some(tree) = gf.tree.as_ref() else { continue };
             let root = tree.root_node();
@@ -47,19 +46,19 @@ impl Rules for Go {
         while let Some(n) = stack.pop() {
             if n.kind() == "field_declaration" {
                 if n.child_by_field_name("name").is_none() {
-                    embedded.extend(n.child_by_field_name("type").and_then(type_name).map(|t| text(t, &fi.src).to_string()));
+                    embedded.extend(n.child_by_field_name("type").and_then(type_name));
                 }
                 continue;
             }
             let mut cur = n.walk();
             stack.extend(n.named_children(&mut cur));
         }
-        for e in embedded {
-            for f in &files {
-                let Some(base) = top_level(&r.file(f), &e).map(|d| d.id) else { continue };
-                if let Some(m) = r.member(base, name, depth + 1) {
-                    return Some(m);
-                }
+        // an embedded `base.Base` is the `Base` of package `base`, not one of this package
+        for leaf in embedded {
+            let line = leaf.start_position().row as i64 + 1;
+            let Ok((base, _)) = r.type_leaf(path, &fi, Lang::Go, leaf, line) else { continue };
+            if let Some(m) = r.member(base, name, depth + 1) {
+                return Some(m);
             }
         }
         None

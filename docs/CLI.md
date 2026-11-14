@@ -361,7 +361,8 @@ refers to. For Python, JavaScript, TypeScript, Rust and Go the rules are, in ord
    such as `Box`, `Rc` and `Arc` in Rust, `await` in TypeScript); `self.x.N` takes field `x`'s
    declared type, and a module-level or static variable its declared or built type. A Go method
    is found by its receiver type in any file of the package, or through an embedded field
-   (`v.Hello()` with `type Wrap struct { *Base }` is `Base.Hello`). A Rust method a type does not define
+   (`v.Hello()` with `type Wrap struct { *Base }` is `Base.Hello`); an embedded `base.Base` is
+   the `Base` of the package imported as `base`, never a local type of that name. A Rust method a type does not define
    itself is the default method of a trait the type implements (`impl Greet for S {}`). A method call on a call's result
    (`mk().norm()`) goes through the callee's declared return type. `this` inside a method of a
    JavaScript or TypeScript object literal is the literal (`this.put()` in `api.get` is
