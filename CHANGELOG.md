@@ -287,6 +287,9 @@ incompatible index by itself, and that is never breaking.
   still asked whole.
 - The GitHub Action keeps a backslash in `args` as written: `grep -c \bTODO\b .` searched for
   `bTODOb` and `--root C:\repo` named `C:repo`, so a gate could pass on the wrong search.
+- Python `grep(sort=True)` gives the CLI's `--sort` order (`a/b` before `a-b`), and with
+  `max_results=N` the first N matches in it, the same on every run: it capped the search at
+  whichever N matches came first and sorted those ([bindings](crates/scrutate-py/README.md)).
 
 ## [0.1.0] - 2026-11-11
 

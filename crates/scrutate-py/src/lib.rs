@@ -245,8 +245,8 @@ impl Drop for GrepIter {
 ///
 /// mode: "regex" (default), "literal", "identifier" (every casing of an identifier) or "fuzzy"
 /// (within `fuzzy_edits` edits). Returns an iterator of `Match`, in the order the files are
-/// searched, or in path and line order with `sort=True` (the first match then waits for the
-/// whole search).
+/// searched, or with `sort=True` in the order of `rg --sort path` (the first match then waits for
+/// the whole search); `sort=True` with `max_results=N` gives the first N matches in that order.
 #[pyfunction]
 #[pyo3(signature = (pattern, paths=vec![".".to_string()], *, mode="regex", case="sensitive", word=false, multiline=false,
                     invert=false, hidden=false, no_ignore=false, follow_links=false, globs=vec![], types=vec![],
@@ -288,6 +288,7 @@ fn grep(
         invert,
         max_count,
         max_results,
+        first_in_path_order: sort,
         before,
         after,
         want_spans: true,
@@ -341,21 +342,12 @@ fn grep(
                         notes.push((path.to_string(), text.clone()));
                     }
                     batch.extend(Match::of(r));
-                    if !sort && batch.len() >= 256 && tx2.send(std::mem::take(&mut batch)).is_err()
-                    {
+                    if batch.len() >= 256 && tx2.send(std::mem::take(&mut batch)).is_err() {
                         c3.store(true, Ordering::Relaxed); // consumer gone
                     }
                 }),
             );
-            if sort {
-                batch.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
-                let mut it = batch.into_iter().peekable();
-                while it.peek().is_some() {
-                    if tx.send(it.by_ref().take(256).collect()).is_err() {
-                        break;
-                    }
-                }
-            } else if !batch.is_empty() {
+            if !batch.is_empty() {
                 let _ = tx.send(batch);
             }
             st.map(|st| (st, notes))

@@ -233,6 +233,24 @@ def test_grep_sort_gives_path_and_line_order(repo):
     assert len(got) > 100 and got == sorted(got)
 
 
+def test_grep_sort_compares_paths_part_by_part(tmp_path):
+    # as `rg --sort path` and the CLI: a/b.txt before a-b.txt, though "-" sorts before "/"
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a" / "b.txt").write_text("x\n")
+    (tmp_path / "a-b.txt").write_text("x\n")
+    got = [m.path.replace("\\", "/") for m in scrutate.grep("x", [str(tmp_path)], sort=True)]
+    assert got == ["a/b.txt", "a-b.txt"]
+
+
+def test_grep_sort_with_max_results_is_the_first_in_path_order(tmp_path):
+    for i in range(300):
+        (tmp_path / f"f{i:03}.txt").write_text("needle\n")
+    want = [f"f{i:03}.txt" for i in range(5)]
+    for _ in range(10):
+        got = [m.path for m in scrutate.grep("needle", [str(tmp_path)], sort=True, max_results=5, threads=8)]
+        assert got == want
+
+
 def _interrupt_latency(call, delay):
     """Seconds from a SIGINT sent `delay` s into `call()` to the KeyboardInterrupt; None if it finished first."""
     timer = threading.Timer(delay, os.kill, (os.getpid(), signal.SIGINT))
