@@ -666,3 +666,34 @@ fn a_byte_order_mark_and_two_definitions_on_one_line_are_placed_as_the_editor_se
     drop(c);
     child.wait().unwrap();
 }
+
+#[test]
+fn a_reference_under_an_alias_spans_the_alias_as_written() {
+    let r = Repo::new("alias_range");
+    r.write("util.py", "def helper():\n    return 1\n");
+    r.write("app.py", "from util import helper as h\n\n\ndef use():\n    return h()\n");
+    let mut child = Command::new(BIN).arg("lsp").current_dir(&r.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
+    c.request("initialize", json!({"processId": null, "rootUri": uri(&r.root), "capabilities": {}}));
+    c.notify("initialized", json!({}));
+    let at = json!({"textDocument": {"uri": uri(&r.root.join("util.py"))}, "position": {"line": 0, "character": 5}, "context": {"includeDeclaration": false}});
+    let refs = c.request("textDocument/references", at);
+    let spans: Vec<(u64, u64, u64)> = refs["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{refs}"))
+        .iter()
+        .filter(|l| l["uri"].as_str().unwrap().ends_with("/app.py"))
+        .map(|l| {
+            (
+                l["range"]["start"]["line"].as_u64().unwrap(),
+                l["range"]["start"]["character"].as_u64().unwrap(),
+                l["range"]["end"]["character"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(spans, [(0, 17, 23), (4, 11, 12)], "{refs}");
+    c.request("shutdown", Value::Null);
+    c.notify("exit", Value::Null);
+    drop(c);
+    child.wait().unwrap();
+}

@@ -169,6 +169,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- The language server's references under an import alias span the alias as the line writes it:
+  `h()` after `from util import helper as h` is 1 character wide, where it took the width of
+  `helper` and ran past the end of a short line ([CLI](docs/CLI.md#lsp)).
 - `callers` lists a call the resolver could not place, tied by its name only (`tx.foo.update()`
   on an untyped parameter), as undecided also when no other definition has the name, where
   `callers update` listed it as decided and `callers ProviderProfile.update` as undecided;

@@ -587,11 +587,17 @@ impl Server {
                 let (l, a, b) = lines.name_pos(&d.path, d.start, d.end, &d.name);
                 out.push(json!({"uri": path_to_uri(&self.root.join(&d.path)), "range": range(l, a, l, b)}));
             }
-            let width = ident.encode_utf16().count() as u64;
             for o in r.of(def_id) {
                 if matches!(o.resolution, Ok((_, "definition"))) {
                     continue;
                 }
+                // an alias (`h` for `helper`) spans what the line writes, not the name asked for
+                let written = o.text.get(o.at..).unwrap_or("");
+                let width = if written.starts_with(ident.as_str()) {
+                    ident.encode_utf16().count()
+                } else {
+                    written.chars().take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$').map(char::len_utf16).sum()
+                } as u64;
                 let (l, a) = (o.line.saturating_sub(1), byte_to_utf16(&o.text, o.at));
                 out.push(json!({"uri": path_to_uri(&self.root.join(&o.path)), "range": range(l, a, l, a + width)}));
             }
