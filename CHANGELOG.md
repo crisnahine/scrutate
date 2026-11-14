@@ -94,6 +94,14 @@ incompatible index by itself, and that is never breaking.
   the MCP server, and records per run whether the answer checks out, tokens, cost, tool calls and
   tool errors. Each run is paid, so it starts only with `--yes-spend`; no round has run yet
   ([Quality](docs/QUALITY.md#agent-eval)).
+- `bench/yardstick.py` measures each workload against its rivals: grep tools, zoekt and livegrep,
+  universal-ctags, ast-grep, rust-analyzer, pyright, clangd and gopls, and on the QUALITY queries
+  (`--quality N`) ck, grepai and claude-context with local embeddings, with each tool's MRR@10
+  and hit@5. It checks every answer before it times one, reports a wrong answer instead of a
+  time, and records each rival's version. `bench/competitors/install_rivals.sh` installs every
+  rival pinned by version and checksum; `yardstick.Dockerfile` and `claude-context.compose.yml`
+  run them in containers. CI runs `--smoke` on a small tree in Python, Rust, C and Go
+  ([Releasing](docs/RELEASING.md#2-benchmarks-on-the-release-binary)).
 
 ### Changed
 - The `scrutate` crate is ready for crates.io: it holds its models and data and nothing else

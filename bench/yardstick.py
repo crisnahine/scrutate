@@ -149,8 +149,8 @@ def adapters(binary: str | None = None) -> list:
     from rivals import index, lsp, scrutate, semantic, text
     b = binary or lb.SCRUTATE
 
-    def server(name, cmd, version, languages):
-        s = lsp.Lsp(name, cmd, version)
+    def server(name, cmd, version, languages, opens=()):
+        s = lsp.Lsp(name, cmd, version, opens=opens)
         s.languages = frozenset(languages)
         return s
 
@@ -161,7 +161,7 @@ def adapters(binary: str | None = None) -> list:
         text.Ctags(), text.AstGrep(), text.EmptyProgram(),
         server("rust-analyzer", ["rust-analyzer"], ["rust-analyzer", "--version"], {"rust"}),
         server("pyright", ["pyright-langserver", "--stdio"], ["pyright", "--version"], {"python"}),
-        server("clangd", ["clangd"], ["clangd", "--version"], {"c", "cpp"}),
+        server("clangd", ["clangd"], ["clangd", "--version"], {"c", "cpp"}, opens=(".c", ".cc", ".cpp")),
         server("gopls", ["gopls"], ["gopls", "version"], {"go"}),
     ]
 
@@ -231,8 +231,15 @@ def main() -> int:
             # a copy: the tools write their indexes into the tree they search
             corpus = os.path.join(work, "tree")
             shutil.copytree(os.path.join(here, "yardstick_smoke", "tree"), corpus)
+            # clangd indexes the files a compilation database lists, by absolute path
+            with open(os.path.join(corpus, "compile_commands.json"), "w") as f:
+                json.dump([{"directory": os.path.realpath(corpus), "file": "point.c", "command": "cc -c point.c"}], f)
         out = measure(adapters(), queries, a.runs, a.warmup, os.path.realpath(corpus), work)
     out["environment"] = lb.environment()
+    # the pinned rivals' versions, as bench/competitors/install_rivals.sh wrote them
+    rivals = os.path.join(os.path.dirname(shutil.which("ck") or shutil.which("ctags") or "/nonexistent/bin/x"), "..", "versions.json")
+    if os.path.exists(rivals):
+        out["environment"]["rivals"] = json.load(open(rivals))
     out["summary"] = summary(out["rows"])
     for r in out["rows"]:
         print(f"{r['workload']:4} {r['query'][:34]:34} {r['tool']:18} {r['form']:8} {r['status'][:60]:60} {r.get('p50_ms', float('nan')):9.2f} ms", file=sys.stderr)

@@ -103,14 +103,27 @@ class Client:
             self.p.kill()
 
 
+def first_file(root: str, suffixes: tuple[str, ...]) -> str | None:
+    """The first file (in sorted walk order, hidden directories skipped) ending in one of `suffixes`."""
+    for d, dirs, files in os.walk(root):
+        dirs[:] = sorted(x for x in dirs if not x.startswith("."))
+        for f in sorted(files):
+            if f.endswith(suffixes):
+                return os.path.relpath(os.path.join(d, f), root)
+    return None
+
+
 class Lsp(Adapter):
     """One language server: `cmd` started in the corpus."""
 
     form = "resident"
     workloads = frozenset({"W4", "W5"})
 
-    def __init__(self, name: str, cmd: list[str], version_cmd: list[str] | None = None, deadline: float = 900, calls: bool = True):
-        self.name, self.cmd, self.version_cmd, self.deadline, self.calls = name, cmd, version_cmd, deadline, calls
+    def __init__(self, name: str, cmd: list[str], version_cmd: list[str] | None = None, deadline: float = 900, calls: bool = True,
+                 opens: tuple[str, ...] = ()):
+        """`opens`: suffixes of a file to open before waiting, for a server that indexes only once
+        a file is open (clangd finds its compilation database from the first one)."""
+        self.name, self.cmd, self.version_cmd, self.deadline, self.calls, self.opens = name, cmd, version_cmd, deadline, calls, opens
         self.c: Client | None = None
         self.corpus = ""
 
@@ -131,6 +144,9 @@ class Lsp(Adapter):
         self.c.request("initialize", {"processId": os.getpid(), "rootUri": uri(corpus), "capabilities": caps,
                                       "workspaceFolders": [{"uri": uri(corpus), "name": os.path.basename(corpus)}]})
         self.c.notify("initialized", {})
+        first = first_file(corpus, self.opens) if self.opens else None
+        if first:
+            self.at({"at": [first, 1, 1]})
         if not self.c.quiet(2.0, self.deadline):
             raise TimeoutError(f"not ready after {self.deadline} s")
         return Setup(seconds=time.perf_counter() - t0)

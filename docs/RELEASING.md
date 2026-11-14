@@ -126,6 +126,16 @@ The VM shares the Mac, so it runs after the macOS chain, never beside it. Linux 
 dedicated server (Hetzner AX) with the same two scripts, natively (`--platform linux/amd64`,
 without `SCRUTATE_PREBUILT`), and can run at the same time as the macOS chain.
 
+The yardstick (`bench/yardstick.py`) runs on Linux x86_64 against every rival at once, each
+answer checked before it is timed. Build the image with every rival pinned
+(`docker build -f bench/competitors/yardstick.Dockerfile -t scrutate-yardstick .`), or install
+them under a user account with `bench/competitors/install_rivals.sh DIR`. claude-context and
+grepai need Milvus and Ollama: `bench/competitors/claude-context.compose.yml` starts both, and its
+header has the model pull. Then run `yardstick.py --corpus DIR --queries FILE --out FILE` for
+W1 to W6, W9 and W10, and `yardstick.py --quality 200 --out FILE` for W8; `--only W4,W5` narrows
+a run. The output records each rival's version and the machine. clangd needs a
+`compile_commands.json` in the corpus, and gopls a Go corpus (`corpora.py --only hugo`).
+
 Then read the results:
 
 - Every row's status, and the rows marked "measured again".

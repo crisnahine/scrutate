@@ -57,6 +57,7 @@ python3 tools/unsafe_count.py                     # each file's `unsafe` count m
 cd python && SCRUTATE_BIN=../target/release/scrutate python -m pytest -q   # training code, benchmark builders (+ bindings if installed)
 python bench/quality.py target/release/scrutate   # ranking quality (MRR@10, hit@5) not below bench/quality/floor.json
 python bench/differential.py --cases 200          # Engine A == ripgrep on random inputs
+SCRUTATE_BIN=target/release/scrutate python bench/yardstick.py --smoke   # every scrutate form answers each workload right; installed rivals too
 python3 tools/gen_assets.py --check && python3 tools/gen_doc_assets.py --check && python3 bench/make_readme_charts.py --check   # images, charts, document heads and links are what the scripts write
 ```
 
