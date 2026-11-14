@@ -177,7 +177,9 @@ fn check(l: LanguageCfg, path: &Path, source: &str, text: &str, seen: &[Lang], (
         }
         let ext = format!(".{}", e.to_lowercase());
         let probe = format!("x{ext}");
-        if let Some(spec) = crate::langs::spec_for(&probe) {
+        // a built-in language that claims a whole file name (`CMakeLists.txt`) claims its extension too
+        let named = || crate::langs::LANGS.iter().copied().find(|s| s.files.iter().any(|f| f.to_lowercase().ends_with(&ext)));
+        if let Some(spec) = crate::langs::spec_for(&probe).or_else(named) {
             return Err(err(span.clone(), format!("extension {e:?} belongs to the built-in language {}", spec.id)));
         }
         if !crate::parse::is_indexable(&probe) {

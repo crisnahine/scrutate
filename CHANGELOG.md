@@ -161,6 +161,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- A custom language's extension is refused when a built-in language claims a file name that
+  ends with it (`txt` for `CMakeLists.txt`): such a table took those files from the built-in
+  language ([CLI](docs/CLI.md#custom-languages)).
 - `check` reports a segment whose vectors are gone or not as wide as the model's, and an IVF row
   out of range, where it said OK or stopped with a bare error; a search finds a segment of the
   wrong width damaged and rebuilds it, where it panicked ([CLI](docs/CLI.md#engine-b)).

@@ -1010,9 +1010,10 @@ definitions = [
 - `name`: the language's id (letters, digits, `_` and `-`). Not a built-in language, a `--type`
   alias (`py`, `js`, `sh` ...), or a name another table already took.
 - `extensions`: one or more, without the dot, matched without regard to case. Refused: an
-  extension a built-in language owns (so the parser, the resolver and the language server agree
-  on what a file is), one the index never reads (`csv`, `log`, `lock` ...), and one another
-  custom language owns.
+  extension a built-in language owns, as one of its extensions or the end of a file name it
+  claims (`txt` for `CMakeLists.txt`, `xml` for `pom.xml`), so that the parser, the resolver and
+  the language server agree on what a file is; one the index never reads (`csv`, `log`, `lock`
+  ...); and one another custom language owns.
 - `line_comment` (optional): the mark that starts a comment line.
 - `block_comment` (optional): the opener and the closer of a block comment.
 - `definitions`: one table per pattern, `kind` one of `class`, `constant`, `enum`, `function`,

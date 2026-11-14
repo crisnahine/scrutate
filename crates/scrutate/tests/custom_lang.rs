@@ -187,6 +187,8 @@ fn a_bad_table_is_one_error_that_names_the_file_and_the_line() {
     one_error(&t, &TABLE.replace("line_comment", "line_coment"), 4, "line_coment");
     one_error(&t, &TABLE.replace("\"mylang\"", "\"python\""), 2, "built-in");
     one_error(&t, &TABLE.replace("[\"myl\"]", "[\"myl\", \"rs\"]"), 3, "rust");
+    // a built-in language that claims a whole file name (CMakeLists.txt) claims its extension too
+    one_error(&t, &TABLE.replace("[\"myl\"]", "[\"myl\", \"txt\"]"), 3, "cmake");
     one_error(&t, &TABLE.replace("kind = \"class\"", "kind = \"widget\""), 8, "widget");
     one_error(&t, &TABLE.replace("name = \"mylang\"", "name = \"my lang\""), 2, "letters");
 }
