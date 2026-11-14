@@ -156,6 +156,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `setup` makes its temporary file with the permissions of the file it replaces before writing to
+  it: a `config.toml` only its owner may read was readable by others while it was written
+  ([CLI](docs/CLI.md#setup-and-the-grep-hook)).
 - A language server request during the first build waits for it up to 20 seconds, then answers
   -32801 "the index is still being built": it waited for the whole build on the one thread that
   reads requests, so `shutdown` and cancellations queued behind it ([CLI](docs/CLI.md#lsp)).

@@ -1102,7 +1102,8 @@ Every other key, server, comment and blank line stays byte for byte: JSON and JS
 edited as text, one member in or out, never rewritten from a parse; `config.toml` gets one table
 appended. A file that does not parse, or where a key on the way to the entry is not an object, is
 named in an error (exit 2), and the run writes nothing. The new text goes to a temporary file in
-the same directory, renamed over the file with its permissions kept; a symbolic link is followed
+the same directory, made with the file's permissions before a byte is written, and renamed over
+the file; a symbolic link is followed
 and stays. A file that changed between read and write is not written, and the error says to run
 setup again. A missing file is created, with its directory, holding only the entry. A second run
 changes nothing; a `scrutate` entry that runs something else is replaced.

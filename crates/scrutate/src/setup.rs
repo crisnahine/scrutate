@@ -209,18 +209,34 @@ fn write_atomic(path: &Path, text: &str) -> Result<()> {
     let tmp = dir.join(format!(".{name}.scrutate-{}.tmp", std::process::id()));
     let written = (|| -> std::io::Result<()> {
         use std::io::Write;
-        let mut f = std::fs::File::create(&tmp)?;
+        let mut f = create_tmp(&tmp, &target)?;
         f.write_all(text.as_bytes())?;
         f.sync_all()?;
-        if let Ok(m) = std::fs::metadata(&target) {
-            std::fs::set_permissions(&tmp, m.permissions())?;
-        }
         std::fs::rename(&tmp, &target)
     })();
     if written.is_err() {
         let _ = std::fs::remove_file(&tmp);
     }
     written.with_context(|| format!("write {}", target.display()))
+}
+
+/// A new file at `tmp` with the permissions of `target` from the start, so a file only its owner
+/// may read (a config holding a token) is never readable by others while it is written.
+fn create_tmp(tmp: &Path, target: &Path) -> std::io::Result<std::fs::File> {
+    let _ = std::fs::remove_file(tmp);
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true).create_new(true);
+    let old = std::fs::metadata(target).ok().map(|m| m.permissions());
+    #[cfg(unix)]
+    if let Some(p) = &old {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        o.mode(p.mode() & 0o7777);
+    }
+    let f = o.open(tmp)?;
+    if let Some(p) = old {
+        std::fs::set_permissions(tmp, p)?;
+    }
+    Ok(f)
 }
 
 // ------------------------------------------------------------------------- what each agent gets
@@ -1051,6 +1067,22 @@ fn pull(text: &str, keys: &[&str], ours: fn(&Value) -> bool) -> Result<Option<Op
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn the_temporary_file_has_the_targets_mode_before_anything_is_written() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("scrutate_setup_tmp_mode_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("config.toml");
+        std::fs::write(&target, "env = { TOKEN = \"secret\" }\n").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let tmp = dir.join(".config.toml.tmp");
+        drop(create_tmp(&tmp, &target).unwrap());
+        assert_eq!(std::fs::metadata(&tmp).unwrap().permissions().mode() & 0o777, 0o600);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn run(bin: &str) -> Value {
         obj(hook_run(bin, true)).value()
