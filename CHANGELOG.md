@@ -161,6 +161,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- Two `Repo`s of the Python module with different custom languages, updated side by side, each
+  parse under their own root's tables: an update could parse with the other root's and keep
+  those chunks ([CLI](docs/CLI.md#custom-languages)).
 - `grep -t cpp` takes `.h` files, as ripgrep's `cpp` type does, `-t objc` takes `.h` and `.m`, and `-t matlab` and
   `-t puppet` find `.m` and `.pp` files, where they found none: a type now includes the extensions its language shares with another and is told apart in by
   content ([CLI](docs/CLI.md#engine-a-grep-alias-g)).

@@ -1000,6 +1000,8 @@ pub(crate) fn file_inside(root: &Path, rel: &str) -> Option<std::fs::Metadata> {
 thread_local! {
     /// Run once at the next `Index::chunks`: a test's writer commits between a query's reads.
     pub static BEFORE_CHUNKS: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = std::cell::RefCell::new(None);
+    /// Run once right after an update loads its root's custom languages.
+    pub static AFTER_LANGUAGES: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = std::cell::RefCell::new(None);
 }
 
 /// Whether this process has opened an index, the code index or the text index, so a panic may
@@ -1912,7 +1914,12 @@ impl Index {
         let reparse = !only && self.meta("content_rev").as_deref() != Some(rev.as_str());
         let force = force || reparse;
         // the files of a custom language whose table changed are read again; their artifact keys hold the table
-        let lang_stamp = crate::custom::load(&self.root)?.stamp();
+        let customs = crate::custom::load(&self.root)?;
+        #[cfg(test)]
+        if let Some(f) = AFTER_LANGUAGES.with(|h| h.borrow_mut().take()) {
+            f();
+        }
+        let lang_stamp = customs.stamp();
         let old_stamp = self.meta("languages").unwrap_or_else(|| "{}".into());
         let relang = if only { Vec::new() } else { crate::custom::changed(&old_stamp, &lang_stamp) };
         let relang_file = |rel: &str| !relang.is_empty() && relang.iter().any(|e| crate::parse::basename(rel).to_lowercase().ends_with(e.as_str()));
@@ -2018,7 +2025,7 @@ impl Index {
                 .par_iter()
                 .map(|(rel, kh)| {
                     let t = Instant::now();
-                    let r = read_file(&root, rel, kh.as_deref());
+                    let r = crate::custom::with(&customs, || read_file(&root, rel, kh.as_deref()));
                     prof::add(&prof::READ, t);
                     r
                 })
@@ -2041,7 +2048,7 @@ impl Index {
                 .zip(found)
                 .zip(prevs)
                 .map(|((((rel, _), read), found), prev)| {
-                    let mut res = process(rel, read, found, model, prev);
+                    let mut res = crate::custom::with(&customs, || process(rel, read, found, model, prev));
                     if let Processed::New(.., tree, _, _) = &mut res {
                         let n = tree.as_ref().map_or(0, |t| t.source_len() as isize);
                         if room.fetch_sub(n, std::sync::atomic::Ordering::Relaxed) < n {
@@ -3251,6 +3258,29 @@ mod tests {
             assert!(super::error_is_corruption(&e), "{case}: {e:#}");
         }
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_update_parses_under_its_own_root_s_languages_while_another_root_s_are_loaded() {
+        let base = std::env::temp_dir().join(format!("scrutate_ix_two_roots_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (a, b) = (base.join("a"), base.join("b"));
+        for (root, word) in [(&a, "fn"), (&b, "def")] {
+            std::fs::create_dir_all(root.join(".git")).unwrap();
+            let table = format!(
+                "[[language]]\nname = \"twolang\"\nextensions = [\"twl\"]\ndefinitions = [\n  {{ kind = \"function\", pattern = '^{word}\\s+([a-z]+)' }},\n]\n"
+            );
+            std::fs::write(root.join(".scrutate.toml"), table).unwrap();
+        }
+        std::fs::write(a.join("x.twl"), "fn alpha\n  1\nend\n").unwrap();
+        let other = b.clone();
+        super::AFTER_LANGUAGES.with(|h| *h.borrow_mut() = Some(Box::new(move || drop(crate::custom::load(&other).unwrap()))));
+        let mut ix = super::Index::open(&a, crate::models::ModelSet::from_env()).unwrap();
+        ix.update(false).unwrap();
+        let names: Vec<String> =
+            ix.db.prepare("SELECT name FROM chunks WHERE kind = 'function'").unwrap().query_map([], |r| r.get(0)).unwrap().map(|n| n.unwrap()).collect();
+        assert_eq!(names, ["alpha"]);
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

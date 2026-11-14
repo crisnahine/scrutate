@@ -781,7 +781,8 @@ fn version() -> &'static str {
 ///   reader of its own, and its writes one at a time;
 /// * `GrepIter` methods take `&mut self`: PyO3's borrow checker rejects concurrent mutable access
 ///   with an exception instead of racing; the channel receiver is additionally behind a `Mutex`;
-/// * the module holds no other global mutable state.
+/// * the module holds no other global mutable state; the crate's custom language tables are the
+///   last root's for a type's globs, and each index update parses under its own root's.
 #[pymodule(gil_used = false)]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Match>()?;

@@ -272,7 +272,9 @@ as a Python one starts at its decorators.
 
 A `[[language]]` table adds a language without a build (`custom.rs`,
 [CLI](CLI.md#custom-languages)), parsed as the keyword tier parses. The tables in effect are
-process-wide, loaded by each command and each index update for the root. A custom-language file's
+process-wide, loaded by each command and each index update for the root; an update's own
+threads parse under the tables it loaded (`custom::with`), so a second root's update in the same
+process cannot swap them midway. A custom-language file's
 artifact key holds its language's signature, and the index's meta keeps every extension's
 signature (`languages`), so a changed table rereads only the files of the extensions it changed.
 

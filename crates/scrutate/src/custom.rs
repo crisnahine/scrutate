@@ -95,9 +95,30 @@ pub fn changed(old: &str, new: &str) -> Vec<String> {
 
 static CURRENT: LazyLock<RwLock<Arc<Customs>>> = LazyLock::new(RwLock::default);
 
-/// The custom languages the last `load` found (none before it).
+thread_local! {
+    static SCOPED: std::cell::RefCell<Option<Arc<Customs>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The custom languages of the `with` this thread runs in, else those the last `load` found (none
+/// before it).
 pub fn current() -> Arc<Customs> {
+    if let Some(c) = SCOPED.with(|s| s.borrow().clone()) {
+        return c;
+    }
     Arc::clone(&CURRENT.read().unwrap_or_else(|p| p.into_inner()))
+}
+
+/// Runs `f` with `c` as this thread's `current`: an update parses under its own root's tables
+/// while another root's are loaded (two `Repo`s of the Python module side by side).
+pub fn with<T>(c: &Arc<Customs>, f: impl FnOnce() -> T) -> T {
+    struct Restore(Option<Arc<Customs>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SCOPED.with(|s| *s.borrow_mut() = self.0.take());
+        }
+    }
+    let _restore = Restore(SCOPED.with(|s| s.replace(Some(Arc::clone(c)))));
+    f()
 }
 
 /// The user's configuration file, when there is one.
