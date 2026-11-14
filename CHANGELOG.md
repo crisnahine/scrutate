@@ -164,9 +164,9 @@ incompatible index by itself, and that is never breaking.
   word.
 - `grep foo . > out.txt` skips `out.txt`, as ripgrep does: it searched its own output and grew
   it until the disk or a file size limit stopped it ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
-- A new segment's files and directory are flushed to disk before the database names them, so
-  power lost after an update can no longer leave the index naming segments of empty or zeroed
-  files that pass their shape checks; an update of 20 files takes about 60 ms longer on macOS
+- A new segment's files and directory are flushed to disk before the database names them, and
+  the text index's before its manifest does, so power lost after an update can no longer leave
+  an index naming segments of empty or zeroed files that pass their shape checks; an update of 20 files takes about 60 ms longer on macOS
   ([ARCHITECTURE](docs/ARCHITECTURE.md)).
 - A Pascal statement that is a name alone (`DoWork;`, `Obj.Tidy;`) is a call edge, so `callers`,
   `callees` and `impact` see a procedure called without parentheses; an index reads its files

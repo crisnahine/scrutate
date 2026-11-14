@@ -742,6 +742,13 @@ fn encode_postings(out: &mut Vec<u8>, list: &[(u32, u16)]) {
     }
 }
 
+/// `bytes` as the file at `path`, on disk before this returns.
+fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut f = File::create(path)?;
+    f.write_all(bytes)?;
+    f.sync_all()
+}
+
 /// Write one segment from documents in order (document `i` of the segment is `docs[i]`).
 fn write_segment(dir: &Path, docs: &[DocIn]) -> Result<()> {
     std::fs::create_dir_all(dir)?;
@@ -778,7 +785,7 @@ fn write_segment(dir: &Path, docs: &[DocIn]) -> Result<()> {
         encode_postings(&mut enc, &post[s..s + n]);
     }
     ptr.push(enc.len() as u64);
-    std::fs::write(dir.join("post.bin"), &enc)?;
+    write_synced(&dir.join("post.bin"), &enc)?;
     npy::save(&dir.join("keys.npy"), &keys, &[keys.len()])?;
     npy::save(&dir.join("ptr.npy"), &ptr, &[ptr.len()])?;
     write_docs(dir, docs.iter().map(|d| (d.rel.as_str(), d.size, d.mtime, d.flags, d.ctime)))
@@ -794,7 +801,7 @@ fn write_docs<'a>(dir: &Path, docs: impl Iterator<Item = (&'a str, u64, i64, i64
         poff.push(paths.len() as u64);
     }
     let n = poff.len() - 1;
-    std::fs::write(dir.join("paths.bin"), &paths)?;
+    write_synced(&dir.join("paths.bin"), &paths)?;
     npy::save(&dir.join("poff.npy"), &poff, &[poff.len()])?;
     npy::save(&dir.join("docs.npy"), &meta, &[n, COLS])?;
     Ok(())
@@ -864,7 +871,7 @@ fn merge_segments(dir: &Path, segs: &[&Segment]) -> Result<()> {
         keys.push(k);
         ptr.push(written);
     }
-    w.flush()?;
+    w.into_inner().map_err(|e| e.into_error())?.sync_all()?;
     npy::save(&dir.join("keys.npy"), &keys, &[keys.len()])?;
     npy::save(&dir.join("ptr.npy"), &ptr, &[ptr.len()])?;
     Ok(())
@@ -1227,7 +1234,7 @@ fn update_with(root: &Path, force: bool, progress: bool, only: Option<&[String]>
         let name = format!("s{next_seg:08}");
         next_seg += 1;
         write_segment(&dir.join(&name), batch)?;
-        std::fs::write(dir.join(&name).join(&live_name), all_live(batch.len()))?;
+        write_synced(&dir.join(&name).join(&live_name), &all_live(batch.len()))?;
         segs.push(Segment::open(&dir, &name, &live_name)?);
         batch.clear();
         Ok(())
@@ -1266,7 +1273,7 @@ fn update_with(root: &Path, force: bool, progress: bool, only: Option<&[String]>
         let merged_live: usize = segs.iter().map(|s| (0..s.ndocs).filter(|&d| s.is_live(d)).count()).sum();
         let name = format!("s{:08}", next_segment_number(&dir)?);
         merge_segments(&dir.join(&name), &segs.iter().collect::<Vec<_>>())?;
-        std::fs::write(dir.join(&name).join(&live_name), all_live(merged_live))?;
+        write_synced(&dir.join(&name).join(&live_name), &all_live(merged_live))?;
         segs = kept.into_iter().chain([Segment::open(&dir, &name, &live_name)?]).collect();
     }
     // liveness of the segments kept: a new file per generation, so a reader of the old manifest
@@ -1276,12 +1283,18 @@ fn update_with(root: &Path, force: bool, progress: bool, only: Option<&[String]>
         let p = dir.join(&s.name).join(&live_name);
         let tmp = p.with_extension("tmp");
         crate::index::write_new(&tmp, &s.live)?;
+        File::open(&tmp)?.sync_all()?;
         crate::index::rename_settled(&tmp, &p)?;
+        crate::index::sync_dir(&dir.join(&s.name))?;
     }
     let m = Manifest { format: FORMAT, generation, segments: segs.iter().map(|s| SegRef { name: s.name.clone(), live: live_name.clone() }).collect() };
     let tmp = dir.join("manifest.json.tmp");
     crate::index::write_new(&tmp, &serde_json::to_vec(&m)?)?;
+    File::open(&tmp)?.sync_all()?;
+    // every file the manifest names is on disk before it is: a power loss leaves the old one
+    crate::index::sync_dir(&dir)?;
     crate::index::rename_settled(&tmp, &dir.join("manifest.json"))?;
+    crate::index::sync_dir(&dir)?;
     let names: Vec<String> = segs.iter().map(|s| s.name.clone()).collect();
     let nsegs = segs.len();
     drop(segs);

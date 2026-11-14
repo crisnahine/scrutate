@@ -512,7 +512,7 @@ time are always searched.
 
 Updates are incremental (size, mtime and status change time, so an edit that keeps size and mtime,
 as `cp -p` and `rsync -t` make, is seen), write new segments and a new liveness file per
-generation, then swap `manifest.json` atomically. More than four segments merges all but the
+generation, flush them and their directories to disk, then swap `manifest.json` atomically. More than four segments merges all but the
 largest by a streaming k-way merge, so the small segments a watch adds do not rewrite the whole
 index; more than 30% dead documents merges all of them. A merge checks the segments it reads
 first, and a damaged one rebuilds the index. A file over 64 MB is read in 1 MB pieces, never
