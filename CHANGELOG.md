@@ -169,6 +169,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `callees` of PHP code that writes `new self()`, `new static()` or `new parent()` lists the
+  class, where it listed `self`, `static` or `parent` as an external name
+  ([CLI](docs/CLI.md#engine-b)).
 - The language server's references under an import alias span the alias as the line writes it:
   `h()` after `from util import helper as h` is 1 character wide, where it took the width of
   `helper` and ran past the end of a short line ([CLI](docs/CLI.md#lsp)).

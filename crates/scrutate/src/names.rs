@@ -477,8 +477,10 @@ impl<'a> Names<'a> {
             if let Some((_, item)) = self.rv.aliases(&d.path).into_iter().find(|(local, _)| *local == n || folds && local.eq_ignore_ascii_case(&n)) {
                 rows.extend(s.ix.named_of_kinds(&item, &kinds)?.into_iter().filter(|r| callable(&d.path, r)));
             }
-            // `super(..)` is named by no definition: it calls the base class the resolver ties it to
-            if n == "super" && rows.is_empty() {
+            // `super(..)`, PHP `new self()` / `static()` / `parent()`: no definition has the name, it
+            // stands for the class the resolver ties it to
+            let class_word = n == "super" || matches!(n.to_ascii_lowercase().as_str(), "self" | "static" | "parent") && langs.id(&d.path) == Some("php");
+            if class_word && rows.is_empty() {
                 for id in self.uses(&d.path, (d.start, d.end), &n).got {
                     rows.extend(s.ix.chunk(id)?);
                 }

@@ -2073,6 +2073,17 @@ fn a_require_chain_is_followed_six_import_hops_deep_by_refs_and_callees_alike() 
 }
 
 #[test]
+fn php_new_self_static_and_parent_are_calls_of_the_class() {
+    let php = "<?php\nclass Base\n{\n    public function __construct() {}\n}\nclass Kid extends Base\n{\n    public static function make() { return new self(); }\n    public static function late() { return new STATIC(); }\n    public static function up() { return new parent(); }\n}\n";
+    let r = Repo::new("php_new_self", &[("a.php", php)]);
+    for (f, class) in [("Kid.make", "Kid"), ("Kid.late", "Kid"), ("Kid.up", "Base")] {
+        let v = r.json(&["callees", f, "--json"]);
+        let names: Vec<&str> = v["resolved"].as_array().unwrap().iter().map(|h| h["name"].as_str().unwrap()).collect();
+        assert_eq!((names, v["external"].as_array().unwrap().len()), (vec![class], 0), "{f}: {v}");
+    }
+}
+
+#[test]
 fn a_super_call_in_a_constructor_is_a_call_of_the_base_class() {
     let base = "export class Base {\n  constructor() {\n    this.x = 1;\n  }\n}\n";
     let kid = "import { Base } from './base.js';\nexport class Kid extends Base {\n  constructor() {\n    super();\n  }\n}\n";
