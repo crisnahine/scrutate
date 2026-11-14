@@ -315,6 +315,15 @@ pub fn write_segment(
     let n = ids.len();
     let tmp = PathBuf::from(format!("{}.tmp", dest.display()));
     let _ = std::fs::remove_dir_all(&tmp);
+    // a write that stops or fails takes its half-written directory with it; after the rename
+    // there is nothing left to take
+    struct Leftover<'a>(&'a Path);
+    impl Drop for Leftover<'_> {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(self.0);
+        }
+    }
+    let _leftover = Leftover(&tmp);
     std::fs::create_dir_all(&tmp).with_context(|| format!("create {}", tmp.display()))?;
     let mut vocab: Vec<i64> = fields.iter().flat_map(|f| f.1.iter().copied()).collect();
     vocab.sort_unstable();
@@ -1283,6 +1292,21 @@ mod tests {
 
     /// A stop asked for while a segment's vectors are clustered ends the clustering at the next
     /// block of rows, with no file written, and the clustering asked once more finishes.
+    #[test]
+    fn a_stopped_segment_write_leaves_no_directory_behind() {
+        let (n, k) = (IVF_MIN_ROWS, 4);
+        let base = std::env::temp_dir().join(format!("scrutate_seg_stop_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let ids: Vec<i64> = (0..n as i64).collect();
+        let fields: Vec<(Vec<i32>, Vec<i64>, Vec<u8>)> = (0..NF).map(|_| (Vec::new(), Vec::new(), Vec::new())).collect();
+        let v = QVecs { q: (0..n * 2 * k).map(|i| (i % 7) as i8).collect(), scale: vec![1.0; n * 2] };
+        let e = write_segment(&|| true, &base.join("s000001"), &ids, &vec![1.0; n], &fields, Some((&v, k)), true).unwrap_err();
+        assert_eq!(e.to_string(), "cancelled");
+        assert_eq!(std::fs::read_dir(&base).unwrap().count(), 0, "a directory was left");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     #[test]
     fn a_stop_ends_the_clustering_of_a_segment_s_vectors() {
         let (n, k) = (3000, 16);

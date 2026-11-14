@@ -161,6 +161,8 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- A code index segment write that is stopped or fails removes its half-written directory, which
+  stayed in `.scrutate` until a later write took its name ([Architecture](docs/ARCHITECTURE.md#storage-indexrs-lexrs)).
 - A path that names the repository's root from a directory below it (`dead ..`, `map ..` from
   `repo/pkg`) is the whole repository: it was an error, "no such file or directory in the
   repository" ([CLI](docs/CLI.md#engine-b)).
