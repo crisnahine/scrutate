@@ -1096,3 +1096,30 @@ fn grep_code_takes_a_path_whose_name_holds_a_backslash() {
     let text = r.ok("grep_code", json!({"pattern": "needle", "path": "x\\ty"}));
     assert!(text.contains("f.txt") && !text.contains("other.txt"), "{text}");
 }
+
+/// A server started on a root spelled through a symbolic link (`--root <dir>/link`, or macOS's
+/// `/tmp` for `/private/tmp`) takes paths spelled through it.
+#[cfg(unix)]
+#[test]
+fn paths_through_the_root_as_the_server_was_given_it_name_its_files() {
+    let base = std::env::temp_dir().join(format!("scrutate_mcp_tools_linkroot_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    fs::create_dir_all(base.join("real/src")).unwrap();
+    fs::write(base.join("real/src/a.py"), "def used():\n    return 1\n\n\ndef unused():\n    return used()\n").unwrap();
+    let link = base.join("link");
+    std::os::unix::fs::symlink(base.join("real"), &link).unwrap();
+    let s = session(&link, 0.0);
+    let text = |tool: &str, args: Value| {
+        let c = call_tool(&s, tool, &args);
+        assert!(!c.is_error, "{tool} {args}: {}", c.text);
+        c.text
+    };
+    let through = link.join("src").to_string_lossy().into_owned();
+    for tool in ["repo_map", "dead_code"] {
+        assert_eq!(text(tool, json!({"path": through})), text(tool, json!({"path": "src"})), "{tool}");
+    }
+    assert_eq!(text("read_code", json!({"path": format!("{through}/a.py")})), text("read_code", json!({"path": "src/a.py"})));
+    assert_eq!(text("grep_code", json!({"pattern": "used", "path": through})), text("grep_code", json!({"pattern": "used", "path": "src"})));
+    drop(s);
+    let _ = fs::remove_dir_all(&base);
+}

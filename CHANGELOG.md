@@ -181,8 +181,9 @@ incompatible index by itself, and that is never breaking.
 - The MCP tools `repo_map` and `dead_code` take an absolute directory under the root, which
   gave no files or "no such file", and `repo_map` and `map` refuse a path that is not there;
   `grep_code` reads a path whose name holds a backslash (`x\ty`) as written when no file has the
-  escape's reading. The command line, the language server and the tools turn paths into
-  repository paths in one place ([CLI](docs/CLI.md#serve-mcp)).
+  escape's reading. The tools also take a path spelled through the root as the server was given
+  it (`--root <dir>/link`, macOS's `/tmp`). The command line, the language server and the tools
+  turn paths into repository paths in one place ([CLI](docs/CLI.md#serve-mcp)).
 - `index`, `watch`, `serve --watch` and `reindex` wait for another writer for up to 10 minutes,
   or until cancelled, and so do the first open of a new index, the rebuild of an index of an
   older schema and the merge of segments after an update: they gave up with "database is locked"

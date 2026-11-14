@@ -1109,6 +1109,9 @@ impl FileCount {
 
 pub struct Index {
     pub root: PathBuf,
+    /// the root as the caller spelled it, made absolute (through a link, macOS's `/tmp`): a path
+    /// spelled through it is a path under `root`
+    pub given: PathBuf,
     pub dir: PathBuf,
     pub seg_dir: PathBuf,
     pub models: Arc<ModelSet>,
@@ -1172,6 +1175,7 @@ impl Index {
     pub fn open(root: &Path, models: Arc<ModelSet>) -> Result<Index> {
         OPENED.store(true, std::sync::atomic::Ordering::Relaxed);
         crate::files::index_dir(root)?;
+        let given = std::path::absolute(root).unwrap_or_else(|_| root.to_path_buf());
         let root = std::fs::canonicalize(root).with_context(|| format!("open {}", root.display()))?;
         let dir = crate::files::make_index_dir(&root)?;
         let seg_dir = dir.join("seg");
@@ -1232,6 +1236,7 @@ impl Index {
         db.set_prepared_statement_cache_capacity(64);
         let mut ix = Index {
             root,
+            given,
             dir,
             seg_dir,
             models,
@@ -1292,10 +1297,15 @@ impl Index {
             db.query_row("SELECT count(*) FROM meta", [], |_| Ok(()))?;
             Ok(db)
         });
-        let Ok(db) = opened else { return Index::open(&self.root, Arc::clone(&self.models)) };
+        let Ok(db) = opened else {
+            let mut fresh = Index::open(&self.root, Arc::clone(&self.models))?;
+            fresh.given.clone_from(&self.given);
+            return Ok(fresh);
+        };
         db.set_prepared_statement_cache_capacity(64);
         Ok(Index {
             root: self.root.clone(),
+            given: self.given.clone(),
             dir: self.dir.clone(),
             seg_dir: self.seg_dir.clone(),
             models: Arc::clone(&self.models),
@@ -1543,6 +1553,7 @@ impl Index {
         fresh.progress = self.progress;
         fresh.cancel = Arc::clone(&self.cancel);
         fresh.count = Arc::clone(&self.count);
+        fresh.given.clone_from(&self.given);
         let reading = self.reading;
         *self = fresh;
         if reading {

@@ -770,7 +770,8 @@ Per tool:
 | `reindex` | Takes `force` (boolean): every file is read again, also one whose size, modification time and change time did not change, and a damaged index is rebuilt. It also updates the text index when there is one, so `grep --index` sees what it indexed; it never makes one. |
 
 - A `path` argument is a path from the root or an absolute path under it, in any spelling that
-  names the same file (`./a.py`, `pkg/../a.py`, `<root>/src`); an escape an answer printed for a
+  names the same file (`./a.py`, `pkg/../a.py`, `<root>/src`, and the root as the server was
+  given it, through a link or macOS's `/tmp`); an escape an answer printed for a
   file (`a\tb.py`) names that file, and a name that holds a backslash itself is read as written
   when no such file exists. `repo_map`, `dead_code` and `grep_code` refuse a path that is not
   there.

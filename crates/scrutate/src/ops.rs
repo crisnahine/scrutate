@@ -312,14 +312,16 @@ pub struct Scope {
 }
 
 impl Scope {
-    fn files(&self, root: &std::path::Path) -> Result<Files> {
+    fn files(&self, ix: &crate::index::Index) -> Result<Files> {
+        let root = ix.root.as_path();
         let mut f = crate::files::repository_files(root);
         // the repository's own exclusions come last, where a later glob wins, so no glob of the caller brings them back
         let skip = std::mem::take(&mut f.globs);
         f.globs = self.globs.iter().cloned().chain(skip).collect();
         let path = self.path.as_deref().map(|p| p.trim_start_matches("./")).filter(|p| !p.is_empty() && *p != ".");
         if let Some(p) = path {
-            let p = unescaped(root, p);
+            let p = respelled(ix, p);
+            let p = unescaped(root, &p);
             if !inside(root, &p) {
                 bail!("path outside repo: give a path relative to the repository root, or an absolute one under it");
             }
@@ -613,7 +615,7 @@ fn run_in(s: &mut Searcher, op: &Op) -> Result<Answer> {
                 first_in_path_order: true,
                 ..Default::default()
             };
-            let files = scope.files(&s.ix.root)?;
+            let files = scope.files(&s.ix)?;
             let (groups, stopped) = crate::intel::grouped_grep(s, &q, &files)?;
             Answer::Grep { groups, stopped_at: stopped.then_some(*max_results) }
         }
@@ -755,6 +757,19 @@ fn unescaped<'p>(root: &std::path::Path, p: &'p str) -> std::borrow::Cow<'p, str
     }
 }
 
+/// `path` with the root as the index was given it (`<dir>/link`, macOS's `/tmp/x`) spelled as the
+/// index's own root; a look at its text only, as for every path outside.
+fn respelled<'p>(ix: &crate::index::Index, path: &'p str) -> std::borrow::Cow<'p, str> {
+    let p = std::path::Path::new(path);
+    if ix.given == ix.root || !p.is_absolute() {
+        return std::borrow::Cow::Borrowed(path);
+    }
+    match p.strip_prefix(&ix.given) {
+        Ok(rest) => std::borrow::Cow::Owned(ix.root.join(rest).to_string_lossy().into_owned()),
+        Err(_) => std::borrow::Cow::Borrowed(path),
+    }
+}
+
 /// An error unless `path` (from the root, or none) is a file or directory of the repository.
 fn existing(s: &Searcher, path: Option<&str>) -> Result<()> {
     match path {
@@ -805,6 +820,7 @@ fn under(path: &str, root: &str) -> bool {
 pub fn read_range(s: &Searcher, path: &str, start: i64, end: i64) -> Result<(Vec<String>, Option<i64>)> {
     use std::io::BufRead;
     let shown = echo(path);
+    let path = &*respelled(&s.ix, path);
     // the answer for a path outside the repository must not tell whether a file is there: one
     // that leaves by its own parts is outside, with nothing looked at (on Windows a share on
     // another machine would be connected to, and offered the user's login), and a link that
@@ -937,10 +953,11 @@ pub fn repo_rel(root: &std::path::Path, path: &std::path::Path) -> Option<String
 /// `path` as the index spells it, when it names a repository file in a spelling `read_code`
 /// accepts (`./a.py`, `pkg/../a.py`, `<root>/a.py`, another case on a case-insensitive file
 /// system); else as given.
-pub fn repo_path(s: &Searcher, path: &str) -> String {
+pub fn repo_path(s: &Searcher, given: &str) -> String {
+    let path = &*respelled(&s.ix, given);
     // a path that leaves the repository names no file of it (`/a.py` is not `a.py`), and is not looked at
     let Some(plain) = inside(&s.ix.root, path).then(|| repo_rel(&s.ix.root, std::path::Path::new(path))).flatten() else {
-        return path.to_string();
+        return given.to_string();
     };
     let indexed = |p: &str| s.ix.has_file(p);
     // a path copied from an answer has its control characters and backslashes written as
