@@ -462,12 +462,28 @@ pub fn output_schema(tool: &str) -> Value {
 }
 
 /// An answer's JSON form in the envelope every front end prints.
-pub fn envelope(result: Value, stopped: Option<Stop>) -> Value {
+pub fn envelope(mut result: Value, stopped: Option<Stop>) -> Value {
+    mark_vendored(&mut result);
     let mut v = json!({"schema": ANSWER_SCHEMA, "result": result});
     if let Some(stop) = stopped {
         v["stopped_at"] = json!(stop.at);
     }
     v
+}
+
+/// Every item of an answer with a `path` of vendored code (`text::is_vendored_path`) gains
+/// `"vendored": true`: the one place, so no answer can leave it out.
+fn mark_vendored(v: &mut Value) {
+    match v {
+        Value::Object(m) => {
+            if m.get("path").and_then(Value::as_str).is_some_and(crate::text::is_vendored_path) {
+                m.insert("vendored".into(), Value::Bool(true));
+            }
+            m.values_mut().for_each(mark_vendored);
+        }
+        Value::Array(a) => a.iter_mut().for_each(mark_vendored),
+        _ => {}
+    }
 }
 
 /// Where an answer stopped because it reached its limit, and what to pass to see more.
@@ -1897,7 +1913,7 @@ impl Answer {
         let from = offset.min(total);
         let to = (from + shown).min(total);
         v["complete"] = json!(false);
-        v["result"] = self.page_json(from..to, total);
+        v["result"] = envelope(self.page_json(from..to, total), None)["result"].take();
         v["offset"] = json!(from);
         v["next_offset"] = if to < total { json!(to) } else { Value::Null };
         v["total"] = json!(total);

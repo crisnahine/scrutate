@@ -312,6 +312,39 @@ fn search_ranks_vendored_code_below_project_code_and_marks_it() {
 }
 
 #[test]
+fn every_json_item_with_a_vendored_path_is_marked() {
+    let r = Repo::new("vendored_all");
+    r.write("lib/app.py", b"from vendor.leases.lease import parse_lease\n\n\ndef main():\n    return parse_lease(1)\n");
+    r.write("vendor/leases/lease.py", b"def parse_lease(text):\n    return text\n\n\ndef unused_vendored(x):\n    return x\n");
+    r.run(&["index"]);
+    let items = |args: &[&str]| {
+        let (code, out, err) = r.run(args);
+        assert!(code == 0 || code == 1, "{args:?}: {err}");
+        let mut all = Vec::new();
+        let mut stack = vec![answer(&out)];
+        while let Some(v) = stack.pop() {
+            match v {
+                serde_json::Value::Object(m) => {
+                    if let Some(p) = m.get("path").and_then(|p| p.as_str()) {
+                        all.push((p.to_string(), m.get("vendored") == Some(&serde_json::Value::Bool(true))));
+                    }
+                    stack.extend(m.into_iter().map(|(_, v)| v));
+                }
+                serde_json::Value::Array(a) => stack.extend(a),
+                _ => {}
+            }
+        }
+        assert!(!all.is_empty(), "{args:?}: no item with a path");
+        all
+    };
+    for args in [&["refs", "parse_lease", "--json"][..], &["dead", "--json"], &["callers", "parse_lease", "--json"], &["symbol", "parse_lease", "--json"]] {
+        for (path, marked) in items(args) {
+            assert_eq!(marked, path.starts_with("vendor/"), "{args:?}: {path}");
+        }
+    }
+}
+
+#[test]
 fn search_finds_a_rust_struct_by_the_doc_comment_above_its_derive() {
     let r = Repo::new("derive_doc");
     r.write("src/lib.rs", b"pub fn open() {}\n\n/// Holds the zqvortex lease.\n#[derive(Debug, Clone)]\npub struct Lease {\n    id: u32,\n}\n");

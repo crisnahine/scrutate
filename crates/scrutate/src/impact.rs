@@ -234,7 +234,6 @@ impl Def {
             name: self.name.clone(),
             qualname: self.qualname.clone(),
             kind: self.kind.clone(),
-            vendored: crate::text::is_vendored_path(path),
             ..Hit::default()
         }
     }

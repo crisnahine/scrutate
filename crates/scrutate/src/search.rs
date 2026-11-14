@@ -65,9 +65,6 @@ pub struct Hit {
     pub text: String,
     pub score: f64,
     pub why: Vec<(String, serde_json::Value)>,
-    /// the path is vendored code (`text::is_vendored_path`); left out of JSON when false
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub vendored: bool,
 }
 
 impl Hit {
@@ -87,7 +84,6 @@ impl Hit {
             text: if with_text { r.text.clone() } else { String::new() },
             score: 0.0,
             why: Vec::new(),
-            vendored: crate::text::is_vendored_path(&r.path),
         }
     }
 

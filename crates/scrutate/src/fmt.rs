@@ -126,15 +126,11 @@ pub fn hits_json(hits: &[Hit]) -> serde_json::Value {
         hits.iter()
             .map(|h| {
                 let why: serde_json::Map<String, serde_json::Value> = h.why.iter().cloned().collect();
-                let mut v = serde_json::json!({
+                serde_json::json!({
                     "id": h.loc(), "path": h.path, "start": h.start, "end": h.end,
                     "name": if h.qualname.is_empty() { &h.name } else { &h.qualname },
                     "kind": h.kind, "score": h.score, "why": why,
-                });
-                if h.vendored {
-                    v["vendored"] = true.into();
-                }
-                v
+                })
             })
             .collect(),
     )
