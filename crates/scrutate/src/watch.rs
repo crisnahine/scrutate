@@ -28,6 +28,9 @@ const MAX_WAIT: Duration = Duration::from_secs(2);
 /// A burst walks the tree once the last walk is this old: no event reports a directory made while
 /// its parent's watch was being set, or events the OS or notify dropped without saying so.
 const WALK_EVERY: Duration = Duration::from_secs(30);
+/// The first pause before a failed update is tried again, and the longest.
+const RETRY_FIRST: Duration = Duration::from_secs(1);
+const RETRY_MOST: Duration = Duration::from_secs(30);
 
 fn has_text_index(root: &Path) -> bool {
     crate::textindex::exists(root)
@@ -506,12 +509,13 @@ pub fn run(root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), mut on_chang
     on_change(&Changes::All)?;
     on_ready();
     let debug = debug();
-    // the files of a burst whose update failed are taken by the next one, which walks the tree
-    let mut failed = false;
+    // a burst whose update failed is tried again, with a walk of the tree, by the next burst or
+    // after a pause that doubles up to 30 s, whichever comes first
+    let (mut failed, mut retry_at, mut pause) = (false, None::<Instant>, RETRY_FIRST);
     while !stop.load(Ordering::Relaxed) {
         root_present(&root)?;
         let mut burst = Burst { full: failed, ..Burst::default() };
-        let mut wanted = false;
+        let mut wanted = retry_at.is_some_and(|t| Instant::now() >= t);
         for ev in poll.check() {
             wanted |= burst.note(&root, &walked, &ev);
         }
@@ -548,6 +552,7 @@ pub fn run(root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), mut on_chang
             eprintln!("[scrutate] burst: {} paths, full walk: {}", burst.paths.len(), if named.is_none() { "yes" } else { "no" });
         }
         failed = on_change(&named.map_or(Changes::All, Changes::Named)).inspect_err(|e| eprintln!("[scrutate] update failed: {e:#}")).is_err();
+        (retry_at, pause) = if failed { (Some(Instant::now() + pause), (pause * 2).min(RETRY_MOST)) } else { (None, RETRY_FIRST) };
     }
     Ok(())
 }

@@ -184,10 +184,13 @@ incompatible index by itself, and that is never breaking.
   escape's reading. The command line, the language server and the tools turn paths into
   repository paths in one place ([CLI](docs/CLI.md#serve-mcp)).
 - `index`, `watch`, `serve --watch` and `reindex` wait for another writer for up to 10 minutes,
-  or until cancelled, and so do the rebuild of an index of an older schema and the merge of
-  segments after an update: they gave up with "database is locked" after 30 s. A `watch` burst whose
-  update failed is followed by a walk of the tree, so its files are indexed
-  ([CLI](docs/CLI.md#watch)).
+  or until cancelled, and so do the first open of a new index, the rebuild of an index of an
+  older schema and the merge of segments after an update: they gave up with "database is locked"
+  after 30 s. Ctrl-C ends `watch` during such a wait. A `watch` burst whose update failed is tried
+  again with a walk of the tree, with the next burst or after a pause of 1 s doubling up to 30 s,
+  so its files are indexed with no further change ([CLI](docs/CLI.md#watch)).
+- An open of the index that finds another process writing no longer takes the lock for damage:
+  it replaced the database and deleted that process's work.
 - `grep -c -U` no longer counts the empty match after each matched group's line end, as
   ripgrep: `^$` on `a`, a blank line and `b` counts 1, not 2.
 - `grep -A` and `-B` win over `-C` in either order, as in ripgrep: `-C1 -A3` showed one line

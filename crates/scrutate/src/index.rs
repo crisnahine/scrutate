@@ -1005,6 +1005,47 @@ thread_local! {
 /// Whether this process has opened an index, so a panic may come from one.
 pub static OPENED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// How long SQLite's busy handler waits for a lock before a statement fails with SQLITE_BUSY;
+/// short in this crate's own tests, so a wait past it takes seconds there.
+const BUSY: Duration = if cfg!(test) { Duration::from_secs(2) } else { Duration::from_secs(30) };
+
+/// A flag a front end sets to stop (`watch`'s Ctrl-C), which ends every wait for a lock.
+static STOP: std::sync::OnceLock<Arc<std::sync::atomic::AtomicBool>> = std::sync::OnceLock::new();
+
+/// Make `flag` end every wait of this process for a lock another process holds.
+pub fn stop_waits_on(flag: Arc<std::sync::atomic::AtomicBool>) {
+    let _ = STOP.set(flag);
+}
+
+fn is_busy(e: &rusqlite::Error) -> bool {
+    matches!(e, rusqlite::Error::SqliteFailure(f, _) if matches!(f.code, rusqlite::ffi::ErrorCode::DatabaseBusy | rusqlite::ffi::ErrorCode::DatabaseLocked))
+}
+
+/// Run `f` again while another connection holds a lock it needs (SQLITE_BUSY or LOCKED), up to
+/// 10 minutes or until `cancel` or the front end's stop (`stop_waits_on`) is set: every write of
+/// the index that waits for another writer waits here. Each try waits at most half a second in
+/// SQLite's busy handler, so a stop is seen within that.
+fn wait_busy<T>(db: &Connection, cancel: &std::sync::atomic::AtomicBool, mut f: impl FnMut(&Connection) -> rusqlite::Result<T>) -> Result<T> {
+    use std::sync::atomic::Ordering::Relaxed;
+    let t0 = Instant::now();
+    db.busy_timeout(Duration::from_millis(500))?;
+    let r = loop {
+        match f(db) {
+            Err(e) if is_busy(&e) => {
+                if cancel.load(Relaxed) || STOP.get().is_some_and(|s| s.load(Relaxed)) {
+                    break Err(anyhow::anyhow!("cancelled"));
+                }
+                if t0.elapsed() > Duration::from_secs(600) {
+                    break Err(anyhow::anyhow!("another process has held the index write lock for 10 minutes"));
+                }
+            }
+            r => break r.map_err(Into::into),
+        }
+    };
+    db.busy_timeout(BUSY)?;
+    r
+}
+
 /// Run `f` again while it fails with SQLITE_BUSY/LOCKED (statements the busy handler does not cover,
 /// such as the journal-mode switch of a brand-new database opened by several processes at once).
 fn retry_busy<T>(mut f: impl FnMut() -> rusqlite::Result<T>) -> rusqlite::Result<T> {
@@ -1012,8 +1053,7 @@ fn retry_busy<T>(mut f: impl FnMut() -> rusqlite::Result<T>) -> rusqlite::Result
     loop {
         match f() {
             Err(rusqlite::Error::SqliteFailure(e, _))
-                if matches!(e.code, rusqlite::ffi::ErrorCode::DatabaseBusy | rusqlite::ffi::ErrorCode::DatabaseLocked)
-                    && t0.elapsed() < Duration::from_secs(30) =>
+                if matches!(e.code, rusqlite::ffi::ErrorCode::DatabaseBusy | rusqlite::ffi::ErrorCode::DatabaseLocked) && t0.elapsed() < BUSY =>
             {
                 std::thread::sleep(Duration::from_millis(10));
             }
@@ -1151,21 +1191,29 @@ impl Index {
             Self::wipe(&dir, &seg_dir);
         }
         std::fs::create_dir_all(&seg_dir)?;
-        let setup = |db: &Connection| -> rusqlite::Result<()> {
-            db.busy_timeout(Duration::from_secs(30))?;
-            retry_busy(|| db.query_row("PRAGMA journal_mode=WAL", [], |_| Ok(())))?;
+        // a lock another process took first (even before the database had its WAL) is waited for
+        let never = std::sync::atomic::AtomicBool::new(false);
+        let setup = |db: &Connection| -> Result<()> {
+            wait_busy(db, &never, |db| db.query_row("PRAGMA journal_mode=WAL", [], |_| Ok(())))?;
             // WAL + NORMAL: durable against process crashes, consistent after power loss (at worst the
             // last transaction rolls back); one fsync per checkpoint instead of per transaction
-            retry_busy(|| db.execute_batch("PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-32000;"))
+            wait_busy(db, &never, |db| db.execute_batch("PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-32000;"))
         };
+        let schema = |db: &Connection| wait_busy(db, &never, |db| db.execute_batch(SCHEMA).and_then(|()| add_art(db)));
+        let read_only = |e: &anyhow::Error| matches!(e.downcast_ref::<rusqlite::Error>(), Some(rusqlite::Error::SqliteFailure(f, _)) if f.code == rusqlite::ffi::ErrorCode::ReadOnly);
         let db = Connection::open(&db_path).with_context(|| format!("open {}", db_path.display()))?;
         let db = match setup(&db) {
-            Ok(()) => retry_busy(|| db.execute_batch(SCHEMA)).and_then(|()| add_art(&db)).map(|()| db),
-            Err(rusqlite::Error::SqliteFailure(f, _)) if f.code == rusqlite::ffi::ErrorCode::ReadOnly && matches!(triage, Triage::Reuse) => {
+            Ok(()) => match schema(&db) {
+                Ok(()) => Ok(db),
+                // a database that refuses the schema is garbage; a wait that ran out is no damage
+                Err(e) if e.downcast_ref::<rusqlite::Error>().is_some() => Err(e),
+                Err(e) => return Err(e),
+            },
+            Err(e) if read_only(&e) && matches!(triage, Triage::Reuse) => {
                 drop(db);
                 Ok(Self::open_immutable(&db_path, &sem_sig)?)
             }
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(e),
         };
         let db = match db {
             Ok(db) => db,
@@ -1176,8 +1224,7 @@ impl Index {
                 std::fs::create_dir_all(&seg_dir)?;
                 let db = Connection::open(&db_path).with_context(|| format!("open {}", db_path.display()))?;
                 setup(&db)?;
-                retry_busy(|| db.execute_batch(SCHEMA))?;
-                add_art(&db)?;
+                schema(&db)?;
                 db
             }
         };
@@ -1238,7 +1285,7 @@ impl Index {
     pub fn another(&self) -> Result<Index> {
         let db_path = self.dir.join("index.db");
         let opened = Connection::open(&db_path).and_then(|db| {
-            db.busy_timeout(Duration::from_secs(30))?;
+            db.busy_timeout(BUSY)?;
             // a page cache of 2 MB: with 32 MB each, eight readers held 77 MB more under eight
             // calls, and the system's file cache serves the pages they share as fast
             db.execute_batch("PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-2000;")?;
@@ -1344,7 +1391,7 @@ impl Index {
             Ok(c) => c,
             Err(e) => return if is_corruption(&e) { Triage::Garbage("cannot open") } else { Triage::Reuse },
         };
-        let _ = con.busy_timeout(Duration::from_secs(30));
+        let _ = con.busy_timeout(BUSY);
         // a damaged header or a foreign file fails the first real read (NOTADB / CORRUPT)
         if let Err(e) = con.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0)) {
             return if is_corruption(&e) { Triage::Garbage("not a database") } else { Triage::Reuse };
@@ -1641,29 +1688,7 @@ impl Index {
     /// until cancelled; every write path that waits takes the lock here. -> false, with no lock
     /// taken, once `needless` holds (another process did the work meanwhile).
     fn begin_waiting(&self, needless: impl Fn(&Connection) -> bool) -> Result<bool> {
-        let t0 = Instant::now();
-        // short busy waits, so a cancel is seen within a second
-        self.db.busy_timeout(Duration::from_millis(500))?;
-        let r = loop {
-            if needless(&self.db) {
-                break Ok(false);
-            }
-            match self.db.execute_batch("BEGIN IMMEDIATE") {
-                Err(rusqlite::Error::SqliteFailure(e, _))
-                    if matches!(e.code, rusqlite::ffi::ErrorCode::DatabaseBusy | rusqlite::ffi::ErrorCode::DatabaseLocked) =>
-                {
-                    if self.cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                        break Err(anyhow::anyhow!("cancelled"));
-                    }
-                    if t0.elapsed() > Duration::from_secs(600) {
-                        break Err(anyhow::anyhow!("another process has held the index write lock for 10 minutes"));
-                    }
-                }
-                r => break r.map(|()| true).map_err(Into::into),
-            }
-        };
-        self.db.busy_timeout(Duration::from_secs(30))?;
-        r
+        wait_busy(&self.db, &self.cancel, |db| if needless(db) { Ok(false) } else { db.execute_batch("BEGIN IMMEDIATE").map(|()| true) })
     }
 
     /// `update`; with `wait` false a write lock held by another process is an error at once.
@@ -1700,7 +1725,7 @@ impl Index {
         } else {
             self.db.busy_timeout(Duration::ZERO)?;
             let r = self.db.execute_batch("BEGIN IMMEDIATE");
-            self.db.busy_timeout(Duration::from_secs(30))?;
+            self.db.busy_timeout(BUSY)?;
             match r {
                 Err(rusqlite::Error::SqliteFailure(f, _)) if f.code == rusqlite::ffi::ErrorCode::DatabaseBusy => return Err(Busy.into()),
                 r => r?,
@@ -1770,7 +1795,7 @@ impl Index {
             // for it, and a later update truncates the log
             let _ = self.db.busy_timeout(Duration::ZERO);
             let _ = self.db.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)");
-            let _ = self.db.busy_timeout(Duration::from_secs(30));
+            let _ = self.db.busy_timeout(BUSY);
             // a long-running process would otherwise keep a build's word caches for its whole life
             rayon::broadcast(|_| crate::text::clear_caches());
             crate::text::clear_caches();
@@ -3067,6 +3092,72 @@ mod tests {
         assert!(t0.elapsed().as_secs() >= 30, "{:?}", t0.elapsed());
         assert_eq!(ix.meta("schema_version"), Some(super::SCHEMA_VERSION.to_string()));
         writer.join().unwrap();
+        drop(ix);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_first_open_waits_for_a_lock_held_before_it_and_keeps_the_holders_data() {
+        for wal in [false, true] {
+            let root = std::env::temp_dir().join(format!("scrutate_ix_lock_first_{wal}_{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(root.join(".scrutate")).unwrap();
+            std::fs::write(root.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+            let db = root.join(".scrutate/index.db");
+            let (locked, done) = std::sync::mpsc::channel();
+            let holder = {
+                let db = db.clone();
+                std::thread::spawn(move || {
+                    let other = rusqlite::Connection::open(db).unwrap();
+                    if wal {
+                        other.query_row("PRAGMA journal_mode=WAL", [], |_| Ok(())).unwrap();
+                    }
+                    other.execute_batch("BEGIN IMMEDIATE; CREATE TABLE held(x); INSERT INTO held VALUES (7);").unwrap();
+                    locked.send(()).unwrap();
+                    std::thread::sleep(super::BUSY + std::time::Duration::from_secs(2));
+                    other.execute_batch("COMMIT").unwrap();
+                })
+            };
+            done.recv().unwrap();
+            let t0 = std::time::Instant::now();
+            let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+            assert!(t0.elapsed() > super::BUSY, "wal {wal}: {:?}", t0.elapsed());
+            holder.join().unwrap();
+            ix.update(false).unwrap();
+            assert_eq!(ix.files().unwrap(), ["a.py"], "wal {wal}");
+            let held: i64 = rusqlite::Connection::open(&db).unwrap().query_row("SELECT x FROM held", [], |r| r.get(0)).unwrap();
+            assert_eq!(held, 7, "wal {wal}: the holder's table is kept");
+            drop(ix);
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+
+    #[test]
+    fn an_open_that_must_add_to_the_schema_waits_for_a_writer_and_never_wipes() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_old_writer_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        let db = ix.dir.join("index.db");
+        drop(ix);
+        // what an older version left: no artifacts column, and it is writing now
+        let old = rusqlite::Connection::open(&db).unwrap();
+        old.execute_batch("DROP INDEX files_art; ALTER TABLE files DROP COLUMN art;").unwrap();
+        let before = super::file_id(&db);
+        let (locked, done) = std::sync::mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            old.execute_batch("BEGIN IMMEDIATE; UPDATE meta SET value=value WHERE key='schema_version';").unwrap();
+            locked.send(()).unwrap();
+            std::thread::sleep(super::BUSY + std::time::Duration::from_secs(2));
+            old.execute_batch("COMMIT").unwrap();
+        });
+        done.recv().unwrap();
+        let ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        writer.join().unwrap();
+        assert_eq!(super::file_id(&db), before, "the database was replaced");
+        assert_eq!(ix.files().unwrap(), ["a.py"]);
         drop(ix);
         let _ = std::fs::remove_dir_all(&root);
     }

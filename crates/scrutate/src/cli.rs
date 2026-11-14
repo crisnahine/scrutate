@@ -1886,7 +1886,13 @@ fn watch_command(root: &Path) -> Result<i32> {
     let root = std::fs::canonicalize(root).with_context(|| format!("watch {}", root.display()))?;
     let stop = Arc::new(AtomicBool::new(false));
     interrupt::install(Arc::clone(&stop));
-    let session = Session::open(&root, crate::session::Every::given(None))?;
+    // Ctrl-C also ends a wait for another process's write lock
+    crate::index::stop_waits_on(Arc::clone(&stop));
+    let stopped = || stop.load(Ordering::Relaxed);
+    let session = match Session::open(&root, crate::session::Every::given(None)) {
+        Err(_) if stopped() => return Ok(130),
+        s => s?,
+    };
     let update = |changes: &crate::stores::Changes| -> Result<()> {
         let up = session.write(|repo| repo.update_stores(Writer::Watch, changes, false))?;
         let (st, text) = (up.code.unwrap_or_default(), up.text);
@@ -1902,8 +1908,11 @@ fn watch_command(root: &Path) -> Result<i32> {
         }
         Ok(())
     };
-    crate::watch::run(&root, &stop, || eprintln!("[scrutate] watching {}", root.display()), update)?;
-    Ok(if stop.load(Ordering::Relaxed) { 130 } else { 0 })
+    let r = crate::watch::run(&root, &stop, || eprintln!("[scrutate] watching {}", root.display()), update);
+    if stopped() {
+        return Ok(130);
+    }
+    r.map(|()| 0)
 }
 
 /// `check`: integrity of the database and the segments; with `--files`, re-hash every indexed file.

@@ -602,3 +602,39 @@ fn wait_update_any(rx: &Receiver<String>) -> Vec<String> {
         }
     }
 }
+
+/// The names of the definitions the code index holds, read from its database without an update.
+fn chunk_names(root: &Path) -> String {
+    let db = rusqlite::Connection::open_with_flags(root.join(".scrutate/index.db"), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    db.query_row("SELECT group_concat(qualname, ' ') FROM chunks", [], |r| r.get::<_, Option<String>>(0)).unwrap().unwrap_or_default()
+}
+
+#[cfg(unix)]
+#[test]
+fn ctrl_c_ends_a_wait_for_another_writer() {
+    let (r, mut child, _rx) = watched("sigint_wait", &[("a.py", "def alpha():\n    return 1\n")]);
+    let db = rusqlite::Connection::open(r.root.join(".scrutate/index.db")).unwrap();
+    db.execute_batch("BEGIN IMMEDIATE").unwrap();
+    r.write("a.py", b"def alpha_new():\n    return 1\n");
+    // the update of that burst is waiting for the lock by now
+    std::thread::sleep(Duration::from_secs(2));
+    assert!(Command::new("kill").args(["-INT", &child.0.id().to_string()]).status().unwrap().success());
+    let t0 = Instant::now();
+    wait_for(5, "watch to stop on Ctrl-C", || child.0.try_wait().unwrap().is_some());
+    assert_eq!(child.0.wait().unwrap().code(), Some(130), "{:?}", t0.elapsed());
+    db.execute_batch("ROLLBACK").unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failed_update_is_tried_again_with_no_further_change() {
+    use std::os::unix::fs::PermissionsExt;
+    let (r, _child, rx) = watched("retry", &[("a.py", "def alpha():\n    return 1\n")]);
+    let seg = r.root.join(".scrutate/seg");
+    fs::set_permissions(&seg, fs::Permissions::from_mode(0o555)).unwrap();
+    r.write("a.py", b"def alpha_new():\n    return 1\n");
+    wait_for(30, "the update to fail", || rx.try_iter().any(|l| l.contains("update failed")));
+    fs::set_permissions(&seg, fs::Permissions::from_mode(0o755)).unwrap();
+    // no file changes again: the retry alone indexes the burst
+    wait_for(30, "the retry", || chunk_names(&r.root).contains("alpha_new"));
+}

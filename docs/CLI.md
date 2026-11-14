@@ -870,7 +870,8 @@ scrutate watch [PATH]
 ```
 Sets up the watch on `PATH` (default `--root`), then updates the index once, so a change made
 during that first update is seen, prints `watching PATH` on stderr, and waits for filesystem
-events.
+events. While another process writes the index, an update waits for it (up to 10 minutes), the
+first one too; Ctrl-C stops `watch` at once, also during that wait, with exit code 130.
 
 Per platform:
 
@@ -900,7 +901,9 @@ the whole tree, reading the ignore files again, runs for a burst that:
   stream that says it dropped events or must rescan);
 - changes an indexed file once the last walk is 30 s old, which is how a change the watcher did
   not see is found;
-- follows a burst whose update failed (stderr says why), so that burst's files are indexed.
+- is the retry of a burst whose update failed (stderr says why): it comes with the next burst or
+  after a pause of 1 s that doubles up to 30 s, whichever is first, so that burst's files are
+  indexed with no further change.
 
 On Linux each directory above the root gets its own watch for those rule files, and another file
 written there costs a filter and nothing more. When such a directory cannot be watched the
