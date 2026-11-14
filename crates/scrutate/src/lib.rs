@@ -16,6 +16,7 @@ pub mod files;
 pub mod finder;
 pub mod fmt;
 pub mod fuzzyre;
+pub mod git;
 pub mod hook;
 pub mod impact;
 pub mod index;

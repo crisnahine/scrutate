@@ -44,7 +44,7 @@ writes an agent's configuration files, and the Grep hook it installs appends to 
 
 | Area | Control | Evidence |
 |---|---|---|
-| No code execution from repositories | Files are parsed as data (tree-sitter, regex); nothing is evaluated, imported or run. There are no build systems, repository hooks, `.scrutate.toml` scripts or plugins. The binary starts another program in two cases: `grep -z` decompresses bzip2, xz, lzma, lz4, zstd, brotli and `.Z` files by running the system's `bzip2`, `xz`, `lz4`, `zstd`, `brotli` or `uncompress` from `PATH` on the file (through `grep-cli`, as ripgrep does; gzip, zip and tar are read in process); and `impact` (the command and the MCP tool) and `review` run `git` from `PATH` in the root to read the diff (see [Running git](#running-git)). Without `-z`, `impact` or `review`, no search starts a program. `scrutate setup claude` runs `claude mcp add-json` or `claude mcp remove` from `PATH` when it is there ([below](#setup-and-the-grep-hook)). | Code review: the engine's process spawns are `grep_cli::DecompressionReaderBuilder` in `archive.rs` and `Git::command` in `impact.rs`, and `setup.rs` runs `claude` as above; `tests/impact.rs` (a revision written as an option is refused, and no file is written). |
+| No code execution from repositories | Files are parsed as data (tree-sitter, regex); nothing is evaluated, imported or run. There are no build systems, repository hooks, `.scrutate.toml` scripts or plugins. The binary starts another program in two cases: `grep -z` decompresses bzip2, xz, lzma, lz4, zstd, brotli and `.Z` files by running the system's `bzip2`, `xz`, `lz4`, `zstd`, `brotli` or `uncompress` from `PATH` on the file (through `grep-cli`, as ripgrep does; gzip, zip and tar are read in process); and `impact` (the command and the MCP tool) and `review` run `git` from `PATH` in the root to read the diff (see [Running git](#running-git)). Without `-z`, `impact` or `review`, no search starts a program. `scrutate setup claude` runs `claude mcp add-json` or `claude mcp remove` from `PATH` when it is there ([below](#setup-and-the-grep-hook)). | Code review: the engine's process spawns are `grep_cli::DecompressionReaderBuilder` in `archive.rs` and `Git::command` in `git.rs`, and `setup.rs` runs `claude` as above; `tests/impact.rs` (a revision written as an option is refused, and no file is written). |
 | No network | The binary makes no network connections and has no HTTP/DNS dependency. | `cargo tree` (docs/DEPENDENCIES.md) has no networking crate; offline build and run verified in a proxy-restricted environment. |
 | Filesystem confinement | `read_code` / `read()` reject paths that resolve outside the repository root, and `read_code` refuses a path that is not a regular file. The index is written only under `<root>/.scrutate/`; another checkout's index is only read, in a linked git work tree, from its main checkout ([below](#the-main-checkouts-index-in-a-linked-work-tree)). Segment files are written to a temp directory *inside* `.scrutate/seg/` and renamed into place (no `/tmp`, no predictable world-writable paths). A repository's `exclude_dirs` (`.scrutate.toml` at the root) can only leave directories out by name: the file is read as other repository files are (a regular file inside the root, at most 1 MB; through a link only when the resolved file is one), and its names are never read as patterns. A `.scrutate` that is a symbolic link, or holds one (checked three levels deep, no link followed), is refused, and files of fixed names are written with remove and `create_new`, so nothing outside the repository is written or deleted through a link. A `--root` that does not exist or is not a directory is an error, and nothing is created. `tsconfig.json`, `jsconfig.json`, `Cargo.toml` and `go.mod` are read only as regular files inside the repository, of at most 1 MB. A path a tool call names, a file an answer cites and a file a watch event names are indexed only when the path resolves inside the root: a linked folder on the way that leads outside makes the file count as missing. A tool-call path that leaves the root by its own parts (`..`, an absolute path elsewhere, a share on another machine) is refused with nothing looked at, so on Windows no connection is made to a machine a call names. The language server reads a document from disk only under the root, links on the way included, and resolves no path on another machine's share than the root's: for a document outside it (another folder, a URI that leaves through `..`) it uses the text the editor sent, or nothing. | `tests/robustness.rs::symlinks_ignores_and_nested_repos` (symlink escape not followed by default), bindings test `r.read("../etc/passwd")` → error, lsp `a_document_that_is_not_under_the_root_is_never_read_from_disk`, mcp_tools `a_path_through_a_linked_folder_reads_nothing_outside_the_repository`. |
 | Symlinks | Not followed by default (Engine A and B); `-L` follows with loop detection (the `ignore` walker). | robustness: loop + dangling + escaping symlinks. |
@@ -56,11 +56,11 @@ writes an agent's configuration files, and the Grep hook it installs appends to 
 | Index privacy | `.scrutate/` holds a compressed copy of every indexed chunk's text, including chunks of files the owner made private (`chmod 600`). On Unix it is made with mode 0700, whatever the umask, so another user can read nothing inside it; an existing one with any other mode (an earlier version's, made under umask 022) is set to 0700 by the next command that writes it. The files inside keep the umask's mode, which does not matter while the directory above shuts others out. A `.scrutate` another user owns is left as it is. Only `.scrutate` itself changes mode: no file of the repository, and nothing outside it. On Windows the directory inherits the repository directory's inheritable permissions, as every new directory does. | cli `the_index_directory_is_private_to_its_owner_under_umask_022` (`index`, `index --text`, `callers` and the `tsquery` cache each make it 0700; a 0755 one is tightened). |
 | Cache files | `.scrutate/tsquery/` (captures by content) and `.scrutate/answers/` (what `callers` and `callees` learned) are read only as regular files within their size limit (128 MB and 64 MB), never through a symbolic link, and decoded with every length checked; a file that does not decode, or whose header names another scrutate, executable, index database or root, counts as no file. They are written whole to a temporary name and renamed into place, only after the index directory check refuses a symbolic link anywhere in `.scrutate/`. A planted cache file that does decode is trusted as the checkout's own index is: it can make the answers it names wrong until it is deleted (deleting `.scrutate/` is always safe). | `files::tests::a_cache_file_is_read_only_as_a_regular_file_within_its_limit`; `answers::tests`; the tsquery tests in `tests/cli.rs`. |
 | Panic containment | A panic in the CLI prints one diagnostic line and exits 2. A panic inside an MCP tool call is reported as a tool error and the server keeps running: the session closes the reader the call ran on and opens another. The Python bindings and the language server keep a panic inside its call the same way. An index update that panics rolls back at once, and the next update clears a write transaction left open. A panic in the MCP server's first index build is reported on stderr and in each tool call's answer; calls stop waiting for it, and `serve` still exits when its input closes. | `cli::main_exit`, `session.rs`; `session::tests::a_panic_inside_one_call_is_that_calls_error_and_the_session_goes_on`; mcp_protocol `a_first_build_that_panics_is_reported_and_the_server_still_answers_and_exits`. |
-| Supply chain | 212 crates in the binary's dependency graph (every platform's), each with a permissive licence (MIT, Apache-2.0, BSD, ISC, Zlib, Unlicense, 0BSD, Unicode-3.0, CC0-1.0, BSL-1.0), plus one data file compiled in, a Han fold table derived from Unihan 18.0.0 (Unicode-3.0) and OpenCC ver.1.4.2's `JPShinjitaiCharacters.txt` (Apache-2.0, pinned by SHA-256 in `tools/gen_han_fold.py`), `crates/scrutate/data/han_fold.txt`; `Cargo.lock` committed; `cargo audit` over the 258 locked crates: **0 vulnerabilities, 0 warnings** (RustSec advisory DB of 1,509 advisories, 2026-11-14). The bundled SQLite was upgraded for RUSTSEC-2026-0459 (`rusqlite` 0.41, `libsqlite3-sys` 0.39). `ignore` is vendored with eleven documented changes (`vendor/ignore`, listed in its README) and published as its own crate, `scrutate-ignore`, so a crate from crates.io builds with the same walker; the SBOM marks it as a modified copy of `ignore`. `zip` 9, used only by `grep -z`, has no open advisory; `pyo3` was upgraded to 0.30 (2 advisories in 0.27). SBOM generated per release (`tools/sbom.py`, CycloneDX 1.5). `cargo deny check` runs on every push to main, every pull request and once a week against `deny.toml`: an advisory (vulnerable, unmaintained, unsound or yanked), a licence outside the list above, a wildcard version, or a crate from a registry other than crates.io or from git fails it. | `cargo audit` output in docs/TEST_RESULTS.md; SBOM in release artifacts; `deny.toml` and the `deny` job of `.github/workflows/security.yml`. |
+| Supply chain | 212 crates in the binary's dependency graph (every platform's), each with a permissive licence (MIT, Apache-2.0, BSD, ISC, Zlib, Unlicense, 0BSD, Unicode-3.0, CC0-1.0, BSL-1.0), plus one data file compiled in, a Han fold table derived from Unihan 18.0.0 (Unicode-3.0) and OpenCC ver.1.4.2's `JPShinjitaiCharacters.txt` (Apache-2.0, pinned by SHA-256 in `tools/gen_han_fold.py`), `crates/scrutate/data/han_fold.txt`; `Cargo.lock` committed; `cargo audit` over the 258 locked crates: **0 vulnerabilities, 0 warnings** (RustSec advisory DB of 1,509 advisories, 2026-11-14). The bundled SQLite was upgraded for RUSTSEC-2026-0459 (`rusqlite` 0.41, `libsqlite3-sys` 0.39). `ignore` is vendored with eleven documented changes (`vendor/ignore`, listed in its README) and published as its own crate, `scrutate-ignore`, so a crate from crates.io builds with the same walker; the SBOM marks it as a modified copy of `ignore`. `zip` 9, used only by `grep -z`, has no open advisory; `pyo3` was upgraded to 0.30 (2 advisories in 0.27). SBOM generated per release (`tools/sbom.py`, CycloneDX 1.5). `cargo deny check` runs on every push to main, every pull request, once a week and on the tagged commit before a release against `deny.toml`: an advisory (vulnerable, unmaintained, unsound or yanked), a licence outside the list above, a wildcard version, or a crate from a registry other than crates.io or from git fails it. | `cargo audit` output in docs/TEST_RESULTS.md; SBOM in release artifacts; `deny.toml` and the `deny` job of `.github/workflows/security.yml`. |
 | Reproducible builds | Release profile pins codegen; `Cargo.lock` and a pinned toolchain (`rust-toolchain.toml`: 1.99.1). Two clean builds in two build images (`rust:1-slim-bookworm` and `golang:1.26-bookworm` with rustup, both on the pinned 1.99.1 compiler, fresh containers) produced the same SHA-256 for the release commit (`261ed1a2...`, linux/arm64); the binary the Linux leaderboard measured, built in another directory, has that hash too. Reproducibility on other operating systems, or across source paths in general, is not claimed. | `tools/repro_docker.sh`, `bench/results/platforms/repro/`; `tools/reproducible_check.sh` (same machine). |
 | Signed releases | "Signed" means: every file on the release carries a SLSA build provenance attestation (`actions/attest`), signed through Sigstore with the workflow's OIDC identity and logged in Sigstore's public transparency log (SLSA v1.0 Build Level 2), and is listed in `SHA256SUMS`; the SBOM is attested to the archives. `gh attestation verify FILE --repo scrutate/scrutate --signer-workflow scrutate/scrutate/.github/workflows/release.yml --source-ref refs/tags/v0.1.0` checks a file ([Install](INSTALL.md#from-a-release-archive)). No platform code signature (see Known gaps). | `.github/workflows/release.yml`, **not yet executed**; no release has been signed yet. |
-| Workflows | Every action is pinned to a commit, checkout keeps no credentials, and each job gets only the permissions it names. `zizmor` 1.32.0 with `--persona pedantic` and its online audits checks `.github` on every push to main, every pull request and once a week; a finding fails the job. | the `zizmor` job of `.github/workflows/security.yml`; `actionlint`. |
-| `unsafe` count | Each file's count of the `unsafe` keyword (comments and strings left out) must equal the table in the [`unsafe` inventory](#known-gaps-and-residual-risks), checked on every push to main, every pull request and once a week, so a new `unsafe` cannot land without its line there. | `tools/unsafe_count.py`; the `unsafe` job of `.github/workflows/security.yml`. |
+| Workflows | Every action is pinned to a commit, checkout keeps no credentials, and each job gets only the permissions it names. `zizmor` 1.32.0 with `--persona pedantic` and its online audits checks `.github` on every push to main, every pull request, once a week and on the tagged commit before a release; a finding fails the job. | the `zizmor` job of `.github/workflows/security.yml`; `actionlint`. |
+| `unsafe` count | Each file's count of the `unsafe` keyword (comments and strings left out) must equal the table in the [`unsafe` inventory](#known-gaps-and-residual-risks), checked on every push to main, every pull request, once a week and on the tagged commit before a release, so a new `unsafe` cannot land without its line there. | `tools/unsafe_count.py`; the `unsafe` job of `.github/workflows/security.yml`. |
 | Coverage-guided fuzzing | Four libFuzzer targets (`fuzz/`, nightly toolchain, AddressSanitizer): the `.npy` reader on arbitrary bytes; the text-index soundness property (a text a pattern matches must satisfy the pattern's trigram condition); the edit-distance matcher; every parser tier on arbitrary text under 60 file extensions. They found four real defects, each fixed with a regression test and its crash input kept in `fuzz/regressions/`: chunk line numbers shifted after form feeds (Python-style line splitting); a truncated string array panicked the `.npy` reader; a shape whose element count overflowed wrapped in release builds and could have produced an over-long slice view (undefined behaviour, now a saturating count and checked sizes); a zero-width string array with a huge shape requested a multi-terabyte allocation. Every week each target fuzzes for 45 minutes from the corpus the last run kept, and a crash, timeout or out-of-memory input fails the run and is kept as an artifact. | `bench/results/fuzz/` (run logs), `.github/workflows/fuzz-weekly.yml`, `fuzz/regressions/`, unit tests `npy::header_tests::damaged_headers_are_errors_not_panics`, `parse::tests::form_feeds_and_lone_cr_do_not_shift_line_numbers`. |
 | Network file systems | A repository on an SMB share (Samba 4.23 server, macOS `smbfs` client): Engine A output identical to the local copy; Engine B indexes, answers, survives three concurrent `index` processes with readers, and passes `check --files`. Found and fixed: a blocking file lock fails at once on SMB (EAGAIN), so the text index polls `try_lock`. One host only: several machines sharing one index over a network file system is not supported (SQLite's documentation warns that its locking is unreliable there). | `tools/netfs_check.sh`, `bench/results/platforms/netfs-smb-macos.txt`. |
 | Untrusted `.scrutate.toml` | The configuration file sets option defaults only (booleans, numbers, globs); it cannot name programs or paths to execute. Unknown keys are rejected. `follow = true` in a repository's own file is ignored with a warning, so a cloned repository cannot make a search leave it through a symbolic link; the flag, the environment and the user's own file still can. | `config.rs` tests; `tests/cli.rs` (a link out of the repository). |
@@ -81,6 +81,10 @@ empty one, or one starting with `-`, is refused before git runs, so `--base=--ou
 become git's `--output` and write a file. It goes as one argument, `REV^{commit}`, to
 `git rev-parse --verify`, and later calls get the commit id that prints. Each side of `A...B` is
 checked the same way.
+
+Of the environment, only a relative `GIT_DIR`, `GIT_WORK_TREE`, `GIT_OBJECT_DIRECTORY` or
+`GIT_COMMON_DIR` changes: it is made absolute against the command's working directory, where git
+itself reads it, so starting git at the root does not point it at another repository.
 
 What remains is git's trust in its own configuration: a clean filter the user's git configuration
 defines (Git LFS, for example) runs on a working tree file `.gitattributes` assigns to it, as in
@@ -204,9 +208,11 @@ Edge cases:
 - Being written at that moment: the reads see the last commit, never half of one (`VACUUM INTO`
   reads in one transaction, an update's lookups in one snapshot). The main checkout removes a
   segment it replaced right after its commit; if a listed segment is gone or half gone, the seed
-  fails with nothing left behind (every copied segment must open before the copy is taken) and
-  the index is built as usual, and an artifact whose vectors were in it gets vectors made from its
-  word counts. The main checkout's writer is never blocked: a WAL reader only holds back the
+  fails and leaves no database (every copied segment must open before the copy is taken), the
+  index is built as usual, and an artifact whose vectors were in that segment gets vectors made
+  from its word counts. The segments the seed copied stay, since another first open at the same
+  moment may list them; an update removes a copy no database lists once it is 10 minutes old.
+  The main checkout's writer is never blocked: a WAL reader only holds back the
   checkpoint until the read ends.
 - Two plain clones of one repository (no git link between them) do not find each other, and a
   second checkout that is no git work tree builds its index as before.
@@ -265,9 +271,18 @@ the time, and no file name or text of the repository.
 ([CLI](CLI.md#tsquery---rewrite) lists every file it leaves alone, a link among them). Each is
 written to a new temporary file in its own directory (`create_new`, so nothing planted there is
 opened) and renamed over the original only if the original's bytes are unchanged, so an edit made
-meanwhile is never lost. The template is text: nothing in it is run. No MCP tool rewrites, so an MCP agent cannot change a source file.
-Tests: `tests/rewrite.rs` (a link out of the root, an edit between the read and the write, the
-diff mode writing nothing).
+meanwhile is never lost. The root is opened once when the plan starts, and every read and write
+goes through that handle and the directories opened from it one name at a time, a name never
+followed: with `O_NOFOLLOW` on Linux and macOS (`openat`, `renameat`), and on Windows with
+`FILE_OPEN_REPARSE_POINT` (`NtCreateFile` and a `FileRenameInformation` rename relative to the
+directory handle), where a directory that is a junction or link is refused. The temporary file,
+the check and the rename are relative to the file's directory handle. A directory swapped for a
+link or junction after the plan starts, the root and its ancestors included, therefore cannot send
+a read, the write or a temporary file outside the root. The template is text: nothing in it is run. No MCP tool rewrites, so an MCP agent cannot change a source file.
+Tests: `tests/rewrite.rs` (a link out of the root, an edit between the read and the write, a
+directory swapped for a link after the read, the root swapped for one after the plan, the diff
+mode writing nothing, and on Windows the same with junctions) and `rewrite::tests` on Windows (each
+step meeting a junction as itself).
 
 ## The review comment
 
@@ -301,7 +316,9 @@ marker is not).
     boundaries);
   - `config.rs`: `std::env::set_var` during startup before any thread exists;
   - `cli.rs`: `signal(SIGINT, ...)` (Unix) and `SetConsoleCtrlHandler` (Windows) declarations,
-    whose handler only stores to an atomic flag;
+    whose handler only swaps an atomic flag; on a second Ctrl-C the Unix handler restores the
+    default action with `signal` and sends `raise(SIGINT)`, both async-signal-safe, and the
+    Windows one passes the event on to the system's handler;
   - `hook.rs` (Windows): `RegOpenKeyExW` and `RegCloseKey` to see whether a policy key exists,
     with a nul-terminated name and the key closed;
   - `index.rs` (Windows): the status change time of a file, from `GetFileInformationByName`
@@ -322,6 +339,11 @@ marker is not).
     descriptor 1 borrowed for one `fstat` and never closed;
   - `foldfind.rs` (x86_64 only): one call to a function compiled for AVX2, made after the CPU
     reports AVX2;
+  - `rewrite.rs` (Windows): `NtCreateFile` relative to a directory handle it holds, with one name
+    in a `UNICODE_STRING` and an `OBJECT_ATTRIBUTES` that live for the call, the returned handle
+    taken into an `OwnedHandle` once; and `NtSetInformationFile` with `FileRenameInformation` from
+    a zeroed, 8-byte aligned buffer at least the size of `FILE_RENAME_INFORMATION`, the name copied
+    after the `FileName` offset and the length passed;
   - `session.rs`: `geteuid`, and `getpeereid` (macOS, the BSDs) or `getsockopt(SO_PEERCRED)`
     (Linux) into a `struct ucred` whose size it passes and checks, on a connected socket it owns,
     and `fchdir` back to a directory descriptor it holds open;
@@ -340,8 +362,9 @@ marker is not).
     `info` is a boxed channel sender that the stream's release callback frees once, or the
     caller frees when no stream was made. `watch::tests` starts a stream and receives a file's
     event, and every `tests/watch_files.rs` test runs on it;
-  - the tests: `kill` (`tests/cli.rs`, `tests/running.rs`), `geteuid` (`tests/robustness.rs`)
-    and `clock_gettime` (`tests/parse_index.rs`) with arguments they own, `std::env::set_var` in
+  - the tests: `kill` (`tests/cli.rs`, `tests/running.rs`), `geteuid` (`tests/robustness.rs`),
+    `clock_gettime` (`tests/parse_index.rs`) and `wait4` of a child the test spawned
+    (`tests/intel_refs.rs`, its CPU time) with arguments they own, `std::env::set_var` in
     `tests/index_quota.rs`, the one test of its binary, so no other thread reads the environment, and in
     `tests/lazy_bind.rs` C library calls (`snprintf`, `powf`, `qsort` with its callback, `fchdir`,
     `fork`, `getpid`, `_exit`, `waitpid`) made through the stubs above.
@@ -352,7 +375,7 @@ marker is not).
 
   | File | `unsafe` |
   |---|---|
-  | `crates/scrutate/src/cli.rs` | 4 |
+  | `crates/scrutate/src/cli.rs` | 5 |
   | `crates/scrutate/src/config.rs` | 1 |
   | `crates/scrutate/src/foldfind.rs` | 2 |
   | `crates/scrutate/src/hook.rs` | 2 |
@@ -362,12 +385,14 @@ marker is not).
   | `crates/scrutate/src/lex.rs` | 1 |
   | `crates/scrutate/src/npy.rs` | 14 |
   | `crates/scrutate/src/policy.rs` | 1 |
+  | `crates/scrutate/src/rewrite.rs` | 2 |
   | `crates/scrutate/src/running.rs` | 12 |
   | `crates/scrutate/src/session.rs` | 5 |
   | `crates/scrutate/src/text.rs` | 1 |
   | `crates/scrutate/src/watch.rs` | 21 |
   | `crates/scrutate/tests/cli.rs` | 1 |
   | `crates/scrutate/tests/index_quota.rs` | 1 |
+  | `crates/scrutate/tests/intel_refs.rs` | 1 |
   | `crates/scrutate/tests/lazy_bind.rs` | 10 |
   | `crates/scrutate/tests/parse_index.rs` | 1 |
   | `crates/scrutate/tests/robustness.rs` | 1 |

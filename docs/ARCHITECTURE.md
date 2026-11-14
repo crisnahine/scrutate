@@ -272,7 +272,11 @@ as a Python one starts at its decorators.
 
 A `[[language]]` table adds a language without a build (`custom.rs`,
 [CLI](CLI.md#custom-languages)), parsed as the keyword tier parses. The tables in effect are
-process-wide, loaded by each command and each index update for the root. A custom-language file's
+process-wide, loaded by each command and each index update for the root. Where one process
+serves several roots (the Python module's `Repo`s), each `Repo` call and index update runs under
+its own root's tables (`custom::of_root`, then `custom::with` on the threads that parse), and
+`grep(types=)` carries the tables of the index it starts in (`Files::customs`), so a second root
+cannot swap them midway. A custom-language file's
 artifact key holds its language's signature, and the index's meta keeps every extension's
 signature (`languages`), so a changed table rereads only the files of the extensions it changed.
 
@@ -391,7 +395,9 @@ NFC with final sigma folded.
   as a copy of the main checkout's index of the same schema, parsing rules and vector model: the
   database read with `VACUUM INTO` in one snapshot and the segments it lists copied, each of which
   must open (a segment the main checkout removed meanwhile fails the seed, and the index is built
-  as usual). The first update reads and hashes every file and
+  as usual). Copied segments are never deleted by a seed that lost or failed: several first opens
+  at once share them, and the one whose database lands first lists them; an unlisted copy goes
+  with the segment collection. The first update reads and hashes every file and
   parses only those that differ. Content an update has not seen is looked up in this checkout's
   store, then the main checkout's, read-only in one snapshot per update. Nothing of the other
   checkout is written (review in docs/SECURITY.md). Two plain clones do not find each other.
@@ -404,9 +410,14 @@ NFC with final sigma folded.
     (`GetFileInformationByName`, Windows 11 24H2 and later) or else by a handle opened for its
     attributes only, as CPython's `os.stat` does (`index::Listed`, `index::change_time`);
     SHA-1 verification;
-  - one `BEGIN IMMEDIATE` transaction per update; new segments written to a temp directory and
-    renamed (the name is taken inside that transaction, so a directory already under it was left
+  - one `BEGIN IMMEDIATE` transaction per update; new segments written to a temp directory,
+    each file and the directory flushed to disk, and renamed before the database names them, so
+    a checkpoint never makes a manifest durable ahead of its segments (the name is taken inside that transaction, so a directory already under it was left
     by a writer stopped before its commit, and is removed); deletions as liveness bitmaps;
+  - one read snapshot per operation (`ops::run`, each language server request): its reads see
+    one commit, and a commit meanwhile shows in the next operation; after an update the log is
+    cut to nothing once the readers on older commits finish, waited for about a second, else
+    by the next update, and a cut log keeps at most 4 MB of its file;
   - background **compaction** (merge small segments / purge dead rows) that aborts if another
     writer moved the manifest; segment **GC** with an age guard inside the update's transaction;
   - **corruption detection**, all with automatic **rebuild**: `PRAGMA quick_check` on opening a
@@ -506,7 +517,7 @@ time are always searched.
 
 Updates are incremental (size, mtime and status change time, so an edit that keeps size and mtime,
 as `cp -p` and `rsync -t` make, is seen), write new segments and a new liveness file per
-generation, then swap `manifest.json` atomically. More than four segments merges all but the
+generation, flush them and their directories to disk, then swap `manifest.json` atomically. More than four segments merges all but the
 largest by a streaming k-way merge, so the small segments a watch adds do not rewrite the whole
 index; more than 30% dead documents merges all of them. A merge checks the segments it reads
 first, and a damaged one rebuilds the index. A file over 64 MB is read in 1 MB pieces, never
@@ -551,7 +562,7 @@ is added there alone.
 
 | Operation | Looks for changes | Keeps current |
 |---|---|---|
-| `index` | every file; waits for another writer | code index, text index (built when missing) |
+| `index` | every file; waits for another writer, up to 10 minutes or a cancel | code index, text index (built when missing) |
 | `index --no-text` | every file; waits | code index |
 | `index --text` | every file; waits | text index (built when missing) |
 | `grep --index --update` | every file; waits | text index (built when missing) |
@@ -659,7 +670,7 @@ definitions and their nesting come from the index's `chunks` rows. A file whose 
 overflow the stack or make a request take minutes; a name's binders and assignments are found once
 per scope, so a function of thousands of uses resolves in linear time. The rules (scopes, method
 resolution order, qualifiers and declared types, Java packages and overloads, import paths and
-re-exports, followed to a depth limit; Rust `crate`/`self`/`super` paths among them) are in
+re-exports, followed up to 6 import hops deep; Rust `crate`/`self`/`super` paths among them) are in
 [CLI](CLI.md#refs). Java overloads share one qualified name in the index.
 Inherited methods are kept per class, and the Java walks
 over base types read a type reached by many paths once per depth, so a diamond of interfaces costs
@@ -741,14 +752,22 @@ instructions), 0.43 s (6.1 billion) from what was kept, where asking about the 4
 cost 0.6 s (8.3 billion).
 
 `impact` (`impact.rs`) is an operation like the others, so it scans first and pages and prints as
-they do. It reads the diff by running `git` in the root, the one program Engine B starts:
-`git diff --raw -z` for each file's status, modes and blob ids, `git diff -U0` for the changed
+they do. It reads the diff through `git.rs`, which runs `git` in the root, the one program Engine B
+starts: `git diff --raw -z` for each file's status, modes and blob ids, `git diff -U0` for the changed
 lines of each side, `git ls-files --others --exclude-standard` for untracked files, `git
 rev-parse` and `git merge-base` for the base commit, and one `git cat-file --batch` for the base
 copies (and, with `--staged`, the staged copies). Every call passes `--no-optional-locks`,
 `core.fsmonitor=false`, `--no-ext-diff` and `--no-textconv`, so git writes nothing and starts no
 helper of its own; a revision is checked before it is passed (none starts with `-`) and resolved to
-a commit id, which every later call uses. Each hunk's new lines map onto the index's definitions
+a commit id, which every later call uses. Git sees this process's environment, a relative
+`GIT_DIR`, `GIT_WORK_TREE`, `GIT_OBJECT_DIRECTORY` or `GIT_COMMON_DIR` made absolute against
+its working directory, where git reads such a value (`git::own_env`; a table in `git.rs` says
+where git reads each of the six); or, built with `Git::with_env`, a caller's own values of the six variables that say where a repository's files
+are (`git::PASSED_ENV`: `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
+`GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`) in place of every `GIT_*` variable of this
+process, its configuration and programs included; any other name is refused before git runs. On Windows
+each path Git hands git, its directory and these values, goes in its plain form (`git::plain`),
+since git does not read a verbatim one (`\\?\C:\x`, what `canonicalize` gives). Each hunk's new lines map onto the index's definitions
 of the file as it is now, and its old lines onto the definitions a parse of the base copy gives
 (`parse::parse_file`, the parse the index stores); a definition is matched across the sides by
 kind and qualified name ([CLI](CLI.md#impact) has the statuses and windows). The callers are
@@ -931,7 +950,7 @@ without its lock when locking is unsupported (one process sees the files), and t
 names of the answer cache, the frecency state and a seeded index leave the process id out.
 PCRE2's JIT has no wasm backend, so that build leaves out the `pcre2` feature:
 `cargo build --release -p scrutate --target wasm32-wasip1 --no-default-features`, with the C
-compiler of a wasi-sdk for SQLite and the grammars. The `wasi` job of `ci.yml` checks that build,
+compiler of a wasi-sdk for SQLite and the grammars. The `wasi` job of `ci.yml` runs that build,
 and runs clippy on the native build without `pcre2`, on every push.
 
 ## Models (`crates/scrutate/models/`, `models.rs`)
@@ -976,7 +995,7 @@ model's tables. Ranking is watched by the pinned features above and by the quali
 - Components are replaceable behind small interfaces: a grammar is a registry row; the ranker is
   an array file; the vector model is an `npz`; the store is a directory of immutable arrays.
 - No network, no execution of repository code, no background daemons: the engines are libraries
-  that a CLI, an MCP server and Python call directly. `impact` runs the `git` program found on
+  that a CLI, an MCP server and Python call directly. `impact` runs the `git` program (`git.rs`) found on
   `PATH`, which reads the repository; nothing in the repository names a program to run. The one
   file written outside `.scrutate/` is the frecency state of `files`, under `XDG_STATE_HOME`. A
   command line call may use a session a running `serve` offers on a local socket, and never
