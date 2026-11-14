@@ -886,7 +886,8 @@ scrutate watch [PATH]
 Sets up the watch on `PATH` (default `--root`), then updates the index once, so a change made
 during that first update is seen, prints `watching PATH` on stderr, and waits for filesystem
 events. While another process writes the index, an update waits for it (up to 10 minutes), the
-first one too; Ctrl-C stops `watch` at once, also during that wait, with exit code 130, and
+first one too; Ctrl-C stops `watch` at once, also during that wait for the code index's or the
+text index's lock, with exit code 130, and
 an update that is running stops at its next batch of files.
 
 Per platform:
@@ -1096,7 +1097,7 @@ committed to answer from: the command fails with "the index is being built by an
 being built. `scrutate index` (and `--force`) waits for the writer, at most 10 minutes: then it
 fails with "another process has held the index write lock for 10 minutes" ("another process has
 held the text index lock for 10 minutes" when the text index's writer is the one it waits for).
-Ctrl-C ends the wait, as it does `watch`'s. A read-only index directory, or a read-only repository
+Ctrl-C ends the wait, as it does `watch`'s and that of `grep --index --update` (exit 130). A read-only index directory, or a read-only repository
 with a complete index, is answered from as it is. A `.scrutate` that is a symbolic link, or holds
 one, is refused: nothing is written or deleted outside the repository.
 ## Setup and the Grep hook

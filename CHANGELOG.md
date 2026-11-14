@@ -161,6 +161,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- Ctrl-C ends a wait for the text index's lock that another process holds, under `watch` and
+  `grep --index --update` (exit 130): the wait went on up to 10 minutes
+  ([CLI](docs/CLI.md#watch)).
 - Ctrl-C stops a code index update while a large segment's vectors are clustered (`watch`, a
   cancelled `reindex`): it waited for the clustering to end, two minutes in a debug build of a
   20,000-file tree ([CLI](docs/CLI.md#watch)).

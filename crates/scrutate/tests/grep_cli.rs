@@ -1508,3 +1508,35 @@ fn an_option_given_twice_takes_its_last_value() {
         assert_eq!((code, out.as_str()), (0, want), "{args:?}: {err}");
     }
 }
+
+/// Ctrl-C ends `grep --index --update`'s wait for the text index's lock that another process
+/// holds.
+#[cfg(unix)]
+#[test]
+fn ctrl_c_ends_an_indexed_search_s_wait_for_the_text_index_lock() {
+    let d = Dir::new("text_lock_grep");
+    fs::create_dir_all(d.0.join(".git")).unwrap();
+    d.write("a.txt", b"foo\n");
+    assert_eq!(d.run(&["index", "--text"]).0, 0);
+    d.write("a.txt", b"foo two\n");
+    let lock = fs::File::options().write(true).open(d.0.join(".scrutate/text/lock")).unwrap();
+    lock.lock().unwrap();
+    let mut child = Command::new(BIN)
+        .args(["grep", "--index", "--update", "foo"])
+        .current_dir(&d.0)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    assert!(child.try_wait().unwrap().is_none(), "the search ended before the signal");
+    assert!(Command::new("kill").args(["-INT", &child.id().to_string()]).status().unwrap().success());
+    let t0 = std::time::Instant::now();
+    while child.try_wait().unwrap().is_none() {
+        assert!(t0.elapsed().as_secs() < 10, "the search did not stop on Ctrl-C");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert_eq!(child.wait().unwrap().code(), Some(130));
+    drop(lock);
+}

@@ -1111,8 +1111,9 @@ fn next_segment_number(dir: &Path) -> Result<u64> {
         + 1)
 }
 
-/// Wait for the update lock. Polls `try_lock`: SMB mounts answer a blocking lock request with
-/// EAGAIN instead of waiting, so a blocking `lock()` fails there when another update runs.
+/// Wait for the update lock, at most 10 minutes or until the front end stops it (`index::stopped`).
+/// Polls `try_lock`: SMB mounts answer a blocking lock request with EAGAIN instead of waiting, so
+/// a blocking `lock()` fails there when another update runs.
 fn lock_exclusive(f: &File) -> Result<()> {
     let t0 = Instant::now();
     loop {
@@ -1124,6 +1125,9 @@ fn lock_exclusive(f: &File) -> Result<()> {
             #[cfg(target_os = "wasi")]
             Err(std::fs::TryLockError::Error(e)) if e.kind() == std::io::ErrorKind::Unsupported => return Ok(()),
             Err(std::fs::TryLockError::Error(e)) => return Err(anyhow::Error::new(e).context("lock the text index")),
+        }
+        if crate::index::stopped() {
+            bail!("cancelled");
         }
         if t0.elapsed() > std::time::Duration::from_secs(600) {
             bail!("another process has held the text index lock for 10 minutes");

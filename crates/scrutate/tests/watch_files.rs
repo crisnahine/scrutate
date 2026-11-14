@@ -679,3 +679,21 @@ fn a_rename_of_the_case_alone_leaves_one_name_in_the_text_index() {
     let _ = rx.try_iter().count();
     assert_eq!(listed(), ["src/foo.txt"]);
 }
+
+/// Ctrl-C ends watch's wait for the text index's lock that another process holds, as it ends the
+/// wait for the code index's.
+#[cfg(unix)]
+#[test]
+fn ctrl_c_ends_a_wait_for_the_text_index_lock() {
+    let (r, mut child, _rx) = watched("text_lock", &[("a.txt", "one\n"), ("mod.py", "def f():\n    return 1\n")]);
+    let lock = fs::File::options().write(true).open(r.root.join(".scrutate/text/lock")).unwrap();
+    lock.lock().unwrap();
+    r.write("a.txt", b"two\n");
+    // the burst reaches the text index and waits for its lock
+    std::thread::sleep(Duration::from_secs(4));
+    assert!(child.0.try_wait().unwrap().is_none(), "watch ended before the signal");
+    assert!(Command::new("kill").args(["-INT", &child.0.id().to_string()]).status().unwrap().success());
+    wait_for(10, "watch to stop on Ctrl-C while the text index is locked", || child.0.try_wait().unwrap().is_some());
+    assert_eq!(child.0.wait().unwrap().code(), Some(130));
+    drop(lock);
+}

@@ -2111,6 +2111,8 @@ fn indexed_candidates(root: &Path, q: &Query, update: bool, under: Option<&str>)
 fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
     let cancel = Arc::new(AtomicBool::new(false));
     interrupt::install(Arc::clone(&cancel));
+    // Ctrl-C also ends `--update`'s wait for another process's lock
+    crate::index::stop_waits_on(Arc::clone(&cancel));
     let roots = match &f.paths {
         Paths::Walk(roots) => roots.clone(),
         Paths::List { .. } | Paths::Memory(_) => Vec::new(),
@@ -2119,7 +2121,10 @@ fn grep_command(q: Query, mut f: Files, out: GrepOutput) -> Result<i32> {
     let plain = !out.json && !colour && !out.sort && !out.symbols && q.report == Report::Lines && out.page.is_none();
     let sink = plain.then(|| Arc::new(instant::PlainSink::new(Box::new(crate::running::GivesWay(std::io::stdout())))));
     if out.indexed {
-        let (root, files) = indexed_candidates(&out.root, &q, out.update, out.under.as_deref())?;
+        let (root, files) = match indexed_candidates(&out.root, &q, out.update, out.under.as_deref()) {
+            Err(_) if cancel.load(Ordering::Relaxed) => return Ok(130),
+            r => r?,
+        };
         f.paths = Paths::List { root, files };
     }
     if let Some(sink) = sink {

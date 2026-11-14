@@ -1024,11 +1024,15 @@ fn is_busy(e: &rusqlite::Error) -> bool {
     matches!(e, rusqlite::Error::SqliteFailure(f, _) if matches!(f.code, rusqlite::ffi::ErrorCode::DatabaseBusy | rusqlite::ffi::ErrorCode::DatabaseLocked))
 }
 
-/// Whether an operation with this `cancel` flag should stop: the flag, or the front end's stop
-/// (`stop_waits_on`, Ctrl-C under `watch`).
+/// Whether the front end asked every wait and update to stop (`stop_waits_on`, Ctrl-C under
+/// `watch`).
+pub(crate) fn stopped() -> bool {
+    STOP.get().is_some_and(|s| s.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// Whether an operation with this `cancel` flag should stop: the flag, or `stopped`.
 pub(crate) fn stopping(cancel: &std::sync::atomic::AtomicBool) -> bool {
-    use std::sync::atomic::Ordering::Relaxed;
-    cancel.load(Relaxed) || STOP.get().is_some_and(|s| s.load(Relaxed))
+    cancel.load(std::sync::atomic::Ordering::Relaxed) || stopped()
 }
 
 /// Run `f` again while another connection holds a lock it needs (SQLITE_BUSY or LOCKED), up to
