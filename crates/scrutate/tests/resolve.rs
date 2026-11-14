@@ -195,6 +195,24 @@ fn rust_two_areas() {
 }
 
 #[test]
+fn rust_a_path_in_a_macro_argument_is_resolved_as_a_path() {
+    let r = Repo::new(
+        "rs_macro_path",
+        &[
+            ("Cargo.toml", "[package]\nname = \"mp\"\nversion = \"0.1.0\"\n"),
+            ("src/util.rs", "pub fn work() -> i32 {\n    1\n}\n"),
+            ("src/other.rs", "pub fn work() -> i32 {\n    2\n}\n"),
+            (
+                "src/main.rs",
+                "mod util;\nmod other;\nuse other::work;\n\nfn caller() {\n    println!(\"{}\", util::work());\n    let v = vec![crate::util::work()];\n    mymac!(util::work);\n    work();\n}\n",
+            ),
+        ],
+    );
+    let (u, o, m) = ("src/util.rs", "src/other.rs", "src/main.rs");
+    assert_eq!(r.resolved("work"), expect(&[(u, 1, u), (o, 1, o), (m, 3, o), (m, 6, u), (m, 7, u), (m, 8, u), (m, 9, o)]));
+}
+
+#[test]
 fn go_two_areas() {
     let r = Repo::new(
         "go",

@@ -398,8 +398,9 @@ refers to. For Python, JavaScript, TypeScript, Rust and Go the rules are, in ord
 
 Inside a Rust macro's arguments, which are tokens to the grammar, a name after `.` is a field,
 or a method when `(` follows; `name:` inside `{}` is a field name; a closure parameter or a
-`let`, or the pattern of a `for`, is a local. A name followed by `(`, `::` or `!`, or after `::`, resolves as outside a
-macro, and so does any name in a standard macro that takes expressions (`assert`, `assert_eq`,
+`let`, or the pattern of a `for`, is a local. A name followed by `(`, `::` or `!` resolves as outside a
+macro, a name after `::` as the same path outside a macro, in any macro (`util::work` in
+`println!("{}", util::work())` or `mymac!(util::work)` is `work` of `util`), and so does any name in a standard macro that takes expressions (`assert`, `assert_eq`,
 `assert_ne`, `dbg`, the `debug_assert` forms, `eprint`, `eprintln`, `format`, `format_args`,
 `panic`, `print`, `println`, `todo`, `unimplemented`, `unreachable`, `vec`, `write`,
 `writeln`): the `x` in `println!("{}", x)` is the local or definition `x`. Any other plain name

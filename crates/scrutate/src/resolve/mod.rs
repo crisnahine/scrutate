@@ -1101,7 +1101,14 @@ impl<'a> Resolver<'a> {
     /// its head names, or of the type of the value `q` is.
     #[allow(clippy::too_many_arguments)]
     fn walk_qualified(&mut self, path: &str, fi: &FileInfo, lang: Lang, q: Node, node: Node, name: &str, line: i64) -> Resolution {
-        let qt = text(q, &fi.src).trim();
+        let head = if q.kind() == "identifier" || q.named_child_count() == 0 { q } else { first_leaf(q) };
+        self.walk_path(path, fi, lang, q, text(q, &fi.src).trim(), head, node, name, line)
+    }
+
+    /// `walk_qualified` of a qualifier written `qt` whose first segment is `head`, also where no
+    /// node spans it (a path in a Rust macro's tokens).
+    #[allow(clippy::too_many_arguments)]
+    fn walk_path(&mut self, path: &str, fi: &FileInfo, lang: Lang, q: Node, qt: &str, head: Node, node: Node, name: &str, line: i64) -> Resolution {
         if rules!(lang, R => R::is_super(q, &fi.src)) {
             return self.super_member(path, fi, lang, q, name, line);
         }
@@ -1145,7 +1152,6 @@ impl<'a> Resolver<'a> {
             return hit.map(|id| (id, "qualified")).ok_or("not found");
         }
         // `Class.N`, `Type::N`: the head names a definition
-        let head = if q.kind() == "identifier" || q.named_child_count() == 0 { q } else { first_leaf(q) };
         let Ok((mut cur, _)) = self.resolve_bare(path, fi, lang, head, segs[0], line) else {
             let imported = fi.bindings.iter().any(|b| b.local == segs[0]) || matches!(segs[0], "std" | "core" | "alloc");
             if imported {

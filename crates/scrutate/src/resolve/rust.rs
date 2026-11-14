@@ -30,6 +30,9 @@ impl Rules for Rust {
 
     fn occurrence(r: &mut Resolver, path: &str, fi: &FileInfo, node: Node, name: &str, line: i64) -> Option<Resolution> {
         if node.parent().is_some_and(|p| p.kind() == "token_tree") {
+            if node.prev_sibling().is_some_and(|p| p.kind() == "::") {
+                return Some(macro_path(r, path, fi, node, name, line));
+            }
             if let Some(why) = macro_token(node, &fi.src) {
                 return Some(Err(why));
             }
@@ -594,6 +597,23 @@ fn macro_plain(n: Node, src: &str) -> bool {
         }
     }
     false
+}
+
+/// `a::b::name` in a macro's tokens, resolved as the same path outside a macro; a path that does
+/// not start with a plain segment (`::a::name`, `Vec::<u8>::name`) is not decided.
+fn macro_path(r: &mut Resolver, path: &str, fi: &FileInfo, n: Node, name: &str, line: i64) -> Resolution {
+    let mut segs = Vec::new();
+    let mut sep = n.prev_sibling();
+    while let Some(s) = sep.filter(|s| s.kind() == "::") {
+        let Some(seg) = s.prev_sibling().filter(|p| matches!(p.kind(), "identifier" | "crate" | "self" | "super")) else {
+            return Err("macro argument");
+        };
+        segs.push(seg);
+        sep = seg.prev_sibling();
+    }
+    segs.reverse();
+    let qt = segs.iter().map(|s| text(*s, &fi.src)).collect::<Vec<_>>().join("::");
+    r.walk_path(path, fi, Lang::Rust, segs[0], &qt, segs[0], n, name, line)
 }
 
 /// Whether a name in a Rust macro argument is bound in the tokens before it: a parameter of a

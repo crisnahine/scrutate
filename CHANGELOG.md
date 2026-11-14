@@ -169,6 +169,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- A Rust path inside a macro's arguments resolves as the same path outside a macro: with `use
+  other::work`, the `util::work()` in `println!("{}", util::work())` or `vec![util::work()]` was
+  read as the bare `work` and tied to `other::work` ([CLI](docs/CLI.md#engine-b)).
 - `callers` and `callees` follow a CommonJS `module.exports = helper` or `module.exports =
   function named() {}` to the call `h()` of `const h = require("./m")`, and an ES default import
   `import h from "./m"` to the definition it reaches: they matched the local name to the imported
