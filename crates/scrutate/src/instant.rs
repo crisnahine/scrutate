@@ -2948,6 +2948,10 @@ fn run_files(
         })
         .map(|rel| (root.join(rel), Arc::from(rel.as_str()), false))
         .collect();
+    // the file standard output writes to is not searched, as the walk skips it
+    if let Some(out) = stdout_file() {
+        files.retain(|(p, ..)| same_file::Handle::from_path(p).map_or(true, |h| h != out));
+    }
     let counters = Counters::default();
     let labels = [root.to_path_buf()];
     let s = Common { matcher: &matcher, q, f, p, m, c: &counters, stop, plain, labels: &labels };
@@ -2960,6 +2964,12 @@ fn run_files(
     }
     schedule(Feed::List(&files, None), &s, on_hit)?;
     Ok(stats(&counters, t0, stop))
+}
+
+/// Standard output, when it writes to a regular file.
+fn stdout_file() -> Option<same_file::Handle> {
+    let h = same_file::Handle::stdout().ok()?;
+    h.as_file().metadata().ok()?.is_file().then_some(h)
 }
 
 /// The files under `roots` the search would reach (path, path as reported, named on the command

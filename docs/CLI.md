@@ -174,7 +174,8 @@ not cover archive members.
 `-e PATTERN` (repeatable) gives several patterns; a line matching any matches, and the first
 positional argument is then a path. The argument after `-e` is the pattern whatever it starts
 with (`-e '->'`, `-F -e -1`), as in grep and ripgrep. A walk skips the file standard output
-writes to, as ripgrep does, so `grep foo . > out.txt` does not search its own output.
+writes to, as ripgrep does, so `grep foo . > out.txt` does not search its own output; so does
+`grep --index`, also when that file is in the text index.
 
 Options mirror grep/ripgrep where the meaning is the same: `-i`, `-S` (smart case), `-w`, `-v`,
 `-l`, `-c`, `-A/-B/-C`, `-m`, `--max-results`, `--hidden`, `--no-ignore`, `-L` (follow links),

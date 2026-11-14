@@ -1462,3 +1462,31 @@ fn a_type_takes_the_extensions_its_language_shares_by_content() {
         assert_eq!((code, out.as_str()), (0, want), "-t {t}: {err}");
     }
 }
+
+/// `grep --index` skips the file standard output writes to, as the walk does, also when that
+/// file is in the text index (the output of an earlier search, indexed with the rest).
+#[cfg(unix)]
+#[test]
+fn an_indexed_search_skips_the_file_standard_output_writes() {
+    let d = Dir::new("ownoutput_index");
+    fs::create_dir_all(d.0.join(".git")).unwrap();
+    let lines: String = (0..200).map(|i| format!("foo {i}\n")).collect();
+    for i in 0..50 {
+        d.write(&format!("f{i:02}.txt"), lines.as_bytes());
+    }
+    d.write("out.txt", lines.as_bytes());
+    let (code, _, err) = d.run(&["index", "--text"]);
+    assert_eq!(code, 0, "{err}");
+    let out = Command::new("sh")
+        .arg("-c")
+        .arg(format!("trap '' XFSZ; ulimit -f 20000; exec '{BIN}' grep --index foo > out.txt"))
+        .current_dir(&d.0)
+        .env_remove("NO_COLOR")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let text = fs::read_to_string(d.0.join("out.txt")).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(!text.lines().any(|l| l.starts_with("out.txt:")), "its own output was searched");
+    assert_eq!(text.lines().count(), 50 * 200);
+}

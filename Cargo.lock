@@ -1159,6 +1159,7 @@ dependencies = [
  "rusqlite",
  "rust-stemmers",
  "rustix",
+ "same-file",
  "scrutate-ignore",
  "serde",
  "serde_json",
