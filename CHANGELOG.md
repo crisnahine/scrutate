@@ -176,8 +176,10 @@ incompatible index by itself, and that is never breaking.
   on an untyped parameter), as undecided also when no other definition has the name, where
   `callers update` listed it as decided and `callers ProviderProfile.update` as undecided;
   `impact` marks such callers undecided too ([CLI](docs/CLI.md#engine-b)).
-- An assignment directly in a Python class body, `h = 5` beside `from util import helper as h`,
-  is a local of the class body, where `refs helper` listed it as a use of the import
+- A name a Python class body binds, `h = 5` beside `from util import helper as h` (also in an
+  `if`, a tuple or a `for` target), is a local of the class body once bound, where `refs helper`
+  listed it as a use of the import; `h = h` still reads the import on its right side, as does a
+  comprehension
   ([CLI](docs/CLI.md#engine-b)).
 - `callers` and `callees` follow a PHP function alias called in another case: `PF()` after
   `use function Lib\phpfn as pf` is a call of `phpfn`, where callers missed it and callees said

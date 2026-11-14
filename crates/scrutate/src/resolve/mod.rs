@@ -2131,12 +2131,22 @@ impl Resolver<'_> {
             return true;
         }
         let at = node.start_byte();
-        // a Python class body is a scope of its own for code directly in it, not for its methods
+        // a Python class body is a scope of its own for code directly in it, not for its methods or
+        // comprehensions (save the first iterable of one, which runs in the class body)
         if lang == Lang::Python {
-            let around = std::iter::successors(node.parent(), |n| n.parent()).find(|n| FUNCTION_NODES.contains(&n.kind()) || n.kind() == "class_definition");
-            if let Some(body) = around.filter(|c| c.kind() == "class_definition").and_then(|c| c.child_by_field_name("body")) {
-                if python_body_assigns(body, name, src, at) {
-                    return true;
+            let around = std::iter::successors(Some(node), |n| n.parent())
+                .zip(std::iter::successors(node.parent(), |n| n.parent()))
+                .find(|(_, p)| FUNCTION_NODES.contains(&p.kind()) || p.kind() == "class_definition" || PY_COMPREHENSIONS.contains(&p.kind()));
+            let in_body = around.filter(|(child, p)| {
+                !PY_COMPREHENSIONS.contains(&p.kind()) || python_first_iterable(*p).is_some_and(|it| it.byte_range().contains(&child.start_byte()))
+            });
+            if let Some((_, p)) = in_body {
+                // the first iterable of a comprehension: its class body, if there is one around
+                let class = std::iter::successors(Some(p), |n| n.parent()).find(|n| FUNCTION_NODES.contains(&n.kind()) || n.kind() == "class_definition");
+                if let Some(body) = class.filter(|c| c.kind() == "class_definition").and_then(|c| c.child_by_field_name("body")) {
+                    if python_class_binds(body, name, src, node) {
+                        return true;
+                    }
                 }
             }
         }
@@ -2215,16 +2225,75 @@ fn names_definition(d: Node, n: Node) -> bool {
     (FUNCTION_NODES.contains(&d.kind()) || CLASS_NODES.contains(&d.kind())) && d.child_by_field_name("name").is_some_and(|x| x.id() == n.id())
 }
 
-/// Whether a statement of Python block `body`, at or before byte `at`, assigns the plain name `name`.
-fn python_body_assigns(body: Node, name: &str, src: &str, at: usize) -> bool {
-    let mut cur = body.walk();
-    let found = body.named_children(&mut cur).filter(|st| st.start_byte() <= at).any(|st| {
-        let a = if st.kind() == "expression_statement" { st.named_child(0) } else { None };
-        a.filter(|a| matches!(a.kind(), "assignment" | "augmented_assignment"))
-            .and_then(|a| a.child_by_field_name("left"))
-            .is_some_and(|l| l.kind() == "identifier" && text(l, src) == name)
-    });
-    found
+/// The Python nodes whose names do not see a class body's: comprehensions.
+const PY_COMPREHENSIONS: &[&str] = &["list_comprehension", "set_comprehension", "dictionary_comprehension", "generator_expression"];
+
+/// The iterable of a comprehension's first `for`, which runs in the scope around it.
+fn python_first_iterable(c: Node) -> Option<Node> {
+    let mut cur = c.walk();
+    let first = c.named_children(&mut cur).find(|n| n.kind() == "for_in_clause");
+    first?.child_by_field_name("right")
+}
+
+/// The names a Python assignment or `for` target binds: `h`, `h, x`, `[a, (b, *c)]`.
+fn python_targets(t: Node) -> Vec<Node> {
+    let mut out = Vec::new();
+    let mut stack = vec![t];
+    while let Some(n) = stack.pop() {
+        match n.kind() {
+            "identifier" => out.push(n),
+            "pattern_list" | "tuple_pattern" | "list_pattern" | "parenthesized_expression" | "list_splat_pattern" => {
+                let mut cur = n.walk();
+                stack.extend(n.named_children(&mut cur));
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Whether Python class body `body` has bound `name` when `use_` runs: a binding (an assignment,
+/// a tuple or `for` target, a walrus, a `def` or `class`) anywhere in the body's own statements
+/// that is done by then. `h = h` reads the outer `h` on its right side; a nested function, class,
+/// lambda or comprehension binds nothing here.
+fn python_class_binds(body: Node, name: &str, src: &str, use_: Node) -> bool {
+    let at = use_.start_byte();
+    let targets = python_targets;
+    let named = |ns: &[Node]| ns.iter().any(|t| text(*t, src) == name);
+    let target_is_use = |ns: &[Node]| ns.iter().any(|t| t.id() == use_.id());
+    let mut stack = vec![body];
+    while let Some(n) = stack.pop() {
+        let done = n.end_byte() <= at;
+        let bound = match n.kind() {
+            // `h: int` alone binds nothing
+            "assignment" if n.child_by_field_name("right").is_some() => {
+                let ts = n.child_by_field_name("left").map(targets).unwrap_or_default();
+                named(&ts) && (done || target_is_use(&ts))
+            }
+            "augmented_assignment" => {
+                let ts = n.child_by_field_name("left").map(targets).unwrap_or_default();
+                named(&ts) && (done || target_is_use(&ts))
+            }
+            // the target is bound before the body runs
+            "for_statement" => {
+                let ts = n.child_by_field_name("left").map(targets).unwrap_or_default();
+                let after_iter = n.child_by_field_name("right").is_some_and(|r| r.end_byte() <= at);
+                named(&ts) && (after_iter || target_is_use(&ts))
+            }
+            "named_expression" => n.child_by_field_name("name").is_some_and(|x| text(x, src) == name && (done || x.id() == use_.id())),
+            "function_definition" | "class_definition" => n.child_by_field_name("name").is_some_and(|x| text(x, src) == name && done),
+            _ => false,
+        };
+        if bound {
+            return true;
+        }
+        // a nested scope binds nothing in the class body; a decorated definition is its definition
+        if n.id() == body.id() || !(FUNCTION_NODES.contains(&n.kind()) || PY_COMPREHENSIONS.contains(&n.kind()) || n.kind() == "class_definition") {
+            let mut cur = n.walk();
+            stack.extend(n.named_children(&mut cur));
+        }
+    }
+    false
 }
 
 /// The innermost function around `node`.

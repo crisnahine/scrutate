@@ -388,6 +388,14 @@ fn python_a_class_attribute_hides_an_import_in_the_class_body_only() {
 }
 
 #[test]
+fn python_class_body_bindings_follow_the_order_and_scopes_python_runs_them_in() {
+    let r = Repo::new("py_class_scopes", &[("util.py", "def helper():\n    return 1\n"), ("k.py", "from util import helper as h\n\nclass A:\n    if True:\n        h = 5\n    a = h\n\nclass B:\n    h, x = 1, 2\n    b = h\n\nclass C:\n    def h(self):\n        return 1\n    c = h\n\nclass D:\n    h = h\n\nclass E:\n    h = 5\n    e = [h for _ in range(2)]\n\nclass F:\n    for h in range(2):\n        pass\n    f = h\n\nclass G:\n    h: int = 5\n    g = h\n")]);
+    // the import is read by `h = h`'s right side (line 18) and inside a comprehension (line 22);
+    // every other `h` is bound in its class body first: in an `if`, a tuple, a `for`, an annotation
+    assert_eq!(r.refs_of("helper", "util.py:1"), ["k.py:1", "k.py:18", "k.py:22", "util.py:1"]);
+}
+
+#[test]
 fn go_two_areas() {
     let r = Repo::new(
         "go",

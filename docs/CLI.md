@@ -353,8 +353,10 @@ refers to. For Python, JavaScript, TypeScript, Rust and Go the rules are, in ord
      `T { .. }`, `&T{}`). That is the nearest in-scope declaration before the use, in the
      function around the use or the functions around that. A closure sees its enclosing
      function's variables unless it binds the name itself; a Rust `fn` item does not, and a
-     Python method does not see its class body; an assignment directly in a Python class body
-     (`h = 5`) is a local of the body there, before an import of that name. Not counted: a declaration in a block that has
+     Python method does not see its class body; a name a Python class body binds (an assignment,
+     also inside an `if` or as a tuple or `for` target, a `def`) is a local of the body once bound,
+     before an import of that name, though `h = h` reads the outer `h` on its right side and a
+     comprehension does not see the class's names. Not counted: a declaration in a block that has
      ended, a closure or lambda, an `if let` or `match` arm, or the declaration's own value. A
      Python function is one scope; a JavaScript `var` belongs to its whole function.
 
