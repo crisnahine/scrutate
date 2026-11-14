@@ -169,6 +169,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `refs` through an import alias lists only uses of the aliased definition: a local of the
+  alias's name (`const g = () => 2; g()` beside `import { jsfn as g }`) no longer adds its own
+  group to `refs jsfn` ([CLI](docs/CLI.md#engine-b)).
 - A Java class of the default package (a file with no `package` line) is looked for in its own
   directory only: `Util.help()` in `ex/b/Main.java` is `ex/b/Util.java`'s, where every
   default-package directory was one package and it could go to `ex/a/Util.java`; with no

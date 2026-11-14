@@ -136,14 +136,11 @@ impl<'a> Names<'a> {
                         if ident(line[..col].chars().next_back()) || ident(line[col + local.len()..].chars().next()) || sites.contains(&(start + col)) {
                             continue;
                         }
-                        // the alias spelled in a string or bound again locally is not a use
+                        // the alias spelled in a string or bound again locally (`const g = ..`) is no
+                        // use of these definitions; only a `super(..)` call names the class
                         let resolution = self.rv.resolve_at(&path, i as u64 + 1, col, local);
-                        if resolution.is_err() {
-                            continue;
-                        }
-                        // only a `super(..)` call names the class, and only one of these definitions
                         let called = line[col + local.len()..].trim_start().starts_with('(');
-                        if local == "super" && !(called && matches!(resolution, Ok((id, _)) if def_ids.contains(&id))) {
+                        if !matches!(resolution, Ok((id, _)) if def_ids.contains(&id)) || local == "super" && !called {
                             continue;
                         }
                         let text = line.trim_end_matches('\r').into();

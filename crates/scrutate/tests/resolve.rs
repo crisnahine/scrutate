@@ -354,6 +354,24 @@ fn rust_a_trait_default_method_is_found_on_a_type_in_a_module() {
 }
 
 #[test]
+fn refs_through_an_alias_keep_only_uses_of_the_aliased_definition() {
+    let r = Repo::new(
+        "js_alias_shadow",
+        &[
+            ("u.js", "export function jsfn() { return 1; }\n"),
+            (
+                "m.js",
+                "import { jsfn as g } from \"./u\";\nexport function caller() { return g(); }\nexport function shadowed() { const g = () => 2; return g(); }\n",
+            ),
+        ],
+    );
+    let v = r.json(&["refs", "jsfn", "--json"]);
+    let groups: Vec<String> = v["definitions"].as_array().unwrap().iter().map(|d| format!("{}:{}", d["path"].as_str().unwrap(), d["start"])).collect();
+    assert_eq!(groups, ["u.js:1"], "{v}");
+    assert_eq!(r.refs_of("jsfn", "u.js:1"), ["m.js:1", "m.js:2", "u.js:1"]);
+}
+
+#[test]
 fn go_two_areas() {
     let r = Repo::new(
         "go",
