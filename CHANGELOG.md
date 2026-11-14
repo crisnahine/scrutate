@@ -169,6 +169,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- An assignment directly in a Python class body, `h = 5` beside `from util import helper as h`,
+  is a local of the class body, where `refs helper` listed it as a use of the import
+  ([CLI](docs/CLI.md#engine-b)).
 - `callers` and `callees` follow a PHP function alias called in another case: `PF()` after
   `use function Lib\phpfn as pf` is a call of `phpfn`, where callers missed it and callees said
   `external: PF` ([CLI](docs/CLI.md#engine-b)).

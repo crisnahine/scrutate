@@ -2131,6 +2131,15 @@ impl Resolver<'_> {
             return true;
         }
         let at = node.start_byte();
+        // a Python class body is a scope of its own for code directly in it, not for its methods
+        if lang == Lang::Python {
+            let around = std::iter::successors(node.parent(), |n| n.parent()).find(|n| FUNCTION_NODES.contains(&n.kind()) || n.kind() == "class_definition");
+            if let Some(body) = around.filter(|c| c.kind() == "class_definition").and_then(|c| c.child_by_field_name("body")) {
+                if python_body_assigns(body, name, src, at) {
+                    return true;
+                }
+            }
+        }
         let Some(mut func) = enclosing_function(node) else { return false };
         // a Rust `fn` item does not see the locals of the function around it
         while let Some(outer) = enclosing_function(func).filter(|_| func.kind() != "function_item") {
@@ -2204,6 +2213,18 @@ fn binder_reach(lang: Lang, b: Node, scope: Node) -> (usize, usize) {
 /// Whether `n` is the name of the function or class `d`.
 fn names_definition(d: Node, n: Node) -> bool {
     (FUNCTION_NODES.contains(&d.kind()) || CLASS_NODES.contains(&d.kind())) && d.child_by_field_name("name").is_some_and(|x| x.id() == n.id())
+}
+
+/// Whether a statement of Python block `body`, at or before byte `at`, assigns the plain name `name`.
+fn python_body_assigns(body: Node, name: &str, src: &str, at: usize) -> bool {
+    let mut cur = body.walk();
+    let found = body.named_children(&mut cur).filter(|st| st.start_byte() <= at).any(|st| {
+        let a = if st.kind() == "expression_statement" { st.named_child(0) } else { None };
+        a.filter(|a| matches!(a.kind(), "assignment" | "augmented_assignment"))
+            .and_then(|a| a.child_by_field_name("left"))
+            .is_some_and(|l| l.kind() == "identifier" && text(l, src) == name)
+    });
+    found
 }
 
 /// The innermost function around `node`.

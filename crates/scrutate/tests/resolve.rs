@@ -372,6 +372,22 @@ fn refs_through_an_alias_keep_only_uses_of_the_aliased_definition() {
 }
 
 #[test]
+fn python_a_class_attribute_hides_an_import_in_the_class_body_only() {
+    let r = Repo::new(
+        "py_class_attr",
+        &[
+            ("util.py", "def helper():\n    return 1\n"),
+            (
+                "k.py",
+                "from util import helper as h\n\nclass K:\n    h = 5\n    j = h + 1\n\n    def m(self):\n        return h()\n\ndef use():\n    return h()\n",
+            ),
+        ],
+    );
+    assert_eq!(r.refs_of("helper", "util.py:1"), ["k.py:1", "k.py:11", "k.py:8", "util.py:1"]);
+    assert_eq!(r.reasons("h", "k.py"), ["4 local variable", "5 local variable"]);
+}
+
+#[test]
 fn go_two_areas() {
     let r = Repo::new(
         "go",
