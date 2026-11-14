@@ -225,6 +225,12 @@ fn javascript_a_shorthand_property_is_a_use_of_the_name() {
 }
 
 #[test]
+fn javascript_the_name_of_a_function_expression_is_its_own_inside_it() {
+    let r = Repo::new("js_fn_expr", &[("s.js", "function load() {\n  return 1;\n}\nvar h = function load() {\n  return load();\n};\nload();\n")]);
+    assert_eq!(r.refs_of("load", "s.js:1"), ["s.js:1", "s.js:7"]);
+}
+
+#[test]
 fn go_two_areas() {
     let r = Repo::new(
         "go",

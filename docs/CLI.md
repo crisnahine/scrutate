@@ -389,7 +389,8 @@ refers to. For Python, JavaScript, TypeScript, Rust and Go the rules are, in ord
      `case`); a `catch` binding and a Go `:=` in an `if`, `for`, `switch` or type switch only in
      that statement; a Python parameter only in the function body (defaults and annotations are
      outside it); a `let` or `for` not in its own value; an import inside a function only in that
-     function. A closure sees the locals of the function it is written in; a Rust `fn` item
+     function; the name of a JavaScript function expression (`var h = function load() {}`) only
+     inside that function. A closure sees the locals of the function it is written in; a Rust `fn` item
      inside a function does not;
    - a top-level definition of the file;
    - a name an import binds (`from x import N`, `import {N} from './x'`, `use a::N`, `require`);

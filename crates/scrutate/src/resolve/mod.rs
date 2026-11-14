@@ -542,6 +542,9 @@ const LOCAL_BINDERS: &[(&str, &str)] = &[
     ("rest_pattern", ""),
     ("catch_clause", "parameter"),
     ("arrow_function", "parameter"),
+    // a JavaScript named function expression binds its name inside itself only (binder_reach)
+    ("function_expression", "name"),
+    ("function", "name"),
     ("named_expression", "name"),
     ("splat_pattern", ""),
     // C and C++: `int x = 1, *p;`, parameters, `T &r`, `auto [a, b]`
