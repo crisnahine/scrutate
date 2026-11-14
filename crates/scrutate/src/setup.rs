@@ -555,7 +555,17 @@ fn block_entry(path: &Path, o: Options) -> Result<Vec<Step>> {
     );
     let before = read(path)?;
     let text = before.as_deref().unwrap_or("");
-    let found = text.find(BEGIN).and_then(|b| text[b..].find(END).map(|e| (b, b + e + END.len() + usize::from(text[b + e + END.len()..].starts_with('\n')))));
+    // a marker counts only as a whole line: a sentence quoting one is the user's text
+    let line = |from: usize, m: &str| {
+        text[from..].match_indices(m).map(|(i, _)| from + i).find(|&i| (i == 0 || text.as_bytes()[i - 1] == b'\n') && matches!(text.as_bytes().get(i + m.len()), None | Some(b'\n')))
+    };
+    let found = match line(0, BEGIN) {
+        Some(b) => match line(b, END) {
+            Some(e) => Some((b, e + END.len() + usize::from(text[e + END.len()..].starts_with('\n')))),
+            None => bail!("{} has a {BEGIN} line with no {END} line: edit it by hand", path.display()),
+        },
+        None => None,
+    };
     if o.uninstall {
         let Some((b, e)) = found else {
             return Ok(vec![Step::Note(format!("{} has no scrutate block", path.display()))]);

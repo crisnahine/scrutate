@@ -156,6 +156,10 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `setup --instructions` and `--uninstall` take a scrutate marker only as a whole line: a
+  sentence quoting `<!-- scrutate:begin -->` got a second block, and uninstall then cut from that
+  sentence to the block's end. A begin line with no end line stops setup with no change
+  ([CLI](docs/CLI.md#setup-and-the-grep-hook)).
 - On Windows an index update that a virus scanner or the search indexer briefly blocked failed with
   "Access is denied" or "being used by another process" when it renamed a new segment or the text
   index manifest into place; the rename is now tried again for up to about two seconds.

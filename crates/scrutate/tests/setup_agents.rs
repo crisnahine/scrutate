@@ -337,6 +337,29 @@ fn a_plain_uninstall_takes_out_the_server_the_hook_and_the_block() {
     assert!(!s.repo.join(".claude/settings.json").exists() && !s.repo.join("CLAUDE.md").exists() && !s.repo.join(".mcp.json").exists());
 }
 
+#[test]
+fn a_marker_quoted_in_prose_is_not_the_block() {
+    let s = Scratch::new("markerprose");
+    let claude_md = s.home.join(".claude/CLAUDE.md");
+    let before_md = "The setup writes `<!-- scrutate:begin -->` markers.\n\n- rule one\n- rule two\n";
+    s.write(&claude_md, before_md);
+    let (code, _, err) = s.setup(&["claude", "--instructions"]);
+    assert_eq!(code, 0, "{err}");
+    let md = fs::read_to_string(&claude_md).unwrap();
+    assert!(md.starts_with(before_md) && md.matches("<!-- scrutate:end -->").count() == 1, "{md}");
+    let (code, _, err) = s.setup(&["claude", "--uninstall", "--instructions"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(fs::read_to_string(&claude_md).unwrap(), before_md);
+
+    // a begin line with no end line is left alone
+    let broken = "# Rules\n<!-- scrutate:begin -->\nmine\n";
+    s.write(&claude_md, broken);
+    let (code, _, err) = s.setup(&["claude", "--instructions"]);
+    assert_ne!(code, 0);
+    assert!(err.contains("scrutate:end"), "{err}");
+    assert_eq!(fs::read_to_string(&claude_md).unwrap(), broken);
+}
+
 /// Sends `initialize` and `tools/list` to `argv` run in `dir` and returns the tool names.
 fn mcp_tools(argv: &[String], dir: &Path, s: &Scratch) -> Vec<String> {
     let mut child = s

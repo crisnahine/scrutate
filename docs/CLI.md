@@ -1120,8 +1120,9 @@ or a `--tools` list without it (`claude -p --tools Grep` runs it).
 
 `--instructions` appends a short block telling the agent to use scrutate's tools, between
 `<!-- scrutate:begin -->` and `<!-- scrutate:end -->`, after a blank line, to the instruction
-file in the table (the `--project` file at the top). Without the option no instruction file is
-read or written.
+file in the table (the `--project` file at the top). A marker counts only as a line of its own,
+so a sentence that quotes one is the user's text; a begin line with no end line makes setup stop
+and change nothing. Without the option no instruction file is read or written.
 
 `hook grep` is the hook program. It reads on standard input the JSON Claude Code sends before a
 Grep call (`hook_event_name`, `tool_name`, `tool_input`, `cwd`, `session_id`) and answers with
