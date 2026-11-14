@@ -133,6 +133,9 @@ incompatible index by itself, and that is never breaking.
   (`--signer-workflow`, `--source-ref`): with `--owner` alone any workflow of the organization
   passed. It says what "signed" means and how to run the binaries, which carry no Apple or
   Windows code signature ([Install](docs/INSTALL.md#unsigned-binaries-on-macos-and-windows)).
+- A release waits for `security.yml` on the tagged commit as well as `ci.yml`: a crate under a
+  licence outside `deny.toml`, a git dependency, a zizmor finding or an unlisted `unsafe` now
+  stops it. `ci.yml` no longer runs `cargo audit`; `cargo deny` checks the same advisories.
 - PCRE2 is the `pcre2` cargo feature, on by default; a build without it refuses `-P`
   ([CLI](docs/CLI.md)).
 - The repository is now github.com/scrutate/scrutate, under the `scrutate` organization; the old

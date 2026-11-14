@@ -115,7 +115,7 @@ def main() -> int:
                "the SBOM from `tools/sbom.py` (CycloneDX 1.5) lists them with licences and purls. `cargo audit` result: docs/TEST_RESULTS.md.\n")
     out.append("## Policy\n")
     out.append("- A dependency is added only with a written reason (what it replaces, size, maintenance, licence), and only under a permissive licence.\n"
-               "- `Cargo.lock` is committed; CI builds with `--locked`; `cargo audit` runs on every push to main, every pull request and once a week, and every release carries the SBOM.\n"
+               "- `Cargo.lock` is committed; CI builds with `--locked`; `cargo deny check` (advisories, licences, bans, sources) runs on every push to main, every pull request, once a week and on the tagged commit before a release; every release carries the SBOM.\n"
                "- C code in the dependency tree: SQLite (bundled), the tree-sitter runtime and grammars. No other native code; no networking crates.\n")
     with open(os.path.join(ROOT, "docs", "DEPENDENCIES.md"), "w") as f:
         f.write("\n".join(out) + "\n")

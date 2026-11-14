@@ -1,5 +1,5 @@
 # Continuous integration: quality gates for every push and pull request, and once a week so a new
-# advisory, runner image or editor release shows up without a code change.
+# runner image or editor release shows up without a code change (advisories: security.yml).
 # The core crate only needs Rust; the Python job covers the training code, the bindings, the
 # differential harnesses and the ranking quality floor; the wheel job builds, installs and tests
 # the bindings on every runner. The editor jobs run the CI binary in the hosts the integrations
@@ -100,19 +100,6 @@ jobs:
             target/release/scrutate.exe
           if-no-files-found: error
           retention-days: 3
-  audit:
-    name: advisories against Cargo.lock
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
-        with:
-          tool: cargo-audit
-          fallback: none
-      - run: cargo-audit audit
   dependency-review:
     name: dependencies a pull request adds
     if: github.event_name == 'pull_request'

@@ -256,8 +256,8 @@ last.
 ## 7. What a published release adds
 
 A tag `v*` starts `.github/workflows/release.yml` (every platform, signing, attestations). It
-checks the version, then runs all of `ci.yml` on the tagged commit (`workflow_call`); the release
-job waits for that run and for the binaries and wheels. The package definitions in `packaging/`
+checks the version, then runs all of `ci.yml` and `security.yml` on the tagged commit
+(`workflow_call`); the release job waits for both runs and for the binaries and wheels. The package definitions in `packaging/`
 need the release checksums (packaging/README.md). The two `-linux-gnu` binaries build on Ubuntu
 22.04 runners, and a step fails when one asks for a glibc newer than 2.34. When GitHub retires
 that image, build them in a container of that glibc or older, never on a newer runner (Ubuntu
@@ -276,13 +276,13 @@ gh workflow run release.yml --ref main -f dry_run=true
 gh run watch "$(gh run list --workflow release.yml -L 1 --json databaseId -q '.[0].databaseId')"
 ```
 
-It takes the version from `crates/scrutate/Cargo.toml` and runs every job, `ci.yml` too. The
-sign-and-publish job runs in the `rehearsal` environment: it attests every file (real, public
-attestations that name `main` and a `workflow_dispatch`, so a verifier pinned to
+It takes the version from `crates/scrutate/Cargo.toml` and runs every job, `ci.yml` and
+`security.yml` too. The sign-and-publish job runs in the `rehearsal` environment: it attests every
+file (real, public attestations that name `main` and a `workflow_dispatch`, so a verifier pinned to
 `refs/tags/v0.1.0` rejects them), makes a draft release `rehearsal-<run id>` with every file,
-checks that the draft has them all and that `gh attestation verify` passes on `SHA256SUMS` for
-this workflow and ref, and then deletes the draft. A draft makes no tag; the job deletes the tag
-if one exists. The files stay as the run's artifacts for 7 days.
+checks that the draft has them all and that `gh attestation verify` passes on `SHA256SUMS` for this
+workflow and ref, and then deletes the draft. A draft makes no tag; the job deletes the tag if one
+exists. The files stay as the run's artifacts for 7 days.
 
 The repository is on GitHub, public, `main` only. Run 43013926055 of `ci.yml` (on `9384c18`) is
 the first green one; all 12 jobs of a push passed:
@@ -291,7 +291,7 @@ the first green one; all 12 jobs of a push passed:
 |---|---|
 | Rust tests | macOS arm64, Intel macOS, Linux x86_64, Linux arm64, Windows x64, Windows arm64 |
 | builds | the musl build; extra-langs on the oldest supported Rust |
-| others | fuzz regressions; the Python reference, bindings, parity and differential job (now training code, bindings, differential and ranking quality); advisories; editor integrations |
+| others | fuzz regressions; the Python reference, bindings, parity and differential job (now training code, bindings, differential and ranking quality); advisories (now `security.yml`'s `deny`); editor integrations |
 
 The dependency review runs on pull requests only. The workflows pass `actionlint` and `zizmor`,
 and the Linux jobs of `ci.yml` pass in a container (`tools/ci_rehearsal.sh`).

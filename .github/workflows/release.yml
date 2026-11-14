@@ -6,7 +6,7 @@
 # The build jobs can only read the repository. The one job that signs and publishes runs in the
 # `release` environment (`rehearsal` for a dry run), and the release stays a draft until every
 # file is attached. Nothing is published unless the tag names the version the code declares and
-# every ci.yml job passed on the tagged commit.
+# every ci.yml and security.yml job passed on the tagged commit.
 name: release
 on:
   push:
@@ -45,6 +45,11 @@ jobs:
     if: github.ref_type == 'tag' || inputs.dry_run
     # the documented form for a workflow of the same repository and commit; actionlint rejects $/
     uses: ./.github/workflows/ci.yml # zizmor: ignore[self-repository]
+  security:
+    name: security on the tagged commit
+    needs: version
+    if: github.ref_type == 'tag' || inputs.dry_run
+    uses: ./.github/workflows/security.yml # zizmor: ignore[self-repository]
   binaries:
     name: binary (${{ matrix.target }})
     needs: version
@@ -207,7 +212,7 @@ jobs:
           retention-days: 7
   release:
     name: sign and publish
-    needs: [version, ci, binaries, wheels, vsix]
+    needs: [version, ci, security, binaries, wheels, vsix]
     if: github.ref_type == 'tag' || inputs.dry_run
     runs-on: ubuntu-latest
     timeout-minutes: 20
