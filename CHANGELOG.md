@@ -161,6 +161,10 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `tsquery --rewrite --write` on Linux and macOS writes through each file's directory as opened
+  from the root, refusing links: a directory swapped for a link between the read and the write
+  sent the write and its temporary file outside `--root`
+  ([Security](docs/SECURITY.md#the-structural-rewrite)).
 - The keyword tier (OCaml and F# without a grammar, unknown languages) names `let rec fact` as
   `fact`, finds `let inline square` and `let private helper`, no longer takes `let mutable x` for a
   function named `mutable`, and keeps a function named after a modifier word (`let data x`,

@@ -53,6 +53,7 @@ PURPOSE = {
     "rusqlite": "SQLite (bundled)",
     "unicode-normalization": "NFC form of names and non-ASCII words, so two spellings of one name match",
     "rust-stemmers": "Snowball English stemmer",
+    "rustix": "directory-relative opens and renames for `tsquery --rewrite --write`, refusing links (Linux and macOS; already in the tree through tar)",
     "serde": "serialisation",
     "serde_json": "JSON output / MCP / config",
     "sha1": "file content hashes",

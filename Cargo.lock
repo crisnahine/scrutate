@@ -1158,6 +1158,7 @@ dependencies = [
  "regex-syntax",
  "rusqlite",
  "rust-stemmers",
+ "rustix",
  "scrutate-ignore",
  "serde",
  "serde_json",

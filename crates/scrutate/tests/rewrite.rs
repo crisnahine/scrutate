@@ -233,3 +233,24 @@ fn a_link_out_of_the_root_is_never_written_and_permissions_are_kept() {
     assert_eq!(outside.read("o.py"), "print(secret)\n");
     assert_eq!(fs::metadata(t.root.join("a.py")).unwrap().permissions().mode() & 0o777, 0o640);
 }
+
+/// A directory swapped for a link to somewhere outside the root between the read and the write
+/// leaves the file alone: the write goes through the directories as they were opened, never
+/// through a link, and leaves nothing outside.
+#[cfg(unix)]
+#[test]
+fn a_directory_swapped_for_a_link_outside_the_root_after_the_read_is_left_alone() {
+    let t = Tree::new("swap_dir");
+    t.write("d/a.py", "print(x)\n");
+    let outside = Tree::new("swap_dir_outside");
+    outside.write("d/a.py", "print(x)\n");
+    let plan = scrutate::rewrite::plan("python", PRINT, "log$args", std::slice::from_ref(&t.root), &t.root).unwrap();
+    assert_eq!(plan.files.len(), 1);
+    fs::rename(t.root.join("d"), t.root.join("d.old")).unwrap();
+    std::os::unix::fs::symlink(outside.root.join("d"), t.root.join("d")).unwrap();
+    let left = plan.write();
+    assert!(left[0].as_deref().is_some_and(|w| w.contains("a.py: ") && w.ends_with("left alone")), "{left:?}");
+    assert_eq!(outside.read("d/a.py"), "print(x)\n");
+    let left_there: Vec<String> = fs::read_dir(outside.root.join("d")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    assert_eq!(left_there, ["a.py"]);
+}

@@ -982,8 +982,9 @@ it (`.NAME.scrutate-PID.tmp`) with the file's permissions, and that file is rena
 original only if the original's bytes on disk are still exactly those read; a file changed
 meanwhile is left alone and named in a warning. A file is also left alone, and named, when its
 text where a match would change does not parse (a tree-sitter error or missing node there), when
-the rewritten text does not parse there, when it is not UTF-8, when it is a link, and when it lies
-outside `--root`. Only files under the given paths are read, as `tsquery` reads them (ignore
+the rewritten text does not parse there, when it is not UTF-8, when it is a link, when it lies
+outside `--root`, and (on Linux and macOS) when a directory on its path has become a link since
+it was read. Only files under the given paths are read, as `tsquery` reads them (ignore
 files obeyed, hidden files and links below a given path left out).
 
 The index learns of a written file as of any edit: the next `symbol`, `search` or other lookup

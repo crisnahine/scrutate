@@ -8,6 +8,9 @@ use anyhow::{bail, Result};
 /// One file the rewrite changes.
 pub struct FileChange {
     pub path: PathBuf,
+    /// where it was under the root when read, with no link on the way
+    #[cfg_attr(not(unix), allow(dead_code))]
+    inside: PathBuf,
     /// the path as `tsquery` prints it
     pub shown: String,
     /// the bytes read, which must still be on disk when the file is written
@@ -22,6 +25,8 @@ pub struct FileChange {
 /// What a rewrite would do: the files it changes, in path order, and why it leaves the others
 /// and some matches alone.
 pub struct Plan {
+    /// the root, links resolved
+    root: PathBuf,
     pub files: Vec<FileChange>,
     /// a file left alone, as `PATH: why`
     pub left: Vec<String>,
@@ -109,9 +114,9 @@ pub fn plan(lang: &str, query: &str, template_text: &str, paths: &[PathBuf], roo
                 if !*ok {
                     return alone("the parser did not load", skipped);
                 }
-                if !std::fs::canonicalize(&f.path).is_ok_and(|p| p.starts_with(&top)) {
+                let Some(inside) = std::fs::canonicalize(&f.path).ok().and_then(|p| p.strip_prefix(&top).ok().map(Path::to_path_buf)) else {
                     return alone("outside the root", skipped);
-                }
+                };
                 if !std::fs::symlink_metadata(&f.path).is_ok_and(|m| m.file_type().is_file()) {
                     return alone("not a regular file", skipped);
                 }
@@ -182,12 +187,12 @@ pub fn plan(lang: &str, query: &str, template_text: &str, paths: &[PathBuf], roo
                 if !parsed.is_some_and(|t| !spans.iter().any(|s| broken(t.root_node(), s.2, s.3))) {
                     return alone("the rewritten text does not parse", skipped);
                 }
-                let change = FileChange { path: f.path.clone(), shown: f.shown.clone(), replaced: kept.len(), new: new.into_bytes(), read: raw, spans };
+                let change = FileChange { path: f.path.clone(), inside, shown: f.shown.clone(), replaced: kept.len(), new: new.into_bytes(), read: raw, spans };
                 (Some(change), None, skipped)
             },
         )
         .collect();
-    let mut plan = Plan { files: Vec::new(), left: Vec::new(), skipped: Vec::new() };
+    let mut plan = Plan { root: top, files: Vec::new(), left: Vec::new(), skipped: Vec::new() };
     for (change, left, skipped) in results {
         plan.files.extend(change);
         plan.left.extend(left);
@@ -210,11 +215,57 @@ impl Plan {
     /// Write each changed file whole by rename, only while its bytes on disk are those read.
     /// Returns, per file in order, why it was left alone (`PATH: why, left alone`) or nothing.
     pub fn write(&self) -> Vec<Option<String>> {
-        self.files.iter().map(|f| write_one(f).err().map(|why| format!("{}: {why}, left alone", f.shown))).collect()
+        self.files.iter().map(|f| write_one(&self.root, f).err().map(|why| format!("{}: {why}, left alone", f.shown))).collect()
     }
 }
 
-fn write_one(f: &FileChange) -> Result<(), String> {
+/// The file's directory is opened from the root one name at a time, refusing links, and the
+/// temporary file, the check and the rename go through that handle: a directory swapped for a
+/// link after the read cannot send the write outside the root.
+#[cfg(unix)]
+fn write_one(root: &Path, f: &FileChange) -> Result<(), String> {
+    use rustix::fs::{fchmod, openat, renameat, statat, unlinkat, AtFlags, FileType, Mode, OFlags, CWD};
+    use std::io::{Read, Write};
+    let dir_flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
+    let mut dir = openat(CWD, root, dir_flags, Mode::empty()).map_err(|e| e.to_string())?;
+    for c in f.inside.parent().unwrap_or(Path::new("")).components() {
+        dir = openat(&dir, c.as_os_str(), dir_flags | OFlags::NOFOLLOW, Mode::empty()).map_err(|e| format!("{}: {e}", c.as_os_str().to_string_lossy()))?;
+    }
+    let name = f.inside.file_name().ok_or("no file name")?;
+    let st = statat(&dir, name, AtFlags::SYMLINK_NOFOLLOW).map_err(|e| e.to_string())?;
+    if FileType::from_raw_mode(st.st_mode as _) != FileType::RegularFile {
+        return Err("not a regular file".into());
+    }
+    let tmp = format!(".{}.scrutate-{}.tmp", name.to_string_lossy(), std::process::id());
+    let written = (|| -> std::io::Result<bool> {
+        let fd = openat(&dir, tmp.as_str(), OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC, Mode::RUSR | Mode::WUSR)?;
+        let mut out = std::fs::File::from(fd);
+        out.write_all(&f.new)?;
+        fchmod(&out, Mode::from_raw_mode(st.st_mode as _))?;
+        out.sync_all()?;
+        drop(out);
+        let mut now = Vec::new();
+        std::fs::File::from(openat(&dir, name, OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC, Mode::empty())?).read_to_end(&mut now)?;
+        if now != f.read {
+            return Ok(false);
+        }
+        renameat(&dir, tmp.as_str(), &dir, name)?;
+        Ok(true)
+    })();
+    if !matches!(written, Ok(true)) {
+        let _ = unlinkat(&dir, tmp.as_str(), AtFlags::empty());
+    }
+    match written {
+        Ok(true) => Ok(()),
+        Ok(false) => Err("changed since it was read".into()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+// shortcut: goes by path, so a directory swapped for a junction after the read is followed; upgrade
+// with handle-relative opens (NtCreateFile with a root directory handle)
+#[cfg(not(unix))]
+fn write_one(_root: &Path, f: &FileChange) -> Result<(), String> {
     use std::io::Write;
     let md = std::fs::symlink_metadata(&f.path).map_err(|e| e.to_string())?;
     if !md.file_type().is_file() {

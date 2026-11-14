@@ -154,6 +154,11 @@ notify = { version = "=9.0.0-rc.8", default-features = false }
 [target.'cfg(target_os = "macos")'.dependencies]
 notify = { version = "=9.0.0-rc.8", default-features = false, features = ["macos_kqueue"] }
 
+# a write goes through directories opened one by one, never through a link (already in the
+# tree through tar)
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", default-features = false, features = ["std", "fs"] }
+
 [dev-dependencies]
 proptest = "1"
 
