@@ -50,6 +50,7 @@ docs/                   architecture, security, benchmarks, traceability, ...
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --exclude scrutate-py -- -D warnings
 cargo test --release -p scrutate                  # unit + samples + robustness + properties + the pinned ranking features
+cargo test --release -p scrutate-ignore           # the vendored walker's own tests (vendor/ignore)
 cargo audit
 cargo deny check                                  # advisories, licences, bans and sources (deny.toml)
 python3 tools/unsafe_count.py                     # each file's `unsafe` count matches docs/SECURITY.md

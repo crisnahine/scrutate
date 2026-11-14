@@ -62,8 +62,8 @@ jobs:
           echo "$RUNNER_TEMP/ripgrep-15.2.0-$t" >> "$GITHUB_PATH"
           echo "SCRUTATE_TEST_NEEDS_RG=1" >> "$GITHUB_ENV"
       # the core must build and pass its tests with no Python involved (the bindings crate is excluded)
-      # every test file runs, so one failure does not hide the next
-      - run: cargo test --release -p scrutate --locked --no-fail-fast
+      # every test file runs, so one failure does not hide the next; the vendored walker's own too
+      - run: cargo test --release -p scrutate -p scrutate-ignore --locked --no-fail-fast
       - run: cargo build --release -p scrutate --locked
       # release.yml's second link on glibc Linux: the ordered names come first in the text, and
       # minor page faults at start (median of 7) without and with the order
