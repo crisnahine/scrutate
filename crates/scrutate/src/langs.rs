@@ -2285,9 +2285,6 @@ pub fn definition_kinds(spec: &LangSpec) -> Vec<&'static str> {
 pub const BY_CONTENT: &[(&str, &[&str])] =
     &[(".m", &["objc", "matlab"]), (".h", &["objc", "cpp"]), (".pp", &["pascal", "puppet"]), (".cls", &["latex", "apex"])];
 
-/// The extensions `sniff` tells apart by content, and the languages it can give each.
-pub const SNIFFED: &[(&str, &[&str])] = &[(".m", &["objc", "matlab"]), (".h", &["objc", "cpp"]), (".pp", &["pascal", "puppet"]), (".cls", &["latex", "apex"])];
-
 pub fn sniff(path: &str, source: &str) -> Option<&'static LangSpec> {
     let lower = path.rsplit('/').next().unwrap_or(path).to_lowercase();
     let head = crate::text::prefix_bytes(source, 4000);

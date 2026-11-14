@@ -1297,7 +1297,7 @@ pub fn builtin_type_globs(name: &str) -> Option<Vec<String>> {
     let spec = crate::langs::by_id(id)?;
     let mut globs: Vec<String> = spec.exts.iter().map(|e| format!("*{e}")).collect();
     // an extension shared with another language is the language's too (`-t cpp` takes `.h`)
-    let shared = crate::langs::SNIFFED.iter().filter(|(e, ids)| ids.contains(&spec.id) && !spec.exts.contains(e));
+    let shared = crate::langs::BY_CONTENT.iter().filter(|(e, ids)| ids.contains(&spec.id) && !spec.exts.contains(e));
     globs.extend(shared.map(|(e, _)| format!("*{e}")));
     globs.extend(spec.files.iter().map(|f| f.to_string()));
     Some(globs)
