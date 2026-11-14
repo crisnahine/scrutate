@@ -530,3 +530,13 @@ public class Main {
         assert!(kinds.iter().any(|k| k == want), "{want}: {kinds:?}");
     }
 }
+
+#[test]
+fn a_local_of_an_instance_initializer_hides_the_field_only_there() {
+    let files = vec![(
+        "a/C.java".to_string(),
+        "package a;\n\npublic class C {\n    int count;\n    {\n        int count = 3;\n        count++;\n    }\n    void m() {\n        count++;\n    }\n}\n",
+    )];
+    let r = Repo::with("init_block", &files);
+    assert_eq!(r.refs_of("count", "a/C.java:4"), ["C.java:10", "C.java:4"]);
+}

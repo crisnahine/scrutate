@@ -169,6 +169,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- A local variable of a Java instance initializer block (`{ int count = 3; count++; }` in a
+  class body) is a local there, where it and its uses were read as the field of that name
+  ([CLI](docs/CLI.md#engine-b)).
 - PHP class, interface, trait, enum, method, namespace and `use` alias names match in any case,
   as PHP matches them: `s::SLUG()` after `use App\Util\Str as S`, `\app\util\str::slug()` and
   `$x->Slug()` are calls of `Str::slug` in `refs`, `callers` and `dead`, where they were

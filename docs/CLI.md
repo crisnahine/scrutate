@@ -416,8 +416,9 @@ Java has rules of its own:
 
 - A file's package comes from its `package` declaration, so every source root works. Imports
   are single-type, on-demand (`.*`) and `static`.
-- Locals are parameters, lambda parameters and the variables of `for`, `catch`, an `instanceof`
-  pattern and a try-with-resources.
+- Locals are parameters, lambda parameters, the variables of a method, a constructor, a static or
+  instance initializer block, and those of `for`, `catch`, an `instanceof` pattern and a
+  try-with-resources.
 - A plain name is also looked up in the enclosing class and what it extends, through nested,
   inner and anonymous classes, enums with methods, records and default methods.
 - A receiver goes through its declared type, a chain through declared return types; one typed by

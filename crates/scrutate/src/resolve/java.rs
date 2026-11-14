@@ -94,7 +94,9 @@ impl Resolver<'_> {
         const SCOPES: &[&str] =
             &["method_declaration", "constructor_declaration", "compact_constructor_declaration", "lambda_expression", "static_initializer"];
         let at = node.start_byte();
-        let top = std::iter::successors(node.parent(), |n| n.parent()).filter(|n| SCOPES.contains(&n.kind())).last()?;
+        // an instance initializer is a block directly in a class body
+        let scope = |n: &Node| SCOPES.contains(&n.kind()) || n.kind() == "block" && n.parent().is_some_and(|p| p.kind() == "class_body");
+        let top = std::iter::successors(node.parent(), |n| n.parent()).filter(scope).last()?;
         // per binder: its scope and its span
         let rows = self.found_in(top, "java binders", name, || {
             let binds = |n: Node| n.kind() == "identifier" && text(n, src) == name && java_binder(n);
