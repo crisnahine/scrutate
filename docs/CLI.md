@@ -179,7 +179,9 @@ writes to, as ripgrep does, so `grep foo . > out.txt` does not search its own ou
 
 Options mirror grep/ripgrep where the meaning is the same: `-i`, `-S` (smart case), `-w`, `-v`,
 `-l`, `-c`, `-A/-B/-C`, `-m`, `--max-results`, `--hidden`, `--no-ignore`, `-L` (follow links),
-`--max-filesize`, `--max-depth`, `-j THREADS`, `--sort`, `--json`, and:
+`--max-filesize`, `--max-depth`, `-j THREADS`, `--sort`, `--json`. As in ripgrep an option given
+twice takes its last value (`-m1 -m2` stops at two), and one that adds (`-e`, `-g`, `-t`) adds
+each. Also:
 
 | Option | Notes |
 |---|---|

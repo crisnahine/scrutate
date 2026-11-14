@@ -161,6 +161,8 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- A `grep` option given twice takes its last value, as in ripgrep (`-m1 -m2`, `-i -i`,
+  `-C1 -C3`): it was an error ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
 - The Arabic letter mark (U+061C) in a path or name is shown as `\u{61c}`, as the other bidi
   marks are: it was printed raw ([CLI](docs/CLI.md#conventions)).
 - `grep --index` skips the file standard output writes to, as the walk does: with an earlier

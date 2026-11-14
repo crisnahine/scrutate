@@ -281,7 +281,8 @@ struct GrepCli {
 #[derive(Subcommand)]
 enum GrepCmd {
     /// Engine A: instant search of files (no index). PATTERN is a regex unless -F, --ident or --fuzzy
-    #[command(alias = "g", version)]
+    // an option given twice takes its last value, as in ripgrep
+    #[command(alias = "g", version, args_override_self = true)]
     Grep(GrepArgs),
 }
 
@@ -491,7 +492,8 @@ fn plain_grep(args: &[String]) -> Option<(bool, GrepArgs)> {
 #[derive(Subcommand)]
 pub enum Cmd {
     /// Engine A: instant search of files (no index). PATTERN is a regex unless -F, --ident or --fuzzy
-    #[command(alias = "g", version)]
+    // an option given twice takes its last value, as in ripgrep
+    #[command(alias = "g", version, args_override_self = true)]
     Grep(GrepArgs),
     /// Engine B: build or update the index (code intelligence and the text index for `grep --index`)
     Index {

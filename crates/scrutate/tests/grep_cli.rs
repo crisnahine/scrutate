@@ -1490,3 +1490,21 @@ fn an_indexed_search_skips_the_file_standard_output_writes() {
     assert!(!text.lines().any(|l| l.starts_with("out.txt:")), "its own output was searched");
     assert_eq!(text.lines().count(), 50 * 200);
 }
+
+/// A grep option given twice takes its last value, as in ripgrep 15.2.0, where it was an error.
+#[test]
+fn an_option_given_twice_takes_its_last_value() {
+    let d = Dir::new("twice");
+    d.write("a.txt", b"x\nfoo 1\nFOO 2\nfoo 3\n");
+    for (args, want) in [
+        (&["-N", "-m1", "-m2", "foo", "a.txt"][..], "foo 1\nfoo 3\n"),
+        (&["-i", "-i", "-c", "foo", "a.txt"], "3\n"),
+        (&["-n", "-n", "-F", "-F", "-w", "-w", "FOO", "a.txt"], "3:FOO 2\n"),
+        (&["-A1", "-A0", "-c", "-c", "FOO", "a.txt"], "1\n"),
+    ] {
+        let mut all = vec!["grep"];
+        all.extend_from_slice(args);
+        let (code, out, err) = d.run(&all);
+        assert_eq!((code, out.as_str()), (0, want), "{args:?}: {err}");
+    }
+}
