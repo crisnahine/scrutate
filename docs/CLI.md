@@ -49,7 +49,9 @@
   bare answer, and `refs` and the `grep_code` answer carried their own `schema` key).
   `tsquery --json`, `check`, `stats`, `languages` and `config` print their own report. In
   `match` and `context` records, `spans` and `column` count bytes of `text` (an invalid byte
-  prints as U+FFFD, three bytes) and a span never runs past `text` into the line end; the Python
+  prints as U+FFFD, three bytes) and a span never runs past `text` into the line end. An empty
+  match keeps its byte offset as ripgrep gives it, inside a character too, when the line is valid
+  UTF-8; in a line with an invalid byte it sits at the start of its character. The Python
   bindings' `Match.spans` and `Match.column` count the same way.
 - **Paths**: `scrutate grep` prints a path as the walk reached it, as grep and ripgrep do:
   `dir/a.txt` for `dir/`, `./dir/a.txt` for `.`, absolute for absolute, relative to `.` with no

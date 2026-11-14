@@ -762,12 +762,8 @@ fn json_spans_leave_out_the_empty_matches_ripgrep_leaves_out() {
     assert_eq!(spans("hello", &["-F", "-e", ""]), [(0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)]);
     assert_eq!(spans("ab", &["-e", "b*"]), [(0, 0), (1, 2)]);
     assert_eq!(spans("aXbX", &["-e", "X*"]), [(0, 0), (1, 2), (3, 4)]);
-    // ripgrep puts the empty matches inside `é` and `€` at bytes 1, 3 and 4; here they stay empty
-    // at the start of their character, where the text can be cut
-    let got = spans("é€x", &["-P", "-e", "x*"]);
-    assert_eq!(got.len(), 6, "{got:?}");
-    assert_eq!(got.last(), Some(&(5, 6)));
-    assert!(got[..5].iter().all(|&(a, b)| a == b && [0, 2].contains(&a)), "{got:?}");
+    // an empty match keeps its byte offset, inside `é` and `€` too, as ripgrep's does
+    assert_eq!(spans("é€x", &["-P", "-e", "x*"]), [(0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 6)]);
 }
 
 #[test]

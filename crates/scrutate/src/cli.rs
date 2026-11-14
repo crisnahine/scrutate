@@ -2353,7 +2353,7 @@ fn write_colour(w: &mut impl WriteColor, h: &instant::Line, context: bool, path:
             w.reset()?;
             write!(w, "{sep}")?;
         }
-        // the spans lie on character boundaries of the text
+        // the spans lie on character boundaries of the text, but an empty one, which colours nothing
         let mut pos = start;
         for &(a, b) in &h.spans {
             let (x, y) = (a.max(start), b.min(end));

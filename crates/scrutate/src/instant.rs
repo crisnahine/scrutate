@@ -1597,8 +1597,8 @@ struct Collector<'a> {
 }
 
 /// Offsets into `line` (a match may run on into the line end left out of it) as offsets into
-/// `text`, `lossy(line)`: inside it and on character boundaries, a U+FFFD that a match ends or
-/// starts within taken whole.
+/// `text`, `lossy(line)`: inside it and on character boundaries (but an empty match in valid
+/// text, as ripgrep gives it), a U+FFFD that a match ends or starts within taken whole.
 fn text_offsets(spans: &mut [(usize, usize)], line: &[u8], text: &str, valid: bool) {
     // each piece of the line: where it starts in `line` and in `text`, its valid and invalid bytes
     let whole = [(0, 0, line.len(), 0)];
@@ -1634,9 +1634,15 @@ fn text_offsets(spans: &mut [(usize, usize)], line: &[u8], text: &str, valid: bo
         }
         y
     };
-    // an empty match stays empty, at the start of the character it falls in
     for s in spans {
-        *s = if s.0 == s.1 { (at(s.0, false), at(s.0, false)) } else { (at(s.0, false), at(s.1, true)) };
+        *s = match (s.0 == s.1, valid) {
+            // an empty match in text that is the line keeps its byte offset, inside a character
+            // too, as ripgrep's does; nothing is cut there
+            (true, true) => (s.0.min(text.len()), s.0.min(text.len())),
+            // elsewhere it stays empty, at the start of the character it falls in
+            (true, false) => (at(s.0, false), at(s.0, false)),
+            _ => (at(s.0, false), at(s.1, true)),
+        };
     }
 }
 
