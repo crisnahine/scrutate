@@ -34,6 +34,8 @@ pub struct Names<'a> {
     line_starts: HashMap<String, Vec<usize>>,
     /// the kept answers of the request running, and the ones it adds
     stored: Option<Stored>,
+    /// every name a call records, by its ASCII lowercase form, read once per request
+    callee_cases: Option<HashMap<String, Vec<String>>>,
     _reading: Reading,
 }
 
@@ -41,7 +43,7 @@ impl<'a> Names<'a> {
     pub fn new(s: &'a Searcher) -> Result<Names<'a>> {
         // started first: the store keeps what every read of the request saw
         let reading = Reading::start();
-        Ok(Names { s, rv: Resolver::new(&s.ix)?, line_starts: HashMap::new(), stored: None, _reading: reading })
+        Ok(Names { s, rv: Resolver::new(&s.ix)?, line_starts: HashMap::new(), stored: None, callee_cases: None, _reading: reading })
     }
 
     /// The definition the occurrence of `name` at 1-based `line`, 0-based byte `col` of `path`
@@ -247,7 +249,11 @@ impl<'a> Names<'a> {
             let mut sites = s.ix.callers_of(n)?;
             // a call in a language that ignores case may spell the name in another case
             if targets.iter().any(|t| t.name == n && crate::langs::ignores_case(&t.path, &t.kind, &t.qualname)) {
-                for other in s.ix.callee_spellings(n)?.into_iter().filter(|c| c != n) {
+                if self.callee_cases.is_none() {
+                    self.callee_cases = Some(s.ix.callees_by_lowercase()?);
+                }
+                let spellings = self.callee_cases.as_ref().and_then(|m| m.get(&n.to_ascii_lowercase())).cloned().unwrap_or_default();
+                for other in spellings.into_iter().filter(|c| c != n) {
                     sites.extend(s.ix.callers_of(&other)?.into_iter().filter(|r| crate::langs::ignores_case(&r.path, "function", "")));
                 }
             }

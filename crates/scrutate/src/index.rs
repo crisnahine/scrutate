@@ -2640,11 +2640,15 @@ impl Index {
         Ok(rows)
     }
 
-    /// The spellings of `callee` in any ASCII case that some call records.
-    pub fn callee_spellings(&self, callee: &str) -> Result<Vec<String>> {
+    /// Every name a call records, by its ASCII lowercase form.
+    pub fn callees_by_lowercase(&self) -> Result<HashMap<String, Vec<String>>> {
         let mut st = self.db.prepare_cached("SELECT DISTINCT callee FROM refs")?;
-        let all = st.query_map([], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(all.into_iter().filter(|c| c.eq_ignore_ascii_case(callee)).collect())
+        let mut out: HashMap<String, Vec<String>> = HashMap::new();
+        for c in st.query_map([], |r| r.get::<_, String>(0))? {
+            let c = c?;
+            out.entry(c.to_ascii_lowercase()).or_default().push(c);
+        }
+        Ok(out)
     }
 
     /// The names chunk `id` calls, each once, sorted.
