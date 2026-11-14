@@ -106,6 +106,15 @@ exports.run = async function () {
     await vscode.commands.executeCommand("scrutate.symbol");
     assert.strictEqual(at(), "src/r.R:1", "a name with dots is asked whole first");
 
+    // a word is letters and digits of any script, as the server reads one
+    const uFile = vscode.Uri.joinPath(root, "src/umlaut.py");
+    fs.writeFileSync(uFile.fsPath, "def größe(x):\n    return x\n\n\ndef nutze():\n    return größe(2)\n");
+    await vscode.commands.executeCommand("scrutate.index");
+    const onEszett = new vscode.Position(5, 14); // `ß` in `return größe(2)`
+    (await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(uFile))).selection = new vscode.Selection(onEszett, onEszett);
+    await vscode.commands.executeCommand("scrutate.symbol");
+    assert.strictEqual(at(), "src/umlaut.py:1", "a word with letters outside ASCII");
+
     await onTheCall();
     want = (item) => item.description.startsWith("src/geo.py:");
     await vscode.commands.executeCommand("scrutate.callers");

@@ -382,7 +382,8 @@ incompatible index by itself, and that is never breaking.
 - VS Code's symbol, callers and references commands ask for the word under the cursor without
   what comes before a dot when the name with its dots finds nothing, as the language server
   does: on `norm` in `p.norm()` they asked only for `p.norm` and found nothing. R's `is.ready` is
-  still asked whole.
+  still asked whole, and a word is letters and digits of any script, as the server reads one: on
+  `ß` in `größe(2)` they found no word.
 - The GitHub Action keeps a backslash in `args` as written: `grep -c \bTODO\b .` searched for
   `bTODOb` and `--root C:\repo` named `C:repo`, so a gate could pass on the wrong search.
 - Python `grep(sort=True)` gives the CLI's `--sort` order (`a/b` before `a-b`), and with
