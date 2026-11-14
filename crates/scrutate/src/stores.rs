@@ -169,6 +169,16 @@ fn hold(writer: &Mutex<()>) -> MutexGuard<'_, ()> {
     writer.lock().unwrap_or_else(|p| p.into_inner())
 }
 
+/// The writer lock when no write of this process holds it: a read does not wait for one, which may
+/// itself be waiting for another process's lock (`serve --watch`).
+fn hold_if_free(writer: &Mutex<()>) -> Option<MutexGuard<'_, ()>> {
+    match writer.try_lock() {
+        Ok(g) => Some(g),
+        Err(std::sync::TryLockError::Poisoned(p)) => Some(p.into_inner()),
+        Err(std::sync::TryLockError::WouldBlock) => None,
+    }
+}
+
 impl Repo {
     /// Open (or create) the index of `root`, without updating it.
     pub fn open(root: &Path) -> Result<Repo> {
@@ -318,7 +328,14 @@ impl Repo {
     /// lock held while the committed index has no file is a first build: `index::BeingBuilt`.
     pub fn refresh(&mut self, min_interval: f64) -> Result<Option<UpdateStats>> {
         let writer = Arc::clone(&self.writer);
-        let _w = hold(&writer);
+        let Some(_w) = hold_if_free(&writer) else {
+            // a write of this process runs: answer from the committed index, as against another
+            // process's writer, unless nothing is committed yet
+            return match &self.searcher {
+                Some(s) if s.ix.has_files()? => Ok(None),
+                _ => Err(index::BeingBuilt.into()),
+            };
+        };
         self.reopened()?;
         match self.ix.refresh_or_fail(min_interval) {
             Err(e) if index::error_is_corruption(&e) => self.rebuild(&e).map(Some),
@@ -389,7 +406,7 @@ impl Repo {
         }
         let updated = {
             let writer = Arc::clone(&self.writer);
-            let _w = hold(&writer);
+            let Some(_w) = hold_if_free(&writer) else { return first };
             match self.ix.update_paths(&stale, false) {
                 Err(e) if index::error_is_corruption(&e) => self.rebuild_unless_rebuilt(&e).map(|_| true),
                 // another writer holds the lock, or the index cannot be written: answer as it is

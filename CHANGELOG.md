@@ -161,6 +161,10 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- A `serve --watch` tool call no longer waits for the server's own update of a saved file, which
+  may itself wait for another process's write lock: it answers from the last committed index at
+  once, where it waited until the lock was free (37 s for a lock held 40 s)
+  ([CLI](docs/CLI.md#the-index-directory)).
 - Ctrl-C ends a wait for the text index's lock that another process holds, under `watch` and
   `grep --index --update` (exit 130): the wait went on up to 10 minutes
   ([CLI](docs/CLI.md#watch)).

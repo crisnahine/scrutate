@@ -800,6 +800,37 @@ mod tests {
         (root, s)
     }
 
+    /// A read while a write of this process runs (one that waits for another process's lock, as
+    /// `serve --watch` does) answers from the committed index at once, as against another
+    /// process's writer.
+    #[test]
+    fn a_read_does_not_wait_for_a_write_of_this_process() {
+        let root = std::env::temp_dir().join(format!("scrutate_session_own_writer_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/geo.py"), "def make_point():\n    return 1\n").unwrap();
+        let s = Session::open(&root, Every::given(Some(0.0))).unwrap();
+        s.build().unwrap();
+        std::fs::write(root.join("src/geo.py"), "def make_point():\n    return 2\n\n\ndef more():\n    return 3\n").unwrap();
+        let writer = lock(&s.seed).writer();
+        let (held, release) = (std::sync::mpsc::channel(), std::sync::mpsc::channel::<()>());
+        std::thread::scope(|sc| {
+            sc.spawn(move || {
+                let _w = writer.lock().unwrap();
+                held.0.send(()).unwrap();
+                let _ = release.1.recv_timeout(Duration::from_secs(20));
+            });
+            held.1.recv().unwrap();
+            let t0 = Instant::now();
+            let r = s.run(&Op::Outline { path: "src/geo.py".into() }, &Arc::default());
+            let took = t0.elapsed();
+            release.0.send(()).unwrap();
+            assert!(r.is_ok(), "{:?}", r.err());
+            assert!(took < Duration::from_secs(3), "{took:?}");
+        });
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn an_idle_reader_lets_go_of_segments_a_write_replaced() {
         let (root, s) = fixture("idle_segments");
