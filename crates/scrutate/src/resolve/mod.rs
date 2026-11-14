@@ -497,6 +497,7 @@ const FUNCTION_NODES: &[&str] = &[
     "lambda",
     "function_declaration",
     "generator_function_declaration",
+    "generator_function",
     "function_expression",
     "function",
     "arrow_function",
@@ -542,9 +543,10 @@ const LOCAL_BINDERS: &[(&str, &str)] = &[
     ("rest_pattern", ""),
     ("catch_clause", "parameter"),
     ("arrow_function", "parameter"),
-    // a JavaScript named function expression binds its name inside itself only (binder_reach)
+    // a JavaScript function expression binds its name inside itself only (binder_reach)
     ("function_expression", "name"),
     ("function", "name"),
+    ("generator_function", "name"),
     ("named_expression", "name"),
     ("splat_pattern", ""),
     // C and C++: `int x = 1, *p;`, parameters, `T &r`, `auto [a, b]`
@@ -2087,6 +2089,12 @@ impl Resolver<'_> {
     /// the locals of the function it is written in) hides outer definitions; one bound in a nested
     /// function, block or comprehension that does not hold `node` does not.
     fn shadowed(&mut self, lang: Lang, node: Node, name: &str, src: &str) -> bool {
+        // a JavaScript class expression binds its name inside the class only
+        if std::iter::successors(node.parent(), |n| n.parent())
+            .any(|c| c.kind() == "class" && c.child_by_field_name("name").is_some_and(|x| text(x, src) == name))
+        {
+            return true;
+        }
         let at = node.start_byte();
         let Some(mut func) = enclosing_function(node) else { return false };
         // a Rust `fn` item does not see the locals of the function around it
@@ -2146,7 +2154,7 @@ fn binder_reach(lang: Lang, b: Node, scope: Node) -> (usize, usize) {
     let blocks = block_scoped(lang, b);
     let mut n = b.parent();
     // the name of a function or class binds around it; that of a function expression only inside
-    if let Some(d) = n.filter(|&d| names_definition(d, b) && !matches!(d.kind(), "function_expression" | "function" | "class")) {
+    if let Some(d) = n.filter(|&d| names_definition(d, b) && !matches!(d.kind(), "function_expression" | "function" | "generator_function" | "class")) {
         n = d.parent();
     }
     while let Some(p) = n.filter(|p| p.id() != scope.id()) {

@@ -169,6 +169,10 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- The name of a JavaScript generator expression (`function* load() {}`) or class expression
+  (`class Box {}` as a value) is its own inside it, where uses there went to an outer `load` or
+  `Box`; a generator expression is also a scope for its parameters and locals
+  ([CLI](docs/CLI.md#engine-b)).
 - The name of a JavaScript named function expression is its own inside it: in `var h = function
   load() { return load(); }` the inner call no longer goes to an outer `function load`, which
   `callers load` listed `h` for ([CLI](docs/CLI.md#engine-b)).

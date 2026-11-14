@@ -231,6 +231,19 @@ fn javascript_the_name_of_a_function_expression_is_its_own_inside_it() {
 }
 
 #[test]
+fn javascript_the_name_of_a_generator_or_class_expression_is_its_own_inside_it() {
+    let r = Repo::new(
+        "js_gen_class_expr",
+        &[(
+            "s.js",
+            "function load() {\n  return 1;\n}\nvar g = function* load() {\n  yield load();\n};\nclass Box {}\nvar C = class Box {\n  m() {\n    return new Box();\n  }\n};\nload();\nnew Box();\nvar p = function* (load) {\n  yield load;\n};\n",
+        )],
+    );
+    assert_eq!(r.refs_of("load", "s.js:1"), ["s.js:1", "s.js:13"]);
+    assert_eq!(r.refs_of("Box", "s.js:7"), ["s.js:14", "s.js:7"]);
+}
+
+#[test]
 fn go_two_areas() {
     let r = Repo::new(
         "go",
