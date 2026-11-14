@@ -69,6 +69,7 @@ def main() -> int:
                 if free:
                     row["checks"]["free-threaded wheel chosen"] = "t-" in row["wheel"]
                 rc, out = sh(["uv", "pip", "install", "-q", "--python", exe, "pytest"])
+                row["checks"]["pytest installed"] = rc == 0
             if rc == 0:
                 probe = "import sys, scrutate; print(getattr(sys, '_is_gil_enabled', lambda: True)())"
                 rc, out = sh([exe, "-W", "error", "-c", probe])
