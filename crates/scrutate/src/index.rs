@@ -1582,6 +1582,20 @@ impl Index {
         }
     }
 
+    /// The names of the segments the store holds open, when it is open.
+    pub fn held_segments(&self) -> Option<&[String]> {
+        self.lex.as_ref().map(|l| l.names.as_slice())
+    }
+
+    /// Close the segment store unless it holds `names`: an index kept idle then holds no file a
+    /// writer has replaced (on Unix its disk space is freed, on Windows it can be removed).
+    pub fn release_segments_other_than(&mut self, names: &[String]) {
+        if self.held_segments().is_some_and(|held| held != names) {
+            self.lex = None;
+            self.lex_ver = None;
+        }
+    }
+
     /// The segment store, with statistics for the chunks that are alive right now.
     pub fn lex(&mut self) -> Result<&mut LexStore> {
         self.reopen_if_replaced()?;

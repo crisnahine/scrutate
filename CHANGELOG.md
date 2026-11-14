@@ -156,6 +156,8 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- A `serve` reader left idle lets go of segments a write replaced, so their disk space is freed
+  on Unix and they can be removed on Windows, where idle readers kept them open until reused.
 - `setup claude` replacing an old entry through `claude mcp` adds the old one back when the new
   `add-json` fails, where the user was left with no scrutate server
   ([CLI](docs/CLI.md#setup-and-the-grep-hook)).
