@@ -506,9 +506,11 @@ pub fn run(root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), mut on_chang
     on_change(&Changes::All)?;
     on_ready();
     let debug = debug();
+    // the files of a burst whose update failed are taken by the next one, which walks the tree
+    let mut failed = false;
     while !stop.load(Ordering::Relaxed) {
         root_present(&root)?;
-        let mut burst = Burst::default();
+        let mut burst = Burst { full: failed, ..Burst::default() };
         let mut wanted = false;
         for ev in poll.check() {
             wanted |= burst.note(&root, &walked, &ev);
@@ -545,9 +547,7 @@ pub fn run(root: &Path, stop: &AtomicBool, on_ready: impl FnOnce(), mut on_chang
         if debug {
             eprintln!("[scrutate] burst: {} paths, full walk: {}", burst.paths.len(), if named.is_none() { "yes" } else { "no" });
         }
-        if let Err(e) = on_change(&named.map_or(Changes::All, Changes::Named)) {
-            eprintln!("[scrutate] update failed: {e:#}");
-        }
+        failed = on_change(&named.map_or(Changes::All, Changes::Named)).inspect_err(|e| eprintln!("[scrutate] update failed: {e:#}")).is_err();
     }
     Ok(())
 }

@@ -892,7 +892,8 @@ the whole tree, reading the ignore files again, runs for a burst that:
 - reports lost events (an inotify queue overflow, an overflowed Windows buffer, an FSEvents
   stream that says it dropped events or must rescan);
 - changes an indexed file once the last walk is 30 s old, which is how a change the watcher did
-  not see is found.
+  not see is found;
+- follows a burst whose update failed (stderr says why), so that burst's files are indexed.
 
 On Linux each directory above the root gets its own watch for those rule files, and another file
 written there costs a filter and nothing more. When such a directory cannot be watched the

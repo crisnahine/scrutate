@@ -156,6 +156,10 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `index`, `watch`, `serve --watch` and `reindex` wait for another writer for up to 10 minutes,
+  or until cancelled: they gave up with "database is locked" after 30 s. A `watch` burst whose
+  update failed is followed by a walk of the tree, so its files are indexed
+  ([CLI](docs/CLI.md#watch)).
 - `grep -c -U` no longer counts the empty match after each matched group's line end, as
   ripgrep: `^$` on `a`, a blank line and `b` counts 1, not 2.
 - `grep -A` and `-B` win over `-C` in either order, as in ripgrep: `-C1 -A3` showed one line

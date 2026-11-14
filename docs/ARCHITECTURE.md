@@ -553,7 +553,7 @@ is added there alone.
 
 | Operation | Looks for changes | Keeps current |
 |---|---|---|
-| `index` | every file; waits for another writer | code index, text index (built when missing) |
+| `index` | every file; waits for another writer, up to 10 minutes or a cancel | code index, text index (built when missing) |
 | `index --no-text` | every file; waits | code index |
 | `index --text` | every file; waits | text index (built when missing) |
 | `grep --index --update` | every file; waits | text index (built when missing) |

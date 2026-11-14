@@ -1601,6 +1601,31 @@ impl Index {
         self.db.prepare_cached("SELECT 1 FROM pragma_table_info('files') WHERE name='ctime_ns'").and_then(|mut q| q.exists([])).unwrap_or(false)
     }
 
+    /// BEGIN IMMEDIATE, waiting for another writer as long as it writes, up to 10 minutes, or
+    /// until cancelled.
+    fn begin_waiting(&self) -> Result<()> {
+        let t0 = Instant::now();
+        // short busy waits, so a cancel is seen within a second
+        self.db.busy_timeout(Duration::from_millis(500))?;
+        let r = loop {
+            match self.db.execute_batch("BEGIN IMMEDIATE") {
+                Err(rusqlite::Error::SqliteFailure(e, _))
+                    if matches!(e.code, rusqlite::ffi::ErrorCode::DatabaseBusy | rusqlite::ffi::ErrorCode::DatabaseLocked) =>
+                {
+                    if self.cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                        break Err(anyhow::anyhow!("cancelled"));
+                    }
+                    if t0.elapsed() > Duration::from_secs(600) {
+                        break Err(anyhow::anyhow!("another process has held the index write lock for 10 minutes"));
+                    }
+                }
+                r => break r.map_err(Into::into),
+            }
+        };
+        self.db.busy_timeout(Duration::from_secs(30))?;
+        r
+    }
+
     /// `update`; with `wait` false a write lock held by another process is an error at once.
     fn update_with(&mut self, force: bool, wait: bool, look: Look) -> Result<UpdateStats> {
         let only = match look {
@@ -1631,7 +1656,7 @@ impl Index {
         }
         // one writer at a time; readers keep working (WAL)
         if wait {
-            retry_busy(|| self.db.execute_batch("BEGIN IMMEDIATE"))?;
+            self.begin_waiting()?;
         } else {
             self.db.busy_timeout(Duration::ZERO)?;
             let r = self.db.execute_batch("BEGIN IMMEDIATE");
@@ -2911,6 +2936,50 @@ mod tests {
         assert_eq!(files(&ix), 0);
         assert_eq!(ix.meta("schema_version"), Some(super::SCHEMA_VERSION.to_string()));
         drop((ix, other));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_update_waits_for_a_writer_past_thirty_seconds_and_stops_when_cancelled() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_wait_writer_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        std::fs::write(root.join("b.py"), "def beta():\n    return 2\n").unwrap();
+        let db = ix.dir.join("index.db");
+        let hold = |secs: u64| {
+            let db = db.clone();
+            let (locked, done) = std::sync::mpsc::channel();
+            let t = std::thread::spawn(move || {
+                let other = rusqlite::Connection::open(db).unwrap();
+                other.execute_batch("BEGIN IMMEDIATE").unwrap();
+                locked.send(()).unwrap();
+                std::thread::sleep(std::time::Duration::from_secs(secs));
+                other.execute_batch("ROLLBACK").unwrap();
+            });
+            done.recv().unwrap();
+            t
+        };
+        let writer = hold(34);
+        let t0 = std::time::Instant::now();
+        ix.update(false).unwrap();
+        assert!(t0.elapsed().as_secs() >= 30, "{:?}", t0.elapsed());
+        assert_eq!(ix.files().unwrap().len(), 2);
+        writer.join().unwrap();
+
+        let writer = hold(8);
+        let cancel = std::sync::Arc::clone(&ix.cancel);
+        let t0 = std::time::Instant::now();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+        assert!(ix.update(false).is_err());
+        assert!(t0.elapsed().as_secs() < 4, "{:?}", t0.elapsed());
+        writer.join().unwrap();
+        drop(ix);
         let _ = std::fs::remove_dir_all(&root);
     }
 
