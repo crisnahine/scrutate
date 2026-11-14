@@ -2019,6 +2019,16 @@ fn a_php_function_alias_called_in_another_case_is_a_call_of_the_function() {
 }
 
 #[test]
+fn a_name_re_exported_under_another_name_is_a_caller_and_a_callee() {
+    let u = "function jsfn() { return 1; }\nexport { jsfn as reexp };\n";
+    let n = "import { reexp } from \"./u\";\nexport function via() { return reexp(); }\n";
+    let r = Repo::new("js_export_as", &[("u.js", u), ("n.ts", n)]);
+    let (code, out) = r.run(&["callers", "jsfn"]);
+    assert!(code == 0 && out.lines().any(|l| l.ends_with(" via")), "callers jsfn: {out}");
+    assert_eq!(callee_names(&r, "via"), ["jsfn"]);
+}
+
+#[test]
 fn a_super_call_in_a_constructor_is_a_call_of_the_base_class() {
     let base = "export class Base {\n  constructor() {\n    this.x = 1;\n  }\n}\n";
     let kid = "import { Base } from './base.js';\nexport class Kid extends Base {\n  constructor() {\n    super();\n  }\n}\n";
