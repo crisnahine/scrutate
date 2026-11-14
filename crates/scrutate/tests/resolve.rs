@@ -244,6 +244,20 @@ fn javascript_the_name_of_a_generator_or_class_expression_is_its_own_inside_it()
 }
 
 #[test]
+fn javascript_refs_list_a_use_under_an_alias_in_a_file_that_never_spells_the_name() {
+    let r = Repo::new(
+        "js_alias_refs",
+        &[
+            ("lib/m.js", "function helper() {\n  return 1;\n}\nmodule.exports = helper;\n"),
+            ("lib/e.js", "export default function shout() {\n  return 2;\n}\n"),
+            ("lib/main.js", "const h = require(\"./m\");\nimport s from \"./e\";\n\nfunction start() {\n  return h() + s();\n}\n"),
+        ],
+    );
+    assert_eq!(r.refs_of("helper", "lib/m.js:1"), ["lib/m.js:1", "lib/m.js:4", "lib/main.js:5"]);
+    assert_eq!(r.refs_of("shout", "lib/e.js:1"), ["lib/e.js:1", "lib/main.js:5"]);
+}
+
+#[test]
 fn go_two_areas() {
     let r = Repo::new(
         "go",

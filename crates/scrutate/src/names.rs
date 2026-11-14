@@ -108,8 +108,13 @@ impl<'a> Names<'a> {
             }
         }
         // a file that imports the name under an alias uses it under the alias too; the import
-        // statement's own alias is listed already, through the name it imports
-        let importing: BTreeSet<String> = occurrences.iter().map(|o| o.path.clone()).collect();
+        // statement's own alias is listed already, through the name it imports. A file whose
+        // import never spells the name (`const h = require("./m")`) is found as callers finds it.
+        let mut importing: BTreeSet<String> = occurrences.iter().map(|o| o.path.clone()).collect();
+        let mut definitions: Vec<ChunkRow> = s.ix.definitions(bare)?.into_iter().filter(|d| crate::resolve::same_name(&d.name, bare)).collect();
+        let defs: Vec<Hit> = definitions.iter().map(|d| Hit::from_row(d, false)).collect();
+        let langs = Langs { root: &s.ix.root, seen: Default::default() };
+        importing.extend(self.aliases_of(&defs, &langs)?.into_iter().map(|(_, f)| f));
         let ident = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
         for path in importing {
             let aliases: Vec<(String, String, Vec<usize>)> = self.rv.alias_sites(&path).into_iter().filter(|(_, item, _)| item == bare).collect();
@@ -138,7 +143,6 @@ impl<'a> Names<'a> {
             }
         }
         occurrences.truncate(max_results as usize);
-        let mut definitions: Vec<ChunkRow> = s.ix.definitions(bare)?.into_iter().filter(|d| crate::resolve::same_name(&d.name, bare)).collect();
         let mut known: HashSet<i64> = definitions.iter().map(|d| d.id).collect();
         for o in &occurrences {
             if let Ok((id, _)) = o.resolution {
