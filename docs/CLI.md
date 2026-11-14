@@ -902,6 +902,8 @@ costs the same in a tree of 20,000 directories as in a small one. The usual incr
 the whole tree, reading the ignore files again, runs for a burst that:
 
 - creates, removes or moves a directory;
+- renames a file to another case of its name on a disk that ignores case (macOS's default),
+  where the old name still opens the file;
 - changes an ignore file (`.gitignore`, `.ignore`, `.rgignore`, `.git/info/exclude`) or
   `.scrutate.toml`, also a rule file outside the tree: an `.ignore` or `.rgignore` in any
   directory above the root, a `.gitignore` above it up to the repository top,

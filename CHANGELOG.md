@@ -161,6 +161,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `watch` on a disk that ignores case (macOS's default) walks the tree after a rename that
+  changes only the case of a name: the text index kept the old name beside the new one
+  ([CLI](docs/CLI.md#watch)).
 - A concise tool answer too long for `max_bytes` is the detailed page, which says how to go on:
   it was cut in the middle of an item and lost the line with the next offset, so items between
   pages were never shown ([CLI](docs/CLI.md#serve-mcp)).

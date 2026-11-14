@@ -182,6 +182,13 @@ impl Listing {
         }
         l
     }
+
+    /// Whether a file of this directory is named `p` in another case.
+    fn holds_in_another_case(&self, p: &Path) -> bool {
+        let lower = |q: &Path| q.file_name().map(|n| n.to_string_lossy().to_lowercase());
+        let want = lower(p);
+        self.code.iter().chain(&self.text).any(|q| q != p && lower(q) == want)
+    }
 }
 
 /// What the events of one burst ask for.
@@ -258,6 +265,12 @@ impl Burst {
                     return None;
                 }
                 continue;
+            }
+            // on a disk that ignores case the old name of a rename of its case alone still opens
+            // the file: the listing holds it under another case, and only a walk tells the two
+            // names apart
+            if md.as_ref().is_some_and(|m| m.is_file()) && !l.code.contains(p) && !l.text.contains(p) && l.holds_in_another_case(p) {
+                return None;
             }
             let Ok(rel) = p.strip_prefix(root) else { continue };
             let rel = rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect::<Vec<_>>().join("/");

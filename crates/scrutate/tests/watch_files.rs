@@ -660,3 +660,22 @@ fn ctrl_c_stops_a_long_first_update_of_watch() {
     wait_for(10, "watch to stop on Ctrl-C", || child.0.try_wait().unwrap().is_some());
     assert_eq!(child.0.wait().unwrap().code(), Some(130), "{:?}", t0.elapsed());
 }
+
+/// A rename that changes only the case of a name (on macOS's default disk the old name still
+/// opens the file) leaves the text index with the new name alone.
+#[test]
+fn a_rename_of_the_case_alone_leaves_one_name_in_the_text_index() {
+    let (r, _child, rx) = watched("case_rename", &[("src/Foo.txt", "kappa\n"), ("mod.py", "def f():\n    return 1\n")]);
+    fs::rename(r.root.join("src/Foo.txt"), r.root.join("src/foo.txt")).unwrap();
+    let listed = || {
+        let out = Command::new(BIN).args(["grep", "--index", "-l", "kappa"]).current_dir(&r.root).stdin(Stdio::null()).output().unwrap();
+        let mut v: Vec<String> = String::from_utf8_lossy(&out.stdout).lines().map(String::from).collect();
+        v.sort();
+        v
+    };
+    wait_for(30, "the rename in the text index", || listed().iter().any(|p| p.ends_with("foo.txt")));
+    // a later burst may still be on its way: give it the time a burst takes
+    std::thread::sleep(Duration::from_secs(3));
+    let _ = rx.try_iter().count();
+    assert_eq!(listed(), ["src/foo.txt"]);
+}
