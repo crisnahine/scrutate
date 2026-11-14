@@ -380,6 +380,33 @@ fn a_block_with_crlf_line_ends_is_the_block() {
     assert!(after.starts_with(before_md.trim_end()), "{after:?}");
 }
 
+/// Claude Code's own `claude mcp` replaces an entry by remove, then add: when the add fails, the
+/// old entry is added back, so the user is not left with none.
+#[cfg(unix)]
+#[test]
+fn a_failed_replace_through_claude_mcp_puts_the_old_entry_back() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = Scratch::new("claudeundo");
+    let old = r#"{"type":"stdio","command":"/old/place/scrutate","args":["serve"]}"#;
+    s.write(&s.user_file("claude"), &format!("{{\n  \"mcpServers\": {{\n    \"scrutate\": {old}\n  }}\n}}\n"));
+    let bin = s.base.join("bin");
+    let log = s.base.join("claude.log");
+    // a claude whose add-json fails for anything but the old entry
+    let script = format!(
+        "#!/bin/sh\necho \"$*\" >> '{}'\ncase \"$2 $4\" in\n  'add-json '*/old/place/*) exit 0 ;;\n  add-json*) echo 'refused' >&2; exit 1 ;;\nesac\nexit 0\n",
+        log.display()
+    );
+    s.write(&bin.join("claude"), &script);
+    fs::set_permissions(bin.join("claude"), fs::Permissions::from_mode(0o755)).unwrap();
+    let (code, _, err) = s.setup_in(&s.repo, &["claude"], &format!("{}:/usr/bin:/bin", bin.display()));
+    assert_ne!(code, 0, "{err}");
+    let calls: Vec<String> = fs::read_to_string(&log).unwrap().lines().map(String::from).collect();
+    assert_eq!(calls.len(), 3, "{calls:?}");
+    assert!(calls[0].starts_with("mcp remove scrutate") && calls[1].starts_with("mcp add-json scrutate"), "{calls:?}");
+    assert!(calls[2].starts_with("mcp add-json scrutate") && calls[2].contains("/old/place/scrutate"), "the old entry goes back: {calls:?}");
+    assert!(err.contains("put back"), "{err}");
+}
+
 /// Sends `initialize` and `tools/list` to `argv` run in `dir` and returns the tool names.
 fn mcp_tools(argv: &[String], dir: &Path, s: &Scratch) -> Vec<String> {
     let mut child = s

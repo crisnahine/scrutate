@@ -104,10 +104,11 @@ enum Step {
         after: Option<String>,
         what: String,
     },
-    /// the agent's own command
+    /// the agent's own command, and the one that undoes the step before it when this one fails
     Run {
         argv: Vec<String>,
         what: String,
+        undo: Option<Vec<String>>,
     },
     Note(String),
 }
@@ -122,7 +123,7 @@ impl Step {
                     let _ = writeln!(out, "  (the file is deleted: nothing else is left in it)");
                 }
             }
-            Step::Run { argv, what } => {
+            Step::Run { argv, what, .. } => {
                 let _ = writeln!(out, "would {what}: {}", shown_command(argv));
             }
             Step::Note(n) => {
@@ -144,14 +145,24 @@ impl Step {
                 }
                 let _ = writeln!(out, "{what}: {}", path.display());
             }
-            Step::Run { argv, what } => {
-                let o = std::process::Command::new(&argv[0])
-                    .args(&argv[1..])
-                    .stdin(std::process::Stdio::null())
-                    .output()
-                    .with_context(|| format!("run {}", argv[0]))?;
-                if !o.status.success() {
-                    bail!("{} failed: {}", shown_command(argv), String::from_utf8_lossy(&o.stderr).trim());
+            Step::Run { argv, what, undo } => {
+                let run = |argv: &[String]| -> Result<()> {
+                    let o = std::process::Command::new(&argv[0])
+                        .args(&argv[1..])
+                        .stdin(std::process::Stdio::null())
+                        .output()
+                        .with_context(|| format!("run {}", argv[0]))?;
+                    if !o.status.success() {
+                        bail!("{} failed: {}", shown_command(argv), String::from_utf8_lossy(&o.stderr).trim());
+                    }
+                    Ok(())
+                };
+                if let Err(e) = run(argv) {
+                    let Some(undo) = undo else { return Err(e) };
+                    return Err(match run(undo) {
+                        Ok(()) => e.context("the old entry was put back"),
+                        Err(u) => e.context(format!("the old entry could not be put back ({u:#})")),
+                    });
                 }
                 let _ = writeln!(out, "{what}: {}", shown_command(argv));
             }
@@ -375,17 +386,17 @@ fn claude_program(claude: &Path, file: &Path, entry: &J, o: Options) -> Result<V
     let remove = Step::Run {
         argv: vec![claude.clone(), "mcp".into(), "remove".into(), NAME.into(), "--scope".into(), "user".into()],
         what: "removed the scrutate server".into(),
+        undo: None,
     };
-    let add = Step::Run {
-        argv: vec![claude, "mcp".into(), "add-json".into(), NAME.into(), entry.value().to_string(), "--scope".into(), "user".into()],
-        what: "added the scrutate server".into(),
-    };
+    let add_json = |v: &Value| vec![claude.clone(), "mcp".into(), "add-json".into(), NAME.into(), v.to_string(), "--scope".into(), "user".into()];
+    let add = |undo: Option<Vec<String>>| Step::Run { argv: add_json(&entry.value()), what: "added the scrutate server".into(), undo };
     Ok(match (o.uninstall, current) {
         (true, Some(_)) => vec![remove],
         (true, None) => vec![Step::Note(format!("{} has no scrutate server", file.display()))],
         (false, Some(v)) if v == entry.value() => vec![Step::Note(format!("{} already has the scrutate server", file.display()))],
-        (false, Some(_)) => vec![remove, add],
-        (false, None) => vec![add],
+        // a replace is a remove, then an add: when the add fails, the old entry goes back
+        (false, Some(old)) => vec![remove, add(Some(add_json(&old)))],
+        (false, None) => vec![add(None)],
     })
 }
 

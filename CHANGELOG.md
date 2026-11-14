@@ -156,6 +156,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `setup claude` replacing an old entry through `claude mcp` adds the old one back when the new
+  `add-json` fails, where the user was left with no scrutate server
+  ([CLI](docs/CLI.md#setup-and-the-grep-hook)).
 - `serve` reads a message of at most 256 MiB, as `lsp` does: a longer line, or one with no end,
   is dropped as it is read and answered with a parse error, where it was held in memory whole
   ([CLI](docs/CLI.md#serve-mcp)).

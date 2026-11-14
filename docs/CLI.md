@@ -1116,7 +1116,8 @@ binary is now). `--hook` and `--instructions` are accepted with it and change no
 `setup` created is deleted when nothing else is left in it. Claude Code's user file goes through
 `claude mcp remove scrutate --scope user` when `claude` is on `PATH`; Claude Code writes that
 whole file itself (its running sessions do so all the time) and keeps an empty `mcpServers` it
-made. `--dry-run` writes and runs nothing: it prints each file it would change, with the lines it
+made. An entry that runs something else is replaced there by `remove`, then `add-json`; when the
+add fails, the old entry is added back and the error says so. `--dry-run` writes and runs nothing: it prints each file it would change, with the lines it
 would add (`+`) or take out (`-`), and the commands it would run.
 
 Claude Code asks once before it starts a server of a project's `.mcp.json`. Gemini CLI starts a
