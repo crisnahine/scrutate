@@ -457,7 +457,7 @@ PHP has rules of its own too:
   it, the call is external. In a trait, `$this->m()` for an `m` the trait lacks is `receiver`: the
   class that uses the trait decides.
 - A variable a closure takes with `use ($u)` has the type it has around the closure, as one an
-  arrow `fn` reads does.
+  arrow `fn` reads does. A static property (`User::$current`) has the type it declares.
 - Undecided: a variable bound by `foreach` or `catch`, a value of an untyped parameter, a union
   type, a dynamic name (`$o->$m()`).
 - Properties and class constants are `field or key`, a bare constant is `constant`, a part of a

@@ -169,6 +169,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- A call on a PHP static property, `User::$current->save()`, goes through the property's declared
+  type to `User::save`, and `current` there is `field or key`, where `save` was `receiver` and
+  `current` a local variable ([CLI](docs/CLI.md#engine-b)).
 - `$this->word()` in a PHP trait that has no `word` is `receiver` in `refs`, since the class using
   the trait decides, where it said `not found` ([CLI](docs/CLI.md#engine-b)).
 - `this` in a JavaScript method under a quoted key (`"get": function () {}`, `"del"() {}`) is

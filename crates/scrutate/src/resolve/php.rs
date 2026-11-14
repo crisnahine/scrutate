@@ -186,6 +186,8 @@ impl Resolver<'_> {
             "variable_name" if p.parent().is_some_and(|g| matches!(g.kind(), "property_element" | "property_promotion_parameter")) => {
                 return Err("field or key")
             }
+            // `User::$current` reads a static property
+            "variable_name" if p.parent().is_some_and(|g| g.kind() == "scoped_property_access_expression") => return Err("field or key"),
             "variable_name" => return Err("local variable"),
             "namespace_name" | "namespace_definition" => return Err("namespace"),
             _ => {}
@@ -399,6 +401,11 @@ impl Resolver<'_> {
                 let (obj, prop) = (e.child_by_field_name("object").ok_or("receiver")?, e.child_by_field_name("name").ok_or("receiver")?);
                 let c = self.php_value(fi, obj)?;
                 self.php_property(c, &format!("${}", text(prop, src)))
+            }
+            "scoped_property_access_expression" => {
+                let (scope, prop) = (e.child_by_field_name("scope").ok_or("receiver")?, e.child_by_field_name("name").ok_or("receiver")?);
+                let c = self.php_type(fi, scope)?;
+                self.php_property(c, text(prop, src))
             }
             _ => Err("receiver"),
         }

@@ -212,3 +212,11 @@ fn this_in_a_trait_calling_a_method_the_trait_lacks_is_a_receiver() {
     let r = Repo::new("trait_this", &[("a.php", a)]);
     assert_eq!(r.resolved("word"), expect(&[("a.php", 4, "receiver"), ("a.php", 9, "a.php")]));
 }
+
+#[test]
+fn a_call_on_a_static_property_goes_through_the_property_type() {
+    let a = "<?php\nclass User\n{\n    public static User $current;\n    public function save() { return 1; }\n}\nfunction run() {\n    User::$current->save();\n}\n";
+    let r = Repo::new("static_prop", &[("a.php", a)]);
+    assert_eq!(r.resolved("save"), expect(&[("a.php", 5, "a.php"), ("a.php", 8, "a.php")]));
+    assert_eq!(r.resolved("current"), expect(&[("a.php", 4, "field or key"), ("a.php", 8, "field or key")]));
+}
