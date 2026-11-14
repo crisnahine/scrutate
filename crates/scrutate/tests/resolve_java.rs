@@ -575,3 +575,13 @@ fn a_class_of_the_default_package_is_looked_for_in_its_own_directory_only() {
     assert_eq!(r.refs_of("help", "ex/b/Util.java:2"), ["Main.java:3", "Util.java:2"]);
     assert_eq!(r.refs_of("help", "ex/a/Util.java:2"), ["Util.java:2"]);
 }
+
+#[test]
+fn a_local_of_an_enum_s_instance_initializer_hides_the_field_only_there() {
+    let files = vec![(
+        "a/E.java".to_string(),
+        "package a;\n\npublic enum E {\n    ONE;\n    int count;\n    {\n        int count = 3;\n        count++;\n    }\n    void m() {\n        count++;\n    }\n}\n",
+    )];
+    let r = Repo::with("enum_init_block", &files);
+    assert_eq!(r.refs_of("count", "a/E.java:5"), ["E.java:11", "E.java:5"]);
+}

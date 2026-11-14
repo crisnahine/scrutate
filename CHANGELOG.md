@@ -200,7 +200,7 @@ incompatible index by itself, and that is never breaking.
 - `Outer.this.tick()` in a Java inner class is a call of `Outer.tick`, where it was `receiver`
   and `dead` left `Outer.tick` undecided ([CLI](docs/CLI.md#engine-b)).
 - A local variable of a Java instance initializer block (`{ int count = 3; count++; }` in a
-  class body) is a local there, where it and its uses were read as the field of that name
+  class or enum body) is a local there, where it and its uses were read as the field of that name
   ([CLI](docs/CLI.md#engine-b)).
 - PHP class, interface, trait, enum, method, namespace and `use` alias names, and `self::`,
   `static::` and `parent::`, match in any case,
