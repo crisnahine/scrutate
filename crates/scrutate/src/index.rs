@@ -1603,21 +1603,29 @@ impl Index {
         }
     }
 
+    /// What is wrong with the vectors of `store`, in an index whose chunks have them.
+    fn vector_damage(&self, store: &LexStore) -> Option<&'static str> {
+        let sig = self.meta("model_sig").filter(|s| s != "none")?;
+        if store.segs.iter().any(|g| g.n > 0 && g.vec.is_none()) {
+            return Some("a segment has no vectors");
+        }
+        // the width is known when the model that wrote them is the one loaded
+        let k = (sig == self.sig).then(|| self.models.semantic().ok().flatten().map(|m| m.k)).flatten()?;
+        store.segs.iter().any(|g| g.vec.is_some() && g.k != k).then_some("a segment's vectors are not as wide as the model's")
+    }
+
     /// The segment store, with statistics for the chunks that are alive right now.
     pub fn lex(&mut self) -> Result<&mut LexStore> {
         self.reopen_if_replaced()?;
         let mut ver = self.meta("data_version").unwrap_or_else(|| "0".into());
         let names = self.segments();
         if self.lex.as_ref().map(|l| l.names != names).unwrap_or(true) {
-            let vectors = self.meta("model_sig").is_some_and(|s| s != "none");
             let mut names = names;
             let mut attempt = 0;
             let store = loop {
-                let opened = LexStore::open(&self.seg_dir, &names).and_then(|s| {
-                    if vectors && s.segs.iter().any(|g| g.n > 0 && g.vec.is_none()) {
-                        return Err(Damaged("a segment has no vectors").into());
-                    }
-                    Ok(s)
+                let opened = LexStore::open(&self.seg_dir, &names).and_then(|s| match self.vector_damage(&s) {
+                    Some(why) => Err(Damaged(why).into()),
+                    None => Ok(s),
                 });
                 match opened {
                     Ok(s) => break s,
@@ -2898,13 +2906,22 @@ impl Index {
                         r.problems.push(format!("segment {name}: {e}"));
                     }
                 }
+                if let Some(why) = self.vector_damage(&store) {
+                    r.segments_ok = false;
+                    r.problems.push(format!("segments: {why}"));
+                }
                 let mut live: Vec<i64> = Vec::new();
                 let mut st = self.db.prepare("SELECT id FROM chunks ORDER BY id")?;
                 for id in st.query_map([], |row| row.get::<_, i64>(0))? {
                     live.push(id?);
                 }
-                store.prepare(Some(&live))?;
-                r.chunks_alive = store.n_alive as i64;
+                match store.prepare(Some(&live)) {
+                    Ok(()) => r.chunks_alive = store.n_alive as i64,
+                    Err(e) => {
+                        r.segments_ok = false;
+                        r.problems.push(format!("segments: {e:#}"));
+                    }
+                }
                 // every chunk in the database must have a row in exactly one segment
                 let in_segments: usize = store.segs.iter().map(|s| s.ids().iter().filter(|id| live.binary_search(id).is_ok()).count()).sum();
                 if in_segments as i64 != r.chunks_db {
@@ -3201,6 +3218,38 @@ mod tests {
         assert_eq!(super::file_id(&db), before, "the database was replaced");
         assert_eq!(ix.files().unwrap(), ["a.py"]);
         drop(ix);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn check_and_a_search_find_a_segment_whose_vectors_are_gone_or_of_another_width() {
+        let models = crate::models::ModelSet::from_env();
+        if !models.semantic_enabled() {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("scrutate_ix_vectors_{}", std::process::id()));
+        for case in ["gone", "wide"] {
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).unwrap();
+            std::fs::write(root.join("a.py"), "def alpha():\n    return 1\n\n\ndef beta():\n    return 2\n").unwrap();
+            let mut ix = super::Index::open(&root, std::sync::Arc::clone(&models)).unwrap();
+            ix.update(false).unwrap();
+            let seg = ix.seg_dir.join(&ix.segments()[0]);
+            if case == "gone" {
+                std::fs::remove_file(seg.join("vec.npy")).unwrap();
+                std::fs::remove_file(seg.join("vscale.npy")).unwrap();
+            } else {
+                // twice the model's width, the rows padded with zeros
+                let v = crate::npy::Npy::open(&seg.join("vec.npy")).unwrap();
+                let (n, k) = (v.shape[0], v.shape[2]);
+                crate::npy::save(&seg.join("vec.npy"), &vec![0i8; n * 2 * 2 * k], &[n, 2, 2 * k]).unwrap();
+            }
+            let mut ix = super::Index::open(&root, std::sync::Arc::clone(&models)).unwrap();
+            let report = ix.check(false).unwrap();
+            assert!(!report.ok(), "{case}: check said OK");
+            let e = ix.lex().err().unwrap_or_else(|| panic!("{case}: the segment opened"));
+            assert!(super::error_is_corruption(&e), "{case}: {e:#}");
+        }
         let _ = std::fs::remove_dir_all(&root);
     }
 

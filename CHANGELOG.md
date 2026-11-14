@@ -161,6 +161,12 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `check` reports a segment whose vectors are gone or not as wide as the model's, and an IVF row
+  out of range, where it said OK or stopped with a bare error; a search finds a segment of the
+  wrong width damaged and rebuilds it, where it panicked ([CLI](docs/CLI.md#engine-b)).
+- A `SCRUTATE_SEMANTIC` model whose tables do not agree in size is refused with an error: it
+  panicked while indexing, and every file stayed skipped after the model was fixed
+  ([CLI](docs/CLI.md#environment-variables)).
 - `watch` on a disk that ignores case (macOS's default) walks the tree after a rename that
   changes only the case of a name: the text index kept the old name beside the new one
   ([CLI](docs/CLI.md#watch)).
