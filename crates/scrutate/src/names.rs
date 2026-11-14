@@ -126,19 +126,24 @@ impl<'a> Names<'a> {
                 aliases.push(("super".into(), bare.to_string(), Vec::new()));
             }
             let fi = self.rv.file(&path);
+            // where names ignore case (PHP), `PF()` is a use of the alias `pf`; ASCII lower case
+            // keeps every byte where it is
+            let folds = self.langs.folds(&path, "function");
             let mut line_start = 0;
             for (i, line) in fi.src.split_inclusive('\n').enumerate() {
                 let start = line_start;
                 line_start += line.len();
                 let line = line.trim_end_matches('\n');
+                let hay = if folds { std::borrow::Cow::Owned(line.to_ascii_lowercase()) } else { std::borrow::Cow::Borrowed(line) };
                 for local in aliases.iter().map(|(l, _, _)| l) {
-                    for (col, _) in line.match_indices(local.as_str()) {
+                    let needle = if folds { local.to_ascii_lowercase() } else { local.clone() };
+                    for (col, _) in hay.match_indices(needle.as_str()) {
                         if ident(line[..col].chars().next_back()) || ident(line[col + local.len()..].chars().next()) || sites.contains(&(start + col)) {
                             continue;
                         }
                         // the alias spelled in a string or bound again locally (`const g = ..`) is no
                         // use of these definitions; only a `super(..)` call names the class
-                        let resolution = self.rv.resolve_at(&path, i as u64 + 1, col, local);
+                        let resolution = self.rv.resolve_at(&path, i as u64 + 1, col, &line[col..col + local.len()]);
                         let called = line[col + local.len()..].trim_start().starts_with('(');
                         if !matches!(resolution, Ok((id, _)) if def_ids.contains(&id)) || local == "super" && !called {
                             continue;

@@ -235,3 +235,12 @@ fn a_variable_a_closure_captures_by_reference_has_the_type_it_has_outside() {
     let r = Repo::new("closure_use_ref", &[("a.php", a)]);
     assert_eq!(r.resolved("save"), expect(&[("a.php", 4, "a.php"), ("a.php", 8, "a.php")]));
 }
+
+#[test]
+fn refs_find_a_use_alias_written_in_another_case() {
+    let app = "<?php\nnamespace App;\nuse function Lib\\phpfn as pf;\nuse Lib\\Tool as T;\nfunction upper() { return PF(); }\nfunction cls() { return t::make(); }\nfunction cls2() { return T::make(); }\n";
+    let lib = "<?php\nnamespace Lib;\nfunction phpfn() { return 1; }\nclass Tool\n{\n    public static function make() { return 1; }\n}\n";
+    let r = Repo::new("alias_case_refs", &[("app.php", app), ("lib.php", lib)]);
+    assert_eq!(r.resolved("phpfn"), expect(&[("app.php", 3, "lib.php"), ("app.php", 5, "lib.php"), ("lib.php", 3, "lib.php")]));
+    assert_eq!(r.resolved("Tool"), expect(&[("app.php", 4, "lib.php"), ("app.php", 6, "lib.php"), ("app.php", 7, "lib.php"), ("lib.php", 4, "lib.php")]));
+}
