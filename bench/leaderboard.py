@@ -861,7 +861,7 @@ def environment():
     env["scrutate_sha256"] = hashlib.sha256(open(SCRUTATE, "rb").read()).hexdigest()
     if SCRUTATE_BASE:
         env["scrutate_base_sha256"] = hashlib.sha256(open(SCRUTATE_BASE, "rb").read()).hexdigest()
-    env["hyperfine"] = subprocess.run(["hyperfine", "--version"], capture_output=True, text=True).stdout.strip()
+    env["hyperfine"] = subprocess.run(["hyperfine", "--version"], capture_output=True, text=True).stdout.strip() if shutil.which("hyperfine") else None
     return env
 
 
