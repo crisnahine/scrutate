@@ -422,7 +422,7 @@ Java has rules of its own:
 - A plain name is also looked up in the enclosing class and what it extends, through nested,
   inner and anonymous classes, enums with methods, records and default methods.
 - A receiver goes through its declared type, a chain through declared return types; one typed by
-  an interface resolves to the interface's method. A class in front of a call (`Util.foo()`,
+  an interface resolves to the interface's method. `Outer.this` is the enclosing class `Outer`. A class in front of a call (`Util.foo()`,
   also `p.Util.foo()` with `p` a repository package) is a use of that class; a local, parameter
   or field there is that variable.
 - The number of arguments picks one overload; when it does not, the call, like a method

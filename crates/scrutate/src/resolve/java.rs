@@ -567,6 +567,10 @@ impl<'a> Resolver<'a> {
         if q.kind() == "this" {
             return self.container_at(fi, q.start_position().row as i64 + 1).ok_or("receiver");
         }
+        // `Outer.this` is the instance of the enclosing class `Outer`
+        if q.kind() == "field_access" && q.child_by_field_name("field").is_some_and(|f| f.kind() == "this") {
+            return self.java_owner(path, fi, q.child_by_field_name("object").ok_or("receiver")?);
+        }
         let mut segs = Vec::new();
         if !java_segments(q, &mut segs) {
             return self.type_of(path, fi, Lang::Java, q).ok_or("receiver");

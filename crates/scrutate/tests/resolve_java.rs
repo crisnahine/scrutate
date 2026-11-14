@@ -540,3 +540,14 @@ fn a_local_of_an_instance_initializer_hides_the_field_only_there() {
     let r = Repo::with("init_block", &files);
     assert_eq!(r.refs_of("count", "a/C.java:4"), ["C.java:10", "C.java:4"]);
 }
+
+#[test]
+fn outer_this_calls_the_method_of_the_outer_class() {
+    let files = vec![(
+        "a/Outer.java".to_string(),
+        "package a;\n\npublic class Outer {\n    void tick() {\n    }\n    class Inner {\n        void tick() {\n        }\n        void run() {\n            Outer.this.tick();\n            tick();\n        }\n    }\n}\n",
+    )];
+    let r = Repo::with("outer_this", &files);
+    assert_eq!(r.refs_of("tick", "a/Outer.java:4"), ["Outer.java:10", "Outer.java:4"]);
+    assert_eq!(r.refs_of("tick", "a/Outer.java:7"), ["Outer.java:11", "Outer.java:7"]);
+}
