@@ -547,11 +547,15 @@ fn each_installed_agent_lists_the_server() {
 fn uninstall_keeps_text_added_after_the_block_on_its_own_line() {
     let s = Scratch::new("after_block");
     let claude_md = s.home.join(".claude/CLAUDE.md");
-    s.write(&claude_md, "# Notes");
-    assert_eq!(s.setup(&["claude", "--instructions"]).0, 0);
-    let md = fs::read_to_string(&claude_md).unwrap();
-    s.write(&claude_md, &format!("{md}- rule two\n"));
-    let (code, _, err) = s.setup(&["claude", "--uninstall", "--instructions"]);
-    assert_eq!(code, 0, "{err}");
-    assert_eq!(fs::read_to_string(&claude_md).unwrap(), "# Notes\n- rule two\n");
+    // with and without a line break at the end of the user's text, LF and CRLF
+    for before in ["# Notes", "# Notes\n", "# Notes\r\n"] {
+        s.write(&claude_md, before);
+        assert_eq!(s.setup(&["claude", "--instructions"]).0, 0);
+        let md = fs::read_to_string(&claude_md).unwrap();
+        s.write(&claude_md, &format!("{md}- rule two\n"));
+        let (code, _, err) = s.setup(&["claude", "--uninstall", "--instructions"]);
+        assert_eq!(code, 0, "{err}");
+        let want = if before.ends_with('\n') { format!("{before}- rule two\n") } else { format!("{before}\n- rule two\n") };
+        assert_eq!(fs::read_to_string(&claude_md).unwrap(), want, "{before:?}");
+    }
 }

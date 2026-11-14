@@ -601,9 +601,9 @@ fn block_entry(path: &Path, o: Options) -> Result<Vec<Step>> {
         let Some((b, e)) = found else {
             return Ok(vec![Step::Note(format!("{} has no scrutate block", path.display()))]);
         };
-        // the line break before the block is setup's only when the block ends the file: text after
-        // it would join the line above
-        let start = if e < text.len() {
+        // setup put a line break before the block; with text after the block it goes only when
+        // the text before it already ended in one, else the two lines would join
+        let start = if e < text.len() && !text[..b.saturating_sub(1)].ends_with('\n') {
             b
         } else if text[..b].ends_with("\r\n") {
             b - 2
