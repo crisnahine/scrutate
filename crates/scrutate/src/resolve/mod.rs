@@ -805,11 +805,16 @@ impl<'a> Resolver<'a> {
     /// The names `path` imports under a local name of its own, as (local, imported name):
     /// `from util import helper as h` is ("h", "helper").
     pub(crate) fn aliases(&mut self, path: &str) -> Vec<(String, String)> {
+        self.alias_sites(path).into_iter().map(|(local, item, _)| (local, item)).collect()
+    }
+
+    /// `aliases`, each with the start bytes of the import statement's identifiers that name it.
+    pub(crate) fn alias_sites(&mut self, path: &str) -> Vec<(String, String, Vec<usize>)> {
         let fi = self.file(path);
         fi.bindings
             .iter()
             .filter(|b| !b.module.is_empty())
-            .filter_map(|b| b.item.as_ref().filter(|i| **i != b.local).map(|i| (b.local.clone(), i.clone())))
+            .filter_map(|b| b.item.as_ref().filter(|i| **i != b.local).map(|i| (b.local.clone(), i.clone(), b.sites.clone())))
             .collect()
     }
 

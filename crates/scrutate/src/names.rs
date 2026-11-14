@@ -101,18 +101,22 @@ impl<'a> Names<'a> {
                 occurrences.push(Occurrence { path: h.path.to_string(), line: h.line, column: a as u64 + 1, text: line_text.clone(), at: da, resolution });
             }
         }
-        // a file that imports the name under an alias uses it under the alias too; the import's
-        // own line is listed already
+        // a file that imports the name under an alias uses it under the alias too; the import
+        // statement's own alias is listed already, through the name it imports
         let importing: BTreeSet<String> = occurrences.iter().map(|o| o.path.clone()).collect();
         let ident = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
         for path in importing {
-            let locals: Vec<String> = self.rv.aliases(&path).into_iter().filter(|(_, item)| item == bare).map(|(local, _)| local).collect();
-            let listed: HashSet<u64> = occurrences.iter().filter(|o| o.path == path).map(|o| o.line).collect();
+            let aliases: Vec<(String, String, Vec<usize>)> = self.rv.alias_sites(&path).into_iter().filter(|(_, item, _)| item == bare).collect();
+            let sites: HashSet<usize> = aliases.iter().flat_map(|(_, _, s)| s.iter().copied()).collect();
             let fi = self.rv.file(&path);
-            for (i, line) in fi.src.lines().enumerate().filter(|(i, _)| !locals.is_empty() && !listed.contains(&(*i as u64 + 1))) {
-                for local in &locals {
+            let mut line_start = 0;
+            for (i, line) in fi.src.split_inclusive('\n').enumerate() {
+                let start = line_start;
+                line_start += line.len();
+                let line = line.trim_end_matches('\n');
+                for local in aliases.iter().map(|(l, _, _)| l) {
                     for (col, _) in line.match_indices(local.as_str()) {
-                        if ident(line[..col].chars().next_back()) || ident(line[col + local.len()..].chars().next()) {
+                        if ident(line[..col].chars().next_back()) || ident(line[col + local.len()..].chars().next()) || sites.contains(&(start + col)) {
                             continue;
                         }
                         // the alias spelled in a string or bound again locally is not a use

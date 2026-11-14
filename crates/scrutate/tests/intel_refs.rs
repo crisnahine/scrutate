@@ -1471,6 +1471,26 @@ fn a_base_type_walk_over_a_diamond_of_many_paths_takes_linear_time() {
 }
 
 #[test]
+fn an_alias_and_the_name_on_one_line_are_both_references() {
+    let r = Repo::new(
+        "alias_same_line",
+        &[("util.py", "def helper(f):\n    return f\n"), ("app.py", "from util import helper as h\n\n\ndef run():\n    return h(helper)\n")],
+    );
+    let v = r.json(&["refs", "helper", "--json"]);
+    let cols: Vec<(u64, u64)> = v["definitions"][0]["references"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|o| o["path"] == "app.py")
+        .map(|o| (o["line"].as_u64().unwrap(), o["column"].as_u64().unwrap()))
+        .collect();
+    assert!(cols.contains(&(5, 12)), "the alias h on the line that also names helper: {cols:?} in {v}");
+    assert_eq!(cols.iter().filter(|(l, _)| *l == 1).count(), 1, "the import line once: {cols:?}");
+    // `helper` itself is no name app.py has: unresolved, as before
+    assert!(v["unresolved"].as_array().unwrap().iter().any(|o| o["line"] == 5 && o["column"] == 14), "{v}");
+}
+
+#[test]
 fn deps_and_rdeps_resolve_typescript_esm_names_and_declaration_files() {
     let r = Repo::new(
         "deps_ts",
