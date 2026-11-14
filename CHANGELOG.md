@@ -156,6 +156,8 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `refs` of a name a Fortran, Pascal or Ada definition or a PHP function has finds its uses in any
+  case in those languages' files: `refs DoWork` missed `dowork()` ([CLI](docs/CLI.md#engine-b)).
 - `grep --fuzzy-regex` reports where a match starts: the reversed pattern is run back from its
   end. The column, the `--json` spans and the colour took a lower bound (`zzz a12b` gave column 1
   for `a[0-9]*b`) ([CLI](docs/CLI.md#engine-a-grep-alias-g)).

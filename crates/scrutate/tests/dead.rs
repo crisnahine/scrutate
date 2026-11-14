@@ -313,3 +313,30 @@ fn callees_in_a_language_that_ignores_case_reach_a_name_in_any_case() {
     let (_, out) = r.run(&["callees", "run"]);
     assert!(out.contains("external: FormatPrice"), "Python keeps case: {out}");
 }
+
+#[test]
+fn refs_in_a_language_that_ignores_case_finds_a_name_in_any_case() {
+    // (path:line, the file it resolves to or "-") of every occurrence `refs NAME --json` lists
+    let refs = |r: &Repo, name: &str| {
+        let v = r.json(&["refs", name])["result"].clone();
+        let mut out = Vec::new();
+        for d in v["definitions"].as_array().unwrap_or_else(|| panic!("{v}")) {
+            for o in d["references"].as_array().unwrap() {
+                out.push(format!("{}:{} {}", o["path"].as_str().unwrap(), o["line"], d["path"].as_str().unwrap()));
+            }
+        }
+        for o in v["unresolved"].as_array().unwrap() {
+            out.push(format!("{}:{} -", o["path"].as_str().unwrap(), o["line"]));
+        }
+        out.sort();
+        out
+    };
+    let pas = "program P;\n\nprocedure DoWork;\nbegin\nend;\n\nprocedure Run;\nbegin\n  dowork();\nend;\n\nbegin\n  Run();\nend.\n";
+    let r = Repo::new("pascal_refs", &[("p.pas", pas)]);
+    assert!(refs(&r, "DoWork").iter().any(|o| o.starts_with("p.pas:9 ")), "{:?}", refs(&r, "DoWork"));
+    let php = "<?php\nfunction formatPrice($p) { return $p; }\n\nfunction show() { return FormatPrice(3); }\n";
+    let r = Repo::new("php_refs", &[("f.php", php), ("g.py", "def run():\n    return formatprice()\n")]);
+    let got = refs(&r, "formatPrice");
+    assert!(got.contains(&"f.php:4 f.php".to_string()), "{got:?}");
+    assert!(!got.iter().any(|o| o.starts_with("g.py")), "Python keeps case: {got:?}");
+}

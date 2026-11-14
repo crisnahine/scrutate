@@ -54,7 +54,13 @@ impl<'a> Names<'a> {
     pub fn references(&mut self, name: &str, max_results: u64) -> Result<Resolved> {
         let s = self.s;
         let bare = &crate::intel::bare_name(s, name)?;
-        let q = crate::instant::Query { want_spans: true, ..crate::resolve::name_search(bare, max_results) };
+        let mut q = crate::instant::Query { want_spans: true, ..crate::resolve::name_search(bare, max_results) };
+        // a name defined in a language that ignores case is looked for in any case, and kept in
+        // another case only in a file of such a language
+        let any_case = bare.is_ascii() && s.ix.named_any_case(bare)?.iter().any(|d| crate::langs::ignores_case(&d.path, &d.kind, &d.qualname));
+        if any_case {
+            q.pattern.case = crate::instant::Case::Insensitive;
+        }
         let walk = crate::files::repository_files(&s.ix.root);
         // the text index, when it holds the files as the last look found them, says which can match
         let files = crate::stores::grep_files(&s.ix, &q, &walk);
@@ -74,7 +80,9 @@ impl<'a> Names<'a> {
         truncated |= total as u64 > max_results;
         for h in hits {
             let line_text: std::sync::Arc<str> = h.text.trim_end_matches(['\n', '\r']).into();
-            for &(a, b) in h.spans.iter().take(max_results.saturating_sub(occurrences.len() as u64) as usize) {
+            let folds = !any_case || crate::langs::ignores_case(&h.path, "function", "");
+            let spans = h.spans.iter().filter(|&&(a, b)| folds || h.text.get(a..b) == Some(bare.as_str()));
+            for &(a, b) in spans.take(max_results.saturating_sub(occurrences.len() as u64) as usize) {
                 let ((da, db), col) = self.rv.decoded_span(&h.path, h.line, (a, b));
                 // the occurrence as this file spells it
                 let resolution = self.rv.resolve_at(&h.path, h.line, col, h.text.get(da..db).unwrap_or(bare));
