@@ -1298,24 +1298,7 @@ impl Index {
         let done = |db: &Connection| stamp_for.is_some() && Self::rebuild_reason(db).is_none();
         self.lex = None;
         self.lex_ver = None;
-        self.db.busy_timeout(Duration::ZERO)?;
-        let t0 = Instant::now();
-        let locked = loop {
-            if done(&self.db) {
-                break Ok(false);
-            }
-            match self.db.execute_batch("BEGIN IMMEDIATE") {
-                Err(rusqlite::Error::SqliteFailure(e, _))
-                    if matches!(e.code, rusqlite::ffi::ErrorCode::DatabaseBusy | rusqlite::ffi::ErrorCode::DatabaseLocked)
-                        && t0.elapsed() < Duration::from_secs(30) =>
-                {
-                    std::thread::sleep(Duration::from_millis(10))
-                }
-                r => break r.map(|()| true),
-            }
-        };
-        self.db.busy_timeout(Duration::from_secs(30))?;
-        if !locked? {
+        if !self.begin_waiting(done)? {
             return Ok(());
         }
         if done(&self.db) {
@@ -1616,12 +1599,16 @@ impl Index {
     }
 
     /// BEGIN IMMEDIATE, waiting for another writer as long as it writes, up to 10 minutes, or
-    /// until cancelled.
-    fn begin_waiting(&self) -> Result<()> {
+    /// until cancelled; every write path that waits takes the lock here. -> false, with no lock
+    /// taken, once `needless` holds (another process did the work meanwhile).
+    fn begin_waiting(&self, needless: impl Fn(&Connection) -> bool) -> Result<bool> {
         let t0 = Instant::now();
         // short busy waits, so a cancel is seen within a second
         self.db.busy_timeout(Duration::from_millis(500))?;
         let r = loop {
+            if needless(&self.db) {
+                break Ok(false);
+            }
             match self.db.execute_batch("BEGIN IMMEDIATE") {
                 Err(rusqlite::Error::SqliteFailure(e, _))
                     if matches!(e.code, rusqlite::ffi::ErrorCode::DatabaseBusy | rusqlite::ffi::ErrorCode::DatabaseLocked) =>
@@ -1633,7 +1620,7 @@ impl Index {
                         break Err(anyhow::anyhow!("another process has held the index write lock for 10 minutes"));
                     }
                 }
-                r => break r.map_err(Into::into),
+                r => break r.map(|()| true).map_err(Into::into),
             }
         };
         self.db.busy_timeout(Duration::from_secs(30))?;
@@ -1670,7 +1657,7 @@ impl Index {
         }
         // one writer at a time; readers keep working (WAL)
         if wait {
-            self.begin_waiting()?;
+            self.begin_waiting(|_| false)?;
         } else {
             self.db.busy_timeout(Duration::ZERO)?;
             let r = self.db.execute_batch("BEGIN IMMEDIATE");
@@ -2263,7 +2250,7 @@ impl Index {
         }
         let mut new_names: Vec<String> = live.iter().filter(|i| !merge.contains(i)).map(|&i| names[i].clone()).collect();
         if !merge.is_empty() {
-            retry_busy(|| self.db.execute_batch("BEGIN IMMEDIATE"))?;
+            self.begin_waiting(|_| false)?;
             let dest = self.new_segment_name()?;
             retry_busy(|| self.db.execute_batch("COMMIT"))?;
             {
@@ -2274,7 +2261,7 @@ impl Index {
             }
             new_names.push(dest);
         }
-        retry_busy(|| self.db.execute_batch("BEGIN IMMEDIATE"))?;
+        self.begin_waiting(|_| false)?;
         if self.segments() != names {
             // another writer changed the manifest while we were merging: our plan is stale. Drop the
             // merged segment (nothing refers to it) and let the next update compact again.
@@ -3003,6 +2990,35 @@ mod tests {
         });
         assert!(ix.update(false).is_err());
         assert!(t0.elapsed().as_secs() < 4, "{:?}", t0.elapsed());
+        writer.join().unwrap();
+        drop(ix);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_rebuild_for_another_schema_waits_for_a_writer_past_thirty_seconds() {
+        let root = std::env::temp_dir().join(format!("scrutate_ix_clear_wait_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+        let mut ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        ix.update(false).unwrap();
+        ix.set_meta("schema_version", "0").unwrap();
+        let db = ix.dir.join("index.db");
+        drop(ix);
+        let (locked, done) = std::sync::mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            let other = rusqlite::Connection::open(db).unwrap();
+            other.execute_batch("BEGIN IMMEDIATE").unwrap();
+            locked.send(()).unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(34));
+            other.execute_batch("ROLLBACK").unwrap();
+        });
+        done.recv().unwrap();
+        let t0 = std::time::Instant::now();
+        let ix = super::Index::open(&root, crate::models::ModelSet::none()).unwrap();
+        assert!(t0.elapsed().as_secs() >= 30, "{:?}", t0.elapsed());
+        assert_eq!(ix.meta("schema_version"), Some(super::SCHEMA_VERSION.to_string()));
         writer.join().unwrap();
         drop(ix);
         let _ = std::fs::remove_dir_all(&root);

@@ -181,7 +181,8 @@ incompatible index by itself, and that is never breaking.
   escape's reading. The command line, the language server and the tools turn paths into
   repository paths in one place ([CLI](docs/CLI.md#serve-mcp)).
 - `index`, `watch`, `serve --watch` and `reindex` wait for another writer for up to 10 minutes,
-  or until cancelled: they gave up with "database is locked" after 30 s. A `watch` burst whose
+  or until cancelled, and so do the rebuild of an index of an older schema and the merge of
+  segments after an update: they gave up with "database is locked" after 30 s. A `watch` burst whose
   update failed is followed by a walk of the tree, so its files are indexed
   ([CLI](docs/CLI.md#watch)).
 - `grep -c -U` no longer counts the empty match after each matched group's line end, as
