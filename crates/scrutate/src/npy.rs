@@ -293,6 +293,8 @@ pub fn save<T: Pod>(path: &Path, data: &[T], shape: &[usize]) -> Result<()> {
     f.write_all(&header_bytes(T::DESCR[0], shape))?;
     let bytes = unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, std::mem::size_of_val(data)) };
     f.write_all(bytes)?;
+    // on disk before the database names the segment, which a checkpoint makes durable
+    f.sync_all()?;
     Ok(())
 }
 

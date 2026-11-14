@@ -851,6 +851,16 @@ pub fn rename_settled(from: &Path, to: &Path) -> std::io::Result<()> {
     }
 }
 
+/// The directory's entries written to disk (Unix; Windows has no handle to a directory to flush,
+/// and NTFS journals its entries).
+pub fn sync_dir(dir: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    std::fs::File::open(dir)?.sync_all()?;
+    #[cfg(not(unix))]
+    let _ = dir;
+    Ok(())
+}
+
 /// `.gitignore` of the index directory, unless something is there already.
 pub(crate) fn write_gitignore(dir: &Path) -> std::io::Result<()> {
     let gi = dir.join(".gitignore");

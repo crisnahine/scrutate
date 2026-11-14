@@ -406,8 +406,9 @@ NFC with final sigma folded.
     (`GetFileInformationByName`, Windows 11 24H2 and later) or else by a handle opened for its
     attributes only, as CPython's `os.stat` does (`index::Listed`, `index::change_time`);
     SHA-1 verification;
-  - one `BEGIN IMMEDIATE` transaction per update; new segments written to a temp directory and
-    renamed (the name is taken inside that transaction, so a directory already under it was left
+  - one `BEGIN IMMEDIATE` transaction per update; new segments written to a temp directory,
+    each file and the directory flushed to disk, and renamed before the database names them, so
+    a checkpoint never makes a manifest durable ahead of its segments (the name is taken inside that transaction, so a directory already under it was left
     by a writer stopped before its commit, and is removed); deletions as liveness bitmaps;
   - background **compaction** (merge small segments / purge dead rows) that aborts if another
     writer moved the manifest; segment **GC** with an age guard inside the update's transaction;
