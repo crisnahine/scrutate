@@ -191,12 +191,12 @@ pub struct GrepArgs {
     /// print no line numbers (--json still has them)
     #[arg(short = 'N', long, overrides_with = "line_number")]
     pub no_line_number: bool,
-    /// lines of context after each match
-    #[arg(short = 'A', long, default_value_t = 0)]
-    pub after: usize,
-    /// lines of context before each match
-    #[arg(short = 'B', long, default_value_t = 0)]
-    pub before: usize,
+    /// lines of context after each match (wins over -C, as in ripgrep)
+    #[arg(short = 'A', long)]
+    pub after: Option<usize>,
+    /// lines of context before each match (wins over -C, as in ripgrep)
+    #[arg(short = 'B', long)]
+    pub before: Option<usize>,
     /// lines of context around each match
     #[arg(short = 'C', long)]
     pub context: Option<usize>,
@@ -365,8 +365,8 @@ fn plain_grep(args: &[String]) -> Option<(bool, GrepArgs)> {
         no_filename: false,
         line_number: false,
         no_line_number: false,
-        after: 0,
-        before: 0,
+        after: None,
+        before: None,
         context: None,
         max_count: None,
         max_results: None,
@@ -1296,8 +1296,8 @@ pub fn run() -> Result<i32> {
                 max_count,
                 max_results,
                 first_in_path_order: sort,
-                before: context.unwrap_or(before),
-                after: context.unwrap_or(after),
+                before: before.or(context).unwrap_or(0),
+                after: after.or(context).unwrap_or(0),
                 want_bytes: stats || json,
                 want_spans: json || color_choice(no_color) != ColorChoice::Never,
                 text_spans: true,

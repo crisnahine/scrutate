@@ -315,6 +315,18 @@ fn a_case_folded_class_that_matches_nothing_finds_nothing() {
 }
 
 #[test]
+fn after_and_before_win_over_context_in_either_order() {
+    let d = Dir::new("ctxorder");
+    d.write("a.txt", b"a\nb\nfoo\nc\nd\ne\n");
+    for args in [["-C1", "-A3"], ["-A3", "-C1"]] {
+        let (_, out, err) = d.run(&[&["grep"][..], &args, &["foo", "a.txt"]].concat());
+        assert_eq!(out, "2-b\n3:foo\n4-c\n5-d\n6-e\n", "{args:?}: {err}");
+    }
+    let (_, out, _) = d.run(&["grep", "-B2", "-C0", "foo", "a.txt"]);
+    assert_eq!(out, "1-a\n2-b\n3:foo\n");
+}
+
+#[test]
 fn smart_case_folds_only_a_pattern_with_lowercase_literals() {
     let d = Dir::new("smart");
     d.write("a.txt", b"ABC\nabc\n");

@@ -156,6 +156,8 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `grep -A` and `-B` win over `-C` in either order, as in ripgrep: `-C1 -A3` showed one line
+  after each match, not three ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
 - `grep -i` with a class that matches nothing (`ab[^\s\S]`) finds nothing and exits 1, as
   ripgrep does; it stopped with an internal error.
 - `dead` and `callers` match a Fortran, Pascal or Ada name, and a PHP function outside a class,
