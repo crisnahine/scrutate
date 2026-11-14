@@ -240,7 +240,8 @@ jobs:
             echo "AR_wasm32_wasip1=$sdk/bin/llvm-ar"
             echo "CFLAGS_wasm32_wasip1=--sysroot=$sdk/share/wasi-sysroot"
           } >> "$GITHUB_ENV"
-      - run: cargo check --target wasm32-wasip1 -p scrutate --no-default-features --locked
+      # only the link step catches a missing symbol or library
+      - run: cargo build --release --target wasm32-wasip1 -p scrutate --no-default-features --locked
       - run: cargo clippy -p scrutate --all-targets --no-default-features --locked -- -D warnings
   compat:
     name: extra-langs feature, oldest supported Rust

@@ -937,7 +937,7 @@ without its lock when locking is unsupported (one process sees the files), and t
 names of the answer cache, the frecency state and a seeded index leave the process id out.
 PCRE2's JIT has no wasm backend, so that build leaves out the `pcre2` feature:
 `cargo build --release -p scrutate --target wasm32-wasip1 --no-default-features`, with the C
-compiler of a wasi-sdk for SQLite and the grammars. The `wasi` job of `ci.yml` checks that build,
+compiler of a wasi-sdk for SQLite and the grammars. The `wasi` job of `ci.yml` runs that build,
 and runs clippy on the native build without `pcre2`, on every push.
 
 ## Models (`crates/scrutate/models/`, `models.rs`)
