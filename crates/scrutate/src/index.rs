@@ -3242,13 +3242,17 @@ mod tests {
             let mut ix = super::Index::open(&root, std::sync::Arc::clone(&models)).unwrap();
             ix.update(false).unwrap();
             let seg = ix.seg_dir.join(&ix.segments()[0]);
+            // Windows refuses to replace or remove a file while a map of it is open
+            drop(ix);
             if case == "gone" {
                 std::fs::remove_file(seg.join("vec.npy")).unwrap();
                 std::fs::remove_file(seg.join("vscale.npy")).unwrap();
             } else {
                 // twice the model's width, the rows padded with zeros
-                let v = crate::npy::Npy::open(&seg.join("vec.npy")).unwrap();
-                let (n, k) = (v.shape[0], v.shape[2]);
+                let (n, k) = {
+                    let v = crate::npy::Npy::open(&seg.join("vec.npy")).unwrap();
+                    (v.shape[0], v.shape[2])
+                };
                 crate::npy::save(&seg.join("vec.npy"), &vec![0i8; n * 2 * 2 * k], &[n, 2, 2 * k]).unwrap();
             }
             let mut ix = super::Index::open(&root, std::sync::Arc::clone(&models)).unwrap();
