@@ -1501,8 +1501,12 @@ pub fn run() -> Result<i32> {
             }
             Ok(i32::from(r.is_empty()))
         }
-        Cmd::Files { query, limit, json } => run_op(&cli.root, Op::Files { query, limit: limit as usize }, json, page, None),
+        Cmd::Files { query, limit, json } => {
+            crate::files::root_dir(&cli.root)?;
+            run_op(&cli.root, Op::Files { query, limit: limit as usize }, json, page, None)
+        }
         Cmd::Tsquery { lang, query, paths, rewrite: Some(template), write, .. } => {
+            crate::files::root_dir(&cli.root)?;
             if cli.offset != 0 {
                 anyhow::bail!("--offset does nothing with --rewrite: the diff is printed whole");
             }
@@ -1543,6 +1547,7 @@ pub fn run() -> Result<i32> {
         }
         Cmd::Dead { path, json } => run_op(&cli.root, Op::Dead { path: path.map(|p| here.path(&p)) }, json, page, outside.as_deref()),
         Cmd::Tsquery { lang, query, paths, limit, json, no_cache, .. } => {
+            crate::files::root_dir(&cli.root)?;
             // streamed: one JSON object or one text line per capture, in path order
             let stdout = std::io::stdout();
             let mut w = std::io::BufWriter::new(stdout.lock());

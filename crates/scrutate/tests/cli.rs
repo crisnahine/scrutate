@@ -91,6 +91,19 @@ fn exit_codes_and_plain_output() {
 }
 
 #[test]
+fn a_root_that_is_no_directory_is_an_error_for_files_and_tsquery_too() {
+    let r = Repo::new("badroot");
+    r.write("a.py", b"x = 1\n");
+    for root in ["nope", "a.py"] {
+        for args in [&["files", "x"][..], &["tsquery", "python", "(identifier) @i"]] {
+            let (code, out, err) = r.run(&[&["--root", root][..], args].concat());
+            assert_eq!(code, 2, "--root {root} {args:?}: {out}{err}");
+            assert!(err.contains(if root == "nope" { "no such directory" } else { "not a directory" }), "{err}");
+        }
+    }
+}
+
+#[test]
 fn json_lines_schema_and_modes() {
     let r = python_repo("json");
     let (code, out, _) = r.run(&["grep", "-F", "--json", "--sort", "import os", "."]);

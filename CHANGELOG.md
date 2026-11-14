@@ -158,6 +158,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `files` and `tsquery` with a `--root` that does not exist or is a file stop with "no such
+  directory" or "not a directory" and exit 2, as the other commands do; they answered "no file
+  matches" with exit 1.
 - The definition patterns of every `[[language]]` table share one regex size budget, so a
   repository's `.scrutate.toml` with many large patterns is refused at once with the pattern's
   line; each pattern had the whole budget, and ten took 340 MB and three seconds in every command,
