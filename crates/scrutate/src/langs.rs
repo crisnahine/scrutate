@@ -2357,7 +2357,3 @@ pub fn spec_for(path: &str) -> Option<&'static LangSpec> {
     // case-sensitive extensions (.R vs .r, .S vs .s) are the same grammar here, so lowercase is fine
     best.map(|(s, _)| s)
 }
-
-pub fn language_ids() -> Vec<&'static str> {
-    LANGS.iter().map(|s| s.id).collect()
-}

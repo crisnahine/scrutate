@@ -262,10 +262,6 @@ impl Npy {
         }
         Ok(out)
     }
-
-    pub fn is_bool(&self) -> bool {
-        self.descr == "|b1"
-    }
 }
 
 fn header_bytes(descr: &str, shape: &[usize]) -> Vec<u8> {
