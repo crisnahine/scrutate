@@ -335,9 +335,7 @@ impl Server {
         if !same_share(&slashed(&p), &slashed(&self.root), cfg!(windows)) {
             return None;
         }
-        let p = std::fs::canonicalize(&p).unwrap_or(p);
-        let r = p.strip_prefix(&self.root).ok()?;
-        Some(crate::instant::slashed(r.to_string_lossy()))
+        crate::ops::repo_rel(&self.root, &p)
     }
 
     fn lines(&self) -> Lines<'_> {

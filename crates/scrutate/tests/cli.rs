@@ -2603,7 +2603,7 @@ fn map_ranks_the_hub_first_and_fits_every_budget() {
     let (code, out, _) = r.run(&["map", "sub"]);
     assert_eq!(code, 0);
     assert!(out.starts_with("sub/inner.py  (rank 1, score ") && out.lines().all(|l| l.starts_with(' ') || l.starts_with("sub/")), "{out}");
-    assert_eq!(r.run(&["map", "nothing_here"]).0, 1);
+    assert_eq!(r.run(&["map", "nothing_here"]).0, 2);
 }
 
 /// `top -> middle -> deep`, each in its own file.

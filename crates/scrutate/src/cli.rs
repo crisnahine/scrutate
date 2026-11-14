@@ -976,27 +976,13 @@ impl Here {
         if arg.is_empty() || !self.cwd.join(p).exists() {
             return Named::Given;
         }
-        if self.inside && !p.is_absolute() {
-            // spelled from here, so a symbolic link inside the repository keeps its name
-            let lexical = p.components().try_fold(self.below.clone(), |mut parts, c| {
-                match c {
-                    std::path::Component::Normal(n) => parts.push(n.to_string_lossy().into_owned()),
-                    std::path::Component::ParentDir => {
-                        parts.pop()?;
-                    }
-                    _ => {}
-                }
-                Some(parts)
-            });
-            if let Some(parts) = lexical {
-                return Named::Root(parts.join("/"));
-            }
+        // spelled from here, so a symbolic link inside the repository keeps its name
+        let from_root = if self.inside && !p.is_absolute() { PathBuf::from(self.below.join("/")).join(p) } else { self.cwd.join(p) };
+        if let Some(rel) = crate::ops::repo_rel(&self.canonical_root, &from_root) {
+            return Named::Root(rel);
         }
         match std::fs::canonicalize(self.cwd.join(p)) {
-            Ok(abs) => match abs.strip_prefix(&self.canonical_root) {
-                Ok(rel) => Named::Root(crate::instant::slashed(rel.to_string_lossy())),
-                Err(_) => Named::Outside(abs),
-            },
+            Ok(abs) => Named::Outside(abs),
             Err(_) => Named::Given,
         }
     }

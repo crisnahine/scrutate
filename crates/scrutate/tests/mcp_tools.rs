@@ -1076,3 +1076,23 @@ fn a_large_answer_pages_its_structured_items_to_the_end_in_both_forms() {
         assert_eq!(flat(pages), items(tool, textual, &whole["result"]), "{tool}");
     }
 }
+
+#[test]
+fn repo_map_and_dead_code_take_an_absolute_directory_and_refuse_a_missing_one() {
+    let mut r = Repo::new("abs_dir", &[("src/a.py", "def used():\n    return 1\n\n\ndef unused():\n    return used()\n"), ("top.py", "X = 1\n")]);
+    let abs = r.root.join("src").to_string_lossy().into_owned();
+    for tool in ["repo_map", "dead_code"] {
+        let plain = r.ok(tool, json!({"path": "src"}));
+        assert!(plain.contains("a.py"), "{tool}: {plain}");
+        assert_eq!(r.ok(tool, json!({"path": abs})), plain, "{tool}");
+        assert!(r.err(tool, json!({"path": "nope"})).contains("no such file or directory"), "{tool}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn grep_code_takes_a_path_whose_name_holds_a_backslash() {
+    let mut r = Repo::new("backslash_dir", &[("x\\ty/f.txt", "needle\n"), ("other.txt", "needle\n")]);
+    let text = r.ok("grep_code", json!({"pattern": "needle", "path": "x\\ty"}));
+    assert!(text.contains("f.txt") && !text.contains("other.txt"), "{text}");
+}

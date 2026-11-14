@@ -319,7 +319,7 @@ impl Scope {
         f.globs = self.globs.iter().cloned().chain(skip).collect();
         let path = self.path.as_deref().map(|p| p.trim_start_matches("./")).filter(|p| !p.is_empty() && *p != ".");
         if let Some(p) = path {
-            let p = crate::fmt::unshown(p);
+            let p = unescaped(root, p);
             if !inside(root, &p) {
                 bail!("path outside repo: give a path relative to the repository root, or an absolute one under it");
             }
@@ -697,15 +697,15 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
             let (caps, stopped) = cut(caps, *limit, RAISE_LIMIT);
             Answer::Captures(caps, stopped)
         }
-        Op::Map { path } => Answer::Map(crate::repomap::map(s, path.as_deref().map(|p| repo_path(s, p)).as_deref())?),
+        Op::Map { path } => {
+            let path = path.as_deref().map(|p| repo_path(s, p)).filter(|p| !p.is_empty() && p != ".");
+            existing(s, path.as_deref())?;
+            Answer::Map(crate::repomap::map(s, path.as_deref())?)
+        }
         Op::Path { from, to, depth } => Answer::Path(Box::new(Names::new(s)?.path(from, to, *depth)?)),
         Op::Dead { path } => {
             let path = path.as_deref().map(|p| repo_path(s, p)).filter(|p| !p.is_empty() && p != ".");
-            if let Some(p) = &path {
-                if !inside(&s.ix.root, p) || !s.ix.root.join(p).exists() {
-                    bail!("no such file or directory in the repository: {}", echo(p));
-                }
-            }
+            existing(s, path.as_deref())?;
             Answer::Dead(Names::new(s)?.dead(path.as_deref())?)
         }
         Op::Reindex { .. } => bail!("reindex keeps every store current: run it through Repo"),
@@ -716,6 +716,25 @@ pub fn run(s: &mut Searcher, op: &Op) -> Result<Answer> {
 
 /// Whether `root` joined with `path` stays under `root` by their parts alone (`.` dropped and
 /// `..` taking a part away), with no file looked at.
+/// `p` with the escapes an answer writes read back (`a\tb` as a tab), when that names a file or
+/// directory and prints as `p` again; else `p` as written (a directory named `x\ty`).
+fn unescaped<'p>(root: &std::path::Path, p: &'p str) -> std::borrow::Cow<'p, str> {
+    let back = crate::fmt::unshown(p);
+    if back != p && crate::fmt::shown(&back) == p && root.join(&*back).exists() {
+        back
+    } else {
+        std::borrow::Cow::Borrowed(p)
+    }
+}
+
+/// An error unless `path` (from the root, or none) is a file or directory of the repository.
+fn existing(s: &Searcher, path: Option<&str>) -> Result<()> {
+    match path {
+        Some(p) if !inside(&s.ix.root, p) || !s.ix.root.join(p).exists() => bail!("no such file or directory in the repository: {}", echo(p)),
+        _ => Ok(()),
+    }
+}
+
 fn inside(root: &std::path::Path, path: &str) -> bool {
     let mut out = std::path::PathBuf::new();
     for c in root.join(path).components() {
@@ -851,24 +870,48 @@ pub fn capture_line(c: &Capture) -> String {
     format!("{}:{}:{}  @{} ({})  {}", shown(&c.path), c.line, c.column, c.capture, c.kind, shown(&c.text))
 }
 
-/// `path` as the index spells it, when it names a repository file in a spelling `read_code`
-/// accepts (`./a.py`, `pkg/../a.py`, another case on a case-insensitive file system); else as given.
-pub fn repo_path(s: &Searcher, path: &str) -> String {
-    // a path that leaves the repository names no file of it (`/a.py` is not `a.py`), and is not looked at
-    if !inside(&s.ix.root, path) {
-        return path.to_string();
+/// `path` from the root of `root` with `.`, `..` and empty parts gone: a path from the root, or
+/// an absolute one under it (as written, else once its links are resolved). None when it leaves
+/// the root, by its parts or by being elsewhere.
+pub fn repo_rel(root: &std::path::Path, path: &std::path::Path) -> Option<String> {
+    use std::path::Component;
+    let lexical = |p: &std::path::Path| {
+        let mut parts: Vec<String> = Vec::new();
+        for c in p.components() {
+            match c {
+                Component::Normal(n) => parts.push(n.to_string_lossy().into_owned()),
+                Component::ParentDir => {
+                    parts.pop()?;
+                }
+                _ => {}
+            }
+        }
+        Some(parts.join("/"))
+    };
+    if !path.is_absolute() {
+        return lexical(path);
     }
-    let mut parts: Vec<&str> = Vec::new();
-    for seg in path.split('/') {
-        match seg {
-            "" | "." => {}
-            // above the root: no repository file, and the answer names the path as given
-            ".." if parts.pop().is_none() => return path.to_string(),
-            ".." => {}
-            seg => parts.push(seg),
+    if inside(root, &path.to_string_lossy()) {
+        // `inside` read the `..` parts already; what is left starts with the root's own parts
+        let rest = lexical(path)?;
+        let top = lexical(root)?;
+        if let Some(r) = rest.strip_prefix(&top).filter(|r| r.is_empty() || r.starts_with('/')) {
+            return Some(r.trim_start_matches('/').to_string());
         }
     }
-    let plain = parts.join("/");
+    let real = std::fs::canonicalize(path).ok()?;
+    let top = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    real.strip_prefix(&top).ok().map(|r| crate::instant::slashed(r.to_string_lossy()))
+}
+
+/// `path` as the index spells it, when it names a repository file in a spelling `read_code`
+/// accepts (`./a.py`, `pkg/../a.py`, `<root>/a.py`, another case on a case-insensitive file
+/// system); else as given.
+pub fn repo_path(s: &Searcher, path: &str) -> String {
+    // a path that leaves the repository names no file of it (`/a.py` is not `a.py`), and is not looked at
+    let Some(plain) = inside(&s.ix.root, path).then(|| repo_rel(&s.ix.root, std::path::Path::new(path))).flatten() else {
+        return path.to_string();
+    };
     let indexed = |p: &str| s.ix.has_file(p);
     // a path copied from an answer has its control characters and backslashes written as
     // escapes; the text an answer prints for a file names that file, whatever else exists
