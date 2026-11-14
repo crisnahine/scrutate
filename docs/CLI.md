@@ -931,8 +931,10 @@ index when `.scrutate/text/` exists (`watch` never creates one; `scrutate index`
 
 `SCRUTATE_WATCH_DEBUG=1` prints one stderr line per burst (the number of paths, and whether the
 tree was walked). Each update that changed something prints one stderr line. A failed first
-update stops the watch; a later failure is reported and the watch goes on. Ctrl-C stops it after
-the update in progress (exit 130). When `PATH` is removed or moved away, `watch` stops with an
+update stops the watch; a later failure is reported and the watch goes on. Ctrl-C stops it (exit 130):
+a code index update in progress stops at its next batch of files, or block of rows while a large
+segment's vectors are clustered, and leaves the index as it was; a text index update in progress
+ends first. When `PATH` is removed or moved away, `watch` stops with an
 error (exit 2). Other processes can read and update the same index meanwhile; the indexes' own
 locks order the writers, and stopping the process mid-update leaves the previous state in place.
 

@@ -161,6 +161,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- Ctrl-C stops a code index update while a large segment's vectors are clustered (`watch`, a
+  cancelled `reindex`): it waited for the clustering to end, two minutes in a debug build of a
+  20,000-file tree ([CLI](docs/CLI.md#watch)).
 - A path that leaves the repository and comes back by its parts (`outline ../../repo/pkg/a.py`
   from `repo/pkg`, an MCP `path` of `../repo/pkg`) names the repository's file or directory:
   `outline` said the file had no symbols, `dead_code` and `repo_map` found nothing, and

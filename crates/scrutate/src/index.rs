@@ -1024,18 +1024,24 @@ fn is_busy(e: &rusqlite::Error) -> bool {
     matches!(e, rusqlite::Error::SqliteFailure(f, _) if matches!(f.code, rusqlite::ffi::ErrorCode::DatabaseBusy | rusqlite::ffi::ErrorCode::DatabaseLocked))
 }
 
+/// Whether an operation with this `cancel` flag should stop: the flag, or the front end's stop
+/// (`stop_waits_on`, Ctrl-C under `watch`).
+pub(crate) fn stopping(cancel: &std::sync::atomic::AtomicBool) -> bool {
+    use std::sync::atomic::Ordering::Relaxed;
+    cancel.load(Relaxed) || STOP.get().is_some_and(|s| s.load(Relaxed))
+}
+
 /// Run `f` again while another connection holds a lock it needs (SQLITE_BUSY or LOCKED), up to
 /// 10 minutes or until `cancel` or the front end's stop (`stop_waits_on`) is set: every write of
 /// the index that waits for another writer waits here. Each try waits at most half a second in
 /// SQLite's busy handler, so a stop is seen within that.
 fn wait_busy<T>(db: &Connection, cancel: &std::sync::atomic::AtomicBool, mut f: impl FnMut(&Connection) -> rusqlite::Result<T>) -> Result<T> {
-    use std::sync::atomic::Ordering::Relaxed;
     let t0 = Instant::now();
     db.busy_timeout(Duration::from_millis(500))?;
     let r = loop {
         match f(db) {
             Err(e) if is_busy(&e) => {
-                if cancel.load(Relaxed) || STOP.get().is_some_and(|s| s.load(Relaxed)) {
+                if stopping(cancel) {
                     break Err(anyhow::anyhow!("cancelled"));
                 }
                 if t0.elapsed() > Duration::from_secs(600) {
@@ -2241,7 +2247,8 @@ impl Index {
             let vectors = if model.is_some() { crate::lex::Vectors::Made(k, &of) } else { crate::lex::Vectors::Dropped };
             let dest = self.new_segment_name()?;
             seg_names.push(dest.clone());
-            crate::lex::merge_segments_with(&self.seg_dir.join(&dest), &[&seg], &[&alive], vectors)?;
+            let cancel = Arc::clone(&self.cancel);
+            crate::lex::merge_segments_with(&|| stopping(&cancel), &self.seg_dir.join(&dest), &[&seg], &[&alive], vectors)?;
             names.push(dest);
         }
         todo.extend(again);
@@ -2271,7 +2278,8 @@ impl Index {
     fn flush_segment(&mut self, builder: SegmentBuilder, seg_names: &mut Vec<String>) -> Result<()> {
         let t = Instant::now();
         let name = self.new_segment_name()?;
-        builder.write(&self.seg_dir.join(&name))?;
+        let cancel = Arc::clone(&self.cancel);
+        builder.write(&|| stopping(&cancel), &self.seg_dir.join(&name))?;
         prof::add(&prof::SEGMENT, t);
         let mut names = self.segments();
         names.push(name.clone());
@@ -2382,7 +2390,8 @@ impl Index {
                 let store = self.lex.as_ref().unwrap();
                 let segs: Vec<&crate::lex::Segment> = merge.iter().map(|&i| &store.segs[i]).collect();
                 let al: Vec<&[bool]> = merge.iter().map(|&i| alive[i].as_slice()).collect();
-                merge_segments(&self.seg_dir.join(&dest), &segs, &al)?;
+                let cancel = Arc::clone(&self.cancel);
+                merge_segments(&|| stopping(&cancel), &self.seg_dir.join(&dest), &segs, &al)?;
             }
             new_names.push(dest);
         }
