@@ -158,6 +158,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- Text answers show bidi marks, embeddings, overrides and isolates and the line and paragraph
+  separators in a path as escapes (`\u{202e}`), as they show control characters: a file named
+  `bidi<U+202E>yp.txt` displayed as `biditxt.py` ([CLI](docs/CLI.md#serve-mcp)).
 - `files` and `tsquery` with a `--root` that does not exist or is a file stop with "no such
   directory" or "not a directory" and exit 2, as the other commands do; they answered "no file
   matches" with exit 1.

@@ -753,8 +753,9 @@ servers on one root, the first offers the socket.
   argument name`; `read_code` without either says `missing path or symbol` and what each takes),
   and JSON `null` is the same as leaving an argument out.
   An error quotes at most 200 characters of an argument. Every path argument may be written `./x`
-  or `pkg/../x`. In text answers, control characters in a path show as escapes (`\n`, `\x1b`);
-  the JSON form keeps them as they are. A path or location written that way is read back, so
+  or `pkg/../x`. In text answers, control characters in a path show as escapes (`\n`, `\x1b`),
+  and so do the characters that reorder text or break a line (bidi marks, embeddings,
+  overrides and isolates, U+2028 and U+2029, as `\u{202e}`); the JSON form keeps them as they are. A path or location written that way is read back, so
   what an answer prints can be passed to the next call.
 
 Per tool:
