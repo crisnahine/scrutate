@@ -873,10 +873,10 @@ fn similar_code_reads_a_location_as_the_other_tools_read_it() {
         assert_eq!(r.ok("similar_code", json!({"target": target})), want, "{target}");
         assert!(!r.call("find_symbol", json!({"name": target})).0, "{target}");
     }
-    // a path that leaves the root is not looked at, though it comes back to the same file
+    // a path that leaves the root by its parts and comes back is read from the root, as the
+    // other tools read it
     let name = r.root.file_name().unwrap().to_string_lossy().into_owned();
-    let (failed, text) = r.call("similar_code", json!({"target": format!("../{name}/src/geo.py:1")}));
-    assert!(failed && text.contains("no symbol or location matches"), "{text}");
+    assert_eq!(r.ok("similar_code", json!({"target": format!("../{name}/src/geo.py:1")})), want);
 }
 
 #[cfg(unix)]
@@ -1135,4 +1135,19 @@ fn a_concise_page_too_long_for_max_bytes_still_says_how_to_go_on() {
     assert!(text.len() <= 1000, "{}", text.len());
     assert!(!text.contains("this item is cut"), "{text}");
     assert!(text.contains("call again with offset="), "{text}");
+}
+
+/// A tool's path that leaves the repository and comes back into it names the repository's
+/// directory, as the same path without the detour does.
+#[test]
+fn a_tool_path_that_leaves_the_repository_and_comes_back_names_its_directory() {
+    let mut r = Repo::new("out_and_back", &[("pkg/a.py", "def used():\n    return 1\n\ndef dead_one():\n    return used()\n")]);
+    let name = r.root.file_name().unwrap().to_string_lossy().into_owned();
+    let detour = format!("../{name}/pkg");
+    for tool in ["dead_code", "repo_map"] {
+        let plain = r.ok(tool, json!({"path": "pkg"}));
+        assert_eq!(r.ok(tool, json!({"path": detour})), plain, "{tool}");
+    }
+    let plain = r.ok("grep_code", json!({"pattern": "return", "path": "pkg"}));
+    assert_eq!(r.ok("grep_code", json!({"pattern": "return", "path": detour})), plain);
 }

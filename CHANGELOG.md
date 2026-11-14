@@ -161,6 +161,10 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- A path that leaves the repository and comes back by its parts (`outline ../../repo/pkg/a.py`
+  from `repo/pkg`, an MCP `path` of `../repo/pkg`) names the repository's file or directory:
+  `outline` said the file had no symbols, `dead_code` and `repo_map` found nothing, and
+  `grep_code` named files by the detour ([CLI](docs/CLI.md#answers-from-the-index-one-definition-for-every-front-end)).
 - `setup --uninstall` keeps text added after the scrutate block on its own line: with a file that
   had no last line break, it joined that text to the line above the block
   ([CLI](docs/CLI.md#setup-and-the-grep-hook)).

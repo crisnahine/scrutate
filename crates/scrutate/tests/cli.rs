@@ -2712,3 +2712,17 @@ fn a_named_compressed_file_whose_text_has_a_nul_is_a_binary_match() {
     let (code, out, _) = r.run(&["grep", "-z", "needle"]);
     assert_eq!((code, out.as_str()), (1, ""));
 }
+
+/// A path that leaves the repository and comes back into it (`../../repo/pkg/a.py` from
+/// `repo/pkg`) names the repository's file.
+#[test]
+fn a_path_that_leaves_the_repository_and_comes_back_names_its_file() {
+    let r = Repo::new("out_and_back");
+    fs::create_dir_all(r.root.join(".git")).unwrap();
+    r.write("pkg/a.py", b"def used():\n    return 1\n\ndef dead_one():\n    return used()\n");
+    assert_eq!(r.run(&["index"]).0, 0);
+    let name = r.root.file_name().unwrap().to_string_lossy().into_owned();
+    let (code, out, err) = run_in(&r.root.join("pkg"), &["outline", &format!("../../{name}/pkg/a.py")], &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("function  used") && out.contains("function  dead_one"), "{out}");
+}

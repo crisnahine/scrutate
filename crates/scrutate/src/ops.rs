@@ -325,6 +325,8 @@ impl Scope {
             if !inside(root, &p) {
                 bail!("path outside repo: give a path relative to the repository root, or an absolute one under it");
             }
+            // spelled from the root, so the answer names files as without a detour (`../repo/pkg`)
+            let p = repo_rel(root, std::path::Path::new(&*p)).map_or(p, std::borrow::Cow::Owned);
             // a link that leaves the repository reads as a missing path, as read_code answers it
             match std::fs::canonicalize(root.join(&*p)) {
                 Ok(c) if c.starts_with(root) => f.paths = crate::instant::Paths::Walk(vec![root.join(&*p)]),
@@ -935,7 +937,9 @@ pub fn repo_rel(root: &std::path::Path, path: &std::path::Path) -> Option<String
         Some(parts.join("/"))
     };
     if !path.is_absolute() {
-        return lexical(path);
+        // one that leaves the root and comes back by its parts (`../repo/pkg`) is resolved from
+        // the root, as `inside` reads it, with no file looked at
+        return lexical(path).or_else(|| inside(root, &path.to_string_lossy()).then(|| repo_rel(root, &root.join(path))).flatten());
     }
     if inside(root, &path.to_string_lossy()) {
         // `inside` read the `..` parts already; what is left starts with the root's own parts
