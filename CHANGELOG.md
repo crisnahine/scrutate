@@ -161,6 +161,8 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- The Arabic letter mark (U+061C) in a path or name is shown as `\u{61c}`, as the other bidi
+  marks are: it was printed raw ([CLI](docs/CLI.md#conventions)).
 - `grep --index` skips the file standard output writes to, as the walk does: with an earlier
   search's output in the text index, `grep --index foo > out.txt` searched its own output and grew
   it until the disk filled ([CLI](docs/CLI.md#engine-a-grep-alias-g)).

@@ -51,10 +51,10 @@ pub fn shown(s: &str) -> Cow<'_, str> {
 }
 
 /// A character a terminal does not show as itself: a control character, one that reorders the text
-/// around it (bidi marks, embeddings, overrides and isolates: `bidi\u{202e}yp.txt` displays as
+/// around it (bidi marks, the Arabic letter mark included, embeddings, overrides and isolates: `bidi\u{202e}yp.txt` displays as
 /// `biditxt.py`) or one that breaks the line.
 fn hidden(c: char) -> bool {
-    c.is_control() || matches!(c, '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{2028}' | '\u{2029}')
+    c.is_control() || matches!(c, '\u{61c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{2028}' | '\u{2029}')
 }
 
 fn escaped(s: &str, backslash: bool) -> Cow<'_, str> {
@@ -146,6 +146,7 @@ mod tests {
             ("bidi\u{202e}yp.txt", r"bidi\u{202e}yp.txt"),
             ("a\u{2066}b\u{2069}c", r"a\u{2066}b\u{2069}c"),
             ("x\u{200f}y", r"x\u{200f}y"),
+            ("a\u{61c}b.py", r"a\u{61c}b.py"),
             ("one\u{2028}two\u{2029}", r"one\u{2028}two\u{2029}"),
         ] {
             assert_eq!(shown(name), want);
