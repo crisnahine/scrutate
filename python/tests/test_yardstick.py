@@ -91,3 +91,20 @@ def test_a_semantic_tool_is_ranked_by_where_its_first_relevant_hit_falls():
     assert all(r["status"] == "ok" and len(r["times"]) == 2 for r in out["rows"])
     quality = Y.summary(out["rows"])["W8"]["quality"]
     assert quality == {"scrutate-mcp": {"mrr10": 1.0, "hit5": 1.0}, "finds it second": {"mrr10": 0.5, "hit5": 1.0}, "misses": {"mrr10": 0.0, "hit5": 0.0}}
+
+
+def test_a_run_passes_only_when_every_scrutate_form_could_run():
+    absent = run(Fake("scrutate-mcp", RIGHT, missing="no binary at /x"), Fake("rival", RIGHT))
+    assert not Y.passed(absent)
+    assert not Y.passed(run(Fake("scrutate-mcp", RIGHT, fails=True)))
+    assert Y.passed(run(Fake("scrutate-mcp", RIGHT), Fake("rival", RIGHT, missing="not on PATH")))
+
+
+class NoCalls(Fake):
+    def ask(self, workload, query):
+        raise Y.Unsupported("no call hierarchy")
+
+
+def test_a_query_scrutate_cannot_express_still_passes():
+    assert Y.passed(run(Fake("scrutate-mcp", RIGHT), NoCalls("scrutate-lsp", RIGHT)))
+

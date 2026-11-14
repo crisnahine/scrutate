@@ -144,6 +144,14 @@ def summary(rows: list[dict]) -> dict:
     return out
 
 
+def passed(out: dict) -> bool:
+    """Every scrutate form ran, and answered right whatever it can express (a query it cannot,
+    such as the language server's callers, is missing, not failed)."""
+    ours = {t: v for t, v in out["tools"].items() if t.startswith("scrutate")}
+    return (all(not v["missing"] and "error" not in v for v in ours.values())
+            and all(r["status"] == "ok" or r["status"].startswith("missing") for r in out["rows"] if r["tool"] in ours))
+
+
 def adapters(binary: str | None = None) -> list:
     """Every adapter: scrutate's forms first, then the rivals (each says why when it cannot run)."""
     from rivals import index, lsp, scrutate, semantic, text
@@ -235,7 +243,8 @@ def main() -> int:
             with open(os.path.join(corpus, "compile_commands.json"), "w") as f:
                 json.dump([{"directory": os.path.realpath(corpus), "file": "point.c", "command": "cc -c point.c"}], f)
         out = measure(adapters(), queries, a.runs, a.warmup, os.path.realpath(corpus), work)
-    out["environment"] = lb.environment()
+    # environment() hashes the binary; without one, the scrutate rows say missing and passed() fails the run
+    out["environment"] = lb.environment() if os.path.isfile(lb.SCRUTATE) else {"scrutate": f"missing: {lb.SCRUTATE}"}
     # the pinned rivals' versions, as bench/competitors/install_rivals.sh wrote them
     rivals = os.path.join(os.path.dirname(shutil.which("ck") or shutil.which("ctags") or "/nonexistent/bin/x"), "..", "versions.json")
     if os.path.exists(rivals):
@@ -248,8 +257,7 @@ def main() -> int:
     if a.out:
         with open(a.out, "w") as f:
             json.dump(out, f, indent=1)
-    ours_ok = all(r["status"] == "ok" or r["status"].startswith("missing") for r in out["rows"] if r["tool"].startswith("scrutate"))
-    return 0 if ours_ok else 1
+    return 0 if passed(out) else 1
 
 
 if __name__ == "__main__":
