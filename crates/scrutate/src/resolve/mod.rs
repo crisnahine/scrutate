@@ -802,7 +802,6 @@ impl<'a> Resolver<'a> {
         fi
     }
 
-    /// Drops the loaded copy of `path`; a later use loads it again.
     /// The names `path` imports under a local name of its own, as (local, imported name):
     /// `from util import helper as h` is ("h", "helper").
     pub(crate) fn aliases(&mut self, path: &str) -> Vec<(String, String)> {
@@ -814,6 +813,7 @@ impl<'a> Resolver<'a> {
             .collect()
     }
 
+    /// Drops the loaded copy of `path`; a later use loads it again.
     pub fn forget(&mut self, path: &str) {
         self.cache.remove(path);
         // node ids name nodes of trees still loaded
