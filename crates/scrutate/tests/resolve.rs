@@ -276,6 +276,18 @@ fn rust_a_use_of_an_inline_module_item_is_that_item() {
 }
 
 #[test]
+fn rust_a_trait_default_method_is_found_on_the_implementing_type() {
+    let r = Repo::new(
+        "rs_trait_default",
+        &[
+            ("Cargo.toml", "[package]\nname = \"td\"\nversion = \"0.1.0\"\n"),
+            ("src/lib.rs", "pub trait Greet {\n    fn hello(&self) -> u8 {\n        1\n    }\n}\npub struct S;\nimpl Greet for S {}\n\npub fn run(s: S) -> u8 {\n    s.hello()\n        + S.hello()\n}\n"),
+        ],
+    );
+    assert_eq!(r.refs_of("hello", "src/lib.rs:2"), ["src/lib.rs:10", "src/lib.rs:11", "src/lib.rs:2"]);
+}
+
+#[test]
 fn go_two_areas() {
     let r = Repo::new(
         "go",

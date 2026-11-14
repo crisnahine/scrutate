@@ -169,6 +169,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `refs` ties a call of a Rust trait's default method on a type that implements the trait
+  without overriding it (`s.hello()` after `impl Greet for S {}`) to that method, where it said
+  `not found` ([CLI](docs/CLI.md#engine-b)).
 - A Rust `use` of an item of an inline `mod other { }` reaches it: `use other::work` and the
   calls `work()` after it were `external` ([CLI](docs/CLI.md#engine-b)).
 - `refs` lists a use under an import alias also in a file whose import never spells the

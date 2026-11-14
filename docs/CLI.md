@@ -360,7 +360,8 @@ refers to. For Python, JavaScript, TypeScript, Rust and Go the rules are, in ord
    A variable set from a call takes the function's declared return type (through `?` and holders
    such as `Box`, `Rc` and `Arc` in Rust, `await` in TypeScript); `self.x.N` takes field `x`'s
    declared type, and a module-level or static variable its declared or built type. A Go method
-   is found by its receiver type in any file of the package. A method call on a call's result
+   is found by its receiver type in any file of the package. A Rust method a type does not define
+   itself is the default method of a trait the type implements (`impl Greet for S {}`). A method call on a call's result
    (`mk().norm()`) goes through the callee's declared return type. `this` inside a method of a
    JavaScript or TypeScript object literal is the literal (`this.put()` in `api.get` is
    `api.put`); an arrow function takes `this` from the code around it. A call on a value of an

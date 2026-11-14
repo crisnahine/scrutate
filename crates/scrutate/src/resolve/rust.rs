@@ -107,7 +107,20 @@ impl Rules for Rust {
         let want = format!("{}.{name}", strip_generics(qualname));
         let rows = r.ix.named(name).ok()?;
         let common = |p: &str| p.split('/').zip(path.split('/')).take_while(|(a, b)| a == b).count();
-        rows.into_iter().filter(|r| strip_generics(&r.qualname) == want).max_by_key(|r| common(&r.path)).map(|r| r.id)
+        if let Some(own) = rows.into_iter().filter(|r| strip_generics(&r.qualname) == want).max_by_key(|r| common(&r.path)) {
+            return Some(own.id);
+        }
+        // a default method of a trait the type implements (`impl Greet for S {}`)
+        let mut impls: Vec<Symbol> = r.ix.named(&strip_generics(qualname)).ok()?.into_iter().filter(|s| s.kind == "impl").collect();
+        impls.sort_by_key(|s| std::cmp::Reverse(common(&s.path)));
+        for s in impls {
+            for t in r.bases(s.id) {
+                if let Some(m) = r.declared_member(t, name) {
+                    return Some(m);
+                }
+            }
+        }
+        None
     }
 
     fn module_of_chain(r: &mut Resolver, path: &str, fi: &FileInfo, segs: &[&str]) -> Option<Vec<String>> {
