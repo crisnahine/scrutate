@@ -196,7 +196,9 @@ incompatible index by itself, and that is never breaking.
 - The keyword tier (OCaml and F# without a grammar, unknown languages) names `let rec fact` as
   `fact`, finds `let inline square` and `let private helper`, no longer takes `let mutable x` for a
   function named `mutable`, and keeps a function named after a modifier word (`let data x`,
-  `proc inner()`); the content revision is 7 so an older index reads its files again
+  `proc inner()`), and takes only OCaml's and F#'s own words after `let` for modifiers
+  (`let data x y` binds `data`, `let inline (+.)` gives no definition named `inline`); the
+  content revision is 8 so an older index reads its files again
   ([Architecture](docs/ARCHITECTURE.md#storage-indexrs-lexrs)).
 - `grep -z` on a compressed file named on the command line whose text has a NUL reports a
   binary match, as ripgrep does, where it reported nothing and exit 1

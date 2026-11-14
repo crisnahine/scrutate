@@ -2195,13 +2195,15 @@ fn strip_modifiers(line: &str) -> &str {
     rest
 }
 
-/// The name `modifier` modifies in `rest`, and where it ends: `fact` in `let rec fact n`. Any
-/// modifier but OCaml's and F#'s after `let` is a name when no other name follows it with more
-/// after (`let data x = x`, `proc inner()`).
+/// The words OCaml and F# allow between `let` and the name it binds.
+const ML_MODIFIERS: &[&str] = &["rec", "mutable", "inline", "private", "public", "internal"];
+
+/// The name `modifier` modifies in `rest`, and where it ends: `fact` in `let rec fact n`. After
+/// `let` only OCaml's and F#'s own words modify (`let data x y` binds `data`); after another word
+/// a modifier is a name unless another name with more after it follows (`proc inner()`).
 fn modified<'a>(word: &str, modifier: &str, rest: &'a str) -> Option<(&'a str, usize)> {
-    const ML: &[&str] = &["rec", "mutable", "inline", "private", "public", "internal"];
-    let ml = word == "let" && ML.contains(&modifier);
-    if !ml && !MODIFIERS.contains(&modifier) {
+    let ml = word == "let" && ML_MODIFIERS.contains(&modifier);
+    if !ml && (word == "let" || !MODIFIERS.contains(&modifier)) {
         return None;
     }
     let body = rest.trim_start();
@@ -2249,7 +2251,8 @@ fn heuristic_def(line: &str) -> Option<(&'static str, String)> {
             }
             (name, end) = (next, end + at);
         }
-        if name.len() > 100 {
+        // `let inline (+.)`: what follows is no name the tier can take
+        if name.len() > 100 || (word == "let" && ML_MODIFIERS.contains(&name)) {
             return None;
         }
         if FUNC_WORDS.contains(&word) {
@@ -2722,6 +2725,12 @@ mod tests {
             ]
         );
         assert_eq!(ch.iter().find(|c| c.name == "f").map(|c| c.end), Some(12));
+        // after `let` only OCaml's and F#'s own words modify: `data` with two parameters is a
+        // name, and an operator after `inline` is no definition the tier can name
+        let ml = "let data x y = x + y\n\nlet inline (+.) a b = a + b\n\nlet rec fact n = n\n\nlet private helper z = z\n";
+        let ch = parse_source("g.unknownext", ml);
+        let names: Vec<(&str, i64)> = ch.iter().filter(|c| c.kind != "module").map(|c| (c.name.as_str(), c.start)).collect();
+        assert_eq!(names, vec![("data", 1), ("fact", 5), ("helper", 7)]);
     }
 
     #[test]
