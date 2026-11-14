@@ -25,7 +25,7 @@ def ignores_case(d: dict, suffixes: dict[str, str]) -> bool:
     lang = next((lang for ext, lang in suffixes.items() if d["path"].endswith(ext)), None)
     if lang is None or not d["name"].isascii():
         return False
-    return lang != "php" or (d["kind"] == "function" and "." not in d["qualname"])
+    return lang != "php" or d["kind"] in ("function", "method", "class", "interface", "trait", "enum")
 
 
 def main() -> int:
