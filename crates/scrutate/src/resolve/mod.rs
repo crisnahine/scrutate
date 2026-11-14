@@ -807,7 +807,11 @@ impl<'a> Resolver<'a> {
     /// `from util import helper as h` is ("h", "helper").
     pub(crate) fn aliases(&mut self, path: &str) -> Vec<(String, String)> {
         let fi = self.file(path);
-        fi.bindings.iter().filter(|b| !b.module.is_empty()).filter_map(|b| b.item.as_ref().filter(|i| **i != b.local).map(|i| (b.local.clone(), i.clone()))).collect()
+        fi.bindings
+            .iter()
+            .filter(|b| !b.module.is_empty())
+            .filter_map(|b| b.item.as_ref().filter(|i| **i != b.local).map(|i| (b.local.clone(), i.clone())))
+            .collect()
     }
 
     pub fn forget(&mut self, path: &str) {

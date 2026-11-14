@@ -557,7 +557,10 @@ fn block_entry(path: &Path, o: Options) -> Result<Vec<Step>> {
     let text = before.as_deref().unwrap_or("");
     // a marker counts only as a whole line: a sentence quoting one is the user's text
     let line = |from: usize, m: &str| {
-        text[from..].match_indices(m).map(|(i, _)| from + i).find(|&i| (i == 0 || text.as_bytes()[i - 1] == b'\n') && matches!(text.as_bytes().get(i + m.len()), None | Some(b'\n')))
+        text[from..]
+            .match_indices(m)
+            .map(|(i, _)| from + i)
+            .find(|&i| (i == 0 || text.as_bytes()[i - 1] == b'\n') && matches!(text.as_bytes().get(i + m.len()), None | Some(b'\n')))
     };
     let found = match line(0, BEGIN) {
         Some(b) => match line(b, END) {
