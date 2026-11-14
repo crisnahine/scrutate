@@ -678,8 +678,9 @@ fn segment_name(n: &str) -> bool {
 /// A new index of a linked git work tree starts as a copy of its main checkout's index of this
 /// schema, parsing rules and vector model: the database read in one snapshot (`VACUUM INTO`, which
 /// leaves the other one as it is) and the segments it lists copied. The first update then reads
-/// and hashes every file and parses only those whose content differs. When anything fails no file
-/// is left and the index is built as usual. -> whether it was seeded.
+/// and hashes every file and parses only those whose content differs. When anything fails no
+/// database is left and the index is built as usual; copied segments stay, since a process that
+/// seeded at the same time may list them. -> whether it was seeded.
 fn seed(root: &Path, dir: &Path, sig: &str) -> bool {
     let Some(main) = crate::files::main_checkout(root) else { return false };
     let Ok(main_dir) = crate::files::index_dir(&main) else { return false };
@@ -694,7 +695,6 @@ fn seed(root: &Path, dir: &Path, sig: &str) -> bool {
     #[cfg(target_os = "wasi")]
     let tag = format!("seed-{nanos}");
     let tmp = dir.join(format!("index.db.{tag}"));
-    let mut made = Vec::new();
     let copied = (|| -> Result<()> {
         let db = Connection::open_with_flags(&src, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         db.busy_timeout(Duration::from_secs(1))?;
@@ -718,39 +718,32 @@ fn seed(root: &Path, dir: &Path, sig: &str) -> bool {
             if !segment_name(n) {
                 bail!("a segment name this program does not write");
             }
-            if copy_segment(&main_dir.join("seg").join(n), &seg_dir, n, &tag)? {
-                made.push(seg_dir.join(n));
-            }
+            copy_segment(&main_dir.join("seg").join(n), &seg_dir, n, &tag)?;
         }
         // the main checkout removes a segment it replaced right after its commit, so one the
         // snapshot lists may be gone, or half gone while it was copied: every one must open
         for n in &names {
             crate::lex::Segment::open(&seg_dir.join(n))?;
         }
-        // another process that made one first wins
+        // another process that made one first wins; segment copies are kept either way, as its
+        // database may name them (an unlisted one goes with gc_segments)
         std::fs::hard_link(&tmp, dir.join("index.db"))?;
         Ok(())
     })();
     let _ = std::fs::remove_file(&tmp);
-    if copied.is_err() {
-        for d in &made {
-            let _ = std::fs::remove_dir_all(d);
-        }
-    }
     copied.is_ok()
 }
 
 /// The files of the segment directory `from` copied into `seg_dir/name` (a copy of the same
-/// name that is there already is the same segment: names are never reused); true when this call
-/// made it.
-fn copy_segment(from: &Path, seg_dir: &Path, name: &str, tag: &str) -> Result<bool> {
+/// name that is there already is the same segment: names are never reused).
+fn copy_segment(from: &Path, seg_dir: &Path, name: &str, tag: &str) -> Result<()> {
     let dest = seg_dir.join(name);
     if dest.exists() {
-        return Ok(false);
+        return Ok(());
     }
     let tmp = seg_dir.join(format!("{name}.{tag}"));
     std::fs::create_dir(&tmp)?;
-    let copied = (|| -> Result<bool> {
+    let copied = (|| -> Result<()> {
         for e in std::fs::read_dir(from)? {
             let e = e?;
             if !e.file_type()?.is_file() {
@@ -759,12 +752,12 @@ fn copy_segment(from: &Path, seg_dir: &Path, name: &str, tag: &str) -> Result<bo
             std::fs::copy(e.path(), tmp.join(e.file_name()))?;
         }
         std::fs::rename(&tmp, &dest)?;
-        Ok(true)
+        Ok(())
     })();
     if copied.is_err() {
         let _ = std::fs::remove_dir_all(&tmp);
     }
-    copied.or_else(|e| if dest.is_dir() { Ok(false) } else { Err(e) })
+    copied.or_else(|e| if dest.is_dir() { Ok(()) } else { Err(e) })
 }
 
 /// The hash of a file's bytes the index records for it.

@@ -156,6 +156,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- Several first opens of a new linked work tree at once (an editor starting its language server
+  and MCP server) no longer delete each other's copied segments: the losing open removed the
+  segments the winner's database listed, and `check` found the new index damaged.
 - `setup --instructions` and `--uninstall` take a scrutate marker only as a whole line: a
   sentence quoting `<!-- scrutate:begin -->` got a second block, and uninstall then cut from that
   sentence to the block's end. A begin line with no end line stops setup with no change
