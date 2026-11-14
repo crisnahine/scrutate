@@ -480,13 +480,21 @@ def wait_idle(max_load, max_wait):
     return loadavg()
 
 
+def c_helper(name, *flags):
+    """bench/NAME.c built into target/NAME, again when the source is newer; a job that never ran
+    cargo has no target/ yet."""
+    out, src = os.path.join(ROOT, "target", name), os.path.join(HERE, f"{name}.c")
+    if not os.path.exists(out) or os.path.getmtime(out) < os.path.getmtime(src):
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        subprocess.run(["cc", "-O2", *flags, "-o", out, src], check=True)
+    return out
+
+
 def resident(lst, cwd):
     """Fraction of the listed files' pages that are in the page cache (bench/evict.c --resident);
     None where that cannot be measured."""
-    out = os.path.join(ROOT, "target", "evict")
     try:
-        if not os.path.exists(out) or os.path.getmtime(out) < os.path.getmtime(os.path.join(HERE, "evict.c")):
-            subprocess.run(["cc", "-O2", "-o", out, os.path.join(HERE, "evict.c")], check=True)
+        out = c_helper("evict")
         m = re.search(r"pages: (\d+) total, (\d+) resident", subprocess.run([out, lst, "--resident"], cwd=cwd, capture_output=True, text=True).stdout)
         return int(m.group(2)) / max(int(m.group(1)), 1) if m else None
     except (OSError, subprocess.CalledProcessError):
@@ -565,10 +573,7 @@ RAWREAD: dict = {}
 
 
 def rawread_bin():
-    out = os.path.join(ROOT, "target", "rawread")
-    if not os.path.exists(out) or os.path.getmtime(out) < os.path.getmtime(os.path.join(HERE, "rawread.c")):
-        subprocess.run(["cc", "-O2", "-pthread", "-o", out, os.path.join(HERE, "rawread.c")], check=True)
-    return out
+    return c_helper("rawread", "-pthread")
 
 
 def run_bench(b, corpora, a, cache_dir):
