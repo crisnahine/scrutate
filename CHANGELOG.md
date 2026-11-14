@@ -169,6 +169,10 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- A Java class of the default package (a file with no `package` line) is looked for in its own
+  directory only: `Util.help()` in `ex/b/Main.java` is `ex/b/Util.java`'s, where every
+  default-package directory was one package and it could go to `ex/a/Util.java`
+  ([CLI](docs/CLI.md#engine-b)).
 - A call on a PHP static property, `User::$current->save()`, goes through the property's declared
   type to `User::save`, and `current` there is `field or key`, where `save` was `receiver` and
   `current` a local variable ([CLI](docs/CLI.md#engine-b)).

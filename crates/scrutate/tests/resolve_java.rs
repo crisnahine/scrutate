@@ -561,3 +561,17 @@ fn a_field_of_an_anonymous_class_hides_a_local_of_the_method_around_it() {
     let r = Repo::with("anon_field", &files);
     assert_eq!(r.refs_of("size", "a/A.java:7"), ["A.java:7", "A.java:9"]);
 }
+
+#[test]
+fn a_class_of_the_default_package_is_looked_for_in_its_own_directory_only() {
+    let util = |n: u8| format!("public class Util {{\n    static int help() {{\n        return {n};\n    }}\n}}\n");
+    let (a, b) = (util(1), util(2));
+    let files = vec![
+        ("ex/a/Util.java".to_string(), a.as_str()),
+        ("ex/b/Util.java".to_string(), b.as_str()),
+        ("ex/b/Main.java".to_string(), "public class Main {\n    int run() {\n        return Util.help();\n    }\n}\n"),
+    ];
+    let r = Repo::with("default_pkg", &files);
+    assert_eq!(r.refs_of("help", "ex/b/Util.java:2"), ["Main.java:3", "Util.java:2"]);
+    assert_eq!(r.refs_of("help", "ex/a/Util.java:2"), ["Util.java:2"]);
+}

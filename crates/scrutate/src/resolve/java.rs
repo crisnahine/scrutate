@@ -793,7 +793,14 @@ impl<'a> Resolver<'a> {
         if let Some(b) = fi.bindings.iter().find(|b| b.local == name && b.item.is_some()) {
             return self.java_binding(b);
         }
-        if let Some(files) = self.java_package_files(&java_package(&fi.src)) {
+        let pkg = java_package(&fi.src);
+        if let Some(mut files) = self.java_package_files(&pkg) {
+            // the default package is one per directory, not one for the whole repository
+            if pkg.is_empty() {
+                if let Some(dir) = fi.defs.iter().find_map(|d| self.def_row(d.id)).map(|(p, _)| dir_of(&p).to_string()) {
+                    files.retain(|f| dir_of(f) == dir);
+                }
+            }
             if let Some(id) = self.java_top(&files, name) {
                 return Ok(id);
             }
