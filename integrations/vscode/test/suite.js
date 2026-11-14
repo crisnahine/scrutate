@@ -91,6 +91,21 @@ exports.run = async function () {
     await vscode.commands.executeCommand("scrutate.symbol");
     assert.strictEqual(at(), "src/geo.py:6", "symbol takes the word under the cursor");
 
+    const onNorm = new vscode.Position(12, 14); // `norm` in `return p.norm()`
+    (await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(geo))).selection = new vscode.Selection(onNorm, onNorm);
+    await vscode.commands.executeCommand("scrutate.symbol");
+    assert.strictEqual(at(), "src/geo.py:2", "the word under the cursor stops at a dot");
+
+    // an R name keeps its dots: the dotted run is asked first
+    const rFile = vscode.Uri.joinPath(root, "src/r.R");
+    fs.writeFileSync(rFile.fsPath, "is.ready <- function(x) x\nuse <- function() is.ready(1)\n");
+    // a query answers from the last committed index; this waits for the server's update to commit
+    await vscode.commands.executeCommand("scrutate.index");
+    const onReady = new vscode.Position(1, 22); // `ready` in `is.ready(1)`
+    (await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(rFile))).selection = new vscode.Selection(onReady, onReady);
+    await vscode.commands.executeCommand("scrutate.symbol");
+    assert.strictEqual(at(), "src/r.R:1", "a name with dots is asked whole first");
+
     await onTheCall();
     want = (item) => item.description.startsWith("src/geo.py:");
     await vscode.commands.executeCommand("scrutate.callers");
