@@ -194,7 +194,8 @@ incompatible index by itself, and that is never breaking.
   `callees` and `impact` see a procedure called without parentheses; an index reads its files
   again ([CLI](docs/CLI.md#engine-b)).
 - `refs` of a name a Fortran, Pascal or Ada definition or a PHP function has finds its uses in any
-  case in those languages' files: `refs DoWork` missed `dowork()` ([CLI](docs/CLI.md#engine-b)).
+  case in those languages' files: `refs DoWork` missed `dowork()`. Fortran needs a build with
+  `--features extra-langs` ([CLI](docs/CLI.md#engine-b)).
 - `grep --fuzzy-regex` reports where a match starts: the reversed pattern is run back from its
   end. The column, the `--json` spans and the colour took a lower bound (`zzz a12b` gave column 1
   for `a[0-9]*b`) ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
@@ -226,7 +227,8 @@ incompatible index by itself, and that is never breaking.
 - `dead`, `callers` and `callees` match a Fortran, Pascal or Ada name, and a PHP function outside a class,
   in any case, as those languages do: `call compute_total(y)` is a call of `Compute_Total`, and
   `FormatPrice(3)` of `formatPrice`, also in a Pascal unit of a `.pp` file, whose language its
-  text decides; an Ada `Main` is an entry point ([CLI](docs/CLI.md#engine-b)).
+  text decides; an Ada `Main` is an entry point. Fortran needs a build with `--features
+  extra-langs` ([CLI](docs/CLI.md#engine-b)).
 - `dead` no longer lists Ruby methods that Ruby calls itself (`method_missing`,
   `respond_to_missing?`, `coerce`, `to_str`, `inherited` and their kin) or operator methods
   (`<=>`) ([CLI](docs/CLI.md#engine-b)).
