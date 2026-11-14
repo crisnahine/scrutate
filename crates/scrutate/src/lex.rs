@@ -574,14 +574,14 @@ impl Rng {
     }
 }
 
-/// Nearest centroid of each row of `x` (unit rows, unit centroids): the centroid with the largest
-/// `dot_seq64`, the lowest cluster number on a tie. A float32 product in any summation order is
-/// within k * 2^-24 of the true dot product, so the winner always scores within `margin` of the
-/// float32 maximum; only rows with more than one centroid that close are decided by `dot_seq64`.
 /// Whether the operation that writes a segment was asked to stop: clustering a large segment's
 /// vectors takes minutes in a debug build, and a stop is seen within one block of rows.
 pub type Stop<'a> = &'a (dyn Fn() -> bool + Sync);
 
+/// Nearest centroid of each row of `x` (unit rows, unit centroids): the centroid with the largest
+/// `dot_seq64`, the lowest cluster number on a tie. A float32 product in any summation order is
+/// within k * 2^-24 of the true dot product, so the winner always scores within `margin` of the
+/// float32 maximum; only rows with more than one centroid that close are decided by `dot_seq64`.
 fn nearest(stop: Stop, x: &[f32], k: usize, cent: &[f32], nk: usize) -> Vec<i32> {
     let margin = 4.0 * k as f32 * f32::EPSILON;
     let n = x.len() / k;
