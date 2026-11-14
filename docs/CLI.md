@@ -395,7 +395,9 @@ refers to. For Python, JavaScript, TypeScript, Rust and Go the rules are, in ord
      load() {}`, `var C = class Box {}`) only inside it. A closure sees the locals of the function it is written in; a Rust `fn` item
      inside a function does not;
    - a top-level definition of the file;
-   - a name an import binds (`from x import N`, `import {N} from './x'`, `use a::N`, `require`);
+   - a name an import binds (`from x import N`, `import {N} from './x'`, `use a::N`, `require`, also
+     `const N = require('./x').N`, `const {N} = await import('./x')` and TypeScript
+     `import m = require('./x')`);
    - in Go, a top-level definition of another file of the same package directory;
    - wildcard imports (`from x import *`, `export * from`, `use a::*`, Go dot imports).
 

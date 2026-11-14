@@ -119,6 +119,16 @@ fn js_bindings(n: Node, path: &str, src: &str, out: &mut Vec<Binding>) -> bool {
     };
     match n.kind() {
         "import_statement" => {
+            // TypeScript `import m = require('./m')` binds the module as `require` does
+            let mut cur = n.walk();
+            if let Some(c) = n.named_children(&mut cur).find(|c| c.kind() == "import_require_clause") {
+                let mut c2 = c.walk();
+                let kids: Vec<Node> = c.named_children(&mut c2).collect();
+                if let (Some(id), Some(m)) = (kids.iter().find(|k| k.kind() == "identifier"), kids.iter().find(|k| k.kind() == "string")) {
+                    out.push(Binding { local: text(*id, src).into(), module: string_content(*m, src), item: None, sites: vec![id.start_byte()] });
+                }
+                return true;
+            }
             let Some(source) = n.child_by_field_name("source") else { return true };
             let module = string_content(source, src);
             let mut cur = n.walk();
@@ -169,16 +179,31 @@ fn js_bindings(n: Node, path: &str, src: &str, out: &mut Vec<Binding>) -> bool {
             true
         }
         "variable_declarator" => {
-            // CommonJS: `const x = require('./m')`, `const {a, b: c} = require('./m')`
+            // CommonJS: `const x = require('./m')`, `const {a, b: c} = require('./m')`, `const x =
+            // require('./m').x`; a dynamic `await import('./m')` is the module too
             let (Some(name), Some(value)) = (n.child_by_field_name("name"), n.child_by_field_name("value")) else { return false };
-            if value.kind() != "call_expression" || value.child_by_field_name("function").map(|f| text(f, src)) != Some("require") {
+            let (value, member) = match value.kind() {
+                "member_expression" => {
+                    (value.child_by_field_name("object"), value.child_by_field_name("property").filter(|p| p.kind() == "property_identifier"))
+                }
+                "await_expression" => (value.named_child(0), None),
+                _ => (Some(value), None),
+            };
+            let awaited = n.child_by_field_name("value").is_some_and(|v| v.kind() == "await_expression");
+            let Some(value) = value.filter(|v| v.kind() == "call_expression") else { return false };
+            // `import(..)` without `await` is a promise of the module, not the module
+            let wanted = if awaited { "import" } else { "require" };
+            if value.child_by_field_name("function").map(|f| text(f, src)) != Some(wanted) {
                 return false;
             }
             let Some(arg) = value.child_by_field_name("arguments").and_then(|a| a.named_child(0)).filter(|a| a.kind() == "string") else { return false };
             let module = string_content(arg, src);
-            match name.kind() {
-                "identifier" => out.push(Binding { local: text(name, src).into(), module, item: None, sites: vec![name.start_byte()] }),
-                "object_pattern" => {
+            match (name.kind(), member) {
+                ("identifier", Some(m)) => {
+                    out.push(Binding { local: text(name, src).into(), module, item: Some(text(m, src).into()), sites: vec![name.start_byte(), m.start_byte()] })
+                }
+                ("identifier", None) => out.push(Binding { local: text(name, src).into(), module, item: None, sites: vec![name.start_byte()] }),
+                ("object_pattern", None) => {
                     let mut cur = name.walk();
                     for p in name.named_children(&mut cur) {
                         match p.kind() {
@@ -243,7 +268,10 @@ impl Resolver<'_> {
     pub(super) fn required(&mut self, from: &str, b: &Binding) -> bool {
         let fi = self.file(from);
         let (Some(tree), Some(&at)) = (fi.tree.as_ref(), b.sites.first()) else { return false };
-        tree.root_node().descendant_for_byte_range(at, at).and_then(|n| n.parent()).is_some_and(|p| p.kind() == "variable_declarator")
+        tree.root_node()
+            .descendant_for_byte_range(at, at)
+            .and_then(|n| n.parent())
+            .is_some_and(|p| matches!(p.kind(), "variable_declarator" | "import_require_clause"))
     }
 }
 

@@ -303,6 +303,25 @@ fn go_a_method_promoted_through_an_embedded_struct_is_found() {
 }
 
 #[test]
+fn javascript_a_member_of_require_a_dynamic_import_and_ts_import_require_bind_names() {
+    let r = Repo::new(
+        "js_require_forms",
+        &[
+            ("lib/n.js", "export function x() {\n  return 1;\n}\nexport function other() {\n  return 2;\n}\n"),
+            ("lib/lazy.js", "export function later() {\n  return 3;\n}\n"),
+            (
+                "main.js",
+                "const x = require('./lib/n').x;\nasync function go() {\n  const { later } = await import('./lib/lazy');\n  return x() + later();\n}\n",
+            ),
+            ("app.ts", "import m = require('./lib/n');\nm.other();\n"),
+        ],
+    );
+    assert_eq!(r.refs_of("x", "lib/n.js:1"), ["lib/n.js:1", "main.js:1", "main.js:1", "main.js:4"]);
+    assert_eq!(r.refs_of("later", "lib/lazy.js:1"), ["lib/lazy.js:1", "main.js:3", "main.js:4"]);
+    assert_eq!(r.refs_of("other", "lib/n.js:4"), ["app.ts:2", "lib/n.js:4"]);
+}
+
+#[test]
 fn go_two_areas() {
     let r = Repo::new(
         "go",
