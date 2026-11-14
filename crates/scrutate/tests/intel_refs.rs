@@ -670,17 +670,57 @@ fn every_use_on_one_long_line_is_counted_up_to_max_results() {
     assert!(short["references"].as_array().unwrap().iter().all(|o| o["path"] != "lib.js" || o.get("cut").is_none()), "{short}");
 }
 
-/// `refs NAME` on `make(n)` and `make(4 * n)` (best of 3 runs each) fails if the larger costs 10x
-/// or more, where linear work gives 4x and quadratic 16x; `want(n)` is the count it must print.
+/// The child `c` runs to its end: its standard output, and the CPU time it used, which a busy
+/// machine does not stretch as it stretches wall time (wall time where it cannot be read).
+// wait4 reaps the child where it returns early
+#[allow(clippy::zombie_processes)]
+fn run_timed(c: &mut Command) -> (String, Duration) {
+    use std::io::Read;
+    let t = Instant::now();
+    let mut child = c.stdin(Stdio::null()).stdout(Stdio::piped()).spawn().unwrap();
+    let mut out = String::new();
+    child.stdout.take().unwrap().read_to_string(&mut out).unwrap();
+    #[cfg(all(any(target_os = "macos", target_os = "linux"), target_pointer_width = "64"))]
+    {
+        #[repr(C)]
+        struct Timeval {
+            sec: i64,
+            #[cfg(target_os = "macos")]
+            usec: i32,
+            #[cfg(not(target_os = "macos"))]
+            usec: i64,
+        }
+        #[repr(C)]
+        struct Rusage {
+            user: Timeval,
+            system: Timeval,
+            rest: [i64; 14],
+        }
+        extern "C" {
+            fn wait4(pid: i32, status: *mut i32, options: i32, usage: *mut Rusage) -> i32;
+        }
+        let zero = || Timeval { sec: 0, usec: 0 };
+        let mut ru = Rusage { user: zero(), system: zero(), rest: [0; 14] };
+        let mut status = 0;
+        // reaps the child itself, so `child` is not waited for again
+        if unsafe { wait4(child.id() as i32, &mut status, 0, &mut ru) } == child.id() as i32 {
+            let us = |t: &Timeval| t.sec as u64 * 1_000_000 + t.usec as u64;
+            return (out, Duration::from_micros(us(&ru.user) + us(&ru.system)));
+        }
+    }
+    child.wait().unwrap();
+    (out, t.elapsed())
+}
+
+/// `refs NAME` on `make(n)` and `make(4 * n)` (best of 3 runs each, in CPU time) fails if the
+/// larger costs 10x or more, where linear work gives 4x and quadratic 16x; `want(n)` is the count
+/// it must print.
 fn assert_refs_scale_linearly(file: &str, other: (&str, &str), name: &str, n: usize, make: impl Fn(usize) -> String, want: impl Fn(usize) -> String) {
     let best = |k: usize| {
         let r = Repo::new("refs_scale", &[other, (file, &make(k))]);
         (0..3)
             .map(|_| {
-                let t = Instant::now();
-                let out = Command::new(BIN).args(["refs", name, "--max-results", "50000"]).current_dir(&r.root).output().unwrap();
-                let took = t.elapsed();
-                let out = String::from_utf8_lossy(&out.stdout).into_owned();
+                let (out, took) = run_timed(Command::new(BIN).args(["refs", name, "--max-results", "50000"]).current_dir(&r.root));
                 assert!(out.contains(&want(k)), "{}", out.lines().next().unwrap_or(""));
                 took
             })
