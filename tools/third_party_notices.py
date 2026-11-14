@@ -38,10 +38,14 @@ OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE."""
 
 
-def shipped(package: str) -> list[dict]:
+def graph(package: str) -> tuple[dict, set[str], str]:
+    """The locked `cargo metadata`, the ids compiled into `package` (itself included) and its id.
+
+    The one walk behind this file, `sbom.py` and `gen_dependencies_md.py`: normal and build
+    dependencies, never dev dependencies.
+    """
     meta = json.loads(subprocess.run(["cargo", "metadata", "--format-version", "1", "--locked"], cwd=os.path.join(HERE, ".."),
                                      capture_output=True, text=True, check=True).stdout)
-    by_id = {p["id"]: p for p in meta["packages"]}
     nodes = {n["id"]: n for n in meta["resolve"]["nodes"]}
     root = next(p["id"] for p in meta["packages"] if p["name"] == package)
     seen, stack = set(), [root]
@@ -53,6 +57,12 @@ def shipped(package: str) -> list[dict]:
         for dep in nodes[nid]["deps"]:
             if any(k["kind"] in (None, "build") for k in dep["dep_kinds"]):
                 stack.append(dep["pkg"])
+    return meta, seen, root
+
+
+def shipped(package: str) -> list[dict]:
+    meta, seen, root = graph(package)
+    by_id = {p["id"]: p for p in meta["packages"]}
     return sorted((by_id[i] for i in seen - {root}), key=lambda p: (p["name"], p["version"]))
 
 

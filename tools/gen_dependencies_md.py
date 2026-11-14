@@ -3,12 +3,11 @@
 size of the transitive graph, from Cargo.toml + `cargo metadata --locked`."""
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
 
-from third_party_notices import data_files
+from third_party_notices import data_files, graph
 
 # The page head (banner and navigation); tools/gen_doc_assets.py --check compares it with its table.
 DOC_HEAD = """<!-- Head written by tools/gen_doc_assets.py: edit its table, then run it. -->
@@ -64,20 +63,9 @@ PURPOSE = {
 
 
 def main() -> int:
-    meta = json.loads(subprocess.run(["cargo", "metadata", "--format-version", "1", "--locked"], cwd=ROOT, capture_output=True, text=True, check=True).stdout)
+    meta, seen, core_id = graph("scrutate")
     pkgs = {p["id"]: p for p in meta["packages"]}
-    core = next(p for p in meta["packages"] if p["name"] == "scrutate")
-    nodes = {n["id"]: n for n in meta["resolve"]["nodes"]}
-    # transitive normal+build deps of the core
-    seen, stack = set(), [core["id"]]
-    while stack:
-        nid = stack.pop()
-        if nid in seen:
-            continue
-        seen.add(nid)
-        for dep in nodes[nid]["deps"]:
-            if any(k["kind"] in (None, "build") for k in dep["dep_kinds"]):
-                stack.append(dep["pkg"])
+    core = pkgs[core_id]
     shipped = len(seen) - 1
     rustc = subprocess.run(["rustc", "--version"], capture_output=True, text=True).stdout.strip()
     out = [DOC_HEAD,

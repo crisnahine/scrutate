@@ -12,12 +12,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
 import sys
 import time
 import uuid
 
-from third_party_notices import data_files
+from third_party_notices import data_files, graph
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -27,20 +26,9 @@ def main() -> int:
     ap.add_argument("--out", default=None)
     ap.add_argument("--package", default="scrutate")
     a = ap.parse_args()
-    meta = json.loads(subprocess.run(["cargo", "metadata", "--format-version", "1", "--locked"], cwd=os.path.join(HERE, ".."), capture_output=True, text=True, check=True).stdout)
+    meta, seen, root_id = graph(a.package)
     by_id = {p["id"]: p for p in meta["packages"]}
     nodes = {n["id"]: n for n in meta["resolve"]["nodes"]}
-    root_id = next(p["id"] for p in meta["packages"] if p["name"] == a.package)
-    # transitive closure of normal + build dependencies (dev dependencies are not shipped)
-    seen, stack = set(), [root_id]
-    while stack:
-        nid = stack.pop()
-        if nid in seen:
-            continue
-        seen.add(nid)
-        for dep in nodes[nid]["deps"]:
-            if any(k["kind"] in (None, "build") for k in dep["dep_kinds"]):
-                stack.append(dep["pkg"])
     comps = []
     for nid in sorted(seen - {root_id}, key=lambda i: (by_id[i]["name"], by_id[i]["version"])):
         p = by_id[nid]
