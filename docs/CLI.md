@@ -1086,10 +1086,11 @@ and says so in one stderr line. The one exception is another process's first bui
 committed to answer from: the command fails with "the index is being built by another process"
 (exit 2), and a `serve` tool call waits up to 20 seconds, then answers that the index is still
 being built. `scrutate index` (and `--force`) waits for the writer, at most 10 minutes: then it
-fails with "another process has held the index write lock for 10 minutes". Ctrl-C ends the wait,
-as it does `watch`'s. A read-only index directory, or a read-only repository with a complete
-index, is answered from as it is. A `.scrutate` that is a symbolic link, or holds one, is
-refused: nothing is written or deleted outside the repository.
+fails with "another process has held the index write lock for 10 minutes" ("another process has
+held the text index lock for 10 minutes" when the text index's writer is the one it waits for).
+Ctrl-C ends the wait, as it does `watch`'s. A read-only index directory, or a read-only repository
+with a complete index, is answered from as it is. A `.scrutate` that is a symbolic link, or holds
+one, is refused: nothing is written or deleted outside the repository.
 ## Setup and the Grep hook
 
 ```
