@@ -604,6 +604,7 @@ fn wait_update_any(rx: &Receiver<String>) -> Vec<String> {
 }
 
 /// The names of the definitions the code index holds, read from its database without an update.
+#[cfg(unix)]
 fn chunk_names(root: &Path) -> String {
     let db = rusqlite::Connection::open_with_flags(root.join(".scrutate/index.db"), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
     db.query_row("SELECT group_concat(qualname, ' ') FROM chunks", [], |r| r.get::<_, Option<String>>(0)).unwrap().unwrap_or_default()
