@@ -153,14 +153,18 @@ impl<'a> Names<'a> {
         let from = starts.get(first).copied().unwrap_or(src.len());
         let ident = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
         let methods = crate::resolve::methods_only(path);
+        // ASCII lowercase keeps every byte where it is, so the columns hold
+        let any_case = crate::langs::ignores_case(path, "function", "") && name.is_ascii();
+        let wanted = if any_case { name.to_ascii_lowercase() } else { name.to_string() };
         let mut uses = Uses { got: HashSet::new(), dispatched: HashSet::new(), unsure: true, unsure_free: true, own_file: false };
         let (mut unsure, mut unsure_free, mut seen, mut elsewhere) = (false, false, false, false);
         for (i, line) in src[from..].lines().enumerate().map(|(i, l)| (i + first, l)).take((end - start + 1).max(0) as usize) {
-            for (col, _) in line.match_indices(name) {
+            let low = if any_case { std::borrow::Cow::Owned(line.to_ascii_lowercase()) } else { std::borrow::Cow::Borrowed(line) };
+            for (col, _) in low.match_indices(wanted.as_str()) {
                 if ident(line[..col].chars().next_back()) || ident(line[col + name.len()..].chars().next()) {
                     continue;
                 }
-                match self.rv.resolve_at(path, i as u64 + 1, col, name) {
+                match self.rv.resolve_at(path, i as u64 + 1, col, &line[col..col + name.len()]) {
                     // the name of a definition is not a call of it
                     Ok((_, "definition")) => {}
                     Ok((id, why)) => {
@@ -233,6 +237,12 @@ impl<'a> Names<'a> {
             // with another definition of the name about, the likeliest call sites are asked first
             let rivals = rows.iter().any(|r| !ids.contains(&r.id) && fits(&r.path));
             let mut sites = s.ix.callers_of(n)?;
+            // a call in a language that ignores case may spell the name in another case
+            if targets.iter().any(|t| t.name == n && crate::langs::ignores_case(&t.path, &t.kind, &t.qualname)) {
+                for other in s.ix.callee_spellings(n)?.into_iter().filter(|c| c != n) {
+                    sites.extend(s.ix.callers_of(&other)?.into_iter().filter(|r| crate::langs::ignores_case(&r.path, "function", "")));
+                }
+            }
             sites.retain(|r| fits(&r.path) && seen.insert(r.id));
             if n == "new" && !targets.iter().any(|t| t.name == "new") {
                 sites.retain(|r| made_by_new.iter().any(|class| has_word(&r.text, &format!("{class}.new"))));

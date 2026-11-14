@@ -2310,6 +2310,16 @@ pub fn sniff(path: &str, source: &str) -> Option<&'static LangSpec> {
     by_id(id)
 }
 
+/// Whether the definition at `path` is named in any case: Fortran, Pascal and Ada names, and PHP
+/// functions outside a class.
+pub fn ignores_case(path: &str, kind: &str, qualname: &str) -> bool {
+    match detect(path, None).map(|l| l.id) {
+        Some("fortran" | "pascal" | "ada") => true,
+        Some("php") => kind == "function" && !qualname.contains('.'),
+        _ => false,
+    }
+}
+
 /// The grammar of `path`: by its name, and by `text` where the extension is shared by several
 /// languages. The one way the parser, the resolver and the answers about names tell a language.
 pub fn detect(path: &str, text: Option<&str>) -> Option<&'static LangSpec> {

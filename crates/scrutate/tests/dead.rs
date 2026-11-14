@@ -256,3 +256,44 @@ fn ruby_methods_the_runtime_calls_are_entry_points() {
     let v = r.json(&["dead"]);
     assert_eq!(names(&v, "dead"), ["p.rb Proxy.really_unused"], "{v:#}");
 }
+
+/// The names `callers NAME` prints, as `path qualname`.
+fn callers(r: &Repo, name: &str) -> Vec<String> {
+    let (_, out) = r.run(&["callers", name]);
+    out.lines().filter_map(|l| Some(format!("{} {}", l.split(':').next()?, l.split("] ").nth(1)?))).collect()
+}
+
+#[test]
+fn a_language_that_ignores_case_uses_a_name_in_any_case() {
+    let pas = "program P;\n\nprocedure DoWork;\nbegin\nend;\n\nprocedure Run;\nbegin\n  dowork();\nend;\n\nbegin\n  Run();\nend.\n";
+    let r = Repo::new("pascal_case", &[("p.pas", pas)]);
+    assert!(!names(&r.json(&["dead"]), "dead").contains(&"p.pas DoWork".to_string()));
+    assert_eq!(callers(&r, "DoWork"), ["p.pas Run"]);
+
+    let adb = "procedure Main is\n   procedure Do_It is\n   begin\n      null;\n   end Do_It;\nbegin\n   do_it;\nend Main;\n";
+    let r = Repo::new("ada_case", &[("a.adb", adb)]);
+    assert_eq!(names(&r.json(&["dead"]), "dead"), Vec::<String>::new());
+    assert_eq!(callers(&r, "Do_It"), ["a.adb Main"]);
+
+    let php = "<?php\nfunction formatPrice($p) { return $p; }\n\nfunction show() { return FormatPrice(3); }\n\nshow();\n";
+    let r = Repo::new("php_case", &[("f.php", php), ("g.py", "def formatprice():\n    return 1\n")]);
+    assert_eq!(names(&r.json(&["dead"]), "dead"), ["g.py formatprice"], "a case-sensitive language keeps its case");
+    assert_eq!(callers(&r, "formatPrice"), ["f.php show"]);
+
+    let r = Repo::new("py_case", &[("h.py", "def Helper():\n    return 1\n\n\ndef run():\n    return helper()\n")]);
+    assert_eq!(names(&r.json(&["dead"]), "dead"), ["h.py Helper", "h.py run"], "Python names keep their case");
+}
+
+#[cfg(feature = "extra-langs")]
+#[test]
+fn fortran_uses_a_name_in_any_case() {
+    let r = Repo::new(
+        "fortran_case",
+        &[
+            ("m.f90", "subroutine Compute_Total(x)\n  real :: x\nend subroutine Compute_Total\n"),
+            ("main.f90", "subroutine driver()\n  real :: y\n  call compute_total(y)\nend subroutine driver\n"),
+        ],
+    );
+    assert!(!names(&r.json(&["dead"]), "dead").contains(&"m.f90 Compute_Total".to_string()));
+    assert_eq!(callers(&r, "Compute_Total"), ["main.f90 driver"]);
+}

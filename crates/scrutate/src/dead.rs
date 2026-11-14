@@ -67,6 +67,15 @@ pub(crate) fn candidates(ix: &crate::index::Index, under: Option<&str>) -> anyho
         let n = name_ids.len() as u32;
         name_ids.entry(s.name.as_str()).or_insert(n);
     }
+    // a name in a language that ignores case is found in any case, by its lowercase form
+    let mut folded: HashMap<String, Vec<u32>> = HashMap::new();
+    for s in wanted.iter().filter(|s| s.name.is_ascii() && crate::langs::ignores_case(&s.path, &s.kind, &s.qualname)) {
+        let id = name_ids[s.name.as_str()];
+        let ids = folded.entry(s.name.to_ascii_lowercase()).or_default();
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
     let odd: Vec<&str> = name_ids.keys().copied().filter(|n| !n.chars().all(word_char)).collect();
     let odd_finder = aho_corasick::AhoCorasick::new(&odd)?;
     let files = every_file(root);
@@ -78,7 +87,7 @@ pub(crate) fn candidates(ix: &crate::index::Index, under: Option<&str>) -> anyho
                 return (Vec::new(), Vec::new(), big);
             };
             let Some(src) = crate::index::decode_source(&raw) else { return (Vec::new(), Vec::new(), false) };
-            let found = occurrences(&src, &name_ids, &odd, &odd_finder);
+            let found = occurrences(&src, &name_ids, &folded, &odd, &odd_finder);
             let mine: Vec<&Symbol> = by_file
                 .get(rel.as_str())
                 .map(|v| v.iter().copied().filter(|s| KINDS.contains(&s.kind.as_str()) && inside(&s.path)).collect())
@@ -184,7 +193,13 @@ const RUBY_HOOKS: [&str; 30] = [
 ];
 
 /// The (name, 1-based line) of every whole-word occurrence in `src` of a name of `names`.
-fn occurrences(src: &str, names: &HashMap<&str, u32>, odd: &[&str], odd_finder: &aho_corasick::AhoCorasick) -> Vec<(u32, i64)> {
+fn occurrences(
+    src: &str,
+    names: &HashMap<&str, u32>,
+    folded: &HashMap<String, Vec<u32>>,
+    odd: &[&str],
+    odd_finder: &aho_corasick::AhoCorasick,
+) -> Vec<(u32, i64)> {
     use unicode_normalization::UnicodeNormalization;
     let mut out = Vec::new();
     let (mut line, mut start) = (1i64, None::<usize>);
@@ -193,6 +208,9 @@ fn occurrences(src: &str, names: &HashMap<&str, u32>, odd: &[&str], odd_finder: 
         let hit = if w.is_ascii() { names.get(w).copied() } else { names.get(w.nfc().collect::<String>().as_str()).copied() };
         if let Some(n) = hit {
             out.push((n, line));
+        }
+        if !folded.is_empty() && w.is_ascii() {
+            out.extend(folded.get(&w.to_ascii_lowercase()).into_iter().flatten().filter(|&&n| hit != Some(n)).map(|&n| (n, line)));
         }
     };
     for (i, c) in src.char_indices() {
@@ -398,7 +416,8 @@ fn registered(f: &Facts, d: &Symbol) -> bool {
 
 fn rule(path: &str, f: &Facts, d: &Symbol, parent: Option<&Symbol>) -> Rule {
     let name = d.name.as_str();
-    if crate::text::is_test_path(path) || name == "main" {
+    let main = if crate::langs::ignores_case(path, &d.kind, &d.qualname) { name.eq_ignore_ascii_case("main") } else { name == "main" };
+    if crate::text::is_test_path(path) || main {
         return Rule::Entry;
     }
     let in_type = parent.filter(|p| p.kind != "function" && p.kind != "method");

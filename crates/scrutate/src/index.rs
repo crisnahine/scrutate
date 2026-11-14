@@ -2477,6 +2477,13 @@ impl Index {
         Ok(rows)
     }
 
+    /// The definitions named `name` in any ASCII case.
+    pub fn named_any_case(&self, name: &str) -> Result<Vec<Symbol>> {
+        let mut st = self.db.prepare_cached("SELECT id, path, kind, name, qualname, start, end FROM chunks WHERE name_key=?1")?;
+        let rows: Vec<Symbol> = st.query_map([name_key(name)], Symbol::from_row)?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows.into_iter().filter(|r| r.name.eq_ignore_ascii_case(name)).collect())
+    }
+
     /// Whether a chunk of one of these kinds is named exactly `name`.
     pub fn defines(&self, name: &str, kinds: &[&str]) -> Result<bool> {
         let mut st = self.db.prepare_cached(&format!("SELECT EXISTS(SELECT 1 FROM chunks WHERE name_key=?1 AND name=?2 AND kind IN ({}))", quoted(kinds)))?;
@@ -2585,6 +2592,13 @@ impl Index {
             self.db.prepare_cached(&format!("SELECT DISTINCT {cols} FROM refs r JOIN chunks c ON c.id=r.chunk_id WHERE r.callee=?1 ORDER BY c.is_test, c.path, c.start, c.end DESC, c.kind, c.qualname"))?;
         let rows = st.query_map([callee], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
         Ok(rows)
+    }
+
+    /// The spellings of `callee` in any ASCII case that some call records.
+    pub fn callee_spellings(&self, callee: &str) -> Result<Vec<String>> {
+        let mut st = self.db.prepare_cached("SELECT DISTINCT callee FROM refs")?;
+        let all = st.query_map([], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(all.into_iter().filter(|c| c.eq_ignore_ascii_case(callee)).collect())
     }
 
     /// The names chunk `id` calls, each once, sorted.
