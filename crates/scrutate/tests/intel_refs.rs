@@ -1998,6 +1998,17 @@ fn an_alias_of_a_name_a_package_init_re_exports_is_a_caller() {
 }
 
 #[test]
+fn a_default_export_re_exported_through_require_reaches_the_definition() {
+    let m = "function helper() {\n  return 1;\n}\nmodule.exports = helper;\n";
+    let re = "const helper = require(\"./m\");\nmodule.exports = helper;\n";
+    let main = "const k = require(\"./r\");\n\nfunction start() {\n  return k();\n}\n";
+    let r = Repo::new("cjs_reexport", &[("lib/m.js", m), ("lib/r.js", re), ("lib/main.js", main)]);
+    assert_eq!(callee_names(&r, "start"), ["helper"]);
+    let v = r.json(&["callees", "start", "--json"]);
+    assert_eq!(v["resolved"][0]["path"], "lib/m.js", "{v}");
+}
+
+#[test]
 fn a_super_call_in_a_constructor_is_a_call_of_the_base_class() {
     let base = "export class Base {\n  constructor() {\n    this.x = 1;\n  }\n}\n";
     let kid = "import { Base } from './base.js';\nexport class Kid extends Base {\n  constructor() {\n    super();\n  }\n}\n";

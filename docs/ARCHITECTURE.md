@@ -670,7 +670,7 @@ definitions and their nesting come from the index's `chunks` rows. A file whose 
 overflow the stack or make a request take minutes; a name's binders and assignments are found once
 per scope, so a function of thousands of uses resolves in linear time. The rules (scopes, method
 resolution order, qualifiers and declared types, Java packages and overloads, import paths and
-re-exports, followed to a depth limit; Rust `crate`/`self`/`super` paths among them) are in
+re-exports, followed up to 6 import hops deep; Rust `crate`/`self`/`super` paths among them) are in
 [CLI](CLI.md#refs). Java overloads share one qualified name in the index.
 Inherited methods are kept per class, and the Java walks
 over base types read a type reached by many paths once per depth, so a diamond of interfaces costs

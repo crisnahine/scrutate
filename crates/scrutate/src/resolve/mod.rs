@@ -1930,11 +1930,16 @@ impl<'a> Resolver<'a> {
     }
 
     fn lookup_top_inner(&mut self, files: &[String], name: &str, depth: usize) -> Option<i64> {
-        if depth > 6 {
+        // each import hop counts twice (the binding, then the lookup): 6 hops of re-exports
+        if depth > 12 {
             return None;
         }
         for f in files {
-            if let Some(d) = top_level(&self.file(f), name) {
+            let fi = self.file(f);
+            // `const helper = require('./m')` is a constant and an import: the import says what it is
+            let required =
+                |d: &&Def| fi.lang.is_some_and(|l| rules!(l, R => R::REQUIRE)) && d.kind == "constant" && fi.bindings.iter().any(|b| b.local == name);
+            if let Some(d) = top_level(&fi, name).filter(|d| !required(d)) {
                 return Some(d.id);
             }
         }
