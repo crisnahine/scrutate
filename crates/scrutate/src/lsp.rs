@@ -324,6 +324,9 @@ struct Server {
     /// how long a request waits for the first build before it is answered that the index is
     /// still being built (`session::BUILD_WAIT`)
     build_wait: std::time::Duration,
+    /// when a request last waited out `build_wait`: the ones read right after it were queued behind
+    /// it, and are answered at once
+    waited_out: std::cell::Cell<Option<std::time::Instant>>,
 }
 
 type Reply = std::result::Result<Value, (i64, String)>;
@@ -482,13 +485,16 @@ impl Server {
             return Ok(Value::Null);
         }
         let session = self.session.clone();
-        let build_wait = self.build_wait;
+        // read within a second of a request that waited out the build: queued behind it
+        let queued = self.waited_out.get().is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(1));
+        let build_wait = if queued { std::time::Duration::ZERO } else { self.build_wait };
         let run = |f: &mut dyn FnMut(&mut Searcher) -> Result<Value>| -> Reply {
             let session = session.as_ref().ok_or((-32603, "the index is not available (see the log)".to_string()))?;
             let never = Arc::new(AtomicBool::new(false));
             // the one thread that reads requests must not wait out a long first build: a cancel,
             // a change and shutdown come in behind it; ContentModified asks the editor to ask again
             if !session.wait_built(&never, Some(build_wait), |_| {}) {
+                self.waited_out.set(Some(std::time::Instant::now()));
                 return Err((-32801, "the index is still being built".to_string()));
             }
             // a damaged index is built again and the request answered from the new one
@@ -732,6 +738,7 @@ pub fn serve(root: &Path, root_given: bool) -> Result<i32> {
         initialized: false,
         shutdown: false,
         build_wait: crate::session::BUILD_WAIT,
+        waited_out: Default::default(),
     };
     let mut input = std::io::stdin().lock();
     while let Some(body) = read_message(&mut input)? {
@@ -787,6 +794,7 @@ mod tests {
             initialized: true,
             shutdown: false,
             build_wait: std::time::Duration::from_millis(300),
+            waited_out: Default::default(),
         };
         let t0 = std::time::Instant::now();
         let r = srv.request("workspace/symbol", &serde_json::json!({"query": "alpha"}));
@@ -794,6 +802,38 @@ mod tests {
         assert_eq!(r.map_err(|e| e.0), Err(-32801));
         // shutdown is answered at once whatever the build does
         assert!(srv.request("shutdown", &Value::Null).is_ok());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Requests queued behind one that waited out the first build are answered at once, so a
+    /// shutdown behind them is not kept waiting a build wait per request; one that comes later
+    /// waits again.
+    #[test]
+    fn requests_queued_behind_a_build_wait_do_not_wait_again() {
+        let root = std::env::temp_dir().join(format!("scrutate_lsp_queued_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "def alpha():\n    return 1\n").unwrap();
+        let session = Arc::new(Session::open(&root, crate::session::Every::given(None)).unwrap());
+        session.building();
+        let mut srv = Server {
+            root: root.clone(),
+            root_given: true,
+            session: Some(session),
+            docs: HashMap::new(),
+            saves: None,
+            initialized: true,
+            shutdown: false,
+            build_wait: std::time::Duration::from_secs(2),
+            waited_out: Default::default(),
+        };
+        let t0 = std::time::Instant::now();
+        for _ in 0..4 {
+            assert_eq!(srv.request("workspace/symbol", &serde_json::json!({"query": "alpha"})).map_err(|e| e.0), Err(-32801));
+        }
+        assert!(srv.request("shutdown", &Value::Null).is_ok());
+        let took = t0.elapsed();
+        assert!(took < std::time::Duration::from_millis(3500), "{took:?}");
         let _ = std::fs::remove_dir_all(&root);
     }
 
