@@ -169,6 +169,10 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `callers` and `callees` follow a CommonJS `module.exports = helper` or `module.exports =
+  function named() {}` to the call `h()` of `const h = require("./m")`, and an ES default import
+  `import h from "./m"` to the definition it reaches: they matched the local name to the imported
+  one, so `h` reached nothing ([CLI](docs/CLI.md#engine-b)).
 - `dead` counts a Ruby writer (`def color=`) as used only where it is called (`x.color = 1`,
   `send(:color=, 1)`): reading `@color` kept a writer nothing calls out of the dead
   ([CLI](docs/CLI.md#engine-b)).

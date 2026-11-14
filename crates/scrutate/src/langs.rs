@@ -353,7 +353,7 @@ const fn dv(node: &'static str, name: &'static [NameRule]) -> Def {
     Def { node, kind: "function", name, value_kinds: JS_FUNCS, head_words: &[], needs_field: "", kind_by_head: false, parents: &[] }
 }
 /// `a.b.c` of a member expression made of names only (no `this` or call), `a["b"]` read as `a.b`.
-fn js_member_path(node: Node, src: &[u8]) -> Option<String> {
+pub(crate) fn js_member_path(node: Node, src: &[u8]) -> Option<String> {
     let key = match node.kind() {
         "identifier" => return Some(text(src, node.start_byte(), node.end_byte())),
         "member_expression" => node.child_by_field_name("property").filter(|p| p.kind() == "property_identifier")?,

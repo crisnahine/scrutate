@@ -207,7 +207,11 @@ fn js_bindings(n: Node, path: &str, src: &str, out: &mut Vec<Binding>) -> bool {
             true
         }
         "assignment_expression" => {
-            if let Some(item) = n.child_by_field_name("right").and_then(default_of) {
+            let right = n.child_by_field_name("right");
+            // `module.exports = helper` exports the file's own `helper` as the default
+            let exports = n.child_by_field_name("left").and_then(|l| crate::langs::js_member_path(l, src.as_bytes())).as_deref() == Some("module.exports");
+            let named = right.filter(|r| exports && r.kind() == "identifier").map(|r| text(r, src).to_string());
+            if let Some(item) = named.or_else(|| right.and_then(default_of)) {
                 out.push(Binding { local: "default".into(), module: String::new(), item: Some(item), sites: vec![] });
             }
             false

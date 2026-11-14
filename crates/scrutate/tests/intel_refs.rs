@@ -1970,6 +1970,20 @@ fn a_function_set_on_this_and_a_default_export_are_symbols_callers_and_callees_f
 }
 
 #[test]
+fn a_default_export_called_under_a_local_name_of_its_own_has_that_caller() {
+    let m = "function helper() {\n  return 1;\n}\nmodule.exports = helper;\n";
+    let named = "module.exports = function named() {\n  return 2;\n};\n";
+    let esm = "export default function shout() {\n  return 3;\n}\n";
+    let main = "import s from \"./esm\";\nconst h = require(\"./m\");\nconst n = require(\"./named\");\n\nfunction start() {\n  return h() + n() + s();\n}\n";
+    let r = Repo::new("cjs_named_default", &[("lib/m.js", m), ("lib/named.js", named), ("lib/esm.js", esm), ("lib/main.js", main)]);
+    assert_eq!(callee_names(&r, "start"), ["helper", "named", "shout"]);
+    for (def, caller) in [("lib/m.js:1", "start"), ("lib/named.js:1", "start"), ("lib/esm.js:1", "start")] {
+        let (code, out) = r.run(&["callers", def]);
+        assert!(code == 0 && out.lines().any(|l| l.ends_with(caller)), "callers {def}: {out}");
+    }
+}
+
+#[test]
 fn a_super_call_is_a_decided_call_of_the_base_method_and_no_call_of_the_override() {
     let ts = "export class Base {\n  size(): number {\n    return 0;\n  }\n}\nexport class Big extends Base {\n  size(): number {\n    return super.size() + 9;\n  }\n  other(): number {\n    return this.size();\n  }\n}\nexport class Bigger extends Big {\n  size(): number {\n    return super.size() + 1;\n  }\n}\nexport function viaBase(b: Base): number {\n  return b.size();\n}\n";
     let far = "import { Outer } from 'outside';\nexport class Far extends Outer {\n  size(): number {\n    return super.size() + 3;\n  }\n}\n";

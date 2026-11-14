@@ -816,8 +816,9 @@ impl<'a> Resolver<'a> {
         fi
     }
 
-    /// The names `path` imports under a local name of its own, as (local, imported name):
-    /// `from util import helper as h` is ("h", "helper").
+    /// The names `path` imports under a local name of its own, as (local, name of the definition
+    /// it reaches, else the imported name): `from util import helper as h` is ("h", "helper"), and
+    /// so is `const h = require("./util")` when util sets `module.exports = helper`.
     pub(crate) fn aliases(&mut self, path: &str) -> Vec<(String, String)> {
         self.alias_sites(path).into_iter().map(|(local, item, _)| (local, item)).collect()
     }
@@ -825,11 +826,15 @@ impl<'a> Resolver<'a> {
     /// `aliases`, each with the start bytes of the import statement's identifiers that name it.
     pub(crate) fn alias_sites(&mut self, path: &str) -> Vec<(String, String, Vec<usize>)> {
         let fi = self.file(path);
-        fi.bindings
-            .iter()
-            .filter(|b| !b.module.is_empty())
-            .filter_map(|b| b.item.as_ref().filter(|i| **i != b.local).map(|i| (b.local.clone(), i.clone(), b.sites.clone())))
-            .collect()
+        let Some(lang) = fi.lang else { return Vec::new() };
+        let mut out = Vec::new();
+        for b in fi.bindings.iter().filter(|b| !b.module.is_empty()) {
+            let reached = self.resolve_binding(path, lang, b, 0).and_then(|id| self.ix.symbol(id).ok().flatten()).map(|d| d.name);
+            if let Some(item) = reached.or_else(|| b.item.clone()).filter(|i| *i != b.local) {
+                out.push((b.local.clone(), item, b.sites.clone()));
+            }
+        }
+        out
     }
 
     /// Drops the loaded copy of `path`; a later use loads it again.
