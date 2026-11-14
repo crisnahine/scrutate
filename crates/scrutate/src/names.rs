@@ -62,6 +62,12 @@ impl<'a> Names<'a> {
         self.rv.resolve_at(path, line, col, name)
     }
 
+    /// Whether the text of `path` the resolver reads starts with a byte order mark, which its
+    /// columns on the first line count.
+    pub fn starts_with_bom(&mut self, path: &str) -> bool {
+        self.rv.file(path).src.starts_with('\u{FEFF}')
+    }
+
     /// Every whole-word occurrence of `name` (Engine A), each resolved to the definition it refers to.
     pub fn references(&mut self, name: &str, max_results: u64) -> Result<Resolved> {
         let s = self.s;

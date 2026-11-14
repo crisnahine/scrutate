@@ -161,6 +161,10 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- The language server counts columns as the editor does in a file with a byte order mark, so
+  definition on its first line and its document symbols land on the name, and two definitions
+  on one line are siblings in the document symbols, not one inside the other
+  ([CLI](docs/CLI.md#lsp)).
 - `grep --json` spans and colour leave out the empty matches ripgrep leaves out: one right where
   a match ended and one past the line's end (`\s*$` on `foo  ` gives one span, not three), and an
   empty match inside a character stays empty instead of covering the character.

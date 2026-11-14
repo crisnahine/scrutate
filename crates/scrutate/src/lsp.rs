@@ -272,7 +272,8 @@ impl Lines<'_> {
                 None if inside => crate::resolve::repo_text(self.root, rel).unwrap_or_default(),
                 None => String::new(),
             };
-            self.cache.insert(rel.to_string(), split_lines(&text));
+            // an editor shows no byte order mark, and counts columns without it
+            self.cache.insert(rel.to_string(), split_lines(text.strip_prefix('\u{FEFF}').unwrap_or(&text)));
         }
         &self.cache[rel]
     }
@@ -534,7 +535,9 @@ impl Server {
     fn resolved_at(&self, names: &mut Names, p: &Value, ident: &str, before: &str) -> Option<i64> {
         let rel = p["textDocument"]["uri"].as_str().and_then(|u| self.rel(u))?;
         let line = p["position"]["line"].as_u64().unwrap_or(0);
-        names.at(&rel, line + 1, before.len(), ident).ok().map(|(id, _)| id)
+        // the resolver's column counts the byte order mark on the first line; the editor's does not
+        let bom = if line == 0 && names.starts_with_bom(&rel) { '\u{FEFF}'.len_utf8() } else { 0 };
+        names.at(&rel, line + 1, before.len() + bom, ident).ok().map(|(id, _)| id)
     }
 
     fn definition(&self, s: &mut Searcher, p: &Value) -> Result<Value> {
@@ -632,8 +635,8 @@ impl Server {
         let mut lines = self.lines();
         // rows come by start line, enclosing symbols first: a stack of open symbols nests them
         let mut roots: Vec<Value> = Vec::new();
-        let mut stack: Vec<(i64, Value, Vec<Value>)> = Vec::new();
-        let pop = |stack: &mut Vec<(i64, Value, Vec<Value>)>, roots: &mut Vec<Value>| {
+        let mut stack: Vec<(&ChunkRow, Value, Vec<Value>)> = Vec::new();
+        let pop = |stack: &mut Vec<(&ChunkRow, Value, Vec<Value>)>, roots: &mut Vec<Value>| {
             let (_, mut v, children) = stack.pop().unwrap();
             if !children.is_empty() {
                 v["children"] = Value::Array(children);
@@ -644,10 +647,18 @@ impl Server {
             }
         };
         for r in &rows {
-            while stack.last().is_some_and(|top| top.0 < r.end) {
+            // a definition that starts on the line of the open one, and is not named inside it,
+            // is its sibling (`function b() {} function c() {}` on one line)
+            let sibling = |top: &ChunkRow| top.start == r.start && !r.qualname.starts_with(&format!("{}.", top.qualname));
+            while stack.last().is_some_and(|top| top.0.end < r.end || sibling(top.0)) {
                 pop(&mut stack, &mut roots);
             }
-            stack.push((r.end, document_symbol(&mut lines, &rel, r), Vec::new()));
+            let mut v = document_symbol(&mut lines, &rel, r);
+            // the index keeps lines, not columns: the second definition of a line starts at its name
+            if rows.iter().take_while(|o| !std::ptr::eq(*o, r)).any(|o| o.start == r.start) {
+                v["range"]["start"] = v["selectionRange"]["start"].clone();
+            }
+            stack.push((r, v, Vec::new()));
         }
         while !stack.is_empty() {
             pop(&mut stack, &mut roots);

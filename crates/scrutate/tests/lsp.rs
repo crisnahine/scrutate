@@ -618,3 +618,41 @@ fn the_index_s_exclude_dirs_comes_from_its_root_not_the_server_s_directory() {
     drop(c);
     child.wait().unwrap();
 }
+
+/// What an editor sees has no byte order mark: definition and document symbols count columns
+/// without it, from the disk and from the editor's text alike; two definitions on one line are
+/// siblings, each range starting where it starts.
+#[test]
+fn a_byte_order_mark_and_two_definitions_on_one_line_are_placed_as_the_editor_sees_them() {
+    let r = Repo::new("bom_symbols");
+    fs::write(r.root.join("u4.py"), b"\xef\xbb\xbfdef foo(): return foo2()\ndef foo2(): return 1\n").unwrap();
+    r.write("u8.js", "function b() { return 1; } function c() { return 2; }\n");
+    let mut child = Command::new(BIN).arg("lsp").current_dir(&r.root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let mut c = Client { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), next_id: 0, notifications: Vec::new() };
+    c.request("initialize", json!({"processId": null, "rootUri": uri(&r.root), "capabilities": {}}));
+    c.notify("initialized", json!({}));
+    let doc = |f: &str| json!({"uri": uri(&r.root.join(f))});
+    for open in [false, true] {
+        if open {
+            c.notify("textDocument/didOpen", json!({"textDocument": {"uri": uri(&r.root.join("u4.py")), "languageId": "python", "version": 1, "text": "def foo(): return foo2()\ndef foo2(): return 1\n"}}));
+        }
+        let found = c.request("textDocument/definition", json!({"textDocument": doc("u4.py"), "position": {"line": 0, "character": 18}}));
+        assert_eq!(places(&found["result"]), [("u4.py".to_string(), 1, 4)], "open {open}: {found}");
+        let syms = c.request("textDocument/documentSymbol", json!({"textDocument": doc("u4.py")}));
+        let foo = &syms["result"][0];
+        assert_eq!(
+            (foo["name"].as_str(), &foo["selectionRange"]["start"]["character"], &foo["selectionRange"]["end"]["character"]),
+            (Some("foo"), &json!(4), &json!(7)),
+            "open {open}: {syms}"
+        );
+    }
+    let syms = c.request("textDocument/documentSymbol", json!({"textDocument": doc("u8.js")}));
+    let roots: Vec<(&str, u64)> =
+        syms["result"].as_array().unwrap().iter().map(|s| (s["name"].as_str().unwrap(), s["range"]["start"]["character"].as_u64().unwrap())).collect();
+    // the index keeps lines, not columns: c's range starts at its name, after b
+    assert_eq!(roots, [("b", 0), ("c", 36)], "{syms}");
+    c.request("shutdown", Value::Null);
+    c.notify("exit", Value::Null);
+    drop(c);
+    child.wait().unwrap();
+}
