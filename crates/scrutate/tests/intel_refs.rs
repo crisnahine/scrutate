@@ -2039,6 +2039,17 @@ fn a_call_only_its_name_ties_to_a_definition_is_an_undecided_caller() {
 }
 
 #[test]
+fn a_super_call_in_a_class_expression_is_a_call_of_its_base() {
+    let base = "export class Base {\n  constructor() {}\n}\n";
+    let kid = "import { Base } from './base.js';\nexport const Kid = class extends Base {\n  constructor() {\n    super();\n  }\n};\n";
+    let r = Repo::new("js_super_class_expr", &[("lib/base.js", base), ("lib/kid.js", kid)]);
+    let (code, out) = r.run(&["refs", "Base"]);
+    assert!(code == 0 && out.contains("lib/kid.js:4:"), "refs Base: {out}");
+    let (code, out) = r.run(&["callers", "Base"]);
+    assert!(code == 0 && out.contains("lib/kid.js"), "callers Base: {out}");
+}
+
+#[test]
 fn a_super_call_in_a_constructor_is_a_call_of_the_base_class() {
     let base = "export class Base {\n  constructor() {\n    this.x = 1;\n  }\n}\n";
     let kid = "import { Base } from './base.js';\nexport class Kid extends Base {\n  constructor() {\n    super();\n  }\n}\n";

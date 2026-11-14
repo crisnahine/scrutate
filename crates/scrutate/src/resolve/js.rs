@@ -14,7 +14,7 @@ impl Rules for Js {
         js_bindings(n, path, src, out)
     }
 
-    fn occurrence(r: &mut Resolver, _path: &str, fi: &FileInfo, node: Node, _name: &str, line: i64) -> Option<Resolution> {
+    fn occurrence(r: &mut Resolver, path: &str, fi: &FileInfo, node: Node, _name: &str, line: i64) -> Option<Resolution> {
         if node.kind() != "super" {
             return None;
         }
@@ -22,6 +22,23 @@ impl Rules for Js {
         let called = node.parent().and_then(|p| p.child_by_field_name("function")).is_some_and(|f| f.id() == node.id());
         if !called {
             return Some(Err("keyword"));
+        }
+        // a class expression (`const Kid = class extends Base {..}`) is no definition of the index:
+        // its base is the one its `extends` names
+        let class =
+            std::iter::successors(node.parent(), |n| n.parent()).find(|n| matches!(n.kind(), "class" | "class_declaration" | "abstract_class_declaration"));
+        if let Some(c) = class.filter(|c| c.kind() == "class") {
+            let mut cur = c.walk();
+            let heritage = c.children(&mut cur).find(|h| h.kind() == "class_heritage");
+            let base = heritage.and_then(|h| h.named_child(0)).and_then(|b| {
+                if b.kind() == "extends_clause" {
+                    b.child_by_field_name("value").or_else(|| b.named_child(0))
+                } else {
+                    Some(b)
+                }
+            });
+            let Some(leaf) = base.and_then(type_name) else { return Some(Err("receiver")) };
+            return Some(r.type_leaf(path, fi, Lang::Js, leaf, line).map(|(id, _)| (id, "super")));
         }
         let Some(Ty::Local(c)) = r.container_at(fi, line) else { return Some(Err("receiver")) };
         let (order, outside, unknown) = r.linearized(c, 0, &mut HashMap::new());
