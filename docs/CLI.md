@@ -433,7 +433,8 @@ Java has rules of its own:
 - A field, an enum constant and a record component are definitions: a plain name, `this.f`,
   `obj.f` through the declared type, `C.F`, an inherited field and a static import resolve to
   them, and a record's implicit accessor (`p.x()` for `record P(int x)`) to its component. A
-  field and a method of one name stay apart: a call is the method, a read the field.
+  field and a method of one name stay apart: a call is the method, a read the field. A field of
+  an anonymous class hides a local of that name of the method around the class, inside it.
 
 PHP has rules of its own too:
 

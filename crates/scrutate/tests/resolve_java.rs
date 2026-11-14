@@ -551,3 +551,13 @@ fn outer_this_calls_the_method_of_the_outer_class() {
     assert_eq!(r.refs_of("tick", "a/Outer.java:4"), ["Outer.java:10", "Outer.java:4"]);
     assert_eq!(r.refs_of("tick", "a/Outer.java:7"), ["Outer.java:11", "Outer.java:7"]);
 }
+
+#[test]
+fn a_field_of_an_anonymous_class_hides_a_local_of_the_method_around_it() {
+    let files = vec![(
+        "a/A.java".to_string(),
+        "package a;\n\npublic class A {\n    Runnable make() {\n        int size = 1;\n        return new Runnable() {\n            int size = 2;\n            public void run() {\n                size++;\n            }\n        };\n    }\n}\n",
+    )];
+    let r = Repo::with("anon_field", &files);
+    assert_eq!(r.refs_of("size", "a/A.java:7"), ["A.java:7", "A.java:9"]);
+}

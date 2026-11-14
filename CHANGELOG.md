@@ -169,6 +169,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- A field of a Java anonymous class is what a use of its name inside the class reads, where a
+  local of that name in the method around it hid the field and the field had no references
+  ([CLI](docs/CLI.md#engine-b)).
 - `Outer.this.tick()` in a Java inner class is a call of `Outer.tick`, where it was `receiver`
   and `dead` left `Outer.tick` undecided ([CLI](docs/CLI.md#engine-b)).
 - A local variable of a Java instance initializer block (`{ int count = 3; count++; }` in a

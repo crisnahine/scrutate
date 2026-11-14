@@ -122,8 +122,39 @@ impl Resolver<'_> {
                 before.checked_sub(1).map(|i| (rows[i][1], n))
             })
             .max_by_key(|&((start, _), _)| start)
+            // a field of a class body between the binder's scope and the use hides the binder
+            .filter(|&(_, scope)| {
+                !std::iter::successors(node.parent(), |n| n.parent())
+                    .take_while(|n| n.id() != scope.id())
+                    .any(|n| n.kind() == "class_body" && java_declares_field(n, name, src))
+            })
             .and_then(|((start, end), n)| n.descendant_for_byte_range(start, end))
     }
+}
+
+/// The field `name` the body of anonymous class `anon` declares.
+fn java_anon_field(fi: &FileInfo, anon: Node, name: &str) -> Option<i64> {
+    let mut cur = anon.walk();
+    let body = anon.named_children(&mut cur).find(|c| c.kind() == "class_body")?;
+    if !java_declares_field(body, name, &fi.src) {
+        return None;
+    }
+    let (s, e) = (body.start_position().row as i64 + 1, body.end_position().row as i64 + 1);
+    fi.defs.iter().find(|d| d.name == name && d.kind == "field" && s <= d.start && d.end <= e).map(|d| d.id)
+}
+
+/// Whether class body `body` declares a field `name`.
+fn java_declares_field(body: Node, name: &str, src: &str) -> bool {
+    let mut cur = body.walk();
+    for d in body.named_children(&mut cur).filter(|d| d.kind() == "field_declaration") {
+        let mut c2 = d.walk();
+        for v in d.children_by_field_name("declarator", &mut c2) {
+            if v.child_by_field_name("name").is_some_and(|x| text(x, src) == name) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 // ------------------------------------------------------------------------- Java
@@ -445,13 +476,15 @@ impl<'a> Resolver<'a> {
             if self.java_local(node, name, src).is_some() {
                 return Err("local variable");
             }
-            if self.java_is_field(fi, node, name) {
-                let found = java_classes(fi, node).into_iter().find_map(|c| match c {
-                    JClass::Named(id) if self.java_has_field(id, name, 0, &mut HashMap::new()) => Some(self.java_field_def(id, name, 0, &mut HashMap::new())),
-                    _ => None,
-                });
+            // the innermost class that has the field, an anonymous class's own fields included
+            let found = java_classes(fi, node).into_iter().find_map(|c| match c {
+                JClass::Named(id) if self.java_has_field(id, name, 0, &mut HashMap::new()) => Some(self.java_field_def(id, name, 0, &mut HashMap::new())),
+                JClass::Anon(a) => java_anon_field(fi, a, name).map(Some),
+                _ => None,
+            });
+            if let Some(found) = found {
                 let why = if java_field_site(node) { "definition" } else { "field" };
-                return found.flatten().map(|f| (f, why)).ok_or("field or key");
+                return found.map(|f| (f, why)).ok_or("field or key");
             }
         }
         match self.java_type(fi, node, name) {
@@ -830,7 +863,10 @@ impl<'a> Resolver<'a> {
 
     /// Whether `name` is a field of a class around `node`, inherited ones included.
     fn java_is_field(&mut self, fi: &FileInfo, node: Node, name: &str) -> bool {
-        java_classes(fi, node).into_iter().any(|c| matches!(c, JClass::Named(id) if self.java_has_field(id, name, 0, &mut HashMap::new())))
+        java_classes(fi, node).into_iter().any(|c| match c {
+            JClass::Named(id) => self.java_has_field(id, name, 0, &mut HashMap::new()),
+            JClass::Anon(a) => java_anon_field(fi, a, name).is_some(),
+        })
     }
 
     fn java_has_field(&mut self, id: i64, name: &str, depth: usize, seen: &mut HashMap<i64, usize>) -> bool {
