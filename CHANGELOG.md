@@ -9,6 +9,11 @@ incompatible index by itself, and that is never breaking.
 ## [Unreleased]
 
 ### Added
+- Vendored code ranks below the project's own in `search` and the MCP `search_code`, and is never
+  left out: `vendor/`, `third_party/`, `node_modules/`, `Pods/`, `Carthage/`, minified files and
+  their kin, a subset of GitHub linguist's `vendor.yml`. A name only vendored code defines,
+  searched for as itself, keeps its place. JSON answers mark such results `"vendored": true`
+  ([CLI](docs/CLI.md#engine-b)).
 - `SCRUTATE_COUNT_KEY=N` keeps a count of big searches apart from the one the user's other
   searches join; the tests of that count use it, so another suite's searches cannot change what
   they see ([CLI](docs/CLI.md#engine-a-grep-alias-g)).

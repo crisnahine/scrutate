@@ -284,6 +284,34 @@ fn search_finds_a_python_function_by_the_comment_above_it() {
 }
 
 #[test]
+fn search_ranks_vendored_code_below_project_code_and_marks_it() {
+    let r = Repo::new("vendored");
+    r.write("lib/tokens.py", b"# Renews the zqvortex lease.\ndef renew(session):\n    return session.renew()\n\n\ndef parse_lease(text):\n    return text\n");
+    r.write(
+        "vendor/leases/lease.py",
+        b"# Renews the zqvortex lease.\ndef zqvortex_lease(session):\n    return session\n\n\ndef parse_lease(text):\n    return text\n\n\ndef burst_frames(n):\n    return n\n",
+    );
+    let search = |q: &str| {
+        let (code, out, err) = r.run(&["search", q, "-k", "5", "--json"]);
+        assert_eq!(code, 0, "{err}");
+        let hits: Vec<serde_json::Value> = serde_json::from_value(answer(&out)).unwrap();
+        hits
+    };
+    let hits = search("zqvortex lease");
+    // every project hit first, though the vendored zqvortex_lease matches the query better
+    let paths: Vec<&str> = hits.iter().map(|h| h["path"].as_str().unwrap()).collect();
+    let first_vendored = paths.iter().position(|p| p.starts_with("vendor/")).unwrap_or_else(|| panic!("vendored hits kept: {paths:?}"));
+    assert!(first_vendored > 0 && paths[first_vendored..].iter().all(|p| p.starts_with("vendor/")), "{paths:?}");
+    let v = hits.iter().find(|h| h["name"] == "zqvortex_lease").unwrap_or_else(|| panic!("vendored hit kept: {hits:?}"));
+    assert_eq!(v["vendored"], true, "{v}");
+    assert!(hits[0].get("vendored").is_none(), "{}", hits[0]);
+    // a name both define: the project's first; a name only vendored code defines: still first
+    assert_eq!(search("parse_lease").first().map(|h| h["path"].clone()), Some("lib/tokens.py".into()));
+    let burst = search("burst_frames");
+    assert!(burst.first().is_some_and(|h| h["name"] == "burst_frames" && h["vendored"] == true), "{burst:?}");
+}
+
+#[test]
 fn search_finds_a_rust_struct_by_the_doc_comment_above_its_derive() {
     let r = Repo::new("derive_doc");
     r.write("src/lib.rs", b"pub fn open() {}\n\n/// Holds the zqvortex lease.\n#[derive(Debug, Clone)]\npub struct Lease {\n    id: u32,\n}\n");
