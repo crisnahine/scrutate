@@ -1112,7 +1112,11 @@ changes nothing; a `scrutate` entry that runs something else is replaced.
 `--uninstall` takes out everything `setup` adds for that agent and scope, leaving each file byte
 for byte as before: the `scrutate` entry, the marked block, and the Grep hook (any `PreToolUse`
 group with matcher `Grep` whose one command is a `scrutate` binary's `hook grep`, wherever that
-binary is now). `--hook` and `--instructions` are accepted with it and change nothing. A file
+binary is now). `--hook` and `--instructions` are accepted with it and change nothing. It reads
+the instruction file in the table with or without `--instructions`: when that file has a
+`<!-- scrutate:begin -->` line with no `<!-- scrutate:end -->` line, even one `setup` never wrote,
+the uninstall stops with exit code 2 and changes no file, the MCP entry and hook included, and
+the error names the file. Remove that line and run it again. A file
 `setup` created is deleted when nothing else is left in it. Claude Code's user file goes through
 `claude mcp remove scrutate --scope user` when `claude` is on `PATH`; Claude Code writes that
 whole file itself (its running sessions do so all the time) and keeps an empty `mcpServers` it
@@ -1139,7 +1143,8 @@ or a `--tools` list without it (`claude -p --tools Grep` runs it).
 `<!-- scrutate:begin -->` and `<!-- scrutate:end -->`, after a blank line, to the instruction
 file in the table (the `--project` file at the top). A marker counts only as a line of its own
 (ended by LF or CRLF), so a sentence that quotes one is the user's text; a begin line with no end line makes setup stop
-and change nothing. Without the option no instruction file is read or written.
+and change nothing. Without the option `setup` reads and writes no instruction file;
+`--uninstall` reads it (above).
 
 `hook grep` is the hook program. It reads on standard input the JSON Claude Code sends before a
 Grep call (`hook_event_name`, `tool_name`, `tool_input`, `cwd`, `session_id`) and answers with

@@ -238,7 +238,8 @@ incompatible index by itself, and that is never breaking.
   segments the winner's database listed, and `check` found the new index damaged.
 - `setup --instructions` and `--uninstall` take a scrutate marker only as a whole line: a
   sentence quoting `<!-- scrutate:begin -->` got a second block, and uninstall then cut from that
-  sentence to the block's end. A begin line with no end line stops setup with no change
+  sentence to the block's end. A begin line with no end line stops setup, and `--uninstall`
+  with or without `--instructions`, with no file changed
   ([CLI](docs/CLI.md#setup-and-the-grep-hook)).
 - On Windows an index update that a virus scanner or the search indexer briefly blocked failed with
   "Access is denied" or "being used by another process" when it renamed a new segment or the text
