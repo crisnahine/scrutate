@@ -38,7 +38,8 @@ pub(crate) struct Entry {
 /// passed, so it never reaches git as an option.
 pub(crate) struct Git {
     dir: PathBuf,
-    /// what git gets of `PASSED_ENV` in place of this process's own; None: this process's own
+    /// the `PASSED_ENV` variables git gets in place of every GIT_* variable of this process; None:
+    /// this process's own
     env: Option<Vec<(String, String)>>,
 }
 
@@ -51,8 +52,8 @@ impl Git {
         Git::checked(Git { dir: plain_dir(root), env: None }, root)
     }
 
-    /// As `new`, with git given these of `PASSED_ENV` and none of this process's own; any other
-    /// name is refused before git runs.
+    /// As `new`, with git given these of `PASSED_ENV` and no GIT_* variable of this process; any
+    /// other name is refused before git runs.
     #[cfg_attr(not(test), expect(dead_code, reason = "the session's caller of this comes with impact requests that carry git's variables"))]
     pub(crate) fn with_env(root: &Path, env: &[(String, String)]) -> Result<Git> {
         if let Some((name, _)) = env.iter().find(|(name, _)| !PASSED_ENV.contains(&name.as_str())) {
@@ -77,6 +78,12 @@ impl Git {
         let mut c = Command::new("git");
         c.current_dir(&self.dir).args(["--no-optional-locks", "-c", "core.fsmonitor=false"]).args(args).stdin(Stdio::null());
         if let Some(env) = &self.env {
+            // git reads its configuration, programs and paths from GIT_* names: none of this process's reach it
+            for (name, _) in std::env::vars_os() {
+                if name.to_string_lossy().to_ascii_uppercase().starts_with("GIT_") {
+                    c.env_remove(name);
+                }
+            }
             for name in PASSED_ENV {
                 c.env_remove(name);
             }
@@ -431,10 +438,41 @@ diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n";
         let git = Git::with_env(&root, &env(&[("GIT_DIR", &dir)])).unwrap();
         let got: BTreeMap<String, Option<String>> =
             git.command(&["status"]).get_envs().map(|(k, v)| (k.to_string_lossy().into_owned(), v.map(|v| v.to_string_lossy().into_owned()))).collect();
-        let mut want: BTreeMap<String, Option<String>> = SIX.iter().map(|n| (n.to_string(), None)).collect();
+        let own = std::env::vars().map(|(n, _)| n).filter(|n| n.to_ascii_uppercase().starts_with("GIT_"));
+        let mut want: BTreeMap<String, Option<String>> = SIX.iter().map(|n| n.to_string()).chain(own).map(|n| (n, None)).collect();
         want.insert("GIT_DIR".into(), Some(dir.to_string_lossy().into_owned()));
         assert_eq!(got, want);
         assert_eq!(Git::new(&root).unwrap().command(&["status"]).get_envs().count(), 0);
+    }
+
+    #[test]
+    fn none_of_this_process_s_git_variables_reach_git_through_with_env() {
+        const NAME: &str = "git::tests::none_of_this_process_s_git_variables_reach_git_through_with_env";
+        // a variable set in this process reaches every test in it, so the check runs alone in a process of its own
+        let Some(root) = std::env::var_os("SCRUTATE_TEST_GIT_ROOT").map(PathBuf::from) else {
+            let root = scratch("own_env");
+            let head = repo(&root);
+            let out = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", NAME, "--test-threads=1"])
+                .env("SCRUTATE_TEST_GIT_ROOT", &root)
+                .env("SCRUTATE_TEST_GIT_HEAD", &head)
+                // git refuses to start on this, and writes a trace of every run to that file
+                .env("GIT_CONFIG_PARAMETERS", "'unterminated")
+                .env("GIT_TRACE", scratch("own_env_trace").join("trace"))
+                .output()
+                .unwrap();
+            let said = String::from_utf8_lossy(&out.stdout);
+            assert!(out.status.success() && said.contains("1 passed"), "{said}{}", String::from_utf8_lossy(&out.stderr));
+            return;
+        };
+        let trace = PathBuf::from(std::env::var_os("GIT_TRACE").unwrap());
+        // with this process's variables git stops, after it began its trace
+        assert!(Git::new(&root).is_err());
+        assert!(trace.exists());
+        std::fs::remove_file(&trace).unwrap();
+        let git = Git::with_env(&root, &[]).unwrap();
+        assert_eq!(git.commit("HEAD").unwrap(), std::env::var("SCRUTATE_TEST_GIT_HEAD").unwrap());
+        assert!(!trace.exists());
     }
 
     #[test]

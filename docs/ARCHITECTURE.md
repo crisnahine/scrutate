@@ -762,8 +762,8 @@ helper of its own; a revision is checked before it is passed (none starts with `
 a commit id, which every later call uses. Git sees this process's environment, or, built with
 `Git::with_env`, a caller's own values of the six variables that say where a repository's files
 are (`git::PASSED_ENV`: `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
-`GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`) in place of this process's six; any other
-name is refused before git runs. Each hunk's new lines map onto the index's definitions
+`GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`) in place of every `GIT_*` variable of this
+process, its configuration and programs included; any other name is refused before git runs. Each hunk's new lines map onto the index's definitions
 of the file as it is now, and its old lines onto the definitions a parse of the base copy gives
 (`parse::parse_file`, the parse the index stores); a definition is matched across the sides by
 kind and qualified name ([CLI](CLI.md#impact) has the statuses and windows). The callers are
