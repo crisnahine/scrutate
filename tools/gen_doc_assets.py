@@ -28,7 +28,7 @@ ASSETS = os.path.join(ROOT, "docs", "assets")
 # the palette, the type, the parts and the image rules are the README's: one source, so the two sets cannot drift apart
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import gen_assets as G  # noqa: E402
-from gen_assets import INK, PAPER, MARK, ALERT, ON, W, PAD, SANS, MONO, EASE, REDUCED  # noqa: E402
+from gen_assets import INK, PAPER, MARK, ALERT, ON, W, PAD, SANS, MONO, REDUCED  # noqa: E402
 
 WRITTEN = "<!-- written by tools/gen_doc_assets.py; edit that, not this file -->"
 

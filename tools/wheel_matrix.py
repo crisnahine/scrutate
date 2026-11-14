@@ -85,7 +85,7 @@ def main() -> int:
             ok_all &= row["ok"]
             rows.append(row)
     host = f"{platform.system()} {platform.machine()}"
-    print(f"| Platform | Python | Wheel | Checks | Result |\n|---|---|---|---|---|")
+    print("| Platform | Python | Wheel | Checks | Result |\n|---|---|---|---|---|")
     for r in rows:
         host = r.get("platform", host)
         checks = ", ".join(f"{k}: {'yes' if v else 'NO'}" for k, v in r.get("checks", {}).items()) or r.get("error", "")

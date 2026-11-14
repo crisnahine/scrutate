@@ -130,7 +130,9 @@ jobs:
           for f in LICENSE-APACHE LICENSE-MIT; do cmp "$f" "crates/scrutate/$f" && cmp "$f" "crates/scrutate-py/$f" && cmp "$f" "python/$f"; done
           python3 -c "import sys; v = open('integrations/vscode/LICENSE').read(); sys.exit(not all(open(f).read().strip() in v for f in ('LICENSE-MIT', 'LICENSE-APACHE')))"
       # the versions the Python tests were last run with
-      - run: pip install -e "python[test]" maturin -c python/constraints.txt
+      - run: pip install -e "python[test]" maturin ruff -c python/constraints.txt
+      # pyflakes over every Python file in the tree: undefined names, unused imports and variables
+      - run: ruff check --select F .
       - run: cargo build --release -p scrutate --locked
       - name: bindings wheel (abi3) and tests
         run: |
