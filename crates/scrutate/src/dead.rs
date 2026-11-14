@@ -103,7 +103,7 @@ pub(crate) fn candidates(ix: &crate::index::Index, under: Option<&str>) -> anyho
         })
         .collect();
     let too_large: Vec<String> = files.iter().zip(&scanned).filter(|(_, s)| s.2).map(|(f, _)| f.clone()).collect();
-    let readable: Vec<bool> = files.iter().map(|f| crate::resolve::reads(f)).collect();
+    let readable: Vec<bool> = files.iter().map(|f| crate::resolve::reads(root, f)).collect();
     let mut rules: HashMap<i64, Rule> = HashMap::new();
     let mut at: Vec<Vec<(u32, i64)>> = vec![Vec::new(); name_ids.len()];
     for (fi, (found, file_rules, _)) in scanned.into_iter().enumerate() {

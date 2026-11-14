@@ -166,7 +166,7 @@ impl Resolver<'_> {
         parts.reverse();
         let want = if parts.is_empty() { name.to_string() } else { format!("{}.{name}", parts.join(".")) };
         let rows: Vec<Symbol> =
-            self.ix.named(name).unwrap_or_default().into_iter().filter(|r| r.kind != "window" && path_lang(&r.path) == Some(Lang::C)).collect();
+            self.ix.named(name).unwrap_or_default().into_iter().filter(|r| r.kind != "window" && self.path_lang(&r.path) == Some(Lang::C)).collect();
         let exact: Vec<i64> = rows.iter().filter(|r| strip_generics(&r.qualname) == want).map(|r| r.id).collect();
         let near: Vec<i64> =
             if exact.is_empty() { rows.iter().filter(|r| strip_generics(&r.qualname).ends_with(&format!(".{want}"))).map(|r| r.id).collect() } else { exact };
@@ -187,7 +187,7 @@ impl Resolver<'_> {
 
     /// The `a` of `a::b`: a class or struct, else a namespace.
     fn c_scope(&mut self, name: &str) -> Resolution {
-        let rows: Vec<Symbol> = self.ix.named(name).unwrap_or_default().into_iter().filter(|r| path_lang(&r.path) == Some(Lang::C)).collect();
+        let rows: Vec<Symbol> = self.ix.named(name).unwrap_or_default().into_iter().filter(|r| self.path_lang(&r.path) == Some(Lang::C)).collect();
         if let Some(t) = rows.iter().find(|r| matches!(r.kind.as_str(), "class" | "struct" | "enum" | "type")) {
             return Ok((t.id, "type"));
         }
@@ -209,7 +209,7 @@ impl Resolver<'_> {
         let rows = self.ix.named(&last).ok()?;
         let ends = |q: &str| q == owner || q.ends_with(&format!(".{owner}")) || owner.ends_with(&format!(".{q}"));
         rows.into_iter()
-            .find(|r| matches!(r.kind.as_str(), "class" | "struct") && path_lang(&r.path) == Some(Lang::C) && ends(&strip_generics(&r.qualname)))
+            .find(|r| matches!(r.kind.as_str(), "class" | "struct") && self.path_lang(&r.path) == Some(Lang::C) && ends(&strip_generics(&r.qualname)))
             .map(|r| r.id)
     }
 
@@ -233,7 +233,7 @@ impl Resolver<'_> {
             let rows = self.ix.named(&last).unwrap_or_default();
             let hit = rows.iter().find(|r| {
                 let q = strip_generics(&r.qualname);
-                matches!(r.kind.as_str(), "class" | "struct") && path_lang(&r.path) == Some(Lang::C) && (q == n || q.ends_with(&format!(".{n}")))
+                matches!(r.kind.as_str(), "class" | "struct") && self.path_lang(&r.path) == Some(Lang::C) && (q == n || q.ends_with(&format!(".{n}")))
             });
             match hit {
                 Some(r) if r.id != id => out.push(r.id),
@@ -270,7 +270,7 @@ impl Resolver<'_> {
         let mut defs: Vec<Symbol> = Vec::new();
         for r in rows {
             if matches!(r.kind.as_str(), "function" | "method")
-                && path_lang(&r.path) == Some(Lang::C)
+                && self.path_lang(&r.path) == Some(Lang::C)
                 && same(&strip_generics(&r.qualname))
                 && self.c_bodied(&r.path, r.id)
             {
@@ -314,7 +314,7 @@ impl Resolver<'_> {
 
     /// Whether a C or C++ file of the repository defines `name`.
     fn c_defined(&self, name: &str) -> bool {
-        self.ix.named(name).map(|rows| rows.iter().any(|r| r.kind != "window" && path_lang(&r.path) == Some(Lang::C))).unwrap_or(true)
+        self.ix.named(name).map(|rows| rows.iter().any(|r| r.kind != "window" && self.path_lang(&r.path) == Some(Lang::C))).unwrap_or(true)
     }
 
     /// The files an `#include` of `from` names: a quoted path beside `from`, else the files whose

@@ -537,7 +537,7 @@ impl Resolver<'_> {
             return Rc::clone(t);
         }
         let mut rows: Vec<Symbol> = self.ix.named(name).unwrap_or_default();
-        rows.retain(|r| (CONTAINER_KINDS.contains(&r.kind.as_str()) || r.kind == "type") && path_lang(&r.path) == Some(Lang::CSharp));
+        rows.retain(|r| (CONTAINER_KINDS.contains(&r.kind.as_str()) || r.kind == "type") && self.path_lang(&r.path) == Some(Lang::CSharp));
         rows.sort_by(|a, b| (&a.path, a.start).cmp(&(&b.path, b.start)));
         let mut out = Vec::new();
         for r in rows {
@@ -556,7 +556,7 @@ impl Resolver<'_> {
     fn cs_namespaces(&mut self) -> &HashMap<String, Vec<String>> {
         if self.cs_namespaces.is_none() {
             let mut m: HashMap<String, Vec<String>> = HashMap::new();
-            let mut files: Vec<String> = self.files.iter().filter(|f| path_lang(f) == Some(Lang::CSharp)).cloned().collect();
+            let mut files: Vec<String> = self.files.iter().filter(|f| self.path_lang(f) == Some(Lang::CSharp)).cloned().collect();
             files.sort();
             for f in files {
                 let stem = f.rsplit('/').next().unwrap_or(&f).rsplit_once('.').map_or(f.as_str(), |(s, _)| s).to_string();
@@ -588,7 +588,7 @@ impl Resolver<'_> {
 
     /// Whether a C# file of the repository defines `name`.
     fn cs_defined(&self, name: &str) -> bool {
-        self.ix.named(name).map(|rows| rows.iter().any(|r| r.kind != "window" && path_lang(&r.path) == Some(Lang::CSharp))).unwrap_or(true)
+        self.ix.named(name).map(|rows| rows.iter().any(|r| r.kind != "window" && self.path_lang(&r.path) == Some(Lang::CSharp))).unwrap_or(true)
     }
 }
 

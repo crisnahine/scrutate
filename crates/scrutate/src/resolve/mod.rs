@@ -268,24 +268,25 @@ fn lang_of(spec_id: &str) -> Option<Lang> {
     LANGS.into_iter().find(|&l| rules!(l, R => R::GRAMMARS.contains(&spec_id)))
 }
 
-/// The language the resolver reads `path` in; the content sniff decides only between others.
-fn path_lang(path: &str) -> Option<Lang> {
-    lang_of(crate::langs::detect(path, None)?.id)
+/// The language the resolver reads a file of language `id` in (`langs::detect_at` decides `id`,
+/// from the text where an extension is shared, as the parser does).
+fn lang_of_id(id: Option<&str>) -> Option<Lang> {
+    lang_of(id?)
 }
 
-/// Whether the resolver reads the language of `path`.
-pub(crate) fn reads(path: &str) -> bool {
-    path_lang(path).is_some()
+/// Whether the resolver reads the repository file `rel`.
+pub(crate) fn reads(root: &std::path::Path, rel: &str) -> bool {
+    lang_of_id(crate::langs::detect_at(root, rel).map(|l| l.id)).is_some()
 }
 
-/// Whether an import in the language of `path` can bind a name under another (`import a as b`).
-pub(crate) fn may_alias(path: &str) -> bool {
-    matches!(path_lang(path), Some(Lang::Python | Lang::Js | Lang::Rust | Lang::Php))
+/// Whether an import in language `id` can bind a name under another (`import a as b`).
+pub(crate) fn may_alias(id: Option<&str>) -> bool {
+    matches!(lang_of_id(id), Some(Lang::Python | Lang::Js | Lang::Rust | Lang::Php))
 }
 
-/// Whether `x.f()` in `path` calls a method, never a free function `f`.
-pub(crate) fn methods_only(path: &str) -> bool {
-    path_lang(path).is_some_and(|l| rules!(l, R => R::METHODS_ONLY))
+/// Whether `x.f()` in language `id` calls a method, never a free function `f`.
+pub(crate) fn methods_only(id: Option<&str>) -> bool {
+    lang_of_id(id).is_some_and(|l| rules!(l, R => R::METHODS_ONLY))
 }
 
 /// Definition chosen for an occurrence and how it was found, or why none was.
@@ -341,6 +342,8 @@ pub struct Resolver<'a> {
     ix: &'a Index,
     files: HashSet<String>,
     cache: HashMap<String, Rc<FileInfo>>,
+    /// the language each file asked about is read in
+    langs: std::cell::RefCell<HashMap<String, Option<Lang>>>,
     parsers: HashMap<&'static str, Parser>,
     crates: Option<HashMap<String, String>>,
     go_dirs: Option<HashMap<String, Vec<String>>>,
@@ -752,6 +755,16 @@ fn bindings_by<R: Rules>(path: &str, root: Node, src: &str) -> Vec<Binding> {
 
 // ------------------------------------------------------------------------- resolver
 impl<'a> Resolver<'a> {
+    /// The language the resolver reads `path` in, as the parser takes the file.
+    fn path_lang(&self, path: &str) -> Option<Lang> {
+        if let Some(l) = self.langs.borrow().get(path) {
+            return *l;
+        }
+        let l = lang_of_id(crate::langs::detect_at(&self.ix.root, path).map(|l| l.id));
+        self.langs.borrow_mut().insert(path.to_string(), l);
+        l
+    }
+
     /// `names::Names` builds the one resolver of a request.
     pub(crate) fn new(ix: &'a Index) -> Result<Resolver<'a>> {
         let files = ix.files()?.into_iter().collect();
@@ -759,6 +772,7 @@ impl<'a> Resolver<'a> {
             ix,
             files,
             cache: HashMap::new(),
+            langs: Default::default(),
             parsers: HashMap::new(),
             crates: None,
             go_dirs: None,
@@ -874,7 +888,7 @@ impl<'a> Resolver<'a> {
     /// A match at bytes `a..b` of `line` as Engine A reads `path` -> the same span in the decoded
     /// line Engine A prints, and the column `resolve_at` takes, which counts a BOM on line 1.
     pub(crate) fn decoded_span(&mut self, path: &str, line: u64, (a, b): (usize, usize)) -> ((usize, usize), usize) {
-        if path_lang(path).is_none() {
+        if self.path_lang(path).is_none() {
             return ((a, b), a);
         }
         let fi = self.file(path);
@@ -956,7 +970,7 @@ impl<'a> Resolver<'a> {
     /// Resolve the occurrence of `name` at 1-based `line`, 0-based byte `col` of `path`.
     pub fn resolve_at(&mut self, path: &str, line: u64, col: usize, name: &str) -> Resolution {
         self.looked_up.clear();
-        if path_lang(path).is_none() {
+        if self.path_lang(path).is_none() {
             // whether a grammar exists does not depend on the content the sniff reads
             return Err(if crate::langs::detect(path, Some("")).is_some() { UNREAD } else { "no grammar" });
         }
@@ -1952,7 +1966,7 @@ impl<'a> Resolver<'a> {
     /// the files `refs` would look its names up in. None when the resolver does not read the
     /// language of `from`; an empty list when it reads it and finds no file.
     pub fn import_files(&mut self, from: &str, line: i64, module: &str) -> Option<Vec<String>> {
-        if !rules!(path_lang(from)?, R => R::reads_import(module)) {
+        if !rules!(self.path_lang(from)?, R => R::reads_import(module)) {
             return None;
         }
         let fi = self.file(from);

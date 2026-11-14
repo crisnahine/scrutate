@@ -176,7 +176,7 @@ impl<'a> Names<'a> {
         let first = (start.max(1) - 1) as usize;
         let from = starts.get(first).copied().unwrap_or(src.len());
         let ident = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
-        let methods = crate::resolve::methods_only(path);
+        let methods = crate::resolve::methods_only(self.langs.id(path));
         // ASCII lowercase keeps every byte where it is, so the columns hold
         let any_case = self.langs.folds(path, "function", "") && name.is_ascii();
         let wanted = if any_case { name.to_ascii_lowercase() } else { name.to_string() };
@@ -325,7 +325,7 @@ impl<'a> Names<'a> {
     /// `from util import helper as h` in `app.py` gives ("h", "app.py"). A call there is stored
     /// under the alias.
     fn aliases_of(&mut self, targets: &[Hit], langs: &Langs) -> Result<Vec<(String, String)>> {
-        let targets: Vec<&Hit> = targets.iter().filter(|t| crate::resolve::may_alias(&t.path)).collect();
+        let targets: Vec<&Hit> = targets.iter().filter(|t| crate::resolve::may_alias(langs.id(&t.path))).collect();
         let names: HashSet<&str> = targets.iter().map(|t| t.name.as_str()).collect();
         // an import names the item (Rust's `use a::helper as h`) or the module that holds it
         let stem = |p: &'_ str| p.rsplit_once('.').map_or(p, |(s, _)| s).to_string();

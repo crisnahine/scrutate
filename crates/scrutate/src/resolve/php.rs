@@ -306,7 +306,7 @@ impl Resolver<'_> {
         let any_case = kinds == ["function"];
         let mut rows: Vec<Symbol> = if any_case { self.ix.named_any_case(name) } else { self.ix.named(name) }.unwrap_or_default();
         let same = |q: &str| if any_case { q.eq_ignore_ascii_case(name) } else { q == name };
-        rows.retain(|r| same(&r.qualname) && kinds.contains(&r.kind.as_str()) && path_lang(&r.path) == Some(Lang::Php));
+        rows.retain(|r| same(&r.qualname) && kinds.contains(&r.kind.as_str()) && self.path_lang(&r.path) == Some(Lang::Php));
         rows.sort_by(|a, b| (&a.path, a.start).cmp(&(&b.path, b.start)));
         let mut found = if rows.is_empty() { Err("external") } else { Err("not found") };
         for r in rows {

@@ -156,6 +156,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- The resolver takes a file's language as the parser does, from its text where the extension is
+  shared: an Objective-C `.h` header no longer goes through the C rules, which could not place its
+  calls and left `dead` asking about them in place of a C file's call.
 - A `serve` reader left idle lets go of segments a write replaced, so their disk space is freed
   on Unix and they can be removed on Windows, where idle readers kept them open until reused.
 - `setup claude` replacing an old entry through `claude mcp` adds the old one back when the new

@@ -359,3 +359,25 @@ fn a_pascal_unit_in_a_pp_file_ignores_case_too() {
     assert_eq!(callers(&r, "DoWork"), ["u.pp Run"]);
     assert!(!names(&r.json(&["dead"]), "dead").iter().any(|n| n.ends_with("DoWork")), "{:?}", r.json(&["dead"]));
 }
+
+/// An Objective-C header (`.h`, which C and C++ share) is not read by the resolver's C rules: a
+/// use in a C file among 16 header lines that name the same function is still asked about.
+#[test]
+fn an_objective_c_header_is_read_in_its_own_language() {
+    let mut files: Vec<(String, String)> = (0..16)
+        .map(|i| {
+            (
+                format!("A{i:02}.h"),
+                format!("#import <Foundation/Foundation.h>\n@interface S{i:02} : NSObject\n@end\nstatic inline int w{i:02}(void) {{ return helper(); }}\n"),
+            )
+        })
+        .collect();
+    files.push(("main.c".into(), "int helper(void);\nint main(void) { return helper(); }\n".into()));
+    files.push(("util.c".into(), "int helper(void) { return 1; }\n".into()));
+    let refs: Vec<(&str, &str)> = files.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();
+    let r = Repo::new("objc_header", &refs);
+    let v = r.json(&["dead"]);
+    for group in ["dead", "undecided"] {
+        assert!(!names(&v, group).contains(&"util.c helper".to_string()), "util.c helper is called from main.c: {v:#}");
+    }
+}
