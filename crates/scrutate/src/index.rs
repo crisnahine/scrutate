@@ -844,7 +844,12 @@ pub fn rename_settled(from: &Path, to: &Path) -> std::io::Result<()> {
     let mut wait = std::time::Duration::from_millis(10);
     loop {
         match std::fs::rename(from, to) {
-            Err(e) if cfg!(windows) && e.kind() == std::io::ErrorKind::PermissionDenied && wait < std::time::Duration::from_millis(1300) => {
+            // 32 is ERROR_SHARING_VIOLATION, which std leaves uncategorised.
+            Err(e)
+                if cfg!(windows)
+                    && (e.kind() == std::io::ErrorKind::PermissionDenied || e.raw_os_error() == Some(32))
+                    && wait < std::time::Duration::from_millis(1300) =>
+            {
                 std::thread::sleep(wait);
                 wait *= 2;
             }

@@ -157,8 +157,8 @@ incompatible index by itself, and that is never breaking.
 
 ### Fixed
 - On Windows an index update that a virus scanner or the search indexer briefly blocked failed with
-  "Access is denied" when it renamed a new segment or the text index manifest into place; the
-  rename is now tried again for up to about two seconds.
+  "Access is denied" or "being used by another process" when it renamed a new segment or the text
+  index manifest into place; the rename is now tried again for up to about two seconds.
 - On Windows the indexes keep each file's status change time, as on Unix: a file edited back to
   its old size and modification time is read again by the next update
   instead of answering from its old chunks until `index --force`. The walk reads the change times
