@@ -2629,6 +2629,13 @@ impl Index {
         Ok(rows)
     }
 
+    /// The (path, module) of each recorded import whose module text holds `needle`.
+    pub fn imports_holding(&self, needle: &str) -> Result<Vec<(String, String)>> {
+        let mut st = self.db.prepare_cached("SELECT DISTINCT path, module FROM imports WHERE instr(module, ?1) > 0 ORDER BY path")?;
+        let rows = st.query_map([needle], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
     /// Every recorded import, as (path, line, module), by path and line.
     pub fn imports(&self) -> Result<Vec<(String, i64, String)>> {
         let mut st = self.db.prepare("SELECT path, line, module FROM imports ORDER BY path, line")?;

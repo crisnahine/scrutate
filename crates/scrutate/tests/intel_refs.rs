@@ -1381,6 +1381,29 @@ fn deps_and_rdeps_resolve_python_names_imported_from_a_package() {
 }
 
 #[test]
+fn a_call_through_an_import_alias_is_a_call_of_the_imported_definition() {
+    let r = Repo::new(
+        "alias_calls",
+        &[
+            ("util.py", "def helper():\n    return 1\n"),
+            ("app.py", "from util import helper as h\n\n\ndef run():\n    return h()\n"),
+            ("other.py", "def h():\n    return 2\n\n\ndef unrelated():\n    return h()\n"),
+            ("u.js", "function lone() {\n  return 1;\n}\nmodule.exports = { lone };\n"),
+            ("m.js", "const { lone: l } = require(\"./u\");\n\nfunction go() {\n  return l();\n}\n"),
+        ],
+    );
+    let lib = r.lib();
+    let callers = |n: &str| lib.callers(n, 50).unwrap().into_iter().map(|h| format!("{}:{}", h.path, h.qualname)).collect::<Vec<_>>();
+    let callees = |n: &str| lib.callees(n, 50).unwrap().0.into_iter().map(|h| format!("{}:{}", h.path, h.qualname)).collect::<Vec<_>>();
+    assert_eq!(callers("helper"), ["app.py:run"]);
+    assert_eq!(callees("run"), ["util.py:helper"]);
+    assert_eq!(callers("h"), ["other.py:unrelated"], "the alias is not the other file's h");
+    assert_eq!(callers("lone"), ["m.js:go"]);
+    assert_eq!(callees("go"), ["u.js:lone"]);
+    assert!(r.resolved("helper").contains(&("app.py:5".to_string(), "util.py".to_string())), "{:?}", r.resolved("helper"));
+}
+
+#[test]
 fn deps_and_rdeps_resolve_typescript_esm_names_and_declaration_files() {
     let r = Repo::new(
         "deps_ts",

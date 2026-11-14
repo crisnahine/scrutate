@@ -278,6 +278,11 @@ pub(crate) fn reads(path: &str) -> bool {
     path_lang(path).is_some()
 }
 
+/// Whether an import in the language of `path` can bind a name under another (`import a as b`).
+pub(crate) fn may_alias(path: &str) -> bool {
+    matches!(path_lang(path), Some(Lang::Python | Lang::Js | Lang::Rust | Lang::Php))
+}
+
 /// Whether `x.f()` in `path` calls a method, never a free function `f`.
 pub(crate) fn methods_only(path: &str) -> bool {
     path_lang(path).is_some_and(|l| rules!(l, R => R::METHODS_ONLY))
@@ -798,6 +803,13 @@ impl<'a> Resolver<'a> {
     }
 
     /// Drops the loaded copy of `path`; a later use loads it again.
+    /// The names `path` imports under a local name of its own, as (local, imported name):
+    /// `from util import helper as h` is ("h", "helper").
+    pub(crate) fn aliases(&mut self, path: &str) -> Vec<(String, String)> {
+        let fi = self.file(path);
+        fi.bindings.iter().filter(|b| !b.module.is_empty()).filter_map(|b| b.item.as_ref().filter(|i| **i != b.local).map(|i| (b.local.clone(), i.clone()))).collect()
+    }
+
     pub fn forget(&mut self, path: &str) {
         self.cache.remove(path);
         // node ids name nodes of trees still loaded

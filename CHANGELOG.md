@@ -156,6 +156,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `callers`, `callees`, `impact` and `refs` follow an import alias: with `from util import helper
+  as h` or `const { lone: l } = require("./u")`, a call `h()` was no caller of `helper`, so
+  `impact` found no callers and no tests ([CLI](docs/CLI.md#engine-b)).
 - Several first opens of a new linked work tree at once (an editor starting its language server
   and MCP server) no longer delete each other's copied segments: the losing open removed the
   segments the winner's database listed, and `check` found the new index damaged.

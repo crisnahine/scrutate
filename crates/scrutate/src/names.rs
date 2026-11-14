@@ -81,6 +81,33 @@ impl<'a> Names<'a> {
                 occurrences.push(Occurrence { path: h.path.to_string(), line: h.line, column: a as u64 + 1, text: line_text.clone(), at: da, resolution });
             }
         }
+        // a file that imports the name under an alias uses it under the alias too; the import's
+        // own line is listed already
+        let importing: BTreeSet<String> = occurrences.iter().map(|o| o.path.clone()).collect();
+        let ident = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+        for path in importing {
+            let locals: Vec<String> = self.rv.aliases(&path).into_iter().filter(|(_, item)| item == bare).map(|(local, _)| local).collect();
+            let listed: HashSet<u64> = occurrences.iter().filter(|o| o.path == path).map(|o| o.line).collect();
+            let fi = self.rv.file(&path);
+            for (i, line) in fi.src.lines().enumerate().filter(|(i, _)| !locals.is_empty() && !listed.contains(&(*i as u64 + 1))) {
+                for local in &locals {
+                    for (col, _) in line.match_indices(local.as_str()) {
+                        if ident(line[..col].chars().next_back()) || ident(line[col + local.len()..].chars().next()) {
+                            continue;
+                        }
+                        // the alias spelled in a string or bound again locally is not a use
+                        let resolution = self.rv.resolve_at(&path, i as u64 + 1, col, local);
+                        if resolution.is_err() {
+                            continue;
+                        }
+                        let text = line.trim_end_matches('\r').into();
+                        occurrences.push(Occurrence { path: path.clone(), line: i as u64 + 1, column: col as u64 + 1, text, at: col, resolution });
+                        truncated |= occurrences.len() as u64 > max_results;
+                    }
+                }
+            }
+        }
+        occurrences.truncate(max_results as usize);
         let mut definitions: Vec<ChunkRow> = s.ix.definitions(bare)?.into_iter().filter(|d| crate::resolve::same_name(&d.name, bare)).collect();
         let mut known: HashSet<i64> = definitions.iter().map(|d| d.id).collect();
         for o in &occurrences {
@@ -238,10 +265,52 @@ impl<'a> Names<'a> {
                 }
             }
         }
+        for (local, file) in self.aliases_of(&targets, &langs)? {
+            let mut sites = s.ix.callers_of(&local)?;
+            sites.retain(|r| r.path == file && seen.insert(r.id));
+            for row in sites {
+                if !self.uses(&row.path, (row.start, row.end), &local).got.is_disjoint(&ids) {
+                    out.push(Hit::from_row(&row, true));
+                    if out.len() >= limit {
+                        return Ok((out, 0, false));
+                    }
+                }
+            }
+        }
         unsure_rows.sort_by_cached_key(&likely);
         let undecided = unsure_rows.len().min(limit - out.len());
         out.extend(unsure_rows.iter().take(undecided).map(|r| Hit::from_row(r, true)));
         Ok((out, undecided, true))
+    }
+
+    /// The names the targets are imported under elsewhere, each with the one file that does so:
+    /// `from util import helper as h` in `app.py` gives ("h", "app.py"). A call there is stored
+    /// under the alias.
+    fn aliases_of(&mut self, targets: &[Hit], langs: &Langs) -> Result<Vec<(String, String)>> {
+        let targets: Vec<&Hit> = targets.iter().filter(|t| crate::resolve::may_alias(&t.path)).collect();
+        let names: HashSet<&str> = targets.iter().map(|t| t.name.as_str()).collect();
+        // an import names the item (Rust's `use a::helper as h`) or the module that holds it
+        let stem = |p: &'_ str| p.rsplit_once('.').map_or(p, |(s, _)| s).to_string();
+        let mut needles: BTreeSet<String> = names.iter().map(|n| n.to_string()).collect();
+        needles.extend(targets.iter().map(|t| module_name(&stem(&t.path)).to_string()));
+        // past a few names one pass over every import is cheaper than one search per name
+        let rows: Vec<(String, String)> = if needles.len() <= 16 {
+            needles.iter().map(|n| self.s.ix.imports_holding(n)).collect::<Result<Vec<_>>>()?.concat()
+        } else {
+            self.s.ix.imports()?.into_iter().map(|(path, _, module)| (path, module)).collect()
+        };
+        let mut files = BTreeSet::new();
+        for (path, module) in rows {
+            let names_it = module.split(|c: char| !(c.is_alphanumeric() || c == '_')).any(|seg| needles.contains(seg));
+            if names_it && targets.iter().any(|t| langs.same_family(&t.path, &path)) {
+                files.insert(path);
+            }
+        }
+        let mut out = Vec::new();
+        for f in files {
+            out.extend(self.rv.aliases(&f).into_iter().filter(|(_, item)| names.contains(item.as_str())).map(|(local, _)| (local, f.clone())));
+        }
+        Ok(out)
     }
 
     /// The definitions whose code calls the name of `gone`, a definition the tree no longer has,
@@ -310,7 +379,11 @@ impl<'a> Names<'a> {
         let callable = |from: &str, r: &ChunkRow| langs.same_family(from, &r.path) && (r.kind != "key" || langs.id(from) == langs.id(&r.path));
         let mut out = Vec::new();
         for n in s.ix.callees_of(d.id)? {
-            let rows: Vec<ChunkRow> = s.ix.named_of_kinds(&n, &kinds)?.into_iter().filter(|r| callable(&d.path, r)).collect();
+            let mut rows: Vec<ChunkRow> = s.ix.named_of_kinds(&n, &kinds)?.into_iter().filter(|r| callable(&d.path, r)).collect();
+            // an import alias names what it imports: `h` of `from util import helper as h`
+            if let Some((_, item)) = self.rv.aliases(&d.path).into_iter().find(|(local, _)| *local == n) {
+                rows.extend(s.ix.named_of_kinds(&item, &kinds)?.into_iter().filter(|r| callable(&d.path, r)));
+            }
             if rows.is_empty() {
                 out.push((n, Vec::new(), false));
                 continue;
@@ -599,16 +672,7 @@ impl<'a> Names<'a> {
         let dotted: String = stem.replace('/', ".");
         let dotted_pkg =
             dotted.strip_suffix(".__init__").or_else(|| dotted.strip_suffix(".index")).or_else(|| dotted.strip_suffix(".mod")).map(|s| s.to_string());
-        // the last name of the module the file is: `a/b.py` -> `b`, `a/b/__init__.py` -> `b`
-        let own = {
-            let mut parts = stem.rsplit('/');
-            let last = parts.next().unwrap_or(stem);
-            if matches!(last, "__init__" | "index" | "mod" | "lib" | "main") {
-                parts.next().unwrap_or(last)
-            } else {
-                last
-            }
-        };
+        let own = module_name(stem);
         let target_dir = target.rsplit_once('/').map_or("", |(d, _)| d);
         let (mut out, mut unsure) = (Vec::new(), 0);
         let mut prev = String::new();
@@ -789,6 +853,18 @@ fn package(path: &str) -> &str {
     match path.strip_prefix("src/").map(|_| 0).or_else(|| path.find("/src/")) {
         Some(i) => &path[..i],
         None => path.split_once('/').map_or("", |(top, _)| top),
+    }
+}
+
+/// The last name of the module a file is, from its path without the extension: `a/b` -> `b`,
+/// `a/b/__init__` -> `b`.
+fn module_name(stem: &str) -> &str {
+    let mut parts = stem.rsplit('/');
+    let last = parts.next().unwrap_or(stem);
+    if matches!(last, "__init__" | "index" | "mod" | "lib" | "main") {
+        parts.next().unwrap_or(last)
+    } else {
+        last
     }
 }
 
