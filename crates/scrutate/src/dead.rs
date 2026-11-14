@@ -62,26 +62,28 @@ pub(crate) fn candidates(ix: &crate::index::Index, under: Option<&str>) -> anyho
         by_file.entry(s.path.as_str()).or_default().push(s);
     }
     let wanted: Vec<&Symbol> = all.iter().filter(|s| KINDS.contains(&s.kind.as_str()) && !s.name.is_empty() && inside(&s.path)).collect();
-    let mut name_ids: HashMap<&str, u32> = HashMap::new();
+    // the names uses are found by, and the writers' (`label=`), each with its own number
+    let (mut name_ids, mut writer_ids): (HashMap<&str, u32>, HashMap<&str, u32>) = Default::default();
     // where each definition starts, by qualified name: a declaration and its body (Pascal's
     // `procedure Tidy;` in the class and `procedure TFoo.Tidy`) do not use each other
     let mut starts: HashMap<&str, Vec<(&str, i64)>> = HashMap::new();
+    let mut id_of: Vec<u32> = Vec::with_capacity(wanted.len());
     for s in &wanted {
-        let n = name_ids.len() as u32;
-        name_ids.entry(looked_for(&s.name)).or_insert(n);
+        let n = (name_ids.len() + writer_ids.len()) as u32;
+        let (key, writer) = looked_for(&s.name);
+        id_of.push(*if writer { writer_ids.entry(key) } else { name_ids.entry(key) }.or_insert(n));
         starts.entry(s.qualname.as_str()).or_default().push((s.path.as_str(), s.start));
     }
     // a name in a language that ignores case is found in any case, by its lowercase form; ASCII
     // letters only, as Fortran, Pascal, Ada and PHP fold no others in their names
     let mut folded: HashMap<String, Vec<u32>> = HashMap::new();
     let mut lang_of: HashMap<&str, Option<&'static str>> = HashMap::new();
-    for s in wanted.iter().filter(|s| s.name.is_ascii()) {
+    for (s, &id) in wanted.iter().zip(&id_of).filter(|(s, _)| s.name.is_ascii()) {
         let lang = *lang_of.entry(s.path.as_str()).or_insert_with(|| crate::langs::detect_at(root, &s.path).map(|l| l.id));
         if !crate::langs::ignores_case(lang, &s.kind, &s.qualname) {
             continue;
         }
-        let id = name_ids[looked_for(&s.name)];
-        let ids = folded.entry(looked_for(&s.name).to_ascii_lowercase()).or_default();
+        let ids = folded.entry(looked_for(&s.name).0.to_ascii_lowercase()).or_default();
         if !ids.contains(&id) {
             ids.push(id);
         }
@@ -97,7 +99,7 @@ pub(crate) fn candidates(ix: &crate::index::Index, under: Option<&str>) -> anyho
                 return (Vec::new(), Vec::new(), big);
             };
             let Some(src) = crate::index::decode_source(&raw) else { return (Vec::new(), Vec::new(), false) };
-            let found = occurrences(&src, &name_ids, &folded, &odd, &odd_finder);
+            let found = occurrences(&src, &name_ids, &writer_ids, &folded, &odd, &odd_finder);
             let mine: Vec<&Symbol> = by_file
                 .get(rel.as_str())
                 .map(|v| v.iter().copied().filter(|s| KINDS.contains(&s.kind.as_str()) && inside(&s.path)).collect())
@@ -109,7 +111,7 @@ pub(crate) fn candidates(ix: &crate::index::Index, under: Option<&str>) -> anyho
     let too_large: Vec<String> = files.iter().zip(&scanned).filter(|(_, s)| s.2).map(|(f, _)| f.clone()).collect();
     let readable: Vec<bool> = files.iter().map(|f| crate::resolve::reads(root, f)).collect();
     let mut rules: HashMap<i64, Rule> = HashMap::new();
-    let mut at: Vec<Vec<(u32, i64)>> = vec![Vec::new(); name_ids.len()];
+    let mut at: Vec<Vec<(u32, i64)>> = vec![Vec::new(); name_ids.len() + writer_ids.len()];
     for (fi, (found, file_rules, _)) in scanned.into_iter().enumerate() {
         rules.extend(file_rules);
         for (n, line) in found {
@@ -117,17 +119,14 @@ pub(crate) fn candidates(ix: &crate::index::Index, under: Option<&str>) -> anyho
         }
     }
     let mut out = Vec::new();
-    for s in wanted {
+    for (s, id) in wanted.into_iter().zip(id_of) {
         let rule = rules.remove(&s.id).unwrap_or(Rule::Plain);
         if matches!(rule, Rule::Entry) {
             continue;
         }
         let twin = |f: u32, line: i64| starts[s.qualname.as_str()].iter().any(|&(p, at)| files[f as usize] == p && at == line);
-        let mut found: Vec<(u32, i64)> = at[name_ids[looked_for(&s.name)] as usize]
-            .iter()
-            .copied()
-            .filter(|&(f, line)| !(files[f as usize] == s.path && s.start <= line && line <= s.end) && !twin(f, line))
-            .collect();
+        let mut found: Vec<(u32, i64)> =
+            at[id as usize].iter().copied().filter(|&(f, line)| !(files[f as usize] == s.path && s.start <= line && line <= s.end) && !twin(f, line)).collect();
         found.dedup();
         let unread = found.iter().filter(|o| !readable[o.0 as usize]).count();
         let mine = |o: &&(u32, i64)| files[o.0 as usize] == s.path;
@@ -150,12 +149,16 @@ pub(crate) fn candidates(ix: &crate::index::Index, under: Option<&str>) -> anyho
 }
 
 /// The text a use of the definition `name` is written with: `Tidy` for Pascal's `TFoo.Tidy`
-/// (called `o.Tidy`), `label` for Ruby's writer `label=` (assigned `v.label = x`).
-fn looked_for(name: &str) -> &str {
-    let name = name.strip_suffix('=').filter(|n| !n.is_empty() && n.chars().all(word_char)).unwrap_or(name);
+/// (called `o.Tidy`), `label` for Ruby's writer `label=` (assigned `v.label = x`); and whether it
+/// is a writer, used only where it is called (`.label =`, `:label=`), not where a variable of the
+/// same name (`@label`) is read.
+fn looked_for(name: &str) -> (&str, bool) {
+    if let Some(bare) = name.strip_suffix('=').filter(|n| !n.is_empty() && n.chars().all(word_char)) {
+        return (bare, true);
+    }
     match name.rsplit_once(['.', ':']) {
-        Some((_, last)) if !last.is_empty() && last.chars().all(word_char) => last,
-        _ => name,
+        Some((_, last)) if !last.is_empty() && last.chars().all(word_char) => (last, false),
+        _ => (name, false),
     }
 }
 
@@ -228,6 +231,7 @@ const RUBY_HOOKS: [&str; 30] = [
 fn occurrences(
     src: &str,
     names: &HashMap<&str, u32>,
+    writers: &HashMap<&str, u32>,
     folded: &HashMap<String, Vec<u32>>,
     odd: &[&str],
     odd_finder: &aho_corasick::AhoCorasick,
@@ -239,6 +243,9 @@ fn occurrences(
         let w = &src[from..to];
         let hit = if w.is_ascii() { names.get(w).copied() } else { names.get(w.nfc().collect::<String>().as_str()).copied() };
         if let Some(n) = hit {
+            out.push((n, line));
+        }
+        if let Some(&n) = writers.get(w).filter(|_| src[..from].ends_with(['.', ':'])) {
             out.push((n, line));
         }
         if !folded.is_empty() && w.is_ascii() {
@@ -556,7 +563,7 @@ mod tests {
         all.insert("valid?", 2);
         let finder = aho_corasick::AhoCorasick::new(odd).unwrap();
         let src = "run()\nrerun run_it $run\ncafe\u{301} x.valid? valid?x\n";
-        assert_eq!(occurrences(src, &all, &HashMap::new(), &odd, &finder), [(0, 1), (0, 2), (1, 3), (2, 3)]);
+        assert_eq!(occurrences(src, &all, &HashMap::new(), &HashMap::new(), &odd, &finder), [(0, 1), (0, 2), (1, 3), (2, 3)]);
     }
 
     #[test]

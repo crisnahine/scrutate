@@ -169,6 +169,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `dead` counts a Ruby writer (`def color=`) as used only where it is called (`x.color = 1`,
+  `send(:color=, 1)`): reading `@color` kept a writer nothing calls out of the dead
+  ([CLI](docs/CLI.md#engine-b)).
 - A code index segment write that is stopped or fails removes its half-written directory, which
   stayed in `.scrutate` until a later write took its name ([Architecture](docs/ARCHITECTURE.md#storage-indexrs-lexrs)).
 - A path that names the repository's root from a directory below it (`dead ..`, `map ..` from

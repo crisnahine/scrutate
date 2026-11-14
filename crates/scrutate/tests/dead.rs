@@ -414,11 +414,12 @@ fn a_doxygen_class_tag_in_a_comment_leaves_a_cpp_header_cpp() {
 #[test]
 fn a_method_named_with_its_owner_or_as_a_writer_is_used_where_it_is_called_or_assigned() {
     let pas = "unit u;\n\ninterface\n\ntype\n  TFoo = class\n    procedure Tidy;\n    procedure Unused;\n  end;\n\nprocedure DoWork(o: TFoo);\n\nimplementation\n\nprocedure TFoo.Tidy;\nbegin\nend;\n\nprocedure TFoo.Unused;\nbegin\nend;\n\nprocedure DoWork(o: TFoo);\nbegin\n  o.Tidy;\nend;\n\nend.\n";
-    let rb = "class Box\n  def label=(v)\n    @label = v\n  end\n\n  def size=(v)\n    @size = v\n  end\nend\n\nb = Box.new\nb.label = \"x\"\n";
+    // `@size` read in `show` is no use of `size=`, and `send(:color=, 1)` is one of `color=`
+    let rb = "class Box\n  def label=(v)\n    @label = v\n  end\n\n  def size=(v)\n    @size = v\n  end\n\n  def color=(v)\n    @color = v\n  end\n\n  def show\n    puts @size\n  end\nend\n\nb = Box.new\nb.label = \"x\"\nb.send(:color=, 1)\nb.show\n";
     let r = Repo::new("owner_and_writer", &[("u.pas", pas), ("a.rb", rb)]);
     let v = r.json(&["dead"]);
     let dead = names(&v, "dead");
-    assert!(!dead.iter().any(|d| d.ends_with("Tidy") || d.ends_with("label=")), "{v:#}");
+    assert!(!dead.iter().any(|d| d.ends_with("Tidy") || d.ends_with("label=") || d.ends_with("color=")), "{v:#}");
     // the declaration in the class and the body name each other, and nothing else names them
     assert!(dead.contains(&"a.rb Box.size=".to_string()) && dead.contains(&"u.pas TFoo.Unused".to_string()), "{v:#}");
 }
