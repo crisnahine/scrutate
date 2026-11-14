@@ -593,11 +593,10 @@ impl Server {
                 }
                 // an alias (`h` for `helper`) spans what the line writes, not the name asked for
                 let written = o.text.get(o.at..).unwrap_or("");
-                let width = if written.starts_with(ident.as_str()) {
-                    ident.encode_utf16().count()
-                } else {
-                    written.chars().take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$').map(char::len_utf16).sum()
-                } as u64;
+                let word = |c: &char| c.is_alphanumeric() || *c == '_' || *c == '$';
+                // the name as asked for, whole: `helper2` starts with `helper` but is another word
+                let whole = written.strip_prefix(ident.as_str()).is_some_and(|rest| !rest.chars().next().is_some_and(|c| word(&c)));
+                let width = if whole { ident.encode_utf16().count() } else { written.chars().take_while(word).map(char::len_utf16).sum() } as u64;
                 let (l, a) = (o.line.saturating_sub(1), byte_to_utf16(&o.text, o.at));
                 out.push(json!({"uri": path_to_uri(&self.root.join(&o.path)), "range": range(l, a, l, a + width)}));
             }
