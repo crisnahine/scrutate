@@ -408,3 +408,17 @@ fn a_doxygen_class_tag_in_a_comment_leaves_a_cpp_header_cpp() {
     let (_, out) = r.run(&["outline", "shim.h"]);
     assert!(out.contains("Shim"), "Objective-C stays Objective-C: {out}");
 }
+
+/// A definition named with its owner (Pascal's `procedure TFoo.Tidy`) is used where its own name
+/// is (`o.Tidy`), and a Ruby writer (`def label=`) where it is assigned (`v.label = "x"`).
+#[test]
+fn a_method_named_with_its_owner_or_as_a_writer_is_used_where_it_is_called_or_assigned() {
+    let pas = "unit u;\n\ninterface\n\ntype\n  TFoo = class\n    procedure Tidy;\n    procedure Unused;\n  end;\n\nprocedure DoWork(o: TFoo);\n\nimplementation\n\nprocedure TFoo.Tidy;\nbegin\nend;\n\nprocedure TFoo.Unused;\nbegin\nend;\n\nprocedure DoWork(o: TFoo);\nbegin\n  o.Tidy;\nend;\n\nend.\n";
+    let rb = "class Box\n  def label=(v)\n    @label = v\n  end\n\n  def size=(v)\n    @size = v\n  end\nend\n\nb = Box.new\nb.label = \"x\"\n";
+    let r = Repo::new("owner_and_writer", &[("u.pas", pas), ("a.rb", rb)]);
+    let v = r.json(&["dead"]);
+    let dead = names(&v, "dead");
+    assert!(!dead.iter().any(|d| d.ends_with("Tidy") || d.ends_with("label=")), "{v:#}");
+    // the declaration in the class and the body name each other, and nothing else names them
+    assert!(dead.contains(&"a.rb Box.size=".to_string()) && dead.contains(&"u.pas TFoo.Unused".to_string()), "{v:#}");
+}

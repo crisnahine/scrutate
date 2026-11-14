@@ -161,6 +161,10 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `dead` finds a use of a definition named with its owner (Pascal's `procedure TFoo.Tidy`, used
+  as `o.Tidy`) and of a Ruby writer (`def label=`, used as `v.label = "x"`) by its own name: both
+  were called dead while code used them. A method's declaration in its class and its body no
+  longer count as uses of each other ([CLI](docs/CLI.md#engine-b)).
 - Two `Repo`s of the Python module with different custom languages, updated side by side, each
   parse under their own root's tables: an update could parse with the other root's and keep
   those chunks ([CLI](docs/CLI.md#custom-languages)).

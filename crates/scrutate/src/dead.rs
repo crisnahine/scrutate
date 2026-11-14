@@ -63,9 +63,13 @@ pub(crate) fn candidates(ix: &crate::index::Index, under: Option<&str>) -> anyho
     }
     let wanted: Vec<&Symbol> = all.iter().filter(|s| KINDS.contains(&s.kind.as_str()) && !s.name.is_empty() && inside(&s.path)).collect();
     let mut name_ids: HashMap<&str, u32> = HashMap::new();
+    // where each definition starts, by qualified name: a declaration and its body (Pascal's
+    // `procedure Tidy;` in the class and `procedure TFoo.Tidy`) do not use each other
+    let mut starts: HashMap<&str, Vec<(&str, i64)>> = HashMap::new();
     for s in &wanted {
         let n = name_ids.len() as u32;
-        name_ids.entry(s.name.as_str()).or_insert(n);
+        name_ids.entry(looked_for(&s.name)).or_insert(n);
+        starts.entry(s.qualname.as_str()).or_default().push((s.path.as_str(), s.start));
     }
     // a name in a language that ignores case is found in any case, by its lowercase form; ASCII
     // letters only, as Fortran, Pascal, Ada and PHP fold no others in their names
@@ -76,8 +80,8 @@ pub(crate) fn candidates(ix: &crate::index::Index, under: Option<&str>) -> anyho
         if !crate::langs::ignores_case(lang, &s.kind, &s.qualname) {
             continue;
         }
-        let id = name_ids[s.name.as_str()];
-        let ids = folded.entry(s.name.to_ascii_lowercase()).or_default();
+        let id = name_ids[looked_for(&s.name)];
+        let ids = folded.entry(looked_for(&s.name).to_ascii_lowercase()).or_default();
         if !ids.contains(&id) {
             ids.push(id);
         }
@@ -118,10 +122,11 @@ pub(crate) fn candidates(ix: &crate::index::Index, under: Option<&str>) -> anyho
         if matches!(rule, Rule::Entry) {
             continue;
         }
-        let mut found: Vec<(u32, i64)> = at[name_ids[s.name.as_str()] as usize]
+        let twin = |f: u32, line: i64| starts[s.qualname.as_str()].iter().any(|&(p, at)| files[f as usize] == p && at == line);
+        let mut found: Vec<(u32, i64)> = at[name_ids[looked_for(&s.name)] as usize]
             .iter()
             .copied()
-            .filter(|&(f, line)| !(files[f as usize] == s.path && s.start <= line && line <= s.end))
+            .filter(|&(f, line)| !(files[f as usize] == s.path && s.start <= line && line <= s.end) && !twin(f, line))
             .collect();
         found.dedup();
         let unread = found.iter().filter(|o| !readable[o.0 as usize]).count();
@@ -142,6 +147,16 @@ pub(crate) fn candidates(ix: &crate::index::Index, under: Option<&str>) -> anyho
         out.push(Candidate { sym: s.clone(), named: found.len(), unread, lines, base });
     }
     Ok((out, too_large))
+}
+
+/// The text a use of the definition `name` is written with: `Tidy` for Pascal's `TFoo.Tidy`
+/// (called `o.Tidy`), `label` for Ruby's writer `label=` (assigned `v.label = x`).
+fn looked_for(name: &str) -> &str {
+    let name = name.strip_suffix('=').filter(|n| !n.is_empty() && n.chars().all(word_char)).unwrap_or(name);
+    match name.rsplit_once(['.', ':']) {
+        Some((_, last)) if !last.is_empty() && last.chars().all(word_char) => last,
+        _ => name,
+    }
 }
 
 /// A character of a word as a whole-word search reads it: a combining mark included.
