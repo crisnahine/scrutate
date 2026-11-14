@@ -204,9 +204,11 @@ Edge cases:
 - Being written at that moment: the reads see the last commit, never half of one (`VACUUM INTO`
   reads in one transaction, an update's lookups in one snapshot). The main checkout removes a
   segment it replaced right after its commit; if a listed segment is gone or half gone, the seed
-  fails with nothing left behind (every copied segment must open before the copy is taken) and
-  the index is built as usual, and an artifact whose vectors were in it gets vectors made from its
-  word counts. The main checkout's writer is never blocked: a WAL reader only holds back the
+  fails and leaves no database (every copied segment must open before the copy is taken), the
+  index is built as usual, and an artifact whose vectors were in that segment gets vectors made
+  from its word counts. The segments the seed copied stay, since another first open at the same
+  moment may list them; an update removes a copy no database lists once it is 10 minutes old.
+  The main checkout's writer is never blocked: a WAL reader only holds back the
   checkpoint until the read ends.
 - Two plain clones of one repository (no git link between them) do not find each other, and a
   second checkout that is no git work tree builds its index as before.
