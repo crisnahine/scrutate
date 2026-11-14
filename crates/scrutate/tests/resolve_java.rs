@@ -585,3 +585,17 @@ fn a_local_of_an_enum_s_instance_initializer_hides_the_field_only_there() {
     let r = Repo::with("enum_init_block", &files);
     assert_eq!(r.refs_of("count", "a/E.java:5"), ["E.java:11", "E.java:5"]);
 }
+
+#[test]
+fn a_default_package_class_another_directory_holds_is_external_to_refs_and_callees() {
+    let util = |n: u8| format!("public class Util {{\n    static int help() {{\n        return {n};\n    }}\n}}\n");
+    let (a, b) = (util(1), util(2));
+    let files = vec![
+        ("ex/a/Util.java".to_string(), a.as_str()),
+        ("ex/b/Util.java".to_string(), b.as_str()),
+        ("ex/c/Main.java".to_string(), "public class Main {\n    int run() {\n        return Util.help();\n    }\n}\n"),
+    ];
+    let r = Repo::with("default_pkg_elsewhere", &files);
+    assert_eq!(r.reasons("Util", "ex/c/Main.java"), ["3 external"]);
+    assert!(r.names(&["callees", "Main.run", "--json"]).is_empty(), "callees by name fallback");
+}

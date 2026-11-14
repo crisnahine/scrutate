@@ -421,7 +421,8 @@ decomposed.
 Java has rules of its own:
 
 - A file's package comes from its `package` declaration, so every source root works; a file
-  without one is in the default package of its own directory. Imports
+  without one is in the default package of its own directory, and a class it names that only
+  another directory defines is `external`, as from the classpath, unless a `*` import may bring it. Imports
   are single-type, on-demand (`.*`) and `static`.
 - Locals are parameters, lambda parameters, the variables of a method, a constructor, a static or
   instance initializer block, and those of `for`, `catch`, an `instanceof` pattern and a

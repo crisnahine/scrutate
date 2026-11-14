@@ -619,6 +619,8 @@ impl<'a> Resolver<'a> {
             Ok(id) => id,
             Err("type parameter") => return Err("receiver"),
             Err("external") if segs.len() == 1 && self.java_package_files(hname).is_some() => return Err("package"),
+            // not one of the repository's same-named classes, which a foreign type may otherwise be
+            Err("external") if segs.len() == 1 && self.java_unseen(fi, hname) => return Err("external"),
             Err(e) if segs.len() == 1 => return if e == "external" { Ok(Ty::Foreign(hname.to_string(), Vec::new())) } else { Err(e) },
             Err(_) => {
                 let full = segs.iter().map(|s| text(*s, src)).collect::<Vec<_>>().join(".");
@@ -817,7 +819,14 @@ impl<'a> Resolver<'a> {
             }
         }
         // `java.lang` and the packages a `*` imports from outside
-        Err(if self.defined_anywhere(name) { "not found" } else { "external" })
+        Err(if self.defined_anywhere(name) && !self.java_unseen(fi, name) { "not found" } else { "external" })
+    }
+
+    /// Whether `name`, defined somewhere in the repository, is out of sight of `fi`: a file of the
+    /// default package with no `*` import sees only its own directory, so such a class is from the
+    /// classpath.
+    fn java_unseen(&mut self, fi: &FileInfo, name: &str) -> bool {
+        java_package(&fi.src).is_empty() && !fi.bindings.iter().any(|b| b.local == "*") && self.defined_anywhere(name)
     }
 
     /// The class a Java type expression names (`T`, `a.b.T`, `Outer.Inner<X>`).
