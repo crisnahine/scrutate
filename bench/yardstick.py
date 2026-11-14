@@ -132,8 +132,13 @@ def summary(rows: list[dict]) -> dict:
             tool, (ratio, form) = min(good.items(), key=lambda kv: kv[1][0])
             out[w] = {"rival": tool, "form": form, "ratio": ratio}
         else:
+            # a right rival with no ratio had no scrutate row of its form to be timed against
+            forms = {r["form"] for r in mine if r["status"] == "ok" and "ratio" not in r}
+            ours = sorted({f"{r['tool']} {r['status']}" for r in rows if r["workload"] == w and r["tool"].startswith("scrutate")
+                           and r["form"] in forms and r["status"] != "ok"})
             seen = sorted({f"{r['tool']} {r['status']}" for r in mine})
-            out[w] = {"reason": "no rival answered right: " + ("; ".join(seen) if seen else "none adapted")}
+            out[w] = {"reason": "; ".join(ours) + ", so no rival has a time to compare" if ours
+                      else "no rival answered right: " + ("; ".join(seen) if seen else "none adapted")}
         if w == "W8":
             import evalcore  # numpy: only a semantic run needs it
 

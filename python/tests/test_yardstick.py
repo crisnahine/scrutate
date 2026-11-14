@@ -108,3 +108,7 @@ class NoCalls(Fake):
 def test_a_query_scrutate_cannot_express_still_passes():
     assert Y.passed(run(Fake("scrutate-mcp", RIGHT), NoCalls("scrutate-lsp", RIGHT)))
 
+
+def test_when_scrutate_fails_the_summary_says_so_and_does_not_blame_the_rivals():
+    reason = Y.summary(run(Fake("scrutate-mcp", RIGHT, fails=True), Fake("rival", RIGHT))["rows"])["W4"]["reason"]
+    assert reason == "scrutate-mcp error: crashed, so no rival has a time to compare"
