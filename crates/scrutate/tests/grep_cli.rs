@@ -305,6 +305,16 @@ fn a_size_too_large_for_64_bits_is_refused() {
 }
 
 #[test]
+fn a_case_folded_class_that_matches_nothing_finds_nothing() {
+    let d = Dir::new("emptyclass");
+    d.write("e.txt", b"xab\n");
+    for pat in [r"ab[^\s\S]", r"(?-u)ab[^\x00-\xff]"] {
+        let (code, out, err) = d.run(&["grep", "-i", pat, "e.txt"]);
+        assert_eq!((code, out.as_str()), (1, ""), "{pat}: {err}");
+    }
+}
+
+#[test]
 fn smart_case_folds_only_a_pattern_with_lowercase_literals() {
     let d = Dir::new("smart");
     d.write("a.txt", b"ABC\nabc\n");
