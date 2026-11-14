@@ -672,6 +672,16 @@ fn a_multi_line_count_counts_matches_that_share_a_line() {
 }
 
 #[test]
+fn a_multi_line_count_does_not_count_the_empty_match_after_a_group_ends() {
+    let d = Dir::new("mlempty");
+    d.write("b.txt", b"a\n\nb\n");
+    // ripgrep 15's counts: `^` and `$` match again where the group's line end is, past the group
+    for (pat, want) in [("^$", "1\n"), ("^", "3\n"), ("$", "3\n")] {
+        assert_eq!(d.run(&["grep", "-c", "-U", pat, "b.txt"]).1, want, "{pat}");
+    }
+}
+
+#[test]
 fn a_bad_configuration_file_stops_only_the_commands_that_use_it() {
     let d = Dir::new("badcfg");
     d.write("a.txt", b"foo\n");

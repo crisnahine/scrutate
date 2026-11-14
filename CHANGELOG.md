@@ -156,6 +156,8 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `grep -c -U` no longer counts the empty match after each matched group's line end, as
+  ripgrep: `^$` on `a`, a blank line and `b` counts 1, not 2.
 - `grep -A` and `-B` win over `-C` in either order, as in ripgrep: `-C1 -A3` showed one line
   after each match, not three ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
 - `grep -i` with a class that matches nothing (`ab[^\s\S]`) finds nothing and exits 1, as

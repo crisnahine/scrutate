@@ -1745,8 +1745,10 @@ impl Collector<'_> {
             // as ripgrep: merged matches that span lines count one by one
             self.file_count += if self.count_each {
                 let mut n = 0;
-                each_match(self.matcher, bytes, |_, _| {
-                    n += 1;
+                // an empty match after the group's line end belongs to the next line, not this one
+                let past = |a: usize, b: usize| a == b && a == bytes.len() && bytes.ends_with(b"\n");
+                each_match(self.matcher, bytes, |a, b| {
+                    n += u64::from(!past(a, b));
                     true
                 });
                 n.max(1)
