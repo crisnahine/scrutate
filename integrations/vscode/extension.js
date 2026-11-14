@@ -65,7 +65,7 @@ async function pickHits(r, placeHolder) {
 function wordsUnderCursor() {
   const ed = vscode.window.activeTextEditor;
   if (!ed) return [];
-  const ranges = [/[\p{L}\p{N}_][\p{L}\p{N}_.]*/u, /[\p{L}\p{N}_]+/u].map((re) => ed.document.getWordRangeAtPosition(ed.selection.active, re));
+  const ranges = [/[\p{Alphabetic}\p{N}_][\p{Alphabetic}\p{N}_.]*/u, /[\p{Alphabetic}\p{N}_]+/u].map((re) => ed.document.getWordRangeAtPosition(ed.selection.active, re));
   return [...new Set(ranges.filter(Boolean).map((r) => ed.document.getText(r)))];
 }
 
