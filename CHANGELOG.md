@@ -169,6 +169,11 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- PHP class, interface, trait, enum, method, namespace and `use` alias names match in any case,
+  as PHP matches them: `s::SLUG()` after `use App\Util\Str as S`, `\app\util\str::slug()` and
+  `$x->Slug()` are calls of `Str::slug` in `refs`, `callers` and `dead`, where they were
+  `external` or not found; variables, properties and constants still compare as written
+  ([CLI](docs/CLI.md#engine-b)).
 - `refs` finds a Go method promoted through an embedded struct field: `v.Hello()` on a `Wrap`
   that embeds `Base` (or `*Base`, also two levels down) is `Base.Hello`, where it said
   `not found` ([CLI](docs/CLI.md#engine-b)).

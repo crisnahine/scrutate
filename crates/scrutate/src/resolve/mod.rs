@@ -105,6 +105,8 @@ trait Rules {
     const EMBEDDED_FIELDS: bool = false;
     /// A constant bound to `require(..)` is an import of a module.
     const REQUIRE: bool = false;
+    /// A method is named in any case (PHP); fields and constants are not.
+    const MEMBERS_ANY_CASE: bool = false;
 
     /// Adds the bindings of import statement `n` to `out`; false when `n` is none.
     fn bindings(n: Node, path: &str, src: &str, out: &mut Vec<Binding>) -> bool;
@@ -1665,8 +1667,12 @@ impl<'a> Resolver<'a> {
     fn declared(&mut self, id: i64, name: &str, field: bool) -> Option<i64> {
         let (path, qualname) = self.def_row(id)?;
         let want = format!("{}.{name}", strip_generics(&qualname));
-        let wanted = |d: &&Def| d.name == name && (d.kind == "field" || field && d.kind == "constant") == field && strip_generics(&d.qualname) == want;
-        self.file(&path).defs.iter().find(wanted).map(|d| d.id)
+        let fi = self.file(&path);
+        let fold = !field && fi.lang.is_some_and(|l| rules!(l, R => R::MEMBERS_ANY_CASE));
+        let same = |a: &str, b: &str| if fold { a.eq_ignore_ascii_case(b) } else { a == b };
+        let wanted =
+            |d: &&Def| same(&d.name, name) && (d.kind == "field" || field && d.kind == "constant") == field && same(&strip_generics(&d.qualname), &want);
+        fi.defs.iter().find(wanted).map(|d| d.id)
     }
 
     fn member_inner(&mut self, id: i64, name: &str, depth: usize) -> Option<i64> {

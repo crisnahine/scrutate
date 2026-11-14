@@ -189,3 +189,12 @@ fn the_accept_fixture_resolves_a_method_through_a_typed_local() {
     );
     assert_eq!(r.resolved("name"), expect(&[("app/Http/Controller.php", 8, "app/Models/User.php"), ("app/Models/User.php", 6, "app/Models/User.php")]));
 }
+
+#[test]
+fn php_class_alias_namespace_and_method_names_match_in_any_case() {
+    let str_php = "<?php\nnamespace App\\Util;\n\nclass Str\n{\n    public static function slug($s) { return $s; }\n}\n";
+    let app = "<?php\nnamespace App;\n\nuse App\\Util\\Str as S;\n\nfunction run() {\n    s::SLUG(\"a\");\n    \\app\\util\\str::slug(\"b\");\n    $x = new s();\n    $x->Slug(\"c\");\n}\n";
+    let r = Repo::new("any_case", &[("src/Util/Str.php", str_php), ("app.php", app)]);
+    let s = "src/Util/Str.php";
+    assert_eq!(r.resolved("slug"), expect(&[(s, 6, s), ("app.php", 7, s), ("app.php", 8, s), ("app.php", 10, s)]));
+}

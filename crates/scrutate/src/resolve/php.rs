@@ -11,6 +11,7 @@ impl Rules for Php {
     const GRAMMARS: &'static [&'static str] = &["php"];
     // `.` joins strings: `$a . f()` may call a free function
     const METHODS_ONLY: bool = false;
+    const MEMBERS_ANY_CASE: bool = true;
 
     fn bindings(n: Node, _path: &str, src: &str, out: &mut Vec<Binding>) -> bool {
         if n.kind() != "namespace_use_declaration" {
@@ -129,7 +130,7 @@ fn php_qualify(fi: &FileInfo, at: Node, written: &str) -> String {
         Some((f, r)) => (f, Some(r)),
         None => (written, None),
     };
-    if let Some(b) = fi.bindings.iter().find(|b| b.local == first) {
+    if let Some(b) = fi.bindings.iter().find(|b| b.local.eq_ignore_ascii_case(first)) {
         let base = php_full(b);
         return rest.map_or(base.clone(), |r| format!("{base}\\{r}"));
     }
@@ -263,7 +264,7 @@ impl Resolver<'_> {
         let full = php_qualify(fi, whole, written);
         match self.php_path(&full, &["function"]) {
             Ok(id) => Ok((id, "namespace")),
-            Err(_) if !written.contains('\\') && full != written && !fi.bindings.iter().any(|b| b.local == written) => {
+            Err(_) if !written.contains('\\') && full != written && !fi.bindings.iter().any(|b| b.local.eq_ignore_ascii_case(written)) => {
                 self.php_path(written, &["function"]).map(|id| (id, "namespace"))
             }
             Err(e) => Err(e),
@@ -302,16 +303,14 @@ impl Resolver<'_> {
             return *r;
         }
         let (ns, name) = full.rsplit_once('\\').unwrap_or(("", full));
-        // PHP function names ignore case: `FormatPrice(3)` calls `formatPrice`
-        let any_case = kinds == ["function"];
-        let mut rows: Vec<Symbol> = if any_case { self.ix.named_any_case(name) } else { self.ix.named(name) }.unwrap_or_default();
-        let same = |q: &str| if any_case { q.eq_ignore_ascii_case(name) } else { q == name };
-        rows.retain(|r| same(&r.qualname) && kinds.contains(&r.kind.as_str()) && self.path_lang(&r.path) == Some(Lang::Php));
+        // PHP class, function and namespace names ignore case: `FormatPrice(3)` calls `formatPrice`
+        let mut rows: Vec<Symbol> = self.ix.named_any_case(name).unwrap_or_default();
+        rows.retain(|r| r.qualname.eq_ignore_ascii_case(name) && kinds.contains(&r.kind.as_str()) && self.path_lang(&r.path) == Some(Lang::Php));
         rows.sort_by(|a, b| (&a.path, a.start).cmp(&(&b.path, b.start)));
         let mut found = if rows.is_empty() { Err("external") } else { Err("not found") };
         for r in rows {
             let f = self.file(&r.path);
-            if php_namespace(&f, (r.start - 1).max(0) as usize) == ns {
+            if php_namespace(&f, (r.start - 1).max(0) as usize).eq_ignore_ascii_case(ns) {
                 found = Ok(r.id);
                 break;
             }
