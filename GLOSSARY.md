@@ -94,6 +94,10 @@ rule set of a file's language wherever languages differ.
 definitions a git diff changes, their callers through `Names` with the distance of each, and the
 test files to run.
 
+**[Git](docs/ARCHITECTURE.md#intelligence-intelrs)**: the one module that runs the `git` program
+(`git.rs`, `git::Git`): the base commit, the diff with the changed lines of each side, the
+untracked files and the blobs of base copies. Impact reads a change through it.
+
 **[Review](docs/CLI.md#review)**: the report of a pull request (`review.rs`, `scrutate review`):
 the impact between a base and a head commit, and the **new duplicates** (head `dupes` groups no
 base group matches). It prints as the PR comment the GitHub Action posts and edits in place

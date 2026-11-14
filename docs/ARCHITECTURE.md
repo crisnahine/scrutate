@@ -752,14 +752,18 @@ instructions), 0.43 s (6.1 billion) from what was kept, where asking about the 4
 cost 0.6 s (8.3 billion).
 
 `impact` (`impact.rs`) is an operation like the others, so it scans first and pages and prints as
-they do. It reads the diff by running `git` in the root, the one program Engine B starts:
-`git diff --raw -z` for each file's status, modes and blob ids, `git diff -U0` for the changed
+they do. It reads the diff through `git.rs`, which runs `git` in the root, the one program Engine B
+starts: `git diff --raw -z` for each file's status, modes and blob ids, `git diff -U0` for the changed
 lines of each side, `git ls-files --others --exclude-standard` for untracked files, `git
 rev-parse` and `git merge-base` for the base commit, and one `git cat-file --batch` for the base
 copies (and, with `--staged`, the staged copies). Every call passes `--no-optional-locks`,
 `core.fsmonitor=false`, `--no-ext-diff` and `--no-textconv`, so git writes nothing and starts no
 helper of its own; a revision is checked before it is passed (none starts with `-`) and resolved to
-a commit id, which every later call uses. Each hunk's new lines map onto the index's definitions
+a commit id, which every later call uses. Git sees this process's environment, or, built with
+`Git::with_env`, a caller's own values of the six variables that say where a repository's files
+are (`git::PASSED_ENV`: `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
+`GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`) in place of this process's six; any other
+name is refused before git runs. Each hunk's new lines map onto the index's definitions
 of the file as it is now, and its old lines onto the definitions a parse of the base copy gives
 (`parse::parse_file`, the parse the index stores); a definition is matched across the sides by
 kind and qualified name ([CLI](CLI.md#impact) has the statuses and windows). The callers are
@@ -987,7 +991,7 @@ model's tables. Ranking is watched by the pinned features above and by the quali
 - Components are replaceable behind small interfaces: a grammar is a registry row; the ranker is
   an array file; the vector model is an `npz`; the store is a directory of immutable arrays.
 - No network, no execution of repository code, no background daemons: the engines are libraries
-  that a CLI, an MCP server and Python call directly. `impact` runs the `git` program found on
+  that a CLI, an MCP server and Python call directly. `impact` runs the `git` program (`git.rs`) found on
   `PATH`, which reads the repository; nothing in the repository names a program to run. The one
   file written outside `.scrutate/` is the frecency state of `files`, under `XDG_STATE_HOME`. A
   command line call may use a session a running `serve` offers on a local socket, and never
