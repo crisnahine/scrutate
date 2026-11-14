@@ -340,3 +340,14 @@ fn refs_in_a_language_that_ignores_case_finds_a_name_in_any_case() {
     assert!(got.contains(&"f.php:4 f.php".to_string()), "{got:?}");
     assert!(!got.iter().any(|o| o.starts_with("g.py")), "Python keeps case: {got:?}");
 }
+
+#[test]
+fn a_pascal_call_without_parentheses_is_a_call() {
+    let pas = "program P;\n\nprocedure DoWork;\nbegin\nend;\n\nprocedure Tidy;\nbegin\nend;\n\nprocedure Run;\nvar x: integer;\nbegin\n  dowork;\n  x := 1;\n  if x > 0 then Obj.Tidy;\nend;\n\nbegin\n  Run;\nend.\n";
+    let r = Repo::new("pascal_bare_call", &[("p.pas", pas)]);
+    assert_eq!(callers(&r, "DoWork"), ["p.pas Run"]);
+    assert_eq!(callers(&r, "Tidy"), ["p.pas Run"]);
+    let (_, out) = r.run(&["callees", "Run"]);
+    assert!(out.contains("DoWork") && out.contains("Tidy") && !out.contains("external: x"), "{out}");
+    assert!(names(&r.json(&["dead"]), "dead").is_empty(), "{:?}", r.json(&["dead"]));
+}

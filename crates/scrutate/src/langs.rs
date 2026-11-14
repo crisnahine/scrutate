@@ -1102,7 +1102,8 @@ const CORE: &[LangSpec] = &[
             // a class is a `declType` whose value is a `declClass`, which has no name of its own
             d("declType", "type", N),
         ],
-        calls: &[c("exprCall", "")],
+        // a statement that is a name alone calls it: `DoWork;`, `Obj.Tidy;`
+        calls: &[c("exprCall", ""), c("statement", "")],
         docstring: false,
         wrappers: &[],
         outer: &[],

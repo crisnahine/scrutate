@@ -156,6 +156,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- A Pascal statement that is a name alone (`DoWork;`, `Obj.Tidy;`) is a call edge, so `callers`,
+  `callees` and `impact` see a procedure called without parentheses; an index reads its files
+  again ([CLI](docs/CLI.md#engine-b)).
 - `refs` of a name a Fortran, Pascal or Ada definition or a PHP function has finds its uses in any
   case in those languages' files: `refs DoWork` missed `dowork()` ([CLI](docs/CLI.md#engine-b)).
 - `grep --fuzzy-regex` reports where a match starts: the reversed pattern is run back from its

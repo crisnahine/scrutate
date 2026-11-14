@@ -749,6 +749,8 @@ fn callee_name(lang: &str, node: Node, field: &str, seps: &mut Seps) -> Option<S
             return IDENT_START.find(args.trim_start()).map(|m| m.as_str().to_string());
         }
         ("make", "raw_text") => return None,
+        // a call with arguments is its own `exprCall`; any other statement is no call
+        ("pascal", "statement") if node.named_child_count() != 1 || !matches!(target.kind(), "identifier" | "exprDot") => return None,
         ("verilog", "data_declaration") if !verilog_typeless_call(node, target, src) => return None,
         _ => {}
     }
