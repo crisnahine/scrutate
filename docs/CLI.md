@@ -164,7 +164,8 @@ tools, as ripgrep does. Limits:
 - an old-GNU sparse member (`tar --sparse`) is skipped and the members after it searched.
 
 An archive named alone is searched as a directory of its members, so each line names its member,
-even the only one; a compressed file named alone prints no name. Control characters and the
+even the only one; a compressed file named alone prints no name, and its text with a NUL is a
+binary match as a named file's is (a member, or a compressed file found by a walk, is skipped). Control characters and the
 characters that reorder text or break a line in a member name show as escapes (`\n`, `\x1b`,
 `\u{202e}`, a backslash as two), so a name cannot forge or disguise an output line;
 `--json` keeps the name as it is. Archives inside archives are not opened, and `--index` does

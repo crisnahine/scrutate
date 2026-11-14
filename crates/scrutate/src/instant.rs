@@ -2222,7 +2222,7 @@ fn search_one(w: &mut FileWorker, r: &Run, path: &Path, rel: Arc<str>, size: Opt
     count_file(r, size);
     if r.f.search_zip {
         if let Some(kind) = crate::archive::Kind::of(&rel) {
-            search_archive(w, r, path, &rel, kind);
+            search_archive(w, r, path, &rel, kind, named);
             return;
         }
     }
@@ -2271,8 +2271,10 @@ fn report(r: &Run, mut sink: Collector, rel: Arc<str>, named: bool) -> Vec<u8> {
 
 /// `-z`: every member of an archive, or the decompressed file, as a file of its own, reported as
 /// `archive.zip{member}` (the decompressed file keeps its own name).
-fn search_archive(w: &mut FileWorker, run: &Run, path: &Path, rel: &Arc<str>, kind: crate::archive::Kind) {
+fn search_archive(w: &mut FileWorker, run: &Run, path: &Path, rel: &Arc<str>, kind: crate::archive::Kind, named: bool) {
     let (c, stop) = (run.c, run.stop);
+    // one compressed file named on the command line is that file, as ripgrep reads it
+    let named = named && matches!(kind, crate::archive::Kind::Gz | crate::archive::Kind::Other);
     // the members of one archive share a searcher, made for that archive
     w.member = None;
     let mut each = |member: Option<&str>, r: &mut dyn std::io::Read| -> bool {
@@ -2285,7 +2287,7 @@ fn search_archive(w: &mut FileWorker, run: &Run, path: &Path, rel: &Arc<str>, ki
             (Some(b), Some(m)) => Some(Arc::from([&b[..], b"{", m.as_bytes(), b"}"].concat())),
             (b, _) => b.cloned(),
         };
-        source::search(w, &Run { raw: raw.as_ref(), ..*run }, &mut source::Member(r), label, false);
+        source::search(w, &Run { raw: raw.as_ref(), ..*run }, &mut source::Member(r), label, named);
         !stop.is_set()
     };
     let mut failed = |what: String| c.failed(format!("{rel}: {what}"));

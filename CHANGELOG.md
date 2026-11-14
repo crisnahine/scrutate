@@ -161,6 +161,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `grep -z` on a compressed file named on the command line whose text has a NUL reports a
+  binary match, as ripgrep does, where it reported nothing and exit 1
+  ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
 - A custom language's extension is refused when a built-in language claims a file name that
   ends with it (`txt` for `CMakeLists.txt`): such a table took those files from the built-in
   language ([CLI](docs/CLI.md#custom-languages)).

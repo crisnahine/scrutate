@@ -2694,3 +2694,21 @@ fn path_takes_a_call_the_resolver_cannot_tie_and_says_so() {
     assert_eq!(out.lines().nth(1), Some("  a.c:4  calls b.c:1-3  [function] deep  (by name: the resolver did not tie this call)"), "{out}");
     assert_eq!(answer(&r.run(&["path", "top", "deep", "--json"]).1)["steps"][0]["tied"], false);
 }
+
+/// A compressed file named on the command line is searched as a named file is: text with a NUL
+/// is a binary match, as ripgrep 15.2.0 reports it; found by a walk, it is skipped, as ripgrep
+/// skips it.
+#[test]
+fn a_named_compressed_file_whose_text_has_a_nul_is_a_binary_match() {
+    use std::io::Write as _;
+    let r = Repo::new("named_gz_binary");
+    let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    e.write_all(b"needle\0x\nneedle\n").unwrap();
+    r.write("bin.gz", &e.finish().unwrap());
+    let (code, out, _) = r.run(&["grep", "-z", "needle", "bin.gz"]);
+    assert_eq!((code, out.as_str()), (0, "binary file matches (found \"\\0\" byte around offset 6)\n"));
+    let (code, out, _) = r.run(&["grep", "-z", "-c", "needle", "bin.gz"]);
+    assert_eq!((code, out.as_str()), (0, "2\n"));
+    let (code, out, _) = r.run(&["grep", "-z", "needle"]);
+    assert_eq!((code, out.as_str()), (1, ""));
+}
