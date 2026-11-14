@@ -350,6 +350,26 @@ fn a_walk_skips_the_file_standard_output_writes() {
     assert_eq!(text.lines().count(), 50 * 2000);
 }
 
+/// A write that fails for another reason than a closed pipe (here the file size limit, with
+/// SIGXFSZ ignored so the write returns EFBIG) is an error, as in ripgrep.
+#[cfg(unix)]
+#[test]
+fn a_failed_write_to_standard_output_is_an_error() {
+    let d = Dir::new("writefails");
+    let lines: String = (0..5000).map(|i| format!("foo {i}\n")).collect();
+    d.write("a.txt", lines.as_bytes());
+    let out = Command::new("sh")
+        .arg("-c")
+        .arg(format!("trap '' XFSZ; ulimit -f 20; exec '{BIN}' grep foo a.txt > out.txt"))
+        .current_dir(&d.0)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{err}");
+    assert!(err.contains("os error 27"), "{err}");
+}
+
 #[test]
 fn smart_case_folds_only_a_pattern_with_lowercase_literals() {
     let d = Dir::new("smart");

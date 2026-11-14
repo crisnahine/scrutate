@@ -1322,8 +1322,10 @@ pub struct PlainSink {
     /// the buffer holds output
     holding: AtomicBool,
     start: Instant,
-    /// the reader went away (`| head`)
+    /// a write failed: the reader went away (`| head`), or `failed` says why
     pub broken: AtomicBool,
+    /// the first write error that is not a closed pipe (a full disk, a file size limit)
+    failed: Mutex<Option<std::io::Error>>,
     /// a file searched with context lines has written output (later files start with `--`)
     grouped: AtomicBool,
 }
@@ -1339,6 +1341,7 @@ impl PlainSink {
             holding: AtomicBool::new(false),
             start: Instant::now(),
             broken: AtomicBool::new(false),
+            failed: Mutex::new(None),
             grouped: AtomicBool::new(false),
         }
     }
@@ -1365,7 +1368,10 @@ impl PlainSink {
             }),
             Err(_) => Err(std::io::Error::other("output lock poisoned")),
         };
-        if res.is_err() {
+        if let Err(e) = res {
+            if e.kind() != std::io::ErrorKind::BrokenPipe {
+                self.failed.lock().unwrap_or_else(|p| p.into_inner()).get_or_insert(e);
+            }
             self.broken.store(true, Ordering::Relaxed);
             stop.set();
         }
@@ -1409,6 +1415,11 @@ impl PlainSink {
         if self.holding.load(Ordering::Relaxed) && self.waited().is_some() {
             self.with(stop, |_| Ok(()));
         }
+    }
+
+    /// The write error that stopped the output, unless it was a closed pipe.
+    pub fn failure(&self) -> Option<std::io::Error> {
+        self.failed.lock().unwrap_or_else(|p| p.into_inner()).take()
     }
 
     pub fn flush(&self) -> std::io::Result<()> {

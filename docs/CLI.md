@@ -118,7 +118,8 @@
   first workspace folder (else `rootUri`).
 - **Shell completion**: `scrutate completions bash|zsh|fish|powershell|elvish`.
 - **Cancellation**: Ctrl-C stops a search between files and exits 130; a closed pipe
-  (`| head`) stops it silently, with `-c`, `-l`, `--sort`, `--type-list` and `languages` too.
+  (`| head`) stops it silently, with `-c`, `-l`, `--sort`, `--type-list` and `languages` too; any
+  other failed write of the output (a full disk, a file size limit) is an error, exit code 2.
 
 ## Engine A: `grep` (alias `g`)
 

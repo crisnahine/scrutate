@@ -156,6 +156,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- A failed write of `grep`'s output other than a closed pipe (a full disk, a file size limit)
+  is an error with exit code 2, as in ripgrep: it stopped the search and exited 0 or 1 without a
+  word.
 - `grep foo . > out.txt` skips `out.txt`, as ripgrep does: it searched its own output and grew
   it until the disk or a file size limit stopped it ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
 - A new segment's files and directory are flushed to disk before the database names them, so

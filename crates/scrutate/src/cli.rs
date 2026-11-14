@@ -2363,6 +2363,9 @@ fn grep_plain(roots: &[PathBuf], q: &Query, f: &Files, out: GrepOutput, cancel: 
     warn_failures(&stats);
     let found = stats.matches > 0;
     if sink.broken.load(Ordering::Relaxed) {
+        if let Some(e) = sink.failure() {
+            return Err(anyhow::Error::new(e).context("write the output"));
+        }
         return Ok(if found { 0 } else { 1 }); // the reader went away (`| head`): stop quietly
     }
     if let Err(e) = sink.flush() {
