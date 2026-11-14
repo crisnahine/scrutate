@@ -339,6 +339,21 @@ fn go_a_method_promoted_from_another_package_s_type_is_that_type_s() {
 }
 
 #[test]
+fn rust_a_trait_default_method_is_found_on_a_type_in_a_module() {
+    let r = Repo::new(
+        "rs_trait_default_mod",
+        &[
+            ("Cargo.toml", "[package]\nname = \"tdm\"\nversion = \"0.1.0\"\n"),
+            (
+                "src/lib.rs",
+                "pub trait Greet {\n    fn hello(&self) -> u8 {\n        1\n    }\n}\npub mod inner {\n    pub struct T;\n    pub struct U;\n    impl super::Greet for U {}\n}\nimpl Greet for inner::T {}\n\npub fn run(t: inner::T, u: inner::U) -> u8 {\n    t.hello()\n        + u.hello()\n}\n",
+            ),
+        ],
+    );
+    assert_eq!(r.refs_of("hello", "src/lib.rs:2"), ["src/lib.rs:14", "src/lib.rs:15", "src/lib.rs:2"]);
+}
+
+#[test]
 fn go_two_areas() {
     let r = Repo::new(
         "go",

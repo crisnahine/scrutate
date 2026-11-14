@@ -212,7 +212,8 @@ incompatible index by itself, and that is never breaking.
   that embeds `Base` (or `*Base`, `base.Base` from another package, also two levels down) is
   `Base.Hello`, where it said `not found` ([CLI](docs/CLI.md#engine-b)).
 - `refs` ties a call of a Rust trait's default method on a type that implements the trait
-  without overriding it (`s.hello()` after `impl Greet for S {}`) to that method, where it said
+  without overriding it (`s.hello()` after `impl Greet for S {}`, also `impl Greet for inner::S`
+  and `impl super::Greet for S` inside `mod inner { }`) to that method, where it said
   `not found` ([CLI](docs/CLI.md#engine-b)).
 - A Rust `use` of an item of an inline `mod other { }` reaches it: `use other::work` and the
   calls `work()` after it were `external` ([CLI](docs/CLI.md#engine-b)).
