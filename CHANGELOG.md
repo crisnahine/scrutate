@@ -156,6 +156,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `serve` reads a message of at most 256 MiB, as `lsp` does: a longer line, or one with no end,
+  is dropped as it is read and answered with a parse error, where it was held in memory whole
+  ([CLI](docs/CLI.md#serve-mcp)).
 - `callers` and `refs` through a C# or C++ type whose bases form a wide diamond take linear time:
   each base type is read once per depth, as for Java, where 9 levels of 6 interfaces took 35 s for
   one call.

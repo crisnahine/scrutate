@@ -676,7 +676,8 @@ Nineteen tools over stdio, each an operation above (`search_code`, `grep_code`, 
 `dependents`, `references`, `similar_code`, `duplicates`, `structural_search`, `impact`,
 `find_files`, `dead_code`, `reindex`). `repo_map` is `map` (argument `path`), `call_path` is
 `path` (arguments `from`, `to` and `depth`, at most 100), both with the same text, and
-`dead_code` is `dead`, with its directory or file in `path`.
+`dead_code` is `dead`, with its directory or file in `path`. A message is one line of at most
+256 MiB, as for `lsp`; a longer one is read and dropped, and answered with a parse error.
 
 Before a call the server checks the repository for changed files and updates the index. Without
 `--refresh-interval`, scans are at most a second apart, closer when a scan is cheap; with

@@ -365,6 +365,36 @@ fn run_call(send: &Wire, session: &Session, calls: &Calls, settings: &Settings, 
     }
 }
 
+/// The longest message read, as the language server's: a line without its end past it is dropped,
+/// not held in memory.
+const MAX_MESSAGE: usize = 256 << 20;
+
+enum Line {
+    Read,
+    TooLong,
+    End,
+}
+
+/// One line of `r` into `buf`, at most `max` bytes before its line end; a longer one is read to
+/// its end a piece at a time and dropped.
+fn read_line(r: &mut impl BufRead, buf: &mut Vec<u8>, max: usize) -> std::io::Result<Line> {
+    use std::io::Read;
+    buf.clear();
+    if r.by_ref().take(max as u64 + 1).read_until(b'\n', buf)? == 0 {
+        return Ok(Line::End);
+    }
+    if buf.len() <= max || buf.ends_with(b"\n") {
+        return Ok(Line::Read);
+    }
+    loop {
+        buf.clear();
+        if r.by_ref().take(1 << 16).read_until(b'\n', buf)? == 0 || buf.ends_with(b"\n") {
+            buf.clear();
+            return Ok(Line::TooLong);
+        }
+    }
+}
+
 /// Serve until stdin closes. The first indexing runs in the background so a client is answered
 /// at once; tool calls that arrive meanwhile wait for it (`BUILD_WAIT`). Each call runs on a
 /// thread of its own, so the reader still sees a `notifications/cancelled` for it.
@@ -390,9 +420,13 @@ pub fn serve(session: Arc<Session>, settings: Settings, version: &str, structure
         let mut stdin = std::io::stdin().lock();
         let mut buf = Vec::new();
         loop {
-            buf.clear();
-            if stdin.read_until(b'\n', &mut buf)? == 0 {
-                break;
+            match read_line(&mut stdin, &mut buf, MAX_MESSAGE)? {
+                Line::End => break,
+                Line::TooLong => {
+                    respond_err(send, &Value::Null, -32700, "parse error: a message is at most 256 MiB", None);
+                    continue;
+                }
+                Line::Read => {}
             }
             let Ok(line) = std::str::from_utf8(&buf) else {
                 respond_err(send, &Value::Null, -32700, "parse error: not UTF-8", None);
@@ -551,6 +585,16 @@ impl Server<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_line_past_the_limit_is_dropped_whole_and_the_next_one_read() {
+        let mut r = std::io::Cursor::new(b"{\"a\":1}\n0123456789abcdef0123\n{\"b\":2}\n".to_vec());
+        let mut buf = Vec::new();
+        assert!(matches!(read_line(&mut r, &mut buf, 16).unwrap(), Line::Read) && buf == b"{\"a\":1}\n");
+        assert!(matches!(read_line(&mut r, &mut buf, 16).unwrap(), Line::TooLong));
+        assert!(matches!(read_line(&mut r, &mut buf, 16).unwrap(), Line::Read) && buf == b"{\"b\":2}\n");
+        assert!(matches!(read_line(&mut r, &mut buf, 16).unwrap(), Line::End));
+    }
     use crate::session::Every;
     use std::time::Duration;
 
