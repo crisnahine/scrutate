@@ -297,3 +297,19 @@ fn fortran_uses_a_name_in_any_case() {
     assert!(!names(&r.json(&["dead"]), "dead").contains(&"m.f90 Compute_Total".to_string()));
     assert_eq!(callers(&r, "Compute_Total"), ["main.f90 driver"]);
 }
+
+#[test]
+fn callees_in_a_language_that_ignores_case_reach_a_name_in_any_case() {
+    let callees = |r: &Repo, name: &str| {
+        let (_, out) = r.run(&["callees", name]);
+        out.lines().filter_map(|l| Some(format!("{} {}", l.split(':').next()?, l.split("] ").nth(1)?))).collect::<Vec<_>>()
+    };
+    let pas = "program P;\n\nprocedure DoWork;\nbegin\nend;\n\nprocedure Run;\nbegin\n  dowork();\nend;\n\nbegin\n  Run();\nend.\n";
+    let r = Repo::new("pascal_callees", &[("p.pas", pas)]);
+    assert_eq!(callees(&r, "Run"), ["p.pas DoWork"]);
+    let php = "<?php\nfunction formatPrice($p) { return $p; }\n\nfunction show() { return FormatPrice(3); }\n";
+    let r = Repo::new("php_callees", &[("f.php", php), ("g.py", "def formatprice():\n    return 1\n\n\ndef run():\n    return FormatPrice()\n")]);
+    assert_eq!(callees(&r, "show"), ["f.php formatPrice"]);
+    let (_, out) = r.run(&["callees", "run"]);
+    assert!(out.contains("external: FormatPrice"), "Python keeps case: {out}");
+}

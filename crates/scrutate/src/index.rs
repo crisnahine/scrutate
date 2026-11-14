@@ -2520,6 +2520,13 @@ impl Index {
     }
 
     /// The definitions of these kinds named exactly `name`, those outside tests first.
+    /// `named_of_kinds` with the name in any ASCII case.
+    pub fn named_of_kinds_any_case(&self, name: &str, kinds: &[&str]) -> Result<Vec<ChunkRow>> {
+        let mut st = self.db.prepare_cached(&format!("SELECT {CHUNK_COLS} FROM chunks WHERE name_key=?1 AND kind IN ({}) ORDER BY is_test", quoted(kinds)))?;
+        let rows: Vec<ChunkRow> = st.query_map(params![name_key(name)], ChunkRow::from_row)?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows.into_iter().filter(|r| r.name.eq_ignore_ascii_case(name)).collect())
+    }
+
     pub fn named_of_kinds(&self, name: &str, kinds: &[&str]) -> Result<Vec<ChunkRow>> {
         let mut st = self
             .db

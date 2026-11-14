@@ -390,6 +390,11 @@ impl<'a> Names<'a> {
         let mut out = Vec::new();
         for n in s.ix.callees_of(d.id)? {
             let mut rows: Vec<ChunkRow> = s.ix.named_of_kinds(&n, &kinds)?.into_iter().filter(|r| callable(&d.path, r)).collect();
+            // a call in a language that ignores case reaches a definition so named in any case
+            if crate::langs::ignores_case(&d.path, "function", "") {
+                let other_case = |r: &ChunkRow| r.name != n && crate::langs::ignores_case(&r.path, &r.kind, &r.qualname);
+                rows.extend(s.ix.named_of_kinds_any_case(&n, &kinds)?.into_iter().filter(|r| other_case(r) && callable(&d.path, r)));
+            }
             // an import alias names what it imports: `h` of `from util import helper as h`
             if let Some((_, item)) = self.rv.aliases(&d.path).into_iter().find(|(local, _)| *local == n) {
                 rows.extend(s.ix.named_of_kinds(&item, &kinds)?.into_iter().filter(|r| callable(&d.path, r)));

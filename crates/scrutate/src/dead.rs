@@ -67,7 +67,8 @@ pub(crate) fn candidates(ix: &crate::index::Index, under: Option<&str>) -> anyho
         let n = name_ids.len() as u32;
         name_ids.entry(s.name.as_str()).or_insert(n);
     }
-    // a name in a language that ignores case is found in any case, by its lowercase form
+    // a name in a language that ignores case is found in any case, by its lowercase form; ASCII
+    // letters only, as Fortran, Pascal, Ada and PHP fold no others in their names
     let mut folded: HashMap<String, Vec<u32>> = HashMap::new();
     for s in wanted.iter().filter(|s| s.name.is_ascii() && crate::langs::ignores_case(&s.path, &s.kind, &s.qualname)) {
         let id = name_ids[s.name.as_str()];

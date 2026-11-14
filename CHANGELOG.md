@@ -176,7 +176,7 @@ incompatible index by itself, and that is never breaking.
   after each match, not three ([CLI](docs/CLI.md#engine-a-grep-alias-g)).
 - `grep -i` with a class that matches nothing (`ab[^\s\S]`) finds nothing and exits 1, as
   ripgrep does; it stopped with an internal error.
-- `dead` and `callers` match a Fortran, Pascal or Ada name, and a PHP function outside a class,
+- `dead`, `callers` and `callees` match a Fortran, Pascal or Ada name, and a PHP function outside a class,
   in any case, as those languages do: `call compute_total(y)` is a call of `Compute_Total`, and
   `FormatPrice(3)` of `formatPrice`; an Ada `Main` is an entry point ([CLI](docs/CLI.md#engine-b)).
 - `dead` no longer lists Ruby methods that Ruby calls itself (`method_missing`,
