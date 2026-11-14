@@ -2009,6 +2009,16 @@ fn a_default_export_re_exported_through_require_reaches_the_definition() {
 }
 
 #[test]
+fn a_php_function_alias_called_in_another_case_is_a_call_of_the_function() {
+    let app = "<?php\nnamespace App;\nuse function Lib\\phpfn as pf;\nfunction upper() { return PF(); }\nfunction lower() { return pf(); }\n";
+    let lib = "<?php\nnamespace Lib;\nfunction phpfn() { return 1; }\n";
+    let r = Repo::new("php_alias_case", &[("app.php", app), ("lib.php", lib)]);
+    let (code, out) = r.run(&["callers", "phpfn"]);
+    assert!(code == 0 && out.lines().any(|l| l.ends_with(" upper")) && out.lines().any(|l| l.ends_with(" lower")), "callers phpfn: {out}");
+    assert_eq!(callee_names(&r, "upper"), ["phpfn"]);
+}
+
+#[test]
 fn a_super_call_in_a_constructor_is_a_call_of_the_base_class() {
     let base = "export class Base {\n  constructor() {\n    this.x = 1;\n  }\n}\n";
     let kid = "import { Base } from './base.js';\nexport class Kid extends Base {\n  constructor() {\n    super();\n  }\n}\n";

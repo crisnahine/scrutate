@@ -169,6 +169,9 @@ incompatible index by itself, and that is never breaking.
   ([CLI](docs/CLI.md#serve-mcp)).
 
 ### Fixed
+- `callers` and `callees` follow a PHP function alias called in another case: `PF()` after
+  `use function Lib\phpfn as pf` is a call of `phpfn`, where callers missed it and callees said
+  `external: PF` ([CLI](docs/CLI.md#engine-b)).
 - `refs` through an import alias lists only uses of the aliased definition: a local of the
   alias's name (`const g = () => 2; g()` beside `import { jsfn as g }`) no longer adds its own
   group to `refs jsfn` ([CLI](docs/CLI.md#engine-b)).

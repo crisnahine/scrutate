@@ -285,11 +285,7 @@ impl<'a> Names<'a> {
             let mut sites = s.ix.callers_of(n)?;
             // a call in a language that ignores case may spell the name in another case
             if targets.iter().any(|t| t.name == n && langs.folds(&t.path, &t.kind)) {
-                if self.callee_cases.is_none() {
-                    self.callee_cases = Some(s.ix.callees_by_lowercase()?);
-                }
-                let spellings = self.callee_cases.as_ref().and_then(|m| m.get(&n.to_ascii_lowercase())).cloned().unwrap_or_default();
-                for other in spellings.into_iter().filter(|c| c != n) {
+                for other in self.other_cases(n)? {
                     sites.extend(s.ix.callers_of(&other)?.into_iter().filter(|r| langs.folds(&r.path, "function")));
                 }
             }
@@ -331,6 +327,12 @@ impl<'a> Names<'a> {
         }
         for (local, file) in self.aliases_of(&targets, &langs)? {
             let mut sites = s.ix.callers_of(&local)?;
+            // `use function Lib\phpfn as pf` is called `PF()` too where names ignore case
+            if langs.folds(&file, "function") {
+                for other in self.other_cases(&local)? {
+                    sites.extend(s.ix.callers_of(&other)?);
+                }
+            }
             sites.retain(|r| r.path == file && seen.insert(r.id));
             for row in sites {
                 if !self.uses(&row.path, (row.start, row.end), &local).got.is_disjoint(&ids) {
@@ -460,7 +462,8 @@ impl<'a> Names<'a> {
                 rows.extend(s.ix.named_of_kinds_any_case(&n, &kinds)?.into_iter().filter(|r| other_case(r) && callable(&d.path, r)));
             }
             // an import alias names what it imports: `h` of `from util import helper as h`
-            if let Some((_, item)) = self.rv.aliases(&d.path).into_iter().find(|(local, _)| *local == n) {
+            let folds = langs.folds(&d.path, "function");
+            if let Some((_, item)) = self.rv.aliases(&d.path).into_iter().find(|(local, _)| *local == n || folds && local.eq_ignore_ascii_case(&n)) {
                 rows.extend(s.ix.named_of_kinds(&item, &kinds)?.into_iter().filter(|r| callable(&d.path, r)));
             }
             // `super(..)` is named by no definition: it calls the base class the resolver ties it to
@@ -496,6 +499,15 @@ impl<'a> Names<'a> {
             out.push((n, picked, is_tied));
         }
         Ok(out)
+    }
+
+    /// The spellings other than `name` that calls in the index give `name` in another case.
+    fn other_cases(&mut self, name: &str) -> Result<Vec<String>> {
+        if self.callee_cases.is_none() {
+            self.callee_cases = Some(self.s.ix.callees_by_lowercase()?);
+        }
+        let all = self.callee_cases.as_ref().and_then(|m| m.get(&name.to_ascii_lowercase())).cloned().unwrap_or_default();
+        Ok(all.into_iter().filter(|c| c != name).collect())
     }
 
     /// The definitions under `under` (a directory or file, or all) that nothing in the repository
